@@ -19,10 +19,11 @@ require_flux_ghcr_yaml_tool
 check_only=false
 allow_incomplete_fanout=false
 report_fences=false
+recover_fences=false
 record_runtime_proof_path=""
 reuse_runtime_proof_path=""
 usage() {
-  echo "Usage: $0 [--check-only|--allow-incomplete-fanout|--fences|--record-runtime-proof PATH|--reuse-runtime-proof PATH]" >&2
+  echo "Usage: $0 [--check-only|--allow-incomplete-fanout|--fences|--recover-fences|--record-runtime-proof PATH|--reuse-runtime-proof PATH]" >&2
 }
 while (($# > 0)); do
   case "$1" in
@@ -36,6 +37,10 @@ while (($# > 0)); do
       ;;
     --fences)
       report_fences=true
+      shift
+      ;;
+    --recover-fences)
+      recover_fences=true
       shift
       ;;
     --record-runtime-proof | --reuse-runtime-proof)
@@ -66,10 +71,20 @@ fi
 # exits before any credential or proof work runs, so accepting it alongside an
 # operational mode makes that step exit 0 having silently skipped the operation
 # it was configured to perform — an automation failure that looks like a pass.
-if [[ "${report_fences}" == "true" ]] &&
+#
+# --recover-fences is the same kind of alternative mode and carries the same
+# hazard, so it is rejected alongside an operational mode for the same reason.
+# It is also rejected alongside --fences: --recover-fences already emits the
+# full report as the evidence it acts on, so accepting both would leave the
+# caller's intent ambiguous between "report" and "report and then mutate".
+if { [[ "${report_fences}" == "true" ]] || [[ "${recover_fences}" == "true" ]]; } &&
   { [[ "${check_only}" == "true" ]] ||
     [[ "${allow_incomplete_fanout}" == "true" ]] ||
     [[ -n "${record_runtime_proof_path}${reuse_runtime_proof_path}" ]]; }; then
+  usage
+  exit 64
+fi
+if [[ "${report_fences}" == "true" && "${recover_fences}" == "true" ]]; then
   usage
   exit 64
 fi
@@ -325,6 +340,13 @@ runtime_probe_bootstrap_needed=0
 # still held, states whether the holder is provably dead, and prints the exact
 # CAS-guarded release. It performs no mutation by design: an operator running
 # the printed command is the explicit step the fencing model requires.
+# State the fence report hands to --recover-fences. Declared here, beside the
+# report that populates them, so the two cannot drift apart.
+fence_non_lease_held=0
+fence_lease_holder=""
+fence_lease_heartbeat_live=false
+fence_lease_state_file=""
+
 fence_run_segment() {
   if [[ -n "${GITHUB_RUN_ID:-}" ]]; then
     printf 'gh%s.%s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT:-1}"
@@ -382,6 +404,20 @@ fence_report_lease() {
   holder="$(jq -r '.spec.holderIdentity // ""' "${state}")"
   [[ -n "${holder}" ]] || return 0
   held=$((held + 1))
+  # Retain what --recover-fences needs to decide, so recovery reasons over the
+  # SAME observation the report just printed rather than re-reading the Lease.
+  # A second read could land either side of a fresh acquisition, which would let
+  # recovery act on a holder the operator never saw evidence for.
+  fence_lease_holder="${holder}"
+  # Only recovery consumes the retained copy, and only the mode dispatch sets the
+  # path. Guarded so a caller that reports without recovering cannot turn an
+  # unset path into a failed `cp` and lose the report itself — which is read
+  # precisely when a deploy is already refusing to start.
+  if [[ -n "${fence_lease_state_file}" ]] &&
+    ! cp -- "${state}" "${fence_lease_state_file}"; then
+    echo "::error::Could not retain the GHCR synchronization lease state."
+    return 1
+  fi
   duration="$(jq -r '.spec.leaseDurationSeconds // 0' "${state}")"
   now_epoch="$(date -u +%s)"
   renew_epoch="$(fence_report_epoch "$(jq -r '.spec.renewTime // ""' "${state}")")"
@@ -389,6 +425,7 @@ fence_report_lease() {
   printf '    holder: %s\n' "${holder}"
   if [[ -n "${renew_epoch}" ]] &&
     ((now_epoch - renew_epoch < duration)); then
+    fence_lease_heartbeat_live=true
     printf '    renewed %ss ago, inside its %ss duration — the holder is LIVE. Do not recover.\n' \
       "$((now_epoch - renew_epoch))" "${duration}"
   else
@@ -805,6 +842,12 @@ report_fences_now() {
     printf '\n'
   done <"${fence_report_nodes}"
 
+  # Captured BEFORE the Lease is reported, so it counts only the fences the
+  # Lease's own ordering rule says must be released first. --recover-fences
+  # refuses while this is non-zero rather than duplicating the node-journal
+  # grouping above, which is the part that is genuinely hard to get right.
+  fence_non_lease_held="${held}"
+
   fence_report_lease "${state}" || return 1
 
   if ((held == 0)); then
@@ -816,6 +859,104 @@ report_fences_now() {
     printf 'Lease. The Lease is the global exclusion fence: clearing it first lets a\n'
     printf 'deploy start against a half-recovered cluster.\n'
   fi
+}
+
+# Answers "is this holder provably dead?" — never "has its lease expired?".
+#
+# Expiry cannot answer it: the script's own acquisition comment explains that an
+# expired shell process can resume after a timeout takeover and write stale
+# credentials even under CAS, which is why automatic expiry takeover is disabled.
+# A run reported `completed` by the API is different in kind: Actions does not
+# resume a completed attempt, so this is a positive death proof rather than an
+# inference from a clock.
+#
+# Every failure path returns non-zero. An unreadable API, an absent gh, a missing
+# token, an empty body, or any status this does not recognise means NOT PROVEN,
+# never "assume dead" — the whole safety property is that the proof and the
+# release cannot be separated.
+fence_run_is_terminal() {
+  local run_id="$1"
+  local run_attempt="$2"
+  local repository="${GITHUB_REPOSITORY:-devantler-tech/platform}"
+  local status
+
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "::error::Cannot prove the fence holder is dead: gh is not available. Recover manually after confirming the run is terminal — see docs/dr/runbook.md → 'Recover an orphaned GHCR deploy fence'."
+    return 1
+  fi
+  # The ATTEMPT is pinned. A rerun reuses the run id, so an unpinned query
+  # reports the newest attempt: an orphan left by a finished attempt 1 would
+  # read as live while attempt 2 runs, and — worse for an automatic path — a
+  # finished attempt 2 would vouch for an attempt 1 that is still going.
+  if ! status="$(gh api \
+    "repos/${repository}/actions/runs/${run_id}/attempts/${run_attempt}" \
+    --jq '.status' 2>/dev/null)"; then
+    echo "::error::Cannot prove the fence holder is dead: querying run ${run_id} attempt ${run_attempt} failed. Not recovering."
+    return 1
+  fi
+  if [[ -z "${status}" ]]; then
+    echo "::error::Cannot prove the fence holder is dead: run ${run_id} attempt ${run_attempt} reported no status. Not recovering."
+    return 1
+  fi
+  if [[ "${status}" != "completed" ]]; then
+    echo "::error::Fence holder run ${run_id} attempt ${run_attempt} is ${status}, not completed — the holder is LIVE. Not recovering."
+    return 1
+  fi
+  printf '  run %s attempt %s is completed — holder proven dead.\n' \
+    "${run_id}" "${run_attempt}"
+}
+
+recover_fences_now() {
+  local run_reference run_id run_attempt patch_file
+
+  report_fences_now || return 1
+
+  printf '\n== Automatic recovery ==\n'
+
+  if [[ -z "${fence_lease_holder}" ]]; then
+    printf 'No Lease fence is held; nothing to recover.\n'
+    return 0
+  fi
+  # The Lease is released LAST for the reason the report states: it is the global
+  # exclusion fence, so clearing it while a policy or node fence is still held
+  # lets a deploy start against a half-recovered cluster. Automation therefore
+  # refuses rather than reordering — the remaining fences need the operator.
+  if ((fence_non_lease_held > 0)); then
+    echo "::error::Refusing to recover the Lease while ${fence_non_lease_held} other fence(s) are held. Release those first, in the order the report prints."
+    return 1
+  fi
+  # Belt and braces against a stale or cached API read: if the heartbeat is still
+  # inside its duration the holder is writing right now, whatever any run status
+  # says.
+  if [[ "${fence_lease_heartbeat_live}" == "true" ]]; then
+    echo "::error::Refusing to recover: the Lease heartbeat is still inside its duration, so the holder is live."
+    return 1
+  fi
+  if ! run_reference="$(fence_holder_run_reference "${fence_lease_holder}")"; then
+    echo "::error::Refusing to recover: holder '${fence_lease_holder}' carries no run reference, so its liveness cannot be proven from the API. This is the expected shape for a local run; recover manually."
+    return 1
+  fi
+  run_id="${run_reference%% *}"
+  run_attempt="${run_reference##* }"
+  fence_run_is_terminal "${run_id}" "${run_attempt}" || return 1
+
+  # Literally the same patch the report prints for an operator — one builder, so
+  # the two cannot diverge. It is built from the state the report RETAINED, never
+  # a fresh read, so the CAS tests the observation this decision was made on.
+  patch_file="${work_dir}/fence-recovery-patch.json"
+  fence_lease_release_patch \
+    "${fence_lease_state_file}" "${fence_lease_holder}" >"${patch_file}"
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    patch lease "${SYNC_LEASE_NAME}" \
+    --type=json \
+    --patch-file "${patch_file}"; then
+    echo "::error::Recovery patch was refused; the Lease was not released. Its holder or resourceVersion changed after the report — re-run to re-evaluate."
+    return 1
+  fi
+  printf 'Released Lease flux-system/%s held by %s.\n' \
+    "${SYNC_LEASE_NAME}" "${fence_lease_holder}"
 }
 
 fence_report_epoch() {
@@ -854,19 +995,34 @@ fence_shell_quote() {
   printf "'%s'" "${literal//$quote/$escaped}"
 }
 
-fence_lease_release_command() {
+# The ONE release patch. Both consumers build it here — the command the report
+# prints for an operator, and the patch --recover-fences applies itself — so the
+# automated path cannot end up on a weaker CAS than the runbook it mirrors.
+# Kept as a single builder deliberately: two copies of a guard that must stay
+# identical will eventually diverge silently, and nothing would fail when they do.
+#
+# Both `test` ops must still hold at apply time, so a Lease that moved after the
+# observation aborts the whole patch instead of clearing a live acquisition.
+fence_lease_release_patch() {
   local state="$1"
   local holder="$2"
-  local patch
 
-  patch="$(jq -nc \
+  jq -nc \
     --arg rv "$(jq -r '.metadata.resourceVersion' "${state}")" \
     --arg holder "${holder}" '[
     {op: "test", path: "/metadata/resourceVersion", value: $rv},
     {op: "test", path: "/spec/holderIdentity", value: $holder},
     {op: "replace", path: "/spec/holderIdentity", value: ""},
     {op: "replace", path: "/spec/leaseDurationSeconds", value: 1}
-  ]')"
+  ]'
+}
+
+fence_lease_release_command() {
+  local state="$1"
+  local holder="$2"
+  local patch
+
+  patch="$(fence_lease_release_patch "${state}" "${holder}")"
   printf "kubectl --context %s -n flux-system patch lease %s --type=json -p %s" \
     "$(fence_shell_quote "${KUBE_CONTEXT}")" "${SYNC_LEASE_NAME}" "$(fence_shell_quote "${patch}")"
 }
@@ -966,7 +1122,8 @@ fence_kustomization_release_command() {
 # Read-only, and deliberately before any credential work: an operator reaches
 # for this exactly when a deploy is refusing to start, so it must not need a
 # GHCR credential, a SOPS key, or a healthy fence to answer.
-if [[ "${report_fences}" == "true" ]]; then
+if [[ "${report_fences}" == "true" || "${recover_fences}" == "true" ]]; then
+  fence_lease_state_file="${work_dir}/fence-lease-state.json"
   # This mode acquires nothing, so the release pass has nothing to do — and it
   # runs before the rest of the file is parsed into functions, so letting the
   # EXIT trap fire would call a cleanup helper that does not exist yet and turn
@@ -974,7 +1131,17 @@ if [[ "${report_fences}" == "true" ]]; then
   # errexit is suspended there, so a FAILED cluster read still reaches the
   # trap-disable below. A bare call would exit through the very handler this
   # has to avoid — and a failing read is exactly when an operator is reading.
-  if report_fences_now; then
+  #
+  # --recover-fences shares that shape: it acquires nothing either, and its own
+  # release is a single CAS patch that either lands or is refused, so there is
+  # still nothing for the release pass to unwind.
+  if [[ "${recover_fences}" == "true" ]]; then
+    if recover_fences_now; then
+      fence_report_status=0
+    else
+      fence_report_status=$?
+    fi
+  elif report_fences_now; then
     fence_report_status=0
   else
     fence_report_status=$?

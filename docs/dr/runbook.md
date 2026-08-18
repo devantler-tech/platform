@@ -458,6 +458,106 @@ hcloud server list --selector hcloud/node-group
 hcloud server delete <server-id>
 ```
 
+### Stranded autoscaler nodes on a LIVE cluster (removed pool)
+
+Removing a pool from `ksail.prod.yaml` does **not** delete servers already
+running in it. The autoscaler only ever considers nodes that belong to one of
+its configured node groups, so a node whose pool no longer exists becomes
+invisible to scale-down and survives indefinitely — however idle the cluster
+gets. It keeps consuming `maxNodesTotal`, which starves real bursts, and it is
+never rolled, so it drifts behind on Kubernetes and Talos.
+
+Detect it by comparing live node names against the configured groups:
+
+```bash
+# pools the autoscaler actually manages — read BOTH command and args: the chart
+# currently passes every flag in `command`, so an `args`-only query returns an
+# empty stream and the grep matches nothing.
+kubectl -n kube-system get deploy cluster-autoscaler-hetzner-cluster-autoscaler \
+  -o jsonpath='{range .spec.template.spec.containers[0].command[*]}{@}{"\n"}{end}{range .spec.template.spec.containers[0].args[*]}{@}{"\n"}{end}' | grep '^--nodes='
+# every autoscaler-provisioned node currently registered
+kubectl get nodes -o name | grep '/autoscale-'
+```
+
+An empty result from the first command means the **query** is wrong, not that no
+pools are configured — check the container spec directly before concluding
+anything. It should print one `--nodes=` line per configured pool.
+
+Any `autoscale-<type>-*` node whose `<type>` has no matching `--nodes=` group is
+stranded.
+
+#### Pre-flight — check these before draining anything
+
+`hcloud server delete` neither cordons nor drains the node, and it does not wait
+for Longhorn to evict replicas. Deleting a server directly destroys any replica
+still on it, so the drain is what makes removal safe, and these checks are what
+make the drain safe.
+
+```bash
+# 1. Every storage node must actually be able to ATTACH volumes. A node whose
+#    iSCSI database has an unparseable record accepts replicas but cannot start
+#    an engine, and reports Ready/Schedulable while doing so (#3180). A node
+#    with zero attachments while others have many is the tell.
+kubectl -n longhorn-system get volumes.longhorn.io -o json |
+  jq -r '[.items[]|select(.status.state=="attached")]|group_by(.status.currentNodeID)[]|"\(.[0].status.currentNodeID) attached=\(length)"'
+```
+
+```bash
+# 2. Replica scheduling must have somewhere to go. With hard anti-affinity
+#    (replica-soft-anti-affinity=false) and only three storage nodes, one node
+#    below storage-minimal-available-percentage means degraded volumes can never
+#    rebuild — they sit at ReplicaSchedulingFailure indefinitely.
+kubectl -n longhorn-system get nodes.longhorn.io -o json |
+  jq -r '.items[]|.metadata.name as $n|(.status.diskStatus//{}|to_entries[0].value) as $s|"\($n) avail=\((($s.storageAvailable//0)*100/($s.storageMaximum//1))|floor)% \([$s.conditions[]?|select(.type=="Schedulable")|"Schedulable=\(.status)"]|join(""))"'
+```
+
+```bash
+# 3. Reclaim orphaned replica directories first — they are the usual reason a
+#    node drifts under the threshold. Delete the listed orphans to free the
+#    space (see #3180 for making this automatic).
+kubectl -n longhorn-system get orphans.longhorn.io
+```
+
+```bash
+# 4. Nothing already degraded.
+kubectl -n longhorn-system get volumes.longhorn.io -o json |
+  jq -r '.items[]|select(.status.robustness!="healthy" or .status.state!="attached")|"\(.metadata.name) \(.status.state)/\(.status.robustness)"'
+```
+
+#### Removal sequence
+
+```bash
+kubectl drain <node> --ignore-daemonsets --delete-emptydir-data --timeout=20m
+```
+
+The drain normally stalls at the end on the node's Longhorn `instance-manager`,
+which carries a PDB with zero allowed disruptions. That is expected: once the
+node is storage-idle the instance-manager is idle too, and Longhorn usually
+removes it on its own. Confirm idleness before forcing anything — both must
+return `0`:
+
+```bash
+kubectl -n longhorn-system get engines.longhorn.io -o json | jq -r --arg n <node> '[.items[]|select(.spec.nodeID==$n)]|length'
+kubectl -n longhorn-system get replicas.longhorn.io -o json | jq -r --arg n <node> '[.items[]|select(.spec.nodeID==$n)]|length'
+```
+
+Only then delete the server, and finally the now-orphaned Node object:
+
+```bash
+hcloud server delete <server-id>
+kubectl delete node <node>
+```
+
+Do one node at a time and let volumes return to `healthy` in between. Deleting
+the server is also what frees a slot under `maxNodesTotal`, so the autoscaler
+cannot replace capacity until that step completes.
+
+`restrict-storage-to-baseline-workers` and `drain-autoscale-node-storage` do
+cover these nodes, because they key on the node *name* rather than the
+`ksail.io/autoscaled` label — which a node predating ksail#5113 does not carry.
+
+Whenever you remove a pool, check for its running nodes in the same change.
+
 ### Autoscaler node not joining cluster
 
 ```bash
