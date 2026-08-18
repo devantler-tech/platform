@@ -31,7 +31,10 @@ set -uo pipefail
 
 root=${1:-k8s}
 
-die() { printf 'guard-checkov-skip-reasons: %s\n' "$1" >&2; exit 2; }
+die() {
+  printf 'guard-checkov-skip-reasons: %s\n' "$1" >&2
+  exit 2
+}
 
 command -v yq >/dev/null 2>&1 || die 'yq is required but not on PATH'
 command -v jq >/dev/null 2>&1 || die 'jq is required but not on PATH'
@@ -47,7 +50,10 @@ grep_rc=$?
 if [ "$grep_rc" -gt 1 ]; then
   die "could not search $root for annotations (grep exit $grep_rc)"
 fi
-[ -n "$files" ] || { printf 'checkov skip reasons: no annotations under %s\n' "$root"; exit 0; }
+[ -n "$files" ] || {
+  printf 'checkov skip reasons: no annotations under %s\n' "$root"
+  exit 0
+}
 
 findings=0
 checked=0
@@ -115,7 +121,7 @@ while IFS= read -r file; do
     # A quoted scalar cannot be truncated by a comment: inside quotes `#` is
     # literal. This is exactly the fix, so flagging it would punish the remedy.
     case $scalar in
-      '"'*|"'"*) continue ;;
+      '"'* | "'"*) continue ;;
     esac
 
     # In a plain scalar, whitespace followed by `#` opens a comment and everything

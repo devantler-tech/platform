@@ -144,8 +144,10 @@ fi
 # Proves the truncation check is what rejects the truncated fixture, rather than
 # some unrelated property of it. Quoting the SAME scalar must flip 1 to 0; if both
 # arms agreed, every rejection above could be vacuous.
-run_guard "$(fixture ablate_bad 'CKV_K8S_40=deferred to #3202 -- reason text')"; bad_rc=$GUARD_RC
-run_guard "$(fixture ablate_ok '"CKV_K8S_40=deferred to #3202 -- reason text"')"; ok_rc=$GUARD_RC
+run_guard "$(fixture ablate_bad 'CKV_K8S_40=deferred to #3202 -- reason text')"
+bad_rc=$GUARD_RC
+run_guard "$(fixture ablate_ok '"CKV_K8S_40=deferred to #3202 -- reason text"')"
+ok_rc=$GUARD_RC
 if [ "$bad_rc" -eq 1 ] && [ "$ok_rc" -eq 0 ]; then
   printf 'ok   ablation: quoting the identical scalar flips the verdict (1 -> 0)\n'
 else
