@@ -14,6 +14,7 @@ resources:
   - image-verification.yaml
   - infrastructure-privileged.yaml
   - kubescape-privileged.yaml
+  - pod-security-mutations-unscoped.yaml
   - pod-security-mutations.yaml
   - readonly-rootfs-pending.yaml
   - secret-reader-rbac.yaml
