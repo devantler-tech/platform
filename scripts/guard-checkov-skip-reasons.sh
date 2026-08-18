@@ -159,7 +159,14 @@ while IFS= read -r file; do
     -- "$file" 2>&1); then
     die "could not scan $file for block scalars: $blocks"
   fi
-  if printf '%s' "$blocks" | jq -r '.[]' 2>/dev/null | grep -qE "$key_shape"; then
+  # Read the block content through the same fail-closed discipline as the yq call
+  # above: if jq cannot render it, that is a guard that could not check, not a file
+  # with nothing to find. Discarding jq's status here would let the one integrity
+  # check in this file end in the silent pass the whole script exists to prevent.
+  if ! block_text=$(printf '%s' "$blocks" | jq -r '.[]' 2>&1); then
+    die "could not read block scalars from $file: $block_text"
+  fi
+  if printf '%s' "$block_text" | grep -qE "$key_shape"; then
     die "$file: a checkov.io/skipN directive appears inside a block scalar (such as a kustomize 'patch: |'), where the parser cannot reach it — so this file cannot be checked"
   fi
 done <<EOF

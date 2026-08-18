@@ -340,6 +340,53 @@ else
   printf 'ok   missing tooling is reported (exit 2)\n'
 fi
 
+# Fail-closed on the block-scalar scan itself. The guard asks jq to render the
+# block content it just got from yq; if that render fails, the guard has NOT
+# checked the file and must say so rather than fall through to a clean verdict.
+#
+# The stub fails ONLY the block-scan invocation (`-r` with `.[]`) and delegates
+# every other call to the real jq, so the fixture still reaches that line with the
+# earlier per-annotation checks working normally. Without that isolation a broken
+# jq would abort earlier and this would prove nothing about the scan.
+assertions=$((assertions + 1))
+jq_stub_dir="$scratch/jq-stub-bin"
+mkdir -p "$jq_stub_dir"
+real_jq="$(command -v jq)"
+jq_stub_log="$scratch/jq-stub.log"
+: > "$jq_stub_log"
+cat > "$jq_stub_dir/jq" <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = "-r" ] && [ "\$2" = ".[]" ]; then
+  echo fired >> "$jq_stub_log"
+  echo 'stubbed jq failure' >&2
+  exit 9
+fi
+exec "$real_jq" "\$@"
+STUB
+chmod +x "$jq_stub_dir/jq"
+run_guard "$(scalar_fixture blockscanjq '"CKV_K8S_1=blockscanjq the reason"')" \
+  "$jq_stub_dir:$PATH"
+if [ "$GUARD_RC" -ne 2 ]; then
+  printf 'FAIL block-scan jq failure: expected exit 2, got %s\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
+  failures=$((failures + 1))
+elif ! printf '%s' "$GUARD_OUT" | grep -qF -- 'could not read block scalars'; then
+  printf 'FAIL block-scan jq failure: exit 2 was right, but the report never named the cause\n%s\n' "$GUARD_OUT" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok   a failing block-scalar scan is reported, not passed over (exit 2)\n'
+fi
+
+# Non-vacuity control for the case above: the stub must actually have been reached.
+# A stub that never fires would make that assertion pass for the wrong reason — the
+# fixture is clean, so exit 2 has to come from the stub and nothing else.
+assertions=$((assertions + 1))
+if [ ! -s "$jq_stub_log" ]; then
+  printf 'FAIL control: the jq stub never fired, so the block-scan assertion proves nothing\n' >&2
+  failures=$((failures + 1))
+else
+  printf 'ok   control: the jq stub really was reached\n'
+fi
+
 # ---------------------------------------------------------------------------
 # Meta-assertion: the suite must be able to FAIL. A fixture that is rejected by the
 # guard is asserted to pass, and that assertion is required to break — this is what
