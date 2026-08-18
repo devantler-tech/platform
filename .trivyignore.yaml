@@ -181,3 +181,32 @@ misconfigurations:
       Both operators register, update and remove their own validating and mutating admission
       webhooks as part of installing and upgrading themselves. The grant is upstream's, in a
       SHA-256 pinned release artifact vendored verbatim.
+  - id: KSV-0048
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Creating and reconciling workloads is what both operators are for. CDI creates the importer,
+      uploader and cloner pods that populate a DataVolume; virt-operator creates and upgrades the
+      virt-api, virt-controller and virt-handler deployments that make up KubeVirt itself. A grant
+      narrow enough to satisfy this check would stop either operator installing or running. The
+      grant is upstream's, in a SHA-256 pinned release artifact vendored verbatim.
+  - id: KSV-0049
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Both operators own the configmaps that configure the components they install, including their
+      generated CA bundles, and must create them to install and rotate them. The grant is upstream's,
+      in a SHA-256 pinned release artifact vendored verbatim.
+  - id: KSV-0113
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Every rule this fires on concerns the serving certificates the operators are issued or
+      generate, in their own namespace. Three of the five grant only get/list/watch; CDI's own cert
+      rule adds create because CDI generates that material itself. The fifth, KubeVirt's namespaced
+      Role, does grant create/patch/delete — but is resourceNames-scoped to sixteen explicitly named
+      kubevirt-* certificate secrets it issues and rotates, so it cannot reach any other secret in
+      the namespace. The grant is upstream's, in a SHA-256 pinned release artifact vendored verbatim.
