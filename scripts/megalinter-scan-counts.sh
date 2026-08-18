@@ -20,7 +20,7 @@
 #   - Command: [checkov --skip-path tests/ --config-file /action/lib/.automation/.checkov.yml
 #     --skip-path .agents --skip-path megalinter-reports --directory . --skip-framework secrets]
 #   - Command: [trivy fs --scanners vuln,misconfig --exit-code 1 --ignorefile
-#     .trivyignore.yaml --skip-dirs tests .]
+#     .trivyignore.yaml --skip-dirs tests --config-data .trivy/data .]
 # Read them from a "🧹 Lint - mega-linter" job log if they ever need re-deriving:
 #   gh api repos/devantler-tech/platform/actions/jobs/<job-id>/logs | grep -aE '^\S+ - Command: '
 #
@@ -260,7 +260,7 @@ scan_trivy() {
   local out="$OUT_DIR/trivy.txt" rc=0
   printf '\nRunning trivy (this takes ~1 minute)...\n' >&2
   (cd "$REPO_ROOT" && trivy fs --scanners vuln,misconfig --exit-code 1 \
-    --ignorefile .trivyignore.yaml --skip-dirs tests .) \
+    --ignorefile .trivyignore.yaml --skip-dirs tests --config-data .trivy/data .) \
     >"$out" 2>"$OUT_DIR/trivy.err" || rc=$?
   if [ "$rc" -gt 1 ]; then
     printf 'trivy exited %d — refusing to report a count from an incomplete run\n' "$rc" >&2
