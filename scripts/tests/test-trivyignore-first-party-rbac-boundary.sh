@@ -149,7 +149,7 @@ while IFS= read -r rule; do
   resources="${rule#*|}"
   core=0
   old_ifs="$IFS"
-  set -f  # a resource may literally be "*"; without this, word-splitting globs it away
+  set -f # a resource may literally be "*"; without this, word-splitting globs it away
   IFS=','
   for g in $groups; do
     [ -z "$g" ] && core=1
