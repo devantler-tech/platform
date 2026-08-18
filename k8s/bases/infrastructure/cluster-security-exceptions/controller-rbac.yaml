@@ -41,11 +41,11 @@ spec:
     #   - C-0002 (exec into container)      -> exec-into-container-rbac.yaml
     #
     # The six controls listed in THIS CR do not all share that limitation, and
-    # three of them are load-bearing on the gating scan. Measured 2026-08-15 by
-    # running the CI scan twice, identical but for this one policy (ksail
-    # 7.178.20, `--framework nsa,mitre`):
+    # three of them are load-bearing on the gating scan. Measured by running the CI
+    # scan twice, identical but for this one policy (`--framework nsa,mitre`);
+    # C-0053 and C-0037 re-measured 2026-08-18, C-0031 as of 2026-08-15:
     #
-    #   C-0053   10 findings with this CR, 23 without  -> suppresses 13
+    #   C-0053   11 findings with this CR, 25 without  -> suppresses 14
     #   C-0037    0 findings with this CR,  3 without  -> suppresses 3
     #   C-0031    0 findings with this CR,  1 without  -> suppresses 1
     #   C-0063 / C-0035 / C-0188:  0 findings in BOTH arms. These are KEPT, and the
@@ -59,8 +59,9 @@ spec:
     #     justified exception. Re-decide only if they come under a gated framework.
     #
     # So do NOT migrate these six to kind+name CRs on the assumption that a
-    # namespaceSelector cannot reach them: dropping this CR adds 17 findings to
-    # the posture gate. C-0053's residual 10 are all tenant-namespace
+    # namespaceSelector cannot reach them: dropping this CR adds 18 findings to
+    # the posture gate (14 + 3 + 1, summed from the per-control ablations above).
+    # C-0053's residual 11 are all tenant-namespace
     # ServiceAccounts, none of them in the selector below, so they are correctly
     # left flagged rather than evidence that this CR is incomplete.
     #
