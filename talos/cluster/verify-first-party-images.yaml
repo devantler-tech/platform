@@ -1,9 +1,31 @@
 # Container image signature verification (Talos 1.13+, ImageVerificationConfig).
 #
-# Verifies cosign signatures at the containerd PULL layer on every node — a
-# defense-in-depth complement to the GitOps-source verification Flux already
-# performs on OCI *manifest* artifacts (apps' sync.yaml verify.provider:
-# cosign). This gates the actual container-image bytes containerd pulls, which
+# STATUS — THESE RULES ARE INERT ON THIS CLUSTER TODAY.
+# containerd does not verify images itself: it delegates to the
+# `io.containerd.image-verifier.v1.bindir` plugin, and permits every pull when
+# that plugin has no `bin_dir` or the directory holds no binary. No verifier
+# binary is installed on any node, so nothing below is evaluated and no pull is
+# gated by it. Installing and wiring the verifier is #3101; the finding is
+# #2856.
+#
+# Check this, do not assume it. The repository cannot answer it — the rules read
+# as correct in exactly the state where they do nothing, which is why this went
+# unnoticed for weeks:
+#     scripts/validate-image-verifier-liveness.sh
+# Measured 2026-08-18: 7 of 7 nodes could not enforce.
+#
+# BEFORE ACTIVATING (#3101): an image that matches a rule but fails
+# verification is refused, so any first-party image that is running yet
+# unsigned goes ImagePullBackOff the moment the verifier starts working.
+# `ghcr.io/devantler-tech/doggy-countdown` is in that state now — its running
+# digest carries attestations but no cosign signature, and it matches the
+# catch-all rule below. Sign it, or scope the rule off it, before activation.
+#
+# Declares the cosign signatures required at the containerd PULL layer on
+# every node — a defense-in-depth complement to the GitOps-source
+# verification Flux already performs on OCI *manifest* artifacts (apps'
+# sync.yaml verify.provider: cosign). This gates the actual container-image
+# bytes containerd pulls, which
 # Flux and the Kyverno admission layer never see (e.g. kubelet-managed static
 # pods, a compromised registry serving a tampered image).
 #
@@ -25,8 +47,10 @@
 # FAIL-OPEN by design for everything else: an image matching NO rule is pulled
 # WITHOUT verification, so third-party chart images (Cilium, Longhorn, Coroot,
 # registry.k8s.io control-plane images, …) are unaffected — this is
-# intentionally NOT a deny-all-unsigned control. The converse: an image that
-# DOES match a rule but fails verification is blocked (ImagePullBackOff).
+# intentionally NOT a deny-all-unsigned control. The converse — an image that
+# DOES match a rule but fails verification is blocked (ImagePullBackOff) — is
+# what these rules describe, and takes effect only once a verifier binary is
+# installed (see STATUS above).
 #
 # A rule over a system registry (e.g. registry.k8s.io/*, the canonical Talos
 # example) would gate control-plane/etcd image pulls — high blast radius on
