@@ -168,6 +168,20 @@ metadata:
 YAML
   )" '1 annotation(s) checked'
 
+# TWO annotations on ONE line. The reconciliation counts key occurrences, so counting
+# matching *lines* here under-counts (1 line vs 2 parsed entries) and rejects valid
+# YAML as uncheckable. Reported by CodeRabbit on #3222 after the flow-map fix.
+expect 'two annotations in one flow map are both counted' 0 \
+  "$(
+    tree_with oktwoflow oktwoflow.yaml <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oktwoflow
+  annotations: {checkov.io/skip1: "CKV_K8S_1=oktwoflow first",checkov.io/skip2: "CKV_K8S_2=oktwoflow second"}
+YAML
+  )" '2 annotation(s) checked'
+
 # The mirror of the above: widening what may precede the key must NOT start
 # counting keys that merely END with the annotation name.
 expect 'look-alike keys are not counted as annotations' 0 \

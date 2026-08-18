@@ -154,7 +154,10 @@ while IFS= read -r file; do
   # Full-line comments are dropped first: a `#`-leading line is never an annotation
   # key, in a comment or inside a block scalar, and this tree does carry prose
   # cross-references shaped like one.
-  raw_keys=$(grep -vE '^[[:space:]]*#' -- "$file" | grep -cE "$key_shape")
+  # `grep -o | wc -l` counts each KEY, not each matching line: a flow map can carry
+  # several annotations on one line, and counting lines there would under-count and
+  # reject valid YAML as uncheckable.
+  raw_keys=$(grep -vE '^[[:space:]]*#' -- "$file" | grep -oE "$key_shape" | wc -l | tr -d ' ')
   raw_rc=$?
   if [ "$raw_rc" -gt 1 ]; then
     die "could not count annotations in $file (grep exit $raw_rc)"
