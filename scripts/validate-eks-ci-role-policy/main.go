@@ -1008,7 +1008,51 @@ const (
 // approved CI toolchain, via the required job. The local kubectl is v1.36.1
 // against an approved v1.36.2, so validateRendererVersion fails closed and cannot
 // corroborate.
-const expectedRenderedSurfaceSHA = "ed2767037a88348b22ec8ecfcc8b2081e86b7979dfe3c86d554034980af01fdf"
+// Re-measured for #2737 after merging exact main c4fb7f2d, which had advanced
+// eleven commits past the base the branch's earlier value was rendered against.
+// That stale value never described this merge result, so it is replaced rather
+// than re-approved.
+//
+// The complete delta over main is TWO files, one line each, and nothing else:
+//
+//	source.toolkit.fluxcd.io/v1  OCIRepository  ascoachingogvaner/ascoachingogvaner
+//	  spec.ref.semver: ">=1.0.0"  (removed)
+//	  spec.ref.tag:    1.13.4     (added)
+//
+//	source.toolkit.fluxcd.io/v1  OCIRepository  wedding-app/wedding-app
+//	  spec.ref.semver: ">=1.0.0"  (removed)
+//	  spec.ref.tag:    1.15.10    (added)
+//
+// Both are Flux sources and isAuthorizationKind selects OCIRepository, so their
+// projected text is covered by the aggregate. Neither carries a pinned entry in
+// expectedResourceSHAs, so the aggregate is the ONLY control that can move for
+// this change: a per-identity mismatch was never an available signal here, and
+// its absence is therefore not evidence on its own.
+//
+// Conservation reported by the required job on this merge result: ZERO
+// per-identity mismatches, ZERO missing resources and ZERO duplicates, so
+// surface membership is unchanged. The 35 unresolved-substitution notes are the
+// diagnostics emitted alongside any aggregate mismatch and are not findings; no
+// note names either tenant OCIRepository, which is the positive signal that the
+// pins did not disturb substitution.
+//
+// The change is a reduction in what may be deployed: a floating ">=1.0.0" range
+// lets ANY newer tag published to that registry path be selected and reconciled
+// unattended, so whoever can publish a tag chooses the manifests; a fixed tag
+// removes that selection. Each tag is the revision production is already
+// reconciling, so this pins what is running rather than moving it. No identity,
+// binding, ServiceAccount, verb, policy or URL changes, and nothing granted to
+// the aws/aws service account this validator protects is touched.
+//
+// Main's own approved digest is recorded here in full, so replacing the constant
+// does not lose it:
+//
+//	ed2767037a88348b22ec8ecfcc8b2081e86b7979dfe3c86d554034980af01fdf
+//
+// Only ONE renderer stands behind the new value: the approved CI toolchain via
+// the required job. The local kubectl is v1.36.1 against an approved v1.36.2, so
+// validateRendererVersion fails closed and cannot corroborate.
+const expectedRenderedSurfaceSHA = "21195b64582f0cc99b42cc6ee61c77610972c12b1556c3b254f68b15ce95d7fa"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
