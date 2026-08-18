@@ -1,0 +1,34 @@
+# Registries this repository is allowed to pull container images from.
+#
+# WHY THIS FILE EXISTS
+# trivy's KSV-0125 ("Restrict container images to trusted registries") ships a default trusted list
+# of Azure ACR, AWS ECR and GCR only — read from the check itself
+# (policies/kubernetes/policies/uses_untrusted_registry.rego), not inferred. This repository uses
+# none of those three, so every single container it declares was reported "untrusted": 27 findings,
+# which said nothing about supply-chain risk and only said "this is not a Google, Azure or AWS
+# shop". That noise is why REPOSITORY_TRIVY sits in DISABLE_ERRORS_LINTERS (#2787).
+#
+# The check reads `data.ksv0125.trusted_registries` and uses it INSTEAD of its defaults whenever the
+# list is non-empty, so declaring the four registries actually in use turns the control from
+# permanently-failing noise into a real gate: a workload pulling from anywhere else now stands out.
+# The list below is derived from the tree, not chosen — every `image:` in k8s/ that names a registry
+# host resolves to exactly these four.
+#
+# ⚠️ MATCHING IS SUFFIX-BASED, NOT EXACT. The check tests `endswith(registry, trusted)`, so an entry
+# `ghcr.io` also trusts a registry named `evil-ghcr.io`. That is upstream behaviour this file cannot
+# tighten; it is recorded so the guarantee is not overstated. The control catches an unexpected
+# registry, it does not defeat a deliberately look-alike one — image digest pinning and the
+# signature verification in #2856 are what cover that.
+#
+# Adding a registry here is a supply-chain decision: it must be a registry this project genuinely
+# publishes to or consumes from, added in its own reviewed pull request.
+ksv0125:
+  trusted_registries:
+    # Upstream project images (cert-manager, kubevirt, cdi, coroot, minio, openbao, …).
+    - quay.io
+    # Docker Hub — alpine/k8s, minio/mc, traefik and other upstream images.
+    - docker.io
+    # Kubernetes' own registry — coredns and other in-tree components.
+    - registry.k8s.io
+    # GitHub Container Registry — devantler-tech's own published images and upstream charts.
+    - ghcr.io

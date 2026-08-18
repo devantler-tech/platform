@@ -97,7 +97,7 @@ DISABLE_ERRORS_LINTERS:
   # (#3205). Its dispositions are documented below because they are what holds that zero — each one
   # is a scoped, resource-level skip naming its reason, not a disabled check.
   #
-  # trivy (93 in the local v0.74.0 reproduction): Kubernetes misconfiguration in k8s/, which the
+  # trivy (66 in the local v0.74.0 reproduction): Kubernetes misconfiguration in k8s/, which the
   # section above explains is NOT covered elsewhere. Tracked by #2787.
   #
   # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore.yaml — 450 of
@@ -137,6 +137,22 @@ DISABLE_ERRORS_LINTERS:
   # ⚠️ That 109 is NOT 108 plus a regression. 108 was measured on trivy v0.73.0 and 109 on v0.74.0
   # with no manifest change in between, so that 1 is a scanner rule-set difference rather than new
   # backlog — the same drift the KSV-0037 note above records. Only the 16 are this slice's work.
+  # It then went 93 -> 66 across 29 -> 16 targets when KSV-0125's trusted-registry list was DECLARED
+  # rather than left at its default — 27 findings, the single largest family on this tree. The check
+  # ships trusting only Azure ACR, AWS ECR and GCR, so on a repository that uses quay.io, docker.io,
+  # registry.k8s.io and ghcr.io it flagged literally every container and measured nothing. The list
+  # lives in .trivy/data/trusted-registries.yaml and is wired in through REPOSITORY_TRIVY_ARGUMENTS
+  # below; see that file for why suffix matching means this catches an unexpected registry rather
+  # than a deliberately look-alike one.
+  #
+  # This is NOT a suppression: the check is live and now discriminating. It proved that by surviving
+  # on one container — vault-config's store-keys ran `alpine/k8s`, whose first path segment is a
+  # Docker Hub NAMESPACE, not a registry host, so the check read the registry as "alpine". That one
+  # was fixed at the manifest by writing the image fully-qualified (`docker.io/alpine/k8s`, same
+  # pinned digest), which is what the other 11 docker.io images here already do.
+  #
+  # The list is load-bearing, verified by ablation rather than asserted: deleting the single
+  # `quay.io` entry returns exactly 11 findings, and all 11 are quay.io-hosted containers.
   #
   # checkov is at 0 failed checks on all three frameworks CI runs. Its last two findings were both
   # CKV_K8S_40, on the two vault-backup workloads, and #2904 dispositioned them as a scoped
@@ -308,6 +324,14 @@ REPOSITORY_TRIVY_ARGUMENTS:
   - .trivyignore.yaml
   - --skip-dirs
   - tests
+  # KSV-0125's BUILT-IN trusted-registry list is Azure ACR, AWS ECR and GCR only — read from the
+  # check itself, not inferred. This repository uses none of those three, so without this argument
+  # every container it declares reads as "untrusted": 27 findings that measured nothing about supply
+  # chain and only said "this is not a Google, Azure or AWS shop". The data file declares the four
+  # registries actually in use, which is what turns the check into a gate that can catch an
+  # unexpected registry. Omitting this argument silently restores those 27.
+  - --config-data
+  - .trivy/data
 
 # zizmor aborts with "fatal: no audit was performed" because MegaLinter strips GITHUB_TOKEN and its
 # artipacked audit then 401s against the GitHub API. Handing it the token makes the audit run

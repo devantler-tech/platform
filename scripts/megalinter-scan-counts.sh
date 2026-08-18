@@ -20,9 +20,28 @@
 #   - Command: [checkov --skip-path tests/ --config-file /action/lib/.automation/.checkov.yml
 #     --skip-path .agents --skip-path megalinter-reports --directory . --skip-framework secrets]
 #   - Command: [trivy fs --scanners vuln,misconfig --exit-code 1 --ignorefile
-#     .trivyignore.yaml --skip-dirs tests .]
+#     .trivyignore.yaml --skip-dirs tests --config-data .trivy/data .]
 # Read them from a "🧹 Lint - mega-linter" job log if they ever need re-deriving:
 #   gh api repos/devantler-tech/platform/actions/jobs/<job-id>/logs | grep -aE '^\S+ - Command: '
+#
+# ⚠️ SCAN THE REPOSITORY ROOT. Narrowing trivy's target to k8s/ INFLATES the count, silently.
+# .trivyignore.yaml's dispositions are path-scoped, and every one of them is written relative to the
+# repository root (k8s/bases/infrastructure/**, k8s/clusters/prod/bootstrap/config-map.yaml, ...).
+# Trivy matches those globs against paths relative to the SCAN ROOT, so a scan rooted at k8s/ sees
+# bases/infrastructure/... instead, and the path-scoped entries stop matching. They deactivate with
+# no warning, and the run re-reports findings this repository has already dispositioned.
+#
+# Measured on this tree with trivy v0.74.0, same subcommand and same flags, scan root the ONLY
+# variable: `... .` reports 66 findings across 16 targets, `... k8s/` reports 133 across 62 — the
+# count doubles. Every check ID that appears only in the k8s/-rooted arm (KSV-0022, KSV-0037,
+# KSV-0053, KSV-0109, KSV-0114, KSV-0117) is already dispositioned there; KSV-0037 alone
+# accounts for 47 of the 67 extra. A few IDs rise without being new to that arm (KSV-0041, KSV-0046,
+# KSV-0056) because their disposition covers only some paths, so the scoped subset deactivates while
+# their other instances legitimately remain.
+#
+# The failure direction is what makes this dangerous: it looks like more backlog to work off, not
+# like a broken measurement, so it reads as plausible and gets believed. Run the command above from
+# the repository root, or the number is not comparable to CI's.
 #
 # TWO DELIBERATE DIFFERENCES FROM THE CI COMMAND, both verified not to change the counts.
 # (--skip-framework secrets is NOT one of them: CI passes it too since MegaLinter 10.0.0, so
@@ -260,7 +279,7 @@ scan_trivy() {
   local out="$OUT_DIR/trivy.txt" rc=0
   printf '\nRunning trivy (this takes ~1 minute)...\n' >&2
   (cd "$REPO_ROOT" && trivy fs --scanners vuln,misconfig --exit-code 1 \
-    --ignorefile .trivyignore.yaml --skip-dirs tests .) \
+    --ignorefile .trivyignore.yaml --skip-dirs tests --config-data .trivy/data .) \
     >"$out" 2>"$OUT_DIR/trivy.err" || rc=$?
   if [ "$rc" -gt 1 ]; then
     printf 'trivy exited %d — refusing to report a count from an incomplete run\n' "$rc" >&2
