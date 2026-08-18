@@ -48,7 +48,10 @@ status=0
 
 # ---------------------------------------------------------------- structure --
 for check in "${checks[@]}"; do
-  entries="$(yq "[.misconfigurations[] | select(.id == \"$check\")] | length" "$ignorefile")"
+  # A yq failure here must take the MISSING DISPOSITION path below, not become an
+  # integer-expression error that evaluates false and silently treats the id as present.
+  entries="$(yq "[.misconfigurations[] | select(.id == \"$check\")] | length" "$ignorefile" 2>/dev/null || printf '0')"
+  entries="${entries:-0}"
   if [ "$entries" -lt 1 ]; then
     printf 'MISSING DISPOSITION: %s has no entry in .trivyignore.yaml\n' "$check" >&2
     status=1
@@ -136,10 +139,21 @@ write_probe "$first_party"
 cp "$ignorefile" "$scratch/.trivyignore.yaml"
 
 findings="$scratch/findings.txt"
-(cd "$scratch" && trivy fs --scanners misconfig --exit-code 0 \
-  --ignorefile .trivyignore.yaml --format json --quiet . 2>/dev/null) |
-  jq -r '.Results[]? as $r | $r.Misconfigurations[]?
-         | select(.Status=="FAIL") | "\($r.Target)\t\(.ID)"' |
+trivy_json="$scratch/trivy.json"
+trivy_err="$scratch/trivy.err"
+
+# trivy's stderr is kept rather than discarded: `set -o pipefail` means a trivy failure would
+# otherwise exit this script non-zero with no diagnostic, which is the "guardrail that blocks
+# without naming the fix" shape. Run it on its own so its status is checked directly.
+if ! (cd "$scratch" && trivy fs --scanners misconfig --exit-code 0 \
+  --ignorefile .trivyignore.yaml --format json --quiet . >"$trivy_json" 2>"$trivy_err"); then
+  printf 'trivy failed while scanning the probe fixture; its stderr follows\n' >&2
+  cat "$trivy_err" >&2
+  exit 1
+fi
+
+jq -r '.Results[]? as $r | $r.Misconfigurations[]?
+       | select(.Status=="FAIL") | "\($r.Target)\t\(.ID)"' "$trivy_json" |
   sed 's|^\./||' | sort -u >"$findings"
 
 [ -s "$findings" ] || {
