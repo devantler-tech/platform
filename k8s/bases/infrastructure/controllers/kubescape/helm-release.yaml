@@ -247,6 +247,14 @@ spec:
   # readOnlyRootFilesystem is deliberately NOT added to `storage`: it is an
   # aggregated APIServer backed by a RWO PVC and its write paths are unverified,
   # so that one needs its own evidence rather than riding along here.
+  #
+  # UPGRADE HAZARD, deliberately accepted: JSON-Patch `add` REPLACES an existing
+  # key, so if a future chart version starts setting `capabilities` on one of
+  # these containers, this patch silently overrides it rather than conflicting.
+  # That is the intent today — nothing here needs a capability — but it means a
+  # component that legitimately gains one would lose it without any error. Being
+  # non-root does not make that safe on its own: a file capability on the binary
+  # would still take effect. Re-check this patch when bumping the chart.
   postRenderers:
     - kustomize:
         patches:
