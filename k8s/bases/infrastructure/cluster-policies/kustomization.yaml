@@ -12,6 +12,7 @@ resources:
   - best-practices/disable-default-sa-automount.yaml
   - best-practices/disallow-latest-tag.yaml
   - best-practices/propagate-reloader-to-flagger-primary.yaml
+  - best-practices/restrict-github-team-management.yaml
   - best-practices/restrict-homepage-service-groups.yaml
   - best-practices/restrict-tenant-issuer-refs.yaml
   - best-practices/restrict-tenant-route-hostnames.yaml
