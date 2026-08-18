@@ -43,7 +43,7 @@ metadata:
     # Jobs are immutable, so without this Flux cannot reapply spec changes.
     # The Job script itself is idempotent — each command checks state first.
     kustomize.toolkit.fluxcd.io/force: enabled
-    checkov.io/skip1: CKV_K8S_38=the store-keys container writes the openbao-unseal Secret through kubectl
+    checkov.io/skip1: "CKV_K8S_38=the store-keys container writes the openbao-unseal Secret through kubectl"
     # Only the two openbao containers run below 10000, and their 100 IS the
     # openbao image's own baked identity rather than a choice this manifest
     # makes: the image carries `openbao:x:100:1000::/home/openbao` in its
@@ -59,7 +59,7 @@ metadata:
     # have been an unjustified low-UID execution that this annotation then hid.
     # They take the pod's high 65532 default instead, leaving the suppression
     # covering only the two executions its rationale actually accounts for.
-    checkov.io/skip2: CKV_K8S_40=UID 100 is the openbao image's baked `openbao` user (openbao:x:100:1000 in its /etc/passwd), which runAsUser/runAsGroup restate; only the two openbao containers run it
+    checkov.io/skip2: "CKV_K8S_40=UID 100 is the openbao image's baked `openbao` user (openbao:x:100:1000 in its /etc/passwd), which runAsUser/runAsGroup restate; only the two openbao containers run it"
 spec:
   # Auto-delete the Job (and its pods) 10 minutes after completion. Without
   # this, the `kustomize.toolkit.fluxcd.io/force: enabled` annotation above

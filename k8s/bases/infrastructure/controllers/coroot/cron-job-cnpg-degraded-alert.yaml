@@ -59,7 +59,7 @@ metadata:
   name: cnpg-degraded-alert
   namespace: observability
   annotations:
-    checkov.io/skip1: CKV_K8S_38=the check container reads its SA token to list CNPG Clusters through the API server
+    checkov.io/skip1: "CKV_K8S_38=the check container reads its SA token to list CNPG Clusters through the API server"
     # `${GRACE_SECONDS}` in the script below is the container's own env var, NOT
     # a Flux post-build variable. The infrastructure-controllers Kustomization
     # runs substituteFrom, so Flux's envsubst expanded it to the empty string and
