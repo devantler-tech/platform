@@ -1,0 +1,14 @@
+# TEMPORARY probe — proves the checkov gate BLOCKS. Reverted before this PR merges.
+# Not referenced by any kustomization, so nothing builds or deploys it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: checkov-gate-probe
+  namespace: default
+spec:
+  containers:
+    - name: probe
+      image: busybox:1.37.0
+      securityContext:
+        privileged: true
+        runAsUser: 0
