@@ -56,6 +56,17 @@ metadata:
     # the image asks for, and this workload is only deployed to the Hetzner
     # provider, so nothing in CI would catch it going wrong.
     checkov.io/skip1: CKV_K8S_40=UID 1001 is the umami image's baked `nextjs` user, which owns its /app WORKDIR
+    # The pod requests a projected SA token because the provisioning script holds a
+    # Lease to serialise the scheduled run against the bootstrap Job: it reads the
+    # token, namespace and CA from /var/run/secrets/kubernetes.io/serviceaccount and
+    # calls coordination.k8s.io directly. The grant behind that token is the narrowest
+    # this check can be answered with, which is why the mount is stated rather than
+    # removed: the bound Role permits `get` and `update` on the single
+    # `umami-provision-tenants` Lease BY resourceName and nothing else, and the
+    # ServiceAccount keeps its own default off, so a later pod naming that account
+    # receives no token unless it asks for one. Dropping the mount would not harden
+    # anything -- it would break run serialisation and leave two provisioners racing.
+    checkov.io/skip2: CKV_K8S_38=the provisioner reads its SA token to hold the umami-provision-tenants Lease, and the bound Role grants get/update on that one Lease alone
 spec:
   schedule: "*/15 * * * *"
   # Never run two reconciles at once; a slow run (e.g. waiting on a down Umami)
