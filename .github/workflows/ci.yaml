@@ -144,6 +144,7 @@ jobs:
               - '.trivyignore.yaml'
               - 'scripts/megalinter-scan-counts.sh'
               - 'scripts/tests/test-megalinter-scan-counts-ignorefile.sh'
+              - 'scripts/tests/test-trivyignore-vendored-operator-boundary.sh'
               # The version-drift guard reads its constants out of
               # megalinter-scan-counts.sh, so the three move together.
               - 'scripts/check-megalinter-version-drift.sh'
@@ -388,6 +389,19 @@ jobs:
         # reproduction helper at its command boundary so a future argument
         # cleanup cannot silently turn every scoped disposition back on.
         run: bash scripts/tests/test-megalinter-scan-counts-ignorefile.sh
+
+      - name: 🧱 Validate vendored-operator disposition boundary
+        if: needs.changes.outputs.k8s == 'true'
+        # The KubeVirt/CDI RBAC dispositions are path-scoped to those two
+        # vendored bundles. If one ever loses its paths key or widens, the
+        # same checks go quiet on the first-party cluster roles this
+        # repository authors, where they are still open findings — and the
+        # count would drop, which reads exactly like progress. yq-only
+        # structural checks always run here; the trivy paired control runs
+        # wherever trivy is installed.
+        run: |
+          shellcheck scripts/tests/test-trivyignore-vendored-operator-boundary.sh
+          bash scripts/tests/test-trivyignore-vendored-operator-boundary.sh
 
       - name: 🔢 Validate scanner version-drift guard
         if: needs.changes.outputs.k8s == 'true'
