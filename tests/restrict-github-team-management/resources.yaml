@@ -223,3 +223,54 @@ spec:
         resolve: Always
     repository: platform
     permission: maintain
+---
+# #3208 THE ESCALATION THIS CEILING EXISTS TO STOP: an allow-listed reference to the
+# LOWER-privileged team asking for admin. Everything else about it is compliant, so
+# only the per-team ceiling can catch it.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: maintainers-escalated
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+    repository: platform
+    permission: admin
+---
+# The same escalation routed through initProvider, which upjet merges into unset
+# forProvider fields.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: maintainers-escalated-initprovider
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+    repository: platform
+    permission: maintain
+  initProvider:
+    permission: admin
+---
+# The maintainers paved road: maintain through the maintainers team is the live shape
+# on 15 repositories and must pass, or the ceiling is just a broken cap again.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: maintainers-repo
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+    repository: platform
+    permission: maintain

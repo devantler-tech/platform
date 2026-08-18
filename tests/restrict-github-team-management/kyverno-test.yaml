@@ -57,15 +57,30 @@ results:
   - policy: restrict-github-team-management
     rule: teamrepositories-reference-allow-listed-teams
     resources:
-      - github-config/admins-repo-admin
       - github-config/unresolved-reference-repo
-      - github-config/initprovider-admin-grant
-      - github-config/maintain-grant
     kind: TeamRepository
     result: fail
   - policy: restrict-github-team-management
     rule: teamrepositories-reference-allow-listed-teams
     resources:
       - github-config/admins-repo
+      - github-config/admins-repo-admin
+      - github-config/initprovider-admin-grant
+      - github-config/maintain-grant
+      - github-config/maintainers-repo
+    kind: TeamRepository
+    result: pass
+  # #3208: the per-team ceiling. admins may hold admin; maintainers may not.
+  - policy: restrict-github-team-management
+    rule: teamrepositories-maintainers-capped-below-admin
+    resources:
+      - github-config/maintainers-escalated
+      - github-config/maintainers-escalated-initprovider
+    kind: TeamRepository
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teamrepositories-maintainers-capped-below-admin
+    resources:
+      - github-config/maintainers-repo
     kind: TeamRepository
     result: pass

@@ -179,6 +179,8 @@ spec:
                   - pull
                   - triage
                   - push
+                  - maintain
+                  - admin
               # Same initProvider merge as above: an approved forProvider
               # reference must not be able to front a foreign team or an admin
               # grant supplied under initProvider.
@@ -201,3 +203,50 @@ spec:
                   - pull
                   - triage
                   - push
+                  - maintain
+                  - admin
+    # #3208: the privilege ceiling is per-team, not flat. A single cap cannot express the
+    # intent — capping everything at `push` denies all 37 live grants, while widening it to
+    # `admin` lets the maintainers team be granted `admin` and makes the rule vacuous.
+    # Measured live, the correlation is exact and has no exceptions: `admins` holds `admin`
+    # on 22 repositories and `maintainers` holds `maintain` on 15, with zero
+    # `maintainers`+`admin` and zero `admins`+non-`admin`. Binding the ceiling to the
+    # referenced team admits all 37 live grants while still denying the escalation a
+    # compromised artifact would actually want: `admin` through the lower-privileged team.
+    # The reference rule above already guarantees the team is one of the two allow-listed
+    # names, so this precondition is exhaustive for anything that rule admits. The flat
+    # list above remains the known-roles guard against org-defined custom roles.
+    - name: teamrepositories-maintainers-capped-below-admin
+      match:
+        any:
+          - resources:
+              kinds:
+                - team.github.m.upbound.io/*/TeamRepository
+              namespaces:
+                - github-config
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.forProvider.teamIdRef.name || '' }}"
+            operator: Equals
+            value: maintainers
+      validate:
+        message: GitHub TeamRepository resources referencing the maintainers team may grant at most maintain; admin is reserved to the admins team.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.forProvider.permission || '' }}"
+                operator: AnyNotIn
+                value:
+                  - ""
+                  - pull
+                  - triage
+                  - push
+                  - maintain
+              - key: "{{ request.object.spec.initProvider.permission || '' }}"
+                operator: AnyNotIn
+                value:
+                  - ""
+                  - pull
+                  - triage
+                  - push
+                  - maintain
