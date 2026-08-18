@@ -85,7 +85,7 @@ report() { # <file> <key> <problem> <detail>
 # the checkov.io/skip2 rationale"), which is why the tree's own cross-references do
 # not inflate the count.
 sq="'"
-key_shape="(^|[[:space:]]|\"|$sq)checkov\.io/skip[0-9]+[\"$sq]?[[:space:]]*:"
+key_shape="(^|[^A-Za-z0-9_./-])checkov\.io/skip[0-9]+[\"$sq]?[[:space:]]*:"
 
 while IFS= read -r file; do
   [ -n "$file" ] || continue

@@ -142,6 +142,48 @@ metadata:
 YAML
   )" 'all quoted'
 
+# A FLOW MAP annotation. The reconciliation counts key-shaped source occurrences,
+# so the character before the key matters: `{` is a legitimate delimiter and must
+# not make the file look uncheckable. Reported by CodeRabbit on #3222 and real —
+# the first-entry form returned exit 2 on correct YAML.
+expect 'a flow-map annotation as the first entry is checked, not rejected' 0 \
+  "$(
+    tree_with okflowfirst okflowfirst.yaml <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: okflowfirst
+  annotations: {checkov.io/skip1: "CKV_K8S_1=okflowfirst the reason"}
+YAML
+  )" '1 annotation(s) checked'
+
+expect 'a flow-map annotation after another entry is checked' 0 \
+  "$(
+    tree_with okflowsecond okflowsecond.yaml <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: okflowsecond
+  annotations: {app: real,checkov.io/skip1: "CKV_K8S_1=okflowsecond the reason"}
+YAML
+  )" '1 annotation(s) checked'
+
+# The mirror of the above: widening what may precede the key must NOT start
+# counting keys that merely END with the annotation name.
+expect 'look-alike keys are not counted as annotations' 0 \
+  "$(
+    tree_with oklookalike oklookalike.yaml <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oklookalike
+  annotations:
+    xcheckov.io/skip1: not-ours-and-plain
+    mycorp.checkov.io/skip1: also-not-ours
+    checkov.io/skip1: "CKV_K8S_1=oklookalike the real one"
+YAML
+  )" '1 annotation(s) checked'
+
 expect 'a tree with no annotations passes' 0 \
   "$(
     tree_with okempty okempty.yaml <<'YAML'
