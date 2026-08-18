@@ -274,3 +274,26 @@ spec:
         resolve: Always
     repository: platform
     permission: maintain
+---
+# CodeRabbit e70024a4: an initProvider-ONLY maintainers reference asking for admin.
+# Two independent rules must reject it, and the fixture asserts both:
+#   * teamrepositories-reference-allow-listed-teams  — forProvider.teamIdRef is absent,
+#     so policy.resolve is not Always. This is what already denied the case before the
+#     precondition was widened, i.e. it was never a live escalation.
+#   * teamrepositories-maintainers-capped-below-admin — the widened precondition now
+#     resolves the effective team through initProvider, so the ceiling rule is correct
+#     on its own rather than relying on the rule above.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: maintainers-escalated-initprovider-only
+  namespace: github-config
+spec:
+  forProvider:
+    repository: platform
+  initProvider:
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+    permission: admin

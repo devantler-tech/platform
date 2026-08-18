@@ -58,6 +58,7 @@ results:
     rule: teamrepositories-reference-allow-listed-teams
     resources:
       - github-config/unresolved-reference-repo
+      - github-config/maintainers-escalated-initprovider-only
     kind: TeamRepository
     result: fail
   - policy: restrict-github-team-management
@@ -76,6 +77,7 @@ results:
     resources:
       - github-config/maintainers-escalated
       - github-config/maintainers-escalated-initprovider
+      - github-config/maintainers-escalated-initprovider-only
     kind: TeamRepository
     result: fail
   - policy: restrict-github-team-management

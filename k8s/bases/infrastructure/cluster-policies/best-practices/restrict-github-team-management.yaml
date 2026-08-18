@@ -226,7 +226,11 @@ spec:
                 - github-config
       preconditions:
         all:
-          - key: "{{ request.object.spec.forProvider.teamIdRef.name || '' }}"
+          # upjet merges initProvider into any UNSET forProvider field, so the team
+          # actually reconciled is forProvider's when set and initProvider's otherwise.
+          # Keying this precondition on forProvider alone let an initProvider-only
+          # maintainers reference skip the rule entirely and take admin.
+          - key: "{{ request.object.spec.forProvider.teamIdRef.name || request.object.spec.initProvider.teamIdRef.name || '' }}"
             operator: Equals
             value: maintainers
       validate:
