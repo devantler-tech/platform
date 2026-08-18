@@ -26,7 +26,7 @@ metadata:
   name: vault-snapshot
   namespace: openbao
   annotations:
-    checkov.io/skip1: CKV_K8S_38=the snapshot container reads its SA JWT to log in via OpenBao Kubernetes auth
+    checkov.io/skip1: "CKV_K8S_38=the snapshot container reads its SA JWT to log in via OpenBao Kubernetes auth"
     # Both containers run the pod's UID 100, for two different reasons.
     # The snapshot container's 100 IS the openbao image's baked identity:
     # the image carries `openbao:x:100:1000` in its own /etc/passwd (the

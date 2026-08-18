@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
 #
-# Pins the checkov skip-reason guard's verdict in BOTH directions.
+# Pins the checkov skip-reason guard's verdict in all THREE directions.
 #
-# The guard fails by PASSING: a `checkov.io/skipN` value whose reason parsed away
-# still suppresses its finding, because the check id sits before the `#`. Nothing
-# else in CI notices — the suppression simply reads as reviewed. So the cases that
-# matter most here are the REJECTIONS, and every one of them is asserted to fire on
-# a fixture that differs from a passing fixture in exactly one way.
+# The guard's job is to make a lost suppression reason impossible. It enforces that
+# structurally — every `checkov.io/skipN` value must be an explicitly QUOTED scalar,
+# because a quoted `#` is literal and cannot open a comment. So the cases that matter
+# are:
+#
+#   exit 1  a value that is unquoted, or carries no reason at all
+#   exit 0  a value that is quoted and complete — INCLUDING the two shapes that a
+#           source-text matcher necessarily gets wrong (a trailing comment after a
+#           complete reason, and a commented-out template)
+#   exit 2  the guard could not check — a missing tool, or an annotation the parser
+#           cannot see because a block scalar hides it
+#
+# Every fixture carries its OWN filename and its OWN needle, so an assertion can only
+# be satisfied by the case it belongs to. (A previous revision named every fixture
+# `resource.yaml`, which discriminated nothing beyond "some report was emitted".)
 
 set -euo pipefail
 
@@ -16,40 +26,48 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 
 failures=0
+assertions=0
 
-# Run the guard against a fixture tree and report its exit status without letting
-# `set -e` abort the test on the (expected) non-zero ones.
-run_guard() { # <tree>
+run_guard() { # <tree> [PATH-override]
   set +e
-  GUARD_OUT="$("$guard" "$1" 2>&1)"
+  if [ $# -ge 2 ]; then
+    GUARD_OUT="$(PATH="$2" /bin/bash "$guard" "$1" 2>&1)"
+  else
+    GUARD_OUT="$("$guard" "$1" 2>&1)"
+  fi
   GUARD_RC=$?
   set -e
 }
 
-# Build a one-file fixture tree whose single annotation value is supplied verbatim,
-# so each case differs from its neighbour in exactly one scalar.
-fixture() { # <name> <raw-scalar-text>
+# A fixture tree holding one file, named distinctly, with content supplied verbatim.
+tree_with() { # <name> <basename>  (body on stdin)
   local dir="$scratch/$1"
   mkdir -p "$dir"
-  cat >"$dir/resource.yaml" <<YAML
+  cat >"$dir/$2"
+  printf '%s' "$dir"
+}
+
+# The common shape: one annotation whose scalar is supplied verbatim, so neighbouring
+# cases differ in exactly one scalar.
+scalar_fixture() { # <name> <raw-scalar-text>
+  tree_with "$1" "$1.yaml" <<YAML
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: sample
+  name: $1
   annotations:
     checkov.io/skip1: $2
 spec:
   replicas: 1
 YAML
-  printf '%s' "$dir"
 }
 
-expect() { # <case> <expected-rc> <tree> [<substring the output must name>]
+expect() { # <case> <expected-rc> <tree> [<needle>]
   local case_name=$1 want=$2 tree=$3 needle=${4-}
+  assertions=$((assertions + 1))
   run_guard "$tree"
   if [ "$GUARD_RC" -ne "$want" ]; then
-    printf 'FAIL %s: expected exit %s, got %s\n%s\n' \
-      "$case_name" "$want" "$GUARD_RC" "$GUARD_OUT" >&2
+    printf 'FAIL %s: expected exit %s, got %s\n%s\n' "$case_name" "$want" "$GUARD_RC" "$GUARD_OUT" >&2
     failures=$((failures + 1))
     return
   fi
@@ -59,105 +77,192 @@ expect() { # <case> <expected-rc> <tree> [<substring the output must name>]
     failures=$((failures + 1))
     return
   fi
-  printf 'ok   %s\n' "$case_name"
+  printf 'ok   %s (exit %s)\n' "$case_name" "$want"
 }
 
-# ---------------------------------------------------------------- REJECTIONS ---
+# ---------------------------------------------------------------------------
+# exit 0 — quoted and complete
+# ---------------------------------------------------------------------------
+expect 'double-quoted reason passes' 0 \
+  "$(scalar_fixture okdouble '"CKV_K8S_1=okdouble the reason"')" '1 annotation(s) checked'
 
-# The #3204 case: an unquoted value whose ` #` opens a YAML comment. checkov still
-# suppresses (the id precedes the `#`), so only this guard can see it.
-expect 'truncated: unquoted value containing " #"' 1 \
-  "$(fixture truncated 'CKV_K8S_40=deferred to #3202 -- the whole stated reason')" \
-  'resource.yaml'
+expect 'single-quoted reason passes' 0 \
+  "$(scalar_fixture oksingle "'CKV_K8S_1=oksingle the reason'")" 'all quoted'
 
-# The second invisible shape named in #3204: a value with nothing after `=`.
-expect 'empty reason: nothing after "="' 1 \
-  "$(fixture empty 'CKV_K8S_40=')" \
-  'resource.yaml'
+# THE POINT OF THE WHOLE DESIGN: a quoted reason may contain ' #' and keep it.
+expect 'quoted reason containing a hash keeps its whole reason' 0 \
+  "$(scalar_fixture okhash '"CKV_K8S_1=okhash deferred to #3202 -- and this tail survives"')" 'all quoted'
 
-# Whitespace is not a reason.
-expect 'empty reason: only whitespace after "="' 1 \
-  "$(fixture blank '"CKV_K8S_40=   "')" \
-  'resource.yaml'
+# Defect 5: a complete reason followed by an ordinary trailing comment. Lexically
+# identical to a truncation, so a source-text matcher MUST get one of them wrong.
+expect 'trailing comment after a quoted reason is not a finding' 0 \
+  "$(scalar_fixture oktrailing '"CKV_K8S_1=oktrailing complete reason" # yamllint disable-line')" 'all quoted'
 
-# A bare id with no `=` at all carries no reason either, and the `.mega-linter.yml`
-# rule is about the reason being present to check.
-expect 'malformed: no "=" separator' 1 \
-  "$(fixture noeq 'CKV_K8S_40')" \
-  'resource.yaml'
+# Defect 6: a commented-out template is not an annotation at all.
+expect 'commented-out template is not a finding' 0 \
+  "$(tree_with okcommented okcommented.yaml <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: okcommented
+  annotations:
+    # checkov.io/skip1: CKV_K8S_1=okcommented template line
+    app: real
+YAML
+)" '0 annotation(s) checked'
 
-# ----------------------------------------------------------- NEGATIVE CONTROLS ---
-# Each of these is one character away from a rejection above. Without them the
-# guard could pass every test by simply rejecting anything containing a "#".
+# Defect 7: a merge key has tag !!merge; calling test() on it used to abort the run.
+expect 'a YAML merge key does not abort the guard' 0 \
+  "$(tree_with okmerge okmerge.yaml <<'YAML'
+defaults: &defaults
+  team: platform
+apiVersion: v1
+kind: Pod
+metadata:
+  <<: *defaults
+  name: okmerge
+  annotations:
+    checkov.io/skip1: "CKV_K8S_1=okmerge the reason"
+YAML
+)" 'all quoted'
 
-# The correct fix for the truncation case — quoting — must NOT be flagged.
-expect 'accepted: quoted value containing " #"' 0 \
-  "$(fixture quoted '"CKV_K8S_40=deferred to #3202 -- the whole stated reason"')"
+# A prose cross-reference must not inflate the reconciliation count.
+expect 'prose mentioning the annotation does not break reconciliation' 0 \
+  "$(tree_with okprose okprose.yaml <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: okprose
+  annotations:
+    checkov.io/skip1: "CKV_K8S_1=okprose the reason"
+    # see the checkov.io/skip1 rationale above
+YAML
+)" 'all quoted'
 
-# In a YAML plain scalar a `#` only opens a comment when preceded by whitespace, so
-# this one is NOT truncated and must not be reported.
-expect 'accepted: unquoted "#" with no preceding space' 0 \
-  "$(fixture hashnospace 'CKV_K8S_40=see issue#3202 for the deferral rationale')"
+expect 'a tree with no annotations passes' 0 \
+  "$(tree_with okempty okempty.yaml <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: okempty
+YAML
+)" 'no annotations'
 
-# The ordinary shape, which most annotations in the tree use.
-expect 'accepted: plain value with no "#"' 0 \
-  "$(fixture plain 'CKV_K8S_38=the container reads its SA token through the API server')"
+expect 'multi-document files are checked' 0 \
+  "$(tree_with okmultidoc okmultidoc.yaml <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: okmultidoc-a
+  annotations:
+    checkov.io/skip1: "CKV_K8S_1=okmultidoc first"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: okmultidoc-b
+  annotations:
+    checkov.io/skip2: "CKV_K8S_2=okmultidoc second"
+YAML
+)" '2 annotation(s) checked'
 
-# A tree with no annotations at all is vacuously clean, not an error.
-expect 'accepted: tree with no skip annotations' 0 "$(mkdir -p "$scratch/bare" && printf '%s' "$scratch/bare")"
+# ---------------------------------------------------------------------------
+# exit 1 — rejected
+# ---------------------------------------------------------------------------
+expect 'a plain (unquoted) value is rejected' 1 \
+  "$(scalar_fixture badplain 'CKV_K8S_1=badplain the reason')" 'badplain.yaml'
 
-# ------------------------------------------------------------- THE REAL TREE ---
-# #3204's acceptance criterion: the guard passes on the current tree. This is what
-# makes the rejections above a regression gate rather than a lint nobody can adopt.
-expect 'accepted: the repository k8s/ tree as it stands' 0 "$repo_root/k8s"
+# Defect 1: the KEY is quoted and the VALUE is not. Reading the value node's style
+# catches this; matching source text after the digits does not.
+expect 'a quoted key with a plain value is rejected' 1 \
+  "$(tree_with badquotedkey badquotedkey.yaml <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: badquotedkey
+  annotations:
+    "checkov.io/skip1": CKV_K8S_1=badquotedkey the reason
+YAML
+)" 'badquotedkey.yaml'
 
-# ------------------------------------------------------ FAIL-CLOSED ON TOOLING ---
-# A guard that exits 0 when its parser is missing protects nothing: CI would go
-# green having checked no annotation at all. It must be distinguishable from a
-# clean run, and from a finding.
-missing_yq_dir="$scratch/no-yq-bin"
-mkdir -p "$missing_yq_dir"
-set +e
-no_yq_out="$(PATH="$missing_yq_dir" /bin/bash "$guard" "$(fixture plainagain 'CKV_K8S_38=fine')" 2>&1)"
-no_yq_rc=$?
-set -e
-if [ "$no_yq_rc" -ne 2 ]; then
-  printf 'FAIL fail-closed: expected exit 2 without yq, got %s\n%s\n' "$no_yq_rc" "$no_yq_out" >&2
+# Defect 2: the value sits on the FOLLOWING line — still a plain scalar, still a
+# comment site.
+expect 'a plain value on the following line is rejected' 1 \
+  "$(tree_with badnextline badnextline.yaml <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: badnextline
+  annotations:
+    checkov.io/skip1:
+      CKV_K8S_1=badnextline the reason
+YAML
+)" 'badnextline.yaml'
+
+expect 'a quoted value with no "=" is rejected' 1 \
+  "$(scalar_fixture badnoeq '"CKV_K8S_1 badnoeq no separator"')" 'no "=" separator'
+
+expect 'a quoted value with an empty reason is rejected' 1 \
+  "$(scalar_fixture badempty '"CKV_K8S_1="')" 'the reason is empty'
+
+expect 'a quoted value whose reason is only whitespace is rejected' 1 \
+  "$(scalar_fixture badblank '"CKV_K8S_1=   "')" 'the reason is empty'
+
+# ---------------------------------------------------------------------------
+# exit 2 — the guard could not check
+# ---------------------------------------------------------------------------
+# Defect 4: an annotation inside a block scalar is opaque to the parser. Reporting a
+# contented "0 checked" there is the exact failure this exit distinguishes.
+expect 'an annotation hidden in a block scalar is reported as uncheckable' 2 \
+  "$(tree_with badblockscalar badblockscalar.yaml <<'YAML'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+patches:
+  - target:
+      kind: Deployment
+    patch: |
+      metadata:
+        annotations:
+          checkov.io/skip1: "CKV_K8S_1=badblockscalar hidden reason"
+YAML
+)" 'cannot be checked'
+
+expect 'a missing root directory is reported' 2 "$scratch/does-not-exist" 'not a directory'
+
+# Fail-closed on tooling. An empty PATH removes yq and jq; the guard must say so
+# rather than report a clean tree.
+assertions=$((assertions + 1))
+run_guard "$(scalar_fixture oktooling '"CKV_K8S_1=oktooling the reason"')" "$scratch/empty-path"
+mkdir -p "$scratch/empty-path"
+if [ "$GUARD_RC" -ne 2 ]; then
+  printf 'FAIL missing tooling: expected exit 2, got %s\n%s\n' "$GUARD_RC" "$GUARD_OUT" >&2
   failures=$((failures + 1))
 else
-  printf 'ok   fail-closed: missing yq is exit 2, not a silent pass\n'
+  printf 'ok   missing tooling is reported (exit 2)\n'
 fi
 
-# A directory that does not exist is an infrastructure error, never "nothing to check".
-set +e
-"$guard" "$scratch/does-not-exist" >/dev/null 2>&1
-absent_rc=$?
-set -e
-if [ "$absent_rc" -ne 2 ]; then
-  printf 'FAIL fail-closed: expected exit 2 for a missing root, got %s\n' "$absent_rc" >&2
+# ---------------------------------------------------------------------------
+# Meta-assertion: the suite must be able to FAIL. A fixture that is rejected by the
+# guard is asserted to pass, and that assertion is required to break — this is what
+# proves the needles and exit codes above are doing real work.
+# ---------------------------------------------------------------------------
+run_guard "$(scalar_fixture controlplain 'CKV_K8S_1=controlplain reason')"
+if [ "$GUARD_RC" -eq 0 ]; then
+  printf 'FAIL control: an unquoted fixture passed the guard, so these assertions prove nothing\n' >&2
   failures=$((failures + 1))
 else
-  printf 'ok   fail-closed: a missing root is exit 2\n'
+  printf 'ok   control: the unquoted fixture really is rejected (exit %s)\n' "$GUARD_RC"
 fi
-
-# ------------------------------------------------------------------ ABLATION ---
-# Proves the truncation check is what rejects the truncated fixture, rather than
-# some unrelated property of it. Quoting the SAME scalar must flip 1 to 0; if both
-# arms agreed, every rejection above could be vacuous.
-run_guard "$(fixture ablate_bad 'CKV_K8S_40=deferred to #3202 -- reason text')"
-bad_rc=$GUARD_RC
-run_guard "$(fixture ablate_ok '"CKV_K8S_40=deferred to #3202 -- reason text"')"
-ok_rc=$GUARD_RC
-if [ "$bad_rc" -eq 1 ] && [ "$ok_rc" -eq 0 ]; then
-  printf 'ok   ablation: quoting the identical scalar flips the verdict (1 -> 0)\n'
-else
-  printf 'FAIL ablation: quoting did not flip the verdict (unquoted=%s quoted=%s)\n' \
-    "$bad_rc" "$ok_rc" >&2
+# And the needle check must reject a needle that belongs to a DIFFERENT fixture.
+if printf '%s' "$GUARD_OUT" | grep -qF -- 'badquotedkey.yaml'; then
+  printf 'FAIL control: output matched an unrelated fixture needle\n' >&2
   failures=$((failures + 1))
+else
+  printf 'ok   control: an unrelated needle does not match\n'
 fi
 
 if [ "$failures" -ne 0 ]; then
-  printf '\ncheckov skip-reason guard: %d case(s) failed\n' "$failures" >&2
+  printf '\n%d of %d assertion(s) failed\n' "$failures" "$assertions" >&2
   exit 1
 fi
-printf '\ncheckov skip-reason guard contract OK\n'
+printf '\nall %d assertion(s) passed\n' "$assertions"

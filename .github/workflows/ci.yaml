@@ -585,14 +585,18 @@ jobs:
         # when the scan step moves, and the wiring that reaches it.
         run: bash scripts/tests/test-kubescape-gate-frameworks-guard.sh
 
-      - name: 🧷 Validate checkov skip reasons survive YAML parsing
+      - name: 🧷 Validate checkov skip reasons are quoted and intact
         if: needs.changes.outputs.k8s == 'true'
         # A `checkov.io/skipN` whose reason parses away still suppresses its
         # finding, because the check id sits before the `#`. The suppression then
         # reads as reviewed while asserting nothing, and no other check in CI can
-        # see it. This runs the guard over the tree and pins its verdict in both
-        # directions — a guard that has only ever seen passing input has proved
-        # nothing about what it rejects.
+        # see it. The guard removes that failure rather than detecting it: every skip
+        # value must be an explicitly QUOTED scalar, because a quoted `#` is literal.
+        # (Detecting truncation from source text is impossible — a complete reason plus
+        # a trailing comment is lexically identical to a truncated one.) This runs the
+        # guard over the tree and pins its verdict in all three directions — pass,
+        # reject, and cannot-check — because a guard that has only ever seen passing
+        # input has proved nothing about what it rejects.
         run: |
           bash scripts/guard-checkov-skip-reasons.sh k8s
           bash scripts/tests/test-guard-checkov-skip-reasons.sh

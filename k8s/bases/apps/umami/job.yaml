@@ -15,8 +15,8 @@ metadata:
   name: umami-provision-tenants-bootstrap
   namespace: umami
   annotations:
-    checkov.io/skip1: CKV_K8S_8=inert source template is replaced before apply
-    checkov.io/skip2: CKV_K8S_9=inert source template is replaced before apply
+    checkov.io/skip1: "CKV_K8S_8=inert source template is replaced before apply"
+    checkov.io/skip2: "CKV_K8S_9=inert source template is replaced before apply"
     kustomize.toolkit.fluxcd.io/force: enabled
 spec:
   # Kubernetes stores this as a signed int32. Using its maximum keeps transient

@@ -3,25 +3,38 @@
 # Fail when a `checkov.io/skipN` annotation carries no readable reason.
 #
 # `.mega-linter.yml` states the rule this protects: "No suppression lands without
-# its stated reason being checked against the manifest it describes." Two shapes
-# defeat that rule without failing anything, because checkov reads only the check
-# id, which sits before the damage:
+# its stated reason being checked against the manifest it describes." checkov reads
+# only the check id, which sits before the reason, so a reason can be lost while the
+# suppression keeps working — leaving a bare exception that still reads as reviewed.
+#
+# Two shapes lose it:
 #
 #   1. TRUNCATION. In a YAML plain (unquoted) scalar, whitespace followed by `#`
 #      opens a comment. So
 #          checkov.io/skip2: CKV_K8S_40=deferred to #3202 -- <the whole reason>
-#      parses as `CKV_K8S_40=deferred to`. The suppression still works and the
-#      stated reason is simply gone. Quoting the scalar is the fix.
-#   2. AN ABSENT REASON. `CKV_K8S_40=` (or a bare id with no `=`) suppresses just
-#      as effectively while asserting nothing.
+#      parses as `CKV_K8S_40=deferred to`, losslessly as far as YAML is concerned.
+#   2. AN ABSENT REASON. `CKV_K8S_40=` (or a bare id with no `=`) suppresses just as
+#      effectively while asserting nothing.
 #
-# Both leave a bare suppression that reads as reviewed. Nothing else in CI can see
-# either one, which is why this guard exists.
+# THE RULE THIS ENFORCES: every `checkov.io/skipN` VALUE MUST BE AN EXPLICITLY
+# QUOTED SCALAR.
+#
+# That is a deliberate inversion. Detecting truncation after the fact is not merely
+# hard, it is impossible from the source text: `reason  # trailing note` (a complete
+# reason plus an ordinary comment) and `reason  # rest of the reason` (a truncated
+# one) are LEXICALLY IDENTICAL, and only the author's intent separates them. Any
+# guard that pattern-matches source text must therefore mis-handle one of them.
+#
+# Requiring the quote removes the failure instead of detecting it: inside quotes `#`
+# is a literal character, so a quoted reason CANNOT be comment-truncated. That makes
+# this check purely structural — it asks yq for each value node's STYLE and never
+# lexes YAML itself.
 #
 # Usage: guard-checkov-skip-reasons.sh [root]        (default: k8s)
-# Exit:  0 every annotation carries an intact reason
-#        1 at least one does not (each is named)
-#        2 the guard could not check — missing tool, unreadable root, parse failure
+# Exit:  0 every annotation is quoted and carries an intact reason
+#        1 at least one does not (each is named, with the edit that fixes it)
+#        2 the guard could not check — missing tool, unreadable root, parse failure,
+#          or an annotation the parser cannot see (see the reconciliation below)
 #
 # Exit 2 is deliberately distinct from both. A guard that cannot run must never be
 # indistinguishable from a clean tree: that is the failure mode where CI goes green
@@ -63,25 +76,57 @@ report() { # <file> <key> <problem> <detail>
   findings=$((findings + 1))
 }
 
+# A key-shaped occurrence: the annotation name in KEY position, i.e. followed by an
+# optional closing quote and an optional-blank colon. The optional quote matters —
+# `"checkov.io/skip1": value` is a legitimate shape, and omitting it here would make
+# the reconciliation below reject that file as uncheckable instead of judging it.
+#
+# This deliberately does NOT match prose that merely mentions the annotation ("see
+# the checkov.io/skip2 rationale"), which is why the tree's own cross-references do
+# not inflate the count.
+sq="'"
+key_shape="(^|[[:space:]]|\"|$sq)checkov\.io/skip[0-9]+[\"$sq]?[[:space:]]*:"
+
 while IFS= read -r file; do
   [ -n "$file" ] || continue
 
-  # --- Parsed pass: does the reason survive YAML parsing at all? --------------
   # Recursive descent, because these annotations sit on several different objects
   # (pod templates, job specs, bare metadata) and a fixed path would miss most.
   # -I=0 keeps one JSON document per line so multi-document files stay parseable.
+  #
+  # `.key | type == "!!str"` is load-bearing: a YAML merge key (`<<: *anchor`) has
+  # tag !!merge, and calling test() on it aborts the whole run with a parse error —
+  # so a single merge key anywhere in an annotated file would take the guard down
+  # before it checked anything.
   if ! parsed=$(yq -o=json -I=0 \
     '[.. | select(kind == "map") | to_entries[]
-        | select(.key | test("^checkov\.io/skip[0-9]+$"))]' -- "$file" 2>&1); then
+        | select((.key | type == "!!str")
+             and (.key | test("^checkov\.io/skip[0-9]+$")))
+        | {"key": .key, "value": .value, "style": (.value | style)}]' -- "$file" 2>&1); then
     die "could not parse $file as YAML: $parsed"
   fi
 
+  file_checked=0
   while IFS= read -r entry; do
     [ -n "$entry" ] || continue
     key=$(printf '%s' "$entry" | jq -r '.key') || die "could not read a key from $file"
     value=$(printf '%s' "$entry" | jq -r '.value') || die "could not read a value from $file"
+    style=$(printf '%s' "$entry" | jq -r '.style') || die "could not read a style from $file"
     checked=$((checked + 1))
+    file_checked=$((file_checked + 1))
 
+    # --- The structural rule -------------------------------------------------
+    # yq reports the VALUE node's style, so this is correct even when the KEY is
+    # quoted and the value is not — a shape that defeats every source-text match.
+    case $style in
+      double | single) ;;
+      *)
+        report "$file" "$key" 'the value is an unquoted (plain) scalar' \
+          "a ' #' anywhere in it would silently truncate the reason — wrap the value in double quotes"
+        ;;
+    esac
+
+    # --- The reason is present at all ----------------------------------------
     case $value in
       *=*)
         reason=${value#*=}
@@ -99,41 +144,24 @@ while IFS= read -r file; do
     esac
   done < <(printf '%s' "$parsed" | jq -c '.[]')
 
-  # --- Raw pass: did a reason exist in the source but parse away? -------------
-  # This cannot be answered from the parsed value alone — truncation is lossless
-  # from YAML's point of view, so the parse looks perfectly well-formed. It has to
-  # be read off the source text.
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    lineno=${line%%:*}
-    text=${line#*:}
-    # The scalar is everything after the annotation key's colon.
-    scalar=${text#*checkov.io/skip}
-    scalar=${scalar#*:}
-    # Strip leading blanks without a subshell.
-    scalar=${scalar#"${scalar%%[![:space:]]*}"}
-
-    # An empty scalar here means a block scalar or a value on a following line.
-    # The parsed pass above already validated its reason; there is no plain-scalar
-    # comment to detect, so there is nothing further to check.
-    [ -n "$scalar" ] || continue
-
-    # A quoted scalar cannot be truncated by a comment: inside quotes `#` is
-    # literal. This is exactly the fix, so flagging it would punish the remedy.
-    case $scalar in
-      '"'* | "'"*) continue ;;
-    esac
-
-    # In a plain scalar, whitespace followed by `#` opens a comment and everything
-    # after it is discarded. A `#` NOT preceded by whitespace (issue#3202) is a
-    # literal character and must not be reported.
-    if printf '%s' "$scalar" | grep -qE '[[:space:]]#'; then
-      keyname=$(printf '%s' "$text" | grep -oE 'checkov\.io/skip[0-9]+' | head -1)
-      report "$file" "${keyname:-checkov.io/skipN}" \
-        'the reason is truncated by an unquoted YAML comment' \
-        "line ${lineno}: everything from ' #' onward is discarded — wrap the value in double quotes"
-    fi
-  done < <(grep -nE 'checkov\.io/skip[0-9]+[[:space:]]*:' -- "$file" || true)
+  # --- Reconciliation: did the parser SEE every annotation in this file? ------
+  # An annotation nested inside a block scalar (a kustomize `patch: |`) is opaque
+  # string content, so yq reports nothing for it and the loop above would report a
+  # contented "0 checked" while a real suppression went unread. Comparing the
+  # key-shaped source count against what was actually checked is what turns that
+  # silent gap into an explicit "cannot check".
+  #
+  # Full-line comments are dropped first: a `#`-leading line is never an annotation
+  # key, in a comment or inside a block scalar, and this tree does carry prose
+  # cross-references shaped like one.
+  raw_keys=$(grep -vE '^[[:space:]]*#' -- "$file" | grep -cE "$key_shape")
+  raw_rc=$?
+  if [ "$raw_rc" -gt 1 ]; then
+    die "could not count annotations in $file (grep exit $raw_rc)"
+  fi
+  if [ "$raw_keys" -ne "$file_checked" ]; then
+    die "$file: $raw_keys annotation(s) in the source but $file_checked reached the parser — one is not a plain map entry (a block scalar such as a kustomize 'patch: |' hides it), so this file cannot be checked"
+  fi
 done <<EOF
 $files
 EOF
@@ -144,4 +172,4 @@ if [ "$findings" -ne 0 ]; then
   exit 1
 fi
 
-printf 'checkov skip reasons: %d annotation(s) checked, all carry an intact reason\n' "$checked"
+printf 'checkov skip reasons: %d annotation(s) checked, all quoted and carrying an intact reason\n' "$checked"
