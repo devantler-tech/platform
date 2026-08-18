@@ -82,12 +82,15 @@ readonly CI_MEGALINTER_VERSION='10.0.0'
 # kubernetes moved 15 -> 3 in the SAME step that took MegaLinter 9.6.0 -> 10.0.0 (checkov
 # 3.3.2 -> 3.3.9). That drop is NOT recorded as backlog progress, and #2787 must not read it as any:
 # a major scanner bump adds and retires rules, which is indistinguishable from findings being fixed
-# unless the two versions are run against the same tree. Nobody has done that here. What CI does
-# state is which three findings remain, all in the kubernetes framework:
-#   CKV_K8S_40  CronJob.openbao.vault-snapshot                (high UID)
-#   CKV_K8S_40  Job.openbao.vault-snapshot-init               (high UID)
-#   CKV_K8S_38  CronJob.umami.umami-provision-tenants         (SA token mounted)
-readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:3 github_actions:0)
+# unless the two versions are run against the same tree. Nobody has done that here.
+#
+# Every framework CI runs is now at zero. The three that were left are all dispositioned with
+# scoped, resource-level skips naming their reason:
+#   CKV_K8S_38  CronJob.umami.umami-provision-tenants         (SA token mounted)   #3198
+#   CKV_K8S_40  CronJob.openbao.vault-snapshot                (high UID)           #2904
+#   CKV_K8S_40  Job.openbao.vault-snapshot-init               (high UID)           #2904
+# The two CKV_K8S_40 skips are DEFERRED, not accepted — #3202 removes them.
+readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:0 github_actions:0)
 
 # A parsing error means a file was NOT analysed, so findings can hide behind it. CI's run has
 # exactly one (in the cloudformation framework) and so does a correct local run, which is why this

@@ -27,6 +27,24 @@ metadata:
   namespace: openbao
   annotations:
     checkov.io/skip1: CKV_K8S_38=the snapshot container reads its SA JWT to log in via OpenBao Kubernetes auth
+    # Both containers run the pod's UID 100, for two different reasons.
+    # The snapshot container's 100 IS the openbao image's baked identity:
+    # the image carries `openbao:x:100:1000` in its own /etc/passwd (the
+    # same pinned digest vault-config reads), which runAsUser/runAsGroup
+    # restate. The mirror container inherits it because the snapshot it
+    # uploads lands `-rw-------` owned by 100:1000, so `minio/mc` — which
+    # bakes no uid-100 entry of its own and mounts /snapshots readOnly —
+    # can open it only as its owner. fsGroup fixes the volume's ownership
+    # and mode at mount time, not the mode `bao operator raft snapshot
+    # save` creates the file with afterwards.
+    #
+    # Neither UID is remapped. The openbao namespace carries no
+    # `pod-security.devantler.tech/user-namespaces: enabled` label, so the
+    # add-user-namespaces rule does not match, hostUsers stays on, and 100
+    # is a host UID. That residual is what #3202 removes: it makes the
+    # snapshot group-readable first, then raises the UIDs, which the three
+    # writers sharing this one RWO PVC have to do together.
+    checkov.io/skip2: "CKV_K8S_40=deferred to #3202 -- the snapshot container's 100 is the openbao image's baked `openbao:x:100:1000` user, and the mirror container must match it to read the -rw------- snapshot from the shared RWO PVC"
 spec:
   schedule: "30 3 * * *"
   # Pin the cron evaluation to UTC instead of inheriting kube-controller-manager's
