@@ -182,6 +182,23 @@ metadata:
 YAML
   )" '2 annotation(s) checked'
 
+# Directive-shaped text inside a QUOTED scalar value. This is textually identical
+# to a key, so no source-text scan can separate them — which is why the check asks
+# yq which scalars are block content instead of counting occurrences. Reported by
+# CodeRabbit on #3222; it exited 2 and blocked CI on this valid file.
+expect 'directive-shaped text in a quoted scalar is not counted as a key' 0 \
+  "$(
+    tree_with okmention okmention.yaml <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: okmention
+  annotations:
+    app.example/note: "See checkov.io/skip1: in the security guide."
+    checkov.io/skip1: "CKV_K8S_1=okmention valid reason"
+YAML
+  )" '1 annotation(s) checked'
+
 # The mirror of the above: widening what may precede the key must NOT start
 # counting keys that merely END with the annotation name.
 expect 'look-alike keys are not counted as annotations' 0 \
@@ -288,6 +305,24 @@ patches:
       metadata:
         annotations:
           checkov.io/skip1: "CKV_K8S_1=badblockscalar hidden reason"
+YAML
+  )" 'cannot be checked'
+
+# A hidden directive written in FLOW form inside the block scalar. The detection
+# above matches key-shaped text in block content, so the character that may precede
+# a key matters here too — `{` is not whitespace. Without the widened class this
+# patch slips through and the file reports a contented "0 checked".
+expect 'a flow-form directive hidden in a block scalar is still caught' 2 \
+  "$(
+    tree_with badblockflow badblockflow.yaml <<'YAML'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+patches:
+  - target:
+      kind: Deployment
+    patch: |
+      metadata:
+        annotations: {checkov.io/skip1: "CKV_K8S_1=badblockflow hidden"}
 YAML
   )" 'cannot be checked'
 

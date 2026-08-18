@@ -106,14 +106,12 @@ while IFS= read -r file; do
     die "could not parse $file as YAML: $parsed"
   fi
 
-  file_checked=0
   while IFS= read -r entry; do
     [ -n "$entry" ] || continue
     key=$(printf '%s' "$entry" | jq -r '.key') || die "could not read a key from $file"
     value=$(printf '%s' "$entry" | jq -r '.value') || die "could not read a value from $file"
     style=$(printf '%s' "$entry" | jq -r '.style') || die "could not read a style from $file"
     checked=$((checked + 1))
-    file_checked=$((file_checked + 1))
 
     # --- The structural rule -------------------------------------------------
     # yq reports the VALUE node's style, so this is correct even when the KEY is
@@ -144,26 +142,25 @@ while IFS= read -r file; do
     esac
   done < <(printf '%s' "$parsed" | jq -c '.[]')
 
-  # --- Reconciliation: did the parser SEE every annotation in this file? ------
+  # --- Parser-invisible content: is a directive hidden in a BLOCK SCALAR? ------
   # An annotation nested inside a block scalar (a kustomize `patch: |`) is opaque
-  # string content, so yq reports nothing for it and the loop above would report a
-  # contented "0 checked" while a real suppression went unread. Comparing the
-  # key-shaped source count against what was actually checked is what turns that
-  # silent gap into an explicit "cannot check".
+  # string content, so the loop above cannot see it and would report a contented
+  # "0 checked" over a real directive.
   #
-  # Full-line comments are dropped first: a `#`-leading line is never an annotation
-  # key, in a comment or inside a block scalar, and this tree does carry prose
-  # cross-references shaped like one.
-  # `grep -o | wc -l` counts each KEY, not each matching line: a flow map can carry
-  # several annotations on one line, and counting lines there would under-count and
-  # reject valid YAML as uncheckable.
-  raw_keys=$(grep -vE '^[[:space:]]*#' -- "$file" | grep -oE "$key_shape" | wc -l | tr -d ' ')
-  raw_rc=$?
-  if [ "$raw_rc" -gt 1 ]; then
-    die "could not count annotations in $file (grep exit $raw_rc)"
+  # Ask yq WHICH scalars are block content rather than counting source text. yq is
+  # the parser, so it knows; and this is the same reason the check above reads node
+  # `style` instead of matching quotes. Counting source occurrences cannot work
+  # here for exactly the reason the raw pass was removed: a quoted value that
+  # merely MENTIONS the directive
+  #     app.example/note: "See checkov.io/skip1: in the security guide."
+  # is textually identical to a key, and only the parser can tell them apart.
+  if ! blocks=$(yq -o=json -I=0 \
+    '[.. | select(kind == "scalar") | select(style == "literal" or style == "folded")]' \
+    -- "$file" 2>&1); then
+    die "could not scan $file for block scalars: $blocks"
   fi
-  if [ "$raw_keys" -ne "$file_checked" ]; then
-    die "$file: $raw_keys annotation(s) in the source but $file_checked reached the parser — one is not a plain map entry (a block scalar such as a kustomize 'patch: |' hides it), so this file cannot be checked"
+  if printf '%s' "$blocks" | jq -r '.[]' 2>/dev/null | grep -qE "$key_shape"; then
+    die "$file: a checkov.io/skipN directive appears inside a block scalar (such as a kustomize 'patch: |'), where the parser cannot reach it — so this file cannot be checked"
   fi
 done <<EOF
 $files
