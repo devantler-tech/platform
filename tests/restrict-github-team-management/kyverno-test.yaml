@@ -53,7 +53,7 @@ results:
       - github-config/admins-member
     kind: TeamMembership
     result: pass
-  # Repository grants are capped below admin.
+  # Repository grants: admins may hold admin; only maintainers are capped below it.
   - policy: restrict-github-team-management
     rule: teamrepositories-reference-allow-listed-teams
     resources:

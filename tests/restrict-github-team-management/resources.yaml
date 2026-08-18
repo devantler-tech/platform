@@ -127,8 +127,8 @@ spec:
     repository: platform
     permission: push
 ---
-# Admin is the privileged repository grant the rule blocks. Everything else is
-# on the paved road, so only the permission is wrong.
+# An admin grant held by the admins team. The ceiling caps maintainers only, so
+# this is an allowed grant and the rule passes it.
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: TeamRepository
 metadata:
@@ -208,8 +208,8 @@ spec:
         resolve: Always
     username: attacker
 ---
-# maintain is privileged but is not `admin`, so a deny-list on admin alone lets
-# it through. This is the fail-open the allow-list closes.
+# maintain is privileged but permitted here: the allow-list admits the team, and
+# the ceiling caps only maintainers at admin, so this grant is allowed.
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: TeamRepository
 metadata:
