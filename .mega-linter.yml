@@ -93,9 +93,12 @@ DISABLE_ERRORS_LINTERS:
   # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
   # path is hidden, and each entry names the issue that removes it.
   #
-  # checkov (0 since #2904; #3205 removes this entry) and trivy (108 in the local v0.73.0
-  # reproduction): Kubernetes misconfiguration in k8s/, which the section above explains is NOT
-  # covered elsewhere. Tracked by #2787.
+  # checkov is NOT in this list: it is a hard gate again, at 0 findings on every framework CI runs
+  # (#3205). Its dispositions are documented below because they are what holds that zero — each one
+  # is a scoped, resource-level skip naming its reason, not a disabled check.
+  #
+  # trivy (108 in the local v0.73.0 reproduction): Kubernetes misconfiguration in k8s/, which the
+  # section above explains is NOT covered elsewhere. Tracked by #2787.
   #
   # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore.yaml — 450 of
   # those
@@ -212,7 +215,6 @@ DISABLE_ERRORS_LINTERS:
   # because merged work and scanner rule-set changes both move them. Re-run the script and correct
   # these figures as part of any slice, rather than reading a stale figure as the current state.
   # #2853 tracks making that drift detectable rather than something a slice has to notice.
-  - REPOSITORY_CHECKOV
   - REPOSITORY_TRIVY
   # jscpd (17): all in test files — scripts/validate-eks-ci-role-policy/main_test.go (#2777) and
   # two scripts/tests/*.py files that are themselves migration targets off Python (#2778).
