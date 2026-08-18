@@ -10,7 +10,9 @@
 #   tenant-base-edit  — aggregated into tenant-edit and bound ONLY by a namespace-scoped
 #                       RoleBinding, so its secrets and networking grants cannot leave the tenant's
 #                       own namespace.
-#   cluster-reader    — uses resources ["*"] but grants get/list/watch and nothing else.
+#   cluster-reader    — its non-core rule uses resources ["*"], but every rule grants
+#                       get/list/watch only, and the core ("") group enumerates its
+#                       resources so Secrets are out of reach.
 #   kro-*-rgd         — aggregated into a KRO controller that runs with rbac.mode `aggregation` and
 #                       therefore holds no standing access of its own.
 #
@@ -21,7 +23,8 @@
 # So this test asserts the premises, not the prose:
 #   * no ClusterRoleBinding anywhere under k8s/ binds the tenant role (checked recursively, so a
 #     binding nested inside a ResourceGraphDefinition template counts too);
-#   * cluster-reader grants no verb outside get/list/watch;
+#   * cluster-reader grants no verb outside get/list/watch, and its core-group rules never
+#     wildcard resources or name secrets;
 #   * KRO keeps rbac.mode `aggregation` and both RGD roles keep the aggregation label;
 #   * each disposition stays scoped to its own file, never loses its paths key, and no pair beyond
 #     the reviewed matrix appears.
@@ -133,6 +136,38 @@ while IFS= read -r verb; do
       ;;
   esac
 done < <(yq -N '.. | select(tag == "!!map") | select(.kind == "ClusterRole") | select(.metadata.name == "cluster-reader") | .rules[].verbs[]' "$repo_root/$reader_role")
+
+# 2b. cluster-reader's CORE-group rules stay resource-enumerated.
+#     Read-only is necessary but NOT sufficient: KSV-0046 is about breadth, and a get/list/watch
+#     grant on core `secrets` would read every Secret in the cluster while passing check 2 above.
+#     The protection is that the core ("") group enumerates its resources instead of wildcarding —
+#     so assert exactly that, rather than trusting the prose. Non-core groups may wildcard
+#     resources; the core group is where Secrets live.
+while IFS= read -r rule; do
+  [ -n "$rule" ] || continue
+  groups="${rule%%|*}"
+  resources="${rule#*|}"
+  core=0
+  old_ifs="$IFS"
+  set -f  # a resource may literally be "*"; without this, word-splitting globs it away
+  IFS=','
+  for g in $groups; do
+    [ -z "$g" ] && core=1
+  done
+  # A rule whose apiGroups list is exactly [""] joins to the empty string, so the loop above sees
+  # no fields at all; catch that case explicitly.
+  [ -z "$groups" ] && core=1
+  for r in $resources; do
+    if [ "$core" -eq 1 ] && { [ "$r" = '*' ] || [ "$r" = 'secrets' ]; }; then
+      IFS="$old_ifs"
+      printf 'PREMISE BROKEN: cluster-reader grants core-group resource %s; the KSV-0046 disposition assumes the core group enumerates resources so Secrets stay out of reach\n' "$r" >&2
+      status=1
+      IFS=','
+    fi
+  done
+  IFS="$old_ifs"
+  set +f
+done < <(yq -N '.. | select(tag == "!!map") | select(.kind == "ClusterRole") | select(.metadata.name == "cluster-reader") | .rules[] | ((.apiGroups // []) | join(",")) + "|" + ((.resources // []) | join(","))' "$repo_root/$reader_role")
 
 # 3. KRO holds no standing access, and both RGD roles are aggregated into it.
 mode="$(yq -N '.spec.values.rbac.mode // ""' "$repo_root/$kro_release" 2>/dev/null || printf '')"

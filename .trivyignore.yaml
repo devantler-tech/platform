@@ -255,6 +255,7 @@ misconfigurations:
     statement: >-
       This check fires on resources ["*"] and does not consider verbs — verified with a paired
       fixture in which an identical read-only rule and a write rule both trigger it. cluster-reader
-      grants get/list/watch and nothing else, and its apiGroups are enumerated rather than
-      wildcarded precisely so the core group, and therefore secrets, is never included. The role
-      cannot write any resource.
+      grants get/list/watch and nothing else. Its one core-group ("") rule enumerates its
+      resources — nodes and persistentvolumes — rather than wildcarding them, so Secrets are
+      out of reach; only the non-core rule uses resources ["*"], and Secrets do not live
+      there. The role cannot write any resource.
