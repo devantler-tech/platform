@@ -3,8 +3,8 @@
 # STATUS — THESE RULES ARE INERT ON THIS CLUSTER TODAY.
 # containerd does not verify images itself: it delegates to the
 # `io.containerd.image-verifier.v1.bindir` plugin, and permits every pull when
-# that plugin has no `bin_dir` or the directory holds no binary. No verifier
-# binary is installed on any node, so nothing below is evaluated and no pull is
+# that plugin has no `bin_dir` or the directory holds no binary. No node
+# configures a `bin_dir` at all, so nothing below is evaluated and no pull is
 # gated by it. Installing and wiring the verifier is #3101; the finding is
 # #2856.
 #
