@@ -100,7 +100,8 @@ expect 'trailing comment after a quoted reason is not a finding' 0 \
 
 # Defect 6: a commented-out template is not an annotation at all.
 expect 'commented-out template is not a finding' 0 \
-  "$(tree_with okcommented okcommented.yaml <<'YAML'
+  "$(
+    tree_with okcommented okcommented.yaml <<'YAML'
 apiVersion: v1
 kind: Pod
 metadata:
@@ -109,11 +110,12 @@ metadata:
     # checkov.io/skip1: CKV_K8S_1=okcommented template line
     app: real
 YAML
-)" '0 annotation(s) checked'
+  )" '0 annotation(s) checked'
 
 # Defect 7: a merge key has tag !!merge; calling test() on it used to abort the run.
 expect 'a YAML merge key does not abort the guard' 0 \
-  "$(tree_with okmerge okmerge.yaml <<'YAML'
+  "$(
+    tree_with okmerge okmerge.yaml <<'YAML'
 defaults: &defaults
   team: platform
 apiVersion: v1
@@ -124,11 +126,12 @@ metadata:
   annotations:
     checkov.io/skip1: "CKV_K8S_1=okmerge the reason"
 YAML
-)" 'all quoted'
+  )" 'all quoted'
 
 # A prose cross-reference must not inflate the reconciliation count.
 expect 'prose mentioning the annotation does not break reconciliation' 0 \
-  "$(tree_with okprose okprose.yaml <<'YAML'
+  "$(
+    tree_with okprose okprose.yaml <<'YAML'
 apiVersion: v1
 kind: Pod
 metadata:
@@ -137,19 +140,21 @@ metadata:
     checkov.io/skip1: "CKV_K8S_1=okprose the reason"
     # see the checkov.io/skip1 rationale above
 YAML
-)" 'all quoted'
+  )" 'all quoted'
 
 expect 'a tree with no annotations passes' 0 \
-  "$(tree_with okempty okempty.yaml <<'YAML'
+  "$(
+    tree_with okempty okempty.yaml <<'YAML'
 apiVersion: v1
 kind: Pod
 metadata:
   name: okempty
 YAML
-)" 'no annotations'
+  )" 'no annotations'
 
 expect 'multi-document files are checked' 0 \
-  "$(tree_with okmultidoc okmultidoc.yaml <<'YAML'
+  "$(
+    tree_with okmultidoc okmultidoc.yaml <<'YAML'
 apiVersion: v1
 kind: Pod
 metadata:
@@ -164,7 +169,7 @@ metadata:
   annotations:
     checkov.io/skip2: "CKV_K8S_2=okmultidoc second"
 YAML
-)" '2 annotation(s) checked'
+  )" '2 annotation(s) checked'
 
 # ---------------------------------------------------------------------------
 # exit 1 — rejected
@@ -175,7 +180,8 @@ expect 'a plain (unquoted) value is rejected' 1 \
 # Defect 1: the KEY is quoted and the VALUE is not. Reading the value node's style
 # catches this; matching source text after the digits does not.
 expect 'a quoted key with a plain value is rejected' 1 \
-  "$(tree_with badquotedkey badquotedkey.yaml <<'YAML'
+  "$(
+    tree_with badquotedkey badquotedkey.yaml <<'YAML'
 apiVersion: v1
 kind: Pod
 metadata:
@@ -183,12 +189,13 @@ metadata:
   annotations:
     "checkov.io/skip1": CKV_K8S_1=badquotedkey the reason
 YAML
-)" 'badquotedkey.yaml'
+  )" 'badquotedkey.yaml'
 
 # Defect 2: the value sits on the FOLLOWING line — still a plain scalar, still a
 # comment site.
 expect 'a plain value on the following line is rejected' 1 \
-  "$(tree_with badnextline badnextline.yaml <<'YAML'
+  "$(
+    tree_with badnextline badnextline.yaml <<'YAML'
 apiVersion: v1
 kind: Pod
 metadata:
@@ -197,7 +204,7 @@ metadata:
     checkov.io/skip1:
       CKV_K8S_1=badnextline the reason
 YAML
-)" 'badnextline.yaml'
+  )" 'badnextline.yaml'
 
 expect 'a quoted value with no "=" is rejected' 1 \
   "$(scalar_fixture badnoeq '"CKV_K8S_1 badnoeq no separator"')" 'no "=" separator'
@@ -214,7 +221,8 @@ expect 'a quoted value whose reason is only whitespace is rejected' 1 \
 # Defect 4: an annotation inside a block scalar is opaque to the parser. Reporting a
 # contented "0 checked" there is the exact failure this exit distinguishes.
 expect 'an annotation hidden in a block scalar is reported as uncheckable' 2 \
-  "$(tree_with badblockscalar badblockscalar.yaml <<'YAML'
+  "$(
+    tree_with badblockscalar badblockscalar.yaml <<'YAML'
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 patches:
@@ -225,7 +233,7 @@ patches:
         annotations:
           checkov.io/skip1: "CKV_K8S_1=badblockscalar hidden reason"
 YAML
-)" 'cannot be checked'
+  )" 'cannot be checked'
 
 expect 'a missing root directory is reported' 2 "$scratch/does-not-exist" 'not a directory'
 
