@@ -17,9 +17,10 @@
 #
 # Verified here in two layers, because they fail for different reasons:
 #
-#   STRUCTURE (always) — every dispositioned check id still carries a non-empty `paths:` list, and
-#   every path in it is one of the two vendored bundles, written literally. This is the layer that
-#   catches the regression above, and it needs nothing but yq.
+#   STRUCTURE (always) — every dispositioned check id is scoped to EXACTLY the two vendored bundles,
+#   written literally: no entry may lose its `paths:` key, gain a path outside them, or drop one of
+#   them. It needs nothing but yq, so it is the layer that still holds when the behavioural control
+#   below is skipped.
 #
 #   BEHAVIOUR (when trivy is installed) — the paired control the KSV-0037 entry describes: the same
 #   offending ClusterRole bytes are written to a vendored path AND to a first-party path, and the
@@ -62,16 +63,31 @@ for check in "${checks[@]}"; do
     fi
   done < <(yq ".misconfigurations[] | select(.id == \"$check\") | (.paths // []) | length" "$ignorefile")
 
+  seen_cdi=0
+  seen_kubevirt=0
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     case "$path" in
-      "$vendored_cdi" | "$vendored_kubevirt") ;;
+      "$vendored_cdi") seen_cdi=1 ;;
+      "$vendored_kubevirt") seen_kubevirt=1 ;;
       *)
         printf 'WIDENED SKIP: %s is scoped to %s, which is not one of the two vendored operator bundles\n' "$check" "$path" >&2
         status=1
         ;;
     esac
   done < <(yq ".misconfigurations[] | select(.id == \"$check\") | (.paths // [])[]" "$ignorefile")
+
+  # Both bundles, or the disposition is no longer the one that was reviewed. Without this the
+  # structural layer accepts a dropped path, and the behavioural half that would notice is skipped
+  # wherever trivy or jq is absent.
+  [ "$seen_cdi" -eq 1 ] || {
+    printf 'NARROWED SKIP: %s is no longer scoped to %s\n' "$check" "$vendored_cdi" >&2
+    status=1
+  }
+  [ "$seen_kubevirt" -eq 1 ] || {
+    printf 'NARROWED SKIP: %s is no longer scoped to %s\n' "$check" "$vendored_kubevirt" >&2
+    status=1
+  }
 done
 
 # ---------------------------------------------------------------- behaviour --
