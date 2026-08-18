@@ -35,7 +35,8 @@ spec:
   forProvider:
     name: attacker-team
 ---
-# A TeamMembership on the paved road.
+# A TeamMembership on the paved road: allow-listed reference that re-resolves on
+# every reconcile, so no authored teamId can survive.
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: TeamMembership
 metadata:
@@ -45,10 +46,47 @@ spec:
   forProvider:
     teamIdRef:
       name: platform
+      policy:
+        resolve: Always
     username: devantler
     role: member
 ---
-# A direct numeric team ID bypasses the reference allow-list entirely.
+# The bypass #3195 documents, and the reason this rule exists: an allow-listed
+# reference left on the IfNotPresent default never overwrites an authored
+# teamId, so the reference is decorative. Only the missing resolve policy is
+# wrong here — the reference name is allow-listed and no teamId is set — so this
+# fixture isolates the new condition.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: unresolved-reference
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: platform
+    username: attacker
+    role: maintainer
+---
+# The same bypass stated explicitly rather than by omission. Kept separate from
+# the fixture above because "field absent" and "field present with the wrong
+# value" are different JMESPath paths through the `|| ''` default.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: ifnotpresent-reference
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: platform
+      policy:
+        resolve: IfNotPresent
+    username: attacker
+    role: maintainer
+---
+# A direct numeric team ID with no reference at all. Nothing resolves it, so the
+# allow-list never applies.
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: TeamMembership
 metadata:
@@ -70,10 +108,27 @@ spec:
   forProvider:
     teamIdRef:
       name: platform
+      policy:
+        resolve: Always
     repository: platform
     permission: push
 ---
-# Admin is the privileged repository grant the rule blocks.
+# The unresolved-reference bypass on the TeamRepository rule. Its permission is
+# allowed and its reference is allow-listed, so only the resolve policy is wrong.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: unresolved-reference-repo
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: platform
+    repository: platform
+    permission: push
+---
+# Admin is the privileged repository grant the rule blocks. Everything else is
+# on the paved road, so only the permission is wrong.
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: TeamRepository
 metadata:
@@ -83,12 +138,14 @@ spec:
   forProvider:
     teamIdRef:
       name: platform
+      policy:
+        resolve: Always
     repository: platform
     permission: admin
 ---
-# initProvider bypass: the forProvider reference is approved, but upjet merges
-# initProvider into unset forProvider fields, so a foreign team supplied there
-# is what actually reconciles.
+# initProvider bypass: the forProvider reference is fully compliant, but upjet
+# merges initProvider into unset forProvider fields, so a foreign team supplied
+# there is what actually reconciles. Only the initProvider teamId is wrong.
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: TeamMembership
 metadata:
@@ -98,6 +155,8 @@ spec:
   forProvider:
     teamIdRef:
       name: platform
+      policy:
+        resolve: Always
     username: attacker
   initProvider:
     teamId: "7654321"
@@ -112,6 +171,8 @@ spec:
   forProvider:
     teamIdRef:
       name: platform
+      policy:
+        resolve: Always
     repository: platform
     permission: push
   initProvider:
@@ -132,7 +193,8 @@ spec:
         role: privileged
     username: attacker
 ---
-# A by-name reference that resolves, but to a team outside the allow-list.
+# A by-name reference that resolves correctly, but to a team outside the
+# allow-list. Only the referenced name is wrong.
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: TeamMembership
 metadata:
@@ -142,6 +204,8 @@ spec:
   forProvider:
     teamIdRef:
       name: attacker-team
+      policy:
+        resolve: Always
     username: attacker
 ---
 # maintain is privileged but is not `admin`, so a deny-list on admin alone lets
@@ -155,5 +219,7 @@ spec:
   forProvider:
     teamIdRef:
       name: platform
+      policy:
+        resolve: Always
     repository: platform
     permission: maintain

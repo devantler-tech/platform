@@ -40,6 +40,8 @@ results:
     rule: teammemberships-reference-allow-listed-teams
     resources:
       - github-config/direct-team-id
+      - github-config/unresolved-reference
+      - github-config/ifnotpresent-reference
       - github-config/initprovider-foreign-team
       - github-config/selector-reference
       - github-config/non-allow-listed-reference
@@ -56,6 +58,7 @@ results:
     rule: teamrepositories-reference-allow-listed-teams
     resources:
       - github-config/platform-repo-admin
+      - github-config/unresolved-reference-repo
       - github-config/initprovider-admin-grant
       - github-config/maintain-grant
     kind: TeamRepository

@@ -100,13 +100,19 @@ spec:
               namespaces:
                 - github-config
       validate:
-        message: GitHub TeamMembership resources must use spec.forProvider.teamIdRef.name set to platform or maintainers; direct teamId values and selectors are not allowed, in forProvider or initProvider.
+        message: GitHub TeamMembership resources must set spec.forProvider.teamIdRef.name to platform or maintainers with policy.resolve Always, so the reference re-resolves on every reconcile; selectors are not allowed, and initProvider must not carry a teamId, selector or non-allow-listed reference.
         deny:
           conditions:
             any:
-              - key: "{{ request.object.spec.forProvider.teamId || '' }}"
+              # #3195: requiring the reference to re-resolve on every reconcile is what
+              # makes a directly-authored numeric ID inert, so no forProvider.teamId deny
+              # is needed -- and none can work. The provider's own reference resolver
+              # writes the resolved ID into that field, so a deny on it fires on the
+              # controller's write and deadlocks the resource. Measured live: all 39
+              # TeamMembership/TeamRepository resources carry a populated teamId.
+              - key: "{{ request.object.spec.forProvider.teamIdRef.policy.resolve || '' }}"
                 operator: NotEquals
-                value: ""
+                value: Always
               - key: "{{ request.object.spec.forProvider.teamIdSelector || `{}` }}"
                 operator: NotEquals
                 value: {}
@@ -140,13 +146,19 @@ spec:
               namespaces:
                 - github-config
       validate:
-        message: GitHub TeamRepository resources must reference platform or maintainers by spec.forProvider.teamIdRef.name and may grant only pull, triage or push permission, in forProvider and initProvider.
+        message: GitHub TeamRepository resources must reference platform or maintainers by spec.forProvider.teamIdRef.name with policy.resolve Always, and may grant only pull, triage or push permission, in forProvider and initProvider.
         deny:
           conditions:
             any:
-              - key: "{{ request.object.spec.forProvider.teamId || '' }}"
+              # #3195: requiring the reference to re-resolve on every reconcile is what
+              # makes a directly-authored numeric ID inert, so no forProvider.teamId deny
+              # is needed -- and none can work. The provider's own reference resolver
+              # writes the resolved ID into that field, so a deny on it fires on the
+              # controller's write and deadlocks the resource. Measured live: all 39
+              # TeamMembership/TeamRepository resources carry a populated teamId.
+              - key: "{{ request.object.spec.forProvider.teamIdRef.policy.resolve || '' }}"
                 operator: NotEquals
-                value: ""
+                value: Always
               - key: "{{ request.object.spec.forProvider.teamIdSelector || `{}` }}"
                 operator: NotEquals
                 value: {}
