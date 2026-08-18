@@ -97,7 +97,7 @@ DISABLE_ERRORS_LINTERS:
   # (#3205). Its dispositions are documented below because they are what holds that zero — each one
   # is a scoped, resource-level skip naming its reason, not a disabled check.
   #
-  # trivy (66 in the local v0.74.0 reproduction): Kubernetes misconfiguration in k8s/, which the
+  # trivy (38 in the local v0.74.0 reproduction): Kubernetes misconfiguration in k8s/, which the
   # section above explains is NOT covered elsewhere. Tracked by #2787.
   #
   # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore.yaml — 450 of
@@ -128,7 +128,8 @@ DISABLE_ERRORS_LINTERS:
   # or Role named for the operator itself, and narrowing those grants would break the operator
   # and diverge the bundle from the checksum it is verified against. See .trivyignore.yaml for the
   # reasoning and #2990 for the measurement. The five checks stay live on the cluster roles this
-  # repository does author, where 7 HIGH/CRITICAL remain, and
+  # repository does author, where the residual HIGH/CRITICAL was dispositioned per class by #2990
+  # (see the entry below), and
   # scripts/tests/test-trivyignore-vendored-operator-boundary.sh fails the build if that boundary
   # is ever lost. KSV-0014 on the two operator Deployments is deliberately left reporting: a
   # read-only root filesystem is a container setting a kustomize patch can supply without
@@ -153,6 +154,23 @@ DISABLE_ERRORS_LINTERS:
   #
   # The list is load-bearing, verified by ablation rather than asserted: deleting the single
   # `quay.io` entry returns exactly 11 findings, and all 11 are quay.io-hosted containers.
+  #
+  # It then went 66 -> 38 when the first-party RBAC this repository authors was dispositioned per
+  # class — 7 findings, and every remaining CRITICAL on this tree, so HIGH+CRITICAL went 9 -> 2 and
+  # CRITICAL 3 -> 0. Each verdict turns on how the role is BOUND rather than on the rules trivy
+  # reads: the tenant role is aggregated into `tenant-edit` and bound only by a namespace-scoped
+  # RoleBinding (no ClusterRoleBinding for it exists in the repository, nor among the 179 on the
+  # live cluster); `cluster-reader` uses resources ["*"] but grants get/list/watch only, and
+  # KSV-0046 was shown by paired fixture to ignore verbs entirely; and the two KRO RGD roles
+  # aggregate into a controller running with `rbac.mode: aggregation`, so it holds no standing
+  # access. See .trivyignore.yaml for each statement and
+  # scripts/tests/test-trivyignore-first-party-rbac-boundary.sh, which fails the build if any of
+  # those premises stops holding — a disposition outliving its reason is the failure mode here.
+  #
+  # The 2 that remain are both KSV-0014 on the vendored operator Deployments, deliberately left
+  # reporting. Note that the kustomize patch that note anticipates hardens the RENDERED workload
+  # but does NOT clear the finding: trivy scans the raw vendored file, not the kustomize output
+  # (measured). #2990 owns closing that last pair.
   #
   # checkov is at 0 failed checks on all three frameworks CI runs. Its last two findings were both
   # CKV_K8S_40, on the two vault-backup workloads, and #2904 dispositioned them as a scoped

@@ -11,7 +11,9 @@
 # The risk that disposition creates is NOT that it is wrong; it is that it silently stops being
 # path-scoped. Drop a `paths:` key, or widen one to k8s/**, and every one of these checks goes
 # quiet across the whole repository — including on the FIRST-PARTY cluster roles this repository
-# does author, where the same permissions are a real finding and four of them are still open.
+# does author. A few exact check:path pairs on those roles now carry their own reviewed
+# dispositions (#2990), listed literally below and guarded by their own premises test; every other
+# check:path combination stays live.
 # Nothing else would fail: the scan still runs, the count still drops, and the gate still reports
 # a smaller number, which reads exactly like progress.
 #
@@ -40,6 +42,21 @@ command -v yq >/dev/null 2>&1 || {
 readonly vendored_cdi='k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml'
 readonly vendored_kubevirt='k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml'
 readonly first_party='k8s/bases/infrastructure/cluster-roles/boundary-probe.yaml'
+
+# First-party RBAC dispositions for these same check ids (#2990), as exact CHECK:PATH pairs.
+# Pairs, not bare paths: a path-only allow-list would let ANY of these five checks be suppressed on
+# a reviewed role — KSV-0053 (pods/exec) on the tenant role, say — which is a widening this test
+# exists to catch. Each pair below is one reviewed verdict, and anything else fails as a widened
+# skip. Their premises are guarded separately by
+# scripts/tests/test-trivyignore-first-party-rbac-boundary.sh, which also rejects any pair not
+# listed here so the two files cannot drift apart.
+readonly first_party_pairs=(
+  'KSV-0041:k8s/bases/infrastructure/cluster-roles/tenant-base-edit.yaml'
+  'KSV-0056:k8s/bases/infrastructure/cluster-roles/tenant-base-edit.yaml'
+  'KSV-0056:k8s/bases/infrastructure/resource-graph-definitions/tenant/cluster-role.yaml'
+  'KSV-0056:k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml'
+  'KSV-0046:k8s/bases/infrastructure/cluster-roles/cluster-reader.yaml'
+)
 
 # Every check id dispositioned for the vendored bundles. Keep in sync with .trivyignore.yaml.
 readonly checks=(KSV-0041 KSV-0046 KSV-0053 KSV-0056 KSV-0114)
@@ -74,8 +91,17 @@ for check in "${checks[@]}"; do
       "$vendored_cdi") seen_cdi=1 ;;
       "$vendored_kubevirt") seen_kubevirt=1 ;;
       *)
-        printf 'WIDENED SKIP: %s is scoped to %s, which is not one of the two vendored operator bundles\n' "$check" "$path" >&2
-        status=1
+        reviewed=0
+        for fp in "${first_party_pairs[@]}"; do
+          if [ "$check:$path" = "$fp" ]; then
+            reviewed=1
+            break
+          fi
+        done
+        if [ "$reviewed" -eq 0 ]; then
+          printf 'WIDENED SKIP: %s is scoped to %s, which is neither a vendored operator bundle nor a reviewed first-party disposition for THAT check\n' "$check" "$path" >&2
+          status=1
+        fi
         ;;
     esac
   done < <(yq ".misconfigurations[] | select(.id == \"$check\") | (.paths // [])[]" "$ignorefile")
@@ -182,4 +208,4 @@ done
 
 [ "$status" -eq 0 ] || exit 1
 
-printf 'vendored-operator RBAC disposition is path-scoped: %d checks suppressed on both vendored bundles, all still live on first-party roles\n' "${#checks[@]}"
+printf 'vendored-operator RBAC disposition is path-scoped: %d checks suppressed on both vendored bundles, still live on every first-party role but the %d reviewed check:path exceptions\n' "${#checks[@]}" "${#first_party_pairs[@]}"
