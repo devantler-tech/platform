@@ -1,0 +1,47 @@
+---
+# The part of the "add-security-context" mutation exemption that cannot yet be
+# scoped to the namespaces that mutation actually runs in.
+#
+# pod-security-mutations.yaml narrows C-0016 and C-0055 to the mutated set,
+# because every workload that narrowing exposes is either covered by another
+# exception or already passes. C-0013 and C-0211 do not have that property, for
+# two different reasons, so they stay cluster-wide here until each is resolved.
+#
+# C-0013 — flux-system is the one namespace the mutation excludes that no other
+# exception covers and that IS scanned in-cluster. Measured there 2026-08-18 on the
+# pre-exception scan surface, all six Flux controllers (flux-operator,
+# helm-controller, kustomize-controller, notification-controller, source-controller,
+# tofu-controller) fail C-0013 on a single missing field,
+# `spec.template.spec.containers[0].securityContext.runAsGroup`. Narrowing C-0013
+# today would therefore surface six real findings with no fix behind them, which
+# lowers the score to absorb a gap instead of closing it. Setting runAsGroup on
+# those six is tracked in #3223; C-0013 narrows once that lands.
+#
+# C-0211 — its field set differs (fsGroupChangePolicy, runAsUser, runAsGroup), no
+# other exception covers it in the excluded namespaces, and its residual population
+# has never been sized. The name-scoped kubescape-privileged.yaml does not list it,
+# so node-agent and storage sit inside that population rather than excepted out of
+# it. Sizing it needs its own per-workload pass, tracked in #3217.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: pod-security-mutations-unscoped
+  annotations:
+    # Cluster-wide, and knowingly wider than its own rationale: in the twelve
+    # namespaces "add-security-context" excludes, nothing injects these fields.
+    # Both controls are retained rather than narrowed on an unmeasured guess —
+    # C-0013 pending #3223, C-0211 pending #3217.
+    platform.devantler.tech/cluster-wide: declared
+spec:
+  reason: >-
+    Kyverno mutate policy "add-security-context" injects runAsNonRoot, runAsUser,
+    runAsGroup and fsGroupChangePolicy at pod admission. The Deployment spec does
+    not contain them and Kubescape scans the stored spec, not the live pod. These
+    two controls remain cluster-wide because narrowing them is blocked on evidence
+    rather than on expressiveness: C-0013 has a measured six-workload gap in
+    flux-system (#3223) and C-0211's residual population is unsized (#3217).
+  posture:
+    - controlID: C-0013
+      action: ignore
+    - controlID: C-0211
+      action: ignore
