@@ -48,9 +48,15 @@ spec:
     #   C-0053   10 findings with this CR, 23 without  -> suppresses 13
     #   C-0037    0 findings with this CR,  3 without  -> suppresses 3
     #   C-0031    0 findings with this CR,  1 without  -> suppresses 1
-    #   C-0063 / C-0035 / C-0188:  0 findings in BOTH arms -> no observable
-    #     effect either way on this surface. That makes them unproven here, not
-    #     proven inert; decide them on evidence before removing them.
+    #   C-0063 / C-0035 / C-0188:  0 findings in BOTH arms. These are KEPT, and the
+    #     null result is not evidence against them: they sit outside NSA-CISA and
+    #     MITRE, so this scan never evaluates them. Proof that "no change" does not
+    #     mean "no effect" here — C-0037 also has a zero baseline, yet dropping it
+    #     moves it 0 -> 3, while dropping these three moves nothing at all. That
+    #     difference is the signature of a control the gate cannot see, not of a
+    #     redundant exception. They do govern real findings on the surfaces that do
+    #     evaluate them, so removing them on this scan's silence would strip a
+    #     justified exception. Re-decide only if they come under a gated framework.
     #
     # So do NOT migrate these six to kind+name CRs on the assumption that a
     # namespaceSelector cannot reach them: dropping this CR adds 17 findings to
