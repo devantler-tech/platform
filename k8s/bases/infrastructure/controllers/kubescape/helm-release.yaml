@@ -216,3 +216,58 @@ spec:
         limits:
           cpu: 500m
           memory: 1Gi
+  # Drop all capabilities and pin a CONTAINER-level seccompProfile on the four
+  # kubescape-operator Deployments. Post-rendered rather than set through
+  # `values` above because the chart gives us no choice: kubescape-operator
+  # 1.40.3 exposes NO securityContext value anywhere in values.yaml (zero
+  # occurrences), and each component's Deployment template HARDCODES the
+  # container securityContext to exactly `allowPrivilegeEscalation: false`
+  # + `readOnlyRootFilesystem: true` + `runAsNonRoot: true` — with no
+  # `capabilities` and no `seccompProfile`. `storage` is weaker still and ships
+  # only the first and third of those.
+  #
+  # Every component already runs as uid 65532 with allowPrivilegeEscalation
+  # false and binds only high ports (kubescape/kubevuln 8080, operator
+  # 4002/8000/8443, storage none), so no component holds or needs a capability:
+  # dropping ALL is a no-op at runtime and makes that guarantee explicit and
+  # enforceable instead of incidental. A pod-level seccompProfile is already set
+  # by the chart; the container-level copy states the same guarantee on the
+  # container itself, so it survives a future template that sets a container
+  # securityContext without inheriting the pod default.
+  #
+  # NOTE ON SCOPE — this hardens the workloads; it does NOT move a posture
+  # score, and no scan will show the difference. These Deployments are scanned
+  # by NEITHER surface: the operator's own config.json excludes its namespace
+  # (`excludeNamespaces: "kubescape,kube-system,…"`), so the in-cluster scan
+  # holds 0 objects for it (measured: 0 of 1542, across 39 scanned namespaces);
+  # and the CI `ksail workload scan` reads manifests, where these exist only as
+  # this HelmRelease and are never rendered. That blind spot is tracked
+  # separately — do not read a green scan as evidence about this namespace.
+  #
+  # readOnlyRootFilesystem is deliberately NOT added to `storage`: it is an
+  # aggregated APIServer backed by a RWO PVC and its write paths are unverified,
+  # so that one needs its own evidence rather than riding along here.
+  #
+  # UPGRADE HAZARD, deliberately accepted: JSON-Patch `add` REPLACES an existing
+  # key, so if a future chart version starts setting `capabilities` on one of
+  # these containers, this patch silently overrides it rather than conflicting.
+  # That is the intent today — nothing here needs a capability — but it means a
+  # component that legitimately gains one would lose it without any error. Being
+  # non-root does not make that safe on its own: a file capability on the binary
+  # would still take effect. Re-check this patch when bumping the chart.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: ^(kubescape|kubevuln|operator|storage)$
+            patch: |
+              - op: add
+                path: /spec/template/spec/containers/0/securityContext/capabilities
+                value:
+                  drop:
+                    - ALL
+              - op: add
+                path: /spec/template/spec/containers/0/securityContext/seccompProfile
+                value:
+                  type: RuntimeDefault

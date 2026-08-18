@@ -1052,7 +1052,39 @@ const (
 // Only ONE renderer stands behind the new value: the approved CI toolchain via
 // the required job. The local kubectl is v1.36.1 against an approved v1.36.2, so
 // validateRendererVersion fails closed and cannot corroborate.
-const expectedRenderedSurfaceSHA = "21195b64582f0cc99b42cc6ee61c77610972c12b1556c3b254f68b15ce95d7fa"
+//
+// This value additionally covers dropping all Linux capabilities and pinning a
+// container-level seccompProfile on the four kubescape-operator Deployments
+// (#3064). The surface moves only because a HelmRelease is an
+// isControllerRBACEmitter, not because any grant changed. Measured by rendering
+// all five authorization overlays from both trees, identical but for that one
+// manifest:
+//
+//	765721 -> 766201 bytes. The ENTIRE delta is 16 added lines and ZERO removed
+//	lines, all of them the one `postRenderers:` block on
+//	helm.toolkit.fluxcd.io/v2 HelmRelease kubescape/kubescape.
+//
+// Grant-bearing document membership is 74 -> 74 and set-IDENTICAL in both
+// directions (Role 11, ClusterRole 22, RoleBinding 16, ClusterRoleBinding 10,
+// ServiceAccount 15) — nothing added, removed or renamed. The count is
+// corroborated by two independent extractions that agree exactly, because the
+// first shapes tried returned a silent 0 and then a nonsense 375058 on the same
+// input.
+//
+// The only `kind: Deployment` line in the delta is the patch TARGET selector,
+// not a granted identity; the patch body only ever removes capability
+// (`drop: [ALL]`) and pins a seccomp profile. No identity, binding, verb, policy
+// document, ServiceAccount or `aws`-bearing line is touched.
+//
+// The previous approved digest is recorded here in full, so replacing the
+// constant does not lose it:
+//
+//	21195b64582f0cc99b42cc6ee61c77610972c12b1556c3b254f68b15ce95d7fa
+//
+// The new fingerprint was read from the required job's own output on the
+// approved renderer (run 32141093701), because the local toolchain is refused as
+// unapproved — the same single-renderer caveat as the value it replaces.
+const expectedRenderedSurfaceSHA = "f204a2d25d468376946989ab2378c41de86f9f66b0cda21b5f80f54bc99d2306"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
