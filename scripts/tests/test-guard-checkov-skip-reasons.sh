@@ -353,8 +353,8 @@ jq_stub_dir="$scratch/jq-stub-bin"
 mkdir -p "$jq_stub_dir"
 real_jq="$(command -v jq)"
 jq_stub_log="$scratch/jq-stub.log"
-: > "$jq_stub_log"
-cat > "$jq_stub_dir/jq" <<STUB
+: >"$jq_stub_log"
+cat >"$jq_stub_dir/jq" <<STUB
 #!/usr/bin/env bash
 if [ "\$1" = "-r" ] && [ "\$2" = ".[]" ]; then
   echo fired >> "$jq_stub_log"
