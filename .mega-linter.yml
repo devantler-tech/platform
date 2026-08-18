@@ -93,7 +93,7 @@ DISABLE_ERRORS_LINTERS:
   # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
   # path is hidden, and each entry names the issue that removes it.
   #
-  # checkov (8) and trivy (108 in the local v0.73.0 reproduction): Kubernetes misconfiguration
+  # checkov (0 since #2904) and trivy (108 in the local v0.73.0 reproduction): Kubernetes misconfiguration
   # in k8s/, which the section above explains is NOT covered elsewhere. Tracked by #2787.
   #
   # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore.yaml — 450 of
@@ -117,19 +117,26 @@ DISABLE_ERRORS_LINTERS:
   # JavaScript that reads an ESO-mounted Secret and the other exposes the public
   # `external_secrets_replicas` count. Trivy matched those identifier strings, not credential data.
   #
-  # checkov's 8 are all `kubernetes` framework, and 2 of them are CKV_K8S_40, at exactly these
-  # sites: the two vault-backup jobs.
-  # Re-derive that list from the scan rather than adjusting a number here — every figure in this
+  # checkov is at 0 failed checks on every framework CI runs. Its last two findings were both
+  # CKV_K8S_40, on the two vault-backup workloads, and #2904 dispositioned them as one scoped
+  # deferred exception each rather than the eleven per-site constraints that issue was filed for.
+  # Re-derive that from the scan rather than adjusting a number here — every figure in this
   # block is a measurement, and the running arithmetic that used to track it went stale twice.
   #
-  # The two vault-backup jobs carry no suppression: their scoped skip claimed to share the
-  # vault-snapshots PVC with the OpenBao StatefulSet, and the live StatefulSet mounts
-  # `config`/`unseal-keys`/`tmp`/`home` plus claim templates `data`/`audit`, never that PVC at all,
-  # so there is no shared ownership to preserve. They are two of the three `vault-snapshots`
-  # writers — the third is the dr-rebuild workflow's helper pod, which this check does not reach
-  # because it is not a committed Kubernetes manifest — and all three
-  # share one RWO PVC at `100:1000`, so they move together. That touches the DR restore path, so
-  # #2904 holds their remediation and the risk-acceptance question.
+  # Both vault-backup workloads run pod-level UID 100, and each of their two containers has its
+  # own reason. The snapshot container's 100 is the openbao image's baked `openbao:x:100:1000`
+  # identity, from the same pinned digest vault-config reads. The mirror container inherits it
+  # because the snapshot lands `-rw-------` owned by `100:1000` while `minio/mc` mounts
+  # /snapshots readOnly and bakes no uid-100 entry of its own, so opening it as its owner is the
+  # only access it has — `fsGroup` fixes the volume's ownership and mode at mount time, not the
+  # mode `bao operator raft snapshot save` writes the file with afterwards.
+  #
+  # Neither UID is remapped: the openbao namespace carries no
+  # `pod-security.devantler.tech/user-namespaces: enabled` label, so the add-user-namespaces rule
+  # does not match, hostUsers stays on, and 100 is a host UID. #3202 removes that residual by
+  # making the snapshot group-readable first and raising the UIDs after. All three
+  # `vault-snapshots` writers move together; the third is the dr-rebuild workflow's helper pod,
+  # which this check does not reach because it is not a committed Kubernetes manifest.
   #
   # The user-namespace probes are resolved rather than excepted, because the UID was never the
   # measurement subject: `/proc/self/uid_map` describes the pod's namespace and reads identically
@@ -141,9 +148,9 @@ DISABLE_ERRORS_LINTERS:
   # openbao image carries `openbao:x:100:1000::/home/openbao` in its own /etc/passwd — read from
   # the pinned digest's layers, not the tag — which is exactly the `runAsUser: 100` /
   # `runAsGroup: 1000` the Job sets. That is the same demonstrated image-baked disposition umami's
-  # 1001 carries (#2901). Whether the two remaining vault-backup writers are the same class is open
-  # in #2904 and is not settled here — #2898 named an image-baked class covering them, but on a
-  # shared-PVC reason that issue itself refuted, so their membership needs its own evidence.
+  # 1001 carries (#2901). The two vault-backup writers share that class for their snapshot
+  # container, which runs the same pinned openbao digest, and diverge for their mirror container,
+  # whose 100 is a file-ownership constraint rather than a baked identity (see above).
   #
   # `checkov.io/skipN` is RESOURCE-scoped, so the Job sets `runAsUser` per container instead of
   # once on the pod: its `minio/mc` and `alpine/k8s` containers carry no uid-100 line in their own
