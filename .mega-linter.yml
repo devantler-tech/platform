@@ -93,8 +93,9 @@ DISABLE_ERRORS_LINTERS:
   # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
   # path is hidden, and each entry names the issue that removes it.
   #
-  # checkov (0 since #2904) and trivy (108 in the local v0.73.0 reproduction): Kubernetes misconfiguration
-  # in k8s/, which the section above explains is NOT covered elsewhere. Tracked by #2787.
+  # checkov (0 since #2904; #3205 removes this entry) and trivy (108 in the local v0.73.0
+  # reproduction): Kubernetes misconfiguration in k8s/, which the section above explains is NOT
+  # covered elsewhere. Tracked by #2787.
   #
   # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore.yaml — 450 of
   # those
@@ -117,9 +118,10 @@ DISABLE_ERRORS_LINTERS:
   # JavaScript that reads an ESO-mounted Secret and the other exposes the public
   # `external_secrets_replicas` count. Trivy matched those identifier strings, not credential data.
   #
-  # checkov is at 0 failed checks on every framework CI runs. Its last two findings were both
-  # CKV_K8S_40, on the two vault-backup workloads, and #2904 dispositioned them as one scoped
-  # deferred exception each rather than the eleven per-site constraints that issue was filed for.
+  # checkov is at 0 failed checks on all three frameworks CI runs. Its last two findings were both
+  # CKV_K8S_40, on the two vault-backup workloads, and #2904 dispositioned them as a scoped
+  # deferred exception on each workload — neither the eleven per-site constraints #2898 claimed nor
+  # the single risk acceptance #2904 proposed, both of which the measurements below rule out.
   # Re-derive that from the scan rather than adjusting a number here — every figure in this
   # block is a measurement, and the running arithmetic that used to track it went stale twice.
   #
