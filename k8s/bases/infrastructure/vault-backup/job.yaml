@@ -46,7 +46,7 @@ metadata:
     # is a host UID. That residual is what #3202 removes: it makes the
     # snapshot group-readable first, then raises the UIDs, which the three
     # writers sharing this one RWO PVC have to do together.
-    checkov.io/skip2: CKV_K8S_40=deferred to #3202 -- the snapshot container's 100 is the openbao image's baked `openbao:x:100:1000` user, and the mirror container must match it to read the -rw------- snapshot from the shared RWO PVC
+    checkov.io/skip2: "CKV_K8S_40=deferred to #3202 -- the snapshot container's 100 is the openbao image's baked `openbao:x:100:1000` user, and the mirror container must match it to read the -rw------- snapshot from the shared RWO PVC"
 spec:
   # No ttlSecondsAfterFinished (intentional). This is a one-shot "snapshot at
   # deploy/change time" Job (see header) -- it must run ONCE per vault-backup
