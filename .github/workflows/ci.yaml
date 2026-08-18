@@ -145,6 +145,11 @@ jobs:
               - 'scripts/megalinter-scan-counts.sh'
               - 'scripts/tests/test-megalinter-scan-counts-ignorefile.sh'
               - 'scripts/tests/test-trivyignore-vendored-operator-boundary.sh'
+              # The first-party RBAC dispositions and the roles they describe are one
+              # contract: the disposition is only valid while the role stays bound and
+              # scoped the way it was reviewed. The roles themselves are already covered
+              # by the k8s/** entry above.
+              - 'scripts/tests/test-trivyignore-first-party-rbac-boundary.sh'
               # The version-drift guard reads its constants out of
               # megalinter-scan-counts.sh, so the three move together.
               - 'scripts/check-megalinter-version-drift.sh'
@@ -406,6 +411,17 @@ jobs:
         run: |
           shellcheck scripts/tests/test-trivyignore-vendored-operator-boundary.sh
           bash scripts/tests/test-trivyignore-vendored-operator-boundary.sh
+
+      - name: 🧱 Validate first-party RBAC disposition premises
+        if: needs.changes.outputs.k8s == 'true'
+        # The four first-party RBAC dispositions rest on facts trivy cannot see: the tenant
+        # role is only ever RoleBinding-bound, cluster-reader grants no write verb, and KRO
+        # runs with no standing access. If one of those stops holding, the finding stays
+        # suppressed while its reason is gone and the count never moves — so assert the
+        # premises rather than the prose.
+        run: |
+          shellcheck scripts/tests/test-trivyignore-first-party-rbac-boundary.sh
+          bash scripts/tests/test-trivyignore-first-party-rbac-boundary.sh
 
       - name: 🔢 Validate scanner version-drift guard
         if: needs.changes.outputs.k8s == 'true'

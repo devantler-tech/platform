@@ -210,3 +210,51 @@ misconfigurations:
       Role, does grant create/patch/delete — but is resourceNames-scoped to sixteen explicitly named
       kubevirt-* certificate secrets it issues and rotates, so it cannot reach any other secret in
       the namespace. The grant is upstream's, in a SHA-256 pinned release artifact vendored verbatim.
+
+  # First-party RBAC this repository authors — the 7 HIGH/CRITICAL the vendored-operator block
+  # above deliberately left live, now dispositioned per class (#2990). Each verdict was checked
+  # against how the role is actually BOUND, which is the fact these checks cannot see: trivy
+  # evaluates a ClusterRole's rules in isolation, so it reads every grant as cluster-wide even
+  # when the only binding is namespace-scoped. Every entry below is path-scoped, so all three
+  # checks stay live on every other role in the tree.
+  #
+  # scripts/tests/test-trivyignore-first-party-rbac-boundary.sh fails the build if the premise
+  # behind any of these verdicts stops holding — a ClusterRoleBinding appearing for the tenant
+  # role, cluster-reader gaining a write verb, or KRO losing aggregation mode. A disposition that
+  # outlives its reason is the failure mode this block must not have.
+  - id: KSV-0041
+    paths:
+      - k8s/bases/infrastructure/cluster-roles/tenant-base-edit.yaml
+    statement: >-
+      tenant-base-edit is the built-in edit role minus the exec-family subresources, aggregated
+      into tenant-edit and bound ONLY by a namespace-scoped RoleBinding to the tenant's own
+      ServiceAccount in its own namespace (resource-graph-definitions/tenant). A tenant's Flux
+      identity manages the secrets it reconciles into its own namespace; the grant cannot reach
+      any other namespace. Verified: no ClusterRoleBinding references this role in the repository
+      or on the live cluster.
+  - id: KSV-0056
+    paths:
+      - k8s/bases/infrastructure/cluster-roles/tenant-base-edit.yaml
+    statement: >-
+      Same namespace-scoped RoleBinding as above. Creating Services and Ingresses for its own
+      workloads is the core capability a tenant namespace-admin role exists to grant, and it is
+      confined to the tenant's own namespace.
+  - id: KSV-0056
+    paths:
+      - k8s/bases/infrastructure/resource-graph-definitions/tenant/cluster-role.yaml
+      - k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml
+    statement: >-
+      The KRO controller runs with rbac.mode aggregation and holds NO standing access; it
+      aggregates only ClusterRoles labelled rbac.kro.run/aggregate-to-controller. Each of these
+      grants exactly the child kinds its own ResourceGraphDefinition renders, so the networking
+      verbs are what lets KRO create the Service and HTTPRoute it is asked to render, and each
+      RGD's blast radius is its own declared resources.
+  - id: KSV-0046
+    paths:
+      - k8s/bases/infrastructure/cluster-roles/cluster-reader.yaml
+    statement: >-
+      This check fires on resources ["*"] and does not consider verbs — verified with a paired
+      fixture in which an identical read-only rule and a write rule both trigger it. cluster-reader
+      grants get/list/watch and nothing else, and its apiGroups are enumerated rather than
+      wildcarded precisely so the core group, and therefore secrets, is never included. The role
+      cannot write any resource.
