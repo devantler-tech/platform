@@ -97,7 +97,7 @@ DISABLE_ERRORS_LINTERS:
   # (#3205). Its dispositions are documented below because they are what holds that zero — each one
   # is a scoped, resource-level skip naming its reason, not a disabled check.
   #
-  # trivy (36 in the local v0.74.0 reproduction): Kubernetes misconfiguration in k8s/, which the
+  # trivy (15 in the local v0.74.0 reproduction): Kubernetes misconfiguration in k8s/, which the
   # section above explains is NOT covered elsewhere. Tracked by #2787.
   #
   # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore.yaml — 450 of

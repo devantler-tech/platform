@@ -248,6 +248,33 @@ misconfigurations:
       resource-scoped Checkov annotations, and trivy reads the raw committed file, so a kustomize
       patch would change the deployed posture without clearing the finding. They ship only to the
       docker (local/CI) provider and are excluded from the production overlay.
+  - id: KSV-0011
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Neither operator Deployment sets a CPU limit; both set a CPU request (cdi-operator 100m,
+      virt-operator 10m), so both are schedulable and neither is unbounded in the scheduler's view.
+      CPU is a compressible resource, so the residual is contention under saturation rather than
+      eviction, and an omitted CPU limit is upstream's deliberate default for both bundles. The
+      bundles are upstream release artifacts whose SHA-256 is verified on download before this
+      repository adds its resource-scoped Checkov annotations, and trivy reads the raw committed
+      file, so a kustomize patch would change the deployed posture without clearing the finding.
+      They ship only to the docker (local/CI) provider and are excluded from the production overlay.
+  - id: KSV-0018
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Neither operator Deployment sets a memory limit; both set a memory request (cdi-operator
+      150Mi, virt-operator 450Mi). Memory is NOT compressible, so unlike the CPU entry above this
+      is a real residual: a leaking operator is bounded only by node capacity and can drive
+      eviction of co-scheduled pods. It is accepted on exactly the premise the KSV-0014, KSV-0020
+      and KSV-0021 entries above rest on, and no wider — these two Deployments never run outside
+      the local/CI provider, so the blast radius is a developer's own local cluster. The bundles are
+      upstream release artifacts whose SHA-256 is verified on download before this repository adds
+      its resource-scoped Checkov annotations, and trivy reads the raw committed file, so a
+      kustomize patch would change the deployed posture without clearing the finding.
   - id: KSV-0041
     paths:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
