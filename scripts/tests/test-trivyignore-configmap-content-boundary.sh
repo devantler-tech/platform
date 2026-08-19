@@ -32,7 +32,43 @@ readonly CHECK_ID="KSV-01010"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-command -v trivy >/dev/null 2>&1 || { echo "SKIP: trivy not installed"; exit 0; }
+
+# --- Layer 1: structural checks. These need only yq, so they still hold in a CI job that has no
+# --- trivy — which is exactly where the behavioural control below would otherwise skip silently.
+command -v yq >/dev/null 2>&1 || fail "yq is required to check the KSV-01010 disposition boundary"
+
+readonly EXPECTED_PATHS="k8s/bases/apps/actual-budget/config-map.yaml
+k8s/clusters/local/bootstrap/config-map.yaml
+k8s/clusters/prod/bootstrap/config-map.yaml"
+
+entry_count="$(yq "[.misconfigurations[] | select(.id == \"$CHECK_ID\")] | length" "$IGNOREFILE" 2>/dev/null || printf '0')"
+[ "$entry_count" -gt 0 ] || fail \
+  "no $CHECK_ID disposition found in $IGNOREFILE — if the findings were fixed at the manifest \
+instead, delete this test with them"
+
+# Every entry must be path-scoped. An entry with no paths key skips the id repository-wide.
+while IFS= read -r n; do
+  [ "$n" -gt 0 ] || fail \
+    "a $CHECK_ID entry has no paths key, so the check is skipped repository-wide rather than \
+scoped to the three reviewed ConfigMaps"
+done < <(yq ".misconfigurations[] | select(.id == \"$CHECK_ID\") | (.paths // []) | length" "$IGNOREFILE")
+
+# The scoped set must be exactly the three reviewed files. A widened glob (k8s/**) or a new path
+# added without review both land here.
+actual_paths="$(yq -r ".misconfigurations[] | select(.id == \"$CHECK_ID\") | .paths[]" "$IGNOREFILE" | sort)"
+if [ "$actual_paths" != "$EXPECTED_PATHS" ]; then
+  fail "$CHECK_ID scope changed. Each path is excepted because its content was reviewed, so a new
+or widened path needs its own reason recorded in $IGNOREFILE.
+expected:
+$EXPECTED_PATHS
+actual:
+$actual_paths"
+fi
+
+echo "PASS(structural): $CHECK_ID is path-scoped to exactly the 3 reviewed ConfigMaps."
+
+# --- Layer 2: behavioural paired control. Needs trivy; skips (loudly) where it is unavailable.
+command -v trivy >/dev/null 2>&1 || { echo "SKIP(behavioural): trivy not installed; structural checks above still passed"; exit 0; }
 [ -r "$IGNOREFILE" ] || fail "ignorefile not readable: $IGNOREFILE"
 [ -r "$SOURCE_CM" ]  || fail "source ConfigMap not readable: $SOURCE_CM"
 
