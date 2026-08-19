@@ -1084,7 +1084,48 @@ const (
 // The new fingerprint was read from the required job's own output on the
 // approved renderer (run 32141093701), because the local toolchain is refused as
 // unapproved — the same single-renderer caveat as the value it replaces.
-const expectedRenderedSurfaceSHA = "f204a2d25d468376946989ab2378c41de86f9f66b0cda21b5f80f54bc99d2306"
+// This value additionally covers adding the posture-staleness-alert check
+// (#3024): a CronJob in the observability namespace that reads Kubescape's
+// stored configuration-scan objects and alerts when they stop being refreshed.
+//
+// Grant-bearing objects DID move here, additively: 74 -> 77 Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount documents, being the three
+// this check introduces — one dedicated ServiceAccount, one narrow ClusterRole,
+// and one binding between exactly those two identities. Same shape as the
+// cnpg-degraded-alert addition recorded above. The ClusterRole is list-only on a
+// single resource type (workloadconfigurationscans in the
+// spdx.softwarecomposition.kubescape.io group) and grants nothing else; it is
+// cluster-scoped only because the check must find the newest scan across every
+// scanned namespace.
+//
+// Measured by rendering all five authorization overlays from both trees and
+// diffing grant-bearing document IDENTITIES, not merely counts:
+//
+//	main 353379fd = 74 (Role 11, ClusterRole 22, RoleBinding 16,
+//	ClusterRoleBinding 10, ServiceAccount 15) — which independently reproduces
+//	the membership already recorded above, corroborating the extraction rather
+//	than assuming it.
+//	this branch   = 77 (ClusterRole 23, ClusterRoleBinding 11, ServiceAccount 16;
+//	Role and RoleBinding UNCHANGED).
+//
+// The added-set is exactly ServiceAccount observability/posture-staleness-alert,
+// ClusterRole posture-staleness-alert and ClusterRoleBinding
+// posture-staleness-alert. The removed-set is EMPTY — nothing displaced, renamed
+// or re-scoped. No identity, binding, verb, policy document or `aws`-bearing
+// line belonging to the aws/aws service account this validator protects is
+// touched.
+//
+// The previous approved digest is recorded here in full, so replacing the
+// constant does not lose it:
+//
+//	f204a2d25d468376946989ab2378c41de86f9f66b0cda21b5f80f54bc99d2306
+//
+// The new fingerprint was read from the required job's own output on the
+// approved renderer (run 32215442664), because the local toolchain is refused as
+// unapproved — kubectl v1.36.1 against an approved v1.36.2, so
+// validateRendererVersion fails closed and cannot corroborate. The same
+// single-renderer caveat as the value it replaces.
+const expectedRenderedSurfaceSHA = "3fda03fc7bdccf0a4a9d9057609ea20c0853af6d619523b94d56d21bca77fa71"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
