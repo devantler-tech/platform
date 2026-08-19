@@ -130,6 +130,23 @@ spec:
                     exit 1
                   fi
 
+                  # VALIDATE THE THRESHOLD BEFORE USING IT. `set -u` catches an
+                  # UNSET variable, but Flux envsubst produces an EMPTY one — and
+                  # `[ "$age" -le "" ]` errors inside an `if` CONDITION, where
+                  # `set -e` cannot fire. The else branch would then be taken, so
+                  # a blanked threshold posts a false "posture is stale" alert for
+                  # fresh data and still exits 0, recording lastSuccessfulTime.
+                  # That is strictly worse than the sibling's failure mode: its
+                  # blanked ${GRACE_SECONDS} reached `jq --argjson grace ""`,
+                  # which exits 1 — and that loudness is how its own death was
+                  # eventually discovered. Fail closed instead.
+                  case "${MAX_AGE_SECONDS}" in
+                    ''|*[!0-9]*)
+                      echo "ERROR: MAX_AGE_SECONDS must be a positive integer, got '${MAX_AGE_SECONDS}'" >&2
+                      exit 1
+                      ;;
+                  esac
+
                   # Follow `continue` to exhaustion. A partial read would report
                   # one page's newest timestamp as the collection's.
                   cont=''
@@ -145,9 +162,24 @@ spec:
                       --cacert "$SA/ca.crt" \
                       -H "Authorization: Bearer $(cat "$SA/token")" \
                       "$url")
+                    # Not-served means Kubescape is not installed here, which is
+                    # the ordinary local/CI shape: the docker overlay comments
+                    # coroot and kubescape out INDEPENDENTLY, so enabling coroot
+                    # alone deploys this CronJob onto a cluster with no scanner.
+                    # Exiting 1 there would be a permanently failing Job every 6h
+                    # that never reaches the placeholder-webhook skip, making the
+                    # header's "local/CI stays quiet by design" claim false. Same
+                    # resolution as cron-job-cnpg-degraded-alert.yaml's missing-CRD
+                    # branch.
+                    #
+                    # ACCEPTED TRADE-OFF: in prod the scanner is always installed,
+                    # so a 404 there would mean its aggregated API has gone away —
+                    # a real fault this check will not report. It is not silent
+                    # overall (a dead storage layer surfaces through Flux and
+                    # Coroot), and the alternative breaks every local cluster.
                     if [ "$code" = "404" ]; then
-                      echo "ERROR: Kubescape scan CRD not served; the scanner is not installed or its storage is down" >&2
-                      exit 1
+                      echo "Kubescape configuration scans are not served on this cluster; nothing to check."
+                      exit 0
                     fi
                     if [ "$code" != "200" ]; then
                       echo "ERROR: kube API returned HTTP $code listing configuration scans" >&2
