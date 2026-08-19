@@ -176,6 +176,43 @@ misconfigurations:
       are SHA-256 pinned artifacts vendored verbatim, and trivy reads the raw file, so a kustomize
       patch would change the deployed posture without clearing this finding. The two Deployments
       ship only to the docker (local/CI) provider and are excluded from the production overlay.
+  #
+  # ALSO covered here: KSV-0020 and KSV-0021 on the same two operator Deployments (#2787). Both
+  # bundles set runAsNonRoot: true and then omit runAsUser and runAsGroup entirely, which is what
+  # these two checks read as "UID/GID <= 10000" — an absent value, not a low one. The three facts
+  # that carry the KSV-0014 entry above carry these unchanged: trivy reads the raw committed file,
+  # so a kustomize patch would move the deployed posture while the count stayed at four; the
+  # omission is upstream's, in a SHA-256 pinned artifact vendored verbatim, and pinning a UID that
+  # upstream does not set risks a component whose filesystem ownership we do not own; and the VM
+  # stack ships only through k8s/providers/docker/, never to production.
+  #
+  # Severity note, because it bounds what is actually being excepted: runAsNonRoot: true IS set on
+  # both, so the kubelet refuses to start these containers as root regardless. The residual is an
+  # unpinned non-root UID inside a local/CI-only workload, not a root container.
+  #
+  # Both ids stay live on every other workload in this repository, and the same
+  # scripts/tests/test-trivyignore-vendored-operator-boundary.sh that guards KSV-0014 asserts it —
+  # its checks array now lists them, so dropping a path or widening a glob fails the build.
+  - id: KSV-0020
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Both operator Deployments set runAsNonRoot but omit runAsUser, so the kubelet enforces a
+      non-root UID that the manifest does not pin. The bundles are SHA-256 pinned artifacts
+      vendored verbatim and trivy reads the raw file, so a kustomize patch would change the
+      deployed posture without clearing the finding. They ship only to the docker (local/CI)
+      provider and are excluded from the production overlay.
+  - id: KSV-0021
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Both operator Deployments omit runAsGroup, leaving the supplementary group unpinned while
+      runAsNonRoot keeps the container off root. The bundles are SHA-256 pinned artifacts vendored
+      verbatim and trivy reads the raw file, so a kustomize patch would change the deployed posture
+      without clearing the finding. They ship only to the docker (local/CI) provider and are
+      excluded from the production overlay.
   - id: KSV-0041
     paths:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml

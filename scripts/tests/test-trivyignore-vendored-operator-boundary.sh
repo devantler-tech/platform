@@ -59,7 +59,7 @@ readonly first_party_pairs=(
 )
 
 # Every check id dispositioned for the vendored bundles. Keep in sync with .trivyignore.yaml.
-readonly checks=(KSV-0014 KSV-0041 KSV-0046 KSV-0053 KSV-0056 KSV-0114)
+readonly checks=(KSV-0014 KSV-0020 KSV-0021 KSV-0041 KSV-0046 KSV-0053 KSV-0056 KSV-0114)
 
 status=0
 
