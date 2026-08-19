@@ -246,18 +246,24 @@ if [ "$vault_ns" != "openbao" ]; then
   printf 'PREMISE BROKEN: %s is namespaced to %s, not openbao\n' "$vault_config_role" "${vault_ns:-unset}" >&2
   status=1
 fi
+# A WHITELIST, deliberately: the blacklist this replaced named list/watch/delete and therefore
+# missed every other widening — most importantly a literal `*`, which grants all of them at once.
+# `set -f` is what makes that case reachable at all: without it the unquoted split glob-expands `*`
+# into filenames, none of which match, so the check passes over the broadest possible grant.
 while IFS= read -r rule; do
   [ -n "$rule" ] || continue
   rule_names="${rule%%|*}"
   rule_verbs="${rule#*|}"
   old_ifs="$IFS"
+  set -f
   IFS=','
   for v in $rule_verbs; do
     [ -n "$v" ] || continue
     case "$v" in
-      list | watch | delete | deletecollection)
+      create | get | update | patch) ;;
+      *)
         IFS="$old_ifs"
-        printf 'PREMISE BROKEN: %s grants %s on secrets; the KSV-0113 disposition assumes the identity cannot enumerate or destroy Secrets in openbao\n' "$vault_config_role" "$v" >&2
+        printf 'PREMISE BROKEN: %s grants %s on secrets; the KSV-0113 disposition assumes create/get/update/patch only, so the identity cannot enumerate or destroy Secrets in openbao\n' "$vault_config_role" "$v" >&2
         status=1
         IFS=','
         ;;
@@ -270,6 +276,7 @@ while IFS= read -r rule; do
     fi
   done
   IFS="$old_ifs"
+  set +f
 done < <(yq -N '.rules[] | ((.resourceNames // []) | join(",")) + "|" + ((.verbs // []) | join(","))' "$repo_root/$vault_config_role")
 
 [ "$status" -eq 0 ] || exit 1
