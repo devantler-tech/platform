@@ -30,8 +30,10 @@ readonly EXCEPTED_PATH="k8s/clusters/prod/bootstrap/config-map.yaml"
 readonly PROBE_PATH="k8s/bases/apps/trivyignore-boundary-probe/config-map.yaml"
 readonly CHECK_ID="KSV-01010"
 
-fail() { echo "FAIL: $*" >&2; exit 1; }
-
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
 
 # --- Layer 1: structural checks. These need only yq, so they still hold in a CI job that has no
 # --- trivy — which is exactly where the behavioural control below would otherwise skip silently.
@@ -68,9 +70,12 @@ fi
 echo "PASS(structural): $CHECK_ID is path-scoped to exactly the 3 reviewed ConfigMaps."
 
 # --- Layer 2: behavioural paired control. Needs trivy; skips (loudly) where it is unavailable.
-command -v trivy >/dev/null 2>&1 || { echo "SKIP(behavioural): trivy not installed; structural checks above still passed"; exit 0; }
+command -v trivy >/dev/null 2>&1 || {
+  echo "SKIP(behavioural): trivy not installed; structural checks above still passed"
+  exit 0
+}
 [ -r "$IGNOREFILE" ] || fail "ignorefile not readable: $IGNOREFILE"
-[ -r "$SOURCE_CM" ]  || fail "source ConfigMap not readable: $SOURCE_CM"
+[ -r "$SOURCE_CM" ] || fail "source ConfigMap not readable: $SOURCE_CM"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -79,7 +84,10 @@ mkdir -p "$WORK/$(dirname "$EXCEPTED_PATH")" "$WORK/$(dirname "$PROBE_PATH")"
 cp "$SOURCE_CM" "$WORK/$EXCEPTED_PATH"
 cp "$SOURCE_CM" "$WORK/$PROBE_PATH"
 cp "$IGNOREFILE" "$WORK/.trivyignore.yaml"
-[ -d "${REPO_ROOT}/.trivy/data" ] && { mkdir -p "$WORK/.trivy"; cp -R "${REPO_ROOT}/.trivy/data" "$WORK/.trivy/data"; }
+[ -d "${REPO_ROOT}/.trivy/data" ] && {
+  mkdir -p "$WORK/.trivy"
+  cp -R "${REPO_ROOT}/.trivy/data" "$WORK/.trivy/data"
+}
 
 # Byte-identical is the whole point of a paired control — assert it rather than trusting cp.
 if ! cmp -s "$WORK/$EXCEPTED_PATH" "$WORK/$PROBE_PATH"; then
@@ -95,8 +103,9 @@ count_at() {
 }
 
 scan() {
-  local out="$1"; shift
-  ( cd "$WORK" && trivy fs --scanners misconfig --config-data .trivy/data --format json "$@" . ) > "$out" 2>/dev/null
+  local out="$1"
+  shift
+  (cd "$WORK" && trivy fs --scanners misconfig --config-data .trivy/data --format json "$@" .) >"$out" 2>/dev/null
 }
 
 # --- Ablation first: WITHOUT the ignorefile both copies must report, or the test proves nothing. ---
