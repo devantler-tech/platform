@@ -184,6 +184,10 @@ jobs:
               - 'scripts/tests/test-crossplane-egress-policy.sh'
               - 'scripts/tests/crossplane-egress-policy-rules.yaml'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
+              # The Job manifest, the Secret it imports and this test are one
+              # contract: the credential is only out of the environment while all
+              # three agree.
+              - 'scripts/tests/test-minio-create-bucket-credentials.sh'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
               - 'scripts/dr-rebuild-supersession-guard.sh'
@@ -583,6 +587,15 @@ jobs:
         # delivery so both silent-zero guards and the credential's handling are
         # pinned by behaviour rather than by schema.
         run: bash scripts/tests/test-cnpg-degraded-alert.sh
+
+      - name: 🔑 Validate the MinIO bucket Job's credential handling
+        if: needs.changes.outputs.k8s == 'true'
+        # checkov CKV_K8S_35 was dispositioned here by moving the root
+        # credential out of the environment and into a mounted file. That
+        # only holds while the Job imports the file, keeps the credential
+        # out of argv, and waits on a command that actually reaches MinIO —
+        # none of which schema validation can see.
+        run: bash scripts/tests/test-minio-create-bucket-credentials.sh
 
       - name: 🧭 Validate the DR rebuild supersession gate
         if: needs.changes.outputs.k8s == 'true'
