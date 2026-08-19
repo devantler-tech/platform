@@ -384,12 +384,15 @@ misconfigurations:
     statement: >-
       Unlike the three entries above this grant IS cluster-wide, and deliberately so: the KRO
       controller runs with rbac.mode aggregation and holds NO standing access of its own,
-      aggregating only ClusterRoles labelled rbac.kro.run/aggregate-to-controller. This role grants
-      exactly the child kinds the WebApp ResourceGraphDefinition renders — Deployment, Service,
-      HTTPRoute — and a WebApp instance may be created in any namespace, so the Deployment grant
-      cannot be namespace-scoped without breaking the RGD. Each RGD's blast radius is therefore its
-      own declared resources. The same subject's controller-grade breadth is already accepted on
-      the Kubescape side, where cluster-security-exceptions/delete-rbac.yaml excepts the
+      aggregating only ClusterRoles labelled rbac.kro.run/aggregate-to-controller. The role carries
+      two grants. The first is the instance kind itself — get/list/watch/update/patch on kro.run
+      webapps and webapps/status — which KRO's per-RGD micro-controller needs to open its informer
+      and write status back; without it the RGD never reaches Active. The second is the child kinds
+      the WebApp ResourceGraphDefinition renders — Deployment, Service, HTTPRoute — and it is the
+      Deployment verbs that this check reports. A WebApp instance may be created in any namespace,
+      so that grant cannot be namespace-scoped without breaking the RGD. Each RGD's blast radius is
+      therefore its own declared resources. The same subject's controller-grade breadth is already
+      accepted on the Kubescape side, where cluster-security-exceptions/delete-rbac.yaml excepts the
       kro:controller ClusterRoleBinding; leaving this reported while that stands would be the two
       scanners disagreeing about one deliberate decision.
   - id: KSV-0113

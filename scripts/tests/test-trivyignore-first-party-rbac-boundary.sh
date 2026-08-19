@@ -212,6 +212,20 @@ if [ "$kyverno_ns" != "umami" ]; then
   printf 'PREMISE BROKEN: %s is namespaced to %s, not umami\n' "$kyverno_role" "${kyverno_ns:-unset}" >&2
   status=1
 fi
+# The grant is ONE rule over apps/deployments and nothing else. Without this, a rule pinned to the
+# same resourceNames but naming statefulsets — or a second rule entirely — satisfies every check
+# below while reaching a different workload kind.
+kyverno_rules="$(yq -N '.rules | length' "$repo_root/$kyverno_role" 2>/dev/null || printf '0')"
+if [ "${kyverno_rules:-0}" -ne 1 ]; then
+  printf 'PREMISE BROKEN: %s declares %s rules; the KSV-0048 disposition assumes exactly one\n' "$kyverno_role" "${kyverno_rules:-unset}" >&2
+  status=1
+fi
+while IFS= read -r shape; do
+  if [ "$shape" != "apps/deployments" ]; then
+    printf 'PREMISE BROKEN: a rule in %s targets [%s], not apps/deployments; the KSV-0048 disposition assumes the one generated Deployment\n' "$kyverno_role" "${shape:-<empty>}" >&2
+    status=1
+  fi
+done < <(yq -N '.rules[] | ((.apiGroups // []) | join(",")) + "/" + ((.resources // []) | join(","))' "$repo_root/$kyverno_role")
 # Every rule must name the one Deployment. An empty resourceNames yields the literal below.
 while IFS= read -r names; do
   if [ "$names" != "umami-umami-primary" ]; then
@@ -246,6 +260,21 @@ if [ "$vault_ns" != "openbao" ]; then
   printf 'PREMISE BROKEN: %s is namespaced to %s, not openbao\n' "$vault_config_role" "${vault_ns:-unset}" >&2
   status=1
 fi
+# Both rules must be core-group Secret rules, and there must be exactly two of them. Without this,
+# a third rule — or a rule over some other group/resource — rides along unexamined, and the verb
+# whitelist below would happily approve `create` on something that is not a Secret at all.
+vault_rules="$(yq -N '.rules | length' "$repo_root/$vault_config_role" 2>/dev/null || printf '0')"
+if [ "${vault_rules:-0}" -ne 2 ]; then
+  printf 'PREMISE BROKEN: %s declares %s rules; the KSV-0113 disposition assumes exactly two (unscoped create, scoped read/write)\n' "$vault_config_role" "${vault_rules:-unset}" >&2
+  status=1
+fi
+while IFS= read -r shape; do
+  if [ "$shape" != "/secrets" ]; then
+    printf 'PREMISE BROKEN: a rule in %s targets [%s], not the core group secrets; the KSV-0113 disposition is about Secrets in openbao only\n' "$vault_config_role" "${shape:-<empty>}" >&2
+    status=1
+  fi
+done < <(yq -N '.rules[] | ((.apiGroups // []) | join(",")) + "/" + ((.resources // []) | join(","))' "$repo_root/$vault_config_role")
+
 # A WHITELIST, deliberately: the blacklist this replaced named list/watch/delete and therefore
 # missed every other widening — most importantly a literal `*`, which grants all of them at once.
 # `set -f` is what makes that case reachable at all: without it the unquoted split glob-expands `*`
@@ -254,6 +283,12 @@ while IFS= read -r rule; do
   [ -n "$rule" ] || continue
   rule_names="${rule%%|*}"
   rule_verbs="${rule#*|}"
+  # Exact equality, not merely non-empty: a rule scoped to some OTHER Secret name is still scoped,
+  # so a non-empty test would approve read/write on a Secret nobody reviewed.
+  if [ -n "$rule_names" ] && [ "$rule_names" != "openbao-unseal" ]; then
+    printf 'PREMISE BROKEN: %s scopes a rule to [%s], not openbao-unseal; the KSV-0113 disposition assumes that one Secret\n' "$vault_config_role" "$rule_names" >&2
+    status=1
+  fi
   old_ifs="$IFS"
   set -f
   IFS=','
