@@ -65,6 +65,15 @@ if grep -q 'secretKeyRef' <<<"${env_block}"; then
 fi
 pass "no secretKeyRef in the container environment"
 
+# mc also honours an undocumented MC_HOST_<alias> variable carrying the whole
+# credential inline. checkov looks for a secretKeyRef, so it would NOT flag
+# that -- it is the same exposure in a shape the scanner cannot see, which
+# makes it the more likely way for this fix to be quietly undone.
+if grep -qE 'MC_HOST' <<<"${env_block}"; then
+  fail "CKV_K8S_35: an MC_HOST_* variable carries the credential in the environment; import it from the mounted file instead"
+fi
+pass "no MC_HOST_* variable in the container environment"
+
 # The check above is also satisfied by simply deleting the credential, which
 # would break the Job instead of hardening it. Assert the Secret still reaches
 # the pod as a volume.
