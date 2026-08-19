@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# The off-cluster mirror must not depend on being the snapshot's OWNER.
+# The off-cluster mirror reads the snapshot as GROUP, not as its OWNER.
 #
-# `bao operator raft snapshot save` creates the file at the process umask and it
-# lands `-rw-------` (0600), owned by the snapshot container's UID. `minio/mc`
-# bakes no matching passwd entry and mounts /snapshots readOnly, so today it can
-# open the snapshot only because it happens to run the same UID. That coupling is
-# what pins all three vault-snapshots writers to a low host UID (checkov
-# CKV_K8S_40, deferred to #3202).
+# `bao` creates the snapshot `-rw-------` (0600), owned by the snapshot
+# container's UID. The kernel decides file access by comparing numeric UID and
+# GID values, so an owner-only mode forces the mirror to run the same UID as the
+# writer. That coupling is what pins every vault-snapshots writer to one low host
+# UID (checkov CKV_K8S_40, whose migration is deferred to #3202).
 #
-# Making the snapshot group-readable breaks the coupling: both containers already
-# run runAsGroup/fsGroup 1000, so the mirror can read it as GROUP and the UIDs
-# become free to move independently.
+# Both containers already run runAsGroup/fsGroup 1000, so a group-readable
+# snapshot is readable by the mirror on its GROUP entry alone, leaving the UIDs
+# free to move independently.
 #
 # NOTE ON MECHANISM: this must be an explicit chmod, not a umask. umask can only
 # CLEAR permission bits, never add them — so if `bao` requests 0600 explicitly (the
@@ -52,20 +51,25 @@ for target in "${targets[@]}"; do
     fail "${manifest}: could not read the snapshot container's script"
   fi
 
+  # Comments are prose, not commands: a line that merely MENTIONS a save or a
+  # chmod must not count toward either binding, or adding a note beside the
+  # command would fail the test while the script itself was still correct.
+  commands="$(printf '%s\n' "${script}" | grep -vE '^[[:space:]]*#' || true)"
+
   # The save operand is the binding key. More than one save makes "the snapshot"
   # ambiguous, so refuse rather than guess which one the chmod should match.
-  save_count="$(printf '%s\n' "${script}" | grep -c 'raft snapshot save' || true)"
+  save_count="$(printf '%s\n' "${commands}" | grep -c 'raft snapshot save' || true)"
   [ "${save_count}" -eq 1 ] ||
     fail "${manifest}: expected exactly 1 'raft snapshot save', found ${save_count} — binding is ambiguous"
 
-  save_operand="$(printf '%s\n' "${script}" |
+  save_operand="$(printf '%s\n' "${commands}" |
     sed -n 's/.*raft snapshot save[[:space:]]*//p' |
     head -1 |
     tr -d '"'"'"'')"
   [ -n "${save_operand}" ] || fail "${manifest}: could not extract the snapshot save operand"
 
   # Now require a chmod naming that SAME operand.
-  chmod_line="$(printf '%s\n' "${script}" | grep -E '^[[:space:]]*chmod[[:space:]]' || true)"
+  chmod_line="$(printf '%s\n' "${commands}" | grep -E '^[[:space:]]*chmod[[:space:]]' || true)"
   [ -n "${chmod_line}" ] ||
     fail "${manifest}: the snapshot script never chmods the snapshot; the mirror still depends on owning it (#3202)"
 

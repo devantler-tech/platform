@@ -46,7 +46,7 @@ metadata:
     # is a host UID. That residual is what #3202 removes: it makes the
     # snapshot group-readable first, then raises the UIDs, which the three
     # writers sharing this one RWO PVC have to do together.
-    checkov.io/skip2: "CKV_K8S_40=deferred to #3202 -- the snapshot container's 100 is the openbao image's baked `openbao:x:100:1000` user, and the mirror container must match it to read the -rw------- snapshot from the shared RWO PVC"
+    checkov.io/skip2: "CKV_K8S_40=deferred to #3202 -- the snapshot container's 100 is the openbao image's baked `openbao:x:100:1000` user, and the snapshot is chmod 0640 so the mirror reads it on the shared group 1000 -- only the UID migration itself is outstanding"
 spec:
   # No ttlSecondsAfterFinished (intentional). This is a one-shot "snapshot at
   # deploy/change time" Job (see header) -- it must run ONCE per vault-backup
@@ -156,12 +156,13 @@ spec:
               SNAP="/snapshots/openbao-$(date -u +%Y%m%d-%H%M%S).snap"
               echo "Saving initial raft snapshot to $SNAP..."
               bao operator raft snapshot save "$SNAP"
-              # Group-readable so the off-cluster mirror can open it as GROUP
-              # (both containers already run fsGroup/runAsGroup 1000) instead of
-              # as OWNER, which is what currently pins every vault-snapshots
-              # writer to one low host UID (CKV_K8S_40, #3202). An explicit
-              # chmod, NOT a umask: umask can only clear permission bits, so it
-              # cannot widen the 0600 that `bao` creates the snapshot with.
+              # The mirror opens the snapshot as GROUP: both containers run
+              # fsGroup/runAsGroup 1000, and the kernel checks access on the numeric
+              # GID, so reading it needs no matching owner UID. An explicit chmod,
+              # NOT a umask: umask can only clear permission bits, so it cannot
+              # widen the 0600 `bao` creates the file with. The writers' UIDs stay
+              # pinned until the migration in #3202 (CKV_K8S_40); this removes the
+              # access coupling that blocked it.
               chmod 0640 "$SNAP"
               ls -l "$SNAP"
               echo "Initial snapshot complete."
