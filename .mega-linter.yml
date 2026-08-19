@@ -171,10 +171,12 @@ DISABLE_ERRORS_LINTERS:
   # scripts/tests/test-trivyignore-first-party-rbac-boundary.sh, which fails the build if any of
   # those premises stops holding — a disposition outliving its reason is the failure mode here.
   #
-  # The 2 that remain are both KSV-0014 on the vendored operator Deployments, deliberately left
-  # reporting. Note that the kustomize patch that note anticipates hardens the RENDERED workload
-  # but does NOT clear the finding: trivy scans the raw vendored file, not the kustomize output
-  # (measured). #2990 owns closing that last pair.
+  # None remain. The last 2 were both KSV-0014 on the vendored operator Deployments, dispositioned
+  # by #3228 rather than patched: a kustomize patch hardens the RENDERED workload but does NOT clear
+  # the finding, because trivy scans the raw vendored file and not the kustomize output (measured).
+  # Upstream omits only this one container control while setting every other, and the two
+  # Deployments ship to the docker (local/CI) provider alone — the premise the boundary test
+  # asserts, so the exception fails the build if the VM stack ever reaches production.
   #
   # checkov is at 0 failed checks on all three frameworks CI runs. Its last two findings were both
   # CKV_K8S_40, on the two vault-backup workloads, and #2904 dispositioned them as a scoped
