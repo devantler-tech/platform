@@ -53,14 +53,23 @@ readonly VENDORED_CDI='k8s/bases/infrastructure/controllers/cdi/cdi-operator.yam
 readonly VENDORED_KUBEVIRT='k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml'
 
 status=0
-fail() { printf '%s\n' "$*" >&2; status=1; }
+fail() {
+  printf '%s\n' "$*" >&2
+  status=1
+}
 
 command -v yq >/dev/null 2>&1 || {
   printf 'yq is required to check the vault-config identity disposition boundary\n' >&2
   exit 1
 }
-[ -r "$IGNOREFILE" ] || { printf 'ignorefile not readable: %s\n' "$IGNOREFILE" >&2; exit 1; }
-[ -r "$REPO_ROOT/$JOB_PATH" ] || { printf 'Job not readable: %s\n' "$JOB_PATH" >&2; exit 1; }
+[ -r "$IGNOREFILE" ] || {
+  printf 'ignorefile not readable: %s\n' "$IGNOREFILE" >&2
+  exit 1
+}
+[ -r "$REPO_ROOT/$JOB_PATH" ] || {
+  printf 'Job not readable: %s\n' "$JOB_PATH" >&2
+  exit 1
+}
 
 # ---------------------------------------------------------------- structure --
 # A yq failure must take the missing-entry path rather than become an integer-expression error that
@@ -130,7 +139,10 @@ mkdir -p "$WORK/$(dirname "$JOB_PATH")" "$WORK/$(dirname "$PROBE_PATH")"
 cp "$REPO_ROOT/$JOB_PATH" "$WORK/$JOB_PATH"
 cp "$REPO_ROOT/$JOB_PATH" "$WORK/$PROBE_PATH"
 cp "$IGNOREFILE" "$WORK/.trivyignore.yaml"
-[ -d "$REPO_ROOT/.trivy/data" ] && { mkdir -p "$WORK/.trivy"; cp -R "$REPO_ROOT/.trivy/data" "$WORK/.trivy/data"; }
+[ -d "$REPO_ROOT/.trivy/data" ] && {
+  mkdir -p "$WORK/.trivy"
+  cp -R "$REPO_ROOT/.trivy/data" "$WORK/.trivy/data"
+}
 
 # Byte-identical is the whole point of a paired control — assert it rather than trusting cp.
 cmp -s "$WORK/$JOB_PATH" "$WORK/$PROBE_PATH" || {
@@ -143,22 +155,38 @@ count_at() {
     '[ .Results[]? | select(.Target == $t) | .Misconfigurations[]? | select(.ID == $id and .Status == "FAIL") ] | length' "$1"
 }
 
-scan() { local out="$1"; shift; (cd "$WORK" && trivy fs --scanners misconfig --config-data .trivy/data --format json "$@" .) >"$out" 2>/dev/null; }
+scan() {
+  local out="$1"
+  shift
+  (cd "$WORK" && trivy fs --scanners misconfig --config-data .trivy/data --format json "$@" .) >"$out" 2>/dev/null
+}
 
 # --- Ablation first: without the ignorefile BOTH copies must report, or this proves nothing. ---
 scan "$WORK/no-ignore.json"
 base_job="$(count_at "$WORK/no-ignore.json" "$JOB_PATH")"
 base_probe="$(count_at "$WORK/no-ignore.json" "$PROBE_PATH")"
-[ "$base_job" -gt 0 ] || { printf 'VACUOUS: without the ignorefile, %s does not fire at %s, so suppressing it below would prove nothing (a trivy rule change?).\n' "$CHECK_ID" "$JOB_PATH" >&2; exit 1; }
-[ "$base_probe" -gt 0 ] || { printf 'VACUOUS: without the ignorefile, %s does not fire at %s.\n' "$CHECK_ID" "$PROBE_PATH" >&2; exit 1; }
+[ "$base_job" -gt 0 ] || {
+  printf 'VACUOUS: without the ignorefile, %s does not fire at %s, so suppressing it below would prove nothing (a trivy rule change?).\n' "$CHECK_ID" "$JOB_PATH" >&2
+  exit 1
+}
+[ "$base_probe" -gt 0 ] || {
+  printf 'VACUOUS: without the ignorefile, %s does not fire at %s.\n' "$CHECK_ID" "$PROBE_PATH" >&2
+  exit 1
+}
 
 # --- With the ignorefile: the dispositioned path is suppressed, the probe is NOT. ---
 scan "$WORK/with-ignore.json" --ignorefile .trivyignore.yaml
 scoped_job="$(count_at "$WORK/with-ignore.json" "$JOB_PATH")"
 scoped_probe="$(count_at "$WORK/with-ignore.json" "$PROBE_PATH")"
 
-[ "$scoped_job" -eq 0 ] || { printf 'the disposition does not cover %s (%s finding(s) still reported)\n' "$JOB_PATH" "$scoped_job" >&2; exit 1; }
-[ "$scoped_probe" -gt 0 ] || { printf 'BOUNDARY BREACHED: identical bytes at the non-dispositioned path %s are ALSO suppressed, so the %s entry has stopped being path-scoped and a genuinely unjustified low-UID workload would now be hidden. Re-scope the entry in .trivyignore.yaml.\n' "$PROBE_PATH" "$CHECK_ID" >&2; exit 1; }
+[ "$scoped_job" -eq 0 ] || {
+  printf 'the disposition does not cover %s (%s finding(s) still reported)\n' "$JOB_PATH" "$scoped_job" >&2
+  exit 1
+}
+[ "$scoped_probe" -gt 0 ] || {
+  printf 'BOUNDARY BREACHED: identical bytes at the non-dispositioned path %s are ALSO suppressed, so the %s entry has stopped being path-scoped and a genuinely unjustified low-UID workload would now be hidden. Re-scope the entry in .trivyignore.yaml.\n' "$PROBE_PATH" "$CHECK_ID" >&2
+  exit 1
+}
 
 printf 'PASS(behaviour): %s is path-scoped.\n' "$CHECK_ID"
 printf '  without ignorefile : job=%s  probe=%s   (ablation fired)\n' "$base_job" "$base_probe"

@@ -108,16 +108,16 @@ for check in "${checks[@]}"; do
             reviewed=1
             break
           fi
-        # Second reviewed category: a workload-identity verdict, guarded by its own premises
-        # test rather than by the RBAC one above.
-        if [ "$reviewed" -eq 0 ]; then
-          for wp in "${reviewed_workload_pairs[@]}"; do
-            if [ "$check:$path" = "$wp" ]; then
-              reviewed=1
-              break
-            fi
-          done
-        fi
+          # Second reviewed category: a workload-identity verdict, guarded by its own premises
+          # test rather than by the RBAC one above.
+          if [ "$reviewed" -eq 0 ]; then
+            for wp in "${reviewed_workload_pairs[@]}"; do
+              if [ "$check:$path" = "$wp" ]; then
+                reviewed=1
+                break
+              fi
+            done
+          fi
         done
         if [ "$reviewed" -eq 0 ]; then
           printf 'WIDENED SKIP: %s is scoped to %s, which is neither a vendored operator bundle nor a reviewed first-party or workload-identity disposition for THAT check\n' "$check" "$path" >&2
