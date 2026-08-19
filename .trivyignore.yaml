@@ -357,9 +357,11 @@ misconfigurations:
       bound ONLY by a namespace-scoped RoleBinding to the tenant's own ServiceAccount in its own
       namespace (resource-graph-definitions/tenant), so managing workloads is confined to that one
       namespace and cannot reach any other. Verified: no ClusterRoleBinding references this role in
-      the repository or on the live cluster, where the only bindings are three namespace-scoped
-      RoleBindings (ascoachingogvaner, doggy-countdown, wedding-app). The role also omits the
-      exec-family pod subresources, so it cannot exec into the pods it manages.
+      the repository or on the live cluster, where every binding is a namespace-scoped RoleBinding
+      to a single tenant ServiceAccount (three at the time of writing: ascoachingogvaner,
+      doggy-countdown, wedding-app; onboarding another tenant adds a fourth without weakening
+      this). The role also omits the exec-family pod subresources, so it cannot exec into the pods
+      it manages.
   - id: KSV-0049
     paths:
       - k8s/bases/infrastructure/cluster-roles/tenant-base-edit.yaml
