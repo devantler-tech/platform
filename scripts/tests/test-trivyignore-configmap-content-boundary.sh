@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The KSV-01010 dispositions in .trivyignore.yaml are PATH-SCOPED, and this test is what keeps that
-# scoping meaningful.
+# The two ConfigMap dispositions in .trivyignore.yaml rest on premises trivy cannot re-check, and
+# this test is what keeps them honest: KSV-01010 is PATH-SCOPED, and both it and KSV-0109 are
+# excepted against a reviewed key set.
 #
 # WHY THIS EXISTS
 # KSV-01010 "ConfigMap with sensitive content" matches key and value TEXT, so it cannot tell a
@@ -269,8 +270,8 @@ readonly REVIEWED_KEYS_actual="const secretKey,enablebanking_secretKey"
 
 # Extract the brace-delimited key list trivy reports for one target, normalise it, and join.
 matched_keys_at() {
-  local json="$1" target="$2"
-  jq -r --arg t "$target" --arg id "$CHECK_ID" \
+  local json="$1" target="$2" id="$3"
+  jq -r --arg t "$target" --arg id "$id" \
     '[ .Results[]? | select(.Target == $t) | .Misconfigurations[]? | select(.ID == $id) | .Message ] | join(" ")' \
     "$json" |
     grep -oE '\{[^}]*\}' |
@@ -281,34 +282,72 @@ matched_keys_at() {
     paste -sd, -
 }
 
-TREEWIDE="$(jq -r --arg id "$CHECK_ID" '[ .Results[]?.Misconfigurations[]? | select(.ID == $id) ] | length' "$WORK/no-ignore.json")"
-readonly TREEWIDE
+# Assert that each excepted file still matches exactly the key set its exception was reviewed
+# against. Shared by both checks: a copied loop would let one of them drift or be narrowed while
+# the other kept reporting PASS.
+#
+# args: <check id> then one "path:reviewed-set" pair per excepted file.
+assert_reviewed_key_sets() {
+  local id="$1"
+  shift
+  local treewide
+  treewide="$(jq -r --arg id "$id" \
+    '[ .Results[]?.Misconfigurations[]? | select(.ID == $id) ] | length' "$WORK/no-ignore.json")"
 
-if [ "$TREEWIDE" -eq 0 ]; then
-  # The running trivy does not implement this check at all (CI pins an older version than the one
-  # these sets were reviewed with). Nothing to assert, and nothing is wrong — say so rather than
-  # failing, and rather than passing silently.
-  echo "SKIP(premise): $CHECK_ID is not emitted by this trivy version; matched-key sets not asserted."
-else
-  premise_behavioural_failures=0
-  for pair in \
-    "k8s/clusters/prod/bootstrap/config-map.yaml:$REVIEWED_KEYS_prod" \
-    "k8s/clusters/local/bootstrap/config-map.yaml:$REVIEWED_KEYS_local" \
-    "k8s/bases/apps/actual-budget/config-map.yaml:$REVIEWED_KEYS_actual"; do
+  if [ "$treewide" -eq 0 ]; then
+    # The running trivy does not implement this check at all (CI may pin an older version than the
+    # one these sets were reviewed with). Nothing to assert, and nothing is wrong — say so rather
+    # than failing, and rather than passing silently.
+    echo "SKIP(premise): $id is not emitted by this trivy version; matched-key sets not asserted."
+    return 0
+  fi
+
+  local failures=0 pair cm want got
+  for pair in "$@"; do
     cm="${pair%%:*}"
     want="${pair#*:}"
-    got="$(matched_keys_at "$WORK/no-ignore.json" "$cm")"
+    got="$(matched_keys_at "$WORK/no-ignore.json" "$cm" "$id")"
     if [ "$got" != "$want" ]; then
-      echo "FAIL: $cm — $CHECK_ID matches a different key set than was reviewed." >&2
+      echo "FAIL: $cm — $id matches a different key set than was reviewed." >&2
       echo "  reviewed: $want" >&2
       echo "  actual  : $got" >&2
-      premise_behavioural_failures=$((premise_behavioural_failures + 1))
+      failures=$((failures + 1))
     fi
   done
 
-  [ "$premise_behavioural_failures" -eq 0 ] || fail \
-    "the exception for the file(s) above was written against a reviewed key set that no longer \
-matches. A new key means new content this disposition was never reviewed to cover."
+  [ "$failures" -eq 0 ] || fail \
+    "the $id exception for the file(s) above was written against a reviewed key set that no longer \
+matches. A new key means new content this disposition was never reviewed to cover — move the value \
+to a Secret, or re-review the exception."
 
-  echo "PASS(premise): each excepted file matches exactly the reviewed key set."
-fi
+  echo "PASS(premise): each $id-excepted file matches exactly the reviewed key set."
+}
+
+assert_reviewed_key_sets "$CHECK_ID" \
+  "k8s/clusters/prod/bootstrap/config-map.yaml:$REVIEWED_KEYS_prod" \
+  "k8s/clusters/local/bootstrap/config-map.yaml:$REVIEWED_KEYS_local" \
+  "k8s/bases/apps/actual-budget/config-map.yaml:$REVIEWED_KEYS_actual"
+
+# --- The KSV-0109 dispositions' content premises. ---
+# KSV-0109 "ConfigMap stores secrets" is the other ConfigMap check, and it is the one that matches
+# credential-shaped KEY NAMES rather than value text. Two files are excepted from it:
+#
+#   k8s/clusters/prod/bootstrap/config-map.yaml   — matched on external_secrets_replicas, a public
+#                                                   controller replica count. The word "secrets"
+#                                                   appears in the key name; no secret material is
+#                                                   present.
+#   k8s/bases/apps/actual-budget/config-map.yaml  — matched on the identifiers in embedded
+#                                                   JavaScript that READS credentials from an
+#                                                   ESO-mounted Secret.
+#
+# Both dispositions are scoped per FILE, so they cover whatever those files hold — including a
+# credential added later under a key nobody reviewed. Such an addition moves no count, because the
+# finding at that path is already suppressed, so neither the scan total nor the path-scoping checks
+# above can see it. Asserting the matched-key SET is what makes it fail.
+readonly CHECK_ID_0109="KSV-0109"
+readonly REVIEWED_0109_prod="external_secrets_replicas"
+readonly REVIEWED_0109_actual="const secretKey,enablebanking_secretKey"
+
+assert_reviewed_key_sets "$CHECK_ID_0109" \
+  "k8s/clusters/prod/bootstrap/config-map.yaml:$REVIEWED_0109_prod" \
+  "k8s/bases/apps/actual-budget/config-map.yaml:$REVIEWED_0109_actual"
