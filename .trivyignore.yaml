@@ -138,9 +138,44 @@ misconfigurations:
   # reaches the second, so widening a glob or dropping a paths key breaks the build instead of
   # silently going quiet.
   #
-  # Deliberately NOT covered here: KSV-0014 on the two operator Deployments. A read-only root
-  # filesystem is a container setting rather than an RBAC grant, so a kustomize patch can supply
-  # it without touching upstream's rules, and it stays reported.
+  # ALSO covered here: KSV-0014 on the two operator Deployments, the last two HIGH findings on this
+  # tree (#3228). An earlier revision of this block deferred it, reasoning that a read-only root
+  # filesystem is a container setting rather than an RBAC grant, so a kustomize patch could supply
+  # it without touching upstream's rules. Three measured facts retired that plan.
+  #
+  # First, a kustomize patch cannot clear this finding. trivy scans the raw committed file, not the
+  # rendered overlay output, so patching moves the deployed posture while the count stays at two —
+  # the effect is real but invisible here, and the check would keep failing the gate forever.
+  #
+  # Second, upstream omits the setting deliberately. Both bundles already set
+  # allowPrivilegeEscalation: false, drop ALL capabilities and run as non-root; readOnlyRootFilesystem
+  # is the one container control they leave out, which reads as a requirement of the operators rather
+  # than an oversight. Forcing it on without upstream's agreement risks a crash-loop on a component
+  # whose write paths we do not own.
+  #
+  # Third, and decisive for the severity: these two Deployments never run in production. The VM
+  # stack is the base aggregate's ONE exclusion — k8s/bases/infrastructure/controllers/kustomization.yaml
+  # documents it, and the hetzner overlay's header records why (no VirtualMachines or DataVolumes
+  # exist on Hetzner, and virt-handler crash-looped with zero VMs). They ship only through
+  # k8s/providers/docker/, the local/CI test-bed. Confirmed against the live prod cluster on
+  # 2026-08-19: zero cdi/kubevirt pods and zero such Deployments, CRDs only.
+  #
+  # So this is a scoped exception on a control that is genuinely irreducible HERE, not a threshold.
+  # KSV-0014 stays live on every other workload in the repository, including every first-party
+  # Deployment, and the local/CI-only premise the third point rests on is asserted by
+  # scripts/tests/test-trivyignore-vendored-operator-boundary.sh rather than left to review: if any
+  # non-docker overlay ever reaches these bundles, the build fails instead of quietly keeping an
+  # exception whose reason has expired.
+  - id: KSV-0014
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Upstream ships both operator Deployments with allowPrivilegeEscalation disabled, all
+      capabilities dropped and runAsNonRoot set, omitting only readOnlyRootFilesystem; the bundles
+      are SHA-256 pinned artifacts vendored verbatim, and trivy reads the raw file, so a kustomize
+      patch would change the deployed posture without clearing this finding. The two Deployments
+      ship only to the docker (local/CI) provider and are excluded from the production overlay.
   - id: KSV-0041
     paths:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
