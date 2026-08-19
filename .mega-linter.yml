@@ -138,10 +138,12 @@ DISABLE_ERRORS_LINTERS:
   # other container control, and the two Deployments ship only to the docker (local/CI) provider —
   # a premise the same boundary test asserts, so the exception fails the build if the VM stack ever
   # reaches production.
-  # It then went 36 -> 32 when KSV-0020 and KSV-0021 on those same two Deployments were
-  # dispositioned (#2787). Both bundles set runAsNonRoot: true and omit runAsUser/runAsGroup, which
-  # is what those two checks read as UID/GID <= 10000 — an absent value rather than a low one, so
-  # the kubelet still refuses to start them as root. Same three facts as KSV-0014 above, and the
+  # It then went 36 -> 32 TOTAL findings when KSV-0020 and KSV-0021 on those same two Deployments
+  # were dispositioned (#2787). Both are LOW: the HIGH/CRITICAL count was already 0 before this and
+  # stays 0 after, so this figure moves the total only. Both bundles set runAsNonRoot: true and omit
+  # runAsUser/runAsGroup, which is what those two checks read as UID/GID <= 10000 — an absent value
+  # rather than a low one. Note the two residuals differ: runAsNonRoot rejects UID 0 but constrains
+  # the UID only, so the primary GID may still be 0. Same three facts as KSV-0014 above, and the
   # same boundary test asserts them: its checks array lists both ids.
   #
   # ⚠️ That 109 is NOT 108 plus a regression. 108 was measured on trivy v0.73.0 and 109 on v0.74.0

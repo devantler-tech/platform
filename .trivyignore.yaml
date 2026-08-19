@@ -182,13 +182,19 @@ misconfigurations:
   # these two checks read as "UID/GID <= 10000" — an absent value, not a low one. The three facts
   # that carry the KSV-0014 entry above carry these unchanged: trivy reads the raw committed file,
   # so a kustomize patch would move the deployed posture while the count stayed at four; the
-  # omission is upstream's, in a SHA-256 pinned artifact vendored verbatim, and pinning a UID that
-  # upstream does not set risks a component whose filesystem ownership we do not own; and the VM
-  # stack ships only through k8s/providers/docker/, never to production.
+  # omission is upstream's, inside a release artifact whose SHA-256 update-vendored-operators.sh
+  # verifies on download before this repository adds its resource-scoped Checkov annotations (so
+  # the committed file is upstream plus those annotations, not a verbatim copy — the securityContext
+  # fields at issue here are untouched upstream ones), and pinning a UID upstream does not set risks
+  # a component whose filesystem ownership we do not own; and the VM stack ships only through
+  # k8s/providers/docker/, never to production.
   #
-  # Severity note, because it bounds what is actually being excepted: runAsNonRoot: true IS set on
-  # both, so the kubelet refuses to start these containers as root regardless. The residual is an
-  # unpinned non-root UID inside a local/CI-only workload, not a root container.
+  # Severity note, stated precisely because it bounds what is actually being excepted. runAsNonRoot
+  # rejects UID 0; it does NOT require a UID above 10000, and it constrains the UID only. So the
+  # residual differs per check: for KSV-0020 it is an unpinned but guaranteed non-root UID, while
+  # for KSV-0021 the primary GID is left image- or runtime-defined and MAY be 0 — runAsGroup sets
+  # the primary GID, not supplementary groups, and nothing here constrains it. That is a real
+  # residual, accepted only because these two Deployments never run outside the local/CI provider.
   #
   # Both ids stay live on every other workload in this repository, and the same
   # scripts/tests/test-trivyignore-vendored-operator-boundary.sh that guards KSV-0014 asserts it —
@@ -198,21 +204,25 @@ misconfigurations:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
       - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
     statement: >-
-      Both operator Deployments set runAsNonRoot but omit runAsUser, so the kubelet enforces a
-      non-root UID that the manifest does not pin. The bundles are SHA-256 pinned artifacts
-      vendored verbatim and trivy reads the raw file, so a kustomize patch would change the
-      deployed posture without clearing the finding. They ship only to the docker (local/CI)
-      provider and are excluded from the production overlay.
+      Both operator Deployments set runAsNonRoot and omit runAsUser, so the kubelet rejects UID 0
+      while the specific non-root UID stays image-defined; runAsNonRoot does not itself require a
+      UID above 10000. The bundles are upstream release artifacts whose SHA-256 is verified on
+      download before this repository adds its resource-scoped Checkov annotations, and trivy reads
+      the raw committed file, so a kustomize patch would change the deployed posture without
+      clearing the finding. They ship only to the docker (local/CI) provider and are excluded from
+      the production overlay.
   - id: KSV-0021
     paths:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
       - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
     statement: >-
-      Both operator Deployments omit runAsGroup, leaving the supplementary group unpinned while
-      runAsNonRoot keeps the container off root. The bundles are SHA-256 pinned artifacts vendored
-      verbatim and trivy reads the raw file, so a kustomize patch would change the deployed posture
-      without clearing the finding. They ship only to the docker (local/CI) provider and are
-      excluded from the production overlay.
+      Both operator Deployments omit runAsGroup, which sets the PRIMARY GID rather than any
+      supplementary group, so the primary GID stays image- or runtime-defined and may be 0;
+      runAsNonRoot constrains the UID only and does not cover this. The bundles are upstream
+      release artifacts whose SHA-256 is verified on download before this repository adds its
+      resource-scoped Checkov annotations, and trivy reads the raw committed file, so a kustomize
+      patch would change the deployed posture without clearing the finding. They ship only to the
+      docker (local/CI) provider and are excluded from the production overlay.
   - id: KSV-0041
     paths:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
