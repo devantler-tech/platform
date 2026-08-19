@@ -30,6 +30,12 @@ readonly EXCEPTED_PATH="k8s/clusters/prod/bootstrap/config-map.yaml"
 readonly PROBE_PATH="k8s/bases/apps/trivyignore-boundary-probe/config-map.yaml"
 readonly CHECK_ID="KSV-01010"
 
+# The two content-premise detectors, defined once so the self-test below exercises the SAME
+# expressions the file loop uses. A self-test against a copied regex proves nothing about the
+# regex that actually runs.
+readonly OPAQUE_VALUE_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?[A-Za-z0-9+/=_.-]{40,}"?[[:space:]]*$'
+readonly ISSUED_PREFIX_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?(gh[pousr]_|github_pat_|xox[abprs]-|sk-[A-Za-z0-9]|AKIA[A-Z0-9]{8}|ASIA[A-Z0-9]{8}|eyJ[A-Za-z0-9_-]{8,}\.)'
+
 fail() {
   echo "FAIL: $*" >&2
   exit 1
@@ -83,10 +89,23 @@ while IFS= read -r cm; do
     premise_failures=$((premise_failures + 1))
   fi
 
-  # A long unbroken base64/hex run as a VALUE is the usual shape of a pasted credential. Anchored
-  # to `key: value` so prose, comments and embedded source do not match.
-  if grep -qE '^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?[A-Za-z0-9+/=]{40,}"?[[:space:]]*$' "$REPO_ROOT/$cm"; then
+  # A long unbroken run as a VALUE is the usual shape of a pasted credential. The character class
+  # includes _ . - because modern tokens are base64url or prefixed (ghp_…, github_pat_…, JWTs); a
+  # class limited to standard base64 misses every one of them. That gap is not cosmetic: a token
+  # dropped into an EXISTING reviewed key leaves the key set unchanged, so the matched-key
+  # assertion below would not catch it either, and the file would keep its exception while
+  # holding live credential material.
+  if grep -qE "$OPAQUE_VALUE_RE" "$REPO_ROOT/$cm"; then
     echo "FAIL: $cm assigns a long opaque value that looks like credential material, but \
+$CHECK_ID is excepted for it" >&2
+    premise_failures=$((premise_failures + 1))
+  fi
+
+  # Length alone is not sufficient — several issued-credential formats are shorter than 40
+  # characters (xoxb- Slack tokens, sk- API keys). These prefixes are issuance markers rather than
+  # an entropy guess, so they are matched at any length.
+  if grep -qE "$ISSUED_PREFIX_RE" "$REPO_ROOT/$cm"; then
+    echo "FAIL: $cm assigns a value carrying an issued-credential prefix, but \
 $CHECK_ID is excepted for it" >&2
     premise_failures=$((premise_failures + 1))
   fi
@@ -100,6 +119,54 @@ because it was reviewed and found to hold no credential material. Move the value
 re-review the exception."
 
 echo "PASS(structural): content premises hold — no PEM block or opaque credential-shaped value."
+
+# --- Layer 1c: detector self-test. The premise checks above are only worth their PASS if they
+# --- actually fire, and the failure mode is silent: a detector that stops matching reports the
+# --- same "premises hold" line as one that is working.
+# ---
+# --- Each detector is asserted SEPARATELY. An OR'd assertion looks equivalent and is not: the
+# --- prefix detector catches ghp_/xoxb-/JWT fixtures on its own, so it would keep the suite green
+# --- while the opaque-value class was silently narrowed back — the exact regression this layer
+# --- exists to catch. `base64url blob` is the discriminating fixture: no issued prefix, so only
+# --- the opaque class can match it.
+selftest_failures=0
+selftest_probe="$(mktemp)"
+
+# args: <expect_opaque yes|no> <expect_prefix yes|no> <label> <value>
+check_fixture() {
+  local want_opaque="$1" want_prefix="$2" label="$3" value="$4"
+  printf '  admin_email: "%s"\n' "$value" >"$selftest_probe"
+  local got_opaque=no got_prefix=no
+  grep -qE "$OPAQUE_VALUE_RE" "$selftest_probe" && got_opaque=yes
+  grep -qE "$ISSUED_PREFIX_RE" "$selftest_probe" && got_prefix=yes
+  if [ "$got_opaque" != "$want_opaque" ] || [ "$got_prefix" != "$want_prefix" ]; then
+    echo "FAIL(selftest): $label — opaque expected=$want_opaque got=$got_opaque; \
+prefix expected=$want_prefix got=$got_prefix" >&2
+    selftest_failures=$((selftest_failures + 1))
+  fi
+}
+
+#             opaque prefix  label                    value
+check_fixture yes    yes     "github ghp_ token"      'ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8'
+check_fixture yes    yes     "github fine-grained"    'github_pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyz123456'
+check_fixture no     yes     "slack bot token"        'xoxb-123456789012-abcdef'
+check_fixture no     yes     "api key sk-"            'sk-proj-abc123'
+check_fixture no     yes     "aws access key id"      'AKIAIOSFODNN7EXAMPLE'
+check_fixture yes    yes     "jwt"                    'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghij'
+check_fixture yes    no      "long base64 blob"       'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWY='
+check_fixture yes    no      "base64url blob"         'dGVzdF92YWx1ZS13aXRoX3VuZGVyc2NvcmVzLWFuZC1kYXNoZXM_zQ'
+
+# MUST NOT be detected by either — the real reviewed values these exceptions exist for.
+check_fixture no     no      "acme contact address"   'ned@devantler.tech'
+check_fixture no     no      "public domain"          'platform.devantler.tech'
+check_fixture no     no      "public client id"       'Iv23limfvbk93bAXZI6b'
+
+rm -f "$selftest_probe"
+
+[ "$selftest_failures" -eq 0 ] || fail \
+  "$selftest_failures detector self-test failure(s). The content-premise checks above cannot be \
+trusted until these pass — a detector that no longer matches reports success identically."
+echo "PASS(selftest): both content detectors pin their own coverage (8 credential fixtures, 3 cleared)."
 
 # --- Layer 2: behavioural paired control. Needs trivy; skips (loudly) where it is unavailable.
 command -v trivy >/dev/null 2>&1 || {
