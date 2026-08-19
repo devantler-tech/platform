@@ -77,8 +77,8 @@ for target in "${targets[@]}"; do
 
   # Group must gain read; world must gain nothing (the snapshot is vault data).
   case "${chmod_mode}" in
-  [0-7][0-7][0-7] | [0-7][0-7][0-7][0-7]) ;;
-  *) fail "${manifest}: chmod mode '${chmod_mode}' is not a 3- or 4-digit octal mode" ;;
+    [0-7][0-7][0-7] | [0-7][0-7][0-7][0-7]) ;;
+    *) fail "${manifest}: chmod mode '${chmod_mode}' is not a 3- or 4-digit octal mode" ;;
   esac
   group_digit="${chmod_mode: -2:1}"
   other_digit="${chmod_mode: -1}"
