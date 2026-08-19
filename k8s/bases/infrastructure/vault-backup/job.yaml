@@ -156,6 +156,13 @@ spec:
               SNAP="/snapshots/openbao-$(date -u +%Y%m%d-%H%M%S).snap"
               echo "Saving initial raft snapshot to $SNAP..."
               bao operator raft snapshot save "$SNAP"
+              # Group-readable so the off-cluster mirror can open it as GROUP
+              # (both containers already run fsGroup/runAsGroup 1000) instead of
+              # as OWNER, which is what currently pins every vault-snapshots
+              # writer to one low host UID (CKV_K8S_40, #3202). An explicit
+              # chmod, NOT a umask: umask can only clear permission bits, so it
+              # cannot widen the 0600 that `bao` creates the snapshot with.
+              chmod 0640 "$SNAP"
               ls -l "$SNAP"
               echo "Initial snapshot complete."
       containers:
