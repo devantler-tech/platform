@@ -106,9 +106,10 @@ spec:
           automountServiceAccountToken: true
           securityContext:
             runAsNonRoot: true
-            # Above the 10000 floor rather than at the image's baked nextjs
-            # uid/gid 1001. That baked ownership constrains the umami
-            # Deployment, which writes /app/.next/cache (chowned nextjs:nodejs
+            # Above the 10000 floor rather than at the image's baked file
+            # ownership, uid 1001 / gid 1001 (`nextjs:nodejs` — the nextjs
+            # account's own primary gid is 65533). That ownership constrains
+            # the umami Deployment, which writes /app/.next/cache (chowned nextjs:nodejs
             # in the image) — but not this pod: the container below replaces
             # the image entrypoint with `node -e` over HTTP, reads no
             # image-owned path, and has readOnlyRootFilesystem with /tmp as its
