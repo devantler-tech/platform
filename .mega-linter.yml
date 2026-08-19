@@ -162,9 +162,11 @@ DISABLE_ERRORS_LINTERS:
   # asserts that per container and fails the build if any other container drops below 10000 or
   # the pod default stops being high.
   #
-  # The residual 13 is fully accounted for: 8 KSV-0021 + 4 KSV-0020 on the two vault-backup
-  # workloads, whose durable fix is #3202, and 1 KSV-0011 on the docker-provider coredns
-  # Deployment. REPOSITORY_TRIVY cannot leave the list below until those land.
+  # The residual 13 is fully accounted for, per file: 4 KSV-0020 + 4 KSV-0021 on the two
+  # vault-backup workloads, whose durable fix is #3202; 4 KSV-0021 on this same vault-config
+  # Job, where runAsGroup sits at POD level and is inherited by the two containers that have no
+  # image-baked reason to be low (#3258); and 1 KSV-0011 on the docker-provider coredns
+  # Deployment, not yet tracked. REPOSITORY_TRIVY cannot leave the list below until those land.
   #
   # ⚠️ That 109 is NOT 108 plus a regression. 108 was measured on trivy v0.73.0 and 109 on v0.74.0
   # with no manifest change in between, so that 1 is a scanner rule-set difference rather than new
