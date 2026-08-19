@@ -20,7 +20,9 @@
 # C-0211 — CIS-5.7.3, and it is a twelve-rule control rather than the three-field
 # check its name suggests. The rules this exception suppresses include
 # non-root-containers, set-fsgroup-value, set-fsgroupchangepolicy-value and
-# set-seLinuxOptions, alongside rules C-0016 and C-0055 also carry.
+# set-seLinuxOptions, alongside rules that C-0016 and C-0055 also carry. No other
+# exception covers it in the excluded namespaces: neither infrastructure-privileged
+# nor the name-scoped kubescape-privileged lists C-0211.
 #
 # Its residual population is every workload in the four excluded namespaces that are
 # actually scanned — flux-system, longhorn-system, observability and velero — all 33
