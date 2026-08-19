@@ -48,8 +48,9 @@ for target in "${targets[@]}"; do
   [ -f "${path}" ] || fail "${manifest}: not found"
 
   script="$(yq "${query}" "${path}")"
-  [ -n "${script}" ] && [ "${script}" != "null" ] ||
+  if [ -z "${script}" ] || [ "${script}" = "null" ]; then
     fail "${manifest}: could not read the snapshot container's script"
+  fi
 
   # The save operand is the binding key. More than one save makes "the snapshot"
   # ambiguous, so refuse rather than guess which one the chmod should match.
