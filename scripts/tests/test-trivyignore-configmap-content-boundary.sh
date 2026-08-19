@@ -69,6 +69,38 @@ fi
 
 echo "PASS(structural): $CHECK_ID is path-scoped to exactly the 3 reviewed ConfigMaps."
 
+# --- Layer 1b: content premises. Path scoping decides WHICH files are excepted; it says nothing
+# --- about what those files may later contain. A credential added to one of them would be
+# --- suppressed by an exception written when the file held none — the disposition outliving its
+# --- premise. These are shape checks, so they need no scanner and always run.
+premise_failures=0
+while IFS= read -r cm; do
+  [ -f "$REPO_ROOT/$cm" ] || fail "excepted file is missing: $cm"
+
+  # A private key pasted into an excepted ConfigMap is the concrete risk. PEM is unambiguous.
+  if grep -qE -- '-----BEGIN [A-Z ]*PRIVATE KEY-----' "$REPO_ROOT/$cm"; then
+    echo "FAIL: $cm contains a PEM private key block, but $CHECK_ID is excepted for it" >&2
+    premise_failures=$((premise_failures + 1))
+  fi
+
+  # A long unbroken base64/hex run as a VALUE is the usual shape of a pasted credential. Anchored
+  # to `key: value` so prose, comments and embedded source do not match.
+  if grep -qE '^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?[A-Za-z0-9+/=]{40,}"?[[:space:]]*$' "$REPO_ROOT/$cm"; then
+    echo "FAIL: $cm assigns a long opaque value that looks like credential material, but \
+$CHECK_ID is excepted for it" >&2
+    premise_failures=$((premise_failures + 1))
+  fi
+done <<EOF
+$EXPECTED_PATHS
+EOF
+
+[ "$premise_failures" -eq 0 ] || fail \
+  "$premise_failures content-premise violation(s). Each of these files is excepted from $CHECK_ID \
+because it was reviewed and found to hold no credential material. Move the value to a Secret, or \
+re-review the exception."
+
+echo "PASS(structural): content premises hold — no PEM block or opaque credential-shaped value."
+
 # --- Layer 2: behavioural paired control. Needs trivy; skips (loudly) where it is unavailable.
 command -v trivy >/dev/null 2>&1 || {
   echo "SKIP(behavioural): trivy not installed; structural checks above still passed"
@@ -84,6 +116,15 @@ mkdir -p "$WORK/$(dirname "$EXCEPTED_PATH")" "$WORK/$(dirname "$PROBE_PATH")"
 cp "$SOURCE_CM" "$WORK/$EXCEPTED_PATH"
 cp "$SOURCE_CM" "$WORK/$PROBE_PATH"
 cp "$IGNOREFILE" "$WORK/.trivyignore.yaml"
+
+# All three excepted files, so each one's own matched-key set can be asserted below. The paired
+# control above only ever exercises the prod bootstrap ConfigMap's content.
+while IFS= read -r cm; do
+  mkdir -p "$WORK/$(dirname "$cm")"
+  cp "$REPO_ROOT/$cm" "$WORK/$cm"
+done <<EOF
+$EXPECTED_PATHS
+EOF
 [ -d "${REPO_ROOT}/.trivy/data" ] && {
   mkdir -p "$WORK/.trivy"
   cp -R "${REPO_ROOT}/.trivy/data" "$WORK/.trivy/data"
@@ -139,3 +180,59 @@ ConfigMap would now be hidden. Re-scope the entry in .trivyignore.yaml."
 echo "PASS: $CHECK_ID is path-scoped."
 echo "  without ignorefile : excepted=$BASE_EXCEPTED  probe=$BASE_PROBE   (ablation fired)"
 echo "  with    ignorefile : excepted=$SCOPED_EXCEPTED  probe=$SCOPED_PROBE   (same bytes, path decides)"
+
+# --- Content premise, behaviourally: WHICH keys the check matches in each excepted file. ---
+# Path scoping and shape checks both stop short of this. trivy names the matching keys in its
+# message, so the reviewed premise can be asserted directly: if a credential key is ever added to
+# one of these files, the matched set changes and this fails — instead of being silently excepted.
+#
+# Reviewed sets (trivy 0.74.0), whitespace-normalised, deduplicated and sorted:
+readonly REVIEWED_KEYS_prod="admin_email"
+readonly REVIEWED_KEYS_local="admin_email"
+readonly REVIEWED_KEYS_actual="const secretKey,enablebanking_secretKey"
+
+# Extract the brace-delimited key list trivy reports for one target, normalise it, and join.
+matched_keys_at() {
+  local json="$1" target="$2"
+  jq -r --arg t "$target" --arg id "$CHECK_ID" \
+    '[ .Results[]? | select(.Target == $t) | .Misconfigurations[]? | select(.ID == $id) | .Message ] | join(" ")' \
+    "$json" |
+    grep -oE '\{[^}]*\}' |
+    tr ',' '\n' |
+    sed -e 's/[{}"]//g' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' |
+    sed '/^$/d' |
+    sort -u |
+    paste -sd, -
+}
+
+TREEWIDE="$(jq -r --arg id "$CHECK_ID" '[ .Results[]?.Misconfigurations[]? | select(.ID == $id) ] | length' "$WORK/no-ignore.json")"
+readonly TREEWIDE
+
+if [ "$TREEWIDE" -eq 0 ]; then
+  # The running trivy does not implement this check at all (CI pins an older version than the one
+  # these sets were reviewed with). Nothing to assert, and nothing is wrong — say so rather than
+  # failing, and rather than passing silently.
+  echo "SKIP(premise): $CHECK_ID is not emitted by this trivy version; matched-key sets not asserted."
+else
+  premise_behavioural_failures=0
+  for pair in \
+    "k8s/clusters/prod/bootstrap/config-map.yaml:$REVIEWED_KEYS_prod" \
+    "k8s/clusters/local/bootstrap/config-map.yaml:$REVIEWED_KEYS_local" \
+    "k8s/bases/apps/actual-budget/config-map.yaml:$REVIEWED_KEYS_actual"; do
+    cm="${pair%%:*}"
+    want="${pair#*:}"
+    got="$(matched_keys_at "$WORK/no-ignore.json" "$cm")"
+    if [ "$got" != "$want" ]; then
+      echo "FAIL: $cm — $CHECK_ID matches a different key set than was reviewed." >&2
+      echo "  reviewed: $want" >&2
+      echo "  actual  : $got" >&2
+      premise_behavioural_failures=$((premise_behavioural_failures + 1))
+    fi
+  done
+
+  [ "$premise_behavioural_failures" -eq 0 ] || fail \
+    "the exception for the file(s) above was written against a reviewed key set that no longer \
+matches. A new key means new content this disposition was never reviewed to cover."
+
+  echo "PASS(premise): each excepted file matches exactly the reviewed key set."
+fi
