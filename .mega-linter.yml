@@ -166,7 +166,7 @@ DISABLE_ERRORS_LINTERS:
   # vault-backup workloads, whose durable fix is #3202; 4 KSV-0021 on this same vault-config
   # Job, where runAsGroup sits at POD level and is inherited by the two containers that have no
   # image-baked reason to be low (#3258); and 1 KSV-0011 on the docker-provider coredns
-  # Deployment, not yet tracked. REPOSITORY_TRIVY cannot leave the list below until those land.
+  # Deployment (#3259). REPOSITORY_TRIVY cannot leave the list below until those three land.
   #
   # ⚠️ That 109 is NOT 108 plus a regression. 108 was measured on trivy v0.73.0 and 109 on v0.74.0
   # with no manifest change in between, so that 1 is a scanner rule-set difference rather than new
