@@ -135,7 +135,9 @@ done
 # the build instead of silently keeping an exception whose reason has expired.
 #
 # Comments are stripped before matching, so the aggregate's own exclusion note is not a reference.
-readonly vm_entry='^[[:space:]]*-[[:space:]]+(.*/)?(cdi|kubevirt)/'
+# Kustomize accepts a directory entry with or without a trailing slash, so both spellings must
+# match, and a reference INTO the directory (…/cdi/cdi-operator.yaml) must keep matching too.
+readonly vm_entry='^[[:space:]]*-[[:space:]]+(.*/)?(cdi|kubevirt)(/|[[:space:]]*(#.*)?$)'
 # A directory every overlay really does include, used to prove the matcher works. Without it, a
 # broken search reports zero VM references and this whole control passes vacuously.
 readonly control_entry='^[[:space:]]*-[[:space:]]+(.*/)?cilium/'
