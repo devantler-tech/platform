@@ -124,6 +124,10 @@ jobs:
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
               - 'scripts/tests/test-tenant-route-hostname-boundary.sh'
               - 'scripts/tests/test-umami-provisioning-bootstrap.sh'
+              # The snapshot manifests and this test are one contract: the
+              # mirror may only stop depending on OWNING the snapshot while
+              # both writers keep making it group-readable (#3202).
+              - 'scripts/tests/test-vault-snapshot-group-readable.sh'
               - 'scripts/tests/test-kyverno-admission-vpa.sh'
               - 'scripts/tests/kyverno-admission-vpa-rules.yaml'
               # The image-verifier liveness checker and its test are one
@@ -491,6 +495,12 @@ jobs:
         run: |
           shellcheck scripts/tests/test-umami-provisioning-bootstrap.sh
           bash scripts/tests/test-umami-provisioning-bootstrap.sh
+
+      - name: 🔐 Validate vault snapshots stay group-readable
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-vault-snapshot-group-readable.sh
+          bash scripts/tests/test-vault-snapshot-group-readable.sh
 
       - name: ⚖️ Validate cluster policies
         if: needs.changes.outputs.k8s == 'true'
