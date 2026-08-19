@@ -97,7 +97,7 @@ DISABLE_ERRORS_LINTERS:
   # (#3205). Its dispositions are documented below because they are what holds that zero — each one
   # is a scoped, resource-level skip naming its reason, not a disabled check.
   #
-  # trivy (38 in the local v0.74.0 reproduction): Kubernetes misconfiguration in k8s/, which the
+  # trivy (36 in the local v0.74.0 reproduction): Kubernetes misconfiguration in k8s/, which the
   # section above explains is NOT covered elsewhere. Tracked by #2787.
   #
   # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore.yaml — 450 of
@@ -131,9 +131,13 @@ DISABLE_ERRORS_LINTERS:
   # repository does author, where the residual HIGH/CRITICAL was dispositioned per class by #2990
   # (see the entry below), and
   # scripts/tests/test-trivyignore-vendored-operator-boundary.sh fails the build if that boundary
-  # is ever lost. KSV-0014 on the two operator Deployments is deliberately left reporting: a
-  # read-only root filesystem is a container setting a kustomize patch can supply without
-  # touching upstream rules.
+  # is ever lost. It then went 38 -> 36 when KSV-0014 on the two operator Deployments was
+  # dispositioned as well (#3228) — the last two HIGH findings on this tree. A kustomize patch
+  # cannot clear them: trivy reads the raw committed file, so patching moves the deployed posture
+  # while the count stands. Upstream omits readOnlyRootFilesystem deliberately while setting every
+  # other container control, and the two Deployments ship only to the docker (local/CI) provider —
+  # a premise the same boundary test asserts, so the exception fails the build if the VM stack ever
+  # reaches production.
   #
   # ⚠️ That 109 is NOT 108 plus a regression. 108 was measured on trivy v0.73.0 and 109 on v0.74.0
   # with no manifest change in between, so that 1 is a scanner rule-set difference rather than new
@@ -167,10 +171,12 @@ DISABLE_ERRORS_LINTERS:
   # scripts/tests/test-trivyignore-first-party-rbac-boundary.sh, which fails the build if any of
   # those premises stops holding — a disposition outliving its reason is the failure mode here.
   #
-  # The 2 that remain are both KSV-0014 on the vendored operator Deployments, deliberately left
-  # reporting. Note that the kustomize patch that note anticipates hardens the RENDERED workload
-  # but does NOT clear the finding: trivy scans the raw vendored file, not the kustomize output
-  # (measured). #2990 owns closing that last pair.
+  # None remain. The last 2 were both KSV-0014 on the vendored operator Deployments, dispositioned
+  # by #3228 rather than patched: a kustomize patch hardens the RENDERED workload but does NOT clear
+  # the finding, because trivy scans the raw vendored file and not the kustomize output (measured).
+  # Upstream omits only this one container control while setting every other, and the two
+  # Deployments ship to the docker (local/CI) provider alone — the premise the boundary test
+  # asserts, so the exception fails the build if the VM stack ever reaches production.
   #
   # checkov is at 0 failed checks on all three frameworks CI runs. Its last two findings were both
   # CKV_K8S_40, on the two vault-backup workloads, and #2904 dispositioned them as a scoped

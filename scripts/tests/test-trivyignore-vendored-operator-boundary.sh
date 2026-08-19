@@ -59,7 +59,7 @@ readonly first_party_pairs=(
 )
 
 # Every check id dispositioned for the vendored bundles. Keep in sync with .trivyignore.yaml.
-readonly checks=(KSV-0041 KSV-0046 KSV-0053 KSV-0056 KSV-0114)
+readonly checks=(KSV-0014 KSV-0041 KSV-0046 KSV-0053 KSV-0056 KSV-0114)
 
 status=0
 
@@ -119,6 +119,54 @@ for check in "${checks[@]}"; do
   }
 done
 
+# ------------------------------------------------------------------ premise --
+# The KSV-0014 disposition rests on a claim the structural layer cannot see: these two Deployments
+# do not run in production. That is what makes a writable root filesystem on them a local-test-bed
+# concern, so if the claim stops holding the exception must stop holding with it.
+#
+# As committed, the VM stack ships NOWHERE: the base controller aggregate excludes it, and the only
+# overlay that carries it at all — the docker (local/CI) provider — keeps both entries commented out
+# as an opt-in. Confirmed against the live production cluster on 2026-08-19: zero cdi/kubevirt pods
+# and zero such Deployments, CRDs only.
+#
+# What is asserted here is the boundary rather than the current count: no kustomization OUTSIDE
+# k8s/providers/docker/ may actively include the VM stack. Uncommenting it in the docker test-bed
+# stays allowed and changes nothing; adding it to the base aggregate or any production overlay fails
+# the build instead of silently keeping an exception whose reason has expired.
+#
+# Comments are stripped before matching, so the aggregate's own exclusion note is not a reference.
+# Kustomize accepts a directory entry with or without a trailing slash, so both spellings must
+# match, and a reference INTO the directory (…/cdi/cdi-operator.yaml) must keep matching too.
+readonly vm_entry='^[[:space:]]*-[[:space:]]+(.*/)?(cdi|kubevirt)(/|[[:space:]]*(#.*)?$)'
+# A directory every overlay really does include, used to prove the matcher works. Without it, a
+# broken search reports zero VM references and this whole control passes vacuously.
+readonly control_entry='^[[:space:]]*-[[:space:]]+(.*/)?cilium/'
+
+matching_kustomizations() {
+  local pattern="$1" k
+  while IFS= read -r k; do
+    grep -vE '^[[:space:]]*#' "$k" | grep -qE "$pattern" && printf '%s\n' "$k"
+  done < <(cd "$repo_root" && find k8s -name kustomization.yaml | sort)
+  return 0
+}
+
+control_hits="$(cd "$repo_root" && matching_kustomizations "$control_entry" | wc -l | tr -d ' ')"
+if [ "${control_hits:-0}" -lt 1 ]; then
+  printf 'PREMISE UNCHECKABLE: the kustomization matcher found no reference to a directory known to be included, so a zero VM-stack result would be meaningless\n' >&2
+  status=1
+else
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    case "$ref" in
+      k8s/providers/docker/*) ;;
+      *)
+        printf 'PREMISE BROKEN: %s actively includes the VM stack from outside the docker provider, so these Deployments can reach production and the KSV-0014 disposition no longer holds\n' "$ref" >&2
+        status=1
+        ;;
+    esac
+  done < <(cd "$repo_root" && matching_kustomizations "$vm_entry")
+fi
+
 # ---------------------------------------------------------------- behaviour --
 if ! command -v trivy >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
   printf 'NOTE: trivy or jq not on PATH; structural checks ran, paired control skipped\n'
@@ -156,6 +204,26 @@ rules:
   - apiGroups: [""]
     resources: ["services", "endpoints"]
     verbs: ["get", "list", "create", "update", "delete"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: boundary-probe
+spec:
+  selector:
+    matchLabels: { app: boundary-probe }
+  template:
+    metadata:
+      labels: { app: boundary-probe }
+    spec:
+      containers:
+        - name: boundary-probe
+          image: busybox:1.36
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
 PROBE
 }
 
