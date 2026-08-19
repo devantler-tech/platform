@@ -341,3 +341,66 @@ misconfigurations:
       resources — nodes and persistentvolumes — rather than wildcarding them, so Secrets are
       out of reach; only the non-core rule uses resources ["*"], and Secrets do not live
       there. The role cannot write any resource.
+
+  # ---------------------------------------------------------------------------
+  # RBAC BREADTH on four first-party roles (#3235) — trivy's KSV-0048 / KSV-0049 /
+  # KSV-0113 read a role's `rules` in isolation and cannot see how the role is BOUND,
+  # so a namespace-confined grant is reported exactly like a cluster-wide one.
+  # Every premise below is asserted by
+  # scripts/tests/test-trivyignore-first-party-rbac-boundary.sh.
+  - id: KSV-0048
+    paths:
+      - k8s/bases/infrastructure/cluster-roles/tenant-base-edit.yaml
+    statement: >-
+      Fires on the core write rule, the apps write rule and the batch rule — the three grants a
+      namespace-admin role exists to give. tenant-base-edit is aggregated into tenant-edit and
+      bound ONLY by a namespace-scoped RoleBinding to the tenant's own ServiceAccount in its own
+      namespace (resource-graph-definitions/tenant), so managing workloads is confined to that one
+      namespace and cannot reach any other. Verified: no ClusterRoleBinding references this role in
+      the repository or on the live cluster, where the only bindings are three namespace-scoped
+      RoleBindings (ascoachingogvaner, doggy-countdown, wedding-app). The role also omits the
+      exec-family pod subresources, so it cannot exec into the pods it manages.
+  - id: KSV-0049
+    paths:
+      - k8s/bases/infrastructure/cluster-roles/tenant-base-edit.yaml
+    statement: >-
+      Same namespace-scoped RoleBinding as above, firing on the same core write rule. Managing its
+      own ConfigMaps is a core capability of a tenant namespace-admin role and is confined to the
+      tenant's own namespace.
+  - id: KSV-0048
+    paths:
+      - k8s/bases/infrastructure/controllers/kyverno/role.yaml
+    statement: >-
+      This is a namespaced Role in the umami namespace, not a ClusterRole, and its single rule is
+      pinned by resourceNames to exactly one object — the generated Deployment umami-umami-primary
+      — with verbs get, update and patch. It grants no create and no delete, so it cannot bring up
+      or remove any workload, and it cannot reach any Deployment other than that one. Bound to the
+      kyverno/kyverno-background-controller ServiceAccount. The pinning, the verb set and the
+      binding subject are additionally asserted against the rendered output by
+      scripts/tests/test-kyverno-umami-mutation-rbac.sh.
+  - id: KSV-0048
+    paths:
+      - k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml
+    statement: >-
+      Unlike the three entries above this grant IS cluster-wide, and deliberately so: the KRO
+      controller runs with rbac.mode aggregation and holds NO standing access of its own,
+      aggregating only ClusterRoles labelled rbac.kro.run/aggregate-to-controller. This role grants
+      exactly the child kinds the WebApp ResourceGraphDefinition renders — Deployment, Service,
+      HTTPRoute — and a WebApp instance may be created in any namespace, so the Deployment grant
+      cannot be namespace-scoped without breaking the RGD. Each RGD's blast radius is therefore its
+      own declared resources. The same subject's controller-grade breadth is already accepted on
+      the Kubescape side, where cluster-security-exceptions/delete-rbac.yaml excepts the
+      kro:controller ClusterRoleBinding; leaving this reported while that stands would be the two
+      scanners disagreeing about one deliberate decision.
+  - id: KSV-0113
+    paths:
+      - k8s/bases/infrastructure/vault-config/role.yaml
+    statement: >-
+      This is a namespaced Role in the openbao namespace, bound to the openbao/vault-config
+      ServiceAccount, and it fires twice because the grant is deliberately split. The read/write
+      rule is scoped by resourceNames to the single openbao-unseal Secret. The other rule grants
+      create alone, which Kubernetes RBAC cannot restrict by resourceNames because the name does
+      not exist at admission time. Neither rule grants list, watch or delete, so the identity
+      cannot enumerate the namespace's Secrets, cannot read any Secret other than openbao-unseal,
+      and cannot destroy one. The residual capability is creating a NEW Secret in the openbao
+      namespace, which is what the store-keys init container does with the unseal material.
