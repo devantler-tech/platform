@@ -137,7 +137,6 @@ if [ "$bindings" -ne 0 ]; then
   status=1
 fi
 
-
 # The tenant disposition also claims the role cannot exec into the pods it manages. That is an
 # asserted fact like any other, so it is checked rather than trusted: adding pods/exec (or any
 # exec-family subresource) would let a namespace-admin grant reach into running containers, and
