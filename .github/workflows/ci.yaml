@@ -150,6 +150,10 @@ jobs:
               # scoped the way it was reviewed. The roles themselves are already covered
               # by the k8s/** entry above.
               - 'scripts/tests/test-trivyignore-first-party-rbac-boundary.sh'
+              # The KSV-01010 ConfigMap dispositions are path-scoped, so the entry and its
+              # paired control move together — a widened glob would suppress the same check
+              # on application ConfigMaps that genuinely carry credentials.
+              - 'scripts/tests/test-trivyignore-configmap-content-boundary.sh'
               # The version-drift guard reads its constants out of
               # megalinter-scan-counts.sh, so the three move together.
               - 'scripts/check-megalinter-version-drift.sh'
@@ -422,6 +426,19 @@ jobs:
         run: |
           shellcheck scripts/tests/test-trivyignore-first-party-rbac-boundary.sh
           bash scripts/tests/test-trivyignore-first-party-rbac-boundary.sh
+
+      - name: 🧱 Validate ConfigMap sensitive-content disposition boundary
+        if: needs.changes.outputs.k8s == 'true'
+        # KSV-01010 matches key and value TEXT, so it cannot tell a public ACME contact
+        # address from a credential. The three dispositioned ConfigMaps are excepted BY
+        # PATH, and that is the whole safety property: if the scoping ever widened, an
+        # application ConfigMap that genuinely embeds a secret would go quiet too, and the
+        # count would simply drop — which reads exactly like progress. The paired control
+        # scans the same bytes at an excepted and a non-excepted path, so only the path can
+        # explain the difference. It skips where trivy is absent rather than passing blindly.
+        run: |
+          shellcheck scripts/tests/test-trivyignore-configmap-content-boundary.sh
+          bash scripts/tests/test-trivyignore-configmap-content-boundary.sh
 
       - name: 🔢 Validate scanner version-drift guard
         if: needs.changes.outputs.k8s == 'true'

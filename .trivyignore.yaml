@@ -89,6 +89,31 @@ misconfigurations:
       external_secrets_replicas is a public controller replica count; Trivy matches the word
       secrets in the key name, not secret material.
 
+  # KSV-01010 "ConfigMap with sensitive content" is a SEPARATE check from KSV-0109 above, not that
+  # check renumbered — verified with a with/without-ignorefile ablation rather than assumed. With
+  # this file trivy reports KSV-0109 x0 and KSV-01010 x3; without it, KSV-0109 x2 and KSV-01010 x3,
+  # and the total moves 24 -> 598, so the ablation demonstrably fired. Both ids exist in trivy
+  # 0.74.0 and they overlap on files but not on keys: KSV-0109 matches external_secrets_replicas,
+  # KSV-01010 matches admin_email. Nothing covered KSV-01010, and the local bootstrap ConfigMap
+  # carried no disposition under either id.
+  #
+  # Measured with trivy 0.74.0; CI runs 0.73.0 (MegaLinter 10.0.0), and whether KSV-01010 exists
+  # there is not established. An entry for an id the running scanner does not emit is inert, so
+  # these are safe under both and correct ahead of the next MegaLinter bump.
+  - id: KSV-01010
+    paths:
+      - k8s/clusters/prod/bootstrap/config-map.yaml
+      - k8s/clusters/local/bootstrap/config-map.yaml
+    statement: >-
+      admin_email is the ACME registration contact the cluster issuer requires; it appears in
+      issued-certificate metadata, is deliberately public, and carries no authentication value.
+  - id: KSV-01010
+    paths:
+      - k8s/bases/apps/actual-budget/config-map.yaml
+    statement: >-
+      The ConfigMap embeds public JavaScript source that reads credentials from an ESO-mounted
+      Secret; Trivy matches the source identifiers containing secretKey, not credential values.
+
   # CoreDNS must bind UDP/TCP port 53 while running as the pinned image's non-root 65532 identity.
   # The binary carries the required file capability, so the container adds only
   # NET_BIND_SERVICE to its bounding set after dropping every other capability. These dispositions
