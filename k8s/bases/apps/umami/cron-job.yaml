@@ -48,14 +48,6 @@ metadata:
   name: umami-provision-tenants
   namespace: umami
   annotations:
-    # UID 1001 is the umami image's own baked user, not a number picked here:
-    # the image config sets `User: "nextjs"`, and that image's /etc/passwd
-    # reads `nextjs:x:1001:65533`. The container reuses the umami image for its
-    # Node runtime and runs out of its /app WORKDIR, so the UID that owns that
-    # tree is the one to run as. Raising it above 10000 would break the match
-    # the image asks for, and this workload is only deployed to the Hetzner
-    # provider, so nothing in CI would catch it going wrong.
-    checkov.io/skip1: "CKV_K8S_40=UID 1001 is the umami image's baked `nextjs` user, which owns its /app WORKDIR"
     # The token is genuinely used, not mounted by habit: the provisioning script
     # reads /var/run/secrets/kubernetes.io/serviceaccount/{token,namespace,ca.crt}
     # and calls coordination.k8s.io directly to hold the umami-provision-tenants
@@ -67,7 +59,7 @@ metadata:
     # automountServiceAccountToken: false as its default, so the token is opted
     # into per pod rather than granted to everything naming the account.
     # Dropping the mount would break run serialisation; there is nothing to tighten.
-    checkov.io/skip2: "CKV_K8S_38=the script reads its SA token to hold the umami-provision-tenants Lease; the Role grants get/update on that one Lease only"
+    checkov.io/skip1: "CKV_K8S_38=the script reads its SA token to hold the umami-provision-tenants Lease; the Role grants get/update on that one Lease only"
 spec:
   schedule: "*/15 * * * *"
   # Never run two reconciles at once; a slow run (e.g. waiting on a down Umami)
@@ -114,9 +106,23 @@ spec:
           automountServiceAccountToken: true
           securityContext:
             runAsNonRoot: true
-            runAsUser: 1001
-            runAsGroup: 1001
-            fsGroup: 1001
+            # Above the 10000 floor rather than at the image's baked file
+            # ownership, uid 1001 / gid 1001 (`nextjs:nodejs` — the nextjs
+            # account's own primary gid is 65533). That ownership constrains
+            # the umami Deployment, which writes /app/.next/cache (chowned nextjs:nodejs
+            # in the image) — but not this pod: the container below replaces
+            # the image entrypoint with `node -e` over HTTP, reads no
+            # image-owned path, and has readOnlyRootFilesystem with /tmp as its
+            # only writable mount. 65534 is `nobody` in the alpine base, so the
+            # uid still resolves to a real passwd entry.
+            #
+            # fsGroup moves in lockstep and must: kubelet owns secret-volume
+            # files root:fsGroup, and the credentials mounted below are
+            # group-readable only (0440 / decimal 288), so a fsGroup that no
+            # longer matches runAsGroup makes them unreadable.
+            runAsUser: 65534
+            runAsGroup: 65534
+            fsGroup: 65534
             seccompProfile:
               type: RuntimeDefault
           containers:
@@ -734,7 +740,7 @@ spec:
             - name: tmp
               emptyDir:
                 sizeLimit: 128Mi
-            # 288 is 0440: readable by root and by the pod's fsGroup (1001, set
+            # 288 is 0440: readable by root and by the pod's fsGroup (65534, set
             # above), rather than by anything else that lands in this pod. It
             # must carry the GROUP bit: kubelet owns secret-volume files
             # root:fsGroup, never uid:fsGroup, so an owner-only 0400 is
