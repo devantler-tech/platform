@@ -156,19 +156,19 @@ prefix expected=$want_prefix got=$got_prefix" >&2
 mk() { printf '%s%s' "$1" "$2"; }
 
 #             opaque prefix  label                    value
-check_fixture yes    yes     "github classic token"   "$(mk 'gh' 'p_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8')"
-check_fixture yes    yes     "github fine-grained"    "$(mk 'github' '_pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyz123456')"
-check_fixture no     yes     "slack bot token"        "$(mk 'xox' 'b-123456789012-abcdef')"
-check_fixture no     yes     "api key sk-"            "$(mk 'sk' '-proj-abc123')"
-check_fixture no     yes     "aws access key id"      "$(mk 'AKIA' 'IOSFODNN7EXAMPLE')"
-check_fixture yes    yes     "jwt"                    "$(mk 'eyJ' "hbGciOiJIUzI1NiJ9.$(mk 'eyJ' 'zdWIiOiIxIn0').abcdefghij")"
-check_fixture yes    no      "long base64 blob"       'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWY='
-check_fixture yes    no      "base64url blob"         'dGVzdF92YWx1ZS13aXRoX3VuZGVyc2NvcmVzLWFuZC1kYXNoZXM_zQ'
+check_fixture yes yes "github classic token" "$(mk 'gh' 'p_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8')"
+check_fixture yes yes "github fine-grained" "$(mk 'github' '_pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyz123456')"
+check_fixture no yes "slack bot token" "$(mk 'xox' 'b-123456789012-abcdef')"
+check_fixture no yes "api key sk-" "$(mk 'sk' '-proj-abc123')"
+check_fixture no yes "aws access key id" "$(mk 'AKIA' 'IOSFODNN7EXAMPLE')"
+check_fixture yes yes "jwt" "$(mk 'eyJ' "hbGciOiJIUzI1NiJ9.$(mk 'eyJ' 'zdWIiOiIxIn0').abcdefghij")"
+check_fixture yes no "long base64 blob" 'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWY='
+check_fixture yes no "base64url blob" 'dGVzdF92YWx1ZS13aXRoX3VuZGVyc2NvcmVzLWFuZC1kYXNoZXM_zQ'
 
 # MUST NOT be detected by either — the real reviewed values these exceptions exist for.
-check_fixture no     no      "acme contact address"   'ned@devantler.tech'
-check_fixture no     no      "public domain"          'platform.devantler.tech'
-check_fixture no     no      "public client id"       'Iv23limfvbk93bAXZI6b'
+check_fixture no no "acme contact address" 'ned@devantler.tech'
+check_fixture no no "public domain" 'platform.devantler.tech'
+check_fixture no no "public client id" 'Iv23limfvbk93bAXZI6b'
 
 rm -f "$selftest_probe"
 
