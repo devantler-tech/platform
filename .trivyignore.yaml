@@ -271,7 +271,7 @@ misconfigurations:
       is a real residual: a leaking operator is bounded only by node capacity and can drive
       eviction of co-scheduled pods. It is accepted on exactly the premise the KSV-0014, KSV-0020
       and KSV-0021 entries above rest on, and no wider — these two Deployments never run outside
-      the local/CI provider, so the blast radius is a developer's own kind cluster. The bundles are
+      the local/CI provider, so the blast radius is a developer's own local cluster. The bundles are
       upstream release artifacts whose SHA-256 is verified on download before this repository adds
       its resource-scoped Checkov annotations, and trivy reads the raw committed file, so a
       kustomize patch would change the deployed posture without clearing the finding.
