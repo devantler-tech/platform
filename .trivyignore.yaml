@@ -461,3 +461,42 @@ misconfigurations:
       cannot enumerate the namespace's Secrets, cannot read any Secret other than openbao-unseal,
       and cannot destroy one. The residual capability is creating a NEW Secret in the openbao
       namespace, which is what the store-keys init container does with the unseal material.
+  # KSV-0020 "runs with UID <= 10000" on the vault-config Job — 2 findings, both LOW.
+  #
+  # UID 100 is the openbao image's own baked `openbao` user: its /etc/passwd carries
+  # `openbao:x:100:1000::/home/openbao`, verified against the pinned DIGEST rather than the tag.
+  # `runAsUser: 100` restates that identity; it does not choose it. Raising it would run the
+  # openbao binary as an identity its own image does not define — the same image-baked class as
+  # umami's 1001 (#2901) and the reason checkov's resource-scoped `checkov.io/skip2` annotation on
+  # this same Job was accepted.
+  #
+  # Only the two openbao containers carry it. The pod default is the high, unprivileged 65532, and
+  # the `minio/mc` and `alpine/k8s` containers take that default rather than inheriting a UID
+  # chosen for openbao — which is exactly why the Job sets `runAsUser` per container instead of
+  # once on the pod.
+  #
+  # ⚠️ THE SCOPING GRANULARITIES DO NOT MATCH, WHICH IS WHY THIS ENTRY NEEDS A GUARD.
+  # `checkov.io/skipN` is RESOURCE-scoped and trivy's `paths:` is PATH-scoped, so this entry
+  # silences KSV-0020 for EVERY container in the Job — including one added later at a low UID with
+  # no image-baked reason. That is the precise widening the per-container `runAsUser` split above
+  # was written to avoid, and nothing in trivy's ignorefile can express it. The premise is
+  # therefore asserted per container by
+  # scripts/tests/test-trivyignore-vault-config-identity-boundary.sh, which fails the build if any
+  # container other than the two openbao ones drops below 10000, or if the pod default stops being
+  # high.
+  #
+  # ⚠️ This Job ships to PRODUCTION — k8s/providers/hetzner/infrastructure/kustomization.yaml
+  # includes k8s/bases/infrastructure/, which carries vault-config/. So the "local/CI provider
+  # only" premise the vendored-operator entries rest on is deliberately NOT available here, and
+  # this disposition does not borrow it. It stands on the image-baked identity alone.
+  - id: KSV-0020
+    paths:
+      - k8s/bases/infrastructure/vault-config/job.yaml
+    statement: >-
+      UID 100 is the openbao image's baked `openbao` user (openbao:x:100:1000 in its /etc/passwd,
+      verified against the pinned digest), which runAsUser restates rather than chooses; raising it
+      would run the openbao binary as an identity its own image does not define. Only the two
+      openbao containers set it — the pod default is 65532 and the minio/mc and alpine/k8s
+      containers take that high default — and because trivy scopes by path rather than by resource,
+      scripts/tests/test-trivyignore-vault-config-identity-boundary.sh asserts that per container so
+      this entry cannot silently cover a future low-UID container.

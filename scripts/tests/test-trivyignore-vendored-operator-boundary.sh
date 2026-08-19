@@ -58,6 +58,17 @@ readonly first_party_pairs=(
   'KSV-0046:k8s/bases/infrastructure/cluster-roles/cluster-reader.yaml'
 )
 
+# Reviewed NON-RBAC dispositions for these same check ids, as exact CHECK:PATH pairs. Kept
+# separate from first_party_pairs above because it is a different KIND of verdict: those turn
+# on how a ClusterRole is BOUND, these on a container identity baked into an upstream image.
+# Folding them together would let an RBAC premises test vouch for a workload-identity claim it
+# never checks. Each pair here is guarded by its own premises test, named beside it.
+readonly reviewed_workload_pairs=(
+  # openbao runs at its image-baked uid 100; guarded per container by
+  # scripts/tests/test-trivyignore-vault-config-identity-boundary.sh (#2787).
+  'KSV-0020:k8s/bases/infrastructure/vault-config/job.yaml'
+)
+
 # Every check id dispositioned for the vendored bundles. Keep in sync with .trivyignore.yaml.
 readonly checks=(KSV-0011 KSV-0014 KSV-0018 KSV-0020 KSV-0021 KSV-0041 KSV-0046 KSV-0053 KSV-0056 KSV-0114)
 
@@ -97,9 +108,19 @@ for check in "${checks[@]}"; do
             reviewed=1
             break
           fi
+        # Second reviewed category: a workload-identity verdict, guarded by its own premises
+        # test rather than by the RBAC one above.
+        if [ "$reviewed" -eq 0 ]; then
+          for wp in "${reviewed_workload_pairs[@]}"; do
+            if [ "$check:$path" = "$wp" ]; then
+              reviewed=1
+              break
+            fi
+          done
+        fi
         done
         if [ "$reviewed" -eq 0 ]; then
-          printf 'WIDENED SKIP: %s is scoped to %s, which is neither a vendored operator bundle nor a reviewed first-party disposition for THAT check\n' "$check" "$path" >&2
+          printf 'WIDENED SKIP: %s is scoped to %s, which is neither a vendored operator bundle nor a reviewed first-party or workload-identity disposition for THAT check\n' "$check" "$path" >&2
           status=1
         fi
         ;;
