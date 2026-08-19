@@ -137,6 +137,20 @@ if [ "$bindings" -ne 0 ]; then
   status=1
 fi
 
+
+# The tenant disposition also claims the role cannot exec into the pods it manages. That is an
+# asserted fact like any other, so it is checked rather than trusted: adding pods/exec (or any
+# exec-family subresource) would let a namespace-admin grant reach into running containers, and
+# would silently falsify the statement while the finding stayed suppressed.
+while IFS= read -r res; do
+  [ -n "$res" ] || continue
+  case "$res" in
+    pods/exec | pods/attach | pods/portforward | pods/proxy | services/proxy | */exec | */attach)
+      printf 'PREMISE BROKEN: %s grants %s; the KSV-0048/KSV-0049 dispositions state the role omits the exec-family subresources\n' "$tenant_role" "$res" >&2
+      status=1
+      ;;
+  esac
+done < <(yq -N '.. | select(tag == "!!map") | select(.kind == "ClusterRole") | select(.metadata.name == "tenant-base-edit") | .rules[].resources[]' "$repo_root/$tenant_role")
 # 2. cluster-reader stays read-only.
 while IFS= read -r verb; do
   [ -n "$verb" ] || continue
