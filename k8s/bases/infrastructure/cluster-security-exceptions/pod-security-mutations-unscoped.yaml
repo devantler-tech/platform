@@ -27,7 +27,10 @@
 # of them: 17 Deployments, 7 DaemonSets, 6 CronJobs and 3 StatefulSets. (CronJobs are
 # scanned and carry a verdict; Jobs are not, so the ephemeral backup and heartbeat
 # Jobs in these namespaces are out of scope.) Measured 2026-08-19 against the live
-# PROD stored specs, which is the surface Kubescape reads.
+# PROD stored specs, which is the surface Kubescape reads. "Scanned" here means in the
+# scanner's configured scope: the config scan itself is not currently producing (#2933,
+# #3024), so this population is real but presently invisible to the posture score —
+# which is exactly the silent-suppression failure mode #2447 exists to prevent.
 #
 # Not one of the 33 passes, and two gaps are universal: the pod-level
 # `securityContext.fsGroupChangePolicy` is absent on 33 of 33 (read under
