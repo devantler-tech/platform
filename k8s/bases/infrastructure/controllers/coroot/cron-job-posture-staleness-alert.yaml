@@ -1,0 +1,264 @@
+# Alerts when Kubescape's stored configuration-scan data stops moving.
+#
+# WHY THIS EXISTS
+#
+# A broken posture scanner and a compliant cluster read IDENTICALLY. When the
+# scan aborts it persists nothing, so every consumer sees "no new findings" —
+# which is exactly what a clean cluster looks like. Nothing anywhere treats that
+# as a failure.
+#
+# That is not hypothetical. Measured on prod 2026-08-19 while picking up #3024:
+# the newest stored `workloadconfigurationscan` was 2026-06-27 — posture had been
+# frozen for FIFTY-THREE DAYS and no signal existed on any surface. The scheduler
+# CronJob kept reporting `lastSuccessfulTime` daily (it only POSTs the scan
+# request; it does not observe the outcome) and the CI posture gate stayed green
+# (it scans manifests, not the cluster). The control that rules out the storage
+# layer: `applicationprofiles` and `vulnerabilitymanifestsummaries`, served by the
+# same aggregated API, were fresh to the same day.
+#
+# This check keys on DATA AGE rather than on any particular failure. #2933's
+# original cause (offline mode starving the policy-artifact fetch) had already
+# been fixed and the scan was failing a THIRD way by the time this was written —
+# so a rule that watched for a known error string would have gone quiet exactly
+# when it mattered. Age covers every abort cause, including the next one.
+#
+# WHY IT PAGINATES — this is load-bearing, not defensive habit
+#
+# The aggregated storage API returns a `continue` token: a single unpaginated GET
+# returns only the first page. Measured, the collection is 1542 objects over 4
+# pages of 500. Taking the newest timestamp from page 1 alone would report an
+# arbitrary subset's maximum as though it were the collection's — silently, and
+# in either direction. The loop below follows `continue` to exhaustion and fails
+# loudly if it does not terminate, rather than reporting a partial answer.
+#
+# WHY ZERO OBJECTS ALERTS RATHER THAN PASSES
+#
+# An empty collection is the silent zero this check exists to catch, so it is
+# treated as a failure signal — never as "nothing to report". Same reasoning as
+# the non-200 and response-shape guards.
+#
+# Lives in the observability namespace to reuse the allow-coroot
+# CiliumNetworkPolicy (endpointSelector: {}), which already permits
+# kube-apiserver, hooks.slack.com:443 and DNS egress — the same reason
+# cron-job-cnpg-degraded-alert.yaml sits here despite being a CNPG concern. It
+# reads the Kubescape API through the kube-apiserver, so no egress to the
+# kubescape namespace is involved.
+#
+# The webhook is injected by Flux substitution from the per-cluster SOPS secret.
+# Unset (local/CI) it defaults to the reserved example.invalid host, which the
+# script matches explicitly and skips, so local/CI stays quiet by design.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: posture-staleness-alert
+  namespace: observability
+  annotations:
+    checkov.io/skip1: "CKV_K8S_38=the check container reads its SA token to list Kubescape scan objects through the API server"
+    # `${MAX_AGE_SECONDS}` in the script below is the container's own env var,
+    # NOT a Flux post-build variable. The infrastructure-controllers Kustomization
+    # runs substituteFrom, which would expand it to the empty string and leave the
+    # script comparing against nothing — the same defect that left
+    # cnpg-degraded-alert dead from birth. This resource needs no Flux
+    # substitution, so opt it out.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  # The scan is scheduled daily (12 9 * * *). Checking every 6h detects a stall
+  # within a quarter-day while giving the daily run ample room to land.
+  schedule: "17 */6 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # Four paginated API reads plus DNS resolution and curl's retry budget.
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app: posture-staleness-alert
+        spec:
+          restartPolicy: Never
+          serviceAccountName: posture-staleness-alert
+          # This check DOES call the Kubernetes API, so it needs its token.
+          # C-0034 is already excepted for the observability namespace
+          # (cluster-security-exceptions/service-account-tokens.yaml).
+          automountServiceAccountToken: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            # fsGroup is what makes the mounted webhook readable at all: secret
+            # volume files are owned root:fsGroup, never uid:fsGroup, so an
+            # owner-only mode would be unreadable by this container's own
+            # non-root user. Same rationale as cnpg-degraded-alert.
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: check
+              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              env:
+                # 48h: two full daily scan intervals, so a single missed or slow
+                # run cannot alert. Anything past this means the scan has failed
+                # at least twice.
+                - name: MAX_AGE_SECONDS
+                  value: "172800"
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  API=https://kubernetes.default.svc
+                  SA=/var/run/secrets/kubernetes.io/serviceaccount
+                  BASE="$API/apis/spdx.softwarecomposition.kubescape.io/v1beta1/workloadconfigurationscans"
+
+                  # Read from the mounted Secret rather than an env var
+                  # (checkov CKV_K8S_35): an env value sits in /proc/self/environ
+                  # for the pod's whole life and is inherited by every child
+                  # process; the file is mounted 0440 and read once, here.
+                  WEBHOOK_URL=$(cat /etc/posture-staleness-alert/url)
+
+                  # The value becomes a curl CONFIG directive below, where a
+                  # newline starts a SECOND directive — so an LF in the Secret
+                  # could redirect the request. A valid URL cannot contain a
+                  # control character, so rejecting them turns a malformed Secret
+                  # into a loud failure instead of a silently reconfigured POST.
+                  if [ "$(printf '%s' "$WEBHOOK_URL" | tr -d '[:cntrl:]')" != "$WEBHOOK_URL" ]; then
+                    echo "ERROR: webhook URL contains control characters" >&2
+                    exit 1
+                  fi
+
+                  # Follow `continue` to exhaustion. A partial read would report
+                  # one page's newest timestamp as the collection's.
+                  cont=''
+                  pages=0
+                  : > /tmp/ts
+                  while :; do
+                    if [ -n "$cont" ]; then
+                      url="$BASE?limit=500&continue=$cont"
+                    else
+                      url="$BASE?limit=500"
+                    fi
+                    code=$(curl -sS -o /tmp/body -w '%{http_code}' \
+                      --cacert "$SA/ca.crt" \
+                      -H "Authorization: Bearer $(cat "$SA/token")" \
+                      "$url")
+                    if [ "$code" = "404" ]; then
+                      echo "ERROR: Kubescape scan CRD not served; the scanner is not installed or its storage is down" >&2
+                      exit 1
+                    fi
+                    if [ "$code" != "200" ]; then
+                      echo "ERROR: kube API returned HTTP $code listing configuration scans" >&2
+                      exit 1
+                    fi
+                    # `has("items")` is satisfied by {"items":{}}, which would
+                    # then contribute zero timestamps and read as a healthy empty
+                    # page. Require the ARRAY.
+                    if ! jq -e '(.items | type) == "array"' /tmp/body >/dev/null; then
+                      echo "ERROR: unexpected response shape from kube API" >&2
+                      exit 1
+                    fi
+                    jq -r '.items[].metadata.creationTimestamp // empty' /tmp/body >> /tmp/ts
+                    pages=$((pages + 1))
+                    cont=$(jq -r '.metadata.continue // empty' /tmp/body)
+                    if [ -z "$cont" ]; then
+                      break
+                    fi
+                    if [ "$pages" -ge 50 ]; then
+                      echo "ERROR: pagination did not terminate after $pages pages; refusing to report a partial result" >&2
+                      exit 1
+                    fi
+                  done
+
+                  count=$(wc -l < /tmp/ts | tr -d ' ')
+                  newest=$(sort < /tmp/ts | tail -1)
+
+                  now=$(date -u +%s)
+                  if [ "$count" -gt 0 ] && [ -n "$newest" ]; then
+                    newest_epoch=$(jq -rn --arg t "$newest" '$t | fromdate')
+                    age=$((now - newest_epoch))
+                    if [ "$age" -le "${MAX_AGE_SECONDS}" ]; then
+                      echo "Posture scan data is current: $count object(s), newest $newest (${age}s old)."
+                      exit 0
+                    fi
+                    detail="Newest stored scan is \`$newest\` — $((age / 86400)) day(s) old, across $count object(s)."
+                  else
+                    # The silent zero: an empty collection is a broken scanner,
+                    # never a clean cluster.
+                    detail="The scan collection is EMPTY — no stored configuration scans at all."
+                  fi
+
+                  echo "Posture scan data is stale: $detail"
+
+                  text=$(printf '*Kubescape posture data is stale*\n\n%s\n\n_Posture has stopped updating, so every consumer now reads "no findings" whether or not the cluster is compliant. The scan scheduler reports success even when the scan itself aborts, and the CI gate scans manifests rather than the cluster, so neither will show this. Check the kubescape scanner pod logs for the abort reason._' \
+                    "$detail")
+                  jq -n --arg t "$text" '{text: $t}' > /tmp/payload.json
+
+                  # Only the known placeholder host skips delivery.
+                  # example.invalid is RFC 2606 reserved, so it can never be a
+                  # real endpoint — matching it explicitly keeps local/CI inert
+                  # without swallowing a REAL prod delivery failure.
+                  case "$WEBHOOK_URL" in
+                    https://example.invalid/*)
+                      echo "No Slack webhook configured; alert not delivered."
+                      exit 0
+                      ;;
+                  esac
+
+                  # No `|| true`. Nothing outside this Job notices a failed POST,
+                  # so swallowing it would record a successful run having sent
+                  # nothing — the same silent zero, at the other end of the check.
+                  #
+                  # The URL reaches curl on stdin as a config file rather than as
+                  # an argument: an argv copy is readable from /proc/<pid>/cmdline
+                  # for the life of the request, which would relocate the exposure
+                  # CKV_K8S_35 names instead of removing it. The value is unquoted
+                  # because curl reads an unquoted config value as everything to
+                  # end of line, with no escape syntax; the control-character
+                  # guard above is what makes that total.
+                  printf 'url = %s\n' "$WEBHOOK_URL" |
+                    curl -sf --max-time 15 \
+                      --retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused \
+                      -H 'Content-Type: application/json' \
+                      --data @/tmp/payload.json \
+                      --config -
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                # readOnlyRootFilesystem: true, so give the script a writable
+                # scratch dir for the paged responses and the webhook payload.
+                - name: tmp
+                  mountPath: /tmp
+                - name: webhook
+                  mountPath: /etc/posture-staleness-alert
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 32Mi
+                limits:
+                  # CPU limit set for kubescape C-0270. Generous: jq parses four
+                  # ~500KB pages.
+                  cpu: 200m
+                  memory: 128Mi
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            # 288 is 0440: readable by root and by the pod's fsGroup (65532),
+            # rather than by anything else that lands in this pod. Written in
+            # DECIMAL deliberately — an unquoted `0440` is read as octal 288 by
+            # Kubernetes' own YAML 1.1 parser and as decimal 440 (mode 0670) by
+            # every YAML 1.2 reader, and nothing validates the difference.
+            - name: webhook
+              secret:
+                secretName: posture-staleness-alert-webhook
+                defaultMode: 288
