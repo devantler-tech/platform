@@ -134,11 +134,35 @@ pass "the imported file (${imported_path}) is under the mounted credential path"
 imported_file="${imported_path##*/}"
 
 # --- the volume item and the Secret key must name that same file -------------
+# Exactly one item: with two, every comparison below would compare a multi-line
+# string and the binding would be ambiguous rather than wrong.
+item_count="$(yq eval \
+  "[${pod_path}.volumes[] | select(.name == \"minio-credentials\") | .secret.items[]] | length" "${manifest}")"
+[ "${item_count}" = "1" ] ||
+  fail "expected exactly 1 minio-credentials volume item, found ${item_count}; the binding would be ambiguous"
+
 item_path="$(yq eval \
   "${pod_path}.volumes[] | select(.name == \"minio-credentials\") | .secret.items[] | .path" "${manifest}")"
+item_key="$(yq eval \
+  "${pod_path}.volumes[] | select(.name == \"minio-credentials\") | .secret.items[] | .key" "${manifest}")"
+
+# The EXACT path, not a prefix plus a basename. The prefix test above accepts
+# anything below the mount and the basename discards the directory, so a nested
+# "<mount>/sub/credentials.json" satisfies both while nothing is projected there.
+[ "${imported_path}" = "${creds_mount_path}/${item_path}" ] ||
+  fail "'mc alias import' reads '${imported_path}', not the projected Secret file '${creds_mount_path}/${item_path}'"
+pass "the imported path is exactly the projected file ${creds_mount_path}/${item_path}"
+
 [ "${item_path}" = "${imported_file}" ] ||
   fail "the Secret volume projects '${item_path}' but the script imports '${imported_file}'; nothing would be at that path"
 pass "the volume projects exactly ${imported_file}"
+
+# The item's KEY, not only its path: an item may map key 'alternate.json' onto
+# path 'credentials.json', so the Secret's own 'credentials.json' key can exist,
+# keep the assertion below green, and still never be the file that is mounted.
+[ "${item_key}" = "${imported_file}" ] ||
+  fail "the volume maps Secret key '${item_key}' onto the imported path, but the imported file is '${imported_file}'; a different key would be mounted"
+pass "the volume projects Secret key ${item_key}"
 
 yq eval ".stringData | has(\"${imported_file}\")" "${secret_manifest}" | grep -qx 'true' ||
   fail "the minio-root-credentials Secret does not define a '${imported_file}' key for the Job to import"
