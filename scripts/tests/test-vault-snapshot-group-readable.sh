@@ -69,6 +69,14 @@ for target in "${targets[@]}"; do
   [ -n "${chmod_line}" ] ||
     fail "${manifest}: the snapshot script never chmods the snapshot; the mirror still depends on owning it (#3202)"
 
+  # Bind the chmod side too. Checking only the FIRST chmod would let a later,
+  # narrowing `chmod 0600 "$SNAP"` re-close the file while this test still
+  # passed on the earlier widening one — the same unbound-assertion trap the
+  # save operand is guarded against above.
+  chmod_count="$(printf '%s\n' "${chmod_line}" | grep -c . || true)"
+  [ "${chmod_count}" -eq 1 ] ||
+    fail "${manifest}: expected exactly 1 chmod in the snapshot script, found ${chmod_count} — the final mode is ambiguous"
+
   chmod_mode="$(printf '%s\n' "${chmod_line}" | head -1 | awk '{print $2}')"
   chmod_operand="$(printf '%s\n' "${chmod_line}" | head -1 | awk '{print $3}' | tr -d '"'"'"'')"
 
