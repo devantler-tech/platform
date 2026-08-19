@@ -44,6 +44,8 @@ readonly reader_role='k8s/bases/infrastructure/cluster-roles/cluster-reader.yaml
 readonly kro_tenant='k8s/bases/infrastructure/resource-graph-definitions/tenant/cluster-role.yaml'
 readonly kro_webapp='k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml'
 readonly kro_release='k8s/bases/infrastructure/controllers/kro/helm-release.yaml'
+readonly kyverno_role='k8s/bases/infrastructure/controllers/kyverno/role.yaml'
+readonly vault_config_role='k8s/bases/infrastructure/vault-config/role.yaml'
 
 status=0
 
@@ -53,6 +55,11 @@ readonly pairs=(
   "KSV-0041:$tenant_role"
   "KSV-0056:$tenant_role"
   "KSV-0046:$reader_role"
+  "KSV-0048:$tenant_role"
+  "KSV-0049:$tenant_role"
+  "KSV-0048:$kyverno_role"
+  "KSV-0048:$kro_webapp"
+  "KSV-0113:$vault_config_role"
 )
 for pair in "${pairs[@]}"; do
   check="${pair%%:*}"
@@ -77,7 +84,7 @@ while IFS= read -r n; do
     printf 'UNSCOPED SKIP: a first-party RBAC entry has no paths key\n' >&2
     status=1
   fi
-done < <(yq '.misconfigurations[] | select(.id == "KSV-0041" or .id == "KSV-0046" or .id == "KSV-0056") | (.paths // []) | length' "$ignorefile")
+done < <(yq '.misconfigurations[] | select(.id == "KSV-0041" or .id == "KSV-0046" or .id == "KSV-0048" or .id == "KSV-0049" or .id == "KSV-0056" or .id == "KSV-0113") | (.paths // []) | length' "$ignorefile")
 
 # Nothing beyond the reviewed matrix. The check ids here are also dispositioned for the two vendored
 # operator bundles, so those two paths are expected; ANY other first-party pair is an unreviewed
@@ -88,6 +95,11 @@ readonly reviewed_pairs=(
   "KSV-0056:$kro_tenant"
   "KSV-0056:$kro_webapp"
   "KSV-0046:$reader_role"
+  "KSV-0048:$tenant_role"
+  "KSV-0049:$tenant_role"
+  "KSV-0048:$kyverno_role"
+  "KSV-0048:$kro_webapp"
+  "KSV-0113:$vault_config_role"
 )
 readonly vendored_cdi='k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml'
 readonly vendored_kubevirt='k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml'
@@ -107,7 +119,7 @@ while IFS= read -r pair; do
     printf 'UNREVIEWED DISPOSITION: %s is not one of the reviewed first-party verdicts\n' "$pair" >&2
     status=1
   fi
-done < <(yq -N '.misconfigurations[] | select(.id == "KSV-0041" or .id == "KSV-0046" or .id == "KSV-0053" or .id == "KSV-0056" or .id == "KSV-0114") | .id + ":" + (.paths // [])[]' "$ignorefile")
+done < <(yq -N '.misconfigurations[] | select(.id == "KSV-0041" or .id == "KSV-0046" or .id == "KSV-0048" or .id == "KSV-0049" or .id == "KSV-0053" or .id == "KSV-0056" or .id == "KSV-0113" or .id == "KSV-0114") | .id + ":" + (.paths // [])[]' "$ignorefile")
 
 # ----------------------------------------------------------------- premises --
 # 1. The tenant role is never bound cluster-wide. Recursive, so a ClusterRoleBinding nested in an
@@ -125,6 +137,19 @@ if [ "$bindings" -ne 0 ]; then
   status=1
 fi
 
+# The tenant disposition also claims the role cannot exec into the pods it manages. That is an
+# asserted fact like any other, so it is checked rather than trusted: adding pods/exec (or any
+# exec-family subresource) would let a namespace-admin grant reach into running containers, and
+# would silently falsify the statement while the finding stayed suppressed.
+while IFS= read -r res; do
+  [ -n "$res" ] || continue
+  case "$res" in
+    pods/exec | pods/attach | pods/portforward | pods/proxy | services/proxy | */exec | */attach)
+      printf 'PREMISE BROKEN: %s grants %s; the KSV-0048/KSV-0049 dispositions state the role omits the exec-family subresources\n' "$tenant_role" "$res" >&2
+      status=1
+      ;;
+  esac
+done < <(yq -N '.. | select(tag == "!!map") | select(.kind == "ClusterRole") | select(.metadata.name == "tenant-base-edit") | .rules[].resources[]' "$repo_root/$tenant_role")
 # 2. cluster-reader stays read-only.
 while IFS= read -r verb; do
   [ -n "$verb" ] || continue
@@ -183,5 +208,124 @@ for role in "$kro_tenant" "$kro_webapp"; do
   fi
 done
 
+# 4. The Kyverno background-controller grant stays a namespaced, resourceNames-pinned Role.
+#    The KSV-0048 disposition on it rests on three separable facts, so assert each: it is a Role
+#    (not a ClusterRole), it lives in the umami namespace, and every rule is pinned to the one
+#    generated Deployment with a verb set that cannot create or destroy a workload. Widening any
+#    one of them — a missing resourceNames, an added `create`, a promotion to ClusterRole — turns
+#    this into write access over arbitrary workload pod templates, which is exactly what the
+#    role's own header warns about.
+kyverno_kind="$(yq -N '.kind // ""' "$repo_root/$kyverno_role" 2>/dev/null || printf '')"
+if [ "$kyverno_kind" != "Role" ]; then
+  printf 'PREMISE BROKEN: %s is a %s, not a namespaced Role; the KSV-0048 disposition assumes it cannot leave the umami namespace\n' "$kyverno_role" "${kyverno_kind:-unset}" >&2
+  status=1
+fi
+kyverno_ns="$(yq -N '.metadata.namespace // ""' "$repo_root/$kyverno_role" 2>/dev/null || printf '')"
+if [ "$kyverno_ns" != "umami" ]; then
+  printf 'PREMISE BROKEN: %s is namespaced to %s, not umami\n' "$kyverno_role" "${kyverno_ns:-unset}" >&2
+  status=1
+fi
+# The grant is ONE rule over apps/deployments and nothing else. Without this, a rule pinned to the
+# same resourceNames but naming statefulsets — or a second rule entirely — satisfies every check
+# below while reaching a different workload kind.
+kyverno_rules="$(yq -N '.rules | length' "$repo_root/$kyverno_role" 2>/dev/null || printf '0')"
+if [ "${kyverno_rules:-0}" -ne 1 ]; then
+  printf 'PREMISE BROKEN: %s declares %s rules; the KSV-0048 disposition assumes exactly one\n' "$kyverno_role" "${kyverno_rules:-unset}" >&2
+  status=1
+fi
+while IFS= read -r shape; do
+  if [ "$shape" != "apps/deployments" ]; then
+    printf 'PREMISE BROKEN: a rule in %s targets [%s], not apps/deployments; the KSV-0048 disposition assumes the one generated Deployment\n' "$kyverno_role" "${shape:-<empty>}" >&2
+    status=1
+  fi
+done < <(yq -N '.rules[] | ((.apiGroups // []) | join(",")) + "/" + ((.resources // []) | join(","))' "$repo_root/$kyverno_role")
+# Every rule must name the one Deployment. An empty resourceNames yields the literal below.
+while IFS= read -r names; do
+  if [ "$names" != "umami-umami-primary" ]; then
+    printf 'PREMISE BROKEN: a rule in %s is pinned to [%s], not to umami-umami-primary alone; the KSV-0048 disposition assumes it can reach exactly one Deployment\n' "$kyverno_role" "${names:-<unpinned>}" >&2
+    status=1
+  fi
+done < <(yq -N '.rules[] | ((.resourceNames // []) | join(","))' "$repo_root/$kyverno_role")
+while IFS= read -r verb; do
+  [ -n "$verb" ] || continue
+  case "$verb" in
+    get | update | patch) ;;
+    *)
+      printf 'PREMISE BROKEN: %s grants verb %s; the KSV-0048 disposition assumes get/update/patch only, so the grant can neither create nor delete a workload\n' "$kyverno_role" "$verb" >&2
+      status=1
+      ;;
+  esac
+done < <(yq -N '.rules[].verbs[]' "$repo_root/$kyverno_role")
+
+# 5. The vault-config grant stays a namespaced Role that cannot enumerate or read the namespace's
+#    other Secrets. The KSV-0113 disposition concedes one unscoped verb — `create`, which RBAC
+#    cannot restrict by resourceNames — and its safety rests on everything else being scoped. So
+#    assert the shape rather than the prose: a rule may grant only create/get/update/patch, and
+#    any rule that is NOT resourceNames-scoped may grant nothing except create. That admits the
+#    documented residual and fails on any widening of it, including a `get` that loses its pin.
+vault_kind="$(yq -N '.kind // ""' "$repo_root/$vault_config_role" 2>/dev/null || printf '')"
+if [ "$vault_kind" != "Role" ]; then
+  printf 'PREMISE BROKEN: %s is a %s, not a namespaced Role; the KSV-0113 disposition assumes it cannot leave the openbao namespace\n' "$vault_config_role" "${vault_kind:-unset}" >&2
+  status=1
+fi
+vault_ns="$(yq -N '.metadata.namespace // ""' "$repo_root/$vault_config_role" 2>/dev/null || printf '')"
+if [ "$vault_ns" != "openbao" ]; then
+  printf 'PREMISE BROKEN: %s is namespaced to %s, not openbao\n' "$vault_config_role" "${vault_ns:-unset}" >&2
+  status=1
+fi
+# Both rules must be core-group Secret rules, and there must be exactly two of them. Without this,
+# a third rule — or a rule over some other group/resource — rides along unexamined, and the verb
+# whitelist below would happily approve `create` on something that is not a Secret at all.
+vault_rules="$(yq -N '.rules | length' "$repo_root/$vault_config_role" 2>/dev/null || printf '0')"
+if [ "${vault_rules:-0}" -ne 2 ]; then
+  printf 'PREMISE BROKEN: %s declares %s rules; the KSV-0113 disposition assumes exactly two (unscoped create, scoped read/write)\n' "$vault_config_role" "${vault_rules:-unset}" >&2
+  status=1
+fi
+while IFS= read -r shape; do
+  if [ "$shape" != "/secrets" ]; then
+    printf 'PREMISE BROKEN: a rule in %s targets [%s], not the core group secrets; the KSV-0113 disposition is about Secrets in openbao only\n' "$vault_config_role" "${shape:-<empty>}" >&2
+    status=1
+  fi
+done < <(yq -N '.rules[] | ((.apiGroups // []) | join(",")) + "/" + ((.resources // []) | join(","))' "$repo_root/$vault_config_role")
+
+# A WHITELIST, deliberately: the blacklist this replaced named list/watch/delete and therefore
+# missed every other widening — most importantly a literal `*`, which grants all of them at once.
+# `set -f` is what makes that case reachable at all: without it the unquoted split glob-expands `*`
+# into filenames, none of which match, so the check passes over the broadest possible grant.
+while IFS= read -r rule; do
+  [ -n "$rule" ] || continue
+  rule_names="${rule%%|*}"
+  rule_verbs="${rule#*|}"
+  # Exact equality, not merely non-empty: a rule scoped to some OTHER Secret name is still scoped,
+  # so a non-empty test would approve read/write on a Secret nobody reviewed.
+  if [ -n "$rule_names" ] && [ "$rule_names" != "openbao-unseal" ]; then
+    printf 'PREMISE BROKEN: %s scopes a rule to [%s], not openbao-unseal; the KSV-0113 disposition assumes that one Secret\n' "$vault_config_role" "$rule_names" >&2
+    status=1
+  fi
+  old_ifs="$IFS"
+  set -f
+  IFS=','
+  for v in $rule_verbs; do
+    [ -n "$v" ] || continue
+    case "$v" in
+      create | get | update | patch) ;;
+      *)
+        IFS="$old_ifs"
+        printf 'PREMISE BROKEN: %s grants %s on secrets; the KSV-0113 disposition assumes create/get/update/patch only, so the identity cannot enumerate or destroy Secrets in openbao\n' "$vault_config_role" "$v" >&2
+        status=1
+        IFS=','
+        ;;
+    esac
+    if [ -z "$rule_names" ] && [ "$v" != "create" ]; then
+      IFS="$old_ifs"
+      printf 'PREMISE BROKEN: %s grants %s in a rule with no resourceNames; the KSV-0113 disposition assumes create is the ONLY unscoped verb\n' "$vault_config_role" "$v" >&2
+      status=1
+      IFS=','
+    fi
+  done
+  IFS="$old_ifs"
+  set +f
+done < <(yq -N '.rules[] | ((.resourceNames // []) | join(",")) + "|" + ((.verbs // []) | join(","))' "$repo_root/$vault_config_role")
+
 [ "$status" -eq 0 ] || exit 1
-printf 'first-party RBAC dispositions hold: tenant role never cluster-bound, cluster-reader read-only, KRO aggregation-scoped\n'
+printf 'first-party RBAC dispositions hold: tenant role never cluster-bound, cluster-reader read-only, KRO aggregation-scoped, kyverno grant pinned to one Deployment, vault-config unscoped only for create\n'
