@@ -147,39 +147,56 @@ spec:
                       ;;
                   esac
 
+                  # `0` is non-empty and all-digit, so the pattern above admits
+                  # it while the message promises a POSITIVE integer — and a zero
+                  # threshold makes `age -le 0` false for every scan, so every run
+                  # alerts. Reject the zero VALUE rather than one spelling of it:
+                  # `00` and `000` are equally zero and equally all-digit.
+                  if [ "${MAX_AGE_SECONDS}" -le 0 ]; then
+                    echo "ERROR: MAX_AGE_SECONDS must be a positive integer, got '${MAX_AGE_SECONDS}'" >&2
+                    exit 1
+                  fi
+
                   # Follow `continue` to exhaustion. A partial read would report
                   # one page's newest timestamp as the collection's.
                   cont=''
                   pages=0
+                  # Initialised because `set -u` aborts on an unset expansion,
+                  # and this flag is only assigned on the 404 path.
+                  api_absent=0
                   : > /tmp/ts
                   while :; do
+                    # The continuation token is opaque and base64-derived, so it
+                    # can carry `+`, `/` and `=`. Interpolated into a query
+                    # string a `+` decodes server-side as a SPACE, corrupting the
+                    # token and breaking pagination on exactly the large
+                    # collections that need it. Let curl encode it instead.
+                    set -- --get --data-urlencode "limit=500"
                     if [ -n "$cont" ]; then
-                      url="$BASE?limit=500&continue=$cont"
-                    else
-                      url="$BASE?limit=500"
+                      set -- "$@" --data-urlencode "continue=$cont"
                     fi
                     code=$(curl -sS -o /tmp/body -w '%{http_code}' \
                       --cacert "$SA/ca.crt" \
                       -H "Authorization: Bearer $(cat "$SA/token")" \
-                      "$url")
-                    # Not-served means Kubescape is not installed here, which is
-                    # the ordinary local/CI shape: the docker overlay comments
-                    # coroot and kubescape out INDEPENDENTLY, so enabling coroot
-                    # alone deploys this CronJob onto a cluster with no scanner.
-                    # Exiting 1 there would be a permanently failing Job every 6h
-                    # that never reaches the placeholder-webhook skip, making the
-                    # header's "local/CI stays quiet by design" claim false. Same
-                    # resolution as cron-job-cnpg-degraded-alert.yaml's missing-CRD
-                    # branch.
+                      "$@" "$BASE")
+                    # A 404 means the aggregated configuration-scan API is not
+                    # served. Locally that is ordinary — the docker overlay
+                    # comments coroot and kubescape out INDEPENDENTLY, so coroot
+                    # alone lands this CronJob on a scanner-less cluster. In prod
+                    # the scanner is always installed, so the same 404 means its
+                    # API has GONE AWAY: posture data has stopped existing, which
+                    # is precisely what this Job exists to report.
                     #
-                    # ACCEPTED TRADE-OFF: in prod the scanner is always installed,
-                    # so a 404 there would mean its aggregated API has gone away —
-                    # a real fault this check will not report. It is not silent
-                    # overall (a dead storage layer surfaces through Flux and
-                    # Coroot), and the alternative breaks every local cluster.
+                    # So do not exit 0 here. Route it through the alert path and
+                    # let the placeholder-webhook branch below decide: local and
+                    # CI clusters point at the reserved `example.invalid` host and
+                    # stay silent there, while a real webhook gets the alert. That
+                    # keeps local quiet WITHOUT making prod report success for a
+                    # vanished scanner — the exact silent-healthy reading this
+                    # check was built to catch.
                     if [ "$code" = "404" ]; then
-                      echo "Kubescape configuration scans are not served on this cluster; nothing to check."
-                      exit 0
+                      api_absent=1
+                      break
                     fi
                     if [ "$code" != "200" ]; then
                       echo "ERROR: kube API returned HTTP $code listing configuration scans" >&2
@@ -208,7 +225,11 @@ spec:
                   newest=$(sort < /tmp/ts | tail -1)
 
                   now=$(date -u +%s)
-                  if [ "$count" -gt 0 ] && [ -n "$newest" ]; then
+                  if [ "$api_absent" = "1" ]; then
+                    # Distinct from the empty-collection case below: there the API
+                    # answers and holds nothing; here it does not answer at all.
+                    detail="The Kubescape configuration-scan API is NOT SERVED (HTTP 404) — the scanner's aggregated API has gone away, so no posture data exists to read."
+                  elif [ "$count" -gt 0 ] && [ -n "$newest" ]; then
                     newest_epoch=$(jq -rn --arg t "$newest" '$t | fromdate')
                     age=$((now - newest_epoch))
                     if [ "$age" -le "${MAX_AGE_SECONDS}" ]; then
