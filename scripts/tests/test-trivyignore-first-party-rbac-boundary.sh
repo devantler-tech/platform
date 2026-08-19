@@ -233,7 +233,7 @@ done < <(yq -N '.rules[].verbs[]' "$repo_root/$kyverno_role")
 # 5. The vault-config grant stays a namespaced Role that cannot enumerate or read the namespace's
 #    other Secrets. The KSV-0113 disposition concedes one unscoped verb — `create`, which RBAC
 #    cannot restrict by resourceNames — and its safety rests on everything else being scoped. So
-#    assert the shape rather than the prose: no rule may grant list, watch or delete at all, and
+#    assert the shape rather than the prose: a rule may grant only create/get/update/patch, and
 #    any rule that is NOT resourceNames-scoped may grant nothing except create. That admits the
 #    documented residual and fails on any widening of it, including a `get` that loses its pin.
 vault_kind="$(yq -N '.kind // ""' "$repo_root/$vault_config_role" 2>/dev/null || printf '')"
