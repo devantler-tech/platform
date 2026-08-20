@@ -280,7 +280,14 @@ misconfigurations:
       ceiling so the DNS datapath never throttles under burst, and CPU is compressible so a
       limit does not affect scheduling. This is the same premise the file's own
       checkov.io/skip3 already carries for CKV_K8S_11, which scripts/guard-limitrange-premise.sh
-      checks; that guard reads checkov annotations only, so this entry is not itself covered.
+      checks against each provider's kustomize graph. That guard matches on checkov annotation
+      values, so on its own it vouches for the annotation rather than for this entry. The two are
+      bound by scripts/tests/test-trivyignore-vendored-operator-boundary.sh, which registers this
+      pair in reviewed_admission_pairs and fails unless that guard reports a passing verdict
+      naming this file, so removing the annotation while keeping this entry breaks the build.
+      That test also fails if this entry widens to any path not reviewed for THIS check. The
+      other premise this entry names — that the Deployment still reserves CPU — is held by
+      checkov CKV_K8S_10, which is a hard gate: dropping requests.cpu fails the build there.
   - id: KSV-0018
     paths:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
