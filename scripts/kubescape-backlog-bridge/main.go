@@ -1022,7 +1022,9 @@ func reconcile(
 }
 
 // dropRacedCreates re-reads the tracked set immediately before applying and
-// discards any create whose fingerprint has been filed since the plan was made.
+// discards any create whose complete identity has been filed since the plan was
+// made. A matching fingerprint with a different identity is a collision, not a
+// duplicate.
 //
 // Two write invocations that overlap both take the same snapshot at the top of
 // reconcile, both find a newly derived theme untracked, and both plan a create.
@@ -1052,7 +1054,12 @@ func dropRacedCreates(p *plan, store issueStore) error {
 		return err
 	}
 
-	filed := map[string]struct{}{}
+	type filedEntry struct {
+		backlogEntry
+		identity string
+	}
+
+	filed := map[string]filedEntry{}
 
 	for _, e := range current {
 		fp, err := e.fingerprint()
@@ -1063,7 +1070,16 @@ func dropRacedCreates(p *plan, store issueStore) error {
 			continue
 		}
 
-		filed[fp] = struct{}{}
+		identity, _, err := e.identity()
+		if err != nil {
+			return err
+		}
+		if previous, duplicate := filed[fp]; duplicate {
+			return fmt.Errorf("%w: issues #%d and #%d carry %s",
+				errAmbiguousEntry, previous.Number, e.Number, fp)
+		}
+
+		filed[fp] = filedEntry{backlogEntry: e, identity: identity}
 	}
 
 	kept := make([]issueAction, 0, len(p.Actions))
@@ -1073,12 +1089,26 @@ func dropRacedCreates(p *plan, store issueStore) error {
 			// The planned body is the only place a create's identity exists —
 			// it carries no issue number yet — and it is the same marker
 			// backlogEntry.fingerprint parses back off a filed issue.
-			fp, err := (backlogEntry{Body: a.Body}).fingerprint()
+			planned := backlogEntry{Title: a.Title, Body: a.Body}
+			fp, err := planned.fingerprint()
 			if err != nil {
 				return err
 			}
+			plannedIdentity, legacy, err := planned.identity()
+			if err != nil {
+				return err
+			}
+			if legacy {
+				return fmt.Errorf("%w: planned create %q has no identity marker", errMalformedIdentity, a.Title)
+			}
 
-			if _, raced := filed[fp]; raced {
+			if raced, exists := filed[fp]; exists {
+				if raced.identity != plannedIdentity {
+					return fmt.Errorf(
+						"%w: issue #%d %q carries %q; planned create %q carries %q; fingerprint %s",
+						errCollidingEntryIdentity, raced.Number, raced.Title, raced.identity,
+						a.Title, plannedIdentity, fp)
+				}
 				p.RacedCreates++
 
 				continue

@@ -1744,6 +1744,55 @@ func TestRacedCreateIsDroppedRatherThanDuplicated(t *testing.T) {
 	}
 }
 
+func TestRacedCreateWithCollidingIdentityIsRefused(t *testing.T) {
+	th := postureTheme("C-0016", "apps/Deployment/web")
+	collidingIdentity := th.Identity()[:len(th.Identity())-1] + "0"
+	if collidingIdentity == th.Identity() {
+		collidingIdentity = th.Identity()[:len(th.Identity())-1] + "1"
+	}
+
+	store := &racingStore{filedByTheOtherRun: []backlogEntry{{
+		Number: 7,
+		Title:  renderTitle(th),
+		Body: strings.Replace(renderBody(th),
+			th.Identity(), collidingIdentity, 1),
+		Open: true,
+	}}}
+
+	var out bytes.Buffer
+	err := reconcile([]theme{th}, []surface{surfacePosture}, true, nil, store, &out)
+	if !errors.Is(err, errCollidingEntryIdentity) {
+		t.Fatalf("want errCollidingEntryIdentity, got %v; calls=%v", err, store.calls)
+	}
+	for _, c := range store.calls {
+		if strings.HasPrefix(c, "create:") {
+			t.Errorf("created through a raced full-identity collision: %v", store.calls)
+		}
+	}
+}
+
+func TestRacedCreateWithMalformedIdentityIsRefused(t *testing.T) {
+	th := postureTheme("C-0016", "apps/Deployment/web")
+	store := &racingStore{filedByTheOtherRun: []backlogEntry{{
+		Number: 7,
+		Title:  renderTitle(th),
+		Body: strings.Replace(renderBody(th),
+			th.Identity(), "not-a-sha256-digest", 1),
+		Open: true,
+	}}}
+
+	var out bytes.Buffer
+	err := reconcile([]theme{th}, []surface{surfacePosture}, true, nil, store, &out)
+	if !errors.Is(err, errMalformedIdentity) {
+		t.Fatalf("want errMalformedIdentity, got %v; calls=%v", err, store.calls)
+	}
+	for _, c := range store.calls {
+		if strings.HasPrefix(c, "create:") {
+			t.Errorf("created through a malformed raced identity: %v", store.calls)
+		}
+	}
+}
+
 // TestForcedLabelProvisioningPinsItsColour covers a churn source that no linter
 // or CI check can see.
 //
