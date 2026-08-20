@@ -268,7 +268,8 @@ type plan struct {
 	// reconciled when a real change — in either direction — is still pending.
 	WithheldUpdates int
 	// RacedCreates counts creates dropped by dropRacedCreates because another
-	// invocation filed the same complete identity between planning and applying.
+	// invocation filed the same theme between planning and applying, proven by
+	// complete identity or the title-bound legacy migration path.
 	//
 	// Disclosed for the same reason as the two counters above: the run performed
 	// fewer writes than it planned, and a silent drop is indistinguishable from

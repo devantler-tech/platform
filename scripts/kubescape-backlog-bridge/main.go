@@ -1022,9 +1022,10 @@ func reconcile(
 }
 
 // dropRacedCreates re-reads the tracked set immediately before applying and
-// discards any create whose complete identity has been filed since the plan was
-// made. A matching fingerprint with a different identity is a collision, not a
-// duplicate.
+// discards any create whose theme has been filed since the plan was made. A
+// current-format entry is verified by complete identity; a legacy entry is
+// title-bound and migrated in place. A matching fingerprint with a different
+// identity or legacy title is a collision, not a duplicate.
 //
 // Two write invocations that overlap both take the same snapshot at the top of
 // reconcile, both find a newly derived theme untracked, and both plan a create.
@@ -1105,12 +1106,21 @@ func dropRacedCreates(p *plan, store issueStore) error {
 			if raced, exists := filed[fp]; exists {
 				// A legacy raced entry carries no complete identity to compare.
 				// Bind its one-time migration to the independently rendered title,
-				// exactly as planWrites does for the initial snapshot.
+				// exactly as planWrites does for the initial snapshot, then migrate
+				// that issue in place instead of waiting for a later invocation.
 				if raced.identity == "" && raced.Title != a.Title {
 					return fmt.Errorf(
 						"%w: legacy issue #%d identity %q; planned create %q carries %q; fingerprint %s",
 						errCollidingEntryIdentity, raced.Number, raced.Title,
 						a.Title, plannedIdentity, fp)
+				}
+				if raced.identity == "" {
+					p.RacedCreates++
+					kept = append(kept, issueAction{
+						Kind: "update", Number: raced.Number, Title: a.Title, Body: a.Body,
+					})
+
+					continue
 				}
 				if raced.identity != "" && raced.identity != plannedIdentity {
 					return fmt.Errorf(

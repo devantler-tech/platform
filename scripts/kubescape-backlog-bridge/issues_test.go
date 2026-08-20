@@ -1694,6 +1694,22 @@ func (r *racingStore) list() ([]backlogEntry, error) {
 	return r.entries, nil
 }
 
+type racingUpdateStore struct {
+	racingStore
+	updatedNumber int
+	updatedTitle  string
+	updatedBody   string
+}
+
+func (r *racingUpdateStore) update(number int, title, body string) error {
+	r.calls = append(r.calls, fmt.Sprintf("update:%d", number))
+	r.updatedNumber = number
+	r.updatedTitle = title
+	r.updatedBody = body
+
+	return nil
+}
+
 // TestRacedCreateIsDroppedRatherThanDuplicated covers the overlap that turns one
 // redundant issue into a permanently wedged reconciler.
 //
@@ -1744,28 +1760,34 @@ func TestRacedCreateIsDroppedRatherThanDuplicated(t *testing.T) {
 	}
 }
 
-func TestRacedLegacyCreateWithMatchingTitleIsDropped(t *testing.T) {
+func TestRacedLegacyCreateWithMatchingTitleIsMigrated(t *testing.T) {
 	th := postureTheme("C-0016", "apps/Deployment/web")
 	legacyBody := strings.Replace(renderBody(th),
 		"<!-- "+identityMarker+th.Identity()+" -->\n", "", 1)
-	store := &racingStore{filedByTheOtherRun: []backlogEntry{{
-		Number: 7,
-		Title:  renderTitle(th),
-		Body:   legacyBody,
-		Open:   true,
-	}}}
+	store := &racingUpdateStore{racingStore: racingStore{
+		filedByTheOtherRun: []backlogEntry{{
+			Number: 7,
+			Title:  renderTitle(th),
+			Body:   legacyBody,
+			Open:   true,
+		}},
+	}}
 
 	var out bytes.Buffer
 	if err := reconcile([]theme{th}, []surface{surfacePosture}, true, nil, store, &out); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	for _, c := range store.calls {
-		if strings.HasPrefix(c, "create:") {
-			t.Errorf("duplicated a matching legacy issue filed by the other invocation: %v", store.calls)
-		}
+	if len(store.calls) != 1 || store.calls[0] != "update:7" {
+		t.Fatalf("want the raced legacy issue migrated in place, got calls=%v", store.calls)
 	}
-	if !strings.Contains(out.String(), "DROPPED") {
-		t.Errorf("the dropped legacy create was not disclosed:\n%s", out.String())
+	if store.updatedNumber != 7 || store.updatedTitle != renderTitle(th) {
+		t.Errorf("migrated the wrong issue: number=%d title=%q", store.updatedNumber, store.updatedTitle)
+	}
+	if !strings.Contains(store.updatedBody, "<!-- "+identityMarker+th.Identity()+" -->") {
+		t.Errorf("migration did not write the complete identity marker:\n%s", store.updatedBody)
+	}
+	if !strings.Contains(out.String(), "DROPPED") || !strings.Contains(out.String(), "updated #7") {
+		t.Errorf("the dropped create and migration update were not disclosed:\n%s", out.String())
 	}
 }
 
