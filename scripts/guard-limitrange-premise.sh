@@ -90,6 +90,13 @@ reachable_files() { # <provider-dir>
     dir=$(dirname "$k")
     # yq exits non-zero on a malformed kustomization; that is a real inability to
     # check the graph, not a clean overlay.
+    # A `namespace:` transformer rewrites the namespace of every resource below this
+      # kustomization, so `.metadata.namespace` read from the file would no longer be the
+      # namespace the LimitRange must match. Resolving that properly means reimplementing
+      # kustomize; refusing to answer is the honest alternative to answering wrongly.
+    ns_xform=$(yq -r '.namespace // ""' "$k" 2>/dev/null) || die "could not parse $k"
+    [ -z "$ns_xform" ] ||
+      die "$k sets a kustomize namespace transformer ($ns_xform); this guard cannot resolve the effective namespace"
     entry=$(yq -r '(.resources // []) + (.components // []) | .[]' "$k" 2>/dev/null) ||
       die "could not parse $k"
     while IFS= read -r e; do
@@ -125,13 +132,21 @@ limitrange_namespaces() { # <files...on stdin>
     [ -n "$f" ] || continue
     case $f in *.yaml | *.yml) ;; *) continue ;; esac
     # A file may hold several documents; only LimitRange ones contribute.
-    ns=$(yq -r 'select(.kind == "LimitRange") | .metadata.namespace // ""' "$f" 2>/dev/null) || continue
+    # A parse failure here is an INABILITY TO CHECK, not an absent LimitRange. Skipping
+    # it would let a malformed file contribute no namespace, and the caller would then
+    # report a definite premise violation (exit 1) over input it could not read.
+    ns=$(yq -r 'select(.kind == "LimitRange") | .metadata.namespace // ""' "$f" 2>/dev/null) ||
+      die "could not parse a reachable LimitRange candidate: $f"
     while IFS= read -r n; do
       [ -n "$n" ] && printf '%s\n' "$n"
     done <<EOF
 $ns
 EOF
   done
+  # An explicit success: a `while` loop returns the status of its LAST body command, so a
+  # final line contributing no namespace would otherwise make this function look like it
+  # failed — and the caller now treats that failure as fatal.
+  return 0
 }
 
 annotated=$(grep -rlE 'checkov\.io/skip[0-9]+' --include='*.yaml' --include='*.yml' -- "$root" 2>/dev/null)
@@ -150,7 +165,12 @@ while IFS= read -r p; do
   [ -n "$p" ] || continue
   name=$(basename "$p")
   reachable_files "$p" >"$prov_files_dir/$name.files"
-  limitrange_namespaces <"$prov_files_dir/$name.files" | sort -u >"$prov_files_dir/$name.ns"
+  # Deliberately NOT piped into `sort`: `die` inside a pipeline exits only the subshell,
+  # and the pipeline then reports `sort`'s status, so a fatal parse error would vanish.
+  limitrange_namespaces <"$prov_files_dir/$name.files" >"$prov_files_dir/$name.raw" ||
+    die "could not collect LimitRange namespaces for provider $name"
+  sort -u <"$prov_files_dir/$name.raw" >"$prov_files_dir/$name.ns" ||
+    die "could not sort LimitRange namespaces for provider $name"
 done <<EOF
 $providers
 EOF

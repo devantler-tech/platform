@@ -34,10 +34,15 @@ failures=0
 assertions=0
 
 run_guard() { # <root>
-  set +e
-  GUARD_OUT="$("$guard" "$1" 2>&1)"
-  GUARD_RC=$?
-  set -e
+  # Capture the status with `if` rather than toggling `set -e`: this file runs under
+  # `set -uo pipefail` with NO errexit, so `set -e` here would ENABLE a mode the script
+  # never had and let a later setup failure kill the run instead of being reported
+  # through the assertion summary.
+  if GUARD_OUT="$("$guard" "$1" 2>&1)"; then
+    GUARD_RC=0
+  else
+    GUARD_RC=$?
+  fi
 }
 
 # A LimitRange base, shared in shape by every fixture that has one.
@@ -206,6 +211,29 @@ spec:
   replicas: 1
 YAML
 expect 'premised-skip-without-namespace-is-exit-2' 2 "$nons" 'namespaceless'
+
+# --- 10. COULD-NOT-CHECK: a reachable LimitRange candidate that will not parse ---
+# A parse failure is an inability to check. Skipping it would let the file contribute
+# no namespace, and the guard would then report a DEFINITE premise violation over input
+# it could not read — a wrong verdict, not a missing one.
+badrange="$scratch/badrange"
+make_provider "$badrange" badrangelike unparseable-dns kube-system \
+  "CKV_K8S_11=the kube-system default-limitrange supplies the CPU limit at admission" \
+  "../../../bases/limit-ranges/"
+make_limitrange_base "$badrange" kube-system
+printf 'apiVersion: v1\nkind: [ LimitRange\n  bad: yaml: here\n' >"$badrange/bases/limit-ranges/range.yaml"
+expect 'unparseable-reachable-limitrange-is-exit-2' 2 "$badrange" 'range.yaml'
+
+# --- 11. COULD-NOT-CHECK: a kustomize namespace transformer -----------------
+# `namespace:` rewrites every resource below it, so the namespace read from the file is
+# no longer the one that must match. The guard refuses rather than comparing the wrong one.
+nsxform="$scratch/nsxform"
+make_provider "$nsxform" nsxformlike transformed-dns kube-system \
+  "CKV_K8S_11=the kube-system default-limitrange supplies the CPU limit at admission" \
+  "../../../bases/limit-ranges/"
+make_limitrange_base "$nsxform" kube-system
+printf 'namespace: somewhere-else\n' >>"$nsxform/providers/nsxformlike/infrastructure/kustomization.yaml"
+expect 'namespace-transformer-is-exit-2' 2 "$nsxform" 'namespace transformer'
 
 printf '\n%d assertion(s), %d failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ] || exit 1
