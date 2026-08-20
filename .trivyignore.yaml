@@ -509,3 +509,48 @@ misconfigurations:
       take that high default — and because trivy scopes by path rather than by resource,
       scripts/tests/test-trivyignore-vault-config-identity-boundary.sh asserts that per
       container so this entry cannot silently cover a future low-UID container.
+
+  # KSV-0021 "runs with GID <= 10000" on the vault-config Job — 2 findings, both LOW.
+  #
+  # The GID half of the same image-defined identity the KSV-0020 entry above describes: that
+  # measurement, taken against the pinned DIGEST, read `openbao:x:100:1000::/home/openbao` from
+  # /etc/passwd and `openbao:x:1000` from /etc/group. So gid 1000 is defined by the image for the
+  # same reason uid 100 is, and the same DEFINES-not-ENFORCES caveat applies — the image config's
+  # User is empty, so the manifest is selecting that identity rather than restating an imposed one.
+  #
+  # Only the two openbao containers carry it. The pod default is the high, unprivileged 65532 for
+  # BOTH uid and gid, and minio/mc and alpine/k8s take that default rather than inheriting a group
+  # chosen for openbao.
+  #
+  # ⚠️ Cross-container access does NOT depend on a shared primary GID, which is what makes the
+  # split safe. `fsGroup: 1000` sets the emptyDir volumes' group AND the setgid bit, so a file
+  # created in /shared or /snapshots inherits group 1000 whatever gid its writer runs as, and
+  # fsGroup is added to every container's supplementary groups so the others can still read it.
+  # Measured with a paired control (#3258), the setgid bit the only variable: with it, a file
+  # written at gid 65532 lands group 1000 and a uid-100/gid-1000 reader CAN read it; without it the
+  # file lands group 65532 and that reader CANNOT. Upstream's own fsGroup example shows the same in
+  # a real pod with the primary GID deliberately differing from fsGroup.
+  #
+  # ⚠️ SAME SCOPING MISMATCH AS KSV-0020, SAME GUARD. This entry is PATH-scoped, so it silences
+  # KSV-0021 for every container in the Job — including one added later at a low GID with no
+  # image-defined reason. That premise is asserted per container by
+  # scripts/tests/test-trivyignore-vault-config-identity-boundary.sh, which fails the build if any
+  # container other than the two openbao ones drops below 10000, or if the pod default stops being
+  # high, or if fsGroup stops being set.
+  #
+  # ⚠️ This Job ships to PRODUCTION, exactly as the KSV-0020 entry notes, so the "local/CI provider
+  # only" premise is not available here and is not borrowed.
+  - id: KSV-0021
+    paths:
+      - k8s/bases/infrastructure/vault-config/job.yaml
+    statement: >-
+      GID 1000 is the group the openbao image itself DEFINES — /etc/group carries openbao:x:1000
+      and /etc/passwd carries openbao:x:100:1000, both read from the pinned DIGEST rather than the
+      tag — and the image does NOT default to it, so runAsGroup: 1000 selects that defined identity
+      rather than restating an enforced one. Only the two openbao containers set it; the pod
+      default is 65532 for both uid and gid, and the minio/mc and alpine/k8s containers take that
+      high default. Cross-container access to the shared emptyDir volumes comes from fsGroup, which
+      sets their group and the setgid bit so files inherit group 1000 regardless of the writer's
+      primary gid, so the split costs no access. Because trivy scopes by path rather than by
+      resource, scripts/tests/test-trivyignore-vault-config-identity-boundary.sh asserts that per
+      container so this entry cannot silently cover a future low-GID container.

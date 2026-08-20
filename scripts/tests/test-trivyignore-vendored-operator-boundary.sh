@@ -67,6 +67,9 @@ readonly reviewed_workload_pairs=(
   # openbao runs at its image-baked uid 100; guarded per container by
   # scripts/tests/test-trivyignore-vault-config-identity-boundary.sh (#2787).
   'KSV-0020:k8s/bases/infrastructure/vault-config/job.yaml'
+  # openbao's image-baked gid 1000, the same identity one field over; guarded per container by
+  # the same test, which asserts both dispositions together (#3258).
+  'KSV-0021:k8s/bases/infrastructure/vault-config/job.yaml'
 )
 
 # Every check id dispositioned for the vendored bundles. Keep in sync with .trivyignore.yaml.
