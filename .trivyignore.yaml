@@ -261,6 +261,26 @@ misconfigurations:
       repository adds its resource-scoped Checkov annotations, and trivy reads the raw committed
       file, so a kustomize patch would change the deployed posture without clearing the finding.
       They ship only to the docker (local/CI) provider and are excluded from the production overlay.
+
+  # KSV-0011 again, for a different reason and so a separate entry — the same convention the two
+  # KSV-0109 entries above follow, so each path carries the reason that was checked against its
+  # content. The entry above accepts an upstream bundle's omitted CPU limit; this one records that
+  # the limit is SUPPLIED, just not by the file trivy reads.
+  - id: KSV-0011
+    paths:
+      - k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml
+    statement: >-
+      The CPU limit is supplied at admission by the kube-system default-limitrange
+      (k8s/bases/infrastructure/limit-ranges/kube-system.yaml, Container-type default.cpu "2"),
+      a base resource that applies to both provider overlays; trivy reads the committed spec,
+      where an admission-time default is absent. Observable rather than inferred: on the prod
+      cluster the stored CoreDNS Deployment carries only limits.memory 170Mi with requests.cpu
+      100m, while its running pods carry a CPU limit no manifest states. Stating a limit here
+      would be a regression rather than a fix — that LimitRange sets a deliberately generous
+      ceiling so the DNS datapath never throttles under burst, and CPU is compressible so a
+      limit does not affect scheduling. This is the same premise the file's own
+      checkov.io/skip3 already carries for CKV_K8S_11, which scripts/guard-limitrange-premise.sh
+      checks; that guard reads checkov annotations only, so this entry is not itself covered.
   - id: KSV-0018
     paths:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
