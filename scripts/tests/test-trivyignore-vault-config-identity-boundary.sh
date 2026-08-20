@@ -79,23 +79,48 @@ entries="${entries:-0}"
 [ "$entries" -ge 1 ] || fail \
   "MISSING DISPOSITION: $CHECK_ID has no entry scoped to $JOB_PATH in .trivyignore.yaml"
 
+# Each enumeration below is CAPTURED and its status checked BEFORE its loop runs. A process
+# substitution whose command fails feeds the loop nothing, so the body never executes and the check
+# reports success having inspected NOTHING — the exact vacuous pass this guard exists to prevent,
+# occurring inside the guard itself. A query that did not run is not evidence that a boundary holds.
+run_yq() { # 1=expression 2=file 3=what it enumerates, for the failure message
+  local out
+  if ! out="$(yq -N "$1" "$2" 2>/dev/null)"; then
+    fail "QUERY FAILED: could not enumerate $3 — refusing to report a boundary this check never inspected"
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
 # Reciprocal: every non-vendored path this check is scoped to must be the one reviewed here.
-while IFS= read -r path; do
-  [ -n "$path" ] || continue
-  case "$path" in
-    "$VENDORED_CDI" | "$VENDORED_KUBEVIRT" | "$JOB_PATH") ;;
-    *) fail "UNREVIEWED DISPOSITION: $CHECK_ID is scoped to $path, which no premises test guards" ;;
-  esac
-done < <(yq -N ".misconfigurations[] | select(.id == \"$CHECK_ID\") | (.paths // [])[]" "$IGNOREFILE")
+if paths_out="$(run_yq ".misconfigurations[] | select(.id == \"$CHECK_ID\") | (.paths // [])[]" "$IGNOREFILE" "the paths $CHECK_ID is scoped to")"; then
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$path" in
+      "$VENDORED_CDI" | "$VENDORED_KUBEVIRT" | "$JOB_PATH") ;;
+      *) fail "UNREVIEWED DISPOSITION: $CHECK_ID is scoped to $path, which no premises test guards" ;;
+    esac
+  done <<PATHS
+$paths_out
+PATHS
+fi
 
 # An entry that lost its paths key suppresses the check repository-wide.
-while IFS= read -r n; do
-  [ "$n" -eq 0 ] && fail \
-    "UNSCOPED SKIP: an entry for $CHECK_ID has no paths, which suppresses it on every workload"
-done < <(yq -N ".misconfigurations[] | select(.id == \"$CHECK_ID\") | (.paths // []) | length" "$IGNOREFILE")
+if lens_out="$(run_yq ".misconfigurations[] | select(.id == \"$CHECK_ID\") | (.paths // []) | length" "$IGNOREFILE" "the path counts for $CHECK_ID")"; then
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    if [ "$n" -eq 0 ]; then
+      fail "UNSCOPED SKIP: an entry for $CHECK_ID has no paths, which suppresses it on every workload"
+    fi
+  done <<LENS
+$lens_out
+LENS
+fi
 
 # ------------------------------------------------------------------ premise --
-pod_uid="$(yq -N '.spec.template.spec.securityContext.runAsUser // "unset"' "$REPO_ROOT/$JOB_PATH")"
+if ! pod_uid="$(run_yq '.spec.template.spec.securityContext.runAsUser // "unset"' "$REPO_ROOT/$JOB_PATH" "the pod-level runAsUser")"; then
+  pod_uid="unset"
+fi
 if [ "$pod_uid" = "unset" ]; then
   fail "PREMISE BROKEN: the pod sets no runAsUser, so every container without an override inherits an unconstrained UID while $CHECK_ID stays suppressed on this Job"
 elif [ "$pod_uid" -lt "$HIGH_UID_FLOOR" ]; then
@@ -103,20 +128,23 @@ elif [ "$pod_uid" -lt "$HIGH_UID_FLOOR" ]; then
 fi
 
 low=0
-while IFS='|' read -r name image uid; do
-  [ -n "$name" ] || continue
-  [ "$uid" = "unset" ] && continue
-  [ "$uid" -ge "$HIGH_UID_FLOOR" ] && continue
-  low=$((low + 1))
-  if ! printf '%s' "$image" | grep -qE "$OPENBAO_IMAGE_RE"; then
-    fail "PREMISE BROKEN: container '$name' runs as UID $uid from image '$image', which is not an openbao image. The $CHECK_ID disposition covers this whole Job by path, so this container's low UID is now silently suppressed with no image-baked identity to justify it."
-  elif [ "$uid" -ne "$EXPECTED_LOW_UID" ]; then
-    fail "PREMISE BROKEN: openbao container '$name' runs as UID $uid, not the image-baked $EXPECTED_LOW_UID the disposition names."
-  fi
-done < <(yq -N '[.spec.template.spec.initContainers[]?, .spec.template.spec.containers[]?] | .[] | .name + "|" + .image + "|" + ((.securityContext.runAsUser // "unset")|tostring)' "$REPO_ROOT/$JOB_PATH")
-
-[ "$low" -eq "$EXPECTED_LOW_CONTAINERS" ] || fail \
-  "PREMISE BROKEN: $low container(s) run below $HIGH_UID_FLOOR; the disposition is written for exactly $EXPECTED_LOW_CONTAINERS (the two openbao containers)."
+if containers_out="$(run_yq '[.spec.template.spec.initContainers[]?, .spec.template.spec.containers[]?] | .[] | .name + "|" + .image + "|" + ((.securityContext.runAsUser // "unset")|tostring)' "$REPO_ROOT/$JOB_PATH" "the containers of the vault-config Job")"; then
+  while IFS='|' read -r name image uid; do
+    [ -n "$name" ] || continue
+    [ "$uid" = "unset" ] && continue
+    [ "$uid" -ge "$HIGH_UID_FLOOR" ] && continue
+    low=$((low + 1))
+    if ! printf '%s' "$image" | grep -qE "$OPENBAO_IMAGE_RE"; then
+      fail "PREMISE BROKEN: container '$name' runs as UID $uid from image '$image', which is not an openbao image. The $CHECK_ID disposition covers this whole Job by path, so this container's low UID is now silently suppressed with no image-defined identity to justify it."
+    elif [ "$uid" -ne "$EXPECTED_LOW_UID" ]; then
+      fail "PREMISE BROKEN: openbao container '$name' runs as UID $uid, not the image-defined $EXPECTED_LOW_UID the disposition names."
+    fi
+  done <<CONTAINERS
+$containers_out
+CONTAINERS
+  [ "$low" -eq "$EXPECTED_LOW_CONTAINERS" ] || fail \
+    "PREMISE BROKEN: $low container(s) run below $HIGH_UID_FLOOR; the disposition is written for exactly $EXPECTED_LOW_CONTAINERS (the two openbao containers)."
+fi
 
 [ "$status" -eq 0 ] || exit "$status"
 printf 'PASS(structure+premise): %s is scoped to %s; pod default UID %s, exactly %s openbao container(s) below %s.\n' \
