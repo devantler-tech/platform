@@ -282,6 +282,27 @@ func TestMalformedIdentityMarkerIsRefused(t *testing.T) {
 	}
 }
 
+func TestIndentedIdentityMarkerIsRefused(t *testing.T) {
+	body := strings.Replace(goldenPostureBody,
+		"<!-- "+identityMarker+goldenPostureIdentity+" -->",
+		"  <!-- "+identityMarker+goldenPostureIdentity+" -->", 1)
+	entry := backlogEntry{Number: 41, Title: goldenPostureTitle, Body: body, Open: true}
+
+	_, legacy, err := entry.identity()
+	if !errors.Is(err, errMalformedIdentity) {
+		t.Fatalf("identity: want errMalformedIdentity, got legacy=%t err=%v", legacy, err)
+	}
+
+	p, err := planWrites([]theme{postureTheme("C-0016", "apps/Deployment/web")},
+		[]backlogEntry{entry}, []surface{surfacePosture}, true, nil)
+	if !errors.Is(err, errMalformedIdentity) {
+		t.Fatalf("planWrites: want errMalformedIdentity, got %v with actions %+v", err, p.Actions)
+	}
+	if len(p.Actions) != 0 {
+		t.Errorf("an indented identity marker must queue nothing, got %+v", p.Actions)
+	}
+}
+
 func TestDuplicateIdentityMarkersAreRefused(t *testing.T) {
 	duplicate := "<!-- " + identityMarker + goldenPostureIdentity + " -->\n"
 	entry := backlogEntry{

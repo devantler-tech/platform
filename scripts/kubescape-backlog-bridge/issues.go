@@ -154,7 +154,7 @@ var identityPattern = regexp.MustCompile(`(?m)^<!-- ` + identityMarker + `([0-9a
 // identityMarkerLinePattern also sees malformed marker lines. Without it, a
 // typo in a current-format body would be mistaken for a legacy issue and could
 // take the weaker title-bound migration path.
-var identityMarkerLinePattern = regexp.MustCompile(`(?m)^<!-- ` + identityMarker + `[^\r\n]*\r?$`)
+var identityMarkerLinePattern = regexp.MustCompile(`(?m)^[^\r\n]*` + identityMarker + `[^\r\n]*\r?$`)
 
 // backlogEntry is an issue this command already owns.
 type backlogEntry struct {
