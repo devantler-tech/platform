@@ -69,38 +69,58 @@ for target in "${targets[@]}"; do
   [ -n "${save_operand}" ] || fail "${manifest}: could not extract the snapshot save operand"
 
   # Now require a chmod naming that SAME operand.
-  chmod_line="$(printf '%s\n' "${commands}" | grep -E '^[[:space:]]*chmod[[:space:]]' || true)"
-  [ -n "${chmod_line}" ] ||
+  chmod_lines="$(printf '%s\n' "${commands}" | grep -E '^[[:space:]]*chmod[[:space:]]' || true)"
+  [ -n "${chmod_lines}" ] ||
     fail "${manifest}: the snapshot script never chmods the snapshot; the mirror still depends on owning it (#3202)"
 
-  # Bind the chmod side too. Checking only the FIRST chmod would let a later,
-  # narrowing `chmod 0600 "$SNAP"` re-close the file while this test still
-  # passed on the earlier widening one — the same unbound-assertion trap the
-  # save operand is guarded against above.
-  chmod_count="$(printf '%s\n' "${chmod_line}" | grep -c . || true)"
-  [ "${chmod_count}" -eq 1 ] ||
-    fail "${manifest}: expected exactly 1 chmod in the snapshot script, found ${chmod_count} — the final mode is ambiguous"
+  # EVERY chmod must WIDEN, never narrow — asserted directly rather than by count.
+  #
+  # This used to require exactly ONE chmod, as a proxy for the same property: with
+  # only one, a later narrowing `chmod 0600 "$SNAP"` could not exist to re-close the
+  # file while this test still passed on the earlier widening one. The directory-wide
+  # widen added for #3202 — every snapshot on the shared PVC, not only the newest —
+  # needs a second chmod, so the proxy no longer fits.
+  #
+  # Checking the property itself is STRICTLY STRONGER, not a relaxation: the count
+  # rule only ever constrained the SECOND chmod onwards and said nothing about the
+  # mode of the lone one it permitted. This rejects a narrowing chmod wherever it
+  # appears — including as the only one — and still refuses a symbolic or variable
+  # mode it cannot read.
+  bound=0
+  chmod_modes=''
+  while IFS= read -r chmod_line; do
+    [ -n "${chmod_line}" ] || continue
 
-  chmod_mode="$(printf '%s\n' "${chmod_line}" | head -1 | awk '{print $2}')"
-  chmod_operand="$(printf '%s\n' "${chmod_line}" | head -1 | awk '{print $3}' | tr -d '"'"'"'')"
+    chmod_mode="$(printf '%s\n' "${chmod_line}" | awk '{print $2}')"
+    chmod_operand="$(printf '%s\n' "${chmod_line}" | awk '{print $3}' | tr -d '"'"'"'')"
 
-  [ "${chmod_operand}" = "${save_operand}" ] ||
-    fail "${manifest}: chmod targets '${chmod_operand}' but the snapshot is saved to '${save_operand}' — the assertions are unbound"
+    # Group must gain read; world must gain nothing (the snapshot is vault data).
+    case "${chmod_mode}" in
+      [0-7][0-7][0-7] | [0-7][0-7][0-7][0-7]) ;;
+      *) fail "${manifest}: chmod mode '${chmod_mode}' is not a 3- or 4-digit octal mode" ;;
+    esac
+    group_digit="${chmod_mode: -2:1}"
+    other_digit="${chmod_mode: -1}"
+    [ $((group_digit & 4)) -eq 4 ] ||
+      fail "${manifest}: chmod mode '${chmod_mode}' does not grant GROUP read — the mirror still needs to be the owner"
+    [ "${other_digit}" -eq 0 ] ||
+      fail "${manifest}: chmod mode '${chmod_mode}' grants OTHER access to a vault snapshot"
 
-  # Group must gain read; world must gain nothing (the snapshot is vault data).
-  case "${chmod_mode}" in
-    [0-7][0-7][0-7] | [0-7][0-7][0-7][0-7]) ;;
-    *) fail "${manifest}: chmod mode '${chmod_mode}' is not a 3- or 4-digit octal mode" ;;
-  esac
-  group_digit="${chmod_mode: -2:1}"
-  other_digit="${chmod_mode: -1}"
-  [ $((group_digit & 4)) -eq 4 ] ||
-    fail "${manifest}: chmod mode '${chmod_mode}' does not grant GROUP read — the mirror still needs to be the owner"
-  [ "${other_digit}" -eq 0 ] ||
-    fail "${manifest}: chmod mode '${chmod_mode}' grants OTHER access to a vault snapshot"
+    if [ "${chmod_operand}" = "${save_operand}" ]; then
+      bound=1
+    fi
+    chmod_modes="${chmod_modes:+${chmod_modes} }${chmod_mode}"
+  done <<CHMODS
+${chmod_lines}
+CHMODS
 
-  printf 'ok: %s — snapshot saved to %s and chmod %s applied to the same path\n' \
-    "${manifest}" "${save_operand}" "${chmod_mode}"
+  # Still bound: at least one chmod must name the SAME path the snapshot was saved
+  # to, or the widening could be targeting some other file entirely.
+  [ "${bound}" -eq 1 ] ||
+    fail "${manifest}: no chmod targets the snapshot saved to '${save_operand}' — the assertions are unbound"
+
+  printf 'ok: %s — snapshot saved to %s; chmod mode(s) %s, each group-readable and none world-readable\n' \
+    "${manifest}" "${save_operand}" "${chmod_modes}"
 done
 
 printf 'PASS: both vault-snapshot writers make the snapshot group-readable\n'
