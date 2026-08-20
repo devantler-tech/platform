@@ -186,12 +186,28 @@ checked=0
 
 while IFS= read -r file; do
   [ -n "$file" ] || continue
-  values=$(yq -r '.metadata.annotations // {} | to_entries | .[] | select(.key | test("^checkov\\.io/skip[0-9]+$")) | .value' \
+  # ONE RECORD PER YAML DOCUMENT, pairing that document's namespace with that document's
+  # own premise-bearing annotation values. Reading the values from every document while
+  # taking the namespace from only the first checks a later document against the wrong
+  # namespace — or, when document 0 is a namespaceless cluster-scoped object, against no
+  # namespace at all, which aborts the build on a well-formed file. That is the ordinary
+  # shape of an operator bundle and already the shape of cdi-operator.yaml and
+  # kubevirt-operator.yaml here.
+  # `@tsv` escapes any tab or newline inside a value, so one document is always one line.
+  records=$(yq -r '[(.metadata.namespace // ""), ((.metadata.annotations // {}) | to_entries | map(select(.key | test("^checkov\\.io/skip[0-9]+$")) | .value) | join(" "))] | @tsv' \
     "$file" 2>/dev/null) || die "could not read annotations from $file"
-  printf '%s' "$values" | grep -qiE "$premise_re" || continue
 
-  ns=$(yq -r '.metadata.namespace // ""' "$file" 2>/dev/null | head -1)
-  [ -n "$ns" ] || die "$file carries a LimitRange-premised skip but states no namespace"
+  doc=-1
+  while IFS= read -r record; do
+    doc=$((doc + 1))
+    # Split on the first tab with parameter expansion, NOT `IFS=$'\t' read`: tab is an IFS
+    # whitespace character, so `read` would collapse an empty leading namespace field and
+    # shift the values into it — silently checking against a namespace named after a reason.
+    ns=${record%%$'\t'*}
+    values=${record#*$'\t'}
+    printf '%s' "$values" | grep -qiE "$premise_re" || continue
+    [ -n "$ns" ] ||
+      die "$file document $doc carries a LimitRange-premised skip but states no namespace"
 
   shipped_by=0
   while IFS= read -r p; do
@@ -219,8 +235,11 @@ EOF
     # to reach a file that is really shipped, or the suppression is dead code — and
     # from here those are indistinguishable. Both mean the premise went unchecked,
     # which is precisely the silent pass this guard exists to refuse.
-    die "$file carries a LimitRange-premised skip, but no provider overlay reaches it"
+    die "$file document $doc carries a LimitRange-premised skip, but no provider overlay reaches it"
   fi
+  done <<EOF
+$records
+EOF
 done <<EOF
 $annotated
 EOF

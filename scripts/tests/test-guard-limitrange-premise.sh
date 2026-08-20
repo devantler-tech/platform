@@ -248,5 +248,43 @@ make_provider "$absentry" absentrylike absolute-dns kube-system \
 make_limitrange_base "$absentry" kube-system
 expect 'absolute-resources-entry-resolves' 0 "$absentry" 'absolute-dns'
 
+# --- 13. A MULTI-DOCUMENT file resolves the namespace PER DOCUMENT -----------
+# `values` is read from every document in the file, but the namespace was taken from
+# the FIRST one. A file whose annotated document is not document 0 — the ordinary shape
+# of an operator bundle, and already the shape of cdi-operator.yaml and
+# kubevirt-operator.yaml in this repo — is then checked against the wrong namespace, or
+# against no namespace at all when document 0 states none. Both readings are wrong about
+# a file the guard reports as checked.
+#
+# Here document 0 is a namespaceless cluster-scoped object and the annotated Deployment
+# in document 1 states `multidoc-ns`, where the LimitRange is shipped. The correct
+# verdict is exit 0.
+multidoc="$scratch/multidoc"
+mkdir -p "$multidoc/providers/multidoclike/infrastructure"
+{
+  printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n'
+  printf '  - bundle-dns.yaml\n'
+  printf '  - %s\n' "$multidoc/bases/limit-ranges/"
+} >"$multidoc/providers/multidoclike/infrastructure/kustomization.yaml"
+cat >"$multidoc/providers/multidoclike/infrastructure/bundle-dns.yaml" <<'YAML'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: bundle-dns-reader
+rules: []
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bundle-dns
+  namespace: multidoc-ns
+  annotations:
+    checkov.io/skip1: "CKV_K8S_11=the multidoc-ns default-limitrange supplies the CPU limit at admission"
+spec:
+  replicas: 1
+YAML
+make_limitrange_base "$multidoc" multidoc-ns
+expect 'multidoc-namespace-resolves-per-document' 0 "$multidoc" 'bundle-dns'
+
 printf '\n%d assertion(s), %d failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ] || exit 1
