@@ -192,13 +192,15 @@ func TestPreviouslyFiledFingerprintCollisionIsRefused(t *testing.T) {
 	const (
 		incomingFingerprint = "cffda777fdcd1a44"
 		incomingIdentity    = "cffda777fdcd1a44cfac478b956ceeac9e28926ded3951fce3cc25769c677e45"
+		storedIdentity      = "cffda777fdcd1a4470135e3efe28ce2b076d40d197e788c71073fc3f76b8e193"
 	)
 
 	entry := backlogEntry{
 		Number: 41,
 		Title:  goldenPostureTitle,
-		Body: strings.Replace(goldenPostureBody,
+		Body: strings.Replace(strings.Replace(goldenPostureBody,
 			goldenPostureFingerprint, incomingFingerprint, 1),
+			goldenPostureIdentity, storedIdentity, 1),
 		Open: true,
 	}
 
@@ -209,7 +211,7 @@ func TestPreviouslyFiledFingerprintCollisionIsRefused(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		goldenPostureIdentity,
+		storedIdentity,
 		incomingIdentity,
 		goldenPostureTitle,
 		"posture/C-0017",
@@ -300,6 +302,83 @@ func TestIndentedIdentityMarkerIsRefused(t *testing.T) {
 	}
 	if len(p.Actions) != 0 {
 		t.Errorf("an indented identity marker must queue nothing, got %+v", p.Actions)
+	}
+}
+
+func TestScannerFieldCannotForgeAnIdentityMarker(t *testing.T) {
+	body := strings.Replace(goldenPostureBody, "**Severity:** High",
+		"**Severity:** future-"+identityMarker+"not-a-comment", 1)
+	entry := backlogEntry{Number: 41, Title: goldenPostureTitle, Body: body, Open: true}
+
+	identity, legacy, err := entry.identity()
+	if err != nil {
+		t.Fatalf("identity: scanner field text was mistaken for a marker: %v", err)
+	}
+	if legacy || identity != goldenPostureIdentity {
+		t.Fatalf("identity: want current identity %s, got legacy=%t identity=%q", goldenPostureIdentity, legacy, identity)
+	}
+}
+
+func TestIdentityFingerprintDisagreementIsRefusedBeforePlanning(t *testing.T) {
+	const contradictoryIdentity = "cffda777fdcd1a44cfac478b956ceeac9e28926ded3951fce3cc25769c677e45"
+	entry := backlogEntry{
+		Number: 41,
+		Title:  goldenPostureTitle,
+		Body: strings.Replace(goldenPostureBody,
+			goldenPostureIdentity, contradictoryIdentity, 1),
+		Open: true,
+	}
+
+	p, err := planWrites(nil, []backlogEntry{entry}, []surface{surfacePosture}, true, nil)
+	if !errors.Is(err, errCollidingEntryIdentity) {
+		t.Fatalf("want errCollidingEntryIdentity, got %v with actions %+v", err, p.Actions)
+	}
+	if len(p.Actions) != 0 {
+		t.Errorf("a contradictory identity must queue nothing, got %+v", p.Actions)
+	}
+}
+
+func TestAcceptedFingerprintCollisionIsRefused(t *testing.T) {
+	const (
+		storedIdentity   = "cffda777fdcd1a44000000000000000000000000000000000000000000000000"
+		acceptedIdentity = "cffda777fdcd1a44cfac478b956ceeac9e28926ded3951fce3cc25769c677e45"
+	)
+	entry := backlogEntry{
+		Number: 41,
+		Title:  goldenPostureTitle,
+		Body: strings.Replace(strings.Replace(goldenPostureBody,
+			goldenPostureFingerprint, acceptedIdentity[:16], 1),
+			goldenPostureIdentity, storedIdentity, 1),
+		Open: true,
+	}
+	accepted := map[string]string{acceptedIdentity: "security(posture): C-0017 fails"}
+
+	p, err := planWrites(nil, []backlogEntry{entry}, []surface{surfacePosture}, true, accepted)
+	if !errors.Is(err, errCollidingEntryIdentity) {
+		t.Fatalf("want errCollidingEntryIdentity, got %v with actions %+v", err, p.Actions)
+	}
+	if len(p.Actions) != 0 {
+		t.Errorf("an accepted collision must queue nothing, got %+v", p.Actions)
+	}
+}
+
+func TestAcceptedLegacyFingerprintCollisionIsRefused(t *testing.T) {
+	const acceptedIdentity = "cffda777fdcd1a44cfac478b956ceeac9e28926ded3951fce3cc25769c677e45"
+	entry := backlogEntry{
+		Number: 41,
+		Title:  goldenPostureTitle,
+		Body: strings.Replace(legacyGoldenPostureBody,
+			goldenPostureFingerprint, acceptedIdentity[:16], 1),
+		Open: true,
+	}
+	accepted := map[string]string{acceptedIdentity: "security(posture): C-0017 fails"}
+
+	p, err := planWrites(nil, []backlogEntry{entry}, []surface{surfacePosture}, true, accepted)
+	if !errors.Is(err, errCollidingEntryIdentity) {
+		t.Fatalf("want errCollidingEntryIdentity, got %v with actions %+v", err, p.Actions)
+	}
+	if len(p.Actions) != 0 {
+		t.Errorf("an accepted legacy collision must queue nothing, got %+v", p.Actions)
 	}
 }
 
@@ -1011,7 +1090,7 @@ func TestPartialInputReopenKeepsFiledScope(t *testing.T) {
 // exactly when a reader needs to know the exception is load-bearing.
 func TestAcceptedThemeClosesAsAcceptedNotAsGone(t *testing.T) {
 	existing := []backlogEntry{trackedPosture(41, true)}
-	accepted := map[string]struct{}{goldenPostureFingerprint: {}}
+	accepted := map[string]string{goldenPostureIdentity: goldenPostureTitle}
 
 	p, err := planWrites(nil, existing, []surface{surfacePosture}, true, accepted)
 	if err != nil {
@@ -1088,7 +1167,7 @@ func TestAcceptedCloseCarriesTheNotPlannedDisposition(t *testing.T) {
 	existing := []backlogEntry{trackedPosture(41, true)}
 
 	p, err := planWrites(nil, existing, []surface{surfacePosture}, true,
-		map[string]struct{}{goldenPostureFingerprint: {}})
+		map[string]string{goldenPostureIdentity: goldenPostureTitle})
 	if err != nil {
 		t.Fatalf("planWrites: %v", err)
 	}
@@ -1726,8 +1805,8 @@ func closedPosture(number int, disposition string) backlogEntry {
 	return e
 }
 
-func acceptedGolden() map[string]struct{} {
-	return map[string]struct{}{goldenPostureFingerprint: {}}
+func acceptedGolden() map[string]string {
+	return map[string]string{goldenPostureIdentity: goldenPostureTitle}
 }
 
 // TestPlanWritesReclassifiesCompletedEntryNowCoveredByException pins the

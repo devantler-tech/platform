@@ -297,21 +297,26 @@ func (t theme) Identity() string {
 	return hex.EncodeToString(sum[:])
 }
 
-// postureFingerprint is the lookup key of a posture theme named only by its key.
+// postureIdentity is the complete identity of a posture theme named only by its
+// key.
 //
 // The accepted-exception set is built from control keys, not from derived
-// themes, so it needs the fingerprint of a theme it never constructs. Doing that
-// inline as theme{Kind: ..., Key: ...}.Fingerprint() silently depends on
-// Fingerprint reading NO OTHER FIELD. That holds today, but if the canonical
+// themes, so it needs the identity of a theme it never constructs. Doing that
+// inline as theme{Kind: ..., Key: ...}.Identity() silently depends on Identity
+// reading NO OTHER FIELD. That holds today, but if the canonical
 // string ever gained a field, the inline literal would start producing an
 // identity matching no tracked issue — every accepted close would then fall back
 // to the "no longer present" wording and the completed disposition, writing the
 // wrong fact into a permanent timeline, and no test would fail.
 //
-// Naming it keeps both producers of a posture fingerprint in one place, so a
+// Naming it keeps both producers of a posture identity in one place, so a
 // change to the canonical form has one site to update rather than two.
-func postureFingerprint(key string) string {
-	return theme{Kind: string(surfacePosture), Key: key}.Fingerprint()
+func postureIdentity(key string) string {
+	return theme{Kind: string(surfacePosture), Key: key}.Identity()
+}
+
+func postureTitle(key string) string {
+	return renderTitle(theme{Kind: string(surfacePosture), Key: key})
 }
 
 // Title renders the backlog title. Stable for a given theme so a
@@ -935,10 +940,10 @@ func run(args []string, out io.Writer) error {
 		// all-clear reached by FILTERING is a different claim from one reached
 		// by a clean input, and the report must not render them identically.
 		suppressed int
-		// accepted holds the fingerprints of themes an exception suppressed
-		// ENTIRELY, which the planner needs to close them as accepted rather
-		// than as gone.
-		accepted = map[string]struct{}{}
+		// accepted holds the complete identities of themes an exception
+		// suppressed ENTIRELY, which the planner needs both to verify the
+		// historical lookup and to close them as accepted rather than as gone.
+		accepted = map[string]string{}
 	)
 
 	if len(posturePaths) > 0 {
@@ -954,11 +959,11 @@ func run(args []string, out io.Writer) error {
 
 		suppressed = n
 
-		// Carried as fingerprints, not keys: that is the identity the planner
-		// matches a tracked issue by, and deriving it here keeps the planner
-		// free of any knowledge of how a posture key becomes one.
+		// Carried as complete identities, not keys: the planner derives the
+		// historical fingerprint for lookup and retains the rest to verify that
+		// an accepted theme did not collide with a different tracked entry.
 		for _, key := range acceptedKeys {
-			accepted[postureFingerprint(key)] = struct{}{}
+			accepted[postureIdentity(key)] = postureTitle(key)
 		}
 
 		themes = append(themes, derived...)
@@ -995,7 +1000,7 @@ func reconcile(
 	themes []theme,
 	examined []surface,
 	inputsComplete bool,
-	accepted map[string]struct{},
+	accepted map[string]string,
 	store issueStore,
 	out io.Writer,
 ) error {
