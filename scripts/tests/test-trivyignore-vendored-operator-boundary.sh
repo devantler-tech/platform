@@ -72,6 +72,28 @@ readonly reviewed_workload_pairs=(
   'KSV-0021:k8s/bases/infrastructure/vault-config/job.yaml'
 )
 
+# THIRD reviewed category: an ADMISSION verdict — the suppressed field is not absent at runtime, it
+# is supplied by a namespace-scoped object the scanner cannot see because it reads one file at a
+# time. Kept separate from both lists above for the same reason those are separate from each other:
+# an RBAC premises test and a workload-identity premises test each check something this claim is not
+# about, so folding it in would let either vouch for a premise it never examines.
+#
+# Its premises test is scripts/guard-limitrange-premise.sh, which walks the kustomize graph of every
+# provider overlay and requires the one shipping the file to also ship a Container-type
+# `default.cpu` LimitRange into that namespace. It reports `ok ... provider docker ships a
+# CPU-defaulting LimitRange into kube-system` for this pair today.
+#
+# ⚠️ COVERAGE CAVEAT, recorded rather than glossed: that guard reads `checkov.io/skipN` annotations
+# only, so it checks this premise for the file's CKV_K8S_11 skip and NOT for the trivy entry below.
+# The two rest on the identical claim, so the premise is verified today — but by the annotation's
+# presence, not the trivy entry's. Removing the annotation while keeping the entry would leave this
+# pair unguarded, silently. #3272 closes that, and carries the measured trap for whoever does.
+readonly reviewed_admission_pairs=(
+  # The kube-system default-limitrange supplies the CPU limit at admission; trivy reads the
+  # committed spec, where an admission-time default is absent (#2787).
+  'KSV-0011:k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml'
+)
+
 # Every check id dispositioned for the vendored bundles. Keep in sync with .trivyignore.yaml.
 readonly checks=(KSV-0011 KSV-0014 KSV-0018 KSV-0020 KSV-0021 KSV-0041 KSV-0046 KSV-0053 KSV-0056 KSV-0114)
 
@@ -121,9 +143,17 @@ for check in "${checks[@]}"; do
               fi
             done
           fi
+          if [ "$reviewed" -eq 0 ]; then
+            for ap in "${reviewed_admission_pairs[@]}"; do
+              if [ "$check:$path" = "$ap" ]; then
+                reviewed=1
+                break
+              fi
+            done
+          fi
         done
         if [ "$reviewed" -eq 0 ]; then
-          printf 'WIDENED SKIP: %s is scoped to %s, which is neither a vendored operator bundle nor a reviewed first-party or workload-identity disposition for THAT check\n' "$check" "$path" >&2
+          printf 'WIDENED SKIP: %s is scoped to %s, which is neither a vendored operator bundle nor a reviewed first-party, workload-identity or admission disposition for THAT check\n' "$check" "$path" >&2
           status=1
         fi
         ;;
