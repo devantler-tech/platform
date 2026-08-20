@@ -215,6 +215,9 @@ jobs:
               # still runs the check that covers it.
               - 'scripts/guard-checkov-skip-reasons.sh'
               - 'scripts/tests/test-guard-checkov-skip-reasons.sh'
+              # Both halves, for the same reason as the guard above.
+              - 'scripts/guard-limitrange-premise.sh'
+              - 'scripts/tests/test-guard-limitrange-premise.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
@@ -672,6 +675,23 @@ jobs:
         run: |
           bash scripts/guard-checkov-skip-reasons.sh k8s
           bash scripts/tests/test-guard-checkov-skip-reasons.sh
+
+      - name: 📐 Validate LimitRange-premised suppressions actually have a LimitRange
+        if: needs.changes.outputs.k8s == 'true'
+        # Several skips here are dispositioned not as accepted risk but as "the check
+        # is blind to an admission-time default" — sound reasoning that holds only
+        # where the LimitRange actually applies. The natural justification is that a
+        # LimitRange is a base resource and so reaches every overlay, which is an
+        # inference about REACHABILITY that reads as obviously true and is not: an
+        # overlay that cherry-picks named base directories does not get it. Nothing
+        # then fails — the suppression keeps suppressing and the workload runs with no
+        # limit in exactly the overlay whose goal was prod-like admission. The guard
+        # walks each provider's kustomize graph and pins its verdict in all three
+        # directions, including the two anti-vacuity cases where a matcher that
+        # matched nothing would otherwise look like a healthy tree.
+        run: |
+          bash scripts/guard-limitrange-premise.sh k8s
+          bash scripts/tests/test-guard-limitrange-premise.sh
 
       - name: 📋 Validate Kubescape finding summary
         if: needs.changes.outputs.k8s == 'true'
