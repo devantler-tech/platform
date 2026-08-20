@@ -209,34 +209,34 @@ while IFS= read -r file; do
     [ -n "$ns" ] ||
       die "$file document $doc carries a LimitRange-premised skip but states no namespace"
 
-  shipped_by=0
-  while IFS= read -r p; do
-    [ -n "$p" ] || continue
-    name=$(basename "$p")
-    grep -qxF -- "$file" "$prov_files_dir/$name.files" || continue
-    shipped_by=$((shipped_by + 1))
-    checked=$((checked + 1))
-    if grep -qxF -- "$ns" "$prov_files_dir/$name.ns"; then
-      printf 'ok   %s — provider %s ships a LimitRange into %s\n' "$file" "$name" "$ns"
-    else
-      printf 'FAIL %s\n' "$file" >&2
-      printf '     its skip reason rests on a LimitRange applying at admission, but provider\n' >&2
-      printf '     %s ships NO LimitRange into namespace %s.\n' "$name" "$ns" >&2
-      printf '     Fix: add the limit-ranges base to that overlay, or drop the skip and\n' >&2
-      printf '     state the limit on the workload.\n' >&2
-      failures=$((failures + 1))
-    fi
-  done <<EOF
+    shipped_by=0
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      name=$(basename "$p")
+      grep -qxF -- "$file" "$prov_files_dir/$name.files" || continue
+      shipped_by=$((shipped_by + 1))
+      checked=$((checked + 1))
+      if grep -qxF -- "$ns" "$prov_files_dir/$name.ns"; then
+        printf 'ok   %s — provider %s ships a LimitRange into %s\n' "$file" "$name" "$ns"
+      else
+        printf 'FAIL %s\n' "$file" >&2
+        printf '     its skip reason rests on a LimitRange applying at admission, but provider\n' >&2
+        printf '     %s ships NO LimitRange into namespace %s.\n' "$name" "$ns" >&2
+        printf '     Fix: add the limit-ranges base to that overlay, or drop the skip and\n' >&2
+        printf '     state the limit on the workload.\n' >&2
+        failures=$((failures + 1))
+      fi
+    done <<EOF
 $providers
 EOF
 
-  if [ "$shipped_by" -eq 0 ]; then
-    # An unattributable premised suppression is NOT benign. Either the walk failed
-    # to reach a file that is really shipped, or the suppression is dead code — and
-    # from here those are indistinguishable. Both mean the premise went unchecked,
-    # which is precisely the silent pass this guard exists to refuse.
-    die "$file document $doc carries a LimitRange-premised skip, but no provider overlay reaches it"
-  fi
+    if [ "$shipped_by" -eq 0 ]; then
+      # An unattributable premised suppression is NOT benign. Either the walk failed
+      # to reach a file that is really shipped, or the suppression is dead code — and
+      # from here those are indistinguishable. Both mean the premise went unchecked,
+      # which is precisely the silent pass this guard exists to refuse.
+      die "$file document $doc carries a LimitRange-premised skip, but no provider overlay reaches it"
+    fi
   done <<EOF
 $records
 EOF
