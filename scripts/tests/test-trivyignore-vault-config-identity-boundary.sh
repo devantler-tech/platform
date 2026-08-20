@@ -154,7 +154,6 @@ CONTAINERS
     "PREMISE BROKEN: $low container(s) run below $HIGH_UID_FLOOR; the disposition is written for exactly $EXPECTED_LOW_CONTAINERS (the two openbao containers)."
 fi
 
-
 # --- GID: the same premise, one field over. A container can carry a justified low UID and an
 # --- unjustified low GID independently, so the two are asserted separately.
 if ! pod_gid="$(run_yq '.spec.template.spec.securityContext.runAsGroup // "unset"' "$REPO_ROOT/$JOB_PATH" "the pod-level runAsGroup")"; then
