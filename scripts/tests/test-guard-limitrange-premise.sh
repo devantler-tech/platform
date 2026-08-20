@@ -235,5 +235,18 @@ make_limitrange_base "$nsxform" kube-system
 printf 'namespace: somewhere-else\n' >>"$nsxform/providers/nsxformlike/infrastructure/kustomization.yaml"
 expect 'namespace-transformer-is-exit-2' 2 "$nsxform" 'namespace transformer'
 
+# --- 12. An ABSOLUTE resources entry still resolves to the file it names ------
+# `canonicalize` joins every entry onto the naming kustomization's directory. An entry
+# that is already absolute must not be joined — the combined path names nothing, the graph
+# walk misses the LimitRange it does reach, and the guard reports a premise violation that
+# is not there. That is a FALSE exit 1: the most expensive verdict this guard can give,
+# because it fails a build over a suppression that is in fact well-founded.
+absentry="$scratch/absentry"
+make_provider "$absentry" absentrylike absolute-dns kube-system \
+  "CKV_K8S_11=the kube-system default-limitrange supplies the CPU limit at admission" \
+  "$scratch/absentry/bases/limit-ranges/"
+make_limitrange_base "$absentry" kube-system
+expect 'absolute-resources-entry-resolves' 0 "$absentry" 'absolute-dns'
+
 printf '\n%d assertion(s), %d failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ] || exit 1

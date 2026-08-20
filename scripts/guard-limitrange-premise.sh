@@ -56,7 +56,13 @@ command -v yq >/dev/null 2>&1 || die 'yq is required but not on PATH'
 # are not filesystem paths and are skipped by the caller.
 canonicalize() { # <dir> <entry>
   local base=$1 entry=$2 combined
-  combined="$base/$entry"
+  # An entry that is already absolute names its target outright. Joining it onto $base
+  # would build a path that names nothing, and the graph walk would then miss a
+  # LimitRange it does reach — a FALSE premise violation, which fails the build.
+  case $entry in
+    /*) combined=$entry ;;
+    *)  combined="$base/$entry" ;;
+  esac
   # No realpath dependency: collapse `.`/`..` textually so the result is stable
   # whether or not the path exists (a dangling entry must not abort the walk).
   printf '%s' "$combined" | awk -F/ -v abs="${combined:0:1}" '{
