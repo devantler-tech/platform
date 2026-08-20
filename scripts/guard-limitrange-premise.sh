@@ -131,17 +131,22 @@ EOF
 # guard already forces it to be a quoted scalar carrying the whole reason.
 premise_re='limit[ -]?range'
 
-# Namespaces a provider ships a LimitRange into.
+# Namespaces a provider ships a CPU-defaulting LimitRange into.
 limitrange_namespaces() { # <files...on stdin>
   local f ns
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     case $f in *.yaml | *.yml) ;; *) continue ;; esac
-    # A file may hold several documents; only LimitRange ones contribute.
+    # A file may hold several documents; only LimitRange ones contribute — and only those
+    # that actually supply the suppressed field. The premise these skips invoke is that a
+    # CPU limit arrives at admission, which is true only of a Container-type limit carrying
+    # `default.cpu`. A range with only `defaultRequest`, only `max`, or only a memory default
+    # leaves the container with no CPU limit, so counting it would satisfy the premise with a
+    # resource that does not supply it.
     # A parse failure here is an INABILITY TO CHECK, not an absent LimitRange. Skipping
     # it would let a malformed file contribute no namespace, and the caller would then
     # report a definite premise violation (exit 1) over input it could not read.
-    ns=$(yq -r 'select(.kind == "LimitRange") | .metadata.namespace // ""' "$f" 2>/dev/null) ||
+    ns=$(yq -r 'select(.kind == "LimitRange") | select([.spec.limits[] | select(.type == "Container" and .default.cpu != null)] | length > 0) | .metadata.namespace // ""' "$f" 2>/dev/null) ||
       die "could not parse a reachable LimitRange candidate: $f"
     while IFS= read -r n; do
       [ -n "$n" ] && printf '%s\n' "$n"
@@ -217,13 +222,15 @@ while IFS= read -r file; do
       shipped_by=$((shipped_by + 1))
       checked=$((checked + 1))
       if grep -qxF -- "$ns" "$prov_files_dir/$name.ns"; then
-        printf 'ok   %s — provider %s ships a LimitRange into %s\n' "$file" "$name" "$ns"
+        printf 'ok   %s — provider %s ships a CPU-defaulting LimitRange into %s\n' "$file" "$name" "$ns"
       else
         printf 'FAIL %s\n' "$file" >&2
         printf '     its skip reason rests on a LimitRange applying at admission, but provider\n' >&2
-        printf '     %s ships NO LimitRange into namespace %s.\n' "$name" "$ns" >&2
-        printf '     Fix: add the limit-ranges base to that overlay, or drop the skip and\n' >&2
-        printf '     state the limit on the workload.\n' >&2
+        printf '     %s ships NO LimitRange supplying a default CPU limit into\n' "$name" >&2
+        printf '     namespace %s. A LimitRange that sets only defaultRequest, only max,\n' "$ns" >&2
+        printf '     or only a memory default does not supply one.\n' >&2
+        printf '     Fix: add (or extend) a Container-type default.cpu in that overlay'"'"'s\n' >&2
+        printf '     limit-ranges base, or drop the skip and state the limit on the workload.\n' >&2
         failures=$((failures + 1))
       fi
     done <<EOF
@@ -256,5 +263,5 @@ if [ "$failures" -gt 0 ]; then
   exit 1
 fi
 
-printf '\nlimitrange premise: %d premised suppression(s) checked, all shipped with a LimitRange.\n' "$checked"
+printf '\nlimitrange premise: %d premised suppression(s) checked, all shipped with a CPU-defaulting LimitRange.\n' "$checked"
 exit 0

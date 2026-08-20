@@ -286,5 +286,39 @@ YAML
 make_limitrange_base "$multidoc" multidoc-ns
 expect 'multidoc-namespace-resolves-per-document' 0 "$multidoc" 'bundle-dns'
 
+
+# --- 14. A LimitRange that supplies no default CPU does NOT satisfy the premise ---
+# The suppressed control is CKV_K8S_11 ("CPU limits should be set") and the reason
+# says the limit arrives at admission. Only `.spec.limits[].default.cpu` makes that
+# true: a range carrying only `defaultRequest`, only `max`, or only a memory default
+# leaves admission supplying no CPU limit at all, so the suppression is unfounded
+# while a namespace-only check still calls it satisfied. That is the fail-open this
+# guard exists to prevent, one field in.
+capless="$scratch/capless"
+make_provider "$capless" caplessprov capless-dns capless-ns \
+  'CKV_K8S_11=the capless-ns default-limitrange supplies the CPU limit at admission' \
+  '../../../bases/limit-ranges/'
+mkdir -p "$capless/bases/limit-ranges"
+cat >"$capless/bases/limit-ranges/kustomization.yaml" <<YAML
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - range.yaml
+YAML
+cat >"$capless/bases/limit-ranges/range.yaml" <<YAML
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-limitrange
+  namespace: capless-ns
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 15m
+      max:
+        memory: 1Gi
+YAML
+expect 'limitrange-without-default-cpu-fails' 1 "$capless" 'capless-dns'
 printf '\n%d assertion(s), %d failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ] || exit 1
