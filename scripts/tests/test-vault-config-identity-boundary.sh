@@ -40,7 +40,10 @@ readonly openbao_containers=(vault-init vault-config)
 readonly low_uid=100 low_gid=1000 high_id=65532
 
 status=0
-fail() { printf 'FAIL: %s\n' "$1" >&2; status=1; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  status=1
+}
 
 # ------------------------------------------------------------------ pod defaults --
 pod_uid="$(yq -e '.spec.template.spec.securityContext.runAsUser' "$manifest")"
@@ -54,9 +57,15 @@ pod_fsgroup="$(yq -e '.spec.template.spec.securityContext.fsGroup' "$manifest")"
 # ------------------------------------------------------------ per-container split --
 # Capture first, then iterate: a failing yq must not leave the loop body unrun and the check
 # reporting success on an empty list.
-names="$(yq -e '[.spec.template.spec.initContainers[], .spec.template.spec.containers[]] | .[].name' "$manifest")" \
-  || { printf 'FAIL: could not enumerate containers in %s\n' "$manifest" >&2; exit 1; }
-[ -n "$names" ] || { printf 'FAIL: enumerated zero containers in %s\n' "$manifest" >&2; exit 1; }
+names="$(yq -e '[.spec.template.spec.initContainers[], .spec.template.spec.containers[]] | .[].name' "$manifest")" ||
+  {
+    printf 'FAIL: could not enumerate containers in %s\n' "$manifest" >&2
+    exit 1
+  }
+[ -n "$names" ] || {
+  printf 'FAIL: enumerated zero containers in %s\n' "$manifest" >&2
+  exit 1
+}
 
 is_openbao() {
   local n
@@ -77,20 +86,23 @@ while IFS= read -r name; do
     [ "$uid" = "$low_uid" ] || fail "container '$name' must pin the image-baked runAsUser $low_uid (got $uid)"
     [ "$gid" = "$low_gid" ] || fail "container '$name' must pin the image-baked runAsGroup $low_gid (got $gid)"
   else
-    [ "$uid" = "inherit" ] || [ "$uid" -ge "$high_id" ] \
-      || fail "container '$name' has no image-baked low identity, so it must take the pod's high runAsUser (got $uid)"
-    [ "$gid" = "inherit" ] || [ "$gid" -ge "$high_id" ] \
-      || fail "container '$name' has no image-baked low identity, so it must take the pod's high runAsGroup (got $gid)"
+    [ "$uid" = "inherit" ] || [ "$uid" -ge "$high_id" ] ||
+      fail "container '$name' has no image-baked low identity, so it must take the pod's high runAsUser (got $uid)"
+    [ "$gid" = "inherit" ] || [ "$gid" -ge "$high_id" ] ||
+      fail "container '$name' has no image-baked low identity, so it must take the pod's high runAsGroup (got $gid)"
   fi
 done <<EOF
 $names
 EOF
 
-[ "$seen_openbao" -eq "${#openbao_containers[@]}" ] \
-  || fail "expected ${#openbao_containers[@]} openbao containers, matched $seen_openbao — the container names this boundary is written against have changed"
+[ "$seen_openbao" -eq "${#openbao_containers[@]}" ] ||
+  fail "expected ${#openbao_containers[@]} openbao containers, matched $seen_openbao — the container names this boundary is written against have changed"
 
 if [ "$status" -eq 0 ]; then
   printf 'PASS: vault-config runs a low identity for exactly %s containers (%s); all others take the high pod defaults\n' \
-    "${#openbao_containers[@]}" "$(IFS=,; echo "${openbao_containers[*]}")"
+    "${#openbao_containers[@]}" "$(
+      IFS=,
+      echo "${openbao_containers[*]}"
+    )"
 fi
 exit "$status"
