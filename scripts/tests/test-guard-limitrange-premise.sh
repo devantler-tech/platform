@@ -286,7 +286,6 @@ YAML
 make_limitrange_base "$multidoc" multidoc-ns
 expect 'multidoc-namespace-resolves-per-document' 0 "$multidoc" 'bundle-dns'
 
-
 # --- 14. A LimitRange that supplies no default CPU does NOT satisfy the premise ---
 # The suppressed control is CKV_K8S_11 ("CPU limits should be set") and the reason
 # says the limit arrives at admission. Only `.spec.limits[].default.cpu` makes that
