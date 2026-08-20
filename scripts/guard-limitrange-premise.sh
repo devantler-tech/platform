@@ -61,7 +61,7 @@ canonicalize() { # <dir> <entry>
   # LimitRange it does reach — a FALSE premise violation, which fails the build.
   case $entry in
     /*) combined=$entry ;;
-    *)  combined="$base/$entry" ;;
+    *) combined="$base/$entry" ;;
   esac
   # No realpath dependency: collapse `.`/`..` textually so the result is stable
   # whether or not the path exists (a dangling entry must not abort the walk).
