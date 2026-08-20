@@ -91,9 +91,9 @@ reachable_files() { # <provider-dir>
     # yq exits non-zero on a malformed kustomization; that is a real inability to
     # check the graph, not a clean overlay.
     # A `namespace:` transformer rewrites the namespace of every resource below this
-      # kustomization, so `.metadata.namespace` read from the file would no longer be the
-      # namespace the LimitRange must match. Resolving that properly means reimplementing
-      # kustomize; refusing to answer is the honest alternative to answering wrongly.
+    # kustomization, so `.metadata.namespace` read from the file would no longer be the
+    # namespace the LimitRange must match. Resolving that properly means reimplementing
+    # kustomize; refusing to answer is the honest alternative to answering wrongly.
     ns_xform=$(yq -r '.namespace // ""' "$k" 2>/dev/null) || die "could not parse $k"
     [ -z "$ns_xform" ] ||
       die "$k sets a kustomize namespace transformer ($ns_xform); this guard cannot resolve the effective namespace"
