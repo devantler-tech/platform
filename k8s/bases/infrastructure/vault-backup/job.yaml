@@ -154,11 +154,14 @@ spec:
               # owner. Widening them here, while this container still is, is what makes
               # that move safe; a warning rather than a hard failure so a single odd file
               # cannot take the nightly backup down.
+              widened=0
               for EXISTING in /snapshots/openbao-*.snap; do
                 [ -e "$EXISTING" ] || continue
-                chmod 0640 "$EXISTING" ||
+                chmod 0640 "$EXISTING" && widened=$((widened + 1)) ||
                   echo "WARNING: could not widen $EXISTING; the mirror may be unable to read it"
               done
+              # Positive evidence: a silent loop cannot be told apart from one that matched nothing.
+              echo "Widened $widened snapshot(s) on the shared PVC to 0640."
 
               # Skip if the nightly CronJob already produced a snapshot today —
               # this job only guarantees a baseline exists.
