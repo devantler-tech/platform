@@ -149,6 +149,9 @@ jobs:
               - 'scripts/megalinter-scan-counts.sh'
               - 'scripts/tests/test-megalinter-scan-counts-ignorefile.sh'
               - 'scripts/tests/test-trivyignore-vendored-operator-boundary.sh'
+              # The vault-config KSV-0020 disposition is path-scoped but the identity it rests
+              # on is PER CONTAINER, so the entry and its premises test move together.
+              - 'scripts/tests/test-trivyignore-vault-config-identity-boundary.sh'
               # The first-party RBAC dispositions and the roles they describe are one
               # contract: the disposition is only valid while the role stays bound and
               # scoped the way it was reviewed. The roles themselves are already covered
@@ -423,6 +426,19 @@ jobs:
         run: |
           shellcheck scripts/tests/test-trivyignore-vendored-operator-boundary.sh
           bash scripts/tests/test-trivyignore-vendored-operator-boundary.sh
+
+      - name: 🧱 Validate vault-config identity disposition boundary
+        if: needs.changes.outputs.k8s == 'true'
+        # The KSV-0020 disposition on the vault-config Job is scoped by PATH, but the reason it
+        # is accepted is per CONTAINER: only the two openbao containers run at the image-baked
+        # uid 100, and the rest take the pod's high 65532 default. trivy cannot express that,
+        # so a container added later at a low UID would be silently suppressed and the count
+        # would simply not rise — which reads exactly like nothing happened. The premise is
+        # asserted per container here; the paired trivy control runs wherever trivy is
+        # installed and skips loudly where it is not.
+        run: |
+          shellcheck scripts/tests/test-trivyignore-vault-config-identity-boundary.sh
+          bash scripts/tests/test-trivyignore-vault-config-identity-boundary.sh
 
       - name: 🧱 Validate first-party RBAC disposition premises
         if: needs.changes.outputs.k8s == 'true'

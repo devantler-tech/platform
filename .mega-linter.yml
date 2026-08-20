@@ -97,7 +97,7 @@ DISABLE_ERRORS_LINTERS:
   # (#3205). Its dispositions are documented below because they are what holds that zero — each one
   # is a scoped, resource-level skip naming its reason, not a disabled check.
   #
-  # trivy (15 in the local v0.74.0 reproduction): Kubernetes misconfiguration in k8s/, which the
+  # trivy (13 in the local v0.74.0 reproduction): Kubernetes misconfiguration in k8s/, which the
   # section above explains is NOT covered elsewhere. Tracked by #2787.
   #
   # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore.yaml — 450 of
@@ -145,6 +145,28 @@ DISABLE_ERRORS_LINTERS:
   # rather than a low one. Note the two residuals differ: runAsNonRoot rejects UID 0 but constrains
   # the UID only, so the primary GID may still be 0. Same three facts as KSV-0014 above, and the
   # same boundary test asserts them: its checks array lists both ids.
+  #
+  # It then went 15 -> 13 when KSV-0020 on the vault-config Job was dispositioned (#2787). Both
+  # are LOW and both are the openbao containers: uid 100 is that image's own baked `openbao`
+  # user (openbao:x:100:1000 in its /etc/passwd, verified against the pinned digest), which
+  # runAsUser restates rather than chooses. checkov already accepts exactly this fact on exactly
+  # this Job through its resource-scoped checkov.io/skip2 annotation, so leaving it reported on
+  # the trivy side was the two scanners disagreeing about one reviewed decision.
+  #
+  # ⚠️ Unlike every entry above, this one does NOT rest on the local/CI-provider premise: the
+  # Job ships to production. It stands on the image-baked identity alone.
+  #
+  # ⚠️ And the two scanners scope differently — checkov.io/skipN is RESOURCE-scoped while a
+  # trivy `paths:` entry is PATH-scoped, so the trivy entry covers all four containers, not the
+  # two the reasoning accounts for. scripts/tests/test-trivyignore-vault-config-identity-boundary.sh
+  # asserts that per container and fails the build if any other container drops below 10000 or
+  # the pod default stops being high.
+  #
+  # The residual 13 is fully accounted for, per file: 4 KSV-0020 + 4 KSV-0021 on the two
+  # vault-backup workloads, whose durable fix is #3202; 4 KSV-0021 on this same vault-config
+  # Job, where runAsGroup sits at POD level and is inherited by the two containers that have no
+  # image-baked reason to be low (#3258); and 1 KSV-0011 on the docker-provider coredns
+  # Deployment (#3259). REPOSITORY_TRIVY cannot leave the list below until those three land.
   #
   # ⚠️ That 109 is NOT 108 plus a regression. 108 was measured on trivy v0.73.0 and 109 on v0.74.0
   # with no manifest change in between, so that 1 is a scanner rule-set difference rather than new
