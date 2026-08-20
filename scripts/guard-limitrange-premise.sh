@@ -90,13 +90,13 @@ reachable_files() { # <provider-dir>
     dir=$(dirname "$k")
     # yq exits non-zero on a malformed kustomization; that is a real inability to
     # check the graph, not a clean overlay.
-    entry=$(yq -r '(.resources // []) + (.components // []) | .[]' "$k" 2>/dev/null) \
-      || die "could not parse $k"
+    entry=$(yq -r '(.resources // []) + (.components // []) | .[]' "$k" 2>/dev/null) ||
+      die "could not parse $k"
     while IFS= read -r e; do
       [ -n "$e" ] || continue
       # Remote bases are not filesystem paths; a LimitRange cannot be asserted
       # through one statically, and none of this tree's limit ranges come that way.
-      case $e in *"://"*|"git@"*) continue ;; esac
+      case $e in *"://"* | "git@"*) continue ;; esac
       target=$(canonicalize "$dir" "$e")
       if [ -d "$target" ]; then
         if [ -f "$target/kustomization.yaml" ]; then
@@ -123,7 +123,7 @@ limitrange_namespaces() { # <files...on stdin>
   local f ns
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    case $f in *.yaml|*.yml) ;; *) continue ;; esac
+    case $f in *.yaml | *.yml) ;; *) continue ;; esac
     # A file may hold several documents; only LimitRange ones contribute.
     ns=$(yq -r 'select(.kind == "LimitRange") | .metadata.namespace // ""' "$f" 2>/dev/null) || continue
     while IFS= read -r n; do

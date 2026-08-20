@@ -108,7 +108,7 @@ expect() { # <case> <expected-rc> <root> [<needle>]
 missing="$scratch/missing"
 make_provider "$missing" dockerlike unshielded-dns kube-system \
   "CKV_K8S_11=the kube-system default-limitrange supplies the CPU limit at admission" ""
-make_limitrange_base "$missing" kube-system   # present in the tree, but NOT referenced
+make_limitrange_base "$missing" kube-system # present in the tree, but NOT referenced
 expect 'premise-without-limitrange-fails' 1 "$missing" 'unshielded-dns'
 
 # The report must name the overlay that lacks it, not merely the file: the fix
