@@ -88,8 +88,6 @@ reachable_files() { # <provider-dir>
     case $'\n'"$seen_k"$'\n' in *$'\n'"$k"$'\n'*) continue ;; esac
     seen_k="$seen_k$k"$'\n'
     dir=$(dirname "$k")
-    # yq exits non-zero on a malformed kustomization; that is a real inability to
-    # check the graph, not a clean overlay.
     # A `namespace:` transformer rewrites the namespace of every resource below this
     # kustomization, so `.metadata.namespace` read from the file would no longer be the
     # namespace the LimitRange must match. Resolving that properly means reimplementing
@@ -97,6 +95,8 @@ reachable_files() { # <provider-dir>
     ns_xform=$(yq -r '.namespace // ""' "$k" 2>/dev/null) || die "could not parse $k"
     [ -z "$ns_xform" ] ||
       die "$k sets a kustomize namespace transformer ($ns_xform); this guard cannot resolve the effective namespace"
+    # yq exits non-zero on a malformed kustomization; that is a real inability to
+    # check the graph, not a clean overlay.
     entry=$(yq -r '(.resources // []) + (.components // []) | .[]' "$k" 2>/dev/null) ||
       die "could not parse $k"
     while IFS= read -r e; do
