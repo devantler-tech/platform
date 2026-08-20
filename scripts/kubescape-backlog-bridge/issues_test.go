@@ -1933,6 +1933,32 @@ func TestRacedCreateWithUnreadableFingerprintIsRefused(t *testing.T) {
 	}
 }
 
+func TestRacedEntryWithContradictoryIdentityIsRefusedBeforeUnrelatedCreate(t *testing.T) {
+	planned := postureTheme("C-0016", "apps/Deployment/web")
+	raced := postureTheme("C-0017", "db/StatefulSet/pg")
+	contradictoryFingerprint := strings.Repeat("0", 16)
+	if contradictoryFingerprint == raced.Fingerprint() || contradictoryFingerprint == planned.Fingerprint() {
+		contradictoryFingerprint = strings.Repeat("1", 16)
+	}
+	racedBody := strings.Replace(renderBody(raced),
+		"<!-- "+fingerprintMarker+raced.Fingerprint()+" -->",
+		"<!-- "+fingerprintMarker+contradictoryFingerprint+" -->", 1)
+	store := &racingStore{filedByTheOtherRun: []backlogEntry{{
+		Number: 7,
+		Title:  renderTitle(raced),
+		Body:   racedBody,
+		Open:   true,
+	}}}
+
+	err := reconcile([]theme{planned}, []surface{surfacePosture}, true, nil, store, &bytes.Buffer{})
+	if !errors.Is(err, errCollidingEntryIdentity) {
+		t.Fatalf("want errCollidingEntryIdentity, got %v; calls=%v", err, store.calls)
+	}
+	if len(store.calls) != 0 {
+		t.Errorf("contradictory raced markers did not stop unrelated writes: %v", store.calls)
+	}
+}
+
 // TestForcedLabelProvisioningPinsItsColour covers a churn source that no linter
 // or CI check can see.
 //

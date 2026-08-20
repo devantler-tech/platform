@@ -1076,6 +1076,11 @@ func dropRacedCreates(p *plan, inputsComplete bool, store issueStore) error {
 		if err != nil {
 			return err
 		}
+		if identity != "" && identity[:16] != fp {
+			return fmt.Errorf(
+				"%w: issue #%d %q carries identity %s under fingerprint %s",
+				errCollidingEntryIdentity, e.Number, e.Title, identity, fp)
+		}
 		if previous, duplicate := filed[fp]; duplicate {
 			return fmt.Errorf("%w: issues #%d and #%d carry %s",
 				errAmbiguousEntry, previous.Number, e.Number, fp)
