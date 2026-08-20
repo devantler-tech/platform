@@ -40,12 +40,17 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly REPO_ROOT
 readonly IGNOREFILE="$REPO_ROOT/.trivyignore.yaml"
-readonly CHECK_ID='KSV-0020'
+readonly UID_CHECK_ID='KSV-0020'
+readonly GID_CHECK_ID='KSV-0021'
+# Both dispositions on this Job are path-scoped and rest on the SAME per-container premise, so
+# they are structurally and behaviourally checked together rather than drifting apart.
+readonly CHECK_IDS=("$UID_CHECK_ID" "$GID_CHECK_ID")
 readonly JOB_PATH='k8s/bases/infrastructure/vault-config/job.yaml'
 readonly PROBE_PATH='k8s/bases/apps/trivyignore-identity-probe/job.yaml'
 readonly OPENBAO_IMAGE_RE='^quay\.io/openbao/openbao:'
 readonly HIGH_UID_FLOOR=10000
 readonly EXPECTED_LOW_UID=100
+readonly EXPECTED_LOW_GID=1000
 readonly EXPECTED_LOW_CONTAINERS=2
 
 # Vendored bundles carry their own reviewed KSV-0020 disposition, guarded elsewhere.
@@ -72,13 +77,6 @@ command -v yq >/dev/null 2>&1 || {
 }
 
 # ---------------------------------------------------------------- structure --
-# A yq failure must take the missing-entry path rather than become an integer-expression error that
-# evaluates false and silently treats the disposition as present.
-entries="$(yq "[.misconfigurations[] | select(.id == \"$CHECK_ID\") | select((.paths // []) | contains([\"$JOB_PATH\"]))] | length" "$IGNOREFILE" 2>/dev/null || printf '0')"
-entries="${entries:-0}"
-[ "$entries" -ge 1 ] || fail \
-  "MISSING DISPOSITION: $CHECK_ID has no entry scoped to $JOB_PATH in .trivyignore.yaml"
-
 # Each enumeration below is CAPTURED and its status checked BEFORE its loop runs. A process
 # substitution whose command fails feeds the loop nothing, so the body never executes and the check
 # reports success having inspected NOTHING — the exact vacuous pass this guard exists to prevent,
@@ -92,37 +90,47 @@ run_yq() { # 1=expression 2=file 3=what it enumerates, for the failure message
   printf '%s\n' "$out"
 }
 
-# Reciprocal: every non-vendored path this check is scoped to must be the one reviewed here.
-if paths_out="$(run_yq ".misconfigurations[] | select(.id == \"$CHECK_ID\") | (.paths // [])[]" "$IGNOREFILE" "the paths $CHECK_ID is scoped to")"; then
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    case "$path" in
-      "$VENDORED_CDI" | "$VENDORED_KUBEVIRT" | "$JOB_PATH") ;;
-      *) fail "UNREVIEWED DISPOSITION: $CHECK_ID is scoped to $path, which no premises test guards" ;;
-    esac
-  done <<PATHS
+# Both dispositions are scoped to this Job and rest on the same per-container premise, so each is
+# asserted identically. Checking only one would let the other lose its scoping unnoticed.
+for CHECK_ID in "${CHECK_IDS[@]}"; do
+  # A yq failure must take the missing-entry path rather than become an integer-expression error that
+  # evaluates false and silently treats the disposition as present.
+  entries="$(yq "[.misconfigurations[] | select(.id == \"$CHECK_ID\") | select((.paths // []) | contains([\"$JOB_PATH\"]))] | length" "$IGNOREFILE" 2>/dev/null || printf '0')"
+  entries="${entries:-0}"
+  [ "$entries" -ge 1 ] || fail \
+    "MISSING DISPOSITION: $CHECK_ID has no entry scoped to $JOB_PATH in .trivyignore.yaml"
+
+  # Reciprocal: every non-vendored path this check is scoped to must be the one reviewed here.
+  if paths_out="$(run_yq ".misconfigurations[] | select(.id == \"$CHECK_ID\") | (.paths // [])[]" "$IGNOREFILE" "the paths $CHECK_ID is scoped to")"; then
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      case "$path" in
+        "$VENDORED_CDI" | "$VENDORED_KUBEVIRT" | "$JOB_PATH") ;;
+        *) fail "UNREVIEWED DISPOSITION: $CHECK_ID is scoped to $path, which no premises test guards" ;;
+      esac
+    done <<PATHS
 $paths_out
 PATHS
-fi
+  fi
 
-# An entry that lost its paths key suppresses the check repository-wide.
-if lens_out="$(run_yq ".misconfigurations[] | select(.id == \"$CHECK_ID\") | (.paths // []) | length" "$IGNOREFILE" "the path counts for $CHECK_ID")"; then
-  while IFS= read -r n; do
-    [ -n "$n" ] || continue
-    if [ "$n" -eq 0 ]; then
-      fail "UNSCOPED SKIP: an entry for $CHECK_ID has no paths, which suppresses it on every workload"
-    fi
-  done <<LENS
+  # An entry that lost its paths key suppresses the check repository-wide.
+  if lens_out="$(run_yq ".misconfigurations[] | select(.id == \"$CHECK_ID\") | (.paths // []) | length" "$IGNOREFILE" "the path counts for $CHECK_ID")"; then
+    while IFS= read -r n; do
+      [ -n "$n" ] || continue
+      if [ "$n" -eq 0 ]; then
+        fail "UNSCOPED SKIP: an entry for $CHECK_ID has no paths, which suppresses it on every workload"
+      fi
+    done <<LENS
 $lens_out
 LENS
-fi
-
+  fi
+done
 # ------------------------------------------------------------------ premise --
 if ! pod_uid="$(run_yq '.spec.template.spec.securityContext.runAsUser // "unset"' "$REPO_ROOT/$JOB_PATH" "the pod-level runAsUser")"; then
   pod_uid="unset"
 fi
 if [ "$pod_uid" = "unset" ]; then
-  fail "PREMISE BROKEN: the pod sets no runAsUser, so every container without an override inherits an unconstrained UID while $CHECK_ID stays suppressed on this Job"
+  fail "PREMISE BROKEN: the pod sets no runAsUser, so every container without an override inherits an unconstrained UID while $UID_CHECK_ID stays suppressed on this Job"
 elif [ "$pod_uid" -lt "$HIGH_UID_FLOOR" ]; then
   fail "PREMISE BROKEN: the pod default runAsUser is $pod_uid, below $HIGH_UID_FLOOR. The disposition states that only the two openbao containers run low and that everything else takes a HIGH default."
 fi
@@ -135,7 +143,7 @@ if containers_out="$(run_yq '[.spec.template.spec.initContainers[]?, .spec.templ
     [ "$uid" -ge "$HIGH_UID_FLOOR" ] && continue
     low=$((low + 1))
     if ! printf '%s' "$image" | grep -qE "$OPENBAO_IMAGE_RE"; then
-      fail "PREMISE BROKEN: container '$name' runs as UID $uid from image '$image', which is not an openbao image. The $CHECK_ID disposition covers this whole Job by path, so this container's low UID is now silently suppressed with no image-defined identity to justify it."
+      fail "PREMISE BROKEN: container '$name' runs as UID $uid from image '$image', which is not an openbao image. The $UID_CHECK_ID disposition covers this whole Job by path, so this container's low UID is now silently suppressed with no image-defined identity to justify it."
     elif [ "$uid" -ne "$EXPECTED_LOW_UID" ]; then
       fail "PREMISE BROKEN: openbao container '$name' runs as UID $uid, not the image-defined $EXPECTED_LOW_UID the disposition names."
     fi
@@ -146,9 +154,53 @@ CONTAINERS
     "PREMISE BROKEN: $low container(s) run below $HIGH_UID_FLOOR; the disposition is written for exactly $EXPECTED_LOW_CONTAINERS (the two openbao containers)."
 fi
 
+
+# --- GID: the same premise, one field over. A container can carry a justified low UID and an
+# --- unjustified low GID independently, so the two are asserted separately.
+if ! pod_gid="$(run_yq '.spec.template.spec.securityContext.runAsGroup // "unset"' "$REPO_ROOT/$JOB_PATH" "the pod-level runAsGroup")"; then
+  pod_gid="unset"
+fi
+if [ "$pod_gid" = "unset" ]; then
+  fail "PREMISE BROKEN: the pod sets no runAsGroup, so every container without an override inherits an unconstrained GID while $GID_CHECK_ID stays suppressed on this Job"
+elif [ "$pod_gid" -lt "$HIGH_UID_FLOOR" ]; then
+  fail "PREMISE BROKEN: the pod default runAsGroup is $pod_gid, below $HIGH_UID_FLOOR. The $GID_CHECK_ID disposition states that only the two openbao containers run low and that everything else takes a HIGH default."
+fi
+
+# fsGroup is what makes the GID split cost no access: it sets the emptyDir volumes' group AND the
+# setgid bit, so files inherit group 1000 whatever gid their writer runs as, and it joins every
+# container's supplementary groups. Drop it and the split stops being free — the containers on the
+# high default silently lose access to what openbao wrote, and vice versa (#3258).
+if ! fs_group="$(run_yq '.spec.template.spec.securityContext.fsGroup // "unset"' "$REPO_ROOT/$JOB_PATH" "the pod-level fsGroup")"; then
+  fs_group="unset"
+fi
+[ "$fs_group" = "$EXPECTED_LOW_GID" ] || fail \
+  "PREMISE BROKEN: fsGroup is '$fs_group', not $EXPECTED_LOW_GID. The per-container GID split depends on fsGroup supplying shared-volume access; without it, raising the pod default breaks cross-container reads instead of merely raising a group."
+
+low_gid=0
+if gids_out="$(run_yq '[.spec.template.spec.initContainers[]?, .spec.template.spec.containers[]?] | .[] | .name + "|" + .image + "|" + ((.securityContext.runAsGroup // "unset")|tostring)' "$REPO_ROOT/$JOB_PATH" "the container GIDs of the vault-config Job")"; then
+  while IFS='|' read -r name image gid; do
+    [ -n "$name" ] || continue
+    [ "$gid" = "unset" ] && continue
+    [ "$gid" -ge "$HIGH_UID_FLOOR" ] && continue
+    low_gid=$((low_gid + 1))
+    if ! printf '%s' "$image" | grep -qE "$OPENBAO_IMAGE_RE"; then
+      fail "PREMISE BROKEN: container '$name' runs as GID $gid from image '$image', which is not an openbao image. The $GID_CHECK_ID disposition covers this whole Job by path, so this container's low GID is now silently suppressed with no image-defined identity to justify it."
+    elif [ "$gid" -ne "$EXPECTED_LOW_GID" ]; then
+      fail "PREMISE BROKEN: openbao container '$name' runs as GID $gid, not the image-defined $EXPECTED_LOW_GID the disposition names."
+    fi
+  done <<GIDS
+$gids_out
+GIDS
+  [ "$low_gid" -eq "$EXPECTED_LOW_CONTAINERS" ] || fail \
+    "PREMISE BROKEN: $low_gid container(s) run below $HIGH_UID_FLOOR by GID; the $GID_CHECK_ID disposition is written for exactly $EXPECTED_LOW_CONTAINERS (the two openbao containers)."
+fi
 [ "$status" -eq 0 ] || exit "$status"
-printf 'PASS(structure+premise): %s is scoped to %s; pod default UID %s, exactly %s openbao container(s) below %s.\n' \
-  "$CHECK_ID" "$JOB_PATH" "$pod_uid" "$low" "$HIGH_UID_FLOOR"
+printf 'PASS(structure+premise): %s and %s are scoped to %s.\n' \
+  "$UID_CHECK_ID" "$GID_CHECK_ID" "$JOB_PATH"
+printf '  pod defaults: uid=%s gid=%s fsGroup=%s (floor %s)\n' \
+  "$pod_uid" "$pod_gid" "$fs_group" "$HIGH_UID_FLOOR"
+printf '  below the floor: %s container(s) by UID, %s by GID; expected %s each (the openbao pair)\n' \
+  "$low" "$low_gid" "$EXPECTED_LOW_CONTAINERS"
 
 # ---------------------------------------------------------------- behaviour --
 command -v trivy >/dev/null 2>&1 || {
@@ -178,8 +230,8 @@ cmp -s "$WORK/$JOB_PATH" "$WORK/$PROBE_PATH" || {
   exit 1
 }
 
-count_at() {
-  jq -r --arg t "$2" --arg id "$CHECK_ID" \
+count_at() { # 1=scan json  2=target path  3=check id
+  jq -r --arg t "$2" --arg id "$3" \
     '[ .Results[]? | select(.Target == $t) | .Misconfigurations[]? | select(.ID == $id and .Status == "FAIL") ] | length' "$1"
 }
 
@@ -189,33 +241,37 @@ scan() {
   (cd "$WORK" && trivy fs --scanners misconfig --config-data .trivy/data --format json "$@" .) >"$out" 2>/dev/null
 }
 
-# --- Ablation first: without the ignorefile BOTH copies must report, or this proves nothing. ---
+# The two scans do not depend on the check id, so run them once and assert per check below.
 scan "$WORK/no-ignore.json"
-base_job="$(count_at "$WORK/no-ignore.json" "$JOB_PATH")"
-base_probe="$(count_at "$WORK/no-ignore.json" "$PROBE_PATH")"
-[ "$base_job" -gt 0 ] || {
-  printf 'VACUOUS: without the ignorefile, %s does not fire at %s, so suppressing it below would prove nothing (a trivy rule change?).\n' "$CHECK_ID" "$JOB_PATH" >&2
-  exit 1
-}
-[ "$base_probe" -gt 0 ] || {
-  printf 'VACUOUS: without the ignorefile, %s does not fire at %s.\n' "$CHECK_ID" "$PROBE_PATH" >&2
-  exit 1
-}
-
-# --- With the ignorefile: the dispositioned path is suppressed, the probe is NOT. ---
 scan "$WORK/with-ignore.json" --ignorefile .trivyignore.yaml
-scoped_job="$(count_at "$WORK/with-ignore.json" "$JOB_PATH")"
-scoped_probe="$(count_at "$WORK/with-ignore.json" "$PROBE_PATH")"
 
-[ "$scoped_job" -eq 0 ] || {
-  printf 'the disposition does not cover %s (%s finding(s) still reported)\n' "$JOB_PATH" "$scoped_job" >&2
-  exit 1
-}
-[ "$scoped_probe" -gt 0 ] || {
-  printf 'BOUNDARY BREACHED: identical bytes at the non-dispositioned path %s are ALSO suppressed, so the %s entry has stopped being path-scoped and a genuinely unjustified low-UID workload would now be hidden. Re-scope the entry in .trivyignore.yaml.\n' "$PROBE_PATH" "$CHECK_ID" >&2
-  exit 1
-}
+for CHECK_ID in "${CHECK_IDS[@]}"; do
+  # --- Ablation first: without the ignorefile BOTH copies must report, or this proves nothing. ---
+  base_job="$(count_at "$WORK/no-ignore.json" "$JOB_PATH" "$CHECK_ID")"
+  base_probe="$(count_at "$WORK/no-ignore.json" "$PROBE_PATH" "$CHECK_ID")"
+  [ "$base_job" -gt 0 ] || {
+    printf 'VACUOUS: without the ignorefile, %s does not fire at %s, so suppressing it below would prove nothing (a trivy rule change?).\n' "$CHECK_ID" "$JOB_PATH" >&2
+    exit 1
+  }
+  [ "$base_probe" -gt 0 ] || {
+    printf 'VACUOUS: without the ignorefile, %s does not fire at %s.\n' "$CHECK_ID" "$PROBE_PATH" >&2
+    exit 1
+  }
 
-printf 'PASS(behaviour): %s is path-scoped.\n' "$CHECK_ID"
-printf '  without ignorefile : job=%s  probe=%s   (ablation fired)\n' "$base_job" "$base_probe"
-printf '  with    ignorefile : job=%s  probe=%s   (same bytes, path decides)\n' "$scoped_job" "$scoped_probe"
+  # --- With the ignorefile: the dispositioned path is suppressed, the probe is NOT. ---
+  scoped_job="$(count_at "$WORK/with-ignore.json" "$JOB_PATH" "$CHECK_ID")"
+  scoped_probe="$(count_at "$WORK/with-ignore.json" "$PROBE_PATH" "$CHECK_ID")"
+
+  [ "$scoped_job" -eq 0 ] || {
+    printf 'the %s disposition does not cover %s (%s finding(s) still reported)\n' "$CHECK_ID" "$JOB_PATH" "$scoped_job" >&2
+    exit 1
+  }
+  [ "$scoped_probe" -gt 0 ] || {
+    printf 'BOUNDARY BREACHED: identical bytes at the non-dispositioned path %s are ALSO suppressed, so the %s entry has stopped being path-scoped and a genuinely unjustified low-identity workload would now be hidden. Re-scope the entry in .trivyignore.yaml.\n' "$PROBE_PATH" "$CHECK_ID" >&2
+    exit 1
+  }
+
+  printf 'PASS(behaviour): %s is path-scoped.\n' "$CHECK_ID"
+  printf '  without ignorefile : job=%s  probe=%s   (ablation fired)\n' "$base_job" "$base_probe"
+  printf '  with    ignorefile : job=%s  probe=%s   (same bytes, path decides)\n' "$scoped_job" "$scoped_probe"
+done
