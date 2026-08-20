@@ -149,8 +149,10 @@
 //
 // # Fingerprints
 //
-// Each theme carries a fingerprint derived from its SURFACE and KEY, and
-// nothing else. Affected components, their count, totals, timestamps, resource
+// Each theme carries two forms of the same SURFACE-and-KEY digest: the
+// historical 64-bit fingerprint used to find already-filed entries, and the
+// complete SHA-256 identity used to verify that a lookup hit still names the
+// same theme. Affected components, their count, totals, timestamps, resource
 // versions and UIDs are all excluded, so:
 //
 //   - unchanged cluster state yields a byte-identical fingerprint across runs
@@ -163,6 +165,12 @@
 // The affected components and counts are still ACCUMULATED and RENDERED, just
 // never fingerprinted: an entry that cannot show 1 critical becoming 999, or a
 // second workload picking up the same failed control, is not worth updating.
+//
+// Entries filed before the complete marker existed migrate in place. Their
+// one-time migration is bound to the independently rendered title; a legacy
+// entry whose title belongs to another theme is refused rather than adopted.
+// The successful update adds the complete identity, so later runs use the
+// collision-resistant comparison directly without recreating any issue.
 //
 // # Every input is identified structurally, never assumed
 //

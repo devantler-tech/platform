@@ -269,7 +269,7 @@ type theme struct {
 	Total      int      // summed occurrences (CVEs); deliberately NOT fingerprinted
 }
 
-// Fingerprint is the theme's stable identity across runs.
+// Fingerprint is the theme's stable historical lookup key across runs.
 //
 // It covers the surface and the key, and NOTHING else — not the affected
 // components, their count, totals, timestamps, resource versions or UIDs.
@@ -282,13 +282,22 @@ type theme struct {
 // — exactly the churn excluding the count was meant to prevent, since the
 // component set implicitly encodes that count anyway.
 func (t theme) Fingerprint() string {
+	return t.Identity()[:16]
+}
+
+// Identity is the theme's collision-resistant machine identity.
+//
+// Fingerprint keeps its historical 64-bit prefix so already-filed issues stay
+// addressable. New bodies retain the complete digest as a second marker, which
+// lets reconciliation verify that a fingerprint still names the same theme.
+func (t theme) Identity() string {
 	canonical := t.Kind + "|" + t.Key
 	sum := sha256.Sum256([]byte(canonical))
 
-	return hex.EncodeToString(sum[:])[:16]
+	return hex.EncodeToString(sum[:])
 }
 
-// postureFingerprint is the identity of a posture theme named only by its key.
+// postureFingerprint is the lookup key of a posture theme named only by its key.
 //
 // The accepted-exception set is built from control keys, not from derived
 // themes, so it needs the fingerprint of a theme it never constructs. Doing that
