@@ -83,11 +83,11 @@ readonly reviewed_workload_pairs=(
 # `default.cpu` LimitRange into that namespace. It reports `ok ... provider docker ships a
 # CPU-defaulting LimitRange into kube-system` for this pair today.
 #
-# ⚠️ COVERAGE CAVEAT, recorded rather than glossed: that guard reads `checkov.io/skipN` annotations
-# only, so it checks this premise for the file's CKV_K8S_11 skip and NOT for the trivy entry below.
-# The two rest on the identical claim, so the premise is verified today — but by the annotation's
-# presence, not the trivy entry's. Removing the annotation while keeping the entry would leave this
-# pair unguarded, silently. #3272 closes that, and carries the measured trap for whoever does.
+# That guard matches on `checkov.io/skipN` annotation values, so on its own it vouches for the
+# file's CKV_K8S_11 skip rather than for the trivy entry below. The admission-premise section near
+# the end of this file binds the two by requiring a passing verdict naming this pair's own file, so
+# removing the annotation while keeping the entry fails the build instead of quietly leaving the
+# pair unpremised.
 readonly reviewed_admission_pairs=(
   # The kube-system default-limitrange supplies the CPU limit at admission; trivy reads the
   # committed spec, where an admission-time default is absent (#2787).
@@ -128,30 +128,36 @@ for check in "${checks[@]}"; do
       "$vendored_kubevirt") seen_kubevirt=1 ;;
       *)
         reviewed=0
-        for fp in "${first_party_pairs[@]}"; do
+        # Three reviewed categories, matched by three SIBLING loops. Nesting the workload and
+        # admission scans inside the first-party loop couples them to that list being non-empty:
+        # with no first-party pairs the outer body never runs, so every workload and admission
+        # pair reads as unreviewed and a correct repository fails the build.
+        for fp in ${first_party_pairs[@]+"${first_party_pairs[@]}"}; do
           if [ "$check:$path" = "$fp" ]; then
             reviewed=1
             break
           fi
-          # Second reviewed category: a workload-identity verdict, guarded by its own premises
-          # test rather than by the RBAC one above.
-          if [ "$reviewed" -eq 0 ]; then
-            for wp in "${reviewed_workload_pairs[@]}"; do
-              if [ "$check:$path" = "$wp" ]; then
-                reviewed=1
-                break
-              fi
-            done
-          fi
-          if [ "$reviewed" -eq 0 ]; then
-            for ap in "${reviewed_admission_pairs[@]}"; do
-              if [ "$check:$path" = "$ap" ]; then
-                reviewed=1
-                break
-              fi
-            done
-          fi
         done
+        # Second reviewed category: a workload-identity verdict, guarded by its own premises
+        # test rather than by the RBAC one above.
+        if [ "$reviewed" -eq 0 ]; then
+          for wp in ${reviewed_workload_pairs[@]+"${reviewed_workload_pairs[@]}"}; do
+            if [ "$check:$path" = "$wp" ]; then
+              reviewed=1
+              break
+            fi
+          done
+        fi
+        # Third reviewed category: an admission verdict, whose premise the admission-premise
+        # section below checks directly against this pair's own file.
+        if [ "$reviewed" -eq 0 ]; then
+          for ap in ${reviewed_admission_pairs[@]+"${reviewed_admission_pairs[@]}"}; do
+            if [ "$check:$path" = "$ap" ]; then
+              reviewed=1
+              break
+            fi
+          done
+        fi
         if [ "$reviewed" -eq 0 ]; then
           printf 'WIDENED SKIP: %s is scoped to %s, which is neither a vendored operator bundle nor a reviewed first-party, workload-identity or admission disposition for THAT check\n' "$check" "$path" >&2
           status=1
@@ -219,6 +225,40 @@ else
         ;;
     esac
   done < <(cd "$repo_root" && matching_kustomizations "$vm_entry")
+fi
+
+# ------------------------------------------------------ admission premise --
+# Every reviewed_admission_pairs entry rests on "a namespace-scoped LimitRange supplies this field
+# at admission, and trivy reading one stored file cannot see it". scripts/guard-limitrange-premise.sh
+# is what checks that claim against the kustomize graph, but it matches on `checkov.io/skipN`
+# annotation values, so by itself it vouches for a file's CHECKOV skip and never for the trivy entry
+# beside it. Requiring a passing verdict naming the pair's own file is what binds the two: remove the
+# annotation while keeping the trivy entry and the guard stops reporting that file, which fails here
+# instead of leaving the entry resting on a premise nothing checks.
+premise_guard="$repo_root/scripts/guard-limitrange-premise.sh"
+if [ ! -x "$premise_guard" ]; then
+  printf 'ADMISSION PREMISE UNCHECKABLE: %s is missing or not executable\n' "$premise_guard" >&2
+  status=1
+else
+  # Capture the guard's status DIRECTLY rather than reading $? after an `if` compound, which
+  # yields the compound's status (0 when the condition merely failed) and would collapse
+  # "could not check" into "checked".
+  premise_out="$(cd "$repo_root" && "$premise_guard" k8s 2>&1)"
+  premise_rc=$?
+  if [ "$premise_rc" -eq 2 ]; then
+    printf 'ADMISSION PREMISE UNCHECKABLE: guard-limitrange-premise.sh exited 2, so an absent verdict below would mean nothing rather than a broken premise\n' >&2
+    printf '%s\n' "$premise_out" >&2
+    status=1
+  else
+    for ap in ${reviewed_admission_pairs[@]+"${reviewed_admission_pairs[@]}"}; do
+      ap_path="${ap#*:}"
+      # The guard prints `ok   <file> — provider <name> ships …`. The trailing space is load-bearing:
+      # without it a path that is a prefix of a longer reported one would satisfy this.
+      printf '%s\n' "$premise_out" | grep -qF -- "ok   $ap_path " && continue
+      printf 'UNPREMISED ADMISSION SKIP: %s is dispositioned as an admission verdict, but guard-limitrange-premise.sh reports no passing LimitRange premise for %s, so the trivy entry rests on a premise nothing checks\n' "$ap" "$ap_path" >&2
+      status=1
+    done
+  fi
 fi
 
 # ---------------------------------------------------------------- behaviour --
