@@ -1744,6 +1744,54 @@ func TestRacedCreateIsDroppedRatherThanDuplicated(t *testing.T) {
 	}
 }
 
+func TestRacedLegacyCreateWithMatchingTitleIsDropped(t *testing.T) {
+	th := postureTheme("C-0016", "apps/Deployment/web")
+	legacyBody := strings.Replace(renderBody(th),
+		"<!-- "+identityMarker+th.Identity()+" -->\n", "", 1)
+	store := &racingStore{filedByTheOtherRun: []backlogEntry{{
+		Number: 7,
+		Title:  renderTitle(th),
+		Body:   legacyBody,
+		Open:   true,
+	}}}
+
+	var out bytes.Buffer
+	if err := reconcile([]theme{th}, []surface{surfacePosture}, true, nil, store, &out); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	for _, c := range store.calls {
+		if strings.HasPrefix(c, "create:") {
+			t.Errorf("duplicated a matching legacy issue filed by the other invocation: %v", store.calls)
+		}
+	}
+	if !strings.Contains(out.String(), "DROPPED") {
+		t.Errorf("the dropped legacy create was not disclosed:\n%s", out.String())
+	}
+}
+
+func TestRacedLegacyCreateWithDifferentTitleIsRefused(t *testing.T) {
+	th := postureTheme("C-0016", "apps/Deployment/web")
+	legacyBody := strings.Replace(renderBody(th),
+		"<!-- "+identityMarker+th.Identity()+" -->\n", "", 1)
+	store := &racingStore{filedByTheOtherRun: []backlogEntry{{
+		Number: 7,
+		Title:  "different legacy theme",
+		Body:   legacyBody,
+		Open:   true,
+	}}}
+
+	var out bytes.Buffer
+	err := reconcile([]theme{th}, []surface{surfacePosture}, true, nil, store, &out)
+	if !errors.Is(err, errCollidingEntryIdentity) {
+		t.Fatalf("want errCollidingEntryIdentity, got %v; calls=%v", err, store.calls)
+	}
+	for _, c := range store.calls {
+		if strings.HasPrefix(c, "create:") {
+			t.Errorf("created through a raced legacy title collision: %v", store.calls)
+		}
+	}
+}
+
 func TestRacedCreateWithCollidingIdentityIsRefused(t *testing.T) {
 	th := postureTheme("C-0016", "apps/Deployment/web")
 	collidingIdentity := th.Identity()[:len(th.Identity())-1] + "0"

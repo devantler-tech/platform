@@ -1103,7 +1103,16 @@ func dropRacedCreates(p *plan, store issueStore) error {
 			}
 
 			if raced, exists := filed[fp]; exists {
-				if raced.identity != plannedIdentity {
+				// A legacy raced entry carries no complete identity to compare.
+				// Bind its one-time migration to the independently rendered title,
+				// exactly as planWrites does for the initial snapshot.
+				if raced.identity == "" && raced.Title != a.Title {
+					return fmt.Errorf(
+						"%w: legacy issue #%d identity %q; planned create %q carries %q; fingerprint %s",
+						errCollidingEntryIdentity, raced.Number, raced.Title,
+						a.Title, plannedIdentity, fp)
+				}
+				if raced.identity != "" && raced.identity != plannedIdentity {
 					return fmt.Errorf(
 						"%w: issue #%d %q carries %q; planned create %q carries %q; fingerprint %s",
 						errCollidingEntryIdentity, raced.Number, raced.Title, raced.identity,
