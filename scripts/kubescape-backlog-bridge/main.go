@@ -1069,10 +1069,7 @@ func dropRacedCreates(p *plan, inputsComplete bool, store issueStore) error {
 	for _, e := range current {
 		fp, err := e.fingerprint()
 		if err != nil {
-			// An unreadable marker is planWrites' business, not this filter's.
-			// Refusing here would put a second, differently-worded gate on a
-			// condition the plan this run is applying has already passed.
-			continue
+			return err
 		}
 
 		identity, _, err := e.identity()

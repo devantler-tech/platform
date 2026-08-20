@@ -1894,6 +1894,45 @@ func TestRacedCreateWithMalformedIdentityIsRefused(t *testing.T) {
 	}
 }
 
+func TestRacedCreateWithUnreadableFingerprintIsRefused(t *testing.T) {
+	th := postureTheme("C-0016", "apps/Deployment/web")
+	fingerprintLine := "<!-- " + fingerprintMarker + th.Fingerprint() + " -->"
+	tests := map[string]struct {
+		body string
+		want error
+	}{
+		"missing": {
+			body: strings.Replace(renderBody(th), fingerprintLine, "", 1),
+			want: errMissingFingerprint,
+		},
+		"duplicate": {
+			body: renderBody(th) + "\n" + fingerprintLine + "\n",
+			want: errAmbiguousFingerprint,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			store := &racingStore{filedByTheOtherRun: []backlogEntry{{
+				Number: 7,
+				Title:  renderTitle(th),
+				Body:   tc.body,
+				Open:   true,
+			}}}
+
+			err := reconcile([]theme{th}, []surface{surfacePosture}, true, nil, store, &bytes.Buffer{})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("want %v, got %v; calls=%v", tc.want, err, store.calls)
+			}
+			for _, c := range store.calls {
+				if strings.HasPrefix(c, "create:") {
+					t.Errorf("created through a raced unreadable fingerprint: %v", store.calls)
+				}
+			}
+		})
+	}
+}
+
 // TestForcedLabelProvisioningPinsItsColour covers a churn source that no linter
 // or CI check can see.
 //
