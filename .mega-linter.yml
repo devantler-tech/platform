@@ -162,14 +162,18 @@ DISABLE_ERRORS_LINTERS:
   # asserts that per container and fails the build if any other container drops below 10000 or
   # the pod default stops being high.
   #
-  # It then went 13 -> 9 when KSV-0021 on the vault-config Job was dispositioned (#3258). The
-  # Job's runAsGroup sat at POD level, so the minio/mc and alpine/k8s containers inherited a group
-  # chosen for openbao. The pod default is now the high 65532 for gid as well as uid, and gid 1000
-  # is set on the two openbao containers only — the same image-baked identity, one field over.
-  # Cross-container access to the shared emptyDir volumes is unaffected because it comes from
-  # fsGroup, which sets their group AND the setgid bit, so files inherit group 1000 whatever gid
-  # their writer runs as; measured with a paired control rather than reasoned. The same
-  # per-container boundary test now asserts both dispositions.
+  # It then went 13 -> 11 when the vault-config Job's runAsGroup moved OFF the pod (#3258). It sat
+  # at pod level, so the minio/mc and alpine/k8s containers inherited a group chosen for openbao.
+  # The pod default is now the high 65532 for gid as well as uid, and gid 1000 is set on the two
+  # openbao containers only. Those two inheriting containers stopped reporting KSV-0021 outright,
+  # so this half is a real fix rather than a suppression. Cross-container access to the shared
+  # emptyDir volumes is unaffected because it comes from fsGroup, which sets their group AND the
+  # setgid bit, so a file inherits group 1000 whatever gid its writer runs as; measured with a
+  # paired control rather than reasoned.
+  #
+  # It then went 11 -> 9 when KSV-0021 on that same Job was dispositioned (#3258), covering the two
+  # openbao containers that legitimately remain — the same image-defined identity the KSV-0020
+  # entry above rests on, one field over. The same per-container boundary test asserts both.
   #
   # The residual 9 is fully accounted for, per file: 4 KSV-0020 + 4 KSV-0021 on the two
   # vault-backup workloads, whose durable fix is #3202; and 1 KSV-0011 on the docker-provider
