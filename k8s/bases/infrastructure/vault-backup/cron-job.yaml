@@ -151,6 +151,20 @@ spec:
                   fi
                   echo "Vault is unsealed and healthy."
 
+                  # Backfill: widen EVERY snapshot on the shared PVC, not only the one this
+                  # run creates. #3246 made new snapshots 0640, but retention keeps the
+                  # newest 14, so every snapshot taken before it is still 0600 — readable
+                  # only by its owner. The mirror runs `mc mirror` over the WHOLE directory,
+                  # so it can need to open any of them, and #3202 step 2 stops it being that
+                  # owner. Widening them here, while this container still is, is what makes
+                  # that move safe; a warning rather than a hard failure so a single odd file
+                  # cannot take the nightly backup down.
+                  for EXISTING in /snapshots/openbao-*.snap; do
+                    [ -e "$EXISTING" ] || continue
+                    chmod 0640 "$EXISTING" ||
+                      echo "WARNING: could not widen $EXISTING; the mirror may be unable to read it"
+                  done
+
                   SNAP="/snapshots/openbao-$(date -u +%Y%m%d-%H%M%S).snap"
                   echo "Saving raft snapshot to $SNAP..."
                   bao operator raft snapshot save "$SNAP"
