@@ -62,13 +62,18 @@ const maxListedComponents = 300
 // which the same test now asserts against a real bound rather than against an
 // assumed input length.
 //
-// Truncating cannot collide two themes into one issue: identity is the body's
-// fingerprint, which Fingerprint derives from Kind and Key alone — never from a
-// severity or a component.
+// Truncating cannot collapse two themes into one identity: neither the lookup
+// fingerprint nor its complete verifying digest includes a severity or a
+// component.
 const maxRenderedFieldRunes = 180
 
-// fingerprintMarker is the machine-readable identity embedded in each body.
+// fingerprintMarker is the historical lookup key embedded in each body.
 const fingerprintMarker = "kubescape-backlog-bridge:fingerprint="
+
+// identityMarker retains the complete collision-resistant theme identity.
+// Fingerprints stay unchanged for compatibility with already-filed issues;
+// this marker verifies that a lookup hit still belongs to the same theme.
+const identityMarker = "kubescape-backlog-bridge:identity="
 
 // errAmbiguousEntry reports two tracked issues carrying one fingerprint.
 //
@@ -96,13 +101,17 @@ var errMissingFingerprint = errors.New("tracked issue carries no readable finger
 // once filed the two issues carry one marker, so every subsequent run fails
 // errAmbiguousEntry against a state no run can now repair.
 //
-// Detection only, and deliberately so. The fingerprint is the STORED identity of
-// issues that already exist, so widening it is a migration rather than a
-// constant change: it would stop every filed issue resolving to its theme, refile
-// each as a duplicate, and never close the originals. Refusing the plan changes
-// no stored identity, converts a silent merge into a loud stop, and is what makes
-// a later widening safe to do deliberately instead of urgently.
+// Detection only, and deliberately so. The fingerprint is the historical
+// lookup key of issues that already exist, so widening it is a migration rather
+// than a constant change: it would stop every filed issue resolving to its
+// theme, refile each as a duplicate, and never close the originals. Refusing the
+// plan changes no stored key, converts a silent merge into a loud stop, and is
+// what makes a later widening safe to do deliberately instead of urgently.
 var errCollidingThemes = errors.New("two derived themes claim the same fingerprint")
+
+// errCollidingEntryIdentity reports a fingerprint that resolves to a tracked
+// issue whose complete identity belongs to a different theme.
+var errCollidingEntryIdentity = errors.New("tracked issue identity does not match derived theme")
 
 // errAmbiguousFingerprint reports an issue body carrying more than one marker.
 //
@@ -114,6 +123,14 @@ var errCollidingThemes = errors.New("two derived themes claim the same fingerpri
 // overwrite that issue against the wrong finding and file a duplicate for its
 // real one — so the identity is refused rather than guessed.
 var errAmbiguousFingerprint = errors.New("tracked issue carries more than one fingerprint")
+
+// errMalformedIdentity reports a body that claims the current identity-marker
+// format without carrying one complete SHA-256 value. A body with no marker at
+// all is legacy and follows the explicit migration path instead.
+var errMalformedIdentity = errors.New("tracked issue carries a malformed identity")
+
+// errAmbiguousIdentity reports more than one identity marker in one body.
+var errAmbiguousIdentity = errors.New("tracked issue carries more than one identity")
 
 // fingerprintPattern extracts the marker's hex identity.
 //
@@ -131,6 +148,15 @@ var errAmbiguousFingerprint = errors.New("tracked issue carries more than one fi
 // and EVERY subsequent run refuses, until someone hand-repairs the body. One
 // maintainer edit through the web UI would otherwise wedge the bridge for good.
 var fingerprintPattern = regexp.MustCompile(`(?m)^<!-- ` + fingerprintMarker + `([0-9a-f]{16}) -->\r?$`)
+
+var identityPattern = regexp.MustCompile(`(?m)^<!-- ` + identityMarker + `([0-9a-f]{64}) -->\r?$`)
+
+// identityMarkerLinePattern also sees malformed marker COMMENT lines. Without
+// it, a typo in a current-format body would be mistaken for a legacy issue and
+// could take the weaker title-bound migration path. Restricting the detector to
+// a comment opener prevents untrusted rendered fields that merely contain the
+// marker token from forging a second identity marker.
+var identityMarkerLinePattern = regexp.MustCompile(`(?m)^[\t ]*<!--[\t ]*` + identityMarker + `[^\r\n]*\r?$`)
 
 // backlogEntry is an issue this command already owns.
 type backlogEntry struct {
@@ -170,6 +196,27 @@ func (e backlogEntry) fingerprint() (string, error) {
 	}
 
 	return m[0][1], nil
+}
+
+// identity reads the complete identity marker. legacy is true only when the
+// body carries no identity-marker line at all.
+func (e backlogEntry) identity() (value string, legacy bool, err error) {
+	valid := identityPattern.FindAllStringSubmatch(e.Body, -1)
+	lines := identityMarkerLinePattern.FindAllString(e.Body, -1)
+
+	if len(lines) == 0 {
+		return "", true, nil
+	}
+
+	if len(lines) > 1 {
+		return "", false, fmt.Errorf("%w: issue #%d carries %d", errAmbiguousIdentity, e.Number, len(lines))
+	}
+
+	if len(valid) != 1 {
+		return "", false, fmt.Errorf("%w: issue #%d", errMalformedIdentity, e.Number)
+	}
+
+	return valid[0][1], false, nil
 }
 
 // issueAction is one reconciliation step.
@@ -221,7 +268,8 @@ type plan struct {
 	// reconciled when a real change — in either direction — is still pending.
 	WithheldUpdates int
 	// RacedCreates counts creates dropped by dropRacedCreates because another
-	// invocation filed the same fingerprint between planning and applying.
+	// invocation filed the same theme between planning and applying, proven by
+	// complete identity or the title-bound legacy migration path.
 	//
 	// Disclosed for the same reason as the two counters above: the run performed
 	// fewer writes than it planned, and a silent drop is indistinguishable from
@@ -401,15 +449,15 @@ func boundField(s string) string {
 // of identical input yields identical bytes, so a bounded title is as stable as
 // an unbounded one.
 //
-// Truncating cannot collide two themes into one issue: identity is the body's
-// fingerprint, never the title.
+// Truncating cannot silently merge two themes into one issue: current bodies
+// carry the complete theme identity, independently of the title.
 //
 // It CAN, however, collide them for a human reader, which is why the digest
 // below exists. The title is the only place t.Key is rendered — renderBody does
 // not carry it — so two keys that render to one visible title produce two issues
 // with identical visible titles, and when their severity and components also
-// match, identical visible bodies. Only the hidden fingerprint would distinguish
-// them, and nobody reads that.
+// match, identical visible bodies. Only the hidden digest markers distinguish
+// them, and nobody reads those.
 //
 // TWO renderings collapse distinct keys, not one, and both need the digest:
 //
@@ -471,7 +519,8 @@ func renderBody(t theme) string {
 	var b strings.Builder
 
 	b.WriteString("> 🤖 Generated by the Agentic Engineer\n\n")
-	b.WriteString("<!-- " + fingerprintMarker + t.Fingerprint() + " -->\n\n")
+	b.WriteString("<!-- " + fingerprintMarker + t.Fingerprint() + " -->\n")
+	b.WriteString("<!-- " + identityMarker + t.Identity() + " -->\n\n")
 	b.WriteString("Filed automatically from live Kubescape findings by ")
 	b.WriteString("`scripts/kubescape-backlog-bridge`. Part of #2854.\n\n")
 
@@ -624,17 +673,37 @@ const acceptedComment = "> 🤖 Generated by the Agentic Engineer\n\n" +
 // examined scopes closing further: a run passed only -posture may not close CVE
 // entries, whose surface it did not look at at all.
 //
-// accepted holds the fingerprints of themes every occurrence of which a declared
-// exception suppressed. They are absent from themes for a reason opposite to the
-// one the close path assumes, so they close with acceptedComment instead.
+// accepted holds the complete identities of themes every occurrence of which a
+// declared exception suppressed. They are absent from themes for a reason
+// opposite to the one the close path assumes, so they close with acceptedComment
+// instead. The complete value verifies that a historical fingerprint lookup did
+// not collide with a different tracked theme.
 func planWrites(
 	themes []theme,
 	existing []backlogEntry,
 	examined []surface,
 	inputsComplete bool,
-	accepted map[string]struct{},
+	accepted map[string]string,
 ) (plan, error) {
 	byFingerprint := map[string]backlogEntry{}
+	identityByFingerprint := map[string]string{}
+	acceptedIdentityByFingerprint := map[string]string{}
+	acceptedTitleByFingerprint := map[string]string{}
+
+	for identity, title := range accepted {
+		if len(identity) != 64 || strings.Trim(identity, "0123456789abcdef") != "" {
+			return plan{}, fmt.Errorf("%w: accepted theme carries %q", errMalformedIdentity, identity)
+		}
+
+		fp := identity[:16]
+		if previous, collision := acceptedIdentityByFingerprint[fp]; collision && previous != identity {
+			return plan{}, fmt.Errorf("%w: accepted identities %s and %s both claim %s",
+				errCollidingThemes, previous, identity, fp)
+		}
+
+		acceptedIdentityByFingerprint[fp] = identity
+		acceptedTitleByFingerprint[fp] = title
+	}
 
 	for _, e := range existing {
 		fp, err := e.fingerprint()
@@ -647,7 +716,18 @@ func planWrites(
 				errAmbiguousEntry, prev.Number, e.Number, fp)
 		}
 
+		identity, _, err := e.identity()
+		if err != nil {
+			return plan{}, err
+		}
+		if identity != "" && identity[:16] != fp {
+			return plan{}, fmt.Errorf(
+				"%w: issue #%d %q carries identity %s under fingerprint %s",
+				errCollidingEntryIdentity, e.Number, e.Title, identity, fp)
+		}
+
 		byFingerprint[fp] = e
+		identityByFingerprint[fp] = identity
 	}
 
 	// Sort themes so the action order is stable run over run. Themes arrive
@@ -689,6 +769,27 @@ func planWrites(
 			p.Actions = append(p.Actions, issueAction{Kind: "create", Title: title, Body: body})
 
 			continue
+		}
+
+		incomingIdentity := t.Identity()
+		storedIdentity := identityByFingerprint[fp]
+		if storedIdentity != "" && storedIdentity != incomingIdentity {
+			return plan{}, fmt.Errorf(
+				"%w: issue #%d %q carries %s; %s/%s carries %s; fingerprint %s",
+				errCollidingEntryIdentity, entry.Number, entry.Title, storedIdentity,
+				t.Kind, t.Key, incomingIdentity, fp)
+		}
+
+		// A legacy entry has no complete identity to compare. Bind its one-time
+		// migration to the independently rendered title: a different theme that
+		// merely shares the 64-bit fingerprint is refused instead of adopting
+		// the issue. The successful update below writes the full identity, so
+		// every subsequent run uses the stronger comparison above.
+		if storedIdentity == "" && entry.Title != title {
+			return plan{}, fmt.Errorf(
+				"%w: legacy issue #%d identity %q; %s/%s carries %s; fingerprint %s",
+				errCollidingEntryIdentity, entry.Number, entry.Title,
+				t.Kind, t.Key, incomingIdentity, fp)
 		}
 
 		// A closed entry whose theme is present again is REOPENED, never
@@ -781,7 +882,19 @@ func planWrites(
 		}
 
 		reason, disposition := closeComment, dispositionCompleted
-		if _, isAccepted := accepted[fp]; isAccepted {
+		if acceptedIdentity, isAccepted := acceptedIdentityByFingerprint[fp]; isAccepted {
+			storedIdentity := identityByFingerprint[fp]
+			if storedIdentity != "" && storedIdentity != acceptedIdentity {
+				return plan{}, fmt.Errorf(
+					"%w: issue #%d %q carries %s; accepted theme carries %s; fingerprint %s",
+					errCollidingEntryIdentity, e.Number, e.Title, storedIdentity, acceptedIdentity, fp)
+			}
+			if storedIdentity == "" && e.Title != acceptedTitleByFingerprint[fp] {
+				return plan{}, fmt.Errorf(
+					"%w: legacy issue #%d identity %q; accepted theme identity %s; fingerprint %s",
+					errCollidingEntryIdentity, e.Number, e.Title, acceptedIdentity, fp)
+			}
+
 			reason, disposition = acceptedComment, dispositionNotPlanned
 		}
 
