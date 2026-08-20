@@ -1014,7 +1014,7 @@ func reconcile(
 		return err
 	}
 
-	if err := dropRacedCreates(&p, store); err != nil {
+	if err := dropRacedCreates(&p, inputsComplete, store); err != nil {
 		return err
 	}
 
@@ -1026,6 +1026,10 @@ func reconcile(
 // current-format entry is verified by complete identity; a legacy entry is
 // title-bound and migrated in place. A matching fingerprint with a different
 // identity or legacy title is a collision, not a duplicate.
+//
+// Partial input still drops the duplicate create, but withholds a legacy
+// migration update: replacing the raced entry's complete render with the
+// subset this run examined would lose recorded components.
 //
 // Two write invocations that overlap both take the same snapshot at the top of
 // reconcile, both find a newly derived theme untracked, and both plan a create.
@@ -1045,7 +1049,7 @@ func reconcile(
 // yet to carry it.
 //
 // Costs one extra list per run, and only on a run that actually creates.
-func dropRacedCreates(p *plan, store issueStore) error {
+func dropRacedCreates(p *plan, inputsComplete bool, store issueStore) error {
 	if !slices.ContainsFunc(p.Actions, func(a issueAction) bool { return a.Kind == "create" }) {
 		return nil
 	}
@@ -1116,6 +1120,11 @@ func dropRacedCreates(p *plan, store issueStore) error {
 				}
 				if raced.identity == "" {
 					p.RacedCreates++
+					if !inputsComplete {
+						p.WithheldUpdates++
+
+						continue
+					}
 					kept = append(kept, issueAction{
 						Kind: "update", Number: raced.Number, Title: a.Title, Body: a.Body,
 					})

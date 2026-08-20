@@ -1791,6 +1791,37 @@ func TestRacedLegacyCreateWithMatchingTitleIsMigrated(t *testing.T) {
 	}
 }
 
+func TestRacedLegacyCreateUnderPartialInputWithholdsMigration(t *testing.T) {
+	full := postureTheme("C-0016", "apps/Deployment/web", "db/StatefulSet/pg")
+	subset := postureTheme("C-0016", "apps/Deployment/web")
+	legacyBody := strings.Replace(renderBody(full),
+		"<!-- "+identityMarker+full.Identity()+" -->\n", "", 1)
+	store := &racingUpdateStore{racingStore: racingStore{
+		filedByTheOtherRun: []backlogEntry{{
+			Number: 7,
+			Title:  renderTitle(full),
+			Body:   legacyBody,
+			Open:   true,
+		}},
+	}}
+
+	var out bytes.Buffer
+	if err := reconcile([]theme{subset}, []surface{surfacePosture}, false, nil, store, &out); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(store.calls) != 0 {
+		t.Fatalf("partial input overwrote the raced legacy issue: calls=%v", store.calls)
+	}
+	for _, want := range []string{"DROPPED", "left UNCHANGED", "no writes performed"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("partial-input disclosure lacks %q:\n%s", want, out.String())
+		}
+	}
+	if !strings.Contains(legacyBody, "db/StatefulSet/pg") {
+		t.Fatal("premise broken: raced legacy body does not carry the unexamined component")
+	}
+}
+
 func TestRacedLegacyCreateWithDifferentTitleIsRefused(t *testing.T) {
 	th := postureTheme("C-0016", "apps/Deployment/web")
 	legacyBody := strings.Replace(renderBody(th),
