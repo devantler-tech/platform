@@ -14,7 +14,7 @@ spec:
   chart:
     spec:
       chart: fleet
-      version: v7.0.11
+      version: v7.0.15
       sourceRef:
         kind: HelmRepository
         name: fleetdm
@@ -175,7 +175,7 @@ spec:
                       # CrashLoopBackOff if MySQL data is lost (e.g. PVC recreation
                       # after storage failures).
                       - name: fleet-db-init
-                        image: fleetdm/fleet:v4.88.1
+                        image: fleetdm/fleet:v4.90.1
                         command: ["fleet", "prepare", "db"]
                         securityContext:
                           runAsUser: 100
@@ -325,7 +325,7 @@ spec:
         repository: bitnamilegacy/redis
       auth:
         existingSecret: redis
-        existingSecretPasswordKey: redis-password
+        existingSecretPasswordKey: redis-password  # checkov:skip=CKV_SECRET_6:names a key inside an existing Secret; the value lives in OpenBao
       master:
         podSecurityContext:
           enabled: true

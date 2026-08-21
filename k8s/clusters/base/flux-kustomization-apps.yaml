@@ -6,7 +6,11 @@ metadata:
   namespace: flux-system
 spec:
   interval: 60m
-  timeout: 20m
+  # Give the retained Umami bootstrap Job a full recovery window for its first
+  # Lease-aware rollout. Controller-level startup failures remain retryable
+  # across later reconciliations instead of becoming a permanently Failed Job;
+  # the retry interval below re-enters the health wait after a timeout.
+  timeout: 30m
   retryInterval: 2m
   path: providers/__PROVIDER__/apps
   sourceRef:
@@ -32,5 +36,24 @@ spec:
       - kind: Secret
         name: variables-cluster
   wait: true
+  # kstatus (used by `wait: true`) marks a CNPG `Cluster` NotReady for the whole
+  # of any rolling update — and CNPG rolls every instance whenever the operator,
+  # the barman-cloud plugin sidecar, or the PostgreSQL image changes, which
+  # Renovate does routinely (plugin v0.13.0 → v0.14.0 in #2971 restarted every
+  # instance of all four clusters). A database that is merely rolling, or
+  # serving on 2 of 3 instances, therefore fails this Kustomization's health
+  # check, times out the deploy, and evicts every PR from the merge queue:
+  # wedding-db 2026-06-19, coroot-db 2026-07-14 (#2639), umami-db twice on
+  # 2026-08-05. Gate on "the database is SERVING" instead — a primary is elected
+  # and at least one instance is ready.
+  # A degraded-but-serving cluster is a paging concern, not a deploy failure;
+  # the cnpg-degraded-alert CronJob owns that signal and is deliberately
+  # independent of this gate, so relaxing the gate removes no coverage. A
+  # cluster with no ready instance still matches no `current` expression, stays
+  # InProgress, and still fails the deploy.
+  healthCheckExprs:
+    - apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      current: has(status.readyInstances) && status.readyInstances >= 1 && has(status.currentPrimary) && status.currentPrimary != ''
   prune: true
   force: true

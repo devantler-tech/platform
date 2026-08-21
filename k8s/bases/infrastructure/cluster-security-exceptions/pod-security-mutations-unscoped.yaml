@@ -1,0 +1,80 @@
+---
+# The part of the "add-security-context" mutation exemption that cannot yet be
+# scoped to the namespaces that mutation actually runs in.
+#
+# pod-security-mutations.yaml narrows C-0016 and C-0055 to the mutated set,
+# because every workload that narrowing exposes is either covered by another
+# exception or already passes. C-0013 and C-0211 do not have that property, for
+# two different reasons, so they stay cluster-wide here until each is resolved.
+#
+# C-0013 — flux-system is the one namespace the mutation excludes that no other
+# exception covers and that IS scanned in-cluster. Measured there 2026-08-18 on the
+# pre-exception scan surface, all six Flux controllers (flux-operator,
+# helm-controller, kustomize-controller, notification-controller, source-controller,
+# tofu-controller) fail C-0013 on a single missing field,
+# `spec.template.spec.containers[0].securityContext.runAsGroup`. Narrowing C-0013
+# today would therefore surface six real findings with no fix behind them, which
+# lowers the score to absorb a gap instead of closing it. Setting runAsGroup on
+# those six is tracked in #3223; C-0013 narrows once that lands.
+#
+# C-0211 — CIS-5.7.3, and it is a twelve-rule control rather than the three-field
+# check its name suggests. The rules this exception suppresses include
+# non-root-containers, set-fsgroup-value, set-fsgroupchangepolicy-value and
+# set-seLinuxOptions, alongside rules that C-0016 and C-0055 also carry. No other
+# exception covers it in the excluded namespaces: neither infrastructure-privileged
+# nor the name-scoped kubescape-privileged lists C-0211.
+#
+# Its residual population is every workload in the four excluded namespaces that are
+# actually scanned — flux-system, longhorn-system, observability and velero — all 33
+# of them: 17 Deployments, 7 DaemonSets, 6 CronJobs and 3 StatefulSets. (CronJobs are
+# scanned and carry a verdict; Jobs are not, so the ephemeral backup and heartbeat
+# Jobs in these namespaces are out of scope.) Measured 2026-08-19 against the live
+# PROD stored specs, which is the surface Kubescape reads. "Scanned" here means in the
+# scanner's configured scope: the config scan itself is not currently producing (#2933,
+# #3024), so this population is real but presently invisible to the posture score —
+# which is exactly the silent-suppression failure mode #2447 exists to prevent.
+#
+# Not one of the 33 passes, and two gaps are universal: the pod-level
+# `securityContext.fsGroupChangePolicy` is absent on 33 of 33 (read under
+# `jobTemplate` for the CronJobs), and `securityContext.seLinuxOptions` is absent on
+# every container of all 33. Pod-level `fsGroup` is absent on 20, `runAsGroup` on 18
+# and `runAsNonRoot` on 12 — each a strict subset of the two universal gaps.
+# Narrowing C-0211 today would surface the whole population with no fix behind it —
+# lowering the score to absorb a gap rather than closing it — so it stays
+# cluster-wide. The per-workload table and the remediation split are on #3217. These
+# counts are prod-only and the local overlay opts in to a different namespace set, so
+# re-measure rather than inheriting them.
+#
+# node-agent and storage are NOT in that population. Both live in `kubescape`, whose
+# workloads the operator's own excludeNamespaces drops from scanning: neither has a
+# workloadconfigurationscan object at all, so there is no verdict to un-suppress and
+# narrowing cannot change their result — unscanned is not the same as passing. Do not
+# read the 384 scan objects sitting in that namespace as evidence it is scanned; they
+# are the cluster-scoped results (ClusterRoleBindings, ServiceAccounts, node and
+# control-plane info) that Kubescape stores there, and none of them is a workload.
+# The name is shared but the workload is not: velero/node-agent is a different
+# DaemonSet, and it IS in the population.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: pod-security-mutations-unscoped
+  annotations:
+    # Cluster-wide, and knowingly wider than its own rationale: in the twelve
+    # namespaces "add-security-context" excludes, nothing injects these fields.
+    # Both controls are retained rather than narrowed on an unmeasured guess —
+    # C-0013 pending #3223; C-0211 sized 2026-08-19 and pending #3217.
+    platform.devantler.tech/cluster-wide: declared
+spec:
+  reason: >-
+    Kyverno mutate policy "add-security-context" injects runAsNonRoot, runAsUser,
+    runAsGroup and fsGroupChangePolicy at pod admission. The Deployment spec does
+    not contain them and Kubescape scans the stored spec, not the live pod. These
+    two controls remain cluster-wide because narrowing them is blocked on evidence
+    rather than on expressiveness: C-0013 has a measured six-workload gap in
+    flux-system (#3223) and C-0211's residual population is every scanned workload
+    the mutation does not reach, sized at 33 (#3217).
+  posture:
+    - controlID: C-0013
+      action: ignore
+    - controlID: C-0211
+      action: ignore

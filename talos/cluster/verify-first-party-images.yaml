@@ -1,31 +1,56 @@
 # Container image signature verification (Talos 1.13+, ImageVerificationConfig).
 #
-# Verifies cosign signatures at the containerd PULL layer on every node — a
-# defense-in-depth complement to the GitOps-source verification Flux already
-# performs on OCI *manifest* artifacts (apps' sync.yaml verify.provider:
-# cosign). This gates the actual container-image bytes containerd pulls, which
+# STATUS — THESE RULES ARE INERT ON THIS CLUSTER TODAY.
+# containerd does not verify images itself: it delegates to the
+# `io.containerd.image-verifier.v1.bindir` plugin, and permits every pull when
+# that plugin has no `bin_dir` or the directory holds no binary. No node
+# configures a `bin_dir` at all, so nothing below is evaluated and no pull is
+# gated by it. Installing and wiring the verifier is #3101; the finding is
+# #2856.
+#
+# Check this, do not assume it. The repository cannot answer it — the rules read
+# as correct in exactly the state where they do nothing, which is why this went
+# unnoticed for weeks:
+#     scripts/validate-image-verifier-liveness.sh
+# Measured 2026-08-18: 7 of 7 nodes could not enforce.
+#
+# BEFORE ACTIVATING (#3101): an image that matches a rule but fails
+# verification is refused, so any first-party image that is running yet
+# unsigned goes ImagePullBackOff the moment the verifier starts working.
+# `ghcr.io/devantler-tech/doggy-countdown` is in that state now — its running
+# digest carries attestations but no cosign signature, and it matches the
+# catch-all rule below. Sign it, or scope the rule off it, before activation.
+#
+# Declares the cosign signatures required at the containerd PULL layer on
+# every node — a defense-in-depth complement to the GitOps-source
+# verification Flux already performs on OCI *manifest* artifacts (apps'
+# sync.yaml verify.provider: cosign). This gates the actual container-image
+# bytes containerd pulls, which
 # Flux and the Kyverno admission layer never see (e.g. kubelet-managed static
 # pods, a compromised registry serving a tampered image).
 #
 # Scope: FIRST-PARTY images (ghcr.io/devantler-tech/*). All are keyless-cosign
-# signed, but by TWO different signing identities, so they need two rules:
+# signed, but by THREE different signing identities, so they need three rules:
 #   1. ghcr.io/devantler-tech/ksail — the ksail-operator image — is signed by
 #      ksail's OWN release pipeline (devantler-tech/ksail .github/workflows/
-#      cd.yaml; see that repo's GoReleaser `docker_signs` step).
-#   2. the app images (wedding-app, ascoachingogvaner, …) are signed by the
-#      shared publish-app.yaml workflow — now in devantler-tech/actions
-#      (moved from reusable-workflows, actions#425); both identities stay
-#      accepted until every app has published a fresh actions-signed image —
-#      the SAME transition alternation their Flux OCIRepository verify blocks
-#      and the verify-app-images ImageValidatingPolicy already pin.
-# Talos evaluates rules in order, first match wins, so the specific ksail rule
+#      cd.yaml; see that repo's GoReleaser `docker_signs` step), at a release tag.
+#   2. ghcr.io/devantler-tech/provider-upjet-* — the Crossplane provider packages
+#      — are signed by each provider repo's own publish-provider-package.yml, on
+#      its default branch (that workflow is workflow_dispatch-only).
+#   3. the app images (wedding-app, ascoachingogvaner, …) are signed by the
+#      shared publish-app.yaml workflow in devantler-tech/actions, pinned by
+#      commit SHA — the SAME form their Flux OCIRepository verify blocks and the
+#      verify-app-images ImageValidatingPolicy pin (#3022).
+# Talos evaluates rules in order, first match wins, so the two specific rules
 # MUST precede the ghcr.io/devantler-tech/* catch-all.
 #
 # FAIL-OPEN by design for everything else: an image matching NO rule is pulled
 # WITHOUT verification, so third-party chart images (Cilium, Longhorn, Coroot,
 # registry.k8s.io control-plane images, …) are unaffected — this is
-# intentionally NOT a deny-all-unsigned control. The converse: an image that
-# DOES match a rule but fails verification is blocked (ImagePullBackOff).
+# intentionally NOT a deny-all-unsigned control. The converse — an image that
+# DOES match a rule but fails verification is blocked (ImagePullBackOff) — is
+# what these rules describe, and takes effect only once a verifier binary is
+# installed (see STATUS above).
 #
 # A rule over a system registry (e.g. registry.k8s.io/*, the canonical Talos
 # example) would gate control-plane/etcd image pulls — high blast radius on
@@ -58,20 +83,20 @@ rules:
   # Mirrors the verify-app-images ImageValidatingPolicy provider-upjet-*
   # attestor (#2382). MUST precede the catch-all below (first-match-wins) or the
   # catch-all's publish-app.yaml identity rejects these (ImagePullBackOff).
+  # The ref is pinned to the default branch: publish-provider-package.yml is
+  # workflow_dispatch-only and publishes from main, so main is the sole
+  # legitimate signing ref. Pinning it rejects a package signed from an
+  # arbitrary feature branch, which an unconstrained ref accepts.
   - image: ghcr.io/devantler-tech/provider-upjet-*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@.+$
-  # First-party APP images signed by the shared publish-app.yaml workflow.
-  # publish-app.yaml moved from devantler-tech/reusable-workflows into
-  # devantler-tech/actions (actions#425): images published after the move
-  # carry the actions identity, which this rule's old reusable-workflows-only
-  # regex rejected at the node pull layer (ImagePullBackOff on every new app
-  # release). Accept BOTH identities until every app has published a fresh
-  # actions-signed image, then narrow to actions-only — the same transition
-  # alternation as the apps' Flux OCIRepository verify blocks and the
-  # verify-app-images ImageValidatingPolicy.
+      subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/heads/main$
+  # First-party APP images signed by the shared publish-app.yaml workflow in
+  # devantler-tech/actions. Callers pin that reusable workflow by commit SHA, so
+  # the ref admits that form alone and rejects everything else — a mutable ref
+  # such as @main, and a release tag (#3022). Same shape as the apps' Flux
+  # OCIRepository verify blocks and the verify-app-images ImageValidatingPolicy.
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/(actions|reusable-workflows)/\.github/workflows/publish-app\.yaml@.+$
+      subjectRegex: ^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$

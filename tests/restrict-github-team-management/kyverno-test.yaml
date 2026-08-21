@@ -1,0 +1,88 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-github-team-management
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-github-team-management.yaml
+resources:
+  - resources.yaml
+results:
+  # Only the CODEOWNERS teams may be managed through this delegation.
+  - policy: restrict-github-team-management
+    rule: teams-allow-listed
+    resources:
+      - github-config/attacker-team
+    kind: Team
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teams-allow-listed
+    resources:
+      - github-config/admins
+      - github-config/maintainers
+    kind: Team
+    result: pass
+  # A self-consistent provider identity passes, including when it is omitted and
+  # Crossplane derives the remote team from the object name. attacker-team is
+  # here on purpose: it fails the allow-list above yet must pass this rule, so a
+  # regression that collapsed the two rules into one would be caught.
+  - policy: restrict-github-team-management
+    rule: teams-bind-provider-identity-to-object-name
+    resources:
+      - github-config/admins
+      - github-config/maintainers
+      - github-config/attacker-team
+    kind: Team
+    result: pass
+  # References must go through the allow-listed Team objects, never a raw ID.
+  - policy: restrict-github-team-management
+    rule: teammemberships-reference-allow-listed-teams
+    resources:
+      - github-config/direct-team-id
+      - github-config/unresolved-reference
+      - github-config/ifnotpresent-reference
+      - github-config/initprovider-foreign-team
+      - github-config/selector-reference
+      - github-config/non-allow-listed-reference
+    kind: TeamMembership
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teammemberships-reference-allow-listed-teams
+    resources:
+      - github-config/admins-member
+    kind: TeamMembership
+    result: pass
+  # Repository grants: admins may hold admin; only maintainers are capped below it.
+  - policy: restrict-github-team-management
+    rule: teamrepositories-reference-allow-listed-teams
+    resources:
+      - github-config/unresolved-reference-repo
+      - github-config/maintainers-escalated-initprovider-only
+    kind: TeamRepository
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teamrepositories-reference-allow-listed-teams
+    resources:
+      - github-config/admins-repo
+      - github-config/admins-repo-admin
+      - github-config/initprovider-admin-grant
+      - github-config/maintain-grant
+      - github-config/maintainers-repo
+    kind: TeamRepository
+    result: pass
+  # #3208: the per-team ceiling. admins may hold admin; maintainers may not.
+  - policy: restrict-github-team-management
+    rule: teamrepositories-maintainers-capped-below-admin
+    resources:
+      - github-config/maintainers-escalated
+      - github-config/maintainers-escalated-initprovider
+      - github-config/maintainers-escalated-initprovider-only
+    kind: TeamRepository
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teamrepositories-maintainers-capped-below-admin
+    resources:
+      - github-config/maintainers-repo
+    kind: TeamRepository
+    result: pass

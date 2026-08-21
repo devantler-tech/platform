@@ -1,0 +1,11 @@
+---
+apiVersion: builtin
+kind: AnnotationsTransformer
+metadata:
+  name: production-pvc-force-protection
+annotations:
+  kustomize.toolkit.fluxcd.io/force: disabled
+fieldSpecs:
+  - kind: PersistentVolumeClaim
+    path: metadata/annotations
+    create: true

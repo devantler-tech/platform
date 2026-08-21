@@ -1,0 +1,76 @@
+# Prod-only: keep OpenBao's pods — and therefore its hcloud block volumes — OFF
+# the ephemeral autoscaler nodes, with a HARD (required) node affinity.
+#
+# WHY A HARD RULE HERE, when prefer-baseline-nodes.yaml deliberately uses a SOFT
+# one: that policy's softness is a FinOps choice ("a hard nodeAffinity would
+# defeat burst"), and it is the right default for ordinary, stateless workloads
+# that can be rescheduled freely. OpenBao is neither. Its `data-` and `audit-`
+# PVCs are `hcloud` block volumes, and an hcloud volume attaches to exactly ONE
+# node at a time with no force-detach when that node departs — so a pod that
+# burst onto an autoscaler node leaves its volume stranded the moment the
+# autoscaler reclaims that node.
+#
+# The failure this prevents is measured, not theoretical (#2363): on 2026-07-01
+# `data-openbao-0` stayed attached to a departed node for ~9h
+# (`FailedAttachVolume ... volume is attached`, ~26,632 retries). With OpenBao
+# down, the one-shot `Job/openbao/vault-config` hit its `activeDeadlineSeconds`,
+# the `infrastructure` Kustomization went `Ready=False`, `apps` blocked on it,
+# and EVERY `merge_group` deploy was evicted — the prod merge queue was wedged
+# for the whole 9h. A single stranded volume takes all of prod delivery down.
+#
+# The soft bias alone does not prevent it, measured on prod 2026-08-21: the
+# rendered spec carried the weight-100 `DoesNotExist` preference from
+# prefer-baseline-nodes and `openbao-0` was running on
+# `autoscale-cx43-6406b46e4820452e` anyway, with both its `data-` and `audit-`
+# hcloud volumes attached there. A preference yields under request pressure, and
+# nothing moves the pod back afterwards.
+#
+# This mirrors the split the cluster already makes for the OTHER storage class:
+# restrict-storage-to-baseline-workers.yaml hard-guards Longhorn replicas off
+# these nodes for the same durability reason. hcloud volumes had no equivalent —
+# even though their failure mode is worse, because Longhorn replicates across
+# nodes and an hcloud volume does not.
+#
+# SCHEDULABILITY: the chart's own podAntiAffinity is `required` on
+# `kubernetes.io/hostname`, so the 3 replicas already need 3 distinct nodes; the
+# 3 static workers supply exactly that. If a baseline worker is down or cordoned
+# the third replica goes Pending instead of bursting onto an autoscaler node.
+# That is the intended trade: OpenBao is raft-HA and keeps quorum at 2/3, so a
+# Pending third replica is a degraded-but-serving cluster, whereas a stranded
+# volume is a multi-hour outage of all prod delivery.
+#
+# The chart's `server.affinity` is a TEMPLATED STRING (it interpolates
+# `openbao.name`/`Release.Name`), not a map, so this restates the chart's default
+# podAntiAffinity verbatim rather than merging into it — dropping it would put
+# two raft peers on one host and lose the anti-affinity the HA setup depends on.
+#
+# RESIDUAL (shared with prefer-baseline-nodes, tracked in #3178): the
+# discriminator is `DoesNotExist`, so an autoscaler node created before KSail
+# began stamping `ksail.io/autoscaled` (ksail#5113) carries no label and is
+# still treated as baseline. Node affinity matches label values and supports no
+# wildcard, so the name-based `autoscale-*` discriminator the Longhorn policies
+# use is not expressible here. Every autoscaler node currently in the pool is
+# labelled; the durable fix is to not leave stranded nodes running.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: openbao
+  namespace: openbao
+spec:
+  values:
+    server:
+      affinity: |
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: {{ template "openbao.name" . }}
+                  app.kubernetes.io/instance: "{{ .Release.Name }}"
+                  component: server
+              topologyKey: kubernetes.io/hostname
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: ksail.io/autoscaled
+                    operator: DoesNotExist

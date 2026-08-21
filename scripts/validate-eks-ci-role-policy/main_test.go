@@ -37,6 +37,94 @@ func repositoryInputs(t *testing.T) ([]byte, []byte, []byte) {
 	return read(roleManifestPath), read(boundaryManifestPath), rendered
 }
 
+func clusterReaderSecretBoundaryViolations(manifest []byte) ([]string, error) {
+	var role struct {
+		AggregationRule *struct {
+			ClusterRoleSelectors []map[string]any `yaml:"clusterRoleSelectors"`
+		} `yaml:"aggregationRule"`
+		Rules []struct {
+			APIGroups []string `yaml:"apiGroups"`
+			Resources []string `yaml:"resources"`
+			Verbs     []string `yaml:"verbs"`
+		} `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(manifest, &role); err != nil {
+		return nil, fmt.Errorf("parse cluster-reader role: %w", err)
+	}
+
+	violations := make([]string, 0)
+	if role.AggregationRule != nil {
+		violations = append(violations, "cluster-reader must not define aggregationRule")
+	}
+	contains := func(values []string, expected string) bool {
+		for _, value := range values {
+			if value == expected {
+				return true
+			}
+		}
+		return false
+	}
+	for _, forbiddenGroup := range []string{
+		"coroot.com",
+		"helm.toolkit.fluxcd.io",
+	} {
+		for ruleIndex, rule := range role.Rules {
+			groupMatches := contains(rule.APIGroups, forbiddenGroup) || contains(rule.APIGroups, "*")
+			readGranted := contains(rule.Verbs, "get") || contains(rule.Verbs, "list") ||
+				contains(rule.Verbs, "watch") || contains(rule.Verbs, "*")
+			if groupMatches && len(rule.Resources) > 0 && readGranted {
+				violations = append(violations, fmt.Sprintf(
+					"cluster-reader rule %d grants read access to secret-bearing API group %s",
+					ruleIndex, forbiddenGroup,
+				))
+			}
+		}
+	}
+
+	return violations, nil
+}
+
+// TestClusterReaderCannotReadSecretBearingCustomResources guards the effective
+// read boundary, not the YAML spelling. Both API groups persist values after
+// Flux substitution, so granting any read verb on their resources lets the
+// read-only OIDC identity recover credentials while core Secrets stay hidden.
+func TestClusterReaderCannotReadSecretBearingCustomResources(t *testing.T) {
+	manifest, err := os.ReadFile(filepath.Join(
+		"..", "..", "k8s/bases/infrastructure/cluster-roles/cluster-reader.yaml",
+	))
+	if err != nil {
+		t.Fatalf("read cluster-reader role: %v", err)
+	}
+
+	violations, err := clusterReaderSecretBoundaryViolations(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, violation := range violations {
+		t.Error(violation)
+	}
+}
+
+// TestClusterReaderCannotUseAggregationRule prevents indirect grants from
+// bypassing the direct-rule checks through labeled contributor ClusterRoles.
+func TestClusterReaderCannotUseAggregationRule(t *testing.T) {
+	manifest := []byte(`
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.authorization.k8s.io/aggregate-to-cluster-reader: "true"
+rules: []
+`)
+
+	violations, err := clusterReaderSecretBoundaryViolations(manifest)
+	if err != nil {
+		t.Fatalf("validate synthetic cluster-reader role: %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "aggregationRule") {
+		t.Fatalf("violations = %v, want explicit aggregationRule rejection", violations)
+	}
+}
+
 // TestRenderAuthorizationLayersIncludesEveryProductionLayer pins scan coverage.
 func TestRenderAuthorizationLayersIncludesEveryProductionLayer(t *testing.T) {
 	repoRoot := filepath.Join("test", "repo")
@@ -161,6 +249,238 @@ spec:
 				t.Fatalf("validateRendered() error = %v, want unresolved authorization substitution", err)
 			}
 		})
+	}
+}
+
+// TestValidatePinnedUnifiSource rejects every source shape that can move
+// without a reviewed Platform change. The unifi Kustomization keeps patch and
+// update authority over live managed resources, so its external Git source
+// must be both the expected repository and one full immutable commit.
+func TestValidatePinnedUnifiSource(t *testing.T) {
+	const trustedURL = "https://github.com/devantler-tech/unifi"
+	pinnedCommit := strings.Repeat("a", 40)
+	targetIdentity := resourceIdentity{
+		apiVersion: "source.toolkit.fluxcd.io/v1",
+		kind:       "GitRepository",
+		namespace:  "unifi",
+		name:       "unifi",
+	}
+	source := func(url string, ref map[string]any) map[string]any {
+		return map[string]any{
+			"spec": map[string]any{
+				"url": url,
+				"ref": ref,
+			},
+		}
+	}
+
+	tests := []struct {
+		name      string
+		identity  resourceIdentity
+		document  map[string]any
+		wantError bool
+	}{
+		{
+			name:     "exact trusted commit",
+			identity: targetIdentity,
+			document: source(trustedURL, map[string]any{"commit": pinnedCommit}),
+		},
+		{
+			name:      "mutable branch",
+			identity:  targetIdentity,
+			document:  source(trustedURL, map[string]any{"branch": "main"}),
+			wantError: true,
+		},
+		{
+			name:      "abbreviated commit",
+			identity:  targetIdentity,
+			document:  source(trustedURL, map[string]any{"commit": "7b17f7e"}),
+			wantError: true,
+		},
+		{
+			name:     "mutable branch beside commit",
+			identity: targetIdentity,
+			document: source(trustedURL, map[string]any{
+				"branch": "main",
+				"commit": pinnedCommit,
+			}),
+			wantError: true,
+		},
+		{
+			name:      "different repository",
+			identity:  targetIdentity,
+			document:  source("https://github.com/attacker/unifi", map[string]any{"commit": pinnedCommit}),
+			wantError: true,
+		},
+		{
+			name: "unrelated source",
+			identity: resourceIdentity{
+				apiVersion: "source.toolkit.fluxcd.io/v1",
+				kind:       "GitRepository",
+				namespace:  "other",
+				name:       "other",
+			},
+			document: source("https://example.com/other", map[string]any{"branch": "main"}),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePinnedUnifiSource(tt.document, tt.identity)
+			if tt.wantError && err == nil {
+				t.Fatal("validatePinnedUnifiSource() error = nil, want rejection")
+			}
+			if !tt.wantError && err != nil {
+				t.Fatalf("validatePinnedUnifiSource() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestValidateUnifiPruneExemption pins the admission exception that makes the
+// non-pruning UniFi reconciler deployable without weakening the default rule
+// for any other Flux Kustomization.
+func TestValidateUnifiPruneExemption(t *testing.T) {
+	targetIdentity := resourceIdentity{
+		apiVersion: "kyverno.io/v1",
+		kind:       "ClusterPolicy",
+		name:       "enforce-flux-best-practices",
+	}
+	policy := func(exclusions ...any) map[string]any {
+		return map[string]any{
+			"spec": map[string]any{
+				"rules": []any{
+					map[string]any{
+						"name":    "kustomization-recommended-settings",
+						"exclude": map[string]any{"any": exclusions},
+					},
+				},
+			},
+		}
+	}
+	resourceExclusion := func(namespace, name string) map[string]any {
+		return map[string]any{
+			"resources": map[string]any{
+				"namespaces": []any{namespace},
+				"names":      []any{name},
+			},
+		}
+	}
+
+	tests := []struct {
+		name      string
+		identity  resourceIdentity
+		document  map[string]any
+		wantError bool
+	}{
+		{
+			name:     "exact narrow exemption",
+			identity: targetIdentity,
+			document: policy(
+				resourceExclusion("flux-system", "flux-system"),
+				resourceExclusion("unifi", "unifi"),
+			),
+		},
+		{
+			name:      "missing exemption",
+			identity:  targetIdentity,
+			document:  policy(resourceExclusion("flux-system", "flux-system")),
+			wantError: true,
+		},
+		{
+			name:      "namespace wildcard is not narrow",
+			identity:  targetIdentity,
+			document:  policy(resourceExclusion("*", "unifi")),
+			wantError: true,
+		},
+		{
+			name:     "additional broad exemption is rejected",
+			identity: targetIdentity,
+			document: policy(
+				resourceExclusion("flux-system", "flux-system"),
+				resourceExclusion("unifi", "unifi"),
+				resourceExclusion("*", "*"),
+			),
+			wantError: true,
+		},
+		{
+			name: "unrelated policy",
+			identity: resourceIdentity{
+				apiVersion: "kyverno.io/v1",
+				kind:       "ClusterPolicy",
+				name:       "other",
+			},
+			document: policy(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateUnifiPruneExemption(tt.document, tt.identity)
+			if tt.wantError && err == nil {
+				t.Fatal("validateUnifiPruneExemption() error = nil, want rejection")
+			}
+			if !tt.wantError && err != nil {
+				t.Fatalf("validateUnifiPruneExemption() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestUnifiPruneExemptionIsHetznerScoped keeps the production-only safety
+// exception out of the shared infrastructure base while proving that the
+// Hetzner render still carries the exact admission shape the app needs.
+func TestUnifiPruneExemptionIsHetznerScoped(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	basePath := filepath.Join(
+		repoRoot,
+		"k8s/bases/infrastructure/cluster-policies/flux/enforce-flux-best-practices.yaml",
+	)
+	baseContents, err := os.ReadFile(basePath) //nolint:gosec // Explicit repository path.
+	if err != nil {
+		t.Fatalf("read shared Flux policy: %v", err)
+	}
+	baseDocuments, err := decodeDocuments(baseContents)
+	if err != nil {
+		t.Fatalf("decode shared Flux policy: %v", err)
+	}
+	if got, want := len(baseDocuments), 1; got != want {
+		t.Fatalf("shared Flux policy documents = %d, want %d", got, want)
+	}
+	if err := validateUnifiPruneExemption(baseDocuments[0], identityOf(baseDocuments[0])); err == nil {
+		t.Fatal("shared Flux policy unexpectedly exempts unifi/unifi")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), rendererCommandTimeout)
+	defer cancel()
+	rendered, err := commandOutput(
+		ctx,
+		"kubectl",
+		"kustomize",
+		filepath.Join(repoRoot, infrastructureOverlayPath),
+	)
+	if err != nil {
+		t.Fatalf("render Hetzner infrastructure: %v", err)
+	}
+	renderedDocuments, err := decodeDocuments(rendered)
+	if err != nil {
+		t.Fatalf("decode Hetzner infrastructure: %v", err)
+	}
+	found := false
+	for _, document := range renderedDocuments {
+		identity := identityOf(document)
+		if identity.apiVersion != "kyverno.io/v1" ||
+			identity.kind != "ClusterPolicy" ||
+			identity.name != "enforce-flux-best-practices" {
+			continue
+		}
+		found = true
+		if err := validateUnifiPruneExemption(document, identity); err != nil {
+			t.Fatalf("validate rendered Hetzner exception: %v", err)
+		}
+	}
+	if !found {
+		t.Fatal("Hetzner infrastructure render omitted enforce-flux-best-practices")
 	}
 }
 
@@ -821,6 +1141,133 @@ func TestValidateAuthorizationAcceptsCommittedPolicy(t *testing.T) {
 	}
 }
 
+// TestCiliumTenantEditSupportsFluxReconciliationWithoutBuiltInEditAggregation
+// pins the safe, non-breaking boundary: Flux impersonates tenant service
+// accounts and needs PATCH for server-side apply plus DELETE for pruning, while
+// unrelated bindings to Kubernetes' built-in edit role must inherit neither.
+func TestCiliumTenantEditSupportsFluxReconciliationWithoutBuiltInEditAggregation(t *testing.T) {
+	const manifestPath = "k8s/bases/infrastructure/cluster-roles/cilium-tenant-edit.yaml"
+	contents, err := os.ReadFile(filepath.Join("..", "..", manifestPath)) //nolint:gosec // Explicit repository path.
+	if err != nil {
+		t.Fatalf("read %s: %v", manifestPath, err)
+	}
+	documents, err := decodeDocuments(contents)
+	if err != nil || len(documents) != 1 {
+		t.Fatalf("decode %s: documents=%d error=%v", manifestPath, len(documents), err)
+	}
+
+	metadata, ok := documents[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatal("cilium-tenant-edit metadata is missing or malformed")
+	}
+	labels, ok := metadata["labels"].(map[string]any)
+	if !ok {
+		t.Fatal("cilium-tenant-edit labels are missing or malformed")
+	}
+	if _, exists := labels["rbac.authorization.k8s.io/aggregate-to-edit"]; exists {
+		t.Fatal("cilium-tenant-edit must not aggregate into Kubernetes' built-in edit role")
+	}
+	if got := labels["devantler.tech/aggregate-to-tenant-edit"]; got != "true" {
+		t.Fatalf("tenant-edit aggregation label = %v, want true", got)
+	}
+
+	rules, ok := documents[0]["rules"].([]any)
+	if !ok || len(rules) != 1 {
+		t.Fatalf("cilium-tenant-edit rules = %T len=%d, want one rule", documents[0]["rules"], len(rules))
+	}
+	rule, ok := rules[0].(map[string]any)
+	if !ok {
+		t.Fatal("cilium-tenant-edit rule is malformed")
+	}
+	verbValues, ok := rule["verbs"].([]any)
+	if !ok {
+		t.Fatal("cilium-tenant-edit verbs are missing or malformed")
+	}
+	verbs := make(map[string]bool, len(verbValues))
+	for _, value := range verbValues {
+		verb, ok := value.(string)
+		if !ok {
+			t.Fatalf("cilium-tenant-edit verb = %T, want string", value)
+		}
+		verbs[verb] = true
+	}
+	for _, verb := range []string{"create", "patch", "delete"} {
+		if !verbs[verb] {
+			t.Errorf("cilium-tenant-edit must retain %q for Flux reconciliation", verb)
+		}
+	}
+}
+
+// TestAuthorizationSurfaceEntryNormalizesOnlyPinnedHelmChartVersions keeps
+// routine dependency pins out of the authorization approval fingerprint while
+// preserving every field that can configure, redirect, or float the chart.
+func TestAuthorizationSurfaceEntryNormalizesOnlyPinnedHelmChartVersions(t *testing.T) {
+	const manifest = `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: controller
+  namespace: controllers
+spec:
+  chart:
+    spec:
+      chart: controller
+      version: 1.2.3
+      sourceRef:
+        kind: HelmRepository
+        name: controller
+  values:
+    rbac:
+      clusterAdmin: false
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+            patch: safe
+`
+
+	entry := func(contents string) string {
+		t.Helper()
+		documents, err := decodeDocuments([]byte(contents))
+		if err != nil || len(documents) != 1 {
+			t.Fatalf("decode HelmRelease: documents=%d error=%v", len(documents), err)
+		}
+		identity := identityOf(documents[0])
+		actual, err := authorizationSurfaceEntry(identity, documents[0])
+		if err != nil {
+			t.Fatalf("authorizationSurfaceEntry() error = %v", err)
+		}
+		return actual
+	}
+
+	baseline := entry(manifest)
+	if actual := entry(strings.Replace(manifest, "version: 1.2.3", "version: v2.0.0-rc.1", 1)); actual != baseline {
+		t.Fatal("exact Helm chart version update moved the authorization surface")
+	}
+
+	mutations := []struct {
+		name string
+		old  string
+		new  string
+	}{
+		{name: "floating version range", old: "version: 1.2.3", new: "version: '>=1.2.3'"},
+		{name: "wildcard version", old: "version: 1.2.3", new: "version: '1.2.x'"},
+		{name: "substituted version", old: "version: 1.2.3", new: "version: ${chart_version}"},
+		{name: "missing version pin", old: "      version: 1.2.3\n", new: ""},
+		{name: "chart identity", old: "chart: controller", new: "chart: controller-shadow"},
+		{name: "source identity", old: "name: controller\n  values:", new: "name: untrusted\n  values:"},
+		{name: "authorization values", old: "clusterAdmin: false", new: "clusterAdmin: true"},
+		{name: "post renderer", old: "patch: safe", new: "patch: unsafe"},
+	}
+	for _, tt := range mutations {
+		t.Run(tt.name, func(t *testing.T) {
+			if actual := entry(strings.Replace(manifest, tt.old, tt.new, 1)); actual == baseline {
+				t.Fatal("non-version HelmRelease mutation did not move the authorization surface")
+			}
+		})
+	}
+}
+
 // TestValidateAuthorizationRejectsSourceAndRenderedMutations covers fail-closed edits.
 func TestValidateAuthorizationRejectsSourceAndRenderedMutations(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
@@ -954,119 +1401,112 @@ metadata:
 	}
 }
 
+// awsServiceAccountSubject names the aws/aws service account directly. Two of
+// the routes below reach it by this same subject and differ only in scope.
+const awsServiceAccountSubject = `  - kind: ServiceAccount
+    name: aws
+    namespace: aws
+`
+
+// awsIdentityBinding is one route by which an RBAC binding can reach the
+// aws/aws service account.
+type awsIdentityBinding struct {
+	// namespace scopes the binding. Empty renders the cluster-wide form.
+	namespace string
+	// subject is the single YAML list item under subjects:, including its
+	// trailing newline.
+	subject string
+}
+
+// manifest renders the binding. namespace selects the whole shape, because the
+// routes below need only two: the namespaced ones are all RoleBinding to
+// Role/aws-managed-resources, the cluster-wide ones ClusterRoleBinding to
+// ClusterRole/cluster-admin.
+//
+// That pairing is this table's choice, not a Kubernetes rule. Only
+// ClusterRoleBinding is constrained; a RoleBinding may reference a ClusterRole,
+// which is how a cluster role is granted namespace-scoped — the fixture at the
+// top of this file does exactly that. A route needing that combination wants
+// explicit roleRef fields adding here rather than another inline copy.
+func (b awsIdentityBinding) manifest() string {
+	kind, roleKind, roleName := "ClusterRoleBinding", "ClusterRole", "cluster-admin"
+
+	namespaceLine := ""
+	if b.namespace != "" {
+		kind, roleKind, roleName = "RoleBinding", "Role", "aws-managed-resources"
+		namespaceLine = "  namespace: " + b.namespace + "\n"
+	}
+
+	return fmt.Sprintf(`---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: %s
+metadata:
+  name: aws-shadow
+%sroleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: %s
+  name: %s
+subjects:
+%s`, kind, namespaceLine, roleKind, roleName, b.subject)
+}
+
 // TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentity covers aliases.
 func TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentity(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
 
 	tests := []struct {
 		name    string
-		binding string
+		binding awsIdentityBinding
 	}{
 		{
 			name: "RoleBinding outside AWS namespace",
-			binding: `---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: aws-shadow
-  namespace: tenant-shadow
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: aws-managed-resources
-subjects:
-  - kind: ServiceAccount
-    name: aws
-    namespace: aws
-`,
+			binding: awsIdentityBinding{
+				namespace: "tenant-shadow",
+				subject:   awsServiceAccountSubject,
+			},
 		},
 		{
-			name: "cluster-wide binding",
-			binding: `---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aws-shadow
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-admin
-subjects:
-  - kind: ServiceAccount
-    name: aws
-    namespace: aws
-`,
+			name:    "cluster-wide binding",
+			binding: awsIdentityBinding{subject: awsServiceAccountSubject},
 		},
 		{
 			name: "service account user identity",
-			binding: `---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: aws-shadow
-  namespace: tenant-shadow
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: aws-managed-resources
-subjects:
-  - kind: User
+			binding: awsIdentityBinding{
+				namespace: "tenant-shadow",
+				subject: `  - kind: User
     name: system:serviceaccount:aws:aws
 `,
+			},
 		},
 		{
 			name: "namespace service account group",
-			binding: `---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aws-shadow
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-admin
-subjects:
-  - kind: Group
+			binding: awsIdentityBinding{
+				subject: `  - kind: Group
     name: system:serviceaccounts:aws
 `,
+			},
 		},
 		{
 			name: "all service accounts group",
-			binding: `---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aws-shadow
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-admin
-subjects:
-  - kind: Group
+			binding: awsIdentityBinding{
+				subject: `  - kind: Group
     name: system:serviceaccounts
 `,
+			},
 		},
 		{
 			name: "all authenticated identities group",
-			binding: `---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aws-shadow
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-admin
-subjects:
-  - kind: Group
+			binding: awsIdentityBinding{
+				subject: `  - kind: Group
     name: system:authenticated
 `,
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mutated := append(append([]byte{}, rendered...), []byte(tt.binding)...)
+			mutated := append(append([]byte{}, rendered...), []byte(tt.binding.manifest())...)
 			err := validateAuthorization(role, boundary, mutated)
 			if err == nil || !strings.Contains(err.Error(), "unapproved rendered authorization surface") {
 				t.Fatalf("validateAuthorization() error = %v, want unapproved rendered authorization surface", err)
@@ -1103,6 +1543,9 @@ func TestWorkflowRunsValidatorForAuthorizationChanges(t *testing.T) {
 		"KUBECTL_VERSION: \"v1.36.2\"",
 		"go test ./scripts/validate-eks-ci-role-policy",
 		"go run ./scripts/validate-eks-ci-role-policy .",
+		"ksail workload validate",
+		"ksail --config ksail.prod.yaml workload validate",
+		"ksail workload scan --framework nsa",
 	} {
 		if !strings.Contains(contract, required) {
 			t.Errorf("CI workflow is missing %q", required)
@@ -1127,12 +1570,35 @@ func TestManualDeployIsGatedByTheValidator(t *testing.T) {
 		"validate-eks-authorization:",
 		"go test ./scripts/validate-eks-ci-role-policy",
 		"go run ./scripts/validate-eks-ci-role-policy .",
-		"needs: [validate-eks-authorization]",
 	} {
 		if !strings.Contains(contract, required) {
 			t.Errorf("CD workflow is missing %q — the manual deploy path bypasses the "+
 				"EKS authorization gate that the merge-queue path cannot skip", required)
 		}
+	}
+
+	// The dependency is PARSED, not grepped — the same reason the sibling
+	// assertion on ci.yaml parses it. A literal `needs: [validate-eks-authorization]`
+	// proves a RENDERING rather than the property: it passes on the same text
+	// sitting in a comment, and it FAILS the moment a second legitimate gate
+	// joins the list. That combination is the worst of both — it obstructs
+	// correct work while still not proving what it claims. Membership is
+	// stronger and stable under a growing gate list.
+	documents, err := decodeDocuments(workflow)
+	if err != nil || len(documents) != 1 {
+		t.Fatalf("decode CD workflow: documents=%d error=%v", len(documents), err)
+	}
+	jobs, err := nestedMap(documents[0], "jobs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploy, ok := jobs["deploy-prod"].(map[string]any)
+	if !ok {
+		t.Fatal("CD workflow is missing the deploy-prod job")
+	}
+	if !stringListIncludes(deploy["needs"], "validate-eks-authorization") {
+		t.Error("CD deploy-prod must need validate-eks-authorization — the manual deploy " +
+			"path bypasses the EKS authorization gate that the merge-queue path cannot skip")
 	}
 }
 

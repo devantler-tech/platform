@@ -12,11 +12,46 @@ permissions: {}
 
 # Shared with the CI merge-queue deploy-prod job (ci.yaml) so a manual deploy
 # and a merge-queue deploy can never run against the prod cluster at once.
+#
+# queue: max is load-bearing, not a tidy-up. cancel-in-progress: false protects
+# the deploy that is already RUNNING; it says nothing about the one waiting
+# behind it. Under the default (queue: single) at most one run may be pending,
+# so a third event replaces the second and that deploy is discarded silently —
+# no failure, no annotation, nothing in the run list. queue: max lets up to 100
+# runs queue FIFO instead, so every deploy in a burst reaches the cluster in
+# order. Cancelling an intermediate deploy is exactly what leaves prod in an
+# inconsistent state, and with main behind a merge queue, several changes
+# landing close together is normal rather than exceptional.
 concurrency:
   group: prod-deploy
   cancel-in-progress: false
+  queue: max
 
 jobs:
+  # A workflow-dispatched deployment is the recovery path for a direct push to
+  # main, so it has no pull_request or merge_group event for ci.yaml to inspect.
+  # Validate every persistence-bearing resource in the dispatched revision
+  # here. The shared deploy action separately compares removals with the live
+  # Flux-owned objects, because a commit parent is not proof that an earlier
+  # direct push ever reached production.
+  validate-pvc-prune-safety:
+    name: 💾 Validate Two-Stage PVC Retirement
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository and its parent
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: 💾 Validate two-stage PVC retirement
+        env:
+          PVC_PRUNE_BASE_SHA: ${{ github.sha }}
+        run: |
+          shellcheck scripts/tests/test-pvc-prune-safety.sh
+          bash scripts/tests/test-pvc-prune-safety.sh
+
   # The merge-queue deploy in ci.yaml cannot run without this validator passing,
   # so leaving it out here made the manual path the WAY AROUND the gate: a direct
   # push to main plus a dispatch reconciled the manifests with no authorization
@@ -25,6 +60,7 @@ jobs:
   # deploy secrets in scope, and a gate belongs before that, not inside it.
   validate-eks-authorization:
     name: 🔐 Validate EKS Authorization
+    needs: validate-pvc-prune-safety
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
@@ -60,9 +96,75 @@ jobs:
           go test ./scripts/validate-eks-ci-role-policy
           go run ./scripts/validate-eks-ci-role-policy .
 
+  # Same reasoning as the authorization gate above, one property along. The
+  # ordering contract — publish to an immutable staging reference, sign and
+  # attest it, only then promote those bytes to latest — was wired into ci.yaml,
+  # which triggers on pull_request and merge_group. This workflow has neither
+  # event, so the direct-push recovery path reached production without the
+  # contract being examined once, and the merge-queue gate was the only thing
+  # enforcing it. A gate one route can walk around is not a gate.
+  validate-publication-contract:
+    name: 🖋️ Validate Publication Contract
+    runs-on: ubuntu-latest
+    # The pin guard gates the deploy THROUGH this job rather than by joining
+    # deploy-prod's own `needs`. Two reasons, both load-bearing: this job may run
+    # only one command step (see the guard's own job below), and deploy-prod's
+    # `needs` line is the literal that validate-dr-signing's ablations mutate — a
+    # third entry wraps it past the formatter's width and those ablations silently
+    # stop biting, which their "ablation changed nothing" failure caught. Depending
+    # on it here keeps that line byte-identical and still blocks the deploy.
+    needs: [validate-shared-publish-pin]
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🖋️ Validate DR signing contract
+        # Identical invocation to ci.yaml's, deliberately: the two routes to
+        # production must be gated by the same check, or they drift and the
+        # weaker one becomes the real policy.
+        run: |
+          go test ./scripts/validate-dr-signing
+          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml
+
+  # Deliberately its OWN job rather than a second step in the contract job above.
+  # scripts/validate-dr-signing requires validate-publication-contract to run
+  # exactly one command step, because any other step in that job could export
+  # BASH_ENV or a fake `go` through $GITHUB_ENV/$GITHUB_PATH and leave the
+  # validator looking correct while it was subverted. Adding this guard there
+  # broke that invariant, which is the invariant doing its job — so it gets its
+  # own job and gates the deploy through `needs` instead.
+  #
+  # ci.yaml runs this guard on `pull_request` and `merge_group` only, so a matcher
+  # widened by a DIRECT PUSH to main reaches production through this manual route
+  # without it ever having run — the weakened trust policy would be reconciled to
+  # the cluster unchecked (#2818).
+  validate-shared-publish-pin:
+    name: 🔐 Validate Shared Publish Workflow Pins
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: 🔐 Validate shared publish workflows are pinned
+        run: ./scripts/guard-shared-publish-workflow-pin.sh
+
   deploy-prod:
     name: 🚀 Deploy to Production
-    needs: [validate-eks-authorization]
+    needs: [validate-eks-authorization, validate-publication-contract]
     runs-on: ubuntu-latest
     environment: prod
     permissions:
@@ -70,6 +172,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
+      actions: read # read a prior run attempt status, to prove an orphaned fence holder is dead (deploy-prod recover-orphaned-fence)
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

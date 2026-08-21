@@ -1,0 +1,11 @@
+---
+# The same detachment expressed through initProvider, which upjet merges into
+# forProvider when the field is unset there.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+spec:
+  initProvider:
+    name: some-other-team
