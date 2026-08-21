@@ -288,6 +288,126 @@ jobs:
           go test ./scripts/validate-dr-signing
           go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml
 
+  validate-matcher-efficacy:
+    name: 🔏 Validate Cosign Matcher Efficacy
+    # A DEDICATED job because this is the only validator that needs to READ the
+    # registry, and that permission should not be inherited by the jobs that do
+    # not need it.
+    #
+    # Every static check we had passed on a matcher that verified ZERO artifacts
+    # and halted all GitOps delivery on prod for ~5.5 hours (#3005). This asks
+    # the one question those cannot: does the matcher, as written in the
+    # manifest, accept a signer that really signed this artifact?
+    #
+    # SKIPPED ON FORK PULL REQUESTS, and still enforced before anything merges.
+    # Reading this artifact needs a token carrying package read; a fork PR's
+    # GITHUB_TOKEN does not have one, so running it there would fail every
+    # external contribution on a permission it cannot be granted. The merge
+    # queue is not a fork context, so the gate still holds at the only moment
+    # that decides what production actually gets.
+    if: github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+      packages: read # read the manifests artifact's signature from GHCR
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🔏 Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: 🔏 Check the configured matcher verifies the real artifact
+        # 🔴 THE PATTERNS ARE NEVER SPELLED HERE. They are printed out of the
+        # manifests we deploy and handed straight to cosign, so this tests the
+        # deployed rule rather than a copy of it that can drift.
+        #
+        # cosign is the matcher's real consumer — Flux hands it these same two
+        # regexes — so letting cosign decide keeps the check's semantics
+        # identical to production's instead of reimplementing them.
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT: ghcr.io/devantler-tech/platform/manifests:latest
+        run: |
+          set -euo pipefail
+
+          go test ./scripts/validate-matcher-efficacy
+
+          MATCHER_JSON="$(go run ./scripts/validate-matcher-efficacy --print-matcher \
+            ksail.prod.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml)"
+          # 🔴 DECODE AS JSON, never line-per-value. A matcher value may legitimately
+          # contain a newline — a YAML literal block is valid for these fields — and a
+          # line-based read would take only its first line, verifying against a
+          # truncated regex while Flux enforces the whole thing. That is a matcher
+          # inert in production and green here: exactly what this job refuses.
+          # `jq -e` fails on a null or missing field, so a malformed handoff stops
+          # the build instead of silently yielding an empty pattern.
+          ISSUER="$(jq -er '.issuer' <<<"${MATCHER_JSON}")"
+          SUBJECT="$(jq -er '.subject' <<<"${MATCHER_JSON}")"
+          if [ -z "${ISSUER}" ] || [ -z "${SUBJECT}" ]; then
+            echo "::error::could not read the matcher out of the manifests"
+            exit 1
+          fi
+          echo "matcher issuer:  ${ISSUER}"
+          echo "matcher subject: ${SUBJECT}"
+
+          echo "${REGISTRY_TOKEN}" | cosign login ghcr.io -u "${REGISTRY_USER}" --password-stdin
+
+          # THE CHECK. Fails when the deployed matcher would not verify the
+          # artifact it guards — which is #3005, caught before the deploy.
+          if ! cosign verify \
+            --certificate-oidc-issuer-regexp "${ISSUER}" \
+            --certificate-identity-regexp "${SUBJECT}" \
+            "${ARTIFACT}" > /dev/null; then
+            echo "::error::the cosign matcher in the manifests does not verify ${ARTIFACT}."
+            echo "::error::a matcher that matches nothing is inert: present, green, and enforcing nothing."
+            exit 1
+          fi
+          echo "the configured matcher verifies the artifact"
+
+          # THE NEGATIVE CONTROL, run on every build rather than asserted once.
+          # A deliberately wrong subject MUST be refused; if it is accepted the
+          # check above proves nothing and is itself the vacuous control this
+          # job exists to prevent.
+          if cosign verify \
+            --certificate-oidc-issuer-regexp "${ISSUER}" \
+            --certificate-identity-regexp '^https://github\.com/devantler-tech/NOT-A-REAL-REPO/.*$' \
+            "${ARTIFACT}" > /dev/null 2>&1; then
+            echo "::error::negative control PASSED — a deliberately wrong subject was accepted."
+            echo "::error::this check cannot distinguish a good matcher from a broken one. Fix it before trusting it."
+            exit 1
+          fi
+
+          # 🔴 THAT NON-ZERO EXIT IS NOT YET EVIDENCE OF A REFUSAL. A network,
+          # registry or auth failure also exits non-zero, and would report the
+          # control as having passed while proving nothing — the control would
+          # then be vacuous in exactly the way it exists to detect. Re-run the
+          # POSITIVE check: if the same path still verifies, the refusal above
+          # was a real refusal rather than an outage. This is a liveness
+          # sandwich, deliberately not a match on cosign's error text, which is
+          # not a stable interface.
+          if ! cosign verify \
+            --certificate-oidc-issuer-regexp "${ISSUER}" \
+            --certificate-identity-regexp "${SUBJECT}" \
+            "${ARTIFACT}" > /dev/null; then
+            echo "::error::the negative control exited non-zero, but the artifact can no longer be"
+            echo "::error::verified either — so this run cannot prove the control refused for the"
+            echo "::error::right reason. Treating an unprovable control as a failure, not a pass."
+            exit 1
+          fi
+          echo "negative control refused a wrong subject, and the positive path still verifies"
+          echo "=> the check above is not vacuous"
+
   validate-eks-authorization:
     name: 🔐 Validate EKS Authorization
     needs: [changes]
@@ -1281,6 +1401,7 @@ jobs:
       [
         changes,
         validate-publication-contract,
+        validate-matcher-efficacy,
         validate-eks-authorization,
         validate,
         naming,
@@ -1296,6 +1417,7 @@ jobs:
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.validate-publication-contract.result }}
+            ${{ needs.validate-matcher-efficacy.result }}
             ${{ needs.validate-eks-authorization.result }}
             ${{ needs.validate.result }}
             ${{ needs.naming.result }}
