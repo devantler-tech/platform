@@ -1125,7 +1125,44 @@ const (
 // unapproved — kubectl v1.36.1 against an approved v1.36.2, so
 // validateRendererVersion fails closed and cannot corroborate. The same
 // single-renderer caveat as the value it replaces.
-const expectedRenderedSurfaceSHA = "3fda03fc7bdccf0a4a9d9057609ea20c0853af6d619523b94d56d21bca77fa71"
+// This value additionally covers pinning OpenBao off the autoscaler nodes
+// (#2363, PR #3286): a required nodeAffinity on the openbao HelmRelease's
+// `server.affinity`, so its single-attach hcloud volumes cannot ride a node the
+// autoscaler may delete.
+//
+// NOTHING grant-bearing moved. Membership is 77 -> 77 and set-IDENTICAL in both
+// directions (Role 11, ClusterRole 23, RoleBinding 16, ClusterRoleBinding 11,
+// ServiceAccount 16) — added-set EMPTY, removed-set EMPTY. Beyond membership,
+// the 77 documents' full canonical CONTENT hashes identically on both trees
+// (4932afd49d173ea6), so no rule, subject or verb changed inside an object whose
+// name stayed the same.
+//
+// Across all five authorization overlays — 1093 rendered documents — EXACTLY ONE
+// document differs: helm.toolkit.fluxcd.io/v2 HelmRelease openbao/openbao,
+// 4812 -> 5334 bytes, the added affinity value. That per-document diff firing on
+// openbao and nowhere else is its own positive control for the comparison.
+//
+// No identity, binding, verb, policy document, ServiceAccount or `aws`-bearing
+// line is touched: the 223 aws/eks/sts-bearing lines hash identically on both
+// trees (e00b36ee90f0d5e8), and a PLANTED extra `sts:AssumeRole` line was
+// confirmed to make that same comparison FIRE, so the identical result is a
+// measurement rather than a vacuous pass.
+//
+// The previous approved digest is recorded here in full, so replacing the
+// constant does not lose it:
+//
+//	3fda03fc7bdccf0a4a9d9057609ea20c0853af6d619523b94d56d21bca77fa71
+//
+// The new fingerprint was read from the required job's own output on the
+// approved renderer (run 32484160592, job 96776995320). UNLIKE the two values
+// above, it is NOT single-renderer: the local toolchain is still refused as
+// unapproved (kubectl v1.36.1 against the approved v1.36.2, so
+// validateRendererVersion fails closed), yet running this same validator locally
+// produced the IDENTICAL fingerprint. The two kubectl patch releases therefore
+// render this surface byte-identically, which corroborates the value rather than
+// resting on one renderer. The conservation figures above were computed with the
+// SAME local renderer on both trees, so that comparison is unaffected by the pin.
+const expectedRenderedSurfaceSHA = "1b7ab5daabc4d5540597a0de180b6f92b4bfb70ef7805eb7e97cf6755a2b92d3"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
