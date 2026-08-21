@@ -59,8 +59,8 @@ go run ./scripts/kubescape-backlog-bridge \
 Each raw failed pair produces one deterministic row:
 
 ```text
-excepted	control=C-0016	component=app/Job/nightly	policies=batch-workloads
-unexcepted	control=C-0016	component=app/Deployment/api	policies=-
+excepted control=C-0016 component=app/Job/nightly policies=batch-workloads
+unexcepted control=C-0016 component=app/Deployment/api policies=-
 ```
 
 `excepted` means at least one named policy matches both the control and the
