@@ -64,7 +64,11 @@ readonly PROBE_PATH='k8s/bases/apps/trivyignore-vault-backup-probe/job.yaml'
 # A bump must therefore FAIL here until someone re-measures the new digest and updates this
 # constant together with the .trivyignore.yaml statement that quotes it.
 readonly EXPECTED_OPENBAO_IMAGE='quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806'
-readonly LOW_ID_FLOOR=10000
+# KSV-0020 fires for UID <= 10000, so 10000 is itself LOW and the first safe value is 10001.
+# Comparing against 10000 with -lt / -ge would treat exactly 10000 as high: trivy would report it,
+# the path-scoped ignore would suppress it, and this guard would still pass -- an off-by-one at
+# precisely the boundary it exists to police.
+readonly LOW_ID_FLOOR=10001
 readonly EXPECTED_LOW_UID=100
 readonly EXPECTED_LOW_CONTAINERS=1
 readonly EXPECTED_LOW_CONTAINER_NAME='snapshot'
@@ -105,10 +109,20 @@ done
 # substitution whose command fails feeds the loop nothing, so the body never executes and the check
 # reports success having inspected NOTHING — the exact vacuous pass this guard exists to prevent,
 # occurring inside the guard itself. A query that did not run is not evidence that a boundary holds.
+#
+# ⚠️ run_yq is ALWAYS called inside $(...), which is a SUBSHELL. A `fail` here would set `status` in
+# that subshell and the parent would never see it, so every caller's `if` would simply skip its body
+# and the guard would print PASS having inspected nothing — the vacuous pass this whole block exists
+# to prevent, occurring inside the mechanism meant to prevent it. It therefore reports the failure to
+# stderr and returns non-zero, and the CALLER records it in the parent via query_failed.
+query_failed() { # 1=what it enumerates, for the failure message
+  fail "QUERY FAILED: could not enumerate $1 — refusing to report a boundary this check never inspected"
+}
+
 run_yq() { # 1=expression 2=file 3=what it enumerates, for the failure message
   local out
   if ! out="$(yq -N "$1" "$2" 2>/dev/null)"; then
-    fail "QUERY FAILED: could not enumerate $3 — refusing to report a boundary this check never inspected"
+    printf 'QUERY FAILED: could not enumerate %s\n' "$3" >&2
     return 1
   fi
   printf '%s\n' "$out"
@@ -137,6 +151,8 @@ if paths_out="$(run_yq ".misconfigurations[] | select(.id == \"$UID_CHECK_ID\") 
   done <<PATHS
 $paths_out
 PATHS
+else
+  query_failed "the paths $UID_CHECK_ID is scoped to"
 fi
 
 # An entry that lost its paths key suppresses the check repository-wide.
@@ -149,6 +165,8 @@ if lens_out="$(run_yq ".misconfigurations[] | select(.id == \"$UID_CHECK_ID\") |
   done <<LENS
 $lens_out
 LENS
+else
+  query_failed "the path counts for $UID_CHECK_ID"
 fi
 
 # ------------------------------------------------------------------ absence --
@@ -164,12 +182,13 @@ done
 # ------------------------------------------------------------------ premise --
 for path in "${WORKLOAD_PATHS[@]}"; do
   if ! pod_uid="$(run_yq "$POD_SPEC.securityContext.runAsUser // \"unset\"" "$REPO_ROOT/$path" "the pod-level runAsUser of $path")"; then
+    query_failed "the pod-level runAsUser of $path"
     pod_uid="unset"
   fi
   if [ "$pod_uid" = "unset" ]; then
     fail "PREMISE BROKEN: $path sets no pod-level runAsUser, so every container without an override inherits an unconstrained UID while $UID_CHECK_ID stays suppressed on it"
   elif [ "$pod_uid" -lt "$LOW_ID_FLOOR" ]; then
-    fail "PREMISE BROKEN: the pod default runAsUser in $path is $pod_uid, below $LOW_ID_FLOOR. The disposition states that only the openbao snapshot container runs low and that everything else takes a HIGH default."
+    fail "PREMISE BROKEN: the pod default runAsUser in $path is $pod_uid, which KSV-0020 counts as low (<= 10000). The disposition states that only the openbao snapshot container runs low and that everything else takes a HIGH default."
   fi
 
   low=0
@@ -190,7 +209,9 @@ for path in "${WORKLOAD_PATHS[@]}"; do
 $containers_out
 CONTAINERS
     [ "$low" -eq "$EXPECTED_LOW_CONTAINERS" ] || fail \
-      "PREMISE BROKEN: $low container(s) in $path run below $LOW_ID_FLOOR by UID; the disposition is written for exactly $EXPECTED_LOW_CONTAINERS (the openbao snapshot container)."
+      "PREMISE BROKEN: $low container(s) in $path run at a UID KSV-0020 counts as low (<= 10000); the disposition is written for exactly $EXPECTED_LOW_CONTAINERS (the openbao snapshot container)."
+  else
+    query_failed "the containers of $path"
   fi
 done
 
