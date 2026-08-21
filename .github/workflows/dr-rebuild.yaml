@@ -426,6 +426,11 @@ jobs:
                     fi
                     echo "Fetching $NEWEST..."
                     mc cp "backup/$R2_BUCKET/openbao-snapshots/$NEWEST" "/snapshots/$NEWEST"
+                    # The restore reads this file as openbao (uid 100, gid 1000), so it must
+                    # be group-readable. mc creates it owned by THIS pod's high uid, and the
+                    # group entry is the only path left — an explicit chmod rather than a
+                    # reliance on mc's umask, matching what the snapshot writers do.
+                    chmod 0640 "/snapshots/$NEWEST"
                     ls -l /snapshots/
           POD
           if ! kubectl -n openbao wait pod/dr-snapshot-fetch \

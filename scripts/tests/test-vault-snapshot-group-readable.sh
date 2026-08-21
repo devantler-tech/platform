@@ -175,4 +175,52 @@ for target in "${uid_targets[@]}"; do
   printf 'ok: %s — pod %s:%s (fsGroup %s); UID 100 scoped to the snapshot container; mirror takes the default\n' \
     "${manifest}" "${pod_uid}" "${pod_gid}" "${pod_fsg}"
 done
+
+# --- The DR fetch writes to the same volume, and it is the leg CI never exercises ---------------
+#
+# The restore reads the fetched snapshot as openbao (uid 100, gid 1000). The fetch pod now runs a
+# high uid, so the group entry is the ONLY remaining path to that file — and mc's umask is not
+# something this repository controls. Assert the explicit chmod instead.
+#
+# Scoped to chmods targeting /snapshots: this workflow also chmods an age private key to 600, which
+# is correct and must not be read as a finding.
+#
+# Text-level rather than yq: the pod spec lives inside a heredoc within a `run:` block, so it is not
+# addressable by a YAML path. Bound the same way as the manifests above — the chmod must name the
+# SAME operand the fetch wrote to, or it could be widening some other file.
+dr_workflow='.github/workflows/dr-rebuild.yaml'
+dr_path="${root_dir}/${dr_workflow}"
+[ -f "${dr_path}" ] || fail "${dr_workflow}: not found"
+
+dr_cp="$(grep -E '^[[:space:]]*mc cp .*/snapshots/' "${dr_path}" || true)"
+[ -n "${dr_cp}" ] || fail "${dr_workflow}: no 'mc cp' onto /snapshots — the fetch step moved or was renamed"
+dr_operand="$(printf '%s\n' "${dr_cp}" | awk '{print $NF}' | tr -d '"')"
+[ -n "${dr_operand}" ] || fail "${dr_workflow}: could not extract the fetch destination"
+
+dr_chmod="$(grep -E '^[[:space:]]*chmod[[:space:]]+[0-7]+[[:space:]]+"?/snapshots/' "${dr_path}" || true)"
+[ -n "${dr_chmod}" ] ||
+  fail "${dr_workflow}: the fetch never chmods the snapshot; the restore depends on mc's umask"
+
+dr_bound=0
+while IFS= read -r line; do
+  [ -n "${line}" ] || continue
+  mode="$(printf '%s\n' "${line}" | awk '{print $2}')"
+  operand="$(printf '%s\n' "${line}" | awk '{print $3}' | tr -d '"')"
+  case "${mode}" in
+    [0-7][0-7][0-7] | [0-7][0-7][0-7][0-7]) ;;
+    *) fail "${dr_workflow}: chmod mode '${mode}' is not a 3- or 4-digit octal mode" ;;
+  esac
+  [ $(( ${mode: -2:1} & 4 )) -eq 4 ] ||
+    fail "${dr_workflow}: chmod mode '${mode}' does not grant GROUP read — the restore cannot open it"
+  [ "${mode: -1}" -eq 0 ] ||
+    fail "${dr_workflow}: chmod mode '${mode}' grants OTHER access to a vault snapshot"
+  [ "${operand}" = "${dr_operand}" ] && dr_bound=1
+done <<DRCHMODS
+${dr_chmod}
+DRCHMODS
+
+[ "${dr_bound}" -eq 1 ] ||
+  fail "${dr_workflow}: no chmod targets the fetched snapshot '${dr_operand}' — the assertion is unbound"
+
+printf 'ok: %s — fetch writes %s and chmods that same path group-readable\n' "${dr_workflow}" "${dr_operand}"
 printf 'PASS: both vault-snapshot writers make the snapshot group-readable, and the UID split holds\n'
