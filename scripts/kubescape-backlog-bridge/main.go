@@ -867,7 +867,9 @@ func run(args []string, out io.Writer) error {
 	fs.Var(&cvePaths, "cve",
 		"path to a per-object vulnerabilitymanifestsummary JSON (repeatable)")
 
-	mode := fs.String("mode", "report", "report (default, prints what it would file) or write (reconciles issues)")
+	mode := fs.String("mode", "report",
+		"report (default, prints what it would file), oracle (explains posture exception matches), "+
+			"or write (reconciles issues)")
 	exceptionsPath := fs.String("exceptions", "",
 		"path to the generated Kubescape exceptions JSON "+
 			"(`go run ./scripts/generate-kubescape-exceptions`); accepted posture controls are not backlog work")
@@ -892,8 +894,8 @@ func run(args []string, out io.Writer) error {
 			errInvalidInvocation, fs.Arg(0))
 	}
 
-	if *mode != "report" && *mode != "write" {
-		return fmt.Errorf("%w: unknown -mode %q (want report or write)", errInvalidInvocation, *mode)
+	if *mode != "report" && *mode != "oracle" && *mode != "write" {
+		return fmt.Errorf("%w: unknown -mode %q (want report, oracle, or write)", errInvalidInvocation, *mode)
 	}
 
 	if *mode == "write" && strings.TrimSpace(*repo) == "" {
@@ -920,6 +922,16 @@ func run(args []string, out io.Writer) error {
 		return fmt.Errorf("%w: -mode=write with -posture requires -exceptions "+
 			"(`go run ./scripts/generate-kubescape-exceptions`); without it every accepted "+
 			"control is filed as backlog work", errWritesNotEnabled)
+	}
+
+	if *mode == "oracle" && strings.TrimSpace(*exceptionsPath) == "" {
+		return fmt.Errorf("%w: -mode=oracle needs -exceptions so every raw posture finding can be "+
+			"evaluated against the declared policy set", errInvalidInvocation)
+	}
+
+	if *mode == "oracle" && len(cvePaths) > 0 {
+		return fmt.Errorf("%w: -mode=oracle accepts posture input only; "+
+			"ClusterSecurityExceptions do not filter the CVE surface", errInvalidInvocation)
 	}
 
 	if len(posturePaths) == 0 && len(cvePaths) == 0 {
@@ -950,6 +962,10 @@ func run(args []string, out io.Writer) error {
 		postureItems, err := readSurface(posturePaths, surfacePosture)
 		if err != nil {
 			return err
+		}
+
+		if *mode == "oracle" {
+			return reportExceptionOracle(postureItems, exceptions, out)
 		}
 
 		derived, n, acceptedKeys, err := derivePosture(postureItems, exceptions)
@@ -990,6 +1006,85 @@ func run(args []string, out io.Writer) error {
 	}
 
 	return report(themes, examined, len(exceptions) > 0, suppressed, out)
+}
+
+// oracleRow is one raw failed posture pair and the declared exception policies
+// that match it. It deliberately carries the same sanitized component string
+// used by backlog rendering, so node identities and wlid internals never enter
+// the output.
+type oracleRow struct {
+	control   string
+	component string
+	policies  []string
+}
+
+// reportExceptionOracle explains the exact client-side exception decision for
+// every failed posture pair in the supplied per-object GETs.
+//
+// derivePosture runs first as the single validation gate for workload identity,
+// status, severity and control-ID consistency. The reporting pass then observes
+// the same validated fields without maintaining a second, weaker validator.
+func reportExceptionOracle(items []item, exceptions []exception, out io.Writer) error {
+	if _, _, _, err := derivePosture(items, exceptions); err != nil {
+		return err
+	}
+
+	var rows []oracleRow
+
+	for _, it := range items {
+		controls, err := it.controls()
+		if err != nil {
+			return err
+		}
+
+		component := it.component()
+		for key, ctrl := range controls {
+			failed, _ := controlFailed(ctrl.Status.Status)
+			if !failed {
+				continue
+			}
+
+			if ctrl.ControlID != "" {
+				key = ctrl.ControlID
+			}
+
+			rows = append(rows, oracleRow{
+				control:   key,
+				component: component.String(),
+				policies:  matchingExceptionNames(exceptions, key, component),
+			})
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].control != rows[j].control {
+			return rows[i].control < rows[j].control
+		}
+
+		return rows[i].component < rows[j].component
+	})
+
+	if len(rows) == 0 {
+		_, err := fmt.Fprintln(out, "no failed posture findings in the supplied per-object input(s)")
+
+		return err
+	}
+
+	for _, row := range rows {
+		status := "unexcepted"
+		policies := "-"
+		if len(row.policies) > 0 {
+			status = "excepted"
+			policies = strings.Join(row.policies, ",")
+		}
+
+		if _, err := fmt.Fprintf(out, "%s\tcontrol=%s\tcomponent=%s\tpolicies=%s\n",
+			status, row.control, row.component, policies); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // reconcile lists what this command already tracks, plans the difference, and
