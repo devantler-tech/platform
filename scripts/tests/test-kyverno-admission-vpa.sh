@@ -11,6 +11,16 @@ for tool in ksail kubectl yq; do
   fi
 done
 
+vpa_release="${repo_root}/k8s/bases/infrastructure/controllers/vertical-pod-autoscaler/helm-release.yaml"
+certgen_run_as_non_root="$(
+  yq -N -r '.spec.values.admissionController.certGen.securityContext.runAsNonRoot // "missing"' \
+    "${vpa_release}"
+)"
+if [[ "${certgen_run_as_non_root}" != "true" ]]; then
+  echo "VPA admission certgen container runAsNonRoot=${certgen_run_as_non_root}; want true for Kyverno admission" >&2
+  exit 1
+fi
+
 rendered_vpas="$(
   kubectl kustomize \
     "${repo_root}/k8s/providers/hetzner/infrastructure/vertical-pod-autoscalers"

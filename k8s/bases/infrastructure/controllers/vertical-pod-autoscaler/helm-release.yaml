@@ -76,6 +76,14 @@ spec:
             - ALL
     admissionController:
       replicaCount: ${vpa_admission_replicas:=2}
+      certGen:
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop:
+              - ALL
       podSecurityContext:
         runAsUser: 65534
         runAsGroup: 65534
