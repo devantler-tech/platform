@@ -27,6 +27,10 @@ rule_count="$(jq -r 'length' <<<"${headlamp_rules}")"
 
 allowed_versions="$(jq -r '.[0].allowedVersions // ""' <<<"${headlamp_rules}")"
 automerge="$(jq -r 'if .[0] | has("automerge") then .[0].automerge else "unset" end' <<<"${headlamp_rules}")"
+readonly expected_allowed_versions='/^v?0\.42\.0$/'
+
+[[ "${allowed_versions}" == "${expected_allowed_versions}" ]] ||
+  fail "Headlamp allowedVersions must pin exactly 0.42.0, got '${allowed_versions}'"
 
 version_is_allowed() {
   local version="$1"
