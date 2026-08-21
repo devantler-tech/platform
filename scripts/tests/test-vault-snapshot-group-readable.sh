@@ -209,7 +209,7 @@ while IFS= read -r line; do
     [0-7][0-7][0-7] | [0-7][0-7][0-7][0-7]) ;;
     *) fail "${dr_workflow}: chmod mode '${mode}' is not a 3- or 4-digit octal mode" ;;
   esac
-  [ $(( ${mode: -2:1} & 4 )) -eq 4 ] ||
+  [ $((${mode: -2:1} & 4)) -eq 4 ] ||
     fail "${dr_workflow}: chmod mode '${mode}' does not grant GROUP read — the restore cannot open it"
   [ "${mode: -1}" -eq 0 ] ||
     fail "${dr_workflow}: chmod mode '${mode}' grants OTHER access to a vault snapshot"
