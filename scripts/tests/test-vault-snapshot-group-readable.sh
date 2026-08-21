@@ -124,7 +124,6 @@ CHMODS
     "${manifest}" "${save_operand}" "${chmod_modes}"
 done
 
-
 # --- The UID split that group-readability makes possible ----------------------------------------
 #
 # Asserted here rather than in a separate file because it is the same property from the other end:
