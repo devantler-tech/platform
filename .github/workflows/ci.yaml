@@ -152,6 +152,9 @@ jobs:
               # The vault-config KSV-0020 disposition is path-scoped but the identity it rests
               # on is PER CONTAINER, so the entry and its premises test move together.
               - 'scripts/tests/test-trivyignore-vault-config-identity-boundary.sh'
+              # The vault-backup KSV-0020 disposition rests on the same per-container identity,
+              # and its guard also asserts that KSV-0021 stays UNdispositioned there.
+              - 'scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh'
               # The first-party RBAC dispositions and the roles they describe are one
               # contract: the disposition is only valid while the role stays bound and
               # scoped the way it was reviewed. The roles themselves are already covered
@@ -442,6 +445,15 @@ jobs:
         run: |
           shellcheck scripts/tests/test-trivyignore-vault-config-identity-boundary.sh
           bash scripts/tests/test-trivyignore-vault-config-identity-boundary.sh
+
+      - name: 🧱 Validate vault-backup identity disposition boundary
+        if: needs.changes.outputs.k8s == 'true'
+        # Same per-container premise as vault-config, on the two workloads that pin the same
+        # openbao digest. This guard also asserts an ABSENCE: KSV-0021 must stay reported on
+        # them, because the mirror inherits that gid rather than having it image-defined.
+        run: |
+          shellcheck scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh
+          bash scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh
 
       - name: 🧱 Validate first-party RBAC disposition premises
         if: needs.changes.outputs.k8s == 'true'

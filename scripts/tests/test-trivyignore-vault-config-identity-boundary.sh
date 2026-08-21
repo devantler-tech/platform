@@ -47,7 +47,9 @@ readonly GID_CHECK_ID='KSV-0021'
 readonly CHECK_IDS=("$UID_CHECK_ID" "$GID_CHECK_ID")
 readonly JOB_PATH='k8s/bases/infrastructure/vault-config/job.yaml'
 readonly PROBE_PATH='k8s/bases/apps/trivyignore-identity-probe/job.yaml'
-readonly OPENBAO_IMAGE_RE='^quay\.io/openbao/openbao:'
+# Pinned to the exact reviewed reference, not the repository name: the disposition rests on account
+# data measured from THIS digest, so an image bump must fail here until the identity is re-measured.
+readonly EXPECTED_OPENBAO_IMAGE='quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806'
 readonly HIGH_UID_FLOOR=10000
 readonly EXPECTED_LOW_UID=100
 readonly EXPECTED_LOW_GID=1000
@@ -56,6 +58,11 @@ readonly EXPECTED_LOW_CONTAINERS=2
 # Vendored bundles carry their own reviewed KSV-0020 disposition, guarded elsewhere.
 readonly VENDORED_CDI='k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml'
 readonly VENDORED_KUBEVIRT='k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml'
+
+# The vault-backup Job and CronJob carry their own reviewed KSV-0020 disposition on the same
+# image-defined identity, guarded by test-trivyignore-vault-backup-identity-boundary.sh.
+readonly VAULT_BACKUP_JOB='k8s/bases/infrastructure/vault-backup/job.yaml'
+readonly VAULT_BACKUP_CRON='k8s/bases/infrastructure/vault-backup/cron-job.yaml'
 
 status=0
 fail() {
@@ -105,7 +112,7 @@ for CHECK_ID in "${CHECK_IDS[@]}"; do
     while IFS= read -r path; do
       [ -n "$path" ] || continue
       case "$path" in
-        "$VENDORED_CDI" | "$VENDORED_KUBEVIRT" | "$JOB_PATH") ;;
+        "$VENDORED_CDI" | "$VENDORED_KUBEVIRT" | "$JOB_PATH" | "$VAULT_BACKUP_JOB" | "$VAULT_BACKUP_CRON") ;;
         *) fail "UNREVIEWED DISPOSITION: $CHECK_ID is scoped to $path, which no premises test guards" ;;
       esac
     done <<PATHS
@@ -142,8 +149,8 @@ if containers_out="$(run_yq '[.spec.template.spec.initContainers[]?, .spec.templ
     [ "$uid" = "unset" ] && continue
     [ "$uid" -ge "$HIGH_UID_FLOOR" ] && continue
     low=$((low + 1))
-    if ! printf '%s' "$image" | grep -qE "$OPENBAO_IMAGE_RE"; then
-      fail "PREMISE BROKEN: container '$name' runs as UID $uid from image '$image', which is not an openbao image. The $UID_CHECK_ID disposition covers this whole Job by path, so this container's low UID is now silently suppressed with no image-defined identity to justify it."
+    if [ "$image" != "$EXPECTED_OPENBAO_IMAGE" ]; then
+      fail "PREMISE BROKEN: container '$name' runs as UID $uid from image '$image', which is not the pinned openbao image whose measured account justifies this. The $UID_CHECK_ID disposition covers this whole Job by path, so this container's low UID is now silently suppressed with no image-defined identity to justify it."
     elif [ "$uid" -ne "$EXPECTED_LOW_UID" ]; then
       fail "PREMISE BROKEN: openbao container '$name' runs as UID $uid, not the image-defined $EXPECTED_LOW_UID the disposition names."
     fi
@@ -182,8 +189,8 @@ if gids_out="$(run_yq '[.spec.template.spec.initContainers[]?, .spec.template.sp
     [ "$gid" = "unset" ] && continue
     [ "$gid" -ge "$HIGH_UID_FLOOR" ] && continue
     low_gid=$((low_gid + 1))
-    if ! printf '%s' "$image" | grep -qE "$OPENBAO_IMAGE_RE"; then
-      fail "PREMISE BROKEN: container '$name' runs as GID $gid from image '$image', which is not an openbao image. The $GID_CHECK_ID disposition covers this whole Job by path, so this container's low GID is now silently suppressed with no image-defined identity to justify it."
+    if [ "$image" != "$EXPECTED_OPENBAO_IMAGE" ]; then
+      fail "PREMISE BROKEN: container '$name' runs as GID $gid from image '$image', which is not the pinned openbao image whose measured account justifies this. The $GID_CHECK_ID disposition covers this whole Job by path, so this container's low GID is now silently suppressed with no image-defined identity to justify it."
     elif [ "$gid" -ne "$EXPECTED_LOW_GID" ]; then
       fail "PREMISE BROKEN: openbao container '$name' runs as GID $gid, not the image-defined $EXPECTED_LOW_GID the disposition names."
     fi

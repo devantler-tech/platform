@@ -175,9 +175,26 @@ DISABLE_ERRORS_LINTERS:
   # openbao containers that legitimately remain — the same image-defined identity the KSV-0020
   # entry above rests on, one field over. The same per-container boundary test asserts both.
   #
-  # The residual 9 is fully accounted for, per file: 4 KSV-0020 + 4 KSV-0021 on the two
-  # vault-backup workloads, whose durable fix is #3202; and 1 KSV-0011 on the docker-provider
-  # coredns Deployment (#3259). REPOSITORY_TRIVY cannot leave the list below until those two land.
+  # It then went 6 -> 4 when KSV-0020 on the two vault-backup workloads was dispositioned (#3202):
+  # the openbao snapshot container's image-defined uid 100, the same premise as the vault-config
+  # entry above and on the same pinned digest, guarded per container by
+  # scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh.
+  #
+  # The residual 4 is fully accounted for: 2 KSV-0021 on each of the two vault-backup workloads --
+  # the snapshot container's image-defined gid AND the mirror container, which INHERITS gid 1000
+  # from the pod rather than having it image-defined. That second one is why the KSV-0020 premise
+  # does not carry over, and why #3202 stays open: it needs the PVC sharing model established
+  # first. REPOSITORY_TRIVY cannot leave the list below until it does.
+  #
+  # ⚠️ That 6 is NOT 9 minus this slice. The 9 recorded here was wrong on two independent counts:
+  # KSV-0020 on vault-backup was 2 (one per file), not 4, and the coredns KSV-0011 was already
+  # gone (#3259 closed). Measured on 2026-08-21 with trivy v0.74.0.
+  #
+  # ⚠️ MEASURE FROM THE REPOSITORY ROOT. Scanning k8s/ directly makes trivy report targets relative
+  # to it, so this file's k8s/-prefixed ignore paths stop matching and already-dispositioned
+  # findings reappear -- which reads as a regression and is an artifact of the invocation. Passing
+  # --data .trivy/data matters for the same reason: without it KSV-0125 invents findings CI never
+  # sees.
   #
   # ⚠️ That 109 is NOT 108 plus a regression. 108 was measured on trivy v0.73.0 and 109 on v0.74.0
   # with no manifest change in between, so that 1 is a scanner rule-set difference rather than new
