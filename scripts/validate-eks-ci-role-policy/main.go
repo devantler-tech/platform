@@ -1162,7 +1162,31 @@ const (
 // render this surface byte-identically, which corroborates the value rather than
 // resting on one renderer. The conservation figures above were computed with the
 // SAME local renderer on both trees, so that comparison is unaffected by the pin.
-const expectedRenderedSurfaceSHA = "1b7ab5daabc4d5540597a0de180b6f92b4bfb70ef7805eb7e97cf6755a2b92d3"
+//
+// Measured against current main 00c72f40 before approving this value: the
+// authorization-surface membership is unchanged because the PR edits one
+// existing document and one test file only. Exactly one authorization-capable
+// document moves:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  vertical-pod-autoscaler/vertical-pod-autoscaler
+//
+// Its rendered delta bumps the chart from 4.12.5 to 5.0.0 and explicitly sets
+// runAsNonRoot plus the existing restrictive container settings on the chart's
+// pre-upgrade certificate Job. Production had already proved the need: Kyverno
+// rejected that new Job four times and Flux rolled the release back because the
+// chart default omitted container-level runAsNonRoot. The added values constrain
+// a short-lived hook; they name no subject, role, binding, verb, AWS identity, or
+// permission. No grant-bearing source file changes.
+//
+// The previous approved digest remains recorded here:
+//
+//	1b7ab5daabc4d5540597a0de180b6f92b4bfb70ef7805eb7e97cf6755a2b92d3
+//
+// The new fingerprint was read from the required job's approved renderer (run
+// 32530032923, job 96920168776). The local renderer independently reached the
+// same authorization delta but is deliberately refused on its kubectl patch pin,
+// so the required job remains the authoritative fingerprint source.
+const expectedRenderedSurfaceSHA = "82dc17b954fecf5122608a519efb6c23eaf9597b9a7e5fe867c53672c511e4fe"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
