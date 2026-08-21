@@ -66,6 +66,28 @@ reject_text() {
   fi
 }
 
+count_literal() {
+  local text="$1"
+  local needle="$2"
+  local count=0
+
+  while [[ "${text}" == *"${needle}"* ]]; do
+    text="${text#*"${needle}"}"
+    count=$((count + 1))
+  done
+
+  printf '%s\n' "${count}"
+}
+
+stuck_query_excludes_only_paused() {
+  local query="$1"
+  local paused_selector='crossplane_managed_resource_condition{condition="Synced",reason!="ReconcilePaused"}'
+  local unfiltered_selector='crossplane_managed_resource_condition{condition="Synced"}'
+
+  [ "$(count_literal "${query}" "${paused_selector}")" -eq 4 ] &&
+    [ "$(count_literal "${query}" "${unfiltered_selector}")" -eq 0 ]
+}
+
 # Collapse each `rules[]` entry into one canonical signature line:
 #
 #   apiGroups=[g1,g2] resources=[r1] verbs=[v1,v2]
@@ -257,6 +279,49 @@ require_text \
   "${hetzner_rendered}" \
   'crossplane-sync-exporter' \
   'the exporter must reach the provider layer prod deploys'
+
+alerter="$(
+  extract_resource CronJob crossplane-sync-alerter <<<"${hetzner_rendered}"
+)" || fail 'the provider layer must render the Crossplane sync alerter CronJob'
+alerter_script="$(
+  yq eval -r '.spec.jobTemplate.spec.template.spec.containers[] | select(.name == "alerter") | .command[2]' \
+    <<<"${alerter}"
+)" || fail 'the rendered Crossplane sync alerter script must be readable'
+
+# Paused resources are deliberately still evidence that the exporter is alive,
+# so coverage must count them. They are not stuck, though: ReconcilePaused is an
+# explicit operator choice and must be removed from every instant/range selector
+# in the stuck query before its grace-window joins run.
+require_text \
+  "${alerter_script}" \
+  'COV=$(q '\''count(crossplane_managed_resource_condition{condition="Synced"})'\'')' \
+  'exporter coverage must retain paused managed-resource series'
+
+stuck_line="$(
+  while IFS= read -r line; do
+    if [[ "${line}" == *'STUCK='* ]]; then
+      printf '%s\n' "${line}"
+    fi
+  done <<<"${alerter_script}"
+)"
+[ -n "${stuck_line}" ] || fail 'the rendered alerter must carry its stuck-resource query'
+stuck_query="${stuck_line#*q }"
+stuck_query="${stuck_query:1:${#stuck_query}-3}"
+
+stuck_query_excludes_only_paused "${stuck_query}" ||
+  fail 'the stuck query must exclude ReconcilePaused from all four metric selectors'
+
+# Mutation controls keep this from becoming a self-affirming source check. The
+# contract must fail if the pause exemption is removed, and also if a future edit
+# swaps in ReconcileError and suppresses a genuine failed reconciliation.
+ablated_query="${stuck_query//,reason!=\"ReconcilePaused\"/}"
+if stuck_query_excludes_only_paused "${ablated_query}"; then
+  fail 'test control: removing the paused exclusion must break the query contract'
+fi
+wrong_reason_query="${stuck_query//ReconcilePaused/ReconcileError}"
+if stuck_query_excludes_only_paused "${wrong_reason_query}"; then
+  fail 'test control: excluding a real reconciliation error must break the query contract'
+fi
 
 # Negative control, and the load-bearing one. The exporter reads
 # `repo.github.m.upbound.io/Repository` resources, which exist only where
