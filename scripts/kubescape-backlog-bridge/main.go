@@ -114,10 +114,11 @@ const nodeIdentityDigestLen = 8
 // is rendered with an explicit "cluster" scope marker rather than an empty
 // leading segment, so a reader cannot mistake it for a missing value.
 //
-// This is the ONLY place a component becomes a public string — acc.add is its
-// single call site, and exception designators match the structured fields
-// instead — which is what makes it the right place to enforce the exclusion the
-// package documents, rather than a second rule that rendering has to remember.
+// This is the ONLY place a component becomes a public string — both backlog
+// aggregation and oracle reporting call it, while exception designators match
+// the structured fields instead. That makes it the right place to enforce the
+// exclusion the package documents, rather than a second rule each output path
+// has to remember.
 //
 // A `Node` is the one kind whose NAME is itself the reachability evidence the
 // package excludes. For every other kind the name is a workload identity and
@@ -269,7 +270,7 @@ type theme struct {
 	Total      int      // summed occurrences (CVEs); deliberately NOT fingerprinted
 }
 
-// Fingerprint is the theme's stable identity across runs.
+// Fingerprint is the theme's stable historical lookup key across runs.
 //
 // It covers the surface and the key, and NOTHING else — not the affected
 // components, their count, totals, timestamps, resource versions or UIDs.
@@ -282,27 +283,41 @@ type theme struct {
 // — exactly the churn excluding the count was meant to prevent, since the
 // component set implicitly encodes that count anyway.
 func (t theme) Fingerprint() string {
+	return t.Identity()[:16]
+}
+
+// Identity is the theme's collision-resistant machine identity.
+//
+// Fingerprint keeps its historical 64-bit prefix so already-filed issues stay
+// addressable. New bodies retain the complete digest as a second marker, which
+// lets reconciliation verify that a fingerprint still names the same theme.
+func (t theme) Identity() string {
 	canonical := t.Kind + "|" + t.Key
 	sum := sha256.Sum256([]byte(canonical))
 
-	return hex.EncodeToString(sum[:])[:16]
+	return hex.EncodeToString(sum[:])
 }
 
-// postureFingerprint is the identity of a posture theme named only by its key.
+// postureIdentity is the complete identity of a posture theme named only by its
+// key.
 //
 // The accepted-exception set is built from control keys, not from derived
-// themes, so it needs the fingerprint of a theme it never constructs. Doing that
-// inline as theme{Kind: ..., Key: ...}.Fingerprint() silently depends on
-// Fingerprint reading NO OTHER FIELD. That holds today, but if the canonical
+// themes, so it needs the identity of a theme it never constructs. Doing that
+// inline as theme{Kind: ..., Key: ...}.Identity() silently depends on Identity
+// reading NO OTHER FIELD. That holds today, but if the canonical
 // string ever gained a field, the inline literal would start producing an
 // identity matching no tracked issue — every accepted close would then fall back
 // to the "no longer present" wording and the completed disposition, writing the
 // wrong fact into a permanent timeline, and no test would fail.
 //
-// Naming it keeps both producers of a posture fingerprint in one place, so a
+// Naming it keeps both producers of a posture identity in one place, so a
 // change to the canonical form has one site to update rather than two.
-func postureFingerprint(key string) string {
-	return theme{Kind: string(surfacePosture), Key: key}.Fingerprint()
+func postureIdentity(key string) string {
+	return theme{Kind: string(surfacePosture), Key: key}.Identity()
+}
+
+func postureTitle(key string) string {
+	return renderTitle(theme{Kind: string(surfacePosture), Key: key})
 }
 
 // Title renders the backlog title. Stable for a given theme so a
@@ -853,7 +868,9 @@ func run(args []string, out io.Writer) error {
 	fs.Var(&cvePaths, "cve",
 		"path to a per-object vulnerabilitymanifestsummary JSON (repeatable)")
 
-	mode := fs.String("mode", "report", "report (default, prints what it would file) or write (reconciles issues)")
+	mode := fs.String("mode", "report",
+		"report (default, prints what it would file), oracle (explains posture exception matches), "+
+			"or write (reconciles issues)")
 	exceptionsPath := fs.String("exceptions", "",
 		"path to the generated Kubescape exceptions JSON "+
 			"(`go run ./scripts/generate-kubescape-exceptions`); accepted posture controls are not backlog work")
@@ -878,8 +895,8 @@ func run(args []string, out io.Writer) error {
 			errInvalidInvocation, fs.Arg(0))
 	}
 
-	if *mode != "report" && *mode != "write" {
-		return fmt.Errorf("%w: unknown -mode %q (want report or write)", errInvalidInvocation, *mode)
+	if *mode != "report" && *mode != "oracle" && *mode != "write" {
+		return fmt.Errorf("%w: unknown -mode %q (want report, oracle, or write)", errInvalidInvocation, *mode)
 	}
 
 	if *mode == "write" && strings.TrimSpace(*repo) == "" {
@@ -908,6 +925,16 @@ func run(args []string, out io.Writer) error {
 			"control is filed as backlog work", errWritesNotEnabled)
 	}
 
+	if *mode == "oracle" && strings.TrimSpace(*exceptionsPath) == "" {
+		return fmt.Errorf("%w: -mode=oracle needs -exceptions so every raw posture finding can be "+
+			"evaluated against the declared policy set", errInvalidInvocation)
+	}
+
+	if *mode == "oracle" && len(cvePaths) > 0 {
+		return fmt.Errorf("%w: -mode=oracle accepts posture input only; "+
+			"ClusterSecurityExceptions do not filter the CVE surface", errInvalidInvocation)
+	}
+
 	if len(posturePaths) == 0 && len(cvePaths) == 0 {
 		return fmt.Errorf("%w: no input: pass -posture and/or -cve. "+
 			"Reporting \"nothing to file\" for an empty invocation would be the same "+
@@ -926,16 +953,20 @@ func run(args []string, out io.Writer) error {
 		// all-clear reached by FILTERING is a different claim from one reached
 		// by a clean input, and the report must not render them identically.
 		suppressed int
-		// accepted holds the fingerprints of themes an exception suppressed
-		// ENTIRELY, which the planner needs to close them as accepted rather
-		// than as gone.
-		accepted = map[string]struct{}{}
+		// accepted holds the complete identities of themes an exception
+		// suppressed ENTIRELY, which the planner needs both to verify the
+		// historical lookup and to close them as accepted rather than as gone.
+		accepted = map[string]string{}
 	)
 
 	if len(posturePaths) > 0 {
 		postureItems, err := readSurface(posturePaths, surfacePosture)
 		if err != nil {
 			return err
+		}
+
+		if *mode == "oracle" {
+			return reportExceptionOracle(postureItems, exceptions, out)
 		}
 
 		derived, n, acceptedKeys, err := derivePosture(postureItems, exceptions)
@@ -945,11 +976,11 @@ func run(args []string, out io.Writer) error {
 
 		suppressed = n
 
-		// Carried as fingerprints, not keys: that is the identity the planner
-		// matches a tracked issue by, and deriving it here keeps the planner
-		// free of any knowledge of how a posture key becomes one.
+		// Carried as complete identities, not keys: the planner derives the
+		// historical fingerprint for lookup and retains the rest to verify that
+		// an accepted theme did not collide with a different tracked entry.
 		for _, key := range acceptedKeys {
-			accepted[postureFingerprint(key)] = struct{}{}
+			accepted[postureIdentity(key)] = postureTitle(key)
 		}
 
 		themes = append(themes, derived...)
@@ -978,6 +1009,85 @@ func run(args []string, out io.Writer) error {
 	return report(themes, examined, len(exceptions) > 0, suppressed, out)
 }
 
+// oracleRow is one raw failed posture pair and the declared exception policies
+// that match it. It deliberately carries the same sanitized component string
+// used by backlog rendering, so node identities and wlid internals never enter
+// the output.
+type oracleRow struct {
+	control   string
+	component string
+	policies  []string
+}
+
+// reportExceptionOracle explains the exact client-side exception decision for
+// every failed posture pair in the supplied per-object GETs.
+//
+// derivePosture runs first as the single validation gate for workload identity,
+// status, severity and control-ID consistency. The reporting pass then observes
+// the same validated fields without maintaining a second, weaker validator.
+func reportExceptionOracle(items []item, exceptions []exception, out io.Writer) error {
+	if _, _, _, err := derivePosture(items, exceptions); err != nil {
+		return err
+	}
+
+	var rows []oracleRow
+
+	for _, it := range items {
+		controls, err := it.controls()
+		if err != nil {
+			return err
+		}
+
+		component := it.component()
+		for key, ctrl := range controls {
+			failed, _ := controlFailed(ctrl.Status.Status)
+			if !failed {
+				continue
+			}
+
+			if ctrl.ControlID != "" {
+				key = ctrl.ControlID
+			}
+
+			rows = append(rows, oracleRow{
+				control:   key,
+				component: component.String(),
+				policies:  matchingExceptionNames(exceptions, key, component),
+			})
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].control != rows[j].control {
+			return rows[i].control < rows[j].control
+		}
+
+		return rows[i].component < rows[j].component
+	})
+
+	if len(rows) == 0 {
+		_, err := fmt.Fprintln(out, "no failed posture findings in the supplied per-object input(s)")
+
+		return err
+	}
+
+	for _, row := range rows {
+		status := "unexcepted"
+		policies := "-"
+		if len(row.policies) > 0 {
+			status = "excepted"
+			policies = strings.Join(row.policies, ",")
+		}
+
+		if _, err := fmt.Fprintf(out, "%s\tcontrol=%s\tcomponent=%s\tpolicies=%s\n",
+			status, row.control, row.component, policies); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // reconcile lists what this command already tracks, plans the difference, and
 // applies it. Split out of run so the write path is exercisable against a fake
 // store — including the case that matters most, where the plan is empty and the
@@ -986,7 +1096,7 @@ func reconcile(
 	themes []theme,
 	examined []surface,
 	inputsComplete bool,
-	accepted map[string]struct{},
+	accepted map[string]string,
 	store issueStore,
 	out io.Writer,
 ) error {
@@ -1000,7 +1110,7 @@ func reconcile(
 		return err
 	}
 
-	if err := dropRacedCreates(&p, store); err != nil {
+	if err := dropRacedCreates(&p, inputsComplete, store); err != nil {
 		return err
 	}
 
@@ -1008,7 +1118,14 @@ func reconcile(
 }
 
 // dropRacedCreates re-reads the tracked set immediately before applying and
-// discards any create whose fingerprint has been filed since the plan was made.
+// discards any create whose theme has been filed since the plan was made. A
+// current-format entry is verified by complete identity; a legacy entry is
+// title-bound and migrated in place. A matching fingerprint with a different
+// identity or legacy title is a collision, not a duplicate.
+//
+// Partial input still drops the duplicate create, but withholds a legacy
+// migration update: replacing the raced entry's complete render with the
+// subset this run examined would lose recorded components.
 //
 // Two write invocations that overlap both take the same snapshot at the top of
 // reconcile, both find a newly derived theme untracked, and both plan a create.
@@ -1028,7 +1145,7 @@ func reconcile(
 // yet to carry it.
 //
 // Costs one extra list per run, and only on a run that actually creates.
-func dropRacedCreates(p *plan, store issueStore) error {
+func dropRacedCreates(p *plan, inputsComplete bool, store issueStore) error {
 	if !slices.ContainsFunc(p.Actions, func(a issueAction) bool { return a.Kind == "create" }) {
 		return nil
 	}
@@ -1038,18 +1155,34 @@ func dropRacedCreates(p *plan, store issueStore) error {
 		return err
 	}
 
-	filed := map[string]struct{}{}
+	type filedEntry struct {
+		backlogEntry
+		identity string
+	}
+
+	filed := map[string]filedEntry{}
 
 	for _, e := range current {
 		fp, err := e.fingerprint()
 		if err != nil {
-			// An unreadable marker is planWrites' business, not this filter's.
-			// Refusing here would put a second, differently-worded gate on a
-			// condition the plan this run is applying has already passed.
-			continue
+			return err
 		}
 
-		filed[fp] = struct{}{}
+		identity, _, err := e.identity()
+		if err != nil {
+			return err
+		}
+		if identity != "" && identity[:16] != fp {
+			return fmt.Errorf(
+				"%w: issue #%d %q carries identity %s under fingerprint %s",
+				errCollidingEntryIdentity, e.Number, e.Title, identity, fp)
+		}
+		if previous, duplicate := filed[fp]; duplicate {
+			return fmt.Errorf("%w: issues #%d and #%d carry %s",
+				errAmbiguousEntry, previous.Number, e.Number, fp)
+		}
+
+		filed[fp] = filedEntry{backlogEntry: e, identity: identity}
 	}
 
 	kept := make([]issueAction, 0, len(p.Actions))
@@ -1059,12 +1192,49 @@ func dropRacedCreates(p *plan, store issueStore) error {
 			// The planned body is the only place a create's identity exists —
 			// it carries no issue number yet — and it is the same marker
 			// backlogEntry.fingerprint parses back off a filed issue.
-			fp, err := (backlogEntry{Body: a.Body}).fingerprint()
+			planned := backlogEntry{Title: a.Title, Body: a.Body}
+			fp, err := planned.fingerprint()
 			if err != nil {
 				return err
 			}
+			plannedIdentity, legacy, err := planned.identity()
+			if err != nil {
+				return err
+			}
+			if legacy {
+				return fmt.Errorf("%w: planned create %q has no identity marker", errMalformedIdentity, a.Title)
+			}
 
-			if _, raced := filed[fp]; raced {
+			if raced, exists := filed[fp]; exists {
+				// A legacy raced entry carries no complete identity to compare.
+				// Bind its one-time migration to the independently rendered title,
+				// exactly as planWrites does for the initial snapshot, then migrate
+				// that issue in place instead of waiting for a later invocation.
+				if raced.identity == "" && raced.Title != a.Title {
+					return fmt.Errorf(
+						"%w: legacy issue #%d identity %q; planned create %q carries %q; fingerprint %s",
+						errCollidingEntryIdentity, raced.Number, raced.Title,
+						a.Title, plannedIdentity, fp)
+				}
+				if raced.identity == "" {
+					p.RacedCreates++
+					if !inputsComplete {
+						p.WithheldUpdates++
+
+						continue
+					}
+					kept = append(kept, issueAction{
+						Kind: "update", Number: raced.Number, Title: a.Title, Body: a.Body,
+					})
+
+					continue
+				}
+				if raced.identity != "" && raced.identity != plannedIdentity {
+					return fmt.Errorf(
+						"%w: issue #%d %q carries %q; planned create %q carries %q; fingerprint %s",
+						errCollidingEntryIdentity, raced.Number, raced.Title, raced.identity,
+						a.Title, plannedIdentity, fp)
+				}
 				p.RacedCreates++
 
 				continue

@@ -110,10 +110,18 @@
 #      the fleet already on the current template, returning to RollingUpdate
 #      rolls nothing. A chart or other Helm-value change stages and soaks
 #      separately.
-#   5. That release restores the deploy: `ksail cluster update` runs again and
-#      the post-deploy guard restores the recorded autoscaler replica count.
+#   5. That release restores the deploy: `ksail cluster update` runs again. The
+#      autoscaler suspension is restored by the guard's --after-revision-ready
+#      phase — after Flux proves the released revision Ready and BEFORE cluster
+#      update — not by the post-deploy phase. That ordering is load-bearing:
+#      cluster update waits for the cluster-autoscaler Deployment, and KSail
+#      treats a zero-replica Deployment as never-ready, so a release that
+#      restored afterwards would hang on the suspension it owns (observed in
+#      prod 2026-08-09). The post-deploy phase remains the failure-path net.
 #      Verify the FIRST autoscaler-created node afterwards like a stepped one —
-#      it boots the new set directly.
+#      it boots the new set directly, and its machine template is refreshed by
+#      the same cluster update, so a node created in the short window before
+#      that step warrants the same check.
 #
 # MERGE-ORDER NOTE (load-bearing): parent `patches:` are applied AFTER all
 # component patches — a devices value carried by

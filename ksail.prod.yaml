@@ -10,7 +10,12 @@ spec:
     distributionConfig: talos
     connection:
       context: admin@prod
-      timeout: 30m
+      # Must stay strictly greater than the longest Flux Kustomization timeout
+      # in the chain (`apps`, 30m in k8s/clusters/base). `workload reconcile`
+      # waits on that chain, so an equal value makes the CLI give up at the
+      # exact moment `apps` times out — the 2m retryInterval that re-enters the
+      # health gate could then never be observed. Matches the 35m outer DR wait.
+      timeout: 35m
     distribution: Talos
     provider: Hetzner
     cni: Cilium
@@ -99,6 +104,14 @@ spec:
         # ships ksail#5277 (post-v7.58.3); the CI/CD KSAIL_VERSION pin
         # (renovate-managed) must reach it first.
         capacityBuffers: true
+        # ⚠️ REMOVING A POOL DOES NOT DELETE ITS RUNNING SERVERS. The autoscaler
+        # only considers nodes inside a configured node group, so a node whose
+        # pool is deleted here becomes invisible to scale-down and survives
+        # indefinitely — still consuming maxNodesTotal and still billed. Dropping
+        # the cx33 pool in #2420 stranded two live cx33 nodes for 47 days exactly
+        # this way (#3178). When removing a pool, drain and delete its nodes in
+        # the same change: docs/dr/runbook.md → "Stranded autoscaler nodes on a
+        # LIVE cluster".
         pools:
           - name: autoscale-cx43
             serverType: cx43
@@ -144,7 +157,7 @@ spec:
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
-      version: v1.13.7
+      version: v1.13.8
       # Hetzner Talos ISO (x86_64). The v1.11.2 ISO (122630) was deprecated
       # and removed from Hetzner on 2026-03-18. Use v1.12.4 (125127).
       iso: 125127

@@ -327,6 +327,20 @@ data:
           {
             "designatorType": "Attributes",
             "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cdi-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^kubevirt-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
               "kind": "^RoleBinding$",
               "name": "^ascoachingogvaner$"
             }
@@ -371,6 +385,20 @@ data:
             "attributes": {
               "kind": "^RoleBinding$",
               "name": "^wedding-app$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^cdi-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^kubevirt-operator-rolebinding$"
             }
           }
         ],
@@ -655,25 +683,43 @@ data:
           {
             "designatorType": "Attributes",
             "attributes": {
+              "namespace": "^([^cfklov].*|c|c[^dh].*|cd|cd[^i].*|cdi.+|ch|ch[^a].*|cha|cha[^o].*|chao|chao[^s].*|chaos|chaos[^\\-].*|chaos-|chaos-[^m].*|chaos-m|chaos-m[^e].*|chaos-me|chaos-me[^s].*|chaos-mes|chaos-mes[^h].*|chaos-mesh.+|f|f[^l].*|fl|fl[^u].*|flu|flu[^x].*|flux|flux[^\\-].*|flux-|flux-[^s].*|flux-s|flux-s[^y].*|flux-sy|flux-sy[^s].*|flux-sys|flux-sys[^t].*|flux-syst|flux-syst[^e].*|flux-syste|flux-syste[^m].*|flux-system.+|k|k[^u].*|ku|ku[^b].*|kub|kub[^e].*|kube|kube[^\\-sv].*|kube-|kube-[^nps].*|kube-n|kube-n[^o].*|kube-no|kube-no[^d].*|kube-nod|kube-nod[^e].*|kube-node|kube-node[^\\-].*|kube-node-|kube-node-[^l].*|kube-node-l|kube-node-l[^e].*|kube-node-le|kube-node-le[^a].*|kube-node-lea|kube-node-lea[^s].*|kube-node-leas|kube-node-leas[^e].*|kube-node-lease.+|kube-p|kube-p[^u].*|kube-pu|kube-pu[^b].*|kube-pub|kube-pub[^l].*|kube-publ|kube-publ[^i].*|kube-publi|kube-publi[^c].*|kube-public.+|kube-s|kube-s[^y].*|kube-sy|kube-sy[^s].*|kube-sys|kube-sys[^t].*|kube-syst|kube-syst[^e].*|kube-syste|kube-syste[^m].*|kube-system.+|kubes|kubes[^c].*|kubesc|kubesc[^a].*|kubesca|kubesca[^p].*|kubescap|kubescap[^e].*|kubescape.+|kubev|kubev[^i].*|kubevi|kubevi[^r].*|kubevir|kubevir[^t].*|kubevirt.+|l|l[^o].*|lo|lo[^cn].*|loc|loc[^a].*|loca|loca[^l].*|local|local[^\\-].*|local-|local-[^p].*|local-p|local-p[^a].*|local-pa|local-pa[^t].*|local-pat|local-pat[^h].*|local-path|local-path[^\\-].*|local-path-|local-path-[^s].*|local-path-s|local-path-s[^t].*|local-path-st|local-path-st[^o].*|local-path-sto|local-path-sto[^r].*|local-path-stor|local-path-stor[^a].*|local-path-stora|local-path-stora[^g].*|local-path-storag|local-path-storag[^e].*|local-path-storage.+|lon|lon[^g].*|long|long[^h].*|longh|longh[^o].*|longho|longho[^r].*|longhor|longhor[^n].*|longhorn|longhorn[^\\-].*|longhorn-|longhorn-[^s].*|longhorn-s|longhorn-s[^y].*|longhorn-sy|longhorn-sy[^s].*|longhorn-sys|longhorn-sys[^t].*|longhorn-syst|longhorn-syst[^e].*|longhorn-syste|longhorn-syste[^m].*|longhorn-system.+|o|o[^b].*|ob|ob[^s].*|obs|obs[^e].*|obse|obse[^r].*|obser|obser[^v].*|observ|observ[^a].*|observa|observa[^b].*|observab|observab[^i].*|observabi|observabi[^l].*|observabil|observabil[^i].*|observabili|observabili[^t].*|observabilit|observabilit[^y].*|observability.+|v|v[^e].*|ve|ve[^l].*|vel|vel[^e].*|vele|vele[^r].*|veler|veler[^o].*|velero.+)$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0016$"
+          },
+          {
+            "controlID": "^C-0055$"
+          }
+        ],
+        "reason": "Kyverno mutate policy \"add-security-context\" injects allowPrivilegeEscalation: false, drop ALL capabilities and seccompProfile at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. The exception is scoped to the namespaces that mutation runs in, so it cannot suppress a control where nothing injects it. readOnlyRootFilesystem (C-0017) is handled separately — set in-spec per workload."
+      },
+      {
+        "name": "pod-security-mutations-unscoped",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
               "kind": ".*"
             }
           }
         ],
         "posturePolicies": [
           {
-            "controlID": "^C-0211$"
-          },
-          {
-            "controlID": "^C-0016$"
-          },
-          {
-            "controlID": "^C-0055$"
-          },
-          {
             "controlID": "^C-0013$"
+          },
+          {
+            "controlID": "^C-0211$"
           }
         ],
-        "reason": "Kyverno mutate policy \"add-security-context\" injects these controls (seccompProfile, allowPrivilegeEscalation: false, drop ALL capabilities, runAsNonRoot) at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. readOnlyRootFilesystem (C-0017) is handled separately — set in-spec per workload."
+        "reason": "Kyverno mutate policy \"add-security-context\" injects runAsNonRoot, runAsUser, runAsGroup and fsGroupChangePolicy at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. These two controls remain cluster-wide because narrowing them is blocked on evidence rather than on expressiveness: C-0013 has a measured six-workload gap in flux-system (#3223) and C-0211's residual population is every scanned workload the mutation does not reach, sized at 33 (#3217)."
       },
       {
         "name": "readonly-rootfs-pending",
@@ -1201,6 +1247,35 @@ data:
           }
         ],
         "reason": "Infrastructure controllers and platform middleware need Kubernetes API access via SA tokens. This includes GitOps controllers, policy engines, certificate managers, autoscalers, monitoring, cluster dashboards (headlamp), service discovery (homepage), device management (fleetdm), identity providers (dex), auth proxies (oauth2-proxy), and config watchers (reloader). The platform uses RBAC to restrict what each SA can do."
+      },
+      {
+        "name": "umami-provisioning-service-account-token",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^CronJob$",
+              "name": "^umami-provision-tenants$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Job$",
+              "name": "^umami-provision-tenants-bootstrap$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0034$"
+          }
+        ],
+        "reason": "The Umami scheduled and bootstrap provisioners need their service-account token to coordinate through the single umami-provision-tenants Lease. Their namespaced Role permits only get and update on that named Lease."
       },
       {
         "name": "upstream-chart-defaults",

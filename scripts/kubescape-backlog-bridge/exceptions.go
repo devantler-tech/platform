@@ -146,6 +146,22 @@ func (e exception) covers(controlID string, c component) bool {
 	return false
 }
 
+// matchingExceptionNames reports every declared policy that accepts this
+// finding. The names make the match explainable for oracle mode.
+func matchingExceptionNames(exceptions []exception, controlID string, c component) []string {
+	var names []string
+
+	for _, e := range exceptions {
+		if e.covers(controlID, c) {
+			names = append(names, e.name)
+		}
+	}
+
+	sort.Strings(names)
+
+	return names
+}
+
 // excepted reports whether any declared exception accepts this finding.
 func excepted(exceptions []exception, controlID string, c component) bool {
 	for _, e := range exceptions {
@@ -635,6 +651,10 @@ func analyse(r *syntax.Regexp) (matchable, consumes bool) {
 
 func compilePolicy(p rawPolicy, path string) (exception, error) {
 	e := exception{name: p.Name}
+	if strings.TrimSpace(p.Name) == "" {
+		return exception{}, fmt.Errorf("%w: %s: a policy has no name; an exception match without "+
+			"an audit identity cannot be explained or safely ablated", errBadExceptions, path)
+	}
 
 	// The action is what makes a policy an exception at all. The generator emits
 	// exactly ["alertOnly"] for every policy it writes, so anything else did not

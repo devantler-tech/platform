@@ -242,17 +242,24 @@ func fakeTalosctl(args []string) int {
 			}
 			return 0
 		}
-		if markerExists("talos-auth-" + node) {
+		nodeName := fakeNodeName(node)
+		reusableProofUID := os.Getenv("FLUX_GHCR_REUSABLE_PROOF_UID")
+		switch {
+		case reusableProofUID != "":
+			if nodeName == "" || reusableProofUID != nodeName+"-uid" {
+				return commandFailure(93, "reusable proof UID does not bind the target Node")
+			}
+		case markerExists("talos-auth-" + node):
 			if !markerExists("talos-reboot-" + node) {
 				return commandFailure(93, "revision preceded reboot")
 			}
-		} else if os.Getenv("FAKE_TALOS_NODES_CURRENT") != "true" {
+		case os.Getenv("FAKE_TALOS_NODES_CURRENT") != "true":
 			return commandFailure(93, "image-only proof lacks current credential")
 		}
-		if !markerExists("talos-remove-"+node) || !markerExists("talos-pull-"+node) {
+		if reusableProofUID == "" &&
+			(!markerExists("talos-remove-"+node) || !markerExists("talos-pull-"+node)) {
 			return commandFailure(93, "revision preceded registry pull proof")
 		}
-		nodeName := fakeNodeName(node)
 		if nodeName == "" || !markerExists("cordoned-"+nodeName) ||
 			markerContent("cordon-owner-"+nodeName) == "" {
 			return commandFailure(93, "Talos revision mutation lacked an owned Kubernetes cordon")
@@ -524,6 +531,34 @@ func setMarkerContent(name, content string) {
 
 func removeMarker(name string) {
 	_ = os.Remove(filepath.Join(os.Getenv("FAKE_SYNC_STATE_DIR"), name))
+}
+
+// The liveness oracle for fence recovery. It exists so a test can drive every
+// answer the real API can give — including the ones that must NOT release the
+// Lease: a non-terminal run, a request that fails, and a response carrying no
+// status at all.
+//
+// It records the request path so a test can prove the ATTEMPT was pinned. An
+// unpinned query reports the newest attempt, which would let a finished attempt
+// 2 vouch for an attempt 1 that is still running.
+func fakeGh(args []string) int {
+	if len(args) < 2 || args[0] != "api" {
+		return commandFailure(64, "unexpected gh invocation: %v", args)
+	}
+	if log := os.Getenv("GH_CALLED"); log != "" {
+		mustWriteCommandFile(log, strings.Join(args, " "))
+	}
+	if os.Getenv("FAKE_GH_REQUEST_FAILS") == "true" {
+		return commandFailure(1, "gh: HTTP 502")
+	}
+	// Absent means the run is terminal — the ordinary case — so a test only sets
+	// this when it wants a different answer.
+	status, present := os.LookupEnv("FAKE_GH_RUN_STATUS")
+	if !present {
+		status = "completed"
+	}
+	fmt.Println(status)
+	return 0
 }
 
 func defaultString(value, fallback string) string {

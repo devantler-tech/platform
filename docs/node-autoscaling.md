@@ -14,7 +14,7 @@ KSail natively installs and manages the Cluster Autoscaler when
 ```
 KSail (static baseline)
 ├── 3 control planes (cx33, 4 vCPU / 8 GB, never autoscaled)
-└── 3 static workers (cx33, 4 vCPU / 8 GB, guaranteed minimum, Longhorn storage nodes)
+└── 3 static workers (cx43, 8 vCPU / 16 GB, guaranteed minimum, Longhorn storage nodes)
 
 Cluster Autoscaler (dynamic workers, managed by KSail)
 ├── Pool: autoscale-cx43 → 0-4 × CX43 (8 vCPU, 16 GB)

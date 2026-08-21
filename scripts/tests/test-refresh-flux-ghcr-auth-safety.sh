@@ -222,6 +222,94 @@ else
   fail "an unfenced node is not reported as holding a fence"
 fi
 
+# Reclaiming a leaked drain fence (#3070). The JSON below is the shape observed
+# in prod on 2026-08-10: an owner annotation, no recovery journal, node left
+# cordoned by the killed transaction.
+# The owner tokens are synthetic stand-ins: the fence logic compares them for
+# equality only and never parses them, and the assertions below key on node name
+# and on the phase/recovery annotations rather than on the owner value.
+orphan_nodes="${work_dir}/orphan-nodes.json"
+orphan_targets="${work_dir}/orphan-targets.tsv"
+
+if declare -F select_orphaned_node_fences >/dev/null; then
+  jq -n '
+    {items: [
+      {metadata: {name: "prod-control-plane-2", uid: "uid-leaked",
+        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "fake-lease-holder-2430-6444",
+                      "platform.devantler.tech/ghcr-auth-drain-phase": "claimed"}},
+       spec: {unschedulable: true}},
+      {metadata: {name: "prod-worker-3", uid: "uid-mutating",
+        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "fake-lease-holder-7-7",
+                      "platform.devantler.tech/ghcr-auth-drain-phase": "mutating"}},
+       spec: {unschedulable: true}},
+      {metadata: {name: "prod-worker-4", uid: "uid-phaseless",
+        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "fake-lease-holder-8-8"}},
+       spec: {unschedulable: true}},
+      {metadata: {name: "prod-worker-1", uid: "uid-journalled",
+        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "fake-lease-holder-9-9",
+                      "platform.devantler.tech/ghcr-auth-drain-recovery": "{\"phase\":\"active\"}",
+                      "platform.devantler.tech/ghcr-auth-drain-phase": "claimed"}},
+       spec: {unschedulable: true}},
+      {metadata: {name: "prod-worker-2", uid: "uid-clean", annotations: {}}, spec: {}}
+    ]}
+  ' >"${orphan_nodes}"
+
+  if select_orphaned_node_fences "${orphan_nodes}" "${orphan_targets}" &&
+    [[ "$(cut -f1 "${orphan_targets}")" == "prod-control-plane-2" ]] &&
+    [[ "$(wc -l <"${orphan_targets}" | tr -d ' ')" == "1" ]]; then
+    pass "a leaked fence with no recovery journal is reclaimable"
+  else
+    fail "a leaked fence with no recovery journal is reclaimable"
+  fi
+
+  # Negative control: the journalled node must NOT be reclaimed, because its
+  # phase decides what is safe and bootstrap recovery owns that state.
+  if ! cut -f1 "${orphan_targets}" | grep -qxF "prod-worker-1"; then
+    pass "a fence carrying a recovery journal is never reclaimed"
+  else
+    fail "a fence carrying a recovery journal is never reclaimed"
+  fi
+
+  # Negative control: a fence that reached Talos mutation is NEVER reclaimed.
+  # The Lease proves no owner is alive; it never proves the node reached a known
+  # state, and that distinction is the whole reason the phase marker exists.
+  if ! cut -f1 "${orphan_targets}" | grep -qxF "prod-worker-3"; then
+    pass "a fence that reached Talos mutation is never reclaimed"
+  else
+    fail "a fence that reached Talos mutation is never reclaimed"
+  fi
+
+  # Negative control: a PRE-#3070 fence carries no phase at all. Absence is
+  # unknown depth, so it must fail closed exactly like "mutating".
+  if ! cut -f1 "${orphan_targets}" | grep -qxF "prod-worker-4"; then
+    pass "a fence with no phase marker is never reclaimed"
+  else
+    fail "a fence with no phase marker is never reclaimed"
+  fi
+
+  # Negative control: an unfenced node is never touched.
+  if ! cut -f1 "${orphan_targets}" | grep -qxF "prod-worker-2"; then
+    pass "an unfenced node is never reclaimed"
+  else
+    fail "an unfenced node is never reclaimed"
+  fi
+
+  # The cordon state travels with the selection so the caller can report it
+  # rather than silently uncordoning a node whose pre-claim state is unknown.
+  if [[ "$(cut -f4 "${orphan_targets}")" == "true" ]]; then
+    pass "a reclaimed fence reports the cordon it leaves behind"
+  else
+    fail "a reclaimed fence reports the cordon it leaves behind"
+  fi
+else
+  fail "a leaked fence with no recovery journal is reclaimable"
+  fail "a fence carrying a recovery journal is never reclaimed"
+  fail "a fence that reached Talos mutation is never reclaimed"
+  fail "a fence with no phase marker is never reclaimed"
+  fail "an unfenced node is never reclaimed"
+  fail "a reclaimed fence reports the cordon it leaves behind"
+fi
+
 operation_log="${work_dir}/operations.log"
 patch_variables_base() {
   printf '%s\n' variables-patch >>"${operation_log}"
@@ -243,6 +331,9 @@ sync_talos_registry_auth() {
 }
 patch_root_secret() {
   printf '%s\n' root-patch >>"${operation_log}"
+}
+record_runtime_proof() {
+  printf 'record:%s:%s\n' "$1" "$2" >>"${operation_log}"
 }
 
 if declare -F stage_fanout_before_talos >/dev/null; then
@@ -272,14 +363,34 @@ if declare -F stage_fanout_before_talos >/dev/null; then
     force:externalsecret/kyverno/ghcr-auth \
     verify:kyverno/ghcr-auth \
     "talos:${DESIRED_REVISION}:${DESIRED_IMAGE}" \
+    "record:${DESIRED_REVISION}:${DESIRED_IMAGE}" \
     root-patch)"
   if [[ "$(<"${operation_log}")" == "${expected_operations}" ]]; then
     pass "verified tenant fanout brackets the Talos rollout"
   else
     fail "verified tenant fanout brackets the Talos rollout"
   fi
+
+  record_runtime_proof() {
+    printf 'record-failed:%s:%s\n' "$1" "$2" >>"${operation_log}"
+    return 1
+  }
+  : >"${operation_log}"
+  talos_sync_call_count=0
+  if stage_fanout_before_talos \
+    "${DESIRED_REVISION}" \
+    "${DESIRED_IMAGE}" \
+    "${work_dir}/talos-stage-result.txt" \
+    wedding-app ascoachingogvaner kyverno; then
+    fail "a failed runtime-proof record blocks the root cutover"
+  elif grep -Fxq -- root-patch "${operation_log}"; then
+    fail "a failed runtime-proof record blocks the root cutover"
+  else
+    pass "a failed runtime-proof record blocks the root cutover"
+  fi
 else
   fail "verified tenant fanout brackets the Talos rollout"
+  fail "a failed runtime-proof record blocks the root cutover"
 fi
 
 control_plane_inventory="${work_dir}/control-planes.json"
@@ -321,7 +432,7 @@ jq -n '
 ' >"${control_plane_inventory}"
 
 kubectl() {
-  cp "${control_plane_inventory}" /dev/stdout
+  command cat "${control_plane_inventory}"
 }
 
 talosctl() {
@@ -460,6 +571,33 @@ else
   fail "an etcd peer alarm blocks a control-plane reboot"
   fail "a learner etcd peer blocks a control-plane reboot"
   fail "an etcd status error blocks a control-plane reboot"
+fi
+
+# The cluster autoscaler's advisory removal-candidate taint must not read as a
+# scheduling-safety change, in EITHER observation. A recovery journal written before
+# that exclusion existed still carries the taint in its captured initialTaints, so the
+# comparison normalizes both sides; otherwise the fix would hold on a fresh deploy and
+# still refuse on the recovery path a killed deploy leaves behind.
+autoscaler_node="${work_dir}/autoscaler-candidate-node.json"
+jq -n '{
+  metadata: {uid: "node-uid-1", annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "owner-token"}},
+  spec: {unschedulable: true, taints: [{key: "node.kubernetes.io/unschedulable", effect: "NoSchedule"}]}
+}' >"${autoscaler_node}"
+
+if node_scheduling_state_is_safe_to_reboot \
+  "${autoscaler_node}" 1 owner-token node-uid-1 \
+  '[{"key":"DeletionCandidateOfClusterAutoscaler","value":"1786925486","effect":"PreferNoSchedule"}]'; then
+  pass "a released autoscaler removal-candidate taint still permits a reboot"
+else
+  fail "a released autoscaler removal-candidate taint still permits a reboot"
+fi
+
+if node_scheduling_state_is_safe_to_reboot \
+  "${autoscaler_node}" 1 owner-token node-uid-1 \
+  '[{"key":"ToBeDeletedByClusterAutoscaler","effect":"NoSchedule"}]'; then
+  fail "a released autoscaler deletion taint blocks a reboot"
+else
+  pass "a released autoscaler deletion taint blocks a reboot"
 fi
 
 if ((failures > 0)); then

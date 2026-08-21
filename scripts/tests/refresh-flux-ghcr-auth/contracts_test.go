@@ -255,15 +255,41 @@ func TestDeployActionConsumerStagingPrecedesPublishAndIsReassertedAfterUpdate(t 
 	requireBefore(t, postPushRefresh, reconcile, "post-publish refresh before reconcile")
 	requireBefore(t, reconcile, clusterUpdate, "reconcile before cluster update")
 	requireBefore(t, clusterUpdate, finalRefresh, "cluster update before final refresh")
-	requireContains(t, action[firstRefresh:push], "run: ./scripts/refresh-flux-ghcr-auth.sh\n")
+	requireContains(t, action[firstRefresh:push], "--record-runtime-proof")
+	requireContains(t, action[firstRefresh:push], "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json")
 	requireNotContains(t, action[firstRefresh:push], "--check-only")
 	requireContains(t, action[postPushRefresh:reconcile], "run: ./scripts/refresh-flux-ghcr-auth.sh --check-only")
 	finalRefreshStep := action[finalRefresh:]
 	requireContains(t, finalRefreshStep, "!cancelled() &&")
 	requireContains(t, finalRefreshStep, "steps.verify_flux_ghcr_auth_after_push.outcome == 'success'")
 	requireContains(t, finalRefreshStep, "steps.reconcile.outcome == 'success'")
-	if count := strings.Count(action, "scripts/refresh-flux-ghcr-auth.sh"); count != 3 {
-		t.Errorf("refresh helper references = %d, want 3", count)
+	requireContains(t, finalRefreshStep, "--reuse-runtime-proof")
+	requireContains(t, finalRefreshStep, "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json")
+	// The fourth reference is the orphaned-fence pre-flight. It is asserted
+	// explicitly rather than absorbed into the count, so a future invocation still
+	// has to be accounted for here deliberately — which is what this exhaustive
+	// count exists to force.
+	// Anchored on the step, not its `run:` line: the gating `if:` precedes the
+	// command, so a slice starting at `run:` would miss the very condition that
+	// keeps this default-off.
+	recoverStep := requireIndex(t, action, "- name: 🧯 Recover an orphaned GHCR deploy fence")
+	requireBefore(t, recoverStep, firstRefresh, "fence recovery before staging")
+	requireContains(t, action[recoverStep:firstRefresh], "inputs.recover-orphaned-fence == 'true'")
+	requireContains(t, action[recoverStep:firstRefresh], "run: ./scripts/refresh-flux-ghcr-auth.sh --recover-fences")
+	// The gate above keeps this off only while the input's own default does, and
+	// the two fail INDEPENDENTLY: a default flipped to "true" leaves the assertion
+	// above passing unchanged while arming automatic Lease mutation against prod on
+	// every deploy and every heal. Read structurally rather than as a substring, so
+	// a `default: "false"` belonging to some other input cannot satisfy it.
+	recoverDefault, err := yamlScalarAtPath(action, "inputs", "recover-orphaned-fence", "default")
+	if err != nil {
+		t.Fatalf("read the fence recovery input default: %v", err)
+	}
+	if recoverDefault != "false" {
+		t.Errorf("recover-orphaned-fence default = %q, want %q", recoverDefault, "false")
+	}
+	if count := strings.Count(action, "scripts/refresh-flux-ghcr-auth.sh"); count != 4 {
+		t.Errorf("refresh helper references = %d, want 4", count)
 	}
 }
 
@@ -320,6 +346,15 @@ func TestDeployStepsThatTakeTheSyncLeaseNeverRunAfterCancellation(t *testing.T) 
 		}
 		if strings.Contains(step, "--check-only") {
 			// Read-only: exits before acquire_sync_lease, so it holds nothing.
+			continue
+		}
+		if strings.Contains(step, "--recover-fences") {
+			// Alternative mode: dispatches in the same early block as --fences and
+			// exits there, before acquire_sync_lease is even defined, so it holds
+			// nothing either. It RELEASES a Lease under CAS, which is the opposite
+			// of the hazard this test guards — a step that acquires and is then
+			// killed before cleanup. Its own refusals are covered by the
+			// fence-autorecovery tests.
 			continue
 		}
 		inspected++

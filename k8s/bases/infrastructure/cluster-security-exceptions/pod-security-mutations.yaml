@@ -1,73 +1,78 @@
 ---
 # Exempt the pod-level security-context controls that Kyverno's
-# "add-security-context" ClusterPolicy injects at pod admission (seccompProfile,
-# allowPrivilegeEscalation: false, drop ALL capabilities, runAsNonRoot). Kubescape
-# scans the stored Deployment/StatefulSet spec — where these Kyverno-injected
-# fields are absent — so they are exempted cluster-wide.
+# "add-security-context" ClusterPolicy injects at pod admission
+# (allowPrivilegeEscalation: false, drop ALL capabilities, seccompProfile).
+# Kubescape scans the stored Deployment/StatefulSet spec — where these
+# Kyverno-injected fields are absent — so they are exempted wherever that
+# mutation actually runs, and only there.
 #
-# NOTE: readOnlyRootFilesystem (C-0017) is deliberately NOT exempted here anymore.
-# It is now set GENUINELY in each workload's own spec wherever the app tolerates a
-# read-only root (see the app HelmReleases + the Crossplane DeploymentRuntimeConfigs),
-# so the control truly passes rather than being suppressed. The privileged infra
-# namespaces keep their C-0017 exemption in infrastructure-privileged.yaml, and the
-# small remainder that cannot yet run read-only is scoped in readonly-rootfs-pending.yaml.
+# SCOPE. add-pod-security-context and add-container-security-context exclude the
+# twelve namespaces listed below, so this exception excludes them too, expressed
+# as `NotIn` and rendered by namespaceNotInPattern. cert-manager, keda and
+# opencost are deliberately NOT in that set: add-imageuid-pod-security-context
+# matches those three by name and supplies the pod-level fields, so the mutation —
+# and therefore this exception — still applies there. Read the mutation's match
+# blocks, not only its exclusions.
+#
+# Narrowing these two controls surfaces nothing, measured 2026-08-18 rather than
+# reasoned. The twelve excluded namespaces split three ways:
+#   - Six carry scanned workloads. longhorn-system, observability, velero, kubevirt
+#     and cdi are separately excepted for C-0016 and C-0055 in
+#     infrastructure-privileged.yaml. flux-system is the only one no other exception
+#     covers, and all six Flux controllers there read C-0016 `passed` and C-0055
+#     `passed` on the pre-exception scan surface, so both controls hold without this
+#     exception. (kubevirt and cdi have no live namespace in prod — their scan
+#     objects are residual — but they are excepted either way.)
+#   - Four are not scanned at all: kube-system, kube-public, kube-node-lease and
+#     kubescape are excluded by the kubescape-operator's own `excludeNamespaces`
+#     config. Being unscanned is not the same as passing — it means narrowing
+#     cannot change their result.
+#   - Two have no namespace in prod: local-path-storage and chaos-mesh, the storage
+#     and chaos stacks being opt-in.
+# The local overlay opts in to a different set, so re-measure rather than assuming
+# these counts still hold.
+# C-0013 and C-0211 are NOT narrowed with them: both have a measured or unsized
+# gap behind them and stay cluster-wide in pod-security-mutations-unscoped.yaml.
+#
+# readOnlyRootFilesystem (C-0017) is not exempted here. It is set genuinely in each
+# workload's own spec wherever the app tolerates a read-only root (see the app
+# HelmReleases and the Crossplane DeploymentRuntimeConfigs), so the control truly
+# passes rather than being suppressed. The privileged infra namespaces keep their
+# C-0017 exemption in infrastructure-privileged.yaml, and the small remainder that
+# cannot yet run read-only is scoped in readonly-rootfs-pending.yaml.
 apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
   name: pod-security-mutations
-  annotations:
-    # Cluster-wide, and KNOWN to be wider than its own rationale (#2824). The
-    # compensating mutation named below excludes twelve namespaces —
-    # kube-system, kube-public, kube-node-lease, flux-system, longhorn-system,
-    # local-path-storage, kubescape, kubevirt, cdi, observability, velero,
-    # chaos-mesh — so in exactly those namespaces this exception suppresses
-    # C-0013/C-0016/C-0055/C-0211 with nothing injecting them. Six of the twelve
-    # are separately and deliberately excepted for C-0013/C-0016/C-0055 in
-    # infrastructure-privileged.yaml; C-0211 and the other six are not covered
-    # anywhere. Narrowing it needs a scope the CSE designators cannot yet spell
-    # (an In-list would fail every newly-onboarded namespace), which is why this
-    # is declared rather than fixed here.
-    #
-    # cert-manager, keda and opencost are NOT part of that set even though
-    # add-pod-security-context excludes them: add-imageuid-pod-security-context
-    # matches those three namespaces by name and supplies the pod-level fields.
-    # Read the mutation's match blocks, not only its exclusions.
-    #
-    # Measured surface for C-0013/C-0016/C-0055 (prod, 2026-08-10), which is
-    # what makes the declaration reviewable rather than open ended: half of the
-    # twelve namespaces run no workloads at all. kube-public and kube-node-lease
-    # exist but are empty; local-path-storage, kubevirt, cdi and chaos-mesh have
-    # no namespace in prod, the VM stack and chaos tooling being opt-in. Six run
-    # workloads, and four of those — kube-system, longhorn-system, observability
-    # and velero — are the excepted set above, leaving flux-system and kubescape
-    # as the genuinely uncovered pair. In those two, the container-level fields
-    # these controls check are set in-spec everywhere except the kubescape,
-    # kubevuln and operator Deployments, which lack capabilities.drop: [ALL] and
-    # a container-level seccompProfile. Hardening those three is tracked in
-    # #3064; the four excepted namespaces were not measured, being out of scope.
-    # These counts are a prod-only snapshot: the local overlay opts in to a
-    # different set, so re-measure rather than assuming they still hold.
-    #
-    # C-0211 is deliberately NOT sized here. It has no other exception, its
-    # field set differs from the three above (fsGroupChangePolicy, runAsUser
-    # and runAsGroup are supplied by the mutation), and the name-scoped
-    # kubescape-privileged.yaml does not cover it — so node-agent and storage
-    # remain inside its residual population rather than excepted out of it.
-    # Sizing it needs its own per-workload pass; #3064 carries that.
-    platform.devantler.tech/cluster-wide: declared
 spec:
+  match:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            - kube-system
+            - kube-public
+            - kube-node-lease
+            - flux-system
+            - longhorn-system
+            - local-path-storage
+            - kubescape
+            - kubevirt
+            - cdi
+            - observability
+            - velero
+            - chaos-mesh
   reason: >-
-    Kyverno mutate policy "add-security-context" injects these controls
-    (seccompProfile, allowPrivilegeEscalation: false, drop ALL capabilities,
-    runAsNonRoot) at pod admission. The Deployment spec does not contain them
-    and Kubescape scans the stored spec, not the live pod. readOnlyRootFilesystem
-    (C-0017) is handled separately — set in-spec per workload.
+    Kyverno mutate policy "add-security-context" injects allowPrivilegeEscalation:
+    false, drop ALL capabilities and seccompProfile at pod admission. The
+    Deployment spec does not contain them and Kubescape scans the stored spec, not
+    the live pod. The exception is scoped to the namespaces that mutation runs in,
+    so it cannot suppress a control where nothing injects it.
+    readOnlyRootFilesystem (C-0017) is handled separately — set in-spec per
+    workload.
   posture:
-    - controlID: C-0211
-      action: ignore
     - controlID: C-0016
       action: ignore
     - controlID: C-0055
-      action: ignore
-    - controlID: C-0013
       action: ignore

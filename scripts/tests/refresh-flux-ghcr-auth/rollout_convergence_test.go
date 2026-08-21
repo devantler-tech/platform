@@ -56,6 +56,112 @@ func TestCurrentTalosNodesSkipTalosAPI(t *testing.T) {
 	}
 }
 
+func TestClusterUpdateCannotEraseVerifiedRuntimeProof(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	runtimeProof := filepath.Join(f.workspace, "ghcr-runtime-proof.json")
+	first := f.runHelper(validConfig(), []string{
+		"--record-runtime-proof", runtimeProof,
+	}, nil)
+	requireSuccessResult(t, first)
+	if !pathExists(runtimeProof) {
+		t.Fatal("stage did not record its exact-node runtime proof")
+	}
+
+	// `ksail cluster update` re-renders Talos machine.nodeAnnotations from the
+	// committed patches. That removes bridge-owned proof stored in machine
+	// config, even though neither the credential nor the running Node changed.
+	// Model only that destructive re-render between the production Stage and
+	// Reassert invocations.
+	for _, address := range []string{"10.0.0.1", "10.0.0.2"} {
+		if err := os.Remove(filepath.Join(f.syncStateDir, "talos-revision-"+address)); err != nil {
+			t.Fatalf("simulate cluster update dropping proof on %s: %v", address, err)
+		}
+	}
+
+	reassert := f.runHelperPreservingClusterState(validConfig(), []string{
+		"--reuse-runtime-proof", runtimeProof,
+	}, nil)
+	requireSuccessResult(t, reassert)
+	operations := readLines(f.operationLog)
+	for _, unexpected := range []string{
+		"node-drain:prod-worker-1",
+		"node-drain:prod-control-plane-1",
+		"talos-reboot:10.0.0.2",
+		"talos-reboot:10.0.0.1",
+		"talos-remove:10.0.0.2:" + ksailTargetImage,
+		"talos-remove:10.0.0.1:" + ksailTargetImage,
+		"talos-pull:10.0.0.2:" + ksailTargetImage,
+		"talos-pull:10.0.0.1:" + ksailTargetImage,
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+	restored := readLines(f.talosLog)
+	requireLinesEqual(t, restored, []string{
+		"talos-revision:10.0.0.2",
+		"talos-revision:10.0.0.1",
+	})
+}
+
+func TestRuntimeProofCannotBeReusedForReplacementNode(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	runtimeProof := filepath.Join(f.workspace, "ghcr-runtime-proof.json")
+	first := f.runHelper(validConfig(), []string{
+		"--record-runtime-proof", runtimeProof,
+	}, nil)
+	requireSuccessResult(t, first)
+
+	for _, address := range []string{"10.0.0.1", "10.0.0.2"} {
+		if err := os.Remove(filepath.Join(f.syncStateDir, "talos-revision-"+address)); err != nil {
+			t.Fatalf("simulate cluster update dropping proof on %s: %v", address, err)
+		}
+	}
+	reassert := f.runHelperPreservingClusterState(validConfig(), []string{
+		"--reuse-runtime-proof", runtimeProof,
+	}, map[string]string{"FAKE_WORKER_UID": "replacement-worker-uid"})
+	requireSuccessResult(t, reassert)
+
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-drain:prod-worker-1")
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	// A replacement worker must not invalidate the control plane's matching proof.
+	requireNoLine(t, operations, "node-drain:prod-control-plane-1")
+	requireNoLine(t, operations, "talos-reboot:10.0.0.1")
+	requireNoLine(t, operations, "talos-pull:10.0.0.1:"+ksailTargetImage)
+}
+
+func TestStaleRuntimeProofFallsBackToFullVerification(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	runtimeProof := filepath.Join(f.workspace, "ghcr-runtime-proof.json")
+	first := f.runHelper(validConfig(), []string{
+		"--record-runtime-proof", runtimeProof,
+	}, nil)
+	requireSuccessResult(t, first)
+
+	for _, address := range []string{"10.0.0.1", "10.0.0.2"} {
+		if err := os.Remove(filepath.Join(f.syncStateDir, "talos-revision-"+address)); err != nil {
+			t.Fatalf("simulate cluster update dropping proof on %s: %v", address, err)
+		}
+	}
+	proof := map[string]any{}
+	if err := json.Unmarshal([]byte(mustRead(runtimeProof)), &proof); err != nil {
+		t.Fatalf("read runtime proof: %v", err)
+	}
+	proof["credentialRevision"] = strings.Repeat("0", 64)
+	mustWriteJSON(t, runtimeProof, proof)
+
+	reassert := f.runHelperPreservingClusterState(validConfig(), []string{
+		"--reuse-runtime-proof", runtimeProof,
+	}, nil)
+	requireSuccessResult(t, reassert)
+	requireContains(t, reassert.stdout+reassert.stderr, "using full per-node verification")
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-drain:prod-worker-1")
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+}
+
 func TestMatchingRevisionRevalidatesChangedDeclaredImage(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -737,6 +843,73 @@ func TestFluxChildReconciliationBlocksBeforePolicyHandoffAcquisition(t *testing.
 	requireNoLine(t, operations, "flux-policy-pause:infrastructure")
 	requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
 	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
+}
+
+func TestHandoffQuiesceTimeoutNamesTheBlockingCondition(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_RECONCILING":         "true",
+		"FAKE_FLUX_POLICY_RECONCILING_REASON":  "ProgressingWithRetry",
+		"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": "Running health checks for revision latest@sha256:fixture",
+		"FAKE_FLUX_POLICY_CHILD_UNHEALTHY":     "timeout waiting for: [Cluster/observability/coroot-db status: 'InProgress']",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output, "did not quiesce before the image-verification policy handoff")
+	requireContains(t, output, "ProgressingWithRetry")
+	requireContains(t, output, "Cluster/observability/coroot-db")
+}
+
+func TestHandoffQuiesceTimeoutNamesTheUnreadyDependency(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_RECONCILING":                 "true",
+		"FAKE_FLUX_POLICY_CHILD_DEPENDENCY_NOT_READY":  "infrastructure-controllers",
+		"FAKE_FLUX_POLICY_DEPENDENCY_BLOCKING_MESSAGE": "Running health checks for revision latest@sha256:fixture with a timeout of 25m0s",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output, "did not quiesce before the image-verification policy handoff")
+	requireContains(t, output, "infrastructure-controllers")
+	requireContains(t, output, "with a timeout of 25m0s")
+}
+
+func TestHandoffQuiesceDiagnosticCannotChangeTheOutcome(t *testing.T) {
+	t.Parallel()
+	blocked := newFixture(t)
+	blockedResult := blocked.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_RECONCILING": "true",
+	})
+	broken := newFixture(t)
+	brokenResult := broken.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_RECONCILING":                "true",
+		"FAKE_FLUX_POLICY_CHILD_DEPENDENCY_NOT_READY": "infrastructure-controllers",
+		"FAKE_FLUX_POLICY_DEPENDENCY_READ_FAILS":      "true",
+	})
+	requireFailureResult(t, brokenResult)
+	requireContains(
+		t,
+		brokenResult.stdout+brokenResult.stderr,
+		"did not quiesce before the image-verification policy handoff",
+	)
+	// Prove the dependency read was actually attempted and swallowed, so this
+	// stays an ablation of the diagnostic rather than of the code path.
+	requireContains(
+		t,
+		brokenResult.stdout+brokenResult.stderr,
+		"Could not read dependency flux-system/infrastructure-controllers",
+	)
+	if brokenResult.exitCode != blockedResult.exitCode {
+		t.Fatalf(
+			"an unreadable dependency changed the handoff failure exit status: got %d, want %d",
+			brokenResult.exitCode,
+			blockedResult.exitCode,
+		)
+	}
+	requireLine(t, readLines(broken.operationLog), "flux-policy-parent-resume:flux-system")
+	requireNoLine(t, readLines(broken.operationLog), "flux-policy-pause:infrastructure")
 }
 
 func TestFluxChildQuiescesBeforePolicyHandoffAcquisition(t *testing.T) {

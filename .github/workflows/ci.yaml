@@ -39,6 +39,19 @@ jobs:
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
+      - name: 💾 Validate two-stage PVC retirement
+        # A merge-group artifact is speculative, but a PVC deletion is not: its
+        # deletionTimestamp survives queue eviction and main cannot undo it.
+        # Run in the shared changes job so both PR and merge-group refs compare
+        # against their exact base even when the full manifest job is skipped.
+        env:
+          PVC_PRUNE_BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck scripts/tests/test-pvc-prune-safety.sh
+          bash scripts/tests/test-pvc-prune-safety.sh
+
       # The DR contract runs in its own dedicated job (below). This checks that
       # the verify block is in effect at all: it ran at spec.cluster.verify for
       # ~3 weeks, where KSail discards it, and every text-based check passed
@@ -83,6 +96,13 @@ jobs:
           go test ./scripts/validate-concurrency-queue
           go run ./scripts/validate-concurrency-queue "${workflows[@]}"
 
+      # This guard spans the HelmRelease and Renovate policy, so it must run
+      # without routing policy-only changes into the production k8s deploy path.
+      - name: 🔐 Validate Headlamp OIDC version gate
+        run: |
+          shellcheck scripts/tests/test-headlamp-oidc-version-gate.sh
+          bash scripts/tests/test-headlamp-oidc-version-gate.sh
+
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
@@ -97,11 +117,31 @@ jobs:
               - 'talos/**'
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
+              - '.github/scripts/setup-ksail.sh'
+              - 'scripts/tests/test-setup-ksail.sh'
               - 'scripts/tests/test-openbao-oidc-role.sh'
+              - 'scripts/tests/test-actual-budget-auth-route.sh'
+              - 'scripts/tests/test-pvc-prune-safety.sh'
+              - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              # The Homepage layout and the policy's allow-list are one contract:
+              # either side changing alone is the drift this test exists to catch.
+              - 'scripts/tests/test-restrict-homepage-service-groups.sh'
+              - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
+              - 'scripts/tests/test-tenant-route-hostname-boundary.sh'
+              - 'scripts/tests/test-umami-provisioning-bootstrap.sh'
+              # The snapshot manifests and this test are one contract: the
+              # mirror may only stop depending on OWNING the snapshot while
+              # both writers keep making it group-readable (#3202).
+              - 'scripts/tests/test-vault-snapshot-group-readable.sh'
               - 'scripts/tests/test-kyverno-admission-vpa.sh'
               - 'scripts/tests/kyverno-admission-vpa-rules.yaml'
+              # The image-verifier liveness checker and its test are one
+              # contract: the checker's whole value is failing loudly, so a
+              # change to either must re-run both.
+              - 'scripts/validate-image-verifier-liveness.sh'
+              - 'scripts/tests/test-validate-image-verifier-liveness.sh'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/kubescape-backlog-bridge/**'
               # The updater and its annotation helper are one fail-closed
@@ -115,6 +155,22 @@ jobs:
               - '.trivyignore.yaml'
               - 'scripts/megalinter-scan-counts.sh'
               - 'scripts/tests/test-megalinter-scan-counts-ignorefile.sh'
+              - 'scripts/tests/test-trivyignore-vendored-operator-boundary.sh'
+              # The vault-config KSV-0020 disposition is path-scoped but the identity it rests
+              # on is PER CONTAINER, so the entry and its premises test move together.
+              - 'scripts/tests/test-trivyignore-vault-config-identity-boundary.sh'
+              # The vault-backup KSV-0020 disposition rests on the same per-container identity,
+              # and its guard also asserts that KSV-0021 stays UNdispositioned there.
+              - 'scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh'
+              # The first-party RBAC dispositions and the roles they describe are one
+              # contract: the disposition is only valid while the role stays bound and
+              # scoped the way it was reviewed. The roles themselves are already covered
+              # by the k8s/** entry above.
+              - 'scripts/tests/test-trivyignore-first-party-rbac-boundary.sh'
+              # The KSV-01010 ConfigMap dispositions are path-scoped, so the entry and its
+              # paired control move together — a widened glob would suppress the same check
+              # on application ConfigMaps that genuinely carry credentials.
+              - 'scripts/tests/test-trivyignore-configmap-content-boundary.sh'
               # The version-drift guard reads its constants out of
               # megalinter-scan-counts.sh, so the three move together.
               - 'scripts/check-megalinter-version-drift.sh'
@@ -130,6 +186,7 @@ jobs:
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy-regressions.sh'
+              - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh'
@@ -141,6 +198,13 @@ jobs:
               - 'scripts/wait-for-platform-flux-revision.sh'
               - 'scripts/tests/test-opencost-usage-scraper.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
+              - 'scripts/tests/test-crossplane-egress-policy.sh'
+              - 'scripts/tests/crossplane-egress-policy-rules.yaml'
+              - 'scripts/tests/test-cnpg-degraded-alert.sh'
+              # The Job manifest, the Secret it imports and this test are one
+              # contract: the credential is only out of the environment while all
+              # three agree.
+              - 'scripts/tests/test-minio-create-bucket-credentials.sh'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
               - 'scripts/dr-rebuild-supersession-guard.sh'
@@ -157,6 +221,13 @@ jobs:
               # Both halves, for the same reason as the guard above.
               - 'scripts/guard-kubescape-gate-frameworks.sh'
               - 'scripts/tests/test-kubescape-gate-frameworks-guard.sh'
+              # Both halves, so editing the guard alone — or its test alone —
+              # still runs the check that covers it.
+              - 'scripts/guard-checkov-skip-reasons.sh'
+              - 'scripts/tests/test-guard-checkov-skip-reasons.sh'
+              # Both halves, for the same reason as the guard above.
+              - 'scripts/guard-limitrange-premise.sh'
+              - 'scripts/tests/test-guard-limitrange-premise.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
@@ -180,6 +251,8 @@ jobs:
               - 'scripts/refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/ghcr-auth-lib.sh'
               - 'scripts/run-ksail-prod-with-pull-auth.sh'
+              - 'scripts/use-prod-stable-api-endpoint.sh'
+              - 'scripts/tests/test-use-prod-stable-api-endpoint.sh'
               - 'scripts/tests/test-refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/tests/refresh-flux-ghcr-auth/**'
               - 'docs/dr/runbook.md'
@@ -221,6 +294,126 @@ jobs:
         run: |
           go test ./scripts/validate-dr-signing
           go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml
+
+  validate-matcher-efficacy:
+    name: 🔏 Validate Cosign Matcher Efficacy
+    # A DEDICATED job because this is the only validator that needs to READ the
+    # registry, and that permission should not be inherited by the jobs that do
+    # not need it.
+    #
+    # Every static check we had passed on a matcher that verified ZERO artifacts
+    # and halted all GitOps delivery on prod for ~5.5 hours (#3005). This asks
+    # the one question those cannot: does the matcher, as written in the
+    # manifest, accept a signer that really signed this artifact?
+    #
+    # SKIPPED ON FORK PULL REQUESTS, and still enforced before anything merges.
+    # Reading this artifact needs a token carrying package read; a fork PR's
+    # GITHUB_TOKEN does not have one, so running it there would fail every
+    # external contribution on a permission it cannot be granted. The merge
+    # queue is not a fork context, so the gate still holds at the only moment
+    # that decides what production actually gets.
+    if: github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+      packages: read # read the manifests artifact's signature from GHCR
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🔏 Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: 🔏 Check the configured matcher verifies the real artifact
+        # 🔴 THE PATTERNS ARE NEVER SPELLED HERE. They are printed out of the
+        # manifests we deploy and handed straight to cosign, so this tests the
+        # deployed rule rather than a copy of it that can drift.
+        #
+        # cosign is the matcher's real consumer — Flux hands it these same two
+        # regexes — so letting cosign decide keeps the check's semantics
+        # identical to production's instead of reimplementing them.
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT: ghcr.io/devantler-tech/platform/manifests:latest
+        run: |
+          set -euo pipefail
+
+          go test ./scripts/validate-matcher-efficacy
+
+          MATCHER_JSON="$(go run ./scripts/validate-matcher-efficacy --print-matcher \
+            ksail.prod.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml)"
+          # 🔴 DECODE AS JSON, never line-per-value. A matcher value may legitimately
+          # contain a newline — a YAML literal block is valid for these fields — and a
+          # line-based read would take only its first line, verifying against a
+          # truncated regex while Flux enforces the whole thing. That is a matcher
+          # inert in production and green here: exactly what this job refuses.
+          # `jq -e` fails on a null or missing field, so a malformed handoff stops
+          # the build instead of silently yielding an empty pattern.
+          ISSUER="$(jq -er '.issuer' <<<"${MATCHER_JSON}")"
+          SUBJECT="$(jq -er '.subject' <<<"${MATCHER_JSON}")"
+          if [ -z "${ISSUER}" ] || [ -z "${SUBJECT}" ]; then
+            echo "::error::could not read the matcher out of the manifests"
+            exit 1
+          fi
+          echo "matcher issuer:  ${ISSUER}"
+          echo "matcher subject: ${SUBJECT}"
+
+          echo "${REGISTRY_TOKEN}" | cosign login ghcr.io -u "${REGISTRY_USER}" --password-stdin
+
+          # THE CHECK. Fails when the deployed matcher would not verify the
+          # artifact it guards — which is #3005, caught before the deploy.
+          if ! cosign verify \
+            --certificate-oidc-issuer-regexp "${ISSUER}" \
+            --certificate-identity-regexp "${SUBJECT}" \
+            "${ARTIFACT}" > /dev/null; then
+            echo "::error::the cosign matcher in the manifests does not verify ${ARTIFACT}."
+            echo "::error::a matcher that matches nothing is inert: present, green, and enforcing nothing."
+            exit 1
+          fi
+          echo "the configured matcher verifies the artifact"
+
+          # THE NEGATIVE CONTROL, run on every build rather than asserted once.
+          # A deliberately wrong subject MUST be refused; if it is accepted the
+          # check above proves nothing and is itself the vacuous control this
+          # job exists to prevent.
+          if cosign verify \
+            --certificate-oidc-issuer-regexp "${ISSUER}" \
+            --certificate-identity-regexp '^https://github\.com/devantler-tech/NOT-A-REAL-REPO/.*$' \
+            "${ARTIFACT}" > /dev/null 2>&1; then
+            echo "::error::negative control PASSED — a deliberately wrong subject was accepted."
+            echo "::error::this check cannot distinguish a good matcher from a broken one. Fix it before trusting it."
+            exit 1
+          fi
+
+          # 🔴 THAT NON-ZERO EXIT IS NOT YET EVIDENCE OF A REFUSAL. A network,
+          # registry or auth failure also exits non-zero, and would report the
+          # control as having passed while proving nothing — the control would
+          # then be vacuous in exactly the way it exists to detect. Re-run the
+          # POSITIVE check: if the same path still verifies, the refusal above
+          # was a real refusal rather than an outage. This is a liveness
+          # sandwich, deliberately not a match on cosign's error text, which is
+          # not a stable interface.
+          if ! cosign verify \
+            --certificate-oidc-issuer-regexp "${ISSUER}" \
+            --certificate-identity-regexp "${SUBJECT}" \
+            "${ARTIFACT}" > /dev/null; then
+            echo "::error::the negative control exited non-zero, but the artifact can no longer be"
+            echo "::error::verified either — so this run cannot prove the control refused for the"
+            echo "::error::right reason. Treating an unprovable control as a failure, not a pass."
+            exit 1
+          fi
+          echo "negative control refused a wrong subject, and the positive path still verifies"
+          echo "=> the check above is not vacuous"
 
   validate-eks-authorization:
     name: 🔐 Validate EKS Authorization
@@ -295,6 +488,12 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 🔐 Validate KSail installer integrity guard
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck .github/scripts/setup-ksail.sh scripts/tests/test-setup-ksail.sh
+          bash scripts/tests/test-setup-ksail.sh
+
       - name: 🔐 Validate Flux GHCR credential bridge
         # Pure local tests with fake ksail/docker/kubectl commands: no SOPS key,
         # registry credential, cluster access, or network is used.
@@ -304,13 +503,18 @@ jobs:
             scripts/refresh-flux-ghcr-auth-safety.sh \
             scripts/refresh-flux-ghcr-auth.sh \
             scripts/run-ksail-prod-with-pull-auth.sh \
+            scripts/use-prod-stable-api-endpoint.sh \
+            scripts/tests/test-use-prod-stable-api-endpoint.sh \
             scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           shellcheck \
             scripts/ghcr-auth-lib.sh \
             scripts/refresh-flux-ghcr-auth-safety.sh \
             scripts/refresh-flux-ghcr-auth.sh \
             scripts/run-ksail-prod-with-pull-auth.sh \
+            scripts/use-prod-stable-api-endpoint.sh \
+            scripts/tests/test-use-prod-stable-api-endpoint.sh \
             scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
+          bash scripts/tests/test-use-prod-stable-api-endpoint.sh
           bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           go test -timeout=20m ./scripts/tests/refresh-flux-ghcr-auth
 
@@ -343,6 +547,65 @@ jobs:
         # cleanup cannot silently turn every scoped disposition back on.
         run: bash scripts/tests/test-megalinter-scan-counts-ignorefile.sh
 
+      - name: 🧱 Validate vendored-operator disposition boundary
+        if: needs.changes.outputs.k8s == 'true'
+        # The KubeVirt/CDI RBAC dispositions are path-scoped to those two
+        # vendored bundles. If one ever loses its paths key or widens, the
+        # same checks go quiet on the first-party cluster roles this
+        # repository authors, where they are still open findings — and the
+        # count would drop, which reads exactly like progress. yq-only
+        # structural checks always run here; the trivy paired control runs
+        # wherever trivy is installed.
+        run: |
+          shellcheck scripts/tests/test-trivyignore-vendored-operator-boundary.sh
+          bash scripts/tests/test-trivyignore-vendored-operator-boundary.sh
+
+      - name: 🧱 Validate vault-config identity disposition boundary
+        if: needs.changes.outputs.k8s == 'true'
+        # The KSV-0020 disposition on the vault-config Job is scoped by PATH, but the reason it
+        # is accepted is per CONTAINER: only the two openbao containers run at the image-baked
+        # uid 100, and the rest take the pod's high 65532 default. trivy cannot express that,
+        # so a container added later at a low UID would be silently suppressed and the count
+        # would simply not rise — which reads exactly like nothing happened. The premise is
+        # asserted per container here; the paired trivy control runs wherever trivy is
+        # installed and skips loudly where it is not.
+        run: |
+          shellcheck scripts/tests/test-trivyignore-vault-config-identity-boundary.sh
+          bash scripts/tests/test-trivyignore-vault-config-identity-boundary.sh
+
+      - name: 🧱 Validate vault-backup identity disposition boundary
+        if: needs.changes.outputs.k8s == 'true'
+        # Same per-container premise as vault-config, on the two workloads that pin the same
+        # openbao digest. This guard also asserts an ABSENCE: KSV-0021 must stay reported on
+        # them, because the mirror inherits that gid rather than having it image-defined.
+        run: |
+          shellcheck scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh
+          bash scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh
+
+      - name: 🧱 Validate first-party RBAC disposition premises
+        if: needs.changes.outputs.k8s == 'true'
+        # The four first-party RBAC dispositions rest on facts trivy cannot see: the tenant
+        # role is only ever RoleBinding-bound, cluster-reader grants no write verb, and KRO
+        # runs with no standing access. If one of those stops holding, the finding stays
+        # suppressed while its reason is gone and the count never moves — so assert the
+        # premises rather than the prose.
+        run: |
+          shellcheck scripts/tests/test-trivyignore-first-party-rbac-boundary.sh
+          bash scripts/tests/test-trivyignore-first-party-rbac-boundary.sh
+
+      - name: 🧱 Validate ConfigMap sensitive-content disposition boundary
+        if: needs.changes.outputs.k8s == 'true'
+        # KSV-01010 matches key and value TEXT, so it cannot tell a public ACME contact
+        # address from a credential. The three dispositioned ConfigMaps are excepted BY
+        # PATH, and that is the whole safety property: if the scoping ever widened, an
+        # application ConfigMap that genuinely embeds a secret would go quiet too, and the
+        # count would simply drop — which reads exactly like progress. The paired control
+        # scans the same bytes at an excepted and a non-excepted path, so only the path can
+        # explain the difference. It skips where trivy is absent rather than passing blindly.
+        run: |
+          shellcheck scripts/tests/test-trivyignore-configmap-content-boundary.sh
+          bash scripts/tests/test-trivyignore-configmap-content-boundary.sh
+
       - name: 🔢 Validate scanner version-drift guard
         if: needs.changes.outputs.k8s == 'true'
         # Guards the guard, offline. The live comparison runs on main
@@ -359,6 +622,12 @@ jobs:
         # bound_claims is a map. Passing JSON-looking text as one CLI argument
         # serializes it as a string and leaves the role unenforced.
         run: bash scripts/tests/test-openbao-oidc-role.sh
+
+      - name: 🧩 Validate Headlamp plugin removal
+        if: needs.changes.outputs.k8s == 'true'
+        # Removing runtime-downloaded plugins must also prune upgrade state and
+        # preserve Crossview's authenticated fresh-install entry point.
+        run: bash scripts/tests/test-headlamp-plugin-removal.sh
 
       - name: 🔑 Validate github-config Role covers the activated MR kinds
         if: needs.changes.outputs.k8s == 'true'
@@ -379,6 +648,18 @@ jobs:
         with:
           release: v1.18.2
 
+      - name: 🔒 Validate Umami provisioning serialization
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-umami-provisioning-bootstrap.sh
+          bash scripts/tests/test-umami-provisioning-bootstrap.sh
+
+      - name: 🔐 Validate vault snapshots stay group-readable
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-vault-snapshot-group-readable.sh
+          bash scripts/tests/test-vault-snapshot-group-readable.sh
+
       - name: ⚖️ Validate cluster policies
         if: needs.changes.outputs.k8s == 'true'
         # Runs the kyverno test fixtures under tests/. Until now nothing
@@ -389,6 +670,14 @@ jobs:
           kyverno test ./tests
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
+          shellcheck scripts/tests/test-restrict-homepage-service-groups.sh
+          bash scripts/tests/test-restrict-homepage-service-groups.sh
+          shellcheck scripts/tests/test-kyverno-umami-mutation-rbac.sh
+          bash scripts/tests/test-kyverno-umami-mutation-rbac.sh
+          shellcheck scripts/tests/test-tenant-route-hostname-boundary.sh
+          bash scripts/tests/test-tenant-route-hostname-boundary.sh
+          shellcheck scripts/tests/test-actual-budget-auth-route.sh
+          bash scripts/tests/test-actual-budget-auth-route.sh
 
       - name: 🚦 Validate default-off Cilium bandwidth manager
         if: needs.changes.outputs.k8s == 'true'
@@ -398,6 +687,17 @@ jobs:
         # on the GitHub-hosted runner; no cluster or secrets required.
         run: bash scripts/tests/test-cilium-bandwidth-manager-component.sh
 
+      - name: 🔏 Validate image-verifier liveness checker
+        if: needs.changes.outputs.k8s == 'true'
+        # The checker asserts that containerd's image-verifier can enforce AT
+        # ALL (#2856). It runs here, inside the required job, rather than in its
+        # own workflow: a check that gates nothing is advisory, and this one
+        # guards a control whose failure mode is silence. Fakes talosctl and
+        # kubectl from fixtures — no cluster, no secrets.
+        run: |
+          shellcheck scripts/validate-image-verifier-liveness.sh scripts/tests/test-validate-image-verifier-liveness.sh
+          bash scripts/tests/test-validate-image-verifier-liveness.sh
+
       - name: 🔐 Validate Cilium mutual-auth policy scope
         if: needs.changes.outputs.k8s == 'true'
         # An authentication stanza is still an allow rule. Reject a cluster-wide
@@ -405,6 +705,14 @@ jobs:
         run: |
           bash scripts/tests/test-cilium-mutual-auth-policy-regressions.sh
           bash scripts/tests/test-cilium-mutual-auth-policy.sh
+
+      - name: 🐘 Validate Coroot Postgres scrape policy
+        if: needs.changes.outputs.k8s == 'true'
+        # Schema validation cannot detect a valid selector that matches no pod.
+        # Pin both cross-namespace policies to the operator's generated labels.
+        run: |
+          shellcheck scripts/tests/test-coroot-postgres-scrape-policy.sh
+          bash scripts/tests/test-coroot-postgres-scrape-policy.sh
 
       - name: 🌐 Validate active Cilium device selection
         if: needs.changes.outputs.k8s == 'true' || needs.changes.outputs.bridge_validation == 'true'
@@ -439,6 +747,24 @@ jobs:
         # see any of it, so render the component contract instead.
         run: bash scripts/tests/test-crossplane-sync-exporter.sh
 
+      - name: 🩺 Validate the CNPG degraded-cluster alert
+        if: needs.changes.outputs.k8s == 'true'
+        # This CronJob is the only signal for a database degraded without
+        # crashlooping, and a broken check prints the same "none degraded" line
+        # as a healthy fleet. Run its real script against a stubbed API and
+        # delivery so both silent-zero guards and the credential's handling are
+        # pinned by behaviour rather than by schema.
+        run: bash scripts/tests/test-cnpg-degraded-alert.sh
+
+      - name: 🔑 Validate the MinIO bucket Job's credential handling
+        if: needs.changes.outputs.k8s == 'true'
+        # checkov CKV_K8S_35 was dispositioned here by moving the root
+        # credential out of the environment and into a mounted file. That
+        # only holds while the Job imports the file, keeps the credential
+        # out of argv, and waits on a command that actually reaches MinIO —
+        # none of which schema validation can see.
+        run: bash scripts/tests/test-minio-create-bucket-credentials.sh
+
       - name: 🧭 Validate the DR rebuild supersession gate
         if: needs.changes.outputs.k8s == 'true'
         # concurrency alone cannot stop a pending DR dispatch from rebuilding on
@@ -472,6 +798,39 @@ jobs:
         # would otherwise revert in silence — plus its fail-closed behaviour
         # when the scan step moves, and the wiring that reaches it.
         run: bash scripts/tests/test-kubescape-gate-frameworks-guard.sh
+
+      - name: 🧷 Validate checkov skip reasons are quoted and intact
+        if: needs.changes.outputs.k8s == 'true'
+        # A `checkov.io/skipN` whose reason parses away still suppresses its
+        # finding, because the check id sits before the `#`. The suppression then
+        # reads as reviewed while asserting nothing, and no other check in CI can
+        # see it. The guard removes that failure rather than detecting it: every skip
+        # value must be an explicitly QUOTED scalar, because a quoted `#` is literal.
+        # (Detecting truncation from source text is impossible — a complete reason plus
+        # a trailing comment is lexically identical to a truncated one.) This runs the
+        # guard over the tree and pins its verdict in all three directions — pass,
+        # reject, and cannot-check — because a guard that has only ever seen passing
+        # input has proved nothing about what it rejects.
+        run: |
+          bash scripts/guard-checkov-skip-reasons.sh k8s
+          bash scripts/tests/test-guard-checkov-skip-reasons.sh
+
+      - name: 📐 Validate LimitRange-premised suppressions actually have a LimitRange
+        if: needs.changes.outputs.k8s == 'true'
+        # Several skips here are dispositioned not as accepted risk but as "the check
+        # is blind to an admission-time default" — sound reasoning that holds only
+        # where the LimitRange actually applies. The natural justification is that a
+        # LimitRange is a base resource and so reaches every overlay, which is an
+        # inference about REACHABILITY that reads as obviously true and is not: an
+        # overlay that cherry-picks named base directories does not get it. Nothing
+        # then fails — the suppression keeps suppressing and the workload runs with no
+        # limit in exactly the overlay whose goal was prod-like admission. The guard
+        # walks each provider's kustomize graph and pins its verdict in all three
+        # directions, including the two anti-vacuity cases where a matcher that
+        # matched nothing would otherwise look like a healthy tree.
+        run: |
+          bash scripts/guard-limitrange-premise.sh k8s
+          bash scripts/tests/test-guard-limitrange-premise.sh
 
       - name: 📋 Validate Kubescape finding summary
         if: needs.changes.outputs.k8s == 'true'
@@ -522,49 +881,10 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.178.21"
+          KSAIL_VERSION: "7.178.25"
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          BASE="https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}"
-          ASSET="ksail_${KSAIL_VERSION}_linux_amd64.tar.gz"
-          curl -fsSL "${BASE}/${ASSET}" -o /tmp/ksail.tar.gz
-          # A version-pinned URL names WHICH asset to fetch, not WHAT BYTES to
-          # expect. This archive is `sudo install`ed and executed on the runner,
-          # and this job runs on `pull_request` including FORK PRs, so a replaced
-          # release asset would execute here on every contributor's build.
-          # (This job is `pull_request`-only — the prod deploy paths install the
-          # same archive separately and are tracked in #3075.)
-          #
-          # Checked against the published list rather than a literal SHA pinned
-          # here: Renovate bumps KSAIL_VERSION and cannot update an opaque digest
-          # beside it, so a pinned SHA would break every bump until hand-edited —
-          # a control that reliably breaks the routine path is one that gets
-          # removed. LIMIT, stated plainly: archive and checksum list share an
-          # origin, so this detects a corrupted, truncated or individually
-          # substituted asset, not a fully compromised release.
-          #
-          # Kept byte-identical to the same block in validate-main.yaml.
-          curl -fsSL "${BASE}/ksail_${KSAIL_VERSION}_checksums.txt" -o /tmp/ksail_checksums.txt
-          # Match the filename field EXACTLY. A regex match treats the dots in
-          # the asset name as metacharacters, so `ksail_7x178x20_…` would select
-          # a different line's digest and report a confusing mismatch instead of
-          # the actionable "no published checksum" below. awk also exits 0 with
-          # no match, so the empty-result check is the single fail-closed path.
-          expected=$(awk -v a="${ASSET}" '$2 == a {print $1}' /tmp/ksail_checksums.txt)
-          # Fail closed on a MISSING entry too — otherwise a renamed asset
-          # silently skips verification instead of failing.
-          if [ -z "$expected" ]; then
-            echo "::error::no published checksum for ${ASSET} — refusing to install unverified"
-            exit 1
-          fi
-          actual=$(sha256sum /tmp/ksail.tar.gz | cut -d' ' -f1)
-          if [ "$expected" != "$actual" ]; then
-            echo "::error::checksum mismatch for ${ASSET}: expected ${expected}, got ${actual}"
-            exit 1
-          fi
-          tar -xzf /tmp/ksail.tar.gz -C /tmp
-          sudo install /tmp/ksail /usr/local/bin/ksail
-          ksail --version
+          .github/scripts/setup-ksail.sh
 
       - name: 📥 Restore kubeconform schema cache
         # ksail's kubeconform client fetches JSON schemas from
@@ -584,6 +904,14 @@ jobs:
           key: kubeconform-schema-cache-v1-${{ github.run_id }}
           restore-keys: |
             kubeconform-schema-cache-v1-
+
+      - name: 🔒 Validate Crossplane provider egress policy
+        if: needs.changes.outputs.k8s == 'true'
+        # This test exercises KSail's in-process Helm renderer, so it must run
+        # after the pinned KSail setup and schema-cache restore above. The
+        # reviewed FQDN set must remain narrow while provider traffic stays on
+        # the direct L3/L4 path that completes upstream TLS handshakes.
+        run: bash scripts/tests/test-crossplane-egress-policy.sh
 
       - name: 🧠 Validate Kyverno admission VPA safety
         if: needs.changes.outputs.k8s == 'true'
@@ -883,7 +1211,7 @@ jobs:
           # Keep in step with the Talos version the prod cluster runs (ksail's
           # node image pin — see ksail DefaultTalosImage).
           # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-          TALOS_VERSION: "1.13.7"
+          TALOS_VERSION: "1.13.8"
         run: |
           curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
           sudo install /tmp/talosctl /usr/local/bin/talosctl
@@ -987,6 +1315,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
+      actions: read # read a prior run attempt status, to prove an orphaned fence holder is dead (deploy-prod recover-orphaned-fence)
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1047,6 +1376,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
+      actions: read # read a prior run attempt status, to prove an orphaned fence holder is dead (deploy-prod recover-orphaned-fence)
     steps:
       - name: 📑 Checkout main
         # Deploy the CURRENT tip of `main` (the last state that actually landed in
@@ -1078,6 +1408,7 @@ jobs:
       [
         changes,
         validate-publication-contract,
+        validate-matcher-efficacy,
         validate-eks-authorization,
         validate,
         naming,
@@ -1093,6 +1424,7 @@ jobs:
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.validate-publication-contract.result }}
+            ${{ needs.validate-matcher-efficacy.result }}
             ${{ needs.validate-eks-authorization.result }}
             ${{ needs.validate.result }}
             ${{ needs.naming.result }}

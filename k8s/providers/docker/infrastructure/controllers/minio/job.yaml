@@ -19,13 +19,16 @@ spec:
       # constrains the UID: the mc image declares no `User` at all, so it would
       # run as root unedited, and its /etc/passwd has no entry for the UID this
       # ran under before — the client is already running unmapped and does not
-      # care. Its only volume is a `mc-config` emptyDir carrying no `fsGroup`,
-      # so no UID owns it, and `MC_CONFIG_DIR` points mc's state there rather
-      # than at a home directory that would have to exist.
+      # care. `fsGroup` below exists so the mounted credential is
+      # group-readable by that same UID, and `MC_CONFIG_DIR` points
+      # mc's state at the emptyDir rather than at a home directory
+      # that would have to exist.
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        # Owns the mounted credential (0440) so UID 65532 can read it.
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -37,19 +40,12 @@ spec:
             capabilities:
               drop: ["ALL"]
             readOnlyRootFilesystem: true
+          # No credential here (checkov CKV_K8S_35). The root credential arrives
+          # as the mounted `credentials.json` below and is read once, by mc
+          # itself. `MC_CONFIG_DIR` carries a path, not a secret.
           env:
             - name: MC_CONFIG_DIR
               value: /tmp/.mc
-            - name: MINIO_ROOT_USER
-              valueFrom:
-                secretKeyRef:
-                  name: minio-root-credentials
-                  key: rootUser
-            - name: MINIO_ROOT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: minio-root-credentials
-                  key: rootPassword
           resources:
             requests:
               cpu: 10m
@@ -60,17 +56,43 @@ spec:
           volumeMounts:
             - name: mc-config
               mountPath: /tmp/.mc
+            - name: minio-credentials
+              mountPath: /etc/minio-credentials
+              readOnly: true
           command:
             - /bin/sh
             - -c
             - |
               set -e
-              until mc alias set local http://minio.minio.svc.cluster.local:9000 \
-                    "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
+
+              # Read the credential from the mounted Secret rather than the
+              # environment (checkov CKV_K8S_35). `alias import` takes a file
+              # path, so the credential never enters this container's
+              # environment nor mc's argv -- `alias set`, which this replaced,
+              # put both halves in /proc/<pid>/cmdline for the process's life.
+              mc alias import local /etc/minio-credentials/credentials.json
+
+              # `alias import` only writes mc's config; it never contacts the
+              # server, so it cannot double as the readiness gate the way the
+              # old `until mc alias set ...` loop did. Wait on bucket creation
+              # instead, which is the first command that does reach MinIO.
+              # Verified against this pinned mc release: `alias import` returns
+              # success with no server reachable at all.
+              until mc mb --ignore-existing local/platform-backups; do
                 sleep 2
               done
-              mc mb --ignore-existing local/platform-backups
+
               mc ls local/
       volumes:
         - name: mc-config
-          emptyDir: {}
+          # Memory-backed: `alias import` writes the imported credential into
+          # mc's config here, and an emptyDir defaults to node disk.
+          emptyDir:
+            medium: Memory
+        - name: minio-credentials
+          secret:
+            secretName: minio-root-credentials
+            items:
+              - key: credentials.json
+                path: credentials.json
+            defaultMode: 0440
