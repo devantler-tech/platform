@@ -222,7 +222,7 @@ class ExtractBookmarksYamlTests(unittest.TestCase):
 
 
 class RealConfigMapRegressionTests(unittest.TestCase):
-    """Guard the actual PR change against the real ConfigMap on disk."""
+    """Guard the real ConfigMap on disk against structural regressions."""
 
     @classmethod
     def setUpClass(cls):
@@ -230,17 +230,17 @@ class RealConfigMapRegressionTests(unittest.TestCase):
             validator.extract_bookmarks_yaml(validator.CONFIG_MAP)
         )
 
-    def test_coderabbit_bookmark_was_added_under_developer_tools(self):
+    def test_coderabbit_bookmark_is_under_code_quality(self):
         matches = [
             e for e in self.entries
-            if e["group"] == "Developer Tools" and e["name"] == "CodeRabbit"
+            if e["group"] == "Code Quality" and e["name"] == "CodeRabbit"
         ]
         self.assertEqual(len(matches), 1, "expected exactly one CodeRabbit bookmark")
         self.assertEqual(matches[0]["icon"], "si-coderabbit-#FF570A")
         self.assertEqual(matches[0]["href"], "https://app.coderabbit.ai")
 
     def test_coderabbit_entry_is_positioned_after_codecov(self):
-        names = [e["name"] for e in self.entries if e["group"] == "Developer Tools"]
+        names = [e["name"] for e in self.entries if e["group"] == "Code Quality"]
         self.assertIn("Codecov", names)
         self.assertIn("CodeRabbit", names)
         self.assertLess(names.index("Codecov"), names.index("CodeRabbit"))

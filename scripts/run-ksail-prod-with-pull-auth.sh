@@ -4,17 +4,21 @@
 set -euo pipefail
 set +x
 
-case "${1:-} ${2:-}" in
-  "cluster create" | "cluster update" | "workload push" | "workload reconcile") ;;
-  *)
-    echo "Usage: $0 {cluster create|cluster update|workload push|workload reconcile}" >&2
-    exit 64
-    ;;
-esac
-if (($# != 2)); then
-  echo "Usage: $0 {cluster create|cluster update|workload push|workload reconcile}" >&2
+usage() {
+  echo "Usage: $0 {cluster create|cluster update|workload reconcile|workload push oci://ghcr.io/devantler-tech/platform/manifests:staging-<sha>-<run>-<attempt>}" >&2
   exit 64
-fi
+}
+
+case "${1:-} ${2:-}" in
+  "cluster create" | "cluster update" | "workload reconcile")
+    (($# == 2)) || usage
+    ;;
+  "workload push")
+    (($# == 3)) || usage
+    [[ "$3" =~ ^oci://ghcr\.io/devantler-tech/platform/manifests:staging-[0-9a-f]{40}-[0-9]+-[0-9]+$ ]] || usage
+    ;;
+  *) usage ;;
+esac
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
@@ -44,7 +48,7 @@ if [[ "$1 $2" == "workload push" ]]; then
   fi
   GHCR_USERNAME="${GITHUB_ACTOR}" \
     GHCR_PULL_REVISION="${pull_revision}" \
-    ksail --config ksail.prod.yaml "$1" "$2"
+    ksail --config ksail.prod.yaml "$1" "$2" "$3"
 else
   work_dir="$(mktemp -d)"
   trap 'rm -rf "${work_dir}"' EXIT

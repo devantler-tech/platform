@@ -14,7 +14,7 @@ KSail natively installs and manages the Cluster Autoscaler when
 ```
 KSail (static baseline)
 ├── 3 control planes (cx33, 4 vCPU / 8 GB, never autoscaled)
-└── 3 static workers (cx33, 4 vCPU / 8 GB, guaranteed minimum, Longhorn storage nodes)
+└── 3 static workers (cx43, 8 vCPU / 16 GB, guaranteed minimum, Longhorn storage nodes)
 
 Cluster Autoscaler (dynamic workers, managed by KSail)
 ├── Pool: autoscale-cx43 → 0-4 × CX43 (8 vCPU, 16 GB)
@@ -86,7 +86,7 @@ spec:
 ```
 
 | Field | Default | Description |
-|-------|---------|-------------|
+| ------- | --------- | ------------- |
 | `enabled` | `false` | Enable/disable node autoscaling |
 | `expander` | `LeastWaste` | Node selection strategy: `LeastWaste`, `LeastNodes`, `Random` (`Price` is unsupported on Hetzner — no pricing API). Accepts a single value or an ordered priority chain, e.g. `[LeastNodes, LeastWaste]` (requires KSail expander-list support; scalar-only up to v7.57.0) |
 | `maxNodesTotal` | `0` (unlimited) | Hard ceiling on total cluster nodes, including the static baseline (see [ksail#5017](https://github.com/devantler-tech/ksail/issues/5017)) |
@@ -201,7 +201,7 @@ kubectl -n kube-system get cm cluster-autoscaler-status -o yaml
 
 ```bash
 # Check if the Hetzner server was created
-hcloud server list --selector cluster.autoscaler.nodeGroupLabel
+hcloud server list --selector hcloud/node-group
 
 # Check Talos bootstrap status (if server IP is known)
 talosctl -n <node-ip> health

@@ -29,6 +29,19 @@ spec:
         - ports:
             - port: "9093"
               protocol: TCP
+    # The crossplane-sync-alerter CronJob (observability) POSTs /api/v2/alerts so
+    # the crossplane-sync-exporter's series reaches Slack through this
+    # Alertmanager's catch-all route. Scoped to that one pod label rather than the
+    # whole observability namespace: everything else there is a scrape client and
+    # has no reason to inject alerts.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability
+            app: crossplane-sync-alerter
+      toPorts:
+        - ports:
+            - port: "9093"
+              protocol: TCP
   egress:
     # Post alert notifications to the Slack incoming-webhook. Pinned by FQDN
     # (not world:443) so a compromised pod cannot exfiltrate elsewhere — the same

@@ -6,17 +6,13 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Crossview has NO public route: the only entry point is the Headlamp
-    # crossview-headlamp plugin's port-forward, whose final hop is dialed by the
-    # kubelet on the pod's node, so it arrives with the "host" (or, cross-node,
-    # "remote-node") identity. That identity carries no SPIFFE SVID and is exempt
-    # from the cluster-wide require-mutual-auth policy — authentication.mode must
-    # NOT be set here. (The port-forward reaches Crossview's own /login; without
-    # a Dex session it cannot read cluster data.) Kubelet health probes reach the
-    # pod via Cilium's implicit allow-localhost=auto path regardless.
-    - fromEntities:
-        - host
-        - remote-node
+    # Public route traffic after the shared oauth2-proxy maintainer-team gate.
+    # auth-proxy performs the Host-based hop from oauth2-proxy to Crossview;
+    # Crossview's native session middleware then supplies its app session.
+    - fromEndpoints:
+        - matchLabels:
+            app: auth-proxy
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
       toPorts:
         - ports:
             - port: "3001"

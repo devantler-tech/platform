@@ -162,77 +162,92 @@ Flux reconciliation.
 > secrets, because `ksail cluster create` writes fresh configs on the runner.
 > The manual procedure below is the fallback when GitHub Actions itself is
 > unavailable.
-
-```bash
-# 1. Set credentials locally
-export HCLOUD_TOKEN=<hetzner-cloud-api-token>
-export WG_SERVER_PRIVATE_KEY=<wireguard-server-private-key>
-export GHCR_TOKEN=<ghcr-pat-with-packages-read-write>
-export GITHUB_ACTOR=devantler
-export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt  # points at the env's Age key
-talosctl version --client  # must be installed; use the prod-pinned v1.13.5
-
-# 2. Prove the Git/SOPS pull credential can read every private package before
-#    creating infrastructure or publishing a mutable latest tag
-./scripts/refresh-flux-ghcr-auth.sh --check-only
-
-# 3. Boot a fresh cluster (ksail handles Talos boot, CCM, CSI, kubeconfig)
-./scripts/run-ksail-prod-with-pull-auth.sh cluster create
-
-# 4. Bootstrap Flux from this repo
-./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
-./scripts/run-ksail-prod-with-pull-auth.sh workload push
-./scripts/refresh-flux-ghcr-auth.sh --check-only
-./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
-
-# 5. Wait for Flux to settle
-for k in bootstrap infrastructure-controllers infrastructure apps; do
-  kubectl --context admin@prod -n flux-system wait "kustomization/${k}" \
-    --for=condition=Ready --timeout=20m
-done
-./scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out + every stale node
-
-# 6. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
-#     in R2 — the vault came up fresh): re-feed the user-fed secrets that
-#     SOPS deliberately does not seed (see the push-secret-seed-* files in
-#     k8s/bases/infrastructure/vault-seed/). Until then,
-#     cert-manager DNS01, external-dns, and fleetdm stay pending:
-kubectl -n openbao exec openbao-0 -- \
-  bao kv put secret/infrastructure/dns/cloudflare api_token=<cloudflare-token>
-kubectl -n openbao exec openbao-0 -- \
-  bao kv put secret/apps/fleetdm/license license-key=<fleet-license-jwt>
-
-# 5. DNS — normally NO manual step: external-dns (hetzner overlay,
-#    policy: sync, gateway-httproute source) repoints the Cloudflare
-#    records at the new load balancer automatically once the HTTPRoutes
-#    are Ready and its Cloudflare token has re-synced from the vault.
-#    Verify, and only intervene if external-dns itself is broken:
-kubectl -n external-dns logs deploy/external-dns | tail -20
-kubectl -n kube-system get svc cilium-gateway-platform \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-# Fallback only: update A/AAAA records for ${domain} at your DNS provider.
-
-# 6. Restore Velero backups (apps + PVCs)
-kubectl -n velero create -f - <<EOF
-apiVersion: velero.io/v1
-kind: Restore
-metadata:
-  name: rebuild-$(date +%s)
-  namespace: velero
-spec:
-  backupName: <pick-latest-from-velero-backup-get>
-  includedNamespaces:
-    - "*"
-  excludedNamespaces:
-    - kube-system
-    - velero
-EOF
-
-# 7. (If any CNPG Cluster exists) restore from R2
-kubectl cnpg restore <new-cluster-name> \
-  --backup <backup-name> \
-  --target-time '<RFC3339-timestamp-or-omit-for-latest>'
-```
+>
+> ```bash
+> # 1. Set credentials locally
+> export HCLOUD_TOKEN=<hetzner-cloud-api-token>
+> export WG_SERVER_PRIVATE_KEY=<wireguard-server-private-key>
+> export GHCR_TOKEN=<ghcr-pat-with-packages-read>
+> export GITHUB_ACTOR=devantler
+> export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt  # points at the env's Age key
+> talosctl version --client  # must be installed; use the prod-pinned v1.13.7
+>
+> # 2. Prove the Git/SOPS pull credential can read every private package before
+> #    creating infrastructure or publishing a mutable latest tag
+> ./scripts/refresh-flux-ghcr-auth.sh --check-only
+>
+> # 3. Boot a fresh cluster (ksail handles Talos boot, CCM, CSI, kubeconfig)
+> ./scripts/run-ksail-prod-with-pull-auth.sh cluster create
+>
+> # 4. Bootstrap Flux from the most recently evidenced latest artifact. The
+> #    Actions-unavailable fallback cannot mint the workflow OIDC evidence, so
+> #    it deliberately leaves latest untouched instead of publishing weaker
+> #    bytes. Use the one-button workflow for a new publication transaction.
+> ./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
+> ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
+> export DOCKER_CONFIG="$(mktemp -d)"
+> trap 'rm -rf "${DOCKER_CONFIG}"' EXIT
+> printf '%s' "${GHCR_TOKEN}" |
+>   docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+> PLATFORM_MANIFEST_DIGEST="$(docker buildx imagetools inspect 'ghcr.io/devantler-tech/platform/manifests:latest' --format '{{.Manifest.Digest}}')"
+> [[ "${PLATFORM_MANIFEST_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+>   printf 'Invalid platform manifest digest: %s\n' "${PLATFORM_MANIFEST_DIGEST:-<empty>}" >&2
+>   exit 1
+> }
+> ./scripts/refresh-flux-ghcr-auth.sh --check-only
+> ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
+> ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
+>
+> # 5. Wait for Flux to settle
+> for k in bootstrap infrastructure-controllers infrastructure apps; do
+>   kubectl --context admin@prod -n flux-system wait "kustomization/${k}" \
+>     --for=condition=Ready --timeout=20m
+> done
+> ./scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out + every stale node
+> CILIUM_ROLLOUT_REVISION_READY=true \
+>   ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
+>
+> # 6. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
+> #     in R2 — the vault came up fresh): re-feed the user-fed secrets that
+> #     SOPS deliberately does not seed (see the push-secret-seed-* files in
+> #     k8s/bases/infrastructure/vault-seed/). Until then,
+> #     cert-manager DNS01, external-dns, and fleetdm stay pending:
+> kubectl -n openbao exec openbao-0 -- \
+>   bao kv put secret/infrastructure/dns/cloudflare api_token=<cloudflare-token>
+> kubectl -n openbao exec openbao-0 -- \
+>   bao kv put secret/apps/fleetdm/license license-key=<fleet-license-jwt>
+>
+> # 5. DNS — normally NO manual step: external-dns (hetzner overlay,
+> #    policy: sync, gateway-httproute source) repoints the Cloudflare
+> #    records at the new load balancer automatically once the HTTPRoutes
+> #    are Ready and its Cloudflare token has re-synced from the vault.
+> #    Verify, and only intervene if external-dns itself is broken:
+> kubectl -n external-dns logs deploy/external-dns | tail -20
+> kubectl -n kube-system get svc cilium-gateway-platform \
+>   -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+> # Fallback only: update A/AAAA records for ${domain} at your DNS provider.
+>
+> # 6. Restore Velero backups (apps + PVCs)
+> kubectl -n velero create -f - <<EOF
+> apiVersion: velero.io/v1
+> kind: Restore
+> metadata:
+>   name: rebuild-$(date +%s)
+>   namespace: velero
+> spec:
+>   backupName: <pick-latest-from-velero-backup-get>
+>   includedNamespaces:
+>     - "*"
+>   excludedNamespaces:
+>     - kube-system
+>     - velero
+> EOF
+>
+> # 7. (If any CNPG Cluster exists) restore from R2
+> kubectl cnpg restore <new-cluster-name> \
+>   --backup <backup-name> \
+>   --target-time '<RFC3339-timestamp-or-omit-for-latest>'
+> ```
 
 If this is the **first time** restoring after losing the SOPS keys, replace
 step 3 with the rotation flow in Scenario 6 first.
@@ -438,10 +453,110 @@ Common causes:
 Autoscaler. Clean up manually:
 
 ```bash
-hcloud server list --selector cluster.autoscaler.nodeGroupLabel
+hcloud server list --selector hcloud/node-group
 # Delete each orphaned server
 hcloud server delete <server-id>
 ```
+
+### Stranded autoscaler nodes on a LIVE cluster (removed pool)
+
+Removing a pool from `ksail.prod.yaml` does **not** delete servers already
+running in it. The autoscaler only ever considers nodes that belong to one of
+its configured node groups, so a node whose pool no longer exists becomes
+invisible to scale-down and survives indefinitely — however idle the cluster
+gets. It keeps consuming `maxNodesTotal`, which starves real bursts, and it is
+never rolled, so it drifts behind on Kubernetes and Talos.
+
+Detect it by comparing live node names against the configured groups:
+
+```bash
+# pools the autoscaler actually manages — read BOTH command and args: the chart
+# currently passes every flag in `command`, so an `args`-only query returns an
+# empty stream and the grep matches nothing.
+kubectl -n kube-system get deploy cluster-autoscaler-hetzner-cluster-autoscaler \
+  -o jsonpath='{range .spec.template.spec.containers[0].command[*]}{@}{"\n"}{end}{range .spec.template.spec.containers[0].args[*]}{@}{"\n"}{end}' | grep '^--nodes='
+# every autoscaler-provisioned node currently registered
+kubectl get nodes -o name | grep '/autoscale-'
+```
+
+An empty result from the first command means the **query** is wrong, not that no
+pools are configured — check the container spec directly before concluding
+anything. It should print one `--nodes=` line per configured pool.
+
+Any `autoscale-<type>-*` node whose `<type>` has no matching `--nodes=` group is
+stranded.
+
+#### Pre-flight — check these before draining anything
+
+`hcloud server delete` neither cordons nor drains the node, and it does not wait
+for Longhorn to evict replicas. Deleting a server directly destroys any replica
+still on it, so the drain is what makes removal safe, and these checks are what
+make the drain safe.
+
+```bash
+# 1. Every storage node must actually be able to ATTACH volumes. A node whose
+#    iSCSI database has an unparseable record accepts replicas but cannot start
+#    an engine, and reports Ready/Schedulable while doing so (#3180). A node
+#    with zero attachments while others have many is the tell.
+kubectl -n longhorn-system get volumes.longhorn.io -o json |
+  jq -r '[.items[]|select(.status.state=="attached")]|group_by(.status.currentNodeID)[]|"\(.[0].status.currentNodeID) attached=\(length)"'
+```
+
+```bash
+# 2. Replica scheduling must have somewhere to go. With hard anti-affinity
+#    (replica-soft-anti-affinity=false) and only three storage nodes, one node
+#    below storage-minimal-available-percentage means degraded volumes can never
+#    rebuild — they sit at ReplicaSchedulingFailure indefinitely.
+kubectl -n longhorn-system get nodes.longhorn.io -o json |
+  jq -r '.items[]|.metadata.name as $n|(.status.diskStatus//{}|to_entries[0].value) as $s|"\($n) avail=\((($s.storageAvailable//0)*100/($s.storageMaximum//1))|floor)% \([$s.conditions[]?|select(.type=="Schedulable")|"Schedulable=\(.status)"]|join(""))"'
+```
+
+```bash
+# 3. Reclaim orphaned replica directories first — they are the usual reason a
+#    node drifts under the threshold. Delete the listed orphans to free the
+#    space (see #3180 for making this automatic).
+kubectl -n longhorn-system get orphans.longhorn.io
+```
+
+```bash
+# 4. Nothing already degraded.
+kubectl -n longhorn-system get volumes.longhorn.io -o json |
+  jq -r '.items[]|select(.status.robustness!="healthy" or .status.state!="attached")|"\(.metadata.name) \(.status.state)/\(.status.robustness)"'
+```
+
+#### Removal sequence
+
+```bash
+kubectl drain <node> --ignore-daemonsets --delete-emptydir-data --timeout=20m
+```
+
+The drain normally stalls at the end on the node's Longhorn `instance-manager`,
+which carries a PDB with zero allowed disruptions. That is expected: once the
+node is storage-idle the instance-manager is idle too, and Longhorn usually
+removes it on its own. Confirm idleness before forcing anything — both must
+return `0`:
+
+```bash
+kubectl -n longhorn-system get engines.longhorn.io -o json | jq -r --arg n <node> '[.items[]|select(.spec.nodeID==$n)]|length'
+kubectl -n longhorn-system get replicas.longhorn.io -o json | jq -r --arg n <node> '[.items[]|select(.spec.nodeID==$n)]|length'
+```
+
+Only then delete the server, and finally the now-orphaned Node object:
+
+```bash
+hcloud server delete <server-id>
+kubectl delete node <node>
+```
+
+Do one node at a time and let volumes return to `healthy` in between. Deleting
+the server is also what frees a slot under `maxNodesTotal`, so the autoscaler
+cannot replace capacity until that step completes.
+
+`restrict-storage-to-baseline-workers` and `drain-autoscale-node-storage` do
+cover these nodes, because they key on the node *name* rather than the
+`ksail.io/autoscaled` label — which a node predating ksail#5113 does not carry.
+
+Whenever you remove a pool, check for its running nodes in the same change.
 
 ### Autoscaler node not joining cluster
 
@@ -542,11 +657,19 @@ The production deploy closes the bootstrap loop in this order:
    `--allow-incomplete-fanout` mode stages `variables-base` and repairs root auth
    so the first reconcile can create the chain. Normal mode fails closed on any
    missing fan-out resource.
-4. Push and sign the artifact with `GHCR_TOKEN`, revalidate the newly-published
-   artifact with `--check-only`, and only then explicitly reconcile Flux. DR
-   runs the full bridge again after every Flux Kustomization is Ready, proving
-   that bootstrap mode completed the entire fan-out, and once more after an
-   OpenBao raft restore so a snapshot cannot rematerialise an older credential.
+4. Push the artifact to a run-unique staging reference. Resolve its digest,
+   cosign-sign it keyless, and attach its CycloneDX SBOM and SLSA provenance
+   before promoting that exact digest to `latest`. Fulcio mints the certificate
+   from the workflow's OIDC identity (`dr-rebuild.yaml@refs/heads/main`), and
+   `GHCR_TOKEN` only pushes the artifact and its evidence. That identity must
+   stay listed in `ksail.prod.yaml`'s `matchOIDCIdentity`, or a recovery
+   publishes an artifact a verifying cluster refuses. Any failure before
+   promotion leaves the prior `latest` digest unchanged. Revalidate the
+   promoted artifact with `--check-only`, and only then explicitly reconcile
+   Flux. DR runs the full bridge again after every Flux Kustomization is Ready,
+   proving that bootstrap mode completed the entire fan-out, and once more
+   after an OpenBao raft restore so a snapshot cannot rematerialise an older
+   credential.
 5. Re-run the bridge after `cluster update`; it repairs any node left stale by
    a partial lifecycle operation and re-verifies the root plus downstream
    fan-out. Nodes carrying proof for both the current credential revision and
@@ -585,6 +708,82 @@ Do not replace this bridge with only a root ExternalSecret: Flux needs valid roo
 auth to fetch the artifact that installs/updates External Secrets, while OpenBao
 receives this rotated value only through a downstream PushSecret. That circular
 dependency cannot recover a stale root credential by itself.
+
+---
+
+## Scenario 11 — Recover an orphaned GHCR deploy fence
+
+A deploy fails to start with one of:
+
+> Another GHCR synchronization transaction holds the synchronization lease
+>
+> Another transaction already owns the image-verification policy handoff
+
+`refresh-flux-ghcr-auth.sh` fences its transaction with a `Lease` and by suspending
+the `infrastructure` and `flux-system` Kustomizations. Those fences are released
+together at exit. A hard kill releases an arbitrary prefix and leaves the rest
+held — and nothing reclaims them automatically, because Talos machine-config
+writes expose no fencing token, so a surviving process could still write after a
+timeout takeover. Recovery is deliberately a human step.
+
+A held policy fence is the more serious of the two: the deploy fails loudly, but
+the suspended Kustomization silently stops GitOps reconciliation for that layer
+until it is released.
+
+**1. List what is actually held.** Read-only; needs no credential and works while
+a deploy is refusing to start:
+
+```bash
+./scripts/refresh-flux-ghcr-auth.sh --fences
+```
+
+It prints each held fence, its holder, liveness evidence, and the exact
+CAS-guarded release command. `--fences` is an alternative mode and cannot be
+combined with `--check-only`, `--allow-incomplete-fanout`, or either
+`--*-runtime-proof` flag; it reports and exits, so accepting the combination
+would let an automation step pass having skipped the work it was configured to
+do.
+
+**2. Prove the holder is dead — never skip this.** A live deploy holds these
+fences legitimately.
+
+- If the Lease was renewed inside its duration, the holder is **live**. Stop.
+- The holder identity embeds the GitHub run: `…-gh<run-id>.<attempt>-…`. Confirm
+  it is terminal:
+
+  ```bash
+  gh run view <run-id> --repo devantler-tech/platform --attempt <attempt> --json status,conclusion
+  ```
+
+  Anything other than `status: completed` means it is still running. Stop.
+  `--attempt` is not optional: a rerun reuses the run id, so without it `gh`
+  reports the newest attempt and an orphan left by a finished attempt reads as
+  live — blocking a recovery that is valid.
+- An identity with no run reference predates that recording, or came from a local
+  run. Establish liveness another way before continuing.
+
+**3. Release.** Run the command the report printed for each dead fence. Each is
+CAS-guarded on the holder and the resource's current state, so it fails safely if
+anything changed since the report.
+
+A node fence may print `NOT releasable` and no command. That is a refusal, not a
+gap to work around by hand: the report only emits a release where it can prove
+the release is the same one the bridge would perform. It withholds one when the
+drain phase is anything but `claimed` (a Talos write may already be in flight,
+and an absent phase is never read as innocence), when another node under the
+same bootstrap owner is still quarantined (that quarantine is all-or-nothing),
+when the journal is `release-ready` (proving it covers the current credential
+revision needs the credential, which this mode deliberately never loads), or
+when the node's scheduling state has drifted from the intent its journal
+captured. In each case run the bridge — a normal `CD` dispatch — and let
+bootstrap recovery adjudicate the node. Never hand-clear a recovery journal: it
+is the only durable record of that state.
+
+**4. Confirm.** Re-run `--fences`; it should report no fence held. Then dispatch
+`CD` on `main`.
+
+Do not raise timeouts or add automatic expiry takeover to work around this — the
+absence of takeover is the property that makes the Talos write path safe.
 
 ---
 

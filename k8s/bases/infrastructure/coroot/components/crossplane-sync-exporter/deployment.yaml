@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crossplane-sync-exporter
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: crossplane-sync-exporter
+    app.kubernetes.io/part-of: coroot
+    app.kubernetes.io/component: metrics-exporter
+    platform.devantler.tech/replica-floor: exempt
+  annotations:
+    checkov.io/skip1: "CKV_K8S_38=kube-state-metrics reads the managed resources it exports through the API server"
+    # Both containers bind 127.0.0.1 only (--host/--telemetry-host and --web.listen-address
+    # below), because the agent scrapes kube-state-metrics from inside the pod and nothing
+    # reaches either port from the network. A kubelet httpGet/tcpSocket probe dials the POD IP,
+    # so it cannot reach a loopback listener; this component ships no Service for the same
+    # reason. Binding either port to the pod network purely to satisfy the check would widen
+    # the attack surface this design deliberately closes, so the workload is dispositioned
+    # rather than changed.
+    checkov.io/skip2: "CKV_K8S_8=loopback-only listeners are unreachable from a kubelet probe; see the note above"
+    checkov.io/skip3: "CKV_K8S_9=loopback-only listeners are unreachable from a kubelet probe; see the note above"
+spec:
+  # A second replica would export identical series and race them into the
+  # remote-write receiver. Recreate avoids an overlapping rollout; the agent's
+  # WAL is disposable because Prometheus is the durable store.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: crossplane-sync-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: crossplane-sync-exporter
+        app.kubernetes.io/part-of: coroot
+        app.kubernetes.io/component: metrics-exporter
+    spec:
+      serviceAccountName: crossplane-sync-exporter
+      # kube-state-metrics reads the managed resources through the API server.
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kube-state-metrics
+          image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.17.0@sha256:2bbc915567334b13632bf62c0a97084aff72a36e13c4dabd5f2f11c898c5bacd
+          imagePullPolicy: IfNotPresent
+          args:
+            - --custom-resource-state-config-file=/etc/kube-state-metrics/custom-resource-state.yaml
+            # Built-in resources stay off: Coroot's cluster agent already
+            # supplies kube-state metrics, and a second copy would double-count.
+            - --custom-resource-state-only=true
+            # Loopback only — the agent scrapes this from inside the pod, so
+            # nothing needs to reach it from the network.
+            - --host=127.0.0.1
+            - --port=8080
+            - --telemetry-host=127.0.0.1
+            - --telemetry-port=8081
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/kube-state-metrics
+              readOnly: true
+        - name: prometheus-agent
+          image: ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:c2a4f92f728411b834b7abd07764cf587e28749c377b157443569dea4f81f833
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --enable-feature=agent
+            - --storage.agent.path=/prometheus
+            - --web.listen-address=127.0.0.1:9090
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: crossplane-sync-exporter
+        - name: data
+          emptyDir:
+            sizeLimit: 1Gi

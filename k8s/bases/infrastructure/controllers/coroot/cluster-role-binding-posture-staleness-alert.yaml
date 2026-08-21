@@ -1,0 +1,16 @@
+# Grants the posture-staleness-alert ServiceAccount its list-only view of the
+# stored configuration scans. See cluster-role-posture-staleness-alert.yaml for
+# the scope rationale.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: posture-staleness-alert
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: posture-staleness-alert
+subjects:
+  - kind: ServiceAccount
+    name: posture-staleness-alert
+    namespace: observability

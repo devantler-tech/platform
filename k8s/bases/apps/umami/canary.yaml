@@ -39,18 +39,35 @@ spec:
     gatewayRefs:
       - name: platform
         namespace: kube-system
+    # Only expose Umami's public collection endpoints at the edge. The admin UI
+    # and login API must not be reachable from the internet because Umami creates
+    # a built-in admin/umami account before our in-cluster provisioning CronJob
+    # can rotate it. Keeping the public HTTPRoute collector-only removes that
+    # first-boot takeover race while preserving tracking. If the dashboard needs
+    # browser access later, add a separate SSO-protected route instead of widening
+    # this Flagger-owned route.
+    match:
+      - uri:
+          prefix: /api/send
+      - uri:
+          prefix: /script.js
     # Tile metadata for the Homepage dashboard. Flagger copies spec.service.apex
     # annotations/labels onto the HTTPRoute it generates (pkg/router/gateway_api.go),
     # so the gethomepage.dev/* annotations the hand-written route used to carry are
-    # reproduced here — Umami reappears under the Analytics group, discovered the
-    # same way as every other app. pod-selector keys on app.kubernetes.io/instance
+    # reproduced here. pod-selector keys on app.kubernetes.io/instance
     # (NOT /name): Flagger's default --selector-labels (app,name,
     # app.kubernetes.io/name) rewrites app.kubernetes.io/name to
     # "umami-umami-primary" on the primary Deployment, while leaving
     # app.kubernetes.io/instance=umami intact on the running pods.
+    #
+    # The tile is disabled because this route serves only the collection
+    # endpoints above — https://analytics.${domain}/ has no match and would give
+    # the reader a dead link. The remaining annotations are kept so re-enabling
+    # is a one-line change once the SSO-protected dashboard route exists
+    # (devantler-tech/platform#3134).
     apex:
       annotations:
-        gethomepage.dev/enabled: "true"
+        gethomepage.dev/enabled: "false"
         gethomepage.dev/name: Umami
         gethomepage.dev/description: Privacy-first web analytics.
         gethomepage.dev/group: Analytics
