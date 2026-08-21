@@ -96,6 +96,13 @@ jobs:
           go test ./scripts/validate-concurrency-queue
           go run ./scripts/validate-concurrency-queue "${workflows[@]}"
 
+      # This guard spans the HelmRelease and Renovate policy, so it must run
+      # without routing policy-only changes into the production k8s deploy path.
+      - name: 🔐 Validate Headlamp OIDC version gate
+        run: |
+          shellcheck scripts/tests/test-headlamp-oidc-version-gate.sh
+          bash scripts/tests/test-headlamp-oidc-version-gate.sh
+
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
@@ -116,8 +123,6 @@ jobs:
               - 'scripts/tests/test-actual-budget-auth-route.sh'
               - 'scripts/tests/test-pvc-prune-safety.sh'
               - 'scripts/tests/test-headlamp-plugin-removal.sh'
-              - 'scripts/tests/test-headlamp-oidc-version-gate.sh'
-              - '.github/renovate.json'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
               # The Homepage layout and the policy's allow-list are one contract:
@@ -623,12 +628,6 @@ jobs:
         # Removing runtime-downloaded plugins must also prune upgrade state and
         # preserve Crossview's authenticated fresh-install entry point.
         run: bash scripts/tests/test-headlamp-plugin-removal.sh
-
-      - name: 🔐 Validate Headlamp OIDC version gate
-        if: needs.changes.outputs.k8s == 'true'
-        run: |
-          shellcheck scripts/tests/test-headlamp-oidc-version-gate.sh
-          bash scripts/tests/test-headlamp-oidc-version-gate.sh
 
       - name: 🔑 Validate github-config Role covers the activated MR kinds
         if: needs.changes.outputs.k8s == 'true'

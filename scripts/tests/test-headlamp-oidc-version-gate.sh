@@ -6,6 +6,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly headlamp_release="${root_dir}/k8s/bases/apps/headlamp/helm-release.yaml"
 readonly renovate_config="${root_dir}/.github/renovate.json"
+readonly ci_workflow="${root_dir}/.github/workflows/ci.yaml"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -13,7 +14,24 @@ fail() {
 }
 
 command -v jq >/dev/null 2>&1 || fail 'jq is required to inspect the Renovate policy'
-command -v yq >/dev/null 2>&1 || fail 'yq v4 is required to inspect the Headlamp HelmRelease'
+changes_job="$(awk '
+  /^  changes:$/ { in_changes = 1 }
+  in_changes && /^  [[:alnum:]_-]+:$/ && $0 != "  changes:" { exit }
+  in_changes { print }
+' "${ci_workflow}")"
+k8s_filter="$(awk '
+  $0 == "            k8s:" { in_k8s = 1; next }
+  in_k8s && /^            [[:alpha:]_][[:alnum:]_]*:$/ { exit }
+  in_k8s { print }
+' "${ci_workflow}")"
+
+grep -Fq 'name: 🔐 Validate Headlamp OIDC version gate' <<<"${changes_job}" ||
+  fail 'the Headlamp version gate must run unconditionally in the changes job'
+
+if grep -Fq '.github/renovate.json' <<<"${k8s_filter}" ||
+  grep -Fq 'scripts/tests/test-headlamp-oidc-version-gate.sh' <<<"${k8s_filter}"; then
+  fail 'Headlamp policy-only changes must not enter the production k8s deployment filter'
+fi
 
 headlamp_rules="$(jq -c '
   [.packageRules[] |
@@ -63,7 +81,10 @@ done
 [[ "${automerge}" == 'false' ]] ||
   fail 'Headlamp updates must require deliberate login verification before merge'
 
-deployed_version="$(yq e -r '.spec.chart.spec.version // ""' "${headlamp_release}")"
+deployed_version="$(awk '
+  $1 == "chart:" && $2 == "headlamp" { in_headlamp_chart = 1; next }
+  in_headlamp_chart && $1 == "version:" { print $2; exit }
+' "${headlamp_release}")"
 [[ "${deployed_version}" == '0.42.0' ]] ||
   fail "Headlamp must stay on the last Safari-verified release 0.42.0, got ${deployed_version}"
 version_is_allowed "${deployed_version}" ||
