@@ -12,11 +12,11 @@ spec:
   chart:
     spec:
       chart: headlamp
-      # 0.43.0 is reverted: its OIDC popup never closes in Safari (ITP suppresses
-      # the cross-window storage event the opener waits for) — upstream
-      # kubernetes-sigs/headlamp#6353, tracked in #2438. Renovate is gated off
-      # exactly 0.43.0 (.github/renovate.json); >= 0.43.1 bumps normally.
-      version: 0.44.0
+      # 0.43.0 introduced a Safari OIDC regression and 0.44.0 still reproduces
+      # it: the session succeeds, but ITP suppresses the cross-window storage
+      # event that redirects the opener. Pin the last Safari-verified release
+      # until upstream #6355 ships and its replacement is verified (#2438).
+      version: 0.42.0
       sourceRef:
         kind: HelmRepository
         name: headlamp
@@ -67,8 +67,8 @@ spec:
   values:
     replicaCount: ${headlamp_replicas:=1}
     # Use chart-native values for the main container's writable directories.
-    # When pluginsManager and its PVC are disabled, chart 0.44.0 renders no
-    # volumes parent at all; JSON post-render appends therefore fail before the
+    # When pluginsManager and its PVC are disabled, the chart renders no volumes
+    # parent at all; JSON post-render appends therefore fail before the
     # Deployment reaches Kubernetes.
     volumes:
       - name: tmp-dir
