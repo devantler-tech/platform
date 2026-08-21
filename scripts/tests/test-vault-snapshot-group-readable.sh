@@ -165,6 +165,12 @@ for target in "${uid_targets[@]}"; do
   [ "${snap_uid}" = "100" ] ||
     fail "${manifest}: the snapshot container's runAsUser is '${snap_uid}', not the image's baked 100"
 
+  # The group it WRITES with. runAsUser 100 alone is not enough: if this moved, the snapshot
+  # would land with a group the mirror does not share, and chmod 0640 could not help it.
+  snap_gid="$(yq "${pod}.initContainers[]|select(.name==\"snapshot\")|.securityContext.runAsGroup" "${path}")"
+  [ "${snap_gid}" = "1000" ] ||
+    fail "${manifest}: the snapshot container's runAsGroup is '${snap_gid}', not 1000 — it would write the snapshot with a group the mirror does not share"
+
   # Asserted ABSENT rather than equal to the pod default: an explicit value here is precisely how
   # the mirror would be re-pinned to the writer's UID.
   mirror_uid="$(yq "${pod}.containers[]|select(.name==\"mirror\")|.securityContext.runAsUser" "${path}")"
@@ -222,4 +228,29 @@ DRCHMODS
   fail "${dr_workflow}: no chmod targets the fetched snapshot '${dr_operand}' — the assertion is unbound"
 
 printf 'ok: %s — fetch writes %s and chmods that same path group-readable\n' "${dr_workflow}" "${dr_operand}"
+
+# The fetch pod's own identity decides the GROUP of the file it writes, so the chmod above is only
+# half of this leg too: a correct 0640 on a file whose group nobody shares is still unreadable.
+# Bound to the pod's own block — the workflow sets securityContext elsewhere as well.
+dr_pod="$(awk '/name: dr-snapshot-fetch/{f=1} f{print} f && /^[[:space:]]*containers:/{exit}' "${dr_path}")"
+[ -n "${dr_pod}" ] || fail "${dr_workflow}: could not locate the dr-snapshot-fetch pod spec"
+
+dr_field() { printf '%s\n' "${dr_pod}" | sed -n "s/^[[:space:]]*$1:[[:space:]]*//p" | head -1; }
+
+dr_uid="$(dr_field runAsUser)"
+dr_gid="$(dr_field runAsGroup)"
+dr_fsg="$(dr_field fsGroup)"
+
+case "${dr_uid}" in
+  '') fail "${dr_workflow}: the fetch pod sets no runAsUser" ;;
+  *[!0-9]*) fail "${dr_workflow}: fetch pod runAsUser '${dr_uid}' is not numeric" ;;
+esac
+[ "${dr_uid}" -ge 10000 ] ||
+  fail "${dr_workflow}: fetch pod runAsUser ${dr_uid} is a low host UID (CKV_K8S_40) — re-coupled to the writer"
+[ "${dr_gid}" = "1000" ] ||
+  fail "${dr_workflow}: fetch pod runAsGroup is '${dr_gid}', not 1000 — the restore could not read what it fetched"
+[ "${dr_fsg}" = "1000" ] ||
+  fail "${dr_workflow}: fetch pod fsGroup is '${dr_fsg}', not 1000 — the restore could not read what it fetched"
+
+printf 'ok: %s — fetch pod runs %s:%s (fsGroup %s)\n' "${dr_workflow}" "${dr_uid}" "${dr_gid}" "${dr_fsg}"
 printf 'PASS: both vault-snapshot writers make the snapshot group-readable, and the UID split holds\n'
