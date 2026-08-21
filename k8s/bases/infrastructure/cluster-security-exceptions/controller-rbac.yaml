@@ -78,9 +78,13 @@ spec:
     # Read the effect off THIS scan only. The kubescape-operator's stored scan
     # resources apply no exceptions at all — their appliedIgnoreRules is empty —
     # so a count taken there says nothing about whether an exception works
-    # (#2823). Headlamp is fixed at the root (SA scoped to read-only
-    # cluster-reader); Flux and Velero are exempted by-design in
-    # wildcard-rbac.yaml.
+    # (#2823). To explain whether a raw in-cluster finding is covered, use the
+    # read-only client-side oracle in docs/kubescape-exception-oracle.md. It
+    # hydrates each summary with an individual GET and matches the generated
+    # exception artifact against the kubescape.io/workload-* labels; it does
+    # not parse kind or name out of wlid. Headlamp is fixed at the root (SA
+    # scoped to read-only cluster-reader); Flux and Velero are exempted
+    # by-design in wildcard-rbac.yaml.
     - controlID: C-0188
       action: ignore
   match:

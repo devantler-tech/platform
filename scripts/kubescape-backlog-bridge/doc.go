@@ -10,9 +10,14 @@
 // # Modes
 //
 // `-mode=report` (the default) prints the themes it would file and writes
-// nothing. `-mode=write` reconciles them into GitHub issues in `-repo`, which
-// is the default-off half: reporting stays the default, so enabling writes is
-// an explicit, reversible step rather than something a run falls into.
+// nothing. `-mode=oracle` prints one row per raw failed posture pair and names
+// every declared exception policy that matches it. It is the read-only
+// exception oracle documented in docs/kubescape-exception-oracle.md: locally
+// removing one policy from the generated artifact changes the same row from
+// `excepted` to `unexcepted`, without changing the cluster. `-mode=write`
+// reconciles themes into GitHub issues in `-repo`, which is the default-off
+// half: reporting stays the default, so enabling writes is an explicit,
+// reversible step rather than something a run falls into.
 //
 // # Write mode must be serialized
 //
@@ -215,6 +220,14 @@
 //	  -exceptions exceptions.json \
 //	  -posture ns-a-workload.json -posture ns-b-workload.json \
 //	  -cve ns-a-workload-image-1.json -cve ns-a-workload-image-2.json
+//
+// To explain exactly which policy accepts each raw failed posture pair, pass
+// the same hydrated posture inputs to oracle mode. The component identity is
+// read from the `kubescape.io/workload-*` labels, never parsed from `wlid`:
+//
+//	go run ./scripts/kubescape-backlog-bridge \
+//	  -mode oracle -exceptions exceptions.json \
+//	  -posture ns-a-workload.json -posture ns-b-workload.json
 //
 // The same invocation reconciling issues, once a sweep really did pass every
 // object — `-inputs-complete` is what authorises closing and updating, so it
