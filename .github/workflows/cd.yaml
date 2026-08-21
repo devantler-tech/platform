@@ -28,6 +28,30 @@ concurrency:
   queue: max
 
 jobs:
+  # A workflow-dispatched deployment is the recovery path for a direct push to
+  # main, so it has no pull_request or merge_group event for ci.yaml to inspect.
+  # Validate every persistence-bearing resource in the dispatched revision
+  # here. The shared deploy action separately compares removals with the live
+  # Flux-owned objects, because a commit parent is not proof that an earlier
+  # direct push ever reached production.
+  validate-pvc-prune-safety:
+    name: 💾 Validate Two-Stage PVC Retirement
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository and its parent
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: 💾 Validate two-stage PVC retirement
+        env:
+          PVC_PRUNE_BASE_SHA: ${{ github.sha }}
+        run: |
+          shellcheck scripts/tests/test-pvc-prune-safety.sh
+          bash scripts/tests/test-pvc-prune-safety.sh
+
   # The merge-queue deploy in ci.yaml cannot run without this validator passing,
   # so leaving it out here made the manual path the WAY AROUND the gate: a direct
   # push to main plus a dispatch reconciled the manifests with no authorization
@@ -36,6 +60,7 @@ jobs:
   # deploy secrets in scope, and a gate belongs before that, not inside it.
   validate-eks-authorization:
     name: 🔐 Validate EKS Authorization
+    needs: validate-pvc-prune-safety
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
@@ -147,6 +172,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
+      actions: read # read a prior run attempt status, to prove an orphaned fence holder is dead (deploy-prod recover-orphaned-fence)
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

@@ -1,0 +1,180 @@
+---
+# wedding-app — the tenant that was already covered before this policy was
+# generalised. Both approved hostnames, so the route is admitted.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: approved-both-hostnames
+  namespace: wedding-app
+spec:
+  hostnames:
+    - wedding.platform.devantler.tech
+    - wedding.platform.lan
+  rules:
+    - backendRefs:
+        - name: wedding-app
+          port: 80
+---
+# Claiming an unrelated subdomain of the shared wildcard.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: foreign-hostname
+  namespace: wedding-app
+spec:
+  hostnames:
+    - totally-unrelated.platform.devantler.tech
+  rules:
+    - backendRefs:
+        - name: wedding-app
+          port: 80
+---
+# No hostnames at all: matches EVERY hostname on the listener, which is the
+# strongest form of the wildcard claim.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: no-hostnames
+  namespace: wedding-app
+spec:
+  rules:
+    - backendRefs:
+        - name: wedding-app
+          port: 80
+---
+# One approved hostname smuggled alongside one that is not: AnyNotIn must reject
+# the whole route rather than admitting it because a valid entry is present.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: approved-plus-smuggled
+  namespace: wedding-app
+spec:
+  hostnames:
+    - wedding.platform.lan
+    - smuggled.platform.devantler.tech
+  rules:
+    - backendRefs:
+        - name: wedding-app
+          port: 80
+---
+# ascoachingogvaner — apex customer domain plus the local hostname.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: approved-apex-and-lan
+  namespace: ascoachingogvaner
+spec:
+  hostnames:
+    - ascoachingogvaner.dk
+    - ascoachingogvaner.platform.lan
+  rules:
+    - backendRefs:
+        - name: ascoachingogvaner
+          port: 80
+---
+# The www redirect route the tenant also ships.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: approved-www-redirect
+  namespace: ascoachingogvaner
+spec:
+  hostnames:
+    - www.ascoachingogvaner.dk
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            hostname: ascoachingogvaner.dk
+            statusCode: 301
+---
+# THE CROSS-TENANT CASE, and the reason this policy had to stop being
+# wedding-app-only: one tenant claiming ANOTHER tenant's hostname. Before the
+# generalisation this route was admitted, because no rule matched this namespace.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: steals-wedding-hostname
+  namespace: ascoachingogvaner
+spec:
+  hostnames:
+    - wedding.platform.devantler.tech
+  rules:
+    - backendRefs:
+        - name: ascoachingogvaner
+          port: 80
+---
+# doggy-countdown — its single declared production hostname.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: approved-simba
+  namespace: doggy-countdown
+spec:
+  hostnames:
+    - simba.platform.devantler.tech
+  rules:
+    - backendRefs:
+        - name: doggy-countdown
+          port: 80
+---
+# Also previously unprotected: a hostname-less route in the third tenant.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: no-hostnames-third-tenant
+  namespace: doggy-countdown
+spec:
+  rules:
+    - backendRefs:
+        - name: doggy-countdown
+          port: 80
+---
+# A ksail tenant namespace with no allow-list rule: fail closed, so onboarding a
+# tenant without adding its hostnames is loud rather than silently unrestricted.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: unlisted-tenant-route
+  namespace: future-tenant
+spec:
+  hostnames:
+    - future-tenant.platform.devantler.tech
+  rules:
+    - backendRefs:
+        - name: future-tenant
+          port: 80
+---
+# A platform namespace (not ksail-managed): outside this boundary entirely, so no
+# rule may fire on it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: platform-route
+  namespace: platform-ns
+spec:
+  hostnames:
+    - headlamp.platform.devantler.tech
+  rules:
+    - backendRefs:
+        - name: headlamp
+          port: 80
+---
+# CONTROL for the platform-author carve-out: byte-identical to the route in
+# platform-author/resources.yaml. Applied by the TENANT ServiceAccount it must be
+# denied, which is what proves the carve-out there is doing the work rather than
+# the rule simply not matching.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: platform-applied-route
+  namespace: wedding-app
+spec:
+  hostnames:
+    - platform-owned.platform.devantler.tech
+  rules:
+    - backendRefs:
+        - name: platform-service
+          port: 80

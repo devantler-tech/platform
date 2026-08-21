@@ -1,0 +1,110 @@
+# Keeps every Homepage-discovered service inside a group the dashboard actually
+# declares.
+#
+# Why: Homepage's group ORDER, icon and position come from the `layout` block in
+# k8s/bases/apps/homepage/config-map.yaml, but the group NAME is chosen by an
+# annotation on a route — often in another repository entirely. Nothing bound the
+# two surfaces, so a route could invent a group, and Homepage would silently
+# accept it: an undeclared group still renders, but falls to the BOTTOM of the
+# page (after every declared group, bookmarks included) with a generic icon.
+# The failure is cosmetic-looking and completely silent, which is why it went
+# unnoticed in two places at once — `Fun` and `Infrastructure as Code` both
+# rendered below the bookmark rail because neither was declared.
+#
+# Homepage has no native way to restrict discovery to declared groups (its
+# Kubernetes config offers only `gethomepage.dev/instance` filtering), so the
+# binding has to happen at admission. This is that binding: a route may only
+# name a group the dashboard declares.
+#
+# Scope: every namespace, and deliberately NOT limited to tenant-applied
+# resources — the platform's own routes are just as able to invent a group, and
+# `Infrastructure as Code` (a platform route, in this repo) is exactly how this
+# was found. There is no userInfo matching here, so background scanning stays on
+# and existing drift surfaces in the PolicyReports rather than only at admission.
+#
+# SERVICE groups only. The bookmark groups in the same layout block (GitHub,
+# Media, Banking, …) are intentionally absent: Homepage renders services and
+# bookmarks as separate sections, so the config-map keeps the two name sets
+# distinct, and a service claiming a bookmark group's name would paint that
+# heading twice with different contents under each.
+#
+# KEEP IN SYNC with the `layout` block in k8s/bases/apps/homepage/config-map.yaml
+# — adding a group there means adding it here, in the same PR. That is a
+# reviewable, fail-loud edit: a route naming an undeclared group is rejected at
+# admission with the list below, instead of silently sinking to the bottom of the
+# dashboard. The list is duplicated rather than read from the ConfigMap on
+# purpose: a Kyverno context lookup would make every annotated route in the
+# cluster un-appliable if that ConfigMap ever became unreadable, trading a silent
+# cosmetic bug for a reconciliation outage.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-homepage-service-groups
+  annotations:
+    policies.kyverno.io/title: Restrict Homepage Service Groups
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/subject: HTTPRoute, Ingress
+    policies.kyverno.io/minversion: 1.13.0
+    policies.kyverno.io/description: >-
+      Requires every route that opts into Homepage discovery
+      (gethomepage.dev/enabled: "true") to name a service group declared in the
+      dashboard's layout, so a discovered service cannot invent a group and sink
+      to the bottom of the page with a generic icon.
+spec:
+  # Rule-level `validate.failureAction` below, not the spec-level
+  # `validationFailureAction`: Kyverno's own v1 CRD describes that one as
+  # "Deprecated, use validationFailureAction under the validate rule instead."
+  # The eleven older policies here still use the deprecated form — it is honoured
+  # on the deployed v1.18.2 — and migrating them is tracked separately; a new
+  # policy should not add to that debt.
+  rules:
+    - name: declared-service-group
+      match:
+        any:
+          - resources:
+              kinds:
+                # HTTPRoute is what this platform actually uses. Ingress is
+                # Homepage's other discovery source and is included so a future
+                # Ingress cannot bypass the guard.
+                - HTTPRoute
+                - Ingress
+      preconditions:
+        all:
+          # Only routes that opt into the dashboard. Everything else is none of
+          # this policy's business.
+          - key: "{{ request.object.metadata.annotations.\"gethomepage.dev/enabled\" || 'false' }}"
+            operator: Equals
+            value: "true"
+      validate:
+        failureAction: Enforce
+        message: >-
+          A route with gethomepage.dev/enabled="true" must set
+          gethomepage.dev/group to a service group declared in the Homepage
+          layout (k8s/bases/apps/homepage/config-map.yaml): Internal Developer
+          Platform, Kubernetes, Observability, Security, Diagnostics, Device
+          Management, Infrastructure as Code, Cloud, Network, Finance, Analytics,
+          Personal Sites, or Customer Sites. An undeclared group still renders,
+          but sorts below every declared group with a generic icon. Bookmark
+          group names are deliberately not accepted here.
+        deny:
+          conditions:
+            any:
+              # The 'MISSING' sentinel is not in the allow-list, so an absent
+              # annotation is denied by the same condition as a misspelled one.
+              - key: "{{ request.object.metadata.annotations.\"gethomepage.dev/group\" || 'MISSING' }}"
+                operator: NotIn
+                value:
+                  - Internal Developer Platform
+                  - Kubernetes
+                  - Observability
+                  - Security
+                  - Diagnostics
+                  - Device Management
+                  - Infrastructure as Code
+                  - Cloud
+                  - Network
+                  - Finance
+                  - Analytics
+                  - Personal Sites
+                  - Customer Sites

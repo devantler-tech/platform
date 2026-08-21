@@ -154,7 +154,7 @@
       "enabled": false
     },
     {
-      "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in .github/actions/deploy-prod/action.yml and dr-rebuild.yaml) and the ksail-operator OCI Helm chart (dedicated github-releases custom manager, helm-release.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a separate Dependabot PR. Both grouped deps now resolve via the same devantler-tech/ksail github-releases datasource, so they always move to the same real ksail release in lockstep (no more split CLI=7.74.0 / chart=7.74.1 bumps), and the devantler-tech 0-day minimumReleaseAge rule below still matches these first-party deps, so the grouped PR opens immediately.",
+      "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in .github/actions/deploy-prod/action.yml and dr-rebuild.yaml) and the ksail-operator OCI Helm chart (dedicated github-releases custom manager, helm-release.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a separate Dependabot PR. Both grouped deps now resolve via the same devantler-tech/ksail github-releases datasource, so they always move to the same real ksail release in lockstep (no more split CLI=7.74.0 / chart=7.74.1 bumps), while retaining the repository-wide minimumReleaseAge cooldown for privileged deployment tooling.",
       "matchPackageNames": [
         "devantler-tech/ksail",
         "ghcr.io/devantler-tech/charts/ksail-operator",
@@ -205,16 +205,6 @@
       "automerge": true
     },
     {
-      "description": "Internal devantler-tech dependencies are trusted (our own code) — bump immediately with no release-age cooldown (e.g. the KSAIL_VERSION custom-manager dep devantler-tech/ksail).",
-      "matchPackageNames": [
-        "devantler-tech/**",
-        "github.com/devantler-tech/**",
-        "ghcr.io/devantler-tech/**",
-        "@devantler-tech/**"
-      ],
-      "minimumReleaseAge": "0 days"
-    },
-    {
       "description": "Talos Linux distribution upgrades (tracked by the custom manager above; depName siderolabs/talos). Renovate opens the PR automatically — the same flow as every other dependency, with no Dependency Dashboard approval gate. It is NOT automerged: the custom manager bumps the talos.version pin in ksail.prod.yaml (KSail derives the installer image from it plus the extensions list), but the Hetzner iso snapshot id in ksail.prod.yaml is not a version string and cannot be auto-derived, and a lockstep kubernetesVersion bump may be needed when Talos's supported Kubernetes range moves. CI's system-test also runs off ksail.yaml (docker), so it never boots this prod config. A maintainer completes the iso (and any kubernetesVersion) edit on the open PR, then merges. automerge:false is placed last so it overrides the broad talos/** and major-update automerge rules above.",
       "matchPackageNames": ["siderolabs/talos"],
       "automerge": false,
@@ -233,16 +223,23 @@
       "automerge": false
     },
     {
-      "description": "headlamp chart 0.43.0 is EXCLUDED (k8s/bases/apps/headlamp/helm-release.yaml, reverted to 0.42.0): its in-cluster OIDC login is broken in Safari — the sign-in popup's only close signal is a cross-window localStorage storage event, which Safari ITP suppresses after the popup's cross-site Dex/GitHub hops, so the popup hangs on 'Redirecting to main page…' forever (upstream kubernetes-sigs/headlamp#6353; fix PR #6355 unmerged; tracked in #2438). The negated regex blocks exactly 0.43.0 while letting the NEXT release (>= 0.43.1, minor or major) bump normally — on that bump, verify Safari login end-to-end per #2438 before considering the regression closed, then remove this rule.",
+      "description": "headlamp is HARD-PINNED at 0.42.0 (k8s/bases/apps/headlamp/helm-release.yaml): 0.43.0 introduced an in-cluster OIDC login regression in Safari, and the same broken popup handoff was reproduced after upgrading to 0.44.0 — the session cookie succeeds, but Safari ITP suppresses the cross-window localStorage storage event after the popup's cross-site Dex/GitHub hops, so the popup never redirects its opener (upstream kubernetes-sigs/headlamp#6353; fix PR #6355 unmerged; tracked in #2438). Keep the last Safari-verified release until a released upstream fix is manually verified end-to-end; automerge:false placed last so an unverified Headlamp update cannot inherit the minor/patch automerge defaults above.",
       "matchDatasources": ["helm"],
       "matchPackageNames": ["headlamp"],
-      "allowedVersions": "!/^v?0\\.43\\.0$/"
+      "allowedVersions": "/^v?0\\.42\\.0$/",
+      "automerge": false
     },
     {
       "description": "KubeVirt and CDI ship as VENDORED upstream operator manifests (k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml, .../cdi/cdi-operator.yaml) — thousands of lines of CRDs, RBAC and the operator Deployment vendored as one unit from each release's published asset. The kubernetes manager only sees the `image:` lines inside them, so a Renovate bump rewrites the operator image alone and silently skews it against the CRDs/RBAC vendored next to it; the system-test would still pass bring-up (operators tolerate startup skew) so automerge would land the skew unseen. Keep the update PR as the new-release signal but require a maintainer to re-vendor the full manifest from the matching release before merging. automerge:false placed last so it overrides the major/minor/patch automerge defaults above.",
       "matchPackageNames": ["quay.io/kubevirt/**"],
       "automerge": false,
       "addLabels": ["vendored-manifest"]
+    },
+    {
+      "description": "kubelet-serving-cert-approver ships only raw Kubernetes install manifests, so the custom-managed kustomize remote resource can change privileged controller/RBAC YAML in the prod infrastructure-controllers layer. Keep Renovate visibility, but require maintainer review for every release bump so the upstream manifest and local PDB selector are re-checked before deployment. automerge:false placed last so it overrides the major/minor/patch automerge defaults above.",
+      "matchPackageNames": ["alex1989hu/kubelet-serving-cert-approver"],
+      "automerge": false,
+      "addLabels": ["security/review-required"]
     }
   ],
   "ignorePaths": ["k8s/bases/infrastructure/cluster-policies/samples"]

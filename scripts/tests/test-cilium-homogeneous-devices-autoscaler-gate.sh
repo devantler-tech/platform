@@ -24,20 +24,30 @@ guard_calls="$(
 readonly guard_calls
 guard_call_count="$(printf '%s\n' "${guard_calls}" | grep -c .)"
 readonly guard_call_count
-[[ "${guard_call_count}" -eq 2 ]] ||
-  fail 'the deploy action must invoke the rollout guard exactly twice'
+[[ "${guard_call_count}" -eq 3 ]] ||
+  fail 'the deploy action must invoke the rollout guard exactly three times'
 first_guard_call_line="$(printf '%s\n' "${guard_calls}" | sed -n '1p')"
 second_guard_call_line="$(printf '%s\n' "${guard_calls}" | sed -n '2p')"
-readonly first_guard_call_line second_guard_call_line
+third_guard_call_line="$(printf '%s\n' "${guard_calls}" | sed -n '3p')"
+readonly first_guard_call_line second_guard_call_line third_guard_call_line
 
 push_line="$(grep -nF 'id: publish_platform_manifest' "${deploy_action}" | cut -d: -f1)"
 reconcile_line="$(grep -nF 'run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile' "${deploy_action}" | cut -d: -f1)"
+revision_line="$(grep -nF 'id: wait_flux_revision' "${deploy_action}" | cut -d: -f1)"
 cluster_update_line="$(grep -nF 'run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update' "${deploy_action}" | cut -d: -f1)"
 
 ((first_guard_call_line < push_line)) ||
   fail 'the first rollout guard must suspend autoscaling before publishing manifests'
-((second_guard_call_line > reconcile_line && second_guard_call_line > cluster_update_line)) ||
-  fail 'the second rollout guard must reassert or release the gate after deployment'
+# The middle call restores a RELEASED gate's suspension between the
+# exact-revision proof and cluster update. Both bounds are load-bearing: after
+# the proof because autoscaling may not resume before the safe artifact is
+# deployed, and before cluster update because that step waits for the
+# cluster-autoscaler Deployment and KSail treats zero replicas as never-ready —
+# a released gate would otherwise hang the deploy that releases it.
+((second_guard_call_line > revision_line && second_guard_call_line < cluster_update_line)) ||
+  fail 'the second rollout guard must restore autoscaling after the revision proof and before cluster update'
+((third_guard_call_line > reconcile_line && third_guard_call_line > cluster_update_line)) ||
+  fail 'the third rollout guard must reassert or release the gate after deployment'
 
 grep -Fq 'id: cilium_rollout_gate' "${deploy_action}" ||
   fail 'the pre-publish guard must expose whether the rollout gate is active'
@@ -86,6 +96,28 @@ cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.y
   "${fixture_controllers}/kustomization.yaml"
 cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/cilium/components/homogeneous-devices/kustomization.yaml" \
   "${fixture_component}/kustomization.yaml"
+
+# CONSTRUCT the active-gate state these assertions exercise instead of
+# inheriting whatever the repository currently ships (platform#3031). The
+# overrides below exist only while a rollout is being stepped, so once one
+# completes and they are removed, an inherited fixture starts INACTIVE and every
+# active-gate assertion here either fails for the wrong reason or passes
+# vacuously — the test would stop covering the gate exactly when the gate is
+# most likely to be reintroduced incorrectly. Appending keeps the block valid:
+# these lines extend the component's trailing `patch: |` literal.
+if ! grep -Eq '^[[:space:]]*type:[[:space:]]*OnDelete[[:space:]]*$' \
+  "${fixture_component}/kustomization.yaml"; then
+  cat >>"${fixture_component}/kustomization.yaml" <<'ACTIVE_GATE'
+      - op: replace
+        path: /spec/values/updateStrategy
+        value:
+          rollingUpdate: null
+          type: OnDelete
+      - op: add
+        path: /spec/upgrade/disableWait
+        value: true
+ACTIVE_GATE
+fi
 
 fake_kubectl="${tmp_dir}/kubectl"
 fake_curl="${tmp_dir}/curl"
@@ -340,11 +372,122 @@ run_guard --before-publish
   fail 'the pre-publish phase must release cluster update after the safe gate removal'
 [[ "$(<"${state_dir}/replicas")" == '0' ]] ||
   fail 'the pre-publish phase must not restore autoscaling before the safe artifact is deployed'
-run_guard --after-deploy true
+# `ksail cluster update` waits for the cluster-autoscaler Deployment and KSail
+# treats zero replicas as never-ready, so a released gate MUST hand that step a
+# running autoscaler. Restoring only after deployment fails the very deploy that
+# releases the gate — observed in prod on 2026-08-09, where cluster update timed
+# out polling a Deployment the gate itself held at zero.
+run_guard --after-revision-ready
 [[ "$(<"${state_dir}/replicas")" == '1' ]] ||
-  fail 'removing the rollout gate must restore the owned replica count after deployment'
+  fail 'a released gate must restore autoscaling before cluster update waits on it'
 [[ ! -s "${state_dir}/previous-replicas" ]] ||
   fail 'restoring autoscaling must release the rollout guard ownership marker'
+run_guard --after-deploy true
+[[ "$(<"${state_dir}/replicas")" == '1' ]] ||
+  fail 'the post-deploy phase must leave an already-restored autoscaler running'
+
+# A remembered count of ZERO — the autoscaler was already scaled down when the
+# gate claimed it — cannot be "restored" into something cluster update can wait
+# on. Honouring it would hand that step the same never-ready Deployment AND
+# clear the ownership marker a retry needs, so the release must fail loudly and
+# keep the marker instead.
+printf '0\n' >"${state_dir}/previous-replicas"
+printf '0\n' >"${state_dir}/replicas"
+# Pass revision_ready=true and assert the MESSAGE, not merely a non-zero exit:
+# run_guard defaults that flag to false, so a phase that rejected it would fail
+# for an unrelated reason and this test would pass without ever reaching the
+# zero-count branch it exists to cover.
+if zero_count_output="$(run_guard --after-revision-ready true 2>&1)"; then
+  fail 'releasing a gate that owns a remembered zero replica count must fail loudly'
+fi
+[[ "${zero_count_output}" == *'remembered autoscaler count of 0'* ]] ||
+  fail "the zero-count refusal must name the conflict; got: ${zero_count_output}"
+# The remediation has to change the REMEMBERED value, or an operator who
+# follows it hits this same refusal on the retry.
+[[ "${zero_count_output}" == *"${previous_replicas_annotation:-cilium-device-rollout-previous-replicas}"* ]] ||
+  fail "the zero-count refusal must name the annotation that records the count; got: ${zero_count_output}"
+[[ "$(<"${state_dir}/previous-replicas")" == '0' ]] ||
+  fail 'a refused zero-count release must preserve the ownership marker for a retry'
+# The remediation runs against prod, but an operator pastes it from whatever
+# context their workstation currently has. Every mutation the guard performs
+# itself pins admin@prod, so the commands it hands out must too, or the retry
+# silently edits an identically named Deployment in another cluster and the
+# production annotation stays at 0.
+#
+# Assert each command SEPARATELY. The refusal emits an `annotate` and a `scale`,
+# so a single substring test over the combined output passes while either one of
+# them is missing the flag — the other's flag satisfies it. Bound each match at
+# `&` and `.` so it cannot run across the `&&` into its sibling command.
+zero_count_annotate="$(
+  printf '%s\n' "${zero_count_output}" |
+    grep -o 'kubectl[^&.]*annotate deployment[^&.]*' || true
+)"
+zero_count_scale="$(
+  printf '%s\n' "${zero_count_output}" |
+    grep -o 'kubectl[^&.]*scale deployment[^&.]*' || true
+)"
+[[ "${zero_count_annotate}" == *'--context admin@prod'* ]] ||
+  fail "the zero-count remediation's annotate command must pin the prod context; got: ${zero_count_annotate:-<no annotate command emitted>}"
+[[ "${zero_count_scale}" == *'--context admin@prod'* ]] ||
+  fail "the zero-count remediation's scale command must pin the prod context; got: ${zero_count_scale:-<no scale command emitted>}"
+
+# The refusal has to cover EVERY release path, not just this phase. The normal
+# deploy's always() post-deploy reassert invokes --after-deploy, and the DR
+# workflow releases exclusively through it, so a refusal that guards only
+# --after-revision-ready is undone moments later: restore_autoscaler_if_owned
+# scales to the remembered zero and then DELETES the annotation, destroying the
+# very marker this refusal just preserved.
+printf '0\n' >"${state_dir}/replicas"
+if zero_count_after_deploy="$(run_guard --after-deploy true 2>&1)"; then
+  fail 'the post-deploy release path must also refuse a remembered zero replica count'
+fi
+[[ "${zero_count_after_deploy}" == *'remembered autoscaler count of 0'* ]] ||
+  fail "the post-deploy zero-count refusal must name the conflict; got: ${zero_count_after_deploy}"
+[[ "$(<"${state_dir}/previous-replicas")" == '0' ]] ||
+  fail 'a refused post-deploy zero-count release must preserve the ownership marker'
+
+# A ZERO-PADDED zero is the same conflict wearing a different spelling, and the
+# annotation is operator-writable: the refusal above hands an operator an
+# `annotate ... =<count>` command, so "00" is a plausible thing to arrive here.
+# require_replica_count accepts it (^[0-9]+$), so a refusal that tests only the
+# canonical "0" lets it through and does exactly the damage the refusal exists to
+# prevent — scale the Deployment to zero, then DELETE the ownership annotation a
+# retry needs. Assert the marker survives AND that nothing was scaled.
+printf '00\n' >"${state_dir}/previous-replicas"
+printf '0\n' >"${state_dir}/replicas"
+if zero_padded_output="$(run_guard --after-revision-ready true 2>&1)"; then
+  fail 'releasing a gate that owns a zero-padded remembered count must fail loudly'
+fi
+[[ "${zero_padded_output}" == *'remembered autoscaler count of 0'* ]] ||
+  fail "the zero-padded refusal must name the conflict; got: ${zero_padded_output}"
+[[ "$(<"${state_dir}/previous-replicas")" == '00' ]] ||
+  fail 'a refused zero-padded release must preserve the ownership marker for a retry'
+# The fake kubectl echoes back whatever it was scaled to, so a padded value that
+# slipped through would leave "00" here rather than the "0" nothing-happened
+# state. In prod the API canonicalises instead, and wait_for_replicas would then
+# compare "00" against "0" and block until it times out.
+[[ "$(<"${state_dir}/replicas")" == '0' ]] ||
+  fail "a refused zero-padded release must not scale the Deployment; got: $(<"${state_dir}/replicas")"
+
+# An all-digit value past the shell's signed 64-bit range must be REFUSED, not
+# silently wrapped. 18446744073709551617 is 2^64+1, which $(( )) folds to 1 — so
+# normalising with arithmetic would "restore" one replica and delete both
+# ownership annotations, which is the same destruction the zero refusal prevents,
+# reached by a different route. spec.replicas is an int32, so this is out of
+# range on its face.
+printf '18446744073709551617\n' >"${state_dir}/previous-replicas"
+printf '0\n' >"${state_dir}/replicas"
+if overflow_output="$(run_guard --after-revision-ready true 2>&1)"; then
+  fail 'releasing a gate that owns an out-of-range remembered count must fail loudly'
+fi
+[[ "${overflow_output}" == *'outside the Kubernetes replica range'* ]] ||
+  fail "the out-of-range refusal must name the conflict; got: ${overflow_output}"
+[[ "$(<"${state_dir}/previous-replicas")" == '18446744073709551617' ]] ||
+  fail 'a refused out-of-range release must preserve the ownership marker for a retry'
+[[ "$(<"${state_dir}/replicas")" == '0' ]] ||
+  fail "a refused out-of-range release must not scale the Deployment; got: $(<"${state_dir}/replicas")"
+
+: >"${state_dir}/previous-replicas"
 
 printf '0\n' >"${state_dir}/replicas"
 run_guard --after-deploy true

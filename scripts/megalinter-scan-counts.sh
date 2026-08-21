@@ -17,13 +17,36 @@
 #
 # HOW THE INVOCATIONS WERE DERIVED
 # Both command lines are copied from MegaLinter's own log, which prints the exact command it ran:
-#   - Command: [checkov --skip-path tests/ --config-file /action/lib/.automation/.checkov.yml --directory .]
+#   - Command: [checkov --skip-path tests/ --config-file /action/lib/.automation/.checkov.yml
+#     --skip-path .agents --skip-path megalinter-reports --directory . --skip-framework secrets]
 #   - Command: [trivy fs --scanners vuln,misconfig --exit-code 1 --ignorefile
-#     .trivyignore.yaml --skip-dirs tests .]
+#     .trivyignore.yaml --skip-dirs tests --config-data .trivy/data .]
 # Read them from a "🧹 Lint - mega-linter" job log if they ever need re-deriving:
 #   gh api repos/devantler-tech/platform/actions/jobs/<job-id>/logs | grep -aE '^\S+ - Command: '
 #
-# TWO DELIBERATE DIFFERENCES FROM THE CI COMMAND, both verified not to change the counts:
+# ⚠️ SCAN THE REPOSITORY ROOT. Narrowing trivy's target to k8s/ INFLATES the count, silently.
+# .trivyignore.yaml's dispositions are path-scoped, and every one of them is written relative to the
+# repository root (k8s/bases/infrastructure/**, k8s/clusters/prod/bootstrap/config-map.yaml, ...).
+# Trivy matches those globs against paths relative to the SCAN ROOT, so a scan rooted at k8s/ sees
+# bases/infrastructure/... instead, and the path-scoped entries stop matching. They deactivate with
+# no warning, and the run re-reports findings this repository has already dispositioned.
+#
+# Measured on this tree with trivy v0.74.0, same subcommand and same flags, scan root the ONLY
+# variable: `... .` reports 66 findings across 16 targets, `... k8s/` reports 133 across 62 — the
+# count doubles. Every check ID that appears only in the k8s/-rooted arm (KSV-0022, KSV-0037,
+# KSV-0053, KSV-0109, KSV-0114, KSV-0117) is already dispositioned there; KSV-0037 alone
+# accounts for 47 of the 67 extra. A few IDs rise without being new to that arm (KSV-0041, KSV-0046,
+# KSV-0056) because their disposition covers only some paths, so the scoped subset deactivates while
+# their other instances legitimately remain.
+#
+# The failure direction is what makes this dangerous: it looks like more backlog to work off, not
+# like a broken measurement, so it reads as plausible and gets believed. Run the command above from
+# the repository root, or the number is not comparable to CI's.
+#
+# TWO DELIBERATE DIFFERENCES FROM THE CI COMMAND, both verified not to change the counts.
+# (--skip-framework secrets is NOT one of them: CI passes it too since MegaLinter 10.0.0, so
+# mirroring it keeps the invocations aligned rather than diverging them. The two --skip-path
+# entries CI adds cover directories that do not exist here.)
 #
 #   1. --config-file is dropped. It points inside the MegaLinter container
 #      (/action/lib/.automation/.checkov.yml) and does not exist on a developer machine. Verified:
@@ -43,8 +66,19 @@ set -euo pipefail
 # not fatal — verified across checkov 3.3.0/3.3.2 (identical FAILED counts, different PASSED) and
 # trivy 0.71.2/0.72.0 (identical) — but a large enough gap can add or retire rules, which would look
 # exactly like backlog movement. Report the gap rather than silently attributing it to a fix.
-readonly CI_CHECKOV_VERSION='3.3.2'
-readonly CI_TRIVY_VERSION='0.71.2'
+readonly CI_CHECKOV_VERSION='3.3.9'
+readonly CI_TRIVY_VERSION='0.73.0'
+
+# The MegaLinter release those two versions came from. It is not a local concept — nothing here runs
+# MegaLinter — but it is what makes the pair above checkable: MegaLinter bundles both scanners AND
+# the .checkov.yml this script deliberately drops, all inside one immutable image tag. So the image
+# version is the single provenance for every CI-side input this script models, and the only one of
+# them that a log states directly.
+#
+# Nothing in THIS repository selects it: the MegaLinter action is pinned in devantler-tech/actions,
+# so all three constants go stale here when that pin moves, silently and in both directions.
+# scripts/check-megalinter-version-drift.sh is the CI-side guard that catches it (#2853).
+readonly CI_MEGALINTER_VERSION='10.0.0'
 
 # The frameworks MegaLinter's checkov run reports, and their current contribution to the CI total.
 #
@@ -58,13 +92,48 @@ readonly CI_TRIVY_VERSION='0.71.2'
 # What protects against the known defect is structural rather than a check: this script always runs
 # checkov from the repository root with a literal ".", the invocation whose absence caused the
 # kubernetes framework to vanish in the first place.
-readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:15 secrets:0 github_actions:0)
+# MegaLinter 10.0.0 reports THREE frameworks, not four: its own checkov invocation now passes
+# --skip-framework secrets, so CI emits no secrets section at all. `secrets` is therefore removed
+# from this list — it records what CI reports, and a framework CI has stopped running is not a
+# framework whose absence should be reported against a local run. The local invocation below mirrors
+# that skip so the totals stay comparable, which is the whole point of both lists.
+#
+# kubernetes moved 15 -> 3 in the SAME step that took MegaLinter 9.6.0 -> 10.0.0 (checkov
+# 3.3.2 -> 3.3.9). That drop is NOT recorded as backlog progress, and #2787 must not read it as any:
+# a major scanner bump adds and retires rules, which is indistinguishable from findings being fixed
+# unless the two versions are run against the same tree. Nobody has done that here.
+#
+# Every framework CI runs is now at zero. The three that were left are all dispositioned with
+# scoped, resource-level skips naming their reason:
+#   CKV_K8S_38  CronJob.umami.umami-provision-tenants         (SA token mounted)   #3198
+#   CKV_K8S_40  CronJob.openbao.vault-snapshot                (high UID)           #2904
+#   CKV_K8S_40  Job.openbao.vault-snapshot-init               (high UID)           #2904
+# The two CKV_K8S_40 skips are DEFERRED, not accepted — #3202 removes them.
+readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:0 github_actions:0)
 
 # A parsing error means a file was NOT analysed, so findings can hide behind it. CI's run has
 # exactly one (in the cloudformation framework) and so does a correct local run, which is why this
 # is a ceiling rather than a zero check — refusing on any parsing error would refuse on the current,
 # CI-matching state. Anything above the ceiling is local-only and breaks comparability.
 readonly CI_CHECKOV_PARSING_ERRORS=1
+
+# TWO RESIDUAL DRIFT RISKS, REVIEWED AND ACCEPTED (#2853). Recorded here rather than fixed, because
+# in both cases the fix costs more than the failure it prevents. Revisit if either assumption moves.
+#
+#   Parsing-error IDENTITY, not just count. The check above compares a count, so one file becoming
+#   parsable while another stops would net to zero and pass. Detecting that needs per-file parse
+#   errors, which --compact suppresses — so closing it means dropping --compact and parsing full
+#   output, a large rewrite of every count path here. Accepted because the blast radius is small and
+#   self-limiting: the swap would have to happen between two runs, and any findings hidden behind the
+#   newly-unparsable file still surface in CI, which does not use this script. The count remains a
+#   ceiling, so the common direction — a NEW parse error appearing — is still caught.
+#
+#   Trivy's vulnerability DATABASE revision moves independently of the CLI version, so
+#   check-megalinter-version-drift.sh cannot pin it. No effect today: this repository reports 0
+#   vulnerabilities, and the misconfiguration counts that #2787 tracks come from built-in policies
+#   rather than the DB. Accepted on that basis, and the reason the two categories are reported
+#   SEPARATELY below is to keep it visible — a vulnerability count that moves without a code change
+#   is the signal that this assumption has expired.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
@@ -147,7 +216,7 @@ scan_checkov() {
   # from 73 to 31 with no error. Reproduced both with and without --skip-path, so it is the absolute
   # path itself.
   (cd "$REPO_ROOT" && checkov --skip-path tests/ --skip-framework kustomize \
-    --directory . --compact --quiet) >"$out" 2>&1 || rc=$?
+    --skip-framework secrets --directory . --compact --quiet) >"$out" 2>&1 || rc=$?
   if [ "$rc" -gt 1 ]; then
     printf 'checkov exited %d — refusing to report a count from an incomplete run\n' "$rc" >&2
     tail -n 5 "$out" >&2
@@ -210,7 +279,7 @@ scan_trivy() {
   local out="$OUT_DIR/trivy.txt" rc=0
   printf '\nRunning trivy (this takes ~1 minute)...\n' >&2
   (cd "$REPO_ROOT" && trivy fs --scanners vuln,misconfig --exit-code 1 \
-    --ignorefile .trivyignore.yaml --skip-dirs tests .) \
+    --ignorefile .trivyignore.yaml --skip-dirs tests --config-data .trivy/data .) \
     >"$out" 2>"$OUT_DIR/trivy.err" || rc=$?
   if [ "$rc" -gt 1 ]; then
     printf 'trivy exited %d — refusing to report a count from an incomplete run\n' "$rc" >&2
@@ -271,7 +340,7 @@ report_version() {
   fi
 }
 
-printf 'Scanner versions:\n'
+printf 'Scanner versions (CI runs them from MegaLinter %s):\n' "$CI_MEGALINTER_VERSION"
 if [ "$scanner" != trivy ]; then
   require_tool checkov 'brew install checkov'
   report_version checkov "$CI_CHECKOV_VERSION" "$(checkov --version 2>/dev/null | tr -d '[:space:]')"

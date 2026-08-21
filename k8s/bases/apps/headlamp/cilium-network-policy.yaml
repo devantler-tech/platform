@@ -17,30 +17,11 @@ spec:
     # Kube API for dashboard
     - toEntities:
         - kube-apiserver
-    # Dex OIDC (via Cloudflare proxy) + plugin downloads: pluginsManager
-    # resolves plugin metadata on artifacthub.io and fetches the archives
-    # from GitHub releases (helm-release.yaml). Pinned by FQDN instead of
-    # world:443 so a compromised pod cannot exfiltrate to arbitrary
-    # external services.
-    # github.com 302-redirects a release-asset download
-    # (github.com/<org>/<repo>/releases/download/...) to this release-asset
-    # CDN; without it every plugin archive fetch times out, the
-    # headlamp-plugin sidecar crashloops and the dashboard ships with no
-    # plugins. Same gap the kubescape policy already had to close.
-    # registry.npmjs.org: the headlamp-plugin sidecar bootstraps each plugin
-    # with `npx @headlamp-k8s/pluginctl ...`, which downloads pluginctl (and its
-    # deps) from the npm registry. Missing it -> npm ETIMEDOUT -> the sidecar
-    # crashloops on every (re)start; regression from the world:443 -> FQDN
-    # lockdown (#2019).
+    # Dex OIDC (via Cloudflare proxy). Dynamic plugin downloads are disabled
+    # in helm-release.yaml, so Headlamp no longer needs Artifact Hub, GitHub
+    # release assets, or npm egress at runtime.
     - toFQDNs:
         - matchName: "dex.${domain}"
-        - matchName: "artifacthub.io"
-        - matchName: "github.com"
-        - matchName: "api.github.com"
-        - matchName: "objects.githubusercontent.com"
-        - matchName: "raw.githubusercontent.com"
-        - matchName: "release-assets.githubusercontent.com"
-        - matchName: "registry.npmjs.org"
       toPorts:
         - ports:
             - port: "443"

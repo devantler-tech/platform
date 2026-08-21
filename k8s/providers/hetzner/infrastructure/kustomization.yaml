@@ -53,6 +53,10 @@ resources:
   # Coroot has no declarative per-alert exemption. See the file header for the
   # exemption list + why each is by-design.
   - coroot/cron-job-alert-autosuppressor.yaml
+  # Prod-only: turns the crossplane-sync-exporter's series into a Slack
+  # notification via Alertmanager, which nothing else consumes. See the file
+  # header for why this is a CronJob rather than a PrometheusRule.
+  - coroot/cron-job-crossplane-sync-alerter.yaml
   # Prod-only: the CloudNativePG datastore + backup wiring that lets the Coroot
   # SERVER run HA (replicas: 2 — set in the coroot-patch below). The operator
   # only honours replicas > 1 when spec.postgres is set, so this Postgres is the
@@ -60,6 +64,8 @@ resources:
   # (like umami-db) these live in this overlay, not the shared base. The
   # drain-safe PDB for the operator-built server StatefulSet ships here too.
   - coroot/cluster.yaml
+  - coroot/password-coroot-monitor.yaml
+  - coroot/external-secret-coroot-monitor.yaml
   - coroot/external-secret.yaml
   - coroot/object-store.yaml
   - coroot/scheduled-backup.yaml
@@ -118,16 +124,47 @@ resources:
   # (patches/add-ascoachingogvaner-dk-listeners.yaml, below), which references the
   # tenant Secret cross-namespace and stays Ready (Gateway Programmed) regardless.
 components:
+  - ../../../bases/components/annotations-transformers
   # Prod-only activation for platform#2689. The shared OpenCost base keeps this
   # bounded cAdvisor scraper default-off; Hetzner runs Kubernetes v1.36, whose
   # fine-grained kubelet authorization maps /metrics/* to nodes/metrics.
   - ../../../bases/infrastructure/opencost/components/usage-scraper
+  # Prod-only activation for platform#2986. Exports each Crossplane managed
+  # resource's conditions as metrics, so a resource that stops reconciling is
+  # visible instead of silent: a managed resource can report Ready=True while
+  # Synced=False — measured on 3 of the 20 Repository resources — and every
+  # health check keyed on Ready reads that fleet as healthy while no declared
+  # setting is reaching the provider. Referenced here rather than from the
+  # shared Coroot base because Crossplane and the `github-config` app it
+  # observes exist only on this provider.
+  #
+  # The metric is the prerequisite for alerting on it; delivery is #2987.
+  - ../../../bases/infrastructure/coroot/components/crossplane-sync-exporter
   # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
   # opencost HelmRelease in this layer. See
   # bases/components/helmrelease-drift-detection.
   - ../../../bases/components/helmrelease-drift-detection
   - ../../../bases/components/helmrelease-flux-defaults
 patches:
+  # UniFi exists only on Hetzner and applies Crossplane Managed Resources whose
+  # default deletion policy cascades to live network objects. Keep its deliberate
+  # non-pruning exception in this provider overlay so the shared admission policy
+  # remains strict for every other environment. The authorization validator pins
+  # the rendered exception set and the reconciler's immutable source/delete bounds.
+  - target:
+      group: kyverno.io
+      version: v1
+      kind: ClusterPolicy
+      name: enforce-flux-best-practices
+    patch: |
+      - op: add
+        path: /spec/rules/0/exclude/any/-
+        value:
+          resources:
+            namespaces:
+              - unifi
+            names:
+              - unifi
   # gateway-patch self-identifies (Gateway/platform/kube-system), so a path is
   # enough — no explicit target, matching the coroot patch below.
   - path: patches/attach-hcloud-load-balancer.yaml

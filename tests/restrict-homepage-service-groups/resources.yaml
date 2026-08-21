@@ -1,0 +1,121 @@
+---
+# A declared service group on a platform-owned route — the ordinary pass case.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: declared-group
+  namespace: observability
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Coroot
+    gethomepage.dev/group: Observability
+spec:
+  hostnames:
+    - observability.platform.devantler.tech
+---
+# The group this change adds. Fails before the layout entry exists, passes after.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: infrastructure-as-code-group
+  namespace: crossview
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Crossview
+    gethomepage.dev/group: Infrastructure as Code
+spec:
+  hostnames:
+    - crossview.platform.devantler.tech
+---
+# The exact drift that motivated the policy: an undeclared group, which Homepage
+# accepts silently and renders below the bookmark rail.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: undeclared-group
+  namespace: doggy-countdown
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Simba Countdown
+    gethomepage.dev/group: Fun
+spec:
+  hostnames:
+    - simba.platform.devantler.tech
+---
+# Opted into discovery but named no group at all.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: missing-group
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Whoami
+spec:
+  hostnames:
+    - whoami.platform.devantler.tech
+---
+# A BOOKMARK group name used for a service. Declared in the layout, but under the
+# bookmark half — accepting it would paint that heading twice.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bookmark-group-name
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Not A Service Group
+    gethomepage.dev/group: Banking
+spec:
+  hostnames:
+    - bookmark.platform.devantler.tech
+---
+# Case matters: Homepage matches the layout key exactly.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: wrong-case-group
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: personal sites
+spec:
+  hostnames:
+    - case.platform.devantler.tech
+---
+# Not opted into the dashboard — the policy must not touch it, even though it
+# carries no group at all. This is the precondition's negative control.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: not-opted-in
+  namespace: whoami
+spec:
+  hostnames:
+    - internal.platform.devantler.tech
+---
+# Explicitly disabled discovery, with a bogus group. Still none of our business.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: discovery-disabled
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "false"
+    gethomepage.dev/group: Nonsense
+spec:
+  hostnames:
+    - disabled.platform.devantler.tech
+---
+# Homepage's other discovery source, guarded the same way.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-undeclared-group
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Fun
+spec:
+  rules:
+    - host: ingress.platform.devantler.tech

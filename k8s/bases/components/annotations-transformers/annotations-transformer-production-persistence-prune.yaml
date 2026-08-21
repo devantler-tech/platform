@@ -1,0 +1,17 @@
+---
+apiVersion: builtin
+kind: AnnotationsTransformer
+metadata:
+  name: production-persistence-prune-protection
+annotations:
+  kustomize.toolkit.fluxcd.io/prune: disabled
+fieldSpecs:
+  - kind: PersistentVolumeClaim
+    path: metadata/annotations
+    create: true
+  - kind: HelmRelease
+    path: metadata/annotations
+    create: true
+  - kind: Namespace
+    path: metadata/annotations
+    create: true

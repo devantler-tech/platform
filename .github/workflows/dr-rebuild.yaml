@@ -149,23 +149,21 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        # Same install path as ci.yaml's deploy-prod job; renovate keeps the
-        # pin current in both places.
+        # Same verified install path as ci.yaml's validate job and the
+        # deploy-prod action; renovate keeps the pin current in all places.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.178.20"
+          KSAIL_VERSION: "7.178.25"
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
-          tar -xzf /tmp/ksail.tar.gz -C /tmp
-          sudo install /tmp/ksail /usr/local/bin/ksail
-          ksail --version
+          .github/scripts/setup-ksail.sh
 
       - name: ⚙️ Setup talosctl
         # The GHCR bridge verifies RegistryAuthConfig on each stale node.
         env:
           # Keep in step with spec.cluster.talos.version in ksail.prod.yaml.
           # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-          TALOS_VERSION: "1.13.7"
+          TALOS_VERSION: "1.13.8"
         run: |
           curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
           sudo install /tmp/talosctl /usr/local/bin/talosctl
@@ -248,7 +246,7 @@ jobs:
           for k in bootstrap infrastructure-controllers infrastructure apps; do
             echo "Waiting for Kustomization ${k}..."
             kubectl -n flux-system wait "kustomization/${k}" \
-              --for=condition=Ready --timeout=20m
+              --for=condition=Ready --timeout=35m
           done
           echo "✅ All Flux Kustomizations Ready — fresh platform converged."
 
@@ -364,7 +362,7 @@ jobs:
             restartPolicy: Never
             securityContext:
               runAsNonRoot: true
-              runAsUser: 100
+              runAsUser: 65532
               runAsGroup: 1000
               fsGroup: 1000
               seccompProfile:
@@ -428,6 +426,11 @@ jobs:
                     fi
                     echo "Fetching $NEWEST..."
                     mc cp "backup/$R2_BUCKET/openbao-snapshots/$NEWEST" "/snapshots/$NEWEST"
+                    # The restore reads this file as openbao (uid 100, gid 1000), so it must
+                    # be group-readable. mc creates it owned by THIS pod's high uid, and the
+                    # group entry is the only path left — an explicit chmod rather than a
+                    # reliance on mc's umask, matching what the snapshot writers do.
+                    chmod 0640 "/snapshots/$NEWEST"
                     ls -l /snapshots/
           POD
           if ! kubectl -n openbao wait pod/dr-snapshot-fetch \

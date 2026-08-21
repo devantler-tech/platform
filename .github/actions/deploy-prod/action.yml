@@ -31,25 +31,33 @@ inputs:
       (secrets.WG_SERVER_PRIVATE_KEY); env-expanded by ksail into
       talos/control-planes/wireguard.yaml when rendering machine config.
     required: true
+  recover-orphaned-fence:
+    description: >-
+      Release the GHCR synchronization Lease before staging when its holder is a
+      GitHub run the API reports terminal, no other fence is held, and its
+      heartbeat has stopped. Default-off: a deploy that dies holding the Lease
+      blocks every later deploy AND its own heal path, and clearing that today
+      needs a human with cluster write access. Any unproven condition refuses
+      rather than releasing.
+    required: false
+    default: "false"
 
 runs:
   using: composite
   steps:
     - name: ⚙️ Setup KSail
-      # Install the KSail CLI from the release tarball via curl. We use curl
-      # rather than brew/setup-ksail-cli because the v7.20.0 release shipped
-      # only desktop artifacts (linux CLI missing, 404 on the tarball).
-      # v7.25.0 ships complete linux artifacts again and carries the
-      # cluster-update fixes; renovate keeps this pin current.
+      # Install the KSail CLI from the release tarball and verify the
+      # downloaded asset against GitHub's published release checksum before
+      # running it with production credentials. We still use the tarball rather
+      # than brew/setup-ksail-cli because v7.20.0 shipped only desktop artifacts
+      # (linux CLI missing, 404 on the tarball); Renovate keeps this pin current.
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.178.20"
+        KSAIL_VERSION: "7.178.25"
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
-        curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
-        tar -xzf /tmp/ksail.tar.gz -C /tmp
-        sudo install /tmp/ksail /usr/local/bin/ksail
-        ksail --version
+        .github/scripts/setup-ksail.sh
 
     - name: ⚙️ Setup talosctl
       # refresh-flux-ghcr-auth.sh uses the host API for a secret-safe,
@@ -58,7 +66,7 @@ runs:
       env:
         # Keep in step with spec.cluster.talos.version in ksail.prod.yaml.
         # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-        TALOS_VERSION: "1.13.7"
+        TALOS_VERSION: "1.13.8"
       run: |
         curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
         sudo install /tmp/talosctl /usr/local/bin/talosctl
@@ -88,6 +96,18 @@ runs:
         umask 077
         printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
         chmod 600 ~/.kube/config
+
+    - name: 🔗 Select stable prod API endpoint
+      # KUBE_CONFIG can outlive the control-plane node whose public IP was the
+      # endpoint when the secret was minted. `cluster update` deliberately
+      # rolls those nodes, so retaining that address makes this deploy sever
+      # its own API connection even while the other control planes are Ready.
+      # Resolve the KSail-owned floating IP live, fail closed on missing or
+      # foreign ownership labels, and switch admin@prod before any API call.
+      shell: bash
+      env:
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: ./scripts/use-prod-stable-api-endpoint.sh
 
     - name: 🔑 Restore talosconfig
       # ksail cluster update talks to the Talos API to sync machine config.
@@ -140,6 +160,19 @@ runs:
         echo "::error::Prod cluster (context admin@prod) is unreachable with the restored kubeconfig (last kubectl error: ${last_err}). KUBE_CONFIG (and likely TALOS_CONFIG) are probably stale after a cluster rebuild — refresh both and update the 'prod' environment secrets. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
         exit 1
 
+    - name: 💾 Validate live persistence retirement safety
+      # A commit parent is not evidence that its protection reached production:
+      # two direct pushes can be waiting behind one manual dispatch. Compare the
+      # candidate with the actual Flux-owned PVCs, HelmReleases, and Namespaces
+      # after restoring the pinned prod context, but before moving the mutable
+      # artifact tag. Any removed live object must already carry prune=disabled.
+      shell: bash
+      env:
+        PVC_PRUNE_LIVE_CONTEXT: admin@prod
+      run: |
+        shellcheck scripts/tests/test-pvc-prune-safety.sh
+        bash scripts/tests/test-pvc-prune-safety.sh
+
     - name: 🛡️ Suspend autoscaling for gated Cilium rollout
       id: cilium_rollout_gate
       # The widened device component deliberately uses OnDelete so the Cilium
@@ -153,15 +186,34 @@ runs:
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
       run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
 
+    - name: 🧯 Recover an orphaned GHCR deploy fence
+      # Runs BEFORE staging, because staging is what fails when the Lease is
+      # orphaned — and both the deploy job and the heal job reach this composite,
+      # so one step covers the two paths that wedge together.
+      #
+      # GH_TOKEN is what makes the liveness proof possible: the holder identity
+      # embeds its run reference, and only the API can say whether that attempt
+      # is terminal. Without it the script refuses rather than guessing.
+      if: inputs.recover-orphaned-fence == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: ./scripts/refresh-flux-ghcr-auth.sh --recover-fences
+
     - name: 🔑 Stage Flux and consumer GHCR pull credential
       id: stage_flux_ghcr_auth
       # Validate all seven packages, synchronize and prove an uncached pull of
       # the declared incoming image on every stale Talos node, then stage and
       # verify the Kubernetes fan-out BEFORE publishing latest. Every pull
       # consumer has one known-readable credential before the mutable tag can
-      # be observed.
+      # be observed. The non-secret exact-node proof survives only in this job
+      # so the post-update pass can distinguish annotation loss from real
+      # credential, image, or node drift.
       shell: bash
-      run: ./scripts/refresh-flux-ghcr-auth.sh
+      run: >-
+        ./scripts/refresh-flux-ghcr-auth.sh
+        --record-runtime-proof
+        "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 
     # Publish the GitOps manifests (stage → sign → attest → promote → reconcile) BEFORE
     # syncing Talos machine config (the "🔄 Update cluster" step runs LAST).
@@ -216,6 +268,23 @@ runs:
       env:
         PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
       run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
+
+    - name: 🛡️ Restore autoscaling once the released revision is Ready
+      id: cilium_rollout_gate_release
+      # `ksail cluster update` waits for the cluster-autoscaler Deployment to be
+      # ready, and KSail treats zero replicas as never-ready — so a deploy that
+      # releases the gate would hang on the suspension the gate itself owns and
+      # fail at its own config sync. Restore between the exact-revision proof and
+      # cluster update: the safe artifact is deployed by now, which is what the
+      # gate requires before autoscaling may resume, and the autoscaler is ready
+      # before the step that waits on it. A still-active gate stays suspended.
+      if: >-
+        !cancelled() &&
+        steps.wait_flux_revision.outcome == 'success'
+      shell: bash
+      env:
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-revision-ready
 
     - name: 🔄 Update cluster (Talos machine config)
       id: cluster_update
@@ -290,9 +359,25 @@ runs:
       # only after the publish, signing, attestation, post-publish auth check,
       # and Flux reconcile all succeeded. Never mutate auth as cleanup for a
       # failed delivery.
+      # Runs on failure but NOT on cancellation. This step takes the
+      # `ghcr-auth-refresh` Lease, which has no automatic expiry takeover
+      # because Talos writes cannot be fenced — a non-empty holder needs
+      # explicit human recovery. Under `always()` a cancelled job still
+      # entered here, then the runner force-killed it when the
+      # post-cancellation grace expired, so the release never landed and every
+      # later deploy failed to acquire the Lease. A merge-queue eviction
+      # cancels this job routinely. The next deploy's staging step performs
+      # this same reassertion with a full time budget.
+      # `ksail cluster update` re-renders Talos node annotations. Reuse only
+      # the same job's credential+image+Node-UID proof to restore those markers
+      # without another uncached pull or rolling reboot. Any mismatch falls
+      # back to the full safety path.
       if: >-
-        always() &&
+        !cancelled() &&
         steps.verify_flux_ghcr_auth_after_push.outcome == 'success' &&
         steps.reconcile.outcome == 'success'
       shell: bash
-      run: ./scripts/refresh-flux-ghcr-auth.sh
+      run: >-
+        ./scripts/refresh-flux-ghcr-auth.sh
+        --reuse-runtime-proof
+        "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"

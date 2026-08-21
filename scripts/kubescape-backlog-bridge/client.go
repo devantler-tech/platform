@@ -92,9 +92,8 @@ func applyPlan(p plan, store issueStore, out io.Writer) error {
 	if p.RacedCreates > 0 {
 		if _, err := fmt.Fprintf(out,
 			"note: %d planned create(s) were DROPPED — another invocation filed the same "+
-				"fingerprint between this run's plan and its apply. Serialize write mode "+
-				"(a concurrency group with cancel-in-progress disabled); the next run "+
-				"reconciles the issues it filed\n", p.RacedCreates); err != nil {
+				"theme between this run's plan and its apply. Serialize write mode "+
+				"(a concurrency group with cancel-in-progress disabled)\n", p.RacedCreates); err != nil {
 			return err
 		}
 	}

@@ -61,6 +61,7 @@ resources:
   # experiments are actually running, not as always-on prod attack surface.
   # - ../../../../bases/infrastructure/controllers/chaos-mesh/
 components:
+  - ../../../../bases/components/annotations-transformers
   # Platform-wide HelmRelease drift detection (mode: enabled). Restores
   # Helm-rendered resources deleted/mutated out-of-band — the cause of the
   # silently-broken keda external-scaler and homepage Deployments.
@@ -76,19 +77,11 @@ components:
   # ACTIVE homogeneous device selection (#2610): widens the device set to
   # the public default-route NICs via wildcards ("en+ eth+") so
   # ebpf-host-routing's BPF masquerade can attach where pod egress actually
-  # leaves. MUST stay listed AFTER private-nic-devices/ when enabled (later
-  # component wins). The component also sets updateStrategy OnDelete, so
-  # referencing it stages config without rolling any agent — the operator steps
-  # the roll pod-by-pod per the component's runbook (verify each node keeps a
-  # private primary address before the next). Rollback = re-comment (stepped
-  # nodes roll back automatically under the restored RollingUpdate).
-  #
-  # While this reference is active the deploy skips `ksail cluster update` — the
-  # pipeline's only Talos machine-config sync. The date below is what makes that
-  # suppression measurable: the deploy reports it in its job summary and warns
-  # once it outruns the rollout's intended window. Set it when activating, and
-  # remove it in the same diff that re-comments the reference.
-  # platform.devantler.tech/rollout-gate-activated: 2026-07-26
+  # leaves. MUST stay listed AFTER private-nic-devices/ (later component wins).
+  # The widened set is live on every node and the DaemonSet is back on the
+  # chart's normal rolling update, so the deploy performs its `ksail cluster
+  # update` Talos machine-config sync again. Rollback = re-comment (every node
+  # rolls back under the rolling update).
   - cilium/components/homogeneous-devices/
   # Default-off Cilium bandwidth-manager + host-only BBR staging component
   # (#2607). It is not activation-ready: #2609 must prove pod-BBR datapath
@@ -109,6 +102,12 @@ components:
   # - cilium/components/ebpf-host-routing/
 patches:
   - path: openbao/patches/store-data-on-hcloud.yaml
+  # Prod-only: HARD-pin OpenBao to the static baseline workers so its hcloud
+  # block volumes never ride a node the autoscaler can reclaim (#2363) — see file.
+  - path: openbao/patches/keep-off-autoscale-nodes.yaml
+  # Umami's Namespace moved into the preceding controllers layer with its
+  # Kyverno Role; keep the prod-only user-namespace label with its new owner.
+  - path: kyverno/patches/enable-user-namespaces.yaml
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
   - path: cilium/patches/enforce-wireguard-strict-mode.yaml
   # Dormant prod-only SPIRE storage values. Authentication/SPIRE stay disabled

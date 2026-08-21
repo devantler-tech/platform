@@ -458,6 +458,106 @@ hcloud server list --selector hcloud/node-group
 hcloud server delete <server-id>
 ```
 
+### Stranded autoscaler nodes on a LIVE cluster (removed pool)
+
+Removing a pool from `ksail.prod.yaml` does **not** delete servers already
+running in it. The autoscaler only ever considers nodes that belong to one of
+its configured node groups, so a node whose pool no longer exists becomes
+invisible to scale-down and survives indefinitely — however idle the cluster
+gets. It keeps consuming `maxNodesTotal`, which starves real bursts, and it is
+never rolled, so it drifts behind on Kubernetes and Talos.
+
+Detect it by comparing live node names against the configured groups:
+
+```bash
+# pools the autoscaler actually manages — read BOTH command and args: the chart
+# currently passes every flag in `command`, so an `args`-only query returns an
+# empty stream and the grep matches nothing.
+kubectl -n kube-system get deploy cluster-autoscaler-hetzner-cluster-autoscaler \
+  -o jsonpath='{range .spec.template.spec.containers[0].command[*]}{@}{"\n"}{end}{range .spec.template.spec.containers[0].args[*]}{@}{"\n"}{end}' | grep '^--nodes='
+# every autoscaler-provisioned node currently registered
+kubectl get nodes -o name | grep '/autoscale-'
+```
+
+An empty result from the first command means the **query** is wrong, not that no
+pools are configured — check the container spec directly before concluding
+anything. It should print one `--nodes=` line per configured pool.
+
+Any `autoscale-<type>-*` node whose `<type>` has no matching `--nodes=` group is
+stranded.
+
+#### Pre-flight — check these before draining anything
+
+`hcloud server delete` neither cordons nor drains the node, and it does not wait
+for Longhorn to evict replicas. Deleting a server directly destroys any replica
+still on it, so the drain is what makes removal safe, and these checks are what
+make the drain safe.
+
+```bash
+# 1. Every storage node must actually be able to ATTACH volumes. A node whose
+#    iSCSI database has an unparseable record accepts replicas but cannot start
+#    an engine, and reports Ready/Schedulable while doing so (#3180). A node
+#    with zero attachments while others have many is the tell.
+kubectl -n longhorn-system get volumes.longhorn.io -o json |
+  jq -r '[.items[]|select(.status.state=="attached")]|group_by(.status.currentNodeID)[]|"\(.[0].status.currentNodeID) attached=\(length)"'
+```
+
+```bash
+# 2. Replica scheduling must have somewhere to go. With hard anti-affinity
+#    (replica-soft-anti-affinity=false) and only three storage nodes, one node
+#    below storage-minimal-available-percentage means degraded volumes can never
+#    rebuild — they sit at ReplicaSchedulingFailure indefinitely.
+kubectl -n longhorn-system get nodes.longhorn.io -o json |
+  jq -r '.items[]|.metadata.name as $n|(.status.diskStatus//{}|to_entries[0].value) as $s|"\($n) avail=\((($s.storageAvailable//0)*100/($s.storageMaximum//1))|floor)% \([$s.conditions[]?|select(.type=="Schedulable")|"Schedulable=\(.status)"]|join(""))"'
+```
+
+```bash
+# 3. Reclaim orphaned replica directories first — they are the usual reason a
+#    node drifts under the threshold. Delete the listed orphans to free the
+#    space (see #3180 for making this automatic).
+kubectl -n longhorn-system get orphans.longhorn.io
+```
+
+```bash
+# 4. Nothing already degraded.
+kubectl -n longhorn-system get volumes.longhorn.io -o json |
+  jq -r '.items[]|select(.status.robustness!="healthy" or .status.state!="attached")|"\(.metadata.name) \(.status.state)/\(.status.robustness)"'
+```
+
+#### Removal sequence
+
+```bash
+kubectl drain <node> --ignore-daemonsets --delete-emptydir-data --timeout=20m
+```
+
+The drain normally stalls at the end on the node's Longhorn `instance-manager`,
+which carries a PDB with zero allowed disruptions. That is expected: once the
+node is storage-idle the instance-manager is idle too, and Longhorn usually
+removes it on its own. Confirm idleness before forcing anything — both must
+return `0`:
+
+```bash
+kubectl -n longhorn-system get engines.longhorn.io -o json | jq -r --arg n <node> '[.items[]|select(.spec.nodeID==$n)]|length'
+kubectl -n longhorn-system get replicas.longhorn.io -o json | jq -r --arg n <node> '[.items[]|select(.spec.nodeID==$n)]|length'
+```
+
+Only then delete the server, and finally the now-orphaned Node object:
+
+```bash
+hcloud server delete <server-id>
+kubectl delete node <node>
+```
+
+Do one node at a time and let volumes return to `healthy` in between. Deleting
+the server is also what frees a slot under `maxNodesTotal`, so the autoscaler
+cannot replace capacity until that step completes.
+
+`restrict-storage-to-baseline-workers` and `drain-autoscale-node-storage` do
+cover these nodes, because they key on the node *name* rather than the
+`ksail.io/autoscaled` label — which a node predating ksail#5113 does not carry.
+
+Whenever you remove a pool, check for its running nodes in the same change.
+
 ### Autoscaler node not joining cluster
 
 ```bash
@@ -608,6 +708,82 @@ Do not replace this bridge with only a root ExternalSecret: Flux needs valid roo
 auth to fetch the artifact that installs/updates External Secrets, while OpenBao
 receives this rotated value only through a downstream PushSecret. That circular
 dependency cannot recover a stale root credential by itself.
+
+---
+
+## Scenario 11 — Recover an orphaned GHCR deploy fence
+
+A deploy fails to start with one of:
+
+> Another GHCR synchronization transaction holds the synchronization lease
+>
+> Another transaction already owns the image-verification policy handoff
+
+`refresh-flux-ghcr-auth.sh` fences its transaction with a `Lease` and by suspending
+the `infrastructure` and `flux-system` Kustomizations. Those fences are released
+together at exit. A hard kill releases an arbitrary prefix and leaves the rest
+held — and nothing reclaims them automatically, because Talos machine-config
+writes expose no fencing token, so a surviving process could still write after a
+timeout takeover. Recovery is deliberately a human step.
+
+A held policy fence is the more serious of the two: the deploy fails loudly, but
+the suspended Kustomization silently stops GitOps reconciliation for that layer
+until it is released.
+
+**1. List what is actually held.** Read-only; needs no credential and works while
+a deploy is refusing to start:
+
+```bash
+./scripts/refresh-flux-ghcr-auth.sh --fences
+```
+
+It prints each held fence, its holder, liveness evidence, and the exact
+CAS-guarded release command. `--fences` is an alternative mode and cannot be
+combined with `--check-only`, `--allow-incomplete-fanout`, or either
+`--*-runtime-proof` flag; it reports and exits, so accepting the combination
+would let an automation step pass having skipped the work it was configured to
+do.
+
+**2. Prove the holder is dead — never skip this.** A live deploy holds these
+fences legitimately.
+
+- If the Lease was renewed inside its duration, the holder is **live**. Stop.
+- The holder identity embeds the GitHub run: `…-gh<run-id>.<attempt>-…`. Confirm
+  it is terminal:
+
+  ```bash
+  gh run view <run-id> --repo devantler-tech/platform --attempt <attempt> --json status,conclusion
+  ```
+
+  Anything other than `status: completed` means it is still running. Stop.
+  `--attempt` is not optional: a rerun reuses the run id, so without it `gh`
+  reports the newest attempt and an orphan left by a finished attempt reads as
+  live — blocking a recovery that is valid.
+- An identity with no run reference predates that recording, or came from a local
+  run. Establish liveness another way before continuing.
+
+**3. Release.** Run the command the report printed for each dead fence. Each is
+CAS-guarded on the holder and the resource's current state, so it fails safely if
+anything changed since the report.
+
+A node fence may print `NOT releasable` and no command. That is a refusal, not a
+gap to work around by hand: the report only emits a release where it can prove
+the release is the same one the bridge would perform. It withholds one when the
+drain phase is anything but `claimed` (a Talos write may already be in flight,
+and an absent phase is never read as innocence), when another node under the
+same bootstrap owner is still quarantined (that quarantine is all-or-nothing),
+when the journal is `release-ready` (proving it covers the current credential
+revision needs the credential, which this mode deliberately never loads), or
+when the node's scheduling state has drifted from the intent its journal
+captured. In each case run the bridge — a normal `CD` dispatch — and let
+bootstrap recovery adjudicate the node. Never hand-clear a recovery journal: it
+is the only durable record of that state.
+
+**4. Confirm.** Re-run `--fences`; it should report no fence held. Then dispatch
+`CD` on `main`.
+
+Do not raise timeouts or add automatic expiry takeover to work around this — the
+absence of takeover is the property that makes the Talos write path safe.
 
 ---
 

@@ -43,7 +43,23 @@ metadata:
     # Jobs are immutable, so without this Flux cannot reapply spec changes.
     # The Job script itself is idempotent — each command checks state first.
     kustomize.toolkit.fluxcd.io/force: enabled
-    checkov.io/skip1: CKV_K8S_38=the store-keys container writes the openbao-unseal Secret through kubectl
+    checkov.io/skip1: "CKV_K8S_38=the store-keys container writes the openbao-unseal Secret through kubectl"
+    # Only the two openbao containers run below 10000, and their 100 IS the
+    # openbao image's own baked identity rather than a choice this manifest
+    # makes: the image carries `openbao:x:100:1000::/home/openbao` in its
+    # /etc/passwd (verified against the pinned digest, not the tag), and
+    # runAsUser/runAsGroup restate exactly that uid:gid pair. Raising it would
+    # run the openbao binary as an identity its own image does not define.
+    # Same image-baked class as umami's 1001 (#2901).
+    #
+    # A `checkov.io/skipN` directive is resource-scoped, so it silences the
+    # check for EVERY container in this Job — which is why `runAsUser` is set
+    # per container rather than once on the pod. `minio/mc` and `alpine/k8s`
+    # bake no uid-100 entry of their own, so an inherited pod-level 100 would
+    # have been an unjustified low-UID execution that this annotation then hid.
+    # They take the pod's high 65532 default instead, leaving the suppression
+    # covering only the two executions its rationale actually accounts for.
+    checkov.io/skip2: "CKV_K8S_40=UID 100 is the openbao image's baked `openbao` user (openbao:x:100:1000 in its /etc/passwd), which runAsUser/runAsGroup restate; only the two openbao containers run it"
 spec:
   # Auto-delete the Job (and its pods) 10 minutes after completion. Without
   # this, the `kustomize.toolkit.fluxcd.io/force: enabled` annotation above
@@ -74,8 +90,26 @@ spec:
       # add-security-context Kyverno mutation) so the pod stays hardened
       # even when created before the webhook is active on fresh bring-up.
       securityContext:
-        runAsUser: 100
-        runAsGroup: 1000
+        # The pod default is the high, unprivileged 65532. Only the two openbao
+        # containers override it with 100, which is that image's own baked
+        # identity (see the checkov.io/skip2 annotation above). The `mc` and
+        # `alpine/k8s` containers bake no identity of their own, so they take
+        # the high default rather than inheriting a UID chosen for openbao.
+        runAsUser: 65532
+        # The pod default gid is the same high 65532, for the same reason the
+        # uid is: `mc` and `alpine/k8s` bake no group of their own, so a
+        # pod-level 1000 would have been an unjustified low-GID execution that
+        # the annotation above then hid.
+        #
+        # Cross-container access to /shared and /snapshots does NOT depend on
+        # any container's primary gid — fsGroup supplies it. Kubernetes sets gid
+        # 1000 AND the setgid bit on the emptyDir volumes, so a file created in
+        # them inherits group 1000 whatever gid its writer runs as, and adds
+        # 1000 to every container's supplementary groups so the others can still
+        # read it. Verified against a paired control (#3258): with the setgid
+        # bit the file lands group 1000 and a uid-100/gid-1000 reader CAN read
+        # it; with the bit absent it lands group 65532 and that reader CANNOT.
+        runAsGroup: 65532
         fsGroup: 1000
         runAsNonRoot: true
         seccompProfile:
@@ -178,6 +212,12 @@ spec:
         - name: vault-init
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
           securityContext:
+            # The openbao image's own baked `openbao` user (openbao:x:100:1000
+            # in its /etc/passwd) — see the checkov.io/skip2 rationale.
+            runAsUser: 100
+            # gid 1000 is the same baked identity (openbao:x:100:1000); these two
+            # containers are the only ones that carry it.
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             runAsNonRoot: true
@@ -404,7 +444,7 @@ spec:
               echo "Unseal phase complete."
         # --- 2. Persist credentials in K8s Secret (only on fresh init) ---
         - name: store-keys
-          image: alpine/k8s:1.36.2@sha256:44ef4942e171939b9c665a4a84beb80e2dcdb9a24330d4651cfdfd2e9deecc47
+          image: docker.io/alpine/k8s:1.36.2@sha256:44ef4942e171939b9c665a4a84beb80e2dcdb9a24330d4651cfdfd2e9deecc47
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -446,6 +486,12 @@ spec:
         - name: vault-config
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
           securityContext:
+            # The openbao image's own baked `openbao` user (openbao:x:100:1000
+            # in its /etc/passwd) — see the checkov.io/skip2 rationale.
+            runAsUser: 100
+            # gid 1000 is the same baked identity (openbao:x:100:1000); these two
+            # containers are the only ones that carry it.
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             runAsNonRoot: true
@@ -582,6 +628,37 @@ spec:
                   secret_access_key="REPLACE_WITH_AWS_SECRET_ACCESS_KEY"
               else
                 echo "AWS bootstrap credentials already present at secret/infrastructure/aws/bootstrap (leaving as-is)."
+              fi
+
+              # --- 1f. Retire the pre-isolation Velero repository password copy ---
+              # The Velero kopia repository password used to be mirrored to
+              # secret/infrastructure/backup/velero-repo, which the broad
+              # infra-backup-readonly policy grants read on. It now lands at
+              # secret/infrastructure/velero/repo instead (see the PushSecret in
+              # vault-seed/), but a PushSecret only writes the new path -- it never
+              # migrates or removes the old one. Left in place, the old entry stays
+              # readable by every infra-backup-readonly holder, so the isolation
+              # would not actually have happened.
+              #
+              # Destroy the old entry, but ONLY once the new path is confirmed to
+              # hold the password, so a run that happens before ESO has synced can
+              # never leave the platform with neither copy. `kv metadata delete`
+              # removes every version plus the metadata (a plain `kv delete` only
+              # soft-deletes the latest version and is trivially undeleted, which
+              # would not remove the exposure). Both branches are idempotent, so a
+              # later Job re-run is a no-op once the migration has completed.
+              if bao kv get -mount=secret -field=repository-password \
+                   infrastructure/velero/repo >/dev/null 2>&1; then
+                if bao kv metadata get -mount=secret \
+                     infrastructure/backup/velero-repo >/dev/null 2>&1; then
+                  echo "Retiring pre-isolation copy at secret/infrastructure/backup/velero-repo..."
+                  bao kv metadata delete -mount=secret infrastructure/backup/velero-repo
+                  echo "Retired: the Velero repository password now lives only at secret/infrastructure/velero/repo."
+                else
+                  echo "No pre-isolation Velero repository password copy present (already retired)."
+                fi
+              else
+                echo "WARNING: secret/infrastructure/velero/repo is not populated yet -- leaving the old copy at secret/infrastructure/backup/velero-repo in place until the PushSecret has synced."
               fi
 
               # --- 2. Enable Kubernetes auth ---
@@ -847,6 +924,9 @@ spec:
               path "secret/data/infrastructure/ghcr/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/data/infrastructure/velero/*" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/data/apps/fleetdm/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -890,6 +970,9 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/infrastructure/ghcr/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/velero/*" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/fleetdm/*" {

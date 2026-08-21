@@ -229,6 +229,16 @@ func TestLeaseLossAfterNodeClaimStopsBeforeTalosMutation(t *testing.T) {
 	requireNoLine(t, operations, "talos-auth:10.0.0.2")
 	requireNoLine(t, operations, "node-drain:prod-worker-1")
 	requireNoLine(t, operations, "root-patch")
+	requireContains(
+		t,
+		result.stdout+result.stderr,
+		"GHCR synchronization Lease is now held by another transaction",
+	)
+	requireNotContains(
+		t,
+		result.stdout+result.stderr,
+		"Kubernetes API was unreachable while verifying",
+	)
 	if pathExists(filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-1")) ||
 		pathExists(filepath.Join(f.syncStateDir, "cordoned-prod-worker-1")) {
 		t.Fatal("Lease loss before Talos mutation left a newly-owned cordon behind")
@@ -388,6 +398,27 @@ func TestAutoscalerTaintIsNeverUncordoned(t *testing.T) {
 	for _, unexpected := range []string{"talos-reboot:10.0.0.2", "node-uncordon:prod-worker-1", "talos-revision:10.0.0.2", "root-patch"} {
 		requireNoLine(t, operations, unexpected)
 	}
+}
+
+// The autoscaler's DeletionCandidateOfClusterAutoscaler taint is advisory
+// (PreferNoSchedule) and churns on the autoscaler's ~10s re-evaluation loop. It says a
+// node COULD be removed, never that it is being removed, so its coming and going is not
+// a scheduling-safety change and must not evict the deploy from the merge queue.
+// TestAutoscalerTaintIsNeverUncordoned is the negative control: the hard
+// ToBeDeletedByClusterAutoscaler taint must still fail closed.
+func TestAutoscalerDeletionCandidateTaintDoesNotBlockDeploy(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALER_DELETION_CANDIDATE_RELEASED_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	requireNotContains(t, result.stdout+result.stderr, "scheduling safety state changed")
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-drain:prod-worker-1")
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
 }
 
 func TestExternalUncordonAfterDrainBlocksReboot(t *testing.T) {
@@ -656,6 +687,7 @@ func TestUnreadyNodeAfterRebootStopsTheRoll(t *testing.T) {
 		"fanout:externalsecret/ascoachingogvaner/ghcr-auth",
 		"fanout:externalsecret/kyverno/ghcr-auth",
 		"node-claim-cordon:prod-worker-1",
+		"node-fence-phase:prod-worker-1",
 		"talos-auth:10.0.0.2",
 		"node-drain:prod-worker-1",
 		"talos-reboot:10.0.0.2",
@@ -717,5 +749,84 @@ func TestTalosFailureAfterSafeFanoutKeepsRootAuthUnchanged(t *testing.T) {
 			}
 			requireNotContains(t, result.stdout+result.stderr, "fixture-secret-token")
 		})
+	}
+}
+
+// The fence phase marker is only trustworthy if it is advanced to "mutating"
+// BEFORE the first Talos mutation. If the order ever inverted, a node could be
+// mutated under a fence still reading "claimed" -- which the #3070 reclaim
+// treats as provably untouched and would clear. That is the one direction that
+// is never safe, so pin the order rather than the mechanism.
+func TestFencePhaseAdvancesBeforeTalosMutation(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, nil)
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	phase := lineIndex(t, operations, "node-fence-phase:prod-worker-1")
+	auth := lineIndex(t, operations, "talos-auth:10.0.0.2")
+	if phase >= auth {
+		t.Fatalf("Talos was mutated before the fence phase advanced: phase=%d auth=%d", phase, auth)
+	}
+}
+
+// A fence left behind by a transaction that died before this run began is
+// reclaimed end-to-end: the Lease was free at acquisition, so no owner is alive
+// to protect it. This exercises the actual patch, not just the jq selection.
+func TestOrphanedFenceIsReclaimed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_LEAKED_FENCE_NODE": "prod-control-plane-2",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	// lineIndex fails when absent, which is the assertion.
+	lineIndex(t, operations, "node-reclaim-fence:prod-control-plane-2")
+}
+
+// The same fence at "mutating" is NEVER reclaimed. The Lease proves no owner is
+// alive; it never proves the node reached a known state, which is the whole
+// reason the phase marker exists.
+func TestMutatingFenceIsNeverReclaimed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_LEAKED_FENCE_NODE":  "prod-control-plane-2",
+		"FAKE_LEAKED_FENCE_PHASE": "mutating",
+	})
+	for _, operation := range readLines(f.operationLog) {
+		if operation == "node-reclaim-fence:prod-control-plane-2" {
+			t.Fatal("a fence that reached Talos mutation was reclaimed")
+		}
+	}
+	_ = result
+}
+
+// A node whose phase marker cannot be advanced must not be mutated at all --
+// and must not be left fenced either. The refusal path releases the fence with
+// `|| true`, so a regression that silently failed to release would still block
+// every later deploy: exactly the #3070 failure mode. Not mutating Talos is
+// therefore only half of what this has to prove.
+func TestFencePhaseFailureBlocksTalosMutation(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FENCE_PHASE_FAIL_NODE": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	if pathExists(f.talosLog) {
+		t.Fatal("Talos was mutated although the fence phase could not be advanced")
+	}
+	operations := readLines(f.operationLog)
+	// lineIndex fails the test when the entry is absent, which is the assertion:
+	// the fence this transaction claimed was handed back before giving up.
+	claim := lineIndex(t, operations, "node-claim-cordon:prod-worker-1")
+	release := lineIndex(t, operations, "node-uncordon:prod-worker-1")
+	if release <= claim {
+		t.Fatalf(
+			"fence was not released after the phase advance failed: claim=%d release=%d",
+			claim, release,
+		)
 	}
 }
