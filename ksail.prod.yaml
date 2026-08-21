@@ -10,7 +10,12 @@ spec:
     distributionConfig: talos
     connection:
       context: admin@prod
-      timeout: 30m
+      # Must stay strictly greater than the longest Flux Kustomization timeout
+      # in the chain (`apps`, 30m in k8s/clusters/base). `workload reconcile`
+      # waits on that chain, so an equal value makes the CLI give up at the
+      # exact moment `apps` times out — the 2m retryInterval that re-enters the
+      # health gate could then never be observed. Matches the 35m outer DR wait.
+      timeout: 35m
     distribution: Talos
     provider: Hetzner
     cni: Cilium
@@ -99,6 +104,14 @@ spec:
         # ships ksail#5277 (post-v7.58.3); the CI/CD KSAIL_VERSION pin
         # (renovate-managed) must reach it first.
         capacityBuffers: true
+        # ⚠️ REMOVING A POOL DOES NOT DELETE ITS RUNNING SERVERS. The autoscaler
+        # only considers nodes inside a configured node group, so a node whose
+        # pool is deleted here becomes invisible to scale-down and survives
+        # indefinitely — still consuming maxNodesTotal and still billed. Dropping
+        # the cx33 pool in #2420 stranded two live cx33 nodes for 47 days exactly
+        # this way (#3178). When removing a pool, drain and delete its nodes in
+        # the same change: docs/dr/runbook.md → "Stranded autoscaler nodes on a
+        # LIVE cluster".
         pools:
           - name: autoscale-cx43
             serverType: cx43
@@ -133,11 +146,18 @@ spec:
     # place instead of evicting them. Upgraded one minor at a time
     # (1.32 -> 1.33 -> 1.34 -> 1.35 -> 1.36); now on 1.36.2. Talos v1.13.5's
     # ceiling is Kubernetes 1.36.
-    kubernetesVersion: v1.36.2
+    #
+    # HELD AT THE RUNNING VERSION so this deploy performs the Talos OS upgrade
+    # ALONE. Kubernetes and OS upgrades are rolled separately here, and the
+    # rollout gate suppressed machine-config sync long enough for Renovate to
+    # queue both (v1.36.3 and Talos v1.13.7) behind it — releasing the gate
+    # with both pins forward would roll one fleet-wide upgrade carrying both.
+    # Restore v1.36.3 in a follow-up once the OS upgrade has settled.
+    kubernetesVersion: v1.36.3
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
-      version: v1.13.6
+      version: v1.13.8
       # Hetzner Talos ISO (x86_64). The v1.11.2 ISO (122630) was deprecated
       # and removed from Hetzner on 2026-03-18. Use v1.12.4 (125127).
       iso: 125127
@@ -155,31 +175,6 @@ spec:
         - siderolabs/qemu-guest-agent
     localRegistry:
       registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
-    # Cosign keyless signature verification on the flux-system OCIRepository that
-    # KSail generates and owns (rendered onto spec.verify; a hand-written override
-    # would lose the reconcile fight, so it is configured here per ksail#4987).
-    # The manifests artifact is already cosign-signed keyless in the deploy-prod
-    # composite (push → sign → attest); this makes Flux REJECT any infra artifact
-    # whose signature is missing or whose signer is not the platform deploy
-    # workflow — closing the supply-chain gap #1559 opened for apps but left on
-    # the infra source (#1570). The signer identity + ref were confirmed against
-    # the live signature with `cosign verify`: the artifact is signed by
-    # .github/workflows/ci.yaml on refs/heads/gh-readonly-queue/main/<pr> (the
-    # merge-queue deploy-prod path — the real prod deploy) under GitHub's Fulcio
-    # OIDC issuer. The subject is pinned to the two *production* deploy refs only
-    # (merge-queue refs off main, plus a manual cd.yaml dispatch from main) rather
-    # than `@.+`, so a signature these workflows might produce on any other ref is
-    # not trusted (defence in depth on a high-blast-radius source).
-    verify:
-      provider: cosign
-      matchOIDCIdentity:
-        # Automatic prod deploy: ci.yaml deploy-prod runs on merge_group, which
-        # signs under the merge-queue ref refs/heads/gh-readonly-queue/main/<pr>.
-        - issuer: '^https://token\.actions\.githubusercontent\.com$'
-          subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/ci\.yaml@refs/heads/gh-readonly-queue/main/.+$'
-        # Manual prod deploy: cd.yaml is workflow_dispatch, run from main.
-        - issuer: '^https://token\.actions\.githubusercontent\.com$'
-          subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/cd\.yaml@refs/heads/main$'
   provider:
     hetzner:
       # Hetzner account hard cap: at most 10 servers total. This mirrors the
@@ -222,6 +217,61 @@ spec:
     sourceDirectory: k8s
     kustomizationFile: clusters/prod
     tag: latest
+    flux:
+      # Cosign keyless signature verification for the flux-system OCIRepository.
+      # KSail reads this at spec.workload.flux.verify (ksail#4987). The manifests
+      # artifact is cosign-signed keyless in the deploy-prod composite
+      # (push → sign → attest), and the subjects below are pinned to the
+      # production deploy refs rather than `@.+`, so a signature these workflows
+      # might produce on any other ref is not trusted.
+      #
+      # THIS BLOCK COVERS BOOTSTRAP ONLY — the steady-state control lives in the
+      # FluxInstance. KSail applies verification from its Flux install path, so
+      # this is what a cluster gets when it is CREATED. On an existing cluster
+      # KSail writes no spec key on that resource at all: measured live,
+      # flux-operator is its Apply field manager (owning
+      # url/ref/interval/provider/secretRef) while KSail's only field-manager
+      # entry is the reconcile-trigger annotation. The control that reaches a
+      # RUNNING cluster is therefore the kustomize patch in
+      #   k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml
+      # which has the operator itself write spec.verify. Keep the two matcher
+      # lists identical; scripts/validate-flux-verify asserts both halves on
+      # every pull request.
+      #
+      # DO NOT "fix" this by hand-writing an in-repo OCIRepository override: a full
+      # override contends with the operator for those five fields on the ROOT
+      # source, where losing the reconcile fight stops all GitOps delivery.
+      #
+      # Signature enforcement elsewhere: tenant/app OCIRepositories carry their
+      # own spec.verify, and container images are checked at the Talos containerd
+      # pull layer plus the Kyverno image-verification policy.
+      verify:
+        provider: cosign
+        # 🔴 EXACTLY ONE ENTRY. cosign's keyless verification rejects a
+        # multi-entry matchOIDCIdentity outright — "unsupported: multiple
+        # identities are not supported at this time" — and fails CLOSED for the
+        # whole set, so a list verifies nothing while looking stricter than a
+        # single matcher. Flux documents the field as an OR'd list and the schema
+        # accepts one, so a list is both docs-valid and schema-valid and still
+        # refuses every artifact. Alternation lives INSIDE the subject regex.
+        #
+        # This is the BOOTSTRAP and DISASTER-RECOVERY path, so a broken matcher
+        # here stays dormant until the moment it is least affordable: a DR
+        # rebuild would produce a correctly-signed artifact that Flux then
+        # refuses, with no cluster left to work around it from.
+        #
+        # The three trusted signers, alternated in the subject below:
+        #   ci.yaml          automatic prod deploy; deploy-prod runs on
+        #                    merge_group, signing under the merge-queue ref
+        #                    refs/heads/gh-readonly-queue/main/<pr>
+        #   cd.yaml          manual prod deploy; workflow_dispatch from main
+        #   dr-rebuild.yaml  disaster recovery; workflow_dispatch from main,
+        #                    republishing this same artifact
+        # cd and dr-rebuild are both pinned to refs/heads/main, so a run
+        # dispatched from any other ref is not trusted.
+        matchOIDCIdentity:
+          - issuer: '^https://token\.actions\.githubusercontent\.com$'
+            subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/(ci\.yaml@refs/heads/gh-readonly-queue/main/.+|(cd|dr-rebuild)\.yaml@refs/heads/main)$'
     validation:
       # Parity with ksail.yaml: the prod kustomization pulls the same shared
       # bases (Coroot + Flagger), so `ksail --config ksail.prod.yaml workload

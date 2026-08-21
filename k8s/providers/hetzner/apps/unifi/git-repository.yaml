@@ -5,8 +5,11 @@ metadata:
   namespace: unifi
 spec:
   interval: 5m
-  # devantler-tech/unifi is public — no auth needed. It holds NO secrets; the
-  # UniFi API credentials come from OpenBao (see credentials-external-secret.yaml).
+  # devantler-tech/unifi is public — no credential is needed. It holds NO
+  # secrets; the UniFi API credentials come from OpenBao (see
+  # external-secret.yaml). Pin the full commit so a source-repository compromise
+  # cannot change resources already authorized for patch/update without a
+  # separately reviewed Platform change.
   url: https://github.com/devantler-tech/unifi
   ref:
-    branch: main
+    commit: 7b17f7e33ef507c24c395b884a433c62b92ace98

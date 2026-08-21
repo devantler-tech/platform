@@ -1,0 +1,22 @@
+# What the posture-staleness-alert CronJob may read.
+#
+# Read-only, and ONLY the stored configuration-scan objects. The check has to see
+# scans in every scanned namespace to find the newest one, so it is cluster-scoped
+# by necessity — but it is list-only on a single resource type, which is the least
+# privilege that satisfies that.
+#
+# It deliberately does NOT grant the summary kinds. Those carry a zero-valued
+# creationTimestamp, so they cannot answer a freshness question and reading them
+# would widen the grant for no signal.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: posture-staleness-alert
+rules:
+  - apiGroups:
+      - spdx.softwarecomposition.kubescape.io
+    resources:
+      - workloadconfigurationscans
+    verbs:
+      - list

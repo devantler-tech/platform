@@ -19,6 +19,14 @@ spec:
             - port: "8080"
               protocol: TCP
   egress:
+    # Actual Budget upstream (personal finance app; Service actual-budget-actualbudget :5006).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: actual-budget
+      toPorts:
+        - ports:
+            - port: "5006"
+              protocol: TCP
     # Backstage upstream (developer portal; Service backstage :7007).
     - toEndpoints:
         - matchLabels:
@@ -26,6 +34,14 @@ spec:
       toPorts:
         - ports:
             - port: "7007"
+              protocol: TCP
+    # Crossview upstream (cluster resource explorer; Service :80 -> pod :3001).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: crossview
+      toPorts:
+        - ports:
+            - port: "3001"
               protocol: TCP
     # Homepage upstream
     - toEndpoints:
@@ -44,6 +60,14 @@ spec:
         - ports:
             - port: "8081"
               protocol: TCP
+    # KSail operator UI upstream (ksail-operator Service :8080).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ksail-operator
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
     # Coroot UI upstream (metrics/logs/traces/profiles/alerts).
     - toEndpoints:
         - matchLabels:
@@ -60,16 +84,6 @@ spec:
         - ports:
             - port: "9090"
               protocol: TCP
-    # Longhorn UI upstream (Hetzner-only). longhorn-frontend forwards to the
-    # longhorn-ui pod on container port 8000; inert on local/CI where the
-    # longhorn-system namespace is absent.
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: longhorn-system
-      toPorts:
-        - ports:
-            - port: "8000"
-              protocol: TCP
     # Policy Reporter UI upstream (policy-reporter-ui Service :8080). Prod-only;
     # inert on local/CI where the policy-reporter namespace has no pods.
     - toEndpoints:
@@ -78,6 +92,15 @@ spec:
       toPorts:
         - ports:
             - port: "8080"
+              protocol: TCP
+    # OpenBao UI/API upstream. The public HTTPRoute points at oauth2-proxy,
+    # then auth-proxy forwards only authenticated requests to OpenBao.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: openbao
+      toPorts:
+        - ports:
+            - port: "8200"
               protocol: TCP
     # DNS resolution
     - toEndpoints:
