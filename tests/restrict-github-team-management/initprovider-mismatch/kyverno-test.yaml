@@ -1,0 +1,23 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-github-team-management-initprovider-mismatch
+policies:
+  - >-
+    ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-github-team-management.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: restrict-github-team-management
+    rule: teams-allow-listed
+    resources:
+      - github-config/admins
+    kind: Team
+    result: pass
+  - policy: restrict-github-team-management
+    rule: teams-bind-provider-identity-to-object-name
+    resources:
+      - github-config/admins
+    kind: Team
+    result: fail

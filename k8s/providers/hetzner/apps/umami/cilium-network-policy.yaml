@@ -6,19 +6,16 @@
 #
 # ADDITIVE, not a replacement for allow-umami: Cilium unions the ingress allows
 # across every policy selecting an endpoint, so this standalone policy only adds
-# the cross-namespace observability source on 5432 while allow-umami keeps
+# the cross-namespace Coroot cluster-agent source on 5432 while allow-umami keeps
 # permitting intra-namespace + cnpg-system + openbao. Scoped to the DB instance
 # pods via CNPG's cnpg.io/cluster label, mirroring the prod-only allow-coroot-db
 # policy in infrastructure/coroot/.
 #
-# No `authentication` stanza here on purpose: the cluster-wide
-# require-mutual-auth CiliumClusterwideNetworkPolicy already attaches
-# authentication.mode: required to ALL pod-to-pod ingress, and both the
-# cluster-agent and the DB pods carry SPIRE identities, so mutual auth is
-# enforced automatically — exactly how the existing cnpg-system/openbao ingress
-# rules in allow-umami work. The cluster-agent's egress to this namespace is
-# already permitted by the base allow-coroot policy (toEndpoints: namespace
-# Exists). Prod-only (hetzner overlay): Coroot and SPIRE run only on Hetzner.
+# No broad `authentication` stanza here on purpose: Cilium ingress rules are
+# allow rules, so authentication must not be added with a catch-all source that
+# would weaken this policy's narrow source allow-list. The cluster-agent's
+# egress to this namespace is already permitted by the base allow-coroot policy
+# (toEndpoints: namespace Exists). Prod-only (hetzner overlay).
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -32,6 +29,9 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: observability
+            app.kubernetes.io/managed-by: coroot-operator
+            app.kubernetes.io/part-of: coroot
+            app.kubernetes.io/component: coroot-cluster-agent
       toPorts:
         - ports:
             - port: "5432"

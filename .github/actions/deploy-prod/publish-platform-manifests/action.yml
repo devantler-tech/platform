@@ -1,0 +1,176 @@
+name: Publish Platform Manifests
+description: >-
+  Publish platform manifests through a unique staging reference, attach the
+  complete supply-chain evidence bundle to its immutable digest, and only then
+  promote that exact digest to latest.
+
+inputs:
+  ghcr-token:
+    description: >-
+      GHCR PAT with write:packages for push, signing, attestation, and
+      promotion, and read:packages for reading the evidence back. The
+      evidence-verification step below reuses this token as GH_TOKEN for
+      `gh attestation verify --bundle-from-oci`, which reads each bundle from
+      the registry beside the image rather than from the GitHub Attestations
+      API — the attestations are published with `create-storage-record: false`,
+      so no API record exists to read. A token that cannot read the package
+      makes that call fail for authorization rather than for absent evidence,
+      and the two are indistinguishable in the verdict.
+    required: true
+  hcloud-token:
+    description: Hetzner Cloud API token required while KSail loads the production config.
+    required: true
+  enforce-evidence-verification:
+    description: >-
+      Refuse to promote a digest whose published evidence cannot be verified.
+      Enforcing by default: promotion is the point of no return, so a digest
+      carrying no usable signature or attestation must not reach the tag
+      production follows. Set to "false" only to stage a NEW evidence kind
+      through the same warn-then-enforce ratchet — a verification wrong about
+      the identity or issuer would break every production deploy, including
+      disaster recovery, so a new check earns the right to block by first being
+      observed passing on real deploys.
+    required: false
+    default: "true"
+
+outputs:
+  digest:
+    description: Immutable manifest digest promoted to latest.
+    value: ${{ steps.promote_latest.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    - name: 🏷️ Create unique staging reference
+      id: staging_reference
+      shell: bash
+      run: |
+        set -euo pipefail
+        STAGING_TAG="staging-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        echo "oci_ref=oci://ghcr.io/devantler-tech/platform/manifests:${STAGING_TAG}" >>"${GITHUB_OUTPUT}"
+        echo "registry_ref=ghcr.io/devantler-tech/platform/manifests:${STAGING_TAG}" >>"${GITHUB_OUTPUT}"
+
+    - name: 📦 Push manifests to the staging reference
+      id: push_staging
+      shell: bash
+      env:
+        GITHUB_ACTOR: ${{ github.actor }}
+        GHCR_TOKEN: ${{ inputs.ghcr-token }}
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+        STAGING_OCI_REF: ${{ steps.staging_reference.outputs.oci_ref }}
+      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push "${STAGING_OCI_REF}"
+
+    - name: 🔐 Configure GHCR auth
+      shell: bash
+      env:
+        GITHUB_ACTOR: ${{ github.actor }}
+        GHCR_TOKEN: ${{ inputs.ghcr-token }}
+      run: |
+        set -euo pipefail
+        umask 077
+        mkdir -p ~/.docker
+        AUTH=$(printf '%s:%s' "${GITHUB_ACTOR}" "${GHCR_TOKEN}" | base64 -w0)
+        echo "::add-mask::${AUTH}"
+        jq -n --arg auth "${AUTH}" \
+          '{auths: {"ghcr.io": {auth: $auth}}}' \
+          > ~/.docker/config.json
+        chmod 600 ~/.docker/config.json
+
+    - name: ⚙️ Install cosign
+      env:
+        # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
+        COSIGN_VERSION: "3.1.3"
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      with:
+        cosign-release: "v${{ env.COSIGN_VERSION }}"
+
+    - name: 🔎 Resolve the staged manifest digest
+      id: resolve_staging
+      shell: bash
+      env:
+        STAGING_REF: ${{ steps.staging_reference.outputs.registry_ref }}
+      run: |
+        set -euo pipefail
+        DIGEST=$(docker buildx imagetools inspect "${STAGING_REF}" --format '{{.Manifest.Digest}}')
+        if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "::error::Staged platform digest is invalid: ${DIGEST:-<empty>}"
+          exit 1
+        fi
+        echo "digest=${DIGEST}" >>"${GITHUB_OUTPUT}"
+
+    - name: 🖋️ Sign the staged digest with cosign
+      id: cosign_sign
+      shell: bash
+      env:
+        COSIGN_YES: "true"
+        STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}
+      run: |
+        set -euo pipefail
+        cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"
+
+    - name: 📋 Generate SBOM (CycloneDX)
+      id: generate_sbom
+      env:
+        # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
+        SYFT_VERSION: "1.51.0"
+      uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+      with:
+        image: ghcr.io/devantler-tech/platform/manifests@${{ steps.resolve_staging.outputs.digest }}
+        format: cyclonedx-json
+        output-file: sbom.cdx.json
+        syft-version: "v${{ env.SYFT_VERSION }}"
+        upload-artifact: false
+
+    - name: 🪪 Attest SBOM
+      id: attest_sbom
+      uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+      with:
+        subject-digest: ${{ steps.resolve_staging.outputs.digest }}
+        subject-name: ghcr.io/devantler-tech/platform/manifests
+        sbom-path: sbom.cdx.json
+        push-to-registry: true
+        create-storage-record: false
+
+    - name: 🪪 Attest build provenance (SLSA L3)
+      id: attest_provenance
+      uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+      with:
+        subject-digest: ${{ steps.resolve_staging.outputs.digest }}
+        subject-name: ghcr.io/devantler-tech/platform/manifests
+        push-to-registry: true
+        create-storage-record: false
+
+    - name: 🔍 Verify the published evidence before promoting
+      id: verify_evidence
+      shell: bash
+      env:
+        ENFORCE: ${{ inputs.enforce-evidence-verification }}
+        GH_TOKEN: ${{ inputs.ghcr-token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}
+        SUBJECT_NAME: ghcr.io/devantler-tech/platform/manifests
+        WORKFLOW_REF: ${{ github.workflow_ref }}
+      # Every step above can report success while leaving no usable evidence in
+      # the registry, and the promotion below is the point of no return: once
+      # latest names these bytes, production follows them within the minute. Ask
+      # the registry what it actually holds before that, rather than inferring it
+      # from the fact that the steps ran.
+      run: ./scripts/verify-published-evidence.sh "${STAGING_DIGEST}"
+
+    - name: 🚀 Promote the evidenced digest to latest
+      id: promote_latest
+      shell: bash
+      env:
+        STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}
+      run: |
+        set -euo pipefail
+        SUBJECT_NAME='ghcr.io/devantler-tech/platform/manifests'
+        LATEST_REF="${SUBJECT_NAME}:latest"
+        docker buildx imagetools create --prefer-index=false \
+          --tag "${LATEST_REF}" "${SUBJECT_NAME}@${STAGING_DIGEST}"
+        LATEST_DIGEST=$(docker buildx imagetools inspect "${LATEST_REF}" --format '{{.Manifest.Digest}}')
+        if [[ "${LATEST_DIGEST}" != "${STAGING_DIGEST}" ]]; then
+          echo "::error::latest resolved to ${LATEST_DIGEST:-<empty>}, expected ${STAGING_DIGEST}"
+          exit 1
+        fi
+        echo "digest=${STAGING_DIGEST}" >>"${GITHUB_OUTPUT}"

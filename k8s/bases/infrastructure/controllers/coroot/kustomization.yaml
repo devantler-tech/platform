@@ -13,3 +13,18 @@ resources:
   - http-route.yaml
   - cilium-network-policy.yaml
   - cron-job.yaml
+  # Degraded-CNPG-cluster alert (one resource per file, per the naming convention):
+  - service-account-cnpg-degraded-alert.yaml
+  - secret-cnpg-degraded-alert.yaml
+  - cluster-role-cnpg-degraded-alert.yaml
+  - cluster-role-binding-cnpg-degraded-alert.yaml
+  - cron-job-cnpg-degraded-alert.yaml
+  # Kubescape posture-staleness alert (one resource per file, per the naming
+  # convention). Lives here rather than under controllers/kubescape/ to reuse the
+  # allow-coroot CiliumNetworkPolicy's kube-apiserver + Slack egress, same as the
+  # CNPG alert above:
+  - service-account-posture-staleness-alert.yaml
+  - secret-posture-staleness-alert.yaml
+  - cluster-role-posture-staleness-alert.yaml
+  - cluster-role-binding-posture-staleness-alert.yaml
+  - cron-job-posture-staleness-alert.yaml

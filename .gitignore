@@ -16,3 +16,54 @@ hetzner/talos-*/*.raw.xz
 .decrypted*
 .playwright-mcp/
 wedding-app-login.png
+
+# MegaLinter writes its report tree here. It must never be committed: the shared CI job
+# stages everything (`file_pattern: .`) when it pushes auto-fixes back, and without this it
+# committed 182 report files into the branch.
+megalinter-reports/
+
+# MegaLinter also drops a generated GitHub config tree here.
+.megalinter_github_conf/
+
+# Python bytecode. The validators and their tests are a migration target, but while they
+# exist every run of them drops a __pycache__ tree next to the source, and the shared CI job
+# stages everything when it pushes auto-fixes back — which is how an empty .pyc reached main.
+__pycache__/
+*.py[cod]
+
+# Compiled Go binaries. Every scripts/<name>/ is a `main` package, and a build drops its output in
+# one of two places: `go build ./scripts/<name>/` from the repository root writes at the root,
+# `go build .` from inside scripts/<name>/ writes there — hence the two blocks below. (`go build
+# ./...` builds every package but discards the executables, so it leaves nothing to ignore.) A
+# directory-wide `git add` otherwise stages a ~4 MB Mach-O binary alongside the source without
+# comment.
+#
+# Four output names reach those two places:
+#   <name>       `go build ./scripts/<name>/`  — named after the package directory
+#   main         `go build main.go`            — named after the first source file
+#   <name>.test  `go test -c`                  — also retained by -cpuprofile and friends
+#   *.exe        any of the above under GOOS=windows (`go test -c` gives <name>.test.exe)
+#
+# The extensionless names are listed literally rather than matched by a glob for extensionless
+# files: that glob would also hide a legitimately extensionless file someone adds later, and a
+# silently ignored source file is a worse failure than a binary that `git status` still shows.
+# `.exe` and `.test` are unambiguous compiled-artifact extensions, so those two are globbed. Add a
+# line to each block when a new scripts/<name>/ package appears.
+/generate-kubescape-exceptions
+/kubescape-backlog-bridge
+/validate-concurrency-queue
+/validate-dr-signing
+/validate-eks-ci-role-policy
+/validate-merge-group-heal
+/main
+/*.exe
+/*.test
+/scripts/*/generate-kubescape-exceptions
+/scripts/*/kubescape-backlog-bridge
+/scripts/*/validate-concurrency-queue
+/scripts/*/validate-dr-signing
+/scripts/*/validate-eks-ci-role-policy
+/scripts/*/validate-merge-group-heal
+/scripts/*/main
+/scripts/*/*.exe
+/scripts/*/*.test

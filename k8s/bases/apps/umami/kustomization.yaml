@@ -2,8 +2,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - namespace.yaml
+  # Namespace ownership lives in infrastructure-controllers/kyverno so the
+  # namespaced background-controller grant exists before its ClusterPolicy.
   - service-account.yaml
+  - service-account-provision-tenants.yaml
   - external-secret.yaml
   - external-secret-admin.yaml
   - external-secret-ascoachingogvaner.yaml
@@ -22,4 +24,19 @@ resources:
   - scaled-object.yaml
   - cilium-network-policy.yaml
   - pod-disruption-budget.yaml
+  - role-provision-tenants.yaml
+  - role-binding-provision-tenants.yaml
+  - lease-provision-tenants.yaml
+  - job.yaml
   - cron-job.yaml
+replacements:
+  - source:
+      kind: CronJob
+      name: umami-provision-tenants
+      fieldPath: spec.jobTemplate.spec.template
+    targets:
+      - select:
+          kind: Job
+          name: umami-provision-tenants-bootstrap
+        fieldPaths:
+          - spec.template
