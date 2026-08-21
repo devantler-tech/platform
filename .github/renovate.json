@@ -223,10 +223,11 @@
       "automerge": false
     },
     {
-      "description": "headlamp chart 0.43.0 is EXCLUDED (k8s/bases/apps/headlamp/helm-release.yaml, reverted to 0.42.0): its in-cluster OIDC login is broken in Safari — the sign-in popup's only close signal is a cross-window localStorage storage event, which Safari ITP suppresses after the popup's cross-site Dex/GitHub hops, so the popup hangs on 'Redirecting to main page…' forever (upstream kubernetes-sigs/headlamp#6353; fix PR #6355 unmerged; tracked in #2438). The negated regex blocks exactly 0.43.0 while letting the NEXT release (>= 0.43.1, minor or major) bump normally — on that bump, verify Safari login end-to-end per #2438 before considering the regression closed, then remove this rule.",
+      "description": "headlamp is HARD-PINNED at 0.42.0 (k8s/bases/apps/headlamp/helm-release.yaml): 0.43.0 introduced an in-cluster OIDC login regression in Safari, and the same broken popup handoff was reproduced after upgrading to 0.44.0 — the session cookie succeeds, but Safari ITP suppresses the cross-window localStorage storage event after the popup's cross-site Dex/GitHub hops, so the popup never redirects its opener (upstream kubernetes-sigs/headlamp#6353; fix PR #6355 unmerged; tracked in #2438). Keep the last Safari-verified release until a released upstream fix is manually verified end-to-end; automerge:false placed last so an unverified Headlamp update cannot inherit the minor/patch automerge defaults above.",
       "matchDatasources": ["helm"],
       "matchPackageNames": ["headlamp"],
-      "allowedVersions": "!/^v?0\\.43\\.0$/"
+      "allowedVersions": "/^v?0\\.42\\.0$/",
+      "automerge": false
     },
     {
       "description": "KubeVirt and CDI ship as VENDORED upstream operator manifests (k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml, .../cdi/cdi-operator.yaml) — thousands of lines of CRDs, RBAC and the operator Deployment vendored as one unit from each release's published asset. The kubernetes manager only sees the `image:` lines inside them, so a Renovate bump rewrites the operator image alone and silently skews it against the CRDs/RBAC vendored next to it; the system-test would still pass bring-up (operators tolerate startup skew) so automerge would land the skew unseen. Keep the update PR as the new-release signal but require a maintainer to re-vendor the full manifest from the matching release before merging. automerge:false placed last so it overrides the major/minor/patch automerge defaults above.",

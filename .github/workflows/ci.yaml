@@ -96,6 +96,13 @@ jobs:
           go test ./scripts/validate-concurrency-queue
           go run ./scripts/validate-concurrency-queue "${workflows[@]}"
 
+      # This guard spans the HelmRelease and Renovate policy, so it must run
+      # without routing policy-only changes into the production k8s deploy path.
+      - name: 🔐 Validate Headlamp OIDC version gate
+        run: |
+          shellcheck scripts/tests/test-headlamp-oidc-version-gate.sh
+          bash scripts/tests/test-headlamp-oidc-version-gate.sh
+
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
