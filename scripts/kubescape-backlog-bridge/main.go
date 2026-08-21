@@ -114,10 +114,11 @@ const nodeIdentityDigestLen = 8
 // is rendered with an explicit "cluster" scope marker rather than an empty
 // leading segment, so a reader cannot mistake it for a missing value.
 //
-// This is the ONLY place a component becomes a public string — acc.add is its
-// single call site, and exception designators match the structured fields
-// instead — which is what makes it the right place to enforce the exclusion the
-// package documents, rather than a second rule that rendering has to remember.
+// This is the ONLY place a component becomes a public string — both backlog
+// aggregation and oracle reporting call it, while exception designators match
+// the structured fields instead. That makes it the right place to enforce the
+// exclusion the package documents, rather than a second rule each output path
+// has to remember.
 //
 // A `Node` is the one kind whose NAME is itself the reachability evidence the
 // package excludes. For every other kind the name is a workload identity and
