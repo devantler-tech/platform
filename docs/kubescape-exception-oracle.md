@@ -56,11 +56,12 @@ go run ./scripts/kubescape-backlog-bridge \
   "${oracle_args[@]}"
 ```
 
-Each raw failed pair produces one deterministic row:
+Each raw failed pair produces one deterministic, tab-separated row. The
+`[TAB]` markers below make those delimiters visible:
 
 ```text
-excepted control=C-0016 component=app/Job/nightly policies=batch-workloads
-unexcepted control=C-0016 component=app/Deployment/api policies=-
+excepted[TAB]control=C-0016[TAB]component=app/Job/nightly[TAB]policies=batch-workloads
+unexcepted[TAB]control=C-0016[TAB]component=app/Deployment/api[TAB]policies=-
 ```
 
 `excepted` means at least one named policy matches both the control and the
