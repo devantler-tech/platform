@@ -537,6 +537,61 @@ misconfigurations:
       scripts/tests/test-trivyignore-vault-config-identity-boundary.sh asserts that per
       container so this entry cannot silently cover a future low-UID container.
 
+  # KSV-0020 "runs with UID <= 10000" on the vault-backup Job and CronJob — 2 findings, both LOW.
+  #
+  # The SAME image-defined identity the vault-config KSV-0020 entry above describes, on the same
+  # pinned DIGEST: all four openbao container references in this repository are
+  # quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca...171f0806, so the /etc/passwd and /etc/group
+  # measurement taken for that entry (`openbao:x:100:1000::/home/openbao`, `openbao:x:1000`) is a
+  # measurement of THIS image, not an analogy to it. The DEFINES-not-ENFORCES caveat carries over
+  # unchanged: the image config's User is empty, so `runAsUser: 100` selects the identity the image
+  # defines rather than restating one it imposes, and raising it would run the openbao binary as a
+  # UID its own image has no account for.
+  #
+  # Only the `snapshot` container carries it, in each of the two workloads. The pod default is the
+  # high, unprivileged 65532 and the `minio/mc` mirror container takes that default, which is why
+  # each workload sets runAsUser per container rather than once on the pod. Trivy's own count
+  # corroborates the split rather than merely restating it: it reports exactly ONE KSV-0020 per
+  # file, which is the count this premise predicts and is not what an inherited low pod default
+  # would produce.
+  #
+  # ⚠️ SAME SCOPING MISMATCH AS THE vault-config ENTRY, AND THEREFORE THE SAME KIND OF GUARD.
+  # This entry is PATH-scoped, so it silences KSV-0020 for every container in both workloads —
+  # including one added later at a low UID with no image-defined reason. That premise is asserted
+  # per container by scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh, which fails
+  # the build if any container other than `snapshot` drops below 10000, if `snapshot` stops running
+  # the openbao image, or if either pod default stops being high.
+  #
+  # ⚠️ These workloads ship to PRODUCTION (k8s/providers/hetzner/infrastructure/ includes
+  # k8s/bases/infrastructure/), so the "local/CI provider only" premise the vendored-operator
+  # entries rest on is NOT available here and is not borrowed. This stands on the image-defined
+  # identity alone.
+  #
+  # ⚠️ DELIBERATELY UID-ONLY. KSV-0021 stays live on both workloads and is NOT dispositioned here,
+  # because its premise is false today: the pod default runAsGroup is 1000, so the mirror container
+  # INHERITS a low GID chosen for openbao rather than taking a high default, and `minio/mc` bakes no
+  # such identity. vault-config can make that split because its shared paths are emptyDir, where
+  # fsGroup's setgid bit carries the group regardless of the writer's primary gid (#3258); the
+  # vault-backup snapshots live on a PVC, where that has not been established — #3281 assumed it
+  # transferred and was withdrawn. The remaining 4 KSV-0021 findings therefore stay reported until
+  # that is measured, rather than being covered by a premise that does not hold. See #3202.
+  - id: KSV-0020
+    paths:
+      - k8s/bases/infrastructure/vault-backup/job.yaml
+      - k8s/bases/infrastructure/vault-backup/cron-job.yaml
+    statement: >-
+      UID 100 is the identity the openbao image itself DEFINES, measured against the same pinned
+      digest these workloads share with the vault-config Job: /etc/passwd carries
+      openbao:x:100:1000::/home/openbao and /etc/group carries openbao:x:1000. The image does NOT
+      default to it — its config User is empty — so runAsUser: 100 selects that defined identity
+      rather than restating an enforced one, and raising it would run the openbao binary as a UID
+      its own image has no account for. Only the snapshot container sets it in each workload; the
+      pod default is 65532 and the minio/mc mirror container takes that high default. Because trivy
+      scopes by path rather than by resource,
+      scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh asserts that per container so
+      this entry cannot silently cover a future low-UID container. KSV-0021 is deliberately not
+      dispositioned on these workloads.
+
   # KSV-0021 "runs with GID <= 10000" on the vault-config Job — 2 findings, both LOW.
   #
   # The GID half of the same image-defined identity the KSV-0020 entry above describes: that

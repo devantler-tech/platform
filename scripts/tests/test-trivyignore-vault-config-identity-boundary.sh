@@ -57,6 +57,11 @@ readonly EXPECTED_LOW_CONTAINERS=2
 readonly VENDORED_CDI='k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml'
 readonly VENDORED_KUBEVIRT='k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml'
 
+# The vault-backup Job and CronJob carry their own reviewed KSV-0020 disposition on the same
+# image-defined identity, guarded by test-trivyignore-vault-backup-identity-boundary.sh.
+readonly VAULT_BACKUP_JOB='k8s/bases/infrastructure/vault-backup/job.yaml'
+readonly VAULT_BACKUP_CRON='k8s/bases/infrastructure/vault-backup/cron-job.yaml'
+
 status=0
 fail() {
   printf '%s\n' "$*" >&2
@@ -105,7 +110,7 @@ for CHECK_ID in "${CHECK_IDS[@]}"; do
     while IFS= read -r path; do
       [ -n "$path" ] || continue
       case "$path" in
-        "$VENDORED_CDI" | "$VENDORED_KUBEVIRT" | "$JOB_PATH") ;;
+        "$VENDORED_CDI" | "$VENDORED_KUBEVIRT" | "$JOB_PATH" | "$VAULT_BACKUP_JOB" | "$VAULT_BACKUP_CRON") ;;
         *) fail "UNREVIEWED DISPOSITION: $CHECK_ID is scoped to $path, which no premises test guards" ;;
       esac
     done <<PATHS
