@@ -57,7 +57,13 @@ readonly JOB_PATH='k8s/bases/infrastructure/vault-backup/job.yaml'
 readonly CRON_PATH='k8s/bases/infrastructure/vault-backup/cron-job.yaml'
 readonly WORKLOAD_PATHS=("$JOB_PATH" "$CRON_PATH")
 readonly PROBE_PATH='k8s/bases/apps/trivyignore-vault-backup-probe/job.yaml'
-readonly OPENBAO_IMAGE_RE='^quay\.io/openbao/openbao:'
+# The disposition rests on account data measured from THIS digest -- /etc/passwd's
+# openbao:x:100:1000 and /etc/group's openbao:x:1000 -- not on the repository name. Matching the
+# name alone would let an image bump keep the suppression alive while the identity behind it
+# changed, which is exactly the premise going stale unnoticed that this guard exists to catch.
+# A bump must therefore FAIL here until someone re-measures the new digest and updates this
+# constant together with the .trivyignore.yaml statement that quotes it.
+readonly EXPECTED_OPENBAO_IMAGE='quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806'
 readonly LOW_ID_FLOOR=10000
 readonly EXPECTED_LOW_UID=100
 readonly EXPECTED_LOW_CONTAINERS=1
@@ -173,8 +179,8 @@ for path in "${WORKLOAD_PATHS[@]}"; do
       [ "$uid" = "unset" ] && continue
       [ "$uid" -ge "$LOW_ID_FLOOR" ] && continue
       low=$((low + 1))
-      if ! printf '%s' "$image" | grep -qE "$OPENBAO_IMAGE_RE"; then
-        fail "PREMISE BROKEN: container '$name' in $path runs as UID $uid from image '$image', which is not an openbao image. The $UID_CHECK_ID disposition covers this whole workload by path, so this container's low UID is now silently suppressed with no image-defined identity to justify it."
+      if [ "$image" != "$EXPECTED_OPENBAO_IMAGE" ]; then
+        fail "PREMISE BROKEN: container '$name' in $path runs as UID $uid from image '$image', which is not the pinned openbao image whose measured uid-100 account justifies $UID_CHECK_ID. If this is a deliberate bump, re-measure /etc/passwd and /etc/group at the new digest and update EXPECTED_OPENBAO_IMAGE and the .trivyignore.yaml statement together."
       elif [ "$uid" -ne "$EXPECTED_LOW_UID" ]; then
         fail "PREMISE BROKEN: openbao container '$name' in $path runs as UID $uid, not the image-defined $EXPECTED_LOW_UID the disposition names."
       elif [ "$name" != "$EXPECTED_LOW_CONTAINER_NAME" ]; then
