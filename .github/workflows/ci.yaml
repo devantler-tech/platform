@@ -298,6 +298,14 @@ jobs:
     # and halted all GitOps delivery on prod for ~5.5 hours (#3005). This asks
     # the one question those cannot: does the matcher, as written in the
     # manifest, accept a signer that really signed this artifact?
+    #
+    # SKIPPED ON FORK PULL REQUESTS, and still enforced before anything merges.
+    # Reading this artifact needs a token carrying package read; a fork PR's
+    # GITHUB_TOKEN does not have one, so running it there would fail every
+    # external contribution on a permission it cannot be granted. The merge
+    # queue is not a fork context, so the gate still holds at the only moment
+    # that decides what production actually gets.
+    if: github.event_name == 'merge_group' || github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
