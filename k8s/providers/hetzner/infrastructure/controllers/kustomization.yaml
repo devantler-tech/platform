@@ -102,6 +102,9 @@ components:
   # - cilium/components/ebpf-host-routing/
 patches:
   - path: openbao/patches/store-data-on-hcloud.yaml
+  # Prod-only: HARD-pin OpenBao to the static baseline workers so its hcloud
+  # block volumes never ride a node the autoscaler can reclaim (#2363) — see file.
+  - path: openbao/patches/keep-off-autoscale-nodes.yaml
   # Umami's Namespace moved into the preceding controllers layer with its
   # Kyverno Role; keep the prod-only user-namespace label with its new owner.
   - path: kyverno/patches/enable-user-namespaces.yaml
