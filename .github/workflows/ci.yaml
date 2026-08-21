@@ -342,11 +342,18 @@ jobs:
 
           go test ./scripts/validate-matcher-efficacy
 
-          mapfile -t MATCHER < <(go run ./scripts/validate-matcher-efficacy --print-matcher \
+          MATCHER_JSON="$(go run ./scripts/validate-matcher-efficacy --print-matcher \
             ksail.prod.yaml \
-            k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml)
-          ISSUER="${MATCHER[0]}"
-          SUBJECT="${MATCHER[1]}"
+            k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml)"
+          # 🔴 DECODE AS JSON, never line-per-value. A matcher value may legitimately
+          # contain a newline — a YAML literal block is valid for these fields — and a
+          # line-based read would take only its first line, verifying against a
+          # truncated regex while Flux enforces the whole thing. That is a matcher
+          # inert in production and green here: exactly what this job refuses.
+          # `jq -e` fails on a null or missing field, so a malformed handoff stops
+          # the build instead of silently yielding an empty pattern.
+          ISSUER="$(jq -er '.issuer' <<<"${MATCHER_JSON}")"
+          SUBJECT="$(jq -er '.subject' <<<"${MATCHER_JSON}")"
           if [ -z "${ISSUER}" ] || [ -z "${SUBJECT}" ]; then
             echo "::error::could not read the matcher out of the manifests"
             exit 1

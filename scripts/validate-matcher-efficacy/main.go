@@ -305,9 +305,43 @@ func readObserved(path string) ([]signerIdentity, error) {
 	return observed, nil
 }
 
-// printMatcher writes the manifest's own patterns, issuer first, one per line,
-// so a caller can hand them straight to cosign. This is what keeps the thing
-// tested identical to the thing deployed: the caller never spells a pattern.
+// encodeMatcher serialises the pair as one line of JSON.
+//
+// 🔴 THIS IS NOT COSMETIC. A matcher value may legitimately contain a newline —
+// a YAML literal block is valid for these fields — and a line-per-value handoff
+// splits it at the shell boundary. The caller would then read only the first
+// line as the subject and verify against a truncated regex, while Flux enforces
+// the whole thing: inert in production, green here. JSON keeps the value
+// intact, and the caller requires both fields to decode.
+func encodeMatcher(configured matcher) (string, error) {
+	encoded, err := json.Marshal(struct {
+		Issuer  string `json:"issuer"`
+		Subject string `json:"subject"`
+	}{Issuer: configured.Issuer, Subject: configured.Subject})
+	if err != nil {
+		return "", fmt.Errorf("encode matcher: %w", err)
+	}
+
+	return string(encoded), nil
+}
+
+// decodeMatcher is the inverse, kept beside it so the round-trip is testable
+// rather than asserted.
+func decodeMatcher(encoded string) (matcher, error) {
+	var decoded struct {
+		Issuer  string `json:"issuer"`
+		Subject string `json:"subject"`
+	}
+
+	if err := json.Unmarshal([]byte(encoded), &decoded); err != nil {
+		return matcher{}, fmt.Errorf("decode matcher: %w", err)
+	}
+
+	return matcher{Issuer: decoded.Issuer, Subject: decoded.Subject}, nil
+}
+
+// printMatcher writes the manifest's own patterns as one line of JSON, so a
+// caller can hand them to cosign without ever spelling a pattern itself.
 func printMatcher(configPath, instancePath string) error {
 	configManifest, err := os.ReadFile(configPath)
 	if err != nil {
@@ -324,8 +358,12 @@ func printMatcher(configPath, instancePath string) error {
 		return err
 	}
 
-	fmt.Println(configured.Issuer)
-	fmt.Println(configured.Subject)
+	encoded, err := encodeMatcher(configured)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(encoded)
 
 	return nil
 }

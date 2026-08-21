@@ -157,3 +157,36 @@ func TestUncompilableSubjectFailsLoudly(t *testing.T) {
 		t.Fatalf("want errBadPattern, got %v", err)
 	}
 }
+
+// A matcher value can legitimately contain a newline — a YAML literal block is
+// valid for these fields — and a line-per-value handoff silently truncates it at
+// the shell boundary. The caller would then verify with only the first line
+// while Flux enforces the whole regex: a matcher that is inert in production and
+// green here, which is the precise state this gate exists to refuse.
+func TestEncodeMatcherPreservesAMultilineValue(t *testing.T) {
+	t.Parallel()
+
+	multiline := "^https://github\\.com/devantler-tech/platform/.+$\n^never-matches-anything$"
+
+	encoded, err := encodeMatcher(matcher{Issuer: realIssuer, Subject: multiline})
+	if err != nil {
+		t.Fatalf("encodeMatcher: %v", err)
+	}
+
+	if strings.Contains(strings.TrimRight(encoded, "\n"), "\n") {
+		t.Fatalf("encoded form is not a single line, so a line-based reader can still split it: %q", encoded)
+	}
+
+	decoded, err := decodeMatcher(encoded)
+	if err != nil {
+		t.Fatalf("decodeMatcher: %v", err)
+	}
+
+	if decoded.Subject != multiline {
+		t.Fatalf("subject did not round-trip:\n want %q\n got  %q", multiline, decoded.Subject)
+	}
+
+	if decoded.Issuer != realIssuer {
+		t.Fatalf("issuer did not round-trip: got %q", decoded.Issuer)
+	}
+}
