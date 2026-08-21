@@ -305,42 +305,82 @@ func readObserved(path string) ([]signerIdentity, error) {
 	return observed, nil
 }
 
-func main() {
-	if len(os.Args) != 4 {
-		fmt.Fprintf(os.Stderr,
-			"usage: %s <config-manifest> <flux-instance-manifest> <observed-signers.json>\n", os.Args[0])
-		os.Exit(2)
+// printMatcher writes the manifest's own patterns, issuer first, one per line,
+// so a caller can hand them straight to cosign. This is what keeps the thing
+// tested identical to the thing deployed: the caller never spells a pattern.
+func printMatcher(configPath, instancePath string) error {
+	configManifest, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("read config manifest: %w", err)
 	}
 
-	configManifest, err := os.ReadFile(os.Args[1])
+	instanceManifest, err := os.ReadFile(instancePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "validate-matcher-efficacy: %v\n", err)
-		os.Exit(1)
-	}
-
-	instanceManifest, err := os.ReadFile(os.Args[2])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "validate-matcher-efficacy: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("read instance manifest: %w", err)
 	}
 
 	configured, err := extractMatcher(configManifest, instanceManifest)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "validate-matcher-efficacy: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
-	observed, err := readObserved(os.Args[3])
+	fmt.Println(configured.Issuer)
+	fmt.Println(configured.Subject)
+
+	return nil
+}
+
+// checkObserved applies the manifest's matcher to identities some other tool
+// already read off the artifact.
+func checkObserved(configPath, instancePath, observedPath string) error {
+	configManifest, err := os.ReadFile(configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "validate-matcher-efficacy: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("read config manifest: %w", err)
+	}
+
+	instanceManifest, err := os.ReadFile(instancePath)
+	if err != nil {
+		return fmt.Errorf("read instance manifest: %w", err)
+	}
+
+	configured, err := extractMatcher(configManifest, instanceManifest)
+	if err != nil {
+		return err
+	}
+
+	observed, err := readObserved(observedPath)
+	if err != nil {
+		return err
 	}
 
 	if err := assertVerifies(configured, observed); err != nil {
-		fmt.Fprintf(os.Stderr, "validate-matcher-efficacy: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	fmt.Printf("matcher verifies the artifact: issuer=%s subject=%s\n",
 		configured.Issuer, configured.Subject)
+
+	return nil
+}
+
+func main() {
+	var err error
+
+	switch {
+	case len(os.Args) == 4 && os.Args[1] == "--print-matcher":
+		err = printMatcher(os.Args[2], os.Args[3])
+	case len(os.Args) == 4:
+		err = checkObserved(os.Args[1], os.Args[2], os.Args[3])
+	default:
+		fmt.Fprintf(os.Stderr,
+			"usage: %s --print-matcher <config-manifest> <flux-instance-manifest>\n"+
+				"       %s <config-manifest> <flux-instance-manifest> <observed-signers.json>\n",
+			os.Args[0], os.Args[0])
+		os.Exit(2)
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "validate-matcher-efficacy: %v\n", err)
+		os.Exit(1)
+	}
 }

@@ -325,39 +325,62 @@ jobs:
       - name: 🔏 Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
-      - name: 🔎 Observe who actually signed the artifact
-        # 🔴 THIS FETCH IS DELIBERATELY PATTERN-NEUTRAL. It asks cosign "who
-        # signed this?", never "does <subject> match?" — the identity regexes
-        # belong to the manifest and are applied by the validator below. A fetch
-        # that restated them would test the restatement, and would keep passing
-        # after the manifest drifted away from it.
+      - name: 🔏 Check the configured matcher verifies the real artifact
+        # 🔴 THE PATTERNS ARE NEVER SPELLED HERE. They are printed out of the
+        # manifests we deploy and handed straight to cosign, so this tests the
+        # deployed rule rather than a copy of it that can drift.
         #
-        # `.*` accepts ANY signer for the purposes of reading the certificate;
-        # cosign still performs full signature and transparency-log
-        # verification, so an unsigned or tampered artifact fails here.
+        # cosign is the matcher's real consumer — Flux hands it these same two
+        # regexes — so letting cosign decide keeps the check's semantics
+        # identical to production's instead of reimplementing them.
         env:
           REGISTRY_USER: ${{ github.actor }}
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT: ghcr.io/devantler-tech/platform/manifests:latest
         run: |
           set -euo pipefail
-          echo "${REGISTRY_TOKEN}" | cosign login ghcr.io -u "${REGISTRY_USER}" --password-stdin
-          cosign verify \
-            --certificate-identity-regexp '.*' \
-            --certificate-oidc-issuer-regexp '.*' \
-            --output json \
-            ghcr.io/devantler-tech/platform/manifests:latest \
-            | jq '[.[] | {issuer: .optional.Issuer, subject: .optional.Subject}]' \
-            > observed-signers.json
-          echo "observed signers:"
-          jq -r '.[] | "  issuer=\(.issuer) subject=\(.subject)"' observed-signers.json
 
-      - name: 🔏 Validate the configured matcher verifies that artifact
-        run: |
           go test ./scripts/validate-matcher-efficacy
-          go run ./scripts/validate-matcher-efficacy \
+
+          mapfile -t MATCHER < <(go run ./scripts/validate-matcher-efficacy --print-matcher \
             ksail.prod.yaml \
-            k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml \
-            observed-signers.json
+            k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml)
+          ISSUER="${MATCHER[0]}"
+          SUBJECT="${MATCHER[1]}"
+          if [ -z "${ISSUER}" ] || [ -z "${SUBJECT}" ]; then
+            echo "::error::could not read the matcher out of the manifests"
+            exit 1
+          fi
+          echo "matcher issuer:  ${ISSUER}"
+          echo "matcher subject: ${SUBJECT}"
+
+          echo "${REGISTRY_TOKEN}" | cosign login ghcr.io -u "${REGISTRY_USER}" --password-stdin
+
+          # THE CHECK. Fails when the deployed matcher would not verify the
+          # artifact it guards — which is #3005, caught before the deploy.
+          if ! cosign verify \
+            --certificate-oidc-issuer-regexp "${ISSUER}" \
+            --certificate-identity-regexp "${SUBJECT}" \
+            "${ARTIFACT}" > /dev/null; then
+            echo "::error::the cosign matcher in the manifests does not verify ${ARTIFACT}."
+            echo "::error::a matcher that matches nothing is inert: present, green, and enforcing nothing."
+            exit 1
+          fi
+          echo "the configured matcher verifies the artifact"
+
+          # THE NEGATIVE CONTROL, run on every build rather than asserted once.
+          # A deliberately wrong subject MUST be refused; if it is accepted the
+          # check above proves nothing and is itself the vacuous control this
+          # job exists to prevent.
+          if cosign verify \
+            --certificate-oidc-issuer-regexp "${ISSUER}" \
+            --certificate-identity-regexp '^https://github\.com/devantler-tech/NOT-A-REAL-REPO/.*$' \
+            "${ARTIFACT}" > /dev/null 2>&1; then
+            echo "::error::negative control PASSED — a deliberately wrong subject was accepted."
+            echo "::error::this check cannot distinguish a good matcher from a broken one. Fix it before trusting it."
+            exit 1
+          fi
+          echo "negative control refused a wrong subject, so the check above is not vacuous"
 
   validate-eks-authorization:
     name: 🔐 Validate EKS Authorization
