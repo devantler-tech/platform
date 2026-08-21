@@ -3,13 +3,14 @@
 #
 # `bao` creates the snapshot `-rw-------` (0600), owned by the snapshot
 # container's UID. The kernel decides file access by comparing numeric UID and
-# GID values, so an owner-only mode forces the mirror to run the same UID as the
-# writer. That coupling is what pins every vault-snapshots writer to one low host
-# UID (checkov CKV_K8S_40, whose migration is deferred to #3202).
+# GID values, so an owner-only mode would force the mirror to run the same UID as
+# the writer. Breaking that coupling is what lets the pods default to the high,
+# unprivileged 65532 and scope UID 100 to the one container whose image bakes it
+# (checkov CKV_K8S_40).
 #
-# Both containers already run runAsGroup/fsGroup 1000, so a group-readable
-# snapshot is readable by the mirror on its GROUP entry alone, leaving the UIDs
-# free to move independently.
+# Every container runs runAsGroup/fsGroup 1000, so a group-readable snapshot is
+# readable by the mirror on its GROUP entry alone — a pod-level property, which is
+# why this does not depend on the volume's setgid bit.
 #
 # NOTE ON MECHANISM: this must be an explicit chmod, not a umask. umask can only
 # CLEAR permission bits, never add them — so if `bao` requests 0600 explicitly (the
@@ -123,4 +124,55 @@ CHMODS
     "${manifest}" "${save_operand}" "${chmod_modes}"
 done
 
-printf 'PASS: both vault-snapshot writers make the snapshot group-readable\n'
+
+# --- The UID split that group-readability makes possible ----------------------------------------
+#
+# Asserted here rather than in a separate file because it is the same property from the other end:
+# the chmod above is only half of it. If the mirror were re-pinned to the openbao UID, every
+# assertion above would still pass while the coupling it exists to prevent had quietly returned.
+
+# manifest:yq-path-to-the-pod-spec
+readonly uid_targets=(
+  "k8s/bases/infrastructure/vault-backup/job.yaml:.spec.template.spec"
+  "k8s/bases/infrastructure/vault-backup/cron-job.yaml:.spec.jobTemplate.spec.template.spec"
+)
+
+for target in "${uid_targets[@]}"; do
+  manifest="${target%%:*}"
+  pod="${target#*:}"
+  path="${root_dir}/${manifest}"
+
+  [ -f "${path}" ] || fail "${manifest}: not found"
+
+  pod_uid="$(yq "${pod}.securityContext.runAsUser" "${path}")"
+  pod_gid="$(yq "${pod}.securityContext.runAsGroup" "${path}")"
+  pod_fsg="$(yq "${pod}.securityContext.fsGroup" "${path}")"
+
+  case "${pod_uid}" in
+    '' | null) fail "${manifest}: the pod sets no runAsUser" ;;
+    *[!0-9]*) fail "${manifest}: pod runAsUser '${pod_uid}' is not numeric" ;;
+  esac
+  [ "${pod_uid}" -ge 10000 ] ||
+    fail "${manifest}: pod runAsUser ${pod_uid} is a low host UID (CKV_K8S_40) — the writers are re-coupled"
+
+  # The mirror reads on THIS group. If either value moves, group access stops working and the only
+  # remaining path to the file is ownership, which is the coupling being removed.
+  [ "${pod_gid}" = "1000" ] ||
+    fail "${manifest}: pod runAsGroup is '${pod_gid}', not 1000 — the mirror loses its group entry"
+  [ "${pod_fsg}" = "1000" ] ||
+    fail "${manifest}: pod fsGroup is '${pod_fsg}', not 1000 — the mirror loses its group entry"
+
+  snap_uid="$(yq "${pod}.initContainers[]|select(.name==\"snapshot\")|.securityContext.runAsUser" "${path}")"
+  [ "${snap_uid}" = "100" ] ||
+    fail "${manifest}: the snapshot container's runAsUser is '${snap_uid}', not the image's baked 100"
+
+  # Asserted ABSENT rather than equal to the pod default: an explicit value here is precisely how
+  # the mirror would be re-pinned to the writer's UID.
+  mirror_uid="$(yq "${pod}.containers[]|select(.name==\"mirror\")|.securityContext.runAsUser" "${path}")"
+  [ "${mirror_uid}" = "null" ] ||
+    fail "${manifest}: the mirror pins runAsUser '${mirror_uid}' instead of taking the pod's high default"
+
+  printf 'ok: %s — pod %s:%s (fsGroup %s); UID 100 scoped to the snapshot container; mirror takes the default\n' \
+    "${manifest}" "${pod_uid}" "${pod_gid}" "${pod_fsg}"
+done
+printf 'PASS: both vault-snapshot writers make the snapshot group-readable, and the UID split holds\n'
