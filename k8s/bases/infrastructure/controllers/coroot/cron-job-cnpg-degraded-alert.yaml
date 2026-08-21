@@ -1,0 +1,282 @@
+# Alerts on a CloudNativePG `Cluster` that has been degraded past a grace period.
+#
+# WHY THIS EXISTS AS A SEPARATE CHECK
+#
+# Until now the ONLY signal for a degraded database was the merge-queue gate.
+# docs/dr/alerting.md states the design: the four top-level Kustomizations
+# `wait: true` on their children, "so a failed controller / app / HelmRelease
+# surfaces here as its parent going NotReady". A degraded CNPG replica therefore
+# reached Slack as a *Flux* error naming a Kustomization — 20 minutes late, after
+# `apps` had already timed out and evicted every PR from the merge queue.
+#
+# That happened twice in three weeks: coroot-db on 2026-07-14, and umami-db on
+# 2026-08-05, whose third replica sat Ready=False for over five hours while
+# nothing alerted (the cluster kept SERVING the whole time — primary healthy,
+# archiving and backups green). Coroot's auto-inspections cover crashloops, so
+# the umami pod's restart loop was visible on that path, but the coroot-db case
+# was a pod that stayed Running, never Ready, with ZERO restarts — which no
+# Coroot inspection covers.
+#
+# This check is deliberately independent of any Flux health gate, so that
+# relaxing that gate (platform#2639 direction 1) does not silently remove the
+# only coverage this class has.
+#
+# GRACE PERIOD — WHY `lastTransitionTime` IS SAFE HERE
+#
+# The grace period keys on the Ready condition's `lastTransitionTime`. That was
+# VERIFIED, not assumed: sampled 45s apart on prod, every cluster's
+# `lastTransitionTime` was byte-identical, so CNPG writes it only on an actual
+# transition. (Crossplane's `Synced` condition behaves the OPPOSITE way — it is
+# rewritten every reconcile, which would make a grace period silently
+# unreachable and the check a permanent no-op. Do not copy this pattern to a
+# Crossplane resource without re-measuring.)
+#
+# One rule covers both degradation shapes, because the timestamp means the right
+# thing in each: a cluster short of instances that only just became Ready is
+# still scaling up and stays quiet inside the grace; one that has been "Ready"
+# for hours while short a replica is a persistent degradation and alerts.
+#
+# REPEATS ARE DELIBERATE. A plain webhook has no notification-controller-style
+# dedupe, so a cluster still degraded on the next tick alerts again. That is
+# intended — a degraded production database should keep paging until it is
+# fixed — and it is strictly QUIETER than the signal it replaces, which fired
+# every ~20 minutes as a merge_group failure.
+#
+# Lives in the observability namespace to reuse the allow-coroot
+# CiliumNetworkPolicy (endpointSelector: {}), which already permits
+# kube-apiserver, hooks.slack.com:443 and DNS egress. It does not depend on
+# Coroot itself.
+#
+# The webhook is injected by Flux substitution from the per-cluster SOPS secret.
+# Unset (local/CI) it defaults to the reserved example.invalid host, which the
+# script matches explicitly and skips, so local/CI stays quiet by design. Every
+# OTHER delivery failure fails the Job: nothing outside this Job would notice a
+# silently dropped alert.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cnpg-degraded-alert
+  namespace: observability
+  annotations:
+    checkov.io/skip1: "CKV_K8S_38=the check container reads its SA token to list CNPG Clusters through the API server"
+    # `${GRACE_SECONDS}` in the script below is the container's own env var, NOT
+    # a Flux post-build variable. The infrastructure-controllers Kustomization
+    # runs substituteFrom, so Flux's envsubst expanded it to the empty string and
+    # the deployed script read `jq --argjson grace ""`, which exits 1 with
+    # "invalid JSON text passed to --argjson". That is why this CronJob had
+    # NEVER succeeded (`status.lastSuccessfulTime` was unset) — the degraded-CNPG
+    # check has been dead since it was created. This resource needs no Flux
+    # substitution, so opt it out — same pattern as the actual-budget seed
+    # ConfigMap's JS template literals and the KRO ResourceGraphDefinitions'
+    # CEL expressions.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # Headroom for pod scheduling + the L7 DNS proxy resolving hooks.slack.com
+      # + curl's retry budget, well below the */30 schedule.
+      activeDeadlineSeconds: 180
+      template:
+        metadata:
+          labels:
+            app: cnpg-degraded-alert
+        spec:
+          restartPolicy: Never
+          serviceAccountName: cnpg-degraded-alert
+          # This check DOES call the Kubernetes API, so unlike cluster-heartbeat
+          # it needs its token. C-0034 is already excepted for the observability
+          # namespace (cluster-security-exceptions/service-account-tokens.yaml).
+          automountServiceAccountToken: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            # fsGroup is what makes the mounted webhook readable at all. Secret
+            # volume files are owned by root:root unless fsGroup is set, so a
+            # non-root container reading a mode-0400 file gets EACCES and this
+            # CronJob fails before its first API call -- silently removing the
+            # only degraded-CNPG alert. Setting fsGroup makes kubelet chown the
+            # volume to root:65532, which the group-readable mode below then
+            # opens to this container and nothing else.
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: check
+              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              env:
+                - name: GRACE_SECONDS
+                  value: "900"
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  API=https://kubernetes.default.svc
+                  SA=/var/run/secrets/kubernetes.io/serviceaccount
+
+                  # Read from the mounted Secret rather than an env var
+                  # (checkov CKV_K8S_35). An env value sits in
+                  # /proc/self/environ for the pod's whole life and is
+                  # inherited by every process the script starts; the file is
+                  # mounted 0440 (root:fsGroup, group-readable by this
+                  # container's own user) and read once, here.
+                  WEBHOOK_URL=$(cat /etc/cnpg-degraded-alert/url)
+
+                  # The value becomes a curl CONFIG directive below, where a
+                  # newline starts a SECOND directive -- so an LF in the Secret
+                  # would let the config say `output = ...` or anything else
+                  # curl accepts. A valid URL cannot contain a control
+                  # character, so rejecting them costs nothing and turns a
+                  # malformed Secret into a loud failure instead of a silently
+                  # reconfigured request. Checked with `tr -d`, which needs no
+                  # locale or regex assumptions.
+                  if [ "$(printf '%s' "$WEBHOOK_URL" | tr -d '[:cntrl:]')" != "$WEBHOOK_URL" ]; then
+                    echo "ERROR: webhook URL contains control characters" >&2
+                    exit 1
+                  fi
+
+                  # A non-2xx or unparseable response must NOT be reported as
+                  # "no degraded clusters" — that is the silent-zero failure
+                  # mode where a broken check and a healthy cluster look
+                  # identical. Fail loudly to the Job log instead.
+                  code=$(curl -sS -o /tmp/body -w '%{http_code}' \
+                    --cacert "$SA/ca.crt" \
+                    -H "Authorization: Bearer $(cat "$SA/token")" \
+                    "$API/apis/postgresql.cnpg.io/v1/clusters")
+                  if [ "$code" = "404" ]; then
+                    echo "CNPG CRD not installed on this cluster; nothing to check."
+                    exit 0
+                  fi
+                  if [ "$code" != "200" ]; then
+                    echo "ERROR: kube API returned HTTP $code listing CNPG clusters" >&2
+                    exit 1
+                  fi
+                  # `has("items")` is satisfied by {"items":{}}, which then
+                  # counts zero clusters and reports a malformed API response as
+                  # a healthy one -- the silent zero this guard exists to stop.
+                  # Require the ARRAY, not merely the key.
+                  if ! jq -e '(.items | type) == "array"' /tmp/body >/dev/null; then
+                    echo "ERROR: unexpected response shape from kube API" >&2
+                    exit 1
+                  fi
+
+                  total=$(jq -r '.items | length' /tmp/body)
+                  degraded=$(jq -r --argjson grace "${GRACE_SECONDS}" \
+                                   --argjson now "$(date -u +%s)" '
+                    .items[]
+                    | . as $c
+                    | (($c.status.conditions // []) | map(select(.type == "Ready")) | first) as $ready
+                    | ($c.status.readyInstances // 0) as $r
+                    | ($c.spec.instances // 0) as $d
+                    | select($r < $d or (($ready.status // "Unknown") != "True"))
+                    | select($ready.lastTransitionTime != null)
+                    | select(($now - ($ready.lastTransitionTime | fromdate)) >= $grace)
+                    | "• `\($c.metadata.namespace)/\($c.metadata.name)` — \($r)/\($d) instances ready, Ready=\($ready.status // "Unknown") since \($ready.lastTransitionTime)"
+                  ' /tmp/body)
+
+                  if [ -z "$degraded" ]; then
+                    echo "Checked $total CNPG cluster(s); none degraded beyond ${GRACE_SECONDS}s."
+                    exit 0
+                  fi
+
+                  echo "Degraded CNPG cluster(s) detected:"
+                  echo "$degraded"
+
+                  text=$(printf '*Degraded CloudNativePG cluster(s)*\n\n%s\n\n_A replica has been down longer than %ss. The primary may still be serving — check before assuming an outage. A replica that cannot self-heal needs its PVC + pod deleted so CNPG re-clones it from the primary (docs/dr/runbook.md)._' \
+                    "$degraded" "${GRACE_SECONDS}")
+                  jq -n --arg t "$text" '{text: $t}' > /tmp/payload.json
+
+                  # Only the known placeholder host is allowed to skip delivery.
+                  # example.invalid is RFC 2606 reserved, so it can never be a
+                  # real endpoint — matching it explicitly keeps local/CI inert
+                  # without also swallowing a REAL prod delivery failure.
+                  case "$WEBHOOK_URL" in
+                    https://example.invalid/*)
+                      echo "No Slack webhook configured; alert not delivered."
+                      exit 0
+                      ;;
+                  esac
+
+                  # No `|| true` here, deliberately. Unlike cluster-heartbeat --
+                  # a dead-man's-switch whose MISSING ping is what the external
+                  # monitor alerts on -- nothing outside this Job notices if the
+                  # POST fails. Swallowing that would record a successful run
+                  # having sent nothing: the same silent-zero failure the API
+                  # read above is guarded against, at the other end of the check.
+                  #
+                  # The URL reaches curl on stdin as a config file rather than
+                  # as an argument. An argv copy is readable from
+                  # /proc/<pid>/cmdline for the life of the request, so passing
+                  # it positionally would relocate the exposure CKV_K8S_35
+                  # names instead of removing it.
+                  #
+                  # The value is UNQUOTED on purpose. curl reads an unquoted
+                  # config value as everything to end of line, with no escape
+                  # syntax at all, so there is nothing here to get wrong; a
+                  # quoted value would need backslash and double-quote escaped
+                  # and would drag in a `sed` the rest of this script does not
+                  # use. curl trims surrounding whitespace, and the
+                  # control-character guard above has already rejected the one
+                  # input that could end this line early -- the guard is what
+                  # makes that total, not the shape of a well-formed URL.
+                  printf 'url = %s\n' "$WEBHOOK_URL" |
+                    curl -sf --max-time 15 \
+                      --retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused \
+                      -H 'Content-Type: application/json' \
+                      --data @/tmp/payload.json \
+                      --config -
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                # readOnlyRootFilesystem: true, so give the script a writable
+                # scratch dir for the API response and the webhook payload.
+                - name: tmp
+                  mountPath: /tmp
+                - name: webhook
+                  mountPath: /etc/cnpg-degraded-alert
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 32Mi
+                limits:
+                  # CPU limit set for kubescape C-0270; generous so the
+                  # short-lived curl+jq never throttles.
+                  cpu: 100m
+                  memory: 64Mi
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            # 288 is 0440: readable by root and by the pod's fsGroup (65532,
+            # set above), rather than by anything else that lands in this pod.
+            # It must carry the GROUP bit: kubelet owns secret-volume files
+            # root:fsGroup, never uid:fsGroup, so an owner-only 0400 is
+            # unreadable by the container's own non-root user. The Secret is the
+            # one secret-cnpg-degraded-alert.yaml creates from the per-cluster
+            # Flux substitution.
+            #
+            # Written in DECIMAL deliberately. An unquoted `0440` is read as
+            # octal 288 by Kubernetes' own parser (sigs.k8s.io/yaml, which is
+            # YAML 1.1) and as decimal 440 — mode 0670 — by every YAML 1.2
+            # reader, yq and kyaml included. The two disagree silently and
+            # nothing validates the difference, so the literal that means the
+            # same thing to both is the only safe one. `defaultMode: 420` on
+            # the coredns Deployment is the same convention.
+            - name: webhook
+              secret:
+                secretName: cnpg-degraded-alert-webhook
+                defaultMode: 288

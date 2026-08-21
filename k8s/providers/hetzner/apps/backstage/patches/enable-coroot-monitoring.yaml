@@ -5,17 +5,14 @@
 #
 #   inheritedMetadata.annotations — CNPG propagates these to the DB instance
 #     Pods so Coroot's cluster-agent can discover and scrape them (it only reads
-#     POD annotations). Credentials come from the CNPG-generated
-#     `backstage-db-app` Secret (kubernetes.io/basic-auth, username=backstage),
-#     the same one Backstage itself consumes. sslmode=require works whether
+#     POD annotations). Credentials come from the dedicated
+#     `backstage-db-coroot-monitor` Secret (kubernetes.io/basic-auth), generated
+#     once by External Secrets and used only by the least-privilege
+#     `coroot_monitor` role. sslmode=require works whether
 #     CNPG's pg_hba uses `host` or `hostssl`.
-#   managed.roles — grant the existing `backstage` login membership in
-#     pg_monitor so Coroot (which logs in AS that role) can read the full
-#     pg_stat_* surface. passwordSecret pins the role to the CNPG-generated
-#     `backstage-db-app` value (which is exactly what the app uses), so CNPG's
-#     role synchronizer converges to that on every reconcile/promotion instead of
-#     re-applying a stale bootstrap password (the cnpg#2029 footgun that bit
-#     umami) — here it is a no-op convergence since CNPG owns that secret.
+#   managed.roles — creates a dedicated `coroot_monitor` login with pg_monitor
+#     membership and its own generated password Secret. The application owner
+#     role and `backstage-db-app` Secret stay untouched.
 #   postgresql.parameters.pg_stat_statements.* — CNPG's managed-extensions
 #     feature auto-adds the library to shared_preload_libraries (one-time rolling
 #     restart) and runs CREATE EXTENSION in every database; fully declarative.
@@ -29,19 +26,19 @@ spec:
     annotations:
       coroot.com/postgres-scrape: "true"
       coroot.com/postgres-scrape-port: "5432"
-      coroot.com/postgres-scrape-credentials-secret-name: backstage-db-app
+      coroot.com/postgres-scrape-credentials-secret-name: backstage-db-coroot-monitor
       coroot.com/postgres-scrape-credentials-secret-username-key: username
       coroot.com/postgres-scrape-credentials-secret-password-key: password
       coroot.com/postgres-scrape-param-sslmode: require
   managed:
     roles:
-      - name: backstage
+      - name: coroot_monitor
         ensure: present
         login: true
         inRoles:
           - pg_monitor
         passwordSecret:
-          name: backstage-db-app
+          name: backstage-db-coroot-monitor
   postgresql:
     parameters:
       pg_stat_statements.max: "10000"

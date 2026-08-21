@@ -9,3 +9,4 @@ resources:
   - cilium-network-policy.yaml
   - role.yaml
   - role-binding.yaml
+  - http-route.yaml

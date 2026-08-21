@@ -1,0 +1,638 @@
+# Trivy misconfiguration checks skipped on this repository, with the reason each one is skipped.
+#
+# The bar here is the same one .mega-linter.yml applies: a skip names a technical reason that
+# survives checking, and nothing is hidden merely because it is noisy. Anything that describes real
+# state stays enabled and gets fixed at the manifest instead — see #2787, which tracks driving
+# checkov and trivy to zero on k8s/ so both can leave DISABLE_ERRORS_LINTERS.
+
+misconfigurations:
+  # KSV-0039 "limit range usage" — 450 of trivy's 614 findings on this tree (73%), all LOW.
+  #
+  # The check is evaluated per FILE, but a LimitRange is a namespace-scoped object that this
+  # repository deliberately keeps in its own base (k8s/bases/infrastructure/limit-ranges/, plus the
+  # longhorn overlay). So the check asks every file whether it contains a LimitRange, and every file
+  # that is not one answers no. That includes objects which cannot carry a LimitRange at all — the
+  # firing set is 46 helm-release.yaml, 46 cilium-network-policy.yaml, 42 helm-repository.yaml,
+  # 23 pod-disruption-budget.yaml, 14 http-route.yaml, 13 external-secret.yaml, 8 network-policy.yaml,
+  # 6 flux-kustomization.yaml.
+  #
+  # It also fires on the LimitRange manifests themselves — limit-ranges/kube-system.yaml,
+  # limit-ranges/kyverno.yaml and controllers/longhorn/limit-range.yaml. A check reporting "limit
+  # range usage" against a LimitRange is reading file contents rather than namespace state, and no
+  # per-file edit can satisfy it.
+  #
+  # Skipping it is therefore not a threshold or a deferral: there is nothing to fix. It is also what
+  # makes the rest of the scan readable — the residual findings contain HIGH/CRITICAL RBAC breadth
+  # that was previously buried in a count of 614.
+  - id: KSV-0039
+    statement: >-
+      LimitRange is namespace-scoped but this check evaluates each file independently, including
+      resources that cannot carry a LimitRange and the LimitRange manifests themselves.
+
+  # KSV-0037 "user resources should not be placed in kube-system namespace" — 47 of trivy's 157
+  # findings on this tree (30%), all MEDIUM.
+  #
+  # The control protects a real property: kube-system carries elevated trust, so an APPLICATION
+  # does not belong there. Every one of the 47 is instead a cluster component that belongs in
+  # kube-system by construction, and the firing set says so — 17 VerticalPodAutoscaler,
+  # 12 HelmRelease, 5 PodDisruptionBudget, 5 HelmRepository, 2 HTTPRoute, 2 Gateway, 1 LimitRange,
+  # 1 Deployment, 1 CiliumNetworkPolicy, 1 Certificate. Their subjects are the CNI (cilium,
+  # cilium-operator, cilium-envoy, hubble-relay, hubble-ui), DNS (coredns), the Hetzner CSI and
+  # cloud-controller-manager, metrics-server, snapshot-controller, cluster-autoscaler, descheduler,
+  # spire and tetragon.
+  #
+  # Most of the set is not merely conventional but structurally forced: a VerticalPodAutoscaler's
+  # targetRef and a PodDisruptionBudget's selector are both namespace-local, so an autoscaler or
+  # budget for a kube-system workload cannot itself live anywhere else. The LimitRange IS the
+  # kube-system namespace's own default limit range, and the Certificate is the TLS material for the
+  # Gateway in the same namespace. The single Deployment is CoreDNS — the canonical kube-system
+  # component.
+  #
+  # So this is scoped to the infrastructure trees rather than skipped outright, and that boundary is
+  # what keeps the control working: all 47 sit under an infrastructure path, while k8s/bases/apps/**
+  # and k8s/clusters/** stay covered. A user application given `namespace: kube-system` is still
+  # reported — verified with a paired control, two copies of one manifest: the copy under
+  # k8s/bases/apps/ FAILS this check with this entry in place, and the copy under
+  # k8s/bases/infrastructure/ is excepted. Same bytes, different path, so the boundary is what
+  # decides rather than the file contents.
+  #
+  # ⚠️ This exception does NOT decide anything about tenant workloads, and it would be wrong to read
+  # it as covering them. Tenants are generated from the KRO ResourceGraphDefinitions under
+  # k8s/bases/infrastructure/resource-graph-definitions/, which are inside the scoped path — but
+  # trivy reports ZERO misconfigurations on those two resource-graph-definition.yaml files with or
+  # without this entry, because it does not evaluate the resource templates nested inside an RGD.
+  # Their generated workloads are therefore outside this scanner's reach either way; that is a
+  # pre-existing coverage gap tracked in #3055, not something this scoping introduces. Every
+  # template in them targets `${tenantNamespace.metadata.name}` today — the only kube-system
+  # references are RBAC grants naming the shared Gateway, not workload placement.
+  - id: KSV-0037
+    paths:
+      - k8s/bases/infrastructure/**
+      - k8s/providers/*/infrastructure/**
+    statement: >-
+      These are cluster infrastructure components that belong in kube-system by construction — CNI,
+      DNS, CSI, cloud-controller-manager and their namespace-local VerticalPodAutoscalers,
+      PodDisruptionBudgets and Gateway material. Application trees remain covered by this check.
+
+  # KSV-0109 matches identifier text rather than secret material at both sites below. Keep the
+  # dispositions separate so each path carries the reason that was checked against its content.
+  - id: KSV-0109
+    paths:
+      - k8s/bases/apps/actual-budget/config-map.yaml
+    statement: >-
+      The ConfigMap embeds public JavaScript source that reads credentials from an ESO-mounted
+      Secret; Trivy matches the source identifiers containing secretKey, not credential values.
+  - id: KSV-0109
+    paths:
+      - k8s/clusters/prod/bootstrap/config-map.yaml
+    statement: >-
+      external_secrets_replicas is a public controller replica count; Trivy matches the word
+      secrets in the key name, not secret material.
+
+  # KSV-01010 "ConfigMap with sensitive content" is a SEPARATE check from KSV-0109 above, not that
+  # check renumbered — verified with a with/without-ignorefile ablation rather than assumed. With
+  # this file trivy reports KSV-0109 x0 and KSV-01010 x3; without it, KSV-0109 x2 and KSV-01010 x3,
+  # and the total moves 24 -> 598, so the ablation demonstrably fired. Both ids exist in trivy
+  # 0.74.0 and they overlap on files but not on keys: KSV-0109 matches external_secrets_replicas,
+  # KSV-01010 matches admin_email. Nothing covered KSV-01010, and the local bootstrap ConfigMap
+  # carried no disposition under either id.
+  #
+  # Measured with trivy 0.74.0; CI runs 0.73.0 (MegaLinter 10.0.0), and whether KSV-01010 exists
+  # there is not established. An entry for an id the running scanner does not emit is inert, so
+  # these are safe under both and correct ahead of the next MegaLinter bump.
+  - id: KSV-01010
+    paths:
+      - k8s/clusters/prod/bootstrap/config-map.yaml
+      - k8s/clusters/local/bootstrap/config-map.yaml
+    statement: >-
+      admin_email is the ACME registration contact the cluster issuer requires; it appears in
+      issued-certificate metadata, is deliberately public, and carries no authentication value.
+  - id: KSV-01010
+    paths:
+      - k8s/bases/apps/actual-budget/config-map.yaml
+    statement: >-
+      The ConfigMap embeds public JavaScript source that reads credentials from an ESO-mounted
+      Secret; Trivy matches the source identifiers containing secretKey, not credential values.
+
+  # CoreDNS must bind UDP/TCP port 53 while running as the pinned image's non-root 65532 identity.
+  # The binary carries the required file capability, so the container adds only
+  # NET_BIND_SERVICE to its bounding set after dropping every other capability. These dispositions
+  # are path-scoped so the controls continue to report any other workload that adds a capability
+  # or binds a privileged port.
+  - id: KSV-0022
+    paths:
+      - k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml
+    statement: >-
+      CoreDNS requires only NET_BIND_SERVICE in its bounding set to serve cluster DNS on port 53;
+      the container drops every other capability and runs as non-root UID/GID 65532.
+  - id: KSV-0117
+    paths:
+      - k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml
+    statement: >-
+      Port 53 is the required DNS service port; the pinned CoreDNS binary carries the file
+      capability needed to bind it while the container runs as non-root UID/GID 65532.
+
+  # RBAC breadth in the vendored KubeVirt and CDI operator bundles — 16 of the 25 HIGH/CRITICAL
+  # findings on this tree, dispositioned here once as a class rather than finding by finding
+  # (#2990, which follows the precedent #2899 set for the same bundles under checkov).
+  #
+  # Both files are upstream release artifacts, not manifests this repository authors.
+  # scripts/update-vendored-operators.sh fetches each one from its project's release URL at a
+  # pinned version and verifies it against a recorded SHA-256 before it replaces the committed
+  # copy, so the bytes carrying these rules are upstream's and are re-verified on every refresh.
+  # The only local modification the updater makes is injecting resource-scoped checkov
+  # annotations; it never edits a rule.
+  #
+  # Every finding sits on a ClusterRole or Role named for the operator itself —
+  # cdi-operator-cluster, cdi-operator and kubevirt-operator — and each grant is one the operator
+  # needs to do its job: reconciling VirtualMachines and DataVolumes across every namespace,
+  # registering its own admission webhooks, and managing the services and endpoints that front
+  # them. Narrowing them at the manifest would break the operators, and would also diverge the
+  # bundle from the checksum-verified artifact, which the updater treats as a hard failure. There
+  # is no manifest-level fix available short of forking upstream, which is why these are excepted
+  # rather than repaired.
+  #
+  # SCOPE, and what still fails. Each entry is path-scoped to the two bundles, so all five checks
+  # stay live everywhere else — including on the cluster roles this repository does author, where
+  # they continue to report and are owned by #2990. The paths are written out on every entry
+  # rather than shared through a YAML anchor: an alias that a reader or tool resolves to an empty
+  # list would read as an unscoped skip, which is the one failure mode this block must not have.
+  # The boundary is not left to review either —
+  # scripts/tests/test-trivyignore-vendored-operator-boundary.sh writes identical offending
+  # ClusterRole bytes to a vendored path and to a first-party path and fails if the suppression
+  # reaches the second, so widening a glob or dropping a paths key breaks the build instead of
+  # silently going quiet.
+  #
+  # ALSO covered here: KSV-0014 on the two operator Deployments, the last two HIGH findings on this
+  # tree (#3228). An earlier revision of this block deferred it, reasoning that a read-only root
+  # filesystem is a container setting rather than an RBAC grant, so a kustomize patch could supply
+  # it without touching upstream's rules. Three measured facts retired that plan.
+  #
+  # First, a kustomize patch cannot clear this finding. trivy scans the raw committed file, not the
+  # rendered overlay output, so patching moves the deployed posture while the count stays at two —
+  # the effect is real but invisible here, and the check would keep failing the gate forever.
+  #
+  # Second, upstream omits the setting deliberately. Both bundles already set
+  # allowPrivilegeEscalation: false, drop ALL capabilities and run as non-root; readOnlyRootFilesystem
+  # is the one container control they leave out, which reads as a requirement of the operators rather
+  # than an oversight. Forcing it on without upstream's agreement risks a crash-loop on a component
+  # whose write paths we do not own.
+  #
+  # Third, and decisive for the severity: these two Deployments never run in production. The VM
+  # stack is the base aggregate's ONE exclusion — k8s/bases/infrastructure/controllers/kustomization.yaml
+  # documents it, and the hetzner overlay's header records why (no VirtualMachines or DataVolumes
+  # exist on Hetzner, and virt-handler crash-looped with zero VMs). They ship only through
+  # k8s/providers/docker/, the local/CI test-bed. Confirmed against the live prod cluster on
+  # 2026-08-19: zero cdi/kubevirt pods and zero such Deployments, CRDs only.
+  #
+  # So this is a scoped exception on a control that is genuinely irreducible HERE, not a threshold.
+  # KSV-0014 stays live on every other workload in the repository, including every first-party
+  # Deployment, and the local/CI-only premise the third point rests on is asserted by
+  # scripts/tests/test-trivyignore-vendored-operator-boundary.sh rather than left to review: if any
+  # non-docker overlay ever reaches these bundles, the build fails instead of quietly keeping an
+  # exception whose reason has expired.
+  - id: KSV-0014
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Upstream ships both operator Deployments with allowPrivilegeEscalation disabled, all
+      capabilities dropped and runAsNonRoot set, omitting only readOnlyRootFilesystem; the bundles
+      are SHA-256 pinned artifacts vendored verbatim, and trivy reads the raw file, so a kustomize
+      patch would change the deployed posture without clearing this finding. The two Deployments
+      ship only to the docker (local/CI) provider and are excluded from the production overlay.
+  #
+  # ALSO covered here: KSV-0020 and KSV-0021 on the same two operator Deployments (#2787). Both
+  # bundles set runAsNonRoot: true and then omit runAsUser and runAsGroup entirely, which is what
+  # these two checks read as "UID/GID <= 10000" — an absent value, not a low one. The three facts
+  # that carry the KSV-0014 entry above carry these unchanged: trivy reads the raw committed file,
+  # so a kustomize patch would move the deployed posture while the count stayed at four; the
+  # omission is upstream's, inside a release artifact whose SHA-256 update-vendored-operators.sh
+  # verifies on download before this repository adds its resource-scoped Checkov annotations (so
+  # the committed file is upstream plus those annotations, not a verbatim copy — the securityContext
+  # fields at issue here are untouched upstream ones), and pinning a UID upstream does not set risks
+  # a component whose filesystem ownership we do not own; and the VM stack ships only through
+  # k8s/providers/docker/, never to production.
+  #
+  # Severity note, stated precisely because it bounds what is actually being excepted. runAsNonRoot
+  # rejects UID 0; it does NOT require a UID above 10000, and it constrains the UID only. So the
+  # residual differs per check: for KSV-0020 it is an unpinned but guaranteed non-root UID, while
+  # for KSV-0021 the primary GID is left image- or runtime-defined and MAY be 0 — runAsGroup sets
+  # the primary GID, not supplementary groups, and nothing here constrains it. That is a real
+  # residual, accepted only because these two Deployments never run outside the local/CI provider.
+  #
+  # Both ids stay live on every other workload in this repository, and the same
+  # scripts/tests/test-trivyignore-vendored-operator-boundary.sh that guards KSV-0014 asserts it —
+  # its checks array now lists them, so dropping a path or widening a glob fails the build.
+  - id: KSV-0020
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Both operator Deployments set runAsNonRoot and omit runAsUser, so the kubelet rejects UID 0
+      while the specific non-root UID stays image-defined; runAsNonRoot does not itself require a
+      UID above 10000. The bundles are upstream release artifacts whose SHA-256 is verified on
+      download before this repository adds its resource-scoped Checkov annotations, and trivy reads
+      the raw committed file, so a kustomize patch would change the deployed posture without
+      clearing the finding. They ship only to the docker (local/CI) provider and are excluded from
+      the production overlay.
+  - id: KSV-0021
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Both operator Deployments omit runAsGroup, which sets the PRIMARY GID rather than any
+      supplementary group, so the primary GID stays image- or runtime-defined and may be 0;
+      runAsNonRoot constrains the UID only and does not cover this. The bundles are upstream
+      release artifacts whose SHA-256 is verified on download before this repository adds its
+      resource-scoped Checkov annotations, and trivy reads the raw committed file, so a kustomize
+      patch would change the deployed posture without clearing the finding. They ship only to the
+      docker (local/CI) provider and are excluded from the production overlay.
+  - id: KSV-0011
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Neither operator Deployment sets a CPU limit; both set a CPU request (cdi-operator 100m,
+      virt-operator 10m), so both are schedulable and neither is unbounded in the scheduler's view.
+      CPU is a compressible resource, so the residual is contention under saturation rather than
+      eviction, and an omitted CPU limit is upstream's deliberate default for both bundles. The
+      bundles are upstream release artifacts whose SHA-256 is verified on download before this
+      repository adds its resource-scoped Checkov annotations, and trivy reads the raw committed
+      file, so a kustomize patch would change the deployed posture without clearing the finding.
+      They ship only to the docker (local/CI) provider and are excluded from the production overlay.
+
+  # KSV-0011 again, for a different reason and so a separate entry — the same convention the two
+  # KSV-0109 entries above follow, so each path carries the reason that was checked against its
+  # content. The entry above accepts an upstream bundle's omitted CPU limit; this one records that
+  # the limit is SUPPLIED, just not by the file trivy reads.
+  - id: KSV-0011
+    paths:
+      - k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml
+    statement: >-
+      The CPU limit is supplied at admission by the kube-system default-limitrange
+      (k8s/bases/infrastructure/limit-ranges/kube-system.yaml, Container-type default.cpu "2"),
+      a base resource that applies to both provider overlays; trivy reads the committed spec,
+      where an admission-time default is absent. Observable rather than inferred: on the prod
+      cluster the stored CoreDNS Deployment carries only limits.memory 170Mi with requests.cpu
+      100m, while its running pods carry a CPU limit no manifest states. Stating a limit here
+      would be a regression rather than a fix — that LimitRange sets a deliberately generous
+      ceiling so the DNS datapath never throttles under burst, and CPU is compressible so a
+      limit does not affect scheduling. This is the same premise the file's own
+      checkov.io/skip3 already carries for CKV_K8S_11, which scripts/guard-limitrange-premise.sh
+      checks against each provider's kustomize graph. That guard matches on checkov annotation
+      values, so on its own it vouches for the annotation rather than for this entry. The two are
+      bound by scripts/tests/test-trivyignore-vendored-operator-boundary.sh, which registers this
+      pair in reviewed_admission_pairs and fails unless that guard reports a passing verdict
+      naming this file, so removing the annotation while keeping this entry breaks the build.
+      That test also fails if this entry widens to any path not reviewed for THIS check. The
+      other premise this entry names — that the Deployment still reserves CPU — is held by
+      checkov CKV_K8S_10, which is a hard gate: dropping requests.cpu fails the build there.
+  - id: KSV-0018
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Neither operator Deployment sets a memory limit; both set a memory request (cdi-operator
+      150Mi, virt-operator 450Mi). Memory is NOT compressible, so unlike the CPU entry above this
+      is a real residual: a leaking operator is bounded only by node capacity and can drive
+      eviction of co-scheduled pods. It is accepted on exactly the premise the KSV-0014, KSV-0020
+      and KSV-0021 entries above rest on, and no wider — these two Deployments never run outside
+      the local/CI provider, so the blast radius is a developer's own local cluster. The bundles are
+      upstream release artifacts whose SHA-256 is verified on download before this repository adds
+      its resource-scoped Checkov annotations, and trivy reads the raw committed file, so a
+      kustomize patch would change the deployed posture without clearing the finding.
+  - id: KSV-0041
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      The operators reconcile DataVolumes and VirtualMachines that carry their own TLS material and
+      registry pull credentials, so their install bundles grant secret access cluster-wide. The
+      grant is upstream's, in a SHA-256 pinned release artifact this repository vendors verbatim.
+  - id: KSV-0046
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      The KubeVirt and CDI operators install and reconcile their own CustomResourceDefinitions and
+      the controllers behind them, which upstream expresses as a wildcard rule in the install
+      bundle. The grant is upstream's, in a SHA-256 pinned release artifact vendored verbatim.
+  - id: KSV-0053
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      virt-operator execs into the virt-handler and virt-launcher pods it manages, for VM lifecycle
+      and migration. The grant is upstream's, in a SHA-256 pinned release artifact vendored
+      verbatim. This disposition covers both operator bundles as one class; of the two, only the
+      KubeVirt bundle currently carries such a rule.
+  - id: KSV-0056
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Both operators create and reconcile the services and endpoints fronting their API and webhook
+      deployments. The grant is upstream's, in a SHA-256 pinned release artifact vendored verbatim.
+  - id: KSV-0114
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Both operators register, update and remove their own validating and mutating admission
+      webhooks as part of installing and upgrading themselves. The grant is upstream's, in a
+      SHA-256 pinned release artifact vendored verbatim.
+  - id: KSV-0048
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Creating and reconciling workloads is what both operators are for. CDI creates the importer,
+      uploader and cloner pods that populate a DataVolume; virt-operator creates and upgrades the
+      virt-api, virt-controller and virt-handler deployments that make up KubeVirt itself. A grant
+      narrow enough to satisfy this check would stop either operator installing or running. The
+      grant is upstream's, in a SHA-256 pinned release artifact vendored verbatim.
+  - id: KSV-0049
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Both operators own the configmaps that configure the components they install, including their
+      generated CA bundles, and must create them to install and rotate them. The grant is upstream's,
+      in a SHA-256 pinned release artifact vendored verbatim.
+  - id: KSV-0113
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Every rule this fires on concerns the serving certificates the operators are issued or
+      generate, in their own namespace. Three of the five grant only get/list/watch; CDI's own cert
+      rule adds create because CDI generates that material itself. The fifth, KubeVirt's namespaced
+      Role, does grant create/patch/delete — but is resourceNames-scoped to sixteen explicitly named
+      kubevirt-* certificate secrets it issues and rotates, so it cannot reach any other secret in
+      the namespace. The grant is upstream's, in a SHA-256 pinned release artifact vendored verbatim.
+
+  # First-party RBAC this repository authors — the 7 HIGH/CRITICAL the vendored-operator block
+  # above deliberately left live, now dispositioned per class (#2990). Each verdict was checked
+  # against how the role is actually BOUND, which is the fact these checks cannot see: trivy
+  # evaluates a ClusterRole's rules in isolation, so it reads every grant as cluster-wide even
+  # when the only binding is namespace-scoped. Every entry below is path-scoped, so all three
+  # checks stay live on every other role in the tree.
+  #
+  # scripts/tests/test-trivyignore-first-party-rbac-boundary.sh fails the build if the premise
+  # behind any of these verdicts stops holding — a ClusterRoleBinding appearing for the tenant
+  # role, cluster-reader gaining a write verb, or KRO losing aggregation mode. A disposition that
+  # outlives its reason is the failure mode this block must not have.
+  - id: KSV-0041
+    paths:
+      - k8s/bases/infrastructure/cluster-roles/tenant-base-edit.yaml
+    statement: >-
+      tenant-base-edit is the built-in edit role minus the exec-family subresources, aggregated
+      into tenant-edit and bound ONLY by a namespace-scoped RoleBinding to the tenant's own
+      ServiceAccount in its own namespace (resource-graph-definitions/tenant). A tenant's Flux
+      identity manages the secrets it reconciles into its own namespace; the grant cannot reach
+      any other namespace. Verified: no ClusterRoleBinding references this role in the repository
+      or on the live cluster.
+  - id: KSV-0056
+    paths:
+      - k8s/bases/infrastructure/cluster-roles/tenant-base-edit.yaml
+    statement: >-
+      Same namespace-scoped RoleBinding as above. Creating Services and Ingresses for its own
+      workloads is the core capability a tenant namespace-admin role exists to grant, and it is
+      confined to the tenant's own namespace.
+  - id: KSV-0056
+    paths:
+      - k8s/bases/infrastructure/resource-graph-definitions/tenant/cluster-role.yaml
+      - k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml
+    statement: >-
+      The KRO controller runs with rbac.mode aggregation and holds NO standing access; it
+      aggregates only ClusterRoles labelled rbac.kro.run/aggregate-to-controller. Each of these
+      grants exactly the child kinds its own ResourceGraphDefinition renders, so the networking
+      verbs are what lets KRO create the Service and HTTPRoute it is asked to render, and each
+      RGD's blast radius is its own declared resources.
+  - id: KSV-0046
+    paths:
+      - k8s/bases/infrastructure/cluster-roles/cluster-reader.yaml
+    statement: >-
+      This check fires on resources ["*"] and does not consider verbs — verified with a paired
+      fixture in which an identical read-only rule and a write rule both trigger it. cluster-reader
+      grants get/list/watch and nothing else. Its one core-group ("") rule enumerates its
+      resources — nodes and persistentvolumes — rather than wildcarding them, so Secrets are
+      out of reach; only the non-core rule uses resources ["*"], and Secrets do not live
+      there. The role cannot write any resource.
+
+  # ---------------------------------------------------------------------------
+  # RBAC BREADTH on four first-party roles (#3235) — trivy's KSV-0048 / KSV-0049 /
+  # KSV-0113 read a role's `rules` in isolation and cannot see how the role is BOUND,
+  # so a namespace-confined grant is reported exactly like a cluster-wide one.
+  # Every premise below is asserted by
+  # scripts/tests/test-trivyignore-first-party-rbac-boundary.sh.
+  - id: KSV-0048
+    paths:
+      - k8s/bases/infrastructure/cluster-roles/tenant-base-edit.yaml
+    statement: >-
+      Fires on the core write rule, the apps write rule and the batch rule — the three grants a
+      namespace-admin role exists to give. tenant-base-edit is aggregated into tenant-edit and
+      bound ONLY by a namespace-scoped RoleBinding to the tenant's own ServiceAccount in its own
+      namespace (resource-graph-definitions/tenant), so managing workloads is confined to that one
+      namespace and cannot reach any other. Verified: no ClusterRoleBinding references this role in
+      the repository or on the live cluster, where every binding is a namespace-scoped RoleBinding
+      to a single tenant ServiceAccount (three at the time of writing: ascoachingogvaner,
+      doggy-countdown, wedding-app; onboarding another tenant adds a fourth without weakening
+      this). The role also omits the exec-family pod subresources, so it cannot exec into the pods
+      it manages.
+  - id: KSV-0049
+    paths:
+      - k8s/bases/infrastructure/cluster-roles/tenant-base-edit.yaml
+    statement: >-
+      Same namespace-scoped RoleBinding as above, firing on the same core write rule. Managing its
+      own ConfigMaps is a core capability of a tenant namespace-admin role and is confined to the
+      tenant's own namespace.
+  - id: KSV-0048
+    paths:
+      - k8s/bases/infrastructure/controllers/kyverno/role.yaml
+    statement: >-
+      This is a namespaced Role in the umami namespace, not a ClusterRole, and its single rule is
+      pinned by resourceNames to exactly one object — the generated Deployment umami-umami-primary
+      — with verbs get, update and patch. It grants no create and no delete, so it cannot bring up
+      or remove any workload, and it cannot reach any Deployment other than that one. Bound to the
+      kyverno/kyverno-background-controller ServiceAccount. The pinning, the verb set and the
+      binding subject are additionally asserted against the rendered output by
+      scripts/tests/test-kyverno-umami-mutation-rbac.sh.
+  - id: KSV-0048
+    paths:
+      - k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml
+    statement: >-
+      Unlike the three entries above this grant IS cluster-wide, and deliberately so: the KRO
+      controller runs with rbac.mode aggregation and holds NO standing access of its own,
+      aggregating only ClusterRoles labelled rbac.kro.run/aggregate-to-controller. The role carries
+      two grants. The first is the instance kind itself — get/list/watch/update/patch on kro.run
+      webapps and webapps/status — which KRO's per-RGD micro-controller needs to open its informer
+      and write status back; without it the RGD never reaches Active. The second is the child kinds
+      the WebApp ResourceGraphDefinition renders — Deployment, Service, HTTPRoute — and it is the
+      Deployment verbs that this check reports. A WebApp instance may be created in any namespace,
+      so that grant cannot be namespace-scoped without breaking the RGD. Each RGD's blast radius is
+      therefore its own declared resources. The same subject's controller-grade breadth is already
+      accepted on the Kubescape side, where cluster-security-exceptions/delete-rbac.yaml excepts the
+      kro:controller ClusterRoleBinding; leaving this reported while that stands would be the two
+      scanners disagreeing about one deliberate decision.
+  - id: KSV-0113
+    paths:
+      - k8s/bases/infrastructure/vault-config/role.yaml
+    statement: >-
+      This is a namespaced Role in the openbao namespace, bound to the openbao/vault-config
+      ServiceAccount, and it fires twice because the grant is deliberately split. The read/write
+      rule is scoped by resourceNames to the single openbao-unseal Secret. The other rule grants
+      create alone, which Kubernetes RBAC cannot restrict by resourceNames because the name does
+      not exist at admission time. Neither rule grants list, watch or delete, so the identity
+      cannot enumerate the namespace's Secrets, cannot read any Secret other than openbao-unseal,
+      and cannot destroy one. The residual capability is creating a NEW Secret in the openbao
+      namespace, which is what the store-keys init container does with the unseal material.
+  # KSV-0020 "runs with UID <= 10000" on the vault-config Job — 2 findings, both LOW.
+  #
+  # UID 100 is the identity the openbao image itself DEFINES — measured against the pinned
+  # DIGEST, not the tag: /etc/passwd carries `openbao:x:100:1000::/home/openbao` and /etc/group
+  # carries `openbao:x:1000`.
+  #
+  # ⚠️ DEFINES, not ENFORCES — the distinction is load-bearing and has already misled one
+  # review (#2900). The image config's `User` field is EMPTY, so the image does not run as
+  # openbao by default. `runAsUser: 100` is therefore the manifest SELECTING an identity the
+  # image defines, not restating one it imposes. The disposition does not need the stronger
+  # claim: raising the UID would run the openbao binary as a UID its own image has no account
+  # for — no name, no home — and would diverge from the identity every other openbao artifact
+  # here uses. Same image-defined class as umami's 1001 (#2901), and the reason checkov's
+  # resource-scoped `checkov.io/skip2` annotation on this same Job was accepted.
+  #
+  # Only the two openbao containers carry it. The pod default is the high, unprivileged 65532, and
+  # the `minio/mc` and `alpine/k8s` containers take that default rather than inheriting a UID
+  # chosen for openbao — which is exactly why the Job sets `runAsUser` per container instead of
+  # once on the pod.
+  #
+  # ⚠️ THE SCOPING GRANULARITIES DO NOT MATCH, WHICH IS WHY THIS ENTRY NEEDS A GUARD.
+  # `checkov.io/skipN` is RESOURCE-scoped and trivy's `paths:` is PATH-scoped, so this entry
+  # silences KSV-0020 for EVERY container in the Job — including one added later at a low UID with
+  # no image-baked reason. That is the precise widening the per-container `runAsUser` split above
+  # was written to avoid, and nothing in trivy's ignorefile can express it. The premise is
+  # therefore asserted per container by
+  # scripts/tests/test-trivyignore-vault-config-identity-boundary.sh, which fails the build if any
+  # container other than the two openbao ones drops below 10000, or if the pod default stops being
+  # high.
+  #
+  # ⚠️ This Job ships to PRODUCTION — k8s/providers/hetzner/infrastructure/kustomization.yaml
+  # includes k8s/bases/infrastructure/, which carries vault-config/. So the "local/CI provider
+  # only" premise the vendored-operator entries rest on is deliberately NOT available here, and
+  # this disposition does not borrow it. It stands on the image-defined identity alone.
+  - id: KSV-0020
+    paths:
+      - k8s/bases/infrastructure/vault-config/job.yaml
+    statement: >-
+      UID 100 is the identity the openbao image itself DEFINES: its /etc/passwd carries
+      openbao:x:100:1000::/home/openbao and its /etc/group carries openbao:x:1000, both read
+      from the pinned DIGEST rather than the tag. The image does NOT default to it — its
+      config User is empty — so runAsUser: 100 is the manifest SELECTING that defined
+      identity, not restating an enforced one. Raising it would run the openbao binary as a
+      UID its own image has no account for, with no name and no home. Only the two openbao
+      containers set it — the pod default is 65532 and the minio/mc and alpine/k8s containers
+      take that high default — and because trivy scopes by path rather than by resource,
+      scripts/tests/test-trivyignore-vault-config-identity-boundary.sh asserts that per
+      container so this entry cannot silently cover a future low-UID container.
+
+  # KSV-0020 "runs with UID <= 10000" on the vault-backup Job and CronJob — 2 findings, both LOW.
+  #
+  # The SAME image-defined identity the vault-config KSV-0020 entry above describes, on the same
+  # pinned DIGEST: all four openbao container references in this repository are
+  # quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca...171f0806, so the /etc/passwd and /etc/group
+  # measurement taken for that entry (`openbao:x:100:1000::/home/openbao`, `openbao:x:1000`) is a
+  # measurement of THIS image, not an analogy to it. The DEFINES-not-ENFORCES caveat carries over
+  # unchanged: the image config's User is empty, so `runAsUser: 100` selects the identity the image
+  # defines rather than restating one it imposes, and raising it would run the openbao binary as a
+  # UID its own image has no account for.
+  #
+  # Only the `snapshot` container carries it, in each of the two workloads. The pod default is the
+  # high, unprivileged 65532 and the `minio/mc` mirror container takes that default, which is why
+  # each workload sets runAsUser per container rather than once on the pod. Trivy's own count
+  # corroborates the split rather than merely restating it: it reports exactly ONE KSV-0020 per
+  # file, which is the count this premise predicts and is not what an inherited low pod default
+  # would produce.
+  #
+  # ⚠️ SAME SCOPING MISMATCH AS THE vault-config ENTRY, AND THEREFORE THE SAME KIND OF GUARD.
+  # This entry is PATH-scoped, so it silences KSV-0020 for every container in both workloads —
+  # including one added later at a low UID with no image-defined reason. That premise is asserted
+  # per container by scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh, which fails
+  # the build if any container other than `snapshot` drops below 10000, if `snapshot` stops running
+  # the openbao image, or if either pod default stops being high.
+  #
+  # ⚠️ These workloads ship to PRODUCTION (k8s/providers/hetzner/infrastructure/ includes
+  # k8s/bases/infrastructure/), so the "local/CI provider only" premise the vendored-operator
+  # entries rest on is NOT available here and is not borrowed. This stands on the image-defined
+  # identity alone.
+  #
+  # ⚠️ DELIBERATELY UID-ONLY. KSV-0021 stays live on both workloads and is NOT dispositioned here,
+  # because its premise is false today: the pod default runAsGroup is 1000, so the mirror container
+  # INHERITS a low GID chosen for openbao rather than taking a high default, and `minio/mc` bakes no
+  # such identity. vault-config can make that split because its shared paths are emptyDir, where
+  # fsGroup's setgid bit carries the group regardless of the writer's primary gid (#3258); the
+  # vault-backup snapshots live on a PVC, where that has not been established — #3281 assumed it
+  # transferred and was withdrawn. The remaining 4 KSV-0021 findings therefore stay reported until
+  # that is measured, rather than being covered by a premise that does not hold. See #3202.
+  - id: KSV-0020
+    paths:
+      - k8s/bases/infrastructure/vault-backup/job.yaml
+      - k8s/bases/infrastructure/vault-backup/cron-job.yaml
+    statement: >-
+      UID 100 is the identity the openbao image itself DEFINES, measured against the same pinned
+      digest these workloads share with the vault-config Job: /etc/passwd carries
+      openbao:x:100:1000::/home/openbao and /etc/group carries openbao:x:1000. The image does NOT
+      default to it — its config User is empty — so runAsUser: 100 selects that defined identity
+      rather than restating an enforced one, and raising it would run the openbao binary as a UID
+      its own image has no account for. Only the snapshot container sets it in each workload; the
+      pod default is 65532 and the minio/mc mirror container takes that high default. Because trivy
+      scopes by path rather than by resource,
+      scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh asserts that per container so
+      this entry cannot silently cover a future low-UID container. KSV-0021 is deliberately not
+      dispositioned on these workloads.
+
+  # KSV-0021 "runs with GID <= 10000" on the vault-config Job — 2 findings, both LOW.
+  #
+  # The GID half of the same image-defined identity the KSV-0020 entry above describes: that
+  # measurement, taken against the pinned DIGEST, read `openbao:x:100:1000::/home/openbao` from
+  # /etc/passwd and `openbao:x:1000` from /etc/group. So gid 1000 is defined by the image for the
+  # same reason uid 100 is, and the same DEFINES-not-ENFORCES caveat applies — the image config's
+  # User is empty, so the manifest is selecting that identity rather than restating an imposed one.
+  #
+  # Only the two openbao containers carry it. The pod default is the high, unprivileged 65532 for
+  # BOTH uid and gid, and minio/mc and alpine/k8s take that default rather than inheriting a group
+  # chosen for openbao.
+  #
+  # ⚠️ Cross-container access does NOT depend on a shared primary GID, which is what makes the
+  # split safe. `fsGroup: 1000` sets the emptyDir volumes' group AND the setgid bit, so a file
+  # created in /shared or /snapshots inherits group 1000 whatever gid its writer runs as, and
+  # fsGroup is added to every container's supplementary groups so the others can still read it.
+  # Measured with a paired control (#3258), the setgid bit the only variable: with it, a file
+  # written at gid 65532 lands group 1000 and a uid-100/gid-1000 reader CAN read it; without it the
+  # file lands group 65532 and that reader CANNOT. Upstream's own fsGroup example shows the same in
+  # a real pod with the primary GID deliberately differing from fsGroup.
+  #
+  # ⚠️ SAME SCOPING MISMATCH AS KSV-0020, SAME GUARD. This entry is PATH-scoped, so it silences
+  # KSV-0021 for every container in the Job — including one added later at a low GID with no
+  # image-defined reason. That premise is asserted per container by
+  # scripts/tests/test-trivyignore-vault-config-identity-boundary.sh, which fails the build if any
+  # container other than the two openbao ones drops below 10000, or if the pod default stops being
+  # high, or if fsGroup stops being set.
+  #
+  # ⚠️ This Job ships to PRODUCTION, exactly as the KSV-0020 entry notes, so the "local/CI provider
+  # only" premise is not available here and is not borrowed.
+  - id: KSV-0021
+    paths:
+      - k8s/bases/infrastructure/vault-config/job.yaml
+    statement: >-
+      GID 1000 is the group the openbao image itself DEFINES — /etc/group carries openbao:x:1000
+      and /etc/passwd carries openbao:x:100:1000, both read from the pinned DIGEST rather than the
+      tag — and the image does NOT default to it, so runAsGroup: 1000 selects that defined identity
+      rather than restating an enforced one. Only the two openbao containers set it; the pod
+      default is 65532 for both uid and gid, and the minio/mc and alpine/k8s containers take that
+      high default. Cross-container access to the shared emptyDir volumes comes from fsGroup, which
+      sets their group and the setgid bit so files inherit group 1000 regardless of the writer's
+      primary gid, so the split costs no access. Because trivy scopes by path rather than by
+      resource, scripts/tests/test-trivyignore-vault-config-identity-boundary.sh asserts that per
+      container so this entry cannot silently cover a future low-GID container.

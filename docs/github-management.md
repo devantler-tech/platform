@@ -32,7 +32,7 @@ Three tiers, each in its conventional place — controller in `controllers/`, it
 CRs one tier later in `infrastructure/`, the workload in `apps/`:
 
 | Piece | Where | Notes |
-|---|---|---|
+| --- | --- | --- |
 | Crossplane core | `k8s/providers/hetzner/infrastructure/controllers/crossplane/` | HelmRelease; prod-only. `provider.defaultActivations: []` keeps unused provider CRDs inactive. Installs the pkg.crossplane.io CRDs. |
 | Provider + activation policy | `k8s/providers/hetzner/infrastructure/crossplane/` | The `Provider` package + `DeploymentRuntimeConfig` + `ManagedResourceActivationPolicy` (namespaced MRDs only). One tier after the controller (needs its CRDs), like Coroot/Flagger CRs. Establishes the namespaced github CRDs. |
 | The `github-config` app (platform scaffolding) | `k8s/bases/apps/github-config/` | namespace, SA, least-privilege `Role`, the namespaced `SecretStore`, and the cosign-verified `OCIRepository` + `Kustomization`. Applied by the existing `apps` Flux Kustomization. Prod-only in practice (the docker provider deploys no apps). The package is **public**, so the OCIRepository pulls anonymously — no ghcr pull credential. |
@@ -65,8 +65,12 @@ Velero), so the manually-set values are durable without a GitOps source of truth
    `github-config` Flux health check. Install it on **all repositories**
    of the org. No webhook.
 2. **Overwrite the placeholders in OpenBao** with the App's real values — the
-   keys already exist (seeded by the vault-config Job), so just set them, e.g.:
+   keys already exist (seeded by the vault-config Job), so just set them. The
+   public `vault.${domain}` hostname serves the browser UI only (it sits behind
+   SSO), so reach the API over a port-forward:
    ```sh
+   kubectl -n openbao port-forward svc/openbao-active 8200:8200 &
+   export BAO_ADDR=http://127.0.0.1:8200
    bao kv put -mount=secret infrastructure/github/app \
      app_id="<app id>" installation_id="<installation id>" pem=@app.private-key.pem
    ```

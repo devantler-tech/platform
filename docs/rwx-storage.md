@@ -79,7 +79,7 @@ The Talos machine config patch (`talos/workers/mount-longhorn-data.yaml`) handle
 ## StorageClasses
 
 | StorageClass | Default | Access Modes | Backing |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `longhorn` | ✅ Yes | RWO, RWX | Longhorn on Hetzner volumes |
 | `hcloud` | ❌ No | RWO only | Hetzner Cloud Block Storage |
 
@@ -120,7 +120,7 @@ spec:
 These variables can be overridden per environment in `k8s/clusters/<env>/bootstrap/config-map.yaml`:
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `longhorn_replica_count` | `3` | Number of volume replicas (matches the storage-worker count) |
 | `longhorn_csi_attacher_replicas` | `1` | CSI attacher replica count |
 | `longhorn_csi_provisioner_replicas` | `1` | CSI provisioner replica count |
