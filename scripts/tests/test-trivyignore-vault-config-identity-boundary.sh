@@ -29,7 +29,7 @@
 #   Job. Also reciprocal: any OTHER non-vendored KSV-0020 path must be listed here, so this file and
 #   test-trivyignore-vendored-operator-boundary.sh cannot drift apart.
 #
-#   PREMISE (always) — per container: the pod default is high, and the only containers below 10000
+#   PREMISE (always) — per container: the pod default is high, and the only containers at or below 10000
 #   are the two openbao ones. This is the layer the ignorefile cannot express.
 #
 #   BEHAVIOUR (when trivy is installed) — the same Job bytes at the dispositioned path and at a
@@ -50,7 +50,11 @@ readonly PROBE_PATH='k8s/bases/apps/trivyignore-identity-probe/job.yaml'
 # Pinned to the exact reviewed reference, not the repository name: the disposition rests on account
 # data measured from THIS digest, so an image bump must fail here until the identity is re-measured.
 readonly EXPECTED_OPENBAO_IMAGE='quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806'
-readonly HIGH_UID_FLOOR=10000
+# KSV-0020/KSV-0021 fire for an id <= 10000, so 10000 is itself LOW and the first safe value is
+# 10001. Comparing against 10000 with -lt / -ge would treat exactly 10000 as high: trivy would
+# report it, the path-scoped ignore would suppress it, and this guard would still pass -- an
+# off-by-one at precisely the boundary it exists to police.
+readonly LOW_ID_FLOOR=10001
 readonly EXPECTED_LOW_UID=100
 readonly EXPECTED_LOW_GID=1000
 readonly EXPECTED_LOW_CONTAINERS=2
@@ -88,10 +92,20 @@ command -v yq >/dev/null 2>&1 || {
 # substitution whose command fails feeds the loop nothing, so the body never executes and the check
 # reports success having inspected NOTHING — the exact vacuous pass this guard exists to prevent,
 # occurring inside the guard itself. A query that did not run is not evidence that a boundary holds.
+#
+# ⚠️ run_yq is ALWAYS called inside $(...), which is a SUBSHELL. A `fail` here would set `status` in
+# that subshell and the parent would never see it, so every caller's `if` would simply skip its body
+# and the guard would print PASS having inspected nothing — the vacuous pass this whole block exists
+# to prevent, occurring inside the mechanism meant to prevent it. It therefore reports the failure to
+# stderr and returns non-zero, and the CALLER records it in the parent via query_failed.
+query_failed() { # 1=what it enumerates, for the failure message
+  fail "QUERY FAILED: could not enumerate $1 — refusing to report a boundary this check never inspected"
+}
+
 run_yq() { # 1=expression 2=file 3=what it enumerates, for the failure message
   local out
   if ! out="$(yq -N "$1" "$2" 2>/dev/null)"; then
-    fail "QUERY FAILED: could not enumerate $3 — refusing to report a boundary this check never inspected"
+    printf 'QUERY FAILED: could not enumerate %s\n' "$3" >&2
     return 1
   fi
   printf '%s\n' "$out"
@@ -118,6 +132,8 @@ for CHECK_ID in "${CHECK_IDS[@]}"; do
     done <<PATHS
 $paths_out
 PATHS
+  else
+    query_failed "the paths $CHECK_ID is scoped to"
   fi
 
   # An entry that lost its paths key suppresses the check repository-wide.
@@ -130,16 +146,21 @@ PATHS
     done <<LENS
 $lens_out
 LENS
+  else
+    query_failed "the path counts for $CHECK_ID"
   fi
 done
 # ------------------------------------------------------------------ premise --
 if ! pod_uid="$(run_yq '.spec.template.spec.securityContext.runAsUser // "unset"' "$REPO_ROOT/$JOB_PATH" "the pod-level runAsUser")"; then
-  pod_uid="unset"
+  query_failed "the pod-level runAsUser"
+  pod_uid="query-failed"
 fi
-if [ "$pod_uid" = "unset" ]; then
+if [ "$pod_uid" = "query-failed" ]; then
+  : # already recorded by query_failed; the comparisons below have nothing to read
+elif [ "$pod_uid" = "unset" ]; then
   fail "PREMISE BROKEN: the pod sets no runAsUser, so every container without an override inherits an unconstrained UID while $UID_CHECK_ID stays suppressed on this Job"
-elif [ "$pod_uid" -lt "$HIGH_UID_FLOOR" ]; then
-  fail "PREMISE BROKEN: the pod default runAsUser is $pod_uid, below $HIGH_UID_FLOOR. The disposition states that only the two openbao containers run low and that everything else takes a HIGH default."
+elif [ "$pod_uid" -lt "$LOW_ID_FLOOR" ]; then
+  fail "PREMISE BROKEN: the pod default runAsUser is $pod_uid, below $LOW_ID_FLOOR. The disposition states that only the two openbao containers run low and that everything else takes a HIGH default."
 fi
 
 low=0
@@ -147,7 +168,7 @@ if containers_out="$(run_yq '[.spec.template.spec.initContainers[]?, .spec.templ
   while IFS='|' read -r name image uid; do
     [ -n "$name" ] || continue
     [ "$uid" = "unset" ] && continue
-    [ "$uid" -ge "$HIGH_UID_FLOOR" ] && continue
+    [ "$uid" -ge "$LOW_ID_FLOOR" ] && continue
     low=$((low + 1))
     if [ "$image" != "$EXPECTED_OPENBAO_IMAGE" ]; then
       fail "PREMISE BROKEN: container '$name' runs as UID $uid from image '$image', which is not the pinned openbao image whose measured account justifies this. The $UID_CHECK_ID disposition covers this whole Job by path, so this container's low UID is now silently suppressed with no image-defined identity to justify it."
@@ -158,18 +179,23 @@ if containers_out="$(run_yq '[.spec.template.spec.initContainers[]?, .spec.templ
 $containers_out
 CONTAINERS
   [ "$low" -eq "$EXPECTED_LOW_CONTAINERS" ] || fail \
-    "PREMISE BROKEN: $low container(s) run below $HIGH_UID_FLOOR; the disposition is written for exactly $EXPECTED_LOW_CONTAINERS (the two openbao containers)."
+    "PREMISE BROKEN: $low container(s) run below $LOW_ID_FLOOR; the disposition is written for exactly $EXPECTED_LOW_CONTAINERS (the two openbao containers)."
+else
+  query_failed "the containers of the vault-config Job"
 fi
 
 # --- GID: the same premise, one field over. A container can carry a justified low UID and an
 # --- unjustified low GID independently, so the two are asserted separately.
 if ! pod_gid="$(run_yq '.spec.template.spec.securityContext.runAsGroup // "unset"' "$REPO_ROOT/$JOB_PATH" "the pod-level runAsGroup")"; then
-  pod_gid="unset"
+  query_failed "the pod-level runAsGroup"
+  pod_gid="query-failed"
 fi
-if [ "$pod_gid" = "unset" ]; then
+if [ "$pod_gid" = "query-failed" ]; then
+  : # already recorded by query_failed; the comparisons below have nothing to read
+elif [ "$pod_gid" = "unset" ]; then
   fail "PREMISE BROKEN: the pod sets no runAsGroup, so every container without an override inherits an unconstrained GID while $GID_CHECK_ID stays suppressed on this Job"
-elif [ "$pod_gid" -lt "$HIGH_UID_FLOOR" ]; then
-  fail "PREMISE BROKEN: the pod default runAsGroup is $pod_gid, below $HIGH_UID_FLOOR. The $GID_CHECK_ID disposition states that only the two openbao containers run low and that everything else takes a HIGH default."
+elif [ "$pod_gid" -lt "$LOW_ID_FLOOR" ]; then
+  fail "PREMISE BROKEN: the pod default runAsGroup is $pod_gid, below $LOW_ID_FLOOR. The $GID_CHECK_ID disposition states that only the two openbao containers run low and that everything else takes a HIGH default."
 fi
 
 # fsGroup is what makes the GID split cost no access: it sets the emptyDir volumes' group AND the
@@ -177,9 +203,10 @@ fi
 # container's supplementary groups. Drop it and the split stops being free — the containers on the
 # high default silently lose access to what openbao wrote, and vice versa (#3258).
 if ! fs_group="$(run_yq '.spec.template.spec.securityContext.fsGroup // "unset"' "$REPO_ROOT/$JOB_PATH" "the pod-level fsGroup")"; then
-  fs_group="unset"
+  query_failed "the pod-level fsGroup"
+  fs_group="query-failed"
 fi
-[ "$fs_group" = "$EXPECTED_LOW_GID" ] || fail \
+[ "$fs_group" = "query-failed" ] || [ "$fs_group" = "$EXPECTED_LOW_GID" ] || fail \
   "PREMISE BROKEN: fsGroup is '$fs_group', not $EXPECTED_LOW_GID. The per-container GID split depends on fsGroup supplying shared-volume access; without it, raising the pod default breaks cross-container reads instead of merely raising a group."
 
 low_gid=0
@@ -187,7 +214,7 @@ if gids_out="$(run_yq '[.spec.template.spec.initContainers[]?, .spec.template.sp
   while IFS='|' read -r name image gid; do
     [ -n "$name" ] || continue
     [ "$gid" = "unset" ] && continue
-    [ "$gid" -ge "$HIGH_UID_FLOOR" ] && continue
+    [ "$gid" -ge "$LOW_ID_FLOOR" ] && continue
     low_gid=$((low_gid + 1))
     if [ "$image" != "$EXPECTED_OPENBAO_IMAGE" ]; then
       fail "PREMISE BROKEN: container '$name' runs as GID $gid from image '$image', which is not the pinned openbao image whose measured account justifies this. The $GID_CHECK_ID disposition covers this whole Job by path, so this container's low GID is now silently suppressed with no image-defined identity to justify it."
@@ -198,13 +225,15 @@ if gids_out="$(run_yq '[.spec.template.spec.initContainers[]?, .spec.template.sp
 $gids_out
 GIDS
   [ "$low_gid" -eq "$EXPECTED_LOW_CONTAINERS" ] || fail \
-    "PREMISE BROKEN: $low_gid container(s) run below $HIGH_UID_FLOOR by GID; the $GID_CHECK_ID disposition is written for exactly $EXPECTED_LOW_CONTAINERS (the two openbao containers)."
+    "PREMISE BROKEN: $low_gid container(s) run below $LOW_ID_FLOOR by GID; the $GID_CHECK_ID disposition is written for exactly $EXPECTED_LOW_CONTAINERS (the two openbao containers)."
+else
+  query_failed "the container GIDs of the vault-config Job"
 fi
 [ "$status" -eq 0 ] || exit "$status"
 printf 'PASS(structure+premise): %s and %s are scoped to %s.\n' \
   "$UID_CHECK_ID" "$GID_CHECK_ID" "$JOB_PATH"
 printf '  pod defaults: uid=%s gid=%s fsGroup=%s (floor %s)\n' \
-  "$pod_uid" "$pod_gid" "$fs_group" "$HIGH_UID_FLOOR"
+  "$pod_uid" "$pod_gid" "$fs_group" "$LOW_ID_FLOOR"
 printf '  below the floor: %s container(s) by UID, %s by GID; expected %s each (the openbao pair)\n' \
   "$low" "$low_gid" "$EXPECTED_LOW_CONTAINERS"
 
