@@ -27,24 +27,25 @@ metadata:
   namespace: openbao
   annotations:
     checkov.io/skip1: "CKV_K8S_38=the snapshot container reads its SA JWT to log in via OpenBao Kubernetes auth"
-    # Both containers run the pod's UID 100, for two different reasons.
-    # The snapshot container's 100 IS the openbao image's baked identity:
-    # the image carries `openbao:x:100:1000` in its own /etc/passwd (the
-    # same pinned digest vault-config reads), which runAsUser/runAsGroup
-    # restate. The mirror container inherits it because the snapshot it
-    # uploads lands `-rw-------` owned by 100:1000, so `minio/mc` — which
-    # bakes no uid-100 entry of its own and mounts /snapshots readOnly —
-    # can open it only as its owner. fsGroup fixes the volume's ownership
-    # and mode at mount time, not the mode `bao operator raft snapshot
-    # save` creates the file with afterwards.
+    # Only the snapshot container runs UID 100, and that IS the openbao image's
+    # baked identity: the image carries `openbao:x:100:1000` in its own
+    # /etc/passwd (the same pinned digest vault-config reads), which
+    # runAsUser/runAsGroup restate. The pod default is the high, unprivileged
+    # 65532, so the mirror container — `minio/mc`, which bakes no identity of
+    # its own and mounts /snapshots readOnly — takes that rather than a UID
+    # chosen for openbao.
     #
-    # Neither UID is remapped. The openbao namespace carries no
+    # The mirror still reads the snapshot because it shares the primary GROUP,
+    # not the owner: runAsGroup/fsGroup 1000 apply to every container, and the
+    # snapshot script chmods the file 0640 after `bao operator raft snapshot
+    # save` writes it. Access therefore rests on group membership, which is a
+    # pod-level property, rather than on the volume's setgid bit.
+    #
+    # UID 100 is not remapped. The openbao namespace carries no
     # `pod-security.devantler.tech/user-namespaces: enabled` label, so the
-    # add-user-namespaces rule does not match, hostUsers stays on, and 100
-    # is a host UID. That residual is what #3202 removes: it makes the
-    # snapshot group-readable first, then raises the UIDs, which the three
-    # writers sharing this one RWO PVC have to do together.
-    checkov.io/skip2: "CKV_K8S_40=deferred to #3202 -- the snapshot container's 100 is the openbao image's baked `openbao:x:100:1000` user, and the snapshot is chmod 0640 so the mirror reads it on the shared group 1000 -- only the UID migration itself is outstanding"
+    # add-user-namespaces rule does not match and hostUsers stays on; 100 is a
+    # host UID, now scoped to the single container whose image defines it.
+    checkov.io/skip2: "CKV_K8S_40=UID 100 is the openbao image's baked `openbao:x:100:1000` user, which runAsUser/runAsGroup restate; only the snapshot container runs it and the pod default is 65532"
 spec:
   schedule: "30 3 * * *"
   # Pin the cron evaluation to UTC instead of inheriting kube-controller-manager's
@@ -80,7 +81,7 @@ spec:
           # add-security-context Kyverno mutation) so the pod stays hardened
           # even when created before the webhook is active on fresh bring-up.
           securityContext:
-            runAsUser: 100
+            runAsUser: 65532
             runAsGroup: 1000
             fsGroup: 1000
             runAsNonRoot: true
@@ -103,6 +104,12 @@ spec:
             - name: snapshot
               image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
               securityContext:
+                # UID 100 is the openbao image's own baked identity (`openbao:x:100:1000`
+                # in its /etc/passwd) — see the checkov.io/skip2 rationale. Only this
+                # container overrides the pod's high default; the mirror takes 65532
+                # and reads the snapshot on the shared primary group 1000.
+                runAsUser: 100
+                runAsGroup: 1000
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
                 runAsNonRoot: true
