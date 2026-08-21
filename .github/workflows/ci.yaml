@@ -380,7 +380,26 @@ jobs:
             echo "::error::this check cannot distinguish a good matcher from a broken one. Fix it before trusting it."
             exit 1
           fi
-          echo "negative control refused a wrong subject, so the check above is not vacuous"
+
+          # 🔴 THAT NON-ZERO EXIT IS NOT YET EVIDENCE OF A REFUSAL. A network,
+          # registry or auth failure also exits non-zero, and would report the
+          # control as having passed while proving nothing — the control would
+          # then be vacuous in exactly the way it exists to detect. Re-run the
+          # POSITIVE check: if the same path still verifies, the refusal above
+          # was a real refusal rather than an outage. This is a liveness
+          # sandwich, deliberately not a match on cosign's error text, which is
+          # not a stable interface.
+          if ! cosign verify \
+            --certificate-oidc-issuer-regexp "${ISSUER}" \
+            --certificate-identity-regexp "${SUBJECT}" \
+            "${ARTIFACT}" > /dev/null; then
+            echo "::error::the negative control exited non-zero, but the artifact can no longer be"
+            echo "::error::verified either — so this run cannot prove the control refused for the"
+            echo "::error::right reason. Treating an unprovable control as a failure, not a pass."
+            exit 1
+          fi
+          echo "negative control refused a wrong subject, and the positive path still verifies"
+          echo "=> the check above is not vacuous"
 
   validate-eks-authorization:
     name: 🔐 Validate EKS Authorization
