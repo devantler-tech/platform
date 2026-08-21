@@ -80,7 +80,19 @@ spec:
       # even when created before the webhook is active on fresh bring-up.
       securityContext:
         runAsUser: 65532
-        runAsGroup: 1000
+        # The pod default gid is the same high 65532, for the same reason the uid is:
+        # `minio/mc` bakes no group of its own, so a pod-level 1000 was an
+        # unjustified low-GID execution for the only container that inherits it. The
+        # snapshot container restates the openbao image's baked 100:1000 explicitly,
+        # so the annotation above covers just the execution its rationale accounts
+        # for rather than one more it does not.
+        #
+        # Reading the snapshot does NOT depend on the mirror's primary gid. fsGroup
+        # stays 1000: Kubernetes adds it to every container's supplementary groups
+        # and sets the setgid bit on the volume, so the 0640 snapshot lands group
+        # 1000 and a gid-65532 reader still opens it. Same mechanism vault-config
+        # relies on, verified there against a paired control (#3258).
+        runAsGroup: 65532
         fsGroup: 1000
         runAsNonRoot: true
         seccompProfile:
