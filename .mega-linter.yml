@@ -183,8 +183,9 @@ DISABLE_ERRORS_LINTERS:
   # The residual 4 is fully accounted for: 2 KSV-0021 on each of the two vault-backup workloads --
   # the snapshot container's image-defined gid AND the mirror container, which INHERITS gid 1000
   # from the pod rather than having it image-defined. That second one is why the KSV-0020 premise
-  # does not carry over, and why #3202 stays open: it needs the PVC sharing model established
-  # first. REPOSITORY_TRIVY cannot leave the list below until it does.
+  # does not carry over. The residual stays live under #2787 until a high primary GID plus explicit
+  # group-1000 membership is proven on the PVC path. REPOSITORY_TRIVY cannot leave the list below
+  # until then.
   #
   # ⚠️ That 6 is NOT 9 minus this slice. The 9 recorded here was wrong on two independent counts:
   # KSV-0020 on vault-backup was 2 (one per file), not 4, and the coredns KSV-0011 was already
@@ -236,26 +237,23 @@ DISABLE_ERRORS_LINTERS:
   # asserts, so the exception fails the build if the VM stack ever reaches production.
   #
   # checkov is at 0 failed checks on all three frameworks CI runs. Its last two findings were both
-  # CKV_K8S_40, on the two vault-backup workloads, and #2904 dispositioned them as a scoped
-  # deferred exception on each workload — neither the eleven per-site constraints #2898 claimed nor
-  # the single risk acceptance #2904 proposed, both of which the measurements below rule out.
+  # CKV_K8S_40 on the two vault-backup snapshot containers. Each pod now defaults to UID 65532, while
+  # the snapshot container alone states the OpenBao image's baked `openbao:x:100:1000` identity.
+  # The two resource-level skips are narrow permanent dispositions guarded against covering any
+  # other container; they are not deferred migration markers.
   # Re-derive that from the scan rather than adjusting a number here — every figure in this
   # block is a measurement, and the running arithmetic that used to track it went stale twice.
   #
-  # Both vault-backup workloads run pod-level UID 100, and each of their two containers has its
-  # own reason. The snapshot container's 100 is the openbao image's baked `openbao:x:100:1000`
-  # identity, from the same pinned digest vault-config reads. The mirror container inherits it
-  # because the snapshot lands `-rw-------` owned by `100:1000` while `minio/mc` mounts
-  # /snapshots readOnly and bakes no uid-100 entry of its own, so opening it as its owner is the
-  # only access it has — `fsGroup` fixes the volume's ownership and mode at mount time, not the
-  # mode `bao operator raft snapshot save` writes the file with afterwards.
+  # Both vault-backup workloads run the pod and mirror container at UID 65532. The snapshot
+  # container overrides that default with the OpenBao image's baked UID 100, from the same pinned
+  # digest vault-config reads. Snapshots are widened to 0640, so the high-UID mirror reads them
+  # through the shared primary GID 1000 instead of by owning the file.
   #
-  # Neither UID is remapped: the openbao namespace carries no
+  # UID 100 is not remapped: the openbao namespace carries no
   # `pod-security.devantler.tech/user-namespaces: enabled` label, so the add-user-namespaces rule
-  # does not match, hostUsers stays on, and 100 is a host UID. #3202 removes that residual by
-  # making the snapshot group-readable first and raising the UIDs after. All three
-  # `vault-snapshots` writers move together; the third is the dr-rebuild workflow's helper pod,
-  # which this check does not reach because it is not a committed Kubernetes manifest.
+  # does not match, hostUsers stays on, and 100 is a host UID. The disposition therefore remains
+  # scoped to the container whose image defines that identity; every other writer uses the high
+  # pod default.
   #
   # The user-namespace probes are resolved rather than excepted, because the UID was never the
   # measurement subject: `/proc/self/uid_map` describes the pod's namespace and reads identically
