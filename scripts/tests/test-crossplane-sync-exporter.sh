@@ -292,6 +292,9 @@ alerter_script="$(
 # so coverage must count them. They are not stuck, though: ReconcilePaused is an
 # explicit operator choice and must be removed from every instant/range selector
 # in the stuck query before its grace-window joins run.
+# The needle is the literal rendered shell program; expanding its command
+# substitution would execute the assertion instead of comparing it.
+# shellcheck disable=SC2016
 require_text \
   "${alerter_script}" \
   'COV=$(q '\''count(crossplane_managed_resource_condition{condition="Synced"})'\'')' \
