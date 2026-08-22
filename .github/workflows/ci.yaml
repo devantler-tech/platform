@@ -1326,7 +1326,9 @@ jobs:
     # The PR job proves the proposed head, but production deploys the speculative merge-group
     # revision. Re-run the complete behavioral contract on that exact revision before deploy-prod
     # can acquire the production environment or publish an artifact.
-    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
+    if: >-
+      github.event_name == 'merge_group' &&
+      needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository

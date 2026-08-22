@@ -1547,8 +1547,20 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		validatorLine = "          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml\n"
 		testLine      = "          go test ./scripts/validate-dr-signing\n"
 		gateJobHeader = "  validate-publication-contract:\n"
-		deployNeeds   = "    needs: [changes, validate-eks-authorization, validate-publication-contract]"
-		healNeeds     = "    needs: [changes, deploy-prod, validate-publication-contract]"
+		deployNeeds   = `    needs:
+      [
+        changes,
+        validate-eks-authorization,
+        validate-publication-contract,
+        validate-rgd-templates-merge-group,
+      ]`
+		deployNeedsWithoutGate = `    needs:
+      [
+        changes,
+        validate-eks-authorization,
+        validate-rgd-templates-merge-group,
+      ]`
+		healNeeds = "    needs: [changes, deploy-prod, validate-publication-contract]"
 	)
 
 	for name, arm := range map[string]struct {
@@ -1620,7 +1632,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		// are not redundant.
 		"deploy-prod no longer requires the gate job": {
 			func(s string) string {
-				return strings.Replace(s, deployNeeds, "    needs: [changes, validate-eks-authorization]", 1)
+				return strings.Replace(s, deployNeeds, deployNeedsWithoutGate, 1)
 			},
 			"does not require validate-publication-contract",
 		},
