@@ -279,8 +279,9 @@ while IFS=$'\t' read -r finding_target finding_id finding_severity \
         line] | sort | .[0]) as $nearest |
       [.. | select(line == $nearest) | path] | sort_by(length) | select(length > 0) | .[-1]' \
     "$finding_file")"
-  [ -n "$cause_path" ] && [ "$cause_path" != "null" ] || fail \
-    "Trivy finding $finding_id on $finding_target has no semantic path in its source range"
+  if [ -z "$cause_path" ] || [ "$cause_path" = "null" ]; then
+    fail "Trivy finding $finding_id on $finding_target has no semantic path in its source range"
+  fi
   cause_identity="${cause_path}"$'\n'"${finding_cause}"
   printf '%s\t%s\t%s\tCAUSE-SHA256:%s\n' \
     "$finding_target" "$finding_id" "$finding_severity" \
