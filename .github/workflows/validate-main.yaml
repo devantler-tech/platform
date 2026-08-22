@@ -96,6 +96,31 @@ jobs:
       - name: 🔐 Validate shared publish workflows are pinned
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
+  # The pull-request gate extracts Kubernetes workloads nested in KRO RGDs because ordinary
+  # manifest scanners see only the outer custom resource. A direct push bypasses that job and can
+  # still reach the manual CD path, so main must exercise the identical behavioral contract.
+  validate-rgd-templates:
+    name: 🔬 Validate Nested RGD Workload Templates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Trivy for nested RGD templates
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+          cache: true
+
+      - name: 🔬 Validate nested RGD workload templates
+        run: |
+          shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
+          bash scripts/tests/test-rgd-template-static-scan.sh
+
   kubescape-baseline:
     name: 🛡️ Publish Kubescape Baseline
     runs-on: ubuntu-latest
