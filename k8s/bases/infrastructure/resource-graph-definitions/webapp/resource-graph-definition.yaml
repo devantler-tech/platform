@@ -6,10 +6,11 @@
 # STATIC SECURITY GATE (#3055): scripts/scan-rgd-templates.sh extracts every
 # spec.resources[].template as a first-class Kubernetes manifest and runs the full Trivy
 # misconfiguration policy set without the repository ignorefile. Exact findings and extracted
-# content digests are ratcheted in scripts/rgd-template-static-scan-baseline.tsv; committed instances
-# are also checked so spec.name cannot place generated children in kube-system.
+# canonical parsed-content digests are ratcheted in scripts/rgd-template-static-scan-baseline.tsv;
+# committed instances are also checked so spec.name cannot place generated children in kube-system.
 # scripts/tests/test-rgd-template-static-scan.sh proves discovery, cause, privilege, resource, and
-# namespace regressions are rejected. Never exclude this directory when adding a template.
+# namespace regressions are rejected on pull requests and direct pushes to main. Never exclude this
+# directory when adding a template.
 #
 # Sibling to the Tenant RGD: a *Tenant* sets up the namespace/isolation/sync
 # (tenant/resource-graph-definition.yaml); a *WebApp* defines the application that

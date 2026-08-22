@@ -11,6 +11,7 @@ readonly WEBAPP_RGD="k8s/bases/infrastructure/resource-graph-definitions/webapp/
 readonly TENANT_RGD="k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
 readonly WEBAPP_INSTANCE="k8s/providers/docker/apps/web-app-wedding-app.yaml"
 readonly TENANT_INSTANCE="k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml"
+readonly MAIN_WORKFLOW="${REPO_ROOT}/.github/workflows/validate-main.yaml"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -20,6 +21,21 @@ fail() {
 [ -x "$GATE" ] || fail "the RGD template static-scan gate is missing or not executable: $GATE"
 command -v yq >/dev/null 2>&1 || fail "yq is required"
 command -v trivy >/dev/null 2>&1 || fail "trivy is required"
+
+# A direct push to main bypasses pull-request and merge-group validation. Keep the same behavioral
+# gate on that path so the manual CD workflow cannot publish a nested-template regression unchecked.
+main_workflow_json="$(yq -o=json -I=0 '.' "$MAIN_WORKFLOW")"
+jq -e '
+  any(.jobs["validate-rgd-templates"].steps[];
+      (.uses // "") == "aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567"
+      and .with.version == "v0.74.0")
+' <<<"$main_workflow_json" >/dev/null ||
+  fail "validate-main.yaml does not pin the RGD gate's Trivy setup"
+jq -e '
+  any(.jobs["validate-rgd-templates"].steps[];
+      (.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh"))
+' <<<"$main_workflow_json" >/dev/null ||
+  fail "validate-main.yaml does not run the RGD template behavioral gate"
 
 # The real committed templates are the positive control. A gate that rejects them cannot be wired
 # into pull requests, and a test that exercises only the mutation cannot prove that it can.
@@ -34,6 +50,27 @@ cp "$REPO_ROOT/$TENANT_RGD" "$WORK/$TENANT_RGD"
 mkdir -p "$WORK/$(dirname "$WEBAPP_INSTANCE")"
 cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 cp "$REPO_ROOT/$TENANT_INSTANCE" "$WORK/$TENANT_INSTANCE"
+
+# The content ratchet represents parsed template semantics, not yq's emitted whitespace. Put a
+# wrapper first on PATH that adds a harmless blank line to YAML extraction; a byte-for-byte digest
+# of serializer output fails here even though the parsed resources and Trivy findings are unchanged.
+YQ_BIN="$(command -v yq)"
+readonly YQ_BIN
+mkdir -p "$WORK/bin"
+cat >"$WORK/bin/yq" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = '.spec.resources[].template | split_doc' ]; then
+  "$REAL_YQ" "$@"
+  printf '\n'
+else
+  exec "$REAL_YQ" "$@"
+fi
+EOF
+chmod +x "$WORK/bin/yq"
+PATH="$WORK/bin:$PATH" REAL_YQ="$YQ_BIN" "$GATE" "$WORK" ||
+  fail "the content ratchet depends on yq's YAML serialization"
+echo "PASS(probe): semantic content evidence ignores serializer-only whitespace."
 
 expect_rejected() {
   local label="$1" expected_id="$2" log="${WORK}/gate-probe.log"
@@ -79,6 +116,14 @@ yq -i '.spec.name = "kube-system"' "$WORK/$WEBAPP_INSTANCE"
 [ "$(yq '.spec.name' "$WORK/$WEBAPP_INSTANCE")" = "kube-system" ] ||
   fail "the unsafe committed-instance fixture was not created"
 expect_rejected "a committed WebApp instance targeting kube-system" "KSV-0037"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
+
+# Parse the kind as YAML rather than prefiltering its serialized spelling. Quoting is valid and must
+# not let the same unsafe instance bypass the placement guard.
+yq -i '.kind style="double" | .spec.name = "kube-system"' "$WORK/$WEBAPP_INSTANCE"
+[ "$(yq '.kind' "$WORK/$WEBAPP_INSTANCE")" = "WebApp" ] ||
+  fail "the quoted-kind committed-instance fixture was not created"
+expect_rejected "a quoted-kind WebApp instance targeting kube-system" "KSV-0037"
 cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 
 # Mutate the nested Deployment rather than adding a top-level manifest. `privileged: true` is a

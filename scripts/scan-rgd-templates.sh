@@ -30,7 +30,6 @@ fail() {
 command -v yq >/dev/null 2>&1 || fail "yq is required to extract RGD templates"
 command -v trivy >/dev/null 2>&1 || fail "trivy is required to scan RGD templates"
 command -v jq >/dev/null 2>&1 || fail "jq is required to compare RGD template findings"
-command -v grep >/dev/null 2>&1 || fail "grep is required to discover committed RGD instances"
 [ -d "$CONFIG_DATA" ] || fail "Trivy policy data is not readable: $CONFIG_DATA"
 
 sha256_file() {
@@ -68,18 +67,29 @@ readonly RGD_KINDS
 # The current RGD contracts use spec.name as the namespace-driving input (directly in WebApp,
 # through the generated Namespace in Tenant). Trivy cannot substitute committed custom-resource
 # values into the extracted templates, so reject the protected kube-system target separately.
-kind_pattern="$(
-  IFS='|'
-  printf '%s' "${RGD_KINDS[*]}"
-)"
 committed_instance_count=0
 while IFS= read -r candidate; do
-  grep -qE "^kind:[[:space:]]*(${kind_pattern})[[:space:]]*$" "$candidate" || continue
-  instance_kind="$(yq '.kind // ""' "$candidate")"
-  instance_name="$(yq '.spec.name // ""' "$candidate")"
-  committed_instance_count=$((committed_instance_count + 1))
-  [ "$instance_name" != "kube-system" ] || fail \
-    "KSV-0037: committed $instance_kind instance $candidate would generate resources in kube-system"
+  # Parse the kind instead of grepping its serialized spelling: quotes, comments, and other valid
+  # YAML presentation choices must not bypass the instance guard. Non-mapping fixture documents are
+  # ignored here and remain owned by the repository's ordinary YAML validation.
+  while IFS=$'\t' read -r instance_kind instance_name; do
+    is_rgd_instance=false
+    for rgd_kind in "${RGD_KINDS[@]}"; do
+      if [ "$instance_kind" = "$rgd_kind" ]; then
+        is_rgd_instance=true
+        break
+      fi
+    done
+    "$is_rgd_instance" || continue
+    committed_instance_count=$((committed_instance_count + 1))
+    [ "$instance_name" != "kube-system" ] || fail \
+      "KSV-0037: committed $instance_kind instance $candidate would generate resources in kube-system"
+  done < <(
+    yq -o=json -I=0 \
+      'select(tag == "!!map") | {"kind": (.kind // ""), "name": (.spec.name // "")}' \
+      "$candidate" |
+      jq -r 'select(.kind != "") | [.kind, .name] | @tsv'
+  )
 done < <(find "${SOURCE_ROOT}/k8s" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | LC_ALL=C sort)
 
 WORK="$(mktemp -d)"
@@ -102,8 +112,13 @@ for relative_path in "${RGD_PATHS[@]}"; do
   # yq emits one YAML document per selected template. Keeping the original repository-relative
   # path makes each finding attributable to the RGD that introduced it.
   yq '.spec.resources[].template | split_doc' "$source_file" >"$output_file"
+  # Hash parsed semantics rather than yq's YAML serialization. jq owns the stable key ordering and
+  # compact representation, so a runner yq update that changes only quoting or whitespace cannot
+  # invalidate the baseline while a value-sensitive template change still does.
+  yq -o=json -I=0 '[.spec.resources[].template]' "$source_file" |
+    jq -cS '.' >"$output_file.content.json"
   printf '1\t%s\tTEMPLATE-CONTENT\tSHA256\t%s\n' \
-    "$relative_path" "$(sha256_file "$output_file")" >>"$WORK/content.tsv"
+    "$relative_path" "$(sha256_file "$output_file.content.json")" >>"$WORK/content.tsv"
   template_count=$((template_count + count))
 done
 
