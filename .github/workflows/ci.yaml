@@ -71,6 +71,16 @@ jobs:
       - name: 🔐 Validate shared publish workflows are pinned
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
+      # The guard above proves every matcher pins A revision. It cannot say WHICH, and
+      # narrowing them to approved revisions (#2818) needs that fact for each consumer.
+      # This runs the hermetic half of the report that computes it: the network resolver
+      # is stubbed, so nothing here depends on another repository's release cadence.
+      - name: 🔐 Validate the publish-revision report
+        run: |
+          shellcheck scripts/report-publish-workflow-signing-revisions.sh
+          shellcheck scripts/tests/test-publish-workflow-signing-revisions.sh
+          bash scripts/tests/test-publish-workflow-signing-revisions.sh
+
       # Dropping a framework from the Kubescape gate REMOVES findings, so the
       # compliance score RISES and every check stays green — a coverage
       # regression that looks like an improvement. That is what un-gated 59
