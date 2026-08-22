@@ -368,3 +368,68 @@ func TestMentionOutsideExecutableStepDoesNotSatisfyWiring(t *testing.T) {
 		t.Fatal("decoy: a comment/step-name mention satisfied the wiring check — deleting the real step would go unnoticed")
 	}
 }
+
+// --- Bypasses that survived the structural rewrite ---------------------------
+//
+// Both decoys below pair a PASSING decoy with a REAL reduced scan hidden in a
+// form the token filter deliberately skips (`env ksail ...`). That pairing is
+// the whole point: neither decoy is dangerous alone, because supplying
+// `nsa,mitre` where nothing runs changes no behaviour. They are dangerous
+// because the decoy becomes the SOLE set the guard reads while the gate that
+// actually executes scans less — the guard reports OK on a reduced scan, which
+// is precisely the regression-that-looks-like-an-improvement it exists to catch.
+
+// A mapping key named `run` is not necessarily a shell step. An action input
+// spelled `with: run:` is a plain string the runner hands to the action, and
+// reading it as an executable step lets a non-executing value satisfy the gate.
+func TestActionInputNamedRunIsNotAnExecutableStep(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - uses: some/action@v1\n" +
+		"        with:\n          run: " + goodScan + "\n" +
+		"      - name: real\n        run: env ksail workload scan --framework nsa\n"
+	path := writeTemp(t, workflow)
+	if _, err := frameworkSet(path); err == nil {
+		t.Fatal("expected FAIL CLOSED: a `with: run:` action input executes nothing, " +
+			"so it must not supply the framework set while the real scan runs reduced")
+	}
+}
+
+// A trailing shell comment is not part of the command. Reading the line as one
+// substring lets comment text on an unrelated `ksail` line supply the set.
+func TestInlineCommentDoesNotSupplyTheFrameworkSet(t *testing.T) {
+	body := "ksail --version # workload scan --framework nsa,mitre\n" +
+		"env ksail workload scan --framework nsa\n"
+	if _, err := setOf(t, body); err == nil {
+		t.Fatal("expected FAIL CLOSED: `--framework` inside a trailing comment executes nothing, " +
+			"so it must not supply the framework set while the real scan runs reduced")
+	}
+}
+
+// Comment-stripping alone does not close the class: this line is not a comment at
+// all, so stripping leaves it whole — yet it still is not the scan command. Only
+// requiring the first three tokens to BE `ksail workload scan` rejects it.
+// Verified non-vacuous: relaxing that check back to a substring test makes this
+// test fail, while the other two still pass.
+func TestQuotedArgumentTextDoesNotSupplyTheFrameworkSet(t *testing.T) {
+	body := "ksail --version --note \"workload scan\" --framework nsa,mitre\n" +
+		"env ksail workload scan --framework nsa\n"
+	if _, err := setOf(t, body); err == nil {
+		t.Fatal("expected FAIL CLOSED: a `ksail` line whose command is not `workload scan` must not " +
+			"so it must not supply the framework set while the real scan runs reduced")
+	}
+}
+
+// The comment must be removed even on a line that IS the scan. Here the real
+// command carries no `--framework` at all, so the flag the guard reads comes
+// entirely from the comment — the scan runs on whatever default applies while
+// the guard reports the comment's set.
+//
+// Verified non-vacuous: making stripComment a no-op makes this test fail, while
+// the command-shape tests still pass. It is the only fixture that isolates it.
+func TestCommentCannotSupplyAMissingFrameworkFlag(t *testing.T) {
+	body := "ksail workload scan --compliance-threshold 95 # --framework nsa,mitre\n"
+	if _, err := setOf(t, body); err == nil {
+		t.Fatal("expected FAIL CLOSED: the executed command has no --framework, " +
+			"so a commented-out one must not satisfy the gate")
+	}
+}

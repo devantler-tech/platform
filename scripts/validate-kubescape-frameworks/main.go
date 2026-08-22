@@ -212,28 +212,65 @@ func runScalars(data []byte) ([]string, error) {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, err
 	}
+	root := &doc
+	if root.Kind == yaml.DocumentNode && len(root.Content) == 1 {
+		root = root.Content[0]
+	}
+	jobs := mappingValue(root, "jobs")
+	if jobs == nil || jobs.Kind != yaml.MappingNode {
+		return nil, nil
+	}
 	var out []string
-	var walk func(n *yaml.Node)
-	walk = func(n *yaml.Node) {
-		if n == nil {
-			return
+	// Job VALUES sit at odd indices of a mapping's Content.
+	for i := 1; i < len(jobs.Content); i += 2 {
+		steps := mappingValue(jobs.Content[i], "steps")
+		if steps == nil || steps.Kind != yaml.SequenceNode {
+			continue
 		}
-		if n.Kind == yaml.MappingNode {
-			for i := 0; i+1 < len(n.Content); i += 2 {
-				key, value := n.Content[i], n.Content[i+1]
-				if key.Kind == yaml.ScalarNode && key.Value == "run" && value.Kind == yaml.ScalarNode {
-					out = append(out, value.Value)
-				}
-				walk(value)
+		for _, step := range steps.Content {
+			if v := mappingValue(step, "run"); v != nil && v.Kind == yaml.ScalarNode {
+				out = append(out, v.Value)
 			}
-			return
-		}
-		for _, c := range n.Content {
-			walk(c)
 		}
 	}
-	walk(&doc)
 	return out, nil
+}
+
+// mappingValue returns the value node for key in a mapping, or nil.
+func mappingValue(n *yaml.Node, key string) *yaml.Node {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Kind == yaml.ScalarNode && n.Content[i].Value == key {
+			return n.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// stripComment removes a trailing shell comment. `#` opens a comment only when
+// it BEGINS A WORD and is not quoted, which is the shell's own rule — so
+// `--framework nsa#x` keeps its value while `ksail --version # ...` loses the
+// remainder. Reading the whole line as one string instead let comment text
+// supply the framework set on an unrelated command line.
+func stripComment(line string) string {
+	var inSingle, inDouble bool
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case c == '\\' && !inSingle:
+			i++
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+		case c == '#' && !inSingle && !inDouble:
+			if i == 0 || line[i-1] == ' ' || line[i-1] == '\t' {
+				return line[:i]
+			}
+		}
+	}
+	return line
 }
 
 // scanInvocations returns the lines of one `run:` scalar that actually INVOKE the
@@ -272,12 +309,15 @@ func scanInvocations(scalar string) []string {
 			continue
 		}
 
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") {
+		// The comment is removed BEFORE anything else reads the line, so no
+		// later test can be satisfied by text the shell never executes.
+		command := stripComment(line)
+		trimmed := strings.TrimSpace(command)
+		if trimmed == "" {
 			continue
 		}
 
-		if m := heredocStart.FindStringSubmatch(line); m != nil {
+		if m := heredocStart.FindStringSubmatch(command); m != nil {
 			for _, g := range m[1:] {
 				if g != "" {
 					heredocDelim = g
@@ -289,11 +329,14 @@ func scanInvocations(scalar string) []string {
 			// through and consider it before skipping the body.
 		}
 
+		// THE FIRST THREE TOKENS MUST BE THE COMMAND ITSELF. Testing the line
+		// for the substrings `workload scan` and `--framework` anywhere let any
+		// `ksail` line carrying that text elsewhere count as the scan.
 		fields := strings.Fields(trimmed)
-		if len(fields) == 0 || fields[0] != "ksail" {
+		if len(fields) < 3 || fields[0] != "ksail" || fields[1] != "workload" || fields[2] != "scan" {
 			continue
 		}
-		if !strings.Contains(trimmed, "workload scan") || !strings.Contains(trimmed, "--framework") {
+		if !strings.Contains(trimmed, "--framework") {
 			continue
 		}
 		// THE SAME RULE AT LINE GRANULARITY. `ksail ... && ksail ...` on one
@@ -301,8 +344,7 @@ func scanInvocations(scalar string) []string {
 		// judge the uploaded analysis on a throwaway's framework set.
 		if n := strings.Count(trimmed, "ksail workload scan"); n > 1 {
 			// Each chained scan is genuinely a separate invocation, so record
-			// them all and let the caller reject the ambiguity. Reading the last
-			// --framework would judge the uploaded analysis on a throwaway.
+			// them all and let the caller reject the ambiguity.
 			for i := 0; i < n; i++ {
 				out = append(out, trimmed)
 			}
