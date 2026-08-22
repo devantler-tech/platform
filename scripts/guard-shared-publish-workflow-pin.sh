@@ -138,8 +138,13 @@ EOF
     location="$location:${line%%:*}"
     subject="${line#*:}"
 
-    # Everything after the LAST @ is the ref constraint; a trailing $ anchor and any
-    # closing quote are not part of it.
+    # Work on the YAML scalar, not the entire source line. An inline comment may
+    # contain another `@refs/tags/...`; taking the last @ before removing that
+    # comment would validate the comment instead of the value consumed by YAML.
+    subject="${subject%%[[:space:]]#*}"
+
+    # Everything after the LAST @ in the scalar is the ref constraint; a trailing
+    # $ anchor and any closing quote are not part of it.
     ref="${subject##*@}"
     ref="${ref%\'}"
     ref="${ref%\"}"
