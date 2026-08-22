@@ -179,6 +179,30 @@ pin_at_ref() {
   printf '%s\n' "$sha"
 }
 
+# Did this tag's release actually PUBLISH an artifact?
+#
+# 🔴 A GIT TAG IS NOT A PUBLISHED ARTIFACT. For the three consumers pinning a semver RANGE
+# there is no version in the manifest, so the newest tag stands in for "what is deployed" —
+# and if that tag's CD run failed or was skipped, no artifact was pushed, Flux is still
+# serving the PREVIOUS one, and this script would read a workflow pin from a release that
+# never signed anything and print it as a SHA the allow-list "must accept". That omits the
+# revision which actually signed the running artifact — the exact outage #3048 exists to
+# prevent, one level in.
+#
+# The publish outcome is public Actions data on the consumer's own repository, so this
+# needs no package read and no cluster access, which keeps the check inside the scope
+# #3048 set for it.
+tag_was_published() {
+  local repo="$1" tag="$2" runs
+  runs="$(gh_retry api "repos/devantler-tech/${repo}/actions/runs?per_page=100&event=push")" || return 1
+  printf '%s' "$runs" |
+    jq -r --arg t "$tag" '
+      [.workflow_runs[]
+       | select(.head_branch == $t and .path == ".github/workflows/cd.yaml")
+       | .conclusion] | .[]' 2>/dev/null |
+    grep -qx 'success'
+}
+
 # The tag that produced the DEPLOYED artifact.
 #
 # 🔴 A GitHub RELEASE is the obvious source and the WRONG one. Releases and the artifact
@@ -193,7 +217,7 @@ pin_at_ref() {
 # inferred revision must not be mistaken for a measured one when an allow-list is built
 # from this output.
 deployed_tag() {
-  local repo="$1" version="$2" tags candidate newest
+  local repo="$1" version="$2" tags candidate bare
   # --paginate: the endpoint caps at 100 per page and these repos already carry 50+ tags.
   # Past the cap an un-paginated read returns an arbitrary subset, which either misses a
   # real tag (false UNRESOLVED) or picks the newest of a truncated page (silently wrong).
@@ -210,16 +234,30 @@ deployed_tag() {
   fi
   # Strip the optional `v` before ordering: `sort -V` compares it as text, so a mixed list
   # orders `v1.23.0` above `1.24.0`. Sort on the bare version, then recover the real tag.
-  newest="$(printf '%s\n' "$tags" | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' |
-    sed 's/^v//' | sort -V | tail -1 || true)"
-  [ -n "$newest" ] || return 1
-  for candidate in "v${newest}" "$newest"; do
-    if printf '%s\n' "$tags" | grep -qxF -- "$candidate"; then
-      plausible_ref "$candidate" || return 1
-      printf '%s\tinferred\n' "$candidate"
-      return 0
-    fi
-  done
+  #
+  # Walk NEWEST-FIRST to the newest tag that actually published. Stopping at the newest tag
+  # regardless of its release outcome is what would attribute a signature to a revision no
+  # deployed artifact was ever signed by. Bounded, because a consumer whose last several
+  # releases all failed is a different problem and should surface as UNRESOLVED rather than
+  # send this walking back through its whole history.
+  local candidates checked=0
+  candidates="$(printf '%s\n' "$tags" | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' |
+    sed 's/^v//' | sort -V -r || true)"
+  [ -n "$candidates" ] || return 1
+  while IFS= read -r bare; do
+    [ -n "$bare" ] || continue
+    checked=$((checked + 1))
+    [ "$checked" -le 5 ] || break
+    for candidate in "v${bare}" "$bare"; do
+      printf '%s\n' "$tags" | grep -qxF -- "$candidate" || continue
+      plausible_ref "$candidate" || continue
+      if tag_was_published "$repo" "$candidate"; then
+        printf '%s\tinferred\n' "$candidate"
+        return 0
+      fi
+      break
+    done
+  done <<<"$candidates"
   return 1
 }
 
@@ -287,10 +325,10 @@ main() {
       continue
     fi
     local mark=''
-    # A revision inferred from the newest tag is not a measurement of what is deployed.
-    # Saying so is the difference between an allow-list built on evidence and one built
-    # on a guess that reads identically.
-    [ "${origin:-}" = 'inferred' ] && mark=' (deployed version inferred from newest tag)'
+    # An inferred revision is the newest tag whose release actually published; it is still
+    # not a measurement of what Flux has APPLIED. Saying so is the difference between an
+    # allow-list built on evidence and one built on a guess that reads identically.
+    [ "${origin:-}" = 'inferred' ] && mark=' (deployed version inferred from newest PUBLISHED tag)'
     if [ "$signing" = "$current" ]; then
       printf 'IN-SYNC    %-22s %-18s signed=%s pinned=%s%s\n' \
         "$repo" "$workflow" "$signing" "$current" "$mark"
