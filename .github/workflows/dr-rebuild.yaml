@@ -160,14 +160,8 @@ jobs:
 
       - name: ⚙️ Setup talosctl
         # The GHCR bridge verifies RegistryAuthConfig on each stale node.
-        env:
-          # Keep in step with spec.cluster.talos.version in ksail.prod.yaml.
-          # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-          TALOS_VERSION: "1.13.8"
         run: |
-          curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
-          sudo install /tmp/talosctl /usr/local/bin/talosctl
-          talosctl version --client
+          .github/scripts/setup-talosctl.sh
 
       - name: 🔐 Create SOPS Age key
         env:
