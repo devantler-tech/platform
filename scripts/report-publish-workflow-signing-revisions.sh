@@ -171,10 +171,19 @@ pin_at_ref() {
   body="$(gh_retry api "repos/devantler-tech/${repo}/contents/.github/workflows/cd.yaml?ref=${ref}" \
     -H "Accept: application/vnd.github.raw")" || return 1
   [ -n "$body" ] || return 1
-  sha="$(printf '%s\n' "$body" |
-    grep -oE "devantler-tech/actions/\\.github/workflows/${workflow}\\.yaml@[0-9a-f]{40}" |
-    head -1 || true)"
-  sha="${sha##*@}"
+  # 🔴 PARSE THE YAML, NOT THE TEXT. An unanchored `grep … | head -1` selects a COMMENTED-OUT
+  # old call if it sits above the active one, and the SHA it yields still passes `is_sha` — so
+  # both revisions get confidently misreported and the real signer is omitted from the
+  # allow-list. Reading `.jobs[].uses` sees only calls that actually run.
+  #
+  # Exactly one matching call, or the attribution is ambiguous: zero means this consumer does
+  # not call that workflow at that ref, and more than one means a guess would be needed.
+  local matches count
+  matches="$(printf '%s\n' "$body" | yq eval -r '.jobs[].uses // ""' - 2>/dev/null |
+    grep -E "^devantler-tech/actions/\\.github/workflows/${workflow}\\.yaml@[0-9a-f]{40}$" || true)"
+  count="$(printf '%s' "$matches" | grep -c . || true)"
+  [ "$count" -eq 1 ] || return 1
+  sha="${matches##*@}"
   is_sha "$sha" || return 1
   printf '%s\n' "$sha"
 }
@@ -194,7 +203,11 @@ pin_at_ref() {
 # #3048 set for it.
 tag_was_published() {
   local repo="$1" tag="$2" runs
-  runs="$(gh_retry api "repos/devantler-tech/${repo}/actions/runs?per_page=100&event=push")" || return 1
+  # Scoped to this tag rather than fetching the newest 100 runs of the whole repository: on a
+  # repository with frequent pushes a candidate release's run falls off that first page, every
+  # retry re-fetches the same incomplete page, and a healthy consumer stays UNRESOLVED until the
+  # next release. Filtering by ref makes the result set small enough that one page is complete.
+  runs="$(gh_retry api "repos/devantler-tech/${repo}/actions/runs?branch=${tag}&event=push&per_page=100")" || return 1
   printf '%s' "$runs" |
     jq -r --arg t "$tag" '
       [.workflow_runs[]
@@ -226,6 +239,13 @@ deployed_tag() {
   if [ -n "$version" ]; then
     for candidate in "$version" "v${version}"; do
       if printf '%s\n' "$tags" | grep -qxF -- "$candidate"; then
+        # 🔴 A PINNED TAG EXISTING IS NOT THE SAME AS ITS ARTIFACT HAVING BEEN PUBLISHED. The
+        # publication check was reachable only from the semver branch, so the two exact-tag
+        # consumers returned as soon as the git tag existed. If that tag's cd.yaml failed, the
+        # previous artifact is still applied and this would name the unpublishing tag's pin as
+        # the signer of what is deployed. A pinned-but-unpublished version is an anomaly worth
+        # surfacing, so it is UNRESOLVED rather than silently walked back to an older tag.
+        tag_was_published "$repo" "$candidate" || return 1
         printf '%s\texact\n' "$candidate"
         return 0
       fi
@@ -283,6 +303,28 @@ main() {
   for expected in "${EXPECTED_CONSUMERS[@]}"; do
     printf '%s\n' "$found" | grep -qxF -- "$expected" || missing="${missing} ${expected}"
   done
+
+  # Both directions. Checking only that every EXPECTED name was found accepts an unregistered
+  # sixth consumer — and that one can later move or change its subject spelling, disappear, and
+  # leave all five registered names present so the report exits clean. That is exactly the silent
+  # disappearance this floor exists to prevent, just one consumer along. Requiring registration
+  # makes adding a consumer a deliberate, reviewed act.
+  local discovered unregistered=""
+  while IFS= read -r discovered; do
+    [ -n "$discovered" ] || continue
+    local known=0 e
+    for e in "${EXPECTED_CONSUMERS[@]}"; do
+      [ "$e" = "$discovered" ] && known=1 && break
+    done
+    [ "$known" -eq 1 ] || unregistered="${unregistered} ${discovered}"
+  done <<<"$found"
+
+  if [ -n "$unregistered" ]; then
+    printf 'discovered consumer(s) not registered in EXPECTED_CONSUMERS:%s\n' "$unregistered" >&2
+    printf 'A consumer this script does not know about is one it cannot notice the LOSS of later.\n' >&2
+    printf 'Add it to EXPECTED_CONSUMERS so its disappearance would fail this run.\n' >&2
+    exit 1
+  fi
 
   if [ -n "$missing" ]; then
     printf 'expected consumer(s) not discovered:%s\n' "$missing" >&2

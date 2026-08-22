@@ -178,9 +178,15 @@ if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
 PUBLISH_CONSUMER_ROOT="$swap_root" "$SCRIPT" >"$swap_out" 2>&1; then
   fail 'a discovery set of the right SIZE but wrong MEMBERSHIP passed — a consumer can vanish silently'
 else
-  grep -q -- "$first_repo" "$swap_out" ||
-    fail "the missing consumer ($first_repo) is not named in the discovery failure"
-  pass 'a same-size discovery set missing a real consumer fails closed and names it'
+  # The set comparison runs in BOTH directions, and the unregistered side fires first here: the
+  # impostor is not in EXPECTED_CONSUMERS, which is itself the stronger objection — a consumer this
+  # script does not know about is one whose later disappearance it could not notice. Either half
+  # naming its cause is a pass; silence is not.
+  grep -qE -- "impostor-repo|$first_repo" "$swap_out" ||
+    fail "the discovery failure names neither the unregistered consumer nor the missing one"
+  grep -qE -- 'not registered|not discovered' "$swap_out" ||
+    fail "the discovery failure does not say WHICH direction of the set comparison failed"
+  pass 'a same-size discovery set with an unregistered member fails closed and names the cause'
 fi
 
 # ---------------------------------------------------------------------------
@@ -243,8 +249,70 @@ if printf '%s\n' "$consumers" | cut -f1 | grep -qxF -- 'github-config'; then
   fail 'the OCI artifact name github-config leaked through as a repository name; no such repository exists'
 fi
 
+# ---------------------------------------------------------------------------
+# 8. AN EXTRA, UNREGISTERED CONSUMER. This isolates the OTHER direction of the set
+#    comparison: every expected consumer is present, so the "missing" check cannot fire
+#    and only the unregistered check can. Without this the swap fixture above passes on
+#    either direction and the unregistered half is never actually exercised — which is
+#    exactly what an ablation showed before this case existed.
+#
+#    It matters because an unregistered consumer is one whose later disappearance this
+#    script could not notice: it would drop out and every registered name would still be
+#    present, so the run would exit clean.
+# ---------------------------------------------------------------------------
+extra_root="$WORK/extra"
+mkdir -p "$extra_root"
+j=0
+while IFS=$'\t' read -r repo workflow _version; do
+  [ -n "$repo" ] || continue
+  j=$((j + 1))
+  # `.github` is the artifact name `github-config` on the wire; emit the OCI name so the
+  # script's own mapping reproduces the real repository, exactly as in production.
+  oci="$repo"
+  [ "$repo" = '.github' ] && oci='github-config'
+  cat >"$extra_root/real-$j.yaml" <<YAML
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: r$j
+spec:
+  url: oci://ghcr.io/devantler-tech/$oci/manifests
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\\.actions\\.githubusercontent\\.com\$'
+        subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/$workflow\\.yaml@[0-9a-f]{40}\$'
+YAML
+done <<<"$consumers"
+cat >"$extra_root/extra.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: newcomer
+spec:
+  url: oci://ghcr.io/devantler-tech/newcomer/manifests
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\.actions\.githubusercontent\.com$'
+        subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
+YAML
+extra_out="$WORK/extra.out"
+if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+PUBLISH_CONSUMER_ROOT="$extra_root" "$SCRIPT" >"$extra_out" 2>&1; then
+  fail 'an unregistered sixth consumer was accepted — its later disappearance could not be noticed'
+else
+  grep -q 'not registered' "$extra_out" ||
+    fail 'the failure does not identify the unregistered direction of the set comparison'
+  grep -q 'newcomer' "$extra_out" ||
+    fail 'the unregistered consumer is not named, so registering it needs guesswork'
+  grep -q 'not discovered' "$extra_out" &&
+    fail 'the run reported a MISSING consumer; this fixture has all five, so the case is not isolating'
+  pass 'an extra unregistered consumer fails closed and is named'
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (7 cases)\n'
+printf '\nPASS: publish-workflow signing-revision report (8 cases)\n'
