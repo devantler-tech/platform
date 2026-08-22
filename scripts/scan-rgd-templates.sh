@@ -217,38 +217,87 @@ grep -Fq 'Falling back to embedded checks' "$WORK/trivy.log" || fail \
   "Trivy did not confirm that it used the v${REQUIRED_TRIVY_VERSION} embedded policy set"
 
 jq -r '
+  .Results[]? as $result
+  | $result.Misconfigurations[]?
+  | [
+      $result.Target,
+      .ID,
+      .Severity,
+      (.CauseMetadata.StartLine | tostring),
+      (.CauseMetadata.EndLine | tostring),
+      (
+        [
+          .CauseMetadata.Code.Lines[]?
+          | select(.IsCause)
+          | (.Content | sub("^[ ]+"; ""))
+        ]
+        | if length == 0 then ["RESOURCE"] else . end
+        | tojson
+        | @base64
+      )
+    ]
+  | @tsv
+' "$WORK/results.json" >"$WORK/raw-findings.tsv"
+
+: >"$WORK/cause-findings.tsv"
+while IFS=$'\t' read -r finding_target finding_id finding_severity \
+  finding_start_line finding_end_line finding_cause; do
+  case "$finding_target" in
+    /* | ../* | */../*) fail "Trivy returned an unsafe finding target: $finding_target" ;;
+  esac
+  case "$finding_start_line" in
+    '' | *[!0-9]*) fail "Trivy finding $finding_id on $finding_target has no source range" ;;
+  esac
+  case "$finding_end_line" in
+    '' | *[!0-9]*) fail "Trivy finding $finding_id on $finding_target has no source range" ;;
+  esac
+  [ "$finding_start_line" -le "$finding_end_line" ] || fail \
+    "Trivy finding $finding_id on $finding_target has an inverted source range"
+  [ -n "$finding_cause" ] || fail \
+    "Trivy finding $finding_id on $finding_target has no attributable cause evidence"
+  finding_file="${WORK}/${finding_target}"
+  [ -r "$finding_file" ] || fail "Trivy finding target is not readable: $finding_target"
+
+  first_content_line="$(awk 'NF { print NR; exit }' "$finding_file")"
+  [ -n "$first_content_line" ] || fail "Trivy finding target is empty: $finding_target"
+  leading_blank_lines=$((first_content_line - 1))
+  [ "$finding_start_line" -gt "$leading_blank_lines" ] || fail \
+    "Trivy finding $finding_id on $finding_target starts before its YAML document"
+  semantic_start_line=$((finding_start_line - leading_blank_lines))
+  semantic_end_line=$((finding_end_line - leading_blank_lines))
+
+  # Trivy v0.74.0 reports a source line, not a JSON path. Resolve that line through yq against the
+  # exact extracted file and retain the deepest semantic path. This distinguishes byte-identical
+  # findings on containers[0] and containers[1]. Leading serializer blanks move Trivy's physical
+  # line while yq normalizes them, so remove that measured offset before resolving the path; neither
+  # an assumed offset nor a serializer-dependent line is hashed.
+  # shellcheck disable=SC2016 # $nearest is a yq variable, not a shell expansion
+  cause_path="$(CAUSE_START="$semantic_start_line" CAUSE_END="$semantic_end_line" \
+    yq -o=json -I=0 \
+    '([.. |
+        select(line >= (env(CAUSE_START) | tonumber) and line <= (env(CAUSE_END) | tonumber)) |
+        line] | sort | .[0]) as $nearest |
+      [.. | select(line == $nearest) | path] | sort_by(length) | select(length > 0) | .[-1]' \
+    "$finding_file")"
+  [ -n "$cause_path" ] && [ "$cause_path" != "null" ] || fail \
+    "Trivy finding $finding_id on $finding_target has no semantic path in its source range"
+  cause_identity="${cause_path}"$'\n'"${finding_cause}"
+  printf '%s\t%s\t%s\tCAUSE-SHA256:%s\n' \
+    "$finding_target" "$finding_id" "$finding_severity" \
+    "$(sha256_text "$cause_identity")" >>"$WORK/cause-findings.tsv"
+done <"$WORK/raw-findings.tsv"
+
+jq -R -s -r '
   [
-    .Results[]? as $result
-    | $result.Misconfigurations[]?
-    | {
-        target: $result.Target,
-        id: .ID,
-        severity: .Severity,
-        cause: (
-          [
-            .CauseMetadata.Code.Lines[]?
-            | select(.IsCause)
-            | (.Content | sub("^[ ]+"; ""))
-          ]
-          | if length == 0 then ["RESOURCE"] else . end
-          | tojson
-          | @base64
-        )
-      }
+    split("\n")[]
+    | select(length > 0)
+    | split("\t")
+    | {target: .[0], id: .[1], severity: .[2], cause: .[3]}
   ]
   | group_by([.target, .id, .severity, .cause])[]
   | [length, .[0].target, .[0].id, .[0].severity, .[0].cause]
   | @tsv
-' "$WORK/results.json" >"$WORK/grouped-findings.tsv"
-
-: >"$WORK/findings.tsv"
-while IFS=$'\t' read -r finding_count finding_target finding_id finding_severity finding_cause; do
-  [ -n "$finding_cause" ] || fail \
-    "Trivy finding $finding_id on $finding_target has no attributable cause evidence"
-  printf '%s\t%s\t%s\t%s\tCAUSE-SHA256:%s\n' \
-    "$finding_count" "$finding_target" "$finding_id" "$finding_severity" \
-    "$(sha256_text "$finding_cause")" >>"$WORK/findings.tsv"
-done <"$WORK/grouped-findings.tsv"
+' "$WORK/cause-findings.tsv" >"$WORK/findings.tsv"
 
 {
   cat "$WORK/findings.tsv"

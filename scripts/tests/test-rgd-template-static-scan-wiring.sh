@@ -5,8 +5,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly REPO_ROOT
-readonly CI_WORKFLOW="${REPO_ROOT}/.github/workflows/ci.yaml"
-readonly MAIN_WORKFLOW="${REPO_ROOT}/.github/workflows/validate-main.yaml"
+readonly CI_WORKFLOW="${RGD_WIRING_CI_WORKFLOW:-${REPO_ROOT}/.github/workflows/ci.yaml}"
+readonly MAIN_WORKFLOW="${RGD_WIRING_MAIN_WORKFLOW:-${REPO_ROOT}/.github/workflows/validate-main.yaml}"
 readonly SETUP_TRIVY="aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567"
 readonly BEHAVIORAL_COMMAND="bash scripts/tests/test-rgd-template-static-scan.sh"
 readonly WIRING_COMMAND="bash scripts/tests/test-rgd-template-static-scan-wiring.sh"
@@ -37,20 +37,30 @@ jq -e '
 
 jq -e --arg setup "$SETUP_TRIVY" --arg behavior "$BEHAVIORAL_COMMAND" '
   .jobs.validate as $gate
-  | (($gate.if // "") | contains("github.event_name == '\''pull_request'\''"))
+  | (($gate.if // "") ==
+      "github.event_name == '\''pull_request'\'' && (needs.changes.outputs.k8s == '\''true'\'' || needs.changes.outputs.bridge_validation == '\''true'\'')")
+  and (($gate["continue-on-error"] // false) == false)
   and any($gate.steps[];
       (.uses // "") == $setup and .with.version == "v0.74.0")
-  and any($gate.steps[]; (.run // "") | contains($behavior))
+  and any($gate.steps[];
+      ((.run // "") | contains($behavior))
+      and ((.["continue-on-error"] // false) == false)
+      and ((.if // "") == "needs.changes.outputs.k8s == '\''true'\''"))
 ' <<<"$ci_workflow_json" >/dev/null ||
   fail "the pull-request validate job does not run the pinned RGD behavioral gate"
 
 jq -e --arg setup "$SETUP_TRIVY" --arg behavior "$BEHAVIORAL_COMMAND" '
   .jobs["validate-rgd-templates-merge-group"] as $gate
-  | (($gate.if // "") | contains("github.event_name == '\''merge_group'\''"))
+  | (($gate.if // "") ==
+      "github.event_name == '\''merge_group'\'' && needs.changes.outputs.k8s == '\''true'\''")
+  and (($gate["continue-on-error"] // false) == false)
   and (($gate.needs | if type == "array" then . else [.] end) | index("changes") != null)
   and any($gate.steps[];
       (.uses // "") == $setup and .with.version == "v0.74.0")
-  and any($gate.steps[]; (.run // "") | contains($behavior))
+  and any($gate.steps[];
+      ((.run // "") | contains($behavior))
+      and ((.["continue-on-error"] // false) == false)
+      and (has("if") | not))
   and ((.jobs["deploy-prod"].needs | if type == "array" then . else [.] end)
       | index("validate-rgd-templates-merge-group") != null)
   and ((.jobs["ci-required-checks"].needs | if type == "array" then . else [.] end)
@@ -60,9 +70,14 @@ jq -e --arg setup "$SETUP_TRIVY" --arg behavior "$BEHAVIORAL_COMMAND" '
 
 jq -e --arg setup "$SETUP_TRIVY" --arg behavior "$BEHAVIORAL_COMMAND" '
   .jobs["validate-rgd-templates"] as $gate
-  | any($gate.steps[];
+  | (($gate["continue-on-error"] // false) == false)
+  and ($gate | has("if") | not)
+  and any($gate.steps[];
       (.uses // "") == $setup and .with.version == "v0.74.0")
-  and any($gate.steps[]; (.run // "") | contains($behavior))
+  and any($gate.steps[];
+      ((.run // "") | contains($behavior))
+      and ((.["continue-on-error"] // false) == false)
+      and (has("if") | not))
 ' <<<"$main_workflow_json" >/dev/null ||
   fail "validate-main.yaml does not run the pinned RGD behavioral gate"
 
@@ -70,9 +85,60 @@ jq -e --arg wiring "$WIRING_COMMAND" '
   any(
     .jobs | to_entries[];
     .key != "validate-rgd-templates"
-    and any(.value.steps[]?; (.run // "") | contains($wiring))
+    and ((.value["continue-on-error"] // false) == false)
+    and (.value | has("if") | not)
+    and any(.value.steps[]?;
+      ((.run // "") | contains($wiring))
+      and ((.["continue-on-error"] // false) == false)
+      and (has("if") | not))
   )
 ' <<<"$main_workflow_json" >/dev/null ||
   fail "the direct-main route does not independently protect the RGD gate from self-removal"
+
+if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
+  ablation_work="$(mktemp -d)"
+  trap 'rm -rf "$ablation_work"' EXIT
+
+  suppressed_workflow="${ablation_work}/ci-continue-on-error.yaml"
+  cp "$CI_WORKFLOW" "$suppressed_workflow"
+  yq -i '(.jobs."validate-rgd-templates-merge-group".steps[] |
+    select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh"))).continue-on-error = true' \
+    "$suppressed_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$suppressed_workflow" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/continue-on-error.log" 2>&1; then
+    fail "the wiring validator accepted a failure-suppressed merge-group RGD scan"
+  fi
+
+  suppressed_job_workflow="${ablation_work}/ci-job-continue-on-error.yaml"
+  cp "$CI_WORKFLOW" "$suppressed_job_workflow"
+  yq -i '.jobs."validate-rgd-templates-merge-group".continue-on-error = true' \
+    "$suppressed_job_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$suppressed_job_workflow" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/job-continue-on-error.log" 2>&1; then
+    fail "the wiring validator accepted a failure-suppressed merge-group RGD job"
+  fi
+
+  conditional_workflow="${ablation_work}/ci-false-condition.yaml"
+  cp "$CI_WORKFLOW" "$conditional_workflow"
+  yq -i '(.jobs."validate-rgd-templates-merge-group".steps[] |
+    select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh"))).if = false' \
+    "$conditional_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$conditional_workflow" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/false-condition.log" 2>&1; then
+    fail "the wiring validator accepted a conditionally skipped merge-group RGD scan"
+  fi
+
+  conditional_job_workflow="${ablation_work}/ci-false-job-condition.yaml"
+  cp "$CI_WORKFLOW" "$conditional_job_workflow"
+  yq -i '.jobs."validate-rgd-templates-merge-group".if = false' "$conditional_job_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$conditional_job_workflow" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/false-job-condition.log" 2>&1; then
+    fail "the wiring validator accepted a conditionally skipped merge-group RGD job"
+  fi
+fi
 
 echo "PASS: PR, merge-group, and direct-main routes retain the nested-RGD behavioral gate."

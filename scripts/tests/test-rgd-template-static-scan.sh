@@ -128,28 +128,18 @@ yq -i '(.spec.resources[] | select(.id == "deployment") |
 expect_rejected "a changed value hidden behind the same finding ID and range" "RGD-CONTENT"
 restore_webapp
 
-# Moving an existing rule between containers must be visible even when its resource-level count is
-# unchanged. Pin the reviewed container image and introduce the same KSV-0013 on a named sidecar;
-# the graph digest changes too, but the finding diff must retain both old and new cause identities.
+# Moving an existing rule between containers must be visible even when its resource-level count and
+# Trivy cause text are unchanged. Clone the reviewed container byte-for-byte, then pin only the
+# original image: KSV-0013 moves from containers[0] to containers[1] with identical cause content.
+# The graph digest changes too, but the finding diff must retain both old and new semantic paths.
+# shellcheck disable=SC2016 # $reviewed_container is a yq variable, not a shell expansion
 yq -i '(.spec.resources[] | select(.id == "deployment") |
+  .template.spec.template.spec.containers[0]) as $reviewed_container |
+  (.spec.resources[] | select(.id == "deployment") |
   .template.spec.template.spec.containers[0].image) =
   "ghcr.io/example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" |
   (.spec.resources[] | select(.id == "deployment") |
-  .template.spec.template.spec.containers) += [{
-    "name": "finding-identity-probe",
-    "image": "nginx:latest",
-    "resources": {
-      "requests": {"cpu": "10m", "memory": "16Mi"},
-      "limits": {"cpu": "20m", "memory": "32Mi"}
-    },
-    "securityContext": {
-      "allowPrivilegeEscalation": false,
-      "capabilities": {"drop": ["ALL"]},
-      "runAsNonRoot": true,
-      "runAsUser": 1000,
-      "seccompProfile": {"type": "RuntimeDefault"}
-    }
-  }]' "$WORK/$WEBAPP_RGD"
+  .template.spec.template.spec.containers) += [$reviewed_container]' "$WORK/$WEBAPP_RGD"
 container_identity_log="${WORK}/container-identity.log"
 if "$GATE" "$WORK" >"$container_identity_log" 2>&1; then
   fail "the gate accepted a KSV-0013 move between workload containers"
