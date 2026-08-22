@@ -37,11 +37,13 @@ set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:-devantler-tech/platform}"
 MEGALINTER_JOB_MATCH='mega-linter'
-# Use GitHub's full single-page capacity. A burst of dependency updates can emit several workflows
-# per pull request; 40 repository-wide runs buried a valid MegaLinter job even though it was less
-# than an hour old (observed 2026-08-22). Keep this bounded to one request while making every result
-# that request can return available to the provenance filter below.
-MAX_RUNS=100
+# A burst of dependency updates can emit several workflows per pull request; 40 repository-wide
+# runs buried a valid MegaLinter job even though it was less than an hour old (observed 2026-08-22),
+# and one full 100-result page can be exhausted just as easily. Walk a bounded three pages in newest-
+# first order. The cap prevents an unbounded historical scan; exhausting it still fails closed below.
+RUNS_PER_PAGE=100
+MAX_RUN_PAGES=3
+MAX_RUNS=$((RUNS_PER_PAGE * MAX_RUN_PAGES))
 
 # The org-managed workflow that runs mega-linter for this repository. Binding to it is a PROVENANCE
 # check, not decoration: the job is selected out of arbitrary recent runs, and a job's display name
@@ -120,7 +122,7 @@ extract_one() {
 
 resolve_log() {
   command -v gh >/dev/null 2>&1 || die_unverifiable 'gh is not installed'
-  local dest="$1" run_id job_id runs
+  local dest="$1" run_id job_id runs page page_runs
 
   # This repository must NOT define the managed workflow itself. If it ever does, the path stops
   # being proof of org-managed provenance — an in-repo file could then be edited to emit whatever
@@ -176,10 +178,26 @@ prove org-managed provenance. Re-establish how the mega-linter job is identified
   }
 
   # Select by the managed workflow's PATH, not the run's display name, then by job name within it.
-  runs="$(gh api "repos/$REPO/actions/runs?per_page=$MAX_RUNS" \
-    --jq ".workflow_runs[] | select(.path == \"$MANAGED_WORKFLOW_PATH\") | \"\(.id) \(.head_sha)\"" \
-    2>/dev/null)" ||
-    die_unverifiable "could not list recent runs for $REPO"
+  # Fetch explicit pages rather than `--paginate`: this keeps the API cost bounded while still
+  # preserving newest-first order across pages for the candidate loop below.
+  runs=''
+  page=1
+  while [ "$page" -le "$MAX_RUN_PAGES" ]; do
+    page_runs="$(gh api \
+      "repos/$REPO/actions/runs?per_page=$RUNS_PER_PAGE&page=$page" \
+      --jq ".workflow_runs[] | select(.path == \"$MANAGED_WORKFLOW_PATH\") | \"\(.id) \(.head_sha)\"" \
+      2>/dev/null)" ||
+      die_unverifiable "could not list recent runs page $page for $REPO"
+    if [ -n "$page_runs" ]; then
+      if [ -n "$runs" ]; then
+        runs="$runs
+$page_runs"
+      else
+        runs="$page_runs"
+      fi
+    fi
+    page=$((page + 1))
+  done
   [ -n "$runs" ] ||
     die_unverifiable "no recent runs of $MANAGED_WORKFLOW_PATH in the last $MAX_RUNS runs of $REPO"
 

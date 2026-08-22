@@ -182,9 +182,22 @@ case "$args" in
     printf 'job%s\n' "$run" ;;
   *actions/runs*per_page*)
     per_page="${args#*per_page=}"
+    per_page="${per_page%%&*}"
     per_page="${per_page%% *}"
     if [ "$per_page" -ge "${GH_STUB_MIN_PER_PAGE:-0}" ]; then
-      cat "$GH_STUB_RUNS"
+      page=1
+      case "$args" in
+        *'&page='*)
+          page="${args##*&page=}"
+          page="${page%% *}"
+          ;;
+      esac
+      if [ -n "${GH_STUB_RUN_PAGES_DIR:-}" ]; then
+        page_file="$GH_STUB_RUN_PAGES_DIR/$page"
+        [ ! -f "$page_file" ] || cat "$page_file"
+      elif [ "$page" -eq 1 ]; then
+        cat "$GH_STUB_RUNS"
+      fi
     fi ;;
   *contents/.github/workflows/validate-go-project.yaml*)
     sha="${args##*ref=}"
@@ -264,6 +277,26 @@ else
   printf 'ok: a genuine run remains reachable after more than 40 unrelated workflow runs\n'
 fi
 GH_STUB_MIN_PER_PAGE=0
+
+# One full page of unrelated workflows must not hide the first managed candidate on page two. This
+# is the regression boundary from the review finding: `per_page=100` increases one response but does
+# not paginate it. The page fixture makes the old one-request implementation fail closed, while a
+# bounded multi-page lookup reaches the same genuine, provenance-checked candidate.
+mkdir -p "$scratch/run-pages"
+: >"$scratch/run-pages/1"
+printf '111 %s\n' "$genuine_sha" >"$scratch/run-pages/2"
+: >"$scratch/run-pages/3"
+GH_STUB_RUN_PAGES_DIR="$scratch/run-pages"
+export GH_STUB_RUN_PAGES_DIR
+run_live
+if [ "$rc" -ne 0 ]; then
+  printf 'FAIL: paginated history — expected page-two genuine run to be reachable, got %d\n%s\n' \
+    "$rc" "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: a genuine run remains reachable on the second workflow-run page\n'
+fi
+unset GH_STUB_RUN_PAGES_DIR
 
 # Discrimination: the newest candidate is tainted, the next is genuine. The guard must SKIP the
 # first and use the second. Consuming the first reports drift (exit 1) and aborting on it fails
