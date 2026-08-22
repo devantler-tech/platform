@@ -474,7 +474,7 @@ run_check_pass() {
     done
 
     # No containerd configuration at all is not a clean node — it means this check
-  # looked at nothing and would otherwise pass the node by default.
+    # looked at nothing and would otherwise pass the node by default.
     [[ "${configs_present}" -gt 0 ]] ||
       fail_infra "no containerd configuration found on ${node} (looked in ${config_files[*]})"
 
