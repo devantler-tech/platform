@@ -48,7 +48,7 @@ for relative_path in "${RGD_PATHS[@]}"; do
 
   count="$(yq '.spec.resources | length' "$source_file")"
   case "$count" in
-    ''|*[!0-9]*) fail "could not count templates in $source_file" ;;
+    '' | *[!0-9]*) fail "could not count templates in $source_file" ;;
     0) fail "RGD contains no templates: $source_file" ;;
   esac
 
