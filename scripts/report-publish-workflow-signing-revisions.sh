@@ -160,7 +160,7 @@ discover_consumers() {
       select(.kind == "OCIRepository") |
       [(.spec.url // "-"),
        ((.spec.verify.matchOIDCIdentity // []) | map(.subject // "") | join(" ") | select(. != "") // "-"),
-       (.spec.ref.tag // "-")] | @tsv
+       (.spec.ref.tag // ("semver:" + (.spec.ref.semver // "")) // "-")] | @tsv
     ' "$file" 2>/dev/null || true)
   done < <(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' "$root" 2>/dev/null | sort -u) | sort -u
 }
@@ -234,6 +234,35 @@ tag_was_published() {
 # from this output.
 deployed_tag() {
   local repo="$1" version="$2" tags candidate bare
+  # 🔴 A SEMVER RANGE IS A CONSTRAINT, NOT "WHATEVER IS NEWEST". Discovery carries the
+  # expression through as `semver:<expr>` instead of discarding it, because the two are
+  # interchangeable only for an UNBOUNDED lower bound. All three range consumers use
+  # `>=1.0.0` today, so the newest published tag is exactly what Flux resolves — but a
+  # bounded selector such as `~1.4` or `<2.0.0` would make this pick a tag Flux would never
+  # serve, attribute its workflow revision to the deployed artifact, and omit the real
+  # signer from the proposed allow-list.
+  #
+  # Resolving a bounded range correctly needs Flux-compatible semver selection, which this
+  # script deliberately does not implement — so it REFUSES rather than guesses. That is the
+  # same fail-closed choice made everywhere else here: a wrong answer about which revision
+  # signed production is worse than no answer.
+  local constraint=""
+  case "${version}" in
+    semver:*)
+      constraint="${version#semver:}"
+      version=""
+      case "${constraint}" in
+        '*' | '>='[0-9]*) : ;;
+        *)
+          printf 'bounded semver constraint "%s" needs Flux-compatible selection, which this script does not implement\n' \
+            "${constraint}" >&2
+          return 1
+          ;;
+      esac
+      ;;
+    '-') version="" ;;
+  esac
+
   # --paginate: the endpoint caps at 100 per page and these repos already carry 50+ tags.
   # Past the cap an un-paginated read returns an arbitrary subset, which either misses a
   # real tag (false UNRESOLVED) or picks the newest of a truncated page (silently wrong).

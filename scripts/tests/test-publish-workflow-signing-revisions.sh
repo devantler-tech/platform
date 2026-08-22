@@ -314,8 +314,58 @@ else
   pass 'an extra unregistered consumer fails closed and is named'
 fi
 
+# ---------------------------------------------------------------------------
+# 9. A BOUNDED SEMVER CONSTRAINT MUST REFUSE, NOT GUESS. An unbounded `>=1.0.0` and
+#    "whatever is newest" happen to agree, which is why discarding the constraint looked
+#    harmless. A bounded selector (`~1.4`, `<2.0.0`) does not agree: the newest published
+#    tag is one Flux would never serve, so its workflow revision would be attributed to
+#    the deployed artifact and the real signer omitted from the allow-list.
+#
+#    Resolving such a range needs Flux-compatible semver selection this script does not
+#    implement, so the honest outcome is a named refusal.
+# ---------------------------------------------------------------------------
+bounded_root="$WORK/bounded"
+mkdir -p "$bounded_root"
+k=0
+while IFS=$'\t' read -r repo workflow _version; do
+  [ -n "$repo" ] || continue
+  k=$((k + 1))
+  oci="$repo"
+  [ "$repo" = '.github' ] && oci='github-config'
+  # One consumer gets a BOUNDED range; the rest keep an unbounded one, so the refusal
+  # cannot be confused with a wholesale failure of the fixture.
+  if [ "$k" -eq 1 ]; then ref='semver: "~1.4"'; else ref='semver: ">=1.0.0"'; fi
+  cat >"$bounded_root/c-$k.yaml" <<YAML
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: b$k
+spec:
+  ref:
+    $ref
+  url: oci://ghcr.io/devantler-tech/$oci/manifests
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\\.actions\\.githubusercontent\\.com\$'
+        subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/$workflow\\.yaml@[0-9a-f]{40}\$'
+YAML
+done <<<"$consumers"
+bounded_out="$WORK/bounded.out"
+# No resolver stub: the refusal must happen while RESOLVING the deployed version, which is
+# the default resolver's job, so stubbing it would bypass the very branch under test.
+if PUBLISH_CONSUMER_ROOT="$bounded_root" "$SCRIPT" >"$bounded_out" 2>&1; then
+  fail 'a bounded semver constraint was silently resolved to the newest tag instead of refusing'
+else
+  grep -q 'bounded semver constraint' "$bounded_out" ||
+    fail 'the run failed but not because of the bounded constraint — the case is not testing what it claims'
+  grep -q '~1.4' "$bounded_out" ||
+    fail 'the refusal does not name the constraint, so the cause is not diagnosable'
+  pass 'a bounded semver constraint refuses by name instead of guessing the newest tag'
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (8 cases)\n'
+printf '\nPASS: publish-workflow signing-revision report (9 cases)\n'
