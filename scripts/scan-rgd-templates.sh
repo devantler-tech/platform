@@ -42,6 +42,39 @@ sha256_file() {
   fi
 }
 
+sha256_text() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s\n' "$1" | sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    printf '%s\n' "$1" | shasum -a 256 | awk '{print $1}'
+  else
+    fail "sha256sum or shasum is required to preserve RGD instance evidence"
+  fi
+}
+
+TRUSTED_REGISTRIES=()
+while IFS= read -r trusted_registry; do
+  [ -n "$trusted_registry" ] && TRUSTED_REGISTRIES+=("$trusted_registry")
+done < <(yq '.ksv0125.trusted_registries[]' "${CONFIG_DATA}/trusted-registries.yaml")
+[ "${#TRUSTED_REGISTRIES[@]}" -gt 0 ] || fail "no trusted registries are configured"
+readonly TRUSTED_REGISTRIES
+
+validate_image_registry() {
+  local image="$1" first_segment registry trusted_registry
+  first_segment="${image%%/*}"
+  if [[ "$image" != */* || ("$first_segment" != *.* && "$first_segment" != *:* && "$first_segment" != "localhost") ]]; then
+    registry="docker.io"
+  else
+    registry="$first_segment"
+  fi
+
+  for trusted_registry in "${TRUSTED_REGISTRIES[@]}"; do
+    # Match Trivy KSV-0125's documented suffix semantics exactly.
+    [[ "$registry" == *"$trusted_registry" ]] && return 0
+  done
+  fail "KSV-0125: committed RGD instance image $image uses untrusted registry $registry"
+}
+
 installed_trivy_version="$(trivy --version | sed -n 's/^Version: //p' | head -n 1)"
 [ "$installed_trivy_version" = "$REQUIRED_TRIVY_VERSION" ] || fail \
   "Trivy $REQUIRED_TRIVY_VERSION is required by the finding baseline; found $installed_trivy_version"
@@ -64,15 +97,22 @@ done < <(find "$rgd_root" -type f \( -name '*.yaml' -o -name '*.yml' \) -print |
 readonly RGD_PATHS
 readonly RGD_KINDS
 
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+: >"$WORK/content.tsv"
+
 # The current RGD contracts use spec.name as the namespace-driving input (directly in WebApp,
 # through the generated Namespace in Tenant). Trivy cannot substitute committed custom-resource
-# values into the extracted templates, so reject the protected kube-system target separately.
+# values into the extracted templates, so reject explicit policy violations and ratchet the complete
+# parsed instance to keep every substituted value review-visible.
 committed_instance_count=0
 while IFS= read -r candidate; do
   # Parse the kind instead of grepping its serialized spelling: quotes, comments, and other valid
   # YAML presentation choices must not bypass the instance guard. Non-mapping fixture documents are
   # ignored here and remain owned by the repository's ordinary YAML validation.
-  while IFS=$'\t' read -r instance_kind instance_name; do
+  while IFS= read -r instance_json; do
+    instance_kind="$(jq -r '.kind // ""' <<<"$instance_json")"
+    instance_name="$(jq -r '.spec.name // ""' <<<"$instance_json")"
     is_rgd_instance=false
     for rgd_kind in "${RGD_KINDS[@]}"; do
       if [ "$instance_kind" = "$rgd_kind" ]; then
@@ -84,17 +124,15 @@ while IFS= read -r candidate; do
     committed_instance_count=$((committed_instance_count + 1))
     [ "$instance_name" != "kube-system" ] || fail \
       "KSV-0037: committed $instance_kind instance $candidate would generate resources in kube-system"
+    instance_image="$(jq -r '.spec.image // ""' <<<"$instance_json")"
+    [ -z "$instance_image" ] || validate_image_registry "$instance_image"
+    printf '1\t%s\tINSTANCE-CONTENT\tSHA256\t%s\n' \
+      "${candidate#"$SOURCE_ROOT"/}" "$(sha256_text "$instance_json")" >>"$WORK/content.tsv"
   done < <(
-    yq -o=json -I=0 \
-      'select(tag == "!!map") | {"kind": (.kind // ""), "name": (.spec.name // "")}' \
-      "$candidate" |
-      jq -r 'select(.kind != "") | [.kind, .name] | @tsv'
+    yq -o=json -I=0 'select(tag == "!!map")' "$candidate" |
+      jq -cS 'select(.kind != null)'
   )
 done < <(find "${SOURCE_ROOT}/k8s" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | LC_ALL=C sort)
-
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
-: >"$WORK/content.tsv"
 
 template_count=0
 for relative_path in "${RGD_PATHS[@]}"; do
@@ -112,12 +150,12 @@ for relative_path in "${RGD_PATHS[@]}"; do
   # yq emits one YAML document per selected template. Keeping the original repository-relative
   # path makes each finding attributable to the RGD that introduced it.
   yq '.spec.resources[].template | split_doc' "$source_file" >"$output_file"
-  # Hash parsed semantics rather than yq's YAML serialization. jq owns the stable key ordering and
-  # compact representation, so a runner yq update that changes only quoting or whitespace cannot
-  # invalidate the baseline while a value-sensitive template change still does.
-  yq -o=json -I=0 '[.spec.resources[].template]' "$source_file" |
+  # Hash the complete graph spec: schema defaults plus every resource definition, including
+  # includeWhen/forEach controls. jq owns stable key ordering and a compact representation, so a
+  # runner yq update that changes only quoting or whitespace cannot invalidate the baseline.
+  yq -o=json -I=0 '.spec' "$source_file" |
     jq -cS '.' >"$output_file.content.json"
-  printf '1\t%s\tTEMPLATE-CONTENT\tSHA256\t%s\n' \
+  printf '1\t%s\tRGD-CONTENT\tSHA256\t%s\n' \
     "$relative_path" "$(sha256_file "$output_file.content.json")" >>"$WORK/content.tsv"
   template_count=$((template_count + count))
 done
@@ -176,7 +214,7 @@ fi
 
 grep -v '^[[:space:]]*#' "$BASELINE" | sed '/^[[:space:]]*$/d' >"$WORK/expected.tsv"
 if ! diff -u "$WORK/expected.tsv" "$WORK/actual.tsv"; then
-  fail "RGD template content or findings changed; fix regressions and update the baseline for reviewed changes"
+  fail "RGD graph, instance, or finding evidence changed; fix regressions and update the baseline for reviewed changes"
 fi
 
 echo "PASS: Trivy scanned ${template_count} templates from ${#RGD_PATHS[@]} RGDs and checked ${committed_instance_count} committed instances."

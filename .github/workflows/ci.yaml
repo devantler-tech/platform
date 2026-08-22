@@ -172,7 +172,9 @@ jobs:
               # on application ConfigMaps that genuinely carry credentials.
               - 'scripts/tests/test-trivyignore-configmap-content-boundary.sh'
               # RGD sources, their extracted-template scanner, and the exact finding ratchet are
-              # one gate. k8s/** covers source edits; these entries cover gate-only changes.
+              # one gate. k8s/** covers source edits; policy data and these entries cover its other
+              # inputs so a changed scanner premise cannot skip the check that consumes it.
+              - '.trivy/data/**'
               - 'scripts/scan-rgd-templates.sh'
               - 'scripts/rgd-template-static-scan-baseline.tsv'
               - 'scripts/tests/test-rgd-template-static-scan.sh'
@@ -622,9 +624,9 @@ jobs:
       - name: 🔬 Validate nested RGD workload templates
         if: needs.changes.outputs.k8s == 'true'
         # Trivy does not descend through a ResourceGraphDefinition custom resource. Extract every
-        # nested template, scan without the repository ignorefile, and compare the complete finding
-        # set plus content digests to the explicit ratchet. The behavioural test also exercises new
-        # RGD discovery and committed instance inputs before the policy-regression probes.
+        # nested template, scan without the repository ignorefile, and compare complete findings,
+        # resource-graph controls, and committed substitution inputs to the explicit ratchet. The
+        # behavioral test also applies registry, placement, and policy-regression probes.
         run: |
           shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
           bash scripts/tests/test-rgd-template-static-scan.sh

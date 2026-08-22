@@ -12,6 +12,7 @@ readonly TENANT_RGD="k8s/bases/infrastructure/resource-graph-definitions/tenant/
 readonly WEBAPP_INSTANCE="k8s/providers/docker/apps/web-app-wedding-app.yaml"
 readonly TENANT_INSTANCE="k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml"
 readonly MAIN_WORKFLOW="${REPO_ROOT}/.github/workflows/validate-main.yaml"
+readonly CI_WORKFLOW="${REPO_ROOT}/.github/workflows/ci.yaml"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -36,6 +37,12 @@ jq -e '
       (.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh"))
 ' <<<"$main_workflow_json" >/dev/null ||
   fail "validate-main.yaml does not run the RGD template behavioral gate"
+ci_workflow_json="$(yq -o=json -I=0 '.' "$CI_WORKFLOW")"
+jq -e '
+  any(.jobs.changes.steps[];
+      .id == "filter" and (.with.filters | contains(".trivy/data/**")))
+' <<<"$ci_workflow_json" >/dev/null ||
+  fail "ci.yaml does not run the RGD gate when its Trivy policy data changes"
 
 # The real committed templates are the positive control. A gate that rejects them cannot be wired
 # into pull requests, and a test that exercises only the mutation cannot prove that it can.
@@ -88,6 +95,10 @@ restore_webapp() {
   cp "$REPO_ROOT/$WEBAPP_RGD" "$WORK/$WEBAPP_RGD"
 }
 
+restore_tenant() {
+  cp "$REPO_ROOT/$TENANT_RGD" "$WORK/$TENANT_RGD"
+}
+
 # A future RGD must enter the scan automatically. Copying a valid current definition under a new
 # sibling path reproduces the review finding: a fixed two-file list reports success while leaving
 # this third definition completely unseen.
@@ -98,6 +109,14 @@ expect_rejected "an unbaselined third ResourceGraphDefinition" "$PROBE_RGD"
 rm -f "$WORK/$PROBE_RGD"
 rmdir "$WORK/$(dirname "$PROBE_RGD")"
 
+# Resource-level graph controls decide whether a template is instantiated. They must be evidence too:
+# gating the default-deny NetworkPolicy changes tenant isolation without changing its template bytes.
+# shellcheck disable=SC2016 # the KRO expression must remain literal in the fixture
+yq -i '(.spec.resources[] | select(.id == "defaultDeny").includeWhen) =
+  ["${schema.spec.resourceQuota.enabled}"]' "$WORK/$TENANT_RGD"
+expect_rejected "a condition that disables default-deny for defaulted tenants" "RGD-CONTENT"
+restore_tenant
+
 # A baselined finding must retain its reviewed cause, not merely its ID and line range. Replacing
 # the caller-supplied image expression with a forced mutable latest tag keeps KSV-0013 at the same
 # location and count, so a count-only ratchet accepts the changed cause.
@@ -106,7 +125,7 @@ yq -i '(.spec.resources[] | select(.id == "deployment") |
 [ "$(yq '.spec.resources[] | select(.id == "deployment") |
   .template.spec.template.spec.containers[0].image' "$WORK/$WEBAPP_RGD")" = "nginx:latest" ] ||
   fail "the baselined-cause regression fixture was not created"
-expect_rejected "a changed value hidden behind the same finding ID and range" "TEMPLATE-CONTENT"
+expect_rejected "a changed value hidden behind the same finding ID and range" "RGD-CONTENT"
 restore_webapp
 
 # Committed RGD instances can feed template expressions values the extraction cannot infer. Guard
@@ -124,6 +143,19 @@ yq -i '.kind style="double" | .spec.name = "kube-system"' "$WORK/$WEBAPP_INSTANC
 [ "$(yq '.kind' "$WORK/$WEBAPP_INSTANCE")" = "WebApp" ] ||
   fail "the quoted-kind committed-instance fixture was not created"
 expect_rejected "a quoted-kind WebApp instance targeting kube-system" "KSV-0037"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
+
+# Security-sensitive substituted values need their own policy checks. The outer WebApp CR is not a
+# workload Trivy recognizes, so an untrusted image registry otherwise remains invisible.
+yq -i '.spec.image = "evil.example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
+  "$WORK/$WEBAPP_INSTANCE"
+expect_rejected "a committed WebApp image from an untrusted registry" "KSV-0125"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
+
+# Ratchet the complete parsed instance as well as explicit security policies. That keeps every value
+# substituted into a generated resource review-visible, including fields without a Trivy rule today.
+yq -i '.spec.host = "unexpected.example"' "$WORK/$WEBAPP_INSTANCE"
+expect_rejected "an unreviewed committed instance substitution" "INSTANCE-CONTENT"
 cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 
 # Mutate the nested Deployment rather than adding a top-level manifest. `privileged: true` is a
@@ -157,4 +189,4 @@ yq -i '(.spec.resources[] | select(.id == "deployment") | .template.metadata.nam
   fail "the kube-system placement fixture was not created"
 expect_rejected "a tenant workload placed in kube-system" "KSV-0037"
 
-echo "PASS: committed RGD templates pass; privilege, resource, and namespace regressions fail."
+echo "PASS: committed RGD graphs and instances pass; graph, substitution, and workload regressions fail."
