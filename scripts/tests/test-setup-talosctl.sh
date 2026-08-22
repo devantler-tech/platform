@@ -82,9 +82,15 @@ make_variant() {
   chmod +x "${variant}"
   # Assert the substitution fired in BOTH places, or every case below is vacuous.
   grep -qx "TALOS_VERSION=\"${test_version}\"" "${variant}" ||
-    { printf 'version substitution did not fire\n' >&2; exit 1; }
+    {
+      printf 'version substitution did not fire\n' >&2
+      exit 1
+    }
   grep -qx "TALOSCTL_SHA256=\"${pinned_digest}\"" "${variant}" ||
-    { printf 'digest substitution did not fire\n' >&2; exit 1; }
+    {
+      printf 'digest substitution did not fire\n' >&2
+      exit 1
+    }
 }
 
 run_installer() {
