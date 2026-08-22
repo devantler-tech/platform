@@ -68,17 +68,17 @@ spec:
                       - name: crossview
                         securityContext:
                           readOnlyRootFilesystem: true
-          # Bundled Postgres (postgres:18.4, persistence disabled → data dir is an
-          # emptyDir). Flip the root FS read-only and add the writable mounts the
-          # postgres entrypoint genuinely needs:
-          #   /var/lib/postgresql  the image VOLUME. PG18 initdb writes the fresh
-          #                        cluster to PGDATA=/var/lib/postgresql/18/docker;
-          #                        with persistence off the chart mounts nothing
-          #                        here, so it must be a writable emptyDir. This is
-          #                        the ephemeral data dir — losing it on restart is
-          #                        by design (SSO-fronted read-only dashboard).
+          # Bundled Postgres (postgres:18.4). Flip the root FS read-only and add the
+          # one writable mount the entrypoint needs beyond its own volumes:
           #   /tmp                 the entrypoint mktemp's the initdb pwfile here.
-          # /var/run/postgresql (the socket dir) is already a chart emptyDir.
+          # /var/lib/postgresql is the image VOLUME and now comes from the chart's
+          # PVC (database.persistence below); /var/run/postgresql (the socket dir)
+          # is already a chart emptyDir.
+          #
+          # This patch must NOT declare a volume for /var/lib/postgresql: one
+          # declared here shadows the chart's PVC and makes the data directory
+          # ephemeral again, which breaks OIDC login (see database.persistence
+          # below) without changing a single line of `values`.
           - target:
               kind: Deployment
               name: crossview-postgres
@@ -95,14 +95,9 @@ spec:
                         securityContext:
                           readOnlyRootFilesystem: true
                         volumeMounts:
-                          - name: postgres-data
-                            mountPath: /var/lib/postgresql
                           - name: tmp
                             mountPath: /tmp
                     volumes:
-                      - name: postgres-data
-                        emptyDir:
-                          sizeLimit: 2Gi
                       - name: tmp
                         emptyDir:
                           sizeLimit: 128Mi
@@ -113,6 +108,16 @@ spec:
       # The namespace is managed declaratively (namespace.yaml) so it carries the
       # Pod Security Standards labels; don't let the chart create it.
       createNamespace: false
+    # Crossview creates its tables (and the break-glass admin) once, at its OWN
+    # startup, so an empty database only gains a schema when the APP restarts —
+    # never when Postgres alone does.
+    #
+    # Bump this value whenever the database is reset or its volume is replaced:
+    # the changed pod template is what makes the app re-run that bootstrap. It is
+    # the only lever available — the chart is third-party and its `/api/health`
+    # probe does not touch the database, so nothing else notices an empty schema.
+    podAnnotations:
+      platform.devantler.tech/db-bootstrap: "pvc-2026-08-22"
     app:
       replicas: ${crossview_replicas:=1}
       # Crossview is a bursty, near-idle dashboard: ~14Mi RSS while nobody is
@@ -155,11 +160,26 @@ spec:
         # crossview.${domain}, so the Secure cookie is valid in every environment.
         - name: NODE_ENV
           value: "production"
-    # The chart bundles a Postgres for session/user state. Run it ephemeral (no
-    # PVC) instead of provisioning a Longhorn volume: Crossview is an
-    # SSO-fronted, read-only dashboard, so losing session/user rows on a pod
-    # restart is acceptable — and it avoids the autoscaler-node Longhorn
-    # data-loss footgun that bites stateful prod volumes.
+    # The chart bundles a Postgres for session/user state, and its data directory
+    # MUST be persistent.
+    #
+    # Crossview creates its tables once, at its OWN startup, and the database pod
+    # has an independent lifecycle — VPA runs `InPlaceOrRecreate` over both
+    # deployments and evicts the database pod on its own as a matter of routine. So
+    # an ephemeral data directory loses the schema, not merely the rows, and
+    # nothing recreates it: the app keeps reporting healthy (`/api/health` never
+    # touches the database) while every OIDC login fails on
+    # `relation "users" does not exist`.
+    #
+    # Dated evidence for that failure mode (#3314): app started
+    # 2026-08-16T20:08:13Z and migrated, VPA replaced the Postgres pod at
+    # 21:21:56Z, first failed login 21:27:57Z, broken six days with every probe
+    # green.
+    #
+    # The storage CLASS is chosen per provider so this base stays
+    # provider-neutral; the Hetzner overlay pins it to hcloud block storage
+    # specifically to avoid the autoscaler-node Longhorn data-loss footgun that
+    # bites stateful prod volumes. 2Gi is sized for session/user state alone.
     database:
       # Pin the chart's bundled Postgres image. The crossview chart defaults
       # database.image.tag to `latest` (a disallow-latest-tag policy violation,
@@ -171,7 +191,12 @@ spec:
         # renovate: datasource=docker depName=postgres
         tag: "18.4"
       persistence:
-        enabled: false
+        enabled: true
+        size: 2Gi
+        accessMode: ReadWriteOnce
+        # storageClass is deliberately unset here so the base stays
+        # provider-neutral and binds the cluster default. The Hetzner overlay
+        # pins it to hcloud (apps/crossview/patches/store-db-on-hcloud.yaml).
     # Every Crossview secret is sourced from the crossview-credentials Secret
     # (external-secret.yaml) via secretKeyRef. That Secret is materialized from
     # OpenBao by External Secrets — the values are generated once and seeded by

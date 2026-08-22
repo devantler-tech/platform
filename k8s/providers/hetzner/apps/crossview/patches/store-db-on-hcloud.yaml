@@ -1,0 +1,21 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: crossview
+  namespace: crossview
+spec:
+  values:
+    database:
+      persistence:
+        # hcloud block storage rather than the cluster default (longhorn-wffc).
+        #
+        # The base enables persistence because Crossview only creates its schema at
+        # app startup, so an ephemeral data directory loses the schema on any
+        # Postgres-only restart and breaks OIDC login until the app is restarted by
+        # hand. The choice of CLASS is separate, and belongs here: the original
+        # ephemeral decision was taken specifically to avoid the autoscaler-node
+        # Longhorn data-loss footgun that bites stateful prod volumes, and that
+        # objection still stands. hcloud is network-attached and follows the pod, so
+        # it keeps the schema without reintroducing that footgun — the same reason
+        # spire, OpenBao and the vault snapshots are pinned to it here.
+        storageClass: hcloud

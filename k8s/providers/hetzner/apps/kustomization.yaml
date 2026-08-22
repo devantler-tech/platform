@@ -98,3 +98,6 @@ patches:
   # Headlamp's label is the enforce ratchet only — the values patch above is
   # what sets hostUsers, and the mutate rule cannot reach an authored value.
   - path: headlamp/patches/enable-user-namespaces.yaml
+  # Keep Crossview's Postgres off Longhorn: the base persists the data directory
+  # so the schema survives a database restart, and this picks the class.
+  - path: crossview/patches/store-db-on-hcloud.yaml
