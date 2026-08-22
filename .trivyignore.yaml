@@ -567,15 +567,6 @@ misconfigurations:
   # entries rest on is NOT available here and is not borrowed. This stands on the image-defined
   # identity alone.
   #
-  # ⚠️ DELIBERATELY UID-ONLY. KSV-0021 stays live on both workloads and is NOT dispositioned here,
-  # because its premise is false today: the pod default runAsGroup is 1000, so the mirror container
-  # INHERITS a low GID chosen for openbao rather than taking a high default, and `minio/mc` bakes no
-  # such identity. vault-config can make that split because its shared paths are emptyDir, where
-  # fsGroup's setgid bit carries the group regardless of the writer's primary gid (#3258); the
-  # vault-backup snapshots live on a PVC, where a high primary GID plus explicit group-1000
-  # membership has not been established — #3281 assumed the emptyDir premise transferred and was
-  # withdrawn. The remaining 4 KSV-0021 findings therefore stay reported under #2787 rather than
-  # being covered by a premise that does not hold.
   - id: KSV-0020
     paths:
       - k8s/bases/infrastructure/vault-backup/job.yaml
@@ -590,8 +581,33 @@ misconfigurations:
       pod default is 65532 and the minio/mc mirror container takes that high default. Because trivy
       scopes by path rather than by resource,
       scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh asserts that per container so
-      this entry cannot silently cover a future low-UID container. KSV-0021 is deliberately not
-      dispositioned on these workloads.
+      this entry cannot silently cover a future low-UID container.
+
+  # KSV-0021 "runs with GID <= 10000" on the vault-backup Job and CronJob — one finding per file.
+  #
+  # Only the openbao `snapshot` container keeps primary GID 1000, the group defined by the same
+  # digest-pinned image whose UID disposition is recorded above. The pod default primary GID is the
+  # high 65532, so the minio/mc mirror does not inherit an identity chosen for openbao. It can still
+  # read each 0640 snapshot because fsGroup 1000 adds that group to every container as a
+  # supplementary group; process membership is independent of the PVC's setgid behavior.
+  #
+  # The ignorefile is path-scoped rather than container-scoped, so the paired boundary test asserts
+  # that exactly the snapshot container has a low effective primary GID, that it still uses the
+  # measured openbao digest, that the mirror inherits the high pod default, and that fsGroup 1000
+  # remains present. Identical bytes copied to an unlisted probe path must continue to report.
+  - id: KSV-0021
+    paths:
+      - k8s/bases/infrastructure/vault-backup/job.yaml
+      - k8s/bases/infrastructure/vault-backup/cron-job.yaml
+    statement: >-
+      Primary GID 1000 is the group the digest-pinned openbao image defines for its snapshot
+      container: /etc/passwd carries openbao:x:100:1000 and /etc/group carries openbao:x:1000.
+      The pod default is 65532:65532, so the minio/mc mirror keeps a high primary GID and receives
+      group 1000 only as supplementary membership through fsGroup. That membership lets it read the
+      snapshot container's explicitly group-readable 0640 files without sharing the low primary GID
+      or depending on a PVC setgid bit. Because this path-scoped entry could otherwise hide another
+      low-GID container, scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh asserts the
+      image, effective GID, high pod default, fsGroup, and an unsuppressed identical-path control.
 
   # KSV-0021 "runs with GID <= 10000" on the vault-config Job — 2 findings, both LOW.
   #

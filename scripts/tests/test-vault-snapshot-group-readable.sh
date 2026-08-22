@@ -8,9 +8,10 @@
 # unprivileged 65532 and scope UID 100 to the one container whose image bakes it
 # (checkov CKV_K8S_40).
 #
-# Every container runs runAsGroup/fsGroup 1000, so a group-readable snapshot is
-# readable by the mirror on its GROUP entry alone — a pod-level property, which is
-# why this does not depend on the volume's setgid bit.
+# fsGroup 1000 gives every container supplementary group 1000. The snapshot container alone uses
+# the openbao image's primary GID 1000; the mirror keeps the pod's high primary GID and reads the
+# 0640 snapshot through that supplementary group. Process membership does not depend on the
+# volume's setgid bit.
 #
 # NOTE ON MECHANISM: this must be an explicit chmod, not a umask. umask can only
 # CLEAR permission bits, never add them — so if `bao` requests 0600 explicitly (the
@@ -154,10 +155,12 @@ for target in "${uid_targets[@]}"; do
   [ "${pod_uid}" -ge 10000 ] ||
     fail "${manifest}: pod runAsUser ${pod_uid} is a low host UID (CKV_K8S_40) — the writers are re-coupled"
 
-  # The mirror reads on THIS group. If either value moves, group access stops working and the only
-  # remaining path to the file is ownership, which is the coupling being removed.
-  [ "${pod_gid}" = "1000" ] ||
-    fail "${manifest}: pod runAsGroup is '${pod_gid}', not 1000 — the mirror loses its group entry"
+  case "${pod_gid}" in
+    '' | null) fail "${manifest}: the pod sets no runAsGroup" ;;
+    *[!0-9]*) fail "${manifest}: pod runAsGroup '${pod_gid}' is not numeric" ;;
+  esac
+  [ "${pod_gid}" -ge 10001 ] ||
+    fail "${manifest}: pod runAsGroup ${pod_gid} is a low host GID (KSV-0021) — the mirror should use fsGroup 1000 only as a supplementary group"
   [ "${pod_fsg}" = "1000" ] ||
     fail "${manifest}: pod fsGroup is '${pod_fsg}', not 1000 — the mirror loses its group entry"
 
@@ -177,7 +180,11 @@ for target in "${uid_targets[@]}"; do
   [ "${mirror_uid}" = "null" ] ||
     fail "${manifest}: the mirror pins runAsUser '${mirror_uid}' instead of taking the pod's high default"
 
-  printf 'ok: %s — pod %s:%s (fsGroup %s); UID 100 scoped to the snapshot container; mirror takes the default\n' \
+  mirror_gid="$(yq "${pod}.containers[]|select(.name==\"mirror\")|.securityContext.runAsGroup" "${path}")"
+  [ "${mirror_gid}" = "null" ] ||
+    fail "${manifest}: the mirror pins runAsGroup '${mirror_gid}' instead of taking the pod's high default and fsGroup supplementary membership"
+
+  printf 'ok: %s — pod %s:%s (fsGroup %s); image UID/GID scoped to snapshot; mirror takes high defaults plus fsGroup\n' \
     "${manifest}" "${pod_uid}" "${pod_gid}" "${pod_fsg}"
 done
 

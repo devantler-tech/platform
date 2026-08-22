@@ -37,11 +37,11 @@ metadata:
     # its own and mounts /snapshots readOnly — takes that rather than a UID
     # chosen for openbao.
     #
-    # The mirror still reads the snapshot because it shares the primary GROUP,
-    # not the owner: runAsGroup/fsGroup 1000 apply to every container, and the
-    # snapshot script chmods the file 0640 after `bao operator raft snapshot
-    # save` writes it. Access therefore rests on group membership, which is a
-    # pod-level property, rather than on the volume's setgid bit.
+    # The mirror still reads the snapshot through supplementary group 1000:
+    # fsGroup adds that group to every container, while only the openbao
+    # snapshot container selects its image-defined primary GID 1000. The
+    # snapshot script chmods the file 0640 after writing it. Access therefore
+    # does not depend on a low pod-wide primary GID or the volume's setgid bit.
     #
     # UID 100 is not remapped. The openbao namespace carries no
     # `pod-security.devantler.tech/user-namespaces: enabled` label, so the
@@ -80,7 +80,7 @@ spec:
       # even when created before the webhook is active on fresh bring-up.
       securityContext:
         runAsUser: 65532
-        runAsGroup: 1000
+        runAsGroup: 65532
         fsGroup: 1000
         runAsNonRoot: true
         seccompProfile:
@@ -104,8 +104,8 @@ spec:
           securityContext:
             # UID 100 is the openbao image's own baked identity (`openbao:x:100:1000`
             # in its /etc/passwd) — see the checkov.io/skip2 rationale. Only this
-            # container overrides the pod's high default; the mirror takes 65532
-            # and reads the snapshot on the shared primary group 1000.
+            # container overrides the pod's high defaults; the mirror takes
+            # 65532:65532 and reads through fsGroup 1000 as a supplementary group.
             runAsUser: 100
             runAsGroup: 1000
             allowPrivilegeEscalation: false
@@ -181,9 +181,9 @@ spec:
               SNAP="/snapshots/openbao-$(date -u +%Y%m%d-%H%M%S).snap"
               echo "Saving initial raft snapshot to $SNAP..."
               bao operator raft snapshot save "$SNAP"
-              # The mirror opens the snapshot as GROUP: pod runAsGroup/fsGroup 1000
-              # makes 1000 its primary group while it inherits the pod's high UID 65532.
-              # The snapshot container alone uses the OpenBao image's UID 100. An explicit chmod,
+              # The mirror opens the snapshot as GROUP: fsGroup 1000 gives it
+              # supplementary membership while its primary identity stays 65532:65532.
+              # The snapshot container alone uses OpenBao's image UID/GID 100:1000. An explicit chmod,
               # NOT a umask: umask can only clear permission bits, so it cannot
               # widen the 0600 `bao` creates the file with. The 0640 mode decouples
               # mirror access from the image-defined owner UID.
