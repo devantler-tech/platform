@@ -367,8 +367,104 @@ else
   pass 'a bounded semver constraint refuses by name instead of guessing the newest tag'
 fi
 
+# ---------------------------------------------------------------------------
+# 10. AN EMPTY MIDDLE FIELD MUST NOT SHIFT `origin` INTO `current`. (#3305 review)
+#     Tab is IFS WHITESPACE, so `IFS=$'\t' read -r signing current origin` COLLAPSES
+#     adjacent tabs: an answer of `SHA_A<TAB><TAB>SHA_A` assigned SHA_A to BOTH signing
+#     and current and reported IN-SYNC — a confident wrong answer produced by the parser
+#     rather than the network, which is the one outcome this script must never have.
+#     Written without arrays or `read -d`, so it holds on the Bash 3.2 that ships on macOS.
+# ---------------------------------------------------------------------------
+collapse_resolver="$WORK/resolver-collapse.sh"
+cat >"$collapse_resolver" <<COLLAPSE
+#!/usr/bin/env bash
+# exit 0 on purpose: a FAILING resolver is discarded by the caller, so only a SUCCEEDING
+# one reaches the field-splitting path this case exists to test.
+printf '%s\t\t%s\n' '$SHA_A' '$SHA_A'
+exit 0
+COLLAPSE
+chmod +x "$collapse_resolver"
+collapse_out="$WORK/collapse.out"
+if PUBLISH_REVISION_RESOLVER="$collapse_resolver" "$SCRIPT" >"$collapse_out" 2>&1; then
+  fail 'an answer with an EMPTY MIDDLE FIELD exited 0 — the collapsed field was compared as the current revision'
+else
+  grep -q 'IN-SYNC' "$collapse_out" &&
+    fail 'SHA<TAB><TAB>SHA was reported as IN-SYNC — adjacent tabs collapsed and the origin field became the current one'
+  grep -q 'UNRESOLVED' "$collapse_out" ||
+    fail 'an answer with an empty middle field produced no UNRESOLVED line'
+  pass 'an empty middle field is UNRESOLVED, never a comparison against the shifted field'
+fi
+
+# ---------------------------------------------------------------------------
+# 11. TRAILING OUTPUT AFTER A VALID LINE MUST NOT BE ACCEPTED UNSEEN. (#3305 review)
+#     `read` stops at the first line, so a resolver emitting a good line followed by
+#     anything at all was accepted on the strength of the part that parsed.
+# ---------------------------------------------------------------------------
+extra_resolver="$WORK/resolver-extra.sh"
+cat >"$extra_resolver" <<EXTRA
+#!/usr/bin/env bash
+printf '%s\t%s\nunexpected trailing output\n' '$SHA_A' '$SHA_A'
+exit 0
+EXTRA
+chmod +x "$extra_resolver"
+extra_out="$WORK/extra.out"
+if PUBLISH_REVISION_RESOLVER="$extra_resolver" "$SCRIPT" >"$extra_out" 2>&1; then
+  fail 'a multi-line resolver answer exited 0 — only its first line was ever examined'
+else
+  grep -q 'IN-SYNC' "$extra_out" &&
+    fail 'a valid first line with trailing output was reported as IN-SYNC'
+  grep -q 'UNRESOLVED' "$extra_out" ||
+    fail 'a multi-line resolver answer produced no UNRESOLVED line'
+  pass 'trailing output after a valid line is UNRESOLVED, not accepted on the first line alone'
+fi
+
+# ---------------------------------------------------------------------------
+# 12. FLUX REFERENCE PRECEDENCE: digest > semver > tag, omitted ref means `latest`.
+#     (#3305 review) Reading `tag` first attributed a document carrying both a tag and a
+#     digest to a tag Flux never serves; a digest or an omitted ref collapsed to the
+#     meaningless `semver:`, which `effective_version` then refused as a bounded
+#     constraint, so a resolvable consumer read as UNRESOLVED. Asserted against the
+#     expression itself, because the selector choice is a property of the MANIFEST.
+# ---------------------------------------------------------------------------
+# 🔴 EXTRACTED FROM THE SCRIPT, NEVER RETYPED. A copy of the expression here would assert
+# only that SOME expression is correct, and would keep passing while the one the script
+# actually runs regressed — the test would pin nothing. The extraction is asserted
+# non-empty below, so a rename or reformat fails the case loudly instead of silently
+# testing an empty string.
+# `|| true` is load-bearing: under `set -e` a no-match grep in a command substitution
+# ABORTS the suite at this line, so the guard below never runs and the run dies with exit 1
+# and NO diagnostic — a failure nobody can act on. Measured while ablating this case.
+ref_expr="$(grep -o '(((\.spec\.ref\.digest.*"latest")' "$SCRIPT" || true)"
+[ -n "$ref_expr" ] ||
+  fail 'could not extract the reference-precedence expression from the script — the case would pass vacuously'
+ref_case() { # <name> <ref-yaml-block> <expected>
+  local name="$1" block="$2" expected="$3" doc="$WORK/ref-$1.yaml" got
+  {
+    printf 'kind: OCIRepository\nspec:\n  url: oci://ghcr.io/devantler-tech/x/manifests\n'
+    [ -n "$block" ] && printf '%s\n' "$block"
+  } >"$doc"
+  got="$(yq eval -r "$ref_expr" "$doc" 2>&1)"
+  [ "$got" = "$expected" ] ||
+    fail "reference precedence ($name): expected [$expected], got [$got]"
+}
+ref_case tag '  ref:
+    tag: v1.2.3' 'v1.2.3'
+ref_case semver '  ref:
+    semver: ">=1.0.0"' 'semver:>=1.0.0'
+ref_case digest '  ref:
+    digest: sha256:abcdef' 'digest:sha256:abcdef'
+ref_case tag-and-digest '  ref:
+    tag: v1.2.3
+    digest: sha256:abcdef' 'digest:sha256:abcdef'
+ref_case tag-and-semver '  ref:
+    tag: v1.2.3
+    semver: ">=1.0.0"' 'semver:>=1.0.0'
+ref_case omitted '' 'latest'
+pass 'Flux reference precedence is digest > semver > tag, and an omitted ref means latest'
+
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (9 cases)\n'
+printf '\nPASS: publish-workflow signing-revision report (12 cases)\n'

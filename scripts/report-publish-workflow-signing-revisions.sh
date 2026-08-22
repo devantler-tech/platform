@@ -94,6 +94,27 @@ plausible_repo() {
 # commit SHA and nothing else.
 is_sha() { [[ "$1" =~ ^[0-9a-f]{40}$ ]]; }
 
+# Split one resolver answer into its tab-separated fields, ONE PER LINE, PRESERVING
+# EMPTY FIELDS.
+#
+# 🔴 `IFS=$'\t' read` CANNOT BE USED HERE: tab is IFS WHITESPACE, so bash collapses
+# adjacent tabs and an empty MIDDLE field silently shifts every later field LEFT.
+# Measured: an answer of `SHA<TAB><TAB>SHA` assigns the ORIGIN field to `current`, both
+# halves then pass `is_sha`, and the IN-SYNC/DIVERGED comparison runs on a field that was
+# never `current` at all. That is this script's one forbidden failure mode — reporting a
+# confident answer having compared the wrong thing — arriving through the parser rather
+# than the network. Discovery already carries a `-` placeholder for exactly this reason;
+# a resolver answer has no such guarantee, so it is split explicitly instead.
+answer_fields() {
+  local rest="$1" field tab=$'\t'
+  while :; do
+    field="${rest%%"${tab}"*}"
+    printf '%s\n' "$field"
+    [ "$field" = "$rest" ] && break
+    rest="${rest#*"${tab}"}"
+  done
+}
+
 # A transient 5xx or secondary rate limit must not make main red on a REPORT: a control
 # that goes red for reasons unrelated to what it checks is one people learn to ignore.
 # Bounded, so a genuine outage still fails rather than hanging.
@@ -156,11 +177,21 @@ discover_consumers() {
       repo="$(oci_name_to_repo "$repo")"
       plausible_repo "$repo" || continue
       printf '%s\t%s\t%s\n' "$repo" "$workflow" "$version"
+    # 🔴 FLUX RESOLVES `spec.ref` AS digest > semver > tag, AND AN OMITTED `ref` MEANS
+    # `latest`. Reading `tag` first inverts that: a document carrying BOTH a tag and a
+    # digest (or a tag and a semver) would be attributed to a tag Flux never serves, and
+    # the real signer would be omitted from the proposed allow-list — a confident wrong
+    # answer, which is the one outcome this report must never produce. A digest or an
+    # omitted ref also collapsed to the meaningless `semver:`, which `effective_version`
+    # then refused as a bounded constraint, so a resolvable consumer read as UNRESOLVED.
+    #
+    # These live OUTSIDE the single-quoted yq program deliberately: a backtick inside it
+    # reads as a command substitution to shellcheck (SC2016), so prose belongs out here.
     done < <(yq eval -r '
       select(.kind == "OCIRepository") |
       [(.spec.url // "-"),
        ((.spec.verify.matchOIDCIdentity // []) | map(.subject // "") | join(" ") | select(. != "") // "-"),
-       (.spec.ref.tag // ("semver:" + (.spec.ref.semver // "")) // "-")] | @tsv
+       (((.spec.ref.digest // "") | select(. != "") | "digest:" + .) // ((.spec.ref.semver // "") | select(. != "") | "semver:" + .) // ((.spec.ref.tag // "") | select(. != "")) // "latest")] | @tsv
     ' "$file" 2>/dev/null || true)
   done < <(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' "$root" 2>/dev/null | sort -u) | sort -u
 }
@@ -190,6 +221,14 @@ effective_version() {
     '-' | '')
       printf '%s\n' ''
       return 0
+      ;;
+    # A digest pins an exact artifact rather than a version, so the tag-based resolver
+    # cannot answer for it. Refuse by name instead of guessing — the same reasoning as
+    # the bounded-semver refusal below.
+    digest:*)
+      printf 'digest-pinned reference "%s" needs artifact-level resolution, which this script does not implement\n' \
+        "${raw#digest:}" >&2
+      return 1
       ;;
     semver:*)
       expr="${raw#semver:}"
@@ -390,7 +429,7 @@ main() {
   fi
 
   local resolver="${PUBLISH_REVISION_RESOLVER:-}"
-  local repo workflow version answer signing current origin
+  local repo workflow version answer signing current origin field field_count
   local diverged=0 unresolved=0 examined=0
 
   printf 'Shared publish-workflow revisions, per consumer (#3048)\n'
@@ -412,13 +451,34 @@ main() {
     else
       answer="$(default_resolver "$repo" "$workflow" "$version")" || answer=""
     fi
-    # 🔴 `cut -f2` WITHOUT `-s` ECHOES THE WHOLE LINE when the delimiter is absent, so a
-    # resolver emitting one tab-free line (an error body — the very shape warned about
-    # above) set signing == current and reported IN-SYNC for every consumer with exit 0.
-    # `read` splits on tabs only, and both values must then be commit SHAs: an
-    # unparseable answer is UNRESOLVED, never agreement.
-    IFS=$'\t' read -r signing current origin <<<"$answer"
-    if ! is_sha "${signing:-}" || ! is_sha "${current:-}"; then
+    # The one-tab-free-line case that `cut -f2` without `-s` used to accept is covered by
+    # the same shape check below: fewer than two fields is UNRESOLVED, never agreement.
+    # A resolver answer must be EXACTLY one line of two or three tab-separated fields,
+    # each SHA field non-empty. Anything else is UNRESOLVED, never agreement.
+    #
+    # 🔴 `read` IS NOT SAFE HERE, on two independent counts, both measured on this exact
+    # path: it stops at the FIRST LINE, so a valid line followed by trailing output was
+    # accepted unseen; and tab is IFS whitespace, so `SHA<TAB><TAB>SHA` COLLAPSED to two
+    # fields and assigned the ORIGIN field to `current` — both halves then passed
+    # `is_sha` and the comparison ran on a field that was never `current`.
+    field_count=0
+    signing=''
+    current=''
+    origin=''
+    while IFS= read -r field; do
+      case "$field_count" in
+        0) signing="$field" ;;
+        1) current="$field" ;;
+        2) origin="$field" ;;
+      esac
+      field_count=$((field_count + 1))
+    done < <(answer_fields "$answer")
+    # A multi-line answer is rejected outright rather than judged on its first line.
+    case "$answer" in
+      *$'\n'*) field_count=0 ;;
+    esac
+    if [ "$field_count" -lt 2 ] || [ "$field_count" -gt 3 ] ||
+      ! is_sha "${signing:-}" || ! is_sha "${current:-}"; then
       unresolved=$((unresolved + 1))
       printf 'UNRESOLVED %-22s %-18s could not resolve both revisions to a commit SHA\n' \
         "$repo" "$workflow"
