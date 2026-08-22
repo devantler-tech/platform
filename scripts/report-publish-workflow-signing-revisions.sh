@@ -176,11 +176,14 @@ pin_at_ref() {
   # both revisions get confidently misreported and the real signer is omitted from the
   # allow-list. Reading `.jobs[].uses` sees only calls that actually run.
   #
-  # Exactly one matching call, or the attribution is ambiguous: zero means this consumer does
-  # not call that workflow at that ref, and more than one means a guess would be needed.
+  # Exactly one DISTINCT revision, or the attribution is ambiguous. Deduplicate first: two jobs
+  # calling the same shared workflow at the same revision is not ambiguity, and counting call
+  # SITES rather than revisions would report a perfectly unambiguous consumer as UNRESOLVED and
+  # fail the run. Zero means this consumer does not call that workflow at that ref.
   local matches count
   matches="$(printf '%s\n' "$body" | yq eval -r '.jobs[].uses // ""' - 2>/dev/null |
-    grep -E "^devantler-tech/actions/\\.github/workflows/${workflow}\\.yaml@[0-9a-f]{40}$" || true)"
+    grep -E "^devantler-tech/actions/\\.github/workflows/${workflow}\\.yaml@[0-9a-f]{40}$" |
+    sort -u || true)"
   count="$(printf '%s' "$matches" | grep -c . || true)"
   [ "$count" -eq 1 ] || return 1
   sha="${matches##*@}"

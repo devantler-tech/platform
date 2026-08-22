@@ -198,8 +198,11 @@ fi
 junk_resolver="$WORK/resolver-junk.sh"
 cat >"$junk_resolver" <<'JUNK'
 #!/usr/bin/env bash
+# exit 0 ON PURPOSE. A FAILING resolver is discarded by the caller (`answer=$(...) || answer=""`),
+# so only a SUCCEEDING resolver reaches the tab-free-answer parsing path this case exists to test.
+# With `exit 1` the case proved only that an EMPTY answer is UNRESOLVED — a different, weaker claim.
 printf '%s\n' '{"message":"Not Found","status":"404"}'
-exit 1
+exit 0
 JUNK
 chmod +x "$junk_resolver"
 junk_out="$WORK/junk.out"
