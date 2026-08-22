@@ -136,12 +136,31 @@ exit 1
 FAKE
 chmod +x "${fake_bin}/talosctl"
 
+# Serves a SEQUENCE when one is staged: the Nth `kubectl get nodes` of a run is
+# answered from nodes.<N>.json when that file exists, and from nodes.json
+# otherwise. The script reads the inventory once before the checks and again
+# after them, so a per-call answer is what lets a test move the fleet in the
+# window between those two reads -- the autoscaler race the convergence loop
+# exists to close. Cases that stage no sequence are unaffected.
 cat >"${fake_bin}/kubectl" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
-cat "${FIXTURES}/nodes.json"
+call_count_file="${FIXTURES}/kubectl-call-count"
+call_number=$(( $(cat "${call_count_file}" 2>/dev/null || printf '0') + 1 ))
+printf '%s' "${call_number}" >"${call_count_file}"
+if [[ -f "${FIXTURES}/nodes.${call_number}.json" ]]; then
+  cat "${FIXTURES}/nodes.${call_number}.json"
+else
+  cat "${FIXTURES}/nodes.json"
+fi
 FAKE
 chmod +x "${fake_bin}/kubectl"
+
+# Clears both the counter and any staged sequence, so one case's fleet cannot
+# leak into the next.
+reset_node_sequence() {
+  rm -f "${fixtures}/kubectl-call-count" "${fixtures}"/nodes.[0-9].json
+}
 
 # A real `talosctl ls -l` header plus rows. Column 2 is MODE, last column is
 # NAME, and the LABEL column is EMPTY for some files on this cluster — which is
@@ -295,8 +314,8 @@ require_text "${output}" '2 of 3 node(s) cannot enforce' 'case 6: counts every f
 cat >"${fixtures}/nodes.json" <<'EOF'
 {
   "items": [
-    {"status": {"addresses": [{"type": "Hostname", "address": "prod-worker-1"}, {"type": "InternalIP", "address": "good"}]}},
-    {"status": {"addresses": [{"type": "InternalIP", "address": "empty"}]}}
+    {"metadata": {"name": "prod-worker-1", "uid": "uid-good"}, "status": {"addresses": [{"type": "Hostname", "address": "prod-worker-1"}, {"type": "InternalIP", "address": "good"}]}},
+    {"metadata": {"name": "prod-worker-2", "uid": "uid-empty"}, "status": {"addresses": [{"type": "InternalIP", "address": "empty"}]}}
   ]
 }
 EOF
@@ -615,7 +634,7 @@ refute_text "${output}" 'does not exist' 'case 19: blamed the cluster for a runn
 # caught it).
 cat >"${fake_bin}/kubectl" <<'FAKE'
 #!/usr/bin/env bash
-printf '%s\n' '{"items":[{"status":{"addresses":[{"type":"InternalIP","address":"good"}]}},{"status":{}}]}'
+printf '%s\n' '{"items":[{"metadata":{"name":"prod-worker-1","uid":"uid-good"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}},{"metadata":{"name":"prod-worker-2","uid":"uid-2"},"status":{}}]}'
 exit 0
 FAKE
 chmod +x "${fake_bin}/kubectl"
@@ -644,8 +663,8 @@ refute_text "${output}" 'can enforce image verification.' 'case 18: reported a f
 cat >"${fake_bin}/kubectl" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' '{"items":[
-  {"metadata":{"name":"prod-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}},
-  {"metadata":{"name":"prod-worker-2"},"status":{"addresses":[{"type":"Hostname","address":"prod-worker-2"},{"type":"ExternalIP","address":"203.0.113.7"}]}}
+  {"metadata":{"name":"prod-worker-1","uid":"uid-1"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}},
+  {"metadata":{"name":"prod-worker-2","uid":"uid-2"},"status":{"addresses":[{"type":"Hostname","address":"prod-worker-2"},{"type":"ExternalIP","address":"203.0.113.7"}]}}
 ]}'
 exit 0
 FAKE
@@ -666,7 +685,7 @@ refute_text "${output}" 'can enforce image verification.' \
 cat >"${fake_bin}/kubectl" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' '{"items":[
-  {"metadata":{"name":"prod-worker-1"},"status":{"addresses":[{"type":"Hostname","address":"prod-worker-1"},{"type":"InternalIP","address":"good"}]}}
+  {"metadata":{"name":"prod-worker-1","uid":"uid-1"},"status":{"addresses":[{"type":"Hostname","address":"prod-worker-1"},{"type":"InternalIP","address":"good"}]}}
 ]}'
 exit 0
 FAKE
@@ -775,8 +794,8 @@ run_script TALOS_NODES=probeerror >/dev/null 2>&1 ||
 cat >"${fake_bin}/kubectl" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' '{"items":[
-  {"metadata":{"name":"prod-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}},
-  {"metadata":{"name":"prod-worker-stale"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}}
+  {"metadata":{"name":"prod-worker-1","uid":"uid-1"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}},
+  {"metadata":{"name":"prod-worker-stale","uid":"uid-stale"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}}
 ]}'
 exit 0
 FAKE
@@ -798,7 +817,7 @@ refute_text "${output}" 'can enforce image verification.' \
 cat >"${fake_bin}/kubectl" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' '{"items":[
-  {"metadata":{"name":"prod-worker-dual"},"status":{"addresses":[{"type":"InternalIP","address":"good"},{"type":"InternalIP","address":"empty"}]}}
+  {"metadata":{"name":"prod-worker-dual","uid":"uid-dual"},"status":{"addresses":[{"type":"InternalIP","address":"good"},{"type":"InternalIP","address":"empty"}]}}
 ]}'
 exit 0
 FAKE
@@ -814,8 +833,8 @@ require_text "${output}" 'prod-worker-dual' 'case 23: names the node carrying tw
 cat >"${fake_bin}/kubectl" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' '{"items":[
-  {"metadata":{"name":"prod-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}},
-  {"metadata":{"name":"prod-worker-2"},"status":{"addresses":[{"type":"InternalIP","address":"onlysystem"}]}}
+  {"metadata":{"name":"prod-worker-1","uid":"uid-1"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}},
+  {"metadata":{"name":"prod-worker-2","uid":"uid-2"},"status":{"addresses":[{"type":"InternalIP","address":"onlysystem"}]}}
 ]}'
 exit 0
 FAKE
@@ -827,5 +846,191 @@ output="$(run_script 2>&1)" ||
   fail 'case 23: a fleet of distinct nodes with distinct InternalIPs must still be accepted'
 require_text "${output}" 'good' 'case 23: control reports the first discovered node'
 require_text "${output}" 'onlysystem' 'case 23: control reports the second discovered node'
+
+# ===========================================================================
+# Case 24 — the plugin is CONFIGURED and DISABLED. A bin_dir that is set,
+# present and full of executables proves nothing if containerd never loads the
+# plugin that runs them, so this node must FAIL exactly like one with no
+# verifier at all. Everything else about it is deliberately healthy, so a pass
+# here could only come from not looking at disabled_plugins.
+# ===========================================================================
+write_node disabled
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ['io.containerd.image-verifier.v1.bindir']
+
+[plugins]
+  [plugins.'io.containerd.cri.v1.images']
+    [plugins.'io.containerd.cri.v1.images'.registry.configs.'ghcr.io'.auth]
+      password = '${canary}'
+      username = 'devantler'
+
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+write_dir disabled /opt/containerd/image-verifier/bin <<EOF
+${listing_header}
+disabled    -rwxr-xr-x   0     0     1024      2026-08-01T00:00:00Z                                                 .
+disabled    -rwxr-xr-x   0     0     1024      2026-08-01T00:00:00Z                                                 verifier
+EOF
+
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a disabled image-verifier plugin must fail the node'
+fi
+require_text "${output}" 'FAIL disabled' 'case 24: names the node that cannot enforce'
+require_text "${output}" 'disabled_plugins' 'case 24: says WHY, so the operator edits the right setting'
+refute_text "${output}" "${canary}" 'case 24: never prints registry credentials'
+
+# Control: the SAME node with the plugin left enabled passes. Without this, the
+# case above would also pass if the script had simply started failing this
+# fixture for some unrelated reason.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ['io.containerd.snapshotter.v1.blockfile']
+
+[plugins]
+  [plugins.'io.containerd.cri.v1.images']
+    [plugins.'io.containerd.cri.v1.images'.registry.configs.'ghcr.io'.auth]
+      password = '${canary}'
+      username = 'devantler'
+
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 24 control: an UNRELATED disabled plugin must not fail the node'
+require_text "${output}" 'OK   disabled' 'case 24 control: the node enforces'
+
+# A multi-line array is the shape containerd config actually uses once more than
+# one plugin is off; a single-line matcher would miss it and report the node OK.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = [
+  'io.containerd.snapshotter.v1.blockfile',
+  'io.containerd.image-verifier.v1.bindir',
+]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a disabled plugin listed in a MULTI-LINE array must still fail the node'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: multi-line array is read'
+
+# A `disabled_plugins` key that belongs to some OTHER table is not the root key
+# and must not disable anything -- otherwise an unrelated setting could switch
+# this whole check off.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+
+[plugins]
+  [plugins.'io.containerd.some.other.plugin']
+    disabled_plugins = ['io.containerd.image-verifier.v1.bindir']
+
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 24: a non-root disabled_plugins key must not be treated as the root one'
+require_text "${output}" 'OK   disabled' 'case 24: scoped to the root key'
+
+# ===========================================================================
+# Case 25 — the node set changes WHILE the fleet is being checked. The
+# inventory is read before a serial pass, so an autoscaler that adds or
+# replaces a worker mid-run would otherwise leave that machine uninspected
+# while every node in the stale snapshot reported healthy.
+# ===========================================================================
+install_sequenced_kubectl() {
+  cat >"${fake_bin}/kubectl" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+call_count_file="${FIXTURES}/kubectl-call-count"
+call_number=$(( $(cat "${call_count_file}" 2>/dev/null || printf '0') + 1 ))
+printf '%s' "${call_number}" >"${call_count_file}"
+if [[ -f "${FIXTURES}/nodes.${call_number}.json" ]]; then
+  cat "${FIXTURES}/nodes.${call_number}.json"
+else
+  cat "${FIXTURES}/nodes.json"
+fi
+FAKE
+  chmod +x "${fake_bin}/kubectl"
+}
+install_sequenced_kubectl
+
+node_json() { printf '{"metadata":{"name":"%s","uid":"%s"},"status":{"addresses":[{"type":"InternalIP","address":"%s"}]}}' "$1" "$2" "$3"; }
+
+# A worker joins between the pass and the re-read, then the fleet holds still:
+# the check re-runs over the new set and reports on what actually exists.
+reset_node_sequence
+printf '{"items":[%s]}' "$(node_json prod-worker-1 uid-1 good)" >"${fixtures}/nodes.1.json"
+for call in 2 3; do
+  printf '{"items":[%s,%s]}' "$(node_json prod-worker-1 uid-1 good)" "$(node_json prod-worker-2 uid-2 onlysystem)" \
+    >"${fixtures}/nodes.${call}.json"
+done
+output="$(run_script 2>&1)" ||
+  fail 'case 25: a settled inventory must be reported, not treated as a fault'
+require_text "${output}" 'The node set changed while it was being checked' 'case 25: says it re-ran'
+require_text "${output}" 'onlysystem' 'case 25: the node that joined mid-run IS inspected'
+require_text "${output}" 'All 2 node(s)' 'case 25: the verdict counts the fleet that actually exists'
+
+# The same race with the joiner NOT healthy: re-running has to reach a verdict
+# about it, not just re-count the fleet.
+reset_node_sequence
+printf '{"items":[%s]}' "$(node_json prod-worker-1 uid-1 good)" >"${fixtures}/nodes.1.json"
+for call in 2 3; do
+  printf '{"items":[%s,%s]}' "$(node_json prod-worker-1 uid-1 good)" "$(node_json prod-worker-2 uid-2 empty)" \
+    >"${fixtures}/nodes.${call}.json"
+done
+if output="$(run_script 2>&1)"; then
+  fail 'case 25: a node that joined mid-run and cannot enforce must fail the run'
+fi
+require_text "${output}" 'FAIL empty' 'case 25: the mid-run joiner is judged, not just counted'
+
+# An inventory that never settles is bounded rather than looping forever, and
+# fails closed instead of reporting on a fleet that never held still.
+reset_node_sequence
+printf '{"items":[%s]}' "$(node_json prod-worker-1 uid-1 good)" >"${fixtures}/nodes.1.json"
+printf '{"items":[%s,%s]}' "$(node_json prod-worker-1 uid-1 good)" "$(node_json prod-worker-2 uid-2 onlysystem)" >"${fixtures}/nodes.2.json"
+printf '{"items":[%s]}' "$(node_json prod-worker-2 uid-2 onlysystem)" >"${fixtures}/nodes.3.json"
+if output="$(run_script IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS=2 2>&1)"; then
+  fail 'case 25: an inventory that never settles must not report a verdict'
+fi
+require_text "${output}" 'never held still' 'case 25: says the fleet would not settle'
+
+# ===========================================================================
+# Case 26 — an autoscaler replacement that REUSES the retired node's address.
+# Address alone cannot tell the two apart, so a machine that was never
+# inspected would be reported as one that passed. The UID is the discriminator.
+# ===========================================================================
+install_sequenced_kubectl
+reset_node_sequence
+printf '{"items":[%s]}' "$(node_json prod-worker-1 uid-original good)" >"${fixtures}/nodes.1.json"
+printf '{"items":[%s]}' "$(node_json prod-worker-1 uid-replacement good)" >"${fixtures}/nodes.2.json"
+if output="$(run_script IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS=1 2>&1)"; then
+  fail 'case 26: a replacement reusing the address must not pass as the original'
+fi
+require_text "${output}" 'never held still' 'case 26: the replacement is detected as a change'
+
+# Control: the SAME node, same UID and address, across both reads settles at
+# once. Without it, case 26 would also pass if the script had simply started
+# rejecting every discovery run.
+reset_node_sequence
+printf '{"items":[%s]}' "$(node_json prod-worker-1 uid-original good)" >"${fixtures}/nodes.1.json"
+printf '{"items":[%s]}' "$(node_json prod-worker-1 uid-original good)" >"${fixtures}/nodes.2.json"
+output="$(run_script IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS=1 2>&1)" ||
+  fail 'case 26 control: an unchanged fleet must settle on the first attempt'
+require_text "${output}" 'All 1 node(s)' 'case 26 control: reports the unchanged fleet'
+
+# A node with no UID at all is refused rather than compared on address alone.
+reset_node_sequence
+printf '%s\n' '{"items":[{"metadata":{"name":"prod-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}}]}' >"${fixtures}/nodes.1.json"
+if output="$(run_script 2>&1)"; then
+  fail 'case 26: a node with no metadata.uid must not be accepted'
+fi
+require_text "${output}" 'no metadata.uid' 'case 26: names the missing identity'
+
+reset_node_sequence
 
 printf 'PASS: all cases\n'

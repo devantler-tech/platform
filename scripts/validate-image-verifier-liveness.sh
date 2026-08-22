@@ -123,15 +123,20 @@ discover_nodes() {
     jq -r '
       [.items[] | {
         name: (.metadata.name // "<unnamed node>"),
+        uid: ((.metadata.uid // "") | tostring),
         ips: [(.status.addresses // [])[]
               | select(.type == "InternalIP" and ((.address // "") | tostring) != "")
               | .address]
       }] as $nodes
       | ($nodes | map(select(.ips | length != 1))
           | map("\(.name) (has \(.ips | length) InternalIP addresses, expected 1)")),
+        ($nodes | map(select(.uid == "" ))
+          | map("\(.name) (has no metadata.uid)")),
         ($nodes | map(select(.ips | length == 1))
           | group_by(.ips[0]) | map(select(length > 1))
-          | map("\(map(.name) | join(" and ")) share InternalIP \(.[0].ips[0])"))
+          | map("\(map(.name) | join(" and ")) share InternalIP \(.[0].ips[0])")),
+        ($nodes | map(select(.uid != "")) | group_by(.uid) | map(select(length > 1))
+          | map("\(map(.name) | join(" and ")) share UID \(.[0].uid)"))
       | .[]
     ' 2>/dev/null)" ||
     fail_infra 'could not parse node addresses from kubectl output'
@@ -139,12 +144,19 @@ discover_nodes() {
     fail_infra "unusable node inventory — refusing to report a fleet that was only partly enumerated: $(printf '%s' "${bad_nodes}" | tr '\n' ';' | sed 's/;$//')"
   fi
 
+  # Emitted as UID and address together. An address alone cannot tell a node
+  # apart from its own replacement: the autoscaler can retire a machine and
+  # bring up a new one that reuses the address, and comparing addresses would
+  # call that pair identical -- so a machine that was never inspected would be
+  # reported as one that passed. The UID is what makes "the same node" mean the
+  # same node.
   printf '%s' "${json}" |
     jq -r '
       .items[]
+      | . as $node
       | (.status.addresses // [])[]
       | select(.type == "InternalIP" and ((.address // "") | tostring) != "")
-      | .address
+      | "\(($node.metadata.uid // "") | tostring)\t\(.address)"
     ' 2>/dev/null ||
     fail_infra 'could not parse node addresses from kubectl output'
 }
@@ -234,6 +246,58 @@ extract_bin_dir_from() {
   '
 }
 
+# Reports 'disabled' when this config file switches the image-verifier plugin
+# OFF, and nothing otherwise.
+#
+# A bin_dir that is configured, exists and holds an executable proves nothing if
+# containerd never loads the plugin that runs it. `disabled_plugins` is the
+# cheap half of that question: it lives in the SAME file the bin_dir came from,
+# so reading it costs nothing extra and closes the case where the configuration
+# looks complete and no verifier handles a single pull -- the same silent
+# enforcement failure this script exists to detect, one layer up. (Whether a
+# plugin that is NOT disabled actually loaded and stayed healthy needs a live
+# plugin-status query or a behavioural probe; that is #3101's job.)
+#
+# Scoped to TOP-LEVEL keys. `disabled_plugins` is a root key in containerd's
+# config, and TOML puts root keys before the first table header -- so once a
+# '[' header is seen, any later match belongs to some other table and must not
+# count. An unscoped match would let an unrelated key disable the check.
+#
+# Only the marker is ever printed. The array is assembled in awk and searched
+# there; the config itself never reaches a variable or an error message, because
+# /etc/cri/conf.d/cri.toml carries registry credentials and this output goes to
+# CI logs. See the SECURITY note at the top.
+plugin_disabled_in() {
+  local node="$1" file="$2"
+  "${talosctl_bin}" -n "${node}" read "${file}" 2>/dev/null | awk '
+    BEGIN {
+      SQ = sprintf("%c", 39); DQ = sprintf("%c", 34)
+      toplevel = 1; in_array = 0; buf = ""
+    }
+    function verdict(text,   probe) {
+      probe = text
+      gsub(SQ, "", probe); gsub(DQ, "", probe); gsub(/[ \t]/, "", probe)
+      if (index(probe, "io.containerd.image-verifier.v1.bindir") > 0) {
+        print "disabled"
+        exit
+      }
+    }
+    # A continuation of the array is consumed before the header rule below, so a
+    # value that happens to start with a bracket cannot be mistaken for a table.
+    in_array {
+      buf = buf $0
+      if (index($0, "]") > 0) { in_array = 0; verdict(buf) }
+      next
+    }
+    /^[ \t]*\[/ { toplevel = 0 }
+    !toplevel { next }
+    match($0, /^[ \t]*disabled_plugins[ \t]*=/) {
+      buf = substr($0, RSTART + RLENGTH)
+      if (index(buf, "]") > 0) { verdict(buf) } else { in_array = 1 }
+    }
+  '
+}
+
 # Counts executable entries, skipping the directory's own '.' entry. MODE is
 # always column 2; NAME is always last. The LABEL column is empty for some files
 # on this cluster, so positional parsing from the left past column 2 is unsafe.
@@ -296,12 +360,12 @@ else
   # and if those nodes happen to be healthy the script exits 0 having silently
   # dropped the rest of the fleet. jq emitting a valid address and then failing
   # on a malformed one is exactly that case.
-  discovered_nodes="$(discover_nodes)" ||
+  discovered_identities="$(discover_nodes)" ||
     fail_infra 'node discovery failed — refusing to report a fleet that was only partly enumerated'
-  while IFS= read -r discovered; do
+  while IFS=$'\t' read -r _discovered_uid discovered; do
     [[ -n "${discovered}" ]] || continue
     nodes+=("${discovered}")
-  done <<<"${discovered_nodes}"
+  done <<<"${discovered_identities}"
 fi
 
 [[ "${#nodes[@]}" -gt 0 ]] || fail_infra 'no nodes to check'
@@ -310,6 +374,20 @@ fi
 # can enforce, 1 when it cannot.
 check_config() {
   local node="$1" file="$2" bin_dir status=0 executables exec_status=0
+
+  # Asked FIRST: a disabled plugin makes the rest of this verdict irrelevant.
+  # bin_dir could be configured, present and full of executables and containerd
+  # would still run none of them, so reporting on the directory before checking
+  # whether the plugin is switched on would describe a path that is not taken.
+  local disabled disabled_status=0
+  disabled="$(plugin_disabled_in "${node}" "${file}")" || disabled_status=$?
+  [[ "${disabled_status}" -eq 0 ]] ||
+    fail_infra "could not read ${file} on ${node} (the file exists but talosctl read failed)"
+  if [[ "${disabled}" == 'disabled' ]]; then
+    printf 'FAIL %s [%s]: the io.containerd.image-verifier.v1.bindir plugin is in disabled_plugins — containerd loads no verifier, so it permits every pull whatever bin_dir says\n' \
+      "${node}" "${file}"
+    return 1
+  fi
 
   bin_dir="$(extract_bin_dir_from "${node}" "${file}")" || status=$?
   # The file's existence was proven before this call, so a read failure here is
@@ -353,49 +431,113 @@ check_config() {
   return 0
 }
 
-failures=0
-for node in "${nodes[@]}"; do
-  # Every containerd instance present on the node is evaluated INDEPENDENTLY.
-  # Accepting the first config that declares a bin_dir would let a wired-up CRI
-  # containerd mask an unprotected system containerd (or the reverse) — and the
-  # two pull different images: CRI pulls workload images, the system instance
-  # pulls Talos' own. A verifier on one leaves the other open, which is the
-  # whole point of checking both.
-  configs_present=0
-  node_failures=0
-  for config_file in "${config_files[@]}"; do
-    case "$(path_probe "${node}" "${config_file}")" in
-      present) ;;
-      absent)
-        # A confirmed not-found normally proves the node answered — but the same
-        # phrase can come from a client-side fault (a missing talosconfig, say),
-        # which would otherwise read as "this node does not ship that config".
-        # The reachability probe is what tells those two apart.
-        node_reachable "${node}" ||
-          fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
-        continue
-        ;;
-      *)
-        # Both "the node is gone" and "the node answered but this one probe
-        # failed" arrive here, and they deserve different diagnoses: the first
-        # is a fleet-wide fault, the second is specific to one containerd.
-        # Neither is a verdict, so both stop the run either way.
-        node_reachable "${node}" ||
-          fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
-        fail_infra "could not determine whether ${config_file} exists on ${node} (talosctl ls failed for a reason other than the file being absent) — refusing to report a node whose containerd was never inspected"
-        ;;
-    esac
-    configs_present=$((configs_present + 1))
-    check_config "${node}" "${config_file}" || node_failures=$((node_failures + 1))
-  done
+# One full sweep of the fleet currently in `nodes`. Kept as a function so the
+# discovery path can run it again on a changed inventory; it is deliberately NOT
+# invoked in a command substitution, because `fail_infra` inside one would exit
+# only the subshell and let a fleet that was never checked report a verdict --
+# the same trap the discovery path documents above.
+run_check_pass() {
+  failures=0
+  for node in "${nodes[@]}"; do
+    # Every containerd instance present on the node is evaluated INDEPENDENTLY.
+    # Accepting the first config that declares a bin_dir would let a wired-up CRI
+    # containerd mask an unprotected system containerd (or the reverse) — and the
+    # two pull different images: CRI pulls workload images, the system instance
+    # pulls Talos' own. A verifier on one leaves the other open, which is the
+    # whole point of checking both.
+    configs_present=0
+    node_failures=0
+    for config_file in "${config_files[@]}"; do
+      case "$(path_probe "${node}" "${config_file}")" in
+        present) ;;
+        absent)
+          # A confirmed not-found normally proves the node answered — but the same
+          # phrase can come from a client-side fault (a missing talosconfig, say),
+          # which would otherwise read as "this node does not ship that config".
+          # The reachability probe is what tells those two apart.
+          node_reachable "${node}" ||
+            fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
+          continue
+          ;;
+        *)
+          # Both "the node is gone" and "the node answered but this one probe
+          # failed" arrive here, and they deserve different diagnoses: the first
+          # is a fleet-wide fault, the second is specific to one containerd.
+          # Neither is a verdict, so both stop the run either way.
+          node_reachable "${node}" ||
+            fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
+          fail_infra "could not determine whether ${config_file} exists on ${node} (talosctl ls failed for a reason other than the file being absent) — refusing to report a node whose containerd was never inspected"
+          ;;
+      esac
+      configs_present=$((configs_present + 1))
+      check_config "${node}" "${config_file}" || node_failures=$((node_failures + 1))
+    done
 
-  # No containerd configuration at all is not a clean node — it means this check
+    # No containerd configuration at all is not a clean node — it means this check
   # looked at nothing and would otherwise pass the node by default.
-  [[ "${configs_present}" -gt 0 ]] ||
-    fail_infra "no containerd configuration found on ${node} (looked in ${config_files[*]})"
+    [[ "${configs_present}" -gt 0 ]] ||
+      fail_infra "no containerd configuration found on ${node} (looked in ${config_files[*]})"
 
-  [[ "${node_failures}" -eq 0 ]] || failures=$((failures + 1))
-done
+    [[ "${node_failures}" -eq 0 ]] || failures=$((failures + 1))
+  done
+}
+
+# Rebuilds `nodes` from a UID/address identity list.
+nodes_from_identities() {
+  nodes=()
+  while IFS=$'\t' read -r _uid identity_address; do
+    [[ -n "${identity_address}" ]] || continue
+    nodes+=("${identity_address}")
+  done <<<"$1"
+}
+
+# The inventory is a snapshot taken BEFORE a serial pass, and Cluster Autoscaler
+# can add or replace workers while that pass runs. A node that joins mid-run --
+# or a replacement reusing a retired address -- would then go completely
+# uninspected while every node in the stale snapshot reported healthy: a green
+# verdict for a fleet that was never fully enumerated, which is the same
+# fail-open shape this script exists to detect.
+#
+# So the discovery path re-reads the inventory AFTER the checks and only reports
+# when the fleet it just checked is still the fleet that exists. A change is
+# ordinary autoscaling rather than a fault, so it costs a re-run, not a failure;
+# only an inventory that will not settle within the bound is an error, which
+# keeps a continuously-scaling cluster from either flapping or looping forever.
+# `sync_talos_registry_auth` in scripts/refresh-flux-ghcr-auth.sh converges the
+# same way and for the same reason.
+#
+# An explicitly requested fleet is NOT re-read: the caller named those nodes, so
+# a cluster changing under them does not change what was asked for.
+convergence_attempts="${IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS:-3}"
+case "${convergence_attempts}" in
+  '' | *[!0-9]*) fail_infra "IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS must be a positive integer, got '${convergence_attempts}'" ;;
+esac
+[[ "${convergence_attempts}" -ge 1 ]] ||
+  fail_infra 'IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS must be at least 1'
+
+if [[ "${nodes_requested}" -eq 1 ]]; then
+  run_check_pass
+else
+  attempt=0
+  while :; do
+    attempt=$((attempt + 1))
+    run_check_pass
+
+    inventory_after="$(discover_nodes)" ||
+      fail_infra 'could not re-read the node inventory after the checks — refusing to report a fleet that may have changed underneath the pass'
+
+    [[ "${inventory_after}" != "${discovered_identities}" ]] || break
+
+    [[ "${attempt}" -lt "${convergence_attempts}" ]] ||
+      fail_infra "the node inventory changed during each of ${convergence_attempts} attempt(s) — refusing to report a fleet that never held still long enough to be checked"
+
+    printf '\nThe node set changed while it was being checked (a node joined, left, or was replaced). Re-running over the current fleet — attempt %s of %s.\n' \
+      "$((attempt + 1))" "${convergence_attempts}"
+    discovered_identities="${inventory_after}"
+    nodes_from_identities "${discovered_identities}"
+    [[ "${#nodes[@]}" -gt 0 ]] || fail_infra 'no nodes to check after the inventory changed'
+  done
+fi
 
 if [[ "${failures}" -gt 0 ]]; then
   printf '\n%s of %s node(s) cannot enforce image verification.\n' "${failures}" "${#nodes[@]}" >&2
