@@ -139,7 +139,7 @@ fi
 # ---------------------------------------------------------------------------
 floor_out="$WORK/floor.out"
 if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
-  PUBLISH_CONSUMER_ROOT="$WORK/empty" "$SCRIPT" >"$floor_out" 2>&1; then
+PUBLISH_CONSUMER_ROOT="$WORK/empty" "$SCRIPT" >"$floor_out" 2>&1; then
   fail 'discovery over an EMPTY tree exited 0 — an unreadable repository would report as clean'
 else
   pass 'discovery over an empty tree fails closed instead of reporting a clean portfolio'

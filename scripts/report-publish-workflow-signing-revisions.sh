@@ -68,8 +68,8 @@ fail() {
 # adding a consumer needs no edit unless its artifact name genuinely differs.
 oci_name_to_repo() {
   case "$1" in
-  github-config) printf '%s\n' '.github' ;;
-  *) printf '%s\n' "$1" ;;
+    github-config) printf '%s\n' '.github' ;;
+    *) printf '%s\n' "$1" ;;
   esac
 }
 
@@ -88,7 +88,7 @@ plausible_ref() {
   local ref="$1"
   [ -n "$ref" ] || return 1
   case "$ref" in
-  *[[:space:]]* | *'{'* | *'}'* | *'"'*) return 1 ;;
+    *[[:space:]]* | *'{'* | *'}'* | *'"'*) return 1 ;;
   esac
   return 0
 }
@@ -115,8 +115,8 @@ discover_consumers() {
     url="$(yq eval -r 'select(.kind == "OCIRepository") | .spec.url // ""' "$file" 2>/dev/null | grep -m1 . || true)"
     [ -n "$url" ] || continue
     case "$url" in
-    oci://ghcr.io/devantler-tech/*) ;;
-    *) continue ;;
+      oci://ghcr.io/devantler-tech/*) ;;
+      *) continue ;;
     esac
     repo="${url#oci://ghcr.io/devantler-tech/}"
     repo="${repo%%/*}"
