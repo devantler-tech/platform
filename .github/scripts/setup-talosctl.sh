@@ -27,7 +27,11 @@ TALOSCTL_SHA256="406b56f9e4ff03b1557cc941b1f163aec8a6ebb36e28f0bbbe6d08358952926
 
 asset_name="talosctl-linux-amd64"
 release_base="https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}"
-target="${RUNNER_TEMP:-/tmp}/talosctl"
+# mktemp, not a fixed name: the fallback below is a world-writable directory, so
+# a predictable path lets another user pre-create the target as a symlink and
+# have curl write through it — and it is this file that sudo install then reads.
+target=$(mktemp "${RUNNER_TEMP:-/tmp}/talosctl.XXXXXX")
+trap 'rm -f "${target}"' EXIT
 
 curl -fsSL "${release_base}/${asset_name}" -o "${target}"
 

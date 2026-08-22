@@ -175,19 +175,45 @@ assert_rejected_before_install 'could not be read, so whether the pin is stale o
 manifest_reachable=1
 
 # --- Case 5: every call site routes through the script, and none installs raw.
+#
+# Scoped to the "⚙️ Setup talosctl" STEP, not the whole file. A whole-file grep
+# is vacuous in ci.yaml, which also names the installer in its path filter and
+# in the step that runs this very suite — so reverting the real step to a raw
+# download still matched, and the check passed over exactly the regression it
+# exists to catch.
+extract_setup_step() {
+  awk '
+    /^[[:space:]]*-[[:space:]]*name:[[:space:]]*⚙️ Setup talosctl[[:space:]]*$/ { in_step = 1; next }
+    in_step && /^[[:space:]]*-[[:space:]]*name:/ { in_step = 0 }
+    in_step { print }
+  ' "$1"
+}
+
 for callsite in \
   .github/actions/deploy-prod/action.yml \
   .github/workflows/ci.yaml \
   .github/workflows/dr-rebuild.yaml \
   .github/workflows/validate-image-verifier-liveness.yaml; do
-  if ! grep -q '\.github/scripts/setup-talosctl\.sh' "${repo_root}/${callsite}"; then
-    printf 'call site does not use setup-talosctl.sh: %s\n' "${callsite}" >&2
+  step=$(extract_setup_step "${repo_root}/${callsite}")
+  # Assert the extraction fired: an empty block would make both checks below
+  # pass without reading anything.
+  if [ -z "${step}" ]; then
+    printf 'no "Setup talosctl" step found in %s\n' "${callsite}" >&2
     exit 1
   fi
-  if grep -q 'talosctl-linux-amd64' "${repo_root}/${callsite}"; then
-    printf 'call site still downloads talosctl directly: %s\n' "${callsite}" >&2
-    exit 1
-  fi
+  case "${step}" in
+    *".github/scripts/setup-talosctl.sh"*) ;;
+    *)
+      printf 'Setup talosctl step does not invoke the installer: %s\n' "${callsite}" >&2
+      exit 1
+      ;;
+  esac
+  case "${step}" in
+    *"curl"*|*"talosctl-linux-amd64"*)
+      printf 'Setup talosctl step still downloads talosctl directly: %s\n' "${callsite}" >&2
+      exit 1
+      ;;
+  esac
 done
 
 printf 'setup-talosctl verification tests passed\n'
