@@ -12,7 +12,7 @@ mkdir -p "$fixture/scripts" "$fixture/config"
 cp "$REPO_ROOT/scripts/guard-shared-publish-workflow-pin.sh" "$fixture/scripts/"
 
 subject="^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@([0-9a-f]{40}|refs/tags/v.+)$"
-for index in $(seq 1 8); do
+for _ in $(seq 1 8); do
   printf "subject: '%s'\n" "$subject" >>"$fixture/config/subjects.yaml"
 done
 
