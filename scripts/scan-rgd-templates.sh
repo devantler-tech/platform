@@ -20,6 +20,7 @@ readonly REQUIRED_TRIVY_VERSION="0.74.0"
 readonly RGD_ROOT_PATH="k8s/bases/infrastructure/resource-graph-definitions"
 
 RGD_PATHS=()
+RGD_API_VERSIONS=()
 RGD_KINDS=()
 
 fail() {
@@ -88,6 +89,18 @@ rgd_root="${SOURCE_ROOT}/${RGD_ROOT_PATH}"
 while IFS= read -r candidate; do
   [ "$(yq '.kind // ""' "$candidate")" = "ResourceGraphDefinition" ] || continue
   RGD_PATHS+=("${candidate#"$SOURCE_ROOT"/}")
+  definition_api_version="$(yq '.apiVersion // ""' "$candidate")"
+  definition_api_group="${definition_api_version%%/*}"
+  [ "$definition_api_group" != "$definition_api_version" ] ||
+    fail "RGD does not declare a grouped apiVersion: $candidate"
+  schema_api_version="$(yq '.spec.schema.apiVersion // ""' "$candidate")"
+  [ -n "$schema_api_version" ] || fail "RGD does not declare spec.schema.apiVersion: $candidate"
+  if [[ "$schema_api_version" == */* ]]; then
+    generated_api_version="$schema_api_version"
+  else
+    generated_api_version="${definition_api_group}/${schema_api_version}"
+  fi
+  RGD_API_VERSIONS+=("$generated_api_version")
   schema_kind="$(yq '.spec.schema.kind // ""' "$candidate")"
   [ -n "$schema_kind" ] || fail "RGD does not declare spec.schema.kind: $candidate"
   RGD_KINDS+=("$schema_kind")
@@ -95,6 +108,7 @@ done < <(find "$rgd_root" -type f \( -name '*.yaml' -o -name '*.yml' \) -print |
 
 [ "${#RGD_PATHS[@]}" -gt 0 ] || fail "no ResourceGraphDefinitions found below $rgd_root"
 readonly RGD_PATHS
+readonly RGD_API_VERSIONS
 readonly RGD_KINDS
 
 WORK="$(mktemp -d)"
@@ -111,11 +125,13 @@ while IFS= read -r candidate; do
   # YAML presentation choices must not bypass the instance guard. Non-mapping fixture documents are
   # ignored here and remain owned by the repository's ordinary YAML validation.
   while IFS= read -r instance_json; do
+    instance_api_version="$(jq -r '.apiVersion // ""' <<<"$instance_json")"
     instance_kind="$(jq -r '.kind // ""' <<<"$instance_json")"
     instance_name="$(jq -r '.spec.name // ""' <<<"$instance_json")"
     is_rgd_instance=false
-    for rgd_kind in "${RGD_KINDS[@]}"; do
-      if [ "$instance_kind" = "$rgd_kind" ]; then
+    for rgd_index in "${!RGD_KINDS[@]}"; do
+      if [ "$instance_api_version" = "${RGD_API_VERSIONS[$rgd_index]}" ] &&
+        [ "$instance_kind" = "${RGD_KINDS[$rgd_index]}" ]; then
         is_rgd_instance=true
         break
       fi
@@ -137,7 +153,6 @@ done < <(find "${SOURCE_ROOT}/k8s" -type f \( -name '*.yaml' -o -name '*.yml' \)
 template_count=0
 for relative_path in "${RGD_PATHS[@]}"; do
   source_file="${SOURCE_ROOT}/${relative_path}"
-  output_file="${WORK}/${relative_path}"
   [ -r "$source_file" ] || fail "RGD source is not readable: $source_file"
 
   count="$(yq '.spec.resources | length' "$source_file")"
@@ -146,17 +161,33 @@ for relative_path in "${RGD_PATHS[@]}"; do
     0) fail "RGD contains no templates: $source_file" ;;
   esac
 
-  mkdir -p "$(dirname "$output_file")"
-  # yq emits one YAML document per selected template. Keeping the original repository-relative
-  # path makes each finding attributable to the RGD that introduced it.
-  yq '.spec.resources[].template | split_doc' "$source_file" >"$output_file"
+  resource_count=0
+  while IFS= read -r resource_id; do
+    [ -n "$resource_id" ] || fail "RGD resource does not declare an id: $source_file"
+    [[ "$resource_id" =~ ^[A-Za-z0-9._-]+$ ]] ||
+      fail "RGD resource id cannot be represented as a finding target: $resource_id"
+    output_file="${WORK}/${relative_path}.resources/${resource_id}.yaml"
+    [ ! -e "$output_file" ] || fail "RGD resource id is duplicated: $resource_id in $source_file"
+    mkdir -p "$(dirname "$output_file")"
+    # One file per stable graph resource ID keeps findings attributable without depending on yq's
+    # emitted line positions. The original RGD path remains the prefix for source ownership.
+    RESOURCE_ID="$resource_id" yq \
+      '(.spec.resources[] | select(.id == strenv(RESOURCE_ID))).template' \
+      "$source_file" >"$output_file"
+    resource_count=$((resource_count + 1))
+  done < <(yq '.spec.resources[].id // ""' "$source_file")
+  [ "$resource_count" -eq "$count" ] ||
+    fail "RGD resource IDs do not map one-to-one with templates: $source_file"
+
   # Hash the complete graph spec: schema defaults plus every resource definition, including
   # includeWhen/forEach controls. jq owns stable key ordering and a compact representation, so a
   # runner yq update that changes only quoting or whitespace cannot invalidate the baseline.
+  content_file="${WORK}/${relative_path}.content.json"
+  mkdir -p "$(dirname "$content_file")"
   yq -o=json -I=0 '.spec' "$source_file" |
-    jq -cS '.' >"$output_file.content.json"
+    jq -cS '.' >"$content_file"
   printf '1\t%s\tRGD-CONTENT\tSHA256\t%s\n' \
-    "$relative_path" "$(sha256_file "$output_file.content.json")" >>"$WORK/content.tsv"
+    "$relative_path" "$(sha256_file "$content_file")" >>"$WORK/content.tsv"
   template_count=$((template_count + count))
 done
 

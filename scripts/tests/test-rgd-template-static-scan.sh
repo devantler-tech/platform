@@ -7,12 +7,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly REPO_ROOT
 readonly GATE="${REPO_ROOT}/scripts/scan-rgd-templates.sh"
+readonly BASELINE="${REPO_ROOT}/scripts/rgd-template-static-scan-baseline.tsv"
+readonly WIRING_TEST="${REPO_ROOT}/scripts/tests/test-rgd-template-static-scan-wiring.sh"
 readonly WEBAPP_RGD="k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml"
 readonly TENANT_RGD="k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
 readonly WEBAPP_INSTANCE="k8s/providers/docker/apps/web-app-wedding-app.yaml"
 readonly TENANT_INSTANCE="k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml"
-readonly MAIN_WORKFLOW="${REPO_ROOT}/.github/workflows/validate-main.yaml"
-readonly CI_WORKFLOW="${REPO_ROOT}/.github/workflows/ci.yaml"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -23,26 +23,8 @@ fail() {
 command -v yq >/dev/null 2>&1 || fail "yq is required"
 command -v trivy >/dev/null 2>&1 || fail "trivy is required"
 
-# A direct push to main bypasses pull-request and merge-group validation. Keep the same behavioral
-# gate on that path so the manual CD workflow cannot publish a nested-template regression unchecked.
-main_workflow_json="$(yq -o=json -I=0 '.' "$MAIN_WORKFLOW")"
-jq -e '
-  any(.jobs["validate-rgd-templates"].steps[];
-      (.uses // "") == "aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567"
-      and .with.version == "v0.74.0")
-' <<<"$main_workflow_json" >/dev/null ||
-  fail "validate-main.yaml does not pin the RGD gate's Trivy setup"
-jq -e '
-  any(.jobs["validate-rgd-templates"].steps[];
-      (.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh"))
-' <<<"$main_workflow_json" >/dev/null ||
-  fail "validate-main.yaml does not run the RGD template behavioral gate"
-ci_workflow_json="$(yq -o=json -I=0 '.' "$CI_WORKFLOW")"
-jq -e '
-  any(.jobs.changes.steps[];
-      .id == "filter" and (.with.filters | contains(".trivy/data/**")))
-' <<<"$ci_workflow_json" >/dev/null ||
-  fail "ci.yaml does not run the RGD gate when its Trivy policy data changes"
+"$WIRING_TEST" || fail "the RGD gate is not wired on every protected event route"
+
 # The real committed templates are the positive control. A gate that rejects them cannot be wired
 # into pull requests, and a test that exercises only the mutation cannot prove that it can.
 "$GATE" "$REPO_ROOT" || fail "the committed RGD templates do not pass the static-scan gate"
@@ -57,18 +39,37 @@ mkdir -p "$WORK/$(dirname "$WEBAPP_INSTANCE")"
 cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 cp "$REPO_ROOT/$TENANT_INSTANCE" "$WORK/$TENANT_INSTANCE"
 
+# Kind alone does not identify a generated KRO API. An unrelated group may legitimately define the
+# same Kind; it must not inherit KRO-specific placement or substitution policies.
+readonly UNRELATED_INSTANCE="k8s/providers/docker/apps/unrelated-webapp.yaml"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$UNRELATED_INSTANCE"
+yq -i '.apiVersion = "example.io/v1" | .spec.name = "kube-system"' "$WORK/$UNRELATED_INSTANCE"
+"$GATE" "$WORK" || fail "an unrelated API group with a shared Kind was treated as an RGD instance"
+rm -f "$WORK/$UNRELATED_INSTANCE"
+echo "PASS(probe): RGD instances are matched by API version and kind."
+
+# Finding counts must remain attributable to individual nested resources. Otherwise removing one
+# KSV-0039 finding while introducing the same rule on a sibling resource leaves the aggregate row
+# unchanged after the graph digest is reviewed.
+tenant_ksv0039_targets="$({
+  awk -F '\t' '$2 ~ /resource-graph-definitions\/tenant/ && $3 == "KSV-0039" { print $2 }' "$BASELINE" |
+    LC_ALL=C sort -u
+} | wc -l | tr -d ' ')"
+[ "$tenant_ksv0039_targets" -gt 1 ] ||
+  fail "the finding ratchet collapses KSV-0039 across Tenant resources"
+
 # The content ratchet represents parsed template semantics, not yq's emitted whitespace. Put a
-# wrapper first on PATH that adds harmless blank lines between serialized documents. This moves
-# Trivy's source ranges for later resources, so a finding identity that depends on yq-emitted line
-# numbers fails even though the parsed resources and findings are unchanged.
+# wrapper first on PATH that adds harmless blank lines before each serialized resource. This moves
+# Trivy's source range without changing the parsed manifest, so finding identity must remain stable.
 YQ_BIN="$(command -v yq)"
 readonly YQ_BIN
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/yq" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-if [ "${1:-}" = '.spec.resources[].template | split_doc' ]; then
-  "$REAL_YQ" "$@" | sed '/^---$/G'
+if [ "${1:-}" = '(.spec.resources[] | select(.id == strenv(RESOURCE_ID))).template' ]; then
+  printf '\n\n'
+  "$REAL_YQ" "$@"
 else
   exec "$REAL_YQ" "$@"
 fi
@@ -77,22 +78,6 @@ chmod +x "$WORK/bin/yq"
 PATH="$WORK/bin:$PATH" REAL_YQ="$YQ_BIN" "$GATE" "$WORK" ||
   fail "the finding or content ratchet depends on yq's YAML serialization"
 echo "PASS(probe): finding and content evidence ignore serializer-only whitespace."
-
-jq -e '
-  .jobs["validate-rgd-templates-merge-group"] as $gate
-  | (($gate.if // "") | contains("github.event_name == '\''merge_group'\''"))
-  and (($gate.needs | if type == "array" then . else [.] end) | index("changes") != null)
-  and any($gate.steps[];
-      (.uses // "") == "aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567"
-      and .with.version == "v0.74.0")
-  and any($gate.steps[];
-      (.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh"))
-  and ((.jobs["deploy-prod"].needs | if type == "array" then . else [.] end)
-      | index("validate-rgd-templates-merge-group") != null)
-  and ((.jobs["ci-required-checks"].needs | if type == "array" then . else [.] end)
-      | index("validate-rgd-templates-merge-group") != null)
-' <<<"$ci_workflow_json" >/dev/null ||
-  fail "ci.yaml does not gate merge-group deployment on the exact RGD behavioral scan"
 
 expect_rejected() {
   local label="$1" expected_id="$2" log="${WORK}/gate-probe.log"

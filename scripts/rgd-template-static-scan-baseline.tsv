@@ -5,20 +5,36 @@
 # This is not an ignore file: scan-rgd-templates.sh runs every Trivy misconfiguration check without
 # exclusions, then fails on any difference from these visible findings or canonical content digests.
 # RGD-CONTENT covers the complete graph spec, including schema defaults, conditions, and iteration;
-# INSTANCE-CONTENT covers every committed substitution input. Findings are counted by path, rule,
-# and severity rather than serializer-dependent line ranges. A removed finding leaves in the same
-# change; a new finding is fixed, not baselined.
+# INSTANCE-CONTENT covers every committed substitution input. Findings are counted by stable graph
+# resource target, rule, and severity rather than serializer-dependent line ranges, so equal rules
+# on sibling resources cannot cancel. A removed finding leaves in the same change; a new finding is
+# fixed, not baselined.
 # Measured with Trivy v0.74.0 and the policies embedded in that binary. CI pins the binary on pull
 # requests, merge groups, and direct main pushes; the gate rejects other versions and policy updates.
-7	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	KSV-0039	LOW	COUNTED
-6	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	KSV-0040	LOW	COUNTED
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	RGD-CONTENT	SHA256	01953c88886b926f0fdbfa2063cecd0139f63cd801ebc5bd59ce57e2e11eb92e
-1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	KSV-0013	MEDIUM	COUNTED
-1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	KSV-0014	HIGH	COUNTED
-1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	KSV-0020	LOW	COUNTED
-1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	KSV-0021	LOW	COUNTED
-3	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	KSV-0039	LOW	COUNTED
-3	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	KSV-0040	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/defaultDeny.yaml	KSV-0039	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/defaultDeny.yaml	KSV-0040	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ghcrAuth.yaml	KSV-0039	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ghcrAuth.yaml	KSV-0040	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/kustomization.yaml	KSV-0039	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/kustomization.yaml	KSV-0040	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/kustomizationSops.yaml	KSV-0039	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/kustomizationSops.yaml	KSV-0040	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/limitRange.yaml	KSV-0039	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/limitRange.yaml	KSV-0040	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0039	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0040	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/resourceQuota.yaml	KSV-0039	LOW	COUNTED
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	RGD-CONTENT	SHA256	5b69e95e01c4eb28d179a168b382645824c8141442fc29c242b1dd5faaf760ae
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0013	MEDIUM	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0014	HIGH	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0020	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0021	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0039	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0040	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/httpRoute.yaml	KSV-0039	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/httpRoute.yaml	KSV-0040	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/service.yaml	KSV-0039	LOW	COUNTED
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/service.yaml	KSV-0040	LOW	COUNTED
 1	k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml	INSTANCE-CONTENT	SHA256	7e65481a62deb24c89dca2e5f83969e308e7604e770d97edb15e86ecc948f22c
 1	k8s/providers/docker/apps/web-app-wedding-app.yaml	INSTANCE-CONTENT	SHA256	3d42027c7e549014cad1e717876a6eb72e0a6641f3bf181f7a0e1a70d94306d6

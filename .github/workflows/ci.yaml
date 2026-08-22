@@ -103,6 +103,13 @@ jobs:
           shellcheck scripts/tests/test-headlamp-oidc-version-gate.sh
           bash scripts/tests/test-headlamp-oidc-version-gate.sh
 
+      # Independent of the conditional validate job whose nested-RGD steps this protects. If those
+      # steps are removed, this unconditional job must still fail the PR and merge-group revision.
+      - name: 🔬 Validate nested RGD workflow wiring
+        run: |
+          shellcheck scripts/tests/test-rgd-template-static-scan-wiring.sh
+          bash scripts/tests/test-rgd-template-static-scan-wiring.sh
+
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
@@ -178,6 +185,7 @@ jobs:
               - 'scripts/scan-rgd-templates.sh'
               - 'scripts/rgd-template-static-scan-baseline.tsv'
               - 'scripts/tests/test-rgd-template-static-scan.sh'
+              - 'scripts/tests/test-rgd-template-static-scan-wiring.sh'
               # The version-drift guard reads its constants out of
               # megalinter-scan-counts.sh, so the three move together.
               - 'scripts/check-megalinter-version-drift.sh'
