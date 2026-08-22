@@ -41,6 +41,8 @@ kind: CronJob
 metadata:
   name: crossplane-sync-alerter
   namespace: observability
+  annotations:
+    checkov.io/skip1: "CKV_K8S_38=the alerter reads its SA token to list CRD schemas in bounded pages for exporter coverage"
 spec:
   # 5m: fast enough that a stuck resource surfaces well inside the 4h Slack
   # repeat_interval, slow enough to stay far below Alertmanager's cost of
@@ -105,7 +107,7 @@ spec:
                   SA_DIR="/var/run/secrets/kubernetes.io/serviceaccount"
                   curl_retry() {
                     curl -sS --retry 5 --retry-delay 2 --retry-all-errors \
-                      --retry-connrefused --max-time 30 "$@"
+                      --retry-connrefused --max-time 30 --retry-max-time 30 "$@"
                   }
 
                   # Alertmanager expires an alert at endsAt, so every alert this
@@ -160,23 +162,47 @@ spec:
                   # A newly installed provider or kind must not silently inherit
                   # broad RBAC. Compare CRD discovery with the exact inventory;
                   # a gap alerts until its GVK and read permission are reviewed.
-                  if ! CRDS=$(curl_retry --fail \
-                    --cacert "$SA_DIR/ca.crt" \
-                    -H "Authorization: Bearer $(cat "$SA_DIR/token")" \
-                    "$KUBE_API/apis/apiextensions.k8s.io/v1/customresourcedefinitions"); then
-                    echo "ERROR: Kubernetes CRD discovery failed"
-                    exit 1
-                  fi
-                  if [ "$(printf '%s' "$CRDS" | jq -r '.kind // ""')" != "CustomResourceDefinitionList" ]; then
-                    echo "ERROR: Kubernetes CRD discovery returned an unexpected response"
-                    exit 1
-                  fi
-                  if ! missing=$(printf '%s' "$CRDS" | jq -r \
-                    --rawfile configured /etc/crossplane-sync-exporter/managed-resources.tsv \
-                    -f /etc/crossplane-sync-exporter/managed-coverage-gaps.jq); then
-                    echo "ERROR: could not compare managed CRDs with exporter inventory"
-                    exit 1
-                  fi
+                  # Kubernetes pagination bounds each response so complete CRD
+                  # schemas are never buffered for the whole cluster at once.
+                  CRD_API="$KUBE_API/apis/apiextensions.k8s.io/v1/customresourcedefinitions"
+                  cursor=""
+                  missing=""
+                  while :; do
+                    if [ -n "$cursor" ]; then
+                      CRDS=$(curl_retry --fail --get \
+                        --cacert "$SA_DIR/ca.crt" \
+                        -H "Authorization: Bearer $(cat "$SA_DIR/token")" \
+                        --data-urlencode "limit=25" \
+                        --data-urlencode "continue=$cursor" \
+                        "$CRD_API") || {
+                          echo "ERROR: Kubernetes CRD discovery failed"
+                          exit 1
+                        }
+                    else
+                      CRDS=$(curl_retry --fail --get \
+                        --cacert "$SA_DIR/ca.crt" \
+                        -H "Authorization: Bearer $(cat "$SA_DIR/token")" \
+                        --data-urlencode "limit=25" \
+                        "$CRD_API") || {
+                          echo "ERROR: Kubernetes CRD discovery failed"
+                          exit 1
+                        }
+                    fi
+                    if [ "$(printf '%s' "$CRDS" | jq -r '.kind // ""')" != "CustomResourceDefinitionList" ]; then
+                      echo "ERROR: Kubernetes CRD discovery returned an unexpected response"
+                      exit 1
+                    fi
+                    if ! page_missing=$(printf '%s' "$CRDS" | jq -r \
+                      --rawfile configured /etc/crossplane-sync-exporter/managed-resources.tsv \
+                      -f /etc/crossplane-sync-exporter/managed-coverage-gaps.jq); then
+                      echo "ERROR: could not compare managed CRDs with exporter inventory"
+                      exit 1
+                    fi
+                    missing=$(printf '%s\n%s\n' "$missing" "$page_missing")
+                    cursor=$(printf '%s' "$CRDS" | jq -r '.metadata.continue // ""')
+                    [ -n "$cursor" ] || break
+                  done
+                  missing=$(printf '%s\n' "$missing" | sed '/^$/d' | LC_ALL=C sort -u)
                   if [ -n "$missing" ]; then
                     missing_text=$(printf '%s\n' "$missing" | jq -Rsr '
                       split("\n") | map(select(length > 0)) | join(", ")

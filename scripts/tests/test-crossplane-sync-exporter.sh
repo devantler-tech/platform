@@ -213,7 +213,7 @@ reject_unexpected_rules() {
       fi
     done
     [ "${matched}" -eq 1 ] ||
-      fail "the exporter must hold no RBAC rule beyond the two it needs (found: ${actual})"
+      fail "the inspected role carries an RBAC rule outside its closed expected set (found: ${actual})"
   done <<<"$(rule_signatures <<<"${cluster_role}")"
 }
 
@@ -301,6 +301,9 @@ require_line \
   "${alerter}" \
   'automountServiceAccountToken: true' \
   'the coverage check must receive the API token it uses'
+[ "$(yq eval -r '.metadata.annotations."checkov.io/skip1"' <<<"${alerter}")" = \
+  'CKV_K8S_38=the alerter reads its SA token to list CRD schemas in bounded pages for exporter coverage' ] ||
+  fail 'the intentional service-account token mount must carry its exact scanner rationale'
 
 coverage_role="$(
   extract_resource ClusterRole crossplane-sync-alerter <<<"${hetzner_rendered}"
@@ -329,6 +332,18 @@ require_text \
   "${alerter_script}" \
   '/apis/apiextensions.k8s.io/v1/customresourcedefinitions' \
   'the alerter must compare its inventory with live CRD discovery'
+require_text \
+  "${alerter_script}" \
+  '--data-urlencode "limit=25"' \
+  'the alerter must bound each CRD response instead of buffering the whole discovery surface'
+require_text \
+  "${alerter_script}" \
+  '.metadata.continue // ""' \
+  'the bounded CRD discovery loop must follow every Kubernetes continuation token'
+require_text \
+  "${alerter_script}" \
+  '--retry-max-time 30' \
+  'each five-attempt curl operation must remain bounded inside the job deadline'
 require_text \
   "${alerter_script}" \
   'managed-coverage-gaps.jq' \
@@ -428,7 +443,7 @@ actual_managed_gvks="$(
     .spec.resources[]
     | [.groupVersionKind.group, .groupVersionKind.version, .groupVersionKind.kind]
     | @tsv
-  ' <<<"${custom_resource_state}" | sort
+  ' <<<"${custom_resource_state}" | LC_ALL=C sort
 )"
 [ "${actual_managed_gvks}" = "${expected_managed_gvks}" ] ||
   fail 'the exporter must describe every installed Crossplane managed-resource GVK'
@@ -437,7 +452,7 @@ expected_managed_resources=$'actions.github.m.upbound.io\tv1alpha1\tRepositoryPe
 configured_managed_resources="$(
   yq eval -r '.data."managed-resources.tsv"' <<<"${config_map}" |
     sed '/^[[:space:]]*$/d' |
-    sort
+    LC_ALL=C sort
 )"
 [ "${configured_managed_resources}" = "${expected_managed_resources}" ] ||
   fail 'the runtime coverage sentinel must share the exporter managed-resource inventory'
