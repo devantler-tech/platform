@@ -77,7 +77,9 @@ jobs:
       # excepted controls for weeks (#2823). Unconditional, like the guard
       # above: the property it protects is not confined to the k8s paths.
       - name: 🔐 Validate the Kubescape gate's framework coverage
-        run: ./scripts/guard-kubescape-gate-frameworks.sh
+        run: |
+          go test ./scripts/validate-kubescape-frameworks
+          go run ./scripts/validate-kubescape-frameworks
 
       # .github/actionlint.yaml silences actionlint's "unexpected key" diagnostic
       # for concurrency.queue, which also removes its enum check. This restores it.
@@ -219,8 +221,8 @@ jobs:
               - 'scripts/guard-shared-publish-workflow-pin.sh'
               - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
               # Both halves, for the same reason as the guard above.
-              - 'scripts/guard-kubescape-gate-frameworks.sh'
-              - 'scripts/tests/test-kubescape-gate-frameworks-guard.sh'
+              - 'scripts/validate-kubescape-frameworks/main.go'
+              - 'scripts/validate-kubescape-frameworks/main_test.go'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
               - 'scripts/guard-checkov-skip-reasons.sh'
@@ -791,14 +793,6 @@ jobs:
         # prior contents of all eight subjects and would otherwise revert in
         # silence — plus the floor and the wiring that reaches it.
         run: bash scripts/tests/test-shared-publish-workflow-pin-guard.sh
-
-      - name: 🧪 Test the Kubescape framework-coverage guard
-        if: needs.changes.outputs.k8s == 'true'
-        # Pins the shapes the guard must reject — above all the pre-#3057
-        # `--framework nsa` gate, which is the exact prior configuration and
-        # would otherwise revert in silence — plus its fail-closed behaviour
-        # when the scan step moves, and the wiring that reaches it.
-        run: bash scripts/tests/test-kubescape-gate-frameworks-guard.sh
 
       - name: 🧷 Validate checkov skip reasons are quoted and intact
         if: needs.changes.outputs.k8s == 'true'
