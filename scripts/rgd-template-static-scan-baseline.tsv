@@ -1,9 +1,11 @@
-# Exact finding-count ratchet for Kubernetes manifests extracted from KRO RGDs.
-# Columns: count, repository-relative RGD path, Trivy check ID, severity, extracted line range.
+# Exact content-and-finding ratchet for Kubernetes manifests extracted from KRO RGDs.
+# Columns: count, repository-relative RGD path, evidence ID, severity/type, line range/digest.
 #
 # This is not an ignore file: scan-rgd-templates.sh runs every Trivy misconfiguration check without
-# exclusions, then fails on any difference from these visible findings. A finding removed from the
-# templates must be removed here in the same change; a new finding must be fixed, not baselined.
+# exclusions, then fails on any difference from these visible findings or the extracted-content
+# digests. The digests preserve value-sensitive cause evidence that an ID/count/range projection
+# loses. A finding removed from the templates must be removed here in the same change; a new finding
+# must be fixed, not baselined.
 # Measured with Trivy v0.74.0 and the policies embedded in that binary. Pull-request CI pins the
 # binary; scan-rgd-templates.sh rejects any other version and disables independent policy updates.
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	KSV-0039	LOW	109-132
@@ -19,6 +21,7 @@
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	KSV-0040	LOW	44-61
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	KSV-0040	LOW	67-71
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	KSV-0040	LOW	93-101
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	TEMPLATE-CONTENT	SHA256	c9b9cef4eddcf57e9dda3487a2edf5f568367eb2f868180f0d581dd7d89cb509
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	KSV-0013	MEDIUM	51-82
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	KSV-0014	HIGH	51-82
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	KSV-0020	LOW	51-82
@@ -29,3 +32,4 @@
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	KSV-0040	LOW	108-122
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	KSV-0040	LOW	13-82
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	KSV-0040	LOW	91-99
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	TEMPLATE-CONTENT	SHA256	1ed62321582fd52c1aa078504b4d79950570b9b218a427ee3c8fb4e539dd7be6

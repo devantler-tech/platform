@@ -9,6 +9,8 @@ readonly REPO_ROOT
 readonly GATE="${REPO_ROOT}/scripts/scan-rgd-templates.sh"
 readonly WEBAPP_RGD="k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml"
 readonly TENANT_RGD="k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
+readonly WEBAPP_INSTANCE="k8s/providers/docker/apps/web-app-wedding-app.yaml"
+readonly TENANT_INSTANCE="k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -29,6 +31,9 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/$(dirname "$WEBAPP_RGD")" "$WORK/$(dirname "$TENANT_RGD")"
 cp "$REPO_ROOT/$WEBAPP_RGD" "$WORK/$WEBAPP_RGD"
 cp "$REPO_ROOT/$TENANT_RGD" "$WORK/$TENANT_RGD"
+mkdir -p "$WORK/$(dirname "$WEBAPP_INSTANCE")"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
+cp "$REPO_ROOT/$TENANT_INSTANCE" "$WORK/$TENANT_INSTANCE"
 
 expect_rejected() {
   local label="$1" expected_id="$2" log="${WORK}/gate-probe.log"
@@ -55,6 +60,26 @@ cp "$REPO_ROOT/$WEBAPP_RGD" "$WORK/$PROBE_RGD"
 expect_rejected "an unbaselined third ResourceGraphDefinition" "$PROBE_RGD"
 rm -f "$WORK/$PROBE_RGD"
 rmdir "$WORK/$(dirname "$PROBE_RGD")"
+
+# A baselined finding must retain its reviewed cause, not merely its ID and line range. Replacing
+# the caller-supplied image expression with a forced mutable latest tag keeps KSV-0013 at the same
+# location and count, so a count-only ratchet accepts the changed cause.
+yq -i '(.spec.resources[] | select(.id == "deployment") |
+  .template.spec.template.spec.containers[0].image) = "nginx:latest"' "$WORK/$WEBAPP_RGD"
+[ "$(yq '.spec.resources[] | select(.id == "deployment") |
+  .template.spec.template.spec.containers[0].image' "$WORK/$WEBAPP_RGD")" = "nginx:latest" ] ||
+  fail "the baselined-cause regression fixture was not created"
+expect_rejected "a changed value hidden behind the same finding ID and range" "TEMPLATE-CONTENT"
+restore_webapp
+
+# Committed RGD instances can feed template expressions values the extraction cannot infer. Guard
+# the namespace-driving spec.name so an opt-in pilot cannot instantiate otherwise-safe templates
+# inside kube-system while both the ordinary custom-resource scan and template scan stay green.
+yq -i '.spec.name = "kube-system"' "$WORK/$WEBAPP_INSTANCE"
+[ "$(yq '.spec.name' "$WORK/$WEBAPP_INSTANCE")" = "kube-system" ] ||
+  fail "the unsafe committed-instance fixture was not created"
+expect_rejected "a committed WebApp instance targeting kube-system" "KSV-0037"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 
 # Mutate the nested Deployment rather than adding a top-level manifest. `privileged: true` is a
 # scanner-supported Kubernetes misconfiguration and represents exactly the blind spot this gate

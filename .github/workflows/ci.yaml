@@ -623,8 +623,8 @@ jobs:
         if: needs.changes.outputs.k8s == 'true'
         # Trivy does not descend through a ResourceGraphDefinition custom resource. Extract every
         # nested template, scan without the repository ignorefile, and compare the complete finding
-        # set to the explicit ratchet. The behavioural test proves privilege, resource-limit and
-        # kube-system-placement regressions each add a finding and fail this gate.
+        # set plus content digests to the explicit ratchet. The behavioural test also exercises new
+        # RGD discovery and committed instance inputs before the policy-regression probes.
         run: |
           shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
           bash scripts/tests/test-rgd-template-static-scan.sh

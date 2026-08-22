@@ -62,8 +62,10 @@ misconfigurations:
   # ordinary repository scan still sees only the outer custom resource, so #3055 added
   # scripts/scan-rgd-templates.sh: it extracts every nested template and deliberately scans them
   # WITHOUT this ignorefile. A generated workload placed in kube-system therefore changes the
-  # exact-finding ratchet and fails PR validation rather than inheriting this infrastructure-path
-  # disposition. Current templates use a tenant-derived namespace expression —
+  # content-and-finding ratchet and fails PR validation rather than inheriting this infrastructure-
+  # path disposition; committed RGD instances are checked separately before extraction so they
+  # cannot inject kube-system through a template expression. Current templates use an input-derived
+  # namespace expression —
   # `${tenantNamespace.metadata.name}` in Tenant or `${schema.spec.name}` in WebApp. Their only
   # kube-system references are RBAC grants naming the shared Gateway, not workload placement.
   - id: KSV-0037
