@@ -1221,48 +1221,7 @@ const (
 // 32587236884, job 97065434213). The local kubectl v1.36.1 render used by the
 // tests independently produced the identical value, while the full local CLI
 // correctly refused that renderer because the approved pin is v1.36.2.
-//
-// This value additionally covers giving crossview's bundled Postgres a
-// persistent data directory so its schema survives a database-pod restart
-// (#3314). The surface moves only because a HelmRelease is an
-// isControllerRBACEmitter, not because any grant changed: no identity, binding,
-// ServiceAccount, verb, policy or URL moved, and nothing granted to the aws/aws
-// service account this validator protects is touched.
-//
-// The previous approved digest is recorded here in full, so replacing the
-// constant does not lose it:
-//
-//	2e5ff04e52117cdbdc88261c35845e51a17ff31b709ed5b7d449b5076c08d8e1
-//
-// Measured by rendering all five authorization overlays from both trees:
-//
-//	807126 -> 807079 bytes, 26295 -> 26295 lines. The ENTIRE delta is 6 added
-//	and 6 removed lines across 2 hunks, all of them inside the one
-//	helm.toolkit.fluxcd.io/v2 HelmRelease crossview/crossview: the removed
-//	`postgres-data` emptyDir volume and its mount (a literal inside the
-//	postRenderers patch string), `enabled: false` -> the four
-//	database.persistence fields, and the two added podAnnotations lines.
-//
-// Grant-bearing document membership is 80 -> 80 and set-IDENTICAL in both
-// directions (Role 11, ClusterRole 24, RoleBinding 16, ClusterRoleBinding 12,
-// ServiceAccount 17) — nothing added, removed or renamed; `comm` reports zero
-// only-in-base and zero only-in-mine. The counts are corroborated by two
-// independent extractions that agree exactly: a structural yq selection, and a
-// line-oriented `^kind:` count that shares no query path with it. A third,
-// cruder awk extraction disagreed on document identity and was discarded as
-// broken rather than counted as agreement.
-//
-// The value came from the required hosted renderer (run 32599614421, job
-// 97095885294), and the local kubectl v1.36.1 render used by the tests
-// independently reproduced it — the same corroboration the previous entry
-// recorded. The full local CLI still refuses that renderer, correctly, because
-// the approved pin is v1.36.2, so validateRendererVersion fails closed there.
-//
-// The conservation evidence above deliberately compares the two trees under the
-// SAME local renderer rather than resting on either absolute digest: that is
-// what makes the delta attributable to this change instead of to a renderer
-// difference.
-const expectedRenderedSurfaceSHA = "158bd0bfeadc60dbb5aebde09c44847c2cefad122758e1403e183d29bd7b6d85"
+const expectedRenderedSurfaceSHA = "2e5ff04e52117cdbdc88261c35845e51a17ff31b709ed5b7d449b5076c08d8e1"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
