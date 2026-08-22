@@ -462,7 +462,6 @@ ref_case tag-and-semver '  ref:
 ref_case omitted '' 'latest'
 pass 'Flux reference precedence is digest > semver > tag, and an omitted ref means latest'
 
-
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1

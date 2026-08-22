@@ -177,16 +177,16 @@ discover_consumers() {
       repo="$(oci_name_to_repo "$repo")"
       plausible_repo "$repo" || continue
       printf '%s\t%s\t%s\n' "$repo" "$workflow" "$version"
-    # 🔴 FLUX RESOLVES `spec.ref` AS digest > semver > tag, AND AN OMITTED `ref` MEANS
-    # `latest`. Reading `tag` first inverts that: a document carrying BOTH a tag and a
-    # digest (or a tag and a semver) would be attributed to a tag Flux never serves, and
-    # the real signer would be omitted from the proposed allow-list — a confident wrong
-    # answer, which is the one outcome this report must never produce. A digest or an
-    # omitted ref also collapsed to the meaningless `semver:`, which `effective_version`
-    # then refused as a bounded constraint, so a resolvable consumer read as UNRESOLVED.
-    #
-    # These live OUTSIDE the single-quoted yq program deliberately: a backtick inside it
-    # reads as a command substitution to shellcheck (SC2016), so prose belongs out here.
+      # 🔴 FLUX RESOLVES `spec.ref` AS digest > semver > tag, AND AN OMITTED `ref` MEANS
+      # `latest`. Reading `tag` first inverts that: a document carrying BOTH a tag and a
+      # digest (or a tag and a semver) would be attributed to a tag Flux never serves, and
+      # the real signer would be omitted from the proposed allow-list — a confident wrong
+      # answer, which is the one outcome this report must never produce. A digest or an
+      # omitted ref also collapsed to the meaningless `semver:`, which `effective_version`
+      # then refused as a bounded constraint, so a resolvable consumer read as UNRESOLVED.
+      #
+      # These live OUTSIDE the single-quoted yq program deliberately: a backtick inside it
+      # reads as a command substitution to shellcheck (SC2016), so prose belongs out here.
     done < <(yq eval -r '
       select(.kind == "OCIRepository") |
       [(.spec.url // "-"),
