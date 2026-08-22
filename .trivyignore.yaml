@@ -572,9 +572,10 @@ misconfigurations:
   # INHERITS a low GID chosen for openbao rather than taking a high default, and `minio/mc` bakes no
   # such identity. vault-config can make that split because its shared paths are emptyDir, where
   # fsGroup's setgid bit carries the group regardless of the writer's primary gid (#3258); the
-  # vault-backup snapshots live on a PVC, where that has not been established — #3281 assumed it
-  # transferred and was withdrawn. The remaining 4 KSV-0021 findings therefore stay reported until
-  # that is measured, rather than being covered by a premise that does not hold. See #3202.
+  # vault-backup snapshots live on a PVC, where a high primary GID plus explicit group-1000
+  # membership has not been established — #3281 assumed the emptyDir premise transferred and was
+  # withdrawn. The remaining 4 KSV-0021 findings therefore stay reported under #2787 rather than
+  # being covered by a premise that does not hold.
   - id: KSV-0020
     paths:
       - k8s/bases/infrastructure/vault-backup/job.yaml

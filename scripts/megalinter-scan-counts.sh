@@ -106,9 +106,10 @@ readonly CI_MEGALINTER_VERSION='10.0.0'
 # Every framework CI runs is now at zero. The three that were left are all dispositioned with
 # scoped, resource-level skips naming their reason:
 #   CKV_K8S_38  CronJob.umami.umami-provision-tenants         (SA token mounted)   #3198
-#   CKV_K8S_40  CronJob.openbao.vault-snapshot                (high UID)           #2904
-#   CKV_K8S_40  Job.openbao.vault-snapshot-init               (high UID)           #2904
-# The two CKV_K8S_40 skips are DEFERRED, not accepted — #3202 removes them.
+#   CKV_K8S_40  CronJob.openbao.vault-snapshot                (image-defined UID)  #3282
+#   CKV_K8S_40  Job.openbao.vault-snapshot-init               (image-defined UID)  #3282
+# The two CKV_K8S_40 skips are narrow permanent dispositions: each pod defaults to high UID 65532,
+# and the identity-boundary guard permits UID 100 only on the container whose OpenBao image defines it.
 readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:0 github_actions:0)
 
 # A parsing error means a file was NOT analysed, so findings can hide behind it. CI's run has

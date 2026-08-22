@@ -157,9 +157,10 @@ spec:
               # run creates. #3246 made new snapshots 0640, but retention keeps the
               # newest 14, so every snapshot taken before it is still 0600 — readable
               # only by its owner. The mirror runs `mc mirror` over the WHOLE directory,
-              # so it can need to open any of them, and #3202 step 2 stops it being that
-              # owner. Widening them here, while this container still is, is what makes
-              # that move safe; a warning rather than a hard failure so a single odd file
+              # so it can need to open any of them. The mirror now runs as the pod's high
+              # UID and reads them through group 1000 instead of ownership. Widening them
+              # here, while the snapshot container still owns them, preserves that access;
+              # a warning rather than a hard failure means a single odd file
               # cannot take the nightly backup down.
               widened=0
               for EXISTING in /snapshots/openbao-*.snap; do
@@ -180,13 +181,12 @@ spec:
               SNAP="/snapshots/openbao-$(date -u +%Y%m%d-%H%M%S).snap"
               echo "Saving initial raft snapshot to $SNAP..."
               bao operator raft snapshot save "$SNAP"
-              # The mirror opens the snapshot as GROUP: both containers run
-              # fsGroup/runAsGroup 1000, and the kernel checks access on the numeric
-              # GID, so reading it needs no matching owner UID. An explicit chmod,
+              # The mirror opens the snapshot as GROUP: pod runAsGroup/fsGroup 1000
+              # makes 1000 its primary group while it inherits the pod's high UID 65532.
+              # The snapshot container alone uses the OpenBao image's UID 100. An explicit chmod,
               # NOT a umask: umask can only clear permission bits, so it cannot
-              # widen the 0600 `bao` creates the file with. The writers' UIDs stay
-              # pinned until the migration in #3202 (CKV_K8S_40); this removes the
-              # access coupling that blocked it.
+              # widen the 0600 `bao` creates the file with. The 0640 mode decouples
+              # mirror access from the image-defined owner UID.
               chmod 0640 "$SNAP"
               ls -l "$SNAP"
               echo "Initial snapshot complete."
