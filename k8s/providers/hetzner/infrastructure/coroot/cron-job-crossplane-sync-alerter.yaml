@@ -229,7 +229,11 @@ spec:
                   # resources, `sum by` 20 of 20 at exactly 15 samples each.
                   # Worst-case detection latency is 15m of grace plus up to one
                   # 5m cron period; the failure this watches for persisted 22 days.
-                  STUCK=$(q 'crossplane_managed_resource_condition{condition="Synced"} == 0 and on (name, namespace) (max by (name, namespace) (max_over_time(crossplane_managed_resource_condition{condition="Synced"}[15m])) == 0) and on (name, namespace) (count by (name, namespace) (count_over_time(crossplane_managed_resource_condition{condition="Synced"}[3m] offset 15m)) > 0) and on (name, namespace) (sum by (name, namespace) (count_over_time(crossplane_managed_resource_condition{condition="Synced"}[15m])) >= 12)')
+                  # ReconcilePaused is an explicit operator choice, not a stuck
+                  # reconciliation. Keep paused series in COV above so they still
+                  # prove the exporter is alive, but exclude them from every
+                  # selector participating in this joined history predicate.
+                  STUCK=$(q 'crossplane_managed_resource_condition{condition="Synced",reason!="ReconcilePaused"} == 0 and on (name, namespace) (max by (name, namespace) (max_over_time(crossplane_managed_resource_condition{condition="Synced",reason!="ReconcilePaused"}[15m])) == 0) and on (name, namespace) (count by (name, namespace) (count_over_time(crossplane_managed_resource_condition{condition="Synced",reason!="ReconcilePaused"}[3m] offset 15m)) > 0) and on (name, namespace) (sum by (name, namespace) (count_over_time(crossplane_managed_resource_condition{condition="Synced",reason!="ReconcilePaused"}[15m])) >= 12)')
                   if [ "$(printf '%s' "$STUCK" | jq -r '.status')" != "success" ]; then
                     echo "ERROR: Prometheus query for stuck resources failed"; exit 1
                   fi
