@@ -122,7 +122,7 @@ extract_one() {
 
 resolve_log() {
   command -v gh >/dev/null 2>&1 || die_unverifiable 'gh is not installed'
-  local dest="$1" run_id job_id runs page page_runs
+  local dest="$1" run_id job_id page page_runs head_sha saw_managed
 
   # This repository must NOT define the managed workflow itself. If it ever does, the path stops
   # being proof of org-managed provenance — an in-repo file could then be edited to emit whatever
@@ -179,8 +179,9 @@ prove org-managed provenance. Re-establish how the mega-linter job is identified
 
   # Select by the managed workflow's PATH, not the run's display name, then by job name within it.
   # Fetch explicit pages rather than `--paginate`: this keeps the API cost bounded while still
-  # preserving newest-first order across pages for the candidate loop below.
-  runs=''
+  # preserving newest-first order. Process each page before fetching the next so valid evidence is
+  # returned immediately and cannot be discarded by a later, unnecessary API failure.
+  saw_managed=no
   page=1
   while [ "$page" -le "$MAX_RUN_PAGES" ]; do
     page_runs="$(gh api \
@@ -189,43 +190,36 @@ prove org-managed provenance. Re-establish how the mega-linter job is identified
       2>/dev/null)" ||
       die_unverifiable "could not list recent runs page $page for $REPO"
     if [ -n "$page_runs" ]; then
-      if [ -n "$runs" ]; then
-        runs="$runs
-$page_runs"
-      else
-        runs="$page_runs"
+      saw_managed=yes
+    fi
+    while read -r run_id head_sha; do
+      [ -n "$run_id" ] || continue
+      if ! managed_path_absent_at "$head_sha"; then
+        printf 'Skipping run %s: %s is not provably absent at its revision %s, so that run is not\n' \
+          "$run_id" "$MANAGED_WORKFLOW_PATH" "$head_sha" >&2
+        printf '  org-managed and its log is not evidence of anything.\n' >&2
+        continue
       fi
-    fi
-    page=$((page + 1))
-  done
-  [ -n "$runs" ] ||
-    die_unverifiable "no recent runs of $MANAGED_WORKFLOW_PATH in the last $MAX_RUNS runs of $REPO"
-
-  local head_sha
-  while read -r run_id head_sha; do
-    [ -n "$run_id" ] || continue
-    if ! managed_path_absent_at "$head_sha"; then
-      printf 'Skipping run %s: %s is not provably absent at its revision %s, so that run is not\n' \
-        "$run_id" "$MANAGED_WORKFLOW_PATH" "$head_sha" >&2
-      printf '  org-managed and its log is not evidence of anything.\n' >&2
-      continue
-    fi
-    # A skipped job states no versions, so require one that actually executed.
-    job_id="$(gh api "repos/$REPO/actions/runs/$run_id/jobs?per_page=100" \
-      --jq ".jobs[]
+      # A skipped job states no versions, so require one that actually executed.
+      job_id="$(gh api "repos/$REPO/actions/runs/$run_id/jobs?per_page=100" \
+        --jq ".jobs[]
             | select(.name | test(\"$MEGALINTER_JOB_MATCH\"))
             | select(.conclusion == \"success\" or .conclusion == \"failure\")
             | .id" 2>/dev/null | head -1)" || continue
-    if [ -n "$job_id" ]; then
-      printf 'Reading mega-linter job %s (run %s of %s) in %s\n' \
-        "$job_id" "$run_id" "$MANAGED_WORKFLOW_PATH" "$REPO" >&2
-      fetch_log "$job_id" "$dest" ||
-        die_unverifiable "could not download the log for job $job_id"
-      return 0
-    fi
-  done <<EOF
-$runs
+      if [ -n "$job_id" ]; then
+        printf 'Reading mega-linter job %s (run %s of %s) in %s\n' \
+          "$job_id" "$run_id" "$MANAGED_WORKFLOW_PATH" "$REPO" >&2
+        fetch_log "$job_id" "$dest" ||
+          die_unverifiable "could not download the log for job $job_id"
+        return 0
+      fi
+    done <<EOF
+$page_runs
 EOF
+    page=$((page + 1))
+  done
+  [ "$saw_managed" = yes ] ||
+    die_unverifiable "no recent runs of $MANAGED_WORKFLOW_PATH in the last $MAX_RUNS runs of $REPO"
   die_unverifiable "no completed '$MEGALINTER_JOB_MATCH' job from a provably org-managed run in the
 last $MAX_RUNS runs of $REPO"
 }

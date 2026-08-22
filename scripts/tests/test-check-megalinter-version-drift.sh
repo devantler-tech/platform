@@ -192,6 +192,9 @@ case "$args" in
           page="${page%% *}"
           ;;
       esac
+      if [ "${GH_STUB_FAIL_RUNS_PAGE:-}" = "$page" ]; then
+        exit 1
+      fi
       if [ -n "${GH_STUB_RUN_PAGES_DIR:-}" ]; then
         page_file="$GH_STUB_RUN_PAGES_DIR/$page"
         [ ! -f "$page_file" ] || cat "$page_file"
@@ -297,6 +300,24 @@ else
   printf 'ok: a genuine run remains reachable on the second workflow-run page\n'
 fi
 unset GH_STUB_RUN_PAGES_DIR
+
+# Once a usable candidate on page one has passed every provenance check, later pages are irrelevant.
+# A transient failure fetching page two must not discard that already-validated evidence. The eager
+# collector does exactly that; processing each page before requesting the next one returns first.
+printf '111 %s\n' "$genuine_sha" >"$scratch/run-pages/1"
+: >"$scratch/run-pages/2"
+GH_STUB_RUN_PAGES_DIR="$scratch/run-pages"
+GH_STUB_FAIL_RUNS_PAGE=2
+export GH_STUB_RUN_PAGES_DIR GH_STUB_FAIL_RUNS_PAGE
+run_live
+if [ "$rc" -ne 0 ]; then
+  printf 'FAIL: early usable run — later page failure discarded valid evidence, got %d\n%s\n' \
+    "$rc" "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: a usable page-one run prevents unnecessary later page requests\n'
+fi
+unset GH_STUB_RUN_PAGES_DIR GH_STUB_FAIL_RUNS_PAGE
 
 # Discrimination: the newest candidate is tainted, the next is genuine. The guard must SKIP the
 # first and use the second. Consuming the first reports drift (exit 1) and aborting on it fails
