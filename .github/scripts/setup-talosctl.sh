@@ -43,10 +43,14 @@ if [ "${actual_digest}" != "${TALOSCTL_SHA256}" ]; then
       awk -v asset="${asset_name}" '$2 == asset {print $1}'
   ) || published_digest=''
 
-  if [ -n "${published_digest}" ] && [ "${published_digest}" = "${actual_digest}" ]; then
+  if [ -z "${published_digest}" ]; then
+    # Say so rather than implying the manifest disagreed — it was never read, so
+    # which of the two faults this is remains unknown.
+    echo "::error::talosctl digest mismatch for v${TALOS_VERSION}: expected ${TALOSCTL_SHA256}, got ${actual_digest}. This release's published sha256sum.txt could not be read, so whether the pin is stale or the bytes are wrong is undetermined. Refusing to install unverified bytes."
+  elif [ "${published_digest}" = "${actual_digest}" ]; then
     echo "::error::the pinned talosctl digest is stale for v${TALOS_VERSION} — the served bytes match this release's published sha256sum.txt, so the version was bumped without its digest. Set TALOSCTL_SHA256 to ${actual_digest} in .github/scripts/setup-talosctl.sh"
   else
-    echo "::error::talosctl digest mismatch for v${TALOS_VERSION}: expected ${TALOSCTL_SHA256}, got ${actual_digest} — the served bytes match neither the pin nor this release's published sha256sum.txt. Refusing to install unverified bytes."
+    echo "::error::talosctl digest mismatch for v${TALOS_VERSION}: expected ${TALOSCTL_SHA256}, got ${actual_digest} — the served bytes match neither the pin nor this release's published sha256sum.txt (${published_digest}). Refusing to install unverified bytes."
   fi
   exit 1
 fi

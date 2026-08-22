@@ -165,7 +165,7 @@ assert_rejected_before_install 'match neither the pin nor'
 manifest_reachable=0
 make_variant "${absent_digest}"
 run_installer
-assert_rejected_before_install 'talosctl digest mismatch'
+assert_rejected_before_install 'could not be read, so whether the pin is stale or the bytes are wrong is undetermined'
 manifest_reachable=1
 
 # --- Case 5: every call site routes through the script, and none installs raw.
