@@ -180,7 +180,12 @@ case "$args" in
     run="${args##*actions/runs/}"
     run="${run%%/jobs*}"
     printf 'job%s\n' "$run" ;;
-  *actions/runs*per_page*) cat "$GH_STUB_RUNS" ;;
+  *actions/runs*per_page*)
+    per_page="${args#*per_page=}"
+    per_page="${per_page%% *}"
+    if [ "$per_page" -ge "${GH_STUB_MIN_PER_PAGE:-0}" ]; then
+      cat "$GH_STUB_RUNS"
+    fi ;;
   *contents/.github/workflows/validate-go-project.yaml*)
     sha="${args##*ref=}"
     if grep -qxF -- "$sha" "$GH_STUB_TAINTED"; then
@@ -201,6 +206,7 @@ export GH_STUB_LOGDIR="$scratch/logs"
 export GH_STUB_RUNS="$scratch/runs.txt"
 export GH_STUB_TAINTED="$scratch/tainted.txt"
 export GH_STUB_UNRESOLVABLE="$scratch/unresolvable.txt"
+export GH_STUB_MIN_PER_PAGE=0
 : >"$scratch/unresolvable.txt"
 
 tainted_sha='deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
@@ -242,6 +248,22 @@ if [ "$rc" -ne 0 ]; then
 else
   printf 'ok: control — an untainted candidate is still consumed\n'
 fi
+
+# A dependency-update burst can create more than 40 repository-wide workflow runs between two
+# executed MegaLinter jobs. The live incident that motivated this case buried the newest usable job
+# at ordinal 99 even though it was less than an hour old. The selector must use the API's full
+# single-page capacity so unrelated workflows do not make recent evidence unreachable.
+GH_STUB_MIN_PER_PAGE=100
+printf '111 %s\n' "$genuine_sha" >"$scratch/runs.txt"
+run_live
+if [ "$rc" -ne 0 ]; then
+  printf 'FAIL: busy repository history — expected recent genuine run to be reachable, got %d\n%s\n' \
+    "$rc" "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: a genuine run remains reachable after more than 40 unrelated workflow runs\n'
+fi
+GH_STUB_MIN_PER_PAGE=0
 
 # Discrimination: the newest candidate is tainted, the next is genuine. The guard must SKIP the
 # first and use the second. Consuming the first reports drift (exit 1) and aborting on it fails

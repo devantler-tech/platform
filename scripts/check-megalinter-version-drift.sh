@@ -37,7 +37,11 @@ set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:-devantler-tech/platform}"
 MEGALINTER_JOB_MATCH='mega-linter'
-MAX_RUNS=40
+# Use GitHub's full single-page capacity. A burst of dependency updates can emit several workflows
+# per pull request; 40 repository-wide runs buried a valid MegaLinter job even though it was less
+# than an hour old (observed 2026-08-22). Keep this bounded to one request while making every result
+# that request can return available to the provenance filter below.
+MAX_RUNS=100
 
 # The org-managed workflow that runs mega-linter for this repository. Binding to it is a PROVENANCE
 # check, not decoration: the job is selected out of arbitrary recent runs, and a job's display name
