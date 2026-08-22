@@ -180,7 +180,28 @@ case "$args" in
     run="${args##*actions/runs/}"
     run="${run%%/jobs*}"
     printf 'job%s\n' "$run" ;;
-  *actions/runs*per_page*) cat "$GH_STUB_RUNS" ;;
+  *actions/runs*per_page*)
+    per_page="${args#*per_page=}"
+    per_page="${per_page%%&*}"
+    per_page="${per_page%% *}"
+    if [ "$per_page" -ge "${GH_STUB_MIN_PER_PAGE:-0}" ]; then
+      page=1
+      case "$args" in
+        *'&page='*)
+          page="${args##*&page=}"
+          page="${page%% *}"
+          ;;
+      esac
+      if [ "${GH_STUB_FAIL_RUNS_PAGE:-}" = "$page" ]; then
+        exit 1
+      fi
+      if [ -n "${GH_STUB_RUN_PAGES_DIR:-}" ]; then
+        page_file="$GH_STUB_RUN_PAGES_DIR/$page"
+        [ ! -f "$page_file" ] || cat "$page_file"
+      elif [ "$page" -eq 1 ]; then
+        cat "$GH_STUB_RUNS"
+      fi
+    fi ;;
   *contents/.github/workflows/validate-go-project.yaml*)
     sha="${args##*ref=}"
     if grep -qxF -- "$sha" "$GH_STUB_TAINTED"; then
@@ -201,6 +222,7 @@ export GH_STUB_LOGDIR="$scratch/logs"
 export GH_STUB_RUNS="$scratch/runs.txt"
 export GH_STUB_TAINTED="$scratch/tainted.txt"
 export GH_STUB_UNRESOLVABLE="$scratch/unresolvable.txt"
+export GH_STUB_MIN_PER_PAGE=0
 : >"$scratch/unresolvable.txt"
 
 tainted_sha='deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
@@ -242,6 +264,60 @@ if [ "$rc" -ne 0 ]; then
 else
   printf 'ok: control — an untainted candidate is still consumed\n'
 fi
+
+# A dependency-update burst can create more than 40 repository-wide workflow runs between two
+# executed MegaLinter jobs. The live incident that motivated this case buried the newest usable job
+# at ordinal 99 even though it was less than an hour old. The selector must use the API's full
+# single-page capacity so unrelated workflows do not make recent evidence unreachable.
+GH_STUB_MIN_PER_PAGE=100
+printf '111 %s\n' "$genuine_sha" >"$scratch/runs.txt"
+run_live
+if [ "$rc" -ne 0 ]; then
+  printf 'FAIL: busy repository history — expected recent genuine run to be reachable, got %d\n%s\n' \
+    "$rc" "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: a genuine run remains reachable after more than 40 unrelated workflow runs\n'
+fi
+GH_STUB_MIN_PER_PAGE=0
+
+# One full page of unrelated workflows must not hide the first managed candidate on page two. This
+# is the regression boundary from the review finding: `per_page=100` increases one response but does
+# not paginate it. The page fixture makes the old one-request implementation fail closed, while a
+# bounded multi-page lookup reaches the same genuine, provenance-checked candidate.
+mkdir -p "$scratch/run-pages"
+: >"$scratch/run-pages/1"
+printf '111 %s\n' "$genuine_sha" >"$scratch/run-pages/2"
+: >"$scratch/run-pages/3"
+GH_STUB_RUN_PAGES_DIR="$scratch/run-pages"
+export GH_STUB_RUN_PAGES_DIR
+run_live
+if [ "$rc" -ne 0 ]; then
+  printf 'FAIL: paginated history — expected page-two genuine run to be reachable, got %d\n%s\n' \
+    "$rc" "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: a genuine run remains reachable on the second workflow-run page\n'
+fi
+unset GH_STUB_RUN_PAGES_DIR
+
+# Once a usable candidate on page one has passed every provenance check, later pages are irrelevant.
+# A transient failure fetching page two must not discard that already-validated evidence. The eager
+# collector does exactly that; processing each page before requesting the next one returns first.
+printf '111 %s\n' "$genuine_sha" >"$scratch/run-pages/1"
+: >"$scratch/run-pages/2"
+GH_STUB_RUN_PAGES_DIR="$scratch/run-pages"
+GH_STUB_FAIL_RUNS_PAGE=2
+export GH_STUB_RUN_PAGES_DIR GH_STUB_FAIL_RUNS_PAGE
+run_live
+if [ "$rc" -ne 0 ]; then
+  printf 'FAIL: early usable run — later page failure discarded valid evidence, got %d\n%s\n' \
+    "$rc" "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: a usable page-one run prevents unnecessary later page requests\n'
+fi
+unset GH_STUB_RUN_PAGES_DIR GH_STUB_FAIL_RUNS_PAGE
 
 # Discrimination: the newest candidate is tainted, the next is genuine. The guard must SKIP the
 # first and use the second. Consuming the first reports drift (exit 1) and aborting on it fails

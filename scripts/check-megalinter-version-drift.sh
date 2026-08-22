@@ -37,7 +37,13 @@ set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:-devantler-tech/platform}"
 MEGALINTER_JOB_MATCH='mega-linter'
-MAX_RUNS=40
+# A burst of dependency updates can emit several workflows per pull request; 40 repository-wide
+# runs buried a valid MegaLinter job even though it was less than an hour old (observed 2026-08-22),
+# and one full 100-result page can be exhausted just as easily. Walk a bounded three pages in newest-
+# first order. The cap prevents an unbounded historical scan; exhausting it still fails closed below.
+RUNS_PER_PAGE=100
+MAX_RUN_PAGES=3
+MAX_RUNS=$((RUNS_PER_PAGE * MAX_RUN_PAGES))
 
 # The org-managed workflow that runs mega-linter for this repository. Binding to it is a PROVENANCE
 # check, not decoration: the job is selected out of arbitrary recent runs, and a job's display name
@@ -116,7 +122,7 @@ extract_one() {
 
 resolve_log() {
   command -v gh >/dev/null 2>&1 || die_unverifiable 'gh is not installed'
-  local dest="$1" run_id job_id runs
+  local dest="$1" run_id job_id page page_runs head_sha saw_managed
 
   # This repository must NOT define the managed workflow itself. If it ever does, the path stops
   # being proof of org-managed provenance — an in-repo file could then be edited to emit whatever
@@ -172,38 +178,48 @@ prove org-managed provenance. Re-establish how the mega-linter job is identified
   }
 
   # Select by the managed workflow's PATH, not the run's display name, then by job name within it.
-  runs="$(gh api "repos/$REPO/actions/runs?per_page=$MAX_RUNS" \
-    --jq ".workflow_runs[] | select(.path == \"$MANAGED_WORKFLOW_PATH\") | \"\(.id) \(.head_sha)\"" \
-    2>/dev/null)" ||
-    die_unverifiable "could not list recent runs for $REPO"
-  [ -n "$runs" ] ||
-    die_unverifiable "no recent runs of $MANAGED_WORKFLOW_PATH in the last $MAX_RUNS runs of $REPO"
-
-  local head_sha
-  while read -r run_id head_sha; do
-    [ -n "$run_id" ] || continue
-    if ! managed_path_absent_at "$head_sha"; then
-      printf 'Skipping run %s: %s is not provably absent at its revision %s, so that run is not\n' \
-        "$run_id" "$MANAGED_WORKFLOW_PATH" "$head_sha" >&2
-      printf '  org-managed and its log is not evidence of anything.\n' >&2
-      continue
+  # Fetch explicit pages rather than `--paginate`: this keeps the API cost bounded while still
+  # preserving newest-first order. Process each page before fetching the next so valid evidence is
+  # returned immediately and cannot be discarded by a later, unnecessary API failure.
+  saw_managed=no
+  page=1
+  while [ "$page" -le "$MAX_RUN_PAGES" ]; do
+    page_runs="$(gh api \
+      "repos/$REPO/actions/runs?per_page=$RUNS_PER_PAGE&page=$page" \
+      --jq ".workflow_runs[] | select(.path == \"$MANAGED_WORKFLOW_PATH\") | \"\(.id) \(.head_sha)\"" \
+      2>/dev/null)" ||
+      die_unverifiable "could not list recent runs page $page for $REPO"
+    if [ -n "$page_runs" ]; then
+      saw_managed=yes
     fi
-    # A skipped job states no versions, so require one that actually executed.
-    job_id="$(gh api "repos/$REPO/actions/runs/$run_id/jobs?per_page=100" \
-      --jq ".jobs[]
+    while read -r run_id head_sha; do
+      [ -n "$run_id" ] || continue
+      if ! managed_path_absent_at "$head_sha"; then
+        printf 'Skipping run %s: %s is not provably absent at its revision %s, so that run is not\n' \
+          "$run_id" "$MANAGED_WORKFLOW_PATH" "$head_sha" >&2
+        printf '  org-managed and its log is not evidence of anything.\n' >&2
+        continue
+      fi
+      # A skipped job states no versions, so require one that actually executed.
+      job_id="$(gh api "repos/$REPO/actions/runs/$run_id/jobs?per_page=100" \
+        --jq ".jobs[]
             | select(.name | test(\"$MEGALINTER_JOB_MATCH\"))
             | select(.conclusion == \"success\" or .conclusion == \"failure\")
             | .id" 2>/dev/null | head -1)" || continue
-    if [ -n "$job_id" ]; then
-      printf 'Reading mega-linter job %s (run %s of %s) in %s\n' \
-        "$job_id" "$run_id" "$MANAGED_WORKFLOW_PATH" "$REPO" >&2
-      fetch_log "$job_id" "$dest" ||
-        die_unverifiable "could not download the log for job $job_id"
-      return 0
-    fi
-  done <<EOF
-$runs
+      if [ -n "$job_id" ]; then
+        printf 'Reading mega-linter job %s (run %s of %s) in %s\n' \
+          "$job_id" "$run_id" "$MANAGED_WORKFLOW_PATH" "$REPO" >&2
+        fetch_log "$job_id" "$dest" ||
+          die_unverifiable "could not download the log for job $job_id"
+        return 0
+      fi
+    done <<EOF
+$page_runs
 EOF
+    page=$((page + 1))
+  done
+  [ "$saw_managed" = yes ] ||
+    die_unverifiable "no recent runs of $MANAGED_WORKFLOW_PATH in the last $MAX_RUNS runs of $REPO"
   die_unverifiable "no completed '$MEGALINTER_JOB_MATCH' job from a provably org-managed run in the
 last $MAX_RUNS runs of $REPO"
 }
