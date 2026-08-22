@@ -137,7 +137,7 @@ data:
 YAML
 nomatch_out="$WORK/nomatch.out"
 if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
-  PUBLISH_CONSUMER_ROOT="$nomatch_root" "$SCRIPT" >"$nomatch_out" 2>&1; then
+PUBLISH_CONSUMER_ROOT="$nomatch_root" "$SCRIPT" >"$nomatch_out" 2>&1; then
   fail 'discovery over a tree matching nothing exited 0 — a moved manifest would report as clean'
 else
   grep -q 'not discovered' "$nomatch_out" ||
@@ -175,7 +175,7 @@ YAML
 done <<<"$consumers"
 swap_out="$WORK/swap.out"
 if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
-  PUBLISH_CONSUMER_ROOT="$swap_root" "$SCRIPT" >"$swap_out" 2>&1; then
+PUBLISH_CONSUMER_ROOT="$swap_root" "$SCRIPT" >"$swap_out" 2>&1; then
   fail 'a discovery set of the right SIZE but wrong MEMBERSHIP passed — a consumer can vanish silently'
 else
   grep -q -- "$first_repo" "$swap_out" ||
