@@ -135,10 +135,8 @@ components:
   # Synced=False — measured on 3 of the 20 Repository resources — and every
   # health check keyed on Ready reads that fleet as healthy while no declared
   # setting is reaching the provider. Referenced here rather than from the
-  # shared Coroot base because Crossplane and the `github-config` app it
-  # observes exist only on this provider.
-  #
-  # The metric is the prerequisite for alerting on it; delivery is #2987.
+  # shared Coroot base because Crossplane exists only on this provider. The
+  # adjacent alerter delivers stuck-resource and coverage-gap notifications.
   - ../../../bases/infrastructure/coroot/components/crossplane-sync-exporter
   # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
   # opencost HelmRelease in this layer. See
