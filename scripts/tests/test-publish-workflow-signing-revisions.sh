@@ -357,7 +357,7 @@ bounded_out="$WORK/bounded.out"
 # the real one run — which made this case hit the network and fail in CI for an unrelated
 # reason. A hermetic case that reaches the branch is strictly better than a live one that does.
 if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
-  PUBLISH_CONSUMER_ROOT="$bounded_root" "$SCRIPT" >"$bounded_out" 2>&1; then
+PUBLISH_CONSUMER_ROOT="$bounded_root" "$SCRIPT" >"$bounded_out" 2>&1; then
   fail 'a bounded semver constraint was silently resolved to the newest tag instead of refusing'
 else
   grep -q 'bounded semver constraint' "$bounded_out" ||

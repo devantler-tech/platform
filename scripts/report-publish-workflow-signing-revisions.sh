@@ -187,11 +187,17 @@ discover_consumers() {
 effective_version() {
   local raw="$1" expr
   case "$raw" in
-    '-' | '') printf '%s\n' ''; return 0 ;;
+    '-' | '')
+      printf '%s\n' ''
+      return 0
+      ;;
     semver:*)
       expr="${raw#semver:}"
       case "$expr" in
-        '*' | '>='[0-9]*) printf '%s\n' ''; return 0 ;;
+        '*' | '>='[0-9]*)
+          printf '%s\n' ''
+          return 0
+          ;;
         *)
           printf 'bounded semver constraint "%s" needs Flux-compatible selection, which this script does not implement\n' \
             "$expr" >&2
@@ -199,7 +205,10 @@ effective_version() {
           ;;
       esac
       ;;
-    *) printf '%s\n' "$raw"; return 0 ;;
+    *)
+      printf '%s\n' "$raw"
+      return 0
+      ;;
   esac
 }
 
