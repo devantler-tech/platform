@@ -44,7 +44,9 @@ exists, and holds at least one executable.
 Nodes are discovered from the cluster when --nodes/TALOS_NODES is not given, so
 autoscaled nodes are covered without anyone maintaining a list.
 
-Environment overrides: TALOSCTL, KUBECTL, TALOS_NODES, CONTAINERD_CONFIG_FILES
+Environment overrides: TALOSCTL, KUBECTL, TALOS_NODES, CONTAINERD_CONFIG_FILES,
+IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS (default 3; how many times discovery re-reads
+a node inventory that changed while the fleet was being checked, before giving up)
 Exit: 0 every node can enforce; 1 at least one cannot; 2 usage/infrastructure error.
 USAGE
   exit 2
@@ -272,18 +274,25 @@ plugin_disabled_in() {
   "${talosctl_bin}" -n "${node}" read "${file}" 2>/dev/null | awk '
     BEGIN {
       SQ = sprintf("%c", 39); DQ = sprintf("%c", 34)
-      toplevel = 1; in_array = 0; buf = ""
+      toplevel = 1; in_array = 0; buf = ""; disabled = 0
     }
+    # Records the verdict rather than printing and exiting on it. Exiting here
+    # would close the pipe while `talosctl read` is still writing, and under
+    # `set -o pipefail` the resulting SIGPIPE is indistinguishable from a real
+    # read failure -- so a genuinely disabled node on a large config would be
+    # reported as an infrastructure error instead of the FAIL it is. Consume to
+    # EOF and print from END. (extract_bin_dir_from documents the same hazard.)
     function verdict(text,   probe) {
       probe = text
       gsub(SQ, "", probe); gsub(DQ, "", probe); gsub(/[ \t]/, "", probe)
       if (index(probe, "io.containerd.image-verifier.v1.bindir") > 0) {
-        print "disabled"
-        exit
+        disabled = 1
       }
     }
+    END { if (disabled) print "disabled" }
     # A continuation of the array is consumed before the header rule below, so a
     # value that happens to start with a bracket cannot be mistaken for a table.
+    disabled { next }
     in_array {
       buf = buf $0
       if (index($0, "]") > 0) { in_array = 0; verdict(buf) }
@@ -526,7 +535,12 @@ else
     inventory_after="$(discover_nodes)" ||
       fail_infra 'could not re-read the node inventory after the checks — refusing to report a fleet that may have changed underneath the pass'
 
-    [[ "${inventory_after}" != "${discovered_identities}" ]] || break
+    # Compare the identity SET, not the stream. `kubectl get nodes` gives no
+    # ordering guarantee, so a plain string compare would call a re-ordered but
+    # otherwise identical fleet "changed", re-run the whole pass, and can burn
+    # the attempt bound into an exit 2 for a cluster that never moved.
+    [[ "$(printf '%s\n' "${inventory_after}" | LC_ALL=C sort)" \
+      != "$(printf '%s\n' "${discovered_identities}" | LC_ALL=C sort)" ]] || break
 
     [[ "${attempt}" -lt "${convergence_attempts}" ]] ||
       fail_infra "the node inventory changed during each of ${convergence_attempts} attempt(s) — refusing to report a fleet that never held still long enough to be checked"

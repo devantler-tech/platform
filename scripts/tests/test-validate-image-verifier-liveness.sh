@@ -142,7 +142,11 @@ chmod +x "${fake_bin}/talosctl"
 # after them, so a per-call answer is what lets a test move the fleet in the
 # window between those two reads -- the autoscaler race the convergence loop
 # exists to close. Cases that stage no sequence are unaffected.
-cat >"${fake_bin}/kubectl" <<'FAKE'
+# Defined once and reused: later cases replace the fake with static variants, so
+# any case needing the sequenced behaviour back calls this rather than pasting a
+# second copy that could drift from this one.
+install_sequenced_kubectl() {
+  cat >"${fake_bin}/kubectl" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 call_count_file="${FIXTURES}/kubectl-call-count"
@@ -154,7 +158,10 @@ else
   cat "${FIXTURES}/nodes.json"
 fi
 FAKE
-chmod +x "${fake_bin}/kubectl"
+  chmod +x "${fake_bin}/kubectl"
+}
+
+install_sequenced_kubectl
 
 # Clears both the counter and any staged sequence, so one case's fleet cannot
 # leak into the next.
@@ -936,27 +943,42 @@ output="$(run_script TALOS_NODES=disabled 2>&1)" ||
   fail 'case 24: a non-root disabled_plugins key must not be treated as the root one'
 require_text "${output}" 'OK   disabled' 'case 24: scoped to the root key'
 
+# A LARGE config with the disabled key near the top. This is the SIGPIPE case:
+# an awk that printed its verdict and exited would close the pipe while
+# `talosctl read` was still writing, and under `set -o pipefail` that SIGPIPE is
+# indistinguishable from a genuine read failure -- so the node would be reported
+# as an INFRASTRUCTURE error (exit 2) rather than the FAIL it is. The verdict has
+# to survive reading the whole file.
+{
+  printf 'version = 3\n'
+  printf "disabled_plugins = ['io.containerd.image-verifier.v1.bindir']\n"
+  printf '\n[plugins]\n'
+  printf "  [plugins.'io.containerd.image-verifier.v1.bindir']\n"
+  printf "    bin_dir = '/opt/containerd/image-verifier/bin'\n"
+  # Filler well past a pipe buffer, so the producer is still writing when a
+  # short-circuiting reader would have quit.
+  awk 'BEGIN { for (i = 0; i < 20000; i++) print "# padding line to outrun the pipe buffer" }'
+} >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml"
+
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a disabled plugin in a LARGE config must still fail the node'
+else
+  status=$?
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: large config still reports the disabled plugin'
+if [ "${status}" -ne 1 ]; then
+  printf 'FAIL: case 24: a disabled plugin in a large config must exit 1 (verdict), got %s — a SIGPIPE from an early awk exit is being reported as an infrastructure error\n%s\n' \
+    "${status}" "${output}" >&2
+  exit 1
+fi
+refute_text "${output}" 'talosctl read failed' 'case 24: not misreported as a read failure'
+
 # ===========================================================================
 # Case 25 — the node set changes WHILE the fleet is being checked. The
 # inventory is read before a serial pass, so an autoscaler that adds or
 # replaces a worker mid-run would otherwise leave that machine uninspected
 # while every node in the stale snapshot reported healthy.
 # ===========================================================================
-install_sequenced_kubectl() {
-  cat >"${fake_bin}/kubectl" <<'FAKE'
-#!/usr/bin/env bash
-set -euo pipefail
-call_count_file="${FIXTURES}/kubectl-call-count"
-call_number=$(( $(cat "${call_count_file}" 2>/dev/null || printf '0') + 1 ))
-printf '%s' "${call_number}" >"${call_count_file}"
-if [[ -f "${FIXTURES}/nodes.${call_number}.json" ]]; then
-  cat "${FIXTURES}/nodes.${call_number}.json"
-else
-  cat "${FIXTURES}/nodes.json"
-fi
-FAKE
-  chmod +x "${fake_bin}/kubectl"
-}
 install_sequenced_kubectl
 
 node_json() { printf '{"metadata":{"name":"%s","uid":"%s"},"status":{"addresses":[{"type":"InternalIP","address":"%s"}]}}' "$1" "$2" "$3"; }
@@ -998,6 +1020,20 @@ if output="$(run_script IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS=2 2>&1)"; then
   fail 'case 25: an inventory that never settles must not report a verdict'
 fi
 require_text "${output}" 'never held still' 'case 25: says the fleet would not settle'
+
+# The SAME fleet returned in a DIFFERENT order across the two reads must settle,
+# not re-run. `kubectl get nodes` guarantees no ordering, so comparing the
+# discovery stream as a string would call a re-ordered but identical fleet
+# "changed" and could burn the attempt bound into an exit 2 for a cluster that
+# never moved. Attempts are pinned at 1 so any re-run at all is a failure.
+install_sequenced_kubectl
+reset_node_sequence
+printf '{"items":[%s,%s]}' "$(node_json prod-worker-1 uid-1 good)" "$(node_json prod-worker-2 uid-2 onlysystem)" >"${fixtures}/nodes.1.json"
+printf '{"items":[%s,%s]}' "$(node_json prod-worker-2 uid-2 onlysystem)" "$(node_json prod-worker-1 uid-1 good)" >"${fixtures}/nodes.2.json"
+output="$(run_script IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS=1 2>&1)" ||
+  fail 'case 25: a re-ordered but identical fleet must settle, not be treated as a change'
+require_text "${output}" 'All 2 node(s)' 'case 25: the re-ordered fleet is reported normally'
+refute_text "${output}" 'The node set changed' 'case 25: re-ordering is not a change'
 
 # ===========================================================================
 # Case 26 — an autoscaler replacement that REUSES the retired node's address.
