@@ -1163,25 +1163,30 @@ const (
 // resting on one renderer. The conservation figures above were computed with the
 // SAME local renderer on both trees, so that comparison is unaffected by the pin.
 //
-// Measured against current main f6bcdee4 before approving this value: the
-// authorization-surface membership is unchanged because the PR edits one
-// existing document only. Exactly one authorization-capable document moves:
+// Measured against current main 026372f9 before approving this value: the
+// authorization-surface membership is unchanged. Exactly one selected
+// authorization-capable document moves:
 //
-//	helm.toolkit.fluxcd.io/v2  HelmRelease  actual-budget/actual-budget
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  kube-system/cilium
 //
-// Its complete rendered delta changes only the custom Deployment image from
-// actualbudget/actual-server:26.7.0 to :26.8.1. It names no subject, role,
-// binding, verb, AWS identity, permission, service account, or secret reference.
-// No grant-bearing source file changes.
+// Its complete rendered delta changes only the SPIRE data-permission init
+// container's pinned BusyBox index from fd8d9aa6... to dc2d74b2.... The
+// command, name, security context, volume mounts, service account, and all
+// chart values around it are byte-identical. The same digest moves in both
+// containers of userns-longhorn-smoke, a production-only Job deliberately
+// omitted from its parent kustomization until a short-lived activation PR;
+// their commands, non-root identities, and restrictive security contexts are
+// unchanged. No subject, role, binding, verb, AWS identity, permission, or
+// grant-bearing source file changes.
 //
 // The previous approved digest remains recorded here:
 //
-//	82dc17b954fecf5122608a519efb6c23eaf9597b9a7e5fe867c53672c511e4fe
+//	dc6ca143f54e95da342e7da1bdb747f02fa782f1d7dc5ec5cf9488151687a0ed
 //
 // The new fingerprint was read from the required job's approved renderer (run
-// 32534315329, job 96932344753). The local renderer is deliberately refused on
-// its kubectl patch pin, so the required job remains the authoritative source.
-const expectedRenderedSurfaceSHA = "dc6ca143f54e95da342e7da1bdb747f02fa782f1d7dc5ec5cf9488151687a0ed"
+// 32537665794, job 96941582102). The local approved renderer independently
+// produced the identical value.
+const expectedRenderedSurfaceSHA = "072296094a73bafe660540b84da2ee94bbe0683d90c7fc9ed97a6d6f9c292d7a"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
