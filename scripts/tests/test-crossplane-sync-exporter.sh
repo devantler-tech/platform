@@ -304,6 +304,9 @@ require_line \
 [ "$(yq eval -r '.metadata.annotations."checkov.io/skip1"' <<<"${alerter}")" = \
   'CKV_K8S_38=the alerter reads its SA token to list CRD schemas in bounded pages for exporter coverage' ] ||
   fail 'the intentional service-account token mount must carry its exact scanner rationale'
+[ "$(yq eval -r '.metadata.annotations."kustomize.toolkit.fluxcd.io/substitute"' <<<"${alerter}")" = \
+  'disabled' ] ||
+  fail 'Flux substitution must stay disabled so the pod receives its Kubernetes service environment references'
 
 coverage_role="$(
   extract_resource ClusterRole crossplane-sync-alerter <<<"${hetzner_rendered}"
