@@ -192,12 +192,11 @@ jq -r '
     | {
         target: $result.Target,
         id: .ID,
-        severity: .Severity,
-        location: "\(.CauseMetadata.StartLine // 0)-\(.CauseMetadata.EndLine // 0)"
+        severity: .Severity
       }
   ]
-  | group_by([.target, .id, .severity, .location])[]
-  | [length, .[0].target, .[0].id, .[0].severity, .[0].location]
+  | group_by([.target, .id, .severity])[]
+  | [length, .[0].target, .[0].id, .[0].severity, "COUNTED"]
   | @tsv
 ' "$WORK/results.json" >"$WORK/findings.tsv"
 

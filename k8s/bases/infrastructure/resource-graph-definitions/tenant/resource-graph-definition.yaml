@@ -11,8 +11,8 @@
 # complete resource-graph and committed-instance digests are ratcheted in
 # scripts/rgd-template-static-scan-baseline.tsv; explicit placement and image policies run too.
 # scripts/tests/test-rgd-template-static-scan.sh proves discovery, cause, privilege, resource, and
-# namespace regressions are rejected on pull requests and direct pushes to main. Never exclude this
-# directory when adding a template.
+# namespace regressions are rejected on pull requests, exact merge-group revisions, and direct
+# pushes to main. Never exclude this directory when adding a template.
 #
 # Onboarding a tenant becomes a ~5-line `Tenant` CR instead of a ~7-file copy:
 #

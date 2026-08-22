@@ -43,7 +43,6 @@ jq -e '
       .id == "filter" and (.with.filters | contains(".trivy/data/**")))
 ' <<<"$ci_workflow_json" >/dev/null ||
   fail "ci.yaml does not run the RGD gate when its Trivy policy data changes"
-
 # The real committed templates are the positive control. A gate that rejects them cannot be wired
 # into pull requests, and a test that exercises only the mutation cannot prove that it can.
 "$GATE" "$REPO_ROOT" || fail "the committed RGD templates do not pass the static-scan gate"
@@ -59,8 +58,9 @@ cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 cp "$REPO_ROOT/$TENANT_INSTANCE" "$WORK/$TENANT_INSTANCE"
 
 # The content ratchet represents parsed template semantics, not yq's emitted whitespace. Put a
-# wrapper first on PATH that adds a harmless blank line to YAML extraction; a byte-for-byte digest
-# of serializer output fails here even though the parsed resources and Trivy findings are unchanged.
+# wrapper first on PATH that adds harmless blank lines between serialized documents. This moves
+# Trivy's source ranges for later resources, so a finding identity that depends on yq-emitted line
+# numbers fails even though the parsed resources and findings are unchanged.
 YQ_BIN="$(command -v yq)"
 readonly YQ_BIN
 mkdir -p "$WORK/bin"
@@ -68,16 +68,31 @@ cat >"$WORK/bin/yq" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [ "${1:-}" = '.spec.resources[].template | split_doc' ]; then
-  "$REAL_YQ" "$@"
-  printf '\n'
+  "$REAL_YQ" "$@" | sed '/^---$/G'
 else
   exec "$REAL_YQ" "$@"
 fi
 EOF
 chmod +x "$WORK/bin/yq"
 PATH="$WORK/bin:$PATH" REAL_YQ="$YQ_BIN" "$GATE" "$WORK" ||
-  fail "the content ratchet depends on yq's YAML serialization"
-echo "PASS(probe): semantic content evidence ignores serializer-only whitespace."
+  fail "the finding or content ratchet depends on yq's YAML serialization"
+echo "PASS(probe): finding and content evidence ignore serializer-only whitespace."
+
+jq -e '
+  .jobs["validate-rgd-templates-merge-group"] as $gate
+  | (($gate.if // "") | contains("github.event_name == '\''merge_group'\''"))
+  and (($gate.needs | if type == "array" then . else [.] end) | index("changes") != null)
+  and any($gate.steps[];
+      (.uses // "") == "aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567"
+      and .with.version == "v0.74.0")
+  and any($gate.steps[];
+      (.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh"))
+  and ((.jobs["deploy-prod"].needs | if type == "array" then . else [.] end)
+      | index("validate-rgd-templates-merge-group") != null)
+  and ((.jobs["ci-required-checks"].needs | if type == "array" then . else [.] end)
+      | index("validate-rgd-templates-merge-group") != null)
+' <<<"$ci_workflow_json" >/dev/null ||
+  fail "ci.yaml does not gate merge-group deployment on the exact RGD behavioral scan"
 
 expect_rejected() {
   local label="$1" expected_id="$2" log="${WORK}/gate-probe.log"

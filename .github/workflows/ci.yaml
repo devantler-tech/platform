@@ -1320,9 +1320,42 @@ jobs:
           validate_overlay talos cloud          # prod (Hetzner)
           validate_overlay talos-local container # local Docker test-bed
 
+  validate-rgd-templates-merge-group:
+    name: 🔬 Validate Nested RGD Workload Templates (merge group)
+    needs: [changes]
+    # The PR job proves the proposed head, but production deploys the speculative merge-group
+    # revision. Re-run the complete behavioral contract on that exact revision before deploy-prod
+    # can acquire the production environment or publish an artifact.
+    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Trivy for nested RGD templates
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+          cache: true
+
+      - name: 🔬 Validate nested RGD workload templates
+        run: |
+          shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
+          bash scripts/tests/test-rgd-template-static-scan.sh
+
   deploy-prod:
     name: 🚀 Deploy to Prod
-    needs: [changes, validate-eks-authorization, validate-publication-contract]
+    needs:
+      [
+        changes,
+        validate-eks-authorization,
+        validate-publication-contract,
+        validate-rgd-templates-merge-group,
+      ]
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     environment: prod
@@ -1438,6 +1471,7 @@ jobs:
         validate,
         naming,
         validate-talos,
+        validate-rgd-templates-merge-group,
         deploy-prod,
       ]
     if: always()
@@ -1454,4 +1488,5 @@ jobs:
             ${{ needs.validate.result }}
             ${{ needs.naming.result }}
             ${{ needs.validate-talos.result }}
+            ${{ needs.validate-rgd-templates-merge-group.result }}
             ${{ needs.deploy-prod.result }}
