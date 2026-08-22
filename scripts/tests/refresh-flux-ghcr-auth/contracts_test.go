@@ -229,14 +229,20 @@ func TestDeployActionTalosctlIsInstalledBeforeAnyMutatingBridge(t *testing.T) {
 			stage := requireIndex(t, test.document, "id: stage_flux_ghcr_auth")
 			requireBefore(t, setup, stage, "talosctl setup before credential staging")
 			setupStep := test.document[setup:stage]
-			requireContains(t, setupStep, fmt.Sprintf("TALOS_VERSION: %q", talosVersion))
-			requireContains(t, setupStep, "talosctl-linux-amd64")
+			requireContains(t, setupStep, ".github/scripts/setup-talosctl.sh")
 			if test.requireRestore {
 				restore := requireIndex(t, test.document, "name: 🔑 Restore talosconfig")
 				requireBefore(t, restore, stage, "talosconfig restore before credential staging")
 			}
 		})
 	}
+
+	// The version and the asset moved into the shared installer, so assert them
+	// there rather than at each call site — this now covers all four sites, not
+	// just the two documents above.
+	installer := readRepositoryFile(t, ".github/scripts/setup-talosctl.sh")
+	requireContains(t, installer, fmt.Sprintf("TALOS_VERSION=%q", talosVersion))
+	requireContains(t, installer, "talosctl-linux-amd64")
 }
 
 func TestDeployActionConsumerStagingPrecedesPublishAndIsReassertedAfterUpdate(t *testing.T) {
