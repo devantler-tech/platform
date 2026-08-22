@@ -88,6 +88,16 @@ stuck_query_excludes_only_paused() {
     [ "$(count_literal "${query}" "${unfiltered_selector}")" -eq 0 ]
 }
 
+stuck_query_joins_full_resource_identity() {
+  local query="$1"
+  local identity='customresource_group, customresource_version, customresource_kind, name, namespace'
+
+  [ "$(count_literal "${query}" "on (${identity})")" -eq 3 ] &&
+    [ "$(count_literal "${query}" "max by (${identity})")" -eq 1 ] &&
+    [ "$(count_literal "${query}" "count by (${identity})")" -eq 1 ] &&
+    [ "$(count_literal "${query}" "sum by (${identity})")" -eq 1 ]
+}
+
 # Collapse each `rules[]` entry into one canonical signature line:
 #
 #   apiGroups=[g1,g2] resources=[r1] verbs=[v1,v2]
@@ -203,7 +213,7 @@ reject_unexpected_rules() {
       fi
     done
     [ "${matched}" -eq 1 ] ||
-      fail "the exporter must hold no RBAC rule beyond the two it needs (found: ${actual})"
+      fail "the inspected role carries an RBAC rule outside its closed expected set (found: ${actual})"
   done <<<"$(rule_signatures <<<"${cluster_role}")"
 }
 
@@ -283,10 +293,65 @@ require_text \
 alerter="$(
   extract_resource CronJob crossplane-sync-alerter <<<"${hetzner_rendered}"
 )" || fail 'the provider layer must render the Crossplane sync alerter CronJob'
+require_line \
+  "${alerter}" \
+  'serviceAccountName: crossplane-sync-alerter' \
+  'the coverage check must use its dedicated service account'
+require_line \
+  "${alerter}" \
+  'automountServiceAccountToken: true' \
+  'the coverage check must receive the API token it uses'
+[ "$(yq eval -r '.metadata.annotations."checkov.io/skip1"' <<<"${alerter}")" = \
+  'CKV_K8S_38=the alerter reads its SA token to list CRD schemas in bounded pages for exporter coverage' ] ||
+  fail 'the intentional service-account token mount must carry its exact scanner rationale'
+
+coverage_role="$(
+  extract_resource ClusterRole crossplane-sync-alerter <<<"${hetzner_rendered}"
+)" || fail 'the provider layer must render the coverage sentinel ClusterRole'
+require_rule \
+  "${coverage_role}" \
+  'apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[list]' \
+  'the coverage sentinel must receive only the CRD-list permission it uses'
+reject_unexpected_rules \
+  "${coverage_role}" \
+  'apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[list]'
+extract_resource \
+  ClusterRoleBinding \
+  crossplane-sync-alerter <<<"${hetzner_rendered}" >/dev/null ||
+  fail 'the provider layer must bind the coverage sentinel ClusterRole'
+extract_resource \
+  ServiceAccount \
+  crossplane-sync-alerter <<<"${hetzner_rendered}" >/dev/null ||
+  fail 'the provider layer must render the coverage sentinel ServiceAccount'
 alerter_script="$(
   yq eval -r '.spec.jobTemplate.spec.template.spec.containers[] | select(.name == "alerter") | .command[2]' \
     <<<"${alerter}"
 )" || fail 'the rendered Crossplane sync alerter script must be readable'
+
+require_text \
+  "${alerter_script}" \
+  '/apis/apiextensions.k8s.io/v1/customresourcedefinitions' \
+  'the alerter must compare its inventory with live CRD discovery'
+require_text \
+  "${alerter_script}" \
+  '--data-urlencode "limit=25"' \
+  'the alerter must bound each CRD response instead of buffering the whole discovery surface'
+require_text \
+  "${alerter_script}" \
+  '.metadata.continue // ""' \
+  'the bounded CRD discovery loop must follow every Kubernetes continuation token'
+require_text \
+  "${alerter_script}" \
+  '--retry-max-time 30' \
+  'each five-attempt curl operation must remain bounded inside the job deadline'
+require_text \
+  "${alerter_script}" \
+  'managed-coverage-gaps.jq' \
+  'the alerter must execute the behavior-tested coverage-gap program'
+require_text \
+  "${alerter_script}" \
+  'CrossplaneSyncExporterCoverageGap' \
+  'an unconfigured managed kind must produce an Alertmanager alert'
 
 # Paused resources are deliberately still evidence that the exporter is alive,
 # so coverage must count them. They are not stuck, though: ReconcilePaused is an
@@ -313,6 +378,8 @@ stuck_query="${stuck_query:1:${#stuck_query}-3}"
 
 stuck_query_excludes_only_paused "${stuck_query}" ||
   fail 'the stuck query must exclude ReconcilePaused from all four metric selectors'
+stuck_query_joins_full_resource_identity "${stuck_query}" ||
+  fail 'the stuck query must keep same-named resources from different GVKs separate'
 
 # Mutation controls keep this from becoming a self-affirming source check. The
 # contract must fail if the pause exemption is removed, and also if a future edit
@@ -324,6 +391,10 @@ fi
 wrong_reason_query="${stuck_query//ReconcilePaused/ReconcileError}"
 if stuck_query_excludes_only_paused "${wrong_reason_query}"; then
   fail 'test control: excluding a real reconciliation error must break the query contract'
+fi
+collapsed_identity_query="${stuck_query//customresource_kind, /}"
+if stuck_query_joins_full_resource_identity "${collapsed_identity_query}"; then
+  fail 'test control: dropping kind identity must break the multi-kind join contract'
 fi
 
 # Negative control, and the load-bearing one. The exporter reads
@@ -357,6 +428,94 @@ rendered="$(kubectl kustomize "${exporter_component}")" ||
 config_map="$(
   extract_resource ConfigMap crossplane-sync-exporter <<<"${rendered}"
 )" || fail 'the component must render the exporter ConfigMap'
+
+custom_resource_state="$(
+  yq eval -r '.data."custom-resource-state.yaml"' <<<"${config_map}"
+)" || fail 'the rendered custom-resource-state config must be readable'
+
+# Each configured GVK has a matching exact RBAC resource. The separate plural
+# inventory lets the runtime sentinel compare this closed set with live CRDs,
+# so a provider addition fails loudly without pre-authorising the exporter to
+# read resource kinds that have not been reviewed.
+expected_managed_gvks=$'actions.github.m.upbound.io\tv1alpha1\tRepositoryPermissions\ndns.unifi.m.crossplane.io\tv1alpha1\tRecord\nenterprise.github.m.upbound.io\tv1alpha1\tOrganizationRuleset\niam.aws.m.upbound.io\tv1beta1\tOpenIDConnectProvider\niam.aws.m.upbound.io\tv1beta1\tPolicy\niam.aws.m.upbound.io\tv1beta1\tRole\nrepo.github.m.upbound.io\tv1alpha1\tBranchProtection\nrepo.github.m.upbound.io\tv1alpha1\tDefaultBranch\nrepo.github.m.upbound.io\tv1alpha1\tIssueLabels\nrepo.github.m.upbound.io\tv1alpha1\tRepository\nrepo.github.m.upbound.io\tv1alpha1\tRepositoryRuleset\nroute.unifi.m.crossplane.io\tv1alpha1\tTrafficRoute\nteam.github.m.upbound.io\tv1alpha1\tTeam\nteam.github.m.upbound.io\tv1alpha1\tTeamMembership\nteam.github.m.upbound.io\tv1alpha1\tTeamRepository\nvpn.unifi.m.crossplane.io\tv1alpha1\tClient'
+actual_managed_gvks="$(
+  yq eval -r '
+    .spec.resources[]
+    | [.groupVersionKind.group, .groupVersionKind.version, .groupVersionKind.kind]
+    | @tsv
+  ' <<<"${custom_resource_state}" | LC_ALL=C sort
+)"
+[ "${actual_managed_gvks}" = "${expected_managed_gvks}" ] ||
+  fail 'the exporter must describe every installed Crossplane managed-resource GVK'
+
+expected_managed_resources=$'actions.github.m.upbound.io\tv1alpha1\tRepositoryPermissions\trepositorypermissions\ndns.unifi.m.crossplane.io\tv1alpha1\tRecord\trecords\nenterprise.github.m.upbound.io\tv1alpha1\tOrganizationRuleset\torganizationrulesets\niam.aws.m.upbound.io\tv1beta1\tOpenIDConnectProvider\topenidconnectproviders\niam.aws.m.upbound.io\tv1beta1\tPolicy\tpolicies\niam.aws.m.upbound.io\tv1beta1\tRole\troles\nrepo.github.m.upbound.io\tv1alpha1\tBranchProtection\tbranchprotections\nrepo.github.m.upbound.io\tv1alpha1\tDefaultBranch\tdefaultbranches\nrepo.github.m.upbound.io\tv1alpha1\tIssueLabels\tissuelabels\nrepo.github.m.upbound.io\tv1alpha1\tRepository\trepositories\nrepo.github.m.upbound.io\tv1alpha1\tRepositoryRuleset\trepositoryrulesets\nroute.unifi.m.crossplane.io\tv1alpha1\tTrafficRoute\ttrafficroutes\nteam.github.m.upbound.io\tv1alpha1\tTeam\tteams\nteam.github.m.upbound.io\tv1alpha1\tTeamMembership\tteammemberships\nteam.github.m.upbound.io\tv1alpha1\tTeamRepository\tteamrepositories\nvpn.unifi.m.crossplane.io\tv1alpha1\tClient\tclients'
+configured_managed_resources="$(
+  yq eval -r '.data."managed-resources.tsv"' <<<"${config_map}" |
+    sed '/^[[:space:]]*$/d' |
+    LC_ALL=C sort
+)"
+[ "${configured_managed_resources}" = "${expected_managed_resources}" ] ||
+  fail 'the runtime coverage sentinel must share the exporter managed-resource inventory'
+
+coverage_gap_program="$(
+  yq eval -r '.data."managed-coverage-gaps.jq"' <<<"${config_map}"
+)" || fail 'the rendered managed-resource coverage program must be readable'
+[ -n "${coverage_gap_program}" ] && [ "${coverage_gap_program}" != "null" ] ||
+  fail 'the exporter ConfigMap must carry the managed-resource coverage program'
+
+# Exercise the real jq program against a Kubernetes CRD-list fixture. The
+# production change that breaks this is accepting a newly installed managed
+# kind merely because another kind from the same provider is configured.
+coverage_fixture='{
+  "items": [
+    {
+      "spec": {
+        "group": "repo.github.m.upbound.io",
+        "names": {"kind": "Repository", "categories": ["crossplane", "managed"]},
+        "versions": [{"name": "v1alpha1", "served": true}]
+      }
+    },
+    {
+      "spec": {
+        "group": "actions.github.m.upbound.io",
+        "names": {"kind": "RepositoryPermissions", "categories": ["crossplane", "managed"]},
+        "versions": [{"name": "v1alpha1", "served": true}]
+      }
+    },
+    {
+      "spec": {
+        "group": "example.invalid",
+        "names": {"kind": "Ignored", "categories": ["unmanaged"]}
+      }
+    }
+  ]
+}'
+repository_inventory=$'repo.github.m.upbound.io\tv1alpha1\tRepository\trepositories'
+gap="$(
+  jq -r \
+    --rawfile configured <(printf '%s\n' "${repository_inventory}") \
+    "${coverage_gap_program}" <<<"${coverage_fixture}"
+)" || fail 'the managed-resource coverage program must accept a CRD-list response'
+[ "${gap}" = 'actions.github.m.upbound.io/RepositoryPermissions' ] ||
+  fail 'an installed managed kind absent from the inventory must be reported as a coverage gap'
+
+complete_fixture_inventory=$'actions.github.m.upbound.io\tv1alpha1\tRepositoryPermissions\trepositorypermissions\nrepo.github.m.upbound.io\tv1alpha1\tRepository\trepositories'
+gap="$(
+  jq -r \
+    --rawfile configured <(printf '%s\n' "${complete_fixture_inventory}") \
+    "${coverage_gap_program}" <<<"${coverage_fixture}"
+)" || fail 'the managed-resource coverage program must accept a complete inventory'
+[ -z "${gap}" ] ||
+  fail 'configured managed kinds and unmanaged CRDs must not produce coverage gaps'
+
+stale_version_inventory=$'actions.github.m.upbound.io\tv1alpha1\tRepositoryPermissions\trepositorypermissions\nrepo.github.m.upbound.io\tv1beta1\tRepository\trepositories'
+gap="$(
+  jq -r \
+    --rawfile configured <(printf '%s\n' "${stale_version_inventory}") \
+    "${coverage_gap_program}" <<<"${coverage_fixture}"
+)" || fail 'the managed-resource coverage program must evaluate served CRD versions'
+[ "${gap}" = 'repo.github.m.upbound.io/Repository' ] ||
+  fail 'a configured GVK whose version is no longer served must be reported as a coverage gap'
 
 # Coroot's bundled Prometheus exposes no scrape configuration, so remote-write is
 # the only ingest path into the store the alerting rule will query.
@@ -471,8 +630,36 @@ cluster_role="$(
 )" || fail 'the component must render the exporter ClusterRole'
 require_rule \
   "${cluster_role}" \
-  'apiGroups=[repo.github.m.upbound.io] resources=[repositories] verbs=[get,list,watch]' \
-  'the exporter must hold exactly one read-only rule on the managed resource it exports'
+  'apiGroups=[actions.github.m.upbound.io] resources=[repositorypermissions] verbs=[get,list,watch]' \
+  'the exporter must read the GitHub Actions managed resource it exports'
+require_rule \
+  "${cluster_role}" \
+  'apiGroups=[dns.unifi.m.crossplane.io] resources=[records] verbs=[get,list,watch]' \
+  'the exporter must read the UniFi DNS managed resource it exports'
+require_rule \
+  "${cluster_role}" \
+  'apiGroups=[enterprise.github.m.upbound.io] resources=[organizationrulesets] verbs=[get,list,watch]' \
+  'the exporter must read the GitHub enterprise managed resource it exports'
+require_rule \
+  "${cluster_role}" \
+  'apiGroups=[iam.aws.m.upbound.io] resources=[openidconnectproviders,policies,roles] verbs=[get,list,watch]' \
+  'the exporter must read the AWS IAM managed resources it exports'
+require_rule \
+  "${cluster_role}" \
+  'apiGroups=[repo.github.m.upbound.io] resources=[branchprotections,defaultbranches,issuelabels,repositories,repositoryrulesets] verbs=[get,list,watch]' \
+  'the exporter must read the GitHub repository managed resources it exports'
+require_rule \
+  "${cluster_role}" \
+  'apiGroups=[route.unifi.m.crossplane.io] resources=[trafficroutes] verbs=[get,list,watch]' \
+  'the exporter must read the UniFi route managed resource it exports'
+require_rule \
+  "${cluster_role}" \
+  'apiGroups=[team.github.m.upbound.io] resources=[teams,teammemberships,teamrepositories] verbs=[get,list,watch]' \
+  'the exporter must read the GitHub team managed resources it exports'
+require_rule \
+  "${cluster_role}" \
+  'apiGroups=[vpn.unifi.m.crossplane.io] resources=[clients] verbs=[get,list,watch]' \
+  'the exporter must read the UniFi VPN managed resource it exports'
 
 # The DISCOVERY half of the RBAC, and the reason this component shipped dead
 # (#3068). kube-state-metrics resolves a CustomResourceStateMetrics
@@ -500,7 +687,14 @@ require_rule \
 # Closes the set: the two rules above are the ONLY rules this role may carry.
 reject_unexpected_rules \
   "${cluster_role}" \
-  'apiGroups=[repo.github.m.upbound.io] resources=[repositories] verbs=[get,list,watch]' \
+  'apiGroups=[actions.github.m.upbound.io] resources=[repositorypermissions] verbs=[get,list,watch]' \
+  'apiGroups=[dns.unifi.m.crossplane.io] resources=[records] verbs=[get,list,watch]' \
+  'apiGroups=[enterprise.github.m.upbound.io] resources=[organizationrulesets] verbs=[get,list,watch]' \
+  'apiGroups=[iam.aws.m.upbound.io] resources=[openidconnectproviders,policies,roles] verbs=[get,list,watch]' \
+  'apiGroups=[repo.github.m.upbound.io] resources=[branchprotections,defaultbranches,issuelabels,repositories,repositoryrulesets] verbs=[get,list,watch]' \
+  'apiGroups=[route.unifi.m.crossplane.io] resources=[trafficroutes] verbs=[get,list,watch]' \
+  'apiGroups=[team.github.m.upbound.io] resources=[teams,teammemberships,teamrepositories] verbs=[get,list,watch]' \
+  'apiGroups=[vpn.unifi.m.crossplane.io] resources=[clients] verbs=[get,list,watch]' \
   'apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[get,list,watch]'
 
 # A metrics exporter able to read every custom resource could also read provider

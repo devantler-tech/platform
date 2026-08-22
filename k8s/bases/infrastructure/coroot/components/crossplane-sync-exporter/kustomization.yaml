@@ -6,10 +6,10 @@
 # keyed on Ready reads the fleet as healthy. Nothing in the cluster observes the
 # Synced condition today, so that state is silent.
 #
-# This component supplies the missing metric, which is the prerequisite for the
-# alerting rule — the rule cannot be written before the series exists. It does
-# not alert; delivery is a separate change, and so is extending coverage beyond
-# Repository to the remaining managed-resource kinds.
+# This component supplies the condition metric for every managed-resource kind
+# currently installed on production. Alert delivery lives in the Hetzner
+# overlay, where a CRD-inventory sentinel also makes a newly added kind fail
+# loudly until this component receives exact GVK config and read-only RBAC.
 #
 # No CiliumNetworkPolicy is included: the base `allow-coroot` policy
 # (controllers/coroot/cilium-network-policy.yaml, endpointSelector: {}) already

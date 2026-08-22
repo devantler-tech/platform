@@ -1186,7 +1186,42 @@ const (
 // The new fingerprint was read from the required job's approved renderer (run
 // 32537665794, job 96941582102). The local approved renderer independently
 // produced the identical value.
-const expectedRenderedSurfaceSHA = "072296094a73bafe660540b84da2ee94bbe0683d90c7fc9ed97a6d6f9c292d7a"
+//
+// Measured against current main 64c4ba23 before approving this value: the five
+// authorization overlays move from 546 to 549 rendered documents, with no
+// duplicate identities. Set difference in BOTH directions reports exactly
+// three additions and no removals or renames:
+//
+//	v1                               ServiceAccount       observability/crossplane-sync-alerter
+//	rbac.authorization.k8s.io/v1    ClusterRole          crossplane-sync-alerter
+//	rbac.authorization.k8s.io/v1    ClusterRoleBinding   crossplane-sync-alerter
+//
+// The grant-bearing surface moves from 77 to 80 objects: Role stays 11,
+// ClusterRole 23 -> 24, RoleBinding stays 16, ClusterRoleBinding 11 -> 12,
+// and ServiceAccount 16 -> 17. Canonical content comparison of every object
+// reports those three additions plus exactly ONE changed existing identity:
+// `ClusterRole/crossplane-sync-exporter`. That role replaces its Repository-only
+// rule with the exact 16 managed-resource kinds currently installed across
+// eight reviewed API groups. Every grant stays get/list/watch, there is no
+// wildcard, no core-group access and no Secret access; its existing exact
+// get/list/watch on CustomResourceDefinitions is unchanged.
+//
+// The new alerter ClusterRole is narrower still: its sole rule is `list` on
+// `apiextensions.k8s.io/customresourcedefinitions`. Its binding names only the
+// new `observability/crossplane-sync-alerter` ServiceAccount. No EKS CI subject,
+// AWS service account, AWS role, boundary, policy, or individually pinned core
+// authorization identity moved; the validator emitted only this aggregate
+// mismatch and no object-specific mismatch.
+//
+// The previous approved digest remains recorded here:
+//
+//	072296094a73bafe660540b84da2ee94bbe0683d90c7fc9ed97a6d6f9c292d7a
+//
+// The new fingerprint was produced by the required hosted renderer (run
+// 32587236884, job 97065434213). The local kubectl v1.36.1 render used by the
+// tests independently produced the identical value, while the full local CLI
+// correctly refused that renderer because the approved pin is v1.36.2.
+const expectedRenderedSurfaceSHA = "2e5ff04e52117cdbdc88261c35845e51a17ff31b709ed5b7d449b5076c08d8e1"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

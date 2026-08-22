@@ -57,6 +57,9 @@ resources:
   # notification via Alertmanager, which nothing else consumes. See the file
   # header for why this is a CronJob rather than a PrometheusRule.
   - coroot/cron-job-crossplane-sync-alerter.yaml
+  - coroot/service-account-crossplane-sync-alerter.yaml
+  - coroot/cluster-role-crossplane-sync-alerter.yaml
+  - coroot/cluster-role-binding-crossplane-sync-alerter.yaml
   # Prod-only: the CloudNativePG datastore + backup wiring that lets the Coroot
   # SERVER run HA (replicas: 2 — set in the coroot-patch below). The operator
   # only honours replicas > 1 when spec.postgres is set, so this Postgres is the
@@ -135,10 +138,8 @@ components:
   # Synced=False — measured on 3 of the 20 Repository resources — and every
   # health check keyed on Ready reads that fleet as healthy while no declared
   # setting is reaching the provider. Referenced here rather than from the
-  # shared Coroot base because Crossplane and the `github-config` app it
-  # observes exist only on this provider.
-  #
-  # The metric is the prerequisite for alerting on it; delivery is #2987.
+  # shared Coroot base because Crossplane exists only on this provider. The
+  # adjacent alerter delivers stuck-resource and coverage-gap notifications.
   - ../../../bases/infrastructure/coroot/components/crossplane-sync-exporter
   # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
   # opencost HelmRelease in this layer. See

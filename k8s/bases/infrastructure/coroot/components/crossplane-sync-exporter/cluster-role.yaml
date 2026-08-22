@@ -1,16 +1,80 @@
-# Read-only, and scoped to the one managed-resource kind this exporter reads.
-# It is deliberately not `apiGroups: ["*"]`: a metrics exporter that could read
-# every custom resource in the cluster would also be able to read the spec of
-# resources that carry provider configuration.
+# Read-only, and scoped one-for-one to the managed-resource kinds this exporter
+# describes. It is deliberately not `apiGroups: ["*"]` or `resources: ["*"]`:
+# provider configuration and a newly installed kind stay unreadable until their
+# least-privilege entry is deliberately reviewed.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: crossplane-sync-exporter
 rules:
   - apiGroups:
+      - actions.github.m.upbound.io
+    resources:
+      - repositorypermissions
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - dns.unifi.m.crossplane.io
+    resources:
+      - records
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - enterprise.github.m.upbound.io
+    resources:
+      - organizationrulesets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - iam.aws.m.upbound.io
+    resources:
+      - openidconnectproviders
+      - policies
+      - roles
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
       - repo.github.m.upbound.io
     resources:
+      - branchprotections
+      - defaultbranches
+      - issuelabels
       - repositories
+      - repositoryrulesets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - route.unifi.m.crossplane.io
+    resources:
+      - trafficroutes
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - team.github.m.upbound.io
+    resources:
+      - teams
+      - teammemberships
+      - teamrepositories
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - vpn.unifi.m.crossplane.io
+    resources:
+      - clients
     verbs:
       - get
       - list
