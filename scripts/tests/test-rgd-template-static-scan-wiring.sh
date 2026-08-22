@@ -66,4 +66,13 @@ jq -e --arg setup "$SETUP_TRIVY" --arg behavior "$BEHAVIORAL_COMMAND" '
 ' <<<"$main_workflow_json" >/dev/null ||
   fail "validate-main.yaml does not run the pinned RGD behavioral gate"
 
+jq -e --arg wiring "$WIRING_COMMAND" '
+  any(
+    .jobs | to_entries[];
+    .key != "validate-rgd-templates"
+    and any(.value.steps[]?; (.run // "") | contains($wiring))
+  )
+' <<<"$main_workflow_json" >/dev/null ||
+  fail "the direct-main route does not independently protect the RGD gate from self-removal"
+
 echo "PASS: PR, merge-group, and direct-main routes retain the nested-RGD behavioral gate."

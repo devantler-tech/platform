@@ -128,6 +128,42 @@ yq -i '(.spec.resources[] | select(.id == "deployment") |
 expect_rejected "a changed value hidden behind the same finding ID and range" "RGD-CONTENT"
 restore_webapp
 
+# Moving an existing rule between containers must be visible even when its resource-level count is
+# unchanged. Pin the reviewed container image and introduce the same KSV-0013 on a named sidecar;
+# the graph digest changes too, but the finding diff must retain both old and new cause identities.
+yq -i '(.spec.resources[] | select(.id == "deployment") |
+  .template.spec.template.spec.containers[0].image) =
+  "ghcr.io/example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" |
+  (.spec.resources[] | select(.id == "deployment") |
+  .template.spec.template.spec.containers) += [{
+    "name": "finding-identity-probe",
+    "image": "nginx:latest",
+    "resources": {
+      "requests": {"cpu": "10m", "memory": "16Mi"},
+      "limits": {"cpu": "20m", "memory": "32Mi"}
+    },
+    "securityContext": {
+      "allowPrivilegeEscalation": false,
+      "capabilities": {"drop": ["ALL"]},
+      "runAsNonRoot": true,
+      "runAsUser": 1000,
+      "seccompProfile": {"type": "RuntimeDefault"}
+    }
+  }]' "$WORK/$WEBAPP_RGD"
+container_identity_log="${WORK}/container-identity.log"
+if "$GATE" "$WORK" >"$container_identity_log" 2>&1; then
+  fail "the gate accepted a KSV-0013 move between workload containers"
+fi
+container_cause_count="$(awk -F '\t' '
+  $3 == "KSV-0013" && index($5, "CAUSE-SHA256:") == 1 { print $5 }
+' "$container_identity_log" | LC_ALL=C sort -u | wc -l | tr -d ' ')"
+[ "$container_cause_count" -gt 1 ] || {
+  sed 's/^/  /' "$container_identity_log" >&2
+  fail "the finding ratchet hides a KSV-0013 move between workload containers"
+}
+echo "PASS(probe): container-level finding identity cannot cancel within one resource."
+restore_webapp
+
 # Committed RGD instances can feed template expressions values the extraction cannot infer. Guard
 # the namespace-driving spec.name so an opt-in pilot cannot instantiate otherwise-safe templates
 # inside kube-system while both the ordinary custom-resource scan and template scan stay green.

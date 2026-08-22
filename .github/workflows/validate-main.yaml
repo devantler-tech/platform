@@ -121,6 +121,25 @@ jobs:
           shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
           bash scripts/tests/test-rgd-template-static-scan.sh
 
+  # This job is deliberately separate from the behavioral gate it protects. A direct push that
+  # removes or renames validate-rgd-templates must still run this structural assertion and fail,
+  # rather than leaving the remaining Validate Main jobs green while the manual CD route is open.
+  validate-rgd-template-wiring:
+    name: 🔐 Validate Nested RGD Gate Wiring
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: 🔐 Validate nested RGD gate wiring
+        run: |
+          shellcheck scripts/tests/test-rgd-template-static-scan-wiring.sh
+          bash scripts/tests/test-rgd-template-static-scan-wiring.sh
+
   kubescape-baseline:
     name: 🛡️ Publish Kubescape Baseline
     runs-on: ubuntu-latest

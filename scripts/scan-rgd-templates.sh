@@ -223,13 +223,32 @@ jq -r '
     | {
         target: $result.Target,
         id: .ID,
-        severity: .Severity
+        severity: .Severity,
+        cause: (
+          [
+            .CauseMetadata.Code.Lines[]?
+            | select(.IsCause)
+            | (.Content | sub("^[ ]+"; ""))
+          ]
+          | if length == 0 then ["RESOURCE"] else . end
+          | tojson
+          | @base64
+        )
       }
   ]
-  | group_by([.target, .id, .severity])[]
-  | [length, .[0].target, .[0].id, .[0].severity, "COUNTED"]
+  | group_by([.target, .id, .severity, .cause])[]
+  | [length, .[0].target, .[0].id, .[0].severity, .[0].cause]
   | @tsv
-' "$WORK/results.json" >"$WORK/findings.tsv"
+' "$WORK/results.json" >"$WORK/grouped-findings.tsv"
+
+: >"$WORK/findings.tsv"
+while IFS=$'\t' read -r finding_count finding_target finding_id finding_severity finding_cause; do
+  [ -n "$finding_cause" ] || fail \
+    "Trivy finding $finding_id on $finding_target has no attributable cause evidence"
+  printf '%s\t%s\t%s\t%s\tCAUSE-SHA256:%s\n' \
+    "$finding_count" "$finding_target" "$finding_id" "$finding_severity" \
+    "$(sha256_text "$finding_cause")" >>"$WORK/findings.tsv"
+done <"$WORK/grouped-findings.tsv"
 
 {
   cat "$WORK/findings.tsv"
