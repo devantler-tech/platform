@@ -57,6 +57,9 @@ resources:
   # notification via Alertmanager, which nothing else consumes. See the file
   # header for why this is a CronJob rather than a PrometheusRule.
   - coroot/cron-job-crossplane-sync-alerter.yaml
+  - coroot/service-account-crossplane-sync-alerter.yaml
+  - coroot/cluster-role-crossplane-sync-alerter.yaml
+  - coroot/cluster-role-binding-crossplane-sync-alerter.yaml
   # Prod-only: the CloudNativePG datastore + backup wiring that lets the Coroot
   # SERVER run HA (replicas: 2 — set in the coroot-patch below). The operator
   # only honours replicas > 1 when spec.postgres is set, so this Postgres is the
