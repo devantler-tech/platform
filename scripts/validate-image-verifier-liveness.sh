@@ -539,8 +539,7 @@ else
     # ordering guarantee, so a plain string compare would call a re-ordered but
     # otherwise identical fleet "changed", re-run the whole pass, and can burn
     # the attempt bound into an exit 2 for a cluster that never moved.
-    [[ "$(printf '%s\n' "${inventory_after}" | LC_ALL=C sort)" \
-      != "$(printf '%s\n' "${discovered_identities}" | LC_ALL=C sort)" ]] || break
+    [[ "$(printf '%s\n' "${inventory_after}" | LC_ALL=C sort)" != "$(printf '%s\n' "${discovered_identities}" | LC_ALL=C sort)" ]] || break
 
     [[ "${attempt}" -lt "${convergence_attempts}" ]] ||
       fail_infra "the node inventory changed during each of ${convergence_attempts} attempt(s) — refusing to report a fleet that never held still long enough to be checked"
