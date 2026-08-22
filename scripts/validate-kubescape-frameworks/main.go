@@ -90,7 +90,7 @@ func main() {
 			sets = append(sets, "")
 			continue
 		}
-		if err := checkRequired(w, set); err != nil {
+		if err := checkRequired(set); err != nil {
 			fmt.Fprintf(os.Stderr, "::error file=%s::%v\n", w, err)
 			failed = true
 		}
@@ -143,7 +143,7 @@ func repoRoot() (string, error) {
 }
 
 // checkRequired asserts every required framework is a whole member of the set.
-func checkRequired(workflow string, set []string) error {
+func checkRequired(set []string) error {
 	present := make(map[string]bool, len(set))
 	for _, f := range set {
 		present[f] = true

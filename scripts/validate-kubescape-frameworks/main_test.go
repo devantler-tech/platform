@@ -93,7 +93,7 @@ func TestRejectsMissingRequiredFramework(t *testing.T) {
 		if err != nil {
 			continue // read failure is also a rejection
 		}
-		if err := checkRequired("ci.yaml", set); err == nil {
+		if err := checkRequired(set); err == nil {
 			t.Fatalf("expected REJECT for %q — a coverage regression would pass", body)
 		}
 	}
@@ -105,7 +105,7 @@ func TestRejectsSubstringOfRequiredFramework(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if err := checkRequired("ci.yaml", set); err == nil {
+	if err := checkRequired(set); err == nil {
 		t.Fatal("expected REJECT: `nsa-extended` must not satisfy `nsa`")
 	}
 }
@@ -304,7 +304,7 @@ func TestRealWorkflowsSatisfyTheGuard(t *testing.T) {
 		if err != nil {
 			t.Fatalf("wiring: the real %s does not satisfy the guard: %v", name, err)
 		}
-		if err := checkRequired(name, set); err != nil {
+		if err := checkRequired(set); err != nil {
 			t.Fatalf("wiring: %s: %v", name, err)
 		}
 	}
