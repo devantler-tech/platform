@@ -171,6 +171,11 @@ jobs:
               # paired control move together — a widened glob would suppress the same check
               # on application ConfigMaps that genuinely carry credentials.
               - 'scripts/tests/test-trivyignore-configmap-content-boundary.sh'
+              # RGD sources, their extracted-template scanner, and the exact finding ratchet are
+              # one gate. k8s/** covers source edits; these entries cover gate-only changes.
+              - 'scripts/scan-rgd-templates.sh'
+              - 'scripts/rgd-template-static-scan-baseline.tsv'
+              - 'scripts/tests/test-rgd-template-static-scan.sh'
               # The version-drift guard reads its constants out of
               # megalinter-scan-counts.sh, so the three move together.
               - 'scripts/check-megalinter-version-drift.sh'
@@ -606,6 +611,23 @@ jobs:
         run: |
           shellcheck scripts/tests/test-trivyignore-configmap-content-boundary.sh
           bash scripts/tests/test-trivyignore-configmap-content-boundary.sh
+
+      - name: ⚙️ Setup Trivy for nested RGD templates
+        if: needs.changes.outputs.k8s == 'true'
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+          cache: true
+
+      - name: 🔬 Validate nested RGD workload templates
+        if: needs.changes.outputs.k8s == 'true'
+        # Trivy does not descend through a ResourceGraphDefinition custom resource. Extract every
+        # nested template, scan without the repository ignorefile, and compare the complete finding
+        # set to the explicit ratchet. The behavioural test proves privilege, resource-limit and
+        # kube-system-placement regressions each add a finding and fail this gate.
+        run: |
+          shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
+          bash scripts/tests/test-rgd-template-static-scan.sh
 
       - name: 🔢 Validate scanner version-drift guard
         if: needs.changes.outputs.k8s == 'true'

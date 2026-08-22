@@ -5,6 +5,13 @@
 # ghcr-auth ExternalSecret, default-deny NetworkPolicy), with optional
 # external-dns RBAC and SOPS decryption behind `includeWhen` toggles.
 #
+# STATIC SECURITY GATE (#3055): scripts/scan-rgd-templates.sh extracts every
+# spec.resources[].template as a first-class Kubernetes manifest and runs the full Trivy
+# misconfiguration policy set without the repository ignorefile. The exact visible findings are
+# ratcheted in scripts/rgd-template-static-scan-baseline.tsv; a new finding fails PR validation.
+# scripts/tests/test-rgd-template-static-scan.sh proves nested privilege, resource, and namespace
+# regressions are rejected. Never exclude this directory from scanners when adding a template.
+#
 # Onboarding a tenant becomes a ~5-line `Tenant` CR instead of a ~7-file copy:
 #
 #   apiVersion: kro.run/v1alpha1
