@@ -17,11 +17,9 @@ readonly SOURCE_ROOT
 readonly CONFIG_DATA="${REPO_ROOT}/.trivy/data"
 readonly BASELINE="${REPO_ROOT}/scripts/rgd-template-static-scan-baseline.tsv"
 readonly REQUIRED_TRIVY_VERSION="0.74.0"
+readonly RGD_ROOT_PATH="k8s/bases/infrastructure/resource-graph-definitions"
 
-readonly RGD_PATHS=(
-  "k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
-  "k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml"
-)
+RGD_PATHS=()
 
 fail() {
   echo "FAIL: $*" >&2
@@ -36,6 +34,20 @@ command -v jq >/dev/null 2>&1 || fail "jq is required to compare RGD template fi
 installed_trivy_version="$(trivy --version | sed -n 's/^Version: //p' | head -n 1)"
 [ "$installed_trivy_version" = "$REQUIRED_TRIVY_VERSION" ] || fail \
   "Trivy $REQUIRED_TRIVY_VERSION is required by the finding baseline; found $installed_trivy_version"
+
+rgd_root="${SOURCE_ROOT}/${RGD_ROOT_PATH}"
+[ -d "$rgd_root" ] || fail "RGD source directory is missing: $rgd_root"
+
+# Discover by resource kind rather than by today's two directory names. The tree also contains
+# sibling ClusterRoles, so a filename glob alone would scan unrelated manifests; conversely, a
+# fixed allow-list would silently recreate this blind spot when the next RGD is added.
+while IFS= read -r candidate; do
+  [ "$(yq '.kind // ""' "$candidate")" = "ResourceGraphDefinition" ] || continue
+  RGD_PATHS+=("${candidate#"$SOURCE_ROOT"/}")
+done < <(find "$rgd_root" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | LC_ALL=C sort)
+
+[ "${#RGD_PATHS[@]}" -gt 0 ] || fail "no ResourceGraphDefinitions found below $rgd_root"
+readonly RGD_PATHS
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

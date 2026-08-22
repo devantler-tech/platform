@@ -33,7 +33,7 @@ cp "$REPO_ROOT/$TENANT_RGD" "$WORK/$TENANT_RGD"
 expect_rejected() {
   local label="$1" expected_id="$2" log="${WORK}/gate-probe.log"
   if "$GATE" "$WORK" >"$log" 2>&1; then
-    fail "the gate accepted $label in the webapp RGD"
+    fail "the gate accepted $label"
   fi
   if ! grep -Fq "$expected_id" "$log"; then
     sed 's/^/  /' "$log" >&2
@@ -45,6 +45,16 @@ expect_rejected() {
 restore_webapp() {
   cp "$REPO_ROOT/$WEBAPP_RGD" "$WORK/$WEBAPP_RGD"
 }
+
+# A future RGD must enter the scan automatically. Copying a valid current definition under a new
+# sibling path reproduces the review finding: a fixed two-file list reports success while leaving
+# this third definition completely unseen.
+readonly PROBE_RGD="k8s/bases/infrastructure/resource-graph-definitions/probe/resource-graph-definition.yaml"
+mkdir -p "$WORK/$(dirname "$PROBE_RGD")"
+cp "$REPO_ROOT/$WEBAPP_RGD" "$WORK/$PROBE_RGD"
+expect_rejected "an unbaselined third ResourceGraphDefinition" "$PROBE_RGD"
+rm -f "$WORK/$PROBE_RGD"
+rmdir "$WORK/$(dirname "$PROBE_RGD")"
 
 # Mutate the nested Deployment rather than adding a top-level manifest. `privileged: true` is a
 # scanner-supported Kubernetes misconfiguration and represents exactly the blind spot this gate
