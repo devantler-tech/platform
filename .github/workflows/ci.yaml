@@ -575,9 +575,10 @@ jobs:
 
       - name: 🧱 Validate vault-backup identity disposition boundary
         if: needs.changes.outputs.k8s == 'true'
-        # Same per-container premise as vault-config, on the two workloads that pin the same
-        # openbao digest. This guard also asserts an ABSENCE: KSV-0021 must stay reported on
-        # them, because the mirror inherits that gid rather than having it image-defined.
+        # The two workloads pin the same openbao digest: only snapshot may use its image-baked
+        # UID/GID 100:1000, while mirror keeps the high pod default and receives group 1000 only
+        # through fsGroup. The guard keeps both identity dispositions path-scoped and requires an
+        # identical unlisted probe to stay reported.
         run: |
           shellcheck scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh
           bash scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh

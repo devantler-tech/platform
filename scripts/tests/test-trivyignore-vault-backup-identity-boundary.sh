@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The KSV-0020 disposition on the vault-backup Job and CronJob is PATH-scoped, and this test is what
-# keeps it honest.
+# The KSV-0020/KSV-0021 dispositions on the vault-backup Job and CronJob are PATH-scoped, and this
+# test is what keeps them honest.
 #
 # WHY THIS EXISTS
 # Each workload runs two containers. `snapshot` sets `runAsUser: 100`, which is the openbao image's
@@ -25,12 +25,10 @@
 # operator dispositions is NOT available here and is not borrowed. The disposition stands on the
 # image-defined identity alone — which is exactly why that identity is asserted rather than trusted.
 #
-# ⚠️ UID ONLY, DELIBERATELY. KSV-0021 is NOT dispositioned on these workloads: the pod default
-# runAsGroup is 1000, so the mirror INHERITS a low GID chosen for openbao instead of taking a high
-# default. vault-config can make that split because its shared paths are emptyDir, where fsGroup's
-# setgid bit carries the group whatever gid the writer runs as (#3258); these snapshots live on a
-# PVC, where that is not established — #3281 assumed it transferred and was withdrawn. This test
-# asserts that absence, so a later run cannot quietly borrow the UID premise for the GID half.
+# KSV-0021 rests on a separate, narrower premise: the pod default primary GID is high, while only
+# the openbao snapshot container selects the image-defined GID 1000. The mirror still receives
+# supplementary group 1000 from fsGroup, so it can read the snapshot's 0640 group entry without a
+# low primary GID. This is process membership and does not depend on a PVC setgid bit.
 #
 # Four layers, which fail for different reasons:
 #
@@ -38,10 +36,8 @@
 #   two workloads. Also reciprocal: any OTHER KSV-0020 path must be one of the reviewed sets, so
 #   this file and its sibling boundary tests cannot drift apart.
 #
-#   ABSENCE (always) — KSV-0021 is NOT scoped to either workload.
-#
-#   PREMISE (always) — per container: each pod default UID is high, and the only container below
-#   10000 is the openbao `snapshot` one. This is the layer the ignorefile cannot express.
+#   PREMISE (always) — per container: each pod default UID/GID is high, and the only container below
+#   10001 is the openbao `snapshot` one. This is the layer the ignorefile cannot express.
 #
 #   BEHAVIOUR (when trivy is installed) — the same workload bytes at the dispositioned path and at a
 #   probe path, scanned with and without the ignorefile. The ablation must fire, or the suppression
@@ -51,6 +47,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly REPO_ROOT
 readonly IGNOREFILE="$REPO_ROOT/.trivyignore.yaml"
+readonly MEGALINTER_CONFIG="$REPO_ROOT/.mega-linter.yml"
 readonly UID_CHECK_ID='KSV-0020'
 readonly GID_CHECK_ID='KSV-0021'
 readonly JOB_PATH='k8s/bases/infrastructure/vault-backup/job.yaml'
@@ -70,6 +67,7 @@ readonly EXPECTED_OPENBAO_IMAGE='quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca
 # precisely the boundary it exists to police.
 readonly LOW_ID_FLOOR=10001
 readonly EXPECTED_LOW_UID=100
+readonly EXPECTED_LOW_GID=1000
 readonly EXPECTED_LOW_CONTAINERS=1
 readonly EXPECTED_LOW_CONTAINER_NAME='snapshot'
 
@@ -103,6 +101,13 @@ for path in "${WORKLOAD_PATHS[@]}"; do
     printf 'workload not readable: %s\n' "$path" >&2
     exit 1
   }
+done
+
+for path in "${WORKLOAD_PATHS[@]}"; do
+  entries="$(yq "[.misconfigurations[] | select(.id == \"$GID_CHECK_ID\") | select((.paths // []) | contains([\"$path\"]))] | length" "$IGNOREFILE" 2>/dev/null || printf '0')"
+  entries="${entries:-0}"
+  [ "$entries" -ge 1 ] || fail \
+    "MISSING DISPOSITION: $GID_CHECK_ID has no entry scoped to $path in .trivyignore.yaml"
 done
 
 # Each enumeration below is CAPTURED and its status checked BEFORE its loop runs. A process
@@ -169,15 +174,38 @@ else
   query_failed "the path counts for $UID_CHECK_ID"
 fi
 
-# ------------------------------------------------------------------ absence --
-# The GID half is deliberately NOT dispositioned here. Asserting that keeps a later run from
-# borrowing the UID premise for a claim the PVC sharing model has not established (#3202, #3281).
-for path in "${WORKLOAD_PATHS[@]}"; do
-  gid_entries="$(yq "[.misconfigurations[] | select(.id == \"$GID_CHECK_ID\") | select((.paths // []) | contains([\"$path\"]))] | length" "$IGNOREFILE" 2>/dev/null || printf '1')"
-  gid_entries="${gid_entries:-1}"
-  [ "$gid_entries" -eq 0 ] || fail \
-    "UNJUSTIFIED WIDENING: $GID_CHECK_ID is now scoped to $path. The mirror container inherits GID 1000 from the pod and minio/mc bakes no such identity, so the image-defined premise that carries $UID_CHECK_ID does NOT carry this. Establish how the mirror reads the snapshots on the PVC first (#3202)."
-done
+# Reciprocal GID boundary: every path this check is scoped to must be guarded here or by a sibling.
+if paths_out="$(run_yq ".misconfigurations[] | select(.id == \"$GID_CHECK_ID\") | (.paths // [])[]" "$IGNOREFILE" "the paths $GID_CHECK_ID is scoped to")"; then
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    reviewed=0
+    for known in "${WORKLOAD_PATHS[@]}" "${REVIEWED_ELSEWHERE[@]}"; do
+      [ "$path" = "$known" ] && reviewed=1 && break
+    done
+    [ "$reviewed" -eq 1 ] || fail \
+      "UNREVIEWED DISPOSITION: $GID_CHECK_ID is scoped to $path, which no premises test guards"
+  done <<PATHS
+$paths_out
+PATHS
+else
+  query_failed "the paths $GID_CHECK_ID is scoped to"
+fi
+
+if lens_out="$(run_yq ".misconfigurations[] | select(.id == \"$GID_CHECK_ID\") | (.paths // []) | length" "$IGNOREFILE" "the path counts for $GID_CHECK_ID")"; then
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    [ "$n" -gt 0 ] || fail \
+      "UNSCOPED SKIP: an entry for $GID_CHECK_ID has no paths, which suppresses it on every workload"
+  done <<LENS
+$lens_out
+LENS
+else
+  query_failed "the path counts for $GID_CHECK_ID"
+fi
+
+disabled="$(yq '[.DISABLE_ERRORS_LINTERS[]? | select(. == "REPOSITORY_TRIVY")] | length' "$MEGALINTER_CONFIG" 2>/dev/null || printf '1')"
+[ "${disabled:-1}" -eq 0 ] || fail \
+  'GATE STILL SOFT: REPOSITORY_TRIVY remains in DISABLE_ERRORS_LINTERS'
 
 # ------------------------------------------------------------------ premise --
 for path in "${WORKLOAD_PATHS[@]}"; do
@@ -190,6 +218,23 @@ for path in "${WORKLOAD_PATHS[@]}"; do
   elif [ "$pod_uid" -lt "$LOW_ID_FLOOR" ]; then
     fail "PREMISE BROKEN: the pod default runAsUser in $path is $pod_uid, which KSV-0020 counts as low (<= 10000). The disposition states that only the openbao snapshot container runs low and that everything else takes a HIGH default."
   fi
+
+  if ! pod_gid="$(run_yq "$POD_SPEC.securityContext.runAsGroup // \"unset\"" "$REPO_ROOT/$path" "the pod-level runAsGroup of $path")"; then
+    query_failed "the pod-level runAsGroup of $path"
+    pod_gid="unset"
+  fi
+  if [ "$pod_gid" = "unset" ]; then
+    fail "PREMISE BROKEN: $path sets no pod-level runAsGroup, so containers without overrides inherit an unconstrained primary GID"
+  elif [ "$pod_gid" -lt "$LOW_ID_FLOOR" ]; then
+    fail "PREMISE BROKEN: the pod default runAsGroup in $path is $pod_gid, which KSV-0021 counts as low (<= 10000). Only the openbao snapshot container may use the image-defined low GID."
+  fi
+
+  if ! fs_group="$(run_yq "$POD_SPEC.securityContext.fsGroup // \"unset\"" "$REPO_ROOT/$path" "the fsGroup of $path")"; then
+    query_failed "the fsGroup of $path"
+    fs_group="unset"
+  fi
+  [ "$fs_group" = "$EXPECTED_LOW_GID" ] || fail \
+    "PREMISE BROKEN: fsGroup in $path is $fs_group, not $EXPECTED_LOW_GID; the high-GID mirror would lose supplementary access to 0640 snapshots"
 
   low=0
   if containers_out="$(run_yq "[$POD_SPEC.initContainers[]?, $POD_SPEC.containers[]?] | .[] | .name + \"|\" + .image + \"|\" + ((.securityContext.runAsUser // \"unset\")|tostring)" "$REPO_ROOT/$path" "the containers of $path")"; then
@@ -213,10 +258,31 @@ CONTAINERS
   else
     query_failed "the containers of $path"
   fi
+  low_gid=0
+  if containers_out="$(run_yq "[$POD_SPEC.initContainers[]?, $POD_SPEC.containers[]?] | .[] | .name + \"|\" + .image + \"|\" + ((.securityContext.runAsGroup // ($POD_SPEC.securityContext.runAsGroup // \"unset\"))|tostring)" "$REPO_ROOT/$path" "the effective container GIDs of $path")"; then
+    while IFS='|' read -r name image gid; do
+      [ -n "$name" ] || continue
+      [ "$gid" = "unset" ] && continue
+      [ "$gid" -ge "$LOW_ID_FLOOR" ] && continue
+      low_gid=$((low_gid + 1))
+      [ "$name" = "$EXPECTED_LOW_CONTAINER_NAME" ] || fail \
+        "PREMISE BROKEN: container '$name' in $path has low effective GID $gid; only '$EXPECTED_LOW_CONTAINER_NAME' is justified"
+      [ "$image" = "$EXPECTED_OPENBAO_IMAGE" ] || fail \
+        "PREMISE BROKEN: low-GID container '$name' in $path does not use the measured openbao image"
+      [ "$gid" -eq "$EXPECTED_LOW_GID" ] || fail \
+        "PREMISE BROKEN: openbao container '$name' in $path uses GID $gid, not image-defined $EXPECTED_LOW_GID"
+    done <<CONTAINERS
+$containers_out
+CONTAINERS
+    [ "$low_gid" -eq "$EXPECTED_LOW_CONTAINERS" ] || fail \
+      "PREMISE BROKEN: $low_gid container(s) in $path have a low effective primary GID; expected only the openbao snapshot container"
+  else
+    query_failed "the effective container GIDs of $path"
+  fi
 done
 
 [ "$status" -eq 0 ] || exit "$status"
-printf 'PASS(structure+absence+premise): %s is scoped to the two vault-backup workloads; %s is not.\n' \
+printf 'PASS(structure+premise+gate): %s and %s are path-scoped to the two vault-backup workloads and Trivy is blocking.\n' \
   "$UID_CHECK_ID" "$GID_CHECK_ID"
 
 # ---------------------------------------------------------------- behaviour --
@@ -269,6 +335,11 @@ for path in "${WORKLOAD_PATHS[@]}" "$PROBE_PATH"; do
     printf 'VACUOUS: without the ignorefile, %s does not fire at %s, so suppressing it below would prove nothing (a trivy rule change?).\n' "$UID_CHECK_ID" "$path" >&2
     exit 1
   }
+  gid_base="$(count_at "$WORK/no-ignore.json" "$path" "$GID_CHECK_ID")"
+  [ "$gid_base" -gt 0 ] || {
+    printf 'VACUOUS: without the ignorefile, %s does not fire at %s, so suppressing it below would prove nothing.\n' "$GID_CHECK_ID" "$path" >&2
+    exit 1
+  }
 done
 
 # --- With the ignorefile: the dispositioned paths are suppressed, the probe is NOT. ---
@@ -276,6 +347,11 @@ for path in "${WORKLOAD_PATHS[@]}"; do
   scoped="$(count_at "$WORK/with-ignore.json" "$path" "$UID_CHECK_ID")"
   [ "$scoped" -eq 0 ] || {
     printf 'the %s disposition does not cover %s (%s finding(s) still reported)\n' "$UID_CHECK_ID" "$path" "$scoped" >&2
+    exit 1
+  }
+  gid_scoped="$(count_at "$WORK/with-ignore.json" "$path" "$GID_CHECK_ID")"
+  [ "$gid_scoped" -eq 0 ] || {
+    printf 'the %s disposition does not cover %s (%s finding(s) still reported)\n' "$GID_CHECK_ID" "$path" "$gid_scoped" >&2
     exit 1
   }
 done
@@ -286,14 +362,10 @@ scoped_probe="$(count_at "$WORK/with-ignore.json" "$PROBE_PATH" "$UID_CHECK_ID")
   exit 1
 }
 
-# The GID half must still be REPORTED on these workloads — the absence layer above checks the
-# ignorefile, this checks what the scanner actually does with it.
-for path in "${WORKLOAD_PATHS[@]}"; do
-  gid_scoped="$(count_at "$WORK/with-ignore.json" "$path" "$GID_CHECK_ID")"
-  [ "$gid_scoped" -gt 0 ] || {
-    printf 'SUPPRESSED WITHOUT A PREMISE: %s no longer reports at %s. It is deliberately not dispositioned there (#3202) — if a fix made it genuinely clean, update this test and the ignorefile comment together.\n' "$GID_CHECK_ID" "$path" >&2
-    exit 1
-  }
-done
+gid_probe="$(count_at "$WORK/with-ignore.json" "$PROBE_PATH" "$GID_CHECK_ID")"
+[ "$gid_probe" -gt 0 ] || {
+  printf 'BOUNDARY BREACHED: identical bytes at the non-dispositioned path %s are also suppressed for %s.\n' "$PROBE_PATH" "$GID_CHECK_ID" >&2
+  exit 1
+}
 
-printf 'PASS(behaviour): %s is path-scoped and %s remains reported.\n' "$UID_CHECK_ID" "$GID_CHECK_ID"
+printf 'PASS(behaviour): %s and %s are path-scoped; identical probe bytes remain reported.\n' "$UID_CHECK_ID" "$GID_CHECK_ID"

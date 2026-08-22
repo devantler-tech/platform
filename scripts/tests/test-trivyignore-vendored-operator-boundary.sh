@@ -72,11 +72,13 @@ readonly reviewed_workload_pairs=(
   'KSV-0021:k8s/bases/infrastructure/vault-config/job.yaml'
   # The same openbao image-baked uid 100, on the two vault-backup workloads that pin the identical
   # digest; guarded per container by
-  # scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh (#3202). KSV-0021 is
-  # deliberately NOT paired here — the mirror container inherits that gid rather than having it
-  # image-defined, so that half stays reported.
+  # scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh (#3202, #2787). That guard now
+  # also proves the narrower GID premise: only snapshot uses the image-defined primary GID 1000;
+  # mirror keeps the high pod default and receives group 1000 only through fsGroup.
   'KSV-0020:k8s/bases/infrastructure/vault-backup/job.yaml'
   'KSV-0020:k8s/bases/infrastructure/vault-backup/cron-job.yaml'
+  'KSV-0021:k8s/bases/infrastructure/vault-backup/job.yaml'
+  'KSV-0021:k8s/bases/infrastructure/vault-backup/cron-job.yaml'
 )
 
 # THIRD reviewed category: an ADMISSION verdict — the suppressed field is not absent at runtime, it

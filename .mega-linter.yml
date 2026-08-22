@@ -175,21 +175,16 @@ DISABLE_ERRORS_LINTERS:
   # openbao containers that legitimately remain — the same image-defined identity the KSV-0020
   # entry above rests on, one field over. The same per-container boundary test asserts both.
   #
-  # It then went 6 -> 4 when KSV-0020 on the two vault-backup workloads was dispositioned (#3202):
-  # the openbao snapshot container's image-defined uid 100, the same premise as the vault-config
-  # entry above and on the same pinned digest, guarded per container by
-  # scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh.
+  # The vault-backup identity pair is guarded per container by
+  # scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh. The pod and mirror use the
+  # high 65532 primary GID; only the digest-pinned openbao snapshot container selects its defined
+  # 100:1000 identity. fsGroup 1000 gives the mirror supplementary read access to the 0640 snapshot
+  # without a low pod-wide primary GID. The path-scoped KSV-0020/KSV-0021 dispositions are coupled
+  # to an identical unlisted probe, so another low-identity workload still fails the scan.
   #
-  # The residual 4 is fully accounted for: 2 KSV-0021 on each of the two vault-backup workloads --
-  # the snapshot container's image-defined gid AND the mirror container, which INHERITS gid 1000
-  # from the pod rather than having it image-defined. That second one is why the KSV-0020 premise
-  # does not carry over. The residual stays live under #2787 until a high primary GID plus explicit
-  # group-1000 membership is proven on the PVC path. REPOSITORY_TRIVY cannot leave the list below
-  # until then.
-  #
-  # ⚠️ That 6 is NOT 9 minus this slice. The 9 recorded here was wrong on two independent counts:
-  # KSV-0020 on vault-backup was 2 (one per file), not 4, and the coredns KSV-0011 was already
-  # gone (#3259 closed). Measured on 2026-08-21 with trivy v0.74.0.
+  # The repository scan is at zero and REPOSITORY_TRIVY is a hard gate. Reproduce that claim from
+  # the repository root with scripts/megalinter-scan-counts.sh --trivy-only; the helper keeps the
+  # ignore paths and config-data root aligned with CI.
   #
   # ⚠️ MEASURE FROM THE REPOSITORY ROOT. Scanning k8s/ directly makes trivy report targets relative
   # to it, so this file's k8s/-prefixed ignore paths stop matching and already-dispositioned
@@ -247,7 +242,7 @@ DISABLE_ERRORS_LINTERS:
   # Both vault-backup workloads run the pod and mirror container at UID 65532. The snapshot
   # container overrides that default with the OpenBao image's baked UID 100, from the same pinned
   # digest vault-config reads. Snapshots are widened to 0640, so the high-UID mirror reads them
-  # through the shared primary GID 1000 instead of by owning the file.
+  # through supplementary group 1000 from fsGroup instead of by owning the file.
   #
   # UID 100 is not remapped: the openbao namespace carries no
   # `pod-security.devantler.tech/user-namespaces: enabled` label, so the add-user-namespaces rule
@@ -327,7 +322,6 @@ DISABLE_ERRORS_LINTERS:
   # because merged work and scanner rule-set changes both move them. Re-run the script and correct
   # these figures as part of any slice, rather than reading a stale figure as the current state.
   # #2853 tracks making that drift detectable rather than something a slice has to notice.
-  - REPOSITORY_TRIVY
   # jscpd (17): all in test files — scripts/validate-eks-ci-role-policy/main_test.go (#2777) and
   # two scripts/tests/*.py files that are themselves migration targets off Python (#2778).
   - COPYPASTE_JSCPD
