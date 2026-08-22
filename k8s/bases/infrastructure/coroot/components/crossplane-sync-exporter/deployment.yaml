@@ -35,6 +35,12 @@ spec:
         app.kubernetes.io/name: crossplane-sync-exporter
         app.kubernetes.io/part-of: coroot
         app.kubernetes.io/component: metrics-exporter
+      annotations:
+        # kube-state-metrics reports a successful in-process config reload, but
+        # the multi-GVK rollout reset its metric handler to an empty response.
+        # Pin the ConfigMap data checksum here so every config change gets a new
+        # pod and loads the final collector set during process startup.
+        platform.devantler.tech/config-checksum: "2762015805-13322"
     spec:
       serviceAccountName: crossplane-sync-exporter
       # kube-state-metrics reads the managed resources through the API server.
