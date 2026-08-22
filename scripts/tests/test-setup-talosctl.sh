@@ -209,7 +209,7 @@ for callsite in \
       ;;
   esac
   case "${step}" in
-    *"curl"*|*"talosctl-linux-amd64"*)
+    *"curl"* | *"talosctl-linux-amd64"*)
       printf 'Setup talosctl step still downloads talosctl directly: %s\n' "${callsite}" >&2
       exit 1
       ;;
