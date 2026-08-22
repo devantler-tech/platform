@@ -143,7 +143,7 @@ jobs:
       # exact gap this workflow exists to close, reopened one level up.
       # (Codex raised this on #3057.)
       - name: 🔐 Validate the Kubescape gate's framework coverage
-        run: ./scripts/guard-kubescape-gate-frameworks.sh
+        run: go run ./scripts/validate-kubescape-frameworks
 
       - name: 🔎 Scan manifests (Kubescape NSA + MITRE)
         # Same invocation and same justified exceptions as ci.yaml's gate, so
@@ -158,7 +158,7 @@ jobs:
         # finding only the PR sees would fail to persist as a main-branch alert
         # — and a direct push to main (which bypasses the merge queue) would go
         # completely ungated on the missing framework.
-        # scripts/guard-kubescape-gate-frameworks.sh enforces the match.
+        # scripts/validate-kubescape-frameworks enforces the match.
         run: |
           go test ./scripts/generate-kubescape-exceptions
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
