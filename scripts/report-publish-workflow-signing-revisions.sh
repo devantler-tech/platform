@@ -165,6 +165,44 @@ discover_consumers() {
   done < <(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' "$root" 2>/dev/null | sort -u) | sort -u
 }
 
+# 🔴 A SEMVER RANGE IS A CONSTRAINT, NOT "WHATEVER IS NEWEST". Discovery carries the
+# expression through as `semver:<expr>` instead of discarding it, because the two are
+# interchangeable only for an UNBOUNDED lower bound. All three range consumers use
+# `>=1.0.0` today, so the newest published tag is exactly what Flux resolves — but a
+# bounded selector such as `~1.4` or `<2.0.0` would make the report pick a tag Flux would
+# never serve, attribute its workflow revision to the deployed artifact, and omit the real
+# signer from the proposed allow-list.
+#
+# Resolving a bounded range correctly needs Flux-compatible semver selection, which this
+# script deliberately does not implement, so it REFUSES rather than guesses.
+#
+# This is decided from the MANIFEST, before any resolver is consulted — the constraint is a
+# property of what is written down, not of anything the network can tell us. Keeping it out
+# of `deployed_tag` is also what lets the test suite prove it without network access; when
+# this lived inside the resolver, the only way to reach it was to let the real resolver run,
+# which made the case non-hermetic and it failed in CI for an unrelated reason.
+#
+# Prints the effective version (empty means "newest published"), or fails naming the
+# constraint.
+effective_version() {
+  local raw="$1" expr
+  case "$raw" in
+    '-' | '') printf '%s\n' ''; return 0 ;;
+    semver:*)
+      expr="${raw#semver:}"
+      case "$expr" in
+        '*' | '>='[0-9]*) printf '%s\n' ''; return 0 ;;
+        *)
+          printf 'bounded semver constraint "%s" needs Flux-compatible selection, which this script does not implement\n' \
+            "$expr" >&2
+          return 1
+          ;;
+      esac
+      ;;
+    *) printf '%s\n' "$raw"; return 0 ;;
+  esac
+}
+
 # The `uses:` pin for one shared workflow, as it stands at one ref of one consumer.
 pin_at_ref() {
   local repo="$1" workflow="$2" ref="$3" body sha
@@ -234,35 +272,6 @@ tag_was_published() {
 # from this output.
 deployed_tag() {
   local repo="$1" version="$2" tags candidate bare
-  # 🔴 A SEMVER RANGE IS A CONSTRAINT, NOT "WHATEVER IS NEWEST". Discovery carries the
-  # expression through as `semver:<expr>` instead of discarding it, because the two are
-  # interchangeable only for an UNBOUNDED lower bound. All three range consumers use
-  # `>=1.0.0` today, so the newest published tag is exactly what Flux resolves — but a
-  # bounded selector such as `~1.4` or `<2.0.0` would make this pick a tag Flux would never
-  # serve, attribute its workflow revision to the deployed artifact, and omit the real
-  # signer from the proposed allow-list.
-  #
-  # Resolving a bounded range correctly needs Flux-compatible semver selection, which this
-  # script deliberately does not implement — so it REFUSES rather than guesses. That is the
-  # same fail-closed choice made everywhere else here: a wrong answer about which revision
-  # signed production is worse than no answer.
-  local constraint=""
-  case "${version}" in
-    semver:*)
-      constraint="${version#semver:}"
-      version=""
-      case "${constraint}" in
-        '*' | '>='[0-9]*) : ;;
-        *)
-          printf 'bounded semver constraint "%s" needs Flux-compatible selection, which this script does not implement\n' \
-            "${constraint}" >&2
-          return 1
-          ;;
-      esac
-      ;;
-    '-') version="" ;;
-  esac
-
   # --paginate: the endpoint caps at 100 per page and these repos already carry 50+ tags.
   # Past the cap an un-paginated read returns an arbitrary subset, which either misses a
   # real tag (false UNRESOLVED) or picks the newest of a truncated page (silently wrong).
@@ -381,6 +390,14 @@ main() {
   while IFS=$'\t' read -r repo workflow version; do
     [ -n "$repo" ] || continue
     examined=$((examined + 1))
+    # Classify from the manifest first: a bounded range is refused before any resolver is
+    # consulted, because the constraint is written down rather than discovered remotely.
+    if ! version="$(effective_version "$version")"; then
+      unresolved=$((unresolved + 1))
+      printf 'UNRESOLVED %-22s %-18s bounded semver constraint — not resolvable here\n' \
+        "$repo" "$workflow"
+      continue
+    fi
     if [ -n "$resolver" ]; then
       answer="$("$resolver" "$repo" "$workflow" "$version")" || answer=""
     else

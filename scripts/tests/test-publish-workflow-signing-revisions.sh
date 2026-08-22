@@ -352,9 +352,12 @@ spec:
 YAML
 done <<<"$consumers"
 bounded_out="$WORK/bounded.out"
-# No resolver stub: the refusal must happen while RESOLVING the deployed version, which is
-# the default resolver's job, so stubbing it would bypass the very branch under test.
-if PUBLISH_CONSUMER_ROOT="$bounded_root" "$SCRIPT" >"$bounded_out" 2>&1; then
+# The stub is safe here BECAUSE the refusal is decided from the manifest, before any resolver
+# is consulted. When this check lived inside the resolver, the only way to reach it was to let
+# the real one run — which made this case hit the network and fail in CI for an unrelated
+# reason. A hermetic case that reaches the branch is strictly better than a live one that does.
+if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+  PUBLISH_CONSUMER_ROOT="$bounded_root" "$SCRIPT" >"$bounded_out" 2>&1; then
   fail 'a bounded semver constraint was silently resolved to the newest tag instead of refusing'
 else
   grep -q 'bounded semver constraint' "$bounded_out" ||
