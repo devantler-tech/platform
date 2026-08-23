@@ -23,6 +23,13 @@ fail() {
 command -v yq >/dev/null 2>&1 || fail "yq is required"
 command -v trivy >/dev/null 2>&1 || fail "trivy is required"
 
+# shellcheck disable=SC2016 # These are literal source invariants, not test-shell arithmetic.
+grep -Fq 'semantic_start_line=$((finding_start_line - leading_blank_lines - 1))' "$GATE" ||
+  fail "Trivy one-based start lines are not converted to yq zero-based lines"
+# shellcheck disable=SC2016 # These are literal source invariants, not test-shell arithmetic.
+grep -Fq 'semantic_end_line=$((finding_end_line - leading_blank_lines - 1))' "$GATE" ||
+  fail "Trivy one-based end lines are not converted to yq zero-based lines"
+
 "$WIRING_TEST" || fail "the RGD gate is not wired on every protected event route"
 
 # The real committed templates are the positive control. A gate that rejects them cannot be wired
@@ -124,6 +131,24 @@ yq -i '.apiVersion = "platform.example/v1alpha1" |
 expect_rejected "a custom-group RGD instance targeting kube-system" "KSV-0037"
 rm -f "$WORK/$GROUPED_INSTANCE" "$WORK/$PROBE_RGD"
 rmdir "$WORK/$(dirname "$PROBE_RGD")"
+
+# Provider overlays may consume the base RGDs, but they may not mutate a graph after the base-only
+# extraction. A targeted JSON patch would otherwise make the rendered provider diverge invisibly.
+readonly PROVIDER_PROBE="k8s/providers/probe/infrastructure/kustomization.yaml"
+mkdir -p "$WORK/$(dirname "$PROVIDER_PROBE")"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [] | .patches = [{
+    "target": {
+      "group": "kro.run",
+      "version": "v1alpha1",
+      "kind": "ResourceGraphDefinition",
+      "name": "webapp.kro.run"
+    },
+    "patch": "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"
+  }]' >"$WORK/$PROVIDER_PROBE"
+expect_rejected "a provider overlay patch targeting an RGD" "ResourceGraphDefinition"
+rm -f "$WORK/$PROVIDER_PROBE"
+rmdir "$WORK/$(dirname "$PROVIDER_PROBE")"
 
 # Resource-level graph controls decide whether a template is instantiated. They must be evidence too:
 # gating the default-deny NetworkPolicy changes tenant isolation without changing its template bytes.

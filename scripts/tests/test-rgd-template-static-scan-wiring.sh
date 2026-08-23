@@ -8,8 +8,8 @@ readonly REPO_ROOT
 readonly CI_WORKFLOW="${RGD_WIRING_CI_WORKFLOW:-${REPO_ROOT}/.github/workflows/ci.yaml}"
 readonly MAIN_WORKFLOW="${RGD_WIRING_MAIN_WORKFLOW:-${REPO_ROOT}/.github/workflows/validate-main.yaml}"
 readonly SETUP_TRIVY="aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567"
-readonly BEHAVIORAL_COMMAND="bash scripts/tests/test-rgd-template-static-scan.sh"
-readonly WIRING_COMMAND="bash scripts/tests/test-rgd-template-static-scan-wiring.sh"
+readonly BEHAVIORAL_RUN=$'shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh\nbash scripts/tests/test-rgd-template-static-scan.sh\n'
+readonly WIRING_RUN=$'shellcheck scripts/tests/test-rgd-template-static-scan-wiring.sh\nbash scripts/tests/test-rgd-template-static-scan-wiring.sh\n'
 
 fail() {
   echo "FAIL: $*" >&2
@@ -22,8 +22,8 @@ command -v jq >/dev/null 2>&1 || fail "jq is required"
 ci_workflow_json="$(yq -o=json -I=0 '.' "$CI_WORKFLOW")"
 main_workflow_json="$(yq -o=json -I=0 '.' "$MAIN_WORKFLOW")"
 
-jq -e --arg wiring "$WIRING_COMMAND" '
-  any(.jobs.changes.steps[]; (.run // "") | contains($wiring))
+jq -e --arg wiring_run "$WIRING_RUN" '
+  any(.jobs.changes.steps[]; (.run // "") == $wiring_run)
 ' <<<"$ci_workflow_json" >/dev/null ||
   fail "the unconditional changes job does not independently validate RGD workflow wiring"
 
@@ -41,7 +41,7 @@ jq -e --argjson required_inputs '[
 ' <<<"$ci_workflow_json" >/dev/null ||
   fail "ci.yaml does not route every RGD gate input through k8s validation"
 
-jq -e --arg setup "$SETUP_TRIVY" --arg behavior "$BEHAVIORAL_COMMAND" '
+jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" '
   .jobs.validate as $gate
   | (($gate.if // "") ==
       "github.event_name == '\''pull_request'\'' && (needs.changes.outputs.k8s == '\''true'\'' || needs.changes.outputs.bridge_validation == '\''true'\'')")
@@ -49,13 +49,13 @@ jq -e --arg setup "$SETUP_TRIVY" --arg behavior "$BEHAVIORAL_COMMAND" '
   and any($gate.steps[];
       (.uses // "") == $setup and .with.version == "v0.74.0")
   and any($gate.steps[];
-      ((.run // "") | contains($behavior))
+      (.run // "") == $behavior_run
       and ((.["continue-on-error"] // false) == false)
       and ((.if // "") == "needs.changes.outputs.k8s == '\''true'\''"))
 ' <<<"$ci_workflow_json" >/dev/null ||
   fail "the pull-request validate job does not run the pinned RGD behavioral gate"
 
-jq -e --arg setup "$SETUP_TRIVY" --arg behavior "$BEHAVIORAL_COMMAND" '
+jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" '
   .jobs["validate-rgd-templates-merge-group"] as $gate
   | (($gate.if // "") ==
       "github.event_name == '\''merge_group'\'' && needs.changes.outputs.k8s == '\''true'\''")
@@ -64,7 +64,7 @@ jq -e --arg setup "$SETUP_TRIVY" --arg behavior "$BEHAVIORAL_COMMAND" '
   and any($gate.steps[];
       (.uses // "") == $setup and .with.version == "v0.74.0")
   and any($gate.steps[];
-      ((.run // "") | contains($behavior))
+      (.run // "") == $behavior_run
       and ((.["continue-on-error"] // false) == false)
       and (has("if") | not))
   and ((.jobs["deploy-prod"].needs | if type == "array" then . else [.] end)
@@ -74,27 +74,27 @@ jq -e --arg setup "$SETUP_TRIVY" --arg behavior "$BEHAVIORAL_COMMAND" '
 ' <<<"$ci_workflow_json" >/dev/null ||
   fail "ci.yaml does not gate merge-group deployment on the exact RGD behavioral scan"
 
-jq -e --arg setup "$SETUP_TRIVY" --arg behavior "$BEHAVIORAL_COMMAND" '
+jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" '
   .jobs["validate-rgd-templates"] as $gate
   | (($gate["continue-on-error"] // false) == false)
   and ($gate | has("if") | not)
   and any($gate.steps[];
       (.uses // "") == $setup and .with.version == "v0.74.0")
   and any($gate.steps[];
-      ((.run // "") | contains($behavior))
+      (.run // "") == $behavior_run
       and ((.["continue-on-error"] // false) == false)
       and (has("if") | not))
 ' <<<"$main_workflow_json" >/dev/null ||
   fail "validate-main.yaml does not run the pinned RGD behavioral gate"
 
-jq -e --arg wiring "$WIRING_COMMAND" '
+jq -e --arg wiring_run "$WIRING_RUN" '
   any(
     .jobs | to_entries[];
     .key != "validate-rgd-templates"
     and ((.value["continue-on-error"] // false) == false)
     and (.value | has("if") | not)
     and any(.value.steps[]?;
-      ((.run // "") | contains($wiring))
+      (.run // "") == $wiring_run
       and ((.["continue-on-error"] // false) == false)
       and (has("if") | not))
   )
@@ -144,6 +144,28 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
     RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
     RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/false-job-condition.log" 2>&1; then
     fail "the wiring validator accepted a conditionally skipped merge-group RGD job"
+  fi
+
+  shell_suppressed_workflow="${ablation_work}/ci-shell-suppressed.yaml"
+  cp "$CI_WORKFLOW" "$shell_suppressed_workflow"
+  yq -i '(.jobs."validate-rgd-templates-merge-group".steps[] |
+    select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh"))).run += " || true"' \
+    "$shell_suppressed_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$shell_suppressed_workflow" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/shell-suppressed.log" 2>&1; then
+    fail "the wiring validator accepted a shell-suppressed merge-group RGD scan"
+  fi
+
+  echoed_command_workflow="${ablation_work}/ci-echoed-command.yaml"
+  cp "$CI_WORKFLOW" "$echoed_command_workflow"
+  yq -i '(.jobs."validate-rgd-templates-merge-group".steps[] |
+    select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh"))).run =
+    "echo bash scripts/tests/test-rgd-template-static-scan.sh"' "$echoed_command_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$echoed_command_workflow" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/echoed-command.log" 2>&1; then
+    fail "the wiring validator accepted an echoed merge-group RGD scan command"
   fi
 
   required_filter_inputs=(

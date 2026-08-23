@@ -84,6 +84,53 @@ installed_trivy_version="$(trivy --version | sed -n 's/^Version: //p' | head -n 
 rgd_root="${SOURCE_ROOT}/${RGD_ROOT_PATH}"
 [ -d "$rgd_root" ] || fail "RGD source directory is missing: $rgd_root"
 
+# Provider overlays consume the reviewed base graph. Reject any provider-local patch or replacement
+# that targets an RGD, because scanning only the base after such a mutation would certify different
+# content from the provider render. Provider-specific graph behavior belongs in a separately scanned
+# definition rather than an invisible per-consumer mutation.
+provider_root="${SOURCE_ROOT}/k8s/providers"
+[ -d "$provider_root" ] || fail "provider source directory is missing: $provider_root"
+while IFS= read -r kustomization_file; do
+  targeted_rgd="$(yq '
+    [
+      .patches[]?.target.kind // "",
+      .patchesJson6902[]?.target.kind // "",
+      .replacements[]?.targets[]?.select.kind // ""
+    ] | .[] | select(. == "ResourceGraphDefinition")
+  ' "$kustomization_file")"
+  [ -z "$targeted_rgd" ] || fail \
+    "provider overlay targets a ResourceGraphDefinition: $kustomization_file"
+
+  while IFS= read -r patch_entry; do
+    patch_path="$(jq -r 'if type == "object" then .path // "" else "" end' <<<"$patch_entry")"
+    inline_patch="$(jq -r 'if type == "object" then .patch // "" else "" end' <<<"$patch_entry")"
+    if [ -n "$patch_path" ]; then
+      patch_file="${kustomization_file%/*}/${patch_path}"
+      [ -r "$patch_file" ] || fail "provider overlay patch is not readable: $patch_file"
+      if yq 'select(tag == "!!map") | .kind // ""' "$patch_file" |
+        grep -Fxq 'ResourceGraphDefinition'; then
+        fail "provider overlay patch declares a ResourceGraphDefinition: $patch_file"
+      fi
+    fi
+    if [ -n "$inline_patch" ]; then
+      if yq 'select(tag == "!!map") | .kind // ""' <<<"$inline_patch" |
+        grep -Fxq 'ResourceGraphDefinition'; then
+        fail "provider overlay inline patch declares a ResourceGraphDefinition: $kustomization_file"
+      fi
+    fi
+  done < <(yq -o=json -I=0 '.patches[]?' "$kustomization_file" | jq -c '.')
+
+  while IFS= read -r legacy_patch_path; do
+    [ -n "$legacy_patch_path" ] || continue
+    patch_file="${kustomization_file%/*}/${legacy_patch_path}"
+    [ -r "$patch_file" ] || fail "provider overlay patch is not readable: $patch_file"
+    if yq 'select(tag == "!!map") | .kind // ""' "$patch_file" |
+      grep -Fxq 'ResourceGraphDefinition'; then
+      fail "provider overlay patch declares a ResourceGraphDefinition: $patch_file"
+    fi
+  done < <(yq '.patchesStrategicMerge[]? // ""' "$kustomization_file")
+done < <(find "$provider_root" -type f -name 'kustomization.yaml' -print | LC_ALL=C sort)
+
 # Discover by resource kind rather than by today's two directory names. The tree also contains
 # sibling ClusterRoles, so a filename glob alone would scan unrelated manifests; conversely, a
 # fixed allow-list would silently recreate this blind spot when the next RGD is added.
@@ -257,8 +304,10 @@ while IFS=$'\t' read -r finding_target finding_id finding_severity \
   leading_blank_lines=$((first_content_line - 1))
   [ "$finding_start_line" -gt "$leading_blank_lines" ] || fail \
     "Trivy finding $finding_id on $finding_target starts before its YAML document"
-  semantic_start_line=$((finding_start_line - leading_blank_lines))
-  semantic_end_line=$((finding_end_line - leading_blank_lines))
+  # Trivy ranges are one-based; yq's line operator is zero-based. Remove both that index offset and
+  # the serializer-only leading blanks before comparing source coordinates.
+  semantic_start_line=$((finding_start_line - leading_blank_lines - 1))
+  semantic_end_line=$((finding_end_line - leading_blank_lines - 1))
 
   # Trivy v0.74.0 reports a source range, not a JSON path. Resolve every scalar path in that range
   # and keep their common semantic parent. This distinguishes byte-identical findings on
