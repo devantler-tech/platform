@@ -401,7 +401,7 @@ config_facts_in() {
           entry = substr(entry, 1, close_at - 1)
           # Basic strings interpret escapes; literal ones keep the text verbatim, so
           # decoding a literal would alias a DIFFERENT plugin id onto ours.
-          if (quote == DQ) entry = decode_basic(entry)
+          if (quote == DQ) entry = decode_basic(entry, 1)
           if (entry == "io.containerd.image-verifier.v1.bindir") disabled = 1
           continue
         }
@@ -421,7 +421,7 @@ config_facts_in() {
             j++
           }
           if (close_at == 0) continue
-          entry = decode_basic(substr(entry, 1, close_at - 1))
+          entry = decode_basic(substr(entry, 1, close_at - 1), 0)
         } else {
           # LITERAL entries interpret nothing, so the same text here is a DIFFERENT
           # plugin id containerd never matches. Decoding it would alias it onto ours.
@@ -496,12 +496,34 @@ config_facts_in() {
       }
       return v
     }
-    function decode_basic(s,   out, i, n, c, d, code) {
+    # `multiline` is 1 only for a TRIPLE-quoted basic string. The line-continuation
+    # rule below exists only there: in a single-line basic string a backslash before
+    # whitespace is not valid TOML at all, so applying it everywhere would decode a
+    # malformed value into our plugin id and fail a node whose verifier is ENABLED --
+    # a false alarm on the one signal meant to mean enforcement is off. Literal
+    # strings never reach this function, which is what keeps the triple-literal form
+    # a DIFFERENT plugin id, exactly as containerd reads it.
+    function decode_basic(s, multiline,   out, i, n, c, d, code) {
       n = length(s); out = ""; i = 1
       while (i <= n) {
         c = substr(s, i, 1)
         if (c != "\\") { out = out c; i++; continue }
         d = substr(s, i + 1, 1)
+        # A backslash immediately before a physical newline removes that newline AND
+        # every leading whitespace character of the next line. The array arrives with
+        # its physical lines joined by ONE space, so the newline is that space here:
+        # consume the backslash and the whole whitespace run that follows it.
+        #
+        # Without this the buffered value kept a literal backslash-space, compared
+        # unequal to our identifier, and the script printed disabled=0 -- reporting OK
+        # while containerd had the verifier switched off. Reached only when the
+        # backslash is genuinely unescaped: a preceding \\ is consumed as a pair by
+        # the branch below before this one is ever tested.
+        if (multiline && (d == " " || d == "\t")) {
+          i += 2
+          while (i <= n && (substr(s, i, 1) == " " || substr(s, i, 1) == "\t")) i++
+          continue
+        }
         if (d == "n")       { out = out "\n"; i += 2 }
         else if (d == "t")  { out = out "\t"; i += 2 }
         else if (d == "r")  { out = out "\r"; i += 2 }
@@ -538,7 +560,7 @@ config_facts_in() {
         }
         if (i > n) return ""
         i++
-        if (q == DQ) out = decode_basic(out)
+        if (q == DQ) out = decode_basic(out, 0)
       } else {
         out = ""
         while (i <= n) {

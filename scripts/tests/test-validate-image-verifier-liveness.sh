@@ -1522,4 +1522,76 @@ printf 'ok — case 27: each config file is read exactly once\n' >/dev/null
 
 reset_node_sequence
 
+# ===========================================================================
+# 28. A MULTILINE BASIC STRING'S BACKSLASH LINE CONTINUATION. (#3320 review)
+#     TOML says a backslash immediately before a physical newline inside a
+#     MULTILINE BASIC string removes the newline AND all leading whitespace of
+#     the next line. So this entry resolves to exactly our plugin id and
+#     containerd switches the verifier off.
+#
+#     The array is joined with a single space, and decode_basic() had no case
+#     for `\` before that join point, so the buffered value kept the backslash
+#     and compared unequal -- disabled=0, and the node reported OK with the
+#     verifier disabled. That is a FAIL-OPEN on the one signal meant to mean
+#     enforcement is on.
+#
+#     🔴 The heredoc MUST be quoted. Unquoted, bash removes the backslash-newline
+#     while WRITING the fixture, collapsing it to the plain identifier -- which
+#     the parser already handles, so the case would pass while testing nothing.
+#     Measured: unquoted yields 1 line and no backslash, quoted yields 2.
+# ===========================================================================
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+disabled_plugins = ["""io.containerd.image-verifier.v1.\
+bindir"""]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+# The fixture must actually carry the continuation, or this case is vacuous.
+grep -q '\\$' "${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" ||
+  fail 'case 28: the fixture lost its backslash continuation — the case would pass vacuously'
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 28: a line-continued multiline basic string naming our plugin must fail the node'
+fi
+require_text "${output}" 'disabled_plugins' 'case 28: says WHY, so the operator edits the right setting'
+
+# CONTROL 1 — MULTILINE LITERAL strings do NOT apply the continuation rule, so
+# the same text is a DIFFERENT plugin id containerd never matches. Applying the
+# continuation here would alias a foreign id onto ours and fail a node whose
+# verifier is ENABLED — a false alarm on the signal that means enforcement is on.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+disabled_plugins = ['''io.containerd.image-verifier.v1.\
+bindir''']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+grep -q '\\$' "${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" ||
+  fail 'case 28 control: the literal fixture lost its backslash — the control proves nothing'
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 28 control: a multiline LITERAL string does not continue lines, so that entry is a different plugin id and must not disable ours'
+require_text "${output}" 'OK   disabled' 'case 28 control: literal strings keep the backslash verbatim'
+
+# CONTROL 2 — a backslash-continued entry naming SOME OTHER plugin must still
+# not disable ours. Without this, the fix could be satisfied by treating any
+# continued entry as a match.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+disabled_plugins = ["""io.containerd.snapshotter.v1.\
+blockfile"""]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 28 control: a continued entry naming another plugin must not disable ours'
+require_text "${output}" 'OK   disabled' 'case 28 control: continuation is decoded, not treated as a wildcard match'
+
+reset_node_sequence
+
 printf 'PASS: all cases\n'
