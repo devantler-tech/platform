@@ -65,8 +65,12 @@ Velero), so the manually-set values are durable without a GitOps source of truth
    `github-config` Flux health check. Install it on **all repositories**
    of the org. No webhook.
 2. **Overwrite the placeholders in OpenBao** with the App's real values — the
-   keys already exist (seeded by the vault-config Job), so just set them, e.g.:
+   keys already exist (seeded by the vault-config Job), so just set them. The
+   public `vault.${domain}` hostname serves the browser UI only (it sits behind
+   SSO), so reach the API over a port-forward:
    ```sh
+   kubectl -n openbao port-forward svc/openbao-active 8200:8200 &
+   export BAO_ADDR=http://127.0.0.1:8200
    bao kv put -mount=secret infrastructure/github/app \
      app_id="<app id>" installation_id="<installation id>" pem=@app.private-key.pem
    ```

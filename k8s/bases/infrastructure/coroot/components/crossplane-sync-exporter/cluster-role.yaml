@@ -1,16 +1,99 @@
-# Read-only, and scoped to the one managed-resource kind this exporter reads.
-# It is deliberately not `apiGroups: ["*"]`: a metrics exporter that could read
-# every custom resource in the cluster would also be able to read the spec of
-# resources that carry provider configuration.
+# Read-only, and scoped one-for-one to the managed-resource kinds this exporter
+# describes. It is deliberately not `apiGroups: ["*"]` or `resources: ["*"]`:
+# provider configuration and a newly installed kind stay unreadable until their
+# least-privilege entry is deliberately reviewed.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: crossplane-sync-exporter
 rules:
   - apiGroups:
+      - actions.github.m.upbound.io
+    resources:
+      - repositorypermissions
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - dns.unifi.m.crossplane.io
+    resources:
+      - records
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - enterprise.github.m.upbound.io
+    resources:
+      - organizationrulesets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - iam.aws.m.upbound.io
+    resources:
+      - openidconnectproviders
+      - policies
+      - roles
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
       - repo.github.m.upbound.io
     resources:
+      - branchprotections
+      - defaultbranches
+      - issuelabels
       - repositories
+      - repositoryrulesets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - route.unifi.m.crossplane.io
+    resources:
+      - trafficroutes
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - team.github.m.upbound.io
+    resources:
+      - teams
+      - teammemberships
+      - teamrepositories
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - vpn.unifi.m.crossplane.io
+    resources:
+      - clients
+    verbs:
+      - get
+      - list
+      - watch
+  # kube-state-metrics resolves the configured `groupVersionKind` through the
+  # CRD API before it can build a store for it, so the rule above is necessary
+  # but not sufficient: without this one the reflector retry-loops on a
+  # forbidden list and the exporter emits nothing while reporting itself ready.
+  #
+  # This reads CRD *definitions* — schemas — not the managed resources
+  # themselves, so it does not widen the access the comment above scopes:
+  # provider configuration lives in managed-resource specs, which stay pinned to
+  # the kinds listed in the first rule. `resourceNames` cannot narrow this
+  # further, because RBAC honours it only for get/update/delete/patch and the
+  # discovery path lists.
+  - apiGroups:
+      - apiextensions.k8s.io
+    resources:
+      - customresourcedefinitions
     verbs:
       - get
       - list

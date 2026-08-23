@@ -25,17 +25,34 @@ spec:
       restartPolicy: Never
       automountServiceAccountToken: false
       enableServiceLinks: false
+      # UID 65532 rather than a low one (checkov CKV_K8S_40, which passes from
+      # 10000 up). The busybox image declares no `User`, so it would run as root
+      # unedited, and it carries no /etc/passwd entry for the UID this runs
+      # under — the identity is unmapped either way and nothing in the image
+      # looks it up.
+      #
+      # The UID is not what this Job measures. Both containers assert on
+      # /proc/self/uid_map, which describes the pod's user namespace and reads
+      # identically for every process in it whatever UID that process has, so
+      # the `uid_host_start > 0` acceptance condition is untouched. `id -u`/
+      # `id -g` reach the sentinel only as text, and the round-trip assertions
+      # grep for the `init-user=`/`main-user=` keys, never their values.
+      #
+      # What makes /smoke writable is `fsGroup` == `runAsGroup`, not the UID:
+      # the kubelet chowns the Longhorn volume to that GID. The three move
+      # together for that reason — raising one alone would be the change that
+      # breaks this.
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       initContainers:
         - name: write-sentinel
-          image: docker.io/library/busybox:1.38.0@sha256:fd8d9aa63ba2f0982b5304e1ee8d3b90a210bc1ffb5314d980eb6962f1a9715d
+          image: docker.io/library/busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -62,8 +79,8 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
+            runAsUser: 65532
+            runAsGroup: 65532
             capabilities:
               drop:
                 - ALL
@@ -83,7 +100,7 @@ spec:
               mountPath: /smoke
       containers:
         - name: verify-round-trip
-          image: docker.io/library/busybox:1.38.0@sha256:fd8d9aa63ba2f0982b5304e1ee8d3b90a210bc1ffb5314d980eb6962f1a9715d
+          image: docker.io/library/busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -119,8 +136,8 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
+            runAsUser: 65532
+            runAsGroup: 65532
             capabilities:
               drop:
                 - ALL

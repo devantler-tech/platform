@@ -19,7 +19,7 @@ trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/scripts" "$fixture/config"
 cp "$REPO_ROOT/scripts/guard-shared-publish-workflow-pin.sh" "$fixture/scripts/"
 
-readonly PINNED='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@([0-9a-f]{40}|refs/tags/v.+)$'
+readonly PINNED='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
 
 failures=0
 
@@ -70,14 +70,14 @@ write_subjects "$(printf "subject: '%s'" "$PINNED")"
 expect_accepted 'eight legitimate subjects are accepted'
 
 # A plain (unquoted) scalar: here a whitespace-# genuinely does open a comment, so the
-# comment's `@refs/tags/v.+` must not be mistaken for the value.
-write_subjects 'subject: ^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@refs/heads/main$ # @refs/tags/v.+'
+# comment's `@[0-9a-f]{40}` must not be mistaken for the value.
+write_subjects 'subject: ^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@refs/heads/main$ # @[0-9a-f]{40}'
 expect_rejected 'inline comment on a plain scalar cannot launder a branch ref' 'refs/heads/main'
 
 # THE QUOTED-COMMENT BYPASS. Inside quotes a `#` is literal scalar content, so YAML
 # hands cosign the whole string — including a second alternative permitting any
 # branch. Truncating at the ` #` validated only the tag half and reported it pinned.
-write_subjects "subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@refs/tags/v.+ # x|^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@refs/heads/.+\$'"
+write_subjects "subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40} # x|^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@refs/heads/.+\$'"
 expect_rejected 'a # inside a quoted scalar does not truncate the value' 'refs/heads/.+'
 
 # A legitimate quoted subject followed by a REAL comment must still be accepted — the
@@ -87,15 +87,15 @@ expect_accepted 'a real trailing comment after a quoted scalar is still removed'
 
 # `''` is an escaped quote rather than the end of the scalar, and no real subject can
 # carry one. It is refused rather than parsed on a guess.
-write_subjects "subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@refs/tags/v.+''|^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@refs/heads/.+$'"
+write_subjects "subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}''|^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@refs/heads/.+$'"
 expect_rejected "an escaped '' is refused rather than parsed on a guess" 'could not read the YAML scalar'
 
 # Shapes the parser will not guess at. Both must fail CLOSED and say so, rather than
 # being validated on a truncation.
-write_subjects 'subject: "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@refs/tags/v.+$"'
+write_subjects 'subject: "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$"'
 expect_rejected 'a double-quoted scalar is refused rather than parsed on a guess' 'could not read the YAML scalar'
 
-write_subjects "subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@refs/tags/v.+\$"
+write_subjects "subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}\$"
 expect_rejected 'an unterminated quoted scalar is refused' 'could not read the YAML scalar'
 
 if [ "$failures" -ne 0 ]; then

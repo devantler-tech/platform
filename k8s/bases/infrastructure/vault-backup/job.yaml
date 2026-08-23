@@ -28,7 +28,26 @@ metadata:
   annotations:
     # Jobs are immutable; let Flux delete-and-recreate on spec change.
     kustomize.toolkit.fluxcd.io/force: enabled
-    checkov.io/skip1: CKV_K8S_38=the snapshot container reads its SA JWT to log in via OpenBao Kubernetes auth
+    checkov.io/skip1: "CKV_K8S_38=the snapshot container reads its SA JWT to log in via OpenBao Kubernetes auth"
+    # Only the snapshot container runs UID 100, and that IS the openbao image's
+    # baked identity: the image carries `openbao:x:100:1000` in its own
+    # /etc/passwd (the same pinned digest vault-config reads), which
+    # runAsUser/runAsGroup restate. The pod default is the high, unprivileged
+    # 65532, so the mirror container — `minio/mc`, which bakes no identity of
+    # its own and mounts /snapshots readOnly — takes that rather than a UID
+    # chosen for openbao.
+    #
+    # The mirror still reads the snapshot through supplementary group 1000:
+    # fsGroup adds that group to every container, while only the openbao
+    # snapshot container selects its image-defined primary GID 1000. The
+    # snapshot script chmods the file 0640 after writing it. Access therefore
+    # does not depend on a low pod-wide primary GID or the volume's setgid bit.
+    #
+    # UID 100 is not remapped. The openbao namespace carries no
+    # `pod-security.devantler.tech/user-namespaces: enabled` label, so the
+    # add-user-namespaces rule does not match and hostUsers stays on; 100 is a
+    # host UID, now scoped to the single container whose image defines it.
+    checkov.io/skip2: "CKV_K8S_40=UID 100 is the openbao image's baked `openbao:x:100:1000` user, which runAsUser/runAsGroup restate; only the snapshot container runs it and the pod default is 65532"
 spec:
   # No ttlSecondsAfterFinished (intentional). This is a one-shot "snapshot at
   # deploy/change time" Job (see header) -- it must run ONCE per vault-backup
@@ -60,8 +79,8 @@ spec:
       # add-security-context Kyverno mutation) so the pod stays hardened
       # even when created before the webhook is active on fresh bring-up.
       securityContext:
-        runAsUser: 100
-        runAsGroup: 1000
+        runAsUser: 65532
+        runAsGroup: 65532
         fsGroup: 1000
         runAsNonRoot: true
         seccompProfile:
@@ -83,6 +102,12 @@ spec:
         - name: snapshot
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
           securityContext:
+            # UID 100 is the openbao image's own baked identity (`openbao:x:100:1000`
+            # in its /etc/passwd) — see the checkov.io/skip2 rationale. Only this
+            # container overrides the pod's high defaults; the mirror takes
+            # 65532:65532 and reads through fsGroup 1000 as a supplementary group.
+            runAsUser: 100
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             runAsNonRoot: true
@@ -128,6 +153,24 @@ spec:
               fi
               echo "Vault is unsealed and healthy."
 
+              # Backfill: widen EVERY snapshot on the shared PVC, not only the one this
+              # run creates. #3246 made new snapshots 0640, but retention keeps the
+              # newest 14, so every snapshot taken before it is still 0600 — readable
+              # only by its owner. The mirror runs `mc mirror` over the WHOLE directory,
+              # so it can need to open any of them. The mirror now runs as the pod's high
+              # UID and reads them through group 1000 instead of ownership. Widening them
+              # here, while the snapshot container still owns them, preserves that access;
+              # a warning rather than a hard failure means a single odd file
+              # cannot take the nightly backup down.
+              widened=0
+              for EXISTING in /snapshots/openbao-*.snap; do
+                [ -e "$EXISTING" ] || continue
+                chmod 0640 "$EXISTING" && widened=$((widened + 1)) ||
+                  echo "WARNING: could not widen $EXISTING; the mirror may be unable to read it"
+              done
+              # Positive evidence: a silent loop cannot be told apart from one that matched nothing.
+              echo "Widened $widened snapshot(s) on the shared PVC to 0640."
+
               # Skip if the nightly CronJob already produced a snapshot today —
               # this job only guarantees a baseline exists.
               if ls /snapshots/openbao-"$(date -u +%Y%m%d)"-*.snap >/dev/null 2>&1; then
@@ -138,6 +181,13 @@ spec:
               SNAP="/snapshots/openbao-$(date -u +%Y%m%d-%H%M%S).snap"
               echo "Saving initial raft snapshot to $SNAP..."
               bao operator raft snapshot save "$SNAP"
+              # The mirror opens the snapshot as GROUP: fsGroup 1000 gives it
+              # supplementary membership while its primary identity stays 65532:65532.
+              # The snapshot container alone uses OpenBao's image UID/GID 100:1000. An explicit chmod,
+              # NOT a umask: umask can only clear permission bits, so it cannot
+              # widen the 0600 `bao` creates the file with. The 0640 mode decouples
+              # mirror access from the image-defined owner UID.
+              chmod 0640 "$SNAP"
               ls -l "$SNAP"
               echo "Initial snapshot complete."
       containers:

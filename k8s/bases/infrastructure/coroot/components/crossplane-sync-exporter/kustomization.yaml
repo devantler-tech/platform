@@ -1,15 +1,15 @@
 ---
-# Default-off component for platform#2820.
+# Component for platform#2820, referenced by the coroot kustomization.
 #
 # A Crossplane managed resource can report Ready=True while Synced=False, which
 # means no declared setting is reaching the provider while every health check
 # keyed on Ready reads the fleet as healthy. Nothing in the cluster observes the
 # Synced condition today, so that state is silent.
 #
-# This component supplies the missing metric, which is the prerequisite for the
-# alerting rule — the rule cannot be written before the series exists. It does
-# not alert; delivery is a separate change, and so is extending coverage beyond
-# Repository to the remaining managed-resource kinds.
+# This component supplies the condition metric for every managed-resource kind
+# currently installed on production. Alert delivery lives in the Hetzner
+# overlay, where a CRD-inventory sentinel also makes a newly added kind fail
+# loudly until this component receives exact GVK config and read-only RBAC.
 #
 # No CiliumNetworkPolicy is included: the base `allow-coroot` policy
 # (controllers/coroot/cilium-network-policy.yaml, endpointSelector: {}) already
@@ -17,8 +17,8 @@
 # traffic to coroot-prometheus, and DNS — which is the whole of what this pod
 # needs.
 #
-# Keep the component unreferenced until a separate activation change can deploy,
-# observe, and roll it back independently.
+# Removing the single `components:` entry that references this folder is the
+# rollback: it withdraws the exporter without touching anything else Coroot runs.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 resources:

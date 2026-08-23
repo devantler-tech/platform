@@ -229,14 +229,20 @@ func TestDeployActionTalosctlIsInstalledBeforeAnyMutatingBridge(t *testing.T) {
 			stage := requireIndex(t, test.document, "id: stage_flux_ghcr_auth")
 			requireBefore(t, setup, stage, "talosctl setup before credential staging")
 			setupStep := test.document[setup:stage]
-			requireContains(t, setupStep, fmt.Sprintf("TALOS_VERSION: %q", talosVersion))
-			requireContains(t, setupStep, "talosctl-linux-amd64")
+			requireContains(t, setupStep, ".github/scripts/setup-talosctl.sh")
 			if test.requireRestore {
 				restore := requireIndex(t, test.document, "name: 🔑 Restore talosconfig")
 				requireBefore(t, restore, stage, "talosconfig restore before credential staging")
 			}
 		})
 	}
+
+	// The version and the asset moved into the shared installer, so assert them
+	// there rather than at each call site — this now covers all four sites, not
+	// just the two documents above.
+	installer := readRepositoryFile(t, ".github/scripts/setup-talosctl.sh")
+	requireContains(t, installer, fmt.Sprintf("TALOS_VERSION=%q", talosVersion))
+	requireContains(t, installer, "talosctl-linux-amd64")
 }
 
 func TestDeployActionConsumerStagingPrecedesPublishAndIsReassertedAfterUpdate(t *testing.T) {
@@ -255,15 +261,118 @@ func TestDeployActionConsumerStagingPrecedesPublishAndIsReassertedAfterUpdate(t 
 	requireBefore(t, postPushRefresh, reconcile, "post-publish refresh before reconcile")
 	requireBefore(t, reconcile, clusterUpdate, "reconcile before cluster update")
 	requireBefore(t, clusterUpdate, finalRefresh, "cluster update before final refresh")
-	requireContains(t, action[firstRefresh:push], "run: ./scripts/refresh-flux-ghcr-auth.sh\n")
+	requireContains(t, action[firstRefresh:push], "--record-runtime-proof")
+	requireContains(t, action[firstRefresh:push], "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json")
 	requireNotContains(t, action[firstRefresh:push], "--check-only")
 	requireContains(t, action[postPushRefresh:reconcile], "run: ./scripts/refresh-flux-ghcr-auth.sh --check-only")
 	finalRefreshStep := action[finalRefresh:]
-	requireContains(t, finalRefreshStep, "always() &&")
+	requireContains(t, finalRefreshStep, "!cancelled() &&")
 	requireContains(t, finalRefreshStep, "steps.verify_flux_ghcr_auth_after_push.outcome == 'success'")
 	requireContains(t, finalRefreshStep, "steps.reconcile.outcome == 'success'")
-	if count := strings.Count(action, "scripts/refresh-flux-ghcr-auth.sh"); count != 3 {
-		t.Errorf("refresh helper references = %d, want 3", count)
+	requireContains(t, finalRefreshStep, "--reuse-runtime-proof")
+	requireContains(t, finalRefreshStep, "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json")
+	// The fourth reference is the orphaned-fence pre-flight. It is asserted
+	// explicitly rather than absorbed into the count, so a future invocation still
+	// has to be accounted for here deliberately — which is what this exhaustive
+	// count exists to force.
+	// Anchored on the step, not its `run:` line: the gating `if:` precedes the
+	// command, so a slice starting at `run:` would miss the very condition that
+	// keeps this default-off.
+	recoverStep := requireIndex(t, action, "- name: 🧯 Recover an orphaned GHCR deploy fence")
+	requireBefore(t, recoverStep, firstRefresh, "fence recovery before staging")
+	requireContains(t, action[recoverStep:firstRefresh], "inputs.recover-orphaned-fence == 'true'")
+	requireContains(t, action[recoverStep:firstRefresh], "run: ./scripts/refresh-flux-ghcr-auth.sh --recover-fences")
+	// The gate above keeps this off only while the input's own default does, and
+	// the two fail INDEPENDENTLY: a default flipped to "true" leaves the assertion
+	// above passing unchanged while arming automatic Lease mutation against prod on
+	// every deploy and every heal. Read structurally rather than as a substring, so
+	// a `default: "false"` belonging to some other input cannot satisfy it.
+	recoverDefault, err := yamlScalarAtPath(action, "inputs", "recover-orphaned-fence", "default")
+	if err != nil {
+		t.Fatalf("read the fence recovery input default: %v", err)
+	}
+	if recoverDefault != "false" {
+		t.Errorf("recover-orphaned-fence default = %q, want %q", recoverDefault, "false")
+	}
+	if count := strings.Count(action, "scripts/refresh-flux-ghcr-auth.sh"); count != 4 {
+		t.Errorf("refresh helper references = %d, want 4", count)
+	}
+}
+
+// splitCompositeSteps returns one string per step of a composite action, each
+// beginning at its own "- name:" line.
+func splitCompositeSteps(document string) []string {
+	const marker = "\n    - name:"
+	parts := strings.Split(document, marker)
+	if len(parts) < 2 {
+		return nil
+	}
+	steps := make([]string, 0, len(parts)-1)
+	for _, part := range parts[1:] {
+		steps = append(steps, strings.TrimPrefix(marker, "\n")+part)
+	}
+	return steps
+}
+
+// stepDirectives drops comment lines, so a rationale that merely mentions a
+// condition is never mistaken for the condition itself.
+func stepDirectives(step string) string {
+	lines := strings.Split(step, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+// A step running the refresh helper without --check-only acquires the
+// `ghcr-auth-refresh` Lease, which by design has no automatic expiry takeover:
+// Talos machine-config writes expose no fencing token, so a non-empty holder
+// always requires explicit human recovery. `always()` also runs after the job
+// is cancelled, and a cancelled job is force-killed once the runner's
+// post-cancellation grace expires — the EXIT trap's release never lands, and
+// every later deploy then fails to acquire the Lease. A merge-queue eviction
+// cancels this job routinely, so no lease-acquiring step may remain reachable
+// after cancellation.
+func TestDeployStepsThatTakeTheSyncLeaseNeverRunAfterCancellation(t *testing.T) {
+	action := readRepositoryFile(t, ".github/actions/deploy-prod/action.yml")
+
+	steps := splitCompositeSteps(action)
+	if len(steps) == 0 {
+		t.Fatal("expected the deploy action to contain composite steps")
+	}
+
+	inspected := 0
+	for _, step := range steps {
+		if !strings.Contains(step, "scripts/refresh-flux-ghcr-auth.sh") {
+			continue
+		}
+		if strings.Contains(step, "--check-only") {
+			// Read-only: exits before acquire_sync_lease, so it holds nothing.
+			continue
+		}
+		if strings.Contains(step, "--recover-fences") {
+			// Alternative mode: dispatches in the same early block as --fences and
+			// exits there, before acquire_sync_lease is even defined, so it holds
+			// nothing either. It RELEASES a Lease under CAS, which is the opposite
+			// of the hazard this test guards — a step that acquires and is then
+			// killed before cleanup. Its own refusals are covered by the
+			// fence-autorecovery tests.
+			continue
+		}
+		inspected++
+		if strings.Contains(stepDirectives(step), "always()") {
+			t.Errorf(
+				"step acquires the GHCR sync Lease under always(); a cancelled job is killed before cleanup releases it, wedging every later deploy:\n%s",
+				step,
+			)
+		}
+	}
+	if inspected != 2 {
+		t.Fatalf("lease-acquiring deploy steps inspected = %d, want 2", inspected)
 	}
 }
 

@@ -3,17 +3,25 @@
 # publish workflow pins a FIXED revision, and never a moving ref.
 #
 # WHY THIS EXISTS (#2818)
-# #2816 tightened these matchers from `@.+` to `@([0-9a-f]{40}|refs/tags/v.+)`, which
-# closed moving refs. Nothing keeps them closed: the property lives in eight separate
-# regex strings, hand-written, under three different key spellings, and a single one
-# widened back to `@.+` restores "trust any signer that can run this workflow from any
-# ref" while every other check in CI stays green. A widened matcher is not a broken
-# matcher — it verifies, it just verifies less — so no schema, no kubeconform pass and
-# no deploy will notice.
+# The accepted ref shape is a 40-hex commit and nothing else. The property lives in
+# eight separate regex strings, hand-written, under three different key spellings, and
+# a single one widened back to `@.+` restores "trust any signer that can run this
+# workflow from any ref" while every other check in CI stays green. A widened matcher
+# is not a broken matcher — it verifies, it just verifies less — so no schema, no
+# kubeconform pass and no deploy will notice.
 #
-# The ref is judged by an ALLOW-LIST — a 40-hex commit, or a tag under refs/tags/ —
-# because enumerating forbidden shapes only catches the regressions someone thought
-# of, and would wave through `@main` or `@v1`.
+# The ref is judged by an ALLOW-LIST — a 40-hex commit — because enumerating forbidden
+# shapes only catches the regressions someone thought of, and would wave through
+# `@main` or `@v1`.
+#
+# THE TAG ALTERNATIVE IS GONE, AND THIS GUARD IS WHAT KEEPS IT GONE (#3022).
+# A `refs/tags/v.+` alternative used to sit beside the commit form. It was removed once
+# it was confirmed unexercised: every artifact these subjects verify is signed by a
+# caller that pins the shared workflow by commit — measured across the complete history
+# of all six consumers and against the signing certificates of every readable artifact,
+# with zero tag-form signatures. Re-adding it would widen the trusted signer set for no
+# artifact that exists, so the allow-list below rejects it rather than merely
+# tolerating its absence.
 #
 # 🔴 THE ROOT SOURCE IS DELIBERATELY EXCLUDED, AND THAT IS THE WHOLE DESIGN.
 #
@@ -34,6 +42,14 @@
 # actions SHA still matches `[0-9a-f]{40}`. Restricting to approved revisions needs a
 # generated allow-list and is tracked separately on #2818. This guard keeps the
 # property #2816 established from silently regressing.
+#
+# Note for whoever implements that allow-list: the check below matches the literal
+# PATTERN text `[0-9a-f]{40}`, because these subjects are regexes. A subject naming one
+# concrete commit — which is what a generated approved-revision list would emit — is
+# therefore REJECTED here today, despite being strictly narrower than what is accepted.
+# That is a limit of this check, not a judgement about the shape; extend the allow-list
+# deliberately when the generator lands, rather than reading the failure as a defect in
+# the generated output.
 
 set -euo pipefail
 
@@ -222,10 +238,13 @@ EOF
     # positively recognisable inverts that — an unfamiliar shape fails, and adding a
     # legitimately new one is a deliberate edit here rather than a silent widening.
     #
-    # Exactly two forms qualify: a 40-hex commit, and a tag under refs/tags/. The
-    # wildcard inside `refs/tags/v.+` widens the tag NAME, never the ref KIND, so it
-    # stays valid — which is why this is judged per alternative rather than on the
-    # whole string.
+    # Exactly one form qualifies: a 40-hex commit (#3022).
+    #
+    # An alternation is therefore always a widening now, but it is still parsed
+    # per alternative rather than rejected wholesale on sight — that way the error
+    # names the offending alternative instead of the whole string, and a future
+    # legitimately-added form is a deliberate edit to the allow-list below rather
+    # than a change to this parsing.
     # A grouped ref must be FULLY grouped. `(A|B)` is the shape this understands;
     # `(A)?B` is not, and stripping a leading paren from it would silently hand the
     # trailing `B` to the per-alternative check as part of A's text. Reject the
@@ -246,26 +265,15 @@ EOF
     esac
 
     while IFS= read -r alternative; do
-      # Match each alternative WHOLE, never by prefix.
+      # Match the alternative WHOLE (`-x`), never by prefix.
       #
-      # `refs/tags/*` as a shell glob accepts anything that merely STARTS with the
-      # tag prefix, so `(refs/tags/v.+)?refs/heads/.+$` — where the tag group is
-      # optional and a branch ref follows it — was accepted and the guard reported
-      # all eight subjects pinned. Reproduced against the real repository before
-      # this fix: exit 0 with a subject that permits `refs/heads/`.
-      #
-      # The tag form therefore allows only characters that widen the tag NAME. `/`
-      # is excluded because it is what lets a second ref kind be appended, and the
-      # grouping and alternation metacharacters are excluded because a matcher that
-      # needs them is not a plain tag pattern and must be reviewed here deliberately.
+      # A prefix match is what let `(refs/tags/v.+)?refs/heads/.+$` through when the
+      # tag form was still accepted: the group was optional and a branch ref followed
+      # it, yet the guard reported all eight subjects pinned. The commit form has no
+      # prefix hazard of its own, but the whole-line anchor is what guarantees that —
+      # `[0-9a-f]{40}` must be the entire alternative, so nothing can be appended to
+      # it.
       if printf '%s' "$alternative" | grep -qxE '\[0-9a-f\]\{40\}'; then
-        continue
-      fi
-      # NOTE the bracket expression's ordering: a backslash is LITERAL inside a
-      # POSIX bracket, so `\]` does not escape anything — it ends the class early.
-      # `]` must therefore come first and `-` last, which is what makes `[` and `]`
-      # members rather than delimiters.
-      if printf '%s' "$alternative" | grep -qxE 'refs/tags/[]A-Za-z0-9._*+{}[-]+'; then
         continue
       fi
       printf '%s: ref alternative %s does not pin a fixed revision (subject: %s)\n' \

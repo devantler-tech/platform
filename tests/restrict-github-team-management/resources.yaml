@@ -1,0 +1,299 @@
+---
+# The paved road: object name is allow-listed and the provider identity agrees
+# with it, so the reference rules mean what they say.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+spec:
+  forProvider:
+    name: Admins
+    privacy: closed
+---
+# Allow-listed with the provider identity omitted entirely — Crossplane then
+# derives the remote team from the object name, which is the shape the
+# allow-list was written for.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: maintainers
+  namespace: github-config
+spec:
+  forProvider:
+    privacy: closed
+---
+# A team outside the allow-list. Its provider identity is self-consistent, so it
+# must fail the allow-list rule and pass the identity-binding rule — the two
+# rules are independent.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: attacker-team
+  namespace: github-config
+spec:
+  forProvider:
+    name: attacker-team
+---
+# A TeamMembership on the paved road: allow-listed reference that re-resolves on
+# every reconcile, so no authored teamId can survive.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: admins-member
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    username: devantler
+    role: member
+---
+# The bypass #3195 documents, and the reason this rule exists: an allow-listed
+# reference left on the IfNotPresent default never overwrites an authored
+# teamId, so the reference is decorative. Only the missing resolve policy is
+# wrong here — the reference name is allow-listed and no teamId is set — so this
+# fixture isolates the new condition.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: unresolved-reference
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+    username: attacker
+    role: maintainer
+---
+# The same bypass stated explicitly rather than by omission. Kept separate from
+# the fixture above because "field absent" and "field present with the wrong
+# value" are different JMESPath paths through the `|| ''` default.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: ifnotpresent-reference
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: IfNotPresent
+    username: attacker
+    role: maintainer
+---
+# A direct numeric team ID with no reference at all. Nothing resolves it, so the
+# allow-list never applies.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: direct-team-id
+  namespace: github-config
+spec:
+  forProvider:
+    teamId: "1234567"
+    username: attacker
+    role: maintainer
+---
+# A TeamRepository on the paved road.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: admins-repo
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    repository: platform
+    permission: push
+---
+# The unresolved-reference bypass on the TeamRepository rule. Its permission is
+# allowed and its reference is allow-listed, so only the resolve policy is wrong.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: unresolved-reference-repo
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+    repository: platform
+    permission: push
+---
+# An admin grant held by the admins team. The ceiling caps maintainers only, so
+# this is an allowed grant and the rule passes it.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: admins-repo-admin
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    repository: platform
+    permission: admin
+---
+# initProvider bypass: the forProvider reference is fully compliant, but upjet
+# merges initProvider into unset forProvider fields, so a foreign team supplied
+# there is what actually reconciles. Only the initProvider teamId is wrong.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: initprovider-foreign-team
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    username: attacker
+  initProvider:
+    teamId: "7654321"
+---
+# Same bypass for the admin grant the TeamRepository rule blocks.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: initprovider-admin-grant
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    repository: platform
+    permission: push
+  initProvider:
+    permission: admin
+---
+# teamIdSelector: a label selector resolves to whatever Team matches, so it
+# bypasses the by-name allow-list entirely. Exercises the JMESPath map-literal
+# comparison against `{}`, which nothing else covers.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: selector-reference
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdSelector:
+      matchLabels:
+        role: privileged
+    username: attacker
+---
+# A by-name reference that resolves correctly, but to a team outside the
+# allow-list. Only the referenced name is wrong.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: non-allow-listed-reference
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: attacker-team
+      policy:
+        resolve: Always
+    username: attacker
+---
+# maintain is privileged but permitted here: the allow-list admits the team, and
+# the ceiling caps only maintainers at admin, so this grant is allowed.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: maintain-grant
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    repository: platform
+    permission: maintain
+---
+# #3208 THE ESCALATION THIS CEILING EXISTS TO STOP: an allow-listed reference to the
+# LOWER-privileged team asking for admin. Everything else about it is compliant, so
+# only the per-team ceiling can catch it.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: maintainers-escalated
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+    repository: platform
+    permission: admin
+---
+# The same escalation routed through initProvider, which upjet merges into unset
+# forProvider fields.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: maintainers-escalated-initprovider
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+    repository: platform
+    permission: maintain
+  initProvider:
+    permission: admin
+---
+# The maintainers paved road: maintain through the maintainers team is the live shape
+# on 15 repositories and must pass, or the ceiling is just a broken cap again.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: maintainers-repo
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+    repository: platform
+    permission: maintain
+---
+# CodeRabbit e70024a4: an initProvider-ONLY maintainers reference asking for admin.
+# Two independent rules must reject it, and the fixture asserts both:
+#   * teamrepositories-reference-allow-listed-teams  — forProvider.teamIdRef is absent,
+#     so policy.resolve is not Always. This is what already denied the case before the
+#     precondition was widened, i.e. it was never a live escalation.
+#   * teamrepositories-maintainers-capped-below-admin — the widened precondition now
+#     resolves the effective team through initProvider, so the ceiling rule is correct
+#     on its own rather than relying on the rule above.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: maintainers-escalated-initprovider-only
+  namespace: github-config
+spec:
+  forProvider:
+    repository: platform
+  initProvider:
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+    permission: admin

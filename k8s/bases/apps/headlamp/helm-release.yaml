@@ -12,11 +12,11 @@ spec:
   chart:
     spec:
       chart: headlamp
-      # 0.43.0 is reverted: its OIDC popup never closes in Safari (ITP suppresses
-      # the cross-window storage event the opener waits for) — upstream
-      # kubernetes-sigs/headlamp#6353, tracked in #2438. Renovate is gated off
-      # exactly 0.43.0 (.github/renovate.json); >= 0.43.1 bumps normally.
-      version: 0.44.0
+      # 0.43.0 introduced a Safari OIDC regression and 0.44.0 still reproduces
+      # it: the session succeeds, but ITP suppresses the cross-window storage
+      # event that redirects the opener. Pin the last Safari-verified release
+      # until upstream #6355 ships and its replacement is verified (#2438).
+      version: 0.42.0
       sourceRef:
         kind: HelmRepository
         name: headlamp
@@ -43,31 +43,6 @@ spec:
                   rollingUpdate:
                     maxSurge: 0
                     maxUnavailable: 1
-              - op: add
-                path: /spec/template/spec/volumes/-
-                value:
-                  name: tmp-dir
-                  emptyDir: {}
-              - op: add
-                path: /spec/template/spec/volumes/-
-                value:
-                  name: headlamp-config
-                  emptyDir: {}
-              - op: add
-                path: /spec/template/spec/containers/0/volumeMounts/-
-                value:
-                  name: tmp-dir
-                  mountPath: /tmp
-              - op: add
-                path: /spec/template/spec/containers/0/volumeMounts/-
-                value:
-                  name: headlamp-config
-                  mountPath: /home/headlamp/.config
-              - op: add
-                path: /spec/template/spec/containers/1/volumeMounts/-
-                value:
-                  name: tmp-dir
-                  mountPath: /tmp
               # Chart hardcodes liveness/readiness with K8s defaults
               # (timeoutSeconds: 1, failureThreshold: 3, periodSeconds: 10).
               # Headlamp is KEDA-scaled to 0 in prod; every cold start logs
@@ -88,25 +63,23 @@ spec:
                   periodSeconds: 5
                   timeoutSeconds: 3
                   failureThreshold: 12  # 60s grace beyond initial delay
-          - target:
-              kind: Deployment
-              name: headlamp
-            patch: |
-              apiVersion: apps/v1
-              kind: Deployment
-              metadata:
-                name: headlamp
-              spec:
-                template:
-                  spec:
-                    volumes:
-                      - name: plugins-dir
-                        emptyDir: null
-                        persistentVolumeClaim:
-                          claimName: headlamp
   # https://github.com/kubernetes-sigs/headlamp/blob/main/charts/headlamp/values.yaml
   values:
     replicaCount: ${headlamp_replicas:=1}
+    # Use chart-native values for the main container's writable directories.
+    # When pluginsManager and its PVC are disabled, the chart renders no volumes
+    # parent at all; JSON post-render appends therefore fail before the
+    # Deployment reaches Kubernetes.
+    volumes:
+      - name: tmp-dir
+        emptyDir: {}
+      - name: headlamp-config
+        emptyDir: {}
+    volumeMounts:
+      - name: tmp-dir
+        mountPath: /tmp
+      - name: headlamp-config
+        mountPath: /home/headlamp/.config
     podDisruptionBudget:
       enabled: true
       # Drain-safe (#1880/#1882): maxUnavailable: 1 lets the pod be evicted
@@ -138,45 +111,18 @@ spec:
     clusterRoleBinding:
       create: false
     config:
-      watchPlugins: true
+      # Disable dynamic plugin loading until Headlamp supports committing
+      # plugin artifact integrity (digest/checksum) in GitOps state. The
+      # pluginsManager resolves Artifact Hub metadata at runtime by name/version
+      # only, which can install unverified same-origin JavaScript into the
+      # dashboard if an upstream package or delivery path is compromised.
+      watchPlugins: false
       oidc:
         clientID: public-client
         issuerURL: https://dex.${domain}
         scopes: "profile,email,groups"
     pluginsManager:
-      enabled: true
-      configContent: |
-        plugins:
-          - name: headlamp_flux
-            source: https://artifacthub.io/packages/headlamp/headlamp-plugins/headlamp_flux
-            version: 0.6.0
-          - name: headlamp_cert-manager
-            source: https://artifacthub.io/packages/headlamp/headlamp-plugins/headlamp_cert-manager
-            version: 0.1.0
-          - name: headlamp_keda
-            source: https://artifacthub.io/packages/headlamp/headlamp-plugins/headlamp_keda
-            version: 0.1.1-beta
-          - name: headlamp_opencost
-            source: https://artifacthub.io/packages/headlamp/headlamp-plugins/headlamp_opencost
-            version: 0.1.3
-          - name: headlamp_kubescape
-            source: https://artifacthub.io/packages/headlamp/kubescape-headlamp-plugin/headlamp_kubescape
-            version: 0.11.2
-          # Crossplane dashboard. Surfaces the Flux-managed Crossview app
-          # (apps/crossview) inside Headlamp via its "Open Crossview" action.
-          # Crossview has NO public route or homepage tile — this plugin is the
-          # ONLY entry point; its resolver falls through to a Headlamp-managed
-          # port-forward of crossview-service (crossview >= 4.5.0 handles OIDC
-          # on that split-horizon localhost origin via its empty-issuer
-          # skip-discovery fix — see apps/crossview/helm-release.yaml).
-          # Do NOT use the plugin's Install/Update/Uninstall buttons — those run
-          # a cluster-admin Helm Job; Crossview is managed declaratively by Flux.
-          - name: crossview-headlamp
-            source: https://artifacthub.io/packages/headlamp/crossview-headlamp/crossview-headlamp
-            version: 0.1.4
-        installOptions:
-          parallel: true
-          maxConcurrent: 3
+      enabled: false
     persistentVolumeClaim:
       enabled: false
     podSecurityContext:

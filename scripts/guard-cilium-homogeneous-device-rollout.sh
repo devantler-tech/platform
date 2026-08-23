@@ -3,14 +3,14 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --before-publish|--after-deploy\n' "${0##*/}" >&2
+  printf 'Usage: %s --before-publish|--after-revision-ready|--after-deploy\n' "${0##*/}" >&2
   exit 2
 }
 
 [[ "$#" -eq 1 ]] || usage
 readonly phase="$1"
 case "${phase}" in
-  --before-publish | --after-deploy) ;;
+  --before-publish | --after-revision-ready | --after-deploy) ;;
   *) usage ;;
 esac
 
@@ -328,6 +328,49 @@ restore_autoscaler_if_owned() {
   fi
 
   require_replica_count "${previous_replicas}" 'remembered autoscaler replica count'
+
+  # Normalise before anything compares this value. get_current_replicas only ever
+  # records the API's canonical form, but the annotation is operator-writable —
+  # the remediation below hands an operator an `annotate ... =<count>` command —
+  # so a zero-padded value can arrive. require_replica_count accepts "00", which
+  # would slip past the zero refusal below and scale the Deployment to zero
+  # anyway; and a padded "08" would reach wait_for_replicas, which compares it
+  # against the API's canonical "8" and blocks until it times out.
+  #
+  # Strip the zeros TEXTUALLY rather than with $(( )). Shell arithmetic is signed
+  # 64-bit and wraps SILENTLY, so an all-digit repair value beyond that range —
+  # 18446744073709551617, say — would normalise to 1 here, and the release would
+  # then happily scale to one replica and delete both ownership annotations
+  # instead of refusing and preserving recovery state.
+  previous_replicas="${previous_replicas#"${previous_replicas%%[!0]*}"}"
+  [[ -n "${previous_replicas}" ]] || previous_replicas=0
+
+  # Range-check what survived. spec.replicas is an int32, so anything longer than
+  # its 10 digits is out of range by inspection; the length test short-circuits
+  # the numeric one, which would itself overflow on a longer value.
+  [[ "${#previous_replicas}" -le 10 && "${previous_replicas}" -le 2147483647 ]] ||
+    fail "the rollout gate owns a remembered autoscaler count outside the Kubernetes replica range (spec.replicas is an int32): ${previous_replicas}. Record the intended count and scale to match, then retry: kubectl --context admin@prod -n ${namespace} annotate deployment ${deployment} ${previous_replicas_annotation}=<count> --overwrite && kubectl --context admin@prod -n ${namespace} scale deployment ${deployment} --replicas=<count>."
+
+  # A remembered count of ZERO cannot be "restored". Honouring it leaves the
+  # Deployment at zero — which `ksail cluster update` waits on and KSail treats
+  # as never-ready — and the restore below would then DELETE the ownership
+  # annotation, destroying the state a retry needs.
+  #
+  # The refusal lives HERE, inside the release itself, rather than in one phase:
+  # the normal deploy's always() post-deploy reassert and the DR workflow both
+  # release exclusively through this function, so a refusal guarding only
+  # --after-revision-ready would be undone moments later by --after-deploy.
+  #
+  # The remediation must change the REMEMBERED value, not just the running
+  # replica count: get_previous_replicas reads the annotation, so scaling the
+  # Deployment alone leaves the same 0 recorded and the next attempt fails here
+  # again. Both commands pin admin@prod — every mutation this guard performs
+  # does, and an operator pastes these from whatever context they happen to be
+  # on.
+  if [[ "${previous_replicas}" == "0" ]]; then
+    fail "the rollout gate owns a remembered autoscaler count of 0, so releasing it cannot satisfy the readiness check that ksail cluster update performs (KSail treats a zero-replica Deployment as never-ready). Record the intended count and scale to match, then retry: kubectl --context admin@prod -n ${namespace} annotate deployment ${deployment} ${previous_replicas_annotation}=<count> --overwrite && kubectl --context admin@prod -n ${namespace} scale deployment ${deployment} --replicas=<count>. Scaling alone is not enough — the remembered value is what this check reads."
+  fi
+
   kubectl_prod -n "${namespace}" scale deployment "${deployment}" \
     --replicas="${previous_replicas}"
   wait_for_replicas "${previous_replicas}"
@@ -401,10 +444,26 @@ require_cilium_fleet_current() {
 }
 
 if [[ "${rollout_gate_active}" == true ]]; then
+  # An active gate keeps autoscaling suspended in every phase, including the
+  # post-revision one: the whole point is that no node may join while agents are
+  # being stepped.
   suspend_autoscaler
   if [[ "${phase}" == '--after-deploy' && "${revision_ready}" == true ]]; then
     record_approved_template_sha
   fi
+elif [[ "${phase}" == '--after-revision-ready' ]]; then
+  # The release artifact has reconciled and Flux reports this exact revision
+  # Ready, so the suspension the retired gate owned has served its purpose.
+  # Restore it HERE, before `ksail cluster update`, because that step waits for
+  # the cluster-autoscaler Deployment to become ready and KSail treats
+  # `Status.Replicas == 0` as never-ready — it polls to its deadline and fails
+  # the very deploy that releases the gate. Restoring in --after-deploy is too
+  # late for that wait, and restoring in --before-publish would do it before the
+  # safe artifact is deployed, which the gate deliberately forbids.
+  #
+  # A remembered count of ZERO is refused inside restore_autoscaler_if_owned,
+  # so it covers this phase and every other release path alike.
+  restore_autoscaler_if_owned
 elif [[ "${phase}" == '--after-deploy' ]]; then
   restore_autoscaler_if_owned
 elif [[ -n "$(get_previous_replicas)" ]]; then

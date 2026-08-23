@@ -9,14 +9,14 @@ metadata:
     app.kubernetes.io/component: metrics-scraper
     platform.devantler.tech/replica-floor: exempt
   annotations:
-    checkov.io/skip1: CKV_K8S_38=Prometheus kubernetes_sd and authenticated kubelet scraping both need the token
+    checkov.io/skip1: "CKV_K8S_38=Prometheus kubernetes_sd and authenticated kubelet scraping both need the token"
     # The agent binds 127.0.0.1:9090 (--web.listen-address below) and pushes via remote_write to
     # coroot-prometheus; nothing scrapes it, and no Service selects this pod. A kubelet
     # httpGet/tcpSocket probe dials the POD IP, so it cannot reach a loopback listener. Opening
     # 9090 to the pod network purely to satisfy the check would expose an admin endpoint that has
     # no consumer, so the workload is dispositioned rather than changed.
-    checkov.io/skip2: CKV_K8S_8=loopback-only listener is unreachable from a kubelet probe; see the note above
-    checkov.io/skip3: CKV_K8S_9=loopback-only listener is unreachable from a kubelet probe; see the note above
+    checkov.io/skip2: "CKV_K8S_8=loopback-only listener is unreachable from a kubelet probe; see the note above"
+    checkov.io/skip3: "CKV_K8S_9=loopback-only listener is unreachable from a kubelet probe; see the note above"
 spec:
   # Two replicas would scrape identical node series and race them into the
   # remote-write receiver. Recreate avoids an overlapping rollout; the WAL is

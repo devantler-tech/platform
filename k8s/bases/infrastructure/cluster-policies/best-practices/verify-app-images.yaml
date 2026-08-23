@@ -57,10 +57,10 @@ spec:
       cosign:
         keyless:
           # publish-app.yaml lives in the actions monorepo. Callers pin that
-          # reusable workflow either by commit SHA or by release tag, so the
-          # ref alternation admits exactly those two forms and rejects a
-          # mutable ref such as @main — the same shape as the tenants' Flux
-          # OCIRepository verify blocks. Keep this to exactly ONE identity
+          # reusable workflow by commit SHA, so the ref admits that form alone
+          # and rejects everything else — a mutable ref such as @main, and a
+          # release tag — the same shape as the tenants' Flux OCIRepository
+          # verify blocks (#3022). Keep this to exactly ONE identity
           # entry: the IVPOL engine verifies cosign v3 bundles through
           # sigstore-go, which rejects more than one identity per verification
           # ("unsupported: multiple identities are not supported at this
@@ -71,7 +71,7 @@ spec:
           # form as an alternation inside this one regex.
           identities:
             - issuer: https://token.actions.githubusercontent.com
-              subjectRegExp: ^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@([0-9a-f]{40}|refs/tags/v.+)$
+              subjectRegExp: ^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$
     # Crossplane provider packages (provider-upjet-*): the crossplane-contrib
     # reusable publish workflow they use cannot sign, so each provider repo
     # attaches the keyless signature in its own publish-provider-package.yml
@@ -110,7 +110,7 @@ spec:
       message: >-
         first-party app image is not signed by the publish-app release
         pipeline (keyless cosign, actions publish-app.yaml identity, pinned by
-        commit SHA or release tag)
+        commit SHA — a release tag is not accepted)
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image, image.startsWith('ghcr.io/devantler-tech/provider-upjet-'))

@@ -10,9 +10,14 @@
 // # Modes
 //
 // `-mode=report` (the default) prints the themes it would file and writes
-// nothing. `-mode=write` reconciles them into GitHub issues in `-repo`, which
-// is the default-off half: reporting stays the default, so enabling writes is
-// an explicit, reversible step rather than something a run falls into.
+// nothing. `-mode=oracle` prints one row per raw failed posture pair and names
+// every declared exception policy that matches it. It is the read-only
+// exception oracle documented in docs/kubescape-exception-oracle.md: locally
+// removing one policy from the generated artifact changes the same row from
+// `excepted` to `unexcepted`, without changing the cluster. `-mode=write`
+// reconciles themes into GitHub issues in `-repo`, which is the default-off
+// half: reporting stays the default, so enabling writes is an explicit,
+// reversible step rather than something a run falls into.
 //
 // # Write mode must be serialized
 //
@@ -149,8 +154,10 @@
 //
 // # Fingerprints
 //
-// Each theme carries a fingerprint derived from its SURFACE and KEY, and
-// nothing else. Affected components, their count, totals, timestamps, resource
+// Each theme carries two forms of the same SURFACE-and-KEY digest: the
+// historical 64-bit fingerprint used to find already-filed entries, and the
+// complete SHA-256 identity used to verify that a lookup hit still names the
+// same theme. Affected components, their count, totals, timestamps, resource
 // versions and UIDs are all excluded, so:
 //
 //   - unchanged cluster state yields a byte-identical fingerprint across runs
@@ -163,6 +170,12 @@
 // The affected components and counts are still ACCUMULATED and RENDERED, just
 // never fingerprinted: an entry that cannot show 1 critical becoming 999, or a
 // second workload picking up the same failed control, is not worth updating.
+//
+// Entries filed before the complete marker existed migrate in place. Their
+// one-time migration is bound to the independently rendered title; a legacy
+// entry whose title belongs to another theme is refused rather than adopted.
+// The successful update adds the complete identity, so later runs use the
+// collision-resistant comparison directly without recreating any issue.
 //
 // # Every input is identified structurally, never assumed
 //
@@ -207,6 +220,14 @@
 //	  -exceptions exceptions.json \
 //	  -posture ns-a-workload.json -posture ns-b-workload.json \
 //	  -cve ns-a-workload-image-1.json -cve ns-a-workload-image-2.json
+//
+// To explain exactly which policy accepts each raw failed posture pair, pass
+// the same hydrated posture inputs to oracle mode. The component identity is
+// read from the `kubescape.io/workload-*` labels, never parsed from `wlid`:
+//
+//	go run ./scripts/kubescape-backlog-bridge \
+//	  -mode oracle -exceptions exceptions.json \
+//	  -posture ns-a-workload.json -posture ns-b-workload.json
 //
 // The same invocation reconciling issues, once a sweep really did pass every
 // object — `-inputs-complete` is what authorises closing and updating, so it

@@ -272,12 +272,18 @@ ok
 
 # Control for the fixture: with exactly one marker the same path succeeds, so the
 # assertion above is about duplication and not about the fixture being unreadable.
-printf '  # %s 2026-07-26\n' "${activation_marker}" >"${fixture_kustomization}"
+#
+# The date is RELATIVE, like every other date in this file. An absolute one was a
+# time bomb: this control asserts exit 0, so once the hard-coded date aged past
+# fail_after_days the reporter correctly failed and took every pull request in the
+# repository with it. The duplicate case above can keep its absolute dates because
+# it asserts FAILURE — it fails closed on the duplication before age matters.
+printf '  # %s %s\n' "${activation_marker}" "${inside}" >"${fixture_kustomization}"
 : >"${tmp}/summary"
 CILIUM_ROLLOUT_GATE_ACTIVE=true PLATFORM_ROOT="${fixture_root}" \
   GITHUB_STEP_SUMMARY="${tmp}/summary" "${report_script}" >"${tmp}/out" 2>&1 ||
   fail 'a single marker read from PLATFORM_ROOT must succeed'
-grep -Fq '2026-07-26' "${tmp}/summary" ||
+grep -Fq "${inside}" "${tmp}/summary" ||
   fail 'the fixture summary must carry the declared date'
 ok
 

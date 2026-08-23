@@ -1,0 +1,47 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-homepage-service-groups
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-homepage-service-groups.yaml
+resources:
+  - resources.yaml
+results:
+  # --- declared service groups pass ---
+  - policy: restrict-homepage-service-groups
+    rule: declared-service-group
+    resources:
+      - observability/declared-group
+      - crossview/infrastructure-as-code-group
+    kind: HTTPRoute
+    result: pass
+
+  # --- undeclared, missing, bookmark-named and mis-cased groups are denied ---
+  - policy: restrict-homepage-service-groups
+    rule: declared-service-group
+    resources:
+      - doggy-countdown/undeclared-group
+      - whoami/missing-group
+      - whoami/bookmark-group-name
+      - whoami/wrong-case-group
+    kind: HTTPRoute
+    result: fail
+
+  # --- the precondition's negative control: routes that never opted in ---
+  - policy: restrict-homepage-service-groups
+    rule: declared-service-group
+    resources:
+      - whoami/not-opted-in
+      - whoami/discovery-disabled
+    kind: HTTPRoute
+    result: skip
+
+  # --- Ingress is guarded identically ---
+  - policy: restrict-homepage-service-groups
+    rule: declared-service-group
+    resources:
+      - whoami/ingress-undeclared-group
+    kind: Ingress
+    result: fail
