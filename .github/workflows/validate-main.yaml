@@ -96,6 +96,20 @@ jobs:
       - name: 🔐 Validate shared publish workflows are pinned
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
+      # Which revision SIGNED what is deployed, against what each consumer pins now
+      # (#3048). Reported on main rather than gated on a PR: it reads five other
+      # repositories over the network, so a transient API failure here must never block
+      # an unrelated pull request. Its hermetic half runs in ci.yaml on every PR.
+      - name: 🔐 Report publish-workflow signing revisions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # `set -o pipefail` is load-bearing: Actions' default shell does not set it, so
+          # a bare pipe into `tee` would report TEE's status and a failed report would
+          # read as a passing step.
+          set -o pipefail
+          ./scripts/report-publish-workflow-signing-revisions.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
   kubescape-baseline:
     name: 🛡️ Publish Kubescape Baseline
     runs-on: ubuntu-latest
