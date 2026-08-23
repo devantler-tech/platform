@@ -248,6 +248,16 @@ config_facts_in() {
   "${talosctl_bin}" -n "${node}" read "${file}" 2>/dev/null | awk '
     BEGIN {
       SQ = sprintf("%c", 39); DQ = sprintf("%c", 34)
+      # A PHYSICAL LINE BOUNDARY inside the array, kept distinct from a space that
+      # is genuinely part of a value. TOML forbids a raw control character inside a
+      # string, so this byte cannot occur in content that containerd would accept.
+      #
+      # A real newline cannot be used: this awk (BWK, macOS) splits on a newline in
+      # split() whatever separator is given, and gawk/mawk in CI differ again. A
+      # SPACE was used before and lost the distinction the TOML rules turn on --
+      # """ id""" is a different plugin from """<newline>id""", and only the second
+      # has its leading character trimmed.
+      NLM = sprintf("%c", 1)
       toplevel = 1; in_array = 0; buf = ""; disabled = 0
       want = 0; found = 0; bin_dir = ""
     }
@@ -361,14 +371,62 @@ config_facts_in() {
     # No apostrophes in these comments: the whole program is a single-quoted
     # shell string, so one would end it. And close_at, not close, because awk
     # already has a close() builtin.
-    function verdict(text,   body, count, i, entry, quote, close_at, j, c) {
+    # Splits the array body at the commas that are actually SEPARATORS. A comma
+    # inside a string is content: go-toml resolves
+    #   [ LITERAL-QUOTED other, "io.containerd.image-verifier.v1.bindir" ]
+    # to ONE string naming a different plugin, so our verifier stays ENABLED --
+    # but splitting the raw text at every comma invented a second entry equal to
+    # our id and reported a healthy node as disabled.
+    function split_entries(body,   n, i, c, q, qlen, out, run) {
+      n = length(body); i = 1; out = 0; q = ""; qlen = 0
+      entries[1] = ""; out = 1
+      while (i <= n) {
+        c = substr(body, i, 1)
+        if (q == "") {
+          if (c == "," ) { out++; entries[out] = ""; i++; continue }
+          if (c == SQ || c == DQ) {
+            q = c
+            qlen = (substr(body, i, 3) == c c c) ? 3 : 1
+            entries[out] = entries[out] substr(body, i, qlen)
+            i += qlen
+            continue
+          }
+          entries[out] = entries[out] c; i++
+          continue
+        }
+        # Inside a string. A basic string escapes its delimiter; a literal one
+        # cannot contain its own quote at all, so nothing escapes there.
+        if (c == "\\" && q == DQ) {
+          entries[out] = entries[out] substr(body, i, 2); i += 2; continue
+        }
+        if (qlen == 3) {
+          if (substr(body, i, 3) == q q q) {
+            # Consume the WHOLE run. TOML lets one or two quotes sit against the
+            # closing delimiter as content, and leaving them behind here would
+            # re-open a string and swallow the next real separator.
+            run = 0
+            while (substr(body, i + run, 1) == q) run++
+            entries[out] = entries[out] substr(body, i, run); i += run; q = ""; qlen = 0
+            continue
+          }
+        } else if (c == q) {
+          entries[out] = entries[out] c; i++; q = ""; qlen = 0
+          continue
+        }
+        entries[out] = entries[out] c; i++
+      }
+      return out
+    }
+    function verdict(text,   body, count, i, entry, quote, close_at, j, c, run) {
       body = text
       sub(/^[^[]*\[/, "", body)
       sub(/\][^]]*$/, "", body)
-      count = split(body, entries, ",")
+      count = split_entries(body)
       for (i = 1; i <= count; i++) {
         entry = entries[i]
-        gsub(/^[ \t]+/, "", entry); gsub(/[ \t]+$/, "", entry)
+        # A line boundary around an entry is layout, exactly like a space: an array
+        # written one entry per line arrives with a marker on each side.
+        gsub("^[ \t" NLM "]+", "", entry); gsub("[ \t" NLM "]+$", "", entry)
         # TOML string values are quoted; an unquoted token is not an entry.
         quote = substr(entry, 1, 1)
         if (quote != SQ && quote != DQ) continue
@@ -380,15 +438,16 @@ config_facts_in() {
           # entry, so containerd had the verifier off and the node still reported OK.
           entry = substr(entry, 4)
           # TOML TRIMS a newline that comes immediately after the opening delimiter, and
-          # ONLY that one; a second newline is content. The array lines arrive joined by a
-          # single space each, so that first newline is exactly one leading space here --
-          # drop one, never a run. Dropping the run would make
+          # ONLY that one; a second newline is content. Trim exactly one LINE BOUNDARY --
+          # never a space. A space written on the same line is content, so
+          # """ id""" is the plugin " id" and our verifier stays ENABLED; trimming it
+          # reported a healthy node as disabled. Dropping a RUN would be wrong the
+          # other way: the real value of
           #   disabled_plugins = ["""
           #
           #   io.containerd.image-verifier.v1.bindir"""]
-          # compare equal to our id, when its real value begins with a newline and names a
-          # different plugin entirely.
-          if (substr(entry, 1, 1) == " ") entry = substr(entry, 2)
+          # begins with a newline and names a different plugin entirely.
+          if (substr(entry, 1, 1) == NLM) entry = substr(entry, 2)
           close_at = 0
           j = 1
           while (j <= length(entry)) {
@@ -398,6 +457,13 @@ config_facts_in() {
             j++
           }
           if (close_at == 0) continue
+          # The delimiter is the LAST three quotes of the run, not the first three:
+          # TOML reads the leading one or two as content, so """id"""" is the plugin
+          # id" -- a DIFFERENT plugin, and our verifier stays enabled. Closing at the
+          # first three compared the bare id and failed a healthy node.
+          run = 0
+          while (substr(entry, close_at + run, 1) == quote) run++
+          if (run > 3) close_at = close_at + run - 3
           entry = substr(entry, 1, close_at - 1)
           # Basic strings interpret escapes; literal ones keep the text verbatim, so
           # decoding a literal would alias a DIFFERENT plugin id onto ours.
@@ -436,13 +502,15 @@ config_facts_in() {
     # value that happens to start with a bracket cannot be mistaken for a table.
     in_array {
       line = strip_comment($0)
-      # Joined with a SPACE, deliberately. A real newline CANNOT be used: this awk
-      # (BWK, macOS) splits on a newline in split() whatever separator is given --
-      # measured: split("x<NL>y,z", a, ",") returns THREE fields -- so an embedded
-      # newline would tear one entry into several, and would behave differently again
-      # under the gawk/mawk that runs in CI. TOML newline semantics are recovered in
-      # verdict() from the single joining space instead.
-      buf = buf " " line
+      # awk splits records on a newline ALONE, so under CRLF every line keeps a
+      # trailing CR. TOML removes a CRLF line ending exactly as it removes an LF
+      # (measured with go-toml, both at the opening delimiter and at a backslash
+      # continuation), so a surviving CR made the value compare unequal to our
+      # plugin id and the script printed disabled=0 -- a node reporting OK with the
+      # verifier switched off. Drop the line ending here and represent the boundary
+      # itself, once, below.
+      sub(/\r$/, "", line)
+      buf = buf NLM line
       if (closes_array(line)) { in_array = 0; verdict(buf) }
       next
     }
@@ -503,26 +571,32 @@ config_facts_in() {
     # a false alarm on the one signal meant to mean enforcement is off. Literal
     # strings never reach this function, which is what keeps the triple-literal form
     # a DIFFERENT plugin id, exactly as containerd reads it.
-    function decode_basic(s, multiline,   out, i, n, c, d, code) {
+    function decode_basic(s, multiline,   out, i, n, c, d, code, j) {
       n = length(s); out = ""; i = 1
       while (i <= n) {
         c = substr(s, i, 1)
         if (c != "\\") { out = out c; i++; continue }
         d = substr(s, i + 1, 1)
-        # A backslash immediately before a physical newline removes that newline AND
-        # every leading whitespace character of the next line. The array arrives with
-        # its physical lines joined by ONE space, so the newline is that space here:
-        # consume the backslash and the whole whitespace run that follows it.
+        # A backslash that is the last non-whitespace character on a line removes the
+        # line ending AND all whitespace up to the next non-whitespace character. So
+        # the run consumed here must CONTAIN a line boundary: a backslash-space with no
+        # boundary after it is not a continuation at all (it is invalid TOML, which
+        # containerd would refuse to load), and treating it as one would decode a
+        # malformed value onto our plugin id and fail a node whose verifier is ENABLED.
         #
-        # Without this the buffered value kept a literal backslash-space, compared
-        # unequal to our identifier, and the script printed disabled=0 -- reporting OK
-        # while containerd had the verifier switched off. Reached only when the
-        # backslash is genuinely unescaped: a preceding \\ is consumed as a pair by
-        # the branch below before this one is ever tested.
-        if (multiline && (d == " " || d == "\t")) {
-          i += 2
-          while (i <= n && (substr(s, i, 1) == " " || substr(s, i, 1) == "\t")) i++
-          continue
+        # Without the rule the buffered value kept a literal backslash, compared unequal
+        # to our identifier, and the script printed disabled=0 -- reporting OK while
+        # containerd had the verifier switched off. Reached only when the backslash is
+        # genuinely unescaped: a preceding \\ is consumed as a pair by the branch below
+        # before this one is ever tested.
+        if (multiline && (d == " " || d == "\t" || d == NLM)) {
+          j = i + 1
+          while (j <= n && (substr(s, j, 1) == " " || substr(s, j, 1) == "\t")) j++
+          if (substr(s, j, 1) == NLM) {
+            i = j
+            while (i <= n && (substr(s, i, 1) == " " || substr(s, i, 1) == "\t" || substr(s, i, 1) == NLM)) i++
+            continue
+          }
         }
         if (d == "n")       { out = out "\n"; i += 2 }
         else if (d == "t")  { out = out "\t"; i += 2 }
@@ -580,6 +654,7 @@ config_facts_in() {
         # Fresh state per array, so a malformed earlier one cannot leak an open string.
         reset_scan_state()
         buf = strip_comment(substr($0, KEYPOS))
+        sub(/\r$/, "", buf)
         if (closes_array(buf)) { verdict(buf) } else { in_array = 1 }
         next
       }
@@ -827,6 +902,13 @@ convergence_attempts="${IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS:-3}"
 case "${convergence_attempts}" in
   '' | *[!0-9]*) fail_infra "IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS must be a positive integer, got '${convergence_attempts}'" ;;
 esac
+# Digits alone are not enough. Bash arithmetic applies BASE-PREFIX rules to a
+# leading zero, so a documented, digit-only override is silently misread:
+# measured, `[[ 08 -ge 1 ]]` errors with "value too great for base" and rejects a
+# positive integer outright, while 010 evaluates to EIGHT and quietly runs a
+# different number of convergence attempts than the operator asked for. `10#`
+# pins base 10; the empty value that would make it a syntax error is already out.
+convergence_attempts="$((10#${convergence_attempts}))"
 [[ "${convergence_attempts}" -ge 1 ]] ||
   fail_infra 'IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS must be at least 1'
 

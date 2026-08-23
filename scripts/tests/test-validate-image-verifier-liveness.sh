@@ -1594,4 +1594,230 @@ require_text "${output}" 'OK   disabled' 'case 28 control: continuation is decod
 
 reset_node_sequence
 
+
+# ===========================================================================
+# 29. A CLOSING RUN OF FOUR OR FIVE QUOTES. (#3320 review)
+#     TOML reads the FIRST quote of a four-quote run as content and the last
+#     three as the delimiter, so this entry is a plugin id ending in a quote --
+#     a DIFFERENT plugin, and our verifier stays ENABLED. Measured with
+#     go-toml: """id"""" -> `id"` and """id""""" -> `id""`.
+#
+#     Closing at the first three quotes compared the bare id and reported the
+#     node disabled, so a healthy node fails the gate.
+# ===========================================================================
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+disabled_plugins = ["""io.containerd.image-verifier.v1.bindir""""]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 29: a four-quote closing run leaves a trailing quote in the value, so that is a different plugin id and must not disable ours'
+require_text "${output}" 'OK   disabled' 'case 29: the first quote of a four-quote run is content'
+
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+disabled_plugins = ["""io.containerd.image-verifier.v1.bindir"""""]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 29: a five-quote closing run leaves two trailing quotes, so that is a different plugin id and must not disable ours'
+require_text "${output}" 'OK   disabled' 'case 29: the first two quotes of a five-quote run are content'
+
+# CONTROL -- the plain three-quote close still names our plugin and must fail.
+# Without this, the fix could be satisfied by never matching a multiline entry.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+disabled_plugins = ["""io.containerd.image-verifier.v1.bindir"""]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 29 control: a three-quote close names our plugin and must still fail the node'
+fi
+require_text "${output}" 'disabled_plugins' 'case 29 control: the ordinary multiline form is still matched'
+
+reset_node_sequence
+
+# ===========================================================================
+# 30. A LEADING SPACE THAT IS CONTENT, NOT A JOINED LINE BREAK. (#3320 review)
+#     TOML trims a newline that immediately follows the opening delimiter, and
+#     the array's physical lines were joined with a single space -- so the
+#     parser dropped one leading space to represent that trimmed newline.
+#
+#     But a space written on the SAME line is content: go-toml resolves
+#     """ id""" to " id", a DIFFERENT plugin, so our verifier stays ENABLED.
+#     Trimming it unconditionally reported a healthy node as disabled.
+# ===========================================================================
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+disabled_plugins = [""" io.containerd.image-verifier.v1.bindir"""]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 30: a same-line leading space is content, so that entry is a different plugin id and must not disable ours'
+require_text "${output}" 'OK   disabled' 'case 30: only a real line break after the opener is trimmed'
+
+# CONTROL -- a real newline after the opener IS trimmed, so this names our
+# plugin and must fail. This is the half the trim exists for; without it the
+# fix could be satisfied by never trimming anything.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+disabled_plugins = ["""
+io.containerd.image-verifier.v1.bindir"""]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 30 control: a newline immediately after the opener is trimmed, so this names our plugin and must fail the node'
+fi
+require_text "${output}" 'disabled_plugins' 'case 30 control: the trimmed-newline form is still matched'
+
+reset_node_sequence
+
+# ===========================================================================
+# 31. A COMMA INSIDE A STRING IS CONTENT, NOT AN ENTRY SEPARATOR. (#3320 review)
+#     Splitting the raw array text at every comma invents a second entry out of
+#     one string. go-toml resolves
+#       ['other, "io.containerd.image-verifier.v1.bindir"']
+#     to a SINGLE string naming a different plugin, so our verifier stays
+#     ENABLED -- but the split produced an apparent entry equal to our id and
+#     reported the healthy node disabled.
+# ===========================================================================
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+disabled_plugins = ['other, "io.containerd.image-verifier.v1.bindir"']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 31: a comma inside a literal string is content, so that is one different plugin id and must not disable ours'
+require_text "${output}" 'OK   disabled' 'case 31: commas are tokenized with quote state'
+
+# CONTROL -- a GENUINE two-entry array whose second entry is ours must still
+# fail. Without this, the fix could be satisfied by never splitting at all.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+disabled_plugins = ['io.containerd.snapshotter.v1.blockfile', 'io.containerd.image-verifier.v1.bindir']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 31 control: a real second entry naming our plugin must still fail the node'
+fi
+require_text "${output}" 'disabled_plugins' 'case 31 control: real separators are still split'
+
+reset_node_sequence
+
+# ===========================================================================
+# 32. A CRLF PHYSICAL LINE BOUNDARY. (#3320 review)
+#     A config assembled from fragments with mixed line endings can carry CRLF.
+#     TOML removes that line ending exactly as it removes LF, so both of these
+#     resolve to our plugin id and containerd switches the verifier OFF
+#     (measured with go-toml).
+#
+#     awk splits records on newline only, so each line kept a trailing CR; the
+#     continuation rule recognised space and tab alone, the CR survived into the
+#     buffered value, the comparison failed, and the script printed disabled=0
+#     -- a node reporting OK with no enforcement. That is the FAIL-OPEN this
+#     script exists to catch.
+#
+#     printf writes the CR: a heredoc cannot carry one portably.
+# ===========================================================================
+printf 'version = 3\ndisabled_plugins = ["""io.containerd.image-verifier.v1.\\\r\nbindir"""]\n\n[plugins]\n  [plugins.%s]\n    bin_dir = %s\n' \
+  "'io.containerd.image-verifier.v1.bindir'" "'/opt/containerd/image-verifier/bin'" \
+  >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml"
+# The fixture must actually carry CR before the newline, or the case is vacuous.
+grep -q "$(printf '\\\r$')" "${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" ||
+  fail 'case 32: the fixture lost its CRLF continuation — the case would pass vacuously'
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 32: a CRLF line continuation naming our plugin must fail the node'
+fi
+require_text "${output}" 'disabled_plugins' 'case 32: CRLF boundaries are decoded like LF'
+
+# The same hole at the opener: a CRLF immediately after """ is trimmed too.
+printf 'version = 3\ndisabled_plugins = ["""\r\nio.containerd.image-verifier.v1.bindir"""]\n\n[plugins]\n  [plugins.%s]\n    bin_dir = %s\n' \
+  "'io.containerd.image-verifier.v1.bindir'" "'/opt/containerd/image-verifier/bin'" \
+  >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml"
+grep -q "$(printf '"""\r$')" "${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" ||
+  fail 'case 32: the opener fixture lost its CR — the case would pass vacuously'
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 32: a CRLF immediately after the opening delimiter is trimmed, so this names our plugin and must fail the node'
+fi
+require_text "${output}" 'disabled_plugins' 'case 32: a CRLF after the opener is trimmed like an LF'
+
+# The same CRLF boundary on a CONTINUATION line, not the array's first line.
+# The two are stripped by different rules -- the opening line is consumed by the
+# key rule, every later line by the array rule -- so a fixture that only ever puts
+# the CR on the first line leaves the second rule untested.
+printf 'version = 3\ndisabled_plugins = [\r\n"""io.containerd.image-verifier.v1.\\\r\nbindir"""]\r\n\n[plugins]\n  [plugins.%s]\n    bin_dir = %s\n' "'io.containerd.image-verifier.v1.bindir'" "'/opt/containerd/image-verifier/bin'" >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml"
+grep -q "$(printf '\\\r$')" "${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" ||
+  fail 'case 32: the continuation-line fixture lost its CRLF -- the case would pass vacuously'
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 32: a CRLF continuation on a later array line must fail the node too'
+fi
+require_text "${output}" 'disabled_plugins' 'case 32: CRLF is stripped on every array line, not just the first'
+
+# CONTROL -- a CR that is NOT at a line boundary is ordinary content, so this
+# names a different plugin and must not disable ours.
+printf 'version = 3\ndisabled_plugins = ["""io.containerd.image-verifier.v1.\\rbindir"""]\n\n[plugins]\n  [plugins.%s]\n    bin_dir = %s\n' \
+  "'io.containerd.image-verifier.v1.bindir'" "'/opt/containerd/image-verifier/bin'" \
+  >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml"
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 32 control: an escaped \r inside the value is content, so that is a different plugin id and must not disable ours'
+require_text "${output}" 'OK   disabled' 'case 32 control: only a CR at a physical line boundary is a line ending'
+
+reset_node_sequence
+
+# ===========================================================================
+# 33. THE CONVERGENCE OVERRIDE IS A DECIMAL INTEGER. (#3320 review)
+#     The value passes the digit-only filter, then reaches bash arithmetic,
+#     which applies base-prefix rules to a leading zero. Measured in bash:
+#     `[[ 08 -ge 1 ]]` errors with "value too great for base", and 010 is
+#     EIGHT. So a documented, digit-only override is either rejected outright
+#     or silently runs a different number of convergence attempts than asked.
+# ===========================================================================
+write_node zeropad
+verifier_config /opt/containerd/image-verifier/bin >"${fixtures}/zeropad/files/_etc_cri_conf.d_cri.toml"
+write_dir zeropad /opt/containerd/image-verifier/bin <<EOF
+${listing_header}
+10.0.1.4   drwxr-xr-x   0     0     37        Aug  4 14:58:45   system_u:object_r:containerd_plugin_t:s0   .
+10.0.1.4   -rwxr-xr-x   0     0     8123456   Aug  4 14:58:45   system_u:object_r:containerd_plugin_t:s0   cosign-verifier
+EOF
+
+output="$(run_script TALOS_NODES=zeropad IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS=08 2>&1)" ||
+  fail 'case 33: a zero-padded attempt count is a positive integer and must be accepted'
+require_text "${output}" 'OK   zeropad' 'case 33: 08 is read as decimal 8'
+
+# CONTROL -- the guard still rejects a non-integer. Without this, the fix could
+# be satisfied by dropping the validation altogether.
+if output="$(run_script TALOS_NODES=zeropad IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS=2x 2>&1)"; then
+  fail 'case 33 control: a non-integer attempt count must still be rejected'
+fi
+require_text "${output}" 'must be a positive integer' 'case 33 control: the digit filter still applies'
+
+# CONTROL -- zero is still not a positive integer, however it is padded.
+if output="$(run_script TALOS_NODES=zeropad IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS=00 2>&1)"; then
+  fail 'case 33 control: a padded zero is still not at least 1'
+fi
+require_text "${output}" 'at least 1' 'case 33 control: 00 is decimal zero, still rejected'
+
+reset_node_sequence
+
 printf 'PASS: all cases\n'
