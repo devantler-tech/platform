@@ -2109,8 +2109,8 @@ control_still_present() { # case-label, address, uid, expected-cause
 }
 
 control_still_present 'case 37f (path_probe absent arm)' gone-absent uid-4 'cannot reach node gone-absent'
-control_still_present 'case 37g (path_probe error arm)'  gone-error  uid-5 'cannot reach node gone-error'
-control_still_present 'case 37h (executable count)'      gone-count  uid-6 'could not list /opt/containerd/image-verifier/bin on gone-count'
+control_still_present 'case 37g (path_probe error arm)' gone-error uid-5 'cannot reach node gone-error'
+control_still_present 'case 37h (executable count)' gone-count uid-6 'could not list /opt/containerd/image-verifier/bin on gone-count'
 
 reset_node_sequence
 
