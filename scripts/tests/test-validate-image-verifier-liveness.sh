@@ -926,6 +926,45 @@ if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
 fi
 require_text "${output}" 'disabled_plugins' 'case 24: multi-line array is read'
 
+# A COMMENT LINE inside the multi-line array. The lines are concatenated into one
+# buffer, so a comment that is not stripped swallows the entry on the next line:
+# that entry lands inside the comment text, fails the quote test, and is skipped.
+# The node then reads as ENABLED while containerd has the verifier DISABLED --
+# a false OK on the one check whose whole job is to catch exactly that.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = [
+  'io.containerd.snapshotter.v1.blockfile',
+  # image verification is off while we debug the registry
+  'io.containerd.image-verifier.v1.bindir',
+]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a comment line before the entry must not hide a disabled plugin'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: commented multi-line array is read'
+
+# The mirror image: a # INSIDE a quoted entry is content, not a comment, so
+# stripping must not truncate the entry and lose the plugin that follows it.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = [
+  'io.containerd.snapshotter.v1.blockfile#notacomment', 'io.containerd.image-verifier.v1.bindir',
+]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a # inside a quoted entry must not truncate the array'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: quoted # is content, not a comment'
+
 # A `disabled_plugins` key that belongs to some OTHER table is not the root key
 # and must not disable anything -- otherwise an unrelated setting could switch
 # this whole check off.

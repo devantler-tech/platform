@@ -282,6 +282,34 @@ plugin_disabled_in() {
     # read failure -- so a genuinely disabled node on a large config would be
     # reported as an infrastructure error instead of the FAIL it is. Consume to
     # EOF and print from END. (extract_bin_dir_from documents the same hazard.)
+    # Removes a TOML comment, respecting quoted strings: a # opens a comment only
+    # OUTSIDE a string. The lines of a multiline array are concatenated into one
+    # buffer below, so a comment left in place swallows what follows it -- the
+    # entry on the next line lands inside the comment text, fails the quote test
+    # in verdict(), and is skipped. The node then reads as ENABLED while
+    # containerd has the verifier DISABLED, which is the false OK this whole
+    # checker exists to prevent. A ] inside a comment would also end the array
+    # early, so stripping has to happen before that test too.
+    #
+    # One quote-aware walk answers both questions, rather than a growing list of
+    # comment spellings to special-case.
+    function strip_comment(line,   out, i, c, n, instr, q) {
+      n = length(line); out = ""; instr = 0; q = ""
+      for (i = 1; i <= n; i++) {
+        c = substr(line, i, 1)
+        if (instr) {
+          out = out c
+          # Basic strings take backslash escapes; literal ones do not.
+          if (c == "\\" && q == DQ) { i++; out = out substr(line, i, 1); continue }
+          if (c == q) instr = 0
+          continue
+        }
+        if (c == "#") break
+        if (c == SQ || c == DQ) { instr = 1; q = c }
+        out = out c
+      }
+      return out
+    }
     function verdict(text,   body, count, i, entry, quote, close_at) {
       # Compare ENTRIES, never the raw array text. A substring test over the
       # whole expression reports a node as disabled while the plugin is enabled:
@@ -316,14 +344,15 @@ plugin_disabled_in() {
     # value that happens to start with a bracket cannot be mistaken for a table.
     disabled { next }
     in_array {
-      buf = buf $0
-      if (index($0, "]") > 0) { in_array = 0; verdict(buf) }
+      line = strip_comment($0)
+      buf = buf " " line
+      if (index(line, "]") > 0) { in_array = 0; verdict(buf) }
       next
     }
     /^[ \t]*\[/ { toplevel = 0 }
     !toplevel { next }
     match($0, /^[ \t]*disabled_plugins[ \t]*=/) {
-      buf = substr($0, RSTART + RLENGTH)
+      buf = strip_comment(substr($0, RSTART + RLENGTH))
       if (index(buf, "]") > 0) { verdict(buf) } else { in_array = 1 }
     }
   '
