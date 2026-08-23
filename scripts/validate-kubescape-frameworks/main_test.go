@@ -466,3 +466,52 @@ func TestQuotedRedirectionTargetDoesNotOpenAHeredoc(t *testing.T) {
 			"must remain visible and make this ambiguous")
 	}
 }
+
+// --- The CONTROL-FLOW class -------------------------------------------------
+//
+// `shellSplit` returns every `&&`/`||` segment as an independent command, so a
+// segment the shell would SKIP was counted as an executed invocation. That turns
+// a never-executing decoy into the guard's sole evidence: pair it with a real
+// reduced scan the shape test already ignores (`env ksail ...`) and the decoy
+// supplies a full framework list while the reduced scan is what actually runs.
+//
+// The fix is to REJECT rather than to evaluate. Whether `&&` fires depends on a
+// command's exit status, which is not decidable from the text — so a scan whose
+// execution is conditional is a form this guard cannot read, and the fail-closed
+// direction is the correct one.
+func TestRejectsConditionallySkippedScan(t *testing.T) {
+	cases := map[string]string{
+		"and-guarded decoy hides an env-wrapped reduced scan": "false && " + goodScan + " -o kubescape.sarif\n" +
+			"env ksail workload scan --framework nsa -o kubescape.sarif\n",
+		"or-guarded decoy hides an env-wrapped reduced scan": "true || " + goodScan + " -o kubescape.sarif\n" +
+			"env ksail workload scan --framework nsa -o kubescape.sarif\n",
+		"and-guarded decoy alone": "false && " + goodScan + "\n",
+	}
+	for name, body := range cases {
+		if _, err := setOf(t, body); err == nil {
+			t.Fatalf("%s: expected FAIL CLOSED — a conditionally executed scan is not evidence "+
+				"of what the gate actually runs", name)
+		}
+	}
+}
+
+// The control for the rejection above: a scan that is FIRST on its line executes
+// unconditionally, and a conditional segment that is not a scan changes nothing.
+// Without this, "reject any line containing `&&`" would pass the test above while
+// breaking every legitimate invocation.
+func TestUnconditionalScanWithTrailingOperatorIsAccepted(t *testing.T) {
+	cases := map[string]string{
+		"scan then and-guarded echo": goodScan + " && echo done",
+		"scan then or-guarded exit":  goodScan + " || exit 1",
+		"scan then sequenced echo":   goodScan + " ; echo done",
+	}
+	for name, body := range cases {
+		got, err := setOf(t, body)
+		if err != nil {
+			t.Fatalf("%s: expected ACCEPT — the scan itself runs unconditionally, got: %v", name, err)
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Fatalf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}

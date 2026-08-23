@@ -178,7 +178,11 @@ func frameworkSet(workflow string) ([]string, error) {
 
 	var invocations []string
 	for _, scalar := range scalars {
-		invocations = append(invocations, scanInvocations(scalar)...)
+		found, err := scanInvocations(scalar)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", workflow, err)
+		}
+		invocations = append(invocations, found...)
 	}
 
 	// An empty result from a filtered read is a claim about the FILTER, so zero
@@ -274,9 +278,20 @@ func stripComment(line string) string {
 	return line
 }
 
+// shellSegment is one command from a split line, together with whether the shell
+// reaches it unconditionally.
+type shellSegment struct {
+	text string
+	// conditional is true when the segment sits after `&&` or `||`, so whether it
+	// runs at all depends on another command's exit status. `;`, `&` and `|` do
+	// not set it: both sides of those run.
+	conditional bool
+}
+
 // shellSplit walks ONE command line once, tracking shell quoting, and returns the
-// command segments it separates on unquoted control operators, plus the delimiter
-// of an unquoted heredoc opener.
+// command segments it separates on unquoted control operators — each marked with
+// whether the shell reaches it unconditionally — plus the delimiter of an unquoted
+// heredoc opener.
 //
 // THIS REPLACES THREE INDEPENDENT STRING TESTS, and that consolidation is the
 // point. Counting the fixed spelling `ksail workload scan` to detect chaining, and
@@ -285,14 +300,17 @@ func stripComment(line string) string {
 // reduced scan, and a `<<` inside a QUOTED filename such as `-o '<<true'` opened a
 // heredoc that swallowed one. Each closed spelling left the class open; this asks
 // the quoting question once and answers all of them from the same walk.
-func shellSplit(line string) (segments []string, heredocDelim string, heredocIndented bool) {
+func shellSplit(line string) (segments []shellSegment, heredocDelim string, heredocIndented bool) {
 	var cur strings.Builder
 	var inSingle, inDouble bool
-	flush := func() {
+	// The first command on a line is always reached; each operator decides the next.
+	conditional := false
+	flush := func(nextConditional bool) {
 		if s := strings.TrimSpace(cur.String()); s != "" {
-			segments = append(segments, s)
+			segments = append(segments, shellSegment{text: s, conditional: conditional})
 		}
 		cur.Reset()
+		conditional = nextConditional
 	}
 	for i := 0; i < len(line); i++ {
 		c := line[i]
@@ -334,17 +352,19 @@ func shellSplit(line string) (segments []string, heredocDelim string, heredocInd
 		}
 		// `;`, `&`, `&&`, `|`, `||` all end the current command. Splitting on the
 		// SINGLE character and then consuming a doubled one covers both forms
-		// without enumerating spellings.
+		// without enumerating spellings — and the DOUBLED forms are exactly the
+		// conditional ones, so the same test that consumes them marks what follows.
 		if c == ';' || c == '&' || c == '|' {
-			flush()
-			if (c == '&' || c == '|') && i+1 < len(line) && line[i+1] == c {
+			doubled := (c == '&' || c == '|') && i+1 < len(line) && line[i+1] == c
+			flush(doubled)
+			if doubled {
 				i++
 			}
 			continue
 		}
 		cur.WriteByte(c)
 	}
-	flush()
+	flush(false)
 	return segments, heredocDelim, heredocIndented
 }
 
@@ -359,10 +379,18 @@ func shellSplit(line string) (segments []string, heredocDelim string, heredocInd
 // `ksail workload scan`. Anything else — `echo`, `env ksail ...`, a comment, a
 // quoted argument that merely contains the words — is not a bare invocation.
 //
+// Shell CONTROL FLOW is closed here too, by REJECTING rather than by evaluating.
+// Whether an `&&`/`||` branch is taken depends on a command's exit status, which
+// the text does not carry — so a scan behind one is a form this cannot read, and
+// counting it as executed is what makes it dangerous: `false && ksail workload
+// scan --framework nsa,mitre` never runs, yet it would supply the full framework
+// list as the guard's sole evidence while a reduced scan the shape test ignores
+// (`env ksail ...`) is what the gate actually executes.
+//
 // The cost is deliberate: a legitimate future invocation in a form this cannot
 // read stops matching and trips the fail-closed path. That is the correct
 // direction — the guard refuses to bless a form it cannot read.
-func scanInvocations(scalar string) []string {
+func scanInvocations(scalar string) ([]string, error) {
 	var out []string
 	var heredocDelim string
 	var heredocIndented bool
@@ -393,17 +421,22 @@ func scanInvocations(scalar string) []string {
 		}
 
 		for _, segment := range segments {
-			fields := strings.Fields(segment)
+			fields := strings.Fields(segment.text)
 			if len(fields) < 3 || fields[0] != "ksail" || fields[1] != "workload" || fields[2] != "scan" {
 				continue
 			}
-			if !strings.Contains(segment, "--framework") {
+			if !strings.Contains(segment.text, "--framework") {
 				continue
 			}
-			out = append(out, segment)
+			if segment.conditional {
+				return nil, fmt.Errorf(
+					"a scan invocation is guarded by `&&` or `||`, so whether it runs depends on another command's exit status: %q. A conditionally executed scan is not evidence of what the gate runs — an always-false guard would let a full framework list stand in for a reduced scan that actually executes. Invoke the scan unconditionally. See #2823",
+					segment.text)
+			}
+			out = append(out, segment.text)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // frameworkArgument returns the raw `--framework` value of one invocation.
