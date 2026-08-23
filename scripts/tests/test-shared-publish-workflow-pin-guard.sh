@@ -257,6 +257,18 @@ assert_line_accepted "a plain scalar with two spaces before a real comment" \
   "        subject: ${SUBJECT_ID}${SHA_PATTERN}\$  # pinned by #2816" \
   plaintwospace
 
+# A comment MAY open immediately after a closing quote, with no whitespace before
+# its `#`. YAML requires whitespace before a comment that follows a PLAIN scalar,
+# and this guard applied that rule to quoted ones too — but a quoted scalar has
+# already ended at its closing quote, so `gopkg.in/yaml.v3` reads `'...'# pinned`
+# as the subject plus a comment. Measured against yaml.v3 directly: `'abc'# c`
+# parses to `abc`, while `'abc'x` is a parse error. So refusing this shape blocks
+# a subject the platform's own parser accepts — fail-closed, and still a defect,
+# exactly as the plain-scalar cases above.
+assert_line_accepted "a comment opening immediately after the closing quote" \
+  "        subject: ${Q}${SUBJECT_ID}${SHA_PATTERN}\$${Q}# pinned by #2816" \
+  quotednospacecomment
+
 # --- Integration: the real repository satisfies the narrowed guard -----------
 
 if (cd "${root_dir}" && bash "${guard}" >/dev/null 2>"${work_dir}/real.stderr"); then

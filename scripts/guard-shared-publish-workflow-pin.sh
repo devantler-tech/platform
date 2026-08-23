@@ -134,10 +134,21 @@ yaml_scalar() {
     "'"*) return 1 ;;
   esac
 
-  # Past the closing quote only a comment may follow, and YAML requires whitespace
-  # before its `#`. Anything else means this line was not read as YAML reads it.
+  # Past the closing quote only a comment may follow. The whitespace-before-`#` rule
+  # belongs to PLAIN scalars, where it is what separates the comment from the value;
+  # a quoted scalar has already ended at its closing quote, so `gopkg.in/yaml.v3`
+  # opens a comment on a `#` that follows immediately. Measured against yaml.v3
+  # directly: `subject: 'abc'# c` parses to `abc`, while `subject: 'abc'x` is a parse
+  # error. Applying the plain-scalar rule here rejected a subject the platform's own
+  # parser accepts — fail-closed, but a false refusal is still a defect, and one that
+  # blocks every workflow invoking this guard.
+  #
+  # Non-comment trailing content stays REJECTED in both shapes, which is what keeps
+  # this a narrowing of the rule rather than a hole: yaml.v3 errors on it too, so a
+  # line carrying it was not read the way YAML reads it.
   case "$body" in
     '') ;;
+    '#'*) ;;
     [[:space:]]*)
       rest="${body#"${body%%[![:space:]]*}"}"
       case "$rest" in
