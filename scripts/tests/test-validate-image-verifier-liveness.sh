@@ -966,6 +966,26 @@ if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
 fi
 require_text "${output}" 'disabled_plugins' 'case 24: quoted # is content, not a comment'
 
+# Same class one character along: a ] INSIDE a quoted entry is content, not the
+# array terminator. Ending the array there drops every entry that follows --
+# including ours -- so the script reported disabled=0 and OK while containerd
+# had the verifier switched off. That is a FAIL-OPEN on the one signal meant to
+# mean enforcement is on, which is the failure mode this script exists to catch.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = [
+  'io.containerd.snapshotter.v1.blockfile]notaterminator', 'io.containerd.image-verifier.v1.bindir',
+]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a ] inside a quoted entry must not terminate the array'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: quoted ] is content, not the array terminator'
+
 # A `disabled_plugins` key that belongs to some OTHER table is not the root key
 # and must not disable anything -- otherwise an unrelated setting could switch
 # this whole check off.

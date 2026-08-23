@@ -281,6 +281,26 @@ config_facts_in() {
       }
       return out
     }
+    # A ] INSIDE a quoted TOML string is not the array terminator. index() cannot
+    # tell the two apart, so an earlier entry carrying a literal bracket ended the
+    # array early and every later entry -- including ours -- was never examined,
+    # leaving disabled = 0 and a verdict of OK while containerd had the verifier
+    # switched off. That is the fail-open this script exists to prevent, so the
+    # terminator is found with the same quote-aware scan strip_comment uses.
+    function closes_array(line,   i, c, n, instr, q) {
+      n = length(line); instr = 0; q = ""
+      for (i = 1; i <= n; i++) {
+        c = substr(line, i, 1)
+        if (instr) {
+          if (c == "\\" && q == DQ) { i++; continue }
+          if (c == q) instr = 0
+          continue
+        }
+        if (c == SQ || c == DQ) { instr = 1; q = c; continue }
+        if (c == "]") return 1
+      }
+      return 0
+    }
     # Compare ENTRIES, never the raw array text. A substring test over the whole
     # expression reports a node as disabled while the plugin is enabled: a
     # DIFFERENT plugin whose name merely contains ours
@@ -314,7 +334,7 @@ config_facts_in() {
     in_array {
       line = strip_comment($0)
       buf = buf " " line
-      if (index(line, "]") > 0) { in_array = 0; verdict(buf) }
+      if (closes_array(line)) { in_array = 0; verdict(buf) }
       next
     }
     /^[ \t]*\[/ {
@@ -330,7 +350,7 @@ config_facts_in() {
     }
     toplevel && match($0, /^[ \t]*disabled_plugins[ \t]*=/) {
       buf = strip_comment(substr($0, RSTART + RLENGTH))
-      if (index(buf, "]") > 0) { verdict(buf) } else { in_array = 1 }
+      if (closes_array(buf)) { verdict(buf) } else { in_array = 1 }
       next
     }
     !found && want && match($0, /^[ \t]*bin_dir[ \t]*=/) {
