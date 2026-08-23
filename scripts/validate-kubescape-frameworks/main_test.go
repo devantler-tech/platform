@@ -617,3 +617,25 @@ func TestCompoundTokenRecognisesGroupingHeads(t *testing.T) {
 		}
 	}
 }
+
+// A command line may carry MORE THAN ONE heredoc redirection, and every body that
+// follows is non-executing input in the order the delimiters appear. Tracking only
+// the first delimiter stops the skip at the first terminator, so the SECOND body's
+// lines are read as executing code.
+//
+// Verified against bash directly: in the fixture below the line between FIRST and
+// SECOND does not run, and only the trailing `env ksail ...` scan executes. That
+// scan omits `mitre`, so the guard must FAIL CLOSED. Accepting it would mean the
+// gate reports the required framework set while the real scan checks less — a
+// fail-open on the control this validator exists to be.
+func TestRejectsSecondHeredocBodyDecoy(t *testing.T) {
+	body := "cat <<'FIRST' <<'SECOND' >/dev/null\n" +
+		"ignored\n" +
+		"FIRST\n" +
+		goodScan + "\n" +
+		"SECOND\n" +
+		"env ksail workload scan --framework nsa --compliance-threshold 95"
+	if got, err := setOf(t, body); err == nil {
+		t.Fatalf("expected FAIL CLOSED — the second heredoc body executes nothing; got set %q", got)
+	}
+}

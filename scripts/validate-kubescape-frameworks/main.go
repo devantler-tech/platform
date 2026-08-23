@@ -300,7 +300,18 @@ type shellSegment struct {
 // reduced scan, and a `<<` inside a QUOTED filename such as `-o '<<true'` opened a
 // heredoc that swallowed one. Each closed spelling left the class open; this asks
 // the quoting question once and answers all of them from the same walk.
-func shellSplit(line string) (segments []shellSegment, heredocDelim string, heredocIndented bool) {
+// One heredoc redirection: its terminator, and whether `<<-` lets that terminator
+// be indented.
+type heredoc struct {
+	delim    string
+	indented bool
+}
+
+// Returns EVERY heredoc opened on this line, in the order the shell will consume
+// their bodies. A single line may carry several — `cat <<'A' <<'B'` — and each
+// body in turn is non-executing input. Recording only the first stopped the skip
+// at the first terminator and handed the following body to the scanner as code.
+func shellSplit(line string) (segments []shellSegment, heredocs []heredoc) {
 	var cur strings.Builder
 	var inSingle, inDouble bool
 	// The first command on a line is always reached; each operator decides the next.
@@ -337,15 +348,19 @@ func shellSplit(line string) (segments []shellSegment, heredocDelim string, here
 			continue
 		}
 		// Unquoted from here, so an operator here is a real shell operator.
-		if c == '<' && i+1 < len(line) && line[i+1] == '<' && heredocDelim == "" {
+		if c == '<' && i+1 < len(line) && line[i+1] == '<' {
 			if m := heredocStart.FindStringSubmatch(line[i:]); m != nil {
+				delim := ""
 				for _, g := range m[1:] {
 					if g != "" {
-						heredocDelim = g
+						delim = g
 						break
 					}
 				}
-				heredocIndented = strings.HasPrefix(m[0], "<<-")
+				heredocs = append(heredocs, heredoc{
+					delim:    delim,
+					indented: strings.HasPrefix(m[0], "<<-"),
+				})
 				i += len(m[0]) - 1
 				continue
 			}
@@ -365,7 +380,7 @@ func shellSplit(line string) (segments []shellSegment, heredocDelim string, here
 		cur.WriteByte(c)
 	}
 	flush(false)
-	return segments, heredocDelim, heredocIndented
+	return segments, heredocs
 }
 
 // Shell words that introduce a COMPOUND command — one whose body's execution is not
@@ -467,17 +482,19 @@ func unquotedGroupingChar(tok string) string {
 func scanInvocations(scalar string) ([]string, error) {
 	var out []string
 	var compound string
-	var heredocDelim string
-	var heredocIndented bool
+	// A QUEUE, not a single delimiter: one command line may open several heredocs,
+	// and their bodies arrive in the order the delimiters were written. Consuming
+	// only the first left every later body being read as executable code.
+	var pending []heredoc
 
 	for _, line := range strings.Split(scalar, "\n") {
-		if heredocDelim != "" {
+		if len(pending) > 0 {
 			candidate := line
-			if heredocIndented {
+			if pending[0].indented {
 				candidate = strings.TrimLeft(candidate, " \t")
 			}
-			if strings.TrimRight(candidate, " \t\r") == heredocDelim {
-				heredocDelim = ""
+			if strings.TrimRight(candidate, " \t\r") == pending[0].delim {
+				pending = pending[1:]
 			}
 			continue
 		}
@@ -489,11 +506,8 @@ func scanInvocations(scalar string) ([]string, error) {
 			continue
 		}
 
-		segments, delim, indented := shellSplit(command)
-		if delim != "" {
-			heredocDelim = delim
-			heredocIndented = indented
-		}
+		segments, heredocs := shellSplit(command)
+		pending = append(pending, heredocs...)
 
 		for _, segment := range segments {
 			// Recorded for the WHOLE scalar, and acted on only if a scan is found below:
