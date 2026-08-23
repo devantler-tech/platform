@@ -129,6 +129,10 @@ func TestSuccessfulTransactionReleasesTheLeaseDespiteAReleaseRace(t *testing.T) 
 			environment: "FAKE_SYNC_LEASE_RELEASE_CONFLICT_ONCE",
 			marker:      "sync-lease-release-conflict",
 		},
+		"release applied but its response lost": {
+			environment: "FAKE_SYNC_LEASE_RELEASE_RESPONSE_LOST",
+			marker:      "sync-lease-release-response-lost",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -149,9 +153,13 @@ func TestSuccessfulTransactionReleasesTheLeaseDespiteAReleaseRace(t *testing.T) 
 
 // The exclusion guarantee is unchanged: a Lease that moved to another holder is
 // a genuine refusal, because this transaction can no longer prove it held the
-// lease while it was mutating. The tolerance above must not paper over that, and
-// the release must never clear a Lease it does not own.
-func TestReleaseNeverClearsALeaseHeldByAnotherTransaction(t *testing.T) {
+// lease while it was mutating. The tolerance above must not paper over that.
+//
+// Asserting only that the foreign holder survives would NOT cover the guard --
+// the server-side CAS alone keeps it intact, so the test passes with the guard
+// deleted. Assert the refusal is reported instead: that distinguishes "refused
+// on sight, as a concurrency breach" from "burned every attempt and gave up".
+func TestReleaseRefusesAndReportsALeaseHeldByAnotherTransaction(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
@@ -164,6 +172,16 @@ func TestReleaseNeverClearsALeaseHeldByAnotherTransaction(t *testing.T) {
 	if holder := mustRead(filepath.Join(f.syncStateDir, "sync-lease-holder")); holder != "newer-transaction" {
 		t.Fatalf("release disturbed a Lease owned by another transaction: holder is %q", holder)
 	}
+	requireContains(
+		t,
+		result.stdout+result.stderr,
+		"refusing to release a lease this run does not own",
+	)
+	requireNotContains(
+		t,
+		result.stdout+result.stderr,
+		"Could not clear the GHCR synchronization lease after",
+	)
 }
 
 func TestCurrentLeaseHolderRetriesSecretCASConflicts(t *testing.T) {

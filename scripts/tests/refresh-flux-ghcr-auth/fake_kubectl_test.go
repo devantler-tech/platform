@@ -1008,6 +1008,17 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 		!hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) {
 		return commandFailure(56, "synchronization lease CAS failed")
 	}
+
+	// The release is the ONE writer that must not pin resourceVersion: a benign
+	// same-holder heartbeat write would otherwise fail it and leave the Lease
+	// held. Every other writer still must pin it -- acquire and renew both rely
+	// on it to avoid a lost update on leaseTransitions -- so keep requiring it
+	// of them rather than dropping the check for everyone.
+	releasesTheLease := hasPatchPath(patch, "replace", "/spec/holderIdentity") &&
+		patchValueString(patch, "replace", "/spec/holderIdentity") == ""
+	if !releasesTheLease && !hasPatchPath(patch, "test", "/metadata/resourceVersion") {
+		return commandFailure(56, "synchronization lease CAS failed")
+	}
 	for _, path := range []string{"/spec/acquireTime", "/spec/renewTime"} {
 		if hasPatchPath(patch, "replace", path) {
 			if err := validateKubernetesMicroTimes(patchValueString(patch, "replace", path)); err != nil {
@@ -1033,6 +1044,17 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 		patchValueString(patch, "replace", "/spec/holderIdentity") == "" {
 		touchMarker("sync-lease-release-conflict")
 		return commandFailure(56, "simulated transient failure releasing the lease")
+	}
+	// The apiserver APPLIES the release and the response is then lost (connection
+	// reset after the write). kubectl exits non-zero, so the caller retries and
+	// finds the Lease already cleared -- which is its goal state, not a failure.
+	if os.Getenv("FAKE_SYNC_LEASE_RELEASE_RESPONSE_LOST") == "true" &&
+		!markerExists("sync-lease-release-response-lost") &&
+		releasesTheLease {
+		touchMarker("sync-lease-release-response-lost")
+		setMarkerContent("sync-lease-holder", "")
+		setMarkerContent("sync-lease-resource-version", incrementDecimal(currentResourceVersion))
+		return commandFailure(54, "connection reset after releasing the lease")
 	}
 	if holder := patchValueString(patch, "replace", "/spec/holderIdentity"); hasPatchPath(patch, "replace", "/spec/holderIdentity") {
 		setMarkerContent("sync-lease-holder", holder)

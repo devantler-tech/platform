@@ -4243,7 +4243,7 @@ release_sync_lease() {
   local lease_file="${work_dir}/sync-lease-release.json"
   local patch_file_local="${work_dir}/sync-lease-release-patch.json"
   local result_file="${work_dir}/sync-lease-release-result.txt"
-  local now attempt observed_holder
+  local now attempt observed_holder release_failure=""
 
   if [[ -n "${sync_lease_heartbeat_pid}" ]]; then
     kill "${sync_lease_heartbeat_pid}" 2>/dev/null || true
@@ -4260,22 +4260,60 @@ release_sync_lease() {
   # same-holder write renew_sync_lease is already documented to expect. A
   # release that refuses leaves the lease held, so that conjunct converts a
   # harmless race into a wedge that blocks every later transaction until a
-  # human clears it. A lease held by anyone else still refuses, below.
+  # human clears it. A lease held by anyone ELSE still refuses, below.
+  #
+  # (fence_lease_release_patch keeps its resourceVersion conjunct deliberately:
+  # there the holder is terminal and nothing races the write, so pinning the
+  # version is what proves the Lease has not moved between the report a human
+  # read and the command they paste.)
   for ((attempt = 1; attempt <= SYNC_LEASE_RELEASE_ATTEMPTS; attempt++)); do
+    if ((attempt > 1)); then
+      sleep "${SYNC_INTERVAL}"
+    fi
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       --namespace flux-system \
+      --request-timeout=30s \
       get lease "${SYNC_LEASE_NAME}" \
+      --ignore-not-found \
       -o json >"${lease_file}" 2>"${result_file}"; then
+      release_failure="api-unreachable"
       continue
     fi
-    observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || continue
+
+    # --ignore-not-found prints nothing when the Lease is gone. Nothing is held,
+    # so there is nothing left for this transaction to hand back.
+    if [[ ! -s "${lease_file}" ]]; then
+      sync_lease_holder=""
+      sync_lease_acquired=false
+      return 0
+    fi
+    observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || {
+      release_failure="invalid-lease-state"
+      continue
+    }
+
+    # An empty holder IS this function's goal state, so reaching it is success
+    # however it happened. The reachable case is a patch that the apiserver
+    # APPLIED and whose response was then lost: kubectl exits non-zero, and the
+    # retry finds the Lease already cleared. Treating that as a failure would
+    # fail a wholly successful deploy over a released lease -- the same wedge
+    # this retry exists to remove, in the likeliest instance of the very
+    # transient it targets.
+    if [[ -z "${observed_holder}" ]]; then
+      sync_lease_holder=""
+      sync_lease_acquired=false
+      return 0
+    fi
 
     # Losing the lease to another holder stays fatal: this transaction can no
     # longer prove it held the lease while it was mutating, which is exactly
     # the condition the exclusion guarantee exists to surface. Retrying cannot
-    # change a holder that already moved away, so refuse immediately.
+    # change a holder that already moved away, so refuse immediately -- and say
+    # so, because this is a concurrency breach and not a transient.
     if [[ "${observed_holder}" != "${sync_lease_holder}" ]]; then
+      echo "::error::The GHCR synchronization lease is held by another transaction; refusing to release a lease this run does not own."
+      report_sync_lease_state 'release found a foreign lease holder'
       return 1
     fi
 
@@ -4293,6 +4331,7 @@ release_sync_lease() {
     if kubectl \
       --context "${KUBE_CONTEXT}" \
       --namespace flux-system \
+      --request-timeout=30s \
       patch lease "${SYNC_LEASE_NAME}" \
       --type=json \
       --patch-file="${patch_file_local}" \
@@ -4301,11 +4340,14 @@ release_sync_lease() {
       sync_lease_acquired=false
       return 0
     fi
+    release_failure="patch-rejected"
   done
 
-  # Every attempt read a lease still held by this transaction and still failed
-  # to clear it. That is a genuine refusal: report it rather than pretending
-  # the lease was released.
+  # Every attempt saw a lease still held by this transaction and still failed to
+  # clear it. Name the last cause: an operator needs to tell a transient apart
+  # from a rejected write.
+  echo "::error::Could not clear the GHCR synchronization lease after ${SYNC_LEASE_RELEASE_ATTEMPTS} attempts (${release_failure:-unknown})."
+  report_sync_lease_state 'release exhausted its attempts'
   return 1
 }
 
