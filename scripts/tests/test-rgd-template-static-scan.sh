@@ -58,9 +58,10 @@ tenant_ksv0039_targets="$({
 [ "$tenant_ksv0039_targets" -gt 1 ] ||
   fail "the finding ratchet collapses KSV-0039 across Tenant resources"
 
-# The content ratchet represents parsed template semantics, not yq's emitted whitespace. Put a
-# wrapper first on PATH that adds harmless blank lines before each serialized resource. This moves
-# Trivy's source range without changing the parsed manifest, so finding identity must remain stable.
+# The content ratchet represents parsed template semantics, not yq's emitted presentation. Put a
+# wrapper first on PATH that adds harmless blank lines and double-quotes every string in each
+# serialized resource. This changes Trivy's ranges and cause text without changing the parsed
+# manifest, so finding identity must remain stable.
 YQ_BIN="$(command -v yq)"
 readonly YQ_BIN
 mkdir -p "$WORK/bin"
@@ -69,7 +70,7 @@ cat >"$WORK/bin/yq" <<'EOF'
 set -euo pipefail
 if [ "${1:-}" = '(.spec.resources[] | select(.id == strenv(RESOURCE_ID))).template' ]; then
   printf '\n\n'
-  "$REAL_YQ" "$@"
+  "$REAL_YQ" "$@" | "$REAL_YQ" '(.. | select(tag == "!!str")) style="double"'
 else
   exec "$REAL_YQ" "$@"
 fi
@@ -77,7 +78,7 @@ EOF
 chmod +x "$WORK/bin/yq"
 PATH="$WORK/bin:$PATH" REAL_YQ="$YQ_BIN" "$GATE" "$WORK" ||
   fail "the finding or content ratchet depends on yq's YAML serialization"
-echo "PASS(probe): finding and content evidence ignore serializer-only whitespace."
+echo "PASS(probe): finding and content evidence ignore serializer-only presentation."
 
 expect_rejected() {
   local label="$1" expected_id="$2" log="${WORK}/gate-probe.log"
@@ -107,6 +108,21 @@ mkdir -p "$WORK/$(dirname "$PROBE_RGD")"
 cp "$REPO_ROOT/$WEBAPP_RGD" "$WORK/$PROBE_RGD"
 expect_rejected "an unbaselined third ResourceGraphDefinition" "$PROBE_RGD"
 rm -f "$WORK/$PROBE_RGD"
+rmdir "$WORK/$(dirname "$PROBE_RGD")"
+
+# Version-only schema APIs use the generated group encoded after the first dot in metadata.name,
+# not the outer ResourceGraphDefinition CRD group. A custom-group instance must therefore still
+# enter the committed-instance placement and substitution guards.
+readonly GROUPED_INSTANCE="k8s/providers/docker/apps/grouped-webapp-probe.yaml"
+mkdir -p "$WORK/$(dirname "$PROBE_RGD")"
+cp "$REPO_ROOT/$WEBAPP_RGD" "$WORK/$PROBE_RGD"
+yq -i '.metadata.name = "groupedwebapp.platform.example" |
+  .spec.schema.kind = "GroupedWebApp"' "$WORK/$PROBE_RGD"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$GROUPED_INSTANCE"
+yq -i '.apiVersion = "platform.example/v1alpha1" |
+  .kind = "GroupedWebApp" | .spec.name = "kube-system"' "$WORK/$GROUPED_INSTANCE"
+expect_rejected "a custom-group RGD instance targeting kube-system" "KSV-0037"
+rm -f "$WORK/$GROUPED_INSTANCE" "$WORK/$PROBE_RGD"
 rmdir "$WORK/$(dirname "$PROBE_RGD")"
 
 # Resource-level graph controls decide whether a template is instantiated. They must be evidence too:

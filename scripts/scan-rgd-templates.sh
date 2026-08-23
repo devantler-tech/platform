@@ -90,15 +90,20 @@ while IFS= read -r candidate; do
   [ "$(yq '.kind // ""' "$candidate")" = "ResourceGraphDefinition" ] || continue
   RGD_PATHS+=("${candidate#"$SOURCE_ROOT"/}")
   definition_api_version="$(yq '.apiVersion // ""' "$candidate")"
-  definition_api_group="${definition_api_version%%/*}"
-  [ "$definition_api_group" != "$definition_api_version" ] ||
+  [[ "$definition_api_version" == */* ]] ||
     fail "RGD does not declare a grouped apiVersion: $candidate"
   schema_api_version="$(yq '.spec.schema.apiVersion // ""' "$candidate")"
   [ -n "$schema_api_version" ] || fail "RGD does not declare spec.schema.apiVersion: $candidate"
   if [[ "$schema_api_version" == */* ]]; then
     generated_api_version="$schema_api_version"
   else
-    generated_api_version="${definition_api_group}/${schema_api_version}"
+    definition_name="$(yq '.metadata.name // ""' "$candidate")"
+    generated_api_group="${definition_name#*.}"
+    if [ -z "$definition_name" ] || [ "$generated_api_group" = "$definition_name" ] || \
+      [ -z "$generated_api_group" ]; then
+      fail "RGD metadata.name does not encode a generated API group: $candidate"
+    fi
+    generated_api_version="${generated_api_group}/${schema_api_version}"
   fi
   RGD_API_VERSIONS+=("$generated_api_version")
   schema_kind="$(yq '.spec.schema.kind // ""' "$candidate")"
@@ -224,24 +229,14 @@ jq -r '
       .ID,
       .Severity,
       (.CauseMetadata.StartLine | tostring),
-      (.CauseMetadata.EndLine | tostring),
-      (
-        [
-          .CauseMetadata.Code.Lines[]?
-          | select(.IsCause)
-          | (.Content | sub("^[ ]+"; ""))
-        ]
-        | if length == 0 then ["RESOURCE"] else . end
-        | tojson
-        | @base64
-      )
+      (.CauseMetadata.EndLine | tostring)
     ]
   | @tsv
 ' "$WORK/results.json" >"$WORK/raw-findings.tsv"
 
 : >"$WORK/cause-findings.tsv"
 while IFS=$'\t' read -r finding_target finding_id finding_severity \
-  finding_start_line finding_end_line finding_cause; do
+  finding_start_line finding_end_line; do
   case "$finding_target" in
     /* | ../* | */../*) fail "Trivy returned an unsafe finding target: $finding_target" ;;
   esac
@@ -253,8 +248,6 @@ while IFS=$'\t' read -r finding_target finding_id finding_severity \
   esac
   [ "$finding_start_line" -le "$finding_end_line" ] || fail \
     "Trivy finding $finding_id on $finding_target has an inverted source range"
-  [ -n "$finding_cause" ] || fail \
-    "Trivy finding $finding_id on $finding_target has no attributable cause evidence"
   finding_file="${WORK}/${finding_target}"
   [ -r "$finding_file" ] || fail "Trivy finding target is not readable: $finding_target"
 
@@ -266,23 +259,41 @@ while IFS=$'\t' read -r finding_target finding_id finding_severity \
   semantic_start_line=$((finding_start_line - leading_blank_lines))
   semantic_end_line=$((finding_end_line - leading_blank_lines))
 
-  # Trivy v0.74.0 reports a source line, not a JSON path. Resolve that line through yq against the
-  # exact extracted file and retain the deepest semantic path. This distinguishes byte-identical
-  # findings on containers[0] and containers[1]. Leading serializer blanks move Trivy's physical
-  # line while yq normalizes them, so remove that measured offset before resolving the path; neither
-  # an assumed offset nor a serializer-dependent line is hashed.
-  # shellcheck disable=SC2016 # $nearest is a yq variable, not a shell expansion
-  cause_path="$(CAUSE_START="$semantic_start_line" CAUSE_END="$semantic_end_line" \
+  # Trivy v0.74.0 reports a source range, not a JSON path. Resolve every scalar path in that range
+  # and keep their common semantic parent. This distinguishes byte-identical findings on
+  # containers[0] and containers[1]. Leading serializer blanks move Trivy's physical line while yq
+  # normalizes them, so remove that measured offset before resolving the path.
+  cause_paths="$(CAUSE_START="$semantic_start_line" CAUSE_END="$semantic_end_line" \
     yq -o=json -I=0 \
-    '([.. |
-        select(line >= (env(CAUSE_START) | tonumber) and line <= (env(CAUSE_END) | tonumber)) |
-        line] | sort | .[0]) as $nearest |
-      [.. | select(line == $nearest) | path] | sort_by(length) | select(length > 0) | .[-1]' \
-    "$finding_file")"
+    '[.. |
+      select(line >= (env(CAUSE_START) | tonumber) and
+        line <= (env(CAUSE_END) | tonumber) and tag != "!!map" and tag != "!!seq") |
+      path]' "$finding_file")"
+  cause_path="$(jq -c '
+    . as $paths
+    | if length == 0 then empty
+      else
+        (map(length) | min) as $limit
+        | ([range(0; $limit) as $index
+            | select(($paths | map(.[$index]) | unique | length) > 1)
+            | $index] | first // $limit) as $cut
+        | $paths[0][0:$cut]
+      end
+  ' <<<"$cause_paths")"
   if [ -z "$cause_path" ] || [ "$cause_path" = "null" ]; then
     fail "Trivy finding $finding_id on $finding_target has no semantic path in its source range"
   fi
-  cause_identity="${cause_path}"$'\n'"${finding_cause}"
+
+  # Hash parsed semantics, never Trivy's serializer-rendered Code.Lines. jq owns stable key order,
+  # so quoting or scalar-presentation changes cannot move an unchanged finding baseline.
+  canonical_cause="$(
+    yq -o=json -I=0 '.' "$finding_file" |
+      jq -cS --argjson cause_path "$cause_path" 'getpath($cause_path)'
+  )"
+  if [ -z "$canonical_cause" ] || [ "$canonical_cause" = "null" ]; then
+    fail "Trivy finding $finding_id on $finding_target has no canonical cause node"
+  fi
+  cause_identity="${cause_path}"$'\n'"${canonical_cause}"
   printf '%s\t%s\t%s\tCAUSE-SHA256:%s\n' \
     "$finding_target" "$finding_id" "$finding_severity" \
     "$(sha256_text "$cause_identity")" >>"$WORK/cause-findings.tsv"
