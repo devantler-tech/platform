@@ -404,10 +404,40 @@ func compoundToken(segment string) string {
 	if shellCompoundWords[head] {
 		return head
 	}
-	// A function definition — `unused()` or `unused() {`. The name varies, so this is
-	// matched by shape rather than by listing it.
-	if len(head) > 2 && strings.HasSuffix(head, "()") {
+	// 🔴 A SHAPE TEST, NOT A SUFFIX TEST. A simple command's NAME never contains an
+	// unquoted `(`, `)`, `{` or `}`, so any of them here means the segment opens a
+	// function definition, a subshell or a group — whatever the spacing.
+	//
+	// A `strings.HasSuffix(head, "()")` test missed `unused(){`, where bash accepts the
+	// brace with no space and the whole thing arrives as ONE field. That form happened to
+	// be refused anyway, by the closing `}` landing as its own segment — accidental
+	// coverage that a one-line body would not have had, so it is closed at the opener.
+	//
+	// Quoted spans are skipped, because a first token legitimately carries these
+	// characters inside quotes: `"${TOOL}" run` is an ordinary command invocation.
+	if unquotedGroupingChar(head) != "" {
 		return head
+	}
+	return ""
+}
+
+// unquotedGroupingChar returns the first `(`, `)`, `{` or `}` in tok that is not inside a
+// single- or double-quoted span, or "" when there is none.
+func unquotedGroupingChar(tok string) string {
+	var inSingle, inDouble bool
+	for i := 0; i < len(tok); i++ {
+		c := tok[i]
+		switch {
+		case c == '\\' && !inSingle:
+			i++
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+		case inSingle || inDouble:
+		case c == '(' || c == ')' || c == '{' || c == '}':
+			return string(c)
+		}
 	}
 	return ""
 }

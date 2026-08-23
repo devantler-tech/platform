@@ -565,3 +565,55 @@ func TestPlainCommandSequenceIsStillAccepted(t *testing.T) {
 		t.Fatalf("normalised set = %q, want %q", strings.Join(got, ","), "mitre,nsa")
 	}
 }
+
+// compoundToken must recognise a function-definition head WHATEVER the spacing.
+//
+// 🔴 THIS IS A UNIT TEST ON PURPOSE, and the reason is worth recording: an end-to-end
+// fixture cannot isolate it. A function body structurally contributes a closing `}` as
+// its own segment, and `}` is already a compound word — so `unused(){ … }` is refused
+// through the CLOSER whether or not the opener is recognised. Every integration case I
+// wrote for this passed against the old suffix-only test, i.e. proved nothing about the
+// change.
+//
+// The defect is therefore in the helper's own contract rather than in the guard's current
+// verdict: `compoundToken` promises to return the token introducing a compound command,
+// and for `unused(){` — which bash accepts, brace and all, as ONE field — it returned "".
+// Closing it makes the coverage principled instead of dependent on a closer showing up.
+//
+// Ablation: restoring `strings.HasSuffix(head, "()")` fails this test on `unused(){`, and
+// fails NO integration case.
+func TestCompoundTokenRecognisesGroupingHeads(t *testing.T) {
+	grouping := []string{
+		"unused(){",  // bash accepts no space before the brace; arrives as one field
+		"unused()",   // the spaced form, `unused() {`
+		"unused(){}", // an empty body, still one field
+		"{",          // a brace group
+		"}",
+		"(", // a subshell
+		")",
+		"if",
+		"done",
+	}
+	for _, tok := range grouping {
+		if got := compoundToken(tok); got == "" {
+			t.Errorf("compoundToken(%q) = \"\", want it recognised as a compound-command head", tok)
+		}
+	}
+
+	// The control: these characters are legitimate INSIDE a quoted command name, and a
+	// shape test that ignored quoting would refuse an ordinary invocation such as
+	// `"${RUNNER_TEMP}/bin/setup" --quiet`. Plain command names must stay accepted too.
+	plain := []string{
+		`"${RUNNER_TEMP}/bin/setup"`,
+		`'{literal}'`,
+		"ksail",
+		"go",
+		"env",
+		"echo",
+	}
+	for _, tok := range plain {
+		if got := compoundToken(tok); got != "" {
+			t.Errorf("compoundToken(%q) = %q, want \"\" — this is an ordinary command name", tok, got)
+		}
+	}
+}
