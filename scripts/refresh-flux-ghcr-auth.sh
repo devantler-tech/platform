@@ -4267,8 +4267,13 @@ release_sync_lease() {
   # version is what proves the Lease has not moved between the report a human
   # read and the command they paste.)
   for ((attempt = 1; attempt <= SYNC_LEASE_RELEASE_ATTEMPTS; attempt++)); do
+    # Retrying an API failure in the same millisecond re-asks a server that has
+    # not had time to recover, so all three attempts land inside one blip and the
+    # retry adds nothing. A short linear backoff makes the later attempts sample
+    # a genuinely different moment. Bounded at 1s + 2s: this runs in cleanup,
+    # where the lease is already released on the happy path.
     if ((attempt > 1)); then
-      sleep "${SYNC_INTERVAL}"
+      sleep "$((attempt - 1))"
     fi
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
@@ -4343,11 +4348,16 @@ release_sync_lease() {
     release_failure="patch-rejected"
   done
 
-  # Every attempt saw a lease still held by this transaction and still failed to
-  # clear it. Name the last cause: an operator needs to tell a transient apart
-  # from a rejected write.
+  # Every attempt read a lease still held by this transaction and still failed
+  # to clear it. That is a genuine refusal: report it rather than pretending the
+  # lease was released. Two halves are needed, and neither substitutes for the
+  # other -- which STAGE gave up, and what the API actually said. The caller's
+  # own message carries neither, so an operator clearing the lease by hand would
+  # otherwise have nothing to go on.
   echo "::error::Could not clear the GHCR synchronization lease after ${SYNC_LEASE_RELEASE_ATTEMPTS} attempts (${release_failure:-unknown})."
-  report_sync_lease_state 'release exhausted its attempts'
+  printf '::warning::sync-lease release: last kubectl error: %s\n' \
+    "$(tr '\n' ' ' <"${result_file}" 2>/dev/null)"
+  report_sync_lease_state 'lease release failed'
   return 1
 }
 
