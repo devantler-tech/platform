@@ -351,9 +351,9 @@ bounded_case() {
     # refusal cannot be confused with a wholesale failure of the fixture.
     if [ "$k" -eq 1 ]; then
       case "$bc_ref_kind" in
-      raw) ref_block="  ref:"$'\n'"    $bc_ref_line" ;;
-      omit) ref_block='' ;;
-      *) ref_block="  ref:"$'\n'"    semver: \"$bc_selector\"" ;;
+        raw) ref_block="  ref:"$'\n'"    $bc_ref_line" ;;
+        omit) ref_block='' ;;
+        *) ref_block="  ref:"$'\n'"    semver: \"$bc_selector\"" ;;
       esac
     else
       ref_block="  ref:"$'\n'"    semver: \">=1.0.0\""
