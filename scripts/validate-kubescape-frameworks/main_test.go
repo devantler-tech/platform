@@ -199,6 +199,18 @@ func TestRejectsHeredocBodyDecoy(t *testing.T) {
 			goodScan + "\n" +
 			"DOC\n" +
 			"run_scan",
+		// A TERMINATOR IS COMPARED EXACTLY. Bash does not accept trailing spaces or
+		// tabs on the delimiter line, but the guard trimmed them -- so `DOC   ` ended
+		// the body HERE while bash kept reading, and the decoy below it was scanned as
+		// code. Reproduced end to end against bash before this was fixed: bash printed
+		// the decoy as heredoc TEXT and executed only the reduced scan, while the guard
+		// reported both frameworks covered.
+		"terminator with trailing whitespace": "cat <<DOC > /dev/null\n" +
+			"hello\n" +
+			"DOC   \n" +
+			goodScan + "\n" +
+			"DOC\n" +
+			"env ksail workload scan --framework nsa",
 		"indented heredoc body": "cat <<-'DOC' > /dev/null\n" +
 			"\t" + goodScan + "\n" +
 			"\tDOC\n" +
@@ -1073,6 +1085,138 @@ func TestRejectsScanInAnAlwaysFalseConjunctionJob(t *testing.T) {
 	path := writeTemp(t, workflow)
 	if set, err := frameworkSet(path); err == nil {
 		t.Fatalf("expected FAIL CLOSED — `false && true` never runs; got %q", set)
+	}
+}
+
+// ACTIONS COMPARES STRINGS CASE-INSENSITIVELY, so `'A' != 'a'` is FALSE there and
+// the job never runs. Comparing case-sensitively called it reachable and let the
+// decoy in that skipped job satisfy the gate, while only the reduced scan ran.
+func TestRejectsScanInACaseInsensitivelyFalseJob(t *testing.T) {
+	workflow := "jobs:\n" +
+		"  skipped-decoy:\n    if: ${{ 'A' != 'a' }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"  reduced-scan:\n    steps:\n" +
+		"      - run: env ksail workload scan --framework nsa\n"
+	path := writeTemp(t, workflow)
+	if set, err := frameworkSet(path); err == nil {
+		t.Fatalf("expected FAIL CLOSED — Actions compares strings case-insensitively, so this job never runs; got %q", set)
+	}
+}
+
+// The MIRROR of the case above, and the reason the fix is EqualFold rather than a
+// blanket lowercase: `'A' == 'a'` is TRUE under Actions, so this job DOES run and
+// its scan must still be read. Without this, making the comparison case-insensitive
+// could have been "reject anything with mixed case", which fails the other way.
+func TestCaseInsensitivelyTrueJobIsStillRead(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ 'A' == 'a' }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	set, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("expected the scan in a case-insensitively TRUE job to be read: %v", err)
+	}
+	if len(set) != 2 {
+		t.Fatalf("framework set = %q, want both frameworks", set)
+	}
+}
+
+// A SCAN WHOSE FAILURE IS DISCARDED IS NOT A GATE. Both of these RUN, so the
+// `conditional` test does not catch them -- but a backgrounded command's status
+// never reaches the step, and without `pipefail` only the last pipeline stage's
+// does. Measured: the backgrounded decoy exited 42 and the step still succeeded,
+// so the full framework list was credited to a command that gated nothing.
+func TestRejectsScanWhoseStatusIsMasked(t *testing.T) {
+	cases := map[string]string{
+		"backgrounded with &": goodScan + " &\n" +
+			"env ksail workload scan --framework nsa",
+		"piped into another command": goodScan + " | tee /dev/null\n" +
+			"env ksail workload scan --framework nsa",
+	}
+	for name, body := range cases {
+		if _, err := setOf(t, body); err == nil {
+			t.Fatalf("%s: expected FAIL CLOSED — a scan whose exit status is discarded is not a gate", name)
+		}
+	}
+}
+
+// The MIRROR: `&&` and `||` still reach the CONDITIONAL refusal, not the new one,
+// and an ordinary unconditional scan is still accepted. Without this, "refuse
+// anything containing & or |" would look identical on the cases above while
+// breaking every real workflow.
+func TestPlainScanIsStillAcceptedAlongsideStatusMasking(t *testing.T) {
+	set, err := setOf(t, goodScan)
+	if err != nil {
+		t.Fatalf("a plain unconditional scan must still be read: %v", err)
+	}
+	if len(set) != 2 {
+		t.Fatalf("framework set = %q, want both frameworks", set)
+	}
+}
+
+// A `run:` SCALAR IS INPUT TO THE STEP'S SHELL, NOT NECESSARILY A BASH PROGRAM.
+// Under a custom `command {0}` template Actions writes the script to a file and runs
+// the template, so `shell: cat {0}` PRINTS the decoy and exits 0 without executing it.
+// The three cases cover the step's own `shell:`, the job default, and the workflow
+// default, because resolving only the first leaves the other two open.
+func TestRejectsScanUnderANonExecutingShell(t *testing.T) {
+	cases := map[string]string{
+		"step shell": "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n        shell: cat {0}\n" +
+			"      - run: env ksail workload scan --framework nsa\n",
+		"job default shell": "jobs:\n  validate:\n    defaults:\n      run:\n        shell: cat {0}\n    steps:\n" +
+			"      - run: " + goodScan + "\n",
+		"workflow default shell": "defaults:\n  run:\n    shell: cat {0}\njobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n",
+	}
+	for name, workflow := range cases {
+		path := writeTemp(t, workflow)
+		if set, err := frameworkSet(path); err == nil {
+			t.Fatalf("%s: expected FAIL CLOSED — a non-executing shell runs no scan; got %q", name, set)
+		}
+	}
+}
+
+// The MIRROR: an EXPLICIT bash/sh shell still executes, so its scan is still read.
+// Without this, the fix could have been "refuse any declared shell", which would
+// reject legitimate workflows.
+func TestScanUnderAnExplicitBashShellIsStillRead(t *testing.T) {
+	for _, sh := range []string{"bash", "sh"} {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n        shell: " + sh + "\n"
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err != nil {
+			t.Fatalf("shell %s: expected the scan to be read: %v", sh, err)
+		}
+		if len(set) != 2 {
+			t.Fatalf("shell %s: framework set = %q, want both frameworks", sh, set)
+		}
+	}
+}
+
+// TEXT AFTER A CLOSING MULTILINE QUOTE IS ARGUMENT TEXT, NOT A NEW COMMAND.
+// Measured in bash: `printf %s 'a` / `b' ksail workload scan ...` printed those words
+// as printf ARGUMENTS and never invoked ksail, while the guard read the remainder as
+// a standalone command and credited the full framework list to it.
+func TestRejectsScanInAMultilineQuoteRemainder(t *testing.T) {
+	body := "printf %s 'text\nmore' " + goodScan + "\n" +
+		"env ksail workload scan --framework nsa"
+	if set, err := setOf(t, body); err == nil {
+		t.Fatalf("expected FAIL CLOSED — the scan is an argument to printf, not a command; got %q", set)
+	}
+}
+
+// The MIRROR, and it caught a real over-rejection while this was being written:
+// an OPERATOR after the closing quote does start a new command, so `'a` / `b'; ksail`
+// really does run the scan -- confirmed against bash. Keying only on "a quote just
+// closed" refused this legitimate invocation.
+func TestScanAfterAnOperatorInAQuoteRemainderIsStillRead(t *testing.T) {
+	set, err := setOf(t, "printf %s 'text\nmore'; "+goodScan)
+	if err != nil {
+		t.Fatalf("a scan after `;` in a quote remainder is a real command: %v", err)
+	}
+	if len(set) != 2 {
+		t.Fatalf("framework set = %q, want both frameworks", set)
 	}
 }
 

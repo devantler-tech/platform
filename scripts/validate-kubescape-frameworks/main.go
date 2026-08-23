@@ -280,6 +280,33 @@ func frameworkSet(workflow string) ([]string, error) {
 // THIS IS STRUCTURAL, and that is the point: a mention of a command in a comment,
 // a step `name:`, or a quoted `with:` value is not a `run:` scalar and cannot
 // reach this list. The predecessor read raw file text, where all three matched.
+// executingShells are the `shell:` values whose `run:` scalar this guard can read as a
+// bash program AND which actually EXECUTE it. Anything else -- a custom `command {0}`
+// template, or another language's interpreter -- means the scalar is not bash source, so
+// finding a scan invocation in it says nothing about what runs.
+//
+// A CUSTOM TEMPLATE NEED NOT RUN THE SCRIPT AT ALL: `shell: cat {0}` merely PRINTS the
+// generated file and exits 0, so a full-framework decoy declared that way never executes
+// while the guard credited it as the gate. Measured. Refused rather than skipped: a real
+// scan someone moved to an unusual shell should fail loudly, not vanish.
+var executingShells = map[string]bool{"bash": true, "sh": true}
+
+// effectiveShell resolves the `shell:` that applies to a step: the step's own, else the
+// job's `defaults.run.shell`, else the workflow's. An empty result means none was
+// declared, which on the runners this repository uses is bash.
+func effectiveShell(root, job, step *yaml.Node) string {
+	for _, n := range []*yaml.Node{
+		mappingValue(step, "shell"),
+		mappingValue(mappingValue(mappingValue(job, "defaults"), "run"), "shell"),
+		mappingValue(mappingValue(mappingValue(root, "defaults"), "run"), "shell"),
+	} {
+		if n != nil && n.Kind == yaml.ScalarNode && strings.TrimSpace(n.Value) != "" {
+			return strings.TrimSpace(n.Value)
+		}
+	}
+	return ""
+}
+
 func runScalars(data []byte) ([]string, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -338,6 +365,16 @@ func runScalars(data []byte) ([]string, error) {
 					return nil, fmt.Errorf(
 						"a `run:` block invoking the scan is guarded by a workflow-level `if:`, so the runner decides whether it executes before any shell starts and this guard cannot see that decision: %q. A skipped step would let a full framework list stand in for a reduced scan that actually runs. Invoke the scan from an unconditional step in an unconditional job. See #2823",
 						firstScanLine(v.Value))
+				}
+				continue
+			}
+			// The shell is resolved only for a step that actually carries a scan, so an
+			// ordinary `shell: python` step elsewhere in the workflow is untouched.
+			if sh := effectiveShell(root, job, step); sh != "" && !executingShells[sh] {
+				if scanCandidate(v.Value) {
+					return nil, fmt.Errorf(
+						"a `run:` block invoking the scan declares `shell: %s`, so its text is not the bash program this guard reads and may not be executed at all — a custom `command {0}` template can simply print the script and exit 0: %q. Invoke the scan from a step using the default shell. See #2823",
+						sh, firstScanLine(v.Value))
 				}
 				continue
 			}
@@ -426,6 +463,14 @@ type shellSegment struct {
 	// runs at all depends on another command's exit status. `;`, `&` and `|` do
 	// not set it: both sides of those run.
 	conditional bool
+	// statusMasked is true when the operator ENDING this segment discards its exit
+	// status: a single `&` backgrounds it, and a single `|` pipes it so only the
+	// last stage's status survives without `pipefail`. This is a DIFFERENT property
+	// from `conditional` -- such a command does run, but its failure does not fail
+	// the step, so it is not a gate. Counting one as the gate let a backgrounded
+	// full-framework scan stand in for a reduced scan that actually decided the
+	// step's outcome.
+	statusMasked bool
 }
 
 // shellSplit walks ONE command line once, tracking shell quoting, and returns the
@@ -462,9 +507,9 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unrea
 	var inSingle, inDouble bool
 	// The first command on a line is always reached; each operator decides the next.
 	conditional := false
-	flush := func(nextConditional bool) {
+	flush := func(nextConditional, maskCurrent bool) {
 		if s := strings.TrimSpace(cur.String()); s != "" {
-			segments = append(segments, shellSegment{text: s, conditional: conditional})
+			segments = append(segments, shellSegment{text: s, conditional: conditional, statusMasked: maskCurrent})
 		}
 		cur.Reset()
 		conditional = nextConditional
@@ -547,7 +592,9 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unrea
 		// conditional ones, so the same test that consumes them marks what follows.
 		if c == ';' || c == '&' || c == '|' {
 			doubled := (c == '&' || c == '|') && i+1 < len(line) && line[i+1] == c
-			flush(doubled)
+			// A SINGLE `&` or `|` MASKS THE STATUS of the command it ends; the doubled
+			// forms do not, they make what FOLLOWS conditional instead.
+			flush(doubled, !doubled && (c == '&' || c == '|'))
 			if doubled {
 				i++
 			}
@@ -555,7 +602,7 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unrea
 		}
 		cur.WriteByte(c)
 	}
-	flush(false)
+	flush(false, false)
 	return segments, heredocs, false, btCount%2 == 1, dollarDepth > 0, quoteOpen(inSingle, inDouble)
 }
 
@@ -703,6 +750,8 @@ func scanInvocations(scalar string) ([]string, error) {
 	lines := strings.Split(scalar, "\n")
 	for idx := 0; idx < len(lines); idx++ {
 		line := lines[idx]
+		// Reset per physical line: it describes only THIS line's leading segment.
+		closedQuoteRemainder := false
 		// A QUOTED ARGUMENT MAY SPAN LINES. Skip the lines that sit INSIDE one, exactly as
 		// the heredoc body is skipped above -- they are argument text bash never executes,
 		// and reading them as commands let a decoy supply the framework set. Consume up to
@@ -715,6 +764,20 @@ func scanInvocations(scalar string) ([]string, error) {
 			}
 			openQuote = 0
 			line = rest
+			// TEXT AFTER THE CLOSING QUOTE IS STILL PART OF THE COMMAND THAT OPENED IT.
+			// Only an operator starts a new command, so the FIRST segment of this
+			// remainder is argument text of that earlier command, not something in
+			// command position. Reading it as a standalone command let
+			// `printf %s 'a` / `b' ksail workload scan --framework nsa,mitre` supply the
+			// full list -- measured: bash printed those words as printf ARGUMENTS and
+			// never invoked ksail, while only a later reduced scan ran.
+			// ...UNLESS AN OPERATOR STARTS THE REMAINDER. `'a` / `b'; ksail ...` really does
+			// run the scan -- measured in bash -- so keying purely on "quote just closed"
+			// refused a legitimate invocation. Only a remainder whose first character is
+			// not a command separator is argument text of the opening command.
+			if t := strings.TrimLeft(line, " \t"); t != "" && strings.IndexByte(";&|", t[0]) < 0 {
+				closedQuoteRemainder = true
+			}
 			if strings.TrimSpace(line) == "" {
 				continue
 			}
@@ -729,7 +792,14 @@ func scanInvocations(scalar string) ([]string, error) {
 				// non-executing input were read as code and could supply the framework set.
 				candidate = strings.TrimLeft(candidate, "\t")
 			}
-			if strings.TrimRight(candidate, " \t\r") == pending[0].delim {
+			// EXACT MATCH. Bash compares the terminator line to the delimiter exactly;
+			// trailing spaces or tabs do NOT end the heredoc. Trimming them ended the body
+			// early here, so lines bash still treats as heredoc INPUT were read as code --
+			// a `DOC   ` line let a decoy `ksail ... --framework nsa,mitre` inside the body
+			// supply the framework set while only a later reduced scan actually ran.
+			// Reproduced against bash before this changed. Only a CR is removed, because a
+			// CRLF line ending is a file-encoding artifact rather than shell content.
+			if strings.TrimSuffix(candidate, "\r") == pending[0].delim {
 				pending = pending[1:]
 			}
 			continue
@@ -771,7 +841,7 @@ func scanInvocations(scalar string) ([]string, error) {
 		}
 		pending = append(pending, heredocs...)
 
-		for _, segment := range segments {
+		for si, segment := range segments {
 			// Recorded for the WHOLE scalar, and acted on only if a scan is found below:
 			// an ordinary `run:` block that never invokes the scan may use whatever shell
 			// it likes.
@@ -788,6 +858,27 @@ func scanInvocations(scalar string) ([]string, error) {
 			if segment.conditional {
 				return nil, fmt.Errorf(
 					"a scan invocation is guarded by `&&` or `||`, so whether it runs depends on another command's exit status: %q. A conditionally executed scan is not evidence of what the gate runs — an always-false guard would let a full framework list stand in for a reduced scan that actually executes. Invoke the scan unconditionally. See #2823",
+					segment.text)
+			}
+			// A RUNNING SCAN IS NOT A GATE IF ITS FAILURE IS DISCARDED. Backgrounding with
+			// `&`, or piping with `|` so only the last stage's status survives, lets the
+			// scan execute and fail while the step still succeeds. Measured: a decoy
+			// `ksail workload scan --framework nsa,mitre &` exited 42 and the step returned
+			// success from a later reduced scan, so the full list was credited to a gate
+			// that gated nothing. Refused rather than skipped, because silently ignoring it
+			// would equally hide a real scan someone backgrounded by mistake.
+			// The first segment of a closed multiline-quote remainder is ARGUMENT text of
+			// the command that opened the quote, so a scan spelled there never executes.
+			// Refused rather than skipped: it looks exactly like a gate to a reader, and
+			// silently ignoring it would hide a real scan someone wrote in the wrong place.
+			if si == 0 && closedQuoteRemainder {
+				return nil, fmt.Errorf(
+					"a scan invocation sits after the closing quote of a string that began on an earlier line, so it is an ARGUMENT to that earlier command rather than a command of its own and never executes: %q. A decoy written this way would supply a full framework list while a reduced scan actually runs. Invoke the scan on its own line. See #2823",
+					segment.text)
+			}
+			if segment.statusMasked {
+				return nil, fmt.Errorf(
+					"a scan invocation's exit status is discarded by a `&` or `|` that ends it, so its failure does not fail the step: %q. A scan whose failure is ignored is not a gate — it would let a full framework list stand in for a reduced scan that actually decides the outcome. Invoke the scan as a plain command whose status the step sees. See #2823",
 					segment.text)
 			}
 			out = append(out, segment.text)
@@ -1095,13 +1186,24 @@ func comparisonTri(expr string) int {
 	if !leftOK || !rightOK || leftKind != rightKind {
 		return triUnknown
 	}
+	// ACTIONS IGNORES CASE WHEN COMPARING STRINGS, so `'A' == 'a'` is TRUE there.
+	// Comparing case-sensitively decided the opposite, and the direction is a
+	// fail-open: a job guarded by `${{ 'A' != 'a' }}` is SKIPPED by Actions, but a
+	// case-sensitive `!=` called it reachable, so a decoy scan in that never-running
+	// job was allowed to satisfy the framework gate. The other operand kinds are
+	// already normalised above (bool and null are lowercased, numbers canonicalised),
+	// so equality for them stays exact.
+	equal := leftVal == rightVal
+	if leftKind == "string" {
+		equal = strings.EqualFold(leftVal, rightVal)
+	}
 	if op == "==" {
-		if leftVal == rightVal {
+		if equal {
 			return triTrue
 		}
 		return triFalse
 	}
-	if leftVal != rightVal {
+	if !equal {
 		return triTrue
 	}
 	return triFalse
