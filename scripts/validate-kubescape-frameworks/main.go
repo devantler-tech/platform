@@ -653,8 +653,13 @@ func resolveOrElseMasking(segments []shellSegment) {
 }
 
 // provablyFails reports whether a command is CERTAIN to exit non-zero, read from the
-// text alone. Only `false` and `exit <non-zero literal>` qualify; a variable, a
-// substitution or any other command does not, however likely it is to fail.
+// text alone. Only `false` and `exit <literal>` qualify; a variable, a substitution
+// or any other command does not, however likely it is to fail.
+//
+// THE LITERAL IS NOT THE STATUS. A shell exit code is taken modulo 256, so `exit 256`
+// and `exit -256` both leave status 0 — a `|| exit 256` reads as re-raising the
+// failure while actually swallowing it, which is the very bypass this whitelist
+// exists to refuse. Compare the NORMALISED status rather than the written number.
 func provablyFails(text string) bool {
 	fields := strings.Fields(text)
 	switch {
@@ -662,7 +667,12 @@ func provablyFails(text string) bool {
 		return true
 	case len(fields) == 2 && fields[0] == "exit":
 		code, err := strconv.Atoi(fields[1])
-		return err == nil && code != 0
+		if err != nil {
+			return false
+		}
+		// Go's % keeps the sign of the dividend, so -256%256 is 0 but -1%256 is -1;
+		// the second +256 %256 folds a negative remainder into 0..255 as the shell does.
+		return ((code%256)+256)%256 != 0
 	}
 	return false
 }

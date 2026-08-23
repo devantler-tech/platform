@@ -1357,6 +1357,11 @@ func TestRejectsScanWhoseFailureIsSwallowedByOrElse(t *testing.T) {
 		"|| nothing at all": goodScan + " ||",
 		// The re-raise must itself reach the step: `&` backgrounds the `exit 1`.
 		"|| exit 1 backgrounded": goodScan + " || exit 1 &",
+		// A shell exit code is taken modulo 256, so these two leave status 0 and mask
+		// the failure while READING like a re-raise.
+		"|| exit 256":  goodScan + " || exit 256",
+		"|| exit -256": goodScan + " || exit -256",
+		"|| exit 512":  goodScan + " || exit 512",
 	}
 	for name, body := range cases {
 		if _, err := setOf(t, body); err == nil {
@@ -1373,6 +1378,9 @@ func TestScanIsStillReadWhenOrElseReRaisesTheFailure(t *testing.T) {
 	cases := map[string]string{
 		"|| false":  goodScan + " || false",
 		"|| exit 2": goodScan + " || exit 2",
+		// -1 normalises to 255, which IS a failure -- so the rule is the normalised
+		// status, not "the literal is positive".
+		"|| exit -1": goodScan + " || exit -1",
 	}
 	for name, body := range cases {
 		set, err := setOf(t, body)
