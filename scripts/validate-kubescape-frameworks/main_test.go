@@ -532,14 +532,14 @@ func TestUnconditionalScanWithTrailingOperatorIsAccepted(t *testing.T) {
 // compound-command construct in that scalar refuses. Deciding reachability properly
 // needs a shell parser, which this guard deliberately does not implement.
 func TestRejectsScanInsideCompoundCommand(t *testing.T) {
-	real := "env ksail workload scan --framework nsa --compliance-threshold 95"
+	reducedScan := "env ksail workload scan --framework nsa --compliance-threshold 95"
 	cases := map[string]string{
-		"if body":       "if false; then\n  " + goodScan + "\nfi\n" + real,
-		"function body": "unused() {\n  " + goodScan + "\n}\n" + real,
-		"while body":    "while false; do\n  " + goodScan + "\ndone\n" + real,
-		"for body":      "for i in 1; do\n  " + goodScan + "\ndone\n" + real,
-		"case body":     "case x in\n  y)\n    " + goodScan + "\n    ;;\nesac\n" + real,
-		"brace group":   "{\n  " + goodScan + "\n}\n" + real,
+		"if body":       "if false; then\n  " + goodScan + "\nfi\n" + reducedScan,
+		"function body": "unused() {\n  " + goodScan + "\n}\n" + reducedScan,
+		"while body":    "while false; do\n  " + goodScan + "\ndone\n" + reducedScan,
+		"for body":      "for i in 1; do\n  " + goodScan + "\ndone\n" + reducedScan,
+		"case body":     "case x in\n  y)\n    " + goodScan + "\n    ;;\nesac\n" + reducedScan,
+		"brace group":   "{\n  " + goodScan + "\n}\n" + reducedScan,
 	}
 	for name, body := range cases {
 		if _, err := setOf(t, body); err == nil {
