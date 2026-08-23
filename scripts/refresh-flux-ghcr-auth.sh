@@ -134,6 +134,7 @@ readonly FLUX_CONTROLLER_ROLLOUT_TIMEOUT="2m"
 readonly SYNC_LEASE_NAME="ghcr-auth-refresh"
 readonly SYNC_LEASE_DURATION_SECONDS=120
 readonly SYNC_LEASE_HEARTBEAT_SECONDS="${FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS:-30}"
+readonly SYNC_LEASE_RELEASE_ATTEMPTS=3
 readonly CORDON_OWNER_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-owner"
 readonly CORDON_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner"
 readonly CORDON_RECOVERY_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-recovery"
@@ -3886,7 +3887,7 @@ acquire_sync_lease() {
   done
 
   failure_detail="$(head -c 1000 "${sync_lease_result_file}" | tr '\r\n' '  ')"
-  failure_detail="${failure_detail//'%'/'%25'}"
+  failure_detail="${failure_detail//%/%25}"
   if [[ -n "${failure_detail}" ]]; then
     echo "::error::Could not atomically acquire the GHCR synchronization lease. Last API error: ${failure_detail}"
   else
@@ -4242,7 +4243,7 @@ release_sync_lease() {
   local lease_file="${work_dir}/sync-lease-release.json"
   local patch_file_local="${work_dir}/sync-lease-release-patch.json"
   local result_file="${work_dir}/sync-lease-release-result.txt"
-  local resource_version now
+  local now attempt backoff observed_holder release_failure="" failure_detail=""
 
   if [[ -n "${sync_lease_heartbeat_pid}" ]]; then
     kill "${sync_lease_heartbeat_pid}" 2>/dev/null || true
@@ -4250,42 +4251,135 @@ release_sync_lease() {
     sync_lease_heartbeat_pid=""
   fi
   [[ "${sync_lease_acquired}" == "true" && -n "${sync_lease_holder}" ]] || return 0
-  if ! kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace flux-system \
-    get lease "${SYNC_LEASE_NAME}" \
-    -o json >"${lease_file}"; then
-    return 1
+
+  # Killing the heartbeat shell does not reap the kubectl child it may be
+  # blocked in, so that renewal can still land between the read and the patch
+  # below. The CAS therefore tests holderIdentity ONLY. That alone carries the
+  # safety property of a release -- the lease is still ours -- while a
+  # resourceVersion conjunct would additionally fail on exactly the benign
+  # same-holder write renew_sync_lease is already documented to expect. A
+  # release that refuses leaves the lease held, so that conjunct converts a
+  # harmless race into a wedge that blocks every later transaction until a
+  # human clears it. A lease held by anyone ELSE still refuses, below.
+  #
+  # (fence_lease_release_patch keeps its resourceVersion conjunct deliberately:
+  # there the holder is terminal and nothing races the write, so pinning the
+  # version is what proves the Lease has not moved between the report a human
+  # read and the command they paste.)
+  for ((attempt = 1; attempt <= SYNC_LEASE_RELEASE_ATTEMPTS; attempt++)); do
+    # Retrying an API failure in the same millisecond re-asks a server that has
+    # not had time to recover, so every attempt lands inside one blip and the
+    # retry adds nothing. A linear backoff makes the later attempts sample a
+    # genuinely different moment, scaling SYNC_INTERVAL so this stays the same
+    # tunable knob every other retry loop here uses -- which also keeps the suite
+    # fast, since the tests set it to 0.
+    #
+    # Repeated sleeps rather than arithmetic: SYNC_INTERVAL is validated as
+    # ^[0-9]+([.][0-9]+)?$, so a DECIMAL is a documented-valid setting, and bash
+    # $(( )) is integer-only -- multiplying it would abort the release with an
+    # arithmetic syntax error on a value the script explicitly accepts.
+    for ((backoff = 1; backoff < attempt; backoff++)); do
+      sleep "${SYNC_INTERVAL}"
+    done
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      --request-timeout=30s \
+      get lease "${SYNC_LEASE_NAME}" \
+      --ignore-not-found \
+      -o json >"${lease_file}" 2>"${result_file}"; then
+      release_failure="api-unreachable"
+      continue
+    fi
+
+    # --ignore-not-found prints nothing when the Lease is gone. That is NOT a
+    # quiet success: acquire_sync_lease CREATES the Lease when it is absent, so
+    # a concurrent transaction that found it deleted has already acquired it
+    # without ever conflicting with us. That is the same thing the foreign-holder
+    # branch below exists to surface -- this run can no longer prove it held the
+    # lease while it was mutating -- so it is reported on the same terms. Nothing
+    # is left held, so failing here wedges nothing.
+    if [[ ! -s "${lease_file}" ]]; then
+      echo "::error::The GHCR synchronization lease no longer exists; this run cannot prove it held the lease while it was mutating."
+      return 1
+    fi
+    observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}" 2>"${result_file}")" || {
+      release_failure="invalid-lease-state"
+      continue
+    }
+
+    # An empty holder IS this function's goal state, so reaching it is success
+    # however it happened. The reachable case is a patch that the apiserver
+    # APPLIED and whose response was then lost: kubectl exits non-zero, and the
+    # retry finds the Lease already cleared. Treating that as a failure would
+    # fail a wholly successful deploy over a released lease -- the same wedge
+    # this retry exists to remove, in the likeliest instance of the very
+    # transient it targets.
+    if [[ -z "${observed_holder}" ]]; then
+      sync_lease_holder=""
+      sync_lease_acquired=false
+      return 0
+    fi
+
+    # Losing the lease to another holder stays fatal: this transaction can no
+    # longer prove it held the lease while it was mutating, which is exactly
+    # the condition the exclusion guarantee exists to surface. Retrying cannot
+    # change a holder that already moved away, so refuse immediately -- and say
+    # so, because this is a concurrency breach and not a transient.
+    if [[ "${observed_holder}" != "${sync_lease_holder}" ]]; then
+      echo "::error::The GHCR synchronization lease is held by another transaction; refusing to release a lease this run does not own."
+      report_sync_lease_state 'release found a foreign lease holder'
+      return 1
+    fi
+
+    now="$(kubernetes_microtime_now)"
+    jq -n \
+      --arg holder "${sync_lease_holder}" \
+      --arg now "${now}" '
+      [
+        {op: "test", path: "/spec/holderIdentity", value: $holder},
+        {op: "replace", path: "/spec/holderIdentity", value: ""},
+        {op: "replace", path: "/spec/leaseDurationSeconds", value: 1},
+        {op: "replace", path: "/spec/renewTime", value: $now}
+      ]
+    ' >"${patch_file_local}"
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      --request-timeout=30s \
+      patch lease "${SYNC_LEASE_NAME}" \
+      --type=json \
+      --patch-file="${patch_file_local}" \
+      >"${result_file}" 2>&1; then
+      sync_lease_holder=""
+      sync_lease_acquired=false
+      return 0
+    fi
+    release_failure="patch-rejected"
+  done
+
+  # Every attempt read a lease still held by this transaction and still failed
+  # to clear it. That is a genuine refusal: report it rather than pretending the
+  # lease was released. Two halves are needed, and neither substitutes for the
+  # other -- which STAGE gave up, and what the API actually said. The caller's
+  # own message carries neither, so an operator clearing the lease by hand would
+  # otherwise have nothing to go on.
+  # Sanitise exactly as acquire_sync_lease already does for this same class of
+  # content: bound it, flatten CR *and* LF, and escape '%'. GitHub Actions
+  # decodes %25/%0A/%0D inside a workflow command, so unescaped captured output
+  # can inject an annotation of its own -- which is why that escaping exists
+  # there. Emitting it raw here would have dropped all three protections.
+  if [[ -s "${result_file}" ]]; then
+    failure_detail="$(head -c 1000 "${result_file}" | tr '\r\n' '  ')"
+    failure_detail="${failure_detail//%/%25}"
   fi
-  resource_version="$(jq -er \
-    --arg holder "${sync_lease_holder}" '
-    select(.spec.holderIdentity == $holder)
-    | .metadata.resourceVersion
-  ' "${lease_file}")" || return 1
-  now="$(kubernetes_microtime_now)"
-  jq -n \
-    --arg resource_version "${resource_version}" \
-    --arg holder "${sync_lease_holder}" \
-    --arg now "${now}" '
-    [
-      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
-      {op: "test", path: "/spec/holderIdentity", value: $holder},
-      {op: "replace", path: "/spec/holderIdentity", value: ""},
-      {op: "replace", path: "/spec/leaseDurationSeconds", value: 1},
-      {op: "replace", path: "/spec/renewTime", value: $now}
-    ]
-  ' >"${patch_file_local}"
-  if ! kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace flux-system \
-    patch lease "${SYNC_LEASE_NAME}" \
-    --type=json \
-    --patch-file="${patch_file_local}" \
-    >"${result_file}" 2>&1; then
-    return 1
+  if [[ -n "${failure_detail}" ]]; then
+    echo "::error::Could not clear the GHCR synchronization lease after ${SYNC_LEASE_RELEASE_ATTEMPTS} attempts (${release_failure}). Last error: ${failure_detail}"
+  else
+    echo "::error::Could not clear the GHCR synchronization lease after ${SYNC_LEASE_RELEASE_ATTEMPTS} attempts (${release_failure})."
   fi
-  sync_lease_holder=""
-  sync_lease_acquired=false
+  report_sync_lease_state 'lease release failed'
+  return 1
 }
 
 # The live image-verification policies are owned by the infrastructure Flux

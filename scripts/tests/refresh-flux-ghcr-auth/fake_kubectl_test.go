@@ -978,8 +978,44 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 	}
 	currentResourceVersion := defaultString(markerContent("sync-lease-resource-version"), "10")
 	currentHolder := markerContent("sync-lease-holder")
-	if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
-		!hasPatchOperation(patch, "test", "/spec/holderIdentity", currentHolder) {
+
+	// release_sync_lease kills the heartbeat shell, but not a kubectl child that
+	// shell may be blocked in. That orphaned renewal lands after the release has
+	// read the Lease and before its patch is applied. Model the write itself --
+	// a same-holder renewal advancing resourceVersion -- and let the ordinary
+	// CAS comparison below decide the outcome, exactly as an apiserver would.
+	// This fires on the release patch only: it is the one that clears
+	// holderIdentity.
+	if os.Getenv("FAKE_SYNC_LEASE_ORPHANED_HEARTBEAT_WRITE_BEFORE_RELEASE") == "true" &&
+		!markerExists("sync-lease-orphaned-heartbeat-write") &&
+		hasPatchPath(patch, "replace", "/spec/holderIdentity") &&
+		patchValueString(patch, "replace", "/spec/holderIdentity") == "" {
+		touchMarker("sync-lease-orphaned-heartbeat-write")
+		currentResourceVersion = incrementDecimal(currentResourceVersion)
+		setMarkerContent("sync-lease-resource-version", currentResourceVersion)
+	}
+	// A real apiserver evaluates the `test` operations a patch actually carries,
+	// and nothing more -- so honour resourceVersion exactly when it is present.
+	// The holderIdentity test is what makes any write to this Lease safe, so a
+	// caller that omits it is rejected outright. Which writers must ALSO pin
+	// resourceVersion is a policy question, not an apiserver one, and it is
+	// asserted separately below.
+	if !hasPatchOperation(patch, "test", "/spec/holderIdentity", currentHolder) {
+		return commandFailure(56, "synchronization lease CAS failed")
+	}
+	if hasPatchPath(patch, "test", "/metadata/resourceVersion") &&
+		!hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) {
+		return commandFailure(56, "synchronization lease CAS failed")
+	}
+
+	// The release is the ONE writer that must not pin resourceVersion: a benign
+	// same-holder heartbeat write would otherwise fail it and leave the Lease
+	// held. Every other writer still must pin it -- acquire and renew both rely
+	// on it to avoid a lost update on leaseTransitions -- so keep requiring it
+	// of them rather than dropping the check for everyone.
+	releasesTheLease := hasPatchPath(patch, "replace", "/spec/holderIdentity") &&
+		patchValueString(patch, "replace", "/spec/holderIdentity") == ""
+	if !releasesTheLease && !hasPatchPath(patch, "test", "/metadata/resourceVersion") {
 		return commandFailure(56, "synchronization lease CAS failed")
 	}
 	for _, path := range []string{"/spec/acquireTime", "/spec/renewTime"} {
@@ -997,6 +1033,35 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 		setMarkerContent("sync-lease-resource-version", incrementDecimal(currentResourceVersion))
 		touchMarker("sync-lease-renew-conflict")
 		return commandFailure(56, "simulated same-holder lease renewal race")
+	}
+	// Every release attempt fails, so the loop's exhaustion path -- its final
+	// diagnostics -- becomes reachable. The one-shot fixtures above cannot get
+	// there by construction.
+	if os.Getenv("FAKE_SYNC_LEASE_RELEASE_ALWAYS_FAILS") == "true" && releasesTheLease {
+		touchMarker("sync-lease-release-always-fails")
+		return commandFailure(56, "persistent failure releasing the lease")
+	}
+
+	// A release whose CAS passed can still fail on a transient API error. The
+	// Lease is untouched, so the retry that follows must be able to complete the
+	// release rather than leaving it held.
+	if os.Getenv("FAKE_SYNC_LEASE_RELEASE_CONFLICT_ONCE") == "true" &&
+		!markerExists("sync-lease-release-conflict") &&
+		hasPatchPath(patch, "replace", "/spec/holderIdentity") &&
+		patchValueString(patch, "replace", "/spec/holderIdentity") == "" {
+		touchMarker("sync-lease-release-conflict")
+		return commandFailure(56, "simulated transient failure releasing the lease")
+	}
+	// The apiserver APPLIES the release and the response is then lost (connection
+	// reset after the write). kubectl exits non-zero, so the caller retries and
+	// finds the Lease already cleared -- which is its goal state, not a failure.
+	if os.Getenv("FAKE_SYNC_LEASE_RELEASE_RESPONSE_LOST") == "true" &&
+		!markerExists("sync-lease-release-response-lost") &&
+		releasesTheLease {
+		touchMarker("sync-lease-release-response-lost")
+		setMarkerContent("sync-lease-holder", "")
+		setMarkerContent("sync-lease-resource-version", incrementDecimal(currentResourceVersion))
+		return commandFailure(54, "connection reset after releasing the lease")
 	}
 	if holder := patchValueString(patch, "replace", "/spec/holderIdentity"); hasPatchPath(patch, "replace", "/spec/holderIdentity") {
 		setMarkerContent("sync-lease-holder", holder)
