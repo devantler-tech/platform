@@ -364,6 +364,16 @@ flux_selector_may_match() {
   ' <<<"$selector_json" >/dev/null
 }
 
+flux_field_path_is_protected() {
+  local field_path="${1//\//.}"
+  case "$field_path" in
+    spec | spec.patches | spec.patches.* | spec.commonMetadata | spec.commonMetadata.* | sops | sops.*)
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 protected_flux_patch_targets() {
   local patch_entries_json="$1" targeted_flux flux_patch_entry flux_patch_body
   local flux_patch_documents protected_flux_patch_kinds
@@ -672,6 +682,34 @@ while IFS= read -r kustomization_file; do
       "Kustomization patch mutates protected Flux controls ($protected_flux_fields): $kustomization_file"
   done < <(yq -o=json -I=0 '(.patches[]?, .patchesJson6902[]?)' "$kustomization_file" | jq -c '.')
 
+  # Replacements can rewrite individual fields inside a Flux Kustomization after the raw control
+  # has been validated. Unlike a complete patch entry, the replacement source does not provide
+  # enough context to re-evaluate the rendered selector, so fail closed on protected field paths.
+  while IFS= read -r flux_replacement_entry; do
+    flux_replacement_path="$(jq -r '
+      if type == "object" and (.path | type) == "string" then .path else "" end
+    ' <<<"$flux_replacement_entry")"
+    if [ -n "$flux_replacement_path" ]; then
+      flux_replacement_file="${kustomization_file%/*}/${flux_replacement_path}"
+      [ -r "$flux_replacement_file" ] ||
+        fail "Kustomization replacement is not readable: $flux_replacement_file"
+      flux_replacement_documents="$(yq -o=json -I=0 '.' "$flux_replacement_file" | jq -cs '.')"
+    else
+      flux_replacement_documents="[$flux_replacement_entry]"
+    fi
+    while IFS= read -r flux_replacement_target; do
+      flux_replacement_selector="$(jq -c '.select // {}' <<<"$flux_replacement_target")"
+      flux_selector_may_match "$flux_replacement_selector" || continue
+      while IFS= read -r flux_replacement_field; do
+        [ -n "$flux_replacement_field" ] || continue
+        if flux_field_path_is_protected "$flux_replacement_field"; then
+          fail "Kustomization replacement mutates protected Flux controls ($flux_replacement_field): $kustomization_file"
+        fi
+      done < <(jq -r '.fieldPaths[]? | select(type == "string")' <<<"$flux_replacement_target")
+    done < <(jq -c '.[] | .targets[]? | select(type == "object")' \
+      <<<"$flux_replacement_documents")
+  done < <(yq -o=json -I=0 '.replacements[]?' "$kustomization_file" | jq -c '.')
+
   while IFS= read -r configuration_entry; do
     [ "$(jq -r 'type' <<<"$configuration_entry")" = "string" ] ||
       fail "Kustomization configuration entry is not a path: $kustomization_file"
@@ -682,6 +720,32 @@ while IFS= read -r kustomization_file; do
     configuration_documents="$(yq -o=json -I=0 '.' "$configuration_file" | jq -cs '.')"
     jq -e 'length > 0 and all(.[]; type == "object")' <<<"$configuration_documents" >/dev/null ||
       fail "Kustomization configuration does not contain only mapping documents: $configuration_file"
+    while IFS= read -r flux_configuration_field; do
+      flux_configuration_selector="$(jq -c '{group, version, kind}' <<<"$flux_configuration_field")"
+      flux_selector_may_match "$flux_configuration_selector" || continue
+      flux_configuration_path="$(jq -r '.path // ""' <<<"$flux_configuration_field")"
+      [ -n "$flux_configuration_path" ] ||
+        fail "Kustomization configuration contains an empty Flux field path: $configuration_file"
+      if flux_field_path_is_protected "$flux_configuration_path"; then
+        fail "Kustomization configuration mutates protected Flux controls ($flux_configuration_path): $configuration_file"
+      fi
+    done < <(jq -c '
+      .[]
+      | (
+          .namePrefix[]?,
+          .nameSuffix[]?,
+          .namespace[]?,
+          .commonLabels[]?,
+          .labels[]?,
+          .templateLabels[]?,
+          .commonAnnotations[]?,
+          .varReference[]?,
+          .images[]?,
+          .replicas[]?,
+          .nameReference[]?.fieldSpecs[]?
+        )
+      | select(type == "object")
+    ' <<<"$configuration_documents")
     targeted_configuration="$(jq -r --argjson generated "$rgd_selectors_json" '
       def selector_matches($value; $pattern):
         ($pattern == "")
@@ -791,6 +855,46 @@ while IFS= read -r kustomization_file; do
     jq -e 'length > 0 and all(.[]; type == "object")' <<<"$transformer_documents" >/dev/null ||
       fail "Kustomization transformer does not contain only mapping documents: $transformer_file"
 
+    while IFS= read -r flux_transformer_document; do
+      flux_transformer_selector="$(jq -c '.target // {}' <<<"$flux_transformer_document")"
+      flux_transformer_body="$(jq -r '
+        if (.patch | type) == "string" then .patch else "" end
+      ' <<<"$flux_transformer_document")"
+      if [ -n "$flux_transformer_body" ] &&
+        flux_selector_may_match "$flux_transformer_selector"; then
+        flux_transformer_patch_documents="$(
+          yq -o=json -I=0 '.' <<<"$flux_transformer_body" 2>/dev/null | jq -cs '.'
+        )" || fail "Kustomization transformer patch is not valid YAML: $transformer_file"
+        protected_flux_fields="$(protected_flux_patch_fields "$flux_transformer_patch_documents")"
+        [ -z "$protected_flux_fields" ] || fail \
+          "Kustomization transformer mutates protected Flux controls ($protected_flux_fields): $transformer_file"
+      fi
+
+      while IFS= read -r flux_transformer_field; do
+        flux_transformer_field_selector="$(jq -c '{group, version, kind}' <<<"$flux_transformer_field")"
+        flux_selector_may_match "$flux_transformer_field_selector" || continue
+        flux_transformer_field_path="$(jq -r '.path // ""' <<<"$flux_transformer_field")"
+        [ -n "$flux_transformer_field_path" ] ||
+          fail "Kustomization transformer contains an empty Flux field path: $transformer_file"
+        if flux_field_path_is_protected "$flux_transformer_field_path"; then
+          fail "Kustomization transformer mutates protected Flux controls ($flux_transformer_field_path): $transformer_file"
+        fi
+      done < <(jq -c '.fieldSpecs[]? | select(type == "object")' <<<"$flux_transformer_document")
+
+      while IFS= read -r flux_transformer_replacement_target; do
+        flux_transformer_replacement_selector="$(jq -c '.select // {}' \
+          <<<"$flux_transformer_replacement_target")"
+        flux_selector_may_match "$flux_transformer_replacement_selector" || continue
+        while IFS= read -r flux_transformer_replacement_field; do
+          if flux_field_path_is_protected "$flux_transformer_replacement_field"; then
+            fail "Kustomization transformer replacement mutates protected Flux controls ($flux_transformer_replacement_field): $transformer_file"
+          fi
+        done < <(jq -r '.fieldPaths[]? | select(type == "string")' \
+          <<<"$flux_transformer_replacement_target")
+      done < <(jq -c '.replacements[]?.targets[]? | select(type == "object")' \
+        <<<"$flux_transformer_document")
+    done < <(jq -c '.[]' <<<"$transformer_documents")
+
     targeted_transformer="$(jq -r --argjson generated "$rgd_selectors_json" '
       def selector_matches($value; $pattern):
         ($pattern == "")
@@ -868,6 +972,16 @@ while IFS= read -r kustomization_file; do
         fail "Kustomization patch is not readable and is not inline YAML: $patch_file"
       legacy_patch_failure="Kustomization inline legacy patch declares an RGD definition or generated instance: $kustomization_file"
     fi
+    legacy_patch_documents="$(jq -cs '.' <<<"$legacy_patch_json")"
+    protected_legacy_flux_documents="$(jq '[
+      .[]
+      | select(type == "object"
+        and ((.apiVersion // "") | startswith("kustomize.toolkit.fluxcd.io/"))
+        and (.kind // "") == "Kustomization")
+    ]' <<<"$legacy_patch_documents")"
+    protected_legacy_flux_fields="$(protected_flux_patch_fields "$protected_legacy_flux_documents")"
+    [ -z "$protected_legacy_flux_fields" ] || fail \
+      "Kustomization patch mutates protected Flux controls ($protected_legacy_flux_fields): $kustomization_file"
     protected_legacy_kinds="$(jq -r -s --argjson generated "$rgd_selectors_json" '
       [
         .[] | select(type == "object") as $document |

@@ -226,6 +226,99 @@ expect_rejected "a Kustomize overlay that injects protected Flux controls" \
   "Kustomization patch mutates protected Flux controls" "spec.patches"
 rm -rf "$WORK/${FLUX_OVERLAY_ROOT:?}"
 
+# Replacements run after raw Flux controls are scanned too. Rewriting a safe patch selector from a
+# ConfigMap to an RGD must not bypass the protected-field guard via a `kind: Kustomization` target.
+mkdir -p "$WORK/$FLUX_OVERLAY_ROOT"
+yq -n '.apiVersion = "v1" | .kind = "ConfigMap" |
+  .metadata.name = "flux-replacement-source" | .data.kind = "ResourceGraphDefinition"' \
+  >"$WORK/$FLUX_OVERLAY_ROOT/replacement-source.yaml"
+yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
+  .kind = "Kustomization" | .metadata.name = "infrastructure" |
+  .metadata.namespace = "flux-system" | .spec.path = "./k8s/providers/hetzner" |
+  .spec.patches = [{
+    "target": {"apiVersion": "v1", "kind": "ConfigMap", "name": "safe-probe"},
+    "patch": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: safe-probe"
+  }]' >"$WORK/$FLUX_OVERLAY_ROOT/flux-kustomization.yaml"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" |
+  .resources = ["replacement-source.yaml", "flux-kustomization.yaml"] |
+  .replacements = [{
+    "source": {"kind": "ConfigMap", "name": "flux-replacement-source", "fieldPath": "data.kind"},
+    "targets": [{
+      "select": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "version": "v1",
+        "kind": "Kustomization",
+        "name": "infrastructure"
+      },
+      "fieldPaths": ["spec.patches.0.target.kind"]
+    }]
+  }]' >"$WORK/$FLUX_OVERLAY_ROOT/kustomization.yaml"
+expect_rejected "a replacement that rewrites protected Flux patch controls" \
+  "Kustomization replacement mutates protected Flux controls" "spec.patches"
+rm -rf "$WORK/${FLUX_OVERLAY_ROOT:?}"
+
+# Legacy strategic merges support inline YAML and must enter the same rendered Flux-control guard as
+# modern patches. Their embedded Flux identity otherwise hides the protected target from raw scans.
+mkdir -p "$WORK/$FLUX_OVERLAY_ROOT"
+yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
+  .kind = "Kustomization" | .metadata.name = "infrastructure" |
+  .metadata.namespace = "flux-system" | .spec.path = "./k8s/providers/hetzner"' \
+  >"$WORK/$FLUX_OVERLAY_ROOT/flux-kustomization.yaml"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = ["flux-kustomization.yaml"] |
+  .patchesStrategicMerge = ["apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: infrastructure\n  namespace: flux-system\nspec:\n  patches:\n    - target:\n        group: kro.run\n        version: v1alpha1\n        kind: ResourceGraphDefinition\n      patch: |\n        apiVersion: kro.run/v1alpha1\n        kind: ResourceGraphDefinition\n        metadata:\n          name: webapp.kro.run"]' \
+  >"$WORK/$FLUX_OVERLAY_ROOT/kustomization.yaml"
+expect_rejected "an inline legacy strategic merge that injects protected Flux controls" \
+  "Kustomization patch mutates protected Flux controls" "spec.patches"
+rm -rf "$WORK/${FLUX_OVERLAY_ROOT:?}"
+
+# Standalone PatchTransformers are another post-source mutation surface. A Flux selector plus a
+# protected patch body must receive the same rendered-control validation as modern/legacy patches.
+mkdir -p "$WORK/$FLUX_OVERLAY_ROOT"
+yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
+  .kind = "Kustomization" | .metadata.name = "infrastructure" |
+  .metadata.namespace = "flux-system" | .spec.path = "./k8s/providers/hetzner"' \
+  >"$WORK/$FLUX_OVERLAY_ROOT/flux-kustomization.yaml"
+yq -n '.apiVersion = "builtin" | .kind = "PatchTransformer" |
+  .metadata.name = "flux-control-probe" |
+  .target = {
+    "group": "kustomize.toolkit.fluxcd.io",
+    "version": "v1",
+    "kind": "Kustomization",
+    "name": "infrastructure"
+  } |
+  .patch = "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: infrastructure\nspec:\n  patches:\n    - target:\n        group: kro.run\n        version: v1alpha1\n        kind: ResourceGraphDefinition\n      patch: |\n        apiVersion: kro.run/v1alpha1\n        kind: ResourceGraphDefinition\n        metadata:\n          name: webapp.kro.run"' \
+  >"$WORK/$FLUX_OVERLAY_ROOT/flux-transformer.yaml"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = ["flux-kustomization.yaml"] |
+  .transformers = ["flux-transformer.yaml"]' >"$WORK/$FLUX_OVERLAY_ROOT/kustomization.yaml"
+expect_rejected "a standalone transformer that injects protected Flux controls" \
+  "Kustomization transformer mutates protected Flux controls" "spec.patches"
+rm -rf "$WORK/${FLUX_OVERLAY_ROOT:?}"
+
+# Custom FieldSpecs can redirect a built-in annotation transformer into Flux commonMetadata. The
+# path and selector must be rejected even when the raw Flux object itself preserves the opt-out.
+mkdir -p "$WORK/$FLUX_OVERLAY_ROOT"
+yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
+  .kind = "Kustomization" | .metadata.name = "infrastructure" |
+  .metadata.namespace = "flux-system" | .spec.path = "./k8s/providers/hetzner"' \
+  >"$WORK/$FLUX_OVERLAY_ROOT/flux-kustomization.yaml"
+yq -n '.commonAnnotations = [{
+    "group": "kustomize.toolkit.fluxcd.io",
+    "version": "v1",
+    "kind": "Kustomization",
+    "path": "spec/commonMetadata/annotations",
+    "create": true
+  }]' >"$WORK/$FLUX_OVERLAY_ROOT/flux-fields.yaml"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = ["flux-kustomization.yaml"] |
+  .commonAnnotations."kustomize.toolkit.fluxcd.io/substitute" = "enabled" |
+  .configurations = ["flux-fields.yaml"]' >"$WORK/$FLUX_OVERLAY_ROOT/kustomization.yaml"
+expect_rejected "a custom FieldSpec that rewrites protected Flux commonMetadata" \
+  "Kustomization configuration mutates protected Flux controls" "spec/commonMetadata"
+rm -rf "$WORK/${FLUX_OVERLAY_ROOT:?}"
+
 # A future RGD must enter the scan automatically. Copying a valid current definition under a new
 # sibling path reproduces the review finding: a fixed two-file list reports success while leaving
 # this third definition completely unseen.
