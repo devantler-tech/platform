@@ -839,3 +839,97 @@ func TestEscapedBackslashDoesNotContinueTheLine(t *testing.T) {
 		t.Fatalf("set = %q", got)
 	}
 }
+
+// A QUOTED ARGUMENT MAY SPAN PHYSICAL LINES, and `inSingle`/`inDouble` were reset on
+// every line, so the lines inside one were parsed as executable commands. Bash PRINTS
+// the decoy and executes only the reduced scan; the validator accepted the block.
+// Measured before the fix: set=["mitre" "nsa"], err=nil.
+func TestRejectsScanInsideAMultilineQuotedArgument(t *testing.T) {
+	cases := map[string]string{
+		"single": "printf '%s\\n' '\n" + goodScan + "\n'\n" +
+			"env ksail workload scan --framework nsa",
+		"double": "printf '%s\\n' \"\n" + goodScan + "\n\"\n" +
+			"env ksail workload scan --framework nsa",
+	}
+	for name, body := range cases {
+		if set, err := setOf(t, body); err == nil {
+			t.Fatalf("%s: expected FAIL CLOSED — text inside a multiline quoted argument is printed, not executed; got %q", name, set)
+		}
+	}
+}
+
+// A real command written AFTER the closing quote is still executed, so it must still be
+// read. Without this the fix could pass by discarding the remainder of every line that
+// closes a quote.
+func TestReadsACommandAfterAClosingQuote(t *testing.T) {
+	body := "printf '%s\\n' '\nirrelevant text\n' && true\n" + goodScan
+	got, err := setOf(t, body)
+	if err != nil {
+		t.Fatalf("expected the invocation after the quoted block to be found, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
+	}
+}
+
+// `<<-` strips leading TABS from the terminator, never SPACES -- measured in bash: a
+// space-indented `DOC` does NOT end the heredoc. Trimming spaces too ended the body
+// early, so lines bash still treats as input were read as code and supplied the set.
+func TestSpaceIndentedDedentTerminatorDoesNotEndTheHeredoc(t *testing.T) {
+	body := "cat <<-DOC > /dev/null\n\tirrelevant\n  DOC\n" +
+		goodScan + "\nDOC\nenv ksail workload scan --framework nsa"
+	if set, err := setOf(t, body); err == nil {
+		t.Fatalf("expected FAIL CLOSED — a space-indented terminator does not end a <<- heredoc in bash; got %q", set)
+	}
+}
+
+// ...and a TAB-indented terminator DOES end it, so the fix must not swallow the rest of
+// the block. Without this, stripping nothing at all would also pass the case above.
+func TestTabIndentedDedentTerminatorStillEndsTheHeredoc(t *testing.T) {
+	body := "cat <<-DOC > /dev/null\n\tirrelevant\n\tDOC\n" + goodScan
+	got, err := setOf(t, body)
+	if err != nil {
+		t.Fatalf("expected a tab-indented terminator to end the heredoc, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
+	}
+}
+
+// A workflow-level `if:` is evaluated BEFORE any shell starts, so no shell parsing can
+// see it. A step-level one is refused outright (no real scan step carries one), and a
+// CONSTANT-FALSE job condition is refused too.
+func TestRejectsScanInAConditionalStep(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - if: ${{ false }}\n        run: " + goodScan + "\n" +
+		"      - run: env ksail workload scan --framework nsa\n"
+	path := writeTemp(t, workflow)
+	if set, err := frameworkSet(path); err == nil {
+		t.Fatalf("expected FAIL CLOSED — a step the runner skips cannot supply the framework set; got %q", set)
+	}
+}
+
+func TestRejectsScanInAConstantFalseJob(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ false }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	if set, err := frameworkSet(path); err == nil {
+		t.Fatalf("expected FAIL CLOSED — a constant-false job never runs; got %q", set)
+	}
+}
+
+// A job carrying a REAL condition is NOT refused: the live `validate` job gates on a
+// path filter, and refusing every conditional job rejected all three real workflows --
+// measured. This pins that the narrowing stays.
+func TestRealConditionalJobIsStillRead(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: github.event_name == 'pull_request'\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("expected a genuinely conditional job to be read, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
+	}
+}

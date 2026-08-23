@@ -296,17 +296,71 @@ func runScalars(data []byte) ([]string, error) {
 	var out []string
 	// Job VALUES sit at odd indices of a mapping's Content.
 	for i := 1; i < len(jobs.Content); i += 2 {
-		steps := mappingValue(jobs.Content[i], "steps")
+		job := jobs.Content[i]
+		// A JOB-level `if:` decides whether the runner starts the job at all, and a
+		// STEP-level one whether it starts that step -- both are evaluated BEFORE any
+		// shell exists, so no amount of shell parsing below can see them. A skipped step
+		// carrying the full framework list would otherwise satisfy the gate while the
+		// only scan that runs is a reduced one, which is the same fail-open as the `&&`
+		// case and reached even earlier.
+		//
+		// Reachability is not decidable here (an `if:` may reference contexts this guard
+		// cannot evaluate), so a conditional CANDIDATE is refused by name rather than
+		// guessed at -- the direction this guard takes everywhere else. Only a step whose
+		// `run:` actually carries a scan is affected: an ordinary conditional step in the
+		// same workflow is untouched.
+		// JOB level is NOT rejected merely for being conditional. The real `validate` job
+		// carries a legitimate path-filter `if:` (it runs only when the manifests changed),
+		// so refusing every conditional job would reject the very workflow this guard
+		// validates -- measured, all three real-workflow tests failed on it.
+		//
+		// General reachability of a workflow expression is not decidable here, so only a
+		// CONSTANT-FALSE literal is refused: that is the demonstrated bypass and it cannot
+		// be a legitimate gate. A non-literal always-false expression (`${{ 1 == 2 }}`)
+		// remains open by construction and is tracked separately; this is deliberately a
+		// partial mitigation and must not be read as closing the class.
+		jobConditional := constantFalse(mappingValue(job, "if"))
+		steps := mappingValue(job, "steps")
 		if steps == nil || steps.Kind != yaml.SequenceNode {
 			continue
 		}
 		for _, step := range steps.Content {
-			if v := mappingValue(step, "run"); v != nil && v.Kind == yaml.ScalarNode {
-				out = append(out, v.Value)
+			v := mappingValue(step, "run")
+			if v == nil || v.Kind != yaml.ScalarNode {
+				continue
 			}
+			// STEP level IS rejected for being conditional at all: no real scan step carries
+			// an `if:`, so this costs nothing and needs no reachability guess.
+			if jobConditional || mappingValue(step, "if") != nil {
+				if scanCandidate(v.Value) {
+					return nil, fmt.Errorf(
+						"a `run:` block invoking the scan is guarded by a workflow-level `if:`, so the runner decides whether it executes before any shell starts and this guard cannot see that decision: %q. A skipped step would let a full framework list stand in for a reduced scan that actually runs. Invoke the scan from an unconditional step in an unconditional job. See #2823",
+						firstScanLine(v.Value))
+				}
+				continue
+			}
+			out = append(out, v.Value)
 		}
 	}
 	return out, nil
+}
+
+// scanCandidate reports whether a `run:` scalar mentions the scan at all. Deliberately
+// LOOSE: it decides only whether a conditional step is worth refusing, and a false
+// positive there costs a diagnosable refusal while a false negative reopens the hole.
+func scanCandidate(scalar string) bool {
+	return strings.Contains(scalar, "ksail") && strings.Contains(scalar, "workload") &&
+		strings.Contains(scalar, "scan") && strings.Contains(scalar, "--framework")
+}
+
+// firstScanLine returns the line naming the scan, for a diagnosable refusal.
+func firstScanLine(scalar string) string {
+	for _, line := range strings.Split(scalar, "\n") {
+		if strings.Contains(line, "--framework") {
+			return strings.TrimSpace(line)
+		}
+	}
+	return strings.TrimSpace(scalar)
 }
 
 // mappingValue returns the value node for key in a mapping, or nil.
@@ -379,7 +433,7 @@ type heredoc struct {
 // their bodies. A single line may carry several — `cat <<'A' <<'B'` — and each
 // body in turn is non-executing input. Recording only the first stopped the skip
 // at the first terminator and handed the following body to the scanner as code.
-func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unreadable, opensBacktick, opensDollar bool) {
+func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unreadable, opensBacktick, opensDollar bool, openQuote byte) {
 	var cur strings.Builder
 	// PARITY, not presence: a substitution CLOSED on its own line cannot suppress a later
 	// line, and rejecting it would block an ordinary `echo `+"`"+`date`+"`"+`. An ODD count leaves one
@@ -466,7 +520,7 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unrea
 			default:
 				// Refuse the whole line rather than walk past a redirection whose body
 				// boundary is unknown: past it, every following line is of unknown status.
-				return segments, heredocs, true, btCount%2 == 1, dollarDepth > 0
+				return segments, heredocs, true, btCount%2 == 1, dollarDepth > 0, 0
 			}
 		}
 		// `;`, `&`, `&&`, `|`, `||` all end the current command. Splitting on the
@@ -484,7 +538,7 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unrea
 		cur.WriteByte(c)
 	}
 	flush(false)
-	return segments, heredocs, false, btCount%2 == 1, dollarDepth > 0
+	return segments, heredocs, false, btCount%2 == 1, dollarDepth > 0, quoteOpen(inSingle, inDouble)
 }
 
 // Shell words that introduce a COMPOUND command — one whose body's execution is not
@@ -608,6 +662,9 @@ func scanInvocations(scalar string) ([]string, error) {
 	// Same undecidability, and the form the backtick rule cannot see: `$(` is still a
 	// substitution inside double quotes, where the parity walk skips it.
 	var sawDollar bool
+	// Which quote, if any, a previous physical line left open. Same shape as the heredoc
+	// queue above: state the shell carries across lines and a per-line walk cannot see.
+	var openQuote byte
 
 	// BASH JOINS a line ending in an unquoted backslash to the next physical line, so an
 	// `&&` guard written on one line reaches the command on the next -- and this walk,
@@ -628,10 +685,31 @@ func scanInvocations(scalar string) ([]string, error) {
 	lines := strings.Split(scalar, "\n")
 	for idx := 0; idx < len(lines); idx++ {
 		line := lines[idx]
+		// A QUOTED ARGUMENT MAY SPAN LINES. Skip the lines that sit INSIDE one, exactly as
+		// the heredoc body is skipped above -- they are argument text bash never executes,
+		// and reading them as commands let a decoy supply the framework set. Consume up to
+		// the closing quote and continue from the remainder of that line, so a real command
+		// written after the closing quote is still seen.
+		if openQuote != 0 {
+			rest, closed := consumeQuoted(line, openQuote)
+			if !closed {
+				continue
+			}
+			openQuote = 0
+			line = rest
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+		}
+
 		if len(pending) > 0 {
 			candidate := line
 			if pending[0].indented {
-				candidate = strings.TrimLeft(candidate, " \t")
+				// TABS ONLY. `<<-` strips leading TABS from the terminator line, never spaces --
+				// measured: a space-indented `DOC` does NOT end the heredoc in bash. Trimming
+				// spaces too ended the body early here, so the lines bash still treats as
+				// non-executing input were read as code and could supply the framework set.
+				candidate = strings.TrimLeft(candidate, "\t")
 			}
 			if strings.TrimRight(candidate, " \t\r") == pending[0].delim {
 				pending = pending[1:]
@@ -653,7 +731,8 @@ func scanInvocations(scalar string) ([]string, error) {
 			continue
 		}
 
-		segments, heredocs, unreadable, backtick, dollar := shellSplit(command)
+		segments, heredocs, unreadable, backtick, dollar, endQuote := shellSplit(command)
+		openQuote = endQuote
 		if backtick {
 			sawBacktick = true
 		}
@@ -751,4 +830,61 @@ func frameworkTokens(argument, workflow string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// quoteOpen reports which quote character is still open at the end of a physical line,
+// or 0 when the line ends outside a string.
+//
+// A QUOTED ARGUMENT MAY SPAN LINES, and everything else here reads one line at a time.
+// `printf '%s\n' '` followed by a scan on the next line and a closing quote is one
+// printf argument to bash -- it PRINTS the scan and never runs it -- while a per-line
+// walk read that middle line as an unconditional bare invocation and took its framework
+// list. Measured: bash emits the decoy and executes only the reduced scan, and the
+// validator accepted the workflow.
+func quoteOpen(inSingle, inDouble bool) byte {
+	switch {
+	case inSingle:
+		return '\''
+	case inDouble:
+		return '"'
+	default:
+		return 0
+	}
+}
+
+// consumeQuoted walks a line that begins INSIDE an open quoted string and returns the
+// text after the closing quote, plus whether the quote closed on this line.
+//
+// A single-quoted string interprets nothing, so the first `'` closes it. A double-quoted
+// one honours backslash escapes, so an escaped quote does not close it.
+func consumeQuoted(line string, quote byte) (string, bool) {
+	for i := 0; i < len(line); i++ {
+		if quote == '"' && line[i] == '\\' {
+			i++
+			continue
+		}
+		if line[i] == quote {
+			return line[i+1:], true
+		}
+	}
+	return "", false
+}
+
+// constantFalse reports whether a workflow `if:` is a literal that can never be true.
+//
+// Deliberately narrow. Reachability of a real expression is not decidable here, and
+// refusing every conditional job rejects the real `validate` job's legitimate path
+// filter -- measured. So only the demonstrated literal forms are refused.
+func constantFalse(n *yaml.Node) bool {
+	if n == nil || n.Kind != yaml.ScalarNode {
+		return false
+	}
+	v := strings.TrimSpace(n.Value)
+	v = strings.TrimPrefix(v, "${{")
+	v = strings.TrimSuffix(v, "}}")
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "false", "'false'", "\"false\"", "0":
+		return true
+	}
+	return false
 }
