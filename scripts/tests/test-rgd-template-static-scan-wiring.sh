@@ -90,6 +90,23 @@ jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" '
   fail "ci.yaml does not gate merge-group deployment on the exact RGD behavioral scan"
 
 jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" '
+  .jobs["heal-prod-on-failure"] as $heal
+  | ($heal.steps | map(select((.uses // "") | startswith("actions/checkout@"))) | map(.with.ref // "") | index("main")) as $main_checkout
+  | ($heal.steps | map(.uses // "") | index($setup)) as $setup_index
+  | ($heal.steps | map(.run // "") | index($behavior_run)) as $scan_index
+  | ($heal.steps | map(.uses // "") | index("./.github/actions/deploy-prod")) as $deploy_index
+  | ($heal != null)
+  and (($heal["continue-on-error"] // false) == false)
+  and ($main_checkout != null)
+  and ($setup_index != null and $scan_index != null and $deploy_index != null)
+  and ($setup_index < $scan_index and $scan_index < $deploy_index)
+  and ($heal.steps[$setup_index].with.version == "v0.74.0")
+  and (($heal.steps[$scan_index]["continue-on-error"] // false) == false)
+  and ($heal.steps[$scan_index] | has("if") | not)
+' <<<"$ci_workflow_json" >/dev/null ||
+  fail "ci.yaml does not rescan the current main checkout before a heal deployment"
+
+jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" '
   .jobs["validate-rgd-templates"] as $gate
   | (($gate["continue-on-error"] // false) == false)
   and ($gate | has("if") | not)
@@ -209,6 +226,28 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
     RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
     RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/wiring-job-false-condition.log" 2>&1; then
     fail "the wiring validator accepted a conditionally skipped independent wiring job"
+  fi
+
+  suppressed_heal_scan_workflow="${ablation_work}/ci-heal-rgd-continue-on-error.yaml"
+  cp "$CI_WORKFLOW" "$suppressed_heal_scan_workflow"
+  yq -i '(.jobs."heal-prod-on-failure".steps[] |
+    select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh"))).continue-on-error = true' \
+    "$suppressed_heal_scan_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$suppressed_heal_scan_workflow" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/heal-rgd-continue-on-error.log" 2>&1; then
+    fail "the wiring validator accepted a failure-suppressed current-main heal scan"
+  fi
+
+  missing_heal_scan_workflow="${ablation_work}/ci-heal-rgd-missing.yaml"
+  cp "$CI_WORKFLOW" "$missing_heal_scan_workflow"
+  yq -i 'del(.jobs."heal-prod-on-failure".steps[] |
+    select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh")))' \
+    "$missing_heal_scan_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$missing_heal_scan_workflow" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/heal-rgd-missing.log" 2>&1; then
+    fail "the wiring validator accepted removal of the current-main heal scan"
   fi
 
   suppressed_cd_workflow="${ablation_work}/cd-rgd-continue-on-error.yaml"
@@ -358,4 +397,4 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
   done
 fi
 
-echo "PASS: PR, merge-group, direct-main, manual-CD, and DR routes retain the nested-RGD behavioral gate."
+echo "PASS: PR, merge-group, failure-heal, direct-main, manual-CD, and DR routes retain the nested-RGD behavioral gate."

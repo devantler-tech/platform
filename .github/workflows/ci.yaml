@@ -1456,6 +1456,19 @@ jobs:
           ref: main
           persist-credentials: false
 
+      - name: ⚙️ Setup Trivy for nested RGD templates
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+          cache: true
+
+      - name: 🔬 Validate nested RGD workload templates on main
+        # `main` may have advanced after the speculative merge-group scan. Re-run the complete
+        # behavior contract on the exact checkout this heal is about to publish and reconcile.
+        run: |
+          shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
+          bash scripts/tests/test-rgd-template-static-scan.sh
+
       - name: 🩹 Re-deploy main to Production
         # Reuse the shared deploy composite (push → sign → attest → reconcile →
         # cluster update) against main's checkout, so the restored artifact is

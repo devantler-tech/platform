@@ -34,6 +34,15 @@ grep -Fq -- '--connect-timeout 10 --max-time 60' "$GATE" ||
 grep -Fq -- '--max-filesize "$MAX_REMOTE_RESOURCE_BYTES"' "$GATE" ||
   fail "remote resource fetches are not bounded by response size"
 
+production_override_log="$(mktemp)"
+if RGD_TEST_REMOTE_BASELINE="${REPO_ROOT}/scripts/rgd-template-static-scan-remote-resources.tsv" \
+  "$GATE" "$REPO_ROOT" >"$production_override_log" 2>&1; then
+  fail "the gate accepted a test-only remote baseline for the production source root"
+fi
+grep -Fq "RGD_TEST_REMOTE_BASELINE is only permitted for an isolated fixture source" \
+  "$production_override_log" || fail "the production remote-baseline override did not fail closed"
+rm -f "$production_override_log"
+
 "$WIRING_TEST" || fail "the RGD gate is not wired on every protected event route"
 
 # The real committed templates are the positive control. A gate that rejects them cannot be wired
@@ -200,6 +209,22 @@ restore_webapp() {
 restore_tenant() {
   cp "$REPO_ROOT/$TENANT_RGD" "$WORK/$TENANT_RGD"
 }
+
+# A cluster Kustomize overlay may patch a safe Flux control after its raw document has been scanned.
+# The rendered object must not gain protected post-render controls invisibly.
+readonly FLUX_OVERLAY_ROOT="k8s/clusters/flux-overlay-probe"
+mkdir -p "$WORK/$FLUX_OVERLAY_ROOT"
+yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
+  .kind = "Kustomization" | .metadata.name = "infrastructure" |
+  .metadata.namespace = "flux-system" | .spec.path = "./k8s/providers/hetzner"' \
+  >"$WORK/$FLUX_OVERLAY_ROOT/flux-kustomization.yaml"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = ["flux-kustomization.yaml"] |
+  .patches = [{"patch": "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: infrastructure\n  namespace: flux-system\nspec:\n  patches:\n    - target:\n        group: kro.run\n        version: v1alpha1\n        kind: ResourceGraphDefinition\n      patch: |-\n        - op: add\n          path: /spec/resources/0/template/spec/privileged\n          value: true"}]' \
+  >"$WORK/$FLUX_OVERLAY_ROOT/kustomization.yaml"
+expect_rejected "a Kustomize overlay that injects protected Flux controls" \
+  "Kustomization patch mutates protected Flux controls" "spec.patches"
+rm -rf "$WORK/${FLUX_OVERLAY_ROOT:?}"
 
 # A future RGD must enter the scan automatically. Copying a valid current definition under a new
 # sibling path reproduces the review finding: a fixed two-file list reports success while leaving
@@ -497,6 +522,69 @@ expect_rejected "an unscanned remote Kustomize resource" \
   "Kustomization resource is not a local path" "https://example.invalid/rgd.yaml"
 rm -f "$WORK/$PROVIDER_PROBE"
 rmdir "$WORK/$(dirname "$PROVIDER_PROBE")"
+
+# A digest-pinned remote may still contain a Flux Kustomization whose post-render controls target a
+# protected graph. Remote bytes are not added to the ordinary resource-path scan, so reject this
+# control-plane kind explicitly rather than treating the digest alone as sufficient evidence.
+readonly REMOTE_FLUX_ROOT="k8s/providers/probe/remote-flux"
+readonly REMOTE_FLUX_URL="https://example.invalid/flux-kustomization.yaml"
+readonly REMOTE_FLUX_FILE="${WORK}/remote-flux-kustomization.yaml"
+readonly REMOTE_FLUX_BASELINE="${WORK}/remote-flux-baseline.tsv"
+readonly REMOTE_CURL_BIN="${WORK}/remote-bin"
+export REMOTE_FLUX_URL
+mkdir -p "$WORK/$REMOTE_FLUX_ROOT" "$REMOTE_CURL_BIN"
+yq -n '.apiVersion = "v1" | .kind = "List" | .items = [{
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {"name": "remote-flux-probe", "namespace": "flux-system"},
+    "spec": {
+      "path": "./k8s/providers/hetzner",
+      "patches": [{
+        "target": {"group": "kro.run", "version": "v1alpha1", "kind": "ResourceGraphDefinition"},
+        "patch": "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"
+      }]
+    }
+  }]' >"$REMOTE_FLUX_FILE"
+remote_flux_sha="$(
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$REMOTE_FLUX_FILE" | awk '{print $1}'
+  else
+    shasum -a 256 "$REMOTE_FLUX_FILE" | awk '{print $1}'
+  fi
+)"
+printf '%s\t%s\n' "$REMOTE_FLUX_URL" "$remote_flux_sha" >"$REMOTE_FLUX_BASELINE"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [strenv(REMOTE_FLUX_URL)]' \
+  >"$WORK/$REMOTE_FLUX_ROOT/kustomization.yaml"
+cat >"$REMOTE_CURL_BIN/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output)
+      output="$2"
+      shift 2
+      ;;
+    *) shift ;;
+  esac
+done
+[ -n "$output" ]
+cp "$FAKE_REMOTE_FILE" "$output"
+EOF
+chmod +x "$REMOTE_CURL_BIN/curl"
+remote_flux_log="${WORK}/remote-flux.log"
+if PATH="$REMOTE_CURL_BIN:$PATH" FAKE_REMOTE_FILE="$REMOTE_FLUX_FILE" \
+  RGD_TEST_REMOTE_BASELINE="$REMOTE_FLUX_BASELINE" "$GATE" "$WORK" >"$remote_flux_log" 2>&1; then
+  fail "the gate accepted a reviewed remote Flux Kustomization"
+fi
+if ! grep -Fq "remote Kustomize resource declares a Flux Kustomization" "$remote_flux_log"; then
+  sed 's/^/  /' "$remote_flux_log" >&2
+  fail "the remote Flux probe failed without the explicit control-plane rejection"
+fi
+echo "PASS(probe): reviewed remote Flux Kustomizations are rejected explicitly."
+rm -rf "$WORK/${REMOTE_FLUX_ROOT:?}" "$REMOTE_CURL_BIN"
+rm -f "$REMOTE_FLUX_FILE" "$REMOTE_FLUX_BASELINE" "$remote_flux_log"
 
 # The same post-scan mutation is unsafe in a shared-base Kustomization, not only below providers.
 # A full-tree guard must reject an inline JSON6902 patch that targets the raw RGD after extraction.

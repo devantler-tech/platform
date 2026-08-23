@@ -16,7 +16,11 @@ SOURCE_ROOT="$(cd "${1:-$REPO_ROOT}" && pwd)"
 readonly SOURCE_ROOT
 readonly CONFIG_DATA="${REPO_ROOT}/.trivy/data"
 readonly BASELINE="${REPO_ROOT}/scripts/rgd-template-static-scan-baseline.tsv"
-readonly REMOTE_BASELINE="${REPO_ROOT}/scripts/rgd-template-static-scan-remote-resources.tsv"
+if [ -n "${RGD_TEST_REMOTE_BASELINE:-}" ] && [ "$SOURCE_ROOT" = "$REPO_ROOT" ]; then
+  echo "RGD_TEST_REMOTE_BASELINE is only permitted for an isolated fixture source" >&2
+  exit 2
+fi
+readonly REMOTE_BASELINE="${RGD_TEST_REMOTE_BASELINE:-${REPO_ROOT}/scripts/rgd-template-static-scan-remote-resources.tsv}"
 readonly REQUIRED_TRIVY_VERSION="0.74.0"
 readonly MAX_REMOTE_RESOURCE_BYTES=1048576
 readonly RGD_ROOT_PATH="k8s/bases/infrastructure/resource-graph-definitions"
@@ -253,6 +257,22 @@ if [ "${#REMOTE_RESOURCE_PATHS[@]}" -gt 0 ]; then
     remote_documents="$(yq -o=json -I=0 '.' "${REMOTE_RESOURCE_PATHS[$remote_index]}" | jq -cs '.')"
     jq -e 'length > 0 and all(.[]; type == "object")' <<<"$remote_documents" >/dev/null ||
       fail "remote Kustomize resource does not contain only mapping documents: ${REMOTE_RESOURCE_URLS[$remote_index]}"
+    remote_flux_kustomization_count="$(jq '
+      def resources:
+        if type == "object" and (.kind // "") == "List"
+        then .items[]? | resources
+        else .
+        end;
+      [
+        .[]
+        | resources
+        | select(type == "object"
+          and ((.apiVersion // "") | startswith("kustomize.toolkit.fluxcd.io/"))
+          and (.kind // "") == "Kustomization")
+      ] | length
+    ' <<<"$remote_documents")"
+    [ "$remote_flux_kustomization_count" -eq 0 ] || fail \
+      "remote Kustomize resource declares a Flux Kustomization whose rendered controls cannot be validated: ${REMOTE_RESOURCE_URLS[$remote_index]}"
     protected_remote_kinds="$(jq -r --argjson generated "$rgd_selectors_json" '
       def resources:
         if type == "object" and (.kind // "") == "List"
@@ -329,6 +349,159 @@ normalize_resource_path() {
     (cd "$resource_path" && pwd)
   else
     printf '%s/%s\n' "$(cd "$(dirname "$resource_path")" && pwd)" "$(basename "$resource_path")"
+  fi
+}
+
+flux_selector_may_match() {
+  local selector_json="$1"
+  jq -e '
+    def selector_matches($value; $pattern):
+      ($pattern == "")
+      or (try ($value | test("^(" + $pattern + ")$")) catch false);
+    type == "object"
+    and selector_matches("Kustomization"; (.kind // ""))
+    and selector_matches("kustomize.toolkit.fluxcd.io"; (.group // ""))
+  ' <<<"$selector_json" >/dev/null
+}
+
+protected_flux_patch_targets() {
+  local patch_entries_json="$1" targeted_flux flux_patch_entry flux_patch_body
+  local flux_patch_documents protected_flux_patch_kinds
+  targeted_flux="$(jq -r --argjson generated "$rgd_selectors_json" '
+    def selector_matches($value; $pattern):
+      ($pattern == "")
+      or (try ($value | test("^(" + $pattern + ")$")) catch false);
+    [
+      .[]?
+      | select(type == "object" and (.target | type) == "object")
+      | .target
+    ]
+    | .[] as $target
+    | select(
+        ($target.kind // "") == ""
+        or selector_matches("ResourceGraphDefinition"; ($target.kind // ""))
+        or any($generated[];
+          selector_matches(.kind; ($target.kind // ""))
+          and selector_matches(.group; ($target.group // ""))
+          and selector_matches(.version; ($target.version // ""))))
+    | $target.kind // "missing kind"
+  ' <<<"$patch_entries_json")"
+  if [ -n "$targeted_flux" ]; then
+    printf '%s\n' "$targeted_flux"
+    return 0
+  fi
+
+  while IFS= read -r flux_patch_entry; do
+    flux_patch_body="$(jq -r '
+      if type == "object" and (.patch | type) == "string" then .patch else "" end
+    ' <<<"$flux_patch_entry")"
+    if [ -z "$flux_patch_body" ]; then
+      printf '%s\n' "invalid targetless patch"
+      return 0
+    fi
+    flux_patch_documents="$(yq -o=json -I=0 '.' <<<"$flux_patch_body" 2>/dev/null | jq -cs '.')" || {
+      printf '%s\n' "invalid targetless patch"
+      return 0
+    }
+    protected_flux_patch_kinds="$(jq -r --argjson generated "$rgd_selectors_json" '
+      def resources:
+        if type == "object" and (.kind // "") == "List"
+        then .items[]? | resources
+        else .
+        end;
+      [
+        .[] | resources | select(type == "object") as $document
+        | if ($document.kind // "") == "ResourceGraphDefinition" then
+            "ResourceGraphDefinition"
+          elif any($generated[];
+            .kind == ($document.kind // "")
+            and ((.group + "/" + .version) == ($document.apiVersion // ""))) then
+            $document.kind
+          else empty
+          end
+      ] | unique | join(", ")
+    ' <<<"$flux_patch_documents")"
+    if [ -n "$protected_flux_patch_kinds" ]; then
+      printf '%s\n' "$protected_flux_patch_kinds"
+      return 0
+    fi
+  done < <(jq -c '.[]? | select(type == "object" and (.target // null) == null)' \
+    <<<"$patch_entries_json")
+}
+
+protected_flux_patch_fields() {
+  local patch_documents_json="$1" patch_document protected_target
+  local operation path from value flux_patch_entries encrypted_patch substitution_override
+  local protected_fields=()
+  while IFS= read -r patch_document; do
+    if [ "$(jq -r 'type' <<<"$patch_document")" = "array" ]; then
+      while IFS= read -r operation; do
+        path="$(jq -r '.path // ""' <<<"$operation")"
+        from="$(jq -r '.from // ""' <<<"$operation")"
+        if [ "$path" = "" ] || [ "$path" = "/" ] || [ "$path" = "/spec" ] ||
+          [ "$from" = "/spec" ]; then
+          protected_fields+=("spec")
+          continue
+        fi
+        if [[ "$path" == /sops* || "$from" == /sops* ]]; then
+          protected_fields+=("sops")
+          continue
+        fi
+        if [[ "$path" == /spec/commonMetadata* || "$from" == /spec/commonMetadata* ]]; then
+          protected_fields+=("spec.commonMetadata")
+          continue
+        fi
+        if [[ "$path" == /spec/patches || "$path" == /spec/patches/- ||
+          "$path" =~ ^/spec/patches/[0-9]+$ ]]; then
+          value="$(jq -c '.value // null' <<<"$operation")"
+          if [ "$value" = "null" ]; then
+            protected_fields+=("spec.patches")
+            continue
+          fi
+          if [ "$(jq -r 'type' <<<"$value")" = "array" ]; then
+            flux_patch_entries="$value"
+          else
+            flux_patch_entries="[$value]"
+          fi
+          protected_target="$(protected_flux_patch_targets "$flux_patch_entries")"
+          [ -z "$protected_target" ] || protected_fields+=("spec.patches ($protected_target)")
+        elif [[ "$path" == /spec/patches/* || "$from" == /spec/patches* ]]; then
+          protected_fields+=("spec.patches")
+        fi
+      done < <(jq -c '.[]? | select(type == "object")' <<<"$patch_document")
+      continue
+    fi
+
+    if [ "$(jq -r 'type' <<<"$patch_document")" != "object" ]; then
+      protected_fields+=("invalid patch")
+      continue
+    fi
+    encrypted_patch="$(jq '
+      (.sops != null)
+      or ([.. | strings | select(startswith("ENC["))] | length > 0)
+    ' <<<"$patch_document")"
+    if [ "$encrypted_patch" = "true" ]; then
+      protected_fields+=("sops")
+    fi
+    if jq -e 'has("spec") and (.spec | type) != "object"' <<<"$patch_document" >/dev/null; then
+      protected_fields+=("spec")
+      continue
+    fi
+    substitution_override="$(jq -r '
+      .spec.commonMetadata.annotations["kustomize.toolkit.fluxcd.io/substitute"] // "disabled"
+    ' <<<"$patch_document")"
+    [ "$substitution_override" = "disabled" ] || protected_fields+=("spec.commonMetadata")
+    flux_patch_entries="$(jq -c '.spec.patches // []' <<<"$patch_document")"
+    if [ "$(jq -r 'type' <<<"$flux_patch_entries")" != "array" ]; then
+      protected_fields+=("spec.patches")
+      continue
+    fi
+    protected_target="$(protected_flux_patch_targets "$flux_patch_entries")"
+    [ -z "$protected_target" ] || protected_fields+=("spec.patches ($protected_target)")
+  done < <(jq -c '.[]' <<<"$patch_documents_json")
+
+  if [ "${#protected_fields[@]}" -gt 0 ]; then
+    printf '%s\n' "${protected_fields[@]}" | LC_ALL=C sort -u | paste -sd ', ' -
   fi
 }
 
@@ -453,6 +626,51 @@ while IFS= read -r kustomization_file; do
     [ "$substitution_override" = "disabled" ] ||
       fail "Kustomization must not override the Flux substitution opt-out: $kustomization_file"
   fi
+
+  # Ordinary Kustomize patches can rewrite the Flux Kustomization CR after its raw source document
+  # has been checked below. Permit operational fields such as timeout and path, but reject the
+  # controls that can mutate or substitute the sealed RGD graph during Flux reconciliation.
+  while IFS= read -r flux_overlay_patch; do
+    flux_overlay_target="$(jq -c '
+      if type == "object" and (.target | type) == "object" then .target else null end
+    ' <<<"$flux_overlay_patch")"
+    flux_overlay_path="$(jq -r '
+      if type == "object" and (.path | type) == "string" then .path else "" end
+    ' <<<"$flux_overlay_patch")"
+    flux_overlay_body="$(jq -r '
+      if type == "object" and (.patch | type) == "string" then .patch else "" end
+    ' <<<"$flux_overlay_patch")"
+    if [ -n "$flux_overlay_path" ]; then
+      flux_overlay_file="${kustomization_file%/*}/${flux_overlay_path}"
+      [ -r "$flux_overlay_file" ] || fail "Kustomization patch is not readable: $flux_overlay_file"
+      flux_overlay_documents="$(yq -o=json -I=0 '.' "$flux_overlay_file" | jq -cs '.')"
+    elif [ -n "$flux_overlay_body" ]; then
+      flux_overlay_documents="$(yq -o=json -I=0 '.' <<<"$flux_overlay_body" 2>/dev/null | jq -cs '.')" ||
+        fail "Kustomization inline patch is not valid YAML: $kustomization_file"
+    else
+      continue
+    fi
+    jq -e 'length > 0' <<<"$flux_overlay_documents" >/dev/null ||
+      fail "Kustomization patch is empty: $kustomization_file"
+
+    if [ "$flux_overlay_target" != "null" ]; then
+      if flux_selector_may_match "$flux_overlay_target"; then
+        protected_flux_documents="$flux_overlay_documents"
+      else
+        protected_flux_documents='[]'
+      fi
+    else
+      protected_flux_documents="$(jq '[
+        .[]
+        | select(type == "object"
+          and ((.apiVersion // "") | startswith("kustomize.toolkit.fluxcd.io/"))
+          and (.kind // "") == "Kustomization")
+      ]' <<<"$flux_overlay_documents")"
+    fi
+    protected_flux_fields="$(protected_flux_patch_fields "$protected_flux_documents")"
+    [ -z "$protected_flux_fields" ] || fail \
+      "Kustomization patch mutates protected Flux controls ($protected_flux_fields): $kustomization_file"
+  done < <(yq -o=json -I=0 '(.patches[]?, .patchesJson6902[]?)' "$kustomization_file" | jq -c '.')
 
   while IFS= read -r configuration_entry; do
     [ "$(jq -r 'type' <<<"$configuration_entry")" = "string" ] ||
