@@ -1058,3 +1058,139 @@ func TestHashInsideAMultilineQuotedStringIsNotAComment(t *testing.T) {
 		t.Fatalf("expected FAIL CLOSED: the reduced scan after the closing quote executes, so a `#` inside the string must not hide it; got %q", got)
 	}
 }
+
+// A COMPOUND boolean condition is statically decidable when its literal operands
+// settle it, and Actions skips such a job exactly as it skips `if: false`. Accepting
+// one let a never-running decoy supply the only full-framework invocation the
+// validator saw while the job that actually ran carried a reduced one. The reviewer's
+// fixture from #3312 verbatim.
+func TestRejectsScanInAnAlwaysFalseConjunctionJob(t *testing.T) {
+	workflow := "jobs:\n" +
+		"  skipped-decoy:\n    if: ${{ false && true }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"  reduced-scan:\n    steps:\n" +
+		"      - run: env ksail workload scan --framework nsa\n"
+	path := writeTemp(t, workflow)
+	if set, err := frameworkSet(path); err == nil {
+		t.Fatalf("expected FAIL CLOSED — `false && true` never runs; got %q", set)
+	}
+}
+
+// The `||` spelling: both branches false, so the job never runs.
+func TestRejectsScanInAnAlwaysFalseDisjunctionJob(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ false || false }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	if set, err := frameworkSet(path); err == nil {
+		t.Fatalf("expected FAIL CLOSED — `false || false` never runs; got %q", set)
+	}
+}
+
+// Negation of a literal is decidable too.
+func TestRejectsScanInANegatedTrueJob(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ !true }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	if set, err := frameworkSet(path); err == nil {
+		t.Fatalf("expected FAIL CLOSED — `!true` never runs; got %q", set)
+	}
+}
+
+// Parentheses group, and a decidable comparison inside one still settles the whole.
+func TestRejectsScanInAParenthesisedAlwaysFalseJob(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ (1 == 2) && true }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	if set, err := frameworkSet(path); err == nil {
+		t.Fatalf("expected FAIL CLOSED — `(1 == 2) && true` never runs; got %q", set)
+	}
+}
+
+// CONTROL — an always-TRUE conjunction is a job that RUNS, so its scan must still be
+// read. Without this the fix could be satisfied by refusing every compound condition.
+func TestAlwaysTrueConjunctionJobIsStillRead(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ true && true }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("an always-true conjunction job runs and must be read, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
+	}
+}
+
+// CONTROL — `false || true` is TRUE, so the job runs. Short-circuiting the wrong way
+// here would refuse a legitimate workflow.
+func TestDisjunctionWithATrueBranchIsStillRead(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ false || true }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("`false || true` runs and must be read, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
+	}
+}
+
+// CONTROL — negating a false literal yields a job that runs.
+func TestNegatedFalseJobIsStillRead(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ !false }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("`!false` runs and must be read, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
+	}
+}
+
+// CONTROL, and the bound that keeps the REAL workflow valid: a context reference is not
+// decidable here, so a compound containing one stays ACCEPTED. Refusing undecidable
+// conditions was measured to fail all three real-workflow tests.
+func TestUndecidableConjunctionIsStillRead(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ github.event_name == 'push' && true }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("an undecidable conjunction must stay accepted, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
+	}
+}
+
+// CONTROL — the shipped `validate` job's own shape, disjoined with a literal.
+func TestUndecidableDisjunctionIsStillRead(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ needs.changes.outputs.k8s == 'true' || false }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("an undecidable disjunction must stay accepted, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
+	}
+}
+
+// CONTROL — an operator INSIDE a string literal is content, not structure. Splitting
+// without quote awareness would tear this comparison apart.
+func TestOperatorInsideAStringLiteralIsContent(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ 'a&&b' == 'a&&b' }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("an equal same-kind comparison is TRUE and must be read, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
+	}
+}

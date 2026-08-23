@@ -895,11 +895,12 @@ func consumeQuoted(line string, quote byte) (string, bool) {
 	return "", false
 }
 
-// constantFalse reports whether a workflow `if:` is a literal that can never be true.
+// constantFalse reports whether a workflow `if:` can never be true.
 //
 // Deliberately narrow. Reachability of a real expression is not decidable here, and
 // refusing every conditional job rejects the real `validate` job's legitimate path
-// filter -- measured. So only the demonstrated literal forms are refused.
+// filter -- measured. So a verdict is taken only where LITERAL operands settle it;
+// anything naming a context stays undecidable and therefore ACCEPTED.
 func constantFalse(n *yaml.Node) bool {
 	if n == nil || n.Kind != yaml.ScalarNode {
 		return false
@@ -907,32 +908,208 @@ func constantFalse(n *yaml.Node) bool {
 	v := strings.TrimSpace(n.Value)
 	v = strings.TrimPrefix(v, "${{")
 	v = strings.TrimSuffix(v, "}}")
-	v = strings.TrimSpace(v)
-	switch strings.ToLower(v) {
-	case "false", "'false'", "\"false\"", "0":
-		return true
-	}
-	return constantFalseComparison(v)
+	return evalCondition(v) == triFalse
 }
 
-// constantFalseComparison decides the one further shape that is safely decidable:
-// a comparison of two LITERALS of the same kind.
+// A three-valued result. triUnknown is the ACCEPTING verdict: it means this guard
+// cannot decide the condition, so the job is read as if it runs.
+const (
+	triFalse = iota
+	triTrue
+	triUnknown
+)
+
+// evalCondition evaluates the boolean skeleton of an `if:` over literal operands,
+// in Actions' precedence order: `||` binds loosest, then `&&`, then `!`.
 //
-// `${{ 1 == 2 }}` is skipped by Actions exactly as `if: false` is, so accepting it
-// let a skipped decoy job supply the only full-framework invocation this validator
-// ever saw, while the job that actually ran carried a reduced one. That is the same
-// bypass the literal check closes, spelled as an expression.
-//
-// Still bounded, and the bound is what keeps the real workflow valid. Anything
-// naming a context (`github.`, `needs.`, an input, a function call) is NOT decidable
-// here and stays ACCEPTED, exactly as before -- the real `validate` job gates on
-// `needs.changes.outputs.k8s == 'true'`, and refusing undecidable conditions was
-// measured to fail all three real-workflow tests.
-//
-// Kinds must MATCH before a verdict is taken. Actions coerces across types, so
-// `1 == '1'` is TRUE there; declaring it constant-false would reject a legitimate
-// workflow, which is the expensive direction. Mixed kinds are therefore treated as
-// undecidable rather than unequal.
+// A compound condition is decidable far more often than a bare literal is, and a
+// job Actions skips must never supply the framework set -- `${{ false && true }}`
+// is skipped exactly as `if: false` is, so a never-running decoy could otherwise
+// stand in for a reduced scan that actually runs.
+func evalCondition(expr string) int {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return triUnknown
+	}
+	if parts := splitTopLevel(expr, "||"); len(parts) > 1 {
+		acc := evalCondition(parts[0])
+		for _, part := range parts[1:] {
+			acc = orTri(acc, evalCondition(part))
+		}
+		return acc
+	}
+	if parts := splitTopLevel(expr, "&&"); len(parts) > 1 {
+		acc := evalCondition(parts[0])
+		for _, part := range parts[1:] {
+			acc = andTri(acc, evalCondition(part))
+		}
+		return acc
+	}
+	if strings.HasPrefix(expr, "!") {
+		return notTri(evalCondition(expr[1:]))
+	}
+	if inner, ok := unwrapParens(expr); ok {
+		return evalCondition(inner)
+	}
+	switch strings.ToLower(expr) {
+	case "false", "'false'", "\"false\"", "0":
+		return triFalse
+	case "true", "'true'", "\"true\"":
+		return triTrue
+	}
+	return comparisonTri(expr)
+}
+
+// andTri follows Actions' semantics: `a && b` yields a when a is falsy, else b. So an
+// undecidable left with a FALSE right is falsy either way, and is decided here.
+func andTri(l, r int) int {
+	switch l {
+	case triFalse:
+		return triFalse
+	case triTrue:
+		return r
+	}
+	if r == triFalse {
+		return triFalse
+	}
+	return triUnknown
+}
+
+// orTri mirrors it: `a || b` yields a when a is truthy, else b. An undecidable left
+// with a TRUE right is truthy either way.
+func orTri(l, r int) int {
+	switch l {
+	case triTrue:
+		return triTrue
+	case triFalse:
+		return r
+	}
+	if r == triTrue {
+		return triTrue
+	}
+	return triUnknown
+}
+
+func notTri(v int) int {
+	switch v {
+	case triTrue:
+		return triFalse
+	case triFalse:
+		return triTrue
+	}
+	return triUnknown
+}
+
+// unwrapParens strips ONE fully-enclosing parenthesis pair. It reports false when the
+// leading `(` is closed before the end -- `(a) && (b)` is not a parenthesised whole,
+// and treating it as one would evaluate the wrong sub-expression.
+func unwrapParens(expr string) (string, bool) {
+	if !strings.HasPrefix(expr, "(") || !strings.HasSuffix(expr, ")") {
+		return "", false
+	}
+	depth, quote := 0, byte(0)
+	for i := 0; i < len(expr); i++ {
+		c := expr[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 && i != len(expr)-1 {
+				return "", false
+			}
+		}
+	}
+	if depth != 0 {
+		return "", false
+	}
+	return strings.TrimSpace(expr[1 : len(expr)-1]), true
+}
+
+// splitTopLevel splits on an operator only where it is STRUCTURE: outside every string
+// literal and at parenthesis depth zero. An operator inside `'a&&b'` is content, and
+// tearing the literal apart there would silently change what is being compared.
+func splitTopLevel(expr, op string) []string {
+	var parts []string
+	depth, quote, last := 0, byte(0), 0
+	for i := 0; i < len(expr); i++ {
+		c := expr[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+			continue
+		case '(':
+			depth++
+			continue
+		case ')':
+			depth--
+			continue
+		}
+		if depth == 0 && strings.HasPrefix(expr[i:], op) {
+			parts = append(parts, strings.TrimSpace(expr[last:i]))
+			i += len(op) - 1
+			last = i + 1
+		}
+	}
+	// An unterminated quote or unbalanced parenthesis means this is not a shape we
+	// parsed correctly; report no split so the caller falls through to undecidable.
+	if quote != 0 || depth != 0 {
+		return []string{expr}
+	}
+	parts = append(parts, strings.TrimSpace(expr[last:]))
+	return parts
+}
+
+// comparisonTri decides a comparison of two LITERALS of the same kind, and reports
+// triUnknown for everything else.
+func comparisonTri(expr string) int {
+	if constantFalseComparison(expr) {
+		return triFalse
+	}
+	var op string
+	switch {
+	case strings.Contains(expr, "=="):
+		op = "=="
+	case strings.Contains(expr, "!="):
+		op = "!="
+	default:
+		return triUnknown
+	}
+	parts := strings.SplitN(expr, op, 2)
+	if len(parts) != 2 {
+		return triUnknown
+	}
+	leftKind, leftVal, leftOK := literalOperand(parts[0])
+	rightKind, rightVal, rightOK := literalOperand(parts[1])
+	if !leftOK || !rightOK || leftKind != rightKind {
+		return triUnknown
+	}
+	if op == "==" {
+		if leftVal == rightVal {
+			return triTrue
+		}
+		return triFalse
+	}
+	if leftVal != rightVal {
+		return triTrue
+	}
+	return triFalse
+}
+
 func constantFalseComparison(expr string) bool {
 	var op string
 	switch {
