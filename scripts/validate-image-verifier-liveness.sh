@@ -203,85 +203,54 @@ node_reachable() {
   "${talosctl_bin}" -n "$1" ls / >/dev/null 2>&1
 }
 
-# Emits the bin_dir declared by ONE config file's image-verifier plugin, or
-# nothing when that file declares none.
+# Emits TWO facts about ONE config file, from ONE read:
 #
-# Scoped to the `io.containerd.image-verifier.v1.bindir` table on purpose.
-# `bin_dir` is a generic key name, and an unscoped match accepts one from an
-# unrelated plugin's table — reporting a node as enforcing on the strength of a
-# setting containerd never consults for image verification.
+#   disabled=0|1   whether that file switches the image-verifier plugin OFF
+#   bin_dir=<path> the bin_dir its image-verifier table declares, empty if none
 #
-# The config is piped straight into awk and only the extracted value is ever
-# printed. `/etc/cri/conf.d/cri.toml` carries registry credentials and this
-# script's output goes to CI logs, so the file must never be captured — not into
-# a variable, not into a temp file, not into an error message. See the SECURITY
-# note at the top.
+# ONE read, deliberately. These were two functions doing a `talosctl read` each,
+# and the pair could straddle a config change: the on-demand fleet workflow uses
+# a different concurrency group from deployments, so it can overlap a Talos or
+# containerd update. The first read could then see the OLD enabled config while
+# the second saw the REPLACEMENT populated bin_dir -- and a replacement that
+# disables the plugin without removing its binaries would be reported OK from
+# two snapshots that never coexisted. The node UID does not change, so the
+# convergence loop never retries it. Two facts about one configuration have to
+# come from one view of that configuration.
+#
+# Scoping, both halves:
+#  * `bin_dir` is scoped to the `io.containerd.image-verifier.v1.bindir` table.
+#    It is a generic key name, and an unscoped match accepts one from an
+#    unrelated plugin's table -- reporting a node as enforcing on the strength
+#    of a setting containerd never consults for image verification.
+#  * `disabled_plugins` is scoped to TOP-LEVEL keys. It is a root key, and TOML
+#    puts root keys before the first table header, so once a `[` header is seen
+#    any later match belongs to some other table and must not count. An
+#    unscoped match would let an unrelated key disable the check.
+#
+# The two never contend: root keys precede the first header, table keys follow
+# it, so `toplevel` is still 1 for one and already 0 for the other.
+#
+# The config is piped straight into awk and only the two extracted values are
+# ever printed. `/etc/cri/conf.d/cri.toml` carries registry credentials and this
+# script's output goes to CI logs, so the file must never be captured -- not
+# into a variable, not into a temp file, not into an error message. See the
+# SECURITY note at the top. Merging the reads keeps that property: a single
+# `talosctl read` still goes straight into awk and never reaches the shell.
 #
 # awk rather than sed because the table scoping needs state across lines, and
 # because awk consumes all input: a `sed ... | head -n 1` pipeline closes the
 # pipe early, and under `pipefail` the resulting SIGPIPE is indistinguishable
-# from a genuine read failure.
-extract_bin_dir_from() {
-  local node="$1" file="$2"
-  "${talosctl_bin}" -n "${node}" read "${file}" 2>/dev/null | awk '
-    BEGIN { SQ = sprintf("%c", 39); DQ = sprintf("%c", 34); want = 0; found = 0 }
-    found { next }
-    /^[ \t]*\[/ {
-      header = $0
-      gsub(/[ \t]/, "", header)
-      gsub(SQ, "", header)
-      gsub(DQ, "", header)
-      want = (header == "[plugins.io.containerd.image-verifier.v1.bindir]")
-      next
-    }
-    want && match($0, /^[ \t]*bin_dir[ \t]*=/) {
-      value = substr($0, RSTART + RLENGTH)
-      sub(/^[ \t]*/, "", value)
-      quote = substr(value, 1, 1)
-      if (quote != SQ && quote != DQ) next
-      value = substr(value, 2)
-      end = index(value, quote)
-      if (end == 0) next
-      print substr(value, 1, end - 1)
-      found = 1
-    }
-  '
-}
-
-# Reports 'disabled' when this config file switches the image-verifier plugin
-# OFF, and nothing otherwise.
-#
-# A bin_dir that is configured, exists and holds an executable proves nothing if
-# containerd never loads the plugin that runs it. `disabled_plugins` is the
-# cheap half of that question: it lives in the SAME file the bin_dir came from,
-# so reading it costs nothing extra and closes the case where the configuration
-# looks complete and no verifier handles a single pull -- the same silent
-# enforcement failure this script exists to detect, one layer up. (Whether a
-# plugin that is NOT disabled actually loaded and stayed healthy needs a live
-# plugin-status query or a behavioural probe; that is #3101's job.)
-#
-# Scoped to TOP-LEVEL keys. `disabled_plugins` is a root key in containerd's
-# config, and TOML puts root keys before the first table header -- so once a
-# '[' header is seen, any later match belongs to some other table and must not
-# count. An unscoped match would let an unrelated key disable the check.
-#
-# Only the marker is ever printed. The array is assembled in awk and searched
-# there; the config itself never reaches a variable or an error message, because
-# /etc/cri/conf.d/cri.toml carries registry credentials and this output goes to
-# CI logs. See the SECURITY note at the top.
-plugin_disabled_in() {
+# from a genuine read failure. For the same reason the verdicts are recorded and
+# printed from END rather than printed and exited on.
+config_facts_in() {
   local node="$1" file="$2"
   "${talosctl_bin}" -n "${node}" read "${file}" 2>/dev/null | awk '
     BEGIN {
       SQ = sprintf("%c", 39); DQ = sprintf("%c", 34)
       toplevel = 1; in_array = 0; buf = ""; disabled = 0
+      want = 0; found = 0; bin_dir = ""
     }
-    # Records the verdict rather than printing and exiting on it. Exiting here
-    # would close the pipe while `talosctl read` is still writing, and under
-    # `set -o pipefail` the resulting SIGPIPE is indistinguishable from a real
-    # read failure -- so a genuinely disabled node on a large config would be
-    # reported as an infrastructure error instead of the FAIL it is. Consume to
-    # EOF and print from END. (extract_bin_dir_from documents the same hazard.)
     # Removes a TOML comment, respecting quoted strings: a # opens a comment only
     # OUTSIDE a string. The lines of a multiline array are concatenated into one
     # buffer below, so a comment left in place swallows what follows it -- the
@@ -292,7 +261,9 @@ plugin_disabled_in() {
     # early, so stripping has to happen before that test too.
     #
     # One quote-aware walk answers both questions, rather than a growing list of
-    # comment spellings to special-case.
+    # comment spellings to special-case. A # INSIDE a quoted entry is content:
+    # truncating there would drop every entry after it on the same line, which
+    # is the same false OK pointing the other way.
     function strip_comment(line,   out, i, c, n, instr, q) {
       n = length(line); out = ""; instr = 0; q = ""
       for (i = 1; i <= n; i++) {
@@ -310,18 +281,17 @@ plugin_disabled_in() {
       }
       return out
     }
+    # Compare ENTRIES, never the raw array text. A substring test over the whole
+    # expression reports a node as disabled while the plugin is enabled: a
+    # DIFFERENT plugin whose name merely contains ours
+    # (example.io.containerd.image-verifier.v1.bindir-extra) matches. Either way
+    # a healthy node fails -- a false alarm on the one signal that is meant to
+    # mean enforcement is off.
+    #
+    # No apostrophes in these comments: the whole program is a single-quoted
+    # shell string, so one would end it. And close_at, not close, because awk
+    # already has a close() builtin.
     function verdict(text,   body, count, i, entry, quote, close_at) {
-      # Compare ENTRIES, never the raw array text. A substring test over the
-      # whole expression reports a node as disabled while the plugin is enabled:
-      # a DIFFERENT plugin whose name merely contains ours
-      # (example.io.containerd.image-verifier.v1.bindir-extra) matches, and so
-      # does our name sitting in a trailing TOML comment. Either way a healthy
-      # node fails -- a false alarm on the one signal that is meant to mean
-      # enforcement is off.
-      #
-      # No apostrophes in these comments: the whole program is a single-quoted
-      # shell string, so one would end it. And close_at, not close, because awk
-      # already has a close() builtin.
       body = text
       sub(/^[^[]*\[/, "", body)
       sub(/\][^]]*$/, "", body)
@@ -339,21 +309,46 @@ plugin_disabled_in() {
         if (entry == "io.containerd.image-verifier.v1.bindir") disabled = 1
       }
     }
-    END { if (disabled) print "disabled" }
     # A continuation of the array is consumed before the header rule below, so a
     # value that happens to start with a bracket cannot be mistaken for a table.
-    disabled { next }
     in_array {
       line = strip_comment($0)
       buf = buf " " line
       if (index(line, "]") > 0) { in_array = 0; verdict(buf) }
       next
     }
-    /^[ \t]*\[/ { toplevel = 0 }
-    !toplevel { next }
-    match($0, /^[ \t]*disabled_plugins[ \t]*=/) {
+    /^[ \t]*\[/ {
+      toplevel = 0
+      if (!found) {
+        header = $0
+        gsub(/[ \t]/, "", header)
+        gsub(SQ, "", header)
+        gsub(DQ, "", header)
+        want = (header == "[plugins.io.containerd.image-verifier.v1.bindir]")
+      }
+      next
+    }
+    toplevel && match($0, /^[ \t]*disabled_plugins[ \t]*=/) {
       buf = strip_comment(substr($0, RSTART + RLENGTH))
       if (index(buf, "]") > 0) { verdict(buf) } else { in_array = 1 }
+      next
+    }
+    !found && want && match($0, /^[ \t]*bin_dir[ \t]*=/) {
+      value = substr($0, RSTART + RLENGTH)
+      sub(/^[ \t]*/, "", value)
+      quote = substr(value, 1, 1)
+      if (quote != SQ && quote != DQ) next
+      value = substr(value, 2)
+      end = index(value, quote)
+      if (end == 0) next
+      bin_dir = substr(value, 1, end - 1)
+      found = 1
+    }
+    # bin_dir LAST, so a value carrying anything unexpected cannot be mistaken
+    # for the disabled marker.
+    END {
+      print "disabled=" (disabled ? 1 : 0)
+      print "bin_dir=" bin_dir
     }
   '
 }
@@ -435,26 +430,34 @@ fi
 check_config() {
   local node="$1" file="$2" bin_dir status=0 executables exec_status=0
 
-  # Asked FIRST: a disabled plugin makes the rest of this verdict irrelevant.
-  # bin_dir could be configured, present and full of executables and containerd
-  # would still run none of them, so reporting on the directory before checking
-  # whether the plugin is switched on would describe a path that is not taken.
-  local disabled disabled_status=0
-  disabled="$(plugin_disabled_in "${node}" "${file}")" || disabled_status=$?
-  [[ "${disabled_status}" -eq 0 ]] ||
-    fail_infra "could not read ${file} on ${node} (the file exists but talosctl read failed)"
-  if [[ "${disabled}" == 'disabled' ]]; then
-    printf 'FAIL %s [%s]: the io.containerd.image-verifier.v1.bindir plugin is in disabled_plugins — containerd loads no verifier, so it permits every pull whatever bin_dir says\n' \
-      "${node}" "${file}"
-    return 1
-  fi
-
-  bin_dir="$(extract_bin_dir_from "${node}" "${file}")" || status=$?
+  # ONE read for both facts. Reading twice let the two verdicts describe two
+  # different configurations -- see config_facts_in.
+  local facts disabled=0
+  facts="$(config_facts_in "${node}" "${file}")" || status=$?
   # The file's existence was proven before this call, so a read failure here is
   # an infrastructure fault, never a verdict. Reporting it as "cannot enforce"
   # would be a misdiagnosis; swallowing it would be a fail-open.
   [[ "${status}" -eq 0 ]] ||
     fail_infra "could not read ${file} on ${node} (the file exists but talosctl read failed)"
+
+  # A truncated read is not a verdict either. awk always prints both markers, so
+  # their absence means the pipeline did not complete.
+  case "${facts}" in
+    disabled=*$'\n'bin_dir=*) ;;
+    *) fail_infra "could not parse ${file} on ${node} (the read completed but produced no verdict)" ;;
+  esac
+  disabled="${facts%%$'\n'*}"; disabled="${disabled#disabled=}"
+  bin_dir="${facts#*$'\n'bin_dir=}"
+
+  # Asked FIRST: a disabled plugin makes the rest of this verdict irrelevant.
+  # bin_dir could be configured, present and full of executables and containerd
+  # would still run none of them, so reporting on the directory before checking
+  # whether the plugin is switched on would describe a path that is not taken.
+  if [[ "${disabled}" == '1' ]]; then
+    printf 'FAIL %s [%s]: the io.containerd.image-verifier.v1.bindir plugin is in disabled_plugins — containerd loads no verifier, so it permits every pull whatever bin_dir says\n' \
+      "${node}" "${file}"
+    return 1
+  fi
 
   if [[ -z "${bin_dir}" ]]; then
     printf 'FAIL %s [%s]: no bin_dir in the io.containerd.image-verifier.v1.bindir table — the plugin has no directory to run, so containerd permits every pull\n' \

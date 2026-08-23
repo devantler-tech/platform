@@ -80,6 +80,7 @@ while [[ "$#" -gt 0 ]]; do
     -n) node="$2"; shift 2 ;;
     read)
       path="$2"
+      printf '%s %s\n' "${node}" "${path}" >>"${FIXTURES}/read-log"
       file="${FIXTURES}/${node}/files/${path//\//_}"
       [[ -f "${file}" ]] || exit 1
       cat "${file}"
@@ -1148,6 +1149,39 @@ if output="$(run_script 2>&1)"; then
   fail 'case 26: a node with no metadata.uid must not be accepted'
 fi
 require_text "${output}" 'no metadata.uid' 'case 26: names the missing identity'
+
+reset_node_sequence
+
+# ===========================================================================
+# Case 27 — ONE read per config file. The disabled verdict and bin_dir describe
+# the same file, so they must come from the same view of it. Two reads could
+# straddle a Talos or containerd update — the fleet workflow uses a different
+# concurrency group from deployments, so it can overlap one — and a replacement
+# that disables the plugin without removing its binaries would then be assembled
+# into an OK verdict from two snapshots that never coexisted. The node UID does
+# not change, so the convergence loop would never retry it.
+#
+# Asserted by COUNTING reads rather than by inspecting the code, so the property
+# survives any future refactor of how the facts are extracted.
+# ===========================================================================
+write_node oneread
+verifier_config /opt/containerd/image-verifier/bin >"${fixtures}/oneread/files/_etc_cri_conf.d_cri.toml"
+verifier_config /opt/containerd/image-verifier/bin >"${fixtures}/oneread/files/_etc_containerd_config.toml"
+write_dir oneread /opt/containerd/image-verifier/bin <<EOF
+${listing_header}
+10.0.1.4   -rwxr-xr-x   0     0     8123456   Aug  4 14:58:45   system_u:object_r:containerd_plugin_t:s0   cosign-verifier
+EOF
+
+rm -f "${fixtures}/read-log"
+run_script TALOS_NODES=oneread >/dev/null 2>&1 ||
+  fail 'case 27 control: the fixture must be a node that PASSES, or the count below proves nothing'
+
+for probed in /etc/cri/conf.d/cri.toml /etc/containerd/config.toml; do
+  reads="$(grep -c "^oneread ${probed}\$" "${fixtures}/read-log" || true)"
+  [[ "${reads}" -eq 1 ]] ||
+    fail "case 27: ${probed} was read ${reads} time(s), expected exactly 1 — the two facts can describe different snapshots"
+done
+printf 'ok — case 27: each config file is read exactly once\n' >/dev/null
 
 reset_node_sequence
 
