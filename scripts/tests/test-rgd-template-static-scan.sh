@@ -493,6 +493,19 @@ expect_rejected "a commonAnnotations override of the Flux substitution opt-out" 
   "Kustomization must not override the Flux substitution opt-out"
 rm -f "$WORK/$PROVIDER_PROBE"
 
+# The substitute key was the ONLY commonAnnotations entry the guard inspected, so every other
+# annotation reached the sealed graph unchecked -- including the Flux behaviour controls, which
+# change how the RGD is applied without changing a byte this scan reads. Probe with an unrelated
+# annotation so the general transformer guard is what has to catch it, not the substitute check.
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" |
+  .resources = ["../../../bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml"] |
+  .commonAnnotations."kustomize.toolkit.fluxcd.io/reconcile" = "disabled"' \
+  >"$WORK/$PROVIDER_PROBE"
+expect_rejected "an unrelated commonAnnotations entry over a consumed RGD" \
+  "Kustomization uses a built-in transformer that can mutate protected resources" "commonAnnotations"
+rm -f "$WORK/$PROVIDER_PROBE"
+
 # Built-in global transformers mutate every resource accumulated by the Kustomization. Applying a
 # label to a directly consumed RGD changes the deployed graph after its raw source was reviewed.
 yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |

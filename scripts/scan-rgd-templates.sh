@@ -613,19 +613,9 @@ while IFS= read -r kustomization_file; do
   if kustomization_has_protected_context "$kustomization_file"; then
     consumes_protected_resources=true
   fi
-  targeted_builtin_transformers="$(yq -o=json -I=0 '.' "$kustomization_file" | jq -r '
-    . as $document
-    | [
-        ["images", "namespace", "commonLabels", "labels", "namePrefix", "nameSuffix", "replicas"][] as $field
-        | select($document | has($field))
-        | $field
-      ]
-    | join(", ")
-  ')"
-  if "$consumes_protected_resources" && [ -n "$targeted_builtin_transformers" ]; then
-    fail "Kustomization uses a built-in transformer that can mutate protected resources ($targeted_builtin_transformers): $kustomization_file"
-  fi
-
+  # The substitute key first, because it has the more precise diagnostic. Every commonAnnotations
+  # entry is rejected below, but a reader who overrode the opt-out specifically is better served by
+  # being told THAT than by a generic transformer message.
   substitution_override_present="$(yq -o=json -I=0 '.' "$kustomization_file" | jq -r '
     (.commonAnnotations | type) == "object"
     and (.commonAnnotations | has("kustomize.toolkit.fluxcd.io/substitute"))
@@ -635,6 +625,24 @@ while IFS= read -r kustomization_file; do
       '.commonAnnotations."kustomize.toolkit.fluxcd.io/substitute"' "$kustomization_file")"
     [ "$substitution_override" = "disabled" ] ||
       fail "Kustomization must not override the Flux substitution opt-out: $kustomization_file"
+  fi
+
+  # commonAnnotations belongs in this list: it annotates EVERY accumulated resource, the protected
+  # RGD included, so the deployed graph stops matching the bytes this scan read. Omitting it left
+  # every annotation except the substitute key unguarded -- including the Flux and KRO behaviour
+  # controls `kustomize.toolkit.fluxcd.io/reconcile` and `.../ssa`, which change how the graph is
+  # applied without changing a single scanned byte.
+  targeted_builtin_transformers="$(yq -o=json -I=0 '.' "$kustomization_file" | jq -r '
+    . as $document
+    | [
+        ["images", "namespace", "commonLabels", "labels", "commonAnnotations", "namePrefix", "nameSuffix", "replicas"][] as $field
+        | select($document | has($field))
+        | $field
+      ]
+    | join(", ")
+  ')"
+  if "$consumes_protected_resources" && [ -n "$targeted_builtin_transformers" ]; then
+    fail "Kustomization uses a built-in transformer that can mutate protected resources ($targeted_builtin_transformers): $kustomization_file"
   fi
 
   # Ordinary Kustomize patches can rewrite the Flux Kustomization CR after its raw source document
