@@ -19,6 +19,14 @@
   "customManagers": [
     {
       "customType": "regex",
+      "description": "Bump pinned CLI versions in the shared installers under .github/scripts. Same pair as the workflow manager below, in shell assignment syntax: '# renovate: ...\\n<NAME>_VERSION=\"<ver>\"'. Those installers also pin the asset's SHA-256 on the next line, which no datasource can supply — a bump here therefore fails the install with the digest to write rather than installing unverified bytes.",
+      "managerFilePatterns": ["/^\\.github/scripts/.+\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) extractVersion=(?<extractVersion>\\S+)\\s+[A-Z][A-Z0-9_]*_VERSION=\"(?<currentValue>[^\"]+)\""
+      ]
+    },
+    {
+      "customType": "regex",
       "description": "Bump pinned CLI versions in workflows and composite actions (Dependabot can't track curl-downloaded release assets). Matches any '# renovate: ...\\n<NAME>_VERSION: \"<ver>\"' pair — currently used for KSAIL_VERSION, COSIGN_VERSION, SYFT_VERSION, GITLEAKS_VERSION.",
       "managerFilePatterns": [
         "/^\\.github/workflows/.+\\.ya?ml$/",

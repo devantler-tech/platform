@@ -75,8 +75,8 @@ spec:
           #                        cluster to PGDATA=/var/lib/postgresql/18/docker;
           #                        with persistence off the chart mounts nothing
           #                        here, so it must be a writable emptyDir. This is
-          #                        the ephemeral data dir — losing it on restart is
-          #                        by design (SSO-fronted read-only dashboard).
+          #                        the ephemeral data dir — see database.persistence
+          #                        below for what that costs and what #3315 tracks.
           #   /tmp                 the entrypoint mktemp's the initdb pwfile here.
           # /var/run/postgresql (the socket dir) is already a chart emptyDir.
           - target:
@@ -113,6 +113,22 @@ spec:
       # The namespace is managed declaratively (namespace.yaml) so it carries the
       # Pod Security Standards labels; don't let the chart create it.
       createNamespace: false
+    # Crossview creates its tables (and the break-glass admin) once, at its OWN
+    # startup, so an empty database only gains a schema when the APP restarts —
+    # never when Postgres alone does.
+    #
+    # Bump this value to make the app re-run that bootstrap against whatever
+    # database is currently live; the changed pod template is what rolls it. It is
+    # the only lever available — the chart is third-party and its `/api/health`
+    # probe does not touch the database, so nothing else notices an empty schema.
+    #
+    # Note this rolls ONLY the app. That is deliberate: it re-bootstraps against
+    # the running database, with no second Deployment reconciling underneath it.
+    # A change that also replaces the database must sequence the two, because the
+    # app's `wait-for-db` can succeed against the outgoing Postgres pod and
+    # bootstrap a schema that disappears when the Service cuts over.
+    podAnnotations:
+      platform.devantler.tech/db-bootstrap: "2026-08-22-schema-recreate"
     app:
       replicas: ${crossview_replicas:=1}
       # Crossview is a bursty, near-idle dashboard: ~14Mi RSS while nobody is
@@ -155,11 +171,27 @@ spec:
         # crossview.${domain}, so the Secure cookie is valid in every environment.
         - name: NODE_ENV
           value: "production"
-    # The chart bundles a Postgres for session/user state. Run it ephemeral (no
-    # PVC) instead of provisioning a Longhorn volume: Crossview is an
-    # SSO-fronted, read-only dashboard, so losing session/user rows on a pod
-    # restart is acceptable — and it avoids the autoscaler-node Longhorn
-    # data-loss footgun that bites stateful prod volumes.
+    # The chart bundles a Postgres for session/user state. It runs ephemeral (no
+    # PVC) rather than on a Longhorn volume: Crossview is an SSO-fronted,
+    # read-only dashboard, so losing session/user rows on a pod restart is
+    # acceptable — and it avoids the autoscaler-node Longhorn data-loss footgun
+    # that bites stateful prod volumes.
+    #
+    # 🔴 Ephemeral costs more than the rows, and #3315 tracks the remainder.
+    # Crossview creates its tables once, at its OWN startup, so a Postgres-only
+    # restart — which VPA's `InPlaceOrRecreate` causes routinely — leaves a
+    # schemaless database that nothing repairs, and every OIDC login fails on
+    # `relation "users" does not exist` while `/api/health` still reports ok.
+    #
+    # Making the data directory persistent is the obvious fix and is NOT a
+    # drop-in: this namespace opts into user namespaces
+    # (providers/hetzner/apps/crossview/patches/enable-user-namespaces.yaml),
+    # whose stated precondition is that there is no PVC and no idmapped-volume
+    # dependency, and the add-security-context rule excludes only
+    # `cnpg.io/cluster` pods from `hostUsers: false`. A PVC here therefore lands
+    # the database on the idmapped-mount path that userns-longhorn-smoke
+    # (platform#2599) exists to validate and which is not validated yet. Sequence
+    # those together, not separately.
     database:
       # Pin the chart's bundled Postgres image. The crossview chart defaults
       # database.image.tag to `latest` (a disallow-latest-tag policy violation,
@@ -169,7 +201,7 @@ spec:
       # .github/renovate.json. (Same image drives the chart's wait-for-db init.)
       image:
         # renovate: datasource=docker depName=postgres
-        tag: "18.4"
+        tag: "18.6"
       persistence:
         enabled: false
     # Every Crossview secret is sourced from the crossview-credentials Secret

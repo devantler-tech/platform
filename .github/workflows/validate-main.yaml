@@ -96,6 +96,20 @@ jobs:
       - name: 🔐 Validate shared publish workflows are pinned
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
+      # Which revision SIGNED what is deployed, against what each consumer pins now
+      # (#3048). Reported on main rather than gated on a PR: it reads five other
+      # repositories over the network, so a transient API failure here must never block
+      # an unrelated pull request. Its hermetic half runs in ci.yaml on every PR.
+      - name: 🔐 Report publish-workflow signing revisions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # `set -o pipefail` is load-bearing: Actions' default shell does not set it, so
+          # a bare pipe into `tee` would report TEE's status and a failed report would
+          # read as a passing step.
+          set -o pipefail
+          ./scripts/report-publish-workflow-signing-revisions.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
   # The pull-request gate extracts Kubernetes workloads nested in KRO RGDs because ordinary
   # manifest scanners see only the outer custom resource. A direct push bypasses that job and can
   # still reach the manual CD path, so main must exercise the identical behavioral contract.
@@ -176,7 +190,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.178.30"
+          KSAIL_VERSION: "7.178.34"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -187,7 +201,7 @@ jobs:
       # exact gap this workflow exists to close, reopened one level up.
       # (Codex raised this on #3057.)
       - name: 🔐 Validate the Kubescape gate's framework coverage
-        run: ./scripts/guard-kubescape-gate-frameworks.sh
+        run: go run ./scripts/validate-kubescape-frameworks
 
       - name: 🔎 Scan manifests (Kubescape NSA + MITRE)
         # Same invocation and same justified exceptions as ci.yaml's gate, so
@@ -202,7 +216,7 @@ jobs:
         # finding only the PR sees would fail to persist as a main-branch alert
         # — and a direct push to main (which bypasses the merge queue) would go
         # completely ungated on the missing framework.
-        # scripts/guard-kubescape-gate-frameworks.sh enforces the match.
+        # scripts/validate-kubescape-frameworks enforces the match.
         run: |
           go test ./scripts/generate-kubescape-exceptions
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json

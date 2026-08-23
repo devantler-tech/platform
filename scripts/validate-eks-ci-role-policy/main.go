@@ -1186,7 +1186,68 @@ const (
 // The new fingerprint was read from the required job's approved renderer (run
 // 32537665794, job 96941582102). The local approved renderer independently
 // produced the identical value.
-const expectedRenderedSurfaceSHA = "072296094a73bafe660540b84da2ee94bbe0683d90c7fc9ed97a6d6f9c292d7a"
+//
+// Measured against current main 64c4ba23 before approving this value: the five
+// authorization overlays move from 546 to 549 rendered documents, with no
+// duplicate identities. Set difference in BOTH directions reports exactly
+// three additions and no removals or renames:
+//
+//	v1                               ServiceAccount       observability/crossplane-sync-alerter
+//	rbac.authorization.k8s.io/v1    ClusterRole          crossplane-sync-alerter
+//	rbac.authorization.k8s.io/v1    ClusterRoleBinding   crossplane-sync-alerter
+//
+// The grant-bearing surface moves from 77 to 80 objects: Role stays 11,
+// ClusterRole 23 -> 24, RoleBinding stays 16, ClusterRoleBinding 11 -> 12,
+// and ServiceAccount 16 -> 17. Canonical content comparison of every object
+// reports those three additions plus exactly ONE changed existing identity:
+// `ClusterRole/crossplane-sync-exporter`. That role replaces its Repository-only
+// rule with the exact 16 managed-resource kinds currently installed across
+// eight reviewed API groups. Every grant stays get/list/watch, there is no
+// wildcard, no core-group access and no Secret access; its existing exact
+// get/list/watch on CustomResourceDefinitions is unchanged.
+//
+// The new alerter ClusterRole is narrower still: its sole rule is `list` on
+// `apiextensions.k8s.io/customresourcedefinitions`. Its binding names only the
+// new `observability/crossplane-sync-alerter` ServiceAccount. No EKS CI subject,
+// AWS service account, AWS role, boundary, policy, or individually pinned core
+// authorization identity moved; the validator emitted only this aggregate
+// mismatch and no object-specific mismatch.
+//
+// The previous approved digest remains recorded here:
+//
+//	072296094a73bafe660540b84da2ee94bbe0683d90c7fc9ed97a6d6f9c292d7a
+//
+// The new fingerprint was produced by the required hosted renderer (run
+// 32587236884, job 97065434213). The local kubectl v1.36.1 render used by the
+// tests independently produced the identical value, while the full local CLI
+// correctly refused that renderer because the approved pin is v1.36.2.
+//
+// Re-approved for the Crossview app pod-template annotation that re-runs the
+// database schema bootstrap. The rendered delta against main 6e809460 is one
+// document, `helm.toolkit.fluxcd.io/v2 HelmRelease crossview/crossview`, which
+// gains a single `podAnnotations` key. The annotation names no subject, role,
+// verb, resource, policy, service account, or AWS identity, so no grant moves;
+// only the aggregate does, because the aggregate covers each document's full
+// text while `expectedRenderedHashes` pins the grant-bearing kinds. All 19 of
+// those pinned entries stayed byte-identical: zero unapproved, zero missing,
+// and zero duplicate rendered resources.
+//
+// The levelling merge is provably neutral: main 6e809460 renders to the digest
+// recorded below as the previous value, so the three commits it brought in
+// contribute nothing to this move, and the change is attributable to the PR's
+// own diff alone. The diagnostic substitution-note count is 35 on both sides,
+// so this adds no unresolved-substitution resource and removes none.
+//
+// Two independent renderers produced the value below: the required hosted
+// kubectl v1.36.2 job (run 32608133113, job 97116555964) at the pre-levelling
+// head c1cb9898, and an uncached local kubectl v1.36.1 render at exact levelled
+// head 3de36aec. The same local renderer reproduces the previous digest exactly
+// at clean main, and rejects a substituted constant there, so it is calibrated
+// against the approved tree. The previous approved digest remains recorded here:
+//
+//	2e5ff04e52117cdbdc88261c35845e51a17ff31b709ed5b7d449b5076c08d8e1
+//	bef0f81a74a01efa995543c82c4adf5c18123f3e1b31d0430719f9a3af53daa5
+const expectedRenderedSurfaceSHA = "54b0b907d2d6a870b9213927f246b79ba1fd7366e6d83a7792284d0c7e683a08"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
