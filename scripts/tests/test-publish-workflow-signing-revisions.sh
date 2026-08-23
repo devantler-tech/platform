@@ -332,6 +332,13 @@ bounded_case() {
   bc_label=$1
   bc_selector=$2
   bc_expect=${3:-bounded semver constraint}
+  # How the first consumer's `spec.ref` is written. `semver` is the original shape;
+  # `raw` passes the selector through verbatim (for a digest), and `omit` drops the
+  # `ref:` key entirely -- the unpinned case, which is a refusal with no selector at all.
+  bc_ref_kind=${4:-semver}
+  # For `raw`, the ref LINE and the string the refusal must NAME differ: the script
+  # reports `sha256:...` while the manifest writes `digest: sha256:...`.
+  bc_ref_line=${5:-}
   bc_root="$WORK/bounded-$bc_label"
   mkdir -p "$bc_root"
   k=0
@@ -342,15 +349,22 @@ bounded_case() {
     [ "$repo" = '.github' ] && oci='github-config'
     # One consumer gets the BOUNDED range; the rest keep an unbounded one, so the
     # refusal cannot be confused with a wholesale failure of the fixture.
-    if [ "$k" -eq 1 ]; then ref="semver: \"$bc_selector\""; else ref='semver: ">=1.0.0"'; fi
+    if [ "$k" -eq 1 ]; then
+      case "$bc_ref_kind" in
+      raw) ref_block="  ref:"$'\n'"    $bc_ref_line" ;;
+      omit) ref_block='' ;;
+      *) ref_block="  ref:"$'\n'"    semver: \"$bc_selector\"" ;;
+      esac
+    else
+      ref_block="  ref:"$'\n'"    semver: \">=1.0.0\""
+    fi
     cat >"$bc_root/c-$k.yaml" <<YAML
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
   name: b$k
 spec:
-  ref:
-    $ref
+$ref_block
   url: oci://ghcr.io/devantler-tech/$oci/manifests
   verify:
     provider: cosign
@@ -391,8 +405,20 @@ bounded_case compound '>=1.0.0 <2.0.0'
 # attribute THAT release's workflow revision to the deployed artifact. It starts exactly
 # like the unbounded `>=1.0.0`, so the compound-range character class does not catch it:
 # every character is one a single lower bound may legitimately contain.
-bounded_case prerelease '>=1.0.0-0'
-bounded_case prerelease_named '>1.2.3-alpha.1'
+# THE ROW MUST NAME THE CAUSE THE RESOLVER GAVE. `effective_version` refuses for five
+# distinct reasons and writes the specific one to stderr, but the report printed a fixed
+# "bounded semver constraint" for all of them -- and the step summary is stdout-only, so a
+# digest-pinned or unpinned consumer was not merely described elsewhere, it was described
+# WRONGLY with no other copy to consult. Two causes are asserted here, one of which is not
+# a semver constraint at all, so a regression to any single fixed wording fails.
+bounded_case digest_pinned 'sha256:abcdef' 'digest-pinned reference' raw 'digest: sha256:abcdef'
+bounded_case unpinned_ref 'spec.ref omitted' 'unpinned reference' omit
+
+# These two refuse for the PRERELEASE reason, not the generic bounded-range one, so they
+# assert that specific wording. The row used to print one fixed cause for every refusal,
+# which made the default expectation match here while describing the wrong thing.
+bounded_case prerelease '>=1.0.0-0' 'prerelease semver constraint'
+bounded_case prerelease_named '>1.2.3-alpha.1' 'prerelease semver constraint'
 
 # A STRICT lower bound. `>=1.0.0` admits 1.0.0, so treating it as unbounded and taking the
 # newest published tag is correct. `>1.0.0` EXCLUDES 1.0.0 — so when 1.0.0 is the newest

@@ -796,6 +796,12 @@ main() {
   local resolver="${PUBLISH_REVISION_RESOLVER:-}"
   local repo workflow version answer signing current origin field field_count
   local diverged=0 unresolved=0 examined=0
+  # Scratch for one consumer's refusal diagnostic. A file rather than a process
+  # substitution so the capture works under a plain POSIX-ish shell, and so the
+  # command substitution above still yields `effective_version`'s STDOUT and its exit
+  # status unchanged -- `2>&1` would fold the diagnostic into the version string.
+  local why why_file
+  why_file="$(mktemp)" || return 1
 
   printf 'Shared publish-workflow revisions, per consumer (#3048)\n'
   printf '%s\n' '-------------------------------------------------------'
@@ -805,10 +811,20 @@ main() {
     examined=$((examined + 1))
     # Classify from the manifest first: a bounded range is refused before any resolver is
     # consulted, because the constraint is written down rather than discovered remotely.
-    if ! version="$(effective_version "$version")"; then
+    #
+    # REPORT THE CAUSE THE RESOLVER ACTUALLY GAVE. `effective_version` refuses for five
+    # distinct reasons -- digest-pinned, omitted, prerelease bound, malformed inclusive
+    # bound, strict lower bound -- and writes the specific one to stderr. Printing a fixed
+    # "bounded semver constraint" for all of them told a reader of the step summary the
+    # wrong thing for four of the five, and the summary is stdout-only (see the note at the
+    # tally below), so the real cause was not merely elsewhere -- it was absent.
+    if ! version="$(effective_version "$version" 2>"$why_file")"; then
       unresolved=$((unresolved + 1))
-      printf 'UNRESOLVED %-22s %-18s bounded semver constraint — not resolvable here\n' \
-        "$repo" "$workflow"
+      # One row per consumer: fold the diagnostic to a single line, and fall back to the
+      # generic wording only if the refusal was silent.
+      why="$(tr '\n' ' ' <"$why_file" | sed -E 's/[[:space:]]+/ /g; s/ $//')"
+      [ -n "$why" ] || why='not resolvable here (no diagnostic emitted)'
+      printf 'UNRESOLVED %-22s %-18s %s\n' "$repo" "$workflow" "$why"
       continue
     fi
     if [ -n "$resolver" ]; then
@@ -885,6 +901,7 @@ main() {
       printf '           allow-list must accept: %s AND %s\n' "$signing" "$current"
     fi
   done <<<"$consumers"
+  rm -f "$why_file"
 
   printf '%s\n' '-------------------------------------------------------'
   # `unresolved` is in the tally deliberately. The failure detail below also goes to
