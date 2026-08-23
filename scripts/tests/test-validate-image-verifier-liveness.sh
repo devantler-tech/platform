@@ -1046,6 +1046,42 @@ if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
 fi
 require_text "${output}" 'disabled_plugins' 'case 24: double-quoted entries are read'
 
+# The root KEY may be quoted too. TOML treats a bare key and a quoted key as the
+# SAME key -- measured against pelletier/go-toml/v2, containerd's own parser
+# family: `disabled_plugins`, `"disabled_plugins"` and `'disabled_plugins'` all
+# unmarshal to one key. A bare-key-only match therefore never calls verdict() on
+# the quoted spellings, leaving disabled = 0 while containerd has the verifier
+# switched OFF -- a node reporting OK with no enforcement, the same fail-open
+# class as the quoted `]` and the substring match above.
+#
+# The table-header rule already strips quotes before comparing; the root key did
+# not, and that inconsistency is what this closes.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+"disabled_plugins" = ["io.containerd.image-verifier.v1.bindir"]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a DOUBLE-QUOTED root disabled_plugins key must still fail the node'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: a double-quoted root key is read'
+
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+'disabled_plugins' = ["io.containerd.image-verifier.v1.bindir"]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a SINGLE-QUOTED root disabled_plugins key must still fail the node'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: a single-quoted root key is read'
+
 # A LARGE config with the disabled key near the top. This is the SIGPIPE case:
 # an awk that printed its verdict and exited would close the pipe while
 # `talosctl read` was still writing, and under `set -o pipefail` that SIGPIPE is

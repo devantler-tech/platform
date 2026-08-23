@@ -348,10 +348,23 @@ config_facts_in() {
       }
       next
     }
-    toplevel && match($0, /^[ \t]*disabled_plugins[ \t]*=/) {
-      buf = strip_comment(substr($0, RSTART + RLENGTH))
-      if (closes_array(buf)) { verdict(buf) } else { in_array = 1 }
-      next
+    # TOML treats a bare key and a quoted key as the SAME key, so
+    # "disabled_plugins" and the bare form name one setting. A bare-key-only
+    # match never reaches verdict() on the quoted spellings, leaving disabled = 0
+    # while containerd has the verifier switched OFF -- a node reporting OK with
+    # no enforcement, the same fail-open class as the quoted ] above. So
+    # NORMALISE the key before comparing, exactly as the table header rule below
+    # already does, rather than enumerating spellings in the pattern.
+    toplevel && match($0, /^[ \t]*[^=]*=/) {
+      key = substr($0, RSTART, RLENGTH - 1)
+      gsub(/[ \t]/, "", key)
+      gsub(SQ, "", key)
+      gsub(DQ, "", key)
+      if (key == "disabled_plugins") {
+        buf = strip_comment(substr($0, RSTART + RLENGTH))
+        if (closes_array(buf)) { verdict(buf) } else { in_array = 1 }
+        next
+      }
     }
     !found && want && match($0, /^[ \t]*bin_dir[ \t]*=/) {
       value = substr($0, RSTART + RLENGTH)
