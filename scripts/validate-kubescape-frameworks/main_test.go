@@ -1338,3 +1338,63 @@ func TestOperatorInsideAStringLiteralIsContent(t *testing.T) {
 		t.Fatalf("set = %q", got)
 	}
 }
+
+// `||` DISCARDS THE FAILURE OF THE COMMAND ON ITS LEFT, so a scan spelled there is not a
+// gate even though nothing precedes it and no single `&` or `|` ends it. Under the default
+// `bash -e` a non-zero left side of `||` is not an error at all -- the right side runs and
+// its status becomes the step's -- so `scan --framework nsa,mitre || true` reports the full
+// framework list while a later reduced scan actually decides the outcome. This is the same
+// status-gating defect the `&`/`|` cases cover, reached by the one operator that marks what
+// FOLLOWS it conditional and so was never tested against what PRECEDES it.
+func TestRejectsScanWhoseFailureIsSwallowedByOrElse(t *testing.T) {
+	cases := map[string]string{
+		"|| true hides an env-wrapped reduced scan": goodScan + " || true\n" +
+			"env ksail workload scan --framework nsa",
+		"|| true alone":     goodScan + " || true",
+		"|| echo":           goodScan + " || echo scan failed",
+		"|| a variable":     goodScan + " || $FALLBACK",
+		"|| exit 0":         goodScan + " || exit 0",
+		"|| nothing at all": goodScan + " ||",
+		// The re-raise must itself reach the step: `&` backgrounds the `exit 1`.
+		"|| exit 1 backgrounded": goodScan + " || exit 1 &",
+	}
+	for name, body := range cases {
+		if _, err := setOf(t, body); err == nil {
+			t.Fatalf("%s: expected FAIL CLOSED — a scan whose failure `||` swallows is not a gate", name)
+		}
+	}
+}
+
+// The other half of the whitelist: a right side that is CERTAIN to fail re-raises the
+// scan's failure, so those two spellings stay readable. `|| exit 1` is already covered by
+// TestUnconditionalScanWithTrailingOperatorIsAccepted; this pins `|| false` and a
+// non-1 exit code so the rule is "the code is non-zero", not "the code is 1".
+func TestScanIsStillReadWhenOrElseReRaisesTheFailure(t *testing.T) {
+	cases := map[string]string{
+		"|| false":  goodScan + " || false",
+		"|| exit 2": goodScan + " || exit 2",
+	}
+	for name, body := range cases {
+		set, err := setOf(t, body)
+		if err != nil {
+			t.Fatalf("%s: the right side re-raises the failure, so the scan must still be read: %v", name, err)
+		}
+		if len(set) != 2 {
+			t.Fatalf("%s: framework set = %q, want both frameworks", name, set)
+		}
+	}
+}
+
+// The MIRROR, and the reason this is not "refuse any doubled operator": `&&` PRESERVES the
+// left side's failure -- if the scan fails the right side never runs and its status is the
+// step's -- so a scan followed by `&&` must still be read. Without this control, masking
+// every doubled operator would pass the case above while refusing a legitimate gate.
+func TestScanFollowedByAndAndIsStillRead(t *testing.T) {
+	set, err := setOf(t, goodScan+" && echo scanned")
+	if err != nil {
+		t.Fatalf("`&&` preserves the scan's failure, so it must still be read: %v", err)
+	}
+	if len(set) != 2 {
+		t.Fatalf("framework set = %q, want both frameworks", set)
+	}
+}

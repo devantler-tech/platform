@@ -32,6 +32,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -471,6 +472,10 @@ type shellSegment struct {
 	// full-framework scan stand in for a reduced scan that actually decided the
 	// step's outcome.
 	statusMasked bool
+	// orElse is true when the operator ENDING this segment was `||`. Whether that
+	// discards this command's failure is a property of the RIGHT side, so it is
+	// recorded during the split and resolved into statusMasked afterwards.
+	orElse bool
 }
 
 // shellSplit walks ONE command line once, tracking shell quoting, and returns the
@@ -592,9 +597,24 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unrea
 		// conditional ones, so the same test that consumes them marks what follows.
 		if c == ';' || c == '&' || c == '|' {
 			doubled := (c == '&' || c == '|') && i+1 < len(line) && line[i+1] == c
-			// A SINGLE `&` or `|` MASKS THE STATUS of the command it ends; the doubled
-			// forms do not, they make what FOLLOWS conditional instead.
+			// MASKING AND CONDITIONALITY ARE SEPARATE PROPERTIES OF THE SAME OPERATOR.
+			// A SINGLE `&` or `|` masks the status of the command it ends; `&&` masks
+			// nothing (if the left side fails the right never runs, so the failure is the
+			// step's). `||` carries BOTH properties -- it makes what follows conditional
+			// AND, under the default `bash -e`, a non-zero left side is not an error at
+			// all: the right side runs and ITS status becomes the step's. Whether that
+			// discards the failure depends on the right side, which is not known until the
+			// next segment is read, so it is RECORDED here and resolved once the line is
+			// split. Deciding masking from `doubled` alone read `scan || true` as a gate.
+			// ATTRIBUTE THE `||` ONLY TO A SEGMENT THIS FLUSH ACTUALLY APPENDED. flush drops
+			// an empty command, so on a line whose `||` follows nothing (`echo x; || true`)
+			// the last element is the EARLIER segment and marking it would refuse a command
+			// no `||` ended.
+			before := len(segments)
 			flush(doubled, !doubled && (c == '&' || c == '|'))
+			if doubled && c == '|' && len(segments) > before {
+				segments[len(segments)-1].orElse = true
+			}
 			if doubled {
 				i++
 			}
@@ -603,7 +623,48 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unrea
 		cur.WriteByte(c)
 	}
 	flush(false, false)
+	resolveOrElseMasking(segments)
 	return segments, heredocs, false, btCount%2 == 1, dollarDepth > 0, quoteOpen(inSingle, inDouble)
+}
+
+// resolveOrElseMasking decides, for each segment ended by `||`, whether that `||`
+// discarded its failure.
+//
+// A WHITELIST, NOT A BLACKLIST, and deliberately tiny. `a || b` runs b exactly when a
+// fails and then reports b's status, so a's failure survives only if b is CERTAIN to
+// fail too. `|| exit 1` and `|| false` are the shapes a real gate uses to turn a
+// tolerated failure back into a hard one, and they are the only ones decidable from
+// the text. Everything else masks -- `|| true`, `|| echo ...`, `|| $CMD`, an empty
+// right side at end of line -- so an unrecognised spelling fails CLOSED instead of
+// arriving as the next round of this bug. `|| exit 0` masks, which is why the exit
+// code is read rather than the word `exit` matched.
+func resolveOrElseMasking(segments []shellSegment) {
+	for i := range segments {
+		if !segments[i].orElse {
+			continue
+		}
+		// The right side must both be certain to fail AND have its own status reach the
+		// step: `scan || exit 1 &` backgrounds the exit, so nothing re-raises anything.
+		if i+1 < len(segments) && provablyFails(segments[i+1].text) && !segments[i+1].statusMasked {
+			continue
+		}
+		segments[i].statusMasked = true
+	}
+}
+
+// provablyFails reports whether a command is CERTAIN to exit non-zero, read from the
+// text alone. Only `false` and `exit <non-zero literal>` qualify; a variable, a
+// substitution or any other command does not, however likely it is to fail.
+func provablyFails(text string) bool {
+	fields := strings.Fields(text)
+	switch {
+	case len(fields) == 1 && fields[0] == "false":
+		return true
+	case len(fields) == 2 && fields[0] == "exit":
+		code, err := strconv.Atoi(fields[1])
+		return err == nil && code != 0
+	}
+	return false
 }
 
 // Shell words that introduce a COMPOUND command — one whose body's execution is not
@@ -878,7 +939,7 @@ func scanInvocations(scalar string) ([]string, error) {
 			}
 			if segment.statusMasked {
 				return nil, fmt.Errorf(
-					"a scan invocation's exit status is discarded by a `&` or `|` that ends it, so its failure does not fail the step: %q. A scan whose failure is ignored is not a gate — it would let a full framework list stand in for a reduced scan that actually decides the outcome. Invoke the scan as a plain command whose status the step sees. See #2823",
+					"a scan invocation's exit status is discarded by the `&`, `|` or `||` that ends it, so its failure does not fail the step: %q. A scan whose failure is ignored is not a gate — it would let a full framework list stand in for a reduced scan that actually decides the outcome. Invoke the scan as a plain command whose status the step sees. See #2823",
 					segment.text)
 			}
 			out = append(out, segment.text)
