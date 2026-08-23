@@ -258,6 +258,42 @@ expect_rejected "a replacement that rewrites protected Flux patch controls" \
   "Kustomization replacement mutates protected Flux controls" "spec.patches"
 rm -rf "$WORK/${FLUX_OVERLAY_ROOT:?}"
 
+# The same protected-control guard must hold when the replacement lives in a referenced file written
+# as a Kustomize sequence. Reading that shape as a single mapping yields no targets at all, so the
+# guard is skipped and the rewrite reaches Flux with nothing reported — a silent bypass rather than a
+# rejected build.
+mkdir -p "$WORK/$FLUX_OVERLAY_ROOT"
+yq -n '.apiVersion = "v1" | .kind = "ConfigMap" |
+  .metadata.name = "flux-replacement-source" | .data.kind = "ResourceGraphDefinition"' \
+  >"$WORK/$FLUX_OVERLAY_ROOT/replacement-source.yaml"
+yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
+  .kind = "Kustomization" | .metadata.name = "infrastructure" |
+  .metadata.namespace = "flux-system" | .spec.path = "./k8s/providers/hetzner" |
+  .spec.patches = [{
+    "target": {"apiVersion": "v1", "kind": "ConfigMap", "name": "safe-probe"},
+    "patch": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: safe-probe"
+  }]' >"$WORK/$FLUX_OVERLAY_ROOT/flux-kustomization.yaml"
+yq -n '[{
+    "source": {"kind": "ConfigMap", "name": "flux-replacement-source", "fieldPath": "data.kind"},
+    "targets": [{
+      "select": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "version": "v1",
+        "kind": "Kustomization",
+        "name": "infrastructure"
+      },
+      "fieldPaths": ["spec.patches.0.target.kind"]
+    }]
+  }]' >"$WORK/$FLUX_OVERLAY_ROOT/replacement-flux.yaml"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" |
+  .resources = ["replacement-source.yaml", "flux-kustomization.yaml"] |
+  .replacements = [{"path": "replacement-flux.yaml"}]' \
+  >"$WORK/$FLUX_OVERLAY_ROOT/kustomization.yaml"
+expect_rejected "a sequence-shaped path-backed replacement rewriting protected Flux patch controls" \
+  "Kustomization replacement mutates protected Flux controls" "spec.patches"
+rm -rf "$WORK/${FLUX_OVERLAY_ROOT:?}"
+
 # Legacy strategic merges support inline YAML and must enter the same rendered Flux-control guard as
 # modern patches. Their embedded Flux identity otherwise hides the protected target from raw scans.
 mkdir -p "$WORK/$FLUX_OVERLAY_ROOT"
@@ -479,6 +515,33 @@ yq -n '.source = {
     "fieldPaths": ["spec.name"]
   }]' >"$WORK/$RGD_REPLACEMENT"
 expect_rejected "a path-backed replacement targeting a generated WebApp" \
+  "Kustomization replacement targets or ambiguously selects" "WebApp"
+rm -f "$WORK/$RGD_REPLACEMENT" "$WORK/$PROVIDER_PROBE"
+
+# Kustomize's own documented shape for a replacement file is a SEQUENCE of replacement entries, and
+# the single-mapping spelling above is the exception rather than the rule. A scanner that reads only
+# the mapping spelling sees no targets at all in the ordinary file, so the guard above must hold for
+# both.
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [] |
+  .replacements = [{"path": "replacement-rgd.yaml"}]' >"$WORK/$PROVIDER_PROBE"
+yq -n '[{
+    "source": {
+      "kind": "ConfigMap",
+      "name": "replacement-source",
+      "fieldPath": "data.namespace"
+    },
+    "targets": [{
+      "select": {
+        "group": "kro.run",
+        "version": "v1alpha1",
+        "kind": "WebApp",
+        "name": "wedding-app"
+      },
+      "fieldPaths": ["spec.name"]
+    }]
+  }]' >"$WORK/$RGD_REPLACEMENT"
+expect_rejected "a sequence-shaped path-backed replacement targeting a generated WebApp" \
   "Kustomization replacement targets or ambiguously selects" "WebApp"
 rm -f "$WORK/$RGD_REPLACEMENT" "$WORK/$PROVIDER_PROBE"
 
@@ -799,12 +862,12 @@ restore_webapp
 # shellcheck disable=SC2016 # the Flux substitution expression must remain literal in the fixture
 yq -i '.spec.name = "${NAMESPACE}"' "$WORK/$WEBAPP_INSTANCE"
 expect_rejected "a generated instance with a substitutable namespace" \
-  "generated instance spec must not contain Flux substitution expressions" "spec.name"
+  "generated instance must not contain Flux substitution expressions" "spec.name"
 cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 # shellcheck disable=SC2016 # the Flux substitution expression must remain literal in the fixture
 yq -i '.spec.image = "${IMAGE}"' "$WORK/$WEBAPP_INSTANCE"
 expect_rejected "a generated instance with a substitutable image" \
-  "generated instance spec must not contain Flux substitution expressions" "spec.image"
+  "generated instance must not contain Flux substitution expressions" "spec.image"
 cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 
 # Every generated-spec value feeds graph behavior after the raw instance hash is sealed. Tenant's
@@ -814,7 +877,7 @@ cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 yq -i '.spec.externalDns = "${ENABLE_EXTERNAL_DNS:=true}"' \
   "$WORK/k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml"
 expect_rejected "a generated Tenant with a substitutable graph option" \
-  "generated instance spec must not contain Flux substitution expressions" "spec.externalDns"
+  "generated instance must not contain Flux substitution expressions" "spec.externalDns"
 cp "$REPO_ROOT/k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml" \
   "$WORK/k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml"
 
@@ -823,7 +886,7 @@ cp "$REPO_ROOT/k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml" \
 # shellcheck disable=SC2016 # the Flux whole-spec expression must remain literal in the fixture
 yq -i '.spec = "${INSTANCE_SPEC}"' "$WORK/$WEBAPP_INSTANCE"
 expect_rejected "a generated instance with a substitutable scalar spec" \
-  "generated instance spec must not contain Flux substitution expressions" "(spec)"
+  "generated instance must not contain Flux substitution expressions" "(spec)"
 cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 
 # Flux decrypts SOPS resources before apply. Ciphertext cannot serve as namespace, registry, or
@@ -833,6 +896,23 @@ yq -i '.spec.name = "ENC[AES256_GCM,data:AAAA,iv:BBBB,tag:CCCC,type:str]" |
   .sops = {"mac": "ENC[AES256_GCM,data:GGGG,iv:HHHH,tag:IIII,type:str]", "version": "3.9.4"}' \
   "$WORK/$WEBAPP_INSTANCE"
 expect_rejected "a SOPS-encrypted generated WebApp instance" \
+  "SOPS-encrypted generated instances cannot be validated from ciphertext"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
+
+# Flux postBuild substitution envsubsts the whole manifest, so metadata carries the same risk as the
+# spec. metadata.namespace decides which namespace the generated graph lands in, and a spec-scoped
+# scan reads a substitutable one as a fixed literal.
+# shellcheck disable=SC2016 # the Flux substitution expression must remain literal in the fixture
+yq -i '.metadata.namespace = "${TARGET_NAMESPACE}"' "$WORK/$WEBAPP_INSTANCE"
+expect_rejected "a generated instance with a substitutable metadata namespace" \
+  "generated instance must not contain Flux substitution expressions" "metadata.namespace"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
+
+# SOPS encrypted_regex can cover any key, so ciphertext outside the spec is just as unreadable. An
+# instance whose metadata is encrypted but which carries no sops block is not reviewable evidence.
+yq -i '.metadata.annotations."platform.devantler.tech/owner" =
+  "ENC[AES256_GCM,data:AAAA,iv:BBBB,tag:CCCC,type:str]"' "$WORK/$WEBAPP_INSTANCE"
+expect_rejected "a generated instance with ciphertext outside its spec" \
   "SOPS-encrypted generated instances cannot be validated from ciphertext"
 cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 

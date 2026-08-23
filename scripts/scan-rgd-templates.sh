@@ -374,6 +374,23 @@ flux_field_path_is_protected() {
   esac
 }
 
+# Kustomize accepts a `replacements:` document as either a sequence of replacement entries or a
+# single mapping, and both spellings are valid input. `yq | jq -cs` wraps whichever arrives in an
+# outer array, so a sequence file surfaces as a nested array. Reading that unflattened breaks both
+# consumers in opposite directions: `.targets[]?` raises "Cannot index array with string" — the `?`
+# binds to the iteration, not to `.targets` — inside a process substitution whose status nothing
+# checks, so the protected-field gate is skipped silently; while `all(.[]; type == "object")`
+# rejects the same valid file. Flatten one level of sequence document so both spellings produce the
+# same replacement-entry stream, and fail closed on anything that is not a replacement mapping.
+replacement_entries_json() {
+  local documents_json="$1" source_label="$2" normalized
+  normalized="$(jq -c '[.[] | if type == "array" then .[] else . end]' <<<"$documents_json")" ||
+    fail "Kustomization replacement is not valid JSON: $source_label"
+  jq -e 'length > 0 and all(.[]; type == "object")' <<<"$normalized" >/dev/null ||
+    fail "Kustomization replacement does not contain only replacement mappings: $source_label"
+  printf '%s\n' "$normalized"
+}
+
 protected_flux_patch_targets() {
   local patch_entries_json="$1" targeted_flux flux_patch_entry flux_patch_body
   local flux_patch_documents protected_flux_patch_kinds
@@ -701,9 +718,12 @@ while IFS= read -r kustomization_file; do
       flux_replacement_file="${kustomization_file%/*}/${flux_replacement_path}"
       [ -r "$flux_replacement_file" ] ||
         fail "Kustomization replacement is not readable: $flux_replacement_file"
-      flux_replacement_documents="$(yq -o=json -I=0 '.' "$flux_replacement_file" | jq -cs '.')"
+      flux_replacement_documents="$(replacement_entries_json \
+        "$(yq -o=json -I=0 '.' "$flux_replacement_file" | jq -cs '.')" \
+        "$flux_replacement_file")"
     else
-      flux_replacement_documents="[$flux_replacement_entry]"
+      flux_replacement_documents="$(replacement_entries_json \
+        "[$flux_replacement_entry]" "$kustomization_file")"
     fi
     while IFS= read -r flux_replacement_target; do
       flux_replacement_selector="$(jq -c '.select // {}' <<<"$flux_replacement_target")"
@@ -828,9 +848,8 @@ while IFS= read -r kustomization_file; do
     [ -n "$replacement_path" ] || continue
     replacement_file="${kustomization_file%/*}/${replacement_path}"
     [ -r "$replacement_file" ] || fail "Kustomization replacement is not readable: $replacement_file"
-    replacement_documents="$(yq -o=json -I=0 '.' "$replacement_file" | jq -cs '.')"
-    jq -e 'length > 0 and all(.[]; type == "object")' <<<"$replacement_documents" >/dev/null ||
-      fail "Kustomization replacement does not contain only mapping documents: $replacement_file"
+    replacement_documents="$(replacement_entries_json \
+      "$(yq -o=json -I=0 '.' "$replacement_file" | jq -cs '.')" "$replacement_file")"
     targeted_replacement="$(jq -r --argjson generated "$rgd_selectors_json" '
       def selector_matches($value; $pattern):
         ($pattern == "")
@@ -1163,29 +1182,30 @@ while IFS= read -r candidate; do
     done
     "$is_rgd_instance" || continue
     committed_instance_count=$((committed_instance_count + 1))
+    # SOPS encrypted_regex can cover any part of the document, so ciphertext outside .spec is just
+    # as unreadable as ciphertext inside it. Scope the scan to the whole instance.
     encrypted_instance="$(jq '
       (.sops != null)
-      or ([.spec | .. | strings | select(startswith("ENC["))] | length > 0)
+      or ([.. | strings | select(startswith("ENC["))] | length > 0)
     ' <<<"$instance_json")"
     [ "$encrypted_instance" = "false" ] || fail \
       "SOPS-encrypted generated instances cannot be validated from ciphertext: $candidate"
+    # Flux postBuild substitution envsubsts the WHOLE manifest, not just its spec, so a metadata
+    # field such as metadata.namespace is replaced after the raw instance evidence is sealed exactly
+    # as a spec field is. Scan every scalar path in the document.
     substitution_path="$(jq -r '
-      .spec as $spec
-      | if (($spec | type) == "string" and ($spec | contains("${"))) then
-          "spec"
-        else
-          [
-            $spec
-            | paths(scalars) as $path
-            | select(
-                ($spec | getpath($path) | type) == "string"
-                and ($spec | getpath($path) | contains("${")))
-            | "spec." + ($path | map(tostring) | join("."))
-          ][0] // ""
-        end
+      . as $instance
+      | [
+          $instance
+          | paths(scalars) as $path
+          | select(
+              ($instance | getpath($path) | type) == "string"
+              and ($instance | getpath($path) | contains("${")))
+          | ($path | map(tostring) | join("."))
+        ][0] // ""
     ' <<<"$instance_json")"
     [ -z "$substitution_path" ] || fail \
-      "generated instance spec must not contain Flux substitution expressions ($substitution_path): $candidate"
+      "generated instance must not contain Flux substitution expressions ($substitution_path): $candidate"
     [ "$instance_name" != "kube-system" ] || fail \
       "KSV-0037: committed $instance_kind instance $candidate would generate resources in kube-system"
     instance_image="$(jq -r '
