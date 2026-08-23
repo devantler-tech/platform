@@ -310,11 +310,11 @@ expect_rejected "a path-backed replacement targeting a generated WebApp" \
   "Kustomization replacement targets or ambiguously selects" "WebApp"
 rm -f "$WORK/$RGD_REPLACEMENT" "$WORK/$PROVIDER_PROBE"
 
-# commonAnnotations is a built-in transformer. Overriding the RGD substitution opt-out there makes
-# the raw-source check pass while Flux later expands values inside the nested templates.
+# commonAnnotations is a built-in transformer. Even an explicitly empty value erases the RGD
+# substitution opt-out, making the raw-source check pass while Flux later expands nested templates.
 yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
   .kind = "Kustomization" | .resources = [] |
-  .commonAnnotations."kustomize.toolkit.fluxcd.io/substitute" = "enabled"' \
+  .commonAnnotations."kustomize.toolkit.fluxcd.io/substitute" = ""' \
   >"$WORK/$PROVIDER_PROBE"
 expect_rejected "a commonAnnotations override of the Flux substitution opt-out" \
   "Kustomization must not override the Flux substitution opt-out"

@@ -182,10 +182,15 @@ readonly rgd_selectors_json
 # mutation in a shared base is as invisible to this scan as one in a provider. Graph variants belong
 # in a separately scanned definition rather than an invisible per-consumer mutation.
 while IFS= read -r kustomization_file; do
-  substitution_override="$(yq '.commonAnnotations."kustomize.toolkit.fluxcd.io/substitute" // ""' \
-    "$kustomization_file")"
-  if [ -n "$substitution_override" ] && [ "$substitution_override" != "disabled" ]; then
-    fail "Kustomization must not override the Flux substitution opt-out: $kustomization_file"
+  substitution_override_present="$(yq -o=json -I=0 '.' "$kustomization_file" | jq -r '
+    (.commonAnnotations | type) == "object"
+    and (.commonAnnotations | has("kustomize.toolkit.fluxcd.io/substitute"))
+  ')"
+  if [ "$substitution_override_present" = "true" ]; then
+    substitution_override="$(yq -r \
+      '.commonAnnotations."kustomize.toolkit.fluxcd.io/substitute"' "$kustomization_file")"
+    [ "$substitution_override" = "disabled" ] ||
+      fail "Kustomization must not override the Flux substitution opt-out: $kustomization_file"
   fi
 
   targeted_rgd="$(yq -o=json -I=0 '.' "$kustomization_file" |
