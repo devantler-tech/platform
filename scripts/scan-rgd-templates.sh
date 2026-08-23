@@ -360,13 +360,65 @@ kustomization_consumes_protected() {
   return 1
 }
 
+PROTECTED_KUSTOMIZATION_PATHS=()
+kustomization_has_protected_context() {
+  local candidate="$1" protected_kustomization
+  [ "${#PROTECTED_KUSTOMIZATION_PATHS[@]}" -gt 0 ] || return 1
+  for protected_kustomization in "${PROTECTED_KUSTOMIZATION_PATHS[@]}"; do
+    [ "$candidate" = "$protected_kustomization" ] && return 0
+  done
+  return 1
+}
+
+if [ "${#KUSTOMIZATION_PATHS[@]}" -gt 0 ]; then
+  for kustomization_file in "${KUSTOMIZATION_PATHS[@]}"; do
+    if kustomization_consumes_protected "$kustomization_file"; then
+      PROTECTED_KUSTOMIZATION_PATHS+=("$kustomization_file")
+    fi
+  done
+fi
+
+# Components apply their transformers to the including parent's accumulated resources, even when
+# the component declares no resources itself. Propagate protected context from every protected
+# includer through arbitrarily nested component chains.
+protected_context_changed=true
+while "$protected_context_changed" && [ "${#PROTECTED_KUSTOMIZATION_PATHS[@]}" -gt 0 ]; do
+  protected_context_changed=false
+  for protected_kustomization in "${PROTECTED_KUSTOMIZATION_PATHS[@]}"; do
+    while IFS= read -r component_path; do
+      [ -n "$component_path" ] || continue
+      component_resource="${protected_kustomization%/*}/${component_path}"
+      [ -e "$component_resource" ] || continue
+      component_resource="$(normalize_resource_path "$component_resource")"
+      component_kustomization=""
+      if [ -f "$component_resource" ]; then
+        component_kustomization="$component_resource"
+      else
+        for candidate_name in kustomization.yaml kustomization.yml Kustomization; do
+          if [ -f "${component_resource}/${candidate_name}" ]; then
+            component_kustomization="${component_resource}/${candidate_name}"
+            break
+          fi
+        done
+      fi
+      [ -n "$component_kustomization" ] || continue
+      if ! kustomization_has_protected_context "$component_kustomization"; then
+        PROTECTED_KUSTOMIZATION_PATHS+=("$component_kustomization")
+        protected_context_changed=true
+      fi
+    done < <(yq -o=json -I=0 '.components[]?' "$protected_kustomization" |
+      jq -r 'select(type == "string")')
+  done
+done
+readonly PROTECTED_KUSTOMIZATION_PATHS
+
 # Kustomizations may consume a reviewed graph, but no overlay may patch, transform, or replace an RGD
 # after the raw definition has been extracted. Enforce that across the complete Kubernetes tree: a
 # mutation in a shared base is as invisible to this scan as one in a provider. Graph variants belong
 # in a separately scanned definition rather than an invisible per-consumer mutation.
 while IFS= read -r kustomization_file; do
   consumes_protected_resources=false
-  if kustomization_consumes_protected "$kustomization_file"; then
+  if kustomization_has_protected_context "$kustomization_file"; then
     consumes_protected_resources=true
   fi
   targeted_builtin_transformers="$(yq -o=json -I=0 '.' "$kustomization_file" | jq -r '
@@ -615,8 +667,15 @@ done < <(
 # build files so they cannot mutate a reviewed RGD or generated instance after its evidence is sealed.
 while IFS= read -r candidate; do
   candidate_documents="$(yq -o=json -I=0 '.' "$candidate" | jq -cs '.')"
-  flux_substitution_override_count="$(jq '[
+  flux_substitution_override_count="$(jq '
+    def resources:
+      if type == "object" and (.kind // "") == "List"
+      then .items[]? | resources
+      else .
+      end;
+    [
     .[]
+    | resources
     | select(type == "object"
       and ((.apiVersion // "") | startswith("kustomize.toolkit.fluxcd.io/"))
       and (.kind // "") == "Kustomization")
@@ -632,8 +691,14 @@ while IFS= read -r candidate; do
     def selector_matches($value; $pattern):
       ($pattern == "")
       or (try ($value | test("^(" + $pattern + ")$")) catch false);
+    def resources:
+      if type == "object" and (.kind // "") == "List"
+      then .items[]? | resources
+      else .
+      end;
     [
       .[] |
+      resources |
       select(type == "object"
         and ((.apiVersion // "") | startswith("kustomize.toolkit.fluxcd.io/"))
         and (.kind // "") == "Kustomization") |
@@ -687,7 +752,13 @@ while IFS= read -r candidate; do
     [ -z "$protected_flux_patch_kinds" ] || fail \
       "Flux Kustomization targetless patch declares an RGD definition or generated instance ($protected_flux_patch_kinds): $candidate"
   done < <(jq -c '
+    def resources:
+      if type == "object" and (.kind // "") == "List"
+      then .items[]? | resources
+      else .
+      end;
     .[]
+    | resources
     | select(type == "object"
       and ((.apiVersion // "") | startswith("kustomize.toolkit.fluxcd.io/"))
       and (.kind // "") == "Kustomization")
@@ -721,17 +792,28 @@ while IFS= read -r candidate; do
     done
     "$is_rgd_instance" || continue
     committed_instance_count=$((committed_instance_count + 1))
-    # shellcheck disable=SC2016 # Flux expressions are matched literally, never expanded here.
-    if [[ "$instance_name" == *'${'* ]]; then
-      fail "generated instance security fields must not contain Flux substitution expressions (spec.name): $candidate"
-    fi
+    encrypted_instance="$(jq '
+      (.sops != null)
+      or ([.spec | .. | strings | select(startswith("ENC["))] | length > 0)
+    ' <<<"$instance_json")"
+    [ "$encrypted_instance" = "false" ] || fail \
+      "SOPS-encrypted generated instances cannot be validated from ciphertext: $candidate"
+    substitution_path="$(jq -r '
+      .spec as $spec
+      | [
+          $spec
+          | paths(scalars) as $path
+          | select(
+              ($spec | getpath($path) | type) == "string"
+              and ($spec | getpath($path) | contains("${")))
+          | "spec." + ($path | map(tostring) | join("."))
+        ][0] // ""
+    ' <<<"$instance_json")"
+    [ -z "$substitution_path" ] || fail \
+      "generated instance spec must not contain Flux substitution expressions ($substitution_path): $candidate"
     [ "$instance_name" != "kube-system" ] || fail \
       "KSV-0037: committed $instance_kind instance $candidate would generate resources in kube-system"
     instance_image="$(jq -r '.spec.image // ""' <<<"$instance_json")"
-    # shellcheck disable=SC2016 # Flux expressions are matched literally, never expanded here.
-    if [[ "$instance_image" == *'${'* ]]; then
-      fail "generated instance security fields must not contain Flux substitution expressions (spec.image): $candidate"
-    fi
     [ -z "$instance_image" ] || validate_image_registry "$instance_image"
     printf '1\t%s\tINSTANCE-CONTENT\tSHA256\t%s\n' \
       "${candidate#"$SOURCE_ROOT"/}" "$(sha256_text "$instance_json")" >>"$WORK/content.tsv"

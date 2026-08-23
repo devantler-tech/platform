@@ -562,6 +562,24 @@ expect_rejected "a transitive built-in transformer over a consumed RGD" \
 rm -f "$WORK/$RGD_CHILD_KUSTOMIZATION" "$WORK/$PROVIDER_PROBE"
 rmdir "$WORK/$(dirname "$RGD_CHILD_KUSTOMIZATION")"
 
+# A Component's transformers apply to the including parent's accumulated resources. Even an empty
+# component therefore inherits protected scope from a parent that consumes an RGD through a sibling
+# resource entry.
+readonly RGD_COMPONENT_KUSTOMIZATION="k8s/providers/probe/infrastructure/rgd-component/kustomization.yaml"
+mkdir -p "$WORK/$(dirname "$RGD_COMPONENT_KUSTOMIZATION")"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1alpha1" |
+  .kind = "Component" | .resources = [] |
+  .commonAnnotations."kustomize.toolkit.fluxcd.io/substitute" = ""' \
+  >"$WORK/$RGD_COMPONENT_KUSTOMIZATION"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" |
+  .resources = ["../../../bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml"] |
+  .components = ["rgd-component"]' >"$WORK/$PROVIDER_PROBE"
+expect_rejected "a component transformer inherited by an RGD-consuming parent" \
+  "Kustomization must not override the Flux substitution opt-out" "rgd-component"
+rm -f "$WORK/$RGD_COMPONENT_KUSTOMIZATION" "$WORK/$PROVIDER_PROBE"
+rmdir "$WORK/$(dirname "$RGD_COMPONENT_KUSTOMIZATION")"
+
 # The infrastructure Flux Kustomization performs postBuild substitution after this scanner reads
 # the raw graph. Every RGD must opt out explicitly so a `${...}` value cannot be rewritten into an
 # unsafe boolean or image after the reviewed template and finding evidence have already passed.
@@ -576,12 +594,33 @@ restore_webapp
 # shellcheck disable=SC2016 # the Flux substitution expression must remain literal in the fixture
 yq -i '.spec.name = "${NAMESPACE}"' "$WORK/$WEBAPP_INSTANCE"
 expect_rejected "a generated instance with a substitutable namespace" \
-  "generated instance security fields must not contain Flux substitution expressions" "spec.name"
+  "generated instance spec must not contain Flux substitution expressions" "spec.name"
 cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 # shellcheck disable=SC2016 # the Flux substitution expression must remain literal in the fixture
 yq -i '.spec.image = "${IMAGE}"' "$WORK/$WEBAPP_INSTANCE"
 expect_rejected "a generated instance with a substitutable image" \
-  "generated instance security fields must not contain Flux substitution expressions" "spec.image"
+  "generated instance spec must not contain Flux substitution expressions" "spec.image"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
+
+# Every generated-spec value feeds graph behavior after the raw instance hash is sealed. Tenant's
+# externalDns flag creates cluster-scoped bindings, so field-specific name/image checks are not
+# sufficient.
+# shellcheck disable=SC2016 # the Flux default-value expression must remain literal in the fixture
+yq -i '.spec.externalDns = "${ENABLE_EXTERNAL_DNS:=true}"' \
+  "$WORK/k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml"
+expect_rejected "a generated Tenant with a substitutable graph option" \
+  "generated instance spec must not contain Flux substitution expressions" "spec.externalDns"
+cp "$REPO_ROOT/k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml" \
+  "$WORK/k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml"
+
+# Flux decrypts SOPS resources before apply. Ciphertext cannot serve as namespace, registry, or
+# complete-instance evidence for the plaintext generated instance that reaches the cluster.
+yq -i '.spec.name = "ENC[AES256_GCM,data:AAAA,iv:BBBB,tag:CCCC,type:str]" |
+  .spec.image = "ENC[AES256_GCM,data:DDDD,iv:EEEE,tag:FFFF,type:str]" |
+  .sops = {"mac": "ENC[AES256_GCM,data:GGGG,iv:HHHH,tag:IIII,type:str]", "version": "3.9.4"}' \
+  "$WORK/$WEBAPP_INSTANCE"
+expect_rejected "a SOPS-encrypted generated WebApp instance" \
+  "SOPS-encrypted generated instances cannot be validated from ciphertext"
 cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 
 # Flux Kustomization patches are applied after the ordinary Kustomize render. They must be checked
@@ -605,6 +644,25 @@ yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
 expect_rejected "a Flux Kustomization patch targeting an RGD" \
   "Flux Kustomization targets or ambiguously selects" "ResourceGraphDefinition"
 rm -f "$WORK/$FLUX_RGD_PATCH"
+
+# Kubernetes List items may themselves be Flux Kustomizations. The post-render patch scan must use
+# the same recursive List traversal as protected resource discovery.
+readonly FLUX_RGD_LIST_PATCH="k8s/clusters/prod/flux-kustomization-rgd-list-patch-probe.yaml"
+yq -n '.apiVersion = "v1" | .kind = "List" | .items = [{
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {"name": "rgd-list-patch-probe", "namespace": "flux-system"},
+    "spec": {
+      "path": "./k8s/providers/hetzner",
+      "patches": [{
+        "target": {"group": "kro.run", "version": "v1alpha1", "kind": "ResourceGraphDefinition"},
+        "patch": "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"
+      }]
+    }
+  }]' >"$WORK/$FLUX_RGD_LIST_PATCH"
+expect_rejected "a Flux Kustomization nested in a List and targeting an RGD" \
+  "Flux Kustomization targets or ambiguously selects" "ResourceGraphDefinition"
+rm -f "$WORK/$FLUX_RGD_LIST_PATCH"
 
 # Flux commonMetadata is also applied after the Kustomize build and can erase the resource-level
 # substitution opt-out on every RGD in the deployment.
