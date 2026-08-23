@@ -28,6 +28,8 @@ grep -Fq 'semantic_start_line=$((finding_start_line - leading_blank_lines - 1))'
 # shellcheck disable=SC2016 # These are literal source invariants, not test-shell arithmetic.
 grep -Fq 'semantic_end_line=$((finding_end_line - leading_blank_lines - 1))' "$GATE" ||
   fail "Trivy one-based end lines are not converted to yq zero-based lines"
+grep -Fq -- '--connect-timeout 10 --max-time 60' "$GATE" ||
+  fail "remote resource fetches are not bounded by connection and transfer timeouts"
 
 "$WIRING_TEST" || fail "the RGD gate is not wired on every protected event route"
 
@@ -286,6 +288,22 @@ expect_rejected "a standalone transformer targeting an RGD" \
   "Kustomization transformer targets or ambiguously selects" "ResourceGraphDefinition"
 rm -f "$WORK/$RGD_TRANSFORMER" "$WORK/$PROVIDER_PROBE"
 
+# Inline replacements are parsed in the build file rather than a referenced replacement document.
+# Keep a dedicated probe so the earlier selector guard cannot regress while path-backed coverage stays
+# green.
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [] |
+  .replacements = [{
+    "source": {"kind": "ConfigMap", "name": "replacement-source", "fieldPath": "data.namespace"},
+    "targets": [{
+      "select": {"group": "kro.run", "version": "v1alpha1", "kind": "WebApp"},
+      "fieldPaths": ["spec.name"]
+    }]
+  }]' >"$WORK/$PROVIDER_PROBE"
+expect_rejected "an inline replacement targeting a generated WebApp" \
+  "Kustomization targets or ambiguously selects" "WebApp"
+rm -f "$WORK/$PROVIDER_PROBE"
+
 # Path-backed replacements run after the raw definitions and instances are hashed. Loading only
 # inline replacement targets leaves a referenced file free to mutate a generated instance without
 # changing any reviewed evidence.
@@ -320,6 +338,16 @@ expect_rejected "a commonAnnotations override of the Flux substitution opt-out" 
   "Kustomization must not override the Flux substitution opt-out"
 rm -f "$WORK/$PROVIDER_PROBE"
 
+# Built-in global transformers mutate every resource accumulated by the Kustomization. Applying a
+# label to a directly consumed RGD changes the deployed graph after its raw source was reviewed.
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" |
+  .resources = ["../../../bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml"] |
+  .commonLabels = {"rgd-probe": "mutated"}' >"$WORK/$PROVIDER_PROBE"
+expect_rejected "a built-in commonLabels transformer over a consumed RGD" \
+  "Kustomization uses a built-in transformer that can mutate protected resources" "commonLabels"
+rm -f "$WORK/$PROVIDER_PROBE"
+
 # Custom var references are post-source transformers too. A WebApp image containing $(IMAGE) is
 # accepted as an ordinary Docker Hub reference by the raw scanner, then configurations can redirect
 # that field to an unreviewed registry during the Kustomize build.
@@ -339,6 +367,22 @@ yq -n '.varReference = [{
   "path": "spec/image"
 }]' >"$WORK/$RGD_VAR_CONFIGURATION"
 expect_rejected "a custom varReference targeting a generated WebApp" \
+  "Kustomization configuration targets or ambiguously selects" "WebApp"
+rm -f "$WORK/$RGD_VAR_CONFIGURATION" "$WORK/$PROVIDER_PROBE"
+
+# ImageTransformer field specs extend the top-level images directive into custom resources. That
+# would make an apparently reviewed WebApp image replaceable whenever an image transformer is added.
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [] |
+  .configurations = ["rgd-vars.yaml"]' \
+  >"$WORK/$PROVIDER_PROBE"
+yq -n '.images = [{
+  "group": "kro.run",
+  "version": "v1alpha1",
+  "kind": "WebApp",
+  "path": "spec/image"
+}]' >"$WORK/$RGD_VAR_CONFIGURATION"
+expect_rejected "a custom image transformer targeting a generated WebApp" \
   "Kustomization configuration targets or ambiguously selects" "WebApp"
 rm -f "$WORK/$RGD_VAR_CONFIGURATION" "$WORK/$PROVIDER_PROBE"
 
@@ -380,7 +424,8 @@ yq -o=json -I=2 '.metadata.name = "jsonwebapp.kro.run" |
 yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
   .kind = "Kustomization" | .resources = ["provider-resource-graph-definition.json"]' \
   >"$WORK/$PROVIDER_PROBE"
-expect_rejected "an unbaselined JSON ResourceGraphDefinition referenced by Kustomize" "$JSON_RGD"
+expect_rejected "an unbaselined JSON ResourceGraphDefinition referenced by Kustomize" \
+  "$JSON_RGD" "RGD graph, instance, or finding evidence changed"
 rm -f "$WORK/$JSON_RGD" "$WORK/$PROVIDER_PROBE"
 
 # A new remote remains renderable by Kustomize but has no reviewed URL/content digest in this source

@@ -122,6 +122,7 @@ if [ "${#KUSTOMIZATION_PATHS[@]}" -gt 0 ]; then
       remote_resource_index=$((remote_resource_index + 1))
       remote_resource_file="${REMOTE_WORK}/remote-resource-${remote_resource_index}.yaml"
       curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+        --connect-timeout 10 --max-time 60 \
         --retry 3 --retry-all-errors "$resource_path" --output "$remote_resource_file" || fail \
         "could not fetch reviewed remote Kustomize resource: $resource_path"
       actual_remote_sha="$(sha256_file "$remote_resource_file")"
@@ -247,6 +248,18 @@ fi
 # mutation in a shared base is as invisible to this scan as one in a provider. Graph variants belong
 # in a separately scanned definition rather than an invisible per-consumer mutation.
 while IFS= read -r kustomization_file; do
+  targeted_builtin_transformers="$(yq -o=json -I=0 '.' "$kustomization_file" | jq -r '
+    . as $document
+    | [
+        ["images", "namespace", "commonLabels", "labels", "namePrefix", "nameSuffix", "replicas"][] as $field
+        | select($document | has($field))
+        | $field
+      ]
+    | join(", ")
+  ')"
+  [ -z "$targeted_builtin_transformers" ] || fail \
+    "Kustomization uses a built-in transformer that can mutate protected resources ($targeted_builtin_transformers): $kustomization_file"
+
   substitution_override_present="$(yq -o=json -I=0 '.' "$kustomization_file" | jq -r '
     (.commonAnnotations | type) == "object"
     and (.commonAnnotations | has("kustomize.toolkit.fluxcd.io/substitute"))
@@ -272,7 +285,22 @@ while IFS= read -r kustomization_file; do
       def selector_matches($value; $pattern):
         ($pattern == "")
         or (try ($value | test("^(" + $pattern + ")$")) catch false);
-      [ .[] | .varReference[]? ]
+      [
+        .[]
+        | (
+            .namePrefix[]?,
+            .nameSuffix[]?,
+            .namespace[]?,
+            .commonLabels[]?,
+            .labels[]?,
+            .templateLabels[]?,
+            .commonAnnotations[]?,
+            .varReference[]?,
+            .images[]?,
+            .replicas[]?,
+            .nameReference[]?.fieldSpecs[]?
+          )
+      ]
       | .[] as $target
       | select(
           ($target | type) != "object"
