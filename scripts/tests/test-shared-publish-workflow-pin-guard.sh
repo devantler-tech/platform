@@ -158,6 +158,178 @@ else
   fail "guard fired on ksail's legitimate tag signer — it is out of scope"
 fi
 
+# --- RED/GREEN: the scalar is read the way YAML reads it ---------------------
+#
+# A `#` opens a comment only OUTSIDE a quoted scalar. The guard used to strip
+# everything from the first whitespace-`#` unconditionally, so a single-quoted
+# subject whose value legitimately contains one was truncated and only the
+# surviving half was judged. Reproduced before the fix: the first case below was
+# ACCEPTED, and the guard reported all eight subjects pinned, while the value
+# YAML hands cosign carried a second alternative permitting any branch.
+#
+# These cases vary the QUOTING rather than the ref, which build_tree cannot do —
+# it always emits a well-formed single-quoted scalar.
+
+readonly SUBJECT_ID='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@'
+readonly Q="'"
+
+# build_tree_line <dir> <verbatim-subject-line> — as build_tree, but the first
+# subject's whole line is supplied by the caller.
+build_tree_line() {
+  local dir="$1" line="$2" i
+  rm -rf "${dir}"
+  mkdir -p "${dir}/scripts" "${dir}/k8s"
+  cp "${guard}" "${dir}/scripts/guard-shared-publish-workflow-pin.sh"
+  printf 'spec:\n  verify:\n    matchOIDCIdentity:\n      - issuer: x\n%s\n' \
+    "${line}" >"${dir}/k8s/subject-1.yaml"
+  for i in 2 3 4 5 6 7 8; do
+    printf 'spec:\n  verify:\n    matchOIDCIdentity:\n      - issuer: x\n        subject: '\''^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@%s$'\''\n' \
+      "${SHA_PATTERN}" >"${dir}/k8s/subject-${i}.yaml"
+  done
+}
+
+# assert_line_rejected <label> <subject-line> <slug> <expected-stderr-pattern>
+#
+# The expected pattern is required because the guard's easiest failure is the
+# floor, which fires whenever a fixture is escaped wrongly. A bare exit-status
+# assertion would pass on a tree the guard never actually read.
+assert_line_rejected() {
+  local label="$1" line="$2" dir="${work_dir}/red-$3" pattern="$4"
+  build_tree_line "${dir}" "${line}"
+  if run_tree "${dir}"; then
+    fail "guard ACCEPTED ${label} — the value YAML passes to cosign was not what was judged"
+  fi
+  grep -q "${pattern}" "${dir}/stderr" ||
+    fail "guard rejected ${label} but not for the expected reason: $(head -1 "${dir}/stderr")"
+  ok "rejects ${label}"
+}
+
+assert_line_rejected "a # inside a quoted scalar used to hide a branch alternative" \
+  "        subject: ${Q}${SUBJECT_ID}${SHA_PATTERN} # x|${SUBJECT_ID}refs/heads/.+\$${Q}" \
+  quotedcomment 'does not pin'
+
+# THE SAME HIDING TRICK WITH THE ALTERNATIVES REVERSED. The case above puts the
+# fixed-SHA alternative first and the branch alternative last, so the last-@ read
+# lands on `refs/heads/.+` and rejects. Swap them and the last @ lands on a DECOY
+# SHA instead: the guard validates that decoy, reports the subject pinned, and the
+# FIRST alternative -- the one cosign also honours -- still permits any branch.
+# Ordering, not shape, is what the last-@ read is sensitive to, so both orders have
+# to be pinned or the fix only covers the spelling that was reported.
+assert_line_rejected "a reversed alternation whose LAST @ is a decoy SHA" \
+  "        subject: ${Q}${SUBJECT_ID}refs/heads/.+\$| #${SUBJECT_ID}${SHA_PATTERN}\$${Q}" \
+  reversedalt 'does not pin'
+
+assert_line_rejected "a double-quoted scalar, whose escapes this guard does not resolve" \
+  "        subject: \"${SUBJECT_ID}${SHA_PATTERN}\$\"" \
+  doublequoted 'could not read the YAML scalar'
+
+assert_line_rejected "an unterminated quoted scalar" \
+  "        subject: ${Q}${SUBJECT_ID}${SHA_PATTERN}\$" \
+  unterminated 'could not read the YAML scalar'
+
+assert_line_rejected "an escaped '' inside a single-quoted scalar" \
+  "        subject: ${Q}${SUBJECT_ID}${SHA_PATTERN}${Q}${Q}|${SUBJECT_ID}refs/heads/.+\$${Q}" \
+  escapedquote 'could not read the YAML scalar'
+
+# GREEN counterpart: a comment OUTSIDE the quotes is a real comment, and removing
+# it is correct. Without this the fix could pass every case above by refusing
+# every line that contains a `#` at all.
+tree="${work_dir}/green-realcomment"
+build_tree_line "${tree}" "        subject: ${Q}${SUBJECT_ID}${SHA_PATTERN}\$${Q} # pinned by #2816"
+if run_tree "${tree}"; then
+  ok "still removes a real comment that follows a quoted scalar"
+else
+  printf '%s\n' "$(cat "${tree}/stderr")" >&2
+  fail "guard rejected a legitimate subject carrying a real trailing comment"
+fi
+
+# A PLAIN (unquoted) scalar. YAML excludes trailing whitespace from the scalar; a `${v%%[[:space:]]#*}`
+# strip does not — with no comment it keeps every trailing space, and before a `#` it removes only the
+# one space adjacent to the marker. The leftover whitespace then stops the trailing `$` being stripped,
+# so the fixed-SHA alternative fails the whole-line allow-list and the guard blocks a VALID subject.
+# Fail-closed, but wrong: these two must be ACCEPTED.
+
+assert_line_accepted() {
+  local label="$1" line="$2" dir="${work_dir}/green-$3"
+  build_tree_line "${dir}" "${line}"
+  if run_tree "${dir}"; then
+    ok "accepts ${label}"
+  else
+    printf '%s\n' "$(cat "${dir}/stderr")" >&2
+    fail "guard REJECTED ${label} — a valid pinned subject must not be blocked"
+  fi
+}
+
+assert_line_accepted "a plain scalar with trailing whitespace" \
+  "        subject: ${SUBJECT_ID}${SHA_PATTERN}\$   " \
+  plaintrailing
+
+assert_line_accepted "a plain scalar with two spaces before a real comment" \
+  "        subject: ${SUBJECT_ID}${SHA_PATTERN}\$  # pinned by #2816" \
+  plaintwospace
+
+# A BLOCK SCALAR carries one value across several lines, and this guard reads LINES.
+# YAML folds the block into a SINGLE value, so an indented content line that merely
+# LOOKS like `subject: <pinned>` is not a key at all -- but the line-oriented grep sees
+# it, validates it, and reports the subject pinned. The value cosign actually receives
+# is `.*| subject: ...@[0-9a-f]{40}$`, whose FIRST alternative accepts EVERY identity.
+#
+# MEASURED with gopkg.in/yaml.v3: the fixture below resolves to exactly that one scalar.
+# Note the shape is deliberately chosen to carry only ONE workflow URL, so the
+# coverage rule's counts still line up -- a decoy repeating the URL in both alternatives
+# is already caught there, and pinning only that shape would leave this one open.
+#
+# The folded value carries two `@`, so the one-identity rule would have caught it; that
+# rule never runs, because the guard never assembles the folded value.
+#
+# Both block styles are pinned: `>-` folds newlines to spaces and `|-` keeps them, and a
+# matcher-looking line is equally invisible in either.
+assert_line_rejected "a folded block scalar hiding a matcher-looking content line" \
+  "        subject: >-
+          .*|
+          subject: ${SUBJECT_ID}${SHA_PATTERN}\$" \
+  foldedblock 'BLOCK SCALAR'
+
+assert_line_rejected "a literal block scalar hiding a matcher-looking content line" \
+  "        subject: |-
+          .*|
+          subject: ${SUBJECT_ID}${SHA_PATTERN}\$" \
+  literalblock 'BLOCK SCALAR'
+
+# A block-scalar header may carry its indentation digit and chomping sign IN EITHER
+# ORDER. `>-2` and `|+2` are as valid as `>2-` and `|2+` -- all four were measured with
+# gopkg.in/yaml.v3 folding an indented decoy line into the value -- so a check keyed on
+# digits-then-sign missed the sign-first spellings and the bypass came straight back.
+assert_line_rejected "a block scalar whose chomping sign precedes its indentation digit" \
+  "        subject: >-2
+           .*|
+           subject: ${SUBJECT_ID}${SHA_PATTERN}\$" \
+  chompfirst 'BLOCK SCALAR'
+
+assert_line_rejected "a literal block scalar with keep-chomping before its indentation digit" \
+  "        subject: |+2
+           .*|
+           subject: ${SUBJECT_ID}${SHA_PATTERN}\$" \
+  keepchompfirst 'BLOCK SCALAR'
+
+assert_line_rejected "a block scalar with its indentation digit first" \
+  "        subject: >2-
+           .*|
+           subject: ${SUBJECT_ID}${SHA_PATTERN}\$" \
+  indentfirst 'BLOCK SCALAR'
+
+# A comment MAY open immediately after a closing quote, with no whitespace before
+# its `#`. YAML requires whitespace before a comment that follows a PLAIN scalar,
+# and this guard applied that rule to quoted ones too — but a quoted scalar has
+# already ended at its closing quote, so `gopkg.in/yaml.v3` reads `'...'# pinned`
+# as the subject plus a comment. Measured against yaml.v3 directly: `'abc'# c`
+# parses to `abc`, while `'abc'x` is a parse error. So refusing this shape blocks
+# a subject the platform's own parser accepts — fail-closed, and still a defect,
+# exactly as the plain-scalar cases above.
+assert_line_accepted "a comment opening immediately after the closing quote" \
+  "        subject: ${Q}${SUBJECT_ID}${SHA_PATTERN}\$${Q}# pinned by #2816" \
+  quotednospacecomment
+
 # --- Integration: the real repository satisfies the narrowed guard -----------
 
 if (cd "${root_dir}" && bash "${guard}" >/dev/null 2>"${work_dir}/real.stderr"); then

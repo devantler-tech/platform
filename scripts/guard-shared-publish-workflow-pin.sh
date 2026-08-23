@@ -72,6 +72,96 @@ readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?
 # when a new consumer is genuinely added.
 readonly EXPECTED_MIN_SUBJECTS=8
 
+# Return the YAML scalar of a `key: value` line, with any inline comment removed.
+#
+# `#` opens a comment only OUTSIDE a quoted scalar. Stripping at the first
+# whitespace-`#` unconditionally truncates a QUOTED value that legitimately contains
+# one — and these values are cosign identity regexes, so the surviving half can pin a
+# tag while the half YAML actually hands to cosign carries a second `|` alternative
+# permitting `refs/heads/`. Reproduced before this fix: the single-quoted subject
+# `…@refs/tags/v.+ # x|^https://…@refs/heads/.+$` was accepted and the guard reported
+# all eight subjects pinned.
+#
+# FAILS CLOSED. Returning non-zero means "this line is not something I can read the
+# way YAML reads it", and the caller rejects it rather than validating a guess. That
+# covers an unterminated quote and a double-quoted scalar, whose backslash escapes
+# would have to be unescaped before the ref could be judged; every subject in this
+# repository is single-quoted or plain, so a double-quoted one is a new shape that
+# gets reviewed here deliberately instead of being parsed on a guess.
+yaml_scalar() {
+  local raw="$1" value body scalar rest
+  value="${raw#"${raw%%[![:space:]]*}"}"     # indentation
+  value="${value#- }"                        # optional block-sequence entry
+  value="${value#*:}"                        # the key
+  value="${value#"${value%%[![:space:]]*}"}" # whitespace after the colon
+
+  case "$value" in
+    # A double-quoted scalar would need its backslash escapes resolved before the ref
+    # could be judged, and every subject here is single-quoted or plain. A new one is
+    # reviewed deliberately rather than parsed on a guess.
+    '"'*) return 1 ;;
+    "'"*) ;;
+    *)
+      # A plain scalar, where a whitespace-`#` genuinely does open a comment. YAML also excludes
+      # TRAILING whitespace from a plain scalar, and this has to be removed separately: with no
+      # comment present the strip above matches nothing and every trailing space survives, and with
+      # one present it removes only the single space adjacent to the `#`. Either way the leftover
+      # whitespace rides into the ref, stops the trailing `$` being stripped, and fails the fixed
+      # `[0-9a-f]{40}` alternative against the whole-line allow-list — so the guard blocks a VALID
+      # pinned subject. Fail-closed, but a false refusal is still a defect.
+      scalar="${value%%[[:space:]]#*}"
+      scalar="${scalar%"${scalar##*[![:space:]]}"}"
+      printf '%s' "$scalar"
+      return 0
+      ;;
+  esac
+
+  body="${value#\'}"
+  # No closing quote on this line: a multi-line or malformed scalar.
+  case "$body" in
+    *"'"*) ;;
+    *) return 1 ;;
+  esac
+  scalar="${body%%\'*}"
+  body="${body#*\'}"
+
+  # `''` is an escaped quote rather than the end of the scalar. No subject can reach
+  # here carrying one: everything before the last @ must match SUBJECT_PATTERN, which
+  # admits no quote, and everything after it is judged by an allow-list that admits
+  # none either. Refuse the shape rather than carry an unreachable — and therefore
+  # untested — branch through a security guard.
+  case "$body" in
+    "'"*) return 1 ;;
+  esac
+
+  # Past the closing quote only a comment may follow. The whitespace-before-`#` rule
+  # belongs to PLAIN scalars, where it is what separates the comment from the value;
+  # a quoted scalar has already ended at its closing quote, so `gopkg.in/yaml.v3`
+  # opens a comment on a `#` that follows immediately. Measured against yaml.v3
+  # directly: `subject: 'abc'# c` parses to `abc`, while `subject: 'abc'x` is a parse
+  # error. Applying the plain-scalar rule here rejected a subject the platform's own
+  # parser accepts — fail-closed, but a false refusal is still a defect, and one that
+  # blocks every workflow invoking this guard.
+  #
+  # Non-comment trailing content stays REJECTED in both shapes, which is what keeps
+  # this a narrowing of the rule rather than a hole: yaml.v3 errors on it too, so a
+  # line carrying it was not read the way YAML reads it.
+  case "$body" in
+    '') ;;
+    '#'*) ;;
+    [[:space:]]*)
+      rest="${body#"${body%%[![:space:]]*}"}"
+      case "$rest" in
+        '' | '#'*) ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+
+  printf '%s' "$scalar"
+}
+
 main() {
   cd "$REPO_ROOT"
 
@@ -121,6 +211,52 @@ main() {
 $discovered_lines
 EOF
 
+  # A BLOCK SCALAR carries ONE value across several lines, and everything in this guard
+  # reads LINES. YAML folds the block into a single value, so an indented content line
+  # that merely LOOKS like `subject: <pinned>` is not a key at all -- the strict pattern
+  # matches that content line, validates it, and reports the subject pinned, while the
+  # value cosign actually receives is something like `.*| subject: ...@[0-9a-f]{40}$`
+  # whose FIRST alternative accepts every identity.
+  #
+  # The coverage rule above does NOT catch this. It compares reference counts against
+  # validated counts, and a decoy carrying the workflow URL only once keeps them aligned
+  # -- measured. A decoy that repeats the URL in both alternatives IS caught there, so
+  # pinning only that shape would leave the reachable one open.
+  #
+  # No legitimate subject needs a block scalar: a cosign identity regex is one line. So
+  # the form is refused outright rather than assembled, exactly as the double-quoted
+  # scalar is refused below. Scoped to files that reference the shared workflow, so an
+  # unrelated `subject:` block scalar elsewhere in the repository is not this guard's
+  # business.
+  local block_subjects=""
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    # ANY suffix after the indicator, not an enumerated one. A block-scalar header may
+    # carry an indentation digit and a chomping sign IN EITHER ORDER -- `>-2` and `>2-`
+    # are both valid, and so are `|+2` and `|2+`; all four were measured folding an
+    # indented decoy line into the value. A pattern matching only digits-then-sign missed
+    # the sign-first spellings, which restored the bypass this check exists to close.
+    #
+    # Nothing legitimate is lost by being broad: in YAML a value beginning with `|` or `>`
+    # IS a block scalar, so there is no plain scalar for this to catch by mistake.
+    if grep -qE '(subject|subjectRegex|subjectRegExp):[[:space:]]*[|>][^[:space:]]*[[:space:]]*(#.*)?$' "$file"; then
+      block_subjects="$block_subjects  $file
+"
+    fi
+  done <<EOF
+$discovered_lines
+EOF
+
+  if [ -n "$block_subjects" ]; then
+    printf 'guard: a cosign subject is written as a YAML BLOCK SCALAR in:\n' >&2
+    printf '%s' "$block_subjects" >&2
+    printf 'This guard reads lines, so it cannot assemble the folded value, and an indented\n' >&2
+    printf 'content line that looks like a pinned subject key would be validated in its place\n' >&2
+    printf 'while the value cosign receives carries an alternative that pins nothing.\n' >&2
+    printf 'Write the subject as a single-line plain or single-quoted scalar.\n' >&2
+    return 1
+  fi
+
   if [ -n "$unvalidated" ]; then
     printf 'guard: found reference(s) to the shared publish workflows that this guard did not validate:\n' >&2
     printf '%s' "$unvalidated" >&2
@@ -138,8 +274,42 @@ EOF
     location="$location:${line%%:*}"
     subject="${line#*:}"
 
-    # Everything after the LAST @ is the ref constraint; a trailing $ anchor and any
-    # closing quote are not part of it.
+    # Work on the YAML scalar, not the entire source line, and read the scalar the
+    # way YAML reads it. An inline comment may contain another `@refs/tags/...`;
+    # taking the last @ before removing that comment would validate the comment
+    # instead of the value consumed by YAML. A `#` INSIDE a quoted scalar is not a
+    # comment at all, so removing it would validate a truncation of the value.
+    if ! subject="$(yaml_scalar "$subject")"; then
+      printf '%s: could not read the YAML scalar on this line; this guard will not\n' "$location" >&2
+      printf 'validate a value it cannot parse the way YAML parses it (a double-quoted or\n' >&2
+      printf 'unterminated scalar). Rewrite it as a single-quoted or plain scalar, or extend\n' >&2
+      printf 'yaml_scalar to understand this form deliberately.\n' >&2
+      status=1
+      continue
+    fi
+
+    # EXACTLY ONE `@`, checked BEFORE the ref is read. The ref constraint is everything
+    # after the LAST @, so any alternative carrying its own `...@...` earlier in the scalar
+    # is never examined. Writing the fixed-SHA alternative LAST makes the last-@ read land
+    # on that decoy: the guard validates it, reports the subject pinned, and an earlier
+    # alternative still permits any branch — cosign honours both. This is the same hiding
+    # trick as a `#` inside a quoted scalar, but sensitive to ORDER rather than shape, so
+    # rejecting one spelling of it leaves the other open.
+    #
+    # A legitimate subject never needs a second identity: alternation over refs belongs
+    # INSIDE the group after the single @, as `@(sha1|sha2)`, which the allow-list below
+    # already parses per alternative.
+    local at_count
+    at_count="$(printf '%s' "$subject" | tr -cd '@' | wc -c | tr -d ' ')"
+    if [ "$at_count" -ne 1 ]; then
+      printf '%s: subject carries %s "@" separators, so it names more than one workflow identity; only the ref after the last @ is validated, so an earlier alternative does not pin a fixed revision (subject: %s)\n' \
+        "$location" "$at_count" "$subject" >&2
+      status=1
+      continue
+    fi
+
+    # Everything after the LAST @ in the scalar is the ref constraint; a trailing
+    # $ anchor and any closing quote are not part of it.
     ref="${subject##*@}"
     ref="${ref%\'}"
     ref="${ref%\"}"
