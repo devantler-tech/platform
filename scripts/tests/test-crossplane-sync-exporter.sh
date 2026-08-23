@@ -597,10 +597,15 @@ require_line \
   "${deployment}" \
   'serviceAccountName: crossplane-sync-exporter' \
   'the exporter must use its dedicated service account'
-require_text \
+# kube-state-metrics <=2.18 can drop every custom-resource family when several
+# GVKs intentionally share this metric's HELP header (upstream #2453 / #2866).
+# v2.19.1 is the first stable release carrying the index-preserving header fix;
+# pin its multi-architecture manifest exactly so the silent-series regression
+# cannot return through a tag move or a downgrade.
+require_line \
   "${deployment}" \
-  'registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.17.0@sha256:' \
-  'the kube-state-metrics image must be immutable'
+  'image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1@sha256:85108987d044b18a098126732f98602df408888c0f7d456241f5abefb9744bc1' \
+  'the custom-resource exporter must use the first stable kube-state-metrics release with duplicate-header alignment fixed'
 require_text \
   "${deployment}" \
   'ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:' \
