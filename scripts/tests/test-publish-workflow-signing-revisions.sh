@@ -597,6 +597,14 @@ case "$args" in
       printf 'API rate limit exceeded\n' >&2
       exit 1
     fi
+    # A tag that lives at its OWN commit, as real tags do. The fixture otherwise resolves
+    # every tag to one shared commit, which was observationally fine while the signing pin
+    # was read at the tag NAME. Now that it is read at the VERIFIED COMMIT, giving a tag its
+    # own commit is the only way a case can still observe which tag was selected.
+    if [ -n "${BM_OWNCOMMIT_TAG:-}" ] && [ "$bm_ctag" = "$BM_OWNCOMMIT_TAG" ]; then
+      printf '%s\n' "$BM_SHA_B"
+      exit 0
+    fi
     # The commit a tag currently resolves to. Every tag resolves to BM_TAG_SHA, so the run
     # lookup below matches by default and the existing cases keep exercising their own
     # guards rather than failing for want of this one.
@@ -631,6 +639,8 @@ case "$args" in
     # was moved, while `/commits/<tag>` above reports where it points NOW. Naming a tag in
     # BM_MOVED_TAG reproduces exactly that, and nothing else about the fixture changes.
     bm_run_sha="${BM_TAG_SHA:-$BM_SHA_C}"
+    # Its run carries that same commit, or the tag would read as MOVED and refuse.
+    [ -n "${BM_OWNCOMMIT_TAG:-}" ] && [ "$bm_ref" = "$BM_OWNCOMMIT_TAG" ] && bm_run_sha="$BM_SHA_B"
     [ "$bm_ref" = "${BM_MOVED_TAG:-}" ] && bm_run_sha="$BM_SHA_A"
     printf '{"workflow_runs":[{"name":"CD","conclusion":"success","path":".github/workflows/cd.yaml","head_branch":"%s","head_sha":"%s"}]}\n' "$bm_ref" "$bm_run_sha"
     ;;
@@ -645,7 +655,19 @@ case "$args" in
     # SHA, and that looks exactly like the walk having chosen the older tag.
     bm_pinref="${bm_pinref%% *}"
     bm_pinsha="$BM_SHA_A"
-    [ "$bm_pinref" = 'v2.0.0+build.1' ] && bm_pinsha="$BM_SHA_B"
+    # Keyed on the COMMIT, not the tag name: `pin_at_ref` is handed the verified commit for
+    # the signing read and only ever a BRANCH name otherwise, so a tag-name key here would
+    # never match and the case would silently stop discriminating.
+    [ -n "${BM_OWNCOMMIT_TAG:-}" ] && [ "$bm_pinref" = "$BM_SHA_B" ] && bm_pinsha="$BM_SHA_B"
+    # A tag that MOVES between publication verification and this lookup. Reading cd.yaml at
+    # the mutable tag NAME sees the NEW commit's pin; reading it at the commit SHA that was
+    # verified as published sees the pin that actually signed the artifact. Giving the two
+    # refs different pins is what makes the caller's choice of ref observable at all.
+    [ -n "${BM_TOCTOU_TAG:-}" ] && [ "$bm_pinref" = "$BM_TOCTOU_TAG" ] && bm_pinsha="$BM_SHA_B"
+    # The over-permissiveness control: give the VERIFIED commit a pin that genuinely differs
+    # from main's, so a real divergence must still be reported rather than smoothed into
+    # agreement by a fix that simply reads a different ref.
+    [ -n "${BM_TOCTOU_SHA_PIN:-}" ] && [ "$bm_pinref" = "${BM_TAG_SHA:-$BM_SHA_C}" ] && bm_pinsha="$BM_TOCTOU_SHA_PIN"
     # BOTH shared workflows, because the cd.yaml request carries no workflow name and the
     # five consumers split across publish-app and publish-manifests. The caller filters to
     # the one it asked about, so emitting both is exact rather than lax; a stub emitting
@@ -786,11 +808,12 @@ bm2_out="$WORK/buildmeta-only.out"
 # Only `aws` carries the metadata-only release; every other consumer stays on a plain
 # `v1.9.0`, so nothing else in this fixture can produce a refusal or a divergence.
 #
-# The stub pins `v2.0.0+build.1` to SHA_B and everything else — including the default
-# branch — to SHA_A. Selecting the metadata tag therefore prints SHA_B as the signing
-# revision and reports the consumer as diverged; walking silently past it prints SHA_A
-# and reports it in sync. SHA_B in the output is the whole discrimination.
-if BM_AWS_TAGS='v2.0.0+build.1\nv1.9.0\n' \
+# `v2.0.0+build.1` lives at its own commit (SHA_B) and everything else — including the
+# default branch — resolves to SHA_A. The signing pin is read at the VERIFIED COMMIT, so
+# selecting the metadata tag prints SHA_B as the signing revision and reports the consumer
+# as diverged; walking silently past it prints SHA_A and reports it in sync. SHA_B in the
+# output is the whole discrimination.
+if BM_AWS_TAGS='v2.0.0+build.1\nv1.9.0\n' BM_OWNCOMMIT_TAG='v2.0.0+build.1' \
   BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$bm2_root" "$SCRIPT" >"$bm2_out" 2>&1; then
   grep -qF "$SHA_B" "$bm2_out" ||
@@ -1243,8 +1266,55 @@ else
   fail "the below-rank control failed outright — the SemVer refusal is too broad: $(cat "$iv2_out")"
 fi
 
+# ---------------------------------------------------------------------------
+# 22. THE SIGNING PIN MUST BE READ AT THE VERIFIED COMMIT, NOT THE MUTABLE TAG. (#3305 review)
+#     `deployed_tag` verifies publication against the SHA from `tag_commit`, then returned
+#     only the tag NAME. `default_resolver` passed that name to `pin_at_ref`, so if the tag
+#     moves after the publication check and before the workflow read, the script verifies
+#     publication for the OLD commit and reads cd.yaml from the NEW one — two individually
+#     true reads composed into a confident wrong signing revision.
+#
+#     Case 17 covers a tag ALREADY moved at verification time, which refuses. This is the
+#     narrower race the refusal cannot see: at verification the tag was consistent.
+# ---------------------------------------------------------------------------
+tc_root="$WORK/toctou-root"
+cp -R "$bm_root" "$tc_root"
+tc_out="$WORK/toctou.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_TOCTOU_TAG='v2.0.0' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$tc_root" "$SCRIPT" >"$tc_out" 2>&1; then
+  # The signing revision must be the pin at the VERIFIED commit ($SHA_A), never the pin the
+  # moved tag now resolves to ($SHA_B).
+  grep -qE "^IN-SYNC +wedding-app .*signed=$SHA_A" "$tc_out" ||
+    fail "the signing revision was not read at the verified commit: $(grep -E '^(IN-SYNC|DIVERGED|UNRESOLVED) +wedding-app' "$tc_out")"
+  grep -qE "^(DIVERGED|IN-SYNC) +wedding-app .*signed=$SHA_B" "$tc_out" &&
+    fail 'the signing revision came from the MOVED tag, so a workflow revision that never signed the artifact would enter the allow-list'
+  tc_insync="$(grep -c '^IN-SYNC' "$tc_out" || true)"
+  [ "$tc_insync" -eq 5 ] ||
+    fail "expected all FIVE consumers IN-SYNC through the same stub, got $tc_insync — the fixture failed for an unrelated reason"
+  pass 'the signing pin is read at the commit whose publication was verified, not at the mutable tag'
+else
+  fail "the TOCTOU fixture failed outright, so it proves nothing: $(cat "$tc_out")"
+fi
+
+# CONTROL: a GENUINE divergence at the verified commit must still be reported. Without this
+# the assertion above would be satisfied by any change that makes every consumer read
+# IN-SYNC, which would hide real drift instead of fixing the race.
+tc2_root="$WORK/toctou-control-root"
+cp -R "$bm_root" "$tc2_root"
+tc2_out="$WORK/toctou-control.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_TOCTOU_TAG='v2.0.0' BM_TOCTOU_SHA_PIN="$SHA_B" \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$tc2_root" "$SCRIPT" >"$tc2_out" 2>&1; then
+  grep -qE "^DIVERGED +wedding-app .*signed=$SHA_B .*pinned=$SHA_A" "$tc2_out" ||
+    fail "a real divergence at the verified commit was not reported: $(grep -E '^(IN-SYNC|DIVERGED|UNRESOLVED) +wedding-app' "$tc2_out")"
+  pass 'a genuine divergence at the verified commit is still reported, so the fix is not smoothing real drift into agreement'
+else
+  fail "the divergence control failed outright: $(cat "$tc2_out")"
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (21 cases)\n'
+printf '\nPASS: publish-workflow signing-revision report (22 cases)\n'

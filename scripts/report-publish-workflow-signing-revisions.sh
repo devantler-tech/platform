@@ -522,7 +522,11 @@ deployed_tag() {
       return 1
     fi
     [ "$exact_pub" -eq 0 ] || return 1
-    printf '%s\tpinned\n' "$candidate"
+    # The VERIFIED commit travels with the tag. `pin_at_ref` used to be handed the tag NAME,
+    # which is mutable: if the tag moves after the publication check above and before that
+    # read, publication is verified for this commit while cd.yaml is read from a different
+    # one, and the report emits a confident signing revision that never signed the artifact.
+    printf '%s\tpinned\t%s\n' "$candidate" "$exact_sha"
     return 0
   fi
   # Strip the optional `v` before ordering: `sort -V` compares it as text, so a mixed list
@@ -721,7 +725,7 @@ deployed_tag() {
             fi
           done <<<"$unrankable"
         fi
-        printf '%s\tinferred\n' "$candidate"
+        printf '%s\tinferred\t%s\n' "$candidate" "$walk_sha"
         return 0
       fi
       if [ "$walk_pub" -eq 2 ]; then
@@ -737,13 +741,21 @@ deployed_tag() {
 
 # Default resolver: "<signing revision>\t<current pin>\t<pinned|inferred>".
 default_resolver() {
-  local repo="$1" workflow="$2" version="${3:-}" branch tagline tag origin signing current
+  local repo="$1" workflow="$2" version="${3:-}" branch tagline tag origin tag_sha signing current
   branch="$(gh_retry api "repos/devantler-tech/${repo}" --jq .default_branch)" || return 1
   plausible_ref "$branch" || return 1
   tagline="$(deployed_tag "$repo" "$version")" || return 1
-  IFS=$'\t' read -r tag origin <<<"$tagline"
+  # THREE fields: reading two would leave `origin` holding "pinned<TAB><sha>", which matches
+  # neither `pinned` nor `inferred` in the disclaimer case below, so the row would silently
+  # lose its not-applied-revision disclaimer.
+  IFS=$'\t' read -r tag origin tag_sha <<<"$tagline"
+  # Fail closed rather than fall back to the tag: an empty or malformed third field would
+  # restore exactly the mutable-ref read this change exists to close.
+  is_sha "${tag_sha:-}" || return 1
   current="$(pin_at_ref "$repo" "$workflow" "$branch")" || return 1
-  signing="$(pin_at_ref "$repo" "$workflow" "$tag")" || return 1
+  # The COMMIT, never `$tag`. `$tag` remains the human-facing name and is what the Actions
+  # run query above was scoped to; it is not a stable ref to read file content at.
+  signing="$(pin_at_ref "$repo" "$workflow" "$tag_sha")" || return 1
   printf '%s\t%s\t%s\n' "$signing" "$current" "$origin"
 }
 
