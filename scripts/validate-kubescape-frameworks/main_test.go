@@ -933,3 +933,61 @@ func TestRealConditionalJobIsStillRead(t *testing.T) {
 		t.Fatalf("set = %q", got)
 	}
 }
+
+// A NON-LITERAL always-false job condition is skipped by Actions exactly as `if: false`
+// is, so a decoy job could supply the only full-framework invocation the validator ever
+// saw while the job that actually ran carried a reduced one. This is the reviewer's
+// fixture from #3312 verbatim; #3330 tracked it as a residual and it is now closed.
+func TestRejectsScanInAnAlwaysFalseComparisonJob(t *testing.T) {
+	workflow := "jobs:\n" +
+		"  skipped-decoy:\n    if: ${{ 1 == 2 }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"  reduced-scan:\n    steps:\n" +
+		"      - run: env ksail workload scan --framework nsa\n"
+	path := writeTemp(t, workflow)
+	if set, err := frameworkSet(path); err == nil {
+		t.Fatalf("expected FAIL CLOSED — a job Actions skips cannot supply the framework set; got %q", set)
+	}
+}
+
+// The `!=` spelling of the same bypass.
+func TestRejectsScanInAnAlwaysFalseInequalityJob(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ 'a' != 'a' }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	if set, err := frameworkSet(path); err == nil {
+		t.Fatalf("expected FAIL CLOSED — an always-false inequality job never runs; got %q", set)
+	}
+}
+
+// CONTROL — an always-TRUE comparison is a job that DOES run, so its scan must still be
+// read. Without this the fix could be satisfied by refusing every comparison.
+func TestAlwaysTrueComparisonJobIsStillRead(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ 1 == 1 }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("an always-true comparison job runs and must be read, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
+	}
+}
+
+// CONTROL, and the one that pins the KIND bound. Actions coerces across types, so
+// `1 == '1'` evaluates TRUE there and the job RUNS. Treating mismatched kinds as unequal
+// would declare this constant-false and reject a legitimate workflow — the expensive
+// direction, and the same over-refusal that failed all three real-workflow tests before.
+func TestMixedKindComparisonIsNotTreatedAsFalse(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    if: ${{ 1 == '1' }}\n    steps:\n" +
+		"      - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("a mixed-kind comparison is not decidable here and must stay accepted, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
+	}
+}

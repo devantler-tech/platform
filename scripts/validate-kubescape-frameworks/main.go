@@ -882,9 +882,97 @@ func constantFalse(n *yaml.Node) bool {
 	v := strings.TrimSpace(n.Value)
 	v = strings.TrimPrefix(v, "${{")
 	v = strings.TrimSuffix(v, "}}")
-	switch strings.ToLower(strings.TrimSpace(v)) {
+	v = strings.TrimSpace(v)
+	switch strings.ToLower(v) {
 	case "false", "'false'", "\"false\"", "0":
 		return true
 	}
-	return false
+	return constantFalseComparison(v)
+}
+
+// constantFalseComparison decides the one further shape that is safely decidable:
+// a comparison of two LITERALS of the same kind.
+//
+// `${{ 1 == 2 }}` is skipped by Actions exactly as `if: false` is, so accepting it
+// let a skipped decoy job supply the only full-framework invocation this validator
+// ever saw, while the job that actually ran carried a reduced one. That is the same
+// bypass the literal check closes, spelled as an expression.
+//
+// Still bounded, and the bound is what keeps the real workflow valid. Anything
+// naming a context (`github.`, `needs.`, an input, a function call) is NOT decidable
+// here and stays ACCEPTED, exactly as before -- the real `validate` job gates on
+// `needs.changes.outputs.k8s == 'true'`, and refusing undecidable conditions was
+// measured to fail all three real-workflow tests.
+//
+// Kinds must MATCH before a verdict is taken. Actions coerces across types, so
+// `1 == '1'` is TRUE there; declaring it constant-false would reject a legitimate
+// workflow, which is the expensive direction. Mixed kinds are therefore treated as
+// undecidable rather than unequal.
+func constantFalseComparison(expr string) bool {
+	var op string
+	switch {
+	case strings.Contains(expr, "=="):
+		op = "=="
+	case strings.Contains(expr, "!="):
+		op = "!="
+	default:
+		return false
+	}
+	parts := strings.SplitN(expr, op, 2)
+	if len(parts) != 2 {
+		return false
+	}
+	leftKind, leftVal, leftOK := literalOperand(parts[0])
+	rightKind, rightVal, rightOK := literalOperand(parts[1])
+	if !leftOK || !rightOK || leftKind != rightKind {
+		return false
+	}
+	if op == "==" {
+		return leftVal != rightVal
+	}
+	return leftVal == rightVal
+}
+
+// literalOperand classifies one side of a comparison as a literal, returning its
+// kind and a normalised value. A non-literal -- any context reference, function
+// call, or compound expression -- reports false so the comparison stays undecidable.
+func literalOperand(s string) (kind string, value string, ok bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", "", false
+	}
+	if len(s) >= 2 {
+		first, last := s[0], s[len(s)-1]
+		if (first == '\'' && last == '\'') || (first == '"' && last == '"') {
+			inner := s[1 : len(s)-1]
+			// A quote INSIDE means this is not one simple literal (an escape, or a
+			// larger expression that merely starts and ends with a quote).
+			if strings.ContainsAny(inner, "'\"") {
+				return "", "", false
+			}
+			return "string", inner, true
+		}
+	}
+	switch strings.ToLower(s) {
+	case "true", "false":
+		return "bool", strings.ToLower(s), true
+	case "null":
+		return "null", "null", true
+	}
+	// Numbers are normalised so `1` and `1.0` compare equal, as Actions treats them.
+	if numericLiteral.MatchString(s) {
+		return "number", normaliseNumber(s), true
+	}
+	return "", "", false
+}
+
+var numericLiteral = regexp.MustCompile(`^-?(0|[1-9][0-9]*)(\.[0-9]+)?$`)
+
+// normaliseNumber trims a trailing fractional zero run so `1.0` and `1` agree.
+func normaliseNumber(s string) string {
+	if !strings.Contains(s, ".") {
+		return s
+	}
+	s = strings.TrimRight(s, "0")
+	return strings.TrimSuffix(s, ".")
 }
