@@ -287,9 +287,26 @@ effective_version() {
             "$expr" >&2
           return 1
           ;;
-        '>='[0-9]*)
-          printf '%s\n' ''
-          return 0
+        # The WHOLE selector must BE an inclusive lower bound, not merely start like one.
+        # The previous `'>='[0-9]*` matched any trailing text: `>=1.0.0=bad` and
+        # `>=1.0.0>=2.0.0` were both read as UNBOUNDED, so the walk returned the newest
+        # published tag and attributed its workflow revision to an artifact Flux would
+        # never have selected — a confident wrong answer from a selector Flux itself
+        # rejects. No character class catches them: every character in both is one a
+        # legitimate single lower bound may contain, which is why this is anchored on the
+        # whole string instead.
+        #
+        # One to three numeric components, so a legitimate `>=1.0` is not newly refused.
+        # Anything richer (prerelease, build metadata, a second bound) is handled by the
+        # arms above or refused here.
+        '>='*)
+          if [[ "$expr" =~ ^\>=[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            printf '%s\n' ''
+            return 0
+          fi
+          printf 'malformed or unsupported semver constraint "%s" needs Flux-compatible selection, which this script does not implement\n' \
+            "$expr" >&2
+          return 1
           ;;
         # A STRICT lower bound is not the same as an inclusive one. `>=1.0.0` admits
         # 1.0.0, so treating it as unbounded and taking the newest published tag is

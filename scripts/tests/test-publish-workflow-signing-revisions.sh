@@ -402,6 +402,14 @@ bounded_case prerelease_named '>1.2.3-alpha.1'
 # contain, so no character-class check catches it.
 bounded_case strict_lower '>1.0.0' 'strict lower-bound semver constraint'
 
+# MALFORMED selectors that merely START like the inclusive lower bound. The previous
+# prefix test matched any trailing text, so these were read as UNBOUNDED and the walk
+# returned the newest published tag — a confident signing revision for an artifact Flux
+# would never have selected, from a selector Flux itself rejects. Every character in both
+# is one a legitimate single lower bound may contain, so no character class catches them.
+bounded_case malformed_trailing '>=1.0.0=bad' 'malformed or unsupported semver constraint'
+bounded_case malformed_second_bound '>=1.0.0>=2.0.0' 'malformed or unsupported semver constraint'
+
 # ---------------------------------------------------------------------------
 # 10. AN EMPTY MIDDLE FIELD MUST NOT SHIFT `origin` INTO `current`. (#3305 review)
 #     Tab is IFS WHITESPACE, so `IFS=$'\t' read -r signing current origin` COLLAPSES
