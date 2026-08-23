@@ -645,18 +645,18 @@ deployed_tag() {
     # `2.0.0` also `2`), while `2.1.3` cannot be shortened at all.
     local partial_re="" p_major p_minor p_patch partial_hit
     case "$bare" in
-    *.*.*)
-      p_major="${bare%%.*}"
-      p_patch="${bare##*.}"
-      p_minor="${bare#*.}"
-      p_minor="${p_minor%%.*}"
-      if [ "$p_patch" = "0" ]; then
-        partial_re="${p_major}\\.${p_minor}"
-        if [ "$p_minor" = "0" ]; then
-          partial_re="${partial_re}|${p_major}"
+      *.*.*)
+        p_major="${bare%%.*}"
+        p_patch="${bare##*.}"
+        p_minor="${bare#*.}"
+        p_minor="${p_minor%%.*}"
+        if [ "$p_patch" = "0" ]; then
+          partial_re="${p_major}\\.${p_minor}"
+          if [ "$p_minor" = "0" ]; then
+            partial_re="${partial_re}|${p_major}"
+          fi
         fi
-      fi
-      ;;
+        ;;
     esac
     if [ -n "$partial_re" ]; then
       partial_hit="$(printf '%s\n' "$tags" | grep -E "^v?(${partial_re})$" | sort -u || true)"
