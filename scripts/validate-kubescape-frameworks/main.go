@@ -1077,9 +1077,6 @@ func splitTopLevel(expr, op string) []string {
 // comparisonTri decides a comparison of two LITERALS of the same kind, and reports
 // triUnknown for everything else.
 func comparisonTri(expr string) int {
-	if constantFalseComparison(expr) {
-		return triFalse
-	}
 	var op string
 	switch {
 	case strings.Contains(expr, "=="):
@@ -1108,31 +1105,6 @@ func comparisonTri(expr string) int {
 		return triTrue
 	}
 	return triFalse
-}
-
-func constantFalseComparison(expr string) bool {
-	var op string
-	switch {
-	case strings.Contains(expr, "=="):
-		op = "=="
-	case strings.Contains(expr, "!="):
-		op = "!="
-	default:
-		return false
-	}
-	parts := strings.SplitN(expr, op, 2)
-	if len(parts) != 2 {
-		return false
-	}
-	leftKind, leftVal, leftOK := literalOperand(parts[0])
-	rightKind, rightVal, rightOK := literalOperand(parts[1])
-	if !leftOK || !rightOK || leftKind != rightKind {
-		return false
-	}
-	if op == "==" {
-		return leftVal != rightVal
-	}
-	return leftVal == rightVal
 }
 
 // literalOperand classifies one side of a comparison as a literal, returning its
