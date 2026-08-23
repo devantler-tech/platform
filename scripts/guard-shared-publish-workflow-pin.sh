@@ -90,10 +90,10 @@ readonly EXPECTED_MIN_SUBJECTS=8
 # gets reviewed here deliberately instead of being parsed on a guess.
 yaml_scalar() {
   local raw="$1" value body scalar rest
-  value="${raw#"${raw%%[![:space:]]*}"}"      # indentation
-  value="${value#- }"                          # optional block-sequence entry
-  value="${value#*:}"                          # the key
-  value="${value#"${value%%[![:space:]]*}"}"  # whitespace after the colon
+  value="${raw#"${raw%%[![:space:]]*}"}"     # indentation
+  value="${value#- }"                        # optional block-sequence entry
+  value="${value#*:}"                        # the key
+  value="${value#"${value%%[![:space:]]*}"}" # whitespace after the colon
 
   case "$value" in
     # A double-quoted scalar would need its backslash escapes resolved before the ref
