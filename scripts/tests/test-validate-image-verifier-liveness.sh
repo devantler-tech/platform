@@ -1937,6 +1937,70 @@ if output="$(run_script TALOS_NODES=asciiesc 2>&1)"; then
 fi
 require_text "${output}" 'disabled_plugins' 'case 36 control: the genuinely disabled verifier is still detected'
 
+# ===========================================================================
+# Case 37 — a discovered node the autoscaler REMOVES mid-pass is an ordinary
+# node-set change, not an infrastructure failure. (#3320 review)
+#
+# `path_probe` fails for a node that has left, and that reachability failure used
+# to exit 2 immediately, so the post-pass inventory read never got the chance to
+# notice the node-set change and retry. The independently-concurrent
+# validate-image-verifier-liveness.yaml workflow therefore failed during an
+# ordinary scale-down or replacement, despite the convergence loop existing.
+# ===========================================================================
+install_sequenced_kubectl
+reset_node_sequence
+
+write_node departing
+verifier_config /opt/containerd/image-verifier/bin >"${fixtures}/departing/files/_etc_cri_conf.d_cri.toml"
+# It answers the config read and then stops answering, which is exactly how a node
+# being drained behaves: the pass gets past the config and only then finds it gone.
+printf 'DEPARTED\n' >"${fixtures}/departing/lsfail_all"
+
+# Call 1 sees both; every later read sees only the survivor, so the node really has
+# left rather than merely gone quiet.
+printf '{"items":[%s,%s]}' "$(node_json prod-worker-1 uid-1 good)" "$(node_json prod-worker-2 uid-2 departing)" \
+  >"${fixtures}/nodes.1.json"
+for call in 2 3 4; do
+  printf '{"items":[%s]}' "$(node_json prod-worker-1 uid-1 good)" >"${fixtures}/nodes.${call}.json"
+done
+
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 0 ]] ||
+  fail "case 37: a node that left mid-pass must converge and report, got exit ${status} — ${output}"
+require_text "${output}" 'The node set changed while it was being checked' 'case 37: says it re-ran'
+require_text "${output}" 'All 1 node(s)' 'case 37: the verdict counts the fleet that actually exists'
+refute_text "${output}" 'cannot reach node departing' 'case 37: blamed infrastructure for an ordinary scale-down'
+
+# ===========================================================================
+# Case 37b CONTROL — a node that is unreachable but STILL IN THE FLEET must
+# still fail as infrastructure. (#3320 review)
+#
+# Without this, case 37 would be satisfied by any change that turns every
+# unreachable node into a retry — downgrading a real fault into a silent re-run
+# and eventually into a verdict for a fleet that was never checked, which is the
+# fail-open this whole script exists to detect.
+# ===========================================================================
+install_sequenced_kubectl
+reset_node_sequence
+
+write_node stuck
+verifier_config /opt/containerd/image-verifier/bin >"${fixtures}/stuck/files/_etc_cri_conf.d_cri.toml"
+printf 'STUCK\n' >"${fixtures}/stuck/lsfail_all"
+
+# The fleet never changes: `stuck` is still registered, it just stopped answering.
+for call in 1 2 3 4; do
+  printf '{"items":[%s,%s]}' "$(node_json prod-worker-1 uid-1 good)" "$(node_json prod-worker-3 uid-3 stuck)" \
+    >"${fixtures}/nodes.${call}.json"
+done
+
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 2 ]] ||
+  fail "case 37b: an unreachable node still in the fleet must exit 2 (infrastructure), got ${status} — ${output}"
+require_text "${output}" 'cannot reach node stuck' 'case 37b: names the unreachable node'
+refute_text "${output}" 'can enforce image verification.' 'case 37b: reported a verdict it could not reach'
+
 reset_node_sequence
 
 printf 'PASS: all cases\n'

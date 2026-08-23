@@ -203,6 +203,40 @@ node_reachable() {
   "${talosctl_bin}" -n "$1" ls / >/dev/null 2>&1
 }
 
+# Whether the address this pass is checking has LEFT the fleet. Cluster Autoscaler
+# removes a worker mid-pass during an ordinary scale-down or replacement, and that
+# node then answers nothing -- which is indistinguishable from an infrastructure
+# fault until the inventory is re-read. Only the discovery path may re-read: an
+# explicitly requested fleet is what the caller ASKED for, so a cluster changing
+# under it does not change the question, and a requested node that stops answering
+# stays a fault.
+#
+# Keyed on the ADDRESS, not the uid/address identity: a replacement reusing a
+# retired address leaves the address present, so this reports "still here" and the
+# run fails infra rather than retrying. That is the conservative direction -- it can
+# only WITHHOLD a retry, never grant one for a node that is genuinely down.
+#
+# A re-read that itself fails reports "still here" for the same reason: `discover_nodes`
+# runs `fail_infra` in this command substitution's subshell, so the failure surfaces
+# as a non-zero status here rather than exiting, and an unreadable inventory must not
+# be what excuses an unreachable node.
+node_departed() {
+  local address="$1" fresh
+  [[ "${nodes_requested}" -eq 0 ]] || return 1
+  fresh="$(discover_nodes)" || return 1
+  ! printf '%s\n' "${fresh}" | cut -f2 | grep -qxF -- "${address}"
+}
+
+# A reachability failure is a fault only if the node is still in the fleet. Returns
+# 3 -- distinct from both success and the fail_infra exit -- when the node departed,
+# so the discovery loop can treat it as the ordinary node-set change it is.
+require_reachable_or_departed() {
+  local node="$1"
+  node_reachable "${node}" && return 0
+  node_departed "${node}" && return 3
+  fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
+}
+
 # Emits TWO facts about ONE config file, from ONE read:
 #
 #   disabled=0|1   whether that file switches the image-verifier plugin OFF
@@ -872,8 +906,12 @@ check_config() {
     # "The directory is not there" and "the node stopped answering" are the same
     # failed `ls` from here. Only the first is a verdict; reporting the second as
     # one would blame the cluster for a runner-side fault.
-    node_reachable "${node}" ||
+    node_reachable "${node}" || {
+      # A node the autoscaler removed mid-pass is not a fault. 3 travels out through
+      # `check_config`'s caller, which must not fold it into an ordinary FAIL verdict.
+      node_departed "${node}" && return 3
       fail_infra "cannot reach node ${node} while checking ${bin_dir} (talosctl ls / failed)"
+    }
     printf 'FAIL %s [%s]: bin_dir %s is configured but does not exist — containerd permits every pull\n' \
       "${node}" "${file}" "${bin_dir}"
     return 1
@@ -883,8 +921,12 @@ check_config() {
   # substitution, so its status is carried out explicitly — the same subshell
   # trap that made partial node discovery pass silently.
   executables="$(count_executables "${node}" "${bin_dir}")" || exec_status=$?
-  [[ "${exec_status}" -eq 0 ]] ||
+  if [[ "${exec_status}" -ne 0 ]]; then
+    # Same class as the probe above: the directory was there a moment ago, so a
+    # failure here is either a real fault or a node that has since left the fleet.
+    node_departed "${node}" && return 3
     fail_infra "could not list ${bin_dir} on ${node} (the directory exists but talosctl ls failed)"
+  fi
 
   if [[ "${executables}" -eq 0 ]]; then
     printf 'FAIL %s [%s]: bin_dir %s holds no executable — containerd permits every pull\n' \
@@ -921,8 +963,7 @@ run_check_pass() {
           # phrase can come from a client-side fault (a missing talosconfig, say),
           # which would otherwise read as "this node does not ship that config".
           # The reachability probe is what tells those two apart.
-          node_reachable "${node}" ||
-            fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
+          require_reachable_or_departed "${node}" || return 3
           continue
           ;;
         *)
@@ -930,13 +971,17 @@ run_check_pass() {
           # failed" arrive here, and they deserve different diagnoses: the first
           # is a fleet-wide fault, the second is specific to one containerd.
           # Neither is a verdict, so both stop the run either way.
-          node_reachable "${node}" ||
-            fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
+          require_reachable_or_departed "${node}" || return 3
           fail_infra "could not determine whether ${config_file} exists on ${node} (talosctl ls failed for a reason other than the file being absent) — refusing to report a node whose containerd was never inspected"
           ;;
       esac
       configs_present=$((configs_present + 1))
-      check_config "${node}" "${config_file}" || node_failures=$((node_failures + 1))
+      # 3 is the departure sentinel, never a verdict about this node: folding it into
+      # `node_failures` would report a node that LEFT as one that cannot enforce.
+      config_status=0
+      check_config "${node}" "${config_file}" || config_status=$?
+      [[ "${config_status}" -ne 3 ]] || return 3
+      [[ "${config_status}" -eq 0 ]] || node_failures=$((node_failures + 1))
     done
 
     # No containerd configuration at all is not a clean node — it means this check
@@ -989,12 +1034,26 @@ convergence_attempts="$((10#${convergence_attempts}))"
   fail_infra 'IMAGE_VERIFIER_CONVERGENCE_ATTEMPTS must be at least 1'
 
 if [[ "${nodes_requested}" -eq 1 ]]; then
-  run_check_pass
+  # No convergence here by design, and the departure sentinel cannot arise: `node_departed`
+  # refuses outright unless this is the discovery path. Handled explicitly anyway so that a
+  # 3 arriving by some future route exits as the fault it is rather than falling through as
+  # a pass -- `set -e` would exit 3 undiagnosed, which reads as neither.
+  pass_status=0
+  run_check_pass || pass_status=$?
+  [[ "${pass_status}" -eq 0 ]] ||
+    fail_infra 'the check pass over an explicitly requested fleet did not complete — refusing to report nodes that were not checked'
 else
   attempt=0
   while :; do
     attempt=$((attempt + 1))
-    run_check_pass
+    # 3 means a node this pass was checking LEFT the fleet mid-pass. That is the same
+    # ordinary node-set change the post-pass comparison below exists for, just observed
+    # earlier -- the pass cannot finish, so it costs a re-run under the SAME bound rather
+    # than the infrastructure failure an unreachable node would otherwise be. Without this
+    # the independently-concurrent liveness workflow fails during a normal scale-down.
+    pass_status=0
+    run_check_pass || pass_status=$?
+    [[ "${pass_status}" -eq 0 || "${pass_status}" -eq 3 ]] || exit "${pass_status}"
 
     inventory_after="$(discover_nodes)" ||
       fail_infra 'could not re-read the node inventory after the checks — refusing to report a fleet that may have changed underneath the pass'
@@ -1003,7 +1062,12 @@ else
     # ordering guarantee, so a plain string compare would call a re-ordered but
     # otherwise identical fleet "changed", re-run the whole pass, and can burn
     # the attempt bound into an exit 2 for a cluster that never moved.
-    [[ "$(printf '%s\n' "${inventory_after}" | LC_ALL=C sort)" != "$(printf '%s\n' "${discovered_identities}" | LC_ALL=C sort)" ]] || break
+    # Only a COMPLETED pass may end the loop. After a departure the fleet can already
+    # look identical again -- the node left before the pre-pass read is re-compared -- and
+    # breaking there would report a verdict for a pass that stopped halfway.
+    if [[ "${pass_status}" -eq 0 ]]; then
+      [[ "$(printf '%s\n' "${inventory_after}" | LC_ALL=C sort)" != "$(printf '%s\n' "${discovered_identities}" | LC_ALL=C sort)" ]] || break
+    fi
 
     [[ "${attempt}" -lt "${convergence_attempts}" ]] ||
       fail_infra "the node inventory changed during each of ${convergence_attempts} attempt(s) — refusing to report a fleet that never held still long enough to be checked"
