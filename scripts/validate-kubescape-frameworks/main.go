@@ -314,11 +314,13 @@ func runScalars(data []byte) ([]string, error) {
 		// so refusing every conditional job would reject the very workflow this guard
 		// validates -- measured, all three real-workflow tests failed on it.
 		//
-		// General reachability of a workflow expression is not decidable here, so only a
-		// CONSTANT-FALSE literal is refused: that is the demonstrated bypass and it cannot
-		// be a legitimate gate. A non-literal always-false expression (`${{ 1 == 2 }}`)
-		// remains open by construction and is tracked separately; this is deliberately a
-		// partial mitigation and must not be read as closing the class.
+		// General reachability of a workflow expression is not decidable here, so what is
+		// refused is bounded to what the text alone decides: a constant-false literal, and
+		// a comparison of two literals that is constant-false. `${{ 1 == 2 }}` is refused;
+		// `${{ 1 == '1' }}` is NOT, because Actions coerces across types, so that job
+		// really runs and refusing it would be wrong. An expression naming a context, or a
+		// compound expression, stays accepted: it cannot be decided here, and refusing it
+		// would reject legitimate gates like the path filter above.
 		jobConditional := constantFalse(mappingValue(job, "if"))
 		steps := mappingValue(job, "steps")
 		if steps == nil || steps.Kind != yaml.SequenceNode {
@@ -382,7 +384,21 @@ func mappingValue(n *yaml.Node, key string) *yaml.Node {
 // remainder. Reading the whole line as one string instead let comment text
 // supply the framework set on an unrelated command line.
 func stripComment(line string) string {
-	var inSingle, inDouble bool
+	out, _ := stripCommentFrom(line, 0)
+	return out
+}
+
+// stripCommentFrom removes a shell comment from ONE PHYSICAL line, starting in the
+// quote state a previous physical line left open and returning the state this line
+// leaves open.
+//
+// The carried state is what makes per-physical-line stripping safe. A `#` inside a
+// quoted string that SPANS lines is content, not a comment, so stripping each line
+// from a clean state would truncate the command at that `#` and hide whatever
+// followed. `open` is 0 outside a string, or the quote byte that is still open.
+func stripCommentFrom(line string, open byte) (string, byte) {
+	inSingle := open == '\''
+	inDouble := open == '"'
 	for i := 0; i < len(line); i++ {
 		switch c := line[i]; {
 		case c == '\\' && !inSingle:
@@ -393,11 +409,18 @@ func stripComment(line string) string {
 			inDouble = !inDouble
 		case c == '#' && !inSingle && !inDouble:
 			if i == 0 || line[i-1] == ' ' || line[i-1] == '\t' {
-				return line[:i]
+				// Everything after the `#` is comment, so no quote it contains is open.
+				return line[:i], 0
 			}
 		}
 	}
-	return line
+	switch {
+	case inSingle:
+		return line, '\''
+	case inDouble:
+		return line, '"'
+	}
+	return line, 0
 }
 
 // shellSegment is one command from a split line, together with whether the shell
@@ -717,16 +740,23 @@ func scanInvocations(scalar string) ([]string, error) {
 			continue
 		}
 
-		// Join before anything reads the line, so every later test sees the command line
-		// bash actually runs.
-		for continuesLine(line) && idx+1 < len(lines) {
+		// COMMENT FIRST, THEN CONTINUATION -- the other order is a fail-open. A backslash
+		// at the end of a shell COMMENT does not continue the line: measured in bash, the
+		// comment ends at the newline and the NEXT line executes as its own command.
+		// Joining first swallowed that next line into the comment and stripped both, so a
+		// real reduced scan written under a backslash-terminated comment became invisible
+		// and the guard reported OK on a workflow that scans less than it claims.
+		//
+		// Quote state is carried across the physical lines, because a `#` inside a string
+		// that spans lines is content rather than a comment; stripping each line from a
+		// clean state would truncate the command there and hide what followed.
+		command, quote := stripCommentFrom(line, openQuote)
+		for continuesLine(command) && idx+1 < len(lines) {
 			idx++
-			line = strings.TrimSuffix(line, "\\") + lines[idx]
+			var next string
+			next, quote = stripCommentFrom(lines[idx], quote)
+			command = strings.TrimSuffix(command, "\\") + next
 		}
-
-		// The comment goes first, so no later test can be satisfied by text the
-		// shell never executes.
-		command := stripComment(line)
 		if strings.TrimSpace(command) == "" {
 			continue
 		}

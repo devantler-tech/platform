@@ -405,7 +405,7 @@ func TestActionInputNamedRunIsNotAnExecutableStep(t *testing.T) {
 	path := writeTemp(t, workflow)
 	if _, err := frameworkSet(path); err == nil {
 		t.Fatal("expected FAIL CLOSED: a `with: run:` action input executes nothing, " +
-			"supply the framework set while the real scan runs reduced")
+			"so it must not supply the framework set while the real scan runs reduced")
 	}
 }
 
@@ -416,7 +416,7 @@ func TestInlineCommentDoesNotSupplyTheFrameworkSet(t *testing.T) {
 		"env ksail workload scan --framework nsa\n"
 	if _, err := setOf(t, body); err == nil {
 		t.Fatal("expected FAIL CLOSED: `--framework` inside a trailing comment executes nothing, " +
-			"supply the framework set while the real scan runs reduced")
+			"so it must not supply the framework set while the real scan runs reduced")
 	}
 }
 
@@ -876,10 +876,21 @@ func TestReadsACommandAfterAClosingQuote(t *testing.T) {
 // space-indented `DOC` does NOT end the heredoc. Trimming spaces too ended the body
 // early, so lines bash still treats as input were read as code and supplied the set.
 func TestSpaceIndentedDedentTerminatorDoesNotEndTheHeredoc(t *testing.T) {
+	// The trailing scan is written BARE rather than `env ksail ...`. The token filter
+	// skips an env-prefixed line, so with that spelling nothing in this fixture counts
+	// as an invocation and the case passes through the zero-invocation error either
+	// way -- it could not tell "the heredoc body was ignored" from "no invocation was
+	// found at all". Asserting the returned SET pins both halves: the decoy inside the
+	// body was not read, and the scan that really executes was.
 	body := "cat <<-DOC > /dev/null\n\tirrelevant\n  DOC\n" +
-		goodScan + "\nDOC\nenv ksail workload scan --framework nsa"
-	if set, err := setOf(t, body); err == nil {
-		t.Fatalf("expected FAIL CLOSED — a space-indented terminator does not end a <<- heredoc in bash; got %q", set)
+		goodScan + "\nDOC\nksail workload scan --framework nsa"
+	got, err := setOf(t, body)
+	if err != nil {
+		t.Fatalf("expected the trailing reduced scan to be read, got: %v", err)
+	}
+	if strings.Join(got, ",") != "nsa" {
+		t.Fatalf("set = %q, want %q — a space-indented terminator does not end a <<- heredoc in bash, so the body must not be read as code",
+			strings.Join(got, ","), "nsa")
 	}
 }
 
@@ -989,5 +1000,61 @@ func TestMixedKindComparisonIsNotTreatedAsFalse(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "mitre,nsa" {
 		t.Fatalf("set = %q", got)
+	}
+}
+
+// A BACKSLASH AT THE END OF A SHELL COMMENT DOES NOT CONTINUE THE LINE. Measured in
+// bash: the comment ends at the newline and the next line executes as its own command.
+// Joining before stripping swallowed that next line into the comment and removed both.
+//
+// This direction is the FAIL-CLOSED half: the swallowed line is the real scan, so the
+// guard saw no invocation at all and refused a workflow that is perfectly fine.
+func TestBackslashEndedCommentDoesNotSwallowTheNextLine(t *testing.T) {
+	body := "# a comment ending in a backslash \\\n" + goodScan
+	got, err := setOf(t, body)
+	if err != nil {
+		t.Fatalf("expected the scan on the line AFTER a backslash-ended comment to be read, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q, want %q", strings.Join(got, ","), "mitre,nsa")
+	}
+}
+
+// ...and the FAIL-OPEN half, which is why this matters. The swallowed line is a REDUCED
+// scan: the guard read only the full-set decoy above it, reported OK, and the workflow
+// scanned one framework. Both halves are needed -- fixing only the first could be done
+// by never joining at all, which would reopen the continuation hole this guard closed.
+func TestBackslashEndedCommentCannotHideAReducedScan(t *testing.T) {
+	body := goodScan + "\n# hide the next line \\\nksail workload scan --framework nsa"
+	got, err := setOf(t, body)
+	if err == nil {
+		t.Fatalf("expected FAIL CLOSED: a reduced scan under a backslash-ended comment executes, so it must not be hidden; got %q", got)
+	}
+}
+
+// CONTROL -- a backslash at the end of a REAL command still continues the line, so the
+// reordering must not disable continuation itself. Without this, stripping comments
+// first could be "fixed" by dropping the join and reopening devantler-tech/platform#2823.
+func TestRealCommandStillContinuesAcrossLines(t *testing.T) {
+	body := "ksail workload scan --framework \\\nnsa,mitre --compliance-threshold 95"
+	got, err := setOf(t, body)
+	if err != nil {
+		t.Fatalf("expected a continued REAL command to still be joined, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q, want %q", strings.Join(got, ","), "mitre,nsa")
+	}
+}
+
+// CONTROL -- a `#` inside a quoted string that SPANS physical lines is content, not a
+// comment, and the carried quote state is what keeps it that way. Stripping each
+// physical line from a CLEAN state reads the `#` on the continuation line as a comment,
+// removes the rest of that line, and takes the reduced scan sitting after the closing
+// quote with it -- the same swallowing bug one level down, and fail-open again.
+func TestHashInsideAMultilineQuotedStringIsNotAComment(t *testing.T) {
+	body := goodScan + "\necho \"opens \\\n# still inside the string\" ; ksail workload scan --framework nsa"
+	got, err := setOf(t, body)
+	if err == nil {
+		t.Fatalf("expected FAIL CLOSED: the reduced scan after the closing quote executes, so a `#` inside the string must not hide it; got %q", got)
 	}
 }
