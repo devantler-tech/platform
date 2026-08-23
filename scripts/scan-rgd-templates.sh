@@ -99,7 +99,7 @@ while IFS= read -r candidate; do
   else
     definition_name="$(yq '.metadata.name // ""' "$candidate")"
     generated_api_group="${definition_name#*.}"
-    if [ -z "$definition_name" ] || [ "$generated_api_group" = "$definition_name" ] || \
+    if [ -z "$definition_name" ] || [ "$generated_api_group" = "$definition_name" ] ||
       [ -z "$generated_api_group" ]; then
       fail "RGD metadata.name does not encode a generated API group: $candidate"
     fi
