@@ -158,6 +158,80 @@ else
   fail "guard fired on ksail's legitimate tag signer — it is out of scope"
 fi
 
+# --- RED/GREEN: the scalar is read the way YAML reads it ---------------------
+#
+# A `#` opens a comment only OUTSIDE a quoted scalar. The guard used to strip
+# everything from the first whitespace-`#` unconditionally, so a single-quoted
+# subject whose value legitimately contains one was truncated and only the
+# surviving half was judged. Reproduced before the fix: the first case below was
+# ACCEPTED, and the guard reported all eight subjects pinned, while the value
+# YAML hands cosign carried a second alternative permitting any branch.
+#
+# These cases vary the QUOTING rather than the ref, which build_tree cannot do —
+# it always emits a well-formed single-quoted scalar.
+
+readonly SUBJECT_ID='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@'
+readonly Q="'"
+
+# build_tree_line <dir> <verbatim-subject-line> — as build_tree, but the first
+# subject's whole line is supplied by the caller.
+build_tree_line() {
+  local dir="$1" line="$2" i
+  rm -rf "${dir}"
+  mkdir -p "${dir}/scripts" "${dir}/k8s"
+  cp "${guard}" "${dir}/scripts/guard-shared-publish-workflow-pin.sh"
+  printf 'spec:\n  verify:\n    matchOIDCIdentity:\n      - issuer: x\n%s\n' \
+    "${line}" >"${dir}/k8s/subject-1.yaml"
+  for i in 2 3 4 5 6 7 8; do
+    printf 'spec:\n  verify:\n    matchOIDCIdentity:\n      - issuer: x\n        subject: '\''^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@%s$'\''\n' \
+      "${SHA_PATTERN}" >"${dir}/k8s/subject-${i}.yaml"
+  done
+}
+
+# assert_line_rejected <label> <subject-line> <slug> <expected-stderr-pattern>
+#
+# The expected pattern is required because the guard's easiest failure is the
+# floor, which fires whenever a fixture is escaped wrongly. A bare exit-status
+# assertion would pass on a tree the guard never actually read.
+assert_line_rejected() {
+  local label="$1" line="$2" dir="${work_dir}/red-$3" pattern="$4"
+  build_tree_line "${dir}" "${line}"
+  if run_tree "${dir}"; then
+    fail "guard ACCEPTED ${label} — the value YAML passes to cosign was not what was judged"
+  fi
+  grep -q "${pattern}" "${dir}/stderr" ||
+    fail "guard rejected ${label} but not for the expected reason: $(head -1 "${dir}/stderr")"
+  ok "rejects ${label}"
+}
+
+assert_line_rejected "a # inside a quoted scalar used to hide a branch alternative" \
+  "        subject: ${Q}${SUBJECT_ID}${SHA_PATTERN} # x|${SUBJECT_ID}refs/heads/.+\$${Q}" \
+  quotedcomment 'does not pin'
+
+assert_line_rejected "a double-quoted scalar, whose escapes this guard does not resolve" \
+  "        subject: \"${SUBJECT_ID}${SHA_PATTERN}\$\"" \
+  doublequoted 'could not read the YAML scalar'
+
+assert_line_rejected "an unterminated quoted scalar" \
+  "        subject: ${Q}${SUBJECT_ID}${SHA_PATTERN}\$" \
+  unterminated 'could not read the YAML scalar'
+
+assert_line_rejected "an escaped '' inside a single-quoted scalar" \
+  "        subject: ${Q}${SUBJECT_ID}${SHA_PATTERN}${Q}${Q}|${SUBJECT_ID}refs/heads/.+\$${Q}" \
+  escapedquote 'could not read the YAML scalar'
+
+# GREEN counterpart: a comment OUTSIDE the quotes is a real comment, and removing
+# it is correct. Without this the fix could pass every case above by refusing
+# every line that contains a `#` at all.
+tree="${work_dir}/green-realcomment"
+build_tree_line "${tree}" "        subject: ${Q}${SUBJECT_ID}${SHA_PATTERN}\$${Q} # pinned by #2816"
+if run_tree "${tree}"; then
+  ok "still removes a real comment that follows a quoted scalar"
+else
+  printf '%s\n' "$(cat "${tree}/stderr")" >&2
+  fail "guard rejected a legitimate subject carrying a real trailing comment"
+fi
+
 # --- Integration: the real repository satisfies the narrowed guard -----------
 
 if (cd "${root_dir}" && bash "${guard}" >/dev/null 2>"${work_dir}/real.stderr"); then
