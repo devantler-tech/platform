@@ -1343,6 +1343,12 @@ jobs:
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
           wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
+          # Release a synchronization Lease that an already-dead deploy left
+          # held, so one crashed run cannot wedge every later deploy and its own
+          # heal. This relaxes no guard: the composite still refuses unless no
+          # other fence is held, the heartbeat has stopped, and the holder's run
+          # attempt is proven terminal via the API (#3343).
+          recover-orphaned-fence: "true"
 
   heal-prod-on-failure:
     name: 🩹 Heal Prod (restore main after unsuccessful merge-group deploy)
@@ -1409,6 +1415,12 @@ jobs:
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
           wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
+          # Release a synchronization Lease that an already-dead deploy left
+          # held, so one crashed run cannot wedge every later deploy and its own
+          # heal. This relaxes no guard: the composite still refuses unless no
+          # other fence is held, the heartbeat has stopped, and the holder's run
+          # attempt is proven terminal via the API (#3343).
+          recover-orphaned-fence: "true"
 
   ci-required-checks:
     name: CI - Required Checks

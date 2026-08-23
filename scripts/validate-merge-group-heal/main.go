@@ -2,15 +2,16 @@
 // workflow can still do its job.
 //
 // The heal job restores main after a merge-group deploy fails, and it needs
-// four things to be true to work at all: it must fire on a failed or cancelled
+// five things to be true to work at all: it must fire on a failed or cancelled
 // merge-group deploy that actually touched k8s and on nothing else; it must
 // hold the shared prod-deploy lock; that lock must not be preemptible, or the
-// heal is cancelled by the next deploy midway through; and it must check out
-// main, or it restores the wrong revision.
+// heal is cancelled by the next deploy midway through; it must check out
+// main, or it restores the wrong revision; and it must opt in to orphaned-fence
+// recovery, or it cannot clear the GHCR Lease a dead deploy left held.
 //
 // Each is one line of workflow YAML, and none of them fails loudly when it is
 // wrong — the damage shows up later, during an incident, when the heal either
-// does not run or restores the wrong thing. Pinning all four here turns that
+// does not run or restores the wrong thing. Pinning all five here turns that
 // into a CI failure on the pull request that breaks one.
 package main
 
@@ -28,8 +29,16 @@ const expectedHealCondition = "always() && " +
 	"(needs.deploy-prod.result == 'failure' || " +
 	"needs.deploy-prod.result == 'cancelled')"
 
+// The deploy-prod composite recovers an orphaned GHCR fence only when a call
+// site opts in — the input is default-off. This exact line is what makes that
+// step reachable, so it is pinned rather than left to a reviewer to notice.
+const recoveryOptIn = `          recover-orphaned-fence: "true"`
+
+// The shared composite both prod-deploy paths call.
+const deployCompositePath = "./.github/actions/deploy-prod"
+
 func validateWorkflowContract(workflow string) error {
-	healJob, ok := extractHealJob(workflow)
+	healJob, ok := extractJob(workflow, "heal-prod-on-failure")
 	if !ok {
 		return errors.New("missing heal-prod-on-failure job")
 	}
@@ -67,14 +76,38 @@ func validateWorkflowContract(workflow string) error {
 		)
 	}
 
+	// Both jobs reach the same composite, and the opt-in is checked against the
+	// STEP rather than the job: a line accepted anywhere in the job would still
+	// pass after an edit moved it onto an unrelated step, leaving the composite
+	// on its default "false". The validator would then vouch for precisely the
+	// state it exists to catch. The heal job is the last line of defence; the
+	// deploy job reaching the composite is what stops the wedge arising at all.
+	for _, target := range []struct{ key, label string }{
+		{"deploy-prod", "deploy"},
+		{"heal-prod-on-failure", "heal"},
+	} {
+		job, ok := extractJob(workflow, target.key)
+		if !ok {
+			return fmt.Errorf("missing %s job", target.key)
+		}
+		step, ok := extractDeployStep(job)
+		if !ok {
+			return fmt.Errorf("%s job does not reach the shared deploy composite", target.label)
+		}
+		if !containsExactLine(step, recoveryOptIn) {
+			return fmt.Errorf("%s job is missing orphaned-fence recovery", target.label)
+		}
+	}
+
 	return nil
 }
 
-func extractHealJob(workflow string) (string, bool) {
+func extractJob(workflow string, jobKey string) (string, bool) {
 	lines := strings.Split(workflow, "\n")
 	start := -1
+	header := "  " + jobKey + ":"
 	for i, line := range lines {
-		if line == "  heal-prod-on-failure:" {
+		if line == header {
 			start = i + 1
 			break
 		}
@@ -89,6 +122,50 @@ func extractHealJob(workflow string) (string, bool) {
 		if strings.HasPrefix(line, "  ") &&
 			!strings.HasPrefix(line, "   ") &&
 			strings.HasSuffix(line, ":") {
+			end = i
+			break
+		}
+	}
+
+	return strings.Join(lines[start:end], "\n"), true
+}
+
+// extractDeployStep returns the one step in a job that reaches the shared
+// deploy composite, so an input can be checked against THAT step rather than
+// against the whole job. It walks back from the `uses:` line to the list-item
+// start, because a step may declare `with:` before `uses:`.
+func extractDeployStep(job string) (string, bool) {
+	lines := strings.Split(job, "\n")
+	target := -1
+	for i, line := range lines {
+		// A step may write `- uses: …` on the list-item line itself or put `uses:`
+		// on its own line under `- name:`; both spellings are the same step.
+		if strings.TrimPrefix(strings.TrimSpace(line), "- ") == "uses: "+deployCompositePath {
+			target = i
+			break
+		}
+	}
+	if target < 0 {
+		return "", false
+	}
+
+	start := 0
+	for i := target; i >= 0; i-- {
+		if strings.HasPrefix(strings.TrimLeft(lines[i], " "), "- ") {
+			start = i
+			break
+		}
+	}
+	indent := len(lines[start]) - len(strings.TrimLeft(lines[start], " "))
+
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		trimmed := strings.TrimLeft(lines[i], " ")
+		if trimmed == "" {
+			continue
+		}
+		lineIndent := len(lines[i]) - len(trimmed)
+		if lineIndent < indent || (lineIndent == indent && strings.HasPrefix(trimmed, "- ")) {
 			end = i
 			break
 		}

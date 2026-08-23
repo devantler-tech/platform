@@ -16,6 +16,10 @@ jobs:
 
   deploy-prod:
     runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/deploy-prod
+        with:
+          recover-orphaned-fence: "true"
 
   heal-prod-on-failure:
     needs: [changes, deploy-prod, validate-publication-contract]
@@ -33,6 +37,9 @@ jobs:
       - uses: actions/checkout@example
         with:
           ref: main
+      - uses: ./.github/actions/deploy-prod
+        with:
+          recover-orphaned-fence: "true"
 
   required-checks:
     runs-on: ubuntu-latest
@@ -102,6 +109,75 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			old:         "needs.deploy-prod.result == 'cancelled'",
 			replacement: "needs.deploy-prod.result == 'failure'",
 			wantError:   "must cover exactly failed and cancelled deploys while excluding success",
+		},
+		{
+			// The opt-in is what makes the composite's recovery step reachable at
+			// all, so dropping it silently restores the wedge this pin exists to
+			// prevent -- the heal cannot clear a Lease a dead deploy left held.
+			name: "heal job drops orphaned-fence recovery",
+			old: `          ref: main
+      - uses: ./.github/actions/deploy-prod
+        with:
+          recover-orphaned-fence: "true"`,
+			replacement: `          ref: main
+      - uses: ./.github/actions/deploy-prod
+        with:
+          sops-age-key: placeholder`,
+			wantError: "heal job is missing orphaned-fence recovery",
+		},
+		{
+			// A job that no longer calls the composite at all is a different break
+			// from one that calls it without the opt-in, so they get separate cases.
+			name: "deploy job does not reach the deploy composite",
+			old: `  deploy-prod:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/deploy-prod
+        with:
+          recover-orphaned-fence: "true"`,
+			replacement: "  deploy-prod:\n    runs-on: ubuntu-latest",
+			wantError:   "deploy job does not reach the shared deploy composite",
+		},
+		{
+			name: "deploy job drops orphaned-fence recovery",
+			old: `  deploy-prod:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/deploy-prod
+        with:
+          recover-orphaned-fence: "true"`,
+			replacement: `  deploy-prod:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/deploy-prod
+        with:
+          sops-age-key: placeholder`,
+			wantError: "deploy job is missing orphaned-fence recovery",
+		},
+		{
+			name:        "missing deploy job",
+			old:         "  deploy-prod:",
+			replacement: "  deploy-prod-disabled:",
+			wantError:   "missing deploy-prod job",
+		},
+		{
+			// The opt-in must be bound to the step that reaches the composite.
+			// Relocating it to a neighbouring step leaves every line the validator
+			// used to look for present in the job, while the composite itself still
+			// runs on its default "false" -- the exact state this pin exists to catch.
+			name: "heal job relocates the opt-in off the deploy step",
+			old: `      - uses: actions/checkout@example
+        with:
+          ref: main
+      - uses: ./.github/actions/deploy-prod
+        with:
+          recover-orphaned-fence: "true"`,
+			replacement: `      - uses: actions/checkout@example
+        with:
+          ref: main
+          recover-orphaned-fence: "true"
+      - uses: ./.github/actions/deploy-prod`,
+			wantError: "heal job is missing orphaned-fence recovery",
 		},
 	}
 
