@@ -211,7 +211,6 @@ main() {
 $discovered_lines
 EOF
 
-
   # A BLOCK SCALAR carries ONE value across several lines, and everything in this guard
   # reads LINES. YAML folds the block into a single value, so an indented content line
   # that merely LOOKS like `subject: <pinned>` is not a key at all -- the strict pattern
