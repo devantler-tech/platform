@@ -337,7 +337,13 @@ effective_version() {
 # The `uses:` pin for one shared workflow, as it stands at one ref of one consumer.
 pin_at_ref() {
   local repo="$1" workflow="$2" ref="$3" body sha
-  body="$(gh_retry api "repos/devantler-tech/${repo}/contents/.github/workflows/cd.yaml?ref=${ref}" \
+  # The ref goes through as a PARAMETER, exactly as the runs lookup does. A selected
+  # tag may carry SemVer build metadata (v2.0.0+build.1), and a raw + in a query string
+  # is decoded as a SPACE on the wire -- measured with GH_DEBUG=api: interpolation sends
+  # `+`, --raw-field sends `%2B`. The workflow body then fails to load and a healthy
+  # consumer reports UNRESOLVED.
+  body="$(gh_retry api --method GET "repos/devantler-tech/${repo}/contents/.github/workflows/cd.yaml" \
+    --raw-field "ref=${ref}" \
     -H "Accept: application/vnd.github.raw")" || return 1
   [ -n "$body" ] || return 1
   # 🔴 PARSE THE YAML, NOT THE TEXT. An unanchored `grep … | head -1` selects a COMMENTED-OUT
@@ -466,9 +472,35 @@ deployed_tag() {
     [ "$checked" -le 5 ] || break
     # Every tag standing at this SemVer precedence. Build metadata is IGNORED for
     # precedence, so `2.0.0` and `2.0.0+build.1` rank equally and the set can hold more
-    # than one tag; the `v` spellings fold together because they are the same version
-    # written two ways, which is not ambiguity.
+    # than one tag. The `v` spellings are folded for PRECEDENCE, but folding them for
+    # IDENTITY would hide a real ambiguity -- see the duality refusal immediately below.
     core_re="$(printf '%s' "$bare" | sed 's/[.]/\\./g')"
+    # BOTH SPELLINGS OF ONE VERSION ARE TWO DISTINCT GIT REFS. Stripping the `v` before
+    # `sort -u` folds `1.2.3` and `v1.2.3` into one variant, so the tie check below sees
+    # no ambiguity -- but the two refs can point at different commits and therefore at
+    # different publish-workflow pins, and the loop that follows unconditionally prefers
+    # the `v` form. That reports the `v` ref's signing revision even when the other ref
+    # produced the deployed artifact: a confident wrong answer, which is exactly what the
+    # tie refusal exists to prevent one line down.
+    #
+    # The fold is only safe when one spelling is published. When both are, refuse by name
+    # like every other ambiguity here rather than picking the one this repository happens
+    # to favour.
+    local raw_variants dual=""
+    raw_variants="$(printf '%s\n' "$tags" | grep -E "^v?${core_re}(\+[0-9A-Za-z.-]+)?$" | sort -u || true)"
+    while IFS= read -r stripped; do
+      [ -n "$stripped" ] || continue
+      if printf '%s\n' "$raw_variants" | grep -qxF -- "$stripped" &&
+        printf '%s\n' "$raw_variants" | grep -qxF -- "v${stripped}"; then
+        dual="$stripped"
+        break
+      fi
+    done <<<"$(printf '%s\n' "$raw_variants" | sed 's/^v//' | sort -u)"
+    if [ -n "$dual" ]; then
+      printf 'version %s is published as BOTH "%s" and "v%s"; those are distinct git refs that can point at different commits and therefore different workflow pins, so choosing between them needs Flux-compatible ordering, which this script does not implement\n' \
+        "$bare" "$dual" "$dual" >&2
+      return 1
+    fi
     variants="$(printf '%s\n' "$tags" | grep -E "^v?${core_re}(\+[0-9A-Za-z.-]+)?$" |
       sed 's/^v//' | sort -u || true)"
     variant_count="$(printf '%s\n' "$variants" | grep -c . || true)"

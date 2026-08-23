@@ -542,6 +542,14 @@ case "$args" in
     printf 'stub: the run lookup interpolated its query string; pass the tag with --raw-field so + survives encoding\n' >&2
     exit 64
     ;;
+  *"/contents/.github/workflows/cd.yaml?"*)
+    # Same rule for the PIN lookup. The selected tag reaches this call too, so an
+    # interpolated ref loses a + exactly as the run lookup did, and the workflow body then
+    # fails to load -- reporting a healthy consumer UNRESOLVED.
+    printf 'interpolated\n' >>"${BM_VIOLATION_LOG:-/dev/null}"
+    printf 'stub: the pin lookup interpolated its query string; pass the ref with --raw-field so + survives encoding\n' >&2
+    exit 64
+    ;;
 esac
 case "$args" in
   *"/tags?per_page=100"*)
@@ -698,6 +706,61 @@ if [ -s "$WORK/interpolated.log" ]; then
   fail 'the run lookup interpolated its query string — a + in a build-metadata tag decodes as a space on the wire, so a published tag reads as UNPUBLISHED'
 else
   pass 'the run lookup passes the tag as a query PARAMETER, so build metadata survives encoding'
+fi
+
+# ---------------------------------------------------------------------------
+# 14b. A VERSION PUBLISHED UNDER BOTH SPELLINGS MUST REFUSE. (#3305 review)
+#      `2.0.0` and `v2.0.0` are two DISTINCT git refs. They can point at different
+#      commits and therefore at different publish-workflow pins, but the precedence fold
+#      strips the `v` before `sort -u`, so the tie check saw ONE variant and passed. The
+#      loop that follows then unconditionally prefers the `v` form — reporting its
+#      signing revision even when the other ref produced the deployed artifact.
+#
+#      This is NOT the build-metadata tie above: there the two tags differ visibly and
+#      the tie check catches them. Here the fold erases the difference before the check
+#      ever runs, which is why folding for precedence and folding for identity have to be
+#      separated.
+# ---------------------------------------------------------------------------
+vd_root="$WORK/vdual-root"
+cp -R "$bm_root" "$vd_root"
+vd_out="$WORK/vdual.out"
+# Only `wedding-app` publishes both spellings; every other consumer stays on a plain
+# v1.9.0, so a refusal or divergence can only have come from that consumer.
+if BM_WEDDING_TAGS='2.0.0\nv2.0.0\nv1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$vd_root" "$SCRIPT" >"$vd_out" 2>&1; then
+  fail 'a version published as both 2.0.0 and v2.0.0 was silently resolved to the v spelling instead of refusing'
+else
+  grep -q 'published as BOTH' "$vd_out" ||
+    fail 'the run failed but not because of the v-spelling duality — the case is not testing what it claims'
+  grep -qF '2.0.0' "$vd_out" ||
+    fail 'the refusal does not name the version published twice, so the cause is not diagnosable'
+  # The same outcome-count control the build-metadata tie uses: a name match alone would
+  # pass just as well if ALL FIVE consumers had failed for an unrelated reason.
+  vd_unresolved="$(grep -c '^UNRESOLVED' "$vd_out" || true)"
+  vd_insync="$(grep -c '^IN-SYNC' "$vd_out" || true)"
+  [ "$vd_unresolved" -eq 1 ] ||
+    fail "expected exactly ONE unresolved consumer (the v-spelling duality), got $vd_unresolved"
+  [ "$vd_insync" -eq 4 ] ||
+    fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $vd_insync"
+  grep -qE '^UNRESOLVED +wedding-app' "$vd_out" ||
+    fail 'the unresolved consumer is not the one publishing both spellings'
+  pass 'a version published under both the bare and v spellings refuses instead of preferring v'
+fi
+
+# CONTROL: ONE spelling is the normal case and must still resolve. Without this the
+# refusal above could be satisfied by refusing every `v` tag, which would break every
+# real consumer in this repository.
+vd2_root="$WORK/vdual-single-root"
+cp -R "$bm_root" "$vd2_root"
+vd2_out="$WORK/vdual-single.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$vd2_root" "$SCRIPT" >"$vd2_out" 2>&1; then
+  pass 'a version published under only the v spelling still resolves'
+else
+  printf '%s\n' "$(cat "$vd2_out")" >&2
+  fail 'a version published under only the v spelling was refused — the duality check is too broad'
 fi
 
 # ---------------------------------------------------------------------------
