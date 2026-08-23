@@ -698,3 +698,32 @@ func TestUnreadableHeredocOpenerFailsClosed(t *testing.T) {
 		}
 	}
 }
+
+// Legacy backtick command substitution SPANS LINES, so whether a command inside one
+// executes is not a fact about its own line. `false &&` before the newline suppresses
+// the scan on the next line, yet the validator read that line as an unconditional bare
+// invocation and took `nsa,mitre` from it while the only scan that ran covered one
+// framework. Verified in bash: the backticked scan produces no output, and the same
+// fixture with `true &&` does.
+//
+// Recorded for the WHOLE scalar and acted on only if a scan is found, exactly like the
+// compound-command rule: an ordinary `run:` block that never invokes the scan may use
+// whatever shell it likes.
+func TestRejectsScanInsideBacktickSubstitution(t *testing.T) {
+	body := "echo `false &&\n" + goodScan + "\n`\nenv ksail workload scan --framework nsa"
+	if set, err := setOf(t, body); err == nil {
+		t.Fatalf("expected FAIL CLOSED — a scan inside a backtick substitution is not decidable from its own line; got %q", set)
+	}
+}
+
+// A backtick in a block that never invokes the scan is not this guard's business.
+func TestBacktickWithoutScanIsAccepted(t *testing.T) {
+	body := "echo `date`\n" + goodScan
+	got, err := setOf(t, body)
+	if err != nil {
+		t.Fatalf("expected a block whose backtick carries no scan to be read normally, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
+	}
+}

@@ -379,8 +379,12 @@ type heredoc struct {
 // their bodies. A single line may carry several — `cat <<'A' <<'B'` — and each
 // body in turn is non-executing input. Recording only the first stopped the skip
 // at the first terminator and handed the following body to the scanner as code.
-func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unreadable bool) {
+func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unreadable, opensBacktick bool) {
 	var cur strings.Builder
+	// PARITY, not presence: a substitution CLOSED on its own line cannot suppress a later
+	// line, and rejecting it would block an ordinary `echo `+"`"+`date`+"`"+`. An ODD count leaves one
+	// open across the newline, which is the shape that makes the next line undecidable.
+	btCount := 0
 	var inSingle, inDouble bool
 	// The first command on a line is always reached; each operator decides the next.
 	conditional := false
@@ -416,6 +420,14 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unrea
 			continue
 		}
 		// Unquoted from here, so an operator here is a real shell operator.
+		// LEGACY BACKTICK SUBSTITUTION SPANS LINES, so what runs inside one is not a fact
+		// about its own line: `false &&` before the newline suppresses the command on the
+		// next, which the per-line walk read as an unconditional invocation. Recorded for
+		// the whole scalar and acted on only if a scan is found, exactly like a compound
+		// command — a block that never invokes the scan may use whatever shell it likes.
+		if c == '`' {
+			btCount++
+		}
 		if c == '<' && i+1 < len(line) && line[i+1] == '<' {
 			h, consumed, kind := parseHeredocOpener(line[i:])
 			switch kind {
@@ -429,7 +441,7 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unrea
 			default:
 				// Refuse the whole line rather than walk past a redirection whose body
 				// boundary is unknown: past it, every following line is of unknown status.
-				return segments, heredocs, true
+				return segments, heredocs, true, btCount%2 == 1
 			}
 		}
 		// `;`, `&`, `&&`, `|`, `||` all end the current command. Splitting on the
@@ -447,7 +459,7 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unrea
 		cur.WriteByte(c)
 	}
 	flush(false)
-	return segments, heredocs, false
+	return segments, heredocs, false, btCount%2 == 1
 }
 
 // Shell words that introduce a COMPOUND command — one whose body's execution is not
@@ -553,6 +565,9 @@ func scanInvocations(scalar string) ([]string, error) {
 	// and their bodies arrive in the order the delimiters were written. Consuming
 	// only the first left every later body being read as executable code.
 	var pending []heredoc
+	// Recorded for the WHOLE scalar, like compound above: a backtick substitution makes
+	// the execution of the lines it spans undecidable from the text.
+	var sawBacktick bool
 
 	for _, line := range strings.Split(scalar, "\n") {
 		if len(pending) > 0 {
@@ -573,7 +588,10 @@ func scanInvocations(scalar string) ([]string, error) {
 			continue
 		}
 
-		segments, heredocs, unreadable := shellSplit(command)
+		segments, heredocs, unreadable, backtick := shellSplit(command)
+		if backtick {
+			sawBacktick = true
+		}
 		if unreadable {
 			return nil, fmt.Errorf(
 				"a `<<` redirection in this `run:` block is not in a form this guard can read, so the end of its heredoc body is unknown and every following line has undecidable status: %q. A body read as code would let a non-executing decoy supply the framework list. Use a plain heredoc delimiter. See #2823",
@@ -602,6 +620,10 @@ func scanInvocations(scalar string) ([]string, error) {
 			}
 			out = append(out, segment.text)
 		}
+	}
+	if len(out) > 0 && sawBacktick {
+		return nil, fmt.Errorf(
+			"a scan invocation shares its `run:` block with a legacy backtick command substitution, whose body spans lines, so whether the scan executes is not decidable from the text: a `false &&` before the newline suppresses it while the line still reads as an unconditional invocation, letting a full framework list stand in for a reduced scan that actually runs. Use $(...) and invoke the scan as a plain command outside it. See #2823")
 	}
 	if len(out) > 0 && compound != "" {
 		return nil, fmt.Errorf(
