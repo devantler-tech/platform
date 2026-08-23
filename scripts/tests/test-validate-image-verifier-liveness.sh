@@ -112,6 +112,15 @@ while [[ "$#" -gt 0 ]]; do
         printf 'rpc error: code = Unavailable desc = connection error\n' >&2
         exit 1
       fi
+      # The node stops answering the REACHABILITY probe specifically, while its file
+      # probes still resolve normally. That ordering is what reaches the departure
+      # check on the path_probe arms: those arms need a probe that returned a verdict
+      # (absent, or a non-lstat error) followed by a node that is no longer there --
+      # which `lsfail_all` cannot produce, because it fails the file probe too.
+      if [[ "${path}" == '/' && -f "${FIXTURES}/${node}/lsfail_root" ]]; then
+        printf 'error connecting to %s\n' "${node}" >&2
+        exit 1
+      fi
       # `ls /` is the reachability probe: the node answered, so it succeeds.
       [[ "${path}" == '/' ]] && exit 0
       if [[ -f "${listing}" ]]; then
@@ -2000,6 +2009,90 @@ output="$(run_script 2>&1)" || status=$?
   fail "case 37b: an unreachable node still in the fleet must exit 2 (infrastructure), got ${status} — ${output}"
 require_text "${output}" 'cannot reach node stuck' 'case 37b: names the unreachable node'
 refute_text "${output}" 'can enforce image verification.' 'case 37b: reported a verdict it could not reach'
+
+# ===========================================================================
+# Case 37c/d/e — EVERY departure path is guarded independently. (#3320 review)
+#
+# Case 37 reaches only the `directory_exists` failure. The departure handling also
+# sits on the `path_probe` absent arm, the `path_probe` error arm, and the
+# executable count — and with one shared case a later change could drop
+# `node_departed` from any of the three and still pass 37 and 37b. Each path gets
+# its own fixture, so each is a regression case on its own.
+#
+# `lsfail_root` rather than `lsfail_all` on the two path_probe arms: those arms are
+# only reached when the file probe RETURNED something, so the node has to answer the
+# probe and then stop answering the reachability check.
+# ===========================================================================
+
+# 37c — the `absent` arm: the node has no such config, then it is gone.
+install_sequenced_kubectl
+reset_node_sequence
+write_node gone-absent
+printf 'GONE\n' >"${fixtures}/gone-absent/lsfail_root"
+printf '{"items":[%s,%s]}' "$(node_json prod-worker-1 uid-1 good)" "$(node_json prod-worker-4 uid-4 gone-absent)" \
+  >"${fixtures}/nodes.1.json"
+for call in 2 3 4; do
+  printf '{"items":[%s]}' "$(node_json prod-worker-1 uid-1 good)" >"${fixtures}/nodes.${call}.json"
+done
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 0 ]] ||
+  fail "case 37c: a node that left on the path_probe ABSENT arm must converge, got exit ${status} — ${output}"
+require_text "${output}" 'All 1 node(s)' 'case 37c: reports the settled fleet'
+
+# 37d — the `error` arm: the probe fails for a reason other than absence, then gone.
+install_sequenced_kubectl
+reset_node_sequence
+write_node gone-error
+printf 'GONE\n' >"${fixtures}/gone-error/lsfail_root"
+printf 'RPC\n' >"${fixtures}/gone-error/lserror_etc_cri_conf.d_cri.toml"
+printf '{"items":[%s,%s]}' "$(node_json prod-worker-1 uid-1 good)" "$(node_json prod-worker-5 uid-5 gone-error)" \
+  >"${fixtures}/nodes.1.json"
+for call in 2 3 4; do
+  printf '{"items":[%s]}' "$(node_json prod-worker-1 uid-1 good)" >"${fixtures}/nodes.${call}.json"
+done
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 0 ]] ||
+  fail "case 37d: a node that left on the path_probe ERROR arm must converge, got exit ${status} — ${output}"
+require_text "${output}" 'All 1 node(s)' 'case 37d: reports the settled fleet'
+
+# 37e — the executable count: bin_dir exists, the long listing fails, then gone.
+install_sequenced_kubectl
+reset_node_sequence
+write_node gone-count
+verifier_config /opt/containerd/image-verifier/bin >"${fixtures}/gone-count/files/_etc_cri_conf.d_cri.toml"
+write_dir gone-count /opt/containerd/image-verifier/bin <<EOF
+${listing_header}
+10.0.1.4   drwxr-xr-x   0     0     37        Aug  4 14:58:45   system_u:object_r:containerd_plugin_t:s0   .
+EOF
+# `lsfail` fails only the LONG form, so directory_exists passes and the count fails.
+printf 'GONE\n' >"${fixtures}/gone-count/lsfail"
+printf '{"items":[%s,%s]}' "$(node_json prod-worker-1 uid-1 good)" "$(node_json prod-worker-6 uid-6 gone-count)" \
+  >"${fixtures}/nodes.1.json"
+for call in 2 3 4; do
+  printf '{"items":[%s]}' "$(node_json prod-worker-1 uid-1 good)" >"${fixtures}/nodes.${call}.json"
+done
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 0 ]] ||
+  fail "case 37e: a node that left on the executable COUNT must converge, got exit ${status} — ${output}"
+require_text "${output}" 'All 1 node(s)' 'case 37e: reports the settled fleet'
+
+# CONTROLS — each of the three paths must STILL fail infra when the node is present.
+# Without these, 37c/d/e would be satisfied by turning every fault into a retry.
+install_sequenced_kubectl
+reset_node_sequence
+for call in 1 2 3 4; do
+  printf '{"items":[%s,%s,%s,%s]}' "$(node_json prod-worker-1 uid-1 good)" \
+    "$(node_json prod-worker-4 uid-4 gone-absent)" "$(node_json prod-worker-5 uid-5 gone-error)" \
+    "$(node_json prod-worker-6 uid-6 gone-count)" >"${fixtures}/nodes.${call}.json"
+done
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 2 ]] ||
+  fail "case 37f: unreachable nodes still in the fleet must exit 2, got ${status} — ${output}"
+refute_text "${output}" 'can enforce image verification.' 'case 37f: reported a verdict it could not reach'
 
 reset_node_sequence
 
