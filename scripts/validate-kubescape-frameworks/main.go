@@ -383,11 +383,6 @@ func mappingValue(n *yaml.Node, key string) *yaml.Node {
 // `--framework nsa#x` keeps its value while `ksail --version # ...` loses the
 // remainder. Reading the whole line as one string instead let comment text
 // supply the framework set on an unrelated command line.
-func stripComment(line string) string {
-	out, _ := stripCommentFrom(line, 0)
-	return out
-}
-
 // stripCommentFrom removes a shell comment from ONE PHYSICAL line, starting in the
 // quote state a previous physical line left open and returning the state this line
 // leaves open.
