@@ -107,6 +107,65 @@ func TestSameHolderLeaseRenewalRaceDoesNotAbortTheTransaction(t *testing.T) {
 	requireLine(t, readLines(f.operationLog), "root-patch")
 }
 
+// A completely successful transaction must still leave the Lease released. The
+// two cases below are the reachable ways its release path can be interrupted:
+// a same-holder write landing inside its read/patch window, and a transient
+// failure of the patch itself. Neither is a safety event -- the lease is still
+// ours throughout -- but a release that gives up leaves it held, and a held
+// Lease fails every later transaction closed until a human clears it. So each
+// case asserts the side effect (the Lease is actually released), not merely
+// that the run reported success.
+func TestSuccessfulTransactionReleasesTheLeaseDespiteAReleaseRace(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		environment string
+		marker      string
+	}{
+		"orphaned heartbeat write inside the release window": {
+			environment: "FAKE_SYNC_LEASE_ORPHANED_HEARTBEAT_WRITE_BEFORE_RELEASE",
+			marker:      "sync-lease-orphaned-heartbeat-write",
+		},
+		"transient failure of the release patch": {
+			environment: "FAKE_SYNC_LEASE_RELEASE_CONFLICT_ONCE",
+			marker:      "sync-lease-release-conflict",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, map[string]string{
+				test.environment: "true",
+			})
+			requireSuccessResult(t, result)
+			if !pathExists(filepath.Join(f.syncStateDir, test.marker)) {
+				t.Fatal("fixture did not exercise the lease release race")
+			}
+			if holder := mustRead(filepath.Join(f.syncStateDir, "sync-lease-holder")); holder != "" {
+				t.Fatalf("lease left held by %q after a successful transaction", holder)
+			}
+		})
+	}
+}
+
+// The exclusion guarantee is unchanged: a Lease that moved to another holder is
+// a genuine refusal, because this transaction can no longer prove it held the
+// lease while it was mutating. The tolerance above must not paper over that, and
+// the release must never clear a Lease it does not own.
+func TestReleaseNeverClearsALeaseHeldByAnotherTransaction(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TRANSIENT_DRAIN_API_FAIL_NODE":                    "prod-worker-1",
+		"FAKE_INTERRUPT_SYNC_LEASE_HEARTBEAT_DURING_DRAIN":      "true",
+		"FAKE_REPLACE_SYNC_LEASE_DURING_HEARTBEAT_INTERRUPTION": "true",
+		"FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS":                "1",
+	})
+	requireFailureResult(t, result)
+	if holder := mustRead(filepath.Join(f.syncStateDir, "sync-lease-holder")); holder != "newer-transaction" {
+		t.Fatalf("release disturbed a Lease owned by another transaction: holder is %q", holder)
+	}
+}
+
 func TestCurrentLeaseHolderRetriesSecretCASConflicts(t *testing.T) {
 	t.Parallel()
 	for name, test := range map[string]struct {

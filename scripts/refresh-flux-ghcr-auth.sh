@@ -134,6 +134,7 @@ readonly FLUX_CONTROLLER_ROLLOUT_TIMEOUT="2m"
 readonly SYNC_LEASE_NAME="ghcr-auth-refresh"
 readonly SYNC_LEASE_DURATION_SECONDS=120
 readonly SYNC_LEASE_HEARTBEAT_SECONDS="${FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS:-30}"
+readonly SYNC_LEASE_RELEASE_ATTEMPTS=3
 readonly CORDON_OWNER_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-owner"
 readonly CORDON_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner"
 readonly CORDON_RECOVERY_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-recovery"
@@ -4242,7 +4243,7 @@ release_sync_lease() {
   local lease_file="${work_dir}/sync-lease-release.json"
   local patch_file_local="${work_dir}/sync-lease-release-patch.json"
   local result_file="${work_dir}/sync-lease-release-result.txt"
-  local resource_version now
+  local now attempt observed_holder
 
   if [[ -n "${sync_lease_heartbeat_pid}" ]]; then
     kill "${sync_lease_heartbeat_pid}" 2>/dev/null || true
@@ -4250,42 +4251,62 @@ release_sync_lease() {
     sync_lease_heartbeat_pid=""
   fi
   [[ "${sync_lease_acquired}" == "true" && -n "${sync_lease_holder}" ]] || return 0
-  if ! kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace flux-system \
-    get lease "${SYNC_LEASE_NAME}" \
-    -o json >"${lease_file}"; then
-    return 1
-  fi
-  resource_version="$(jq -er \
-    --arg holder "${sync_lease_holder}" '
-    select(.spec.holderIdentity == $holder)
-    | .metadata.resourceVersion
-  ' "${lease_file}")" || return 1
-  now="$(kubernetes_microtime_now)"
-  jq -n \
-    --arg resource_version "${resource_version}" \
-    --arg holder "${sync_lease_holder}" \
-    --arg now "${now}" '
-    [
-      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
-      {op: "test", path: "/spec/holderIdentity", value: $holder},
-      {op: "replace", path: "/spec/holderIdentity", value: ""},
-      {op: "replace", path: "/spec/leaseDurationSeconds", value: 1},
-      {op: "replace", path: "/spec/renewTime", value: $now}
-    ]
-  ' >"${patch_file_local}"
-  if ! kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace flux-system \
-    patch lease "${SYNC_LEASE_NAME}" \
-    --type=json \
-    --patch-file="${patch_file_local}" \
-    >"${result_file}" 2>&1; then
-    return 1
-  fi
-  sync_lease_holder=""
-  sync_lease_acquired=false
+
+  # Killing the heartbeat shell does not reap the kubectl child it may be
+  # blocked in, so that renewal can still land between the read and the patch
+  # below. The CAS therefore tests holderIdentity ONLY. That alone carries the
+  # safety property of a release -- the lease is still ours -- while a
+  # resourceVersion conjunct would additionally fail on exactly the benign
+  # same-holder write renew_sync_lease is already documented to expect. A
+  # release that refuses leaves the lease held, so that conjunct converts a
+  # harmless race into a wedge that blocks every later transaction until a
+  # human clears it. A lease held by anyone else still refuses, below.
+  for ((attempt = 1; attempt <= SYNC_LEASE_RELEASE_ATTEMPTS; attempt++)); do
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      get lease "${SYNC_LEASE_NAME}" \
+      -o json >"${lease_file}" 2>"${result_file}"; then
+      continue
+    fi
+    observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || continue
+
+    # Losing the lease to another holder stays fatal: this transaction can no
+    # longer prove it held the lease while it was mutating, which is exactly
+    # the condition the exclusion guarantee exists to surface. Retrying cannot
+    # change a holder that already moved away, so refuse immediately.
+    if [[ "${observed_holder}" != "${sync_lease_holder}" ]]; then
+      return 1
+    fi
+
+    now="$(kubernetes_microtime_now)"
+    jq -n \
+      --arg holder "${sync_lease_holder}" \
+      --arg now "${now}" '
+      [
+        {op: "test", path: "/spec/holderIdentity", value: $holder},
+        {op: "replace", path: "/spec/holderIdentity", value: ""},
+        {op: "replace", path: "/spec/leaseDurationSeconds", value: 1},
+        {op: "replace", path: "/spec/renewTime", value: $now}
+      ]
+    ' >"${patch_file_local}"
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      patch lease "${SYNC_LEASE_NAME}" \
+      --type=json \
+      --patch-file="${patch_file_local}" \
+      >"${result_file}" 2>&1; then
+      sync_lease_holder=""
+      sync_lease_acquired=false
+      return 0
+    fi
+  done
+
+  # Every attempt read a lease still held by this transaction and still failed
+  # to clear it. That is a genuine refusal: report it rather than pretending
+  # the lease was released.
+  return 1
 }
 
 # The live image-verification policies are owned by the infrastructure Flux
