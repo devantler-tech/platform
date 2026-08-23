@@ -301,8 +301,13 @@ config_facts_in() {
     function reset_scan_state() {
       sc_instr = 0; sc_q = ""; sc_qlen = 1
       ca_instr = 0; ca_q = ""; ca_qlen = 1
+      # The ARRAY path owns the lines from here to the closing bracket and carries its
+      # own quote state, so the top-level tracker must let go. Its opener was counted
+      # on this same line one rule earlier; leaving it set would swallow every line
+      # after the array -- including the verifier table -- as string content.
+      ml_open = ""
     }
-    function strip_comment(line,   out, i, c, n) {
+    function strip_comment(line,   out, i, c, n, sc_run) {
       n = length(line); out = ""
       for (i = 1; i <= n; i++) {
         c = substr(line, i, 1)
@@ -311,7 +316,15 @@ config_facts_in() {
             # Multiline BASIC strings take escapes too, so an escaped quote does not
             # begin the closing triple.
             if (c == "\\" && sc_q == DQ) { out = out c; i++; out = out substr(line, i, 1); continue }
-            if (substr(line, i, 3) == sc_q sc_q sc_q) { out = out sc_q sc_q sc_q; i += 2; sc_instr = 0; continue }
+            # Consume the WHOLE run. TOML reads the leading one or two quotes of a
+            # four- or five-quote run as CONTENT and the last three as the delimiter, so
+            # stopping at the first three leaves a stray quote that re-opens a string --
+            # and everything after it, including a real table header, is read as content.
+            if (substr(line, i, 3) == sc_q sc_q sc_q) {
+              sc_run = 0
+              while (substr(line, i + sc_run, 1) == sc_q) sc_run++
+              out = out substr(line, i, sc_run); i += sc_run - 1; sc_instr = 0; continue
+            }
             out = out c
             continue
           }
@@ -337,14 +350,23 @@ config_facts_in() {
     # leaving disabled = 0 and a verdict of OK while containerd had the verifier
     # switched off. That is the fail-open this script exists to prevent, so the
     # terminator is found with the same quote-aware scan strip_comment uses.
-    function closes_array(line,   i, c, n) {
+    function closes_array(line,   i, c, n, ca_run) {
       n = length(line)
       for (i = 1; i <= n; i++) {
         c = substr(line, i, 1)
         if (ca_instr) {
           if (ca_qlen == 3) {
             if (c == "\\" && ca_q == DQ) { i++; continue }
-            if (substr(line, i, 3) == ca_q ca_q ca_q) { i += 2; ca_instr = 0 }
+            # Same whole-run rule as strip_comment above. Closing at the first three left
+            # the fourth quote re-opening a string, so the array never terminated and the
+            # verifier own table -- which TOML permits directly after, with no explicit
+            # [plugins] parent -- was swallowed as string content. Its populated bin_dir
+            # was then never seen and a HEALTHY node failed the gate.
+            if (substr(line, i, 3) == ca_q ca_q ca_q) {
+              ca_run = 0
+              while (substr(line, i + ca_run, 1) == ca_q) ca_run++
+              i += ca_run - 1; ca_instr = 0
+            }
             continue
           }
           if (c == "\\" && ca_q == DQ) { i++; continue }
@@ -513,6 +535,48 @@ config_facts_in() {
       buf = buf NLM line
       if (closes_array(line)) { in_array = 0; verdict(buf) }
       next
+    }
+    # A MULTILINE STRING SPANS PHYSICAL LINES, and its content is not TOML syntax.
+    # The header rule below fires on any line starting with [ and clears root scope
+    # PERMANENTLY, so a line of string content beginning with [ ended root scope and
+    # the real disabled_plugins underneath it was never examined -- disabled stayed 0
+    # while the verifier table still supplied a populated bin_dir, and the script
+    # reported OK with containerd having the plugin switched off. A fail-open.
+    #
+    # Runs after the array rule, so array continuation lines are consumed there and
+    # never reach this tracker; they carry their own state.
+    function ml_track(line,   i, n, c, run) {
+      n = length(line)
+      for (i = 1; i <= n; i++) {
+        c = substr(line, i, 1)
+        if (ml_open != "") {
+          if (c == "\\" && ml_open == DQ) { i++; continue }
+          if (substr(line, i, 3) == ml_open ml_open ml_open) {
+            run = 0
+            while (substr(line, i + run, 1) == ml_open) run++
+            i += run - 1
+            ml_open = ""
+          }
+          continue
+        }
+        # Outside a string a # opens a comment, so nothing after it is syntax.
+        if (c == "#") return
+        if (c == SQ || c == DQ) {
+          if (substr(line, i, 3) == c c c) { ml_open = c; i += 2; continue }
+          # A SINGLE-line string cannot span lines, so it only has to be skipped
+          # over here -- leaving it open would swallow the rest of the file.
+          i++
+          while (i <= n) {
+            if (substr(line, i, 1) == "\\" && c == DQ) { i += 2; continue }
+            if (substr(line, i, 1) == c) break
+            i++
+          }
+        }
+      }
+    }
+    {
+      if (ml_open != "") { ml_track($0); next }
+      ml_track($0)
     }
     /^[ \t]*\[/ {
       toplevel = 0

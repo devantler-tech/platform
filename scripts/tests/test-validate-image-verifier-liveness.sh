@@ -1819,4 +1819,73 @@ require_text "${output}" 'at least 1' 'case 33 control: 00 is decimal zero, stil
 
 reset_node_sequence
 
+
+# ===========================================================================
+# 34. THE CLOSING-RUN RULE IS NEEDED IN THE ARRAY SCANNER TOO. (#3320 review)
+#     Case 29 fixed the run in the ENTRY comparison. The scanner that decides
+#     where the array ENDS closes on the first three quotes as well, so it reads
+#     the fourth as a new opener and swallows whatever follows as string content.
+#
+#     TOML lets a sub-table be written without its implicit parent, so the very
+#     next line can be the verifier's own table. Swallowed, its populated bin_dir
+#     is never seen and a HEALTHY node fails the gate. The case 29 fixtures all
+#     carry an explicit [plugins] header, which absorbs the mis-parse and hides
+#     this -- so this case deliberately omits it.
+# ===========================================================================
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+disabled_plugins = ["""io.containerd.snapshotter.v1.blockfile""""]
+
+[plugins.'io.containerd.image-verifier.v1.bindir']
+  bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 34: a four-quote close must not swallow the verifier table that follows it'
+require_text "${output}" 'OK   disabled' 'case 34: the array scanner consumes the whole closing quote run'
+
+reset_node_sequence
+
+# ===========================================================================
+# 35. A `[` INSIDE A TOP-LEVEL MULTILINE STRING IS NOT A TABLE HEADER. (#3320 review)
+#     The header rule fires on any line starting with `[` and clears root scope
+#     permanently. A physical line of an earlier top-level multiline string that
+#     begins with `[` therefore ends root scope, and the REAL disabled_plugins
+#     below it is never examined -- disabled stays 0, the verifier table still
+#     supplies a populated bin_dir, and the script reports OK while containerd
+#     has the plugin switched off. That is the FAIL-OPEN direction.
+# ===========================================================================
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+note = """
+[this is string content, not a table header]
+"""
+disabled_plugins = ['io.containerd.image-verifier.v1.bindir']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 35: a bracketed line inside a multiline string must not end root scope and hide the real disabled_plugins'
+fi
+require_text "${output}" 'disabled_plugins' 'case 35: the real root key is still read after a bracketed string line'
+
+# CONTROL -- a REAL table header must still end root scope, or the fix would
+# re-alias a non-root disabled_plugins onto the root one (the hole case 24 closed).
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+
+[some.other.table]
+disabled_plugins = ['io.containerd.image-verifier.v1.bindir']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 35 control: a non-root disabled_plugins must not be treated as the root one'
+require_text "${output}" 'OK   disabled' 'case 35 control: a real table header still ends root scope'
+
+reset_node_sequence
+
 printf 'PASS: all cases\n'
