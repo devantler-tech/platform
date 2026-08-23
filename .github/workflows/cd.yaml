@@ -52,6 +52,9 @@ jobs:
           shellcheck scripts/tests/test-pvc-prune-safety.sh
           bash scripts/tests/test-pvc-prune-safety.sh
 
+      # Keep this structural check outside the RGD job whose presence and failure propagation it
+      # verifies. This independently required prerequisite still catches deletion or suppression of
+      # validate-rgd-templates instead of disappearing with the gate it is meant to protect.
       - name: 🔐 Validate nested RGD gate wiring
         run: |
           shellcheck scripts/tests/test-rgd-template-static-scan-wiring.sh

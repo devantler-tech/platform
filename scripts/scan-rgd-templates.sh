@@ -203,22 +203,38 @@ while IFS= read -r kustomization_file; do
     fi
   done < <(yq -o=json -I=0 '.patches[]?' "$kustomization_file" | jq -c '.')
 
-  while IFS= read -r legacy_patch_path; do
-    [ -n "$legacy_patch_path" ] || continue
-    patch_file="${kustomization_file%/*}/${legacy_patch_path}"
-    [ -r "$patch_file" ] || fail "Kustomization patch is not readable: $patch_file"
-    if yq -o=json -I=0 '.' "$patch_file" |
-      jq -e -s --argjson generated "$rgd_selectors_json" '
-        any(.[];
-          type == "object"
-          and ((.kind // "") == "ResourceGraphDefinition"
-            or (. as $document | any($generated[];
-              .kind == ($document.kind // "")
-              and ((.group + "/" + .version) == ($document.apiVersion // ""))))))
-      ' >/dev/null; then
-      fail "Kustomization patch declares an RGD definition or generated instance: $patch_file"
+  while IFS= read -r legacy_patch_entry; do
+    [ "$(jq -r 'type' <<<"$legacy_patch_entry")" = "string" ] ||
+      fail "Kustomization legacy patch entry is not a path or inline YAML: $kustomization_file"
+    legacy_patch="$(jq -r '.' <<<"$legacy_patch_entry")"
+    [ -n "$legacy_patch" ] || continue
+    patch_file="${kustomization_file%/*}/${legacy_patch}"
+    if [ -r "$patch_file" ]; then
+      legacy_patch_json="$(yq -o=json -I=0 '.' "$patch_file")"
+      legacy_patch_failure="Kustomization patch declares an RGD definition or generated instance: $patch_file"
+    else
+      legacy_patch_json="$(yq -o=json -I=0 '.' <<<"$legacy_patch" 2>/dev/null)" ||
+        fail "Kustomization patch is not readable and is not valid inline YAML: $patch_file"
+      jq -e -s 'length > 0 and all(.[]; type == "object")' <<<"$legacy_patch_json" >/dev/null ||
+        fail "Kustomization patch is not readable and is not inline YAML: $patch_file"
+      legacy_patch_failure="Kustomization inline legacy patch declares an RGD definition or generated instance: $kustomization_file"
     fi
-  done < <(yq '.patchesStrategicMerge[]? // ""' "$kustomization_file")
+    protected_legacy_kinds="$(jq -r -s --argjson generated "$rgd_selectors_json" '
+      [
+        .[] | select(type == "object") as $document |
+        if ($document.kind // "") == "ResourceGraphDefinition" then
+          "ResourceGraphDefinition"
+        elif any($generated[];
+          .kind == ($document.kind // "")
+          and ((.group + "/" + .version) == ($document.apiVersion // ""))) then
+          $document.kind
+        else empty end
+      ] | unique | join(", ")
+    ' <<<"$legacy_patch_json")"
+    if [ -n "$protected_legacy_kinds" ]; then
+      fail "$legacy_patch_failure ($protected_legacy_kinds)"
+    fi
+  done < <(yq -o=json -I=0 '.patchesStrategicMerge[]?' "$kustomization_file" | jq -c '.')
 done < <(
   find "$k8s_root" -type f \
     \( -name 'kustomization.yaml' -o -name 'kustomization.yml' -o -name 'Kustomization' \) \

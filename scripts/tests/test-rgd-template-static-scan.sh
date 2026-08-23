@@ -141,15 +141,18 @@ PATH="$WORK/bin:$PATH" REAL_YQ="$YQ_BIN" "$GATE" "$WORK" ||
 echo "PASS(probe): finding and content evidence ignore serializer-only presentation."
 
 expect_rejected() {
-  local label="$1" expected_id="$2" log="${WORK}/gate-probe.log"
+  local label="$1" log="${WORK}/gate-probe.log" expected_fragment
+  shift
   if "$GATE" "$WORK" >"$log" 2>&1; then
     fail "the gate accepted $label"
   fi
-  if ! grep -Fq "$expected_id" "$log"; then
-    sed 's/^/  /' "$log" >&2
-    fail "the gate failed for $label without reporting the expected $expected_id finding"
-  fi
-  echo "PASS(probe): $label is rejected with $expected_id."
+  for expected_fragment in "$@"; do
+    if ! grep -Fq "$expected_fragment" "$log"; then
+      sed 's/^/  /' "$log" >&2
+      fail "the gate failed for $label without reporting the expected $expected_fragment finding"
+    fi
+  done
+  echo "PASS(probe): $label is rejected with the expected evidence."
 }
 
 restore_webapp() {
@@ -199,7 +202,8 @@ yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
     },
     "patch": "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"
   }]' >"$WORK/$PROVIDER_PROBE"
-expect_rejected "a provider overlay patch targeting an RGD" "ResourceGraphDefinition"
+expect_rejected "a provider overlay patch targeting an RGD" \
+  "Kustomization targets or ambiguously selects" "ResourceGraphDefinition"
 rm -f "$WORK/$PROVIDER_PROBE"
 
 # A Kustomize selector may omit kind and still match every resource satisfying its remaining
@@ -214,7 +218,8 @@ yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
     },
     "patch": "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"
   }]' >"$WORK/$PROVIDER_PROBE"
-expect_rejected "a provider overlay RGD selector without kind" "ResourceGraphDefinition"
+expect_rejected "a provider overlay RGD selector without kind" \
+  "Kustomization targets or ambiguously selects" "missing kind"
 rm -f "$WORK/$PROVIDER_PROBE"
 
 # Generated instances feed values into templates after extraction too. A patch to a WebApp or
@@ -229,7 +234,8 @@ yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
     },
     "patch": "- op: replace\n  path: /spec/name\n  value: kube-system"
   }]' >"$WORK/$PROVIDER_PROBE"
-expect_rejected "a provider overlay patch targeting a generated WebApp" "WebApp"
+expect_rejected "a provider overlay patch targeting a generated WebApp" \
+  "Kustomization targets or ambiguously selects" "WebApp"
 rm -f "$WORK/$PROVIDER_PROBE"
 
 yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
@@ -242,7 +248,27 @@ yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
     },
     "patch": "- op: replace\n  path: /spec/name\n  value: kube-system"
   }]' >"$WORK/$PROVIDER_PROBE"
-expect_rejected "a regex provider overlay patch targeting a generated WebApp" "Web.*"
+expect_rejected "a regex provider overlay patch targeting a generated WebApp" \
+  "Kustomization targets or ambiguously selects" "Web.*"
+rm -f "$WORK/$PROVIDER_PROBE"
+
+# Legacy strategic-merge entries may contain inline YAML instead of a path. An unrelated patch must
+# remain usable, while an inline generated-instance patch must receive the same post-scan guard as a
+# path-backed patch.
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [] | .patchesStrategicMerge = [
+    "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: unrelated"
+  ]' >"$WORK/$PROVIDER_PROBE"
+"$GATE" "$WORK" || fail "the gate rejected a permitted inline legacy ConfigMap patch"
+echo "PASS(probe): an unrelated inline legacy strategic-merge patch remains permitted."
+rm -f "$WORK/$PROVIDER_PROBE"
+
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [] | .patchesStrategicMerge = [
+    "apiVersion: kro.run/v1alpha1\nkind: WebApp\nmetadata:\n  name: wedding-app\nspec:\n  name: kube-system"
+  ]' >"$WORK/$PROVIDER_PROBE"
+expect_rejected "an inline legacy patch declaring a generated WebApp" \
+  "Kustomization inline legacy patch declares an RGD definition or generated instance" "WebApp"
 rm -f "$WORK/$PROVIDER_PROBE"
 
 # Provider-local definitions are valid graph sources rather than mutations, but they must enter the
@@ -269,7 +295,8 @@ yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
     },
     "patch": "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"
   }]' >"$WORK/$BASE_RGD_KUSTOMIZATION"
-expect_rejected "a shared-base overlay patch targeting an RGD" "ResourceGraphDefinition"
+expect_rejected "a shared-base overlay patch targeting an RGD" \
+  "Kustomization targets or ambiguously selects" "ResourceGraphDefinition"
 rm -f "$WORK/$BASE_RGD_KUSTOMIZATION"
 
 for alternate_kustomization_name in kustomization.yml Kustomization; do
@@ -284,7 +311,8 @@ for alternate_kustomization_name in kustomization.yml Kustomization; do
       },
       "patch": "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"
     }]' >"$WORK/$alternate_kustomization"
-  expect_rejected "an RGD patch in $alternate_kustomization_name" "ResourceGraphDefinition"
+  expect_rejected "an RGD patch in $alternate_kustomization_name" \
+    "Kustomization targets or ambiguously selects" "ResourceGraphDefinition"
   rm -f "$WORK/$alternate_kustomization"
 done
 
