@@ -58,9 +58,77 @@ var requiredFrameworks = []string{"nsa", "mitre"}
 // happens to match.
 var frameworkToken = regexp.MustCompile(`^[a-z0-9._-]+$`)
 
-// Matches `<<` / `<<-` plus an optionally quoted delimiter word, ANCHORED: it is applied
-// at a position shellSplit has already proven to be unquoted, never searched over a line.
-var heredocStart = regexp.MustCompile(`^<<-?\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))`)
+// What `<<` opened, as far as this can tell.
+//
+// A DELIMITER IS A SHELL WORD, NOT AN IDENTIFIER. Matching an identifier read two
+// DIFFERENT wrong answers off the same construct, in opposite directions. `<<EOF-1`
+// matched the prefix `EOF`, whose terminator never arrives, so the rest of the block
+// was swallowed as heredoc body — a false reject. `<<1EOF` and `<<\EOF` matched NO
+// branch at all, so no heredoc was recorded and the body was handed to the scanner as
+// executable code — a FAIL-OPEN, which let a decoy body supply `nsa,mitre` while the
+// only scan that ran covered one framework. Both spellings are valid bash; measured.
+//
+// So the opener is parsed rather than pattern-matched, and anything unreadable fails
+// closed instead of being guessed at — guessing is what produced both bugs.
+const (
+	heredocUnreadable = iota // a `<<` this cannot parse; the caller fails closed
+	heredocOpener            // a real heredoc, delimiter parsed
+	heredocHereString        // `<<<`: stdin from a string; no body to skip
+)
+
+// parseHeredocOpener reads a heredoc redirection at the START of s, which shellSplit
+// has already proven to begin at an unquoted `<<`. Quote removal applies per part, so
+// `<<'E'OF`, `<<"E"OF` and `<<E\OF` all terminate on the literal word they spell.
+func parseHeredocOpener(s string) (h heredoc, consumed, kind int) {
+	if !strings.HasPrefix(s, "<<") {
+		return heredoc{}, 0, heredocUnreadable
+	}
+	i := 2
+	// `<<<` is a here-STRING: it consumes a word on this line and swallows no body.
+	// Left to the heredoc path it parsed as a heredoc whose delimiter was the quoted
+	// word, silently eating the rest of the block.
+	if i < len(s) && s[i] == '<' {
+		return heredoc{}, 3, heredocHereString
+	}
+	if i < len(s) && s[i] == '-' {
+		h.indented = true
+		i++
+	}
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	var delim strings.Builder
+	for i < len(s) {
+		c := s[i]
+		// An unquoted word ends at whitespace or a redirection/list operator.
+		if c == ' ' || c == '\t' || strings.IndexByte(";&|<>()", c) >= 0 {
+			break
+		}
+		switch c {
+		case '\\':
+			if i+1 >= len(s) {
+				return heredoc{}, 0, heredocUnreadable
+			}
+			delim.WriteByte(s[i+1])
+			i += 2
+		case '\'', '"':
+			j := strings.IndexByte(s[i+1:], c)
+			if j < 0 {
+				return heredoc{}, 0, heredocUnreadable
+			}
+			delim.WriteString(s[i+1 : i+1+j])
+			i += j + 2
+		default:
+			delim.WriteByte(c)
+			i++
+		}
+	}
+	if delim.Len() == 0 {
+		return heredoc{}, 0, heredocUnreadable
+	}
+	h.delim = delim.String()
+	return h, i, heredocOpener
+}
 
 func main() {
 	workflows := os.Args[1:]
@@ -311,7 +379,7 @@ type heredoc struct {
 // their bodies. A single line may carry several — `cat <<'A' <<'B'` — and each
 // body in turn is non-executing input. Recording only the first stopped the skip
 // at the first terminator and handed the following body to the scanner as code.
-func shellSplit(line string) (segments []shellSegment, heredocs []heredoc) {
+func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unreadable bool) {
 	var cur strings.Builder
 	var inSingle, inDouble bool
 	// The first command on a line is always reached; each operator decides the next.
@@ -349,20 +417,19 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc) {
 		}
 		// Unquoted from here, so an operator here is a real shell operator.
 		if c == '<' && i+1 < len(line) && line[i+1] == '<' {
-			if m := heredocStart.FindStringSubmatch(line[i:]); m != nil {
-				delim := ""
-				for _, g := range m[1:] {
-					if g != "" {
-						delim = g
-						break
-					}
-				}
-				heredocs = append(heredocs, heredoc{
-					delim:    delim,
-					indented: strings.HasPrefix(m[0], "<<-"),
-				})
-				i += len(m[0]) - 1
+			h, consumed, kind := parseHeredocOpener(line[i:])
+			switch kind {
+			case heredocOpener:
+				heredocs = append(heredocs, h)
+				i += consumed - 1
 				continue
+			case heredocHereString:
+				i += consumed - 1
+				continue
+			default:
+				// Refuse the whole line rather than walk past a redirection whose body
+				// boundary is unknown: past it, every following line is of unknown status.
+				return segments, heredocs, true
 			}
 		}
 		// `;`, `&`, `&&`, `|`, `||` all end the current command. Splitting on the
@@ -380,7 +447,7 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc) {
 		cur.WriteByte(c)
 	}
 	flush(false)
-	return segments, heredocs
+	return segments, heredocs, false
 }
 
 // Shell words that introduce a COMPOUND command — one whose body's execution is not
@@ -506,7 +573,12 @@ func scanInvocations(scalar string) ([]string, error) {
 			continue
 		}
 
-		segments, heredocs := shellSplit(command)
+		segments, heredocs, unreadable := shellSplit(command)
+		if unreadable {
+			return nil, fmt.Errorf(
+				"a `<<` redirection in this `run:` block is not in a form this guard can read, so the end of its heredoc body is unknown and every following line has undecidable status: %q. A body read as code would let a non-executing decoy supply the framework list. Use a plain heredoc delimiter. See #2823",
+				strings.TrimSpace(command))
+		}
 		pending = append(pending, heredocs...)
 
 		for _, segment := range segments {

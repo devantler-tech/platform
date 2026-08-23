@@ -175,6 +175,21 @@ func TestRejectsOutputOnlyDecoys(t *testing.T) {
 // covered one framework. Measured on the shipped bash guard before this rewrite.
 func TestRejectsHeredocBodyDecoy(t *testing.T) {
 	cases := map[string]string{
+		// A heredoc delimiter is a shell WORD, not an identifier. These two open a
+		// heredoc in bash — measured — but matched no branch of the opener pattern,
+		// so NO heredoc was recorded and the body was read as executable code. The
+		// guard then took `nsa,mitre` from text that never runs, while the only scan
+		// that executes covers one framework. A FAIL-OPEN, which is the direction
+		// that matters: a delimiter mis-read as a shorter PREFIX (`<<EOF-1` -> `EOF`)
+		// instead swallows the rest of the block and fails closed.
+		"heredoc delimiter starting with a digit": "cat <<1EOF > /dev/null\n" +
+			goodScan + "\n" +
+			"1EOF\n" +
+			"env ksail workload scan --framework nsa",
+		"escaped heredoc delimiter": "cat <<\\EOF > /dev/null\n" +
+			goodScan + "\n" +
+			"EOF\n" +
+			"env ksail workload scan --framework nsa",
 		"heredoc body with an env-wrapped real scan": "cat <<'DOC' > /dev/null\n" +
 			goodScan + "\n" +
 			"DOC\n" +
@@ -637,5 +652,49 @@ func TestRejectsSecondHeredocBodyDecoy(t *testing.T) {
 		"env ksail workload scan --framework nsa --compliance-threshold 95"
 	if got, err := setOf(t, body); err == nil {
 		t.Fatalf("expected FAIL CLOSED — the second heredoc body executes nothing; got set %q", got)
+	}
+}
+
+// The other direction of the same bug: a valid non-identifier delimiter must
+// TERMINATE correctly. `<<EOF-1` used to match the prefix `EOF`, whose terminator
+// never arrives, so every later line was swallowed as heredoc body and the real
+// scan vanished — a false reject that reads exactly like a clean run.
+func TestNonIdentifierHeredocTerminatesCorrectly(t *testing.T) {
+	body := "cat <<EOF-1 > /dev/null\nirrelevant text\nEOF-1\n" + goodScan
+	got, err := setOf(t, body)
+	if err != nil {
+		t.Fatalf("expected the scan after an `EOF-1` heredoc to be found, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set after non-identifier heredoc = %q", got)
+	}
+}
+
+// `<<<` is a here-STRING: it consumes a word on its own line and swallows no body.
+// Routed through the heredoc path it parsed as a heredoc whose delimiter was the
+// quoted word, silently eating the rest of the block.
+func TestHereStringDoesNotSwallowLaterInvocation(t *testing.T) {
+	body := "grep -q x <<<\"some text\"\n" + goodScan
+	got, err := setOf(t, body)
+	if err != nil {
+		t.Fatalf("expected the scan after a here-string to be found, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set after here-string = %q", got)
+	}
+}
+
+// A `<<` whose delimiter cannot be parsed leaves the body boundary unknown, so every
+// following line has undecidable status. That fails CLOSED rather than being walked
+// past — walking past it is what handed a decoy body to the scanner as code.
+func TestUnreadableHeredocOpenerFailsClosed(t *testing.T) {
+	for name, body := range map[string]string{
+		"empty delimiter":    "cat << > /dev/null\n" + goodScan,
+		"unterminated quote": "cat <<'EOF > /dev/null\n" + goodScan,
+		"trailing backslash": "cat <<\\",
+	} {
+		if _, err := setOf(t, body); err == nil {
+			t.Fatalf("%s: expected FAIL CLOSED — an unreadable `<<` leaves the body boundary unknown", name)
+		}
 	}
 }
