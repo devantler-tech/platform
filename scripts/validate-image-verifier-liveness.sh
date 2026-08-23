@@ -264,11 +264,29 @@ config_facts_in() {
     # comment spellings to special-case. A # INSIDE a quoted entry is content:
     # truncating there would drop every entry after it on the same line, which
     # is the same false OK pointing the other way.
-    function strip_comment(line,   out, i, c, n, instr, q) {
-      n = length(line); out = ""; instr = 0; q = ""
+    # A TOML MULTILINE string opens and closes with THREE quotes. Reading each quote
+    # as its own single-char delimiter toggles the string state on and straight back
+    # off across the opener, so the body is then scanned as if it were unquoted: a #
+    # inside it truncates the array and a ] inside it ends it, dropping every later
+    # entry -- ours among them -- and reporting OK while the verifier is off. Answers
+    # how many characters the delimiter at i occupies.
+    function delim_len(line, i, c) {
+      if (substr(line, i, 3) == c c c) return 3
+      return 1
+    }
+    function strip_comment(line,   out, i, c, n, instr, q, qlen) {
+      n = length(line); out = ""; instr = 0; q = ""; qlen = 1
       for (i = 1; i <= n; i++) {
         c = substr(line, i, 1)
         if (instr) {
+          if (qlen == 3) {
+            # Multiline BASIC strings take escapes too, so an escaped quote does not
+            # begin the closing triple.
+            if (c == "\\" && q == DQ) { out = out c; i++; out = out substr(line, i, 1); continue }
+            if (substr(line, i, 3) == q q q) { out = out q q q; i += 2; instr = 0; continue }
+            out = out c
+            continue
+          }
           out = out c
           # Basic strings take backslash escapes; literal ones do not.
           if (c == "\\" && q == DQ) { i++; out = out substr(line, i, 1); continue }
@@ -276,7 +294,10 @@ config_facts_in() {
           continue
         }
         if (c == "#") break
-        if (c == SQ || c == DQ) { instr = 1; q = c }
+        if (c == SQ || c == DQ) {
+          instr = 1; q = c; qlen = delim_len(line, i, c)
+          if (qlen == 3) { out = out c c c; i += 2; continue }
+        }
         out = out c
       }
       return out
@@ -287,16 +308,25 @@ config_facts_in() {
     # leaving disabled = 0 and a verdict of OK while containerd had the verifier
     # switched off. That is the fail-open this script exists to prevent, so the
     # terminator is found with the same quote-aware scan strip_comment uses.
-    function closes_array(line,   i, c, n, instr, q) {
-      n = length(line); instr = 0; q = ""
+    function closes_array(line,   i, c, n, instr, q, qlen) {
+      n = length(line); instr = 0; q = ""; qlen = 1
       for (i = 1; i <= n; i++) {
         c = substr(line, i, 1)
         if (instr) {
+          if (qlen == 3) {
+            if (c == "\\" && q == DQ) { i++; continue }
+            if (substr(line, i, 3) == q q q) { i += 2; instr = 0 }
+            continue
+          }
           if (c == "\\" && q == DQ) { i++; continue }
           if (c == q) instr = 0
           continue
         }
-        if (c == SQ || c == DQ) { instr = 1; q = c; continue }
+        if (c == SQ || c == DQ) {
+          instr = 1; q = c; qlen = delim_len(line, i, c)
+          if (qlen == 3) i += 2
+          continue
+        }
         if (c == "]") return 1
       }
       return 0
@@ -322,6 +352,29 @@ config_facts_in() {
         # TOML string values are quoted; an unquoted token is not an entry.
         quote = substr(entry, 1, 1)
         if (quote != SQ && quote != DQ) continue
+        if (substr(entry, 1, 3) == quote quote quote) {
+          # A MULTILINE entry resolves to exactly the characters of the single-line
+          # form -- measured against go-toml, which returns our identifier for
+          # """id""", the literal triple, and plain "id" alike. Reading the opener as
+          # ONE quote closed the string on its second character and compared an EMPTY
+          # entry, so containerd had the verifier off and the node still reported OK.
+          entry = substr(entry, 4)
+          close_at = 0
+          j = 1
+          while (j <= length(entry)) {
+            c = substr(entry, j, 1)
+            if (c == "\\" && quote == DQ) { j += 2; continue }
+            if (substr(entry, j, 3) == quote quote quote) { close_at = j; break }
+            j++
+          }
+          if (close_at == 0) continue
+          entry = substr(entry, 1, close_at - 1)
+          # Basic strings interpret escapes; literal ones keep the text verbatim, so
+          # decoding a literal would alias a DIFFERENT plugin id onto ours.
+          if (quote == DQ) entry = decode_basic(entry)
+          if (entry == "io.containerd.image-verifier.v1.bindir") disabled = 1
+          continue
+        }
         entry = substr(entry, 2)
         if (quote == DQ) {
           # A BASIC entry escapes its closing quote, so a plain index() stops early and

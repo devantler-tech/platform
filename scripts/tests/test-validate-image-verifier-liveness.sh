@@ -205,6 +205,11 @@ run_script() {
 # tree, and a test fixture is not a good reason to spend that).
 readonly canary='CANARY-registry-auth-value-must-never-be-printed'
 
+# A literal backslash, BUILT rather than typed, so no layer between this file and
+# the fixture can decode a TOML escape sequence on the way through.
+BS="$(awk 'BEGIN{printf "%c", 92}')"
+readonly BS
+
 verifier_config() {
   local bin_dir="$1"
   cat <<EOF
@@ -1098,6 +1103,107 @@ EOF
 output="$(run_script TALOS_NODES=disabled 2>&1)" ||
   fail 'case 24: a literal-quoted entry with escape text must not be decoded onto our plugin id'
 require_text "${output}" 'OK   disabled' 'case 24: literal entries keep escape text verbatim'
+
+# A MULTILINE BASIC entry ("""...""") is the same plugin id to containerd: go-toml
+# resolves the triple-quoted form to exactly the characters of our identifier, so
+# the verifier is OFF. Treating each quote as a single-char delimiter closed the
+# string on the SECOND quote of the opener and compared an EMPTY entry, so the node
+# reported OK with no enforcement -- the fail-open this script exists to prevent.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ["""io.containerd.image-verifier.v1.bindir"""]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a MULTILINE BASIC entry must be read as our plugin id'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: triple-quoted basic entries are parsed'
+
+# The MULTILINE LITERAL spelling ('''...''') resolves to the SAME characters --
+# measured with go-toml, which returns our identifier for the basic, the literal
+# and the plain forms alike. The reviewer named only the basic form; this half of
+# the hole is identical and fails open in exactly the same direction.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ['''io.containerd.image-verifier.v1.bindir''']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a MULTILINE LITERAL entry must be read as our plugin id'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: triple-quoted literal entries are parsed'
+
+# A multiline BASIC entry interprets escapes exactly as the single-line form does,
+# so the escaped spelling is still our plugin id and must disable the node.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ["""io.containerd.image-verifier.v1${BS}u002ebindir"""]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: escapes inside a MULTILINE BASIC entry must be decoded'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: multiline basic escapes are decoded'
+
+# ...and the multiline LITERAL form interprets nothing, so the same text is a
+# DIFFERENT plugin id containerd never matches. Decoding it would alias a healthy
+# node onto ours and report a false FAIL.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ['''io.containerd.image-verifier.v1${BS}u002ebindir''']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 24: a multiline LITERAL entry with escape text must not be decoded onto our plugin id'
+require_text "${output}" 'OK   disabled' 'case 24: multiline literal entries keep escape text verbatim'
+
+# A # inside a MULTILINE string is content, not a comment opener. ONE interior quote
+# is legal inside a multiline basic string and makes the quote count ODD, so a walk that
+# reads each quote singly ends up OUTSIDE the string at the #, truncates the array there,
+# and drops our entry -- reporting OK while containerd has the verifier off.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ["""a"b#c""", 'io.containerd.image-verifier.v1.bindir']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a # inside a MULTILINE string must not truncate the array'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: # inside a triple-quoted string is content'
+
+# ...and a ] inside a MULTILINE string is not the array terminator. In a MULTI-LINE
+# array that early termination stops the buffer before the next line, so our entry on
+# it is never examined at all -- the same fail-open, reached through enumeration.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = [
+  """a"b]c""",
+  'io.containerd.image-verifier.v1.bindir',
+]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a ] inside a MULTILINE string must not terminate the array'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: ] inside a triple-quoted string is content'
 
 # Our identifier appearing only in a trailing TOML COMMENT is not an entry.
 cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
