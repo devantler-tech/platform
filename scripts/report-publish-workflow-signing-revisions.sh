@@ -233,7 +233,27 @@ effective_version() {
     semver:*)
       expr="${raw#semver:}"
       case "$expr" in
-        '*' | '>='[0-9]*)
+        '*')
+          printf '%s\n' ''
+          return 0
+          ;;
+        # ANY character a single lower bound cannot contain means the range is COMPOUND,
+        # and therefore bounded. This is a character class rather than a prefix because
+        # the previous form was `'>='[0-9]*`, whose trailing `*` swallowed the upper
+        # bound of `>=1.0.0 <2.0.0`: that selector begins exactly like the unbounded
+        # `>=1.0.0` which IS legitimately allowed, so a prefix test accepted it, dropped
+        # the `<2.0.0`, and would resolve to a 2.x tag Flux never serves — attributing
+        # that tag's workflow revision to the deployed artifact and omitting the real
+        # signer from the allow-list.
+        #
+        # `>` and `=` are quoted so the shell does not read them as a redirection inside
+        # the pattern, and `-` is last inside the class so it stays literal.
+        *[!0-9A-Za-z.+'>='-]*)
+          printf 'bounded semver constraint "%s" needs Flux-compatible selection, which this script does not implement\n' \
+            "$expr" >&2
+          return 1
+          ;;
+        '>'[0-9]* | '>='[0-9]*)
           printf '%s\n' ''
           return 0
           ;;

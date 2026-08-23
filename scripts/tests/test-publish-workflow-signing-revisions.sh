@@ -324,18 +324,25 @@ fi
 #    Resolving such a range needs Flux-compatible semver selection this script does not
 #    implement, so the honest outcome is a named refusal.
 # ---------------------------------------------------------------------------
-bounded_root="$WORK/bounded"
-mkdir -p "$bounded_root"
-k=0
-while IFS=$'\t' read -r repo workflow _version; do
-  [ -n "$repo" ] || continue
-  k=$((k + 1))
-  oci="$repo"
-  [ "$repo" = '.github' ] && oci='github-config'
-  # One consumer gets a BOUNDED range; the rest keep an unbounded one, so the refusal
-  # cannot be confused with a wholesale failure of the fixture.
-  if [ "$k" -eq 1 ]; then ref='semver: "~1.4"'; else ref='semver: ">=1.0.0"'; fi
-  cat >"$bounded_root/c-$k.yaml" <<YAML
+# Each selector below is bounded and must refuse BY NAME. `~1.4` is the simple form;
+# `>=1.0.0 <2.0.0` is the compound one, which matters because a lower-bound-prefix
+# test accepts it — the upper bound is simply not looked at — and the script would
+# then treat a bounded range as unbounded and resolve it to the newest tag.
+bounded_case() {
+  bc_label=$1
+  bc_selector=$2
+  bc_root="$WORK/bounded-$bc_label"
+  mkdir -p "$bc_root"
+  k=0
+  while IFS=$'\t' read -r repo workflow _version; do
+    [ -n "$repo" ] || continue
+    k=$((k + 1))
+    oci="$repo"
+    [ "$repo" = '.github' ] && oci='github-config'
+    # One consumer gets the BOUNDED range; the rest keep an unbounded one, so the
+    # refusal cannot be confused with a wholesale failure of the fixture.
+    if [ "$k" -eq 1 ]; then ref="semver: \"$bc_selector\""; else ref='semver: ">=1.0.0"'; fi
+    cat >"$bc_root/c-$k.yaml" <<YAML
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
@@ -350,22 +357,31 @@ spec:
       - issuer: '^https://token\\.actions\\.githubusercontent\\.com\$'
         subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/$workflow\\.yaml@[0-9a-f]{40}\$'
 YAML
-done <<<"$consumers"
-bounded_out="$WORK/bounded.out"
-# The stub is safe here BECAUSE the refusal is decided from the manifest, before any resolver
-# is consulted. When this check lived inside the resolver, the only way to reach it was to let
-# the real one run — which made this case hit the network and fail in CI for an unrelated
-# reason. A hermetic case that reaches the branch is strictly better than a live one that does.
-if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
-PUBLISH_CONSUMER_ROOT="$bounded_root" "$SCRIPT" >"$bounded_out" 2>&1; then
-  fail 'a bounded semver constraint was silently resolved to the newest tag instead of refusing'
-else
-  grep -q 'bounded semver constraint' "$bounded_out" ||
-    fail 'the run failed but not because of the bounded constraint — the case is not testing what it claims'
-  grep -q '~1.4' "$bounded_out" ||
-    fail 'the refusal does not name the constraint, so the cause is not diagnosable'
-  pass 'a bounded semver constraint refuses by name instead of guessing the newest tag'
-fi
+  done <<<"$consumers"
+  bc_out="$WORK/bounded-$bc_label.out"
+  # The stub is safe here BECAUSE the refusal is decided from the manifest, before any
+  # resolver is consulted. When this check lived inside the resolver, the only way to
+  # reach it was to let the real one run — which made this case hit the network and fail
+  # in CI for an unrelated reason. A hermetic case that reaches the branch is strictly
+  # better than a live one that does.
+  if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+  PUBLISH_CONSUMER_ROOT="$bc_root" "$SCRIPT" >"$bc_out" 2>&1; then
+    fail "a bounded semver constraint ($bc_selector) was silently resolved to the newest tag instead of refusing"
+  else
+    grep -q 'bounded semver constraint' "$bc_out" ||
+      fail "the run failed but not because of the bounded constraint ($bc_selector) — the case is not testing what it claims"
+    grep -qF "$bc_selector" "$bc_out" ||
+      fail "the refusal does not name the constraint ($bc_selector), so the cause is not diagnosable"
+    pass "a bounded semver constraint refuses by name instead of guessing the newest tag: $bc_selector"
+  fi
+}
+
+bounded_case simple '~1.4'
+# A COMPOUND range beginning with a lower bound. The whole point: it *starts* like the
+# unbounded `>=1.0.0` that is legitimately allowed, so any test looking only at the
+# prefix accepts it and discards the `<2.0.0` — attributing a 2.x tag's workflow
+# revision to an artifact Flux would never deploy, and omitting the real signer.
+bounded_case compound '>=1.0.0 <2.0.0'
 
 # ---------------------------------------------------------------------------
 # 10. AN EMPTY MIDDLE FIELD MUST NOT SHIFT `origin` INTO `current`. (#3305 review)
