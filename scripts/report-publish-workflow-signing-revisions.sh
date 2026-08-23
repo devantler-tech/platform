@@ -367,11 +367,17 @@ tag_was_published() {
 # Release object; `aws` publishes from tags and cuts no Releases at all. Releases are
 # therefore not consulted.
 #
-# Prints "<tag>\t<exact|inferred>". `exact` means the OCIRepository pins that version, so
-# it IS what is deployed. `inferred` means the consumer uses a semver RANGE, so the newest
-# published tag is the closest honest answer — and the caller marks the row, because an
-# inferred revision must not be mistaken for a measured one when an allow-list is built
-# from this output.
+# Prints "<tag>\t<pinned|inferred>". `pinned` means the OCIRepository names that version
+# and its artifact was published; `inferred` means the consumer uses a semver RANGE, so the
+# newest published tag is the closest honest answer.
+#
+# 🔴 NEITHER IS EVIDENCE OF WHAT IS APPLIED, and the caller marks BOTH rows for that reason.
+# `pinned` was called `exact` and read as "this IS what is deployed", which it cannot know:
+# a version bump landing by direct push to main is reported by validate-main.yaml before the
+# manual CD workflow deploys it, so a previously-published tag reads as deployed while the
+# cluster still runs its predecessor — and the proposed allow-list then omits the revision
+# that actually signed the running artifact. Closing that needs an applied Flux revision,
+# which means reading a cluster; this script reads manifests and a registry only.
 deployed_tag() {
   local repo="$1" version="$2" tags candidate bare
   # --paginate: the endpoint caps at 100 per page and these repos already carry 50+ tags.
@@ -389,7 +395,7 @@ deployed_tag() {
         # the signer of what is deployed. A pinned-but-unpublished version is an anomaly worth
         # surfacing, so it is UNRESOLVED rather than silently walked back to an older tag.
         tag_was_published "$repo" "$candidate" || return 1
-        printf '%s\texact\n' "$candidate"
+        printf '%s\tpinned\n' "$candidate"
         return 0
       fi
     done
@@ -453,7 +459,7 @@ deployed_tag() {
   return 1
 }
 
-# Default resolver: "<signing revision>\t<current pin>\t<exact|inferred>".
+# Default resolver: "<signing revision>\t<current pin>\t<pinned|inferred>".
 default_resolver() {
   local repo="$1" workflow="$2" version="${3:-}" branch tagline tag origin signing current
   branch="$(gh_retry api "repos/devantler-tech/${repo}" --jq .default_branch)" || return 1
@@ -568,10 +574,23 @@ main() {
       continue
     fi
     local mark=''
-    # An inferred revision is the newest tag whose release actually published; it is still
-    # not a measurement of what Flux has APPLIED. Saying so is the difference between an
-    # allow-list built on evidence and one built on a guess that reads identically.
-    [ "${origin:-}" = 'inferred' ] && mark=' (deployed version inferred from newest PUBLISHED tag)'
+    # 🔴 NEITHER ORIGIN IS A MEASUREMENT OF WHAT FLUX HAS APPLIED, and both say so. This
+    # script reads manifests and a registry; nothing here reads a cluster. Saying so is the
+    # difference between an allow-list built on evidence and one built on a guess that
+    # reads identically.
+    #
+    # `pinned` was called `exact`, which overclaimed in a way that is reachable rather than
+    # theoretical: a version bump landing by DIRECT PUSH to main runs validate-main.yaml
+    # immediately, while that path does not deploy until the manual CD workflow runs. If
+    # that tag's artifact had been published earlier, the row read `exact` — "this IS what
+    # is deployed" — while the cluster was still running the PREVIOUS tag, so the proposed
+    # allow-list could omit the revision that actually signed the running artifact.
+    # `tag_was_published` closes "the tag exists but never published"; it cannot close
+    # "published but not yet applied", and no tag-based check can.
+    case "${origin:-}" in
+      inferred) mark=' (deployed version inferred from newest PUBLISHED tag; not applied-revision evidence)' ;;
+      pinned) mark=' (deployed version is what the manifest PINS and was published; not applied-revision evidence)' ;;
+    esac
     if [ "$signing" = "$current" ]; then
       printf 'IN-SYNC    %-22s %-18s signed=%s pinned=%s%s\n' \
         "$repo" "$workflow" "$signing" "$current" "$mark"

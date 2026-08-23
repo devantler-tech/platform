@@ -703,8 +703,53 @@ else
   pass 'an omitted spec.ref refuses by name instead of being looked up as a literal tag'
 fi
 
+# ---------------------------------------------------------------------------
+# 16. NEITHER ORIGIN MAY READ AS APPLIED-REVISION EVIDENCE. (#3305 review)
+#     `pinned` was called `exact` and read as "this IS what is deployed". It cannot know
+#     that: a version bump landing by DIRECT PUSH to main is reported by validate-main.yaml
+#     before the manual CD workflow deploys it, so a previously-published tag reads as
+#     deployed while the cluster still runs its predecessor — and the allow-list built from
+#     that row omits the revision which actually signed the running artifact.
+#
+#     This script reads manifests and a registry; nothing in it reads a cluster. So BOTH
+#     origins are marked, and the assertion is on the marks rather than on the token, since
+#     the mark is what a human building an allow-list actually reads.
+# ---------------------------------------------------------------------------
+origin_stub="$WORK/resolver-origin.sh"
+cat >"$origin_stub" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+# \$1=repo \$2=workflow \$3=version. Emit the THIRD origin field, which the two-field
+# stubs above never exercise.
+if [ -n "\${3:-}" ]; then
+  printf '%s\t%s\t%s\n' '$SHA_A' '$SHA_A' 'pinned'
+else
+  printf '%s\t%s\t%s\n' '$SHA_A' '$SHA_A' 'inferred'
+fi
+STUB
+chmod +x "$origin_stub"
+
+origin_out="$WORK/origin.out"
+if PUBLISH_REVISION_RESOLVER="$origin_stub" "$SCRIPT" >"$origin_out" 2>&1; then
+  # Every row must disclaim applied-revision evidence — count them against the IN-SYNC
+  # rows rather than grepping for one consumer, so a partially-marked report fails.
+  origin_insync="$(grep -c '^IN-SYNC' "$origin_out" || true)"
+  origin_marked="$(grep -c 'not applied-revision evidence' "$origin_out" || true)"
+  [ "$origin_insync" -gt 0 ] ||
+    fail 'the origin fixture produced no IN-SYNC rows, so the marks below would pass vacuously'
+  [ "$origin_marked" -eq "$origin_insync" ] ||
+    fail "every resolved row must disclaim applied-revision evidence: $origin_marked marked of $origin_insync rows"
+  grep -q 'what the manifest PINS and was published' "$origin_out" ||
+    fail 'a pinned row does not say that a pin is not proof of what is applied'
+  grep -q 'inferred from newest PUBLISHED tag' "$origin_out" ||
+    fail 'an inferred row lost its existing disclaimer'
+  pass 'a pinned origin is disclaimed as not applied-revision evidence, exactly like an inferred one'
+else
+  fail "the script exited non-zero on the origin fixture: $(cat "$origin_out")"
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (15 cases)\n'
+printf '\nPASS: publish-workflow signing-revision report (16 cases)\n'
