@@ -208,6 +208,17 @@ assert_line_rejected "a # inside a quoted scalar used to hide a branch alternati
   "        subject: ${Q}${SUBJECT_ID}${SHA_PATTERN} # x|${SUBJECT_ID}refs/heads/.+\$${Q}" \
   quotedcomment 'does not pin'
 
+# THE SAME HIDING TRICK WITH THE ALTERNATIVES REVERSED. The case above puts the
+# fixed-SHA alternative first and the branch alternative last, so the last-@ read
+# lands on `refs/heads/.+` and rejects. Swap them and the last @ lands on a DECOY
+# SHA instead: the guard validates that decoy, reports the subject pinned, and the
+# FIRST alternative -- the one cosign also honours -- still permits any branch.
+# Ordering, not shape, is what the last-@ read is sensitive to, so both orders have
+# to be pinned or the fix only covers the spelling that was reported.
+assert_line_rejected "a reversed alternation whose LAST @ is a decoy SHA" \
+  "        subject: ${Q}${SUBJECT_ID}refs/heads/.+\$| #${SUBJECT_ID}${SHA_PATTERN}\$${Q}" \
+  reversedalt 'does not pin'
+
 assert_line_rejected "a double-quoted scalar, whose escapes this guard does not resolve" \
   "        subject: \"${SUBJECT_ID}${SHA_PATTERN}\$\"" \
   doublequoted 'could not read the YAML scalar'

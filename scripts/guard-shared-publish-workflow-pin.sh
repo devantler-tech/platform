@@ -242,6 +242,26 @@ EOF
       continue
     fi
 
+    # EXACTLY ONE `@`, checked BEFORE the ref is read. The ref constraint is everything
+    # after the LAST @, so any alternative carrying its own `...@...` earlier in the scalar
+    # is never examined. Writing the fixed-SHA alternative LAST makes the last-@ read land
+    # on that decoy: the guard validates it, reports the subject pinned, and an earlier
+    # alternative still permits any branch — cosign honours both. This is the same hiding
+    # trick as a `#` inside a quoted scalar, but sensitive to ORDER rather than shape, so
+    # rejecting one spelling of it leaves the other open.
+    #
+    # A legitimate subject never needs a second identity: alternation over refs belongs
+    # INSIDE the group after the single @, as `@(sha1|sha2)`, which the allow-list below
+    # already parses per alternative.
+    local at_count
+    at_count="$(printf '%s' "$subject" | tr -cd '@' | wc -c | tr -d ' ')"
+    if [ "$at_count" -ne 1 ]; then
+      printf '%s: subject carries %s "@" separators, so it names more than one workflow identity; only the ref after the last @ is validated, so an earlier alternative does not pin a fixed revision (subject: %s)\n' \
+        "$location" "$at_count" "$subject" >&2
+      status=1
+      continue
+    fi
+
     # Everything after the LAST @ in the scalar is the ref constraint; a trailing
     # $ anchor and any closing quote are not part of it.
     ref="${subject##*@}"
