@@ -633,6 +633,39 @@ deployed_tag() {
         "$bare" "$dual" "$dual" >&2
       return 1
     fi
+    # A PARTIAL TAG COERCES TO THIS SAME PRECEDENCE, and it is invisible to every check
+    # above. Flux reads `v2.0` as 2.0.0, so it TIES `v2.0.0` and may be the ref Flux
+    # selects -- but `sort -V` orders `2.0.0` ABOVE `2.0`, so the partial reads as safely
+    # lower, and its spelling matches neither the three-component core pattern nor the
+    # duality fold. The walk below then considers only the strict tag and can report ITS
+    # signing revision for an artifact the partial tag produced: a confident wrong answer,
+    # which is the same failure the build-metadata tie refusal exists to prevent.
+    #
+    # Only a trailing-zero core has a partial spelling: `2.0.0` can be written `2.0` (and
+    # `2.0.0` also `2`), while `2.1.3` cannot be shortened at all.
+    local partial_re="" p_major p_minor p_patch partial_hit
+    case "$bare" in
+    *.*.*)
+      p_major="${bare%%.*}"
+      p_patch="${bare##*.}"
+      p_minor="${bare#*.}"
+      p_minor="${p_minor%%.*}"
+      if [ "$p_patch" = "0" ]; then
+        partial_re="${p_major}\\.${p_minor}"
+        if [ "$p_minor" = "0" ]; then
+          partial_re="${partial_re}|${p_major}"
+        fi
+      fi
+      ;;
+    esac
+    if [ -n "$partial_re" ]; then
+      partial_hit="$(printf '%s\n' "$tags" | grep -E "^v?(${partial_re})$" | sort -u || true)"
+      if [ -n "$partial_hit" ]; then
+        printf 'version %s is also published as a PARTIAL tag (%s); Flux coerces the partial spelling to the same SemVer precedence, so the two tie and can point at different commits and therefore different workflow pins, and choosing between them needs Flux-compatible ordering, which this script does not implement\n' \
+          "$bare" "$(printf '%s\n' "$partial_hit" | tr '\n' ' ')" >&2
+        return 1
+      fi
+    fi
     variants="$(printf '%s\n' "$tags" | grep -E "^v?${core_re}(\+[0-9A-Za-z.-]+)?$" |
       sed 's/^v//' | sort -u || true)"
     variant_count="$(printf '%s\n' "$variants" | grep -c . || true)"

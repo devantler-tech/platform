@@ -697,6 +697,53 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 13b. A PARTIAL TAG TIES A STRICT ONE, AND IS INVISIBLE TO EVERY OTHER CHECK.
+#
+# Flux coerces `v2.0` to 2.0.0, so it stands at the SAME precedence as `v2.0.0` and may
+# be the ref it selects. But `sort -V` orders `2.0.0` ABOVE `2.0`, so the partial reads
+# as safely lower, and its spelling matches neither the three-component core pattern nor
+# the `v`-duality fold -- so it never entered the variant set and the tie refusal never
+# fired. The walk then considered only the strict tag and could report ITS signing
+# revision for an artifact the partial tag produced.
+partial_tie_out="$WORK/partial-tie.out"
+if BM_WEDDING_TAGS='v2.0.0\nv2.0\nv1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/partial-tie.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$bm_root" "$SCRIPT" >"$partial_tie_out" 2>&1; then
+  fail 'a strict version tied by a PARTIAL tag was silently resolved instead of refusing'
+else
+  grep -q 'published as a PARTIAL tag' "$partial_tie_out" ||
+    fail 'the run failed but not because of the partial-tag tie -- the case is not testing what it claims'
+  grep -qF 'v2.0' "$partial_tie_out" ||
+    fail 'the refusal does not name the partial tag, so the cause is not diagnosable'
+  # Same control as the build-metadata tie: count the outcome lines, because the report
+  # names every consumer it discovered on the UNRESOLVED line as readily as the IN-SYNC
+  # one, so a name match would also pass if ALL FIVE consumers had failed.
+  pt_unresolved="$(grep -c '^UNRESOLVED' "$partial_tie_out" || true)"
+  pt_insync="$(grep -c '^IN-SYNC' "$partial_tie_out" || true)"
+  [ "$pt_unresolved" -eq 1 ] ||
+    fail "expected exactly ONE unresolved consumer (the partial tie), got $pt_unresolved -- a different count means the fixture failed for an unrelated reason"
+  [ "$pt_insync" -eq 4 ] ||
+    fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $pt_insync"
+  pass 'a strict version tied by a partial tag refuses instead of preferring the strict spelling'
+fi
+
+# A MIRROR, and the reason the refusal is conditioned on a trailing-zero core: `2.1.3`
+# has NO partial spelling, so a repository publishing it alongside an unrelated `v2.0`
+# must still resolve. Without this, "refuse when any shorter tag exists" would look
+# identical on the case above while breaking ordinary repositories.
+partial_ok_out="$WORK/partial-ok.out"
+if BM_WEDDING_TAGS='v2.1.3\nv2.0\nv1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/partial-ok.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$bm_root" "$SCRIPT" >"$partial_ok_out" 2>&1; then
+  pok_insync="$(grep -c '^IN-SYNC' "$partial_ok_out" || true)"
+  [ "$pok_insync" -eq 5 ] ||
+    fail "a version with no partial spelling must still resolve for all five consumers, got $pok_insync IN-SYNC"
+  pass 'a version that has no partial spelling is unaffected by the partial-tie refusal'
+else
+  fail 'a version with no partial spelling was refused -- the partial-tie check is too broad'
+fi
+
+# ---------------------------------------------------------------------------
 # 14. A VERSION PUBLISHED ONLY WITH BUILD METADATA MUST NOT BE WALKED PAST. (#3305 review)
 #     `2.0.0+build.1` with no bare `2.0.0` is the newest release, and Flux selects it.
 #     A walk that rebuilds the tag from the bare core version finds nothing at that
