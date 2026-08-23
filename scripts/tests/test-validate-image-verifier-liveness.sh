@@ -1038,6 +1038,37 @@ output="$(run_script TALOS_NODES=disabled 2>&1)" ||
   fail 'case 24: a quoted lookalike key must not be aliased onto the root key'
 require_text "${output}" 'OK   disabled' 'case 24: interior characters inside a quoted key are preserved'
 
+# A BASIC (double-quoted) TOML key interprets escapes, so this names our setting and
+# containerd switches the verifier OFF. Comparing the raw text missed it and the node
+# reported OK with no enforcement -- a FAIL-OPEN, the direction that matters here.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+"disabled\u005fplugins" = ['io.containerd.image-verifier.v1.bindir']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: an escaped basic-quoted key must be decoded before comparison'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: TOML basic-string escapes are decoded in a quoted key'
+
+# The LITERAL (single-quoted) spelling of the same text is a DIFFERENT key: literal
+# strings do not interpret escapes, so containerd never reads it. Decoding it too would
+# re-introduce the aliasing this parser exists to avoid. Measured with go-toml.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+'disabled\u005fplugins' = ['io.containerd.image-verifier.v1.bindir']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 24: a literal-quoted key with escape text must not be decoded onto the root key'
+require_text "${output}" 'OK   disabled' 'case 24: literal strings keep escape text verbatim'
+
 # Our identifier appearing only in a trailing TOML COMMENT is not an entry.
 cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
 version = 3

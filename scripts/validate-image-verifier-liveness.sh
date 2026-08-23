@@ -365,6 +365,52 @@ config_facts_in() {
     # key, which names a setting inside a table rather than the root one. Sets
     # KEYPOS to the index just past the =, so the caller never has to search for
     # it and cannot be misled by an = inside the key text.
+    # A TOML BASIC (double-quoted) string INTERPRETS escapes, so a key written as
+    # "disabled_plugins" IS disabled_plugins and containerd switches the verifier
+    # off. Comparing the raw text missed it and the node reported OK with no enforcement
+    # -- a FAIL-OPEN, the direction that matters for this check.
+    #
+    # LITERAL (single-quoted) strings interpret nothing: measured with go-toml, the same
+    # text in single quotes stays the DISTINCT key disabled_plugins. Decoding it too
+    # would alias a key containerd never reads back onto ours, which is the
+    # over-normalisation this parser was written to remove. So decoding is scoped to the
+    # double-quoted form only.
+    #
+    # The target is pure ASCII, so an escape decoding outside ASCII can never spell it;
+    # such a key simply does not match, which is the safe direction.
+    function hexval(h,   i, n, c, v, digits) {
+      digits = "0123456789abcdef"
+      v = 0; n = length(h)
+      for (i = 1; i <= n; i++) {
+        c = tolower(substr(h, i, 1))
+        v = v * 16 + (index(digits, c) - 1)
+      }
+      return v
+    }
+    function decode_basic(s,   out, i, n, c, d, code) {
+      n = length(s); out = ""; i = 1
+      while (i <= n) {
+        c = substr(s, i, 1)
+        if (c != "\\") { out = out c; i++; continue }
+        d = substr(s, i + 1, 1)
+        if (d == "n")       { out = out "\n"; i += 2 }
+        else if (d == "t")  { out = out "\t"; i += 2 }
+        else if (d == "r")  { out = out "\r"; i += 2 }
+        else if (d == "f")  { out = out sprintf("%c", 12); i += 2 }
+        else if (d == "b")  { out = out sprintf("%c", 8); i += 2 }
+        else if (d == DQ)   { out = out DQ; i += 2 }
+        else if (d == "\\") { out = out "\\"; i += 2 }
+        else if (d == "u" || d == "U") {
+          code = (d == "u") ? substr(s, i + 2, 4) : substr(s, i + 2, 8)
+          if (length(code) == ((d == "u") ? 4 : 8) && code ~ /^[0-9A-Fa-f]+$/) {
+            out = out sprintf("%c", hexval(code))
+            i += (d == "u") ? 6 : 10
+          } else { out = out c; i++ }
+        }
+        else { out = out c; i++ }
+      }
+      return out
+    }
     function root_key(s,   i, n, c, q, out) {
       KEYPOS = 0
       n = length(s)
@@ -373,9 +419,17 @@ config_facts_in() {
       c = substr(s, i, 1)
       if (c == SQ || c == DQ) {
         q = c; i++; out = ""
-        while (i <= n && substr(s, i, 1) != q) { out = out substr(s, i, 1); i++ }
+        # In a BASIC string a backslash escapes the next character, so scanning to the
+        # next quote would stop early on an escaped one and read a truncated key.
+        while (i <= n) {
+          c = substr(s, i, 1)
+          if (c == q) break
+          if (q == DQ && c == "\\" && i < n) { out = out substr(s, i, 2); i += 2; continue }
+          out = out c; i++
+        }
         if (i > n) return ""
         i++
+        if (q == DQ) out = decode_basic(out)
       } else {
         out = ""
         while (i <= n) {
