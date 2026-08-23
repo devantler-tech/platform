@@ -18,6 +18,7 @@ readonly CONFIG_DATA="${REPO_ROOT}/.trivy/data"
 readonly BASELINE="${REPO_ROOT}/scripts/rgd-template-static-scan-baseline.tsv"
 readonly REMOTE_BASELINE="${REPO_ROOT}/scripts/rgd-template-static-scan-remote-resources.tsv"
 readonly REQUIRED_TRIVY_VERSION="0.74.0"
+readonly MAX_REMOTE_RESOURCE_BYTES=1048576
 readonly RGD_ROOT_PATH="k8s/bases/infrastructure/resource-graph-definitions"
 
 RGD_PATHS=()
@@ -123,6 +124,7 @@ if [ "${#KUSTOMIZATION_PATHS[@]}" -gt 0 ]; then
       remote_resource_file="${REMOTE_WORK}/remote-resource-${remote_resource_index}.yaml"
       curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
         --connect-timeout 10 --max-time 60 \
+        --max-filesize "$MAX_REMOTE_RESOURCE_BYTES" \
         --retry 3 --retry-all-errors "$resource_path" --output "$remote_resource_file" || fail \
         "could not fetch reviewed remote Kustomize resource: $resource_path"
       actual_remote_sha="$(sha256_file "$remote_resource_file")"
@@ -130,7 +132,7 @@ if [ "${#KUSTOMIZATION_PATHS[@]}" -gt 0 ]; then
         "remote Kustomize resource digest changed ($resource_path): expected $expected_remote_sha, got $actual_remote_sha"
       REMOTE_RESOURCE_URLS+=("$resource_path")
       REMOTE_RESOURCE_PATHS+=("$remote_resource_file")
-    done < <(yq -o=json -I=0 '.resources[]?' "$kustomization_file" |
+    done < <(yq -o=json -I=0 '(.resources[]?, .components[]?, .bases[]?)' "$kustomization_file" |
       jq -r 'select(type == "string")')
   done
 fi
@@ -154,7 +156,7 @@ done < <(
           [ -f "$resource_file" ] || continue
           resource_dir="$(cd "$(dirname "$resource_file")" && pwd)"
           printf '%s/%s\n' "$resource_dir" "$(basename "$resource_file")"
-        done < <(yq -o=json -I=0 '.resources[]?' "$kustomization_file" |
+        done < <(yq -o=json -I=0 '(.resources[]?, .components[]?, .bases[]?)' "$kustomization_file" |
           jq -r 'select(type == "string")')
       done
     fi
@@ -167,6 +169,22 @@ readonly K8S_RESOURCE_PATHS
 # discovery only in the base would leave a provider-specific RGD and its nested workloads unseen.
 while IFS= read -r candidate; do
   candidate_documents="$(yq -o=json -I=0 '.' "$candidate" | jq -cs '.')"
+  nested_rgd_count="$(jq '
+    def resources:
+      if type == "object" and (.kind // "") == "List"
+      then .items[]? | resources
+      else .
+      end;
+    [
+      .[]
+      | select(type == "object" and (.kind // "") == "List")
+      | .items[]?
+      | resources
+      | select(type == "object" and (.kind // "") == "ResourceGraphDefinition")
+    ] | length
+  ' <<<"$candidate_documents")"
+  [ "$nested_rgd_count" -eq 0 ] || fail \
+    "Kubernetes List contains a ResourceGraphDefinition that cannot be baselined safely: $candidate"
   rgd_document_count="$(jq '[.[] | select(type == "object" and (.kind // "") ==
     "ResourceGraphDefinition")] | length' <<<"$candidate_documents")"
   [ "$rgd_document_count" -gt 0 ] || continue
@@ -227,8 +245,13 @@ if [ "${#REMOTE_RESOURCE_PATHS[@]}" -gt 0 ]; then
     jq -e 'length > 0 and all(.[]; type == "object")' <<<"$remote_documents" >/dev/null ||
       fail "remote Kustomize resource does not contain only mapping documents: ${REMOTE_RESOURCE_URLS[$remote_index]}"
     protected_remote_kinds="$(jq -r --argjson generated "$rgd_selectors_json" '
+      def resources:
+        if type == "object" and (.kind // "") == "List"
+        then .items[]? | resources
+        else .
+        end;
       [
-        .[] | select(type == "object") as $document |
+        .[] | resources | select(type == "object") as $document |
         if ($document.kind // "") == "ResourceGraphDefinition" then
           "ResourceGraphDefinition"
         elif any($generated[];
@@ -243,11 +266,109 @@ if [ "${#REMOTE_RESOURCE_PATHS[@]}" -gt 0 ]; then
   done
 fi
 
+# Kustomize expands Kubernetes List items before applying transformers. A generated instance nested
+# in a local List has no stable source path for the instance baseline, so reject it just as remote
+# protected resources are rejected rather than letting the top-level List kind hide it.
+while IFS= read -r candidate; do
+  candidate_documents="$(yq -o=json -I=0 '.' "$candidate" | jq -cs '.')"
+  protected_list_kinds="$(jq -r --argjson generated "$rgd_selectors_json" '
+    def resources:
+      if type == "object" and (.kind // "") == "List"
+      then .items[]? | resources
+      else .
+      end;
+    [
+      .[]
+      | select(type == "object" and (.kind // "") == "List")
+      | .items[]?
+      | resources
+      | select(type == "object") as $document
+      | if any($generated[];
+          .kind == ($document.kind // "")
+          and ((.group + "/" + .version) == ($document.apiVersion // "")))
+        then $document.kind
+        else empty
+        end
+    ] | unique | join(", ")
+  ' <<<"$candidate_documents")"
+  [ -z "$protected_list_kinds" ] || fail \
+    "Kubernetes List contains a generated RGD instance that cannot be baselined safely ($protected_list_kinds): $candidate"
+done < <(printf '%s\n' "${K8S_RESOURCE_PATHS[@]}")
+
+PROTECTED_RESOURCE_PATHS=()
+for relative_path in "${RGD_PATHS[@]}"; do
+  PROTECTED_RESOURCE_PATHS+=("${SOURCE_ROOT}/${relative_path}")
+done
+while IFS= read -r candidate; do
+  candidate_documents="$(yq -o=json -I=0 '.' "$candidate" | jq -cs '.')"
+  generated_document_count="$(jq --argjson generated "$rgd_selectors_json" '
+    [
+      .[]
+      | select(type == "object") as $document
+      | select(any($generated[];
+          .kind == ($document.kind // "")
+          and ((.group + "/" + .version) == ($document.apiVersion // ""))))
+    ] | length
+  ' <<<"$candidate_documents")"
+  [ "$generated_document_count" -eq 0 ] || PROTECTED_RESOURCE_PATHS+=("$candidate")
+done < <(printf '%s\n' "${K8S_RESOURCE_PATHS[@]}")
+readonly PROTECTED_RESOURCE_PATHS
+
+normalize_resource_path() {
+  local resource_path="$1"
+  if [ -d "$resource_path" ]; then
+    (cd "$resource_path" && pwd)
+  else
+    printf '%s/%s\n' "$(cd "$(dirname "$resource_path")" && pwd)" "$(basename "$resource_path")"
+  fi
+}
+
+kustomization_consumes_protected() {
+  local kustomization_file="$1" ancestry="${2:-}"
+  local resource_path resource_file protected_path child_kustomization candidate_name
+
+  if printf '%s\n' "$ancestry" | grep -Fxq "$kustomization_file"; then
+    fail "Kustomization resource graph contains a cycle: $kustomization_file"
+  fi
+  ancestry="${ancestry}${ancestry:+$'\n'}${kustomization_file}"
+
+  while IFS= read -r resource_path; do
+    [ -n "$resource_path" ] || continue
+    resource_file="${kustomization_file%/*}/${resource_path}"
+    [ -e "$resource_file" ] || continue
+    resource_file="$(normalize_resource_path "$resource_file")"
+    if [ -f "$resource_file" ]; then
+      for protected_path in "${PROTECTED_RESOURCE_PATHS[@]}"; do
+        [ "$resource_file" = "$protected_path" ] && return 0
+      done
+      continue
+    fi
+
+    child_kustomization=""
+    for candidate_name in kustomization.yaml kustomization.yml Kustomization; do
+      if [ -f "${resource_file}/${candidate_name}" ]; then
+        child_kustomization="${resource_file}/${candidate_name}"
+        break
+      fi
+    done
+    # Kustomize itself rejects a resource directory without a build file. It cannot contribute a
+    # protected object, and ordinary manifest validation owns that malformed-build diagnostic.
+    [ -n "$child_kustomization" ] || continue
+    kustomization_consumes_protected "$child_kustomization" "$ancestry" && return 0
+  done < <(yq -o=json -I=0 '(.resources[]?, .components[]?, .bases[]?)' "$kustomization_file" |
+    jq -r 'select(type == "string")')
+  return 1
+}
+
 # Kustomizations may consume a reviewed graph, but no overlay may patch, transform, or replace an RGD
 # after the raw definition has been extracted. Enforce that across the complete Kubernetes tree: a
 # mutation in a shared base is as invisible to this scan as one in a provider. Graph variants belong
 # in a separately scanned definition rather than an invisible per-consumer mutation.
 while IFS= read -r kustomization_file; do
+  consumes_protected_resources=false
+  if kustomization_consumes_protected "$kustomization_file"; then
+    consumes_protected_resources=true
+  fi
   targeted_builtin_transformers="$(yq -o=json -I=0 '.' "$kustomization_file" | jq -r '
     . as $document
     | [
@@ -257,14 +378,15 @@ while IFS= read -r kustomization_file; do
       ]
     | join(", ")
   ')"
-  [ -z "$targeted_builtin_transformers" ] || fail \
-    "Kustomization uses a built-in transformer that can mutate protected resources ($targeted_builtin_transformers): $kustomization_file"
+  if "$consumes_protected_resources" && [ -n "$targeted_builtin_transformers" ]; then
+    fail "Kustomization uses a built-in transformer that can mutate protected resources ($targeted_builtin_transformers): $kustomization_file"
+  fi
 
   substitution_override_present="$(yq -o=json -I=0 '.' "$kustomization_file" | jq -r '
     (.commonAnnotations | type) == "object"
     and (.commonAnnotations | has("kustomize.toolkit.fluxcd.io/substitute"))
   ')"
-  if [ "$substitution_override_present" = "true" ]; then
+  if "$consumes_protected_resources" && [ "$substitution_override_present" = "true" ]; then
     substitution_override="$(yq -r \
       '.commonAnnotations."kustomize.toolkit.fluxcd.io/substitute"' "$kustomization_file")"
     [ "$substitution_override" = "disabled" ] ||
@@ -493,6 +615,19 @@ done < <(
 # build files so they cannot mutate a reviewed RGD or generated instance after its evidence is sealed.
 while IFS= read -r candidate; do
   candidate_documents="$(yq -o=json -I=0 '.' "$candidate" | jq -cs '.')"
+  flux_substitution_override_count="$(jq '[
+    .[]
+    | select(type == "object"
+      and ((.apiVersion // "") | startswith("kustomize.toolkit.fluxcd.io/"))
+      and (.kind // "") == "Kustomization")
+    | .spec.commonMetadata.annotations
+    | select(type == "object" and has("kustomize.toolkit.fluxcd.io/substitute"))
+    | .["kustomize.toolkit.fluxcd.io/substitute"]
+    | select(. != "disabled")
+  ] | length' <<<"$candidate_documents")"
+  [ "$flux_substitution_override_count" -eq 0 ] || fail \
+    "Flux Kustomization must not override the substitution opt-out: $candidate"
+
   targeted_flux="$(jq -r --argjson generated "$rgd_selectors_json" '
     def selector_matches($value; $pattern):
       ($pattern == "")
@@ -520,6 +655,45 @@ while IFS= read -r candidate; do
   ' <<<"$candidate_documents")"
   [ -z "$targeted_flux" ] || fail \
     "Flux Kustomization targets or ambiguously selects a ResourceGraphDefinition/generated instance ($targeted_flux): $candidate"
+
+  while IFS= read -r flux_patch_entry; do
+    flux_patch_body="$(jq -r '
+      if type == "object" and (.patch | type) == "string" then .patch else "" end
+    ' <<<"$flux_patch_entry")"
+    [ -n "$flux_patch_body" ] || fail \
+      "Flux Kustomization targetless patch does not contain inline YAML: $candidate"
+    flux_patch_documents="$(yq -o=json -I=0 '.' <<<"$flux_patch_body" 2>/dev/null | jq -cs '.')" ||
+      fail "Flux Kustomization targetless patch is not valid YAML: $candidate"
+    jq -e 'length > 0 and all(.[]; type == "object")' <<<"$flux_patch_documents" >/dev/null ||
+      fail "Flux Kustomization targetless patch does not contain only mapping documents: $candidate"
+    protected_flux_patch_kinds="$(jq -r --argjson generated "$rgd_selectors_json" '
+      def resources:
+        if type == "object" and (.kind // "") == "List"
+        then .items[]? | resources
+        else .
+        end;
+      [
+        .[] | resources | select(type == "object") as $document
+        | if ($document.kind // "") == "ResourceGraphDefinition" then
+            "ResourceGraphDefinition"
+          elif any($generated[];
+            .kind == ($document.kind // "")
+            and ((.group + "/" + .version) == ($document.apiVersion // ""))) then
+            $document.kind
+          else empty
+          end
+      ] | unique | join(", ")
+    ' <<<"$flux_patch_documents")"
+    [ -z "$protected_flux_patch_kinds" ] || fail \
+      "Flux Kustomization targetless patch declares an RGD definition or generated instance ($protected_flux_patch_kinds): $candidate"
+  done < <(jq -c '
+    .[]
+    | select(type == "object"
+      and ((.apiVersion // "") | startswith("kustomize.toolkit.fluxcd.io/"))
+      and (.kind // "") == "Kustomization")
+    | .spec.patches[]?
+    | select(type == "object" and (.target // null) == null)
+  ' <<<"$candidate_documents")
 done < <(printf '%s\n' "${K8S_RESOURCE_PATHS[@]}")
 
 : >"$WORK/content.tsv"
@@ -547,9 +721,17 @@ while IFS= read -r candidate; do
     done
     "$is_rgd_instance" || continue
     committed_instance_count=$((committed_instance_count + 1))
+    # shellcheck disable=SC2016 # Flux expressions are matched literally, never expanded here.
+    if [[ "$instance_name" == *'${'* ]]; then
+      fail "generated instance security fields must not contain Flux substitution expressions (spec.name): $candidate"
+    fi
     [ "$instance_name" != "kube-system" ] || fail \
       "KSV-0037: committed $instance_kind instance $candidate would generate resources in kube-system"
     instance_image="$(jq -r '.spec.image // ""' <<<"$instance_json")"
+    # shellcheck disable=SC2016 # Flux expressions are matched literally, never expanded here.
+    if [[ "$instance_image" == *'${'* ]]; then
+      fail "generated instance security fields must not contain Flux substitution expressions (spec.image): $candidate"
+    fi
     [ -z "$instance_image" ] || validate_image_registry "$instance_image"
     printf '1\t%s\tINSTANCE-CONTENT\tSHA256\t%s\n' \
       "${candidate#"$SOURCE_ROOT"/}" "$(sha256_text "$instance_json")" >>"$WORK/content.tsv"

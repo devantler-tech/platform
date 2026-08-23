@@ -30,6 +30,9 @@ grep -Fq 'semantic_end_line=$((finding_end_line - leading_blank_lines - 1))' "$G
   fail "Trivy one-based end lines are not converted to yq zero-based lines"
 grep -Fq -- '--connect-timeout 10 --max-time 60' "$GATE" ||
   fail "remote resource fetches are not bounded by connection and transfer timeouts"
+# shellcheck disable=SC2016 # the scanner variable reference is a literal source invariant.
+grep -Fq -- '--max-filesize "$MAX_REMOTE_RESOURCE_BYTES"' "$GATE" ||
+  fail "remote resource fetches are not bounded by response size"
 
 "$WIRING_TEST" || fail "the RGD gate is not wired on every protected event route"
 
@@ -43,11 +46,29 @@ trap 'rm -rf "$WORK"' EXIT
 copy_rgd_inputs() {
   local source_root="$1" target_root="$2"
   local input_index="${target_root}/.rgd-inputs.tsv"
+  local candidate_index="${target_root}/.rgd-candidates.txt"
   local candidate candidate_json relative_path schema_api_version schema_kind
   local definition_name generated_api_group generated_api_version instance_json
-  local instance_api_version instance_kind matches_rgd
+  local instance_api_version instance_kind matches_rgd kustomization_file resource_path resource_file
 
   : >"$input_index"
+  {
+    find "$source_root/k8s" -type f \( -name '*.yaml' -o -name '*.yml' \) -print
+    while IFS= read -r kustomization_file; do
+      while IFS= read -r resource_path; do
+        [ -n "$resource_path" ] || continue
+        resource_file="${kustomization_file%/*}/${resource_path}"
+        [ -f "$resource_file" ] || continue
+        printf '%s/%s\n' "$(cd "$(dirname "$resource_file")" && pwd)" "$(basename "$resource_file")"
+      done < <(yq -o=json -I=0 '(.resources[]?, .components[]?, .bases[]?)' "$kustomization_file" |
+        jq -r 'select(type == "string")')
+    done < <(
+      find "$source_root/k8s" -type f \
+        \( -name 'kustomization.yaml' -o -name 'kustomization.yml' -o -name 'Kustomization' \) \
+        -print
+    )
+  } | LC_ALL=C sort -u >"$candidate_index"
+
   while IFS= read -r candidate; do
     candidate_json="$(yq -o=json -I=0 '.' "$candidate" |
       jq -c 'select(type == "object" and (.kind // "") == "ResourceGraphDefinition")')"
@@ -71,7 +92,7 @@ copy_rgd_inputs() {
       generated_api_version="${generated_api_group}/${schema_api_version}"
     fi
     printf '%s\t%s\n' "$generated_api_version" "$schema_kind" >>"$input_index"
-  done < <(find "$source_root/k8s" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | LC_ALL=C sort)
+  done <"$candidate_index"
 
   [ -s "$input_index" ] || fail "fixture source contains no ResourceGraphDefinitions"
   while IFS= read -r candidate; do
@@ -94,10 +115,25 @@ copy_rgd_inputs() {
     relative_path="${candidate#"$source_root"/}"
     mkdir -p "$target_root/$(dirname "$relative_path")"
     cp "$candidate" "$target_root/$relative_path"
-  done < <(find "$source_root/k8s" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | LC_ALL=C sort)
+  done <"$candidate_index"
 
-  rm -f "$input_index"
+  rm -f "$candidate_index" "$input_index"
 }
+
+# The gate discovers Kustomize-readable JSON and extensionless inputs, so the fixture copier must
+# preserve that same set. Otherwise adding their reviewed baseline rows breaks every later probe.
+readonly COPY_PROBE_SOURCE="${WORK}/copy-probe-source"
+readonly COPY_PROBE_TARGET="${WORK}/copy-probe-target"
+readonly COPY_PROBE_RGD="k8s/rgd/probe.json"
+mkdir -p "$COPY_PROBE_SOURCE/k8s/rgd" "$COPY_PROBE_TARGET"
+yq -o=json -I=2 '.' "$REPO_ROOT/$WEBAPP_RGD" >"$COPY_PROBE_SOURCE/$COPY_PROBE_RGD"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = ["probe.json"]' \
+  >"$COPY_PROBE_SOURCE/k8s/rgd/kustomization.yaml"
+copy_rgd_inputs "$COPY_PROBE_SOURCE" "$COPY_PROBE_TARGET"
+[ -r "$COPY_PROBE_TARGET/$COPY_PROBE_RGD" ] ||
+  fail "the fixture copier omitted a Kustomize-referenced JSON RGD"
+rm -rf "$COPY_PROBE_SOURCE" "$COPY_PROBE_TARGET"
 
 copy_rgd_inputs "$REPO_ROOT" "$WORK"
 
@@ -331,7 +367,8 @@ rm -f "$WORK/$RGD_REPLACEMENT" "$WORK/$PROVIDER_PROBE"
 # commonAnnotations is a built-in transformer. Even an explicitly empty value erases the RGD
 # substitution opt-out, making the raw-source check pass while Flux later expands nested templates.
 yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
-  .kind = "Kustomization" | .resources = [] |
+  .kind = "Kustomization" |
+  .resources = ["../../../bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml"] |
   .commonAnnotations."kustomize.toolkit.fluxcd.io/substitute" = ""' \
   >"$WORK/$PROVIDER_PROBE"
 expect_rejected "a commonAnnotations override of the Flux substitution opt-out" \
@@ -428,6 +465,29 @@ expect_rejected "an unbaselined JSON ResourceGraphDefinition referenced by Kusto
   "$JSON_RGD" "RGD graph, instance, or finding evidence changed"
 rm -f "$WORK/$JSON_RGD" "$WORK/$PROVIDER_PROBE"
 
+# Kubernetes List is expanded by Kustomize. A protected item nested below its top-level kind must
+# not disappear from source discovery and baseline evidence.
+readonly LIST_RGD="k8s/providers/probe/infrastructure/provider-resource-graph-definition-list.json"
+WEBAPP_RGD_SOURCE="$REPO_ROOT/$WEBAPP_RGD" yq -n -o=json -I=2 '
+  .apiVersion = "v1" | .kind = "List" | .items = [load(strenv(WEBAPP_RGD_SOURCE))]' \
+  >"$WORK/$LIST_RGD"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" |
+  .resources = ["provider-resource-graph-definition-list.json"]' >"$WORK/$PROVIDER_PROBE"
+expect_rejected "a ResourceGraphDefinition nested in a Kubernetes List" \
+  "Kubernetes List contains a ResourceGraphDefinition" "$LIST_RGD"
+rm -f "$WORK/$LIST_RGD" "$WORK/$PROVIDER_PROBE"
+
+WEBAPP_INSTANCE_SOURCE="$REPO_ROOT/$WEBAPP_INSTANCE" yq -n -o=json -I=2 '
+  .apiVersion = "v1" | .kind = "List" | .items = [load(strenv(WEBAPP_INSTANCE_SOURCE))]' \
+  >"$WORK/$LIST_RGD"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" |
+  .resources = ["provider-resource-graph-definition-list.json"]' >"$WORK/$PROVIDER_PROBE"
+expect_rejected "a generated WebApp nested in a Kubernetes List" \
+  "Kubernetes List contains a generated RGD instance" "WebApp"
+rm -f "$WORK/$LIST_RGD" "$WORK/$PROVIDER_PROBE"
+
 # A new remote remains renderable by Kustomize but has no reviewed URL/content digest in this source
 # scanner's evidence. Reject it explicitly instead of silently treating the URL as a missing file.
 yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
@@ -472,6 +532,36 @@ for alternate_kustomization_name in kustomization.yml Kustomization; do
   rm -f "$WORK/$alternate_kustomization"
 done
 
+# Built-in transformers are ordinary Kustomize features for unrelated applications. The protected
+# guard must follow the resource graph rather than ban them across the complete Kubernetes tree.
+readonly UNRELATED_CONFIG_MAP="k8s/providers/probe/infrastructure/unrelated-config-map.yaml"
+mkdir -p "$WORK/$(dirname "$PROVIDER_PROBE")"
+yq -n '.apiVersion = "v1" | .kind = "ConfigMap" | .metadata.name = "unrelated"' \
+  >"$WORK/$UNRELATED_CONFIG_MAP"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = ["unrelated-config-map.yaml"] |
+  .images = [{"name": "unrelated", "newName": "example.invalid/unrelated"}]' \
+  >"$WORK/$PROVIDER_PROBE"
+"$GATE" "$WORK" || fail "the gate rejected a built-in transformer on unrelated resources"
+echo "PASS(probe): unrelated built-in transformers remain permitted."
+rm -f "$WORK/$UNRELATED_CONFIG_MAP" "$WORK/$PROVIDER_PROBE"
+
+# Conversely, a parent Kustomization's transformer reaches protected resources through a child
+# Kustomization directory and must be rejected transitively.
+readonly RGD_CHILD_KUSTOMIZATION="k8s/providers/probe/infrastructure/rgd-child/kustomization.yaml"
+mkdir -p "$WORK/$(dirname "$RGD_CHILD_KUSTOMIZATION")"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" |
+  .resources = ["../../../../bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml"]' \
+  >"$WORK/$RGD_CHILD_KUSTOMIZATION"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = ["rgd-child"] |
+  .commonLabels = {"rgd-probe": "mutated"}' >"$WORK/$PROVIDER_PROBE"
+expect_rejected "a transitive built-in transformer over a consumed RGD" \
+  "Kustomization uses a built-in transformer that can mutate protected resources" "commonLabels"
+rm -f "$WORK/$RGD_CHILD_KUSTOMIZATION" "$WORK/$PROVIDER_PROBE"
+rmdir "$WORK/$(dirname "$RGD_CHILD_KUSTOMIZATION")"
+
 # The infrastructure Flux Kustomization performs postBuild substitution after this scanner reads
 # the raw graph. Every RGD must opt out explicitly so a `${...}` value cannot be rewritten into an
 # unsafe boolean or image after the reviewed template and finding evidence have already passed.
@@ -480,6 +570,19 @@ yq -i 'del(.metadata.annotations."kustomize.toolkit.fluxcd.io/substitute")' \
 expect_rejected "an RGD without the Flux substitution opt-out" \
   "Flux postBuild substitution must be disabled for every ResourceGraphDefinition"
 restore_webapp
+
+# Generated instances also feed Flux postBuild substitution. Security-sensitive namespace and image
+# inputs must not carry expressions that are replaced after their raw evidence is sealed.
+# shellcheck disable=SC2016 # the Flux substitution expression must remain literal in the fixture
+yq -i '.spec.name = "${NAMESPACE}"' "$WORK/$WEBAPP_INSTANCE"
+expect_rejected "a generated instance with a substitutable namespace" \
+  "generated instance security fields must not contain Flux substitution expressions" "spec.name"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
+# shellcheck disable=SC2016 # the Flux substitution expression must remain literal in the fixture
+yq -i '.spec.image = "${IMAGE}"' "$WORK/$WEBAPP_INSTANCE"
+expect_rejected "a generated instance with a substitutable image" \
+  "generated instance security fields must not contain Flux substitution expressions" "spec.image"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 
 # Flux Kustomization patches are applied after the ordinary Kustomize render. They must be checked
 # independently from build-file patches or they can mutate an RGD after its raw evidence is sealed.
@@ -501,6 +604,37 @@ yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
   }]' >"$WORK/$FLUX_RGD_PATCH"
 expect_rejected "a Flux Kustomization patch targeting an RGD" \
   "Flux Kustomization targets or ambiguously selects" "ResourceGraphDefinition"
+rm -f "$WORK/$FLUX_RGD_PATCH"
+
+# Flux commonMetadata is also applied after the Kustomize build and can erase the resource-level
+# substitution opt-out on every RGD in the deployment.
+yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
+  .kind = "Kustomization" | .metadata.name = "rgd-metadata-probe" |
+  .metadata.namespace = "flux-system" | .spec.path = "./k8s/providers/hetzner" |
+  .spec.commonMetadata.annotations."kustomize.toolkit.fluxcd.io/substitute" = "disabled"' \
+  >"$WORK/$FLUX_RGD_PATCH"
+"$GATE" "$WORK" || fail "the gate rejected a Flux commonMetadata substitution opt-out"
+echo "PASS(probe): Flux commonMetadata may preserve the substitution opt-out."
+rm -f "$WORK/$FLUX_RGD_PATCH"
+
+yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
+  .kind = "Kustomization" | .metadata.name = "rgd-metadata-probe" |
+  .metadata.namespace = "flux-system" | .spec.path = "./k8s/providers/hetzner" |
+  .spec.commonMetadata.annotations."kustomize.toolkit.fluxcd.io/substitute" = "enabled"' \
+  >"$WORK/$FLUX_RGD_PATCH"
+expect_rejected "a Flux commonMetadata override of the substitution opt-out" \
+  "Flux Kustomization must not override the substitution opt-out"
+rm -f "$WORK/$FLUX_RGD_PATCH"
+
+# Flux strategic-merge patches may omit target and identify the resource in the patch body itself.
+yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
+  .kind = "Kustomization" | .metadata.name = "rgd-targetless-patch-probe" |
+  .metadata.namespace = "flux-system" | .spec.path = "./k8s/providers/hetzner" |
+  .spec.patches = [{"patch": "apiVersion: kro.run/v1alpha1\nkind: ResourceGraphDefinition\nmetadata:\n  name: webapp.kro.run\nspec:\n  resources: []"}]' \
+  >"$WORK/$FLUX_RGD_PATCH"
+expect_rejected "a targetless Flux strategic-merge patch declaring an RGD" \
+  "Flux Kustomization targetless patch declares an RGD definition or generated instance" \
+  "ResourceGraphDefinition"
 rm -f "$WORK/$FLUX_RGD_PATCH"
 
 # Resource-level graph controls decide whether a template is instantiated. They must be evidence too:
