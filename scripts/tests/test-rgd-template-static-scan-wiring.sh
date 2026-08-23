@@ -27,11 +27,17 @@ jq -e --arg wiring "$WIRING_COMMAND" '
 ' <<<"$ci_workflow_json" >/dev/null ||
   fail "the unconditional changes job does not independently validate RGD workflow wiring"
 
-jq -e '
+jq -e --argjson required_inputs '[
+    ".trivy/data/**",
+    "scripts/scan-rgd-templates.sh",
+    "scripts/rgd-template-static-scan-baseline.tsv",
+    "scripts/tests/test-rgd-template-static-scan.sh",
+    "scripts/tests/test-rgd-template-static-scan-wiring.sh"
+  ]' '
   any(.jobs.changes.steps[];
       .id == "filter"
-      and (.with.filters | contains(".trivy/data/**"))
-      and (.with.filters | contains("scripts/tests/test-rgd-template-static-scan-wiring.sh")))
+      and (.with.filters as $filters
+        | [$required_inputs[] as $input | $filters | contains($input)] | all))
 ' <<<"$ci_workflow_json" >/dev/null ||
   fail "ci.yaml does not route every RGD gate input through k8s validation"
 
@@ -139,6 +145,29 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
     RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/false-job-condition.log" 2>&1; then
     fail "the wiring validator accepted a conditionally skipped merge-group RGD job"
   fi
+
+  required_filter_inputs=(
+    ".trivy/data/**"
+    "scripts/scan-rgd-templates.sh"
+    "scripts/rgd-template-static-scan-baseline.tsv"
+    "scripts/tests/test-rgd-template-static-scan.sh"
+    "scripts/tests/test-rgd-template-static-scan-wiring.sh"
+  )
+  filter_ablation_index=0
+  for filter_input in "${required_filter_inputs[@]}"; do
+    filter_ablation_index=$((filter_ablation_index + 1))
+    filtered_workflow="${ablation_work}/ci-filter-${filter_ablation_index}.yaml"
+    cp "$CI_WORKFLOW" "$filtered_workflow"
+    FILTER_INPUT="$filter_input" yq -i \
+      '(.jobs.changes.steps[] | select(.id == "filter").with.filters) |=
+        (split("\n") | map(select(contains(strenv(FILTER_INPUT)) | not)) | join("\n"))' \
+      "$filtered_workflow"
+    if RGD_WIRING_CI_WORKFLOW="$filtered_workflow" \
+      RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+      RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/filter-${filter_ablation_index}.log" 2>&1; then
+      fail "the wiring validator accepted removal of required RGD filter input: $filter_input"
+    fi
+  done
 fi
 
 echo "PASS: PR, merge-group, and direct-main routes retain the nested-RGD behavioral gate."

@@ -194,6 +194,13 @@ yq -i '.spec.image = "evil.example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 expect_rejected "a committed WebApp image from an untrusted registry" "KSV-0125"
 cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 
+# A hostname that merely ends with a trusted registry is still a different registry. The RGD
+# instance guard must be stricter than Trivy's suffix-based KSV-0125 implementation here.
+yq -i '.spec.image = "attackerghcr.io/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
+  "$WORK/$WEBAPP_INSTANCE"
+expect_rejected "a look-alike committed WebApp image registry" "KSV-0125"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
+
 # Ratchet the complete parsed instance as well as explicit security policies. That keeps every value
 # substituted into a generated resource review-visible, including fields without a Trivy rule today.
 yq -i '.spec.host = "unexpected.example"' "$WORK/$WEBAPP_INSTANCE"

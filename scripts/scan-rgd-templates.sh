@@ -70,8 +70,9 @@ validate_image_registry() {
   fi
 
   for trusted_registry in "${TRUSTED_REGISTRIES[@]}"; do
-    # Match Trivy KSV-0125's documented suffix semantics exactly.
-    [[ "$registry" == *"$trusted_registry" ]] && return 0
+    # Trivy KSV-0125 uses a suffix match, but committed RGD inputs need an exact host boundary so a
+    # look-alike registry cannot inherit trust. Legitimate aliases belong in the reviewed data list.
+    [ "$registry" = "$trusted_registry" ] && return 0
   done
   fail "KSV-0125: committed RGD instance image $image uses untrusted registry $registry"
 }
