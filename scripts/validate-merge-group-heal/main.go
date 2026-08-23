@@ -34,6 +34,9 @@ const expectedHealCondition = "always() && " +
 // step reachable, so it is pinned rather than left to a reviewer to notice.
 const recoveryOptIn = `          recover-orphaned-fence: "true"`
 
+// The shared composite both prod-deploy paths call.
+const deployCompositePath = "./.github/actions/deploy-prod"
+
 func validateWorkflowContract(workflow string) error {
 	healJob, ok := extractJob(workflow, "heal-prod-on-failure")
 	if !ok {
@@ -56,11 +59,6 @@ func validateWorkflowContract(workflow string) error {
 		{line: "      group: prod-deploy", description: "shared production lock"},
 		{line: "      cancel-in-progress: false", description: "non-preempting production lock"},
 		{line: "          ref: main", description: "current-main checkout"},
-		// Without this, a deploy that dies holding the GHCR synchronization Lease
-		// wedges the queue AND this heal job — the exact state the heal exists to
-		// clear (#3343). Opting in relaxes no guard: the composite still refuses to
-		// release unless the holder is provably terminal and its heartbeat stopped.
-		{line: recoveryOptIn, description: "orphaned-fence recovery"},
 	}
 	for _, requirement := range requirements {
 		if !containsExactLine(healJob, requirement.line) {
@@ -78,15 +76,27 @@ func validateWorkflowContract(workflow string) error {
 		)
 	}
 
-	// The heal job is the last line of defence; the deploy job reaching the same
-	// composite is what stops the wedge arising at all. Pin both, or a dead deploy
-	// still fails the NEXT deploy before any heal gets the chance to clear it.
-	deployJob, ok := extractJob(workflow, "deploy-prod")
-	if !ok {
-		return errors.New("missing deploy-prod job")
-	}
-	if !containsExactLine(deployJob, recoveryOptIn) {
-		return errors.New("deploy job is missing orphaned-fence recovery")
+	// Both jobs reach the same composite, and the opt-in is checked against the
+	// STEP rather than the job: a line accepted anywhere in the job would still
+	// pass after an edit moved it onto an unrelated step, leaving the composite
+	// on its default "false". The validator would then vouch for precisely the
+	// state it exists to catch. The heal job is the last line of defence; the
+	// deploy job reaching the composite is what stops the wedge arising at all.
+	for _, target := range []struct{ key, label string }{
+		{"deploy-prod", "deploy"},
+		{"heal-prod-on-failure", "heal"},
+	} {
+		job, ok := extractJob(workflow, target.key)
+		if !ok {
+			return fmt.Errorf("missing %s job", target.key)
+		}
+		step, ok := extractDeployStep(job)
+		if !ok {
+			return fmt.Errorf("%s job does not reach the shared deploy composite", target.label)
+		}
+		if !containsExactLine(step, recoveryOptIn) {
+			return fmt.Errorf("%s job is missing orphaned-fence recovery", target.label)
+		}
 	}
 
 	return nil
@@ -112,6 +122,50 @@ func extractJob(workflow string, jobKey string) (string, bool) {
 		if strings.HasPrefix(line, "  ") &&
 			!strings.HasPrefix(line, "   ") &&
 			strings.HasSuffix(line, ":") {
+			end = i
+			break
+		}
+	}
+
+	return strings.Join(lines[start:end], "\n"), true
+}
+
+// extractDeployStep returns the one step in a job that reaches the shared
+// deploy composite, so an input can be checked against THAT step rather than
+// against the whole job. It walks back from the `uses:` line to the list-item
+// start, because a step may declare `with:` before `uses:`.
+func extractDeployStep(job string) (string, bool) {
+	lines := strings.Split(job, "\n")
+	target := -1
+	for i, line := range lines {
+		// A step may write `- uses: …` on the list-item line itself or put `uses:`
+		// on its own line under `- name:`; both spellings are the same step.
+		if strings.TrimPrefix(strings.TrimSpace(line), "- ") == "uses: "+deployCompositePath {
+			target = i
+			break
+		}
+	}
+	if target < 0 {
+		return "", false
+	}
+
+	start := 0
+	for i := target; i >= 0; i-- {
+		if strings.HasPrefix(strings.TrimLeft(lines[i], " "), "- ") {
+			start = i
+			break
+		}
+	}
+	indent := len(lines[start]) - len(strings.TrimLeft(lines[start], " "))
+
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		trimmed := strings.TrimLeft(lines[i], " ")
+		if trimmed == "" {
+			continue
+		}
+		lineIndent := len(lines[i]) - len(trimmed)
+		if lineIndent < indent || (lineIndent == indent && strings.HasPrefix(trimmed, "- ")) {
 			end = i
 			break
 		}
