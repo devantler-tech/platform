@@ -304,6 +304,9 @@ require_line \
 [ "$(yq eval -r '.metadata.annotations."checkov.io/skip1"' <<<"${alerter}")" = \
   'CKV_K8S_38=the alerter reads its SA token to list CRD schemas in bounded pages for exporter coverage' ] ||
   fail 'the intentional service-account token mount must carry its exact scanner rationale'
+[ "$(yq eval -r '.metadata.annotations."kustomize.toolkit.fluxcd.io/substitute"' <<<"${alerter}")" = \
+  'disabled' ] ||
+  fail 'Flux substitution must stay disabled so the pod receives its Kubernetes service environment references'
 
 coverage_role="$(
   extract_resource ClusterRole crossplane-sync-alerter <<<"${hetzner_rendered}"
@@ -428,6 +431,12 @@ rendered="$(kubectl kustomize "${exporter_component}")" ||
 config_map="$(
   extract_resource ConfigMap crossplane-sync-exporter <<<"${rendered}"
 )" || fail 'the component must render the exporter ConfigMap'
+config_checksum="$(
+  yq eval -o=json '.data' <<<"${config_map}" |
+    jq -cS . |
+    cksum |
+    awk '{ print $1 "-" $2 }'
+)" || fail 'the exporter ConfigMap data checksum must be computable'
 
 custom_resource_state="$(
   yq eval -r '.data."custom-resource-state.yaml"' <<<"${config_map}"
@@ -581,14 +590,22 @@ require_line \
 deployment="$(
   extract_resource Deployment crossplane-sync-exporter <<<"${rendered}"
 )" || fail 'the component must render the exporter Deployment'
+[ "$(yq eval -r '.spec.template.metadata.annotations."platform.devantler.tech/config-checksum"' \
+  <<<"${deployment}")" = "${config_checksum}" ] ||
+  fail 'the exporter pod template checksum must force a rollout whenever its ConfigMap data changes'
 require_line \
   "${deployment}" \
   'serviceAccountName: crossplane-sync-exporter' \
   'the exporter must use its dedicated service account'
-require_text \
+# kube-state-metrics <=2.18 can drop every custom-resource family when several
+# GVKs intentionally share this metric's HELP header (upstream #2453 / #2866).
+# v2.19.1 is the first stable release carrying the index-preserving header fix;
+# pin its multi-architecture manifest exactly so the silent-series regression
+# cannot return through a tag move or a downgrade.
+require_line \
   "${deployment}" \
-  'registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.17.0@sha256:' \
-  'the kube-state-metrics image must be immutable'
+  'image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1@sha256:85108987d044b18a098126732f98602df408888c0f7d456241f5abefb9744bc1' \
+  'the custom-resource exporter must use the first stable kube-state-metrics release with duplicate-header alignment fixed'
 require_text \
   "${deployment}" \
   'ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:' \

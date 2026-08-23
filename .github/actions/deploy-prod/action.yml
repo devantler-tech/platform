@@ -63,14 +63,8 @@ runs:
       # refresh-flux-ghcr-auth.sh uses the host API for a secret-safe,
       # per-node RegistryAuthConfig patch and exact image-pull proof.
       shell: bash
-      env:
-        # Keep in step with spec.cluster.talos.version in ksail.prod.yaml.
-        # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-        TALOS_VERSION: "1.13.8"
       run: |
-        curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
-        sudo install /tmp/talosctl /usr/local/bin/talosctl
-        talosctl version --client
+        .github/scripts/setup-talosctl.sh
 
     - name: 🔐 Create SOPS Age key
       shell: bash

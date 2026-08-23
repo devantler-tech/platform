@@ -35,6 +35,12 @@ spec:
         app.kubernetes.io/name: crossplane-sync-exporter
         app.kubernetes.io/part-of: coroot
         app.kubernetes.io/component: metrics-exporter
+      annotations:
+        # kube-state-metrics reports a successful in-process config reload, but
+        # the multi-GVK rollout reset its metric handler to an empty response.
+        # Pin the ConfigMap data checksum here so every config change gets a new
+        # pod and loads the final collector set during process startup.
+        platform.devantler.tech/config-checksum: "2762015805-13322"
     spec:
       serviceAccountName: crossplane-sync-exporter
       # kube-state-metrics reads the managed resources through the API server.
@@ -48,7 +54,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: kube-state-metrics
-          image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.17.0@sha256:2bbc915567334b13632bf62c0a97084aff72a36e13c4dabd5f2f11c898c5bacd
+          image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1@sha256:85108987d044b18a098126732f98602df408888c0f7d456241f5abefb9744bc1
           imagePullPolicy: IfNotPresent
           args:
             - --custom-resource-state-config-file=/etc/kube-state-metrics/custom-resource-state.yaml

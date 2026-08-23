@@ -1221,7 +1221,24 @@ const (
 // 32587236884, job 97065434213). The local kubectl v1.36.1 render used by the
 // tests independently produced the identical value, while the full local CLI
 // correctly refused that renderer because the approved pin is v1.36.2.
-const expectedRenderedSurfaceSHA = "2e5ff04e52117cdbdc88261c35845e51a17ff31b709ed5b7d449b5076c08d8e1"
+//
+// Re-approved for the Postgres 18.4 -> 18.6 image-tag update in the Crossview
+// HelmRelease. The source diff and a direct kubectl render comparison against
+// main 2dc64295 each report exactly one changed line, the database image tag in
+// `helm.toolkit.fluxcd.io/v2 HelmRelease crossview/crossview`; the other four
+// independently reconciled production layers are byte-identical. The tag names
+// no subject, role, resource, policy, service account, or AWS identity, and the
+// validator reported no individually pinned authorization-object mismatch, so
+// the approved grant-bearing surface is unchanged and only the aggregate moves.
+//
+// Two independent renderers produced the value below: the required hosted
+// kubectl v1.36.2 job (run 32601695474, job 97100890991) and an uncached local
+// kubectl render at exact PR head 5b23c29b. Both rejected the previous digest
+// with the same fingerprint, while the same uncached test passes at exact base
+// 2dc64295. The previous approved digest remains recorded here:
+//
+//	2e5ff04e52117cdbdc88261c35845e51a17ff31b709ed5b7d449b5076c08d8e1
+const expectedRenderedSurfaceSHA = "bef0f81a74a01efa995543c82c4adf5c18123f3e1b31d0430719f9a3af53daa5"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

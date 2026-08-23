@@ -43,6 +43,11 @@ metadata:
   namespace: observability
   annotations:
     checkov.io/skip1: "CKV_K8S_38=the alerter reads its SA token to list CRD schemas in bounded pages for exporter coverage"
+    # KUBERNETES_SERVICE_HOST/PORT_HTTPS below are pod environment variables,
+    # not Flux inputs. The infrastructure Kustomization runs post-build
+    # substitution, which otherwise blanks both references and deploys
+    # KUBE_API="https://:". This resource has no Flux substitutions of its own.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
 spec:
   # 5m: fast enough that a stuck resource surfaces well inside the 4h Slack
   # repeat_interval, slow enough to stay far below Alertmanager's cost of

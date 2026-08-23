@@ -201,7 +201,7 @@ spec:
       # .github/renovate.json. (Same image drives the chart's wait-for-db init.)
       image:
         # renovate: datasource=docker depName=postgres
-        tag: "18.4"
+        tag: "18.6"
       persistence:
         enabled: false
     # Every Crossview secret is sourced from the crossview-credentials Secret
