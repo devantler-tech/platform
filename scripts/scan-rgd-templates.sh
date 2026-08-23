@@ -188,6 +188,15 @@ while IFS= read -r candidate; do
   rgd_document_count="$(jq '[.[] | select(type == "object" and (.kind // "") ==
     "ResourceGraphDefinition")] | length' <<<"$candidate_documents")"
   [ "$rgd_document_count" -gt 0 ] || continue
+  encrypted_rgd_count="$(jq '[
+    .[]
+    | select(type == "object" and (.kind // "") == "ResourceGraphDefinition")
+    | select(
+        (.sops != null)
+        or ([.. | strings | select(startswith("ENC["))] | length > 0))
+  ] | length' <<<"$candidate_documents")"
+  [ "$encrypted_rgd_count" -eq 0 ] || fail \
+    "SOPS-encrypted ResourceGraphDefinitions cannot be validated from ciphertext: $candidate"
   document_count="$(jq 'length' <<<"$candidate_documents")"
   if [ "$document_count" -ne 1 ] || [ "$rgd_document_count" -ne 1 ]; then
     fail "ResourceGraphDefinition must be the only YAML document in its file: $candidate"
@@ -667,6 +676,26 @@ done < <(
 # build files so they cannot mutate a reviewed RGD or generated instance after its evidence is sealed.
 while IFS= read -r candidate; do
   candidate_documents="$(yq -o=json -I=0 '.' "$candidate" | jq -cs '.')"
+  encrypted_flux_count="$(jq '
+    def resources:
+      if type == "object" and (.kind // "") == "List"
+      then .items[]? | resources
+      else .
+      end;
+    [
+      .[]
+      | resources
+      | select(type == "object"
+        and ((.apiVersion // "") | startswith("kustomize.toolkit.fluxcd.io/"))
+        and (.kind // "") == "Kustomization")
+      | select(
+          (.sops != null)
+          or ([.. | strings | select(startswith("ENC["))] | length > 0))
+    ] | length
+  ' <<<"$candidate_documents")"
+  [ "$encrypted_flux_count" -eq 0 ] || fail \
+    "SOPS-encrypted Flux Kustomizations cannot be validated from ciphertext: $candidate"
+
   flux_substitution_override_count="$(jq '
     def resources:
       if type == "object" and (.kind // "") == "List"
@@ -781,7 +810,9 @@ while IFS= read -r candidate; do
   while IFS= read -r instance_json; do
     instance_api_version="$(jq -r '.apiVersion // ""' <<<"$instance_json")"
     instance_kind="$(jq -r '.kind // ""' <<<"$instance_json")"
-    instance_name="$(jq -r '.spec.name // ""' <<<"$instance_json")"
+    instance_name="$(jq -r '
+      if (.spec | type) == "object" then .spec.name // "" else "" end
+    ' <<<"$instance_json")"
     is_rgd_instance=false
     for rgd_index in "${!RGD_KINDS[@]}"; do
       if [ "$instance_api_version" = "${RGD_API_VERSIONS[$rgd_index]}" ] &&
@@ -800,20 +831,26 @@ while IFS= read -r candidate; do
       "SOPS-encrypted generated instances cannot be validated from ciphertext: $candidate"
     substitution_path="$(jq -r '
       .spec as $spec
-      | [
-          $spec
-          | paths(scalars) as $path
-          | select(
-              ($spec | getpath($path) | type) == "string"
-              and ($spec | getpath($path) | contains("${")))
-          | "spec." + ($path | map(tostring) | join("."))
-        ][0] // ""
+      | if (($spec | type) == "string" and ($spec | contains("${"))) then
+          "spec"
+        else
+          [
+            $spec
+            | paths(scalars) as $path
+            | select(
+                ($spec | getpath($path) | type) == "string"
+                and ($spec | getpath($path) | contains("${")))
+            | "spec." + ($path | map(tostring) | join("."))
+          ][0] // ""
+        end
     ' <<<"$instance_json")"
     [ -z "$substitution_path" ] || fail \
       "generated instance spec must not contain Flux substitution expressions ($substitution_path): $candidate"
     [ "$instance_name" != "kube-system" ] || fail \
       "KSV-0037: committed $instance_kind instance $candidate would generate resources in kube-system"
-    instance_image="$(jq -r '.spec.image // ""' <<<"$instance_json")"
+    instance_image="$(jq -r '
+      if (.spec | type) == "object" then .spec.image // "" else "" end
+    ' <<<"$instance_json")"
     [ -z "$instance_image" ] || validate_image_registry "$instance_image"
     printf '1\t%s\tINSTANCE-CONTENT\tSHA256\t%s\n' \
       "${candidate#"$SOURCE_ROOT"/}" "$(sha256_text "$instance_json")" >>"$WORK/content.tsv"

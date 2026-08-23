@@ -589,6 +589,17 @@ expect_rejected "an RGD without the Flux substitution opt-out" \
   "Flux postBuild substitution must be disabled for every ResourceGraphDefinition"
 restore_webapp
 
+# Flux decrypts RGD definitions before apply too. Ciphertext in a nested template cannot be scanned
+# or baselined as evidence for the plaintext workload that reaches KRO.
+yq -i '(.spec.resources[] | select(.id == "deployment") |
+  .template.spec.template.spec.containers[0].image) =
+  "ENC[AES256_GCM,data:AAAA,iv:BBBB,tag:CCCC,type:str]" |
+  .sops = {"mac": "ENC[AES256_GCM,data:DDDD,iv:EEEE,tag:FFFF,type:str]", "version": "3.9.4"}' \
+  "$WORK/$WEBAPP_RGD"
+expect_rejected "a SOPS-encrypted ResourceGraphDefinition template" \
+  "SOPS-encrypted ResourceGraphDefinitions cannot be validated from ciphertext"
+restore_webapp
+
 # Generated instances also feed Flux postBuild substitution. Security-sensitive namespace and image
 # inputs must not carry expressions that are replaced after their raw evidence is sealed.
 # shellcheck disable=SC2016 # the Flux substitution expression must remain literal in the fixture
@@ -612,6 +623,14 @@ expect_rejected "a generated Tenant with a substitutable graph option" \
   "generated instance spec must not contain Flux substitution expressions" "spec.externalDns"
 cp "$REPO_ROOT/k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml" \
   "$WORK/k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml"
+
+# A scalar spec has no descendant path for jq paths(scalars), but Flux can replace the scalar with a
+# complete mapping after the instance evidence is sealed.
+# shellcheck disable=SC2016 # the Flux whole-spec expression must remain literal in the fixture
+yq -i '.spec = "${INSTANCE_SPEC}"' "$WORK/$WEBAPP_INSTANCE"
+expect_rejected "a generated instance with a substitutable scalar spec" \
+  "generated instance spec must not contain Flux substitution expressions" "(spec)"
+cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
 
 # Flux decrypts SOPS resources before apply. Ciphertext cannot serve as namespace, registry, or
 # complete-instance evidence for the plaintext generated instance that reaches the cluster.
@@ -663,6 +682,21 @@ yq -n '.apiVersion = "v1" | .kind = "List" | .items = [{
 expect_rejected "a Flux Kustomization nested in a List and targeting an RGD" \
   "Flux Kustomization targets or ambiguously selects" "ResourceGraphDefinition"
 rm -f "$WORK/$FLUX_RGD_LIST_PATCH"
+
+# Selectively SOPS-encrypted Flux selectors are decrypted before reconciliation, so ciphertext cannot
+# be compared as if it were the deployed patch target.
+yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
+  .kind = "Kustomization" | .metadata.name = "rgd-encrypted-patch-probe" |
+  .metadata.namespace = "flux-system" | .spec.path = "./k8s/providers/hetzner" |
+  .spec.patches = [{
+    "target": {"group": "kro.run", "version": "v1alpha1", "kind": "ENC[AES256_GCM,data:AAAA,iv:BBBB,tag:CCCC,type:str]"},
+    "patch": "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"
+  }] |
+  .sops = {"mac": "ENC[AES256_GCM,data:DDDD,iv:EEEE,tag:FFFF,type:str]", "version": "3.9.4"}' \
+  >"$WORK/$FLUX_RGD_PATCH"
+expect_rejected "a SOPS-encrypted Flux Kustomization selector" \
+  "SOPS-encrypted Flux Kustomizations cannot be validated from ciphertext"
+rm -f "$WORK/$FLUX_RGD_PATCH"
 
 # Flux commonMetadata is also applied after the Kustomize build and can erase the resource-level
 # substitution opt-out on every RGD in the deployment.
