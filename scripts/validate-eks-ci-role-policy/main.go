@@ -1222,23 +1222,32 @@ const (
 // tests independently produced the identical value, while the full local CLI
 // correctly refused that renderer because the approved pin is v1.36.2.
 //
-// Re-approved for the Postgres 18.4 -> 18.6 image-tag update in the Crossview
-// HelmRelease. The source diff and a direct kubectl render comparison against
-// main 2dc64295 each report exactly one changed line, the database image tag in
-// `helm.toolkit.fluxcd.io/v2 HelmRelease crossview/crossview`; the other four
-// independently reconciled production layers are byte-identical. The tag names
-// no subject, role, resource, policy, service account, or AWS identity, and the
-// validator reported no individually pinned authorization-object mismatch, so
-// the approved grant-bearing surface is unchanged and only the aggregate moves.
+// Re-approved for the Crossview app pod-template annotation that re-runs the
+// database schema bootstrap. The rendered delta against main 6e809460 is one
+// document, `helm.toolkit.fluxcd.io/v2 HelmRelease crossview/crossview`, which
+// gains a single `podAnnotations` key. The annotation names no subject, role,
+// verb, resource, policy, service account, or AWS identity, so no grant moves;
+// only the aggregate does, because the aggregate covers each document's full
+// text while `expectedRenderedHashes` pins the grant-bearing kinds. All 19 of
+// those pinned entries stayed byte-identical: zero unapproved, zero missing,
+// and zero duplicate rendered resources.
+//
+// The levelling merge is provably neutral: main 6e809460 renders to the digest
+// recorded below as the previous value, so the three commits it brought in
+// contribute nothing to this move, and the change is attributable to the PR's
+// own diff alone. The diagnostic substitution-note count is 35 on both sides,
+// so this adds no unresolved-substitution resource and removes none.
 //
 // Two independent renderers produced the value below: the required hosted
-// kubectl v1.36.2 job (run 32601695474, job 97100890991) and an uncached local
-// kubectl render at exact PR head 5b23c29b. Both rejected the previous digest
-// with the same fingerprint, while the same uncached test passes at exact base
-// 2dc64295. The previous approved digest remains recorded here:
+// kubectl v1.36.2 job (run 32608133113, job 97116555964) at the pre-levelling
+// head c1cb9898, and an uncached local kubectl v1.36.1 render at exact levelled
+// head 3de36aec. The same local renderer reproduces the previous digest exactly
+// at clean main, and rejects a substituted constant there, so it is calibrated
+// against the approved tree. The previous approved digest remains recorded here:
 //
 //	2e5ff04e52117cdbdc88261c35845e51a17ff31b709ed5b7d449b5076c08d8e1
-const expectedRenderedSurfaceSHA = "bef0f81a74a01efa995543c82c4adf5c18123f3e1b31d0430719f9a3af53daa5"
+//	bef0f81a74a01efa995543c82c4adf5c18123f3e1b31d0430719f9a3af53daa5
+const expectedRenderedSurfaceSHA = "54b0b907d2d6a870b9213927f246b79ba1fd7366e6d83a7792284d0c7e683a08"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
