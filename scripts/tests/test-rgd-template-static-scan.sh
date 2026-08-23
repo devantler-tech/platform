@@ -286,6 +286,40 @@ expect_rejected "a standalone transformer targeting an RGD" \
   "Kustomization transformer targets or ambiguously selects" "ResourceGraphDefinition"
 rm -f "$WORK/$RGD_TRANSFORMER" "$WORK/$PROVIDER_PROBE"
 
+# Path-backed replacements run after the raw definitions and instances are hashed. Loading only
+# inline replacement targets leaves a referenced file free to mutate a generated instance without
+# changing any reviewed evidence.
+readonly RGD_REPLACEMENT="k8s/providers/probe/infrastructure/replacement-rgd.yaml"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [] |
+  .replacements = [{"path": "replacement-rgd.yaml"}]' >"$WORK/$PROVIDER_PROBE"
+yq -n '.source = {
+    "kind": "ConfigMap",
+    "name": "replacement-source",
+    "fieldPath": "data.namespace"
+  } | .targets = [{
+    "select": {
+      "group": "kro.run",
+      "version": "v1alpha1",
+      "kind": "WebApp",
+      "name": "wedding-app"
+    },
+    "fieldPaths": ["spec.name"]
+  }]' >"$WORK/$RGD_REPLACEMENT"
+expect_rejected "a path-backed replacement targeting a generated WebApp" \
+  "Kustomization replacement targets or ambiguously selects" "WebApp"
+rm -f "$WORK/$RGD_REPLACEMENT" "$WORK/$PROVIDER_PROBE"
+
+# commonAnnotations is a built-in transformer. Overriding the RGD substitution opt-out there makes
+# the raw-source check pass while Flux later expands values inside the nested templates.
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [] |
+  .commonAnnotations."kustomize.toolkit.fluxcd.io/substitute" = "enabled"' \
+  >"$WORK/$PROVIDER_PROBE"
+expect_rejected "a commonAnnotations override of the Flux substitution opt-out" \
+  "Kustomization must not override the Flux substitution opt-out"
+rm -f "$WORK/$PROVIDER_PROBE"
+
 # Legacy strategic-merge entries may contain inline YAML instead of a path. An unrelated patch must
 # remain usable, while an inline generated-instance patch must receive the same post-scan guard as a
 # path-backed patch.
@@ -314,6 +348,18 @@ yq -i '.metadata.name = "providerwebapp.kro.run" |
   .spec.schema.kind = "ProviderWebApp"' "$WORK/$PROVIDER_RGD"
 expect_rejected "an unbaselined provider ResourceGraphDefinition" "$PROVIDER_RGD"
 rm -f "$WORK/$PROVIDER_RGD"
+
+# Kustomize accepts JSON and extensionless resources. Direct-main/manual-CD execution does not run
+# the naming validator, so discovery must follow every readable resource path rather than depend on
+# a .yaml/.yml suffix.
+readonly JSON_RGD="k8s/providers/probe/infrastructure/provider-resource-graph-definition.json"
+yq -o=json -I=2 '.metadata.name = "jsonwebapp.kro.run" |
+  .spec.schema.kind = "JsonWebApp"' "$REPO_ROOT/$WEBAPP_RGD" >"$WORK/$JSON_RGD"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = ["provider-resource-graph-definition.json"]' \
+  >"$WORK/$PROVIDER_PROBE"
+expect_rejected "an unbaselined JSON ResourceGraphDefinition referenced by Kustomize" "$JSON_RGD"
+rm -f "$WORK/$JSON_RGD" "$WORK/$PROVIDER_PROBE"
 rmdir "$WORK/$(dirname "$PROVIDER_PROBE")"
 
 # The same post-scan mutation is unsafe in a shared-base Kustomization, not only below providers.
@@ -358,6 +404,28 @@ yq -i 'del(.metadata.annotations."kustomize.toolkit.fluxcd.io/substitute")' \
 expect_rejected "an RGD without the Flux substitution opt-out" \
   "Flux postBuild substitution must be disabled for every ResourceGraphDefinition"
 restore_webapp
+
+# Flux Kustomization patches are applied after the ordinary Kustomize render. They must be checked
+# independently from build-file patches or they can mutate an RGD after its raw evidence is sealed.
+readonly FLUX_RGD_PATCH="k8s/clusters/prod/flux-kustomization-rgd-patch-probe.yaml"
+mkdir -p "$WORK/$(dirname "$FLUX_RGD_PATCH")"
+yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
+  .kind = "Kustomization" |
+  .metadata.name = "rgd-patch-probe" |
+  .metadata.namespace = "flux-system" |
+  .spec.path = "./k8s/providers/hetzner" |
+  .spec.patches = [{
+    "target": {
+      "group": "kro.run",
+      "version": "v1alpha1",
+      "kind": "ResourceGraphDefinition",
+      "name": "webapp.kro.run"
+    },
+    "patch": "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"
+  }]' >"$WORK/$FLUX_RGD_PATCH"
+expect_rejected "a Flux Kustomization patch targeting an RGD" \
+  "Flux Kustomization targets or ambiguously selects" "ResourceGraphDefinition"
+rm -f "$WORK/$FLUX_RGD_PATCH"
 
 # Resource-level graph controls decide whether a template is instantiated. They must be evidence too:
 # gating the default-deny NetworkPolicy changes tenant isolation without changing its template bytes.

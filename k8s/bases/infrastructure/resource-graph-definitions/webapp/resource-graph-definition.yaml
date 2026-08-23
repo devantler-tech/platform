@@ -11,9 +11,11 @@
 # scripts/tests/test-rgd-template-static-scan.sh proves discovery, cause, privilege, resource, and
 # namespace regressions are rejected on pull requests, exact merge-group revisions, direct pushes to
 # main, and manual production dispatches. Each RGD must be the only document in its file and opt out
-# of Flux substitution. Kustomizations may consume this graph and its instances but may not patch,
-# transform, or replace either anywhere in `k8s`: the scanner rejects targeted, self-identifying, or
-# ambiguously selected RGD definitions and generated instances so the reviewed files are deployed.
+# of Flux substitution. Discovery includes YAML plus every readable file referenced by a Kustomize
+# build, regardless of suffix. Kustomize builds and Flux Kustomization CRs may consume this graph and
+# its instances but may not patch, transform, replace, or override the substitution opt-out anywhere
+# in `k8s`: the scanner rejects inline and path-backed mutations, targeted/self-identifying/ambiguous
+# selectors, and post-render Flux patches so the reviewed files are deployed.
 # Never exclude this directory when adding a template.
 #
 # Sibling to the Tenant RGD: a *Tenant* sets up the namespace/isolation/sync

@@ -86,6 +86,41 @@ rgd_root="${SOURCE_ROOT}/${RGD_ROOT_PATH}"
 k8s_root="${SOURCE_ROOT}/k8s"
 [ -d "$k8s_root" ] || fail "Kubernetes source directory is missing: $k8s_root"
 
+KUSTOMIZATION_PATHS=()
+while IFS= read -r kustomization_file; do
+  KUSTOMIZATION_PATHS+=("$kustomization_file")
+done < <(
+  find "$k8s_root" -type f \
+    \( -name 'kustomization.yaml' -o -name 'kustomization.yml' -o -name 'Kustomization' \) \
+    -print | LC_ALL=C sort
+)
+readonly KUSTOMIZATION_PATHS
+
+# YAML suffixes cover the committed tree today, while Kustomize also accepts JSON and extensionless
+# resources. Add every readable file referenced by a build file so direct-main/manual-CD validation
+# cannot deploy a resource that discovery omitted merely because of its presentation or filename.
+K8S_RESOURCE_PATHS=()
+while IFS= read -r candidate; do
+  K8S_RESOURCE_PATHS+=("$candidate")
+done < <(
+  {
+    find "$k8s_root" -type f \( -name '*.yaml' -o -name '*.yml' \) -print
+    if [ "${#KUSTOMIZATION_PATHS[@]}" -gt 0 ]; then
+      for kustomization_file in "${KUSTOMIZATION_PATHS[@]}"; do
+        while IFS= read -r resource_path; do
+          [ -n "$resource_path" ] || continue
+          resource_file="${kustomization_file%/*}/${resource_path}"
+          [ -f "$resource_file" ] || continue
+          resource_dir="$(cd "$(dirname "$resource_file")" && pwd)"
+          printf '%s/%s\n' "$resource_dir" "$(basename "$resource_file")"
+        done < <(yq -o=json -I=0 '.resources[]?' "$kustomization_file" |
+          jq -r 'select(type == "string")')
+      done
+    fi
+  } | LC_ALL=C sort -u
+)
+readonly K8S_RESOURCE_PATHS
+
 # Discover by resource kind across every provider as well as the shared base. The tree contains
 # sibling resources, so a filename glob alone would scan unrelated manifests; conversely, rooting
 # discovery only in the base would leave a provider-specific RGD and its nested workloads unseen.
@@ -103,15 +138,15 @@ while IFS= read -r candidate; do
   [ "$substitution_mode" = "disabled" ] || fail \
     "Flux postBuild substitution must be disabled for every ResourceGraphDefinition: $candidate"
   RGD_PATHS+=("${candidate#"$SOURCE_ROOT"/}")
-  definition_api_version="$(yq '.apiVersion // ""' "$candidate")"
+  definition_api_version="$(yq -r '.apiVersion // ""' "$candidate")"
   [[ "$definition_api_version" == */* ]] ||
     fail "RGD does not declare a grouped apiVersion: $candidate"
-  schema_api_version="$(yq '.spec.schema.apiVersion // ""' "$candidate")"
+  schema_api_version="$(yq -r '.spec.schema.apiVersion // ""' "$candidate")"
   [ -n "$schema_api_version" ] || fail "RGD does not declare spec.schema.apiVersion: $candidate"
   if [[ "$schema_api_version" == */* ]]; then
     generated_api_version="$schema_api_version"
   else
-    definition_name="$(yq '.metadata.name // ""' "$candidate")"
+    definition_name="$(yq -r '.metadata.name // ""' "$candidate")"
     generated_api_group="${definition_name#*.}"
     if [ -z "$definition_name" ] || [ "$generated_api_group" = "$definition_name" ] ||
       [ -z "$generated_api_group" ]; then
@@ -120,10 +155,10 @@ while IFS= read -r candidate; do
     generated_api_version="${generated_api_group}/${schema_api_version}"
   fi
   RGD_API_VERSIONS+=("$generated_api_version")
-  schema_kind="$(yq '.spec.schema.kind // ""' "$candidate")"
+  schema_kind="$(yq -r '.spec.schema.kind // ""' "$candidate")"
   [ -n "$schema_kind" ] || fail "RGD does not declare spec.schema.kind: $candidate"
   RGD_KINDS+=("$schema_kind")
-done < <(find "$k8s_root" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | LC_ALL=C sort)
+done < <(printf '%s\n' "${K8S_RESOURCE_PATHS[@]}")
 
 [ "${#RGD_PATHS[@]}" -gt 0 ] || fail "no ResourceGraphDefinitions found below $k8s_root"
 readonly RGD_PATHS
@@ -147,6 +182,12 @@ readonly rgd_selectors_json
 # mutation in a shared base is as invisible to this scan as one in a provider. Graph variants belong
 # in a separately scanned definition rather than an invisible per-consumer mutation.
 while IFS= read -r kustomization_file; do
+  substitution_override="$(yq '.commonAnnotations."kustomize.toolkit.fluxcd.io/substitute" // ""' \
+    "$kustomization_file")"
+  if [ -n "$substitution_override" ] && [ "$substitution_override" != "disabled" ]; then
+    fail "Kustomization must not override the Flux substitution opt-out: $kustomization_file"
+  fi
+
   targeted_rgd="$(yq -o=json -I=0 '.' "$kustomization_file" |
     jq -r --argjson generated "$rgd_selectors_json" '
     def selector_matches($value; $pattern):
@@ -178,6 +219,36 @@ while IFS= read -r kustomization_file; do
   ')"
   [ -z "$targeted_rgd" ] || fail \
     "Kustomization targets or ambiguously selects a ResourceGraphDefinition/generated instance ($targeted_rgd): $kustomization_file"
+
+  while IFS= read -r replacement_entry; do
+    replacement_path="$(jq -r 'if type == "object" and (.path | type) == "string" then .path else "" end' \
+      <<<"$replacement_entry")"
+    [ -n "$replacement_path" ] || continue
+    replacement_file="${kustomization_file%/*}/${replacement_path}"
+    [ -r "$replacement_file" ] || fail "Kustomization replacement is not readable: $replacement_file"
+    replacement_documents="$(yq -o=json -I=0 '.' "$replacement_file" | jq -cs '.')"
+    jq -e 'length > 0 and all(.[]; type == "object")' <<<"$replacement_documents" >/dev/null ||
+      fail "Kustomization replacement does not contain only mapping documents: $replacement_file"
+    targeted_replacement="$(jq -r --argjson generated "$rgd_selectors_json" '
+      def selector_matches($value; $pattern):
+        ($pattern == "")
+        or (try ($value | test("^(" + $pattern + ")$")) catch false);
+      [ .[] | .targets[]?.select? // empty ]
+      | .[] as $target
+      | select(
+          ($target | type) != "object"
+          or ($target.kind // "") == ""
+          or selector_matches("ResourceGraphDefinition"; ($target.kind // ""))
+          or any($generated[];
+            selector_matches(.kind; ($target.kind // ""))
+            and selector_matches(.group; ($target.group // ""))
+            and selector_matches(.version; ($target.version // ""))))
+      | if ($target | type) == "object" then $target.kind // "missing kind"
+        else "invalid selector" end
+    ' <<<"$replacement_documents")"
+    [ -z "$targeted_replacement" ] || fail \
+      "Kustomization replacement targets or ambiguously selects a ResourceGraphDefinition/generated instance ($targeted_replacement): $replacement_file"
+  done < <(yq -o=json -I=0 '.replacements[]?' "$kustomization_file" | jq -c '.')
 
   while IFS= read -r transformer_entry; do
     [ "$(jq -r 'type' <<<"$transformer_entry")" = "string" ] ||
@@ -284,10 +355,43 @@ while IFS= read -r kustomization_file; do
     fi
   done < <(yq -o=json -I=0 '.patchesStrategicMerge[]?' "$kustomization_file" | jq -c '.')
 done < <(
-  find "$k8s_root" -type f \
-    \( -name 'kustomization.yaml' -o -name 'kustomization.yml' -o -name 'Kustomization' \) \
-    -print | LC_ALL=C sort
+  if [ "${#KUSTOMIZATION_PATHS[@]}" -gt 0 ]; then
+    printf '%s\n' "${KUSTOMIZATION_PATHS[@]}"
+  fi
 )
+
+# Flux applies spec.patches after the ordinary Kustomize build. Inspect those CRs separately from
+# build files so they cannot mutate a reviewed RGD or generated instance after its evidence is sealed.
+while IFS= read -r candidate; do
+  candidate_documents="$(yq -o=json -I=0 '.' "$candidate" | jq -cs '.')"
+  targeted_flux="$(jq -r --argjson generated "$rgd_selectors_json" '
+    def selector_matches($value; $pattern):
+      ($pattern == "")
+      or (try ($value | test("^(" + $pattern + ")$")) catch false);
+    [
+      .[] |
+      select(type == "object"
+        and ((.apiVersion // "") | startswith("kustomize.toolkit.fluxcd.io/"))
+        and (.kind // "") == "Kustomization") |
+      .spec.patches[]? |
+      select(type == "object" and .target != null) |
+      .target
+    ]
+    | .[] as $target
+    | select(
+        ($target | type) != "object"
+        or ($target.kind // "") == ""
+        or selector_matches("ResourceGraphDefinition"; ($target.kind // ""))
+        or any($generated[];
+          selector_matches(.kind; ($target.kind // ""))
+          and selector_matches(.group; ($target.group // ""))
+          and selector_matches(.version; ($target.version // ""))))
+    | if ($target | type) == "object" then $target.kind // "missing kind"
+      else "invalid selector" end
+  ' <<<"$candidate_documents")"
+  [ -z "$targeted_flux" ] || fail \
+    "Flux Kustomization targets or ambiguously selects a ResourceGraphDefinition/generated instance ($targeted_flux): $candidate"
+done < <(printf '%s\n' "${K8S_RESOURCE_PATHS[@]}")
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -326,17 +430,17 @@ while IFS= read -r candidate; do
     yq -o=json -I=0 'select(tag == "!!map")' "$candidate" |
       jq -cS 'select(.kind != null)'
   )
-done < <(find "${SOURCE_ROOT}/k8s" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | LC_ALL=C sort)
+done < <(printf '%s\n' "${K8S_RESOURCE_PATHS[@]}")
 
 template_count=0
 for relative_path in "${RGD_PATHS[@]}"; do
   source_file="${SOURCE_ROOT}/${relative_path}"
   [ -r "$source_file" ] || fail "RGD source is not readable: $source_file"
 
-  count="$(yq '.spec.resources | length' "$source_file")"
+  count="$(yq -r '.spec.resources | length' "$source_file")"
   case "$count" in
-    '' | *[!0-9]*) fail "could not count templates in $source_file" ;;
-    0) fail "RGD contains no templates: $source_file" ;;
+  '' | *[!0-9]*) fail "could not count templates in $source_file" ;;
+  0) fail "RGD contains no templates: $source_file" ;;
   esac
 
   resource_count=0
@@ -353,7 +457,7 @@ for relative_path in "${RGD_PATHS[@]}"; do
       '(.spec.resources[] | select(.id == strenv(RESOURCE_ID))).template' \
       "$source_file" >"$output_file"
     resource_count=$((resource_count + 1))
-  done < <(yq '.spec.resources[].id // ""' "$source_file")
+  done < <(yq -r '.spec.resources[].id // ""' "$source_file")
   [ "$resource_count" -eq "$count" ] ||
     fail "RGD resource IDs do not map one-to-one with templates: $source_file"
 
@@ -411,13 +515,13 @@ jq -r '
 while IFS=$'\t' read -r finding_target finding_id finding_severity \
   finding_start_line finding_end_line; do
   case "$finding_target" in
-    /* | ../* | */../*) fail "Trivy returned an unsafe finding target: $finding_target" ;;
+  /* | ../* | */../*) fail "Trivy returned an unsafe finding target: $finding_target" ;;
   esac
   case "$finding_start_line" in
-    '' | *[!0-9]*) fail "Trivy finding $finding_id on $finding_target has no source range" ;;
+  '' | *[!0-9]*) fail "Trivy finding $finding_id on $finding_target has no source range" ;;
   esac
   case "$finding_end_line" in
-    '' | *[!0-9]*) fail "Trivy finding $finding_id on $finding_target has no source range" ;;
+  '' | *[!0-9]*) fail "Trivy finding $finding_id on $finding_target has no source range" ;;
   esac
   [ "$finding_start_line" -le "$finding_end_line" ] || fail \
     "Trivy finding $finding_id on $finding_target has an inverted source range"
