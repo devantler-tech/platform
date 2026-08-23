@@ -8,6 +8,7 @@ readonly REPO_ROOT
 readonly CI_WORKFLOW="${RGD_WIRING_CI_WORKFLOW:-${REPO_ROOT}/.github/workflows/ci.yaml}"
 readonly MAIN_WORKFLOW="${RGD_WIRING_MAIN_WORKFLOW:-${REPO_ROOT}/.github/workflows/validate-main.yaml}"
 readonly CD_WORKFLOW="${RGD_WIRING_CD_WORKFLOW:-${REPO_ROOT}/.github/workflows/cd.yaml}"
+readonly DR_WORKFLOW="${RGD_WIRING_DR_WORKFLOW:-${REPO_ROOT}/.github/workflows/dr-rebuild.yaml}"
 readonly SETUP_TRIVY="aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567"
 readonly BEHAVIORAL_RUN=$'shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh\nbash scripts/tests/test-rgd-template-static-scan.sh\n'
 readonly WIRING_RUN=$'shellcheck scripts/tests/test-rgd-template-static-scan-wiring.sh\nbash scripts/tests/test-rgd-template-static-scan-wiring.sh\n'
@@ -23,6 +24,7 @@ command -v jq >/dev/null 2>&1 || fail "jq is required"
 ci_workflow_json="$(yq -o=json -I=0 '.' "$CI_WORKFLOW")"
 main_workflow_json="$(yq -o=json -I=0 '.' "$MAIN_WORKFLOW")"
 cd_workflow_json="$(yq -o=json -I=0 '.' "$CD_WORKFLOW")"
+dr_workflow_json="$(yq -o=json -I=0 '.' "$DR_WORKFLOW")"
 k8s_filter_json="$(yq -o=json -I=0 '
   (.jobs.changes.steps[] | select(.id == "filter").with.filters) |
   from_yaml | .k8s
@@ -43,6 +45,7 @@ jq -e --argjson required_inputs '[
     ".trivy/data/**",
     "scripts/scan-rgd-templates.sh",
     "scripts/rgd-template-static-scan-baseline.tsv",
+    "scripts/rgd-template-static-scan-remote-resources.tsv",
     "scripts/tests/test-rgd-template-static-scan.sh",
     "scripts/tests/test-rgd-template-static-scan-wiring.sh"
   ]' '
@@ -142,6 +145,28 @@ jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" \
 ' <<<"$cd_workflow_json" >/dev/null ||
   fail "cd.yaml does not gate manual production dispatches on the exact RGD behavioral scan"
 
+jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" \
+  --arg wiring_run "$WIRING_RUN" '
+  .jobs.rebuild as $gate
+  | .jobs["supersession-gate"] as $wiring_job
+  | ($gate.steps | map(.run // "") | index($behavior_run)) as $scan_index
+  | ($gate.steps | map((.run // "") | contains("cluster create")) | index(true)) as $create_index
+  | ($gate != null)
+  and (($gate["continue-on-error"] // false) == false)
+  and any($gate.steps[];
+      (.uses // "") == $setup and .with.version == "v0.74.0")
+  and ($scan_index != null and $create_index != null and $scan_index < $create_index)
+  and (($gate.steps[$scan_index]["continue-on-error"] // false) == false)
+  and ($gate.steps[$scan_index] | has("if") | not)
+  and (($wiring_job["continue-on-error"] // false) == false)
+  and ($wiring_job | has("if") | not)
+  and any($wiring_job.steps[];
+      (.run // "") == $wiring_run
+      and ((.["continue-on-error"] // false) == false)
+      and (has("if") | not))
+' <<<"$dr_workflow_json" >/dev/null ||
+  fail "dr-rebuild.yaml does not gate from-zero deployment on the exact RGD behavioral scan"
+
 if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
   ablation_work="$(mktemp -d)"
   trap 'rm -rf "$ablation_work"' EXIT
@@ -219,6 +244,16 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
     RGD_WIRING_CD_WORKFLOW="$detached_cd_workflow" \
     RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/cd-rgd-detached.log" 2>&1; then
     fail "the wiring validator accepted a manual-CD RGD scan detached from deployment"
+  fi
+
+  suppressed_dr_workflow="${ablation_work}/dr-rgd-continue-on-error.yaml"
+  cp "$DR_WORKFLOW" "$suppressed_dr_workflow"
+  yq -i '(.jobs.rebuild.steps[] |
+    select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh"))).continue-on-error = true' \
+    "$suppressed_dr_workflow"
+  if RGD_WIRING_DR_WORKFLOW="$suppressed_dr_workflow" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/dr-rgd-continue-on-error.log" 2>&1; then
+    fail "the wiring validator accepted a failure-suppressed DR rebuild RGD scan"
   fi
 
   suppressed_workflow="${ablation_work}/ci-continue-on-error.yaml"
@@ -323,4 +358,4 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
   done
 fi
 
-echo "PASS: PR, merge-group, direct-main, and manual-CD routes retain the nested-RGD behavioral gate."
+echo "PASS: PR, merge-group, direct-main, manual-CD, and DR routes retain the nested-RGD behavioral gate."

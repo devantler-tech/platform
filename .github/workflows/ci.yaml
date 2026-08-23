@@ -184,6 +184,7 @@ jobs:
               - '.trivy/data/**'
               - 'scripts/scan-rgd-templates.sh'
               - 'scripts/rgd-template-static-scan-baseline.tsv'
+              - 'scripts/rgd-template-static-scan-remote-resources.tsv'
               - 'scripts/tests/test-rgd-template-static-scan.sh'
               - 'scripts/tests/test-rgd-template-static-scan-wiring.sh'
               # The version-drift guard reads its constants out of

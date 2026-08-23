@@ -16,6 +16,7 @@ SOURCE_ROOT="$(cd "${1:-$REPO_ROOT}" && pwd)"
 readonly SOURCE_ROOT
 readonly CONFIG_DATA="${REPO_ROOT}/.trivy/data"
 readonly BASELINE="${REPO_ROOT}/scripts/rgd-template-static-scan-baseline.tsv"
+readonly REMOTE_BASELINE="${REPO_ROOT}/scripts/rgd-template-static-scan-remote-resources.tsv"
 readonly REQUIRED_TRIVY_VERSION="0.74.0"
 readonly RGD_ROOT_PATH="k8s/bases/infrastructure/resource-graph-definitions"
 
@@ -31,7 +32,9 @@ fail() {
 command -v yq >/dev/null 2>&1 || fail "yq is required to extract RGD templates"
 command -v trivy >/dev/null 2>&1 || fail "trivy is required to scan RGD templates"
 command -v jq >/dev/null 2>&1 || fail "jq is required to compare RGD template findings"
+command -v curl >/dev/null 2>&1 || fail "curl is required to verify pinned remote resources"
 [ -d "$CONFIG_DATA" ] || fail "Trivy policy data is not readable: $CONFIG_DATA"
+[ -r "$REMOTE_BASELINE" ] || fail "remote-resource baseline is not readable: $REMOTE_BASELINE"
 
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -85,6 +88,9 @@ rgd_root="${SOURCE_ROOT}/${RGD_ROOT_PATH}"
 [ -d "$rgd_root" ] || fail "RGD source directory is missing: $rgd_root"
 k8s_root="${SOURCE_ROOT}/k8s"
 [ -d "$k8s_root" ] || fail "Kubernetes source directory is missing: $k8s_root"
+WORK="$(mktemp -d)"
+REMOTE_WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK" "$REMOTE_WORK"' EXIT
 
 KUSTOMIZATION_PATHS=()
 while IFS= read -r kustomization_file; do
@@ -95,6 +101,40 @@ done < <(
     -print | LC_ALL=C sort
 )
 readonly KUSTOMIZATION_PATHS
+
+# This scanner proves committed source inputs. An intentional remote resource therefore needs an
+# exact URL and content digest in the reviewed baseline; every other non-local entry fails closed.
+# Download in the main shell so a fetch/digest error cannot be lost inside the aggregation subshell.
+REMOTE_RESOURCE_URLS=()
+REMOTE_RESOURCE_PATHS=()
+remote_resource_index=0
+if [ "${#KUSTOMIZATION_PATHS[@]}" -gt 0 ]; then
+  for kustomization_file in "${KUSTOMIZATION_PATHS[@]}"; do
+    while IFS= read -r resource_path; do
+      [ -n "$resource_path" ] || continue
+      resource_file="${kustomization_file%/*}/${resource_path}"
+      [ -e "$resource_file" ] && continue
+      expected_remote_sha="$(awk -F '\t' -v url="$resource_path" '
+        $1 == url { print $2 }
+      ' "$REMOTE_BASELINE")"
+      [[ "$expected_remote_sha" =~ ^[0-9a-f]{64}$ ]] || fail \
+        "Kustomization resource is not a local path or reviewed remote ($resource_path): $kustomization_file"
+      remote_resource_index=$((remote_resource_index + 1))
+      remote_resource_file="${REMOTE_WORK}/remote-resource-${remote_resource_index}.yaml"
+      curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+        --retry 3 --retry-all-errors "$resource_path" --output "$remote_resource_file" || fail \
+        "could not fetch reviewed remote Kustomize resource: $resource_path"
+      actual_remote_sha="$(sha256_file "$remote_resource_file")"
+      [ "$actual_remote_sha" = "$expected_remote_sha" ] || fail \
+        "remote Kustomize resource digest changed ($resource_path): expected $expected_remote_sha, got $actual_remote_sha"
+      REMOTE_RESOURCE_URLS+=("$resource_path")
+      REMOTE_RESOURCE_PATHS+=("$remote_resource_file")
+    done < <(yq -o=json -I=0 '.resources[]?' "$kustomization_file" |
+      jq -r 'select(type == "string")')
+  done
+fi
+readonly REMOTE_RESOURCE_URLS
+readonly REMOTE_RESOURCE_PATHS
 
 # YAML suffixes cover the committed tree today, while Kustomize also accepts JSON and extensionless
 # resources. Add every readable file referenced by a build file so direct-main/manual-CD validation
@@ -177,6 +217,31 @@ for rgd_index in "${!RGD_KINDS[@]}"; do
 done
 readonly rgd_selectors_json
 
+# Approved remote manifests remain ordinary upstream resources only. A remote RGD or generated
+# instance has no committed source path for this scanner's hashes and baseline, so reject it even
+# when its URL and bytes match the reviewed remote-resource baseline.
+if [ "${#REMOTE_RESOURCE_PATHS[@]}" -gt 0 ]; then
+  for remote_index in "${!REMOTE_RESOURCE_PATHS[@]}"; do
+    remote_documents="$(yq -o=json -I=0 '.' "${REMOTE_RESOURCE_PATHS[$remote_index]}" | jq -cs '.')"
+    jq -e 'length > 0 and all(.[]; type == "object")' <<<"$remote_documents" >/dev/null ||
+      fail "remote Kustomize resource does not contain only mapping documents: ${REMOTE_RESOURCE_URLS[$remote_index]}"
+    protected_remote_kinds="$(jq -r --argjson generated "$rgd_selectors_json" '
+      [
+        .[] | select(type == "object") as $document |
+        if ($document.kind // "") == "ResourceGraphDefinition" then
+          "ResourceGraphDefinition"
+        elif any($generated[];
+          .kind == ($document.kind // "")
+          and ((.group + "/" + .version) == ($document.apiVersion // ""))) then
+          $document.kind
+        else empty end
+      ] | unique | join(", ")
+    ' <<<"$remote_documents")"
+    [ -z "$protected_remote_kinds" ] || fail \
+      "remote Kustomize resource declares an RGD definition or generated instance ($protected_remote_kinds): ${REMOTE_RESOURCE_URLS[$remote_index]}"
+  done
+fi
+
 # Kustomizations may consume a reviewed graph, but no overlay may patch, transform, or replace an RGD
 # after the raw definition has been extracted. Enforce that across the complete Kubernetes tree: a
 # mutation in a shared base is as invisible to this scan as one in a provider. Graph variants belong
@@ -192,6 +257,37 @@ while IFS= read -r kustomization_file; do
     [ "$substitution_override" = "disabled" ] ||
       fail "Kustomization must not override the Flux substitution opt-out: $kustomization_file"
   fi
+
+  while IFS= read -r configuration_entry; do
+    [ "$(jq -r 'type' <<<"$configuration_entry")" = "string" ] ||
+      fail "Kustomization configuration entry is not a path: $kustomization_file"
+    configuration_path="$(jq -r '.' <<<"$configuration_entry")"
+    configuration_file="${kustomization_file%/*}/${configuration_path}"
+    [ -r "$configuration_file" ] ||
+      fail "Kustomization configuration is not readable: $configuration_file"
+    configuration_documents="$(yq -o=json -I=0 '.' "$configuration_file" | jq -cs '.')"
+    jq -e 'length > 0 and all(.[]; type == "object")' <<<"$configuration_documents" >/dev/null ||
+      fail "Kustomization configuration does not contain only mapping documents: $configuration_file"
+    targeted_configuration="$(jq -r --argjson generated "$rgd_selectors_json" '
+      def selector_matches($value; $pattern):
+        ($pattern == "")
+        or (try ($value | test("^(" + $pattern + ")$")) catch false);
+      [ .[] | .varReference[]? ]
+      | .[] as $target
+      | select(
+          ($target | type) != "object"
+          or ($target.kind // "") == ""
+          or selector_matches("ResourceGraphDefinition"; ($target.kind // ""))
+          or any($generated[];
+            selector_matches(.kind; ($target.kind // ""))
+            and selector_matches(.group; ($target.group // ""))
+            and selector_matches(.version; ($target.version // ""))))
+      | if ($target | type) == "object" then $target.kind // "missing kind"
+        else "invalid selector" end
+    ' <<<"$configuration_documents")"
+    [ -z "$targeted_configuration" ] || fail \
+      "Kustomization configuration targets or ambiguously selects a ResourceGraphDefinition/generated instance ($targeted_configuration): $configuration_file"
+  done < <(yq -o=json -I=0 '.configurations[]?' "$kustomization_file" | jq -c '.')
 
   targeted_rgd="$(yq -o=json -I=0 '.' "$kustomization_file" |
     jq -r --argjson generated "$rgd_selectors_json" '
@@ -398,8 +494,6 @@ while IFS= read -r candidate; do
     "Flux Kustomization targets or ambiguously selects a ResourceGraphDefinition/generated instance ($targeted_flux): $candidate"
 done < <(printf '%s\n' "${K8S_RESOURCE_PATHS[@]}")
 
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
 : >"$WORK/content.tsv"
 
 # The current RGD contracts use spec.name as the namespace-driving input (directly in WebApp,

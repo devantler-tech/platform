@@ -320,6 +320,28 @@ expect_rejected "a commonAnnotations override of the Flux substitution opt-out" 
   "Kustomization must not override the Flux substitution opt-out"
 rm -f "$WORK/$PROVIDER_PROBE"
 
+# Custom var references are post-source transformers too. A WebApp image containing $(IMAGE) is
+# accepted as an ordinary Docker Hub reference by the raw scanner, then configurations can redirect
+# that field to an unreviewed registry during the Kustomize build.
+readonly RGD_VAR_CONFIGURATION="k8s/providers/probe/infrastructure/rgd-vars.yaml"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [] |
+  .configurations = ["rgd-vars.yaml"] |
+  .vars = [{
+    "name": "IMAGE",
+    "objref": {"apiVersion": "v1", "kind": "ConfigMap", "name": "image-vars"},
+    "fieldref": {"fieldpath": "data.image"}
+  }]' >"$WORK/$PROVIDER_PROBE"
+yq -n '.varReference = [{
+  "group": "kro.run",
+  "version": "v1alpha1",
+  "kind": "WebApp",
+  "path": "spec/image"
+}]' >"$WORK/$RGD_VAR_CONFIGURATION"
+expect_rejected "a custom varReference targeting a generated WebApp" \
+  "Kustomization configuration targets or ambiguously selects" "WebApp"
+rm -f "$WORK/$RGD_VAR_CONFIGURATION" "$WORK/$PROVIDER_PROBE"
+
 # Legacy strategic-merge entries may contain inline YAML instead of a path. An unrelated patch must
 # remain usable, while an inline generated-instance patch must receive the same post-scan guard as a
 # path-backed patch.
@@ -360,6 +382,15 @@ yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
   >"$WORK/$PROVIDER_PROBE"
 expect_rejected "an unbaselined JSON ResourceGraphDefinition referenced by Kustomize" "$JSON_RGD"
 rm -f "$WORK/$JSON_RGD" "$WORK/$PROVIDER_PROBE"
+
+# A new remote remains renderable by Kustomize but has no reviewed URL/content digest in this source
+# scanner's evidence. Reject it explicitly instead of silently treating the URL as a missing file.
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" |
+  .resources = ["https://example.invalid/rgd.yaml"]' >"$WORK/$PROVIDER_PROBE"
+expect_rejected "an unscanned remote Kustomize resource" \
+  "Kustomization resource is not a local path" "https://example.invalid/rgd.yaml"
+rm -f "$WORK/$PROVIDER_PROBE"
 rmdir "$WORK/$(dirname "$PROVIDER_PROBE")"
 
 # The same post-scan mutation is unsafe in a shared-base Kustomization, not only below providers.
