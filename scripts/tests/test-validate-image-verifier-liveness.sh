@@ -1069,6 +1069,36 @@ output="$(run_script TALOS_NODES=disabled 2>&1)" ||
   fail 'case 24: a literal-quoted key with escape text must not be decoded onto the root key'
 require_text "${output}" 'OK   disabled' 'case 24: literal strings keep escape text verbatim'
 
+# The SAME escape hole one level down: the ENTRY VALUES in the array. A basic-quoted
+# entry interprets escapes, so this names our plugin and containerd switches the verifier
+# off, while an un-decoded comparison misses it and the node reports OK -- a FAIL-OPEN.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ["io.containerd.image-verifier.v1\u002ebindir"]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: an escaped basic-quoted ENTRY must be decoded before comparison'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: TOML basic-string escapes are decoded in an array entry'
+
+# And the LITERAL spelling of the same entry is a DIFFERENT plugin id that containerd
+# never matches, so it must NOT disable us.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ['io.containerd.image-verifier.v1\u002ebindir']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 24: a literal-quoted entry with escape text must not be decoded onto our plugin id'
+require_text "${output}" 'OK   disabled' 'case 24: literal entries keep escape text verbatim'
+
 # Our identifier appearing only in a trailing TOML COMMENT is not an entry.
 cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
 version = 3

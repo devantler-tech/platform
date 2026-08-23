@@ -311,7 +311,7 @@ config_facts_in() {
     # No apostrophes in these comments: the whole program is a single-quoted
     # shell string, so one would end it. And close_at, not close, because awk
     # already has a close() builtin.
-    function verdict(text,   body, count, i, entry, quote, close_at) {
+    function verdict(text,   body, count, i, entry, quote, close_at, j, c) {
       body = text
       sub(/^[^[]*\[/, "", body)
       sub(/\][^]]*$/, "", body)
@@ -323,9 +323,29 @@ config_facts_in() {
         quote = substr(entry, 1, 1)
         if (quote != SQ && quote != DQ) continue
         entry = substr(entry, 2)
-        close_at = index(entry, quote)
-        if (close_at == 0) continue
-        entry = substr(entry, 1, close_at - 1)
+        if (quote == DQ) {
+          # A BASIC entry escapes its closing quote, so a plain index() stops early and
+          # compares a TRUNCATED value; and its escapes must be decoded before comparing,
+          # exactly as for the key above. Our plugin id written with an escape IS our
+          # plugin, and containerd switches the verifier off -- comparing the raw text
+          # missed it and the node reported OK with no enforcement.
+          close_at = 0
+          j = 1
+          while (j <= length(entry)) {
+            c = substr(entry, j, 1)
+            if (c == "\\") { j += 2; continue }
+            if (c == quote) { close_at = j; break }
+            j++
+          }
+          if (close_at == 0) continue
+          entry = decode_basic(substr(entry, 1, close_at - 1))
+        } else {
+          # LITERAL entries interpret nothing, so the same text here is a DIFFERENT
+          # plugin id containerd never matches. Decoding it would alias it onto ours.
+          close_at = index(entry, quote)
+          if (close_at == 0) continue
+          entry = substr(entry, 1, close_at - 1)
+        }
         if (entry == "io.containerd.image-verifier.v1.bindir") disabled = 1
       }
     }
