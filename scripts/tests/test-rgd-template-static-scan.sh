@@ -63,8 +63,9 @@ copy_rgd_inputs() {
     else
       definition_name="$(jq -r '.metadata.name // ""' <<<"$candidate_json")"
       generated_api_group="${definition_name#*.}"
-      [ -n "$definition_name" ] && [ "$generated_api_group" != "$definition_name" ] ||
+      if [ -z "$definition_name" ] || [ "$generated_api_group" = "$definition_name" ]; then
         fail "fixture RGD metadata.name does not encode a generated API group: $candidate"
+      fi
       generated_api_version="${generated_api_group}/${schema_api_version}"
     fi
     printf '%s\t%s\n' "$generated_api_version" "$schema_kind" >>"$input_index"
