@@ -178,12 +178,20 @@ discover_consumers() {
       plausible_repo "$repo" || continue
       printf '%s\t%s\t%s\n' "$repo" "$workflow" "$version"
       # 🔴 FLUX RESOLVES `spec.ref` AS digest > semver > tag, AND AN OMITTED `ref` MEANS
-      # `latest`. Reading `tag` first inverts that: a document carrying BOTH a tag and a
-      # digest (or a tag and a semver) would be attributed to a tag Flux never serves, and
-      # the real signer would be omitted from the proposed allow-list — a confident wrong
-      # answer, which is the one outcome this report must never produce. A digest or an
-      # omitted ref also collapsed to the meaningless `semver:`, which `effective_version`
-      # then refused as a bounded constraint, so a resolvable consumer read as UNRESOLVED.
+      # the mutable `latest` tag. Reading `tag` first inverts that: a document carrying BOTH
+      # a tag and a digest (or a tag and a semver) would be attributed to a tag Flux never
+      # serves, and the real signer would be omitted from the proposed allow-list — a
+      # confident wrong answer, which is the one outcome this report must never produce. A
+      # digest or an omitted ref also collapsed to the meaningless `semver:`, which
+      # `effective_version` then refused as a bounded constraint, so a resolvable consumer
+      # read as UNRESOLVED.
+      #
+      # An omitted ref emits `unpinned`, NOT the literal `latest`, so it stays distinct from
+      # a document that explicitly writes `tag: latest`. The two are different questions: an
+      # explicit tag is a written-down selector this resolver can look up, while an omitted
+      # ref is a mutable pointer with no release version behind it. Emitting `latest` for
+      # both made the omitted case an exact lookup for a tag that is not a release, and
+      # `effective_version` refuses `unpinned` by name instead.
       #
       # These live OUTSIDE the single-quoted yq program deliberately: a backtick inside it
       # reads as a command substitution to shellcheck (SC2016), so prose belongs out here.
@@ -191,7 +199,7 @@ discover_consumers() {
       select(.kind == "OCIRepository") |
       [(.spec.url // "-"),
        ((.spec.verify.matchOIDCIdentity // []) | map(.subject // "") | join(" ") | select(. != "") // "-"),
-       (((.spec.ref.digest // "") | select(. != "") | "digest:" + .) // ((.spec.ref.semver // "") | select(. != "") | "semver:" + .) // ((.spec.ref.tag // "") | select(. != "")) // "latest")] | @tsv
+       (((.spec.ref.digest // "") | select(. != "") | "digest:" + .) // ((.spec.ref.semver // "") | select(. != "") | "semver:" + .) // ((.spec.ref.tag // "") | select(. != "")) // "unpinned")] | @tsv
     ' "$file" 2>/dev/null || true)
   done < <(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' "$root" 2>/dev/null | sort -u) | sort -u
 }
@@ -228,6 +236,17 @@ effective_version() {
     digest:*)
       printf 'digest-pinned reference "%s" needs artifact-level resolution, which this script does not implement\n' \
         "${raw#digest:}" >&2
+      return 1
+      ;;
+    # An omitted `spec.ref` tracks the MUTABLE `latest` tag. That is a pointer, not a
+    # release version, so the tag walk below has nothing to select and no published
+    # release corresponds to it — the same shape as the digest refusal above. Walking to
+    # the newest release instead would be a GUESS: `latest` need not point at it, and the
+    # report would then attribute that release's workflow revision to whatever is actually
+    # deployed. Refuse by name, so the cause is diagnosable rather than surfacing as an
+    # opaque lookup miss.
+    unpinned)
+      printf 'unpinned reference (spec.ref omitted) tracks the mutable "latest" tag, which is not a release version this tag-based resolver can attribute; pin the consumer with a tag, semver range, or digest\n' >&2
       return 1
       ;;
     semver:*)

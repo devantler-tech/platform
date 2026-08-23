@@ -445,7 +445,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 12. FLUX REFERENCE PRECEDENCE: digest > semver > tag, omitted ref means `latest`.
+# 12. FLUX REFERENCE PRECEDENCE: digest > semver > tag, omitted ref emits `unpinned`.
 #     (#3305 review) Reading `tag` first attributed a document carrying both a tag and a
 #     digest to a tag Flux never serves; a digest or an omitted ref collapsed to the
 #     meaningless `semver:`, which `effective_version` then refused as a bounded
@@ -460,7 +460,7 @@ fi
 # `|| true` is load-bearing: under `set -e` a no-match grep in a command substitution
 # ABORTS the suite at this line, so the guard below never runs and the run dies with exit 1
 # and NO diagnostic — a failure nobody can act on. Measured while ablating this case.
-ref_expr="$(grep -o '(((\.spec\.ref\.digest.*"latest")' "$SCRIPT" || true)"
+ref_expr="$(grep -o '(((\.spec\.ref\.digest.*"unpinned")' "$SCRIPT" || true)"
 [ -n "$ref_expr" ] ||
   fail 'could not extract the reference-precedence expression from the script — the case would pass vacuously'
 ref_case() { # <name> <ref-yaml-block> <expected>
@@ -485,8 +485,8 @@ ref_case tag-and-digest '  ref:
 ref_case tag-and-semver '  ref:
     tag: v1.2.3
     semver: ">=1.0.0"' 'semver:>=1.0.0'
-ref_case omitted '' 'latest'
-pass 'Flux reference precedence is digest > semver > tag, and an omitted ref means latest'
+ref_case omitted '' 'unpinned'
+pass 'Flux reference precedence is digest > semver > tag, and an omitted ref emits unpinned rather than a literal tag'
 
 # ---------------------------------------------------------------------------
 # 13. BUILD METADATA MUST NOT BE DISCARDED, AND A TIE MUST NOT BE GUESSED. (#3305 review)
@@ -597,8 +597,24 @@ else
     fail 'the refusal does not name the tags that tie, so the cause is not diagnosable'
   # A CONTROL: the other four consumers must resolve through the same stub, or this
   # "refusal" could just be the whole fixture failing for an unrelated reason.
-  grep -q 'wedding-app' "$bm_out" ||
-    fail 'the refusal does not name the consumer that ties'
+  #
+  # 🔴 COUNT THE OUTCOME LINES; a name match is NOT a control. The report names every
+  # consumer it discovered, on the UNRESOLVED line as readily as the IN-SYNC one, so
+  # `grep -q wedding-app` matches just as well when ALL FIVE consumers failed — which is
+  # precisely the unrelated-failure case this control exists to exclude. It asserted only
+  # that the tying consumer was mentioned, which the refusal message above already proves.
+  #
+  # `|| true` is load-bearing on both counts: `grep -c` exits 1 when the count is zero, and
+  # a command substitution's status becomes the assignment's, so under `set -e` a legitimate
+  # zero would abort the suite here instead of reaching the comparison that reports it.
+  bm_unresolved="$(grep -c '^UNRESOLVED' "$bm_out" || true)"
+  bm_insync="$(grep -c '^IN-SYNC' "$bm_out" || true)"
+  [ "$bm_unresolved" -eq 1 ] ||
+    fail "expected exactly ONE unresolved consumer (the build-metadata tie), got $bm_unresolved — a different count means the fixture failed for an unrelated reason"
+  [ "$bm_insync" -eq 4 ] ||
+    fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $bm_insync"
+  grep -qE '^UNRESOLVED +wedding-app' "$bm_out" ||
+    fail 'the unresolved consumer is not the one that ties'
   pass 'a version carried by both a bare and a build-metadata tag refuses instead of guessing'
 fi
 
@@ -636,8 +652,59 @@ else
   pass 'a version published only with build metadata is never silently walked past'
 fi
 
+# ---------------------------------------------------------------------------
+# 15. AN OMITTED `spec.ref` MUST REFUSE, NOT BE LOOKED UP. (#3305 review)
+#     Flux serves the mutable `latest` tag when `spec.ref` is absent. That is a pointer,
+#     not a release version, so there is nothing for the tag walk to select — the same
+#     shape as the digest refusal. Emitting the literal `latest` made it an exact lookup
+#     for a tag that is not a release; walking to the newest release instead would be a
+#     GUESS, since `latest` need not point there, and would attribute that release's
+#     workflow revision to whatever is actually deployed.
+#
+#     Case 12 pins the token the expression emits. This pins what the RESOLVER does with
+#     it, which is the half that decides whether a consumer is misattributed.
+# ---------------------------------------------------------------------------
+up_root="$WORK/unpinned"
+mkdir -p "$up_root"
+k=0
+while IFS=$'\t' read -r repo workflow _version; do
+  [ -n "$repo" ] || continue
+  k=$((k + 1))
+  oci="$repo"
+  [ "$repo" = '.github' ] && oci='github-config'
+  # Consumer 1 OMITS `ref:` entirely; the rest keep an unbounded range, so the refusal
+  # cannot be confused with a wholesale failure of the fixture.
+  if [ "$k" -eq 1 ]; then ref_block=''; else ref_block='  ref:
+    semver: ">=1.0.0"'; fi
+  {
+    printf 'apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata:\n  name: u%s\nspec:\n' "$k"
+    if [ -n "$ref_block" ]; then printf '%s\n' "$ref_block"; fi
+    printf '  url: oci://ghcr.io/devantler-tech/%s/manifests\n' "$oci"
+    printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n'
+    printf "      - issuer: '^https://token\\\\.actions\\\\.githubusercontent\\\\.com\$'\n"
+    printf "        subject: '^https://github\\\\.com/devantler-tech/actions/\\\\.github/workflows/%s\\\\.yaml@[0-9a-f]{40}\$'\n" "$workflow"
+  } >"$up_root/c-$k.yaml"
+done <<<"$consumers"
+
+up_out="$WORK/unpinned.out"
+# Hermetic for the same reason as the bounded-semver case: the refusal is decided from
+# the MANIFEST, before any resolver is consulted, so the stub never has to answer.
+if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+PUBLISH_CONSUMER_ROOT="$up_root" "$SCRIPT" >"$up_out" 2>&1; then
+  fail 'an omitted spec.ref was silently resolved instead of refusing — a mutable latest pointer has no release version behind it'
+else
+  grep -q 'unpinned reference' "$up_out" ||
+    fail 'the run failed but not because of the unpinned reference — the case is not testing what it claims'
+  # A CONTROL, counted rather than name-matched: the other four consumers keep an
+  # unbounded range and must still resolve, or this "refusal" is just the fixture dying.
+  up_insync="$(grep -c '^IN-SYNC' "$up_out" || true)"
+  [ "$up_insync" -eq 4 ] ||
+    fail "expected the other FOUR consumers to resolve IN-SYNC alongside the refusal, got $up_insync"
+  pass 'an omitted spec.ref refuses by name instead of being looked up as a literal tag'
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (14 cases)\n'
+printf '\nPASS: publish-workflow signing-revision report (15 cases)\n'
