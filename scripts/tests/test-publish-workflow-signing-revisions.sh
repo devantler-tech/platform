@@ -563,6 +563,14 @@ case "$args" in
     esac
     ;;
   *"/commits/"*)
+    # A NAMED tag whose commit lookup fails, the way a rate limit or an API outage does.
+    # Nothing else about the fixture changes, so a case using it isolates the failure path.
+    bm_ctag="${args##*/commits/}"
+    bm_ctag="${bm_ctag%% *}"
+    if [ -n "${BM_COMMIT_FAIL_TAG:-}" ] && [ "$bm_ctag" = "$BM_COMMIT_FAIL_TAG" ]; then
+      printf 'API rate limit exceeded\n' >&2
+      exit 1
+    fi
     # The commit a tag currently resolves to. Every tag resolves to BM_TAG_SHA, so the run
     # lookup below matches by default and the existing cases keep exercising their own
     # guards rather than failing for want of this one.
@@ -580,6 +588,19 @@ case "$args" in
     bm_ref="${args#*branch=}"
     bm_ref="${bm_ref%%&*}"
     bm_ref="${bm_ref%% *}"
+    # The same failure one lookup later: the runs query itself cannot be answered.
+    if [ -n "${BM_RUNS_FAIL_TAG:-}" ] && [ "$bm_ref" = "$BM_RUNS_FAIL_TAG" ]; then
+      printf 'API rate limit exceeded\n' >&2
+      exit 1
+    fi
+    # A tag that was QUERIED SUCCESSFULLY and simply never published: the run exists and
+    # failed. This is the ordinary case the walk is built for, and it is what separates
+    # "the answer is no" from "there is no answer".
+    if [ -n "${BM_UNPUBLISHED_TAG:-}" ] && [ "$bm_ref" = "$BM_UNPUBLISHED_TAG" ]; then
+      printf '{"workflow_runs":[{"name":"CD","conclusion":"failure","path":".github/workflows/cd.yaml","head_branch":"%s","head_sha":"%s"}]}\n' \
+        "$bm_ref" "${BM_TAG_SHA:-$BM_SHA_C}"
+      exit 0
+    fi
     # A MOVED TAG: the historical run still carries the commit the tag pointed at BEFORE it
     # was moved, while `/commits/<tag>` above reports where it points NOW. Naming a tag in
     # BM_MOVED_TAG reproduces exactly that, and nothing else about the fixture changes.
@@ -1025,6 +1046,112 @@ else
   pass 'a tag that is not valid SemVer and would outrank the best valid candidate refuses by name'
 fi
 
+# ---------------------------------------------------------------------------
+# 20. A TAG FLUX ACCEPTS BUT THIS SCRIPT CANNOT RANK. (#3305 review)
+#     Flux parses tags with Masterminds semver.NewVersion, which COERCES a partial
+#     version: measured, v2.5 resolves to 2.5.0 and v2 to 2.0.0. Both the strict
+#     candidate filter and the unrankable filter required three components, so such
+#     a tag matched NEITHER -- it was silently dropped, the walk stepped to an older
+#     release, and the report named THAT release's signing revision, leaving the
+#     actual signer out of the allow-list.
+# ---------------------------------------------------------------------------
+fx_root="$WORK/flux-loose-root"
+cp -R "$bm_root" "$fx_root"
+fx_out="$WORK/flux-loose.out"
+if BM_WEDDING_TAGS='v2.5\nv2.4.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$fx_root" "$SCRIPT" >"$fx_out" 2>&1; then
+  fail 'a partial-version tag Flux resolves ABOVE every ranked candidate was silently skipped instead of refusing'
+else
+  grep -q 'not valid SemVer' "$fx_out" ||
+    fail 'the run failed but not because of the unrankable tag — the case is not testing what it claims'
+  grep -qF 'v2.5' "$fx_out" ||
+    fail 'the refusal does not name the tag Flux would select, so the cause is not diagnosable'
+  fx_unresolved="$(grep -c '^UNRESOLVED' "$fx_out" || true)"
+  [ "$fx_unresolved" -eq 1 ] ||
+    fail "expected exactly ONE unresolved consumer (the partial-version tag), got $fx_unresolved"
+  pass 'a partial version Flux would rank above the best candidate refuses by name'
+fi
+
+# CONTROL — the same narrowing as case 19: a partial version ranking BELOW the best
+# candidate cannot change what Flux selects, so it must NOT refuse. Without this the
+# case above would be satisfied by refusing whenever any partial tag exists.
+fx2_root="$WORK/flux-loose-below-root"
+cp -R "$bm_root" "$fx2_root"
+fx2_out="$WORK/flux-loose-below.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.5\nv1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$fx2_root" "$SCRIPT" >"$fx2_out" 2>&1; then
+  fx2_insync="$(grep -c '^IN-SYNC' "$fx2_out" || true)"
+  [ "$fx2_insync" -eq 5 ] ||
+    fail "the below-rank control resolved only $fx2_insync of 5 consumers — the partial-version check refuses on mere existence, not on rank"
+  pass 'a partial version ranking below the best candidate does not refuse'
+else
+  fail "the below-rank control failed outright — the partial-version refusal is too broad: $(cat "$fx2_out")"
+fi
+
+# ---------------------------------------------------------------------------
+# 21. A FAILED LOOKUP IS NOT AN ESTABLISHED ABSENCE. (#3305 review)
+#     `tag_commit` returning nonzero only broke the inner spelling loop, so the outer
+#     loop walked on to an OLDER version; and `tag_was_published` returned 1 both for
+#     "queried successfully, never published" and for "the query failed". Either way a
+#     rate limit or a transient outage was reported as an older release's signing SHA
+#     -- a confident wrong answer built from an error, where the honest answer is that
+#     the question could not be answered.
+# ---------------------------------------------------------------------------
+lc_root="$WORK/lookup-commit-root"
+cp -R "$bm_root" "$lc_root"
+lc_out="$WORK/lookup-commit.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_COMMIT_FAIL_TAG='v2.0.0' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$lc_root" "$SCRIPT" >"$lc_out" 2>&1; then
+  fail 'a failed commit lookup walked back to an older release instead of refusing'
+else
+  grep -q 'could not resolve the commit for tag' "$lc_out" ||
+    fail 'the run failed but not because the commit lookup could not be answered — the case is not testing what it claims'
+  grep -qF 'v2.0.0' "$lc_out" ||
+    fail 'the refusal does not name the tag whose lookup failed, so the cause is not diagnosable'
+  lc_unresolved="$(grep -c '^UNRESOLVED' "$lc_out" || true)"
+  [ "$lc_unresolved" -eq 1 ] ||
+    fail "expected exactly ONE unresolved consumer (the failed lookup), got $lc_unresolved"
+  pass 'a commit lookup that cannot be answered refuses instead of walking backward'
+fi
+
+lr_root="$WORK/lookup-runs-root"
+cp -R "$bm_root" "$lr_root"
+lr_out="$WORK/lookup-runs.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_RUNS_FAIL_TAG='v2.0.0' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$lr_root" "$SCRIPT" >"$lr_out" 2>&1; then
+  fail 'a failed workflow-runs query was read as "never published" and walked back to an older release'
+else
+  grep -q 'could not read the workflow runs for' "$lr_out" ||
+    fail 'the run failed but not because the runs query could not be answered — the case is not testing what it claims'
+  grep -qF 'v2.0.0' "$lr_out" ||
+    fail 'the refusal does not name the tag whose runs query failed, so the cause is not diagnosable'
+  lr_unresolved="$(grep -c '^UNRESOLVED' "$lr_out" || true)"
+  [ "$lr_unresolved" -eq 1 ] ||
+    fail "expected exactly ONE unresolved consumer (the failed runs query), got $lr_unresolved"
+  pass 'a runs query that cannot be answered refuses instead of walking backward'
+fi
+
+# CONTROL — a tag that genuinely never published must still WALK, exactly as before.
+# Without this, the two cases above would be satisfied by refusing on every non-zero
+# status, which would turn every ordinary failed release into an UNRESOLVED consumer.
+nw_root="$WORK/never-published-walk-root"
+cp -R "$bm_root" "$nw_root"
+nw_out="$WORK/never-published-walk.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_UNPUBLISHED_TAG='v2.0.0' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$nw_root" "$SCRIPT" >"$nw_out" 2>&1; then
+  nw_insync="$(grep -c '^IN-SYNC' "$nw_out" || true)"
+  [ "$nw_insync" -eq 5 ] ||
+    fail "the never-published control resolved only $nw_insync of 5 consumers — the lookup-failure refusal swallowed the ordinary walk"
+  pass 'a tag that genuinely never published still walks to the previous release'
+else
+  fail "the never-published control failed outright — the lookup-failure refusal is too broad: $(cat "$nw_out")"
+fi
+
 # CONTROL, and the one that pins the NARROWING: an unrankable tag that ranks BELOW the best
 # valid candidate cannot change which tag is selected, so it must NOT refuse. Without this
 # the case above would be satisfied by refusing on the mere existence of a malformed tag,
@@ -1047,4 +1174,4 @@ if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (19 cases)\n'
+printf '\nPASS: publish-workflow signing-revision report (21 cases)\n'

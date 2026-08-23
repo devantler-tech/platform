@@ -410,8 +410,13 @@ tag_was_published() {
   # SPACE. The run for a genuinely published tag is then never matched and a healthy
   # consumer reports UNRESOLVED. Measured: raw interpolation sends `branch=v2.0.0+build.1`,
   # --raw-field sends `branch=v2.0.0%2Bbuild.1`.
+  # 🔴 A FAILED QUERY IS NOT AN ESTABLISHED ABSENCE. Returning 1 here made a rate limit, an
+  # API outage or a tag-list race indistinguishable from "this tag never published", and the
+  # caller's walk then stepped BACKWARD and reported an older release's signing revision as
+  # the signer of what is deployed -- a confident wrong answer built from a transient error.
+  # Exit 3 says the question could not be answered, so the caller refuses instead of guessing.
   runs="$(gh_retry api --method GET "repos/devantler-tech/${repo}/actions/runs" \
-    --raw-field "branch=${tag}" --raw-field event=push --raw-field per_page=100)" || return 1
+    --raw-field "branch=${tag}" --raw-field event=push --raw-field per_page=100)" || return 3
   # `head_sha` pins the run to the commit the tag resolves to TODAY. A historical run for a
   # since-moved tag still carries the old commit and no longer counts as evidence that the
   # artifact the current commit describes was ever published.
@@ -506,6 +511,11 @@ deployed_tag() {
     # to be told apart from the never-published case (1).
     local exact_pub=0
     tag_was_published "$repo" "$candidate" "$exact_sha" || exact_pub=$?
+    if [ "$exact_pub" -eq 3 ]; then
+      printf 'could not read the workflow runs for the pinned tag %s, so whether it published cannot be established\n' \
+        "$candidate" >&2
+      return 1
+    fi
     if [ "$exact_pub" -eq 2 ]; then
       printf 'tag %s published successfully from a DIFFERENT commit than it points at today, so it has been moved or recreated; the workflow revision read from its current commit did not sign the published artifact\n' \
         "$candidate" >&2
@@ -550,7 +560,17 @@ deployed_tag() {
   # which would park a repository on one ancient malformed release forever.
   local candidates checked=0
   local strict_re='^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
-  local loose_re='^v?[0-9]+\.[0-9]+\.[0-9]+(\+[0-9A-Za-z.-]*)?$'
+  # Version-like enough to be intended as a release, but not something this script ranks.
+  # It must cover every form FLUX accepts, not just the malformed ones: Flux parses tags with
+  # Masterminds semver.NewVersion, which COERCES a partial version -- measured, v2.5 resolves
+  # to 2.5.0 and v2 to 2.0.0. A pattern requiring three components matched neither the strict
+  # filter nor this one, so such a tag was dropped from BOTH sets: the walk stepped silently
+  # to an older release and reported ITS signing revision, omitting the actual signer from
+  # the allow-list. Prereleases are here for the same reason -- Flux accepts v2.0.0-rc.1, and
+  # ordering it against a release is exactly the Flux-compatible precedence this script does
+  # not implement. Four-component tags and non-numeric ones stay out: Flux rejects them too
+  # (measured), so they cannot be selected and refusing on them would be noise.
+  local loose_re='^v?[0-9]+(\.[0-9]+){0,2}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]*)?$'
   candidates="$(printf '%s\n' "$tags" | grep -E "$strict_re" |
     sed -e 's/^v//' -e 's/+.*$//' | sort -V -r -u || true)"
   [ -n "$candidates" ] || return 1
@@ -624,9 +644,22 @@ deployed_tag() {
     for candidate in "v${variants}" "$variants"; do
       printf '%s\n' "$tags" | grep -qxF -- "$candidate" || continue
       plausible_ref "$candidate" || continue
-      walk_sha="$(tag_commit "$repo" "$candidate")" || break
+      # A `break` here would leave the OUTER loop free to step to an older version, so a
+      # transient commit lookup failure was reported as that older release's signing
+      # revision. The tag is known to exist -- it came from the tag list two lines up -- so
+      # a failure is the query, never absence, and the run refuses by name.
+      if ! walk_sha="$(tag_commit "$repo" "$candidate")"; then
+        printf 'could not resolve the commit for tag %s, so whether it published cannot be established; walking past it would attribute an older release workflow revision to the deployed artifact\n' \
+          "$candidate" >&2
+        return 1
+      fi
       local walk_pub=0
       tag_was_published "$repo" "$candidate" "$walk_sha" || walk_pub=$?
+      if [ "$walk_pub" -eq 3 ]; then
+        printf 'could not read the workflow runs for tag %s, so whether it published cannot be established; walking past it would attribute an older release workflow revision to the deployed artifact\n' \
+          "$candidate" >&2
+        return 1
+      fi
       if [ "$walk_pub" -eq 0 ]; then
         printf '%s\tinferred\n' "$candidate"
         return 0
