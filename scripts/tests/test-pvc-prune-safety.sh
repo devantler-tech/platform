@@ -58,7 +58,7 @@ render_protected_resources() {
 validate_manual_deploy_gate() {
   local workflow="${root_dir}/.github/workflows/cd.yaml"
   local action="${root_dir}/.github/actions/deploy-prod/action.yml"
-  local gate_base gate_run live_context live_index live_run publish_index upstream_need
+  local gate_base gate_run live_context live_index live_run publish_index
 
   gate_run="$(yq -r '
     .jobs."validate-pvc-prune-safety".steps[]? |
@@ -76,8 +76,12 @@ validate_manual_deploy_gate() {
   [[ "${gate_base}" == *'github.sha'* && "${gate_base}" != *'^'* ]] ||
     fail 'manual production deploy must validate the dispatched revision without assuming its parent reached production'
 
-  upstream_need="$(yq -r '.jobs."validate-eks-authorization".needs // ""' "${workflow}")"
-  [[ "${upstream_need}" == 'validate-pvc-prune-safety' ]] ||
+  yq -o=json -I=0 '.jobs."validate-eks-authorization".needs // ""' "${workflow}" |
+    jq -e '
+      if type == "array" then index("validate-pvc-prune-safety") != null
+      else . == "validate-pvc-prune-safety"
+      end
+    ' >/dev/null ||
     fail 'manual production deploy must depend transitively on the PVC prune-safety gate'
 
   live_run="$(yq -r '
