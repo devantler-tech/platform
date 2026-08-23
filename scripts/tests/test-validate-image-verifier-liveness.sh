@@ -1819,7 +1819,6 @@ require_text "${output}" 'at least 1' 'case 33 control: 00 is decimal zero, stil
 
 reset_node_sequence
 
-
 # ===========================================================================
 # 34. THE CLOSING-RUN RULE IS NEEDED IN THE ARRAY SCANNER TOO. (#3320 review)
 #     Case 29 fixed the run in the ENTRY comparison. The scanner that decides
