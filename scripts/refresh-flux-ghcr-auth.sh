@@ -4262,6 +4262,14 @@ release_sync_lease() {
   # harmless race into a wedge that blocks every later transaction until a
   # human clears it. A lease held by anyone else still refuses, below.
   for ((attempt = 1; attempt <= SYNC_LEASE_RELEASE_ATTEMPTS; attempt++)); do
+    # Retrying an API failure in the same millisecond re-asks a server that has
+    # not had time to recover, so all three attempts land inside one blip and the
+    # retry adds nothing. A short linear backoff makes the later attempts sample
+    # a genuinely different moment. Bounded at 1s + 2s: this runs in cleanup,
+    # where the lease is already released on the happy path.
+    if ((attempt > 1)); then
+      sleep "$((attempt - 1))"
+    fi
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       --namespace flux-system \
@@ -4305,7 +4313,13 @@ release_sync_lease() {
 
   # Every attempt read a lease still held by this transaction and still failed
   # to clear it. That is a genuine refusal: report it rather than pretending
-  # the lease was released.
+  # the lease was released. The caller's message says only THAT the release
+  # failed; this is the one lease-failure path that emitted no state, so the
+  # operator clearing the lease by hand had nothing to go on. The last attempt's
+  # kubectl error is the missing half.
+  printf '::warning::sync-lease release: last kubectl error: %s\n' \
+    "$(tr '\n' ' ' <"${result_file}" 2>/dev/null)"
+  report_sync_lease_state 'lease release failed'
   return 1
 }
 
