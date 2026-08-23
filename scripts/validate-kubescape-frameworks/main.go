@@ -368,6 +368,50 @@ func shellSplit(line string) (segments []shellSegment, heredocDelim string, here
 	return segments, heredocDelim, heredocIndented
 }
 
+// Shell words that introduce a COMPOUND command — one whose body's execution is not
+// decidable from the text. Deliberately limited to reachability constructs: `[[`, `!` and
+// `time` change no command's reachability and would refuse ordinary tests for nothing.
+//
+// `in` is absent because it is never a COMMAND, only a word inside `for`/`case` — and
+// those two are here, so the construct is caught at its keyword.
+var shellCompoundWords = map[string]bool{
+	"if": true, "then": true, "elif": true, "else": true, "fi": true,
+	"for": true, "while": true, "until": true, "do": true, "done": true,
+	"case": true, "esac": true, "select": true,
+	"function": true, "coproc": true,
+	"{": true, "}": true, "(": true, ")": true,
+}
+
+// compoundToken returns the token introducing a compound command when this segment does,
+// or "" when it is a plain simple command.
+//
+// 🔴 ONLY THE FIRST TOKEN, because that is the only place the shell recognises a reserved
+// word. Scanning every token instead reads an ARGUMENT as a keyword: `echo done` is a
+// simple command, and `ksail workload scan … && echo done` was refused for the `done`
+// belonging to `echo`. `shellSplit` has already ended a segment at each operator, so the
+// first token of every segment is genuinely in command position.
+//
+// Whole-token equality, never a substring: the shipped invocation ends in
+// `-o "${RUNNER_TEMP}/kubescape.sarif"`, which contains `{` and `}` inside a quoted word.
+// `shellSplit` preserves the quote characters, so that word is one token and matches
+// nothing here — while a brace GROUP, whose `{` is a token on its own, does.
+func compoundToken(segment string) string {
+	fields := strings.Fields(segment)
+	if len(fields) == 0 {
+		return ""
+	}
+	head := fields[0]
+	if shellCompoundWords[head] {
+		return head
+	}
+	// A function definition — `unused()` or `unused() {`. The name varies, so this is
+	// matched by shape rather than by listing it.
+	if len(head) > 2 && strings.HasSuffix(head, "()") {
+		return head
+	}
+	return ""
+}
+
 // scanInvocations returns the commands in one `run:` scalar that actually INVOKE
 // the scan — one entry per invocation, so two chained scans are two entries and
 // the caller rejects the ambiguity rather than judging the upload on the first.
@@ -392,6 +436,7 @@ func shellSplit(line string) (segments []shellSegment, heredocDelim string, here
 // direction — the guard refuses to bless a form it cannot read.
 func scanInvocations(scalar string) ([]string, error) {
 	var out []string
+	var compound string
 	var heredocDelim string
 	var heredocIndented bool
 
@@ -421,6 +466,12 @@ func scanInvocations(scalar string) ([]string, error) {
 		}
 
 		for _, segment := range segments {
+			// Recorded for the WHOLE scalar, and acted on only if a scan is found below:
+			// an ordinary `run:` block that never invokes the scan may use whatever shell
+			// it likes.
+			if compound == "" {
+				compound = compoundToken(segment.text)
+			}
 			fields := strings.Fields(segment.text)
 			if len(fields) < 3 || fields[0] != "ksail" || fields[1] != "workload" || fields[2] != "scan" {
 				continue
@@ -435,6 +486,11 @@ func scanInvocations(scalar string) ([]string, error) {
 			}
 			out = append(out, segment.text)
 		}
+	}
+	if len(out) > 0 && compound != "" {
+		return nil, fmt.Errorf(
+			"a scan invocation shares its `run:` block with the compound command %q, so whether it executes is not decidable from the text. An `if`, loop, `case`, function or group body is skipped without any operator on the scan's own line, which would let an unreachable full framework list stand in for a reduced scan that actually runs. Invoke the scan as a plain command, in a block of plain commands. See #2823",
+			compound)
 	}
 	return out, nil
 }

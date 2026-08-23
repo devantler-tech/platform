@@ -515,3 +515,53 @@ func TestUnconditionalScanWithTrailingOperatorIsAccepted(t *testing.T) {
 		}
 	}
 }
+
+// --- The COMPOUND-COMMAND class ---------------------------------------------
+//
+// Rejecting `&&`/`||` closed one way to make a scan unreachable. It is not the only
+// one: an `if` body and a function body are both skipped without any operator on the
+// scan's own line, so each was counted as an executed invocation. Paired with a real
+// reduced scan the shape test ignores (`env ksail ...`), the unreachable full-framework
+// command becomes the guard's sole evidence — the identical outcome, reached by a
+// different spelling.
+//
+// THAT REPETITION IS THE SIGNAL. Two rounds closing two spellings of one class means the
+// blacklist is the wrong shape: `while`, `for`, `case`, a subshell and a brace group are
+// all still open, and each would arrive as its own round. So this INVERTS — a scan is
+// accepted only from a scalar that is a plain sequence of simple commands, and any
+// compound-command construct in that scalar refuses. Deciding reachability properly
+// needs a shell parser, which this guard deliberately does not implement.
+func TestRejectsScanInsideCompoundCommand(t *testing.T) {
+	real := "env ksail workload scan --framework nsa --compliance-threshold 95"
+	cases := map[string]string{
+		"if body":       "if false; then\n  " + goodScan + "\nfi\n" + real,
+		"function body": "unused() {\n  " + goodScan + "\n}\n" + real,
+		"while body":    "while false; do\n  " + goodScan + "\ndone\n" + real,
+		"for body":      "for i in 1; do\n  " + goodScan + "\ndone\n" + real,
+		"case body":     "case x in\n  y)\n    " + goodScan + "\n    ;;\nesac\n" + real,
+		"brace group":   "{\n  " + goodScan + "\n}\n" + real,
+	}
+	for name, body := range cases {
+		if _, err := setOf(t, body); err == nil {
+			t.Fatalf("%s: expected FAIL CLOSED — a scan inside a compound command is not "+
+				"evidence of what the gate actually runs", name)
+		}
+	}
+}
+
+// The control for the inversion: the shipped shape is a plain sequence of simple
+// commands and must still be accepted. Without this, "reject any scalar containing a
+// reserved word" could be satisfied by rejecting everything.
+func TestPlainCommandSequenceIsStillAccepted(t *testing.T) {
+	body := "go test ./scripts/generate-kubescape-exceptions\n" +
+		"go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json\n" +
+		"ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json " +
+		"--compliance-threshold 95 --format sarif -o \"${RUNNER_TEMP}/kubescape.sarif\"\n"
+	got, err := setOf(t, body)
+	if err != nil {
+		t.Fatalf("expected ACCEPT — this is the shipped shape, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("normalised set = %q, want %q", strings.Join(got, ","), "mitre,nsa")
+	}
+}
