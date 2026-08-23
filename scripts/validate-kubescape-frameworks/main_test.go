@@ -727,3 +727,57 @@ func TestBacktickWithoutScanIsAccepted(t *testing.T) {
 		t.Fatalf("set = %q", got)
 	}
 }
+
+// `$(...)` SPANS LINES exactly as a backtick does, and the double-quoted form is the
+// one the backtick rule never reached: the closing `)"` on the following line is not a
+// backtick, and the scan's own line begins with `ksail`, so no compound token is seen
+// either. `false &&` before the newline suppresses the scan while that line still reads
+// as an unconditional invocation, and the guard took `nsa,mitre` from it while the only
+// scan bash actually ran covered one framework.
+//
+// MEASURED, not reasoned: with a `ksail` stub on PATH this exact fixture emits only the
+// reduced `--framework nsa` invocation, and the validator returned `["mitre" "nsa"]`
+// with a nil error before this rule existed.
+//
+// Recorded for the WHOLE scalar and acted on only if a scan is found, exactly like the
+// backtick and compound-command rules.
+func TestRejectsScanInsideDollarSubstitution(t *testing.T) {
+	cases := map[string]string{
+		// Inside double quotes -- the measured fail-open.
+		"double-quoted": "echo \"$(false &&\n" + goodScan +
+			" --compliance-threshold 95)\"\nenv ksail workload scan --framework nsa",
+		// Unquoted. MEASURED: this arm is carried by the pre-existing COMPOUND-command
+		// rule, not by the substitution rule -- neutralising the substitution rejection
+		// leaves it passing. It is pinned so that rule cannot silently stop covering it.
+		"unquoted": "echo $(false &&\n" + goodScan +
+			" --compliance-threshold 95)\nenv ksail workload scan --framework nsa",
+	}
+	for name, body := range cases {
+		if set, err := setOf(t, body); err == nil {
+			t.Fatalf("%s: expected FAIL CLOSED — a scan inside a $() substitution that spans lines is not decidable from its own line; got %q", name, set)
+		}
+	}
+}
+
+// PARITY OF INTENT WITH THE BACKTICK RULE: a substitution CLOSED on its own line cannot
+// suppress anything later, so it must not be refused. Without this the rule would reject
+// an ordinary `echo "$(date)"` and turn the guard into a permanent fail-closed.
+func TestClosedDollarSubstitutionIsAccepted(t *testing.T) {
+	cases := map[string]string{
+		"unquoted":      "echo $(date)\n" + goodScan,
+		"double-quoted": "echo \"$(date)\"\n" + goodScan,
+		"nested":        "echo \"$(dirname \"$(pwd)\")\"\n" + goodScan,
+		"arithmetic":    "echo \"$((1 + 2))\"\n" + goodScan,
+		// A single-quoted `$(` is literal text, never a substitution.
+		"single-quoted": "echo '$(false &&'\n" + goodScan,
+	}
+	for name, body := range cases {
+		got, err := setOf(t, body)
+		if err != nil {
+			t.Fatalf("%s: expected a closed substitution to be read normally, got: %v", name, err)
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Fatalf("%s: set = %q", name, got)
+		}
+	}
+}

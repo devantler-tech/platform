@@ -379,12 +379,14 @@ type heredoc struct {
 // their bodies. A single line may carry several — `cat <<'A' <<'B'` — and each
 // body in turn is non-executing input. Recording only the first stopped the skip
 // at the first terminator and handed the following body to the scanner as code.
-func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unreadable, opensBacktick bool) {
+func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unreadable, opensBacktick, opensDollar bool) {
 	var cur strings.Builder
 	// PARITY, not presence: a substitution CLOSED on its own line cannot suppress a later
 	// line, and rejecting it would block an ordinary `echo `+"`"+`date`+"`"+`. An ODD count leaves one
 	// open across the newline, which is the shape that makes the next line undecidable.
 	btCount := 0
+	// DEPTH across the line for `$(...)`, tracked below.
+	dollarDepth := 0
 	var inSingle, inDouble bool
 	// The first command on a line is always reached; each operator decides the next.
 	conditional := false
@@ -415,6 +417,29 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unrea
 			cur.WriteByte(c)
 			continue
 		}
+		// `$(...)` SPANS LINES exactly as a legacy backtick does, and unlike a backtick
+		// it is still a substitution INSIDE double quotes -- which is precisely where the
+		// parity rule above never reached it, because the closing `)"` on the next line
+		// carries no backtick and the scan's own line begins with `ksail`, so no compound
+		// token is seen either.
+		//
+		// DEPTH, not presence: a substitution CLOSED on its own line cannot suppress a
+		// later line, and refusing it would block an ordinary `echo "$(date)"` and turn
+		// the guard into a permanent fail-closed. Single quotes make `$(` literal text.
+		if !inSingle {
+			if c == '$' && i+1 < len(line) && line[i+1] == '(' {
+				dollarDepth++
+				cur.WriteByte(c)
+				i++
+				cur.WriteByte(line[i])
+				continue
+			}
+			if c == ')' && dollarDepth > 0 {
+				dollarDepth--
+				cur.WriteByte(c)
+				continue
+			}
+		}
 		if inSingle || inDouble {
 			cur.WriteByte(c)
 			continue
@@ -441,7 +466,7 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unrea
 			default:
 				// Refuse the whole line rather than walk past a redirection whose body
 				// boundary is unknown: past it, every following line is of unknown status.
-				return segments, heredocs, true, btCount%2 == 1
+				return segments, heredocs, true, btCount%2 == 1, dollarDepth > 0
 			}
 		}
 		// `;`, `&`, `&&`, `|`, `||` all end the current command. Splitting on the
@@ -459,7 +484,7 @@ func shellSplit(line string) (segments []shellSegment, heredocs []heredoc, unrea
 		cur.WriteByte(c)
 	}
 	flush(false)
-	return segments, heredocs, false, btCount%2 == 1
+	return segments, heredocs, false, btCount%2 == 1, dollarDepth > 0
 }
 
 // Shell words that introduce a COMPOUND command — one whose body's execution is not
@@ -568,6 +593,9 @@ func scanInvocations(scalar string) ([]string, error) {
 	// Recorded for the WHOLE scalar, like compound above: a backtick substitution makes
 	// the execution of the lines it spans undecidable from the text.
 	var sawBacktick bool
+	// Same undecidability, and the form the backtick rule cannot see: `$(` is still a
+	// substitution inside double quotes, where the parity walk skips it.
+	var sawDollar bool
 
 	for _, line := range strings.Split(scalar, "\n") {
 		if len(pending) > 0 {
@@ -588,9 +616,12 @@ func scanInvocations(scalar string) ([]string, error) {
 			continue
 		}
 
-		segments, heredocs, unreadable, backtick := shellSplit(command)
+		segments, heredocs, unreadable, backtick, dollar := shellSplit(command)
 		if backtick {
 			sawBacktick = true
+		}
+		if dollar {
+			sawDollar = true
 		}
 		if unreadable {
 			return nil, fmt.Errorf(
@@ -620,6 +651,10 @@ func scanInvocations(scalar string) ([]string, error) {
 			}
 			out = append(out, segment.text)
 		}
+	}
+	if len(out) > 0 && sawDollar {
+		return nil, fmt.Errorf(
+			"a scan invocation shares its `run:` block with a `$(...)` command substitution left open across a newline, so whether the scan executes is not decidable from the text: a `false &&` before the newline suppresses it while the line still reads as an unconditional invocation, letting a full framework list stand in for a reduced scan that actually runs. Close the substitution on its own line and invoke the scan as a plain command outside it. See #2823")
 	}
 	if len(out) > 0 && sawBacktick {
 		return nil, fmt.Errorf(
