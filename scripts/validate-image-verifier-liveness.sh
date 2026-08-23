@@ -446,7 +446,8 @@ check_config() {
     disabled=*$'\n'bin_dir=*) ;;
     *) fail_infra "could not parse ${file} on ${node} (the read completed but produced no verdict)" ;;
   esac
-  disabled="${facts%%$'\n'*}"; disabled="${disabled#disabled=}"
+  disabled="${facts%%$'\n'*}"
+  disabled="${disabled#disabled=}"
   bin_dir="${facts#*$'\n'bin_dir=}"
 
   # Asked FIRST: a disabled plugin makes the rest of this verdict irrelevant.
