@@ -102,8 +102,16 @@ yaml_scalar() {
     '"'*) return 1 ;;
     "'"*) ;;
     *)
-      # A plain scalar, where a whitespace-`#` genuinely does open a comment.
-      printf '%s' "${value%%[[:space:]]#*}"
+      # A plain scalar, where a whitespace-`#` genuinely does open a comment. YAML also excludes
+      # TRAILING whitespace from a plain scalar, and this has to be removed separately: with no
+      # comment present the strip above matches nothing and every trailing space survives, and with
+      # one present it removes only the single space adjacent to the `#`. Either way the leftover
+      # whitespace rides into the ref, stops the trailing `$` being stripped, and fails the fixed
+      # `[0-9a-f]{40}` alternative against the whole-line allow-list — so the guard blocks a VALID
+      # pinned subject. Fail-closed, but a false refusal is still a defect.
+      scalar="${value%%[[:space:]]#*}"
+      scalar="${scalar%"${scalar##*[![:space:]]}"}"
+      printf '%s' "$scalar"
       return 0
       ;;
   esac

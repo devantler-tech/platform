@@ -232,6 +232,31 @@ else
   fail "guard rejected a legitimate subject carrying a real trailing comment"
 fi
 
+# A PLAIN (unquoted) scalar. YAML excludes trailing whitespace from the scalar; a `${v%%[[:space:]]#*}`
+# strip does not — with no comment it keeps every trailing space, and before a `#` it removes only the
+# one space adjacent to the marker. The leftover whitespace then stops the trailing `$` being stripped,
+# so the fixed-SHA alternative fails the whole-line allow-list and the guard blocks a VALID subject.
+# Fail-closed, but wrong: these two must be ACCEPTED.
+
+assert_line_accepted() {
+  local label="$1" line="$2" dir="${work_dir}/green-$3"
+  build_tree_line "${dir}" "${line}"
+  if run_tree "${dir}"; then
+    ok "accepts ${label}"
+  else
+    printf '%s\n' "$(cat "${dir}/stderr")" >&2
+    fail "guard REJECTED ${label} — a valid pinned subject must not be blocked"
+  fi
+}
+
+assert_line_accepted "a plain scalar with trailing whitespace" \
+  "        subject: ${SUBJECT_ID}${SHA_PATTERN}\$   " \
+  plaintrailing
+
+assert_line_accepted "a plain scalar with two spaces before a real comment" \
+  "        subject: ${SUBJECT_ID}${SHA_PATTERN}\$  # pinned by #2816" \
+  plaintwospace
+
 # --- Integration: the real repository satisfies the narrowed guard -----------
 
 if (cd "${root_dir}" && bash "${guard}" >/dev/null 2>"${work_dir}/real.stderr"); then
