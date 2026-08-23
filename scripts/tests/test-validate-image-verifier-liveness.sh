@@ -1594,7 +1594,6 @@ require_text "${output}" 'OK   disabled' 'case 28 control: continuation is decod
 
 reset_node_sequence
 
-
 # ===========================================================================
 # 29. A CLOSING RUN OF FOUR OR FIVE QUOTES. (#3320 review)
 #     TOML reads the FIRST quote of a four-quote run as content and the last
