@@ -234,7 +234,7 @@ func checkRequired(set []string) error {
 // frameworkSet returns one workflow's framework list, deduplicated and sorted so
 // ordering and repetition cannot make two equal sets compare unequal.
 func frameworkSet(workflow string) ([]string, error) {
-	data, err := os.ReadFile(workflow)
+	data, err := os.ReadFile(workflow) // #nosec G304 -- the workflow path is a CLI argument or the computed repo root, by design
 	if err != nil {
 		return nil, fmt.Errorf("%s could not be read; nothing was validated: %w", workflow, err)
 	}
@@ -583,6 +583,18 @@ func unquotedGroupingChar(tok string) string {
 // The cost is deliberate: a legitimate future invocation in a form this cannot
 // read stops matching and trips the fail-closed path. That is the correct
 // direction — the guard refuses to bless a form it cannot read.
+// continuesLine reports whether bash joins this physical line to the next one.
+//
+// An ODD number of trailing backslashes continues the line; an EVEN number is escaped
+// backslashes and ends it. Parity, for the same reason the backtick rule uses parity.
+func continuesLine(line string) bool {
+	n := 0
+	for i := len(line) - 1; i >= 0 && line[i] == '\\'; i-- {
+		n++
+	}
+	return n%2 == 1
+}
+
 func scanInvocations(scalar string) ([]string, error) {
 	var out []string
 	var compound string
@@ -597,7 +609,25 @@ func scanInvocations(scalar string) ([]string, error) {
 	// substitution inside double quotes, where the parity walk skips it.
 	var sawDollar bool
 
-	for _, line := range strings.Split(scalar, "\n") {
+	// BASH JOINS a line ending in an unquoted backslash to the next physical line, so an
+	// `&&` guard written on one line reaches the command on the next -- and this walk,
+	// which treats every physical line as its own command line, could not see it. The
+	// scan line then read as an unconditional bare invocation and supplied its full
+	// framework list while the only scan that executed covered one framework. Measured
+	// against bash, and the validator accepted it.
+	//
+	// JOINED rather than refused. A `run:` block that invokes the scan may also
+	// legitimately continue an unrelated command -- ci.yaml alone carries 29 continued
+	// lines -- so a scalar-wide refusal would reject the very workflows this guard
+	// validates, and a continued scan invocation was not even being read. Joining puts
+	// the real command line in front of the `&&`/`||` rule that already exists, rather
+	// than adding a third spelling-specific test beside it.
+	//
+	// The heredoc skip above stays per PHYSICAL line: a backslash at the end of a
+	// heredoc body line is data, not a continuation.
+	lines := strings.Split(scalar, "\n")
+	for idx := 0; idx < len(lines); idx++ {
+		line := lines[idx]
 		if len(pending) > 0 {
 			candidate := line
 			if pending[0].indented {
@@ -607,6 +637,13 @@ func scanInvocations(scalar string) ([]string, error) {
 				pending = pending[1:]
 			}
 			continue
+		}
+
+		// Join before anything reads the line, so every later test sees the command line
+		// bash actually runs.
+		for continuesLine(line) && idx+1 < len(lines) {
+			idx++
+			line = strings.TrimSuffix(line, "\\") + lines[idx]
 		}
 
 		// The comment goes first, so no later test can be satisfied by text the

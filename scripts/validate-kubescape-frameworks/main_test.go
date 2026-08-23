@@ -405,7 +405,7 @@ func TestActionInputNamedRunIsNotAnExecutableStep(t *testing.T) {
 	path := writeTemp(t, workflow)
 	if _, err := frameworkSet(path); err == nil {
 		t.Fatal("expected FAIL CLOSED: a `with: run:` action input executes nothing, " +
-			"so it must not supply the framework set while the real scan runs reduced")
+			"supply the framework set while the real scan runs reduced")
 	}
 }
 
@@ -416,7 +416,7 @@ func TestInlineCommentDoesNotSupplyTheFrameworkSet(t *testing.T) {
 		"env ksail workload scan --framework nsa\n"
 	if _, err := setOf(t, body); err == nil {
 		t.Fatal("expected FAIL CLOSED: `--framework` inside a trailing comment executes nothing, " +
-			"so it must not supply the framework set while the real scan runs reduced")
+			"supply the framework set while the real scan runs reduced")
 	}
 }
 
@@ -430,7 +430,7 @@ func TestQuotedArgumentTextDoesNotSupplyTheFrameworkSet(t *testing.T) {
 		"env ksail workload scan --framework nsa\n"
 	if _, err := setOf(t, body); err == nil {
 		t.Fatal("expected FAIL CLOSED: a `ksail` line whose command is not `workload scan` must not " +
-			"so it must not supply the framework set while the real scan runs reduced")
+			"supply the framework set while the real scan runs reduced")
 	}
 }
 
@@ -779,5 +779,63 @@ func TestClosedDollarSubstitutionIsAccepted(t *testing.T) {
 		if strings.Join(got, ",") != "mitre,nsa" {
 			t.Fatalf("%s: set = %q", name, got)
 		}
+	}
+}
+
+// BASH JOINS a line ending in an unquoted backslash to the next physical line, so an
+// `&&` guard written on one line reaches the command on the next -- and a walk that
+// treats every physical line as its own command cannot see it. The scan line then reads
+// as an unconditional bare invocation and supplies `nsa,mitre` while the only scan that
+// executes covers one framework.
+//
+// MEASURED: with a `ksail` stub on PATH the fixture below emits only the reduced
+// `--framework nsa` invocation, and the validator returned ["mitre" "nsa"] with a nil
+// error before continuations were joined.
+//
+// This is the same fail-open the `&&`/`||` rule already closes, reached through a
+// different spelling -- which is why joining, rather than adding a third operator test,
+// is the fix: it puts the real command line in front of the rule that already exists.
+func TestRejectsScanContinuedFromAConditional(t *testing.T) {
+	cases := map[string]string{
+		"and": "false && \\\n" + goodScan + " --compliance-threshold 95\n" +
+			"env ksail workload scan --framework nsa",
+		"or": "true || \\\n" + goodScan + " --compliance-threshold 95\n" +
+			"env ksail workload scan --framework nsa",
+		// The guard is on the FIRST of two continued lines, so the scan is two joins away.
+		"two continuations": "false && \\\n" + "echo x \\\n" + "&& " + goodScan + "\n" +
+			"env ksail workload scan --framework nsa",
+	}
+	for name, body := range cases {
+		if set, err := setOf(t, body); err == nil {
+			t.Fatalf("%s: expected FAIL CLOSED — a scan continued from a conditional does not run unconditionally; got %q", name, set)
+		}
+	}
+}
+
+// A continuation carrying NO conditional is ordinary shell style and must still be read.
+// `ci.yaml` alone has 29 continued lines, so refusing the form outright -- rather than
+// joining it -- would reject the real workflows this guard exists to validate.
+func TestJoinsAnOrdinaryContinuationInsteadOfRefusing(t *testing.T) {
+	body := "ksail workload scan \\\n  --framework nsa,mitre \\\n  --compliance-threshold 95"
+	got, err := setOf(t, body)
+	if err != nil {
+		t.Fatalf("expected a continued scan invocation to be read as one command, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
+	}
+}
+
+// An EVEN number of trailing backslashes is escaped backslashes, not a continuation, so
+// the line ends and the next one stands alone. Keyed on parity for the same reason the
+// backtick rule is.
+func TestEscapedBackslashDoesNotContinueTheLine(t *testing.T) {
+	body := "echo a\\\\\n" + goodScan
+	got, err := setOf(t, body)
+	if err != nil {
+		t.Fatalf("expected an escaped trailing backslash not to swallow the next line, got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q", got)
 	}
 }
