@@ -231,7 +231,15 @@ EOF
   local block_subjects=""
   while IFS= read -r file; do
     [ -n "$file" ] || continue
-    if grep -qE '(subject|subjectRegex|subjectRegExp):[[:space:]]*[|>][0-9]*[+-]?[[:space:]]*(#.*)?$' "$file"; then
+    # ANY suffix after the indicator, not an enumerated one. A block-scalar header may
+    # carry an indentation digit and a chomping sign IN EITHER ORDER -- `>-2` and `>2-`
+    # are both valid, and so are `|+2` and `|2+`; all four were measured folding an
+    # indented decoy line into the value. A pattern matching only digits-then-sign missed
+    # the sign-first spellings, which restored the bypass this check exists to close.
+    #
+    # Nothing legitimate is lost by being broad: in YAML a value beginning with `|` or `>`
+    # IS a block scalar, so there is no plain scalar for this to catch by mistake.
+    if grep -qE '(subject|subjectRegex|subjectRegExp):[[:space:]]*[|>][^[:space:]]*[[:space:]]*(#.*)?$' "$file"; then
       block_subjects="$block_subjects  $file
 "
     fi

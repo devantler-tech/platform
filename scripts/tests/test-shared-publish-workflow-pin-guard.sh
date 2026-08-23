@@ -296,6 +296,28 @@ assert_line_rejected "a literal block scalar hiding a matcher-looking content li
           subject: ${SUBJECT_ID}${SHA_PATTERN}\$" \
   literalblock 'BLOCK SCALAR'
 
+# A block-scalar header may carry its indentation digit and chomping sign IN EITHER
+# ORDER. `>-2` and `|+2` are as valid as `>2-` and `|2+` -- all four were measured with
+# gopkg.in/yaml.v3 folding an indented decoy line into the value -- so a check keyed on
+# digits-then-sign missed the sign-first spellings and the bypass came straight back.
+assert_line_rejected "a block scalar whose chomping sign precedes its indentation digit" \
+  "        subject: >-2
+           .*|
+           subject: ${SUBJECT_ID}${SHA_PATTERN}\$" \
+  chompfirst 'BLOCK SCALAR'
+
+assert_line_rejected "a literal block scalar with keep-chomping before its indentation digit" \
+  "        subject: |+2
+           .*|
+           subject: ${SUBJECT_ID}${SHA_PATTERN}\$" \
+  keepchompfirst 'BLOCK SCALAR'
+
+assert_line_rejected "a block scalar with its indentation digit first" \
+  "        subject: >2-
+           .*|
+           subject: ${SUBJECT_ID}${SHA_PATTERN}\$" \
+  indentfirst 'BLOCK SCALAR'
+
 # A comment MAY open immediately after a closing quote, with no whitespace before
 # its `#`. YAML requires whitespace before a comment that follows a PLAIN scalar,
 # and this guard applied that rule to quoted ones too — but a quoted scalar has
