@@ -173,6 +173,19 @@ expect_rejected "an unbaselined third ResourceGraphDefinition" "$PROBE_RGD"
 rm -f "$WORK/$PROBE_RGD"
 rmdir "$WORK/$(dirname "$PROBE_RGD")"
 
+# Direct-main and manual-CD routes run this gate without the repository naming check. A new RGD
+# hidden as one document in a multi-document file must therefore fail here rather than disappear
+# from discovery when the parsed kinds collapse into a newline-separated value.
+mkdir -p "$WORK/$(dirname "$PROBE_RGD")"
+cp "$REPO_ROOT/$WEBAPP_RGD" "$WORK/$PROBE_RGD"
+yq -i '.metadata.name = "multidocwebapp.kro.run" |
+  .spec.schema.kind = "MultiDocWebApp"' "$WORK/$PROBE_RGD"
+printf '\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: adjacent-probe\n' >>"$WORK/$PROBE_RGD"
+expect_rejected "a multi-document file containing an RGD" \
+  "ResourceGraphDefinition must be the only YAML document"
+rm -f "$WORK/$PROBE_RGD"
+rmdir "$WORK/$(dirname "$PROBE_RGD")"
+
 # Version-only schema APIs use the generated group encoded after the first dot in metadata.name,
 # not the outer ResourceGraphDefinition CRD group. A custom-group instance must therefore still
 # enter the committed-instance placement and substitution guards.
@@ -252,6 +265,27 @@ expect_rejected "a regex provider overlay patch targeting a generated WebApp" \
   "Kustomization targets or ambiguously selects" "Web.*"
 rm -f "$WORK/$PROVIDER_PROBE"
 
+# Standalone Kustomize transformers run after the raw RGD is read by the scanner. A targeted
+# PatchTransformer must receive the same guard as an inline or path-backed patch, or it can change a
+# nested workload while the reviewed definition and finding baseline remain unchanged.
+readonly RGD_TRANSFORMER="k8s/providers/probe/infrastructure/patch-transformer-rgd.yaml"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [] |
+  .transformers = ["patch-transformer-rgd.yaml"]' >"$WORK/$PROVIDER_PROBE"
+yq -n '.apiVersion = "builtin" | .kind = "PatchTransformer" |
+  .metadata.name = "mutate-rgd" |
+  .target = {
+    "group": "kro.run",
+    "version": "v1alpha1",
+    "kind": "ResourceGraphDefinition",
+    "name": "webapp.kro.run"
+  } |
+  .patch = "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"' \
+  >"$WORK/$RGD_TRANSFORMER"
+expect_rejected "a standalone transformer targeting an RGD" \
+  "Kustomization transformer targets or ambiguously selects" "ResourceGraphDefinition"
+rm -f "$WORK/$RGD_TRANSFORMER" "$WORK/$PROVIDER_PROBE"
+
 # Legacy strategic-merge entries may contain inline YAML instead of a path. An unrelated patch must
 # remain usable, while an inline generated-instance patch must receive the same post-scan guard as a
 # path-backed patch.
@@ -315,6 +349,15 @@ for alternate_kustomization_name in kustomization.yml Kustomization; do
     "Kustomization targets or ambiguously selects" "ResourceGraphDefinition"
   rm -f "$WORK/$alternate_kustomization"
 done
+
+# The infrastructure Flux Kustomization performs postBuild substitution after this scanner reads
+# the raw graph. Every RGD must opt out explicitly so a `${...}` value cannot be rewritten into an
+# unsafe boolean or image after the reviewed template and finding evidence have already passed.
+yq -i 'del(.metadata.annotations."kustomize.toolkit.fluxcd.io/substitute")' \
+  "$WORK/$WEBAPP_RGD"
+expect_rejected "an RGD without the Flux substitution opt-out" \
+  "Flux postBuild substitution must be disabled for every ResourceGraphDefinition"
+restore_webapp
 
 # Resource-level graph controls decide whether a template is instantiated. They must be evidence too:
 # gating the default-deny NetworkPolicy changes tenant isolation without changing its template bytes.

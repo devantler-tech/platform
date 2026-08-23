@@ -90,9 +90,18 @@ k8s_root="${SOURCE_ROOT}/k8s"
 # sibling resources, so a filename glob alone would scan unrelated manifests; conversely, rooting
 # discovery only in the base would leave a provider-specific RGD and its nested workloads unseen.
 while IFS= read -r candidate; do
-  candidate_kind="$(yq -o=json -I=0 '.' "$candidate" |
-    jq -r 'if type == "object" then .kind // "" else "" end')"
-  [ "$candidate_kind" = "ResourceGraphDefinition" ] || continue
+  candidate_documents="$(yq -o=json -I=0 '.' "$candidate" | jq -cs '.')"
+  rgd_document_count="$(jq '[.[] | select(type == "object" and (.kind // "") ==
+    "ResourceGraphDefinition")] | length' <<<"$candidate_documents")"
+  [ "$rgd_document_count" -gt 0 ] || continue
+  document_count="$(jq 'length' <<<"$candidate_documents")"
+  if [ "$document_count" -ne 1 ] || [ "$rgd_document_count" -ne 1 ]; then
+    fail "ResourceGraphDefinition must be the only YAML document in its file: $candidate"
+  fi
+  substitution_mode="$(jq -r '.[0].metadata.annotations[
+    "kustomize.toolkit.fluxcd.io/substitute"] // ""' <<<"$candidate_documents")"
+  [ "$substitution_mode" = "disabled" ] || fail \
+    "Flux postBuild substitution must be disabled for every ResourceGraphDefinition: $candidate"
   RGD_PATHS+=("${candidate#"$SOURCE_ROOT"/}")
   definition_api_version="$(yq '.apiVersion // ""' "$candidate")"
   [[ "$definition_api_version" == */* ]] ||
@@ -133,10 +142,10 @@ for rgd_index in "${!RGD_KINDS[@]}"; do
 done
 readonly rgd_selectors_json
 
-# Kustomizations may consume a reviewed graph, but no overlay may patch or replace an RGD after the
-# raw definition has been extracted. Enforce that across the complete Kubernetes tree: a mutation
-# in a shared base is as invisible to this scan as one in a provider. Graph variants belong in a
-# separately scanned definition rather than an invisible per-consumer mutation.
+# Kustomizations may consume a reviewed graph, but no overlay may patch, transform, or replace an RGD
+# after the raw definition has been extracted. Enforce that across the complete Kubernetes tree: a
+# mutation in a shared base is as invisible to this scan as one in a provider. Graph variants belong
+# in a separately scanned definition rather than an invisible per-consumer mutation.
 while IFS= read -r kustomization_file; do
   targeted_rgd="$(yq -o=json -I=0 '.' "$kustomization_file" |
     jq -r --argjson generated "$rgd_selectors_json" '
@@ -169,6 +178,45 @@ while IFS= read -r kustomization_file; do
   ')"
   [ -z "$targeted_rgd" ] || fail \
     "Kustomization targets or ambiguously selects a ResourceGraphDefinition/generated instance ($targeted_rgd): $kustomization_file"
+
+  while IFS= read -r transformer_entry; do
+    [ "$(jq -r 'type' <<<"$transformer_entry")" = "string" ] ||
+      fail "Kustomization transformer entry is not a path: $kustomization_file"
+    transformer_path="$(jq -r '.' <<<"$transformer_entry")"
+    [ -n "$transformer_path" ] || continue
+    transformer_file="${kustomization_file%/*}/${transformer_path}"
+    [ -r "$transformer_file" ] || fail "Kustomization transformer is not readable: $transformer_file"
+    transformer_documents="$(yq -o=json -I=0 '.' "$transformer_file" | jq -cs '.')"
+    jq -e 'length > 0 and all(.[]; type == "object")' <<<"$transformer_documents" >/dev/null ||
+      fail "Kustomization transformer does not contain only mapping documents: $transformer_file"
+
+    targeted_transformer="$(jq -r --argjson generated "$rgd_selectors_json" '
+      def selector_matches($value; $pattern):
+        ($pattern == "")
+        or (try ($value | test("^(" + $pattern + ")$")) catch false);
+      [
+        .[] as $document |
+        ([
+          ($document.target? // empty),
+          ($document.fieldSpecs[]?),
+          ($document.replacements[]?.targets[]?.select? // empty)
+        ] | if length == 0 then [{}] else . end)[]
+      ]
+      | .[] as $target
+      | select(
+          ($target | type) != "object"
+          or ($target.kind // "") == ""
+          or selector_matches("ResourceGraphDefinition"; ($target.kind // ""))
+          or any($generated[];
+            selector_matches(.kind; ($target.kind // ""))
+            and selector_matches(.group; ($target.group // ""))
+            and selector_matches(.version; ($target.version // ""))))
+      | if ($target | type) == "object" then $target.kind // "missing kind"
+        else "invalid selector" end
+    ' <<<"$transformer_documents")"
+    [ -z "$targeted_transformer" ] || fail \
+      "Kustomization transformer targets or ambiguously selects a ResourceGraphDefinition/generated instance ($targeted_transformer): $transformer_file"
+  done < <(yq -o=json -I=0 '.transformers[]?' "$kustomization_file" | jq -c '.')
 
   while IFS= read -r patch_entry; do
     patch_path="$(jq -r 'if type == "object" then .path // "" else "" end' <<<"$patch_entry")"

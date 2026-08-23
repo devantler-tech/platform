@@ -12,9 +12,10 @@
 # scripts/rgd-template-static-scan-baseline.tsv; explicit placement and image policies run too.
 # scripts/tests/test-rgd-template-static-scan.sh proves discovery, cause, privilege, resource, and
 # namespace regressions are rejected on pull requests, exact merge-group revisions, direct pushes to
-# main, and manual production dispatches. Kustomizations may consume this graph and its instances but
-# may not patch either anywhere in `k8s`: the scanner rejects targeted or self-identifying RGD
-# definitions and generated instances so the reviewed files are what get deployed.
+# main, and manual production dispatches. Each RGD must be the only document in its file and opt out
+# of Flux substitution. Kustomizations may consume this graph and its instances but may not patch,
+# transform, or replace either anywhere in `k8s`: the scanner rejects targeted, self-identifying, or
+# ambiguously selected RGD definitions and generated instances so the reviewed files are deployed.
 # Never exclude this directory when adding a template.
 #
 # Onboarding a tenant becomes a ~5-line `Tenant` CR instead of a ~7-file copy:
