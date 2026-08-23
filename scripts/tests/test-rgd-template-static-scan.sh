@@ -12,7 +12,6 @@ readonly WIRING_TEST="${REPO_ROOT}/scripts/tests/test-rgd-template-static-scan-w
 readonly WEBAPP_RGD="k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml"
 readonly TENANT_RGD="k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
 readonly WEBAPP_INSTANCE="k8s/providers/docker/apps/web-app-wedding-app.yaml"
-readonly TENANT_INSTANCE="k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -39,12 +38,65 @@ grep -Fq 'semantic_end_line=$((finding_end_line - leading_blank_lines - 1))' "$G
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-mkdir -p "$WORK/$(dirname "$WEBAPP_RGD")" "$WORK/$(dirname "$TENANT_RGD")"
-cp "$REPO_ROOT/$WEBAPP_RGD" "$WORK/$WEBAPP_RGD"
-cp "$REPO_ROOT/$TENANT_RGD" "$WORK/$TENANT_RGD"
-mkdir -p "$WORK/$(dirname "$WEBAPP_INSTANCE")"
-cp "$REPO_ROOT/$WEBAPP_INSTANCE" "$WORK/$WEBAPP_INSTANCE"
-cp "$REPO_ROOT/$TENANT_INSTANCE" "$WORK/$TENANT_INSTANCE"
+copy_rgd_inputs() {
+  local source_root="$1" target_root="$2"
+  local input_index="${target_root}/.rgd-inputs.tsv"
+  local candidate candidate_json relative_path schema_api_version schema_kind
+  local definition_name generated_api_group generated_api_version instance_json
+  local instance_api_version instance_kind matches_rgd
+
+  : >"$input_index"
+  while IFS= read -r candidate; do
+    candidate_json="$(yq -o=json -I=0 '.' "$candidate" |
+      jq -c 'select(type == "object" and (.kind // "") == "ResourceGraphDefinition")')"
+    [ -n "$candidate_json" ] || continue
+    relative_path="${candidate#"$source_root"/}"
+    mkdir -p "$target_root/$(dirname "$relative_path")"
+    cp "$candidate" "$target_root/$relative_path"
+
+    schema_api_version="$(jq -r '.spec.schema.apiVersion // ""' <<<"$candidate_json")"
+    schema_kind="$(jq -r '.spec.schema.kind // ""' <<<"$candidate_json")"
+    [ -n "$schema_api_version" ] || fail "fixture RGD omits spec.schema.apiVersion: $candidate"
+    [ -n "$schema_kind" ] || fail "fixture RGD omits spec.schema.kind: $candidate"
+    if [[ "$schema_api_version" == */* ]]; then
+      generated_api_version="$schema_api_version"
+    else
+      definition_name="$(jq -r '.metadata.name // ""' <<<"$candidate_json")"
+      generated_api_group="${definition_name#*.}"
+      [ -n "$definition_name" ] && [ "$generated_api_group" != "$definition_name" ] ||
+        fail "fixture RGD metadata.name does not encode a generated API group: $candidate"
+      generated_api_version="${generated_api_group}/${schema_api_version}"
+    fi
+    printf '%s\t%s\n' "$generated_api_version" "$schema_kind" >>"$input_index"
+  done < <(find "$source_root/k8s" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | LC_ALL=C sort)
+
+  [ -s "$input_index" ] || fail "fixture source contains no ResourceGraphDefinitions"
+  while IFS= read -r candidate; do
+    matches_rgd=false
+    while IFS= read -r instance_json; do
+      instance_api_version="$(jq -r '.apiVersion // ""' <<<"$instance_json")"
+      instance_kind="$(jq -r '.kind // ""' <<<"$instance_json")"
+      if awk -F '\t' -v api="$instance_api_version" -v kind="$instance_kind" '
+        $1 == api && $2 == kind { found = 1 }
+        END { exit(found ? 0 : 1) }
+      ' "$input_index"; then
+        matches_rgd=true
+        break
+      fi
+    done < <(
+      yq -o=json -I=0 'select(tag == "!!map")' "$candidate" |
+        jq -cS 'select(.kind != null)'
+    )
+    "$matches_rgd" || continue
+    relative_path="${candidate#"$source_root"/}"
+    mkdir -p "$target_root/$(dirname "$relative_path")"
+    cp "$candidate" "$target_root/$relative_path"
+  done < <(find "$source_root/k8s" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | LC_ALL=C sort)
+
+  rm -f "$input_index"
+}
+
+copy_rgd_inputs "$REPO_ROOT" "$WORK"
 
 # Kind alone does not identify a generated KRO API. An unrelated group may legitimately define the
 # same Kind; it must not inherit KRO-specific placement or substitution policies.
@@ -162,6 +214,34 @@ yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
     "patch": "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"
   }]' >"$WORK/$PROVIDER_PROBE"
 expect_rejected "a provider overlay RGD selector without kind" "ResourceGraphDefinition"
+rm -f "$WORK/$PROVIDER_PROBE"
+
+# Generated instances feed values into templates after extraction too. A patch to a WebApp or
+# Tenant can otherwise bypass the raw-instance placement, registry, and complete-content evidence.
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [] | .patches = [{
+    "target": {
+      "group": "kro.run",
+      "version": "v1alpha1",
+      "kind": "WebApp",
+      "name": "wedding-app"
+    },
+    "patch": "- op: replace\n  path: /spec/name\n  value: kube-system"
+  }]' >"$WORK/$PROVIDER_PROBE"
+expect_rejected "a provider overlay patch targeting a generated WebApp" "WebApp"
+rm -f "$WORK/$PROVIDER_PROBE"
+
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [] | .patches = [{
+    "target": {
+      "group": "kro.run",
+      "version": "v1alpha1",
+      "kind": "Web.*",
+      "name": "wedding-app"
+    },
+    "patch": "- op: replace\n  path: /spec/name\n  value: kube-system"
+  }]' >"$WORK/$PROVIDER_PROBE"
+expect_rejected "a regex provider overlay patch targeting a generated WebApp" "Web.*"
 rm -f "$WORK/$PROVIDER_PROBE"
 
 # Provider-local definitions are valid graph sources rather than mutations, but they must enter the

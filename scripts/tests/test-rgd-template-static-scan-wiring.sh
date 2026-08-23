@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Assert every event route invokes the nested-RGD behavioral gate. This script is run from the
-# unconditional changes job, independently of the PR validation step whose presence it protects.
+# Assert every event and deployment route invokes the nested-RGD behavioral gate. This script is
+# run from the unconditional changes job, independently of the PR validation step it protects.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly REPO_ROOT
 readonly CI_WORKFLOW="${RGD_WIRING_CI_WORKFLOW:-${REPO_ROOT}/.github/workflows/ci.yaml}"
 readonly MAIN_WORKFLOW="${RGD_WIRING_MAIN_WORKFLOW:-${REPO_ROOT}/.github/workflows/validate-main.yaml}"
+readonly CD_WORKFLOW="${RGD_WIRING_CD_WORKFLOW:-${REPO_ROOT}/.github/workflows/cd.yaml}"
 readonly SETUP_TRIVY="aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567"
 readonly BEHAVIORAL_RUN=$'shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh\nbash scripts/tests/test-rgd-template-static-scan.sh\n'
 readonly WIRING_RUN=$'shellcheck scripts/tests/test-rgd-template-static-scan-wiring.sh\nbash scripts/tests/test-rgd-template-static-scan-wiring.sh\n'
@@ -21,6 +22,7 @@ command -v jq >/dev/null 2>&1 || fail "jq is required"
 
 ci_workflow_json="$(yq -o=json -I=0 '.' "$CI_WORKFLOW")"
 main_workflow_json="$(yq -o=json -I=0 '.' "$MAIN_WORKFLOW")"
+cd_workflow_json="$(yq -o=json -I=0 '.' "$CD_WORKFLOW")"
 k8s_filter_json="$(yq -o=json -I=0 '
   (.jobs.changes.steps[] | select(.id == "filter").with.filters) |
   from_yaml | .k8s
@@ -111,6 +113,35 @@ jq -e --arg wiring_run "$WIRING_RUN" '
 ' <<<"$main_workflow_json" >/dev/null ||
   fail "the direct-main route does not independently protect the RGD gate from self-removal"
 
+jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" \
+  --arg wiring_run "$WIRING_RUN" '
+  .jobs["validate-rgd-templates"] as $gate
+  | .jobs["validate-pvc-prune-safety"] as $wiring_job
+  | ($gate != null)
+  and (($gate["continue-on-error"] // false) == false)
+  and ($gate | has("if") | not)
+  and any($gate.steps[];
+      (.uses // "") == $setup and .with.version == "v0.74.0")
+  and any($gate.steps[];
+      (.run // "") == $behavior_run
+      and ((.["continue-on-error"] // false) == false)
+      and (has("if") | not))
+  and (($wiring_job["continue-on-error"] // false) == false)
+  and ($wiring_job | has("if") | not)
+  and any($wiring_job.steps[];
+      (.run // "") == $wiring_run
+      and ((.["continue-on-error"] // false) == false)
+      and (has("if") | not))
+  and ((.jobs["validate-eks-authorization"].needs |
+      if type == "array" then . else [.] end) |
+    index("validate-rgd-templates") != null
+    and index("validate-pvc-prune-safety") != null)
+  and ((.jobs["deploy-prod"].needs |
+      if type == "array" then . else [.] end) |
+    index("validate-eks-authorization") != null)
+' <<<"$cd_workflow_json" >/dev/null ||
+  fail "cd.yaml does not gate manual production dispatches on the exact RGD behavioral scan"
+
 if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
   ablation_work="$(mktemp -d)"
   trap 'rm -rf "$ablation_work"' EXIT
@@ -153,6 +184,41 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
     RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
     RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/wiring-job-false-condition.log" 2>&1; then
     fail "the wiring validator accepted a conditionally skipped independent wiring job"
+  fi
+
+  suppressed_cd_workflow="${ablation_work}/cd-rgd-continue-on-error.yaml"
+  cp "$CD_WORKFLOW" "$suppressed_cd_workflow"
+  yq -i '(.jobs."validate-rgd-templates".steps[] |
+    select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh"))).continue-on-error = true' \
+    "$suppressed_cd_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$CI_WORKFLOW" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_CD_WORKFLOW="$suppressed_cd_workflow" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/cd-rgd-continue-on-error.log" 2>&1; then
+    fail "the wiring validator accepted a failure-suppressed manual-CD RGD scan"
+  fi
+
+  suppressed_cd_wiring_workflow="${ablation_work}/cd-rgd-wiring-continue-on-error.yaml"
+  cp "$CD_WORKFLOW" "$suppressed_cd_wiring_workflow"
+  yq -i '(.jobs."validate-pvc-prune-safety".steps[] |
+    select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan-wiring.sh"))).continue-on-error = true' \
+    "$suppressed_cd_wiring_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$CI_WORKFLOW" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_CD_WORKFLOW="$suppressed_cd_wiring_workflow" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/cd-rgd-wiring-continue-on-error.log" 2>&1; then
+    fail "the wiring validator accepted a failure-suppressed manual-CD wiring check"
+  fi
+
+  detached_cd_workflow="${ablation_work}/cd-rgd-detached.yaml"
+  cp "$CD_WORKFLOW" "$detached_cd_workflow"
+  yq -i '.jobs."validate-eks-authorization".needs = ["validate-pvc-prune-safety"]' \
+    "$detached_cd_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$CI_WORKFLOW" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_CD_WORKFLOW="$detached_cd_workflow" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/cd-rgd-detached.log" 2>&1; then
+    fail "the wiring validator accepted a manual-CD RGD scan detached from deployment"
   fi
 
   suppressed_workflow="${ablation_work}/ci-continue-on-error.yaml"
@@ -257,4 +323,4 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
   done
 fi
 
-echo "PASS: PR, merge-group, and direct-main routes retain the nested-RGD behavioral gate."
+echo "PASS: PR, merge-group, direct-main, and manual-CD routes retain the nested-RGD behavioral gate."

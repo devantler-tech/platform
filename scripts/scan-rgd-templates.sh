@@ -121,31 +121,54 @@ readonly RGD_PATHS
 readonly RGD_API_VERSIONS
 readonly RGD_KINDS
 
+rgd_selectors_json='[]'
+for rgd_index in "${!RGD_KINDS[@]}"; do
+  generated_api_group="${RGD_API_VERSIONS[$rgd_index]%/*}"
+  generated_api_version="${RGD_API_VERSIONS[$rgd_index]#*/}"
+  rgd_selectors_json="$(jq -c \
+    --arg group "$generated_api_group" \
+    --arg version "$generated_api_version" \
+    --arg kind "${RGD_KINDS[$rgd_index]}" \
+    '. + [{group: $group, version: $version, kind: $kind}]' <<<"$rgd_selectors_json")"
+done
+readonly rgd_selectors_json
+
 # Kustomizations may consume a reviewed graph, but no overlay may patch or replace an RGD after the
 # raw definition has been extracted. Enforce that across the complete Kubernetes tree: a mutation
 # in a shared base is as invisible to this scan as one in a provider. Graph variants belong in a
 # separately scanned definition rather than an invisible per-consumer mutation.
 while IFS= read -r kustomization_file; do
-  targeted_rgd="$(yq -o=json -I=0 '.' "$kustomization_file" | jq -r '
+  targeted_rgd="$(yq -o=json -I=0 '.' "$kustomization_file" |
+    jq -r --argjson generated "$rgd_selectors_json" '
+    def selector_matches($value; $pattern):
+      ($pattern == "")
+      or (try ($value | test("^(" + $pattern + ")$")) catch false);
     [
       (.patches[]? |
         select(type == "object" and .target != null) |
-        if (.target | type) == "object" then .target.kind // "__MISSING_KIND__"
-        else "__MISSING_KIND__" end),
+        .target),
       (.patchesJson6902[]? |
         select(type == "object" and .target != null) |
-        if (.target | type) == "object" then .target.kind // "__MISSING_KIND__"
-        else "__MISSING_KIND__" end),
+        .target),
       (.replacements[]? |
         select(type == "object") | .targets[]? |
         select(type == "object" and .select != null) |
-        if (.select | type) == "object" then .select.kind // "__MISSING_KIND__"
-        else "__MISSING_KIND__" end)
+        .select)
     ]
-    | .[] | select(. == "__MISSING_KIND__" or . == "ResourceGraphDefinition")
+    | .[] as $target
+    | select(
+        ($target | type) != "object"
+        or ($target.kind // "") == ""
+        or selector_matches("ResourceGraphDefinition"; ($target.kind // ""))
+        or any($generated[];
+          selector_matches(.kind; ($target.kind // ""))
+          and selector_matches(.group; ($target.group // ""))
+          and selector_matches(.version; ($target.version // ""))))
+    | if ($target | type) == "object" then $target.kind // "missing kind"
+      else "invalid selector" end
   ')"
   [ -z "$targeted_rgd" ] || fail \
-    "Kustomization targets or ambiguously omits the kind of a ResourceGraphDefinition: $kustomization_file"
+    "Kustomization targets or ambiguously selects a ResourceGraphDefinition/generated instance ($targeted_rgd): $kustomization_file"
 
   while IFS= read -r patch_entry; do
     patch_path="$(jq -r 'if type == "object" then .path // "" else "" end' <<<"$patch_entry")"
@@ -154,14 +177,28 @@ while IFS= read -r kustomization_file; do
       patch_file="${kustomization_file%/*}/${patch_path}"
       [ -r "$patch_file" ] || fail "Kustomization patch is not readable: $patch_file"
       if yq -o=json -I=0 '.' "$patch_file" |
-        jq -e 'type == "object" and (.kind // "") == "ResourceGraphDefinition"' >/dev/null; then
-        fail "Kustomization patch declares a ResourceGraphDefinition: $patch_file"
+        jq -e -s --argjson generated "$rgd_selectors_json" '
+          any(.[];
+            type == "object"
+            and ((.kind // "") == "ResourceGraphDefinition"
+              or (. as $document | any($generated[];
+                .kind == ($document.kind // "")
+                and ((.group + "/" + .version) == ($document.apiVersion // ""))))))
+        ' >/dev/null; then
+        fail "Kustomization patch declares an RGD definition or generated instance: $patch_file"
       fi
     fi
     if [ -n "$inline_patch" ]; then
       if yq -o=json -I=0 '.' <<<"$inline_patch" |
-        jq -e 'type == "object" and (.kind // "") == "ResourceGraphDefinition"' >/dev/null; then
-        fail "Kustomization inline patch declares a ResourceGraphDefinition: $kustomization_file"
+        jq -e -s --argjson generated "$rgd_selectors_json" '
+          any(.[];
+            type == "object"
+            and ((.kind // "") == "ResourceGraphDefinition"
+              or (. as $document | any($generated[];
+                .kind == ($document.kind // "")
+                and ((.group + "/" + .version) == ($document.apiVersion // ""))))))
+        ' >/dev/null; then
+        fail "Kustomization inline patch declares an RGD definition or generated instance: $kustomization_file"
       fi
     fi
   done < <(yq -o=json -I=0 '.patches[]?' "$kustomization_file" | jq -c '.')
@@ -171,8 +208,15 @@ while IFS= read -r kustomization_file; do
     patch_file="${kustomization_file%/*}/${legacy_patch_path}"
     [ -r "$patch_file" ] || fail "Kustomization patch is not readable: $patch_file"
     if yq -o=json -I=0 '.' "$patch_file" |
-      jq -e 'type == "object" and (.kind // "") == "ResourceGraphDefinition"' >/dev/null; then
-      fail "Kustomization patch declares a ResourceGraphDefinition: $patch_file"
+      jq -e -s --argjson generated "$rgd_selectors_json" '
+        any(.[];
+          type == "object"
+          and ((.kind // "") == "ResourceGraphDefinition"
+            or (. as $document | any($generated[];
+              .kind == ($document.kind // "")
+              and ((.group + "/" + .version) == ($document.apiVersion // ""))))))
+      ' >/dev/null; then
+      fail "Kustomization patch declares an RGD definition or generated instance: $patch_file"
     fi
   done < <(yq '.patchesStrategicMerge[]? // ""' "$kustomization_file")
 done < <(

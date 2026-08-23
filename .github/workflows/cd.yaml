@@ -52,6 +52,37 @@ jobs:
           shellcheck scripts/tests/test-pvc-prune-safety.sh
           bash scripts/tests/test-pvc-prune-safety.sh
 
+      - name: 🔐 Validate nested RGD gate wiring
+        run: |
+          shellcheck scripts/tests/test-rgd-template-static-scan-wiring.sh
+          bash scripts/tests/test-rgd-template-static-scan-wiring.sh
+
+  # A workflow dispatch can deploy a direct push that never had a merge-group revision. Run the
+  # same nested-RGD behavioral contract before authorization; validate-eks-authorization depends
+  # on this job, and deploy-prod already depends on authorization, preserving the signing
+  # validator's load-bearing deploy-prod.needs shape while still making this a deployment gate.
+  validate-rgd-templates:
+    name: 🔬 Validate Nested RGD Workload Templates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Trivy for nested RGD templates
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+          cache: true
+
+      - name: 🔬 Validate nested RGD workload templates
+        run: |
+          shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
+          bash scripts/tests/test-rgd-template-static-scan.sh
+
   # The merge-queue deploy in ci.yaml cannot run without this validator passing,
   # so leaving it out here made the manual path the WAY AROUND the gate: a direct
   # push to main plus a dispatch reconciled the manifests with no authorization
@@ -60,7 +91,7 @@ jobs:
   # deploy secrets in scope, and a gate belongs before that, not inside it.
   validate-eks-authorization:
     name: 🔐 Validate EKS Authorization
-    needs: validate-pvc-prune-safety
+    needs: [validate-pvc-prune-safety, validate-rgd-templates]
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
