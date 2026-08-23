@@ -2079,20 +2079,38 @@ output="$(run_script 2>&1)" || status=$?
   fail "case 37e: a node that left on the executable COUNT must converge, got exit ${status} — ${output}"
 require_text "${output}" 'All 1 node(s)' 'case 37e: reports the settled fleet'
 
-# CONTROLS — each of the three paths must STILL fail infra when the node is present.
-# Without these, 37c/d/e would be satisfied by turning every fault into a retry.
-install_sequenced_kubectl
-reset_node_sequence
-for call in 1 2 3 4; do
-  printf '{"items":[%s,%s,%s,%s]}' "$(node_json prod-worker-1 uid-1 good)" \
-    "$(node_json prod-worker-4 uid-4 gone-absent)" "$(node_json prod-worker-5 uid-5 gone-error)" \
-    "$(node_json prod-worker-6 uid-6 gone-count)" >"${fixtures}/nodes.${call}.json"
-done
-status=0
-output="$(run_script 2>&1)" || status=$?
-[[ "${status}" -eq 2 ]] ||
-  fail "case 37f: unreachable nodes still in the fleet must exit 2, got ${status} — ${output}"
-refute_text "${output}" 'can enforce image verification.' 'case 37f: reported a verdict it could not reach'
+# CONTROLS — each path must STILL fail infra when the node is PRESENT, and each needs
+# its OWN fleet. One fleet carrying all three problem nodes exits at the first of them,
+# so the error and count paths would never be asserted at all: a change turning either
+# into an unconditional retry would still pass. One unreachable node per control is what
+# makes each assertion reach the path it names.
+control_still_present() { # case-label, address, uid, expected-cause
+  install_sequenced_kubectl
+  reset_node_sequence
+  local call
+  for call in 1 2 3 4; do
+    printf '{"items":[%s,%s]}' "$(node_json prod-worker-1 uid-1 good)" "$(node_json "prod-$2" "$3" "$2")" \
+      >"${fixtures}/nodes.${call}.json"
+  done
+  local status=0 output
+  output="$(run_script 2>&1)" || status=$?
+  [[ "${status}" -eq 2 ]] ||
+    fail "$1: an unreachable but PRESENT node must exit 2 (infrastructure), got ${status} — ${output}"
+  # The exit CODE alone proves nothing here. Making this path retry unconditionally also
+  # ends in exit 2 -- the retries exhaust the convergence bound and fail "never held
+  # still" -- so a control asserting only the status passes against the very mutation it
+  # exists to catch. Assert the CAUSE: this node was unreachable, not merely unsettled.
+  # The cause text differs per path -- the count path reports "could not list <dir> on
+  # <node>", the probe paths report "cannot reach node <node>" -- so each control names
+  # the message its own path emits rather than assuming one shape for all three.
+  require_text "${output}" "$4" "$1: failed for the wrong reason (expected: $4)"
+  refute_text "${output}" 'never held still' "$1: a present unreachable node was retried instead of failing infra"
+  refute_text "${output}" 'can enforce image verification.' "$1: reported a verdict it could not reach"
+}
+
+control_still_present 'case 37f (path_probe absent arm)' gone-absent uid-4 'cannot reach node gone-absent'
+control_still_present 'case 37g (path_probe error arm)'  gone-error  uid-5 'cannot reach node gone-error'
+control_still_present 'case 37h (executable count)'      gone-count  uid-6 'could not list /opt/containerd/image-verifier/bin on gone-count'
 
 reset_node_sequence
 
