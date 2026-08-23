@@ -253,6 +253,21 @@ effective_version() {
             "$expr" >&2
           return 1
           ;;
+        # A lower bound carrying a PRERELEASE component. A range whose bound has none
+        # excludes prerelease versions, but one that carries a bound like `>=1.0.0-0`
+        # ADMITS them, so Flux can select `2.0.0-rc.1`. The tag walk below orders only
+        # release versions, and `sort -V` is not SemVer precedence for a prerelease
+        # anyway, so treating this as unbounded would walk back to an older stable tag
+        # and attribute ITS workflow revision to the deployed artifact.
+        #
+        # It is not caught by the compound-range class above, and cannot be: every
+        # character in `>=1.0.0-0` is one a single lower bound may legitimately contain,
+        # and it begins exactly like the unbounded `>=1.0.0` that IS allowed.
+        *-*)
+          printf 'prerelease semver constraint "%s" needs Flux-compatible prerelease selection, which this script does not implement\n' \
+            "$expr" >&2
+          return 1
+          ;;
         '>'[0-9]* | '>='[0-9]*)
           printf '%s\n' ''
           return 0
@@ -369,15 +384,44 @@ deployed_tag() {
   # deployed artifact was ever signed by. Bounded, because a consumer whose last several
   # releases all failed is a different problem and should surface as UNRESOLVED rather than
   # send this walking back through its whole history.
+  #
+  # BUILD METADATA is part of a valid release tag and SemVer says it is IGNORED when
+  # determining precedence, so `2.0.0` and `2.0.0+build.1` rank EQUALLY and there is no
+  # defined answer to which one a selector picks. Matching only the bare form would
+  # silently discard `2.0.0+build.1` and walk back to an older release, attributing that
+  # release's workflow revision to the deployed artifact. Both forms are therefore
+  # candidates, keyed on the core version they share, and a core version carrying more
+  # than one distinct tag REFUSES — the same reasoning as the bounded-range refusal:
+  # picking one of two equally-ranked tags is a guess, and a guess here is the confident
+  # wrong answer this report must never produce.
   local candidates checked=0
-  candidates="$(printf '%s\n' "$tags" | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' |
-    sed 's/^v//' | sort -V -r || true)"
+  candidates="$(printf '%s\n' "$tags" | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+(\+[0-9A-Za-z.-]+)?$' |
+    sed -e 's/^v//' -e 's/+.*$//' | sort -V -r -u || true)"
   [ -n "$candidates" ] || return 1
+  local core_re variants variant_count candidate
   while IFS= read -r bare; do
     [ -n "$bare" ] || continue
     checked=$((checked + 1))
     [ "$checked" -le 5 ] || break
-    for candidate in "v${bare}" "$bare"; do
+    # Every tag standing at this SemVer precedence. Build metadata is IGNORED for
+    # precedence, so `2.0.0` and `2.0.0+build.1` rank equally and the set can hold more
+    # than one tag; the `v` spellings fold together because they are the same version
+    # written two ways, which is not ambiguity.
+    core_re="$(printf '%s' "$bare" | sed 's/[.]/\\./g')"
+    variants="$(printf '%s\n' "$tags" | grep -E "^v?${core_re}(\+[0-9A-Za-z.-]+)?$" |
+      sed 's/^v//' | sort -u || true)"
+    variant_count="$(printf '%s\n' "$variants" | grep -c . || true)"
+    if [ "$variant_count" -gt 1 ]; then
+      printf 'version %s is carried by more than one tag (%s); build metadata ties their SemVer precedence, so choosing between them needs Flux-compatible ordering, which this script does not implement\n' \
+        "$bare" "$(printf '%s\n' "$variants" | tr '\n' ' ')" >&2
+      return 1
+    fi
+    # The real tag comes from the tag list, never from reconstructing `bare`: a version
+    # published only as `2.0.0+build.1` has no bare spelling to rebuild, so rebuilding
+    # would find nothing, walk silently back to an older release, and attribute THAT
+    # release's workflow revision to the deployed artifact. The `v` form is preferred
+    # only because these repositories use it.
+    for candidate in "v${variants}" "$variants"; do
       printf '%s\n' "$tags" | grep -qxF -- "$candidate" || continue
       plausible_ref "$candidate" || continue
       if tag_was_published "$repo" "$candidate"; then

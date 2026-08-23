@@ -383,6 +383,16 @@ bounded_case simple '~1.4'
 # revision to an artifact Flux would never deploy, and omitting the real signer.
 bounded_case compound '>=1.0.0 <2.0.0'
 
+# A lower bound carrying a PRERELEASE component. Flux/Masterminds excludes prerelease
+# versions from a range whose bound has none, but ADMITS them once the bound carries one
+# — so `>=1.0.0-0` legitimately selects `2.0.0-rc.1`. The tag walk only ever considers
+# `X.Y.Z`, so it would discard that tag, walk back to an older stable release, and
+# attribute THAT release's workflow revision to the deployed artifact. It starts exactly
+# like the unbounded `>=1.0.0`, so the compound-range character class does not catch it:
+# every character is one a single lower bound may legitimately contain.
+bounded_case prerelease '>=1.0.0-0'
+bounded_case prerelease_named '>1.2.3-alpha.1'
+
 # ---------------------------------------------------------------------------
 # 10. AN EMPTY MIDDLE FIELD MUST NOT SHIFT `origin` INTO `current`. (#3305 review)
 #     Tab is IFS WHITESPACE, so `IFS=$'\t' read -r signing current origin` COLLAPSES
@@ -478,8 +488,156 @@ ref_case tag-and-semver '  ref:
 ref_case omitted '' 'latest'
 pass 'Flux reference precedence is digest > semver > tag, and an omitted ref means latest'
 
+# ---------------------------------------------------------------------------
+# 13. BUILD METADATA MUST NOT BE DISCARDED, AND A TIE MUST NOT BE GUESSED. (#3305 review)
+#     SemVer ignores build metadata for precedence, so `2.0.0` and `2.0.0+build.1` rank
+#     equally: a tag walk matching only the bare form silently discards the metadata tag
+#     and walks back to an older release, attributing THAT release's workflow revision to
+#     the deployed artifact. Both forms are candidates; a core version carrying two tags
+#     refuses instead of picking one.
+#
+#     This is the only case that exercises the REAL resolver, so it stubs `gh` on PATH
+#     rather than replacing the resolver: the behaviour under test lives inside
+#     `deployed_tag`, which a resolver stub bypasses entirely.
+# ---------------------------------------------------------------------------
+bm_bin="$WORK/bm-bin"
+mkdir -p "$bm_bin"
+# Quoted delimiter: the stub's own comments mention shell syntax, and an UNQUOTED
+# heredoc runs backticks and expands parameters while WRITING the file — which silently
+# executed fragments of those comments. Values it needs come through the environment.
+cat >"$bm_bin/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+# Minimal forge stub. Only the four call shapes the default resolver makes are answered;
+# anything else exits non-zero, so an unstubbed call surfaces as a failure rather than as
+# an empty string the script might read as data.
+args="$*"
+case "$args" in
+  *"/tags?per_page=100"*)
+    # Per-repo tag lists, so each case can put the interesting shape on exactly ONE
+    # consumer and leave the rest clean: a refusal or divergence can then only have come
+    # from that consumer.
+    case "$args" in
+      *wedding-app*) printf "${BM_WEDDING_TAGS:-v1.9.0\n}" ;;
+      *aws*)         printf "${BM_AWS_TAGS:-v1.9.0\n}" ;;
+      *)             printf 'v1.9.0\n' ;;
+    esac
+    ;;
+  *"/actions/runs?branch="*)
+    # Echo the requested ref back so every candidate tag reads as published. Pinning this
+    # to one tag would make the ablations fail for want of a published release rather than
+    # for the guard under test, and the cases would stop discriminating.
+    bm_ref="${args#*branch=}"
+    bm_ref="${bm_ref%%&*}"
+    printf '{"workflow_runs":[{"name":"CD","conclusion":"success","path":".github/workflows/cd.yaml","head_branch":"%s"}]}\n' "$bm_ref"
+    ;;
+  *"/contents/.github/workflows/cd.yaml"*)
+    # The pin DEPENDS ON THE REF, which is what makes the walk's choice observable: the
+    # report prints the signing revision and never the tag it came from, so a case can
+    # only tell which tag was selected by giving that tag a distinct pin.
+    bm_pinref="${args#*ref=}"
+    bm_pinref="${bm_pinref%%&*}"
+    # args is the whole argv joined by spaces, so the ref is trailed by the Accept-header
+    # flags. Without this trim the ref never compares equal, every tag reads as the base
+    # SHA, and that looks exactly like the walk having chosen the older tag.
+    bm_pinref="${bm_pinref%% *}"
+    bm_pinsha="$BM_SHA_A"
+    [ "$bm_pinref" = 'v2.0.0+build.1' ] && bm_pinsha="$BM_SHA_B"
+    # BOTH shared workflows, because the cd.yaml request carries no workflow name and the
+    # five consumers split across publish-app and publish-manifests. The caller filters to
+    # the one it asked about, so emitting both is exact rather than lax; a stub emitting
+    # only one silently made EVERY consumer unresolvable.
+    printf 'jobs:\n  app:\n    uses: devantler-tech/actions/.github/workflows/publish-app.yaml@%s\n  manifests:\n    uses: devantler-tech/actions/.github/workflows/publish-manifests.yaml@%s\n' \
+      "$bm_pinsha" "$bm_pinsha"
+    ;;
+  *"repos/devantler-tech/"*)
+    printf 'main\n'
+    ;;
+  *) exit 1 ;;
+esac
+exit 0
+GHSTUB
+chmod +x "$bm_bin/gh"
+
+bm_out="$WORK/buildmeta.out"
+# No PUBLISH_REVISION_RESOLVER: the default resolver must run for `deployed_tag` to be
+# reached at all. Every consumer keeps an unbounded `>=1.0.0`, so the walk is entered.
+bm_root="$WORK/buildmeta-root"
+mkdir -p "$bm_root"
+k=0
+while IFS=$'\t' read -r repo workflow _version; do
+  [ -n "$repo" ] || continue
+  k=$((k + 1))
+  oci="$repo"
+  [ "$repo" = '.github' ] && oci='github-config'
+  cat >"$bm_root/c-$k.yaml" <<YAML
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: bm$k
+spec:
+  ref:
+    semver: ">=1.0.0"
+  url: oci://ghcr.io/devantler-tech/$oci/manifests
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\\.actions\\.githubusercontent\\.com\$'
+        subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/$workflow\\.yaml@[0-9a-f]{40}\$'
+YAML
+done <<<"$consumers"
+
+if BM_WEDDING_TAGS='v2.0.0\nv2.0.0+build.1\nv1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$bm_root" "$SCRIPT" >"$bm_out" 2>&1; then
+  fail 'a version carried by two tags was silently resolved instead of refusing'
+else
+  grep -q 'carried by more than one tag' "$bm_out" ||
+    fail 'the run failed but not because of the build-metadata tie — the case is not testing what it claims'
+  grep -qF '2.0.0+build.1' "$bm_out" ||
+    fail 'the refusal does not name the tags that tie, so the cause is not diagnosable'
+  # A CONTROL: the other four consumers must resolve through the same stub, or this
+  # "refusal" could just be the whole fixture failing for an unrelated reason.
+  grep -q 'wedding-app' "$bm_out" ||
+    fail 'the refusal does not name the consumer that ties'
+  pass 'a version carried by both a bare and a build-metadata tag refuses instead of guessing'
+fi
+
+# ---------------------------------------------------------------------------
+# 14. A VERSION PUBLISHED ONLY WITH BUILD METADATA MUST NOT BE WALKED PAST. (#3305 review)
+#     `2.0.0+build.1` with no bare `2.0.0` is the newest release, and Flux selects it.
+#     A walk that rebuilds the tag from the bare core version finds nothing at that
+#     precedence, drops silently to `1.9.0`, and reports ITS workflow revision as the
+#     signer of the deployed artifact — succeeding, which is worse than refusing.
+#
+#     This is the case the tie refusal alone does NOT cover: with one tag at the newest
+#     precedence there is no tie, so only reading the real tag out of the tag list makes
+#     the run correct here.
+# ---------------------------------------------------------------------------
+bm2_root="$WORK/buildmeta-only-root"
+cp -R "$bm_root" "$bm2_root"
+bm2_out="$WORK/buildmeta-only.out"
+# Only `aws` carries the metadata-only release; every other consumer stays on a plain
+# `v1.9.0`, so nothing else in this fixture can produce a refusal or a divergence.
+#
+# The stub pins `v2.0.0+build.1` to SHA_B and everything else — including the default
+# branch — to SHA_A. Selecting the metadata tag therefore prints SHA_B as the signing
+# revision and reports the consumer as diverged; walking silently past it prints SHA_A
+# and reports it in sync. SHA_B in the output is the whole discrimination.
+if BM_AWS_TAGS='v2.0.0+build.1\nv1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$bm2_root" "$SCRIPT" >"$bm2_out" 2>&1; then
+  grep -qF "$SHA_B" "$bm2_out" ||
+    fail 'the newest release exists only as a build-metadata tag, and the report resolved an older one instead — it walked silently past it'
+  pass 'a version published only with build metadata is resolved as itself, not walked past'
+else
+  # Refusing by name is acceptable; succeeding while naming an older tag is not.
+  grep -qF '2.0.0+build.1' "$bm2_out" ||
+    fail 'the run neither resolved the metadata-only release nor refused by name'
+  pass 'a version published only with build metadata is never silently walked past'
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (12 cases)\n'
+printf '\nPASS: publish-workflow signing-revision report (14 cases)\n'
