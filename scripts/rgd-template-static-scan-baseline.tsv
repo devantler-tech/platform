@@ -1,0 +1,41 @@
+# Exact content-and-finding ratchet for KRO resource graphs, committed instances, and their
+# extracted Kubernetes manifests.
+# Columns: count, repository-relative source path, evidence ID, severity/type, evidence detail.
+#
+# This is not an ignore file: scan-rgd-templates.sh runs every Trivy misconfiguration check without
+# exclusions, then fails on any difference from these visible findings or canonical content digests.
+# RGD-CONTENT covers the complete graph spec, including schema defaults, conditions, and iteration;
+# INSTANCE-CONTENT covers every committed substitution input. Findings are counted by stable graph
+# resource target, rule, severity, and a normalized hash of the semantic YAML path plus its canonical
+# parsed node rather than serializer-dependent line ranges or rendered cause text. Equal rules on
+# sibling resources or workload containers cannot cancel. A removed finding leaves in the same
+# change; a new finding is fixed, not baselined.
+# Measured with Trivy v0.74.0 and the policies embedded in that binary. CI pins the binary on pull
+# requests, merge groups, and direct main pushes; the gate rejects other versions and policy updates.
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	RGD-CONTENT	SHA256	01953c88886b926f0fdbfa2063cecd0139f63cd801ebc5bd59ce57e2e11eb92e
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/defaultDeny.yaml	KSV-0039	LOW	CAUSE-SHA256:6246c5e7ede528806f1f84a2b466b1a22c061b7d7f2ad38e18dc4c722ea7b32b
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/defaultDeny.yaml	KSV-0040	LOW	CAUSE-SHA256:6246c5e7ede528806f1f84a2b466b1a22c061b7d7f2ad38e18dc4c722ea7b32b
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ghcrAuth.yaml	KSV-0039	LOW	CAUSE-SHA256:f3c7ced815c76aaba6407cf691461a7e46b0037f888f32d760286b0fde1bd286
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ghcrAuth.yaml	KSV-0040	LOW	CAUSE-SHA256:f3c7ced815c76aaba6407cf691461a7e46b0037f888f32d760286b0fde1bd286
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/kustomization.yaml	KSV-0039	LOW	CAUSE-SHA256:1ebd8487222e03b649f95b96fb502578bd5f3fee3a775f5b54b450ec12ea9f81
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/kustomization.yaml	KSV-0040	LOW	CAUSE-SHA256:1ebd8487222e03b649f95b96fb502578bd5f3fee3a775f5b54b450ec12ea9f81
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/kustomizationSops.yaml	KSV-0039	LOW	CAUSE-SHA256:62bdc59f0e694bd4baccf8f6c2523696b1afd6ad47c6a53be670419a1e42038d
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/kustomizationSops.yaml	KSV-0040	LOW	CAUSE-SHA256:62bdc59f0e694bd4baccf8f6c2523696b1afd6ad47c6a53be670419a1e42038d
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/limitRange.yaml	KSV-0039	LOW	CAUSE-SHA256:c37b17db55af250264e52c9089e25decadde834c9ebae540db73774a4f2b5702
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/limitRange.yaml	KSV-0040	LOW	CAUSE-SHA256:c37b17db55af250264e52c9089e25decadde834c9ebae540db73774a4f2b5702
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0039	LOW	CAUSE-SHA256:7655439f41ac63530bbbacc158dbf9a0ea3b63d14d1e7135ce6b25e2218adb42
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ociRepository.yaml	KSV-0040	LOW	CAUSE-SHA256:7655439f41ac63530bbbacc158dbf9a0ea3b63d14d1e7135ce6b25e2218adb42
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/resourceQuota.yaml	KSV-0039	LOW	CAUSE-SHA256:9e7f4d1bd690474236d5c0a694dce8767ed63f3b41bd94a1741ff5a8d072a8a4
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml	RGD-CONTENT	SHA256	5b69e95e01c4eb28d179a168b382645824c8141442fc29c242b1dd5faaf760ae
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0013	MEDIUM	CAUSE-SHA256:b32bf9db4b8cfa8bb2a0eec82247e39e6f63e9b9e772c22faf35b7eedf7301bd
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0014	HIGH	CAUSE-SHA256:b32bf9db4b8cfa8bb2a0eec82247e39e6f63e9b9e772c22faf35b7eedf7301bd
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0020	LOW	CAUSE-SHA256:b32bf9db4b8cfa8bb2a0eec82247e39e6f63e9b9e772c22faf35b7eedf7301bd
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0021	LOW	CAUSE-SHA256:b32bf9db4b8cfa8bb2a0eec82247e39e6f63e9b9e772c22faf35b7eedf7301bd
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0039	LOW	CAUSE-SHA256:9e87aace8c0889220f7a8e236dfd064794c526f52b8380123297fc5b047b6d7b
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/deployment.yaml	KSV-0040	LOW	CAUSE-SHA256:9e87aace8c0889220f7a8e236dfd064794c526f52b8380123297fc5b047b6d7b
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/httpRoute.yaml	KSV-0039	LOW	CAUSE-SHA256:b79642b9e85bb986f184b3b83639e109382bdd5d4a318a8390619bf03e16a0cc
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/httpRoute.yaml	KSV-0040	LOW	CAUSE-SHA256:b79642b9e85bb986f184b3b83639e109382bdd5d4a318a8390619bf03e16a0cc
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/service.yaml	KSV-0039	LOW	CAUSE-SHA256:e59d76fdca878919309a3203c94916d7258f052f5ac4012683c70a6307f16e07
+1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/service.yaml	KSV-0040	LOW	CAUSE-SHA256:e59d76fdca878919309a3203c94916d7258f052f5ac4012683c70a6307f16e07
+1	k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml	INSTANCE-CONTENT	SHA256	7e65481a62deb24c89dca2e5f83969e308e7604e770d97edb15e86ecc948f22c
+1	k8s/providers/docker/apps/web-app-wedding-app.yaml	INSTANCE-CONTENT	SHA256	3d42027c7e549014cad1e717876a6eb72e0a6641f3bf181f7a0e1a70d94306d6

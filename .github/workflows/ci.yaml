@@ -115,6 +115,13 @@ jobs:
           shellcheck scripts/tests/test-headlamp-oidc-version-gate.sh
           bash scripts/tests/test-headlamp-oidc-version-gate.sh
 
+      # Independent of the conditional validate job whose nested-RGD steps this protects. If those
+      # steps are removed, this unconditional job must still fail the PR and merge-group revision.
+      - name: 🔬 Validate nested RGD workflow wiring
+        run: |
+          shellcheck scripts/tests/test-rgd-template-static-scan-wiring.sh
+          bash scripts/tests/test-rgd-template-static-scan-wiring.sh
+
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
@@ -188,6 +195,15 @@ jobs:
               # paired control move together — a widened glob would suppress the same check
               # on application ConfigMaps that genuinely carry credentials.
               - 'scripts/tests/test-trivyignore-configmap-content-boundary.sh'
+              # RGD sources, their extracted-template scanner, and the exact finding ratchet are
+              # one gate. k8s/** covers source edits; policy data and these entries cover its other
+              # inputs so a changed scanner premise cannot skip the check that consumes it.
+              - '.trivy/data/**'
+              - 'scripts/scan-rgd-templates.sh'
+              - 'scripts/rgd-template-static-scan-baseline.tsv'
+              - 'scripts/rgd-template-static-scan-remote-resources.tsv'
+              - 'scripts/tests/test-rgd-template-static-scan.sh'
+              - 'scripts/tests/test-rgd-template-static-scan-wiring.sh'
               # The version-drift guard reads its constants out of
               # megalinter-scan-counts.sh, so the three move together.
               - 'scripts/check-megalinter-version-drift.sh'
@@ -629,6 +645,23 @@ jobs:
         run: |
           shellcheck scripts/tests/test-trivyignore-configmap-content-boundary.sh
           bash scripts/tests/test-trivyignore-configmap-content-boundary.sh
+
+      - name: ⚙️ Setup Trivy for nested RGD templates
+        if: needs.changes.outputs.k8s == 'true'
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+          cache: true
+
+      - name: 🔬 Validate nested RGD workload templates
+        if: needs.changes.outputs.k8s == 'true'
+        # Trivy does not descend through a ResourceGraphDefinition custom resource. Extract every
+        # nested template, scan without the repository ignorefile, and compare complete findings,
+        # resource-graph controls, and committed substitution inputs to the explicit ratchet. The
+        # behavioral test also applies registry, placement, and policy-regression probes.
+        run: |
+          shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
+          bash scripts/tests/test-rgd-template-static-scan.sh
 
       - name: 🔢 Validate scanner version-drift guard
         if: needs.changes.outputs.k8s == 'true'
@@ -1304,9 +1337,44 @@ jobs:
           validate_overlay talos cloud          # prod (Hetzner)
           validate_overlay talos-local container # local Docker test-bed
 
+  validate-rgd-templates-merge-group:
+    name: 🔬 Validate Nested RGD Workload Templates (merge group)
+    needs: [changes]
+    # The PR job proves the proposed head, but production deploys the speculative merge-group
+    # revision. Re-run the complete behavioral contract on that exact revision before deploy-prod
+    # can acquire the production environment or publish an artifact.
+    if: >-
+      github.event_name == 'merge_group' &&
+      needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Trivy for nested RGD templates
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+          cache: true
+
+      - name: 🔬 Validate nested RGD workload templates
+        run: |
+          shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
+          bash scripts/tests/test-rgd-template-static-scan.sh
+
   deploy-prod:
     name: 🚀 Deploy to Prod
-    needs: [changes, validate-eks-authorization, validate-publication-contract]
+    needs:
+      [
+        changes,
+        validate-eks-authorization,
+        validate-publication-contract,
+        validate-rgd-templates-merge-group,
+      ]
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     environment: prod
@@ -1402,6 +1470,19 @@ jobs:
           ref: main
           persist-credentials: false
 
+      - name: ⚙️ Setup Trivy for nested RGD templates
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+          cache: true
+
+      - name: 🔬 Validate nested RGD workload templates on main
+        # `main` may have advanced after the speculative merge-group scan. Re-run the complete
+        # behavior contract on the exact checkout this heal is about to publish and reconcile.
+        run: |
+          shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
+          bash scripts/tests/test-rgd-template-static-scan.sh
+
       - name: 🩹 Re-deploy main to Production
         # Reuse the shared deploy composite (push → sign → attest → reconcile →
         # cluster update) against main's checkout, so the restored artifact is
@@ -1434,6 +1515,7 @@ jobs:
         validate,
         naming,
         validate-talos,
+        validate-rgd-templates-merge-group,
         deploy-prod,
       ]
     if: always()
@@ -1450,4 +1532,5 @@ jobs:
             ${{ needs.validate.result }}
             ${{ needs.naming.result }}
             ${{ needs.validate-talos.result }}
+            ${{ needs.validate-rgd-templates-merge-group.result }}
             ${{ needs.deploy-prod.result }}
