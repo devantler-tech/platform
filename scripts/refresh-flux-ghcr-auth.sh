@@ -3887,7 +3887,7 @@ acquire_sync_lease() {
   done
 
   failure_detail="$(head -c 1000 "${sync_lease_result_file}" | tr '\r\n' '  ')"
-  failure_detail="${failure_detail//'%'/'%25'}"
+  failure_detail="${failure_detail//%/%25}"
   if [[ -n "${failure_detail}" ]]; then
     echo "::error::Could not atomically acquire the GHCR synchronization lease. Last API error: ${failure_detail}"
   else
@@ -4243,7 +4243,7 @@ release_sync_lease() {
   local lease_file="${work_dir}/sync-lease-release.json"
   local patch_file_local="${work_dir}/sync-lease-release-patch.json"
   local result_file="${work_dir}/sync-lease-release-result.txt"
-  local now attempt observed_holder release_failure=""
+  local now attempt observed_holder release_failure="" failure_detail=""
 
   if [[ -n "${sync_lease_heartbeat_pid}" ]]; then
     kill "${sync_lease_heartbeat_pid}" 2>/dev/null || true
@@ -4268,12 +4268,13 @@ release_sync_lease() {
   # read and the command they paste.)
   for ((attempt = 1; attempt <= SYNC_LEASE_RELEASE_ATTEMPTS; attempt++)); do
     # Retrying an API failure in the same millisecond re-asks a server that has
-    # not had time to recover, so all three attempts land inside one blip and the
-    # retry adds nothing. A short linear backoff makes the later attempts sample
-    # a genuinely different moment. Bounded at 1s + 2s: this runs in cleanup,
-    # where the lease is already released on the happy path.
+    # not had time to recover, so every attempt lands inside one blip and the
+    # retry adds nothing. A linear backoff makes the later attempts sample a
+    # genuinely different moment. It scales SYNC_INTERVAL rather than hard-coding
+    # seconds, so this stays the same tunable knob every other retry loop here
+    # uses -- which also keeps the suite fast, since the tests set it to 0.
     if ((attempt > 1)); then
-      sleep "$((attempt - 1))"
+      sleep "$(((attempt - 1) * SYNC_INTERVAL))"
     fi
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
@@ -4286,14 +4287,18 @@ release_sync_lease() {
       continue
     fi
 
-    # --ignore-not-found prints nothing when the Lease is gone. Nothing is held,
-    # so there is nothing left for this transaction to hand back.
+    # --ignore-not-found prints nothing when the Lease is gone. That is NOT a
+    # quiet success: acquire_sync_lease CREATES the Lease when it is absent, so
+    # a concurrent transaction that found it deleted has already acquired it
+    # without ever conflicting with us. That is the same thing the foreign-holder
+    # branch below exists to surface -- this run can no longer prove it held the
+    # lease while it was mutating -- so it is reported on the same terms. Nothing
+    # is left held, so failing here wedges nothing.
     if [[ ! -s "${lease_file}" ]]; then
-      sync_lease_holder=""
-      sync_lease_acquired=false
-      return 0
+      echo "::error::The GHCR synchronization lease no longer exists; this run cannot prove it held the lease while it was mutating."
+      return 1
     fi
-    observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || {
+    observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}" 2>"${result_file}")" || {
       release_failure="invalid-lease-state"
       continue
     }
@@ -4354,9 +4359,20 @@ release_sync_lease() {
   # other -- which STAGE gave up, and what the API actually said. The caller's
   # own message carries neither, so an operator clearing the lease by hand would
   # otherwise have nothing to go on.
-  echo "::error::Could not clear the GHCR synchronization lease after ${SYNC_LEASE_RELEASE_ATTEMPTS} attempts (${release_failure:-unknown})."
-  printf '::warning::sync-lease release: last kubectl error: %s\n' \
-    "$(tr '\n' ' ' <"${result_file}" 2>/dev/null)"
+  # Sanitise exactly as acquire_sync_lease already does for this same class of
+  # content: bound it, flatten CR *and* LF, and escape '%'. GitHub Actions
+  # decodes %25/%0A/%0D inside a workflow command, so unescaped captured output
+  # can inject an annotation of its own -- which is why that escaping exists
+  # there. Emitting it raw here would have dropped all three protections.
+  if [[ -s "${result_file}" ]]; then
+    failure_detail="$(head -c 1000 "${result_file}" | tr '\r\n' '  ')"
+    failure_detail="${failure_detail//%/%25}"
+  fi
+  if [[ -n "${failure_detail}" ]]; then
+    echo "::error::Could not clear the GHCR synchronization lease after ${SYNC_LEASE_RELEASE_ATTEMPTS} attempts (${release_failure}). Last error: ${failure_detail}"
+  else
+    echo "::error::Could not clear the GHCR synchronization lease after ${SYNC_LEASE_RELEASE_ATTEMPTS} attempts (${release_failure})."
+  fi
   report_sync_lease_state 'lease release failed'
   return 1
 }

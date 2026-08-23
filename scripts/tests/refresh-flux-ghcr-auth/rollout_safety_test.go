@@ -184,6 +184,31 @@ func TestReleaseRefusesAndReportsALeaseHeldByAnotherTransaction(t *testing.T) {
 	)
 }
 
+// The exhaustion path emits the diagnostics an operator clearing the lease by
+// hand depends on, and until this test existed nothing could even reach it --
+// every other release fixture fails at most once. It asserts the failing STAGE
+// and the captured API error travel together: either alone leaves the operator
+// guessing which half of the release gave up.
+func TestExhaustedReleaseReportsBothTheStageAndTheAPIError(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_SYNC_LEASE_RELEASE_ALWAYS_FAILS": "true",
+	})
+	requireFailureResult(t, result)
+	if !pathExists(filepath.Join(f.syncStateDir, "sync-lease-release-always-fails")) {
+		t.Fatal("fixture did not exercise the exhausted release path")
+	}
+	output := result.stdout + result.stderr
+	requireContains(t, output, "Could not clear the GHCR synchronization lease after")
+	requireContains(t, output, "(patch-rejected)")
+	requireContains(t, output, "persistent failure releasing the lease")
+	// The Lease is still ours and still held: the run must not claim otherwise.
+	if holder := mustRead(filepath.Join(f.syncStateDir, "sync-lease-holder")); holder == "" {
+		t.Fatal("exhausted release reported failure but cleared the Lease anyway")
+	}
+}
+
 func TestCurrentLeaseHolderRetriesSecretCASConflicts(t *testing.T) {
 	t.Parallel()
 	for name, test := range map[string]struct {

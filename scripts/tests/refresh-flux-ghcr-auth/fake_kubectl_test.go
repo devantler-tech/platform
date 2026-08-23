@@ -995,12 +995,11 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 		setMarkerContent("sync-lease-resource-version", currentResourceVersion)
 	}
 	// A real apiserver evaluates the `test` operations a patch actually carries,
-	// and nothing more. The holderIdentity test is what makes any write to this
-	// Lease safe, so a caller that omits it is rejected outright. The
-	// resourceVersion test is optional and is honoured exactly when the caller
-	// asks for it -- requiring it here would force every writer to carry a
-	// conjunct that fails on a benign same-holder write, which is a property of
-	// this fake rather than of Kubernetes.
+	// and nothing more -- so honour resourceVersion exactly when it is present.
+	// The holderIdentity test is what makes any write to this Lease safe, so a
+	// caller that omits it is rejected outright. Which writers must ALSO pin
+	// resourceVersion is a policy question, not an apiserver one, and it is
+	// asserted separately below.
 	if !hasPatchOperation(patch, "test", "/spec/holderIdentity", currentHolder) {
 		return commandFailure(56, "synchronization lease CAS failed")
 	}
@@ -1035,6 +1034,14 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 		touchMarker("sync-lease-renew-conflict")
 		return commandFailure(56, "simulated same-holder lease renewal race")
 	}
+	// Every release attempt fails, so the loop's exhaustion path -- its final
+	// diagnostics -- becomes reachable. The one-shot fixtures above cannot get
+	// there by construction.
+	if os.Getenv("FAKE_SYNC_LEASE_RELEASE_ALWAYS_FAILS") == "true" && releasesTheLease {
+		touchMarker("sync-lease-release-always-fails")
+		return commandFailure(56, "persistent failure releasing the lease")
+	}
+
 	// A release whose CAS passed can still fail on a transient API error. The
 	// Lease is untouched, so the retry that follows must be able to complete the
 	// release rather than leaving it held.
