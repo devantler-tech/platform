@@ -439,8 +439,8 @@ for relative_path in "${RGD_PATHS[@]}"; do
 
   count="$(yq -r '.spec.resources | length' "$source_file")"
   case "$count" in
-  '' | *[!0-9]*) fail "could not count templates in $source_file" ;;
-  0) fail "RGD contains no templates: $source_file" ;;
+    '' | *[!0-9]*) fail "could not count templates in $source_file" ;;
+    0) fail "RGD contains no templates: $source_file" ;;
   esac
 
   resource_count=0
@@ -515,13 +515,13 @@ jq -r '
 while IFS=$'\t' read -r finding_target finding_id finding_severity \
   finding_start_line finding_end_line; do
   case "$finding_target" in
-  /* | ../* | */../*) fail "Trivy returned an unsafe finding target: $finding_target" ;;
+    /* | ../* | */../*) fail "Trivy returned an unsafe finding target: $finding_target" ;;
   esac
   case "$finding_start_line" in
-  '' | *[!0-9]*) fail "Trivy finding $finding_id on $finding_target has no source range" ;;
+    '' | *[!0-9]*) fail "Trivy finding $finding_id on $finding_target has no source range" ;;
   esac
   case "$finding_end_line" in
-  '' | *[!0-9]*) fail "Trivy finding $finding_id on $finding_target has no source range" ;;
+    '' | *[!0-9]*) fail "Trivy finding $finding_id on $finding_target has no source range" ;;
   esac
   [ "$finding_start_line" -le "$finding_end_line" ] || fail \
     "Trivy finding $finding_id on $finding_target has an inverted source range"
