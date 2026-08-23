@@ -175,7 +175,11 @@ while IFS= read -r kustomization_file; do
       fail "Kustomization patch declares a ResourceGraphDefinition: $patch_file"
     fi
   done < <(yq '.patchesStrategicMerge[]? // ""' "$kustomization_file")
-done < <(find "$k8s_root" -type f -name 'kustomization.yaml' -print | LC_ALL=C sort)
+done < <(
+  find "$k8s_root" -type f \
+    \( -name 'kustomization.yaml' -o -name 'kustomization.yml' -o -name 'Kustomization' \) \
+    -print | LC_ALL=C sort
+)
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

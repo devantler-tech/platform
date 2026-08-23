@@ -191,6 +191,22 @@ yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
 expect_rejected "a shared-base overlay patch targeting an RGD" "ResourceGraphDefinition"
 rm -f "$WORK/$BASE_RGD_KUSTOMIZATION"
 
+for alternate_kustomization_name in kustomization.yml Kustomization; do
+  alternate_kustomization="$(dirname "$BASE_RGD_KUSTOMIZATION")/${alternate_kustomization_name}"
+  yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+    .kind = "Kustomization" | .resources = ["webapp", "tenant"] | .patches = [{
+      "target": {
+        "group": "kro.run",
+        "version": "v1alpha1",
+        "kind": "ResourceGraphDefinition",
+        "name": "webapp.kro.run"
+      },
+      "patch": "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"
+    }]' >"$WORK/$alternate_kustomization"
+  expect_rejected "an RGD patch in $alternate_kustomization_name" "ResourceGraphDefinition"
+  rm -f "$WORK/$alternate_kustomization"
+done
+
 # Resource-level graph controls decide whether a template is instantiated. They must be evidence too:
 # gating the default-deny NetworkPolicy changes tenant isolation without changing its template bytes.
 # shellcheck disable=SC2016 # the KRO expression must remain literal in the fixture

@@ -21,6 +21,10 @@ command -v jq >/dev/null 2>&1 || fail "jq is required"
 
 ci_workflow_json="$(yq -o=json -I=0 '.' "$CI_WORKFLOW")"
 main_workflow_json="$(yq -o=json -I=0 '.' "$MAIN_WORKFLOW")"
+k8s_filter_json="$(yq -o=json -I=0 '
+  (.jobs.changes.steps[] | select(.id == "filter").with.filters) |
+  from_yaml | .k8s
+' "$CI_WORKFLOW")"
 
 jq -e --arg wiring_run "$WIRING_RUN" '
   .jobs.changes as $wiring_job
@@ -40,11 +44,11 @@ jq -e --argjson required_inputs '[
     "scripts/tests/test-rgd-template-static-scan.sh",
     "scripts/tests/test-rgd-template-static-scan-wiring.sh"
   ]' '
-  any(.jobs.changes.steps[];
-      .id == "filter"
-      and (.with.filters as $filters
-        | [$required_inputs[] as $input | $filters | contains($input)] | all))
-' <<<"$ci_workflow_json" >/dev/null ||
+  . as $k8s_filter
+  | (($k8s_filter | type) == "array")
+  and ([$required_inputs[] as $input |
+    ($k8s_filter | index($input)) != null] | all)
+' <<<"$k8s_filter_json" >/dev/null ||
   fail "ci.yaml does not route every RGD gate input through k8s validation"
 
 jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" '
@@ -234,6 +238,21 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
       RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
       RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/filter-${filter_ablation_index}.log" 2>&1; then
       fail "the wiring validator accepted removal of required RGD filter input: $filter_input"
+    fi
+
+    relocated_workflow="${ablation_work}/ci-filter-relocated-${filter_ablation_index}.yaml"
+    cp "$CI_WORKFLOW" "$relocated_workflow"
+    FILTER_INPUT="$filter_input" yq -i \
+      '(.jobs.changes.steps[] | select(.id == "filter").with.filters) |=
+        (from_yaml |
+          .k8s = (.k8s | map(select(. != strenv(FILTER_INPUT)))) |
+          .bridge_validation += [strenv(FILTER_INPUT)] |
+          to_yaml)' \
+      "$relocated_workflow"
+    if RGD_WIRING_CI_WORKFLOW="$relocated_workflow" \
+      RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+      RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/filter-relocated-${filter_ablation_index}.log" 2>&1; then
+      fail "the wiring validator accepted a required RGD input outside the k8s filter: $filter_input"
     fi
   done
 fi
