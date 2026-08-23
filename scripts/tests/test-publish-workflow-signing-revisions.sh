@@ -331,6 +331,7 @@ fi
 bounded_case() {
   bc_label=$1
   bc_selector=$2
+  bc_expect=${3:-bounded semver constraint}
   bc_root="$WORK/bounded-$bc_label"
   mkdir -p "$bc_root"
   k=0
@@ -368,7 +369,7 @@ YAML
   PUBLISH_CONSUMER_ROOT="$bc_root" "$SCRIPT" >"$bc_out" 2>&1; then
     fail "a bounded semver constraint ($bc_selector) was silently resolved to the newest tag instead of refusing"
   else
-    grep -q 'bounded semver constraint' "$bc_out" ||
+    grep -q "$bc_expect" "$bc_out" ||
       fail "the run failed but not because of the bounded constraint ($bc_selector) — the case is not testing what it claims"
     grep -qF "$bc_selector" "$bc_out" ||
       fail "the refusal does not name the constraint ($bc_selector), so the cause is not diagnosable"
@@ -392,6 +393,14 @@ bounded_case compound '>=1.0.0 <2.0.0'
 # every character is one a single lower bound may legitimately contain.
 bounded_case prerelease '>=1.0.0-0'
 bounded_case prerelease_named '>1.2.3-alpha.1'
+
+# A STRICT lower bound. `>=1.0.0` admits 1.0.0, so treating it as unbounded and taking the
+# newest published tag is correct. `>1.0.0` EXCLUDES 1.0.0 — so when 1.0.0 is the newest
+# published tag, Flux selects nothing there while the walk would hand back 1.0.0 and
+# attribute ITS workflow revision to whatever is deployed. It begins exactly like the
+# unbounded `>=1.0.0`, and every character is one a legitimate single lower bound may
+# contain, so no character-class check catches it.
+bounded_case strict_lower '>1.0.0' 'strict lower-bound semver constraint'
 
 # ---------------------------------------------------------------------------
 # 10. AN EMPTY MIDDLE FIELD MUST NOT SHIFT `origin` INTO `current`. (#3305 review)
@@ -511,6 +520,21 @@ cat >"$bm_bin/gh" <<'GHSTUB'
 # anything else exits non-zero, so an unstubbed call surfaces as a failure rather than as
 # an empty string the script might read as data.
 args="$*"
+# The tag must arrive as a PARAMETER, never interpolated into the query string. A tag may
+# carry SemVer build metadata (v2.0.0+build.1), and a raw + in a query string is decoded as
+# a SPACE on the wire, so the run for a genuinely published tag is never matched and a
+# healthy consumer reports UNRESOLVED. This stub receives argv and so cannot observe
+# percent-encoding itself; refusing the old call shape is what pins the fix.
+case "$args" in
+  *"/actions/runs?"*)
+    # gh_retry discards stderr, so a message alone would be invisible and the regression
+    # would surface only as unexplained unresolved consumers. Record it where the suite
+    # can assert on it and name the cause.
+    printf 'interpolated\n' >>"${BM_VIOLATION_LOG:-/dev/null}"
+    printf 'stub: the run lookup interpolated its query string; pass the tag with --raw-field so + survives encoding\n' >&2
+    exit 64
+    ;;
+esac
 case "$args" in
   *"/tags?per_page=100"*)
     # Per-repo tag lists, so each case can put the interesting shape on exactly ONE
@@ -522,12 +546,18 @@ case "$args" in
       *)             printf 'v1.9.0\n' ;;
     esac
     ;;
-  *"/actions/runs?branch="*)
+  *"/actions/runs"*)
     # Echo the requested ref back so every candidate tag reads as published. Pinning this
     # to one tag would make the ablations fail for want of a published release rather than
     # for the guard under test, and the cases would stop discriminating.
+    #
+    # The tag now arrives as a --raw-field PARAMETER rather than interpolated into the
+    # query string, so it is trailed by a SPACE rather than an &. Both are trimmed, so this
+    # stub cannot silently match nothing if the call shape moves again. gh does the
+    # percent-encoding on the wire, so the stub still sees the raw tag.
     bm_ref="${args#*branch=}"
     bm_ref="${bm_ref%%&*}"
+    bm_ref="${bm_ref%% *}"
     printf '{"workflow_runs":[{"name":"CD","conclusion":"success","path":".github/workflows/cd.yaml","head_branch":"%s"}]}\n' "$bm_ref"
     ;;
   *"/contents/.github/workflows/cd.yaml"*)
@@ -587,7 +617,7 @@ YAML
 done <<<"$consumers"
 
 if BM_WEDDING_TAGS='v2.0.0\nv2.0.0+build.1\nv1.9.0\n' \
-  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" PATH="$bm_bin:$PATH" \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$bm_root" "$SCRIPT" >"$bm_out" 2>&1; then
   fail 'a version carried by two tags was silently resolved instead of refusing'
 else
@@ -640,7 +670,7 @@ bm2_out="$WORK/buildmeta-only.out"
 # revision and reports the consumer as diverged; walking silently past it prints SHA_A
 # and reports it in sync. SHA_B in the output is the whole discrimination.
 if BM_AWS_TAGS='v2.0.0+build.1\nv1.9.0\n' \
-  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" PATH="$bm_bin:$PATH" \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$bm2_root" "$SCRIPT" >"$bm2_out" 2>&1; then
   grep -qF "$SHA_B" "$bm2_out" ||
     fail 'the newest release exists only as a build-metadata tag, and the report resolved an older one instead — it walked silently past it'
@@ -650,6 +680,16 @@ else
   grep -qF '2.0.0+build.1' "$bm2_out" ||
     fail 'the run neither resolved the metadata-only release nor refused by name'
   pass 'a version published only with build metadata is never silently walked past'
+fi
+
+# The run lookup must pass the tag as a PARAMETER. Checked explicitly because the failure
+# it prevents is invisible otherwise: gh_retry discards stderr, so an interpolated query
+# string surfaces only as unexplained unresolved consumers, and this stub receives argv so
+# it cannot observe percent-encoding itself.
+if [ -s "$WORK/interpolated.log" ]; then
+  fail 'the run lookup interpolated its query string — a + in a build-metadata tag decodes as a space on the wire, so a published tag reads as UNPUBLISHED'
+else
+  pass 'the run lookup passes the tag as a query PARAMETER, so build metadata survives encoding'
 fi
 
 # ---------------------------------------------------------------------------

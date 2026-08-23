@@ -287,9 +287,21 @@ effective_version() {
             "$expr" >&2
           return 1
           ;;
-        '>'[0-9]* | '>='[0-9]*)
+        '>='[0-9]*)
           printf '%s\n' ''
           return 0
+          ;;
+        # A STRICT lower bound is not the same as an inclusive one. `>=1.0.0` admits
+        # 1.0.0, so treating it as unbounded and taking the newest published tag is
+        # right. `>1.0.0` EXCLUDES 1.0.0 — so when 1.0.0 is the newest published tag
+        # Flux selects nothing there, while the walk below would hand back 1.0.0 and
+        # attribute ITS workflow revision to whatever is actually deployed. The walk
+        # models no lower bound at all, so this refuses by name like every other
+        # constraint whose selection this script does not implement.
+        '>'[0-9]*)
+          printf 'strict lower-bound semver constraint "%s" needs Flux-compatible selection, which this script does not implement\n' \
+            "$expr" >&2
+          return 1
           ;;
         *)
           printf 'bounded semver constraint "%s" needs Flux-compatible selection, which this script does not implement\n' \
@@ -350,7 +362,14 @@ tag_was_published() {
   # repository with frequent pushes a candidate release's run falls off that first page, every
   # retry re-fetches the same incomplete page, and a healthy consumer stays UNRESOLVED until the
   # next release. Filtering by ref makes the result set small enough that one page is complete.
-  runs="$(gh_retry api "repos/devantler-tech/${repo}/actions/runs?branch=${tag}&event=push&per_page=100")" || return 1
+  # The tag goes in as a PARAMETER, not interpolated into the query string. A tag may
+  # carry SemVer build metadata (`v2.0.0+build.1`) and this script resolves such tags as
+  # themselves, so a raw `+` reaches the wire unencoded, where query parsing reads it as a
+  # SPACE. The run for a genuinely published tag is then never matched and a healthy
+  # consumer reports UNRESOLVED. Measured: raw interpolation sends `branch=v2.0.0+build.1`,
+  # --raw-field sends `branch=v2.0.0%2Bbuild.1`.
+  runs="$(gh_retry api --method GET "repos/devantler-tech/${repo}/actions/runs" \
+    --raw-field "branch=${tag}" --raw-field event=push --raw-field per_page=100)" || return 1
   printf '%s' "$runs" |
     jq -r --arg t "$tag" '
       [.workflow_runs[]
