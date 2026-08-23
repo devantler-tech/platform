@@ -189,31 +189,98 @@ extract_setup_step() {
   ' "$1"
 }
 
+# The two assertions answer DIFFERENT questions and both are needed.
+#
+#   1. Step-scoped: "the ⚙️ Setup talosctl step invokes the installer, and does
+#      not download talosctl itself". Scoping is what makes this one real --
+#      ci.yaml names the installer a second time in the step that lints it, so a
+#      whole-file grep passed even with the real setup step deleted.
+#   2. Whole-file: "no call site downloads talosctl directly, ANYWHERE". Scoping
+#      this one narrows it: a raw install added as its OWN step, alongside an
+#      untouched setup step, satisfies every step-scoped check -- and that is
+#      precisely the shape this assertion exists to stop.
+#
+# Only `talosctl-linux-amd64` is checked whole-file. `curl` cannot be -- these
+# workflows use it legitimately elsewhere -- so it stays inside the step, where
+# any curl at all is wrong.
+#
+# Returns non-zero rather than exiting, so the fixtures below can assert that it
+# actually fails when it should.
+assert_callsite() {
+  callsite_path="$1"
+  callsite_label="$2"
+  step=$(extract_setup_step "${callsite_path}")
+  # Assert the extraction fired: an empty block would make the checks below
+  # pass without reading anything.
+  if [ -z "${step}" ]; then
+    printf 'no "Setup talosctl" step found in %s\n' "${callsite_label}" >&2
+    return 1
+  fi
+  case "${step}" in
+    *".github/scripts/setup-talosctl.sh"*) ;;
+    *)
+      printf 'Setup talosctl step does not invoke the installer: %s\n' "${callsite_label}" >&2
+      return 1
+      ;;
+  esac
+  case "${step}" in
+    *"curl"* | *"talosctl-linux-amd64"*)
+      printf 'Setup talosctl step still downloads talosctl directly: %s\n' "${callsite_label}" >&2
+      return 1
+      ;;
+  esac
+  if grep -q 'talosctl-linux-amd64' "${callsite_path}"; then
+    printf 'call site downloads talosctl directly outside its setup step: %s\n' "${callsite_label}" >&2
+    return 1
+  fi
+}
+
 for callsite in \
   .github/actions/deploy-prod/action.yml \
   .github/workflows/ci.yaml \
   .github/workflows/dr-rebuild.yaml \
   .github/workflows/validate-image-verifier-liveness.yaml; do
-  step=$(extract_setup_step "${repo_root}/${callsite}")
-  # Assert the extraction fired: an empty block would make both checks below
-  # pass without reading anything.
-  if [ -z "${step}" ]; then
-    printf 'no "Setup talosctl" step found in %s\n' "${callsite}" >&2
-    exit 1
-  fi
-  case "${step}" in
-    *".github/scripts/setup-talosctl.sh"*) ;;
-    *)
-      printf 'Setup talosctl step does not invoke the installer: %s\n' "${callsite}" >&2
-      exit 1
-      ;;
-  esac
-  case "${step}" in
-    *"curl"* | *"talosctl-linux-amd64"*)
-      printf 'Setup talosctl step still downloads talosctl directly: %s\n' "${callsite}" >&2
-      exit 1
-      ;;
-  esac
+  assert_callsite "${repo_root}/${callsite}" "${callsite}" || exit 1
 done
+
+# --- Case 7: the whole-file assertion, exercised against fixtures so it is
+# pinned by something that can actually fail. A raw install as its OWN step
+# leaves every step-scoped check satisfied.
+callsite_fixture="${test_root}/callsite.yaml"
+
+cat >"${callsite_fixture}" <<'FIXTURE'
+name: fixture
+jobs:
+  build:
+    steps:
+      - name: ⚙️ Setup talosctl
+        run: |
+          .github/scripts/setup-talosctl.sh
+      - name: 🚀 Do the thing
+        run: |
+          talosctl version --client
+FIXTURE
+if ! assert_callsite "${callsite_fixture}" 'fixture(clean)'; then
+  printf 'a clean call-site fixture must pass\n' >&2
+  exit 1
+fi
+
+cat >"${callsite_fixture}" <<'FIXTURE'
+name: fixture
+jobs:
+  build:
+    steps:
+      - name: ⚙️ Setup talosctl
+        run: |
+          .github/scripts/setup-talosctl.sh
+      - name: 😈 Smuggled raw install
+        run: |
+          curl -fsSL https://example.invalid/talosctl-linux-amd64 -o /tmp/talosctl
+          sudo install /tmp/talosctl /usr/local/bin/talosctl
+FIXTURE
+if assert_callsite "${callsite_fixture}" 'fixture(smuggled)' 2>/dev/null; then
+  printf 'a raw talosctl install in a NON-setup step must be rejected\n' >&2
+  exit 1
+fi
 
 printf 'setup-talosctl verification tests passed\n'
