@@ -4243,7 +4243,7 @@ release_sync_lease() {
   local lease_file="${work_dir}/sync-lease-release.json"
   local patch_file_local="${work_dir}/sync-lease-release-patch.json"
   local result_file="${work_dir}/sync-lease-release-result.txt"
-  local now attempt observed_holder release_failure="" failure_detail=""
+  local now attempt backoff observed_holder release_failure="" failure_detail=""
 
   if [[ -n "${sync_lease_heartbeat_pid}" ]]; then
     kill "${sync_lease_heartbeat_pid}" 2>/dev/null || true
@@ -4270,12 +4270,17 @@ release_sync_lease() {
     # Retrying an API failure in the same millisecond re-asks a server that has
     # not had time to recover, so every attempt lands inside one blip and the
     # retry adds nothing. A linear backoff makes the later attempts sample a
-    # genuinely different moment. It scales SYNC_INTERVAL rather than hard-coding
-    # seconds, so this stays the same tunable knob every other retry loop here
-    # uses -- which also keeps the suite fast, since the tests set it to 0.
-    if ((attempt > 1)); then
-      sleep "$(((attempt - 1) * SYNC_INTERVAL))"
-    fi
+    # genuinely different moment, scaling SYNC_INTERVAL so this stays the same
+    # tunable knob every other retry loop here uses -- which also keeps the suite
+    # fast, since the tests set it to 0.
+    #
+    # Repeated sleeps rather than arithmetic: SYNC_INTERVAL is validated as
+    # ^[0-9]+([.][0-9]+)?$, so a DECIMAL is a documented-valid setting, and bash
+    # $(( )) is integer-only -- multiplying it would abort the release with an
+    # arithmetic syntax error on a value the script explicitly accepts.
+    for ((backoff = 1; backoff < attempt; backoff++)); do
+      sleep "${SYNC_INTERVAL}"
+    done
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       --namespace flux-system \
