@@ -2,15 +2,16 @@
 // workflow can still do its job.
 //
 // The heal job restores main after a merge-group deploy fails, and it needs
-// four things to be true to work at all: it must fire on a failed or cancelled
+// five things to be true to work at all: it must fire on a failed or cancelled
 // merge-group deploy that actually touched k8s and on nothing else; it must
 // hold the shared prod-deploy lock; that lock must not be preemptible, or the
-// heal is cancelled by the next deploy midway through; and it must check out
-// main, or it restores the wrong revision.
+// heal is cancelled by the next deploy midway through; it must check out
+// main, or it restores the wrong revision; and it must opt in to orphaned-fence
+// recovery, or it cannot clear the GHCR Lease a dead deploy left held.
 //
 // Each is one line of workflow YAML, and none of them fails loudly when it is
 // wrong — the damage shows up later, during an incident, when the heal either
-// does not run or restores the wrong thing. Pinning all four here turns that
+// does not run or restores the wrong thing. Pinning all five here turns that
 // into a CI failure on the pull request that breaks one.
 package main
 
@@ -28,8 +29,13 @@ const expectedHealCondition = "always() && " +
 	"(needs.deploy-prod.result == 'failure' || " +
 	"needs.deploy-prod.result == 'cancelled')"
 
+// The deploy-prod composite recovers an orphaned GHCR fence only when a call
+// site opts in — the input is default-off. This exact line is what makes that
+// step reachable, so it is pinned rather than left to a reviewer to notice.
+const recoveryOptIn = `          recover-orphaned-fence: "true"`
+
 func validateWorkflowContract(workflow string) error {
-	healJob, ok := extractHealJob(workflow)
+	healJob, ok := extractJob(workflow, "heal-prod-on-failure")
 	if !ok {
 		return errors.New("missing heal-prod-on-failure job")
 	}
@@ -50,6 +56,11 @@ func validateWorkflowContract(workflow string) error {
 		{line: "      group: prod-deploy", description: "shared production lock"},
 		{line: "      cancel-in-progress: false", description: "non-preempting production lock"},
 		{line: "          ref: main", description: "current-main checkout"},
+		// Without this, a deploy that dies holding the GHCR synchronization Lease
+		// wedges the queue AND this heal job — the exact state the heal exists to
+		// clear (#3343). Opting in relaxes no guard: the composite still refuses to
+		// release unless the holder is provably terminal and its heartbeat stopped.
+		{line: recoveryOptIn, description: "orphaned-fence recovery"},
 	}
 	for _, requirement := range requirements {
 		if !containsExactLine(healJob, requirement.line) {
@@ -67,14 +78,26 @@ func validateWorkflowContract(workflow string) error {
 		)
 	}
 
+	// The heal job is the last line of defence; the deploy job reaching the same
+	// composite is what stops the wedge arising at all. Pin both, or a dead deploy
+	// still fails the NEXT deploy before any heal gets the chance to clear it.
+	deployJob, ok := extractJob(workflow, "deploy-prod")
+	if !ok {
+		return errors.New("missing deploy-prod job")
+	}
+	if !containsExactLine(deployJob, recoveryOptIn) {
+		return errors.New("deploy job is missing orphaned-fence recovery")
+	}
+
 	return nil
 }
 
-func extractHealJob(workflow string) (string, bool) {
+func extractJob(workflow string, jobKey string) (string, bool) {
 	lines := strings.Split(workflow, "\n")
 	start := -1
+	header := "  " + jobKey + ":"
 	for i, line := range lines {
-		if line == "  heal-prod-on-failure:" {
+		if line == header {
 			start = i + 1
 			break
 		}

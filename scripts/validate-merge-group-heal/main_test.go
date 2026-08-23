@@ -16,6 +16,10 @@ jobs:
 
   deploy-prod:
     runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/deploy-prod
+        with:
+          recover-orphaned-fence: "true"
 
   heal-prod-on-failure:
     needs: [changes, deploy-prod, validate-publication-contract]
@@ -33,6 +37,9 @@ jobs:
       - uses: actions/checkout@example
         with:
           ref: main
+      - uses: ./.github/actions/deploy-prod
+        with:
+          recover-orphaned-fence: "true"
 
   required-checks:
     runs-on: ubuntu-latest
@@ -102,6 +109,35 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			old:         "needs.deploy-prod.result == 'cancelled'",
 			replacement: "needs.deploy-prod.result == 'failure'",
 			wantError:   "must cover exactly failed and cancelled deploys while excluding success",
+		},
+		{
+			// The opt-in is what makes the composite's recovery step reachable at
+			// all, so dropping it silently restores the wedge this pin exists to
+			// prevent -- the heal cannot clear a Lease a dead deploy left held.
+			name: "heal job drops orphaned-fence recovery",
+			old: `          ref: main
+      - uses: ./.github/actions/deploy-prod
+        with:
+          recover-orphaned-fence: "true"`,
+			replacement: "          ref: main",
+			wantError:   "heal job is missing orphaned-fence recovery",
+		},
+		{
+			name: "deploy job drops orphaned-fence recovery",
+			old: `  deploy-prod:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/deploy-prod
+        with:
+          recover-orphaned-fence: "true"`,
+			replacement: "  deploy-prod:\n    runs-on: ubuntu-latest",
+			wantError:   "deploy job is missing orphaned-fence recovery",
+		},
+		{
+			name:        "missing deploy job",
+			old:         "  deploy-prod:",
+			replacement: "  deploy-prod-disabled:",
+			wantError:   "missing deploy-prod job",
 		},
 	}
 
