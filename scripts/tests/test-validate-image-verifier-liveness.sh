@@ -1169,6 +1169,101 @@ output="$(run_script TALOS_NODES=disabled 2>&1)" ||
   fail 'case 24: a multiline LITERAL entry with escape text must not be decoded onto our plugin id'
 require_text "${output}" 'OK   disabled' 'case 24: multiline literal entries keep escape text verbatim'
 
+# A MULTILINE string that genuinely SPANS PHYSICAL LINES. TOML trims a newline that
+# comes straight after the opening delimiter, so this names our plugin EXACTLY and
+# containerd has the verifier off -- measured with go-toml, which returns the bare id for
+# both the basic and the literal form.
+#
+# The walk restarted its quote state on every line, so the closing delimiter on the second
+# line read as a fresh OPENER; and the lines were joined with a SPACE, which turned the
+# newline TOML trims into a leading space. The entry compared as something that is not our
+# id and the node reported OK with no enforcement.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ["""
+io.containerd.image-verifier.v1.bindir"""]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a multiline BASIC entry spanning physical lines must be read as our plugin id'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: quote state is carried across array lines'
+
+# The LITERAL triple spans lines under the same rule.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ['''
+io.containerd.image-verifier.v1.bindir''']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a multiline LITERAL entry spanning physical lines must be read as our plugin id'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: literal triples carry across lines too'
+
+# CONTROL: only the FIRST newline after the opener is trimmed. A second one is CONTENT, so
+# this entry is "\nio.containerd..." -- a DIFFERENT string that containerd never matches,
+# and the node must stay OK. Without this the fix could pass by stripping every leading
+# newline, which would alias a different plugin id onto ours.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ["""
+
+io.containerd.image-verifier.v1.bindir"""]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 24: only the first newline after a multiline opener is trimmed; a second is content'
+require_text "${output}" 'OK   disabled' 'case 24: a retained newline makes it a different plugin id'
+
+# A # inside a multiline string that SPANS lines. The comment stripper restarted its
+# quote state on every line, so on the second line the # read as a comment opener and
+# truncated the array there -- dropping our entry and reporting OK with the verifier off.
+# Carrying the string state across lines is what keeps the # as content. Measured with
+# go-toml: this list holds "a#b" AND our plugin id.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ["""
+a#b""", 'io.containerd.image-verifier.v1.bindir']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a # inside a SPANNING multiline string must not truncate the array'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: comment state is carried across array lines'
+
+# A ] inside a multiline string that SPANS lines, in a MULTI-LINE array. The array-
+# terminator scan also restarted per line, so the ] on the second line ended the array
+# there -- and the entry on the THIRD line was never buffered at all. Our plugin is on
+# that third line, so the node reported OK with the verifier off. Measured with go-toml:
+# this list holds "a]b" AND our plugin id.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ["""
+a]b""",
+  'io.containerd.image-verifier.v1.bindir']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a ] inside a SPANNING multiline string must not terminate the array'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: terminator state is carried across array lines'
+
 # A # inside a MULTILINE string is content, not a comment opener. ONE interior quote
 # is legal inside a multiline basic string and makes the quote count ODD, so a walk that
 # reads each quote singly ends up OUTSIDE the string at the #, truncates the array there,

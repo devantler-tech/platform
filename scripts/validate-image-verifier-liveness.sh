@@ -274,32 +274,51 @@ config_facts_in() {
       if (substr(line, i, 3) == c c c) return 3
       return 1
     }
-    function strip_comment(line,   out, i, c, n, instr, q, qlen) {
-      n = length(line); out = ""; instr = 0; q = ""; qlen = 1
+    # QUOTE STATE IS CARRIED ACROSS PHYSICAL LINES, in globals rather than locals. A
+    # multiline string may legitimately span lines -- TOML trims a newline that comes
+    # straight after the opener, so
+    #
+    #   disabled_plugins = ["""
+    #   io.containerd.image-verifier.v1.bindir"""]
+    #
+    # names our plugin exactly. Restarting the walk on each line read the closing
+    # delimiter on the second line as a fresh OPENER, and the entry compared as
+    # something that is not our id -- reporting OK with the verifier off.
+    #
+    # Only a TRIPLE delimiter carries: a single-line string left unterminated at the
+    # end of a line is invalid TOML, and carrying it would swallow the rest of the
+    # array on a typo. So the state is dropped unless it is a multiline one.
+    function reset_scan_state() {
+      sc_instr = 0; sc_q = ""; sc_qlen = 1
+      ca_instr = 0; ca_q = ""; ca_qlen = 1
+    }
+    function strip_comment(line,   out, i, c, n) {
+      n = length(line); out = ""
       for (i = 1; i <= n; i++) {
         c = substr(line, i, 1)
-        if (instr) {
-          if (qlen == 3) {
+        if (sc_instr) {
+          if (sc_qlen == 3) {
             # Multiline BASIC strings take escapes too, so an escaped quote does not
             # begin the closing triple.
-            if (c == "\\" && q == DQ) { out = out c; i++; out = out substr(line, i, 1); continue }
-            if (substr(line, i, 3) == q q q) { out = out q q q; i += 2; instr = 0; continue }
+            if (c == "\\" && sc_q == DQ) { out = out c; i++; out = out substr(line, i, 1); continue }
+            if (substr(line, i, 3) == sc_q sc_q sc_q) { out = out sc_q sc_q sc_q; i += 2; sc_instr = 0; continue }
             out = out c
             continue
           }
           out = out c
           # Basic strings take backslash escapes; literal ones do not.
-          if (c == "\\" && q == DQ) { i++; out = out substr(line, i, 1); continue }
-          if (c == q) instr = 0
+          if (c == "\\" && sc_q == DQ) { i++; out = out substr(line, i, 1); continue }
+          if (c == sc_q) sc_instr = 0
           continue
         }
         if (c == "#") break
         if (c == SQ || c == DQ) {
-          instr = 1; q = c; qlen = delim_len(line, i, c)
-          if (qlen == 3) { out = out c c c; i += 2; continue }
+          sc_instr = 1; sc_q = c; sc_qlen = delim_len(line, i, c)
+          if (sc_qlen == 3) { out = out c c c; i += 2; continue }
         }
         out = out c
       }
+      if (sc_instr && sc_qlen != 3) sc_instr = 0
       return out
     }
     # A ] INSIDE a quoted TOML string is not the array terminator. index() cannot
@@ -308,27 +327,28 @@ config_facts_in() {
     # leaving disabled = 0 and a verdict of OK while containerd had the verifier
     # switched off. That is the fail-open this script exists to prevent, so the
     # terminator is found with the same quote-aware scan strip_comment uses.
-    function closes_array(line,   i, c, n, instr, q, qlen) {
-      n = length(line); instr = 0; q = ""; qlen = 1
+    function closes_array(line,   i, c, n) {
+      n = length(line)
       for (i = 1; i <= n; i++) {
         c = substr(line, i, 1)
-        if (instr) {
-          if (qlen == 3) {
-            if (c == "\\" && q == DQ) { i++; continue }
-            if (substr(line, i, 3) == q q q) { i += 2; instr = 0 }
+        if (ca_instr) {
+          if (ca_qlen == 3) {
+            if (c == "\\" && ca_q == DQ) { i++; continue }
+            if (substr(line, i, 3) == ca_q ca_q ca_q) { i += 2; ca_instr = 0 }
             continue
           }
-          if (c == "\\" && q == DQ) { i++; continue }
-          if (c == q) instr = 0
+          if (c == "\\" && ca_q == DQ) { i++; continue }
+          if (c == ca_q) ca_instr = 0
           continue
         }
         if (c == SQ || c == DQ) {
-          instr = 1; q = c; qlen = delim_len(line, i, c)
-          if (qlen == 3) i += 2
+          ca_instr = 1; ca_q = c; ca_qlen = delim_len(line, i, c)
+          if (ca_qlen == 3) i += 2
           continue
         }
         if (c == "]") return 1
       }
+      if (ca_instr && ca_qlen != 3) ca_instr = 0
       return 0
     }
     # Compare ENTRIES, never the raw array text. A substring test over the whole
@@ -359,6 +379,16 @@ config_facts_in() {
           # ONE quote closed the string on its second character and compared an EMPTY
           # entry, so containerd had the verifier off and the node still reported OK.
           entry = substr(entry, 4)
+          # TOML TRIMS a newline that comes immediately after the opening delimiter, and
+          # ONLY that one; a second newline is content. The array lines arrive joined by a
+          # single space each, so that first newline is exactly one leading space here --
+          # drop one, never a run. Dropping the run would make
+          #   disabled_plugins = ["""
+          #
+          #   io.containerd.image-verifier.v1.bindir"""]
+          # compare equal to our id, when its real value begins with a newline and names a
+          # different plugin entirely.
+          if (substr(entry, 1, 1) == " ") entry = substr(entry, 2)
           close_at = 0
           j = 1
           while (j <= length(entry)) {
@@ -406,6 +436,12 @@ config_facts_in() {
     # value that happens to start with a bracket cannot be mistaken for a table.
     in_array {
       line = strip_comment($0)
+      # Joined with a SPACE, deliberately. A real newline CANNOT be used: this awk
+      # (BWK, macOS) splits on a newline in split() whatever separator is given --
+      # measured: split("x<NL>y,z", a, ",") returns THREE fields -- so an embedded
+      # newline would tear one entry into several, and would behave differently again
+      # under the gawk/mawk that runs in CI. TOML newline semantics are recovered in
+      # verdict() from the single joining space instead.
       buf = buf " " line
       if (closes_array(line)) { in_array = 0; verdict(buf) }
       next
@@ -519,6 +555,8 @@ config_facts_in() {
     }
     toplevel {
       if (root_key($0) == "disabled_plugins") {
+        # Fresh state per array, so a malformed earlier one cannot leak an open string.
+        reset_scan_state()
         buf = strip_comment(substr($0, KEYPOS))
         if (closes_array(buf)) { verdict(buf) } else { in_array = 1 }
         next
