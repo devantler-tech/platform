@@ -83,59 +83,16 @@ installed_trivy_version="$(trivy --version | sed -n 's/^Version: //p' | head -n 
 
 rgd_root="${SOURCE_ROOT}/${RGD_ROOT_PATH}"
 [ -d "$rgd_root" ] || fail "RGD source directory is missing: $rgd_root"
+k8s_root="${SOURCE_ROOT}/k8s"
+[ -d "$k8s_root" ] || fail "Kubernetes source directory is missing: $k8s_root"
 
-# Provider overlays consume the reviewed base graph. Reject any provider-local patch or replacement
-# that targets an RGD, because scanning only the base after such a mutation would certify different
-# content from the provider render. Provider-specific graph behavior belongs in a separately scanned
-# definition rather than an invisible per-consumer mutation.
-provider_root="${SOURCE_ROOT}/k8s/providers"
-[ -d "$provider_root" ] || fail "provider source directory is missing: $provider_root"
-while IFS= read -r kustomization_file; do
-  targeted_rgd="$(yq '
-    [
-      .patches[]?.target.kind // "",
-      .patchesJson6902[]?.target.kind // "",
-      .replacements[]?.targets[]?.select.kind // ""
-    ] | .[] | select(. == "ResourceGraphDefinition")
-  ' "$kustomization_file")"
-  [ -z "$targeted_rgd" ] || fail \
-    "provider overlay targets a ResourceGraphDefinition: $kustomization_file"
-
-  while IFS= read -r patch_entry; do
-    patch_path="$(jq -r 'if type == "object" then .path // "" else "" end' <<<"$patch_entry")"
-    inline_patch="$(jq -r 'if type == "object" then .patch // "" else "" end' <<<"$patch_entry")"
-    if [ -n "$patch_path" ]; then
-      patch_file="${kustomization_file%/*}/${patch_path}"
-      [ -r "$patch_file" ] || fail "provider overlay patch is not readable: $patch_file"
-      if yq 'select(tag == "!!map") | .kind // ""' "$patch_file" |
-        grep -Fxq 'ResourceGraphDefinition'; then
-        fail "provider overlay patch declares a ResourceGraphDefinition: $patch_file"
-      fi
-    fi
-    if [ -n "$inline_patch" ]; then
-      if yq 'select(tag == "!!map") | .kind // ""' <<<"$inline_patch" |
-        grep -Fxq 'ResourceGraphDefinition'; then
-        fail "provider overlay inline patch declares a ResourceGraphDefinition: $kustomization_file"
-      fi
-    fi
-  done < <(yq -o=json -I=0 '.patches[]?' "$kustomization_file" | jq -c '.')
-
-  while IFS= read -r legacy_patch_path; do
-    [ -n "$legacy_patch_path" ] || continue
-    patch_file="${kustomization_file%/*}/${legacy_patch_path}"
-    [ -r "$patch_file" ] || fail "provider overlay patch is not readable: $patch_file"
-    if yq 'select(tag == "!!map") | .kind // ""' "$patch_file" |
-      grep -Fxq 'ResourceGraphDefinition'; then
-      fail "provider overlay patch declares a ResourceGraphDefinition: $patch_file"
-    fi
-  done < <(yq '.patchesStrategicMerge[]? // ""' "$kustomization_file")
-done < <(find "$provider_root" -type f -name 'kustomization.yaml' -print | LC_ALL=C sort)
-
-# Discover by resource kind rather than by today's two directory names. The tree also contains
-# sibling ClusterRoles, so a filename glob alone would scan unrelated manifests; conversely, a
-# fixed allow-list would silently recreate this blind spot when the next RGD is added.
+# Discover by resource kind across every provider as well as the shared base. The tree contains
+# sibling resources, so a filename glob alone would scan unrelated manifests; conversely, rooting
+# discovery only in the base would leave a provider-specific RGD and its nested workloads unseen.
 while IFS= read -r candidate; do
-  [ "$(yq '.kind // ""' "$candidate")" = "ResourceGraphDefinition" ] || continue
+  candidate_kind="$(yq -o=json -I=0 '.' "$candidate" |
+    jq -r 'if type == "object" then .kind // "" else "" end')"
+  [ "$candidate_kind" = "ResourceGraphDefinition" ] || continue
   RGD_PATHS+=("${candidate#"$SOURCE_ROOT"/}")
   definition_api_version="$(yq '.apiVersion // ""' "$candidate")"
   [[ "$definition_api_version" == */* ]] ||
@@ -157,12 +114,70 @@ while IFS= read -r candidate; do
   schema_kind="$(yq '.spec.schema.kind // ""' "$candidate")"
   [ -n "$schema_kind" ] || fail "RGD does not declare spec.schema.kind: $candidate"
   RGD_KINDS+=("$schema_kind")
-done < <(find "$rgd_root" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | LC_ALL=C sort)
+done < <(find "$k8s_root" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | LC_ALL=C sort)
 
-[ "${#RGD_PATHS[@]}" -gt 0 ] || fail "no ResourceGraphDefinitions found below $rgd_root"
+[ "${#RGD_PATHS[@]}" -gt 0 ] || fail "no ResourceGraphDefinitions found below $k8s_root"
 readonly RGD_PATHS
 readonly RGD_API_VERSIONS
 readonly RGD_KINDS
+
+# Provider overlays consume the reviewed base graph. Reject any provider-local patch or replacement
+# that targets an RGD, because scanning only the base after such a mutation would certify different
+# content from the provider render. Provider-specific graph behavior belongs in a separately scanned
+# definition rather than an invisible per-consumer mutation.
+provider_root="${SOURCE_ROOT}/k8s/providers"
+[ -d "$provider_root" ] || fail "provider source directory is missing: $provider_root"
+while IFS= read -r kustomization_file; do
+  targeted_rgd="$(yq -o=json -I=0 '.' "$kustomization_file" | jq -r '
+    [
+      (.patches[]? |
+        select(type == "object" and .target != null) |
+        if (.target | type) == "object" then .target.kind // "__MISSING_KIND__"
+        else "__MISSING_KIND__" end),
+      (.patchesJson6902[]? |
+        select(type == "object" and .target != null) |
+        if (.target | type) == "object" then .target.kind // "__MISSING_KIND__"
+        else "__MISSING_KIND__" end),
+      (.replacements[]? |
+        select(type == "object") | .targets[]? |
+        select(type == "object" and .select != null) |
+        if (.select | type) == "object" then .select.kind // "__MISSING_KIND__"
+        else "__MISSING_KIND__" end)
+    ]
+    | .[] | select(. == "__MISSING_KIND__" or . == "ResourceGraphDefinition")
+  ')"
+  [ -z "$targeted_rgd" ] || fail \
+    "provider overlay targets or ambiguously omits the kind of a ResourceGraphDefinition: $kustomization_file"
+
+  while IFS= read -r patch_entry; do
+    patch_path="$(jq -r 'if type == "object" then .path // "" else "" end' <<<"$patch_entry")"
+    inline_patch="$(jq -r 'if type == "object" then .patch // "" else "" end' <<<"$patch_entry")"
+    if [ -n "$patch_path" ]; then
+      patch_file="${kustomization_file%/*}/${patch_path}"
+      [ -r "$patch_file" ] || fail "provider overlay patch is not readable: $patch_file"
+      if yq -o=json -I=0 '.' "$patch_file" |
+        jq -e 'type == "object" and (.kind // "") == "ResourceGraphDefinition"' >/dev/null; then
+        fail "provider overlay patch declares a ResourceGraphDefinition: $patch_file"
+      fi
+    fi
+    if [ -n "$inline_patch" ]; then
+      if yq -o=json -I=0 '.' <<<"$inline_patch" |
+        jq -e 'type == "object" and (.kind // "") == "ResourceGraphDefinition"' >/dev/null; then
+        fail "provider overlay inline patch declares a ResourceGraphDefinition: $kustomization_file"
+      fi
+    fi
+  done < <(yq -o=json -I=0 '.patches[]?' "$kustomization_file" | jq -c '.')
+
+  while IFS= read -r legacy_patch_path; do
+    [ -n "$legacy_patch_path" ] || continue
+    patch_file="${kustomization_file%/*}/${legacy_patch_path}"
+    [ -r "$patch_file" ] || fail "provider overlay patch is not readable: $patch_file"
+    if yq -o=json -I=0 '.' "$patch_file" |
+      jq -e 'type == "object" and (.kind // "") == "ResourceGraphDefinition"' >/dev/null; then
+      fail "provider overlay patch declares a ResourceGraphDefinition: $patch_file"
+    fi
+  done < <(yq '.patchesStrategicMerge[]? // ""' "$kustomization_file")
+done < <(find "$provider_root" -type f -name 'kustomization.yaml' -print | LC_ALL=C sort)
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

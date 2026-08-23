@@ -23,7 +23,13 @@ ci_workflow_json="$(yq -o=json -I=0 '.' "$CI_WORKFLOW")"
 main_workflow_json="$(yq -o=json -I=0 '.' "$MAIN_WORKFLOW")"
 
 jq -e --arg wiring_run "$WIRING_RUN" '
-  any(.jobs.changes.steps[]; (.run // "") == $wiring_run)
+  .jobs.changes as $wiring_job
+  | (($wiring_job["continue-on-error"] // false) == false)
+  and ($wiring_job | has("if") | not)
+  and any($wiring_job.steps[];
+    (.run // "") == $wiring_run
+    and ((.["continue-on-error"] // false) == false)
+    and (has("if") | not))
 ' <<<"$ci_workflow_json" >/dev/null ||
   fail "the unconditional changes job does not independently validate RGD workflow wiring"
 
@@ -104,6 +110,46 @@ jq -e --arg wiring_run "$WIRING_RUN" '
 if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
   ablation_work="$(mktemp -d)"
   trap 'rm -rf "$ablation_work"' EXIT
+
+  suppressed_wiring_step_workflow="${ablation_work}/ci-wiring-step-continue-on-error.yaml"
+  cp "$CI_WORKFLOW" "$suppressed_wiring_step_workflow"
+  yq -i '(.jobs.changes.steps[] |
+    select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan-wiring.sh"))).continue-on-error = true' \
+    "$suppressed_wiring_step_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$suppressed_wiring_step_workflow" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/wiring-step-continue-on-error.log" 2>&1; then
+    fail "the wiring validator accepted a failure-suppressed independent wiring step"
+  fi
+
+  conditional_wiring_step_workflow="${ablation_work}/ci-wiring-step-false-condition.yaml"
+  cp "$CI_WORKFLOW" "$conditional_wiring_step_workflow"
+  yq -i '(.jobs.changes.steps[] |
+    select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan-wiring.sh"))).if = false' \
+    "$conditional_wiring_step_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$conditional_wiring_step_workflow" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/wiring-step-false-condition.log" 2>&1; then
+    fail "the wiring validator accepted a conditionally skipped independent wiring step"
+  fi
+
+  suppressed_wiring_job_workflow="${ablation_work}/ci-wiring-job-continue-on-error.yaml"
+  cp "$CI_WORKFLOW" "$suppressed_wiring_job_workflow"
+  yq -i '.jobs.changes.continue-on-error = true' "$suppressed_wiring_job_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$suppressed_wiring_job_workflow" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/wiring-job-continue-on-error.log" 2>&1; then
+    fail "the wiring validator accepted a failure-suppressed independent wiring job"
+  fi
+
+  conditional_wiring_job_workflow="${ablation_work}/ci-wiring-job-false-condition.yaml"
+  cp "$CI_WORKFLOW" "$conditional_wiring_job_workflow"
+  yq -i '.jobs.changes.if = false' "$conditional_wiring_job_workflow"
+  if RGD_WIRING_CI_WORKFLOW="$conditional_wiring_job_workflow" \
+    RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
+    RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/wiring-job-false-condition.log" 2>&1; then
+    fail "the wiring validator accepted a conditionally skipped independent wiring job"
+  fi
 
   suppressed_workflow="${ablation_work}/ci-continue-on-error.yaml"
   cp "$CI_WORKFLOW" "$suppressed_workflow"

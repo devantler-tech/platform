@@ -148,6 +148,31 @@ yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
   }]' >"$WORK/$PROVIDER_PROBE"
 expect_rejected "a provider overlay patch targeting an RGD" "ResourceGraphDefinition"
 rm -f "$WORK/$PROVIDER_PROBE"
+
+# A Kustomize selector may omit kind and still match every resource satisfying its remaining
+# fields. Such a selector must not bypass the provider-overlay guard merely because `.target.kind`
+# is absent.
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = [] | .patches = [{
+    "target": {
+      "group": "kro.run",
+      "version": "v1alpha1",
+      "name": "webapp.kro.run"
+    },
+    "patch": "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"
+  }]' >"$WORK/$PROVIDER_PROBE"
+expect_rejected "a provider overlay RGD selector without kind" "ResourceGraphDefinition"
+rm -f "$WORK/$PROVIDER_PROBE"
+
+# Provider-local definitions are valid graph sources rather than mutations, but they must enter the
+# same evidence baseline. Leaving discovery rooted only in the shared base would certify neither
+# their nested resources nor their graph content.
+readonly PROVIDER_RGD="k8s/providers/probe/infrastructure/provider-resource-graph-definition.yaml"
+cp "$REPO_ROOT/$WEBAPP_RGD" "$WORK/$PROVIDER_RGD"
+yq -i '.metadata.name = "providerwebapp.kro.run" |
+  .spec.schema.kind = "ProviderWebApp"' "$WORK/$PROVIDER_RGD"
+expect_rejected "an unbaselined provider ResourceGraphDefinition" "$PROVIDER_RGD"
+rm -f "$WORK/$PROVIDER_RGD"
 rmdir "$WORK/$(dirname "$PROVIDER_PROBE")"
 
 # Resource-level graph controls decide whether a template is instantiated. They must be evidence too:
