@@ -943,6 +943,49 @@ output="$(run_script TALOS_NODES=disabled 2>&1)" ||
   fail 'case 24: a non-root disabled_plugins key must not be treated as the root one'
 require_text "${output}" 'OK   disabled' 'case 24: scoped to the root key'
 
+# A DIFFERENT plugin whose name merely CONTAINS ours must not disable us. This
+# is a false-FAIL guard: a substring test over the array text fails a node whose
+# verifier is perfectly enabled, which is the worst direction for a check whose
+# whole output is "enforcement is off".
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ['example.io.containerd.image-verifier.v1.bindir-extra']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 24: a different plugin whose name contains ours must not read as disabled'
+require_text "${output}" 'OK   disabled' 'case 24: entries are matched exactly, not by substring'
+
+# Our identifier appearing only in a trailing TOML COMMENT is not an entry.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ['io.containerd.snapshotter.v1.blockfile'] # io.containerd.image-verifier.v1.bindir
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 24: our identifier in a comment must not read as disabled'
+require_text "${output}" 'OK   disabled' 'case 24: a trailing comment is not an array entry'
+
+# Double-quoted entries are TOML too, and must still be caught.
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+disabled_plugins = ["io.containerd.image-verifier.v1.bindir"]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+if output="$(run_script TALOS_NODES=disabled 2>&1)"; then
+  fail 'case 24: a double-quoted disabled entry must still fail the node'
+fi
+require_text "${output}" 'disabled_plugins' 'case 24: double-quoted entries are read'
+
 # A LARGE config with the disabled key near the top. This is the SIGPIPE case:
 # an awk that printed its verdict and exited would close the pipe while
 # `talosctl read` was still writing, and under `set -o pipefail` that SIGPIPE is

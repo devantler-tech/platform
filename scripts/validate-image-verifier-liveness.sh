@@ -282,11 +282,33 @@ plugin_disabled_in() {
     # read failure -- so a genuinely disabled node on a large config would be
     # reported as an infrastructure error instead of the FAIL it is. Consume to
     # EOF and print from END. (extract_bin_dir_from documents the same hazard.)
-    function verdict(text,   probe) {
-      probe = text
-      gsub(SQ, "", probe); gsub(DQ, "", probe); gsub(/[ \t]/, "", probe)
-      if (index(probe, "io.containerd.image-verifier.v1.bindir") > 0) {
-        disabled = 1
+    function verdict(text,   body, count, i, entry, quote, close_at) {
+      # Compare ENTRIES, never the raw array text. A substring test over the
+      # whole expression reports a node as disabled while the plugin is enabled:
+      # a DIFFERENT plugin whose name merely contains ours
+      # (example.io.containerd.image-verifier.v1.bindir-extra) matches, and so
+      # does our name sitting in a trailing TOML comment. Either way a healthy
+      # node fails -- a false alarm on the one signal that is meant to mean
+      # enforcement is off.
+      #
+      # No apostrophes in these comments: the whole program is a single-quoted
+      # shell string, so one would end it. And close_at, not close, because awk
+      # already has a close() builtin.
+      body = text
+      sub(/^[^[]*\[/, "", body)
+      sub(/\][^]]*$/, "", body)
+      count = split(body, entries, ",")
+      for (i = 1; i <= count; i++) {
+        entry = entries[i]
+        gsub(/^[ \t]+/, "", entry); gsub(/[ \t]+$/, "", entry)
+        # TOML string values are quoted; an unquoted token is not an entry.
+        quote = substr(entry, 1, 1)
+        if (quote != SQ && quote != DQ) continue
+        entry = substr(entry, 2)
+        close_at = index(entry, quote)
+        if (close_at == 0) continue
+        entry = substr(entry, 1, close_at - 1)
+        if (entry == "io.containerd.image-verifier.v1.bindir") disabled = 1
       }
     }
     END { if (disabled) print "disabled" }
