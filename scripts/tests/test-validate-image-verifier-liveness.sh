@@ -1019,6 +1019,25 @@ output="$(run_script TALOS_NODES=disabled 2>&1)" ||
   fail 'case 24: a different plugin whose name contains ours must not read as disabled'
 require_text "${output}" 'OK   disabled' 'case 24: entries are matched exactly, not by substring'
 
+# A quoted key that merely NORMALISES to ours is a DIFFERENT key. TOML treats a
+# bare and a quoted key as the same only when they spell the same characters, so
+# 'disabled_ plugins' -- with an interior space -- is a distinct setting that
+# containerd never reads. Deleting whitespace and quotes before comparing aliased
+# it onto ours and failed a node whose verifier is enabled: a false FAIL, the same
+# direction as the substring guard above and the worst one for a check whose only
+# output is "enforcement is off".
+cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
+version = 3
+'disabled_ plugins' = ['io.containerd.image-verifier.v1.bindir']
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+output="$(run_script TALOS_NODES=disabled 2>&1)" ||
+  fail 'case 24: a quoted lookalike key must not be aliased onto the root key'
+require_text "${output}" 'OK   disabled' 'case 24: interior characters inside a quoted key are preserved'
+
 # Our identifier appearing only in a trailing TOML COMMENT is not an entry.
 cat >"${fixtures}/disabled/files/_etc_cri_conf.d_cri.toml" <<EOF
 version = 3

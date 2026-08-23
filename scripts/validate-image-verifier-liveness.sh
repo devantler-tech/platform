@@ -348,20 +348,51 @@ config_facts_in() {
       }
       next
     }
-    # TOML treats a bare key and a quoted key as the SAME key, so
-    # "disabled_plugins" and the bare form name one setting. A bare-key-only
-    # match never reaches verdict() on the quoted spellings, leaving disabled = 0
-    # while containerd has the verifier switched OFF -- a node reporting OK with
-    # no enforcement, the same fail-open class as the quoted ] above. So
-    # NORMALISE the key before comparing, exactly as the table header rule below
-    # already does, rather than enumerating spellings in the pattern.
-    toplevel && match($0, /^[ \t]*[^=]*=/) {
-      key = substr($0, RSTART, RLENGTH - 1)
-      gsub(/[ \t]/, "", key)
-      gsub(SQ, "", key)
-      gsub(DQ, "", key)
-      if (key == "disabled_plugins") {
-        buf = strip_comment(substr($0, RSTART + RLENGTH))
+    # TOML treats a bare key and a quoted key as the SAME key only when they spell
+    # the SAME characters, so disabled_plugins and its quoted forms name one
+    # setting. A bare-key-only match never reaches verdict() on the quoted
+    # spellings, leaving disabled = 0 while containerd has the verifier switched
+    # OFF -- a node reporting OK with no enforcement.
+    #
+    # NORMALISING by deleting whitespace and quotes went too far the other way: it
+    # ALIASED DISTINCT keys onto ours. A key spelled with an interior space inside
+    # quotes is a different setting that containerd never reads, and deleting that
+    # space failed a node whose verifier was enabled -- a false alarm on the one
+    # signal meant to mean enforcement is off. So parse exactly ONE key and strip
+    # only its outer delimiters, preserving every character between them.
+    #
+    # Returns "" when the line is not a simple assignment -- including a DOTTED
+    # key, which names a setting inside a table rather than the root one. Sets
+    # KEYPOS to the index just past the =, so the caller never has to search for
+    # it and cannot be misled by an = inside the key text.
+    function root_key(s,   i, n, c, q, out) {
+      KEYPOS = 0
+      n = length(s)
+      i = 1
+      while (i <= n && (substr(s, i, 1) == " " || substr(s, i, 1) == "\t")) i++
+      c = substr(s, i, 1)
+      if (c == SQ || c == DQ) {
+        q = c; i++; out = ""
+        while (i <= n && substr(s, i, 1) != q) { out = out substr(s, i, 1); i++ }
+        if (i > n) return ""
+        i++
+      } else {
+        out = ""
+        while (i <= n) {
+          c = substr(s, i, 1)
+          if (c !~ /[A-Za-z0-9_-]/) break
+          out = out c; i++
+        }
+        if (out == "") return ""
+      }
+      while (i <= n && (substr(s, i, 1) == " " || substr(s, i, 1) == "\t")) i++
+      if (substr(s, i, 1) != "=") return ""
+      KEYPOS = i + 1
+      return out
+    }
+    toplevel {
+      if (root_key($0) == "disabled_plugins") {
+        buf = strip_comment(substr($0, KEYPOS))
         if (closes_array(buf)) { verdict(buf) } else { in_array = 1 }
         next
       }
