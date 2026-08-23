@@ -58,8 +58,9 @@ var requiredFrameworks = []string{"nsa", "mitre"}
 // happens to match.
 var frameworkToken = regexp.MustCompile(`^[a-z0-9._-]+$`)
 
-// Matches `<<` / `<<-` followed by an optionally quoted delimiter word.
-var heredocStart = regexp.MustCompile(`<<-?\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))`)
+// Matches `<<` / `<<-` plus an optionally quoted delimiter word, ANCHORED: it is applied
+// at a position shellSplit has already proven to be unquoted, never searched over a line.
+var heredocStart = regexp.MustCompile(`^<<-?\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))`)
 
 func main() {
 	workflows := os.Args[1:]
@@ -273,25 +274,94 @@ func stripComment(line string) string {
 	return line
 }
 
-// scanInvocations returns the lines of one `run:` scalar that actually INVOKE the
-// scan.
+// shellSplit walks ONE command line once, tracking shell quoting, and returns the
+// command segments it separates on unquoted control operators, plus the delimiter
+// of an unquoted heredoc opener.
 //
-// TWO FILTERS, CLOSING TWO DIFFERENT AXES.
+// THIS REPLACES THREE INDEPENDENT STRING TESTS, and that consolidation is the
+// point. Counting the fixed spelling `ksail workload scan` to detect chaining, and
+// matching a heredoc opener with a regex over the raw line, both read the text in a
+// way the shell does not — so `ksail  workload  scan` (re-spaced) hid a chained
+// reduced scan, and a `<<` inside a QUOTED filename such as `-o '<<true'` opened a
+// heredoc that swallowed one. Each closed spelling left the class open; this asks
+// the quoting question once and answers all of them from the same walk.
+func shellSplit(line string) (segments []string, heredocDelim string, heredocIndented bool) {
+	var cur strings.Builder
+	var inSingle, inDouble bool
+	flush := func() {
+		if s := strings.TrimSpace(cur.String()); s != "" {
+			segments = append(segments, s)
+		}
+		cur.Reset()
+	}
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if c == '\\' && !inSingle {
+			cur.WriteByte(c)
+			if i+1 < len(line) {
+				i++
+				cur.WriteByte(line[i])
+			}
+			continue
+		}
+		if c == '\'' && !inDouble {
+			inSingle = !inSingle
+			cur.WriteByte(c)
+			continue
+		}
+		if c == '"' && !inSingle {
+			inDouble = !inDouble
+			cur.WriteByte(c)
+			continue
+		}
+		if inSingle || inDouble {
+			cur.WriteByte(c)
+			continue
+		}
+		// Unquoted from here, so an operator here is a real shell operator.
+		if c == '<' && i+1 < len(line) && line[i+1] == '<' && heredocDelim == "" {
+			if m := heredocStart.FindStringSubmatch(line[i:]); m != nil {
+				for _, g := range m[1:] {
+					if g != "" {
+						heredocDelim = g
+						break
+					}
+				}
+				heredocIndented = strings.HasPrefix(m[0], "<<-")
+				i += len(m[0]) - 1
+				continue
+			}
+		}
+		// `;`, `&`, `&&`, `|`, `||` all end the current command. Splitting on the
+		// SINGLE character and then consuming a doubled one covers both forms
+		// without enumerating spellings.
+		if c == ';' || c == '&' || c == '|' {
+			flush()
+			if (c == '&' || c == '|') && i+1 < len(line) && line[i+1] == c {
+				i++
+			}
+			continue
+		}
+		cur.WriteByte(c)
+	}
+	flush()
+	return segments, heredocDelim, heredocIndented
+}
+
+// scanInvocations returns the commands in one `run:` scalar that actually INVOKE
+// the scan — one entry per invocation, so two chained scans are two entries and
+// the caller rejects the ambiguity rather than judging the upload on the first.
 //
-// Shell CONTEXT: heredoc bodies are removed first. A heredoc body line genuinely
-// begins with `ksail` while executing nothing, so a decoy body could otherwise
-// supply the framework list this guard reads while the real scan ran in a form
-// the token filter skips. That was the residual left open by #3057 and is what
-// #3060 closes.
+// Shell CONTEXT is closed by shellSplit: heredoc bodies are skipped, and an opener
+// only counts when it is genuinely unquoted.
 //
-// Command SHAPE: the surviving line's first token must be exactly `ksail`.
-// Anything else — `echo`, `printf`, `env ksail`, a function definition, `:` —
-// is not a bare invocation and does not count. The earlier version subtracted
-// known decoys instead, a list without an end.
+// Command SHAPE is closed here: a segment's first three tokens must BE
+// `ksail workload scan`. Anything else — `echo`, `env ksail ...`, a comment, a
+// quoted argument that merely contains the words — is not a bare invocation.
 //
-// The cost is deliberate: a legitimate future invocation that is NOT a bare
-// `ksail` line stops matching and trips the fail-closed path. That is the
-// correct direction — the guard refuses to bless a form it cannot read.
+// The cost is deliberate: a legitimate future invocation in a form this cannot
+// read stops matching and trips the fail-closed path. That is the correct
+// direction — the guard refuses to bless a form it cannot read.
 func scanInvocations(scalar string) []string {
 	var out []string
 	var heredocDelim string
@@ -309,48 +379,29 @@ func scanInvocations(scalar string) []string {
 			continue
 		}
 
-		// The comment is removed BEFORE anything else reads the line, so no
-		// later test can be satisfied by text the shell never executes.
+		// The comment goes first, so no later test can be satisfied by text the
+		// shell never executes.
 		command := stripComment(line)
-		trimmed := strings.TrimSpace(command)
-		if trimmed == "" {
+		if strings.TrimSpace(command) == "" {
 			continue
 		}
 
-		if m := heredocStart.FindStringSubmatch(command); m != nil {
-			for _, g := range m[1:] {
-				if g != "" {
-					heredocDelim = g
-					break
-				}
-			}
-			heredocIndented = strings.Contains(m[0], "<<-")
-			// The line opening a heredoc is still a command line, so fall
-			// through and consider it before skipping the body.
+		segments, delim, indented := shellSplit(command)
+		if delim != "" {
+			heredocDelim = delim
+			heredocIndented = indented
 		}
 
-		// THE FIRST THREE TOKENS MUST BE THE COMMAND ITSELF. Testing the line
-		// for the substrings `workload scan` and `--framework` anywhere let any
-		// `ksail` line carrying that text elsewhere count as the scan.
-		fields := strings.Fields(trimmed)
-		if len(fields) < 3 || fields[0] != "ksail" || fields[1] != "workload" || fields[2] != "scan" {
-			continue
-		}
-		if !strings.Contains(trimmed, "--framework") {
-			continue
-		}
-		// THE SAME RULE AT LINE GRANULARITY. `ksail ... && ksail ...` on one
-		// physical line is one record, and reading the last `--framework` would
-		// judge the uploaded analysis on a throwaway's framework set.
-		if n := strings.Count(trimmed, "ksail workload scan"); n > 1 {
-			// Each chained scan is genuinely a separate invocation, so record
-			// them all and let the caller reject the ambiguity.
-			for i := 0; i < n; i++ {
-				out = append(out, trimmed)
+		for _, segment := range segments {
+			fields := strings.Fields(segment)
+			if len(fields) < 3 || fields[0] != "ksail" || fields[1] != "workload" || fields[2] != "scan" {
+				continue
 			}
-			continue
+			if !strings.Contains(segment, "--framework") {
+				continue
+			}
+			out = append(out, segment)
 		}
-		out = append(out, trimmed)
 	}
 	return out
 }

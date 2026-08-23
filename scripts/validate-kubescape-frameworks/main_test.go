@@ -433,3 +433,36 @@ func TestCommentCannotSupplyAMissingFrameworkFlag(t *testing.T) {
 			"so a commented-out one must not satisfy the gate")
 	}
 }
+
+// --- Round two: the LINE was still read with string operations ------------------
+//
+// The two below are the same class as the first round — a decoy supplying the set
+// while a real reduced scan executes — but they defeat the *scanner* rather than
+// the command-shape test. Both were found by review after the shape fix landed,
+// which is the signal to stop closing spellings and parse the line instead.
+
+// `strings.Count` matched one exact spelling, so re-spacing the second command
+// hid it: the line then read as a single invocation and the FIRST (full)
+// framework list was accepted, while the later reduced scan is the one whose
+// SARIF is uploaded.
+func TestChainedScanIsRejectedRegardlessOfSpacing(t *testing.T) {
+	body := "ksail workload scan --framework nsa,mitre -o throwaway.sarif && " +
+		"ksail  workload  scan --framework nsa -o kubescape.sarif\n"
+	if _, err := setOf(t, body); err == nil {
+		t.Fatal("expected FAIL CLOSED: two chained scans are ambiguous however they are spaced, " +
+			"so the guard must not judge the upload on the first one's framework list")
+	}
+}
+
+// `<<` inside a QUOTED argument is an ordinary filename, not a heredoc operator.
+// Treating it as one suppressed every following line until a matching word, which
+// swallowed the real reduced scan while the shell executed both.
+func TestQuotedRedirectionTargetDoesNotOpenAHeredoc(t *testing.T) {
+	body := "ksail workload scan --framework nsa,mitre -o '<<true'\n" +
+		"ksail workload scan --framework nsa -o kubescape.sarif\n" +
+		"true\n"
+	if _, err := setOf(t, body); err == nil {
+		t.Fatal("expected FAIL CLOSED: `<<` inside quotes is a filename, so the second scan " +
+			"must remain visible and make this ambiguous")
+	}
+}
