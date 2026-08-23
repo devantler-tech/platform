@@ -211,6 +211,45 @@ main() {
 $discovered_lines
 EOF
 
+
+  # A BLOCK SCALAR carries ONE value across several lines, and everything in this guard
+  # reads LINES. YAML folds the block into a single value, so an indented content line
+  # that merely LOOKS like `subject: <pinned>` is not a key at all -- the strict pattern
+  # matches that content line, validates it, and reports the subject pinned, while the
+  # value cosign actually receives is something like `.*| subject: ...@[0-9a-f]{40}$`
+  # whose FIRST alternative accepts every identity.
+  #
+  # The coverage rule above does NOT catch this. It compares reference counts against
+  # validated counts, and a decoy carrying the workflow URL only once keeps them aligned
+  # -- measured. A decoy that repeats the URL in both alternatives IS caught there, so
+  # pinning only that shape would leave the reachable one open.
+  #
+  # No legitimate subject needs a block scalar: a cosign identity regex is one line. So
+  # the form is refused outright rather than assembled, exactly as the double-quoted
+  # scalar is refused below. Scoped to files that reference the shared workflow, so an
+  # unrelated `subject:` block scalar elsewhere in the repository is not this guard's
+  # business.
+  local block_subjects=""
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    if grep -qE '(subject|subjectRegex|subjectRegExp):[[:space:]]*[|>][0-9]*[+-]?[[:space:]]*(#.*)?$' "$file"; then
+      block_subjects="$block_subjects  $file
+"
+    fi
+  done <<EOF
+$discovered_lines
+EOF
+
+  if [ -n "$block_subjects" ]; then
+    printf 'guard: a cosign subject is written as a YAML BLOCK SCALAR in:\n' >&2
+    printf '%s' "$block_subjects" >&2
+    printf 'This guard reads lines, so it cannot assemble the folded value, and an indented\n' >&2
+    printf 'content line that looks like a pinned subject key would be validated in its place\n' >&2
+    printf 'while the value cosign receives carries an alternative that pins nothing.\n' >&2
+    printf 'Write the subject as a single-line plain or single-quoted scalar.\n' >&2
+    return 1
+  fi
+
   if [ -n "$unvalidated" ]; then
     printf 'guard: found reference(s) to the shared publish workflows that this guard did not validate:\n' >&2
     printf '%s' "$unvalidated" >&2

@@ -268,6 +268,34 @@ assert_line_accepted "a plain scalar with two spaces before a real comment" \
   "        subject: ${SUBJECT_ID}${SHA_PATTERN}\$  # pinned by #2816" \
   plaintwospace
 
+# A BLOCK SCALAR carries one value across several lines, and this guard reads LINES.
+# YAML folds the block into a SINGLE value, so an indented content line that merely
+# LOOKS like `subject: <pinned>` is not a key at all -- but the line-oriented grep sees
+# it, validates it, and reports the subject pinned. The value cosign actually receives
+# is `.*| subject: ...@[0-9a-f]{40}$`, whose FIRST alternative accepts EVERY identity.
+#
+# MEASURED with gopkg.in/yaml.v3: the fixture below resolves to exactly that one scalar.
+# Note the shape is deliberately chosen to carry only ONE workflow URL, so the
+# coverage rule's counts still line up -- a decoy repeating the URL in both alternatives
+# is already caught there, and pinning only that shape would leave this one open.
+#
+# The folded value carries two `@`, so the one-identity rule would have caught it; that
+# rule never runs, because the guard never assembles the folded value.
+#
+# Both block styles are pinned: `>-` folds newlines to spaces and `|-` keeps them, and a
+# matcher-looking line is equally invisible in either.
+assert_line_rejected "a folded block scalar hiding a matcher-looking content line" \
+  "        subject: >-
+          .*|
+          subject: ${SUBJECT_ID}${SHA_PATTERN}\$" \
+  foldedblock 'BLOCK SCALAR'
+
+assert_line_rejected "a literal block scalar hiding a matcher-looking content line" \
+  "        subject: |-
+          .*|
+          subject: ${SUBJECT_ID}${SHA_PATTERN}\$" \
+  literalblock 'BLOCK SCALAR'
+
 # A comment MAY open immediately after a closing quote, with no whitespace before
 # its `#`. YAML requires whitespace before a comment that follows a PLAIN scalar,
 # and this guard applied that rule to quoted ones too — but a quoted scalar has
