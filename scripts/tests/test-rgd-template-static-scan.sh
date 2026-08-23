@@ -175,6 +175,22 @@ expect_rejected "an unbaselined provider ResourceGraphDefinition" "$PROVIDER_RGD
 rm -f "$WORK/$PROVIDER_RGD"
 rmdir "$WORK/$(dirname "$PROVIDER_PROBE")"
 
+# The same post-scan mutation is unsafe in a shared-base Kustomization, not only below providers.
+# A full-tree guard must reject an inline JSON6902 patch that targets the raw RGD after extraction.
+readonly BASE_RGD_KUSTOMIZATION="k8s/bases/infrastructure/resource-graph-definitions/kustomization.yaml"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" |
+  .kind = "Kustomization" | .resources = ["webapp", "tenant"] | .patches = [{
+    "target": {
+      "group": "kro.run",
+      "version": "v1alpha1",
+      "kind": "ResourceGraphDefinition",
+      "name": "webapp.kro.run"
+    },
+    "patch": "- op: add\n  path: /spec/resources/0/template/spec/privileged\n  value: true"
+  }]' >"$WORK/$BASE_RGD_KUSTOMIZATION"
+expect_rejected "a shared-base overlay patch targeting an RGD" "ResourceGraphDefinition"
+rm -f "$WORK/$BASE_RGD_KUSTOMIZATION"
+
 # Resource-level graph controls decide whether a template is instantiated. They must be evidence too:
 # gating the default-deny NetworkPolicy changes tenant isolation without changing its template bytes.
 # shellcheck disable=SC2016 # the KRO expression must remain literal in the fixture

@@ -10,8 +10,8 @@
 # scripts/rgd-template-static-scan-baseline.tsv; explicit placement and image policies run too.
 # scripts/tests/test-rgd-template-static-scan.sh proves discovery, cause, privilege, resource, and
 # namespace regressions are rejected on pull requests, exact merge-group revisions, and direct
-# pushes to main. Provider overlays may consume this graph but may not patch it: the scanner rejects
-# targeted or self-identifying provider RGD patches so the reviewed base is the deployed definition.
+# pushes to main. Kustomizations may consume this graph but may not patch it anywhere in `k8s`: the
+# scanner rejects targeted or self-identifying RGD patches so the reviewed file is what is deployed.
 # Never exclude this directory when adding a template.
 #
 # Sibling to the Tenant RGD: a *Tenant* sets up the namespace/isolation/sync
