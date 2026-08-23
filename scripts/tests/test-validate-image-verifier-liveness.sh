@@ -1887,4 +1887,56 @@ require_text "${output}" 'OK   disabled' 'case 35 control: a real table header s
 
 reset_node_sequence
 
+# ===========================================================================
+# case 36 -- A NON-ASCII \U ESCAPE MUST NOT ALIAS ONTO THE VERIFIER ID.
+#   `%c` is byte-oriented in several awks, so a code point above 255 is
+#   truncated modulo 256: U+10069 emits the single byte 0x69 (`i`), so the
+#   basic string below decoded to exactly `io.containerd.image-verifier.v1.bindir`.
+#   This node disables a DIFFERENT plugin and verifies images perfectly well,
+#   but the aliased decode reported it as having the verifier switched off --
+#   a healthy node failed on a config that never names the verifier.
+# ===========================================================================
+write_node escaped
+cat >"${fixtures}/escaped/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+disabled_plugins = ["\U00010069o.containerd.image-verifier.v1.bindir"]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+write_dir escaped /opt/containerd/image-verifier/bin <<EOF
+${listing_header}
+10.0.1.4   drwxr-xr-x   0     0     37        Aug  4 14:58:45   system_u:object_r:containerd_plugin_t:s0   .
+10.0.1.4   -rwxr-xr-x   0     0     8123456   Aug  4 14:58:45   system_u:object_r:containerd_plugin_t:s0   cosign-verifier
+EOF
+output="$(run_script TALOS_NODES=escaped 2>&1)" ||
+  fail 'case 36: a non-ASCII \U escape must not alias onto the verifier ID and disable a healthy node'
+require_text "${output}" 'OK   escaped' 'case 36: the node that disables a different plugin still enforces'
+
+# CONTROL -- an ASCII \u escape that really does spell the verifier ID must STILL
+# be decoded and honoured. Without this the fix could be satisfied by decoding no
+# escapes at all, which would hide a genuinely disabled verifier -- the FAIL-OPEN
+# direction and far worse than the false alarm above.
+write_node asciiesc
+cat >"${fixtures}/asciiesc/files/_etc_cri_conf.d_cri.toml" <<'EOF'
+version = 3
+disabled_plugins = ["\u0069o.containerd.image-verifier.v1.bindir"]
+
+[plugins]
+  [plugins.'io.containerd.image-verifier.v1.bindir']
+    bin_dir = '/opt/containerd/image-verifier/bin'
+EOF
+write_dir asciiesc /opt/containerd/image-verifier/bin <<EOF
+${listing_header}
+10.0.1.4   drwxr-xr-x   0     0     37        Aug  4 14:58:45   system_u:object_r:containerd_plugin_t:s0   .
+10.0.1.4   -rwxr-xr-x   0     0     8123456   Aug  4 14:58:45   system_u:object_r:containerd_plugin_t:s0   cosign-verifier
+EOF
+if output="$(run_script TALOS_NODES=asciiesc 2>&1)"; then
+  fail 'case 36 control: an ASCII \u escape spelling the verifier ID must still be decoded and honoured'
+fi
+require_text "${output}" 'disabled_plugins' 'case 36 control: the genuinely disabled verifier is still detected'
+
+reset_node_sequence
+
 printf 'PASS: all cases\n'

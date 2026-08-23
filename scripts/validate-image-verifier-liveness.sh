@@ -635,7 +635,7 @@ config_facts_in() {
     # a false alarm on the one signal meant to mean enforcement is off. Literal
     # strings never reach this function, which is what keeps the triple-literal form
     # a DIFFERENT plugin id, exactly as containerd reads it.
-    function decode_basic(s, multiline,   out, i, n, c, d, code, j) {
+    function decode_basic(s, multiline,   out, i, n, c, d, code, j, cp) {
       n = length(s); out = ""; i = 1
       while (i <= n) {
         c = substr(s, i, 1)
@@ -672,7 +672,19 @@ config_facts_in() {
         else if (d == "u" || d == "U") {
           code = (d == "u") ? substr(s, i + 2, 4) : substr(s, i + 2, 8)
           if (length(code) == ((d == "u") ? 4 : 8) && code ~ /^[0-9A-Fa-f]+$/) {
-            out = out sprintf("%c", hexval(code))
+            cp = hexval(code)
+            # `%c` IS BYTE-ORIENTED in several awks, so a code point above 255 is
+            # truncated modulo 256 and ALIASES onto an ASCII character. Measured on the
+            # awk shipped with this host: U+10069 emits the single byte 0x69, so a key
+            # written as a U+10069 escape followed by "o.containerd.image-verifier.v1.bindir"
+            # decoded to exactly the verifier ID, and a config that never names the
+            # verifier read as though it did. The same aliasing in the other direction
+            # reports a healthy node disabled. Every identifier this script compares
+            # against is pure ASCII, so a code point above 127 CANNOT be part of a
+            # matching key: emit it as a marker no ASCII key can contain, keeping the
+            # code point so two distinct characters never collapse into one.
+            if (cp <= 127) out = out sprintf("%c", cp)
+            else out = out sprintf("%c%X%c", 1, cp, 1)
             i += (d == "u") ? 6 : 10
           } else { out = out c; i++ }
         }
