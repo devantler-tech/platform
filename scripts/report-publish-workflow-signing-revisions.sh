@@ -566,11 +566,17 @@ deployed_tag() {
   # to 2.5.0 and v2 to 2.0.0. A pattern requiring three components matched neither the strict
   # filter nor this one, so such a tag was dropped from BOTH sets: the walk stepped silently
   # to an older release and reported ITS signing revision, omitting the actual signer from
-  # the allow-list. Prereleases are here for the same reason -- Flux accepts v2.0.0-rc.1, and
-  # ordering it against a release is exactly the Flux-compatible precedence this script does
-  # not implement. Four-component tags and non-numeric ones stay out: Flux rejects them too
+  # the allow-list. Four-component tags and non-numeric ones stay out: Flux rejects them too
   # (measured), so they cannot be selected and refusing on them would be noise.
-  local loose_re='^v?[0-9]+(\.[0-9]+){0,2}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]*)?$'
+  #
+  # PRERELEASES stay out for the same reason, and the guarantee comes from this script:
+  # `effective_version` REFUSES any constraint carrying a prerelease bound by name, so every
+  # consumer that reaches this walk has a constraint with no prerelease comparator -- and
+  # Masterminds excludes prereleases from exactly those. A prerelease therefore cannot be
+  # selected no matter how it orders, so treating one as an unrankable ambiguity refused a
+  # consumer Flux resolves unambiguously: an `v2.0.0-rc.1` above the newest stable made every
+  # run red until the RC tag was deleted or a stable release was cut.
+  local loose_re='^v?[0-9]+(\.[0-9]+){0,2}(\+[0-9A-Za-z.-]*)?$'
   candidates="$(printf '%s\n' "$tags" | grep -E "$strict_re" |
     sed -e 's/^v//' -e 's/+.*$//' | sort -V -r -u || true)"
   [ -n "$candidates" ] || return 1
@@ -661,6 +667,27 @@ deployed_tag() {
         return 1
       fi
       if [ "$walk_pub" -eq 0 ]; then
+        # The early refusal above compares against the highest STRICT tag, which is not
+        # necessarily the one being reported: when that tag never published, the walk steps
+        # past it to an older release, and a loose tag sitting between the two was cleared
+        # by a comparison against a version nobody selects. Flux coerces such a tag -- `v2.5`
+        # resolves to 2.5.0 -- so it can be selected ahead of the release reported here, and
+        # the run would emit the wrong signing revision. Re-check the set against the version
+        # actually being returned, which is the only one the answer depends on.
+        if [ -n "$unrankable" ]; then
+          local late_bad late_core late_high
+          while IFS= read -r late_bad; do
+            [ -n "$late_bad" ] || continue
+            late_core="$(printf '%s' "$late_bad" | sed -e 's/^v//' -e 's/+.*$//')"
+            [ -n "$late_core" ] || continue
+            late_high="$(printf '%s\n%s\n' "$late_core" "$variants" | sort -V -r | head -1)"
+            if [ "$late_high" = "$late_core" ]; then
+              printf 'tag %s is not valid SemVer yet Flux would coerce it to rank at or above the reported release %s, so it may be the artifact Flux selected; choosing needs Flux-compatible ordering, which this script does not implement\n' \
+                "$late_bad" "$variants" >&2
+              return 1
+            fi
+          done <<<"$unrankable"
+        fi
         printf '%s\tinferred\n' "$candidate"
         return 0
       fi
