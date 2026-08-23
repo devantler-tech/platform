@@ -56,6 +56,77 @@ readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?
 # when a new consumer is genuinely added.
 readonly EXPECTED_MIN_SUBJECTS=8
 
+# Return the YAML scalar of a `key: value` line, with any inline comment removed.
+#
+# `#` opens a comment only OUTSIDE a quoted scalar. Stripping at the first
+# whitespace-`#` unconditionally truncates a QUOTED value that legitimately contains
+# one — and these values are cosign identity regexes, so the surviving half can pin a
+# tag while the half YAML actually hands to cosign carries a second `|` alternative
+# permitting `refs/heads/`. Reproduced before this fix: the single-quoted subject
+# `…@refs/tags/v.+ # x|^https://…@refs/heads/.+$` was accepted and the guard reported
+# all eight subjects pinned.
+#
+# FAILS CLOSED. Returning non-zero means "this line is not something I can read the
+# way YAML reads it", and the caller rejects it rather than validating a guess. That
+# covers an unterminated quote and a double-quoted scalar, whose backslash escapes
+# would have to be unescaped before the ref could be judged; every subject in this
+# repository is single-quoted or plain, so a double-quoted one is a new shape that
+# gets reviewed here deliberately instead of being parsed on a guess.
+yaml_scalar() {
+  local raw="$1" value body scalar rest
+  value="${raw#"${raw%%[![:space:]]*}"}"      # indentation
+  value="${value#- }"                          # optional block-sequence entry
+  value="${value#*:}"                          # the key
+  value="${value#"${value%%[![:space:]]*}"}"  # whitespace after the colon
+
+  case "$value" in
+    # A double-quoted scalar would need its backslash escapes resolved before the ref
+    # could be judged, and every subject here is single-quoted or plain. A new one is
+    # reviewed deliberately rather than parsed on a guess.
+    '"'*) return 1 ;;
+    "'"*) ;;
+    *)
+      # A plain scalar, where a whitespace-`#` genuinely does open a comment.
+      printf '%s' "${value%%[[:space:]]#*}"
+      return 0
+      ;;
+  esac
+
+  body="${value#\'}"
+  # No closing quote on this line: a multi-line or malformed scalar.
+  case "$body" in
+    *"'"*) ;;
+    *) return 1 ;;
+  esac
+  scalar="${body%%\'*}"
+  body="${body#*\'}"
+
+  # `''` is an escaped quote rather than the end of the scalar. No subject can reach
+  # here carrying one: everything before the last @ must match SUBJECT_PATTERN, which
+  # admits no quote, and everything after it is judged by an allow-list that admits
+  # none either. Refuse the shape rather than carry an unreachable — and therefore
+  # untested — branch through a security guard.
+  case "$body" in
+    "'"*) return 1 ;;
+  esac
+
+  # Past the closing quote only a comment may follow, and YAML requires whitespace
+  # before its `#`. Anything else means this line was not read as YAML reads it.
+  case "$body" in
+    '') ;;
+    [[:space:]]*)
+      rest="${body#"${body%%[![:space:]]*}"}"
+      case "$rest" in
+        '' | '#'*) ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+
+  printf '%s' "$scalar"
+}
+
 main() {
   cd "$REPO_ROOT"
 
@@ -122,10 +193,19 @@ EOF
     location="$location:${line%%:*}"
     subject="${line#*:}"
 
-    # Work on the YAML scalar, not the entire source line. An inline comment may
-    # contain another `@refs/tags/...`; taking the last @ before removing that
-    # comment would validate the comment instead of the value consumed by YAML.
-    subject="${subject%%[[:space:]]#*}"
+    # Work on the YAML scalar, not the entire source line, and read the scalar the
+    # way YAML reads it. An inline comment may contain another `@refs/tags/...`;
+    # taking the last @ before removing that comment would validate the comment
+    # instead of the value consumed by YAML. A `#` INSIDE a quoted scalar is not a
+    # comment at all, so removing it would validate a truncation of the value.
+    if ! subject="$(yaml_scalar "$subject")"; then
+      printf '%s: could not read the YAML scalar on this line; this guard will not\n' "$location" >&2
+      printf 'validate a value it cannot parse the way YAML parses it (a double-quoted or\n' >&2
+      printf 'unterminated scalar). Rewrite it as a single-quoted or plain scalar, or extend\n' >&2
+      printf 'yaml_scalar to understand this form deliberately.\n' >&2
+      status=1
+      continue
+    fi
 
     # Everything after the LAST @ in the scalar is the ref constraint; a trailing
     # $ anchor and any closing quote are not part of it.

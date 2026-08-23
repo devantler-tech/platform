@@ -58,6 +58,13 @@ jobs:
       - name: 🔐 Validate shared publish workflows are pinned
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
+      # The guard's own regression tests. Without them a parser regression still
+      # passes CI for as long as the repository's real subjects stay unchanged, so
+      # the guard would keep reporting success after it had stopped rejecting the
+      # bypasses it exists to catch.
+      - name: 🧪 Test shared publish workflow pin guard
+        run: bash scripts/tests/test-guard-shared-publish-workflow-pin.sh
+
       # .github/actionlint.yaml silences actionlint's "unexpected key" diagnostic
       # for concurrency.queue, which also removes its enum check. This restores it.
       - name: 🚦 Validate concurrency queue values
