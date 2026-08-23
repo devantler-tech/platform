@@ -562,6 +562,12 @@ case "$args" in
       *)             printf 'v1.9.0\n' ;;
     esac
     ;;
+  *"/commits/"*)
+    # The commit a tag currently resolves to. Every tag resolves to BM_TAG_SHA, so the run
+    # lookup below matches by default and the existing cases keep exercising their own
+    # guards rather than failing for want of this one.
+    printf '%s\n' "${BM_TAG_SHA:-$BM_SHA_C}"
+    ;;
   *"/actions/runs"*)
     # Echo the requested ref back so every candidate tag reads as published. Pinning this
     # to one tag would make the ablations fail for want of a published release rather than
@@ -574,7 +580,12 @@ case "$args" in
     bm_ref="${args#*branch=}"
     bm_ref="${bm_ref%%&*}"
     bm_ref="${bm_ref%% *}"
-    printf '{"workflow_runs":[{"name":"CD","conclusion":"success","path":".github/workflows/cd.yaml","head_branch":"%s"}]}\n' "$bm_ref"
+    # A MOVED TAG: the historical run still carries the commit the tag pointed at BEFORE it
+    # was moved, while `/commits/<tag>` above reports where it points NOW. Naming a tag in
+    # BM_MOVED_TAG reproduces exactly that, and nothing else about the fixture changes.
+    bm_run_sha="${BM_TAG_SHA:-$BM_SHA_C}"
+    [ "$bm_ref" = "${BM_MOVED_TAG:-}" ] && bm_run_sha="$BM_SHA_A"
+    printf '{"workflow_runs":[{"name":"CD","conclusion":"success","path":".github/workflows/cd.yaml","head_branch":"%s","head_sha":"%s"}]}\n' "$bm_ref" "$bm_run_sha"
     ;;
   *"/contents/.github/workflows/cd.yaml"*)
     # The pin DEPENDS ON THE REF, which is what makes the walk's choice observable: the
@@ -633,7 +644,7 @@ YAML
 done <<<"$consumers"
 
 if BM_WEDDING_TAGS='v2.0.0\nv2.0.0+build.1\nv1.9.0\n' \
-  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$bm_root" "$SCRIPT" >"$bm_out" 2>&1; then
   fail 'a version carried by two tags was silently resolved instead of refusing'
 else
@@ -686,7 +697,7 @@ bm2_out="$WORK/buildmeta-only.out"
 # revision and reports the consumer as diverged; walking silently past it prints SHA_A
 # and reports it in sync. SHA_B in the output is the whole discrimination.
 if BM_AWS_TAGS='v2.0.0+build.1\nv1.9.0\n' \
-  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$bm2_root" "$SCRIPT" >"$bm2_out" 2>&1; then
   grep -qF "$SHA_B" "$bm2_out" ||
     fail 'the newest release exists only as a build-metadata tag, and the report resolved an older one instead — it walked silently past it'
@@ -727,7 +738,7 @@ vd_out="$WORK/vdual.out"
 # Only `wedding-app` publishes both spellings; every other consumer stays on a plain
 # v1.9.0, so a refusal or divergence can only have come from that consumer.
 if BM_WEDDING_TAGS='2.0.0\nv2.0.0\nv1.9.0\n' \
-  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$vd_root" "$SCRIPT" >"$vd_out" 2>&1; then
   fail 'a version published as both 2.0.0 and v2.0.0 was silently resolved to the v spelling instead of refusing'
 else
@@ -755,7 +766,7 @@ vd2_root="$WORK/vdual-single-root"
 cp -R "$bm_root" "$vd2_root"
 vd2_out="$WORK/vdual-single.out"
 if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' \
-  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$vd2_root" "$SCRIPT" >"$vd2_out" 2>&1; then
   pass 'a version published under only the v spelling still resolves'
 else
@@ -859,8 +870,181 @@ else
   fail "the script exited non-zero on the origin fixture: $(cat "$origin_out")"
 fi
 
+# ---------------------------------------------------------------------------
+# 17. A MOVED TAG MUST NOT COUNT AS PUBLISHED. (#3305 review)
+#     The run filter matched on ref NAME, path and conclusion only, so a successful run
+#     from BEFORE a tag was moved or recreated still counted. `pin_at_ref` then reads
+#     cd.yaml at the tag's CURRENT commit, so the report pairs a workflow revision from one
+#     commit with a publish proved by another and prints it as a SHA the allow-list "must
+#     accept" — two individually-true facts composed into a confident wrong answer.
+#
+#     It REFUSES rather than walking back: a moved tag HAS published something, just not
+#     what it now points at, so stepping silently to the previous release would attribute
+#     THAT release's revision to the deployed artifact — the same failure one release down.
+# ---------------------------------------------------------------------------
+mv_root="$WORK/moved-root"
+cp -R "$bm_root" "$mv_root"
+mv_out="$WORK/moved.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_MOVED_TAG='v2.0.0' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$mv_root" "$SCRIPT" >"$mv_out" 2>&1; then
+  fail 'a tag whose only successful run belongs to a DIFFERENT commit was accepted as published — the workflow pin would be read from a commit that never signed the artifact'
+else
+  grep -q 'moved or recreated' "$mv_out" ||
+    fail 'the run failed but not because of the moved tag — the case is not testing what it claims'
+  grep -qF 'v2.0.0' "$mv_out" ||
+    fail 'the refusal does not name the moved tag, so the cause is not diagnosable'
+  mv_unresolved="$(grep -c '^UNRESOLVED' "$mv_out" || true)"
+  mv_insync="$(grep -c '^IN-SYNC' "$mv_out" || true)"
+  [ "$mv_unresolved" -eq 1 ] ||
+    fail "expected exactly ONE unresolved consumer (the moved tag), got $mv_unresolved"
+  [ "$mv_insync" -eq 4 ] ||
+    fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $mv_insync"
+  grep -qE '^UNRESOLVED +wedding-app' "$mv_out" ||
+    fail 'the unresolved consumer is not the one whose tag moved'
+  pass 'a tag whose successful run belongs to another commit refuses instead of being read as published'
+fi
+
+# CONTROL: the SAME tag set with nothing moved must resolve. Without this the refusal above
+# would be satisfied by rejecting every tag, which would break every real consumer — and the
+# only difference between the two runs is BM_MOVED_TAG, so it is the moved-ness under test.
+mv2_root="$WORK/moved-control-root"
+cp -R "$bm_root" "$mv2_root"
+mv2_out="$WORK/moved-control.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$mv2_root" "$SCRIPT" >"$mv2_out" 2>&1; then
+  mv2_insync="$(grep -c '^IN-SYNC' "$mv2_out" || true)"
+  [ "$mv2_insync" -eq 5 ] ||
+    fail "the unmoved control resolved only $mv2_insync of 5 consumers — the moved-tag check is too broad"
+  pass 'an unmoved tag still resolves, so the moved-tag refusal is not rejecting every run'
+else
+  fail "the unmoved control failed outright, so the moved-tag case above proves nothing: $(cat "$mv2_out")"
+fi
+
+# ---------------------------------------------------------------------------
+# 18. AN EXACT PIN MUST REFUSE BOTH SPELLINGS TOO. (#3305 review)
+#     Case 14b proves the semver WALK refuses a version published as both `2.0.0` and
+#     `v2.0.0`. The exact-pin branch returned on the FIRST spelling it found, so that
+#     refusal was unreachable for precisely the consumers whose version is written down —
+#     and the two refs can point at different commits and so at different workflow pins.
+# ---------------------------------------------------------------------------
+# One consumer pins an EXACT tag; the rest keep an unbounded range, so a refusal can only
+# have come from that consumer.
+make_exact_root() { # <dest> <pinned-tag>
+  local dest="$1" pin="$2" k=0 repo workflow oci ref_block
+  mkdir -p "$dest"
+  while IFS=$'\t' read -r repo workflow _version; do
+    [ -n "$repo" ] || continue
+    k=$((k + 1))
+    oci="$repo"
+    [ "$repo" = '.github' ] && oci='github-config'
+    if [ "$repo" = 'wedding-app' ]; then
+      ref_block="    tag: \"$pin\""
+    else
+      ref_block='    semver: ">=1.0.0"'
+    fi
+    {
+      printf 'apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata:\n  name: e%s\nspec:\n  ref:\n' "$k"
+      printf '%s\n' "$ref_block"
+      printf '  url: oci://ghcr.io/devantler-tech/%s/manifests\n' "$oci"
+      printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n'
+      printf "      - issuer: '^https://token\\\\.actions\\\\.githubusercontent\\\\.com\$'\n"
+      printf "        subject: '^https://github\\\\.com/devantler-tech/actions/\\\\.github/workflows/%s\\\\.yaml@[0-9a-f]{40}\$'\n" "$workflow"
+    } >"$dest/c-$k.yaml"
+  done <<<"$consumers"
+}
+
+ex_root="$WORK/exact-dual-root"
+make_exact_root "$ex_root" '2.0.0'
+ex_out="$WORK/exact-dual.out"
+if BM_WEDDING_TAGS='2.0.0\nv2.0.0\nv1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$ex_root" "$SCRIPT" >"$ex_out" 2>&1; then
+  fail 'an exact pin whose version exists under BOTH spellings resolved to whichever was tried first instead of refusing'
+else
+  grep -q 'published as BOTH' "$ex_out" ||
+    fail 'the run failed but not because of the exact-pin duality — the case is not testing what it claims'
+  ex_unresolved="$(grep -c '^UNRESOLVED' "$ex_out" || true)"
+  ex_insync="$(grep -c '^IN-SYNC' "$ex_out" || true)"
+  [ "$ex_unresolved" -eq 1 ] ||
+    fail "expected exactly ONE unresolved consumer (the exact-pin duality), got $ex_unresolved"
+  [ "$ex_insync" -eq 4 ] ||
+    fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $ex_insync"
+  grep -qE '^UNRESOLVED +wedding-app' "$ex_out" ||
+    fail 'the unresolved consumer is not the one pinning the doubly-spelled version'
+  pass 'an exact pin refuses when its version exists under both the bare and v spellings'
+fi
+
+# CONTROL: an exact pin with ONE spelling present must still resolve — the pin is written
+# bare while only the `v` form exists, which is the real repository's shape.
+ex2_root="$WORK/exact-single-root"
+make_exact_root "$ex2_root" '2.0.0'
+ex2_out="$WORK/exact-single.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$ex2_root" "$SCRIPT" >"$ex2_out" 2>&1; then
+  ex2_insync="$(grep -c '^IN-SYNC' "$ex2_out" || true)"
+  [ "$ex2_insync" -eq 5 ] ||
+    fail "the single-spelling exact-pin control resolved only $ex2_insync of 5 consumers — the duality check is too broad"
+  pass 'an exact pin resolves normally when only one spelling of its version exists'
+else
+  fail "the single-spelling exact-pin control failed outright, so the duality case proves nothing: $(cat "$ex2_out")"
+fi
+
+# ---------------------------------------------------------------------------
+# 19. A TAG THIS SCRIPT CANNOT RANK MUST NOT BE SILENTLY OUTRANKED. (#3305 review)
+#     The candidate filter was a character-class regex, so `v02.0.0` (SemVer forbids a
+#     leading zero in a numeric identifier) and `v2.0.0+foo..bar` (a build identifier may
+#     not be empty) were accepted, stripped and ranked. Measured: `02.0.0` sorts ABOVE
+#     `1.9.0`, so such a tag could be selected and its workflow pin attributed to the
+#     consumer while Flux, rejecting the tag, resolves an older artifact.
+#
+#     Excluding it is not enough on its own — that walks silently back to an older release,
+#     which is the confident wrong answer rather than a refusal. So it refuses BY NAME, and
+#     only when the unrankable tag could actually outrank the best valid candidate.
+# ---------------------------------------------------------------------------
+iv_root="$WORK/invalid-semver-root"
+cp -R "$bm_root" "$iv_root"
+iv_out="$WORK/invalid-semver.out"
+if BM_WEDDING_TAGS='v02.0.0\nv1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$iv_root" "$SCRIPT" >"$iv_out" 2>&1; then
+  fail 'a tag that is not valid SemVer but outranks every valid candidate was resolved or silently skipped instead of refusing'
+else
+  grep -q 'not valid SemVer' "$iv_out" ||
+    fail 'the run failed but not because of the unrankable tag — the case is not testing what it claims'
+  grep -qF 'v02.0.0' "$iv_out" ||
+    fail 'the refusal does not name the unrankable tag, so the cause is not diagnosable'
+  iv_unresolved="$(grep -c '^UNRESOLVED' "$iv_out" || true)"
+  iv_insync="$(grep -c '^IN-SYNC' "$iv_out" || true)"
+  [ "$iv_unresolved" -eq 1 ] ||
+    fail "expected exactly ONE unresolved consumer (the unrankable tag), got $iv_unresolved"
+  [ "$iv_insync" -eq 4 ] ||
+    fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $iv_insync"
+  pass 'a tag that is not valid SemVer and would outrank the best valid candidate refuses by name'
+fi
+
+# CONTROL, and the one that pins the NARROWING: an unrankable tag that ranks BELOW the best
+# valid candidate cannot change which tag is selected, so it must NOT refuse. Without this
+# the case above would be satisfied by refusing on the mere existence of a malformed tag,
+# which would park a repository on one ancient stray tag forever.
+iv2_root="$WORK/invalid-semver-below-root"
+cp -R "$bm_root" "$iv2_root"
+iv2_out="$WORK/invalid-semver-below.out"
+if BM_WEDDING_TAGS='v2.0.0\nv01.5.0\nv1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$iv2_root" "$SCRIPT" >"$iv2_out" 2>&1; then
+  iv2_insync="$(grep -c '^IN-SYNC' "$iv2_out" || true)"
+  [ "$iv2_insync" -eq 5 ] ||
+    fail "the below-rank control resolved only $iv2_insync of 5 consumers — the SemVer check refuses on mere existence, not on rank"
+  pass 'an unrankable tag ranking below the best valid candidate does not refuse'
+else
+  fail "the below-rank control failed outright — the SemVer refusal is too broad: $(cat "$iv2_out")"
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (16 cases)\n'
+printf '\nPASS: publish-workflow signing-revision report (19 cases)\n'

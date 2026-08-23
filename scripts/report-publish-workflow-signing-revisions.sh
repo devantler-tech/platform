@@ -379,8 +379,27 @@ pin_at_ref() {
 # The publish outcome is public Actions data on the consumer's own repository, so this
 # needs no package read and no cluster access, which keeps the check inside the scope
 # #3048 set for it.
+# The commit a tag currently points at.
+#
+# 🔴 A TAG IS MUTABLE. `tag_was_published` matches a run by REF NAME, and `pin_at_ref` reads
+# cd.yaml at the ref's CURRENT commit — two different commits whenever a release tag has been
+# moved or deleted and recreated after an older successful run. The report would then pair a
+# workflow revision read from the NEW commit with a publish proved by the OLD one, and print
+# it as a SHA the allow-list "must accept": a confident wrong answer built from two facts that
+# are individually true. Resolving the tag once and binding the run to it is what keeps the
+# publish evidence and the pin evidence on the same commit.
+tag_commit() {
+  local repo="$1" tag="$2" sha
+  sha="$(gh_retry api "repos/devantler-tech/${repo}/commits/${tag}" --jq .sha)" || return 1
+  is_sha "$sha" || return 1
+  printf '%s\n' "$sha"
+}
+
 tag_was_published() {
-  local repo="$1" tag="$2" runs
+  local repo="$1" tag="$2" sha="$3" runs
+  # The commit is REQUIRED, never defaulted: an empty expected SHA would make the match below
+  # vacuous and restore exactly the moved-tag hole this argument exists to close.
+  is_sha "$sha" || return 1
   # Scoped to this tag rather than fetching the newest 100 runs of the whole repository: on a
   # repository with frequent pushes a candidate release's run falls off that first page, every
   # retry re-fetches the same incomplete page, and a healthy consumer stays UNRESOLVED until the
@@ -393,12 +412,35 @@ tag_was_published() {
   # --raw-field sends `branch=v2.0.0%2Bbuild.1`.
   runs="$(gh_retry api --method GET "repos/devantler-tech/${repo}/actions/runs" \
     --raw-field "branch=${tag}" --raw-field event=push --raw-field per_page=100)" || return 1
-  printf '%s' "$runs" |
-    jq -r --arg t "$tag" '
+  # `head_sha` pins the run to the commit the tag resolves to TODAY. A historical run for a
+  # since-moved tag still carries the old commit and no longer counts as evidence that the
+  # artifact the current commit describes was ever published.
+  if printf '%s' "$runs" |
+    jq -r --arg t "$tag" --arg s "$sha" '
       [.workflow_runs[]
-       | select(.head_branch == $t and .path == ".github/workflows/cd.yaml")
+       | select(.head_branch == $t and .path == ".github/workflows/cd.yaml"
+                and .head_sha == $s)
        | .conclusion] | .[]' 2>/dev/null |
-    grep -qx 'success'
+    grep -qx 'success'; then
+    return 0
+  fi
+  # 🔴 A MOVED TAG IS NOT THE SAME AS AN UNPUBLISHED ONE, and collapsing them would swap one
+  # wrong answer for another. "Never published" is ordinary — the walk steps to the previous
+  # release. But a tag with a successful run at a DIFFERENT commit has published something,
+  # just not what it now points at; walking silently past it would report an older release's
+  # workflow revision as the signer of what is deployed, which is the confident wrong answer
+  # this report exists to avoid. It is an anomaly, so it is surfaced by name (exit 2) and the
+  # caller refuses rather than guessing which commit the deployed artifact came from.
+  if printf '%s' "$runs" |
+    jq -r --arg t "$tag" --arg s "$sha" '
+      [.workflow_runs[]
+       | select(.head_branch == $t and .path == ".github/workflows/cd.yaml"
+                and .head_sha != null and .head_sha != $s)
+       | .conclusion] | .[]' 2>/dev/null |
+    grep -qx 'success'; then
+    return 2
+  fi
+  return 1
 }
 
 # The tag that produced the DEPLOYED artifact.
@@ -419,7 +461,7 @@ tag_was_published() {
 # manual CD workflow deploys it, so a previously-published tag reads as deployed while the
 # cluster still runs its predecessor — and the proposed allow-list then omits the revision
 # that actually signed the running artifact. Closing that needs an applied Flux revision,
-# which means reading a cluster; this script reads manifests and a registry only.
+# which means reading a cluster; this script reads manifests, git tags and Actions runs only.
 deployed_tag() {
   local repo="$1" version="$2" tags candidate bare
   # --paginate: the endpoint caps at 100 per page and these repos already carry 50+ tags.
@@ -428,20 +470,50 @@ deployed_tag() {
   tags="$(gh_retry api --paginate "repos/devantler-tech/${repo}/tags?per_page=100" --jq '.[].name')" || return 1
   [ -n "$tags" ] || return 1
   if [ -n "$version" ]; then
+    # 🔴 BOTH SPELLINGS OF ONE VERSION ARE TWO DISTINCT GIT REFS HERE TOO. The semver walk
+    # below refuses that ambiguity by name, but this branch RETURNED ON THE FIRST MATCH, so
+    # the refusal was unreachable for the two exact-tag consumers — precisely the consumers
+    # whose version is written down and therefore most likely to be spelled either way. When
+    # `1.2.3` and `v1.2.3` both exist they can point at different commits and so at different
+    # publish-workflow pins, and this loop reported whichever spelling it happened to try
+    # first: a confident wrong answer. Decide the ambiguity BEFORE resolving anything.
+    local exact_matches exact_count exact_sha
+    exact_matches=''
     for candidate in "$version" "v${version}"; do
-      if printf '%s\n' "$tags" | grep -qxF -- "$candidate"; then
-        # 🔴 A PINNED TAG EXISTING IS NOT THE SAME AS ITS ARTIFACT HAVING BEEN PUBLISHED. The
-        # publication check was reachable only from the semver branch, so the two exact-tag
-        # consumers returned as soon as the git tag existed. If that tag's cd.yaml failed, the
-        # previous artifact is still applied and this would name the unpublishing tag's pin as
-        # the signer of what is deployed. A pinned-but-unpublished version is an anomaly worth
-        # surfacing, so it is UNRESOLVED rather than silently walked back to an older tag.
-        tag_was_published "$repo" "$candidate" || return 1
-        printf '%s\tpinned\n' "$candidate"
-        return 0
-      fi
+      printf '%s\n' "$tags" | grep -qxF -- "$candidate" || continue
+      exact_matches="${exact_matches}${candidate}"$'\n'
     done
-    return 1
+    # `|| true`: `grep -c` exits 1 on a zero count, and a command substitution's status
+    # becomes the assignment's, so under `set -e` the legitimate not-found case would abort
+    # the run here instead of reaching the return that reports it.
+    exact_count="$(printf '%s' "$exact_matches" | grep -c . || true)"
+    if [ "$exact_count" -gt 1 ]; then
+      printf 'version %s is published as BOTH "%s" and "v%s"; those are distinct git refs that can point at different commits and therefore different workflow pins, so choosing between them needs Flux-compatible ordering, which this script does not implement\n' \
+        "$version" "$version" "$version" >&2
+      return 1
+    fi
+    [ "$exact_count" -eq 1 ] || return 1
+    candidate="$(printf '%s' "$exact_matches" | head -1)"
+    # 🔴 A PINNED TAG EXISTING IS NOT THE SAME AS ITS ARTIFACT HAVING BEEN PUBLISHED. The
+    # publication check was reachable only from the semver branch, so the two exact-tag
+    # consumers returned as soon as the git tag existed. If that tag's cd.yaml failed, the
+    # previous artifact is still applied and this would name the unpublishing tag's pin as
+    # the signer of what is deployed. A pinned-but-unpublished version is an anomaly worth
+    # surfacing, so it is UNRESOLVED rather than silently walked back to an older tag.
+    exact_sha="$(tag_commit "$repo" "$candidate")" || return 1
+    # `|| exact_pub=$?` rather than a bare call: under `set -e` a non-zero return would
+    # abort the run before the exit status could be read, and the moved-tag case (2) needs
+    # to be told apart from the never-published case (1).
+    local exact_pub=0
+    tag_was_published "$repo" "$candidate" "$exact_sha" || exact_pub=$?
+    if [ "$exact_pub" -eq 2 ]; then
+      printf 'tag %s published successfully from a DIFFERENT commit than it points at today, so it has been moved or recreated; the workflow revision read from its current commit did not sign the published artifact\n' \
+        "$candidate" >&2
+      return 1
+    fi
+    [ "$exact_pub" -eq 0 ] || return 1
+    printf '%s\tpinned\n' "$candidate"
+    return 0
   fi
   # Strip the optional `v` before ordering: `sort -V` compares it as text, so a mixed list
   # orders `v1.23.0` above `1.24.0`. Sort on the bare version, then recover the real tag.
@@ -461,10 +533,44 @@ deployed_tag() {
   # than one distinct tag REFUSES — the same reasoning as the bounded-range refusal:
   # picking one of two equally-ranked tags is a guess, and a guess here is the confident
   # wrong answer this report must never produce.
+  #
+  # 🔴 A CHARACTER-CLASS REGEX IS NOT SEMVER VALIDATION. The previous pattern accepted
+  # `v02.0.0` (SemVer forbids leading zeros in a numeric identifier) and `v2.0.0+foo..bar`
+  # or `v2.0.0+.` (a build identifier may not be empty) — measured directly against it. It
+  # then stripped the metadata and ranked what was left: `02.0.0` sorts ABOVE `1.9.0`, so an
+  # invalid tag with a successful CD run could be selected and its workflow pin attributed to
+  # the consumer while Flux, rejecting the tag, resolves an older artifact.
+  #
+  # Candidates are therefore built with a STRICT pattern. Excluding an invalid tag is not on
+  # its own enough, though: silently skipping it walks back to an older release and reports
+  # THAT release's pin, which is the confident wrong answer rather than a refusal. So the
+  # tags this script cannot rank are also detected, and when one of them could outrank the
+  # best valid candidate the run REFUSES by name — the same treatment every other ambiguity
+  # here gets, and deliberately narrower than refusing on the mere existence of a stray tag,
+  # which would park a repository on one ancient malformed release forever.
   local candidates checked=0
-  candidates="$(printf '%s\n' "$tags" | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+(\+[0-9A-Za-z.-]+)?$' |
+  local strict_re='^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+  local loose_re='^v?[0-9]+\.[0-9]+\.[0-9]+(\+[0-9A-Za-z.-]*)?$'
+  candidates="$(printf '%s\n' "$tags" | grep -E "$strict_re" |
     sed -e 's/^v//' -e 's/+.*$//' | sort -V -r -u || true)"
   [ -n "$candidates" ] || return 1
+  # Version-like enough to be intended as a release, but not valid SemVer.
+  local unrankable top_valid bad bad_core highest
+  unrankable="$(printf '%s\n' "$tags" | grep -E "$loose_re" | grep -Ev "$strict_re" || true)"
+  if [ -n "$unrankable" ]; then
+    top_valid="$(printf '%s\n' "$candidates" | head -1)"
+    while IFS= read -r bad; do
+      [ -n "$bad" ] || continue
+      bad_core="$(printf '%s' "$bad" | sed -e 's/^v//' -e 's/+.*$//')"
+      [ -n "$bad_core" ] || continue
+      highest="$(printf '%s\n%s\n' "$bad_core" "$top_valid" | sort -V -r | head -1)"
+      if [ "$highest" = "$bad_core" ]; then
+        printf 'tag %s is not valid SemVer (a numeric identifier may not carry a leading zero and a build identifier may not be empty) yet would rank at or above %s; Flux may or may not select it, and choosing needs Flux-compatible ordering, which this script does not implement\n' \
+          "$bad" "$top_valid" >&2
+        return 1
+      fi
+    done <<<"$unrankable"
+  fi
   local core_re variants variant_count candidate
   while IFS= read -r bare; do
     [ -n "$bare" ] || continue
@@ -514,12 +620,21 @@ deployed_tag() {
     # would find nothing, walk silently back to an older release, and attribute THAT
     # release's workflow revision to the deployed artifact. The `v` form is preferred
     # only because these repositories use it.
+    local walk_sha
     for candidate in "v${variants}" "$variants"; do
       printf '%s\n' "$tags" | grep -qxF -- "$candidate" || continue
       plausible_ref "$candidate" || continue
-      if tag_was_published "$repo" "$candidate"; then
+      walk_sha="$(tag_commit "$repo" "$candidate")" || break
+      local walk_pub=0
+      tag_was_published "$repo" "$candidate" "$walk_sha" || walk_pub=$?
+      if [ "$walk_pub" -eq 0 ]; then
         printf '%s\tinferred\n' "$candidate"
         return 0
+      fi
+      if [ "$walk_pub" -eq 2 ]; then
+        printf 'tag %s published successfully from a DIFFERENT commit than it points at today, so it has been moved or recreated; walking past it would attribute an older release workflow revision to the deployed artifact\n' \
+          "$candidate" >&2
+        return 1
       fi
       break
     done
@@ -643,9 +758,14 @@ main() {
     fi
     local mark=''
     # 🔴 NEITHER ORIGIN IS A MEASUREMENT OF WHAT FLUX HAS APPLIED, and both say so. This
-    # script reads manifests and a registry; nothing here reads a cluster. Saying so is the
-    # difference between an allow-list built on evidence and one built on a guess that
-    # reads identically.
+    # script reads manifests, git tags and Actions runs; nothing here reads a cluster, and
+    # nothing here reads the REGISTRY either. Saying so is the difference between an
+    # allow-list built on evidence and one built on a guess that reads identically.
+    #
+    # The registry gap is its own limitation, tracked separately: candidates come only from
+    # git tags, so a GHCR version deleted after a successful run still reads as publishable
+    # while Flux's selector can no longer resolve it. Closing that needs a package read,
+    # which is outside the scope #3048 set for this script.
     #
     # `pinned` was called `exact`, which overclaimed in a way that is reachable rather than
     # theoretical: a version bump landing by DIRECT PUSH to main runs validate-main.yaml
