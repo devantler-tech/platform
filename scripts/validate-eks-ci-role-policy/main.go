@@ -1273,7 +1273,30 @@ const (
 //
 //	2e5ff04e52117cdbdc88261c35845e51a17ff31b709ed5b7d449b5076c08d8e1
 //	bef0f81a74a01efa995543c82c4adf5c18123f3e1b31d0430719f9a3af53daa5
-const expectedRenderedSurfaceSHA = "3ef2555fe188f77b84a5927739842929f637688713fa6510bf2c682adce3643b"
+//
+// Measured against main 5dfb6f78 for the UniFi Git signature boundary: the
+// five production projections move from 539 to 540 documents. Set difference
+// in BOTH directions over apiVersion|kind|namespace|name reports exactly one
+// addition and no removal or rename:
+//
+//	v1  Secret  unifi/unifi-git-signing-keys
+//
+// Exactly one existing rendered identity changes:
+//
+//	source.toolkit.fluxcd.io/v1  GitRepository  unifi/unifi
+//
+// Its only delta adds `verify.mode: HEAD` and the exact Secret reference above
+// while retaining the already-immutable 40-character commit pin. The Secret
+// contains public verification material only; validateUnifiSigningKey pins its
+// sole armored key to GitHub's active signer fingerprint
+// 968479A1AFF927E37D1A566BB5690EEEBB952194 through the reviewed content hash.
+// The pinned commit verifies with that key, while an unsigned empty-commit
+// control is rejected. Grant-bearing counts remain byte-for-byte stable:
+// Role 11, ClusterRole 24, RoleBinding 15, ClusterRoleBinding 12, and
+// ServiceAccount 16. The previous approved aggregate digest was:
+//
+//	3ef2555fe188f77b84a5927739842929f637688713fa6510bf2c682adce3643b
+const expectedRenderedSurfaceSHA = "9309a857065fd3d675fd1a26414311d2c7a43717618c904a980c0fe8177839bd"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -1341,6 +1364,53 @@ func validatePinnedUnifiSource(document map[string]any, identity resourceIdentit
 	commit, ok := ref["commit"].(string)
 	if !ok || !exactGitCommit.MatchString(commit) {
 		return errors.New("unifi GitRepository must pin exactly one full immutable commit")
+	}
+	verify, ok := spec["verify"].(map[string]any)
+	if !ok || len(verify) != 2 || verify["mode"] != "HEAD" {
+		return errors.New("unifi GitRepository must verify the pinned HEAD commit")
+	}
+	secretRef, ok := verify["secretRef"].(map[string]any)
+	if !ok || len(secretRef) != 1 || secretRef["name"] != "unifi-git-signing-keys" {
+		return errors.New("unifi GitRepository must trust only the reviewed unifi Git signing key Secret")
+	}
+	return nil
+}
+
+const expectedUnifiSigningKeySHA = "40ce89d21fb075092d256f9fbf62a1c19299d3282cb913d3e61d08235d0c491a"
+
+// validateUnifiSigningKey pins the public trust root used by the UniFi
+// GitRepository. A secretRef alone only proves that Flux will look up a name;
+// it says nothing about which signer that Secret actually trusts.
+func validateUnifiSigningKey(documents []map[string]any) error {
+	wantIdentity := resourceIdentity{
+		apiVersion: "v1",
+		kind:       "Secret",
+		namespace:  "unifi",
+		name:       "unifi-git-signing-keys",
+	}
+	count := 0
+	for _, document := range documents {
+		if identityOf(document) != wantIdentity {
+			continue
+		}
+		count++
+		if document["type"] != "Opaque" {
+			return errors.New("unifi Git signing key Secret must be type Opaque")
+		}
+		stringData, ok := document["stringData"].(map[string]any)
+		if !ok || len(stringData) != 1 {
+			return errors.New("unifi Git signing key Secret must contain only github.asc")
+		}
+		key, ok := stringData["github.asc"].(string)
+		if !ok || key == "" {
+			return errors.New("unifi Git signing key Secret must contain github.asc")
+		}
+		if actual := fingerprint([]byte(key)); actual != expectedUnifiSigningKeySHA {
+			return fmt.Errorf("unapproved unifi Git signing key fingerprint: %s", actual)
+		}
+	}
+	if count != 1 {
+		return fmt.Errorf("unifi Git signing key Secret count is %d, want exactly 1", count)
 	}
 	return nil
 }
@@ -2350,6 +2420,9 @@ func validateRendered(rendered []byte) error {
 	seen := make(map[resourceIdentity]bool, len(expectedRenderedHashes))
 	surfaceEntries := make([]string, 0, len(expectedRenderedHashes))
 	problems := make([]error, 0)
+	if keyErr := validateUnifiSigningKey(documents); keyErr != nil {
+		problems = append(problems, keyErr)
+	}
 	substitutionProblems := make([]error, 0)
 	for _, document := range documents {
 		identity := identityOf(document)
