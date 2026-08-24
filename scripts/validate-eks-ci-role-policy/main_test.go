@@ -413,9 +413,22 @@ func TestValidateUnifiSigningKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode the tampered-key fixture: %v", err)
 	}
-	tampered[0]["stringData"].(map[string]any)["github.asc"] = "attacker key\n"
+	stringData, ok := tampered[0]["stringData"].(map[string]any)
+	if !ok {
+		t.Fatal("the tampered-key fixture must contain stringData")
+	}
+	stringData["github.asc"] = "attacker key\n"
 	if err := validateUnifiSigningKey(tampered); err == nil {
 		t.Fatal("an unreviewed UniFi signing key must be rejected")
+	}
+
+	widened, err := decodeDocuments(contents)
+	if err != nil {
+		t.Fatalf("decode the widened-key fixture: %v", err)
+	}
+	widened[0]["data"] = map[string]any{"attacker.asc": "YXR0YWNrZXI="}
+	if err := validateUnifiSigningKey(widened); err == nil {
+		t.Fatal("additional base64-encoded signing keys must be rejected")
 	}
 }
 

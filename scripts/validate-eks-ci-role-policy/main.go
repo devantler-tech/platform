@@ -1397,6 +1397,9 @@ func validateUnifiSigningKey(documents []map[string]any) error {
 		if document["type"] != "Opaque" {
 			return errors.New("unifi Git signing key Secret must be type Opaque")
 		}
+		if _, exists := document["data"]; exists {
+			return errors.New("unifi Git signing key Secret must not contain data")
+		}
 		stringData, ok := document["stringData"].(map[string]any)
 		if !ok || len(stringData) != 1 {
 			return errors.New("unifi Git signing key Secret must contain only github.asc")
