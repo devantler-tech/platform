@@ -3,22 +3,22 @@ name: Validate Image Verifier Liveness
 # Assert that node-level image verification can enforce AT ALL.
 #
 # The ImageVerificationConfig rules in talos/cluster/verify-first-party-images.yaml
-# were correct, active, and evaluating NOTHING for weeks, because containerd's
-# image-verifier plugin had no bin_dir and no verifier binary — a state
-# containerd documents as permitting every pull (devantler-tech/platform#2856).
-# Nothing in CI could see it: the rules were present, the node config matched the
-# repository, and every check was green.
+# read as correct whether or not anything on the node evaluates them, and nothing
+# in CI can tell those two states apart: the rules are present, the node config
+# matches the repository, and every check is green either way
+# (devantler-tech/platform#2856).
 #
-# The fleet check is DORMANT: it runs only on demand (`workflow_dispatch`), and
-# #3101 turns on its daily cadence as part of installing the verifier.
+# The mechanism is Talos' own. `security.ImageVerificationConfigController`
+# materialises each rule into an `ImageVerificationRules.security.talos.dev`
+# resource, and `security.TUFTrustedRootController` maintains the Sigstore TUF
+# trust root keyless verification needs. The fleet check asserts both are live
+# on every node.
 #
-# The verifier is absent fleet-wide today, so the check reports RED on every
-# node. That verdict is correct and is tracked on #3101 — it is not news any
-# individual run needs to act on. Publishing it daily on `main` would spend the
-# repository's CI-red channel, which means "something broke, fix it now", on a
-# known open issue that the tracker already states. Landing the checker dormant
-# keeps the capability reviewable and runnable on demand without burning that
-# signal, and activation becomes one reversible line in #3101.
+# The fleet check is DORMANT: it runs only on demand (`workflow_dispatch`).
+# Turning on a daily cadence belongs to #3336, which first establishes that a
+# matched rule actually refuses an unsigned pull — running rules and trust
+# material are necessary for enforcement, not proof of it, because a cached
+# image is never re-pulled.
 #
 # The checker's OWN tests need no cluster and no secrets, so they gate every PR
 # that touches the checker. They live in ci.yaml's `validate` job, which
@@ -41,7 +41,7 @@ jobs:
     name: 🔏 Validate Image Verifier Liveness
     # Dormancy is now the TRIGGER SET, not a job condition: `workflow_dispatch`
     # is the only event, so there is no PR or schedule path to guard against.
-    # Adding the daily `schedule:` is what activation means (#3101).
+    # Adding the daily `schedule:` is what activation means (#3336).
     runs-on: ubuntu-latest
     # KUBE_CONFIG and TALOS_CONFIG are `prod` ENVIRONMENT secrets, not repository
     # secrets — every other consumer (ci.yaml's deploy jobs, cd.yaml, dr-rebuild)
