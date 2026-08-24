@@ -78,6 +78,14 @@ node=''
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     -n) node="$2"; shift 2 ;;
+    read)
+      # The script must never read a node FILE: /etc/cri/conf.d/cri.toml carries
+      # registry credentials and this output goes to CI logs. A sentinel FILE is
+      # used rather than stderr because the script redirects stderr on its query
+      # path, so a stream-based marker could be swallowed silently.
+      touch "${FIXTURES}/NODE_FILE_WAS_READ"
+      exit 1
+      ;;
     get)
       type="$2"
       # An unreachable node fails everything.
@@ -407,4 +415,20 @@ output="$(run_script 2>&1)" || fail 'case 16: a fleet of distinct nodes with dis
 require_text "${output}" 'OK   10.0.1.4' 'case 16: control reports the first discovered node'
 require_text "${output}" 'OK   10.0.1.6' 'case 16: control reports the second discovered node'
 
+
+# ===========================================================================
+# Case 17 — SECURITY: the check must never read a node FILE. Until 2026-08-24
+# it parsed /etc/cri/conf.d/cri.toml, which carries registry credentials on
+# this cluster, and this script's output goes to CI logs. Removing that read
+# removed the exposure; this pins it so a future change cannot quietly restore
+# it. The fake records any `talosctl read` in a sentinel FILE, because the
+# script redirects stderr on its query path and a stream marker could be
+# swallowed.
+# ===========================================================================
+rm -f "${fixtures}/NODE_FILE_WAS_READ"
+healthy_node credsafe
+output="$(run_script TALOS_NODES=credsafe 2>&1)" || fail 'case 17: control — the healthy node must still pass'
+require_text "${output}" 'OK   credsafe' 'case 17: control — reports the healthy node'
+[[ ! -e "${fixtures}/NODE_FILE_WAS_READ" ]] ||
+  fail 'case 17: the check read a node file — registry credentials are reachable from a script whose output goes to CI logs'
 printf 'all cases passed\n'
