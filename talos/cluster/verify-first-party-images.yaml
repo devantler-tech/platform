@@ -17,9 +17,9 @@
 # BEFORE ACTIVATING (#3101): an image that matches a rule but fails
 # verification is refused, so any first-party image that is running yet
 # unsigned goes ImagePullBackOff the moment the verifier starts working.
-# `ghcr.io/devantler-tech/doggy-countdown` is in that state now — its running
-# digest carries attestations but no cosign signature, and it matches the
-# catch-all rule below. Sign it, or scope the rule off it, before activation.
+# Enumerate the running first-party digests and confirm each carries a cosign
+# signature — attestations alone do not satisfy the catch-all rule below — then
+# sign or scope the rule off any that do not.
 #
 # Declares the cosign signatures required at the containerd PULL layer on
 # every node — a defense-in-depth complement to the GitOps-source

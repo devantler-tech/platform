@@ -175,8 +175,8 @@ data:
             href: https://unifi.ui.com
             description: Central hub for managing on-prem UniFi network infrastructure.
     # Personal Sites also gains cluster-hosted entries from the
-    # gethomepage.dev annotations on other repositories' HTTPRoutes (e.g.
-    # doggy-countdown). devantler.tech is not deployed from this cluster, so it
+    # gethomepage.dev annotations on other repositories' HTTPRoutes.
+    # devantler.tech is not deployed from this cluster, so it
     # is listed statically here; Homepage renders discovered services above
     # static ones within the same group.
     - Personal Sites:

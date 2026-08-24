@@ -12,9 +12,6 @@ namespaceSelector:
   - name: ascoachingogvaner
     labels:
       app.kubernetes.io/managed-by: ksail
-  - name: doggy-countdown
-    labels:
-      app.kubernetes.io/managed-by: ksail
   - name: future-tenant
     labels:
       app.kubernetes.io/managed-by: ksail

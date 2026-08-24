@@ -230,7 +230,7 @@ here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes,
   therefore part of onboarding, not an optional hardening step: until a tenant namespace has
   a rule naming its approved hostnames, its HTTPRoutes are refused at admission with a
   message saying exactly that. The alternative — enumerating only some tenants — is
-  fail-open, and `doggy-countdown` ran that way, able to claim any hostname because no rule
+  fail-open, and a tenant once ran that way, able to claim any hostname because no rule
   matched its namespace.
 - **`HTTPRoute` is the only route kind a tenant can use.** The hostname allow-list above
   matches `HTTPRoute`, so every other Gateway API route kind is closed off rather than left

@@ -246,8 +246,8 @@ const (
 // `(reusable-workflows|actions)/…@.+` to `actions/…@([0-9a-f]{40}|refs/tags/v.+)`.
 // That drops the archived `reusable-workflows` repo as an accepted signer and
 // stops a floating ref (e.g. `@refs/heads/main`) from satisfying the rule. The
-// result is byte-identical to the three live `publish-app` OCIRepository trust
-// rules (wedding-app, ascoachingogvaner, doggy-countdown), so the template every
+// result is byte-identical to the live `publish-app` OCIRepository trust
+// rules (wedding-app, ascoachingogvaner), so the template every
 // tenant is generated from now carries the same rule its tenants do. It is
 // strictly a tightening: every subject the new matcher accepts, the old one
 // already accepted.

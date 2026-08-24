@@ -440,8 +440,8 @@ misconfigurations:
       namespace (resource-graph-definitions/tenant), so managing workloads is confined to that one
       namespace and cannot reach any other. Verified: no ClusterRoleBinding references this role in
       the repository or on the live cluster, where every binding is a namespace-scoped RoleBinding
-      to a single tenant ServiceAccount (three at the time of writing: ascoachingogvaner,
-      doggy-countdown, wedding-app; onboarding another tenant adds a fourth without weakening
+      to a single tenant ServiceAccount (two at the time of writing: ascoachingogvaner and
+      wedding-app; onboarding another tenant adds a third without weakening
       this). The role also omits the exec-family pod subresources, so it cannot exec into the pods
       it manages.
   - id: KSV-0049
