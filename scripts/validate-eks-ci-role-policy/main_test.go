@@ -270,6 +270,12 @@ func TestValidatePinnedUnifiSource(t *testing.T) {
 			"spec": map[string]any{
 				"url": url,
 				"ref": ref,
+				"verify": map[string]any{
+					"mode": "HEAD",
+					"secretRef": map[string]any{
+						"name": "unifi-git-signing-keys",
+					},
+				},
 			},
 		}
 	}
@@ -313,6 +319,47 @@ func TestValidatePinnedUnifiSource(t *testing.T) {
 			wantError: true,
 		},
 		{
+			name:     "missing signature verification",
+			identity: targetIdentity,
+			document: map[string]any{
+				"spec": map[string]any{
+					"url": trustedURL,
+					"ref": map[string]any{"commit": pinnedCommit},
+				},
+			},
+			wantError: true,
+		},
+		{
+			name:     "tag-only signature verification",
+			identity: targetIdentity,
+			document: map[string]any{
+				"spec": map[string]any{
+					"url": trustedURL,
+					"ref": map[string]any{"commit": pinnedCommit},
+					"verify": map[string]any{
+						"mode":      "Tag",
+						"secretRef": map[string]any{"name": "unifi-git-signing-keys"},
+					},
+				},
+			},
+			wantError: true,
+		},
+		{
+			name:     "untrusted signature key secret",
+			identity: targetIdentity,
+			document: map[string]any{
+				"spec": map[string]any{
+					"url": trustedURL,
+					"ref": map[string]any{"commit": pinnedCommit},
+					"verify": map[string]any{
+						"mode":      "HEAD",
+						"secretRef": map[string]any{"name": "some-other-key"},
+					},
+				},
+			},
+			wantError: true,
+		},
+		{
 			name: "unrelated source",
 			identity: resourceIdentity{
 				apiVersion: "source.toolkit.fluxcd.io/v1",
@@ -334,6 +381,54 @@ func TestValidatePinnedUnifiSource(t *testing.T) {
 				t.Fatalf("validatePinnedUnifiSource() error = %v, want nil", err)
 			}
 		})
+	}
+}
+
+// TestValidateUnifiSigningKey proves the trust root is present exactly once
+// and cannot be replaced or widened without moving the reviewed fingerprint.
+func TestValidateUnifiSigningKey(t *testing.T) {
+	manifestPath := filepath.Join(
+		"..", "..", "k8s", "providers", "hetzner", "apps", "unifi", "secret-git-signing-keys.yaml",
+	)
+	contents, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read the UniFi signing key manifest: %v", err)
+	}
+	documents, err := decodeDocuments(contents)
+	if err != nil {
+		t.Fatalf("decode the UniFi signing key manifest: %v", err)
+	}
+	if err := validateUnifiSigningKey(documents); err != nil {
+		t.Fatalf("the reviewed UniFi signing key must validate: %v", err)
+	}
+
+	if err := validateUnifiSigningKey(nil); err == nil {
+		t.Fatal("a missing UniFi signing key Secret must be rejected")
+	}
+	if err := validateUnifiSigningKey(append(documents, documents[0])); err == nil {
+		t.Fatal("a duplicate UniFi signing key Secret must be rejected")
+	}
+
+	tampered, err := decodeDocuments(contents)
+	if err != nil {
+		t.Fatalf("decode the tampered-key fixture: %v", err)
+	}
+	stringData, ok := tampered[0]["stringData"].(map[string]any)
+	if !ok {
+		t.Fatal("the tampered-key fixture must contain stringData")
+	}
+	stringData["github.asc"] = "attacker key\n"
+	if err := validateUnifiSigningKey(tampered); err == nil {
+		t.Fatal("an unreviewed UniFi signing key must be rejected")
+	}
+
+	widened, err := decodeDocuments(contents)
+	if err != nil {
+		t.Fatalf("decode the widened-key fixture: %v", err)
+	}
+	widened[0]["data"] = map[string]any{"attacker.asc": "YXR0YWNrZXI="}
+	if err := validateUnifiSigningKey(widened); err == nil {
+		t.Fatal("additional base64-encoded signing keys must be rejected")
 	}
 }
 

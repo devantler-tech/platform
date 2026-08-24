@@ -13,3 +13,7 @@ spec:
   url: https://github.com/devantler-tech/unifi
   ref:
     commit: 7b17f7e33ef507c24c395b884a433c62b92ace98
+  verify:
+    mode: HEAD
+    secretRef:
+      name: unifi-git-signing-keys

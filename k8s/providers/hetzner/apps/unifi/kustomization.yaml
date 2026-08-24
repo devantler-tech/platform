@@ -7,6 +7,7 @@ resources:
   - role.yaml
   - role-binding.yaml
   - network-policy.yaml
+  - secret-git-signing-keys.yaml
   - secret-store.yaml
   - provider-config.yaml
   - external-secret.yaml
