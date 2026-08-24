@@ -69,8 +69,17 @@ readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?
 # the grep below returns nothing and — without this — the guard would exit 0 and
 # report a clean repository while checking absolutely nothing. Failing closed on an
 # unexpectedly small match set is what makes a passing run mean something. Raise this
-# when a new consumer is genuinely added.
-readonly EXPECTED_MIN_SUBJECTS=8
+# when a new consumer is genuinely added, and lower it ONLY after verifying by hand
+# that the scan still matches everything it should — a pattern that quietly stopped
+# matching looks identical to a consumer that was removed.
+#
+# 8 -> 7 on 2026-08-24: the doggy-countdown tenant was decommissioned
+# (devantler-tech/monorepo#3023), removing k8s/bases/apps/doggy-countdown/oci-repository.yaml.
+# Verified by hand before lowering: the remaining 7 subjects are talos verify-first-party-images,
+# the aws and github-config manifests consumers, the tenant RGD template, verify-app-images, and
+# the wedding-app and ascoachingogvaner tenants — i.e. the pattern is intact and the set shrank by
+# exactly the deleted file.
+readonly EXPECTED_MIN_SUBJECTS=7
 
 # Return the YAML scalar of a `key: value` line, with any inline comment removed.
 #
