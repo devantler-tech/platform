@@ -1522,7 +1522,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@9705e47d7df0b556ec06786247297c0e5020e56d # v10.2.1
+        uses: devantler-tech/actions/aggregate-job-checks@d72ecd5e8b680c2066a490a2b761a8913c454575 # v13.1.3
         with:
           job-results: >-
             ${{ needs.changes.result }}
