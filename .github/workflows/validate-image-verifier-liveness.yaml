@@ -41,7 +41,7 @@ jobs:
     name: 🔏 Validate Image Verifier Liveness
     # Dormancy is now the TRIGGER SET, not a job condition: `workflow_dispatch`
     # is the only event, so there is no PR or schedule path to guard against.
-    # Adding the daily `schedule:` is what activation means (#3101).
+    # Adding the daily `schedule:` is what activation means (#3336).
     runs-on: ubuntu-latest
     # KUBE_CONFIG and TALOS_CONFIG are `prod` ENVIRONMENT secrets, not repository
     # secrets — every other consumer (ci.yaml's deploy jobs, cd.yaml, dr-rebuild)

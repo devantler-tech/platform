@@ -129,6 +129,9 @@ readonly rules_type='imageverificationrules.security.talos.dev'
 readonly roots_type='tuftrustedroots.security.talos.dev'
 readonly rules_owner='security.ImageVerificationConfigController'
 readonly roots_owner='security.TUFTrustedRootController'
+readonly ksail_pattern='ghcr.io/devantler-tech/ksail*'
+readonly provider_pattern='ghcr.io/devantler-tech/provider-upjet-*'
+readonly app_pattern='ghcr.io/devantler-tech/*'
 
 write_node() {
   mkdir -p "${fixtures}/$1/resources"
@@ -137,7 +140,11 @@ write_node() {
 # Emits one resource object in the shape `talosctl get -o json` produces: a
 # STREAM of objects, not an array.
 resource_obj() {
-  local id="$1" phase="$2" owner="$3" type="$4"
+  local id="$1" phase="$2" owner="$3" type="$4" image_pattern="${5:-}"
+  local spec='{}'
+  if [[ -n "${image_pattern}" ]]; then
+    spec="{\"imagePattern\":\"${image_pattern}\"}"
+  fi
   cat <<EOF
 {
     "metadata": {
@@ -149,7 +156,7 @@ resource_obj() {
         "version": 1
     },
     "node": "fixture",
-    "spec": {}
+    "spec": ${spec}
 }
 EOF
 }
@@ -162,14 +169,21 @@ write_roots() {
   cat >"${fixtures}/$1/resources/${roots_type}"
 }
 
+# The complete ordered rule set declared by the manifest.
+write_healthy_rules() {
+  local node="$1"
+  {
+    resource_obj 0000 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${ksail_pattern}"
+    resource_obj 0001 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${provider_pattern}"
+    resource_obj 0002 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
+  } | write_rules "${node}"
+}
+
 # The healthy shape, used as the control for every RED case below.
 healthy_node() {
   local node="$1"
   write_node "${node}"
-  {
-    resource_obj 0000 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev'
-    resource_obj 0001 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev'
-  } | write_rules "${node}"
+  write_healthy_rules "${node}"
   resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
     write_roots "${node}"
 }
@@ -186,8 +200,44 @@ run_script() {
 healthy_node good
 output="$(run_script TALOS_NODES=good 2>&1)" || fail "case 1: expected exit 0 for a node that can enforce"
 require_text "${output}" 'OK   good' 'case 1: reports the healthy node'
-require_text "${output}" '2 rule(s) in phase running' 'case 1: counts the running rules'
+require_text "${output}" '3 rule(s) in phase running' 'case 1: counts every declared running rule'
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 1: reports the summary'
+
+# ===========================================================================
+# Case 1a — RED: SOME declared rules materialised and are running, but the
+# catch-all rule is absent. A presence-only check reports this node healthy even
+# though images matched only by that rule are pulled without verification.
+# ===========================================================================
+write_node partialrules
+{
+  resource_obj 0000 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${ksail_pattern}"
+  resource_obj 0001 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${provider_pattern}"
+} | write_rules partialrules
+resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
+  write_roots partialrules
+status=0
+output="$(run_script TALOS_NODES=partialrules 2>&1)" || status=$?
+[[ "${status}" -eq 1 ]] || fail 'case 1a: a node missing one declared ImageVerificationRules resource MUST fail'
+require_text "${output}" 'FAIL partialrules' 'case 1a: names the partially materialised node'
+require_text "${output}" 'declared rule set' 'case 1a: names the incomplete policy'
+
+# ===========================================================================
+# Case 1b — RED: the right NUMBER of rules is running, but the last pattern is
+# stale. Counts alone cannot prove that the declared ordered policy materialised.
+# ===========================================================================
+write_node driftrules
+{
+  resource_obj 0000 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${ksail_pattern}"
+  resource_obj 0001 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${provider_pattern}"
+  resource_obj 0002 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
+} | write_rules driftrules
+resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
+  write_roots driftrules
+status=0
+output="$(run_script TALOS_NODES=driftrules 2>&1)" || status=$?
+[[ "${status}" -eq 1 ]] || fail 'case 1b: a runtime rule pattern that differs from the declaration MUST fail'
+require_text "${output}" 'FAIL driftrules' 'case 1b: names the node with policy drift'
+require_text "${output}" 'declared rule set' 'case 1b: names the drifted policy'
 
 # ===========================================================================
 # Case 2 — RED: the node holds NO ImageVerificationRules at all. The declared
@@ -240,9 +290,7 @@ require_text "${output}" 'not being enforced' 'case 4: names the condition that 
 # DIFFERENT failure from a missing rule and must be reported as its own.
 # ===========================================================================
 write_node noroot
-{
-  resource_obj 0000 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev'
-} | write_rules noroot
+write_healthy_rules noroot
 status=0
 output="$(run_script TALOS_NODES=noroot 2>&1)" || status=$?
 [[ "${status}" -eq 1 ]] || fail 'case 5: running rules with no trust root MUST fail'
@@ -253,9 +301,7 @@ require_text "${output}" 'no trust material' 'case 5: names the condition that f
 # Case 6 — RED: a trust root that exists but is not running.
 # ===========================================================================
 write_node staleroot
-{
-  resource_obj 0000 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev'
-} | write_rules staleroot
+write_healthy_rules staleroot
 resource_obj trusted_root.json tearingDown "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
   write_roots staleroot
 status=0

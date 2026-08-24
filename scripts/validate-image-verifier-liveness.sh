@@ -46,9 +46,10 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: validate-image-verifier-liveness.sh [--nodes <ip>[,<ip>...]]
 
-Asserts, for every node, that Talos' own image verification is live: at least one
-ImageVerificationRules resource in phase "running", and a TUFTrustedRoots trust
-root in phase "running" to verify against.
+Asserts, for every node, that Talos' own image verification is live: every
+declared ImageVerificationRules pattern is materialised in order and in phase
+"running", and a TUFTrustedRoots trust root is in phase "running" to verify
+against.
 
 Nodes are discovered from the cluster when --nodes/TALOS_NODES is not given, so
 autoscaled nodes are covered without anyone maintaining a list.
@@ -61,6 +62,9 @@ USAGE
 
 readonly talosctl_bin="${TALOSCTL:-talosctl}"
 readonly kubectl_bin="${KUBECTL:-kubectl}"
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly root_dir
+readonly policy_manifest="${root_dir}/talos/cluster/verify-first-party-images.yaml"
 
 nodes_arg="${TALOS_NODES:-}"
 
@@ -92,6 +96,37 @@ fail_infra() {
   printf 'ERROR: %s\n' "$1" >&2
   exit 2
 }
+
+# Read the ordered `rules[].image` policy without adding a yq dependency to the
+# production workflow. This manifest intentionally uses one plain or quoted
+# scalar per `- image:` row; if that shape disappears, an empty result fails
+# closed below instead of inventing an expected policy.
+declared_patterns_text="$(awk '
+  /^[[:space:]]*-[[:space:]]+image:[[:space:]]*/ {
+    line = $0
+    sub(/^[[:space:]]*-[[:space:]]+image:[[:space:]]*/, "", line)
+    sub(/[[:space:]]+#.*$/, "", line)
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+    if ((substr(line, 1, 1) == "\"" && substr(line, length(line), 1) == "\"") ||
+        (substr(line, 1, 1) == sprintf("%c", 39) && substr(line, length(line), 1) == sprintf("%c", 39))) {
+      line = substr(line, 2, length(line) - 2)
+    }
+    if (line != "") print line
+  }
+' "${policy_manifest}")" || fail_infra "could not read declared image-verification rules from ${policy_manifest}"
+
+declared_rule_patterns=()
+while IFS= read -r pattern; do
+  [[ -n "${pattern}" ]] || continue
+  declared_rule_patterns+=("${pattern}")
+done <<<"${declared_patterns_text}"
+[[ "${#declared_rule_patterns[@]}" -gt 0 ]] ||
+  fail_infra "no image-verification rules found in ${policy_manifest}"
+readonly declared_rule_count="${#declared_rule_patterns[@]}"
+declared_patterns_json="$(printf '%s\n' "${declared_rule_patterns[@]}" |
+  jq -R -s -c 'split("\n") | map(select(length > 0))')" ||
+  fail_infra 'could not encode the declared image-verification rule set'
+readonly declared_patterns_json
 
 # KUBECTL must name a bare binary, never a command with flags: it is invoked
 # quoted, so "kubectl --context x" would be looked up as a single executable
@@ -219,14 +254,19 @@ get_resource_json() {
   out="$("${talosctl_bin}" -n "${node}" get "${type}" -o json 2>/dev/null)" || status=$?
   [[ "${status}" -eq 0 ]] || return "${status}"
   # `jq -s` on empty input yields `[]`, which is the "none present" verdict.
-  printf '%s' "${out}" | jq -s -c '[.[] | {phase: (.metadata.phase // ""), owner: (.metadata.owner // "")}]' 2>/dev/null
+  printf '%s' "${out}" | jq -s -c '[.[] | {
+    id: (.metadata.id // ""),
+    phase: (.metadata.phase // ""),
+    owner: (.metadata.owner // ""),
+    imagePattern: (.spec.imagePattern // "")
+  }]' 2>/dev/null
 }
 
 # Verdict for ONE node. Returns 0 when that node's verification mechanism is
 # live, 1 when it is not.
 check_node() {
   local node="$1" rules trustroots status=0
-  local total_rules running_rules total_roots running_roots
+  local total_rules running_rules running_patterns total_roots running_roots
 
   rules="$(get_resource_json "${node}" "${rules_type}")" || status=$?
   if [[ "${status}" -ne 0 || -z "${rules}" ]]; then
@@ -250,6 +290,21 @@ check_node() {
   if [[ "${running_rules}" -eq 0 ]]; then
     printf 'FAIL %s: %s rule(s) present but none owned by %s in phase "running" — the rules exist as resources and are not being enforced\n' \
       "${node}" "${total_rules}" "${rules_owner}"
+    return 1
+  fi
+
+  # Talos assigns IDs 0000, 0001, ... in declaration order, and first match
+  # wins. Count and order are therefore both policy: one running rule is not a
+  # healthy substitute for three declared rules, and three stale patterns are
+  # not the declared policy merely because the totals happen to agree.
+  running_patterns="$(printf '%s' "${rules}" | jq -c --arg owner "${rules_owner}" \
+    '[sort_by(.id)[] | select(.phase == "running" and .owner == $owner) | .imagePattern]')" ||
+    fail_infra "could not compare materialised image-verification rules on ${node}"
+  if [[ "${total_rules}" -ne "${declared_rule_count}" ||
+    "${running_patterns}" != "${declared_patterns_json}" ]]; then
+    printf 'FAIL %s: materialised rules do not match the declared rule set — expected %s ordered running pattern(s) %s, found %s resource(s) with %s running pattern(s) %s\n' \
+      "${node}" "${declared_rule_count}" "${declared_patterns_json}" \
+      "${total_rules}" "${running_rules}" "${running_patterns}"
     return 1
   fi
 
