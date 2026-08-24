@@ -9,10 +9,6 @@ resources:
   # Crossplane CRDs, and Crossplane runs only on the Hetzner provider. The
   # docker provider deploys no apps, so it is naturally excluded from local.
   - crossview/
-  # Countdown to a puppy coming home — a single static page on
-  # simba.platform.devantler.tech, served by the shared platform gateway under
-  # its existing *.platform.devantler.tech certificate.
-  - doggy-countdown/
   # fleetdm disabled 2026-06-03 — not in use. The manifests under
   # bases/apps/fleetdm/ are retained; re-enable by uncommenting the line below.
   # The prod-only HelmRelease patch (providers/hetzner/apps/fleetdm/) was

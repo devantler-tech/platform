@@ -64,6 +64,15 @@ if [ -z "$consumers" ]; then
   exit 1
 fi
 
+# Derived from --list-consumers, never hard-coded: the count changes whenever a consumer is
+# onboarded or decommissioned, and a literal here fails the whole suite for a reason that has
+# nothing to do with what each case is testing. (Decommissioning doggy-countdown took it 5 -> 4
+# and broke fourteen assertions at once, none of which was about that tenant.)
+#   consumer_count  — every consumer resolves
+#   expected_insync — every consumer BUT the one a case deliberately breaks
+consumer_count="$(printf '%s\n' "$consumers" | grep -c .)"
+expected_insync=$((consumer_count - 1))
+
 write_table() { # <path> <special-repo|""> <special-signing> <special-current>
   local table="$1" special="$2" s_sign="$3" s_cur="$4" repo workflow
   : >"$table"
@@ -225,7 +234,6 @@ fi
 # ---------------------------------------------------------------------------
 partial_table="$WORK/partial.tsv"
 awk -F'\t' -v r="$first_repo" '$1 != r' "$agree_table" >"$partial_table"
-expected_insync=$(($(printf '%s\n' "$consumers" | grep -c .) - 1))
 partial_out="$WORK/partial.out"
 if PUBLISH_REVISION_RESOLVER="$(make_stub "$partial_table" partial)" "$SCRIPT" >"$partial_out" 2>&1; then
   fail 'a consumer the resolver could not answer for did not fail the run'
@@ -737,7 +745,7 @@ else
   bm_insync="$(grep -c '^IN-SYNC' "$bm_out" || true)"
   [ "$bm_unresolved" -eq 1 ] ||
     fail "expected exactly ONE unresolved consumer (the build-metadata tie), got $bm_unresolved — a different count means the fixture failed for an unrelated reason"
-  [ "$bm_insync" -eq 4 ] ||
+  [ "$bm_insync" -eq "$expected_insync" ] ||
     fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $bm_insync"
   grep -qE '^UNRESOLVED +wedding-app' "$bm_out" ||
     fail 'the unresolved consumer is not the one that ties'
@@ -770,7 +778,7 @@ else
   pt_insync="$(grep -c '^IN-SYNC' "$partial_tie_out" || true)"
   [ "$pt_unresolved" -eq 1 ] ||
     fail "expected exactly ONE unresolved consumer (the partial tie), got $pt_unresolved -- a different count means the fixture failed for an unrelated reason"
-  [ "$pt_insync" -eq 4 ] ||
+  [ "$pt_insync" -eq "$expected_insync" ] ||
     fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $pt_insync"
   pass 'a strict version tied by a partial tag refuses instead of preferring the strict spelling'
 fi
@@ -784,7 +792,7 @@ if BM_WEDDING_TAGS='v2.1.3\nv2.0\nv1.9.0\n' \
   BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/partial-ok.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$bm_root" "$SCRIPT" >"$partial_ok_out" 2>&1; then
   pok_insync="$(grep -c '^IN-SYNC' "$partial_ok_out" || true)"
-  [ "$pok_insync" -eq 5 ] ||
+  [ "$pok_insync" -eq "$consumer_count" ] ||
     fail "a version with no partial spelling must still resolve for all five consumers, got $pok_insync IN-SYNC"
   pass 'a version that has no partial spelling is unaffected by the partial-tie refusal'
 else
@@ -869,7 +877,7 @@ else
   vd_insync="$(grep -c '^IN-SYNC' "$vd_out" || true)"
   [ "$vd_unresolved" -eq 1 ] ||
     fail "expected exactly ONE unresolved consumer (the v-spelling duality), got $vd_unresolved"
-  [ "$vd_insync" -eq 4 ] ||
+  [ "$vd_insync" -eq "$expected_insync" ] ||
     fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $vd_insync"
   grep -qE '^UNRESOLVED +wedding-app' "$vd_out" ||
     fail 'the unresolved consumer is not the one publishing both spellings'
@@ -937,7 +945,7 @@ else
   # A CONTROL, counted rather than name-matched: the other four consumers keep an
   # unbounded range and must still resolve, or this "refusal" is just the fixture dying.
   up_insync="$(grep -c '^IN-SYNC' "$up_out" || true)"
-  [ "$up_insync" -eq 4 ] ||
+  [ "$up_insync" -eq "$expected_insync" ] ||
     fail "expected the other FOUR consumers to resolve IN-SYNC alongside the refusal, got $up_insync"
   pass 'an omitted spec.ref refuses by name instead of being looked up as a literal tag'
 fi
@@ -1015,7 +1023,7 @@ else
   mv_insync="$(grep -c '^IN-SYNC' "$mv_out" || true)"
   [ "$mv_unresolved" -eq 1 ] ||
     fail "expected exactly ONE unresolved consumer (the moved tag), got $mv_unresolved"
-  [ "$mv_insync" -eq 4 ] ||
+  [ "$mv_insync" -eq "$expected_insync" ] ||
     fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $mv_insync"
   grep -qE '^UNRESOLVED +wedding-app' "$mv_out" ||
     fail 'the unresolved consumer is not the one whose tag moved'
@@ -1032,8 +1040,8 @@ if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' \
   BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$mv2_root" "$SCRIPT" >"$mv2_out" 2>&1; then
   mv2_insync="$(grep -c '^IN-SYNC' "$mv2_out" || true)"
-  [ "$mv2_insync" -eq 5 ] ||
-    fail "the unmoved control resolved only $mv2_insync of 5 consumers — the moved-tag check is too broad"
+  [ "$mv2_insync" -eq "$consumer_count" ] ||
+    fail "the unmoved control resolved only $mv2_insync of $consumer_count consumers — the moved-tag check is too broad"
   pass 'an unmoved tag still resolves, so the moved-tag refusal is not rejecting every run'
 else
   fail "the unmoved control failed outright, so the moved-tag case above proves nothing: $(cat "$mv2_out")"
@@ -1086,7 +1094,7 @@ else
   ex_insync="$(grep -c '^IN-SYNC' "$ex_out" || true)"
   [ "$ex_unresolved" -eq 1 ] ||
     fail "expected exactly ONE unresolved consumer (the exact-pin duality), got $ex_unresolved"
-  [ "$ex_insync" -eq 4 ] ||
+  [ "$ex_insync" -eq "$expected_insync" ] ||
     fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $ex_insync"
   grep -qE '^UNRESOLVED +wedding-app' "$ex_out" ||
     fail 'the unresolved consumer is not the one pinning the doubly-spelled version'
@@ -1102,8 +1110,8 @@ if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' \
   BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$ex2_root" "$SCRIPT" >"$ex2_out" 2>&1; then
   ex2_insync="$(grep -c '^IN-SYNC' "$ex2_out" || true)"
-  [ "$ex2_insync" -eq 5 ] ||
-    fail "the single-spelling exact-pin control resolved only $ex2_insync of 5 consumers — the duality check is too broad"
+  [ "$ex2_insync" -eq "$consumer_count" ] ||
+    fail "the single-spelling exact-pin control resolved only $ex2_insync of $consumer_count consumers — the duality check is too broad"
   pass 'an exact pin resolves normally when only one spelling of its version exists'
 else
   fail "the single-spelling exact-pin control failed outright, so the duality case proves nothing: $(cat "$ex2_out")"
@@ -1137,7 +1145,7 @@ else
   iv_insync="$(grep -c '^IN-SYNC' "$iv_out" || true)"
   [ "$iv_unresolved" -eq 1 ] ||
     fail "expected exactly ONE unresolved consumer (the unrankable tag), got $iv_unresolved"
-  [ "$iv_insync" -eq 4 ] ||
+  [ "$iv_insync" -eq "$expected_insync" ] ||
     fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $iv_insync"
   pass 'a tag that is not valid SemVer and would outrank the best valid candidate refuses by name'
 fi
@@ -1179,8 +1187,8 @@ if BM_WEDDING_TAGS='v2.0.0\nv1.5\nv1.9.0\n' \
   BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$fx2_root" "$SCRIPT" >"$fx2_out" 2>&1; then
   fx2_insync="$(grep -c '^IN-SYNC' "$fx2_out" || true)"
-  [ "$fx2_insync" -eq 5 ] ||
-    fail "the below-rank control resolved only $fx2_insync of 5 consumers — the partial-version check refuses on mere existence, not on rank"
+  [ "$fx2_insync" -eq "$consumer_count" ] ||
+    fail "the below-rank control resolved only $fx2_insync of $consumer_count consumers — the partial-version check refuses on mere existence, not on rank"
   pass 'a partial version ranking below the best candidate does not refuse'
 else
   fail "the below-rank control failed outright — the partial-version refusal is too broad: $(cat "$fx2_out")"
@@ -1241,8 +1249,8 @@ if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_UNPUBLISHED_TAG='v2.0.0' \
   BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$nw_root" "$SCRIPT" >"$nw_out" 2>&1; then
   nw_insync="$(grep -c '^IN-SYNC' "$nw_out" || true)"
-  [ "$nw_insync" -eq 5 ] ||
-    fail "the never-published control resolved only $nw_insync of 5 consumers — the lookup-failure refusal swallowed the ordinary walk"
+  [ "$nw_insync" -eq "$consumer_count" ] ||
+    fail "the never-published control resolved only $nw_insync of $consumer_count consumers — the lookup-failure refusal swallowed the ordinary walk"
   pass 'a tag that genuinely never published still walks to the previous release'
 else
   fail "the never-published control failed outright — the lookup-failure refusal is too broad: $(cat "$nw_out")"
@@ -1259,8 +1267,8 @@ if BM_WEDDING_TAGS='v2.0.0\nv01.5.0\nv1.9.0\n' \
   BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$iv2_root" "$SCRIPT" >"$iv2_out" 2>&1; then
   iv2_insync="$(grep -c '^IN-SYNC' "$iv2_out" || true)"
-  [ "$iv2_insync" -eq 5 ] ||
-    fail "the below-rank control resolved only $iv2_insync of 5 consumers — the SemVer check refuses on mere existence, not on rank"
+  [ "$iv2_insync" -eq "$consumer_count" ] ||
+    fail "the below-rank control resolved only $iv2_insync of $consumer_count consumers — the SemVer check refuses on mere existence, not on rank"
   pass 'an unrankable tag ranking below the best valid candidate does not refuse'
 else
   fail "the below-rank control failed outright — the SemVer refusal is too broad: $(cat "$iv2_out")"
@@ -1290,7 +1298,7 @@ if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_TOCTOU_TAG='v2.0.0' \
   grep -qE "^(DIVERGED|IN-SYNC) +wedding-app .*signed=$SHA_B" "$tc_out" &&
     fail 'the signing revision came from the MOVED tag, so a workflow revision that never signed the artifact would enter the allow-list'
   tc_insync="$(grep -c '^IN-SYNC' "$tc_out" || true)"
-  [ "$tc_insync" -eq 5 ] ||
+  [ "$tc_insync" -eq "$consumer_count" ] ||
     fail "expected all FIVE consumers IN-SYNC through the same stub, got $tc_insync — the fixture failed for an unrelated reason"
   pass 'the signing pin is read at the commit whose publication was verified, not at the mutable tag'
 else

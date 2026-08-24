@@ -106,32 +106,6 @@ spec:
         - name: ascoachingogvaner
           port: 80
 ---
-# doggy-countdown — its single declared production hostname.
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: approved-simba
-  namespace: doggy-countdown
-spec:
-  hostnames:
-    - simba.platform.devantler.tech
-  rules:
-    - backendRefs:
-        - name: doggy-countdown
-          port: 80
----
-# Also previously unprotected: a hostname-less route in the third tenant.
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: no-hostnames-third-tenant
-  namespace: doggy-countdown
-spec:
-  rules:
-    - backendRefs:
-        - name: doggy-countdown
-          port: 80
----
 # A ksail tenant namespace with no allow-list rule: fail closed, so onboarding a
 # tenant without adding its hostnames is loud rather than silently unrestricted.
 apiVersion: gateway.networking.k8s.io/v1

@@ -12,14 +12,13 @@
 # hostname on the listener.
 #
 # Coverage: every namespace bound to the tenant-edit ClusterRole gets a rule.
-# Three namespaces reconcile tenant-controlled manifests as a tenant
-# ServiceAccount today — wedding-app, ascoachingogvaner and doggy-countdown — and
-# each has its own allow-list below, because tenant hostnames are not derivable
-# from the namespace name (wedding-app serves wedding.*, doggy-countdown serves
-# simba.*, ascoachingogvaner serves an apex customer domain). Each list is that
-# tenant's own declared set from its deploy/httproute.yaml, covering the
-# production hostname and the *.platform.lan name used on local/dev clusters
-# where the tenant declares one.
+# Two namespaces reconcile tenant-controlled manifests as a tenant
+# ServiceAccount today — wedding-app and ascoachingogvaner — and each has its own
+# allow-list below, because tenant hostnames are not derivable from the namespace
+# name (wedding-app serves wedding.*, ascoachingogvaner serves an apex customer
+# domain). Each list is that tenant's own declared set from its
+# deploy/httproute.yaml, covering the production hostname and the *.platform.lan
+# name used on local/dev clusters where the tenant declares one.
 #
 # Fail-closed for anything NOT listed: the final rule denies every HTTPRoute in a
 # ksail tenant namespace that has no allow-list rule above, so a newly onboarded
@@ -129,39 +128,10 @@ spec:
                   - ascoachingogvaner.dk
                   - www.ascoachingogvaner.dk
                   - ascoachingogvaner.platform.lan
-    - name: doggy-countdown-approved-hostnames
-      match:
-        any:
-          - resources:
-              kinds:
-                - HTTPRoute
-              namespaces:
-                - doggy-countdown
-      exclude:
-        any:
-          - subjects:
-              - kind: ServiceAccount
-                name: kustomize-controller
-                namespace: flux-system
-      validate:
-        message: >-
-          doggy-countdown HTTPRoutes must set spec.hostnames and may only use
-          simba.platform.devantler.tech. Omitting hostnames claims every hostname
-          on the shared platform Gateway listener.
-        deny:
-          conditions:
-            any:
-              - key: "{{ length(request.object.spec.hostnames || `[]`) }}"
-                operator: Equals
-                value: 0
-              - key: "{{ request.object.spec.hostnames || `[]` }}"
-                operator: AnyNotIn
-                value:
-                  - simba.platform.devantler.tech
     # Catch-all: any ksail tenant namespace without an allow-list rule above. This
     # is what makes onboarding fail loudly instead of silently unrestricted — the
-    # exact gap that left this policy covering only wedding-app while
-    # ascoachingogvaner and doggy-countdown shared the same wildcard Gateway.
+    # exact gap that once left this policy covering only wedding-app while other
+    # tenants shared the same wildcard Gateway.
     - name: unlisted-tenant-namespace-has-no-approved-hostnames
       match:
         any:
@@ -182,7 +152,6 @@ spec:
               namespaces:
                 - wedding-app
                 - ascoachingogvaner
-                - doggy-countdown
       validate:
         message: >-
           This tenant namespace has no approved hostnames. Add an allow-list rule

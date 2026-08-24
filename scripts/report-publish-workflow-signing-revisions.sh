@@ -44,7 +44,6 @@ readonly EXPECTED_CONSUMERS=(
   '.github'
   'ascoachingogvaner'
   'aws'
-  'doggy-countdown'
   'wedding-app'
 )
 

@@ -44,19 +44,6 @@ results:
       - ascoachingogvaner/steals-wedding-hostname
     kind: HTTPRoute
     result: fail
-  # --- doggy-countdown: previously UNCOVERED by this policy ---
-  - policy: restrict-tenant-route-hostnames
-    rule: doggy-countdown-approved-hostnames
-    resources:
-      - doggy-countdown/approved-simba
-    kind: HTTPRoute
-    result: pass
-  - policy: restrict-tenant-route-hostnames
-    rule: doggy-countdown-approved-hostnames
-    resources:
-      - doggy-countdown/no-hostnames-third-tenant
-    kind: HTTPRoute
-    result: fail
   # --- fail-closed catch-all ---
   - policy: restrict-tenant-route-hostnames
     rule: unlisted-tenant-namespace-has-no-approved-hostnames
