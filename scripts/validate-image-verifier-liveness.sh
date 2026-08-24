@@ -1,36 +1,44 @@
 #!/usr/bin/env bash
 
-# Assert that the node image verifier can enforce AT ALL.
+# Assert that node-level image verification can enforce AT ALL.
 #
 # `talos/cluster/verify-first-party-images.yaml` declares ImageVerificationConfig
-# rules. Those rules are inert on their own: containerd does not verify images
-# itself, it delegates to the `io.containerd.image-verifier.v1.bindir` plugin,
-# which executes every binary in a configured `bin_dir`. containerd's documented
-# behaviour when that directory is unset, absent, or empty is to permit the pull:
+# rules. Talos v1.13 verifies images ITSELF: no external verifier binary is
+# involved, and containerd's `io.containerd.image-verifier.v1.bindir` plugin is
+# not the mechanism on this platform. Two node-local controllers own it:
 #
-#   "If bin_dir does not exist or contains no files, the image verifier does not
-#    block image pulls."
+#   * `security.ImageVerificationConfigController` materialises each declared
+#     rule into an `ImageVerificationRules.security.talos.dev` resource, and
+#   * `security.TUFTrustedRootController` maintains the Sigstore TUF trust root
+#     (`TUFTrustedRoots.security.talos.dev`) that keyless verification needs.
 #
-# So a cluster with perfect rules and no verifier binary reads EXACTLY like a
-# compliant one from every surface we routinely check — the rules are present,
-# the node config matches the repository, CI is green — while every image pulls
-# unverified. That is not hypothetical: it was the live state of this cluster,
-# found only by hand (devantler-tech/platform#2856).
-#
-# This check asserts the ENFORCEMENT PATH, not the configuration. Asserting that
-# the rules exist would NOT have caught #2856 — the rules were correct
-# throughout. It is deliberately the weaker of the two signals that issue asks
-# for; the strong one is a behavioural test that a known-unsigned image is
-# actually refused (#3101). This one's value is that it needs no node rollout
-# and fails loudly while the verifier is missing.
+# A rule that never reached `phase: running`, or a node with no trust root, is a
+# node where the declared rules decide nothing — while the repository, the
+# rendered manifests and CI all still read as compliant. That is the silent
+# enforcement gap this check exists to break (devantler-tech/platform#2856).
 #
 # It reads LIVE NODE STATE on purpose. A variant that read the repository would
 # re-create the exact blind spot it exists to close.
 #
-# SECURITY: the rendered `/etc/cri/conf.d/cri.toml` carries registry
-# credentials. Every read of it is piped straight into a key extractor; the
-# file's contents are never stored in a variable, echoed, or included in an
-# error message. Keep it that way — this script's output goes to CI logs.
+# WHAT THIS DOES NOT PROVE. That the controllers hold running rules and trust
+# material is necessary for enforcement, not sufficient: it does not establish
+# that a matched rule has ever produced a verification DECISION, because a
+# cached image is never re-pulled. That behavioural proof — a known-unsigned
+# image demonstrably refused at pull — is devantler-tech/platform#3336's job.
+# This check's value is that it needs no rollout and fails loudly when the
+# mechanism itself is not running.
+#
+# HISTORY, because it changes how a reader should read a green result: until
+# 2026-08-24 this script asserted a containerd `bin_dir`. No `bin_dir` is
+# configured anywhere on this cluster, so it reported a permanent, confident
+# FAIL on nodes that were verifying correctly (#3108). Trust its verdict only
+# from that date forward.
+#
+# SECURITY: this check reads Talos resources only. It deliberately does NOT read
+# `/etc/cri/conf.d/cri.toml`, which carries registry credentials on this
+# cluster — the previous bin_dir implementation had to, and this script's output
+# goes to CI logs. Keep it that way: no node file is read here, so no credential
+# can reach an error message.
 
 set -euo pipefail
 
@@ -38,13 +46,14 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: validate-image-verifier-liveness.sh [--nodes <ip>[,<ip>...]]
 
-Asserts, for every node, that containerd's image-verifier bin_dir is configured,
-exists, and holds at least one executable.
+Asserts, for every node, that Talos' own image verification is live: at least one
+ImageVerificationRules resource in phase "running", and a TUFTrustedRoots trust
+root in phase "running" to verify against.
 
 Nodes are discovered from the cluster when --nodes/TALOS_NODES is not given, so
 autoscaled nodes are covered without anyone maintaining a list.
 
-Environment overrides: TALOSCTL, KUBECTL, TALOS_NODES, CONTAINERD_CONFIG_FILES
+Environment overrides: TALOSCTL, KUBECTL, KUBECTL_CONTEXT, TALOS_NODES
 Exit: 0 every node can enforce; 1 at least one cannot; 2 usage/infrastructure error.
 USAGE
   exit 2
@@ -78,11 +87,6 @@ while [[ "$#" -gt 0 ]]; do
     *) usage ;;
   esac
 done
-
-# Both containerd instances matter: the CRI one pulls workload images, the system
-# one pulls Talos' own. A verifier wired into only one leaves the other open.
-readonly default_config_files='/etc/cri/conf.d/cri.toml /etc/containerd/config.toml'
-read -r -a config_files <<<"${CONTAINERD_CONFIG_FILES:-${default_config_files}}"
 
 fail_infra() {
   printf 'ERROR: %s\n' "$1" >&2
@@ -149,120 +153,8 @@ discover_nodes() {
     fail_infra 'could not parse node addresses from kubectl output'
 }
 
-# `ls` reports a path's EXISTENCE without emitting its contents, so its exit
-# status is safe to branch on; `read` emits the whole config, so a failed read
-# must never be the thing that tells "absent" apart from "unreachable".
-#
-# That distinction is load-bearing. Inferring absence from a failed read means a
-# node the runner cannot reach — expired talosconfig, network partition, API
-# down — looks exactly like a node that simply does not ship that config file.
-# Such a node would be skipped silently, and if any OTHER containerd config
-# declared a verifier the fleet would pass while nothing had been checked: the
-# same fail-open shape this script exists to detect, reintroduced in the
-# detector.
-# Three-state probe: 'present', 'absent', or 'error'.
-#
-# A failed `ls` is ambiguous — the path may not be there, or the node may have
-# hiccuped — and only the first of those is a verdict. Collapsing both into
-# "this node does not ship that config" lets a transient fault silently drop one
-# containerd from the check; if the OTHER one is wired up, `configs_present`
-# stays nonzero and the node passes with half its image paths never inspected.
-#
-# Only a CONFIRMED not-found counts as absent, and the discriminator has to be
-# the stderr text because talosctl exits 1 for both. `ls` on a path emits only
-# that path's name and never file contents, so matching its stderr cannot expose
-# the registry credentials that `/etc/cri/conf.d/cri.toml` carries.
-path_probe() {
-  local node="$1" path="$2" err status=0
-  err="$("${talosctl_bin}" -n "${node}" ls "${path}" 2>&1 >/dev/null)" || status=$?
-  if [[ "${status}" -eq 0 ]]; then
-    printf 'present\n'
-    return 0
-  fi
-  case "${err}" in
-    *'no such file or directory'* | *'NotFound'* | *'not found'*) printf 'absent\n' ;;
-    *) printf 'error\n' ;;
-  esac
-}
-
 node_reachable() {
   "${talosctl_bin}" -n "$1" ls / >/dev/null 2>&1
-}
-
-# Emits the bin_dir declared by ONE config file's image-verifier plugin, or
-# nothing when that file declares none.
-#
-# Scoped to the `io.containerd.image-verifier.v1.bindir` table on purpose.
-# `bin_dir` is a generic key name, and an unscoped match accepts one from an
-# unrelated plugin's table — reporting a node as enforcing on the strength of a
-# setting containerd never consults for image verification.
-#
-# The config is piped straight into awk and only the extracted value is ever
-# printed. `/etc/cri/conf.d/cri.toml` carries registry credentials and this
-# script's output goes to CI logs, so the file must never be captured — not into
-# a variable, not into a temp file, not into an error message. See the SECURITY
-# note at the top.
-#
-# awk rather than sed because the table scoping needs state across lines, and
-# because awk consumes all input: a `sed ... | head -n 1` pipeline closes the
-# pipe early, and under `pipefail` the resulting SIGPIPE is indistinguishable
-# from a genuine read failure.
-extract_bin_dir_from() {
-  local node="$1" file="$2"
-  "${talosctl_bin}" -n "${node}" read "${file}" 2>/dev/null | awk '
-    BEGIN { SQ = sprintf("%c", 39); DQ = sprintf("%c", 34); want = 0; found = 0 }
-    found { next }
-    /^[ \t]*\[/ {
-      header = $0
-      gsub(/[ \t]/, "", header)
-      gsub(SQ, "", header)
-      gsub(DQ, "", header)
-      want = (header == "[plugins.io.containerd.image-verifier.v1.bindir]")
-      next
-    }
-    want && match($0, /^[ \t]*bin_dir[ \t]*=/) {
-      value = substr($0, RSTART + RLENGTH)
-      sub(/^[ \t]*/, "", value)
-      quote = substr(value, 1, 1)
-      if (quote != SQ && quote != DQ) next
-      value = substr(value, 2)
-      end = index(value, quote)
-      if (end == 0) next
-      print substr(value, 1, end - 1)
-      found = 1
-    }
-  '
-}
-
-# Counts executable entries, skipping the directory's own '.' entry. MODE is
-# always column 2; NAME is always last. The LABEL column is empty for some files
-# on this cluster, so positional parsing from the left past column 2 is unsafe.
-#
-# The MODE's first character is the entry TYPE, and it must be checked: a
-# directory's mode ('drwxr-xr-x') carries an 'x' too, so counting any entry with
-# an 'x' would let a bin_dir holding nothing but a subdirectory report as
-# enforcing. containerd executes FILES in bin_dir and does not descend into
-# subdirectories, so such a node permits every pull while this check calls it
-# healthy — the precise fail-open this script exists to detect. Regular files
-# ('-') and symlinks ('l') count; everything else does not.
-#
-# The listing's exit status is preserved, not discarded. The caller only reaches
-# this after the directory was proven to exist, so a failure here means the node
-# stopped answering mid-check — which must be an infrastructure error, never the
-# "holds no executable" verdict. `awk` on empty input prints 0 quite happily, so
-# swallowing the status turns an unreachable node into a confident FAIL line.
-count_executables() {
-  local node="$1" dir="$2" listing status=0
-  listing="$("${talosctl_bin}" -n "${node}" ls -l "${dir}" 2>/dev/null)" || status=$?
-  [[ "${status}" -eq 0 ]] ||
-    fail_infra "could not list ${dir} on ${node} (the directory exists but talosctl ls failed)"
-  printf '%s\n' "${listing}" |
-    awk 'NR > 1 && $NF != "." && substr($2, 1, 1) ~ /^[-l]$/ && $2 ~ /x/ { n++ } END { print n + 0 }'
-}
-
-directory_exists() {
-  local node="$1" dir="$2"
-  "${talosctl_bin}" -n "${node}" ls "${dir}" >/dev/null 2>&1
 }
 
 # Built with a read loop rather than `mapfile` so the script and its tests run
@@ -306,101 +198,103 @@ fi
 
 [[ "${#nodes[@]}" -gt 0 ]] || fail_infra 'no nodes to check'
 
-# Verdict for ONE containerd instance on one node. Returns 0 when that instance
-# can enforce, 1 when it cannot.
-check_config() {
-  local node="$1" file="$2" bin_dir status=0 executables exec_status=0
+readonly rules_type='imageverificationrules.security.talos.dev'
+readonly trustroot_type='tuftrustedroots.security.talos.dev'
+readonly rules_owner='security.ImageVerificationConfigController'
+readonly trustroot_owner='security.TUFTrustedRootController'
 
-  bin_dir="$(extract_bin_dir_from "${node}" "${file}")" || status=$?
-  # The file's existence was proven before this call, so a read failure here is
-  # an infrastructure fault, never a verdict. Reporting it as "cannot enforce"
-  # would be a misdiagnosis; swallowing it would be a fail-open.
-  [[ "${status}" -eq 0 ]] ||
-    fail_infra "could not read ${file} on ${node} (the file exists but talosctl read failed)"
+# Emits ONE resource type's rows on one node as a compact JSON array, or returns
+# non-zero. `talosctl get -o json` emits a STREAM of objects (not an array), and
+# emits nothing at all when the type has no instances, so `jq -s` is what turns
+# both shapes into something countable.
+#
+# An empty result and a failed query are NOT the same thing, and this returns
+# them differently on purpose: "the node holds no rules" is a verdict, "the
+# query failed" is an infrastructure fault. Collapsing them would let an
+# expired talosconfig or a partitioned node read as "verification is not
+# configured here" — a confident wrong answer, which is the failure mode this
+# script was rewritten to remove rather than reintroduce one level down.
+get_resource_json() {
+  local node="$1" type="$2" out status=0
+  out="$("${talosctl_bin}" -n "${node}" get "${type}" -o json 2>/dev/null)" || status=$?
+  [[ "${status}" -eq 0 ]] || return "${status}"
+  # `jq -s` on empty input yields `[]`, which is the "none present" verdict.
+  printf '%s' "${out}" | jq -s -c '[.[] | {id: (.metadata.id|tostring), phase: (.metadata.phase // ""), owner: (.metadata.owner // "")}]' 2>/dev/null
+}
 
-  if [[ -z "${bin_dir}" ]]; then
-    printf 'FAIL %s [%s]: no bin_dir in the io.containerd.image-verifier.v1.bindir table — the plugin has no directory to run, so containerd permits every pull\n' \
-      "${node}" "${file}"
-    return 1
-  fi
+# Verdict for ONE node. Returns 0 when that node's verification mechanism is
+# live, 1 when it is not.
+check_node() {
+  local node="$1" rules trustroots status=0
+  local total_rules running_rules total_roots running_roots
 
-  if ! directory_exists "${node}" "${bin_dir}"; then
-    # "The directory is not there" and "the node stopped answering" are the same
-    # failed `ls` from here. Only the first is a verdict; reporting the second as
-    # one would blame the cluster for a runner-side fault.
+  rules="$(get_resource_json "${node}" "${rules_type}")" || status=$?
+  if [[ "${status}" -ne 0 || -z "${rules}" ]]; then
+    # "The node is gone" and "the node answered but this query failed" deserve
+    # different diagnoses, and neither is a verdict.
     node_reachable "${node}" ||
-      fail_infra "cannot reach node ${node} while checking ${bin_dir} (talosctl ls / failed)"
-    printf 'FAIL %s [%s]: bin_dir %s is configured but does not exist — containerd permits every pull\n' \
-      "${node}" "${file}" "${bin_dir}"
+      fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
+    fail_infra "could not read ${rules_type} on ${node} (the node is reachable but the query failed) — refusing to report a node whose verification state was never inspected"
+  fi
+
+  total_rules="$(printf '%s' "${rules}" | jq -r 'length')"
+  running_rules="$(printf '%s' "${rules}" | jq -r --arg owner "${rules_owner}" \
+    '[.[] | select(.phase == "running" and .owner == $owner)] | length')"
+
+  if [[ "${total_rules}" -eq 0 ]]; then
+    printf 'FAIL %s: no %s resources — the declared ImageVerificationConfig rules were never materialised on this node, so nothing constrains a pull\n' \
+      "${node}" "${rules_type}"
     return 1
   fi
 
-  # `fail_infra` inside count_executables would exit only the command
-  # substitution, so its status is carried out explicitly — the same subshell
-  # trap that made partial node discovery pass silently.
-  executables="$(count_executables "${node}" "${bin_dir}")" || exec_status=$?
-  [[ "${exec_status}" -eq 0 ]] ||
-    fail_infra "could not list ${bin_dir} on ${node} (the directory exists but talosctl ls failed)"
-
-  if [[ "${executables}" -eq 0 ]]; then
-    printf 'FAIL %s [%s]: bin_dir %s holds no executable — containerd permits every pull\n' \
-      "${node}" "${file}" "${bin_dir}"
+  if [[ "${running_rules}" -eq 0 ]]; then
+    printf 'FAIL %s: %s rule(s) present but none owned by %s in phase "running" — the rules exist as resources and are not being enforced\n' \
+      "${node}" "${total_rules}" "${rules_owner}"
     return 1
   fi
 
-  printf 'OK   %s [%s]: bin_dir %s holds %s executable(s)\n' \
-    "${node}" "${file}" "${bin_dir}" "${executables}"
+  status=0
+  trustroots="$(get_resource_json "${node}" "${trustroot_type}")" || status=$?
+  if [[ "${status}" -ne 0 || -z "${trustroots}" ]]; then
+    node_reachable "${node}" ||
+      fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
+    fail_infra "could not read ${trustroot_type} on ${node} (the node is reachable but the query failed) — refusing to report a node whose verification state was never inspected"
+  fi
+
+  total_roots="$(printf '%s' "${trustroots}" | jq -r 'length')"
+  running_roots="$(printf '%s' "${trustroots}" | jq -r --arg owner "${trustroot_owner}" \
+    '[.[] | select(.phase == "running" and .owner == $owner)] | length')"
+
+  # The trust root is checked SECOND and separately because its absence is a
+  # different failure from a missing rule: the rules can be perfectly live and
+  # still decide nothing if there is no Sigstore trust material to verify a
+  # keyless signature against.
+  if [[ "${total_roots}" -eq 0 ]]; then
+    printf 'FAIL %s: %s running rule(s) but no %s — keyless verification has no trust material, so a signature cannot be checked\n' \
+      "${node}" "${running_rules}" "${trustroot_type}"
+    return 1
+  fi
+
+  if [[ "${running_roots}" -eq 0 ]]; then
+    printf 'FAIL %s: trust root present but not owned by %s in phase "running" — keyless verification has no usable trust material\n' \
+      "${node}" "${trustroot_owner}"
+    return 1
+  fi
+
+  printf 'OK   %s: %s rule(s) in phase running, %s trust root(s) running\n' \
+    "${node}" "${running_rules}" "${running_roots}"
   return 0
 }
 
 failures=0
 for node in "${nodes[@]}"; do
-  # Every containerd instance present on the node is evaluated INDEPENDENTLY.
-  # Accepting the first config that declares a bin_dir would let a wired-up CRI
-  # containerd mask an unprotected system containerd (or the reverse) — and the
-  # two pull different images: CRI pulls workload images, the system instance
-  # pulls Talos' own. A verifier on one leaves the other open, which is the
-  # whole point of checking both.
-  configs_present=0
-  node_failures=0
-  for config_file in "${config_files[@]}"; do
-    case "$(path_probe "${node}" "${config_file}")" in
-      present) ;;
-      absent)
-        # A confirmed not-found normally proves the node answered — but the same
-        # phrase can come from a client-side fault (a missing talosconfig, say),
-        # which would otherwise read as "this node does not ship that config".
-        # The reachability probe is what tells those two apart.
-        node_reachable "${node}" ||
-          fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
-        continue
-        ;;
-      *)
-        # Both "the node is gone" and "the node answered but this one probe
-        # failed" arrive here, and they deserve different diagnoses: the first
-        # is a fleet-wide fault, the second is specific to one containerd.
-        # Neither is a verdict, so both stop the run either way.
-        node_reachable "${node}" ||
-          fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
-        fail_infra "could not determine whether ${config_file} exists on ${node} (talosctl ls failed for a reason other than the file being absent) — refusing to report a node whose containerd was never inspected"
-        ;;
-    esac
-    configs_present=$((configs_present + 1))
-    check_config "${node}" "${config_file}" || node_failures=$((node_failures + 1))
-  done
-
-  # No containerd configuration at all is not a clean node — it means this check
-  # looked at nothing and would otherwise pass the node by default.
-  [[ "${configs_present}" -gt 0 ]] ||
-    fail_infra "no containerd configuration found on ${node} (looked in ${config_files[*]})"
-
-  [[ "${node_failures}" -eq 0 ]] || failures=$((failures + 1))
+  check_node "${node}" || failures=$((failures + 1))
 done
 
 if [[ "${failures}" -gt 0 ]]; then
   printf '\n%s of %s node(s) cannot enforce image verification.\n' "${failures}" "${#nodes[@]}" >&2
-  printf 'The ImageVerificationConfig rules in talos/cluster/verify-first-party-images.yaml are not being evaluated on those nodes.\n' >&2
-  printf 'See devantler-tech/platform#2856 (finding) and #3101 (installing the verifier).\n' >&2
+  printf 'The ImageVerificationConfig rules in talos/cluster/verify-first-party-images.yaml are declared, but Talos is not enforcing them on those nodes.\n' >&2
+  printf 'See devantler-tech/platform#2856 (finding) and #3336 (proving a refusal at pull).\n' >&2
   exit 1
 fi
 

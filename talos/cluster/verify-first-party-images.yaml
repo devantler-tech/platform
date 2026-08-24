@@ -1,18 +1,22 @@
 # Container image signature verification (Talos 1.13+, ImageVerificationConfig).
 #
-# STATUS — THESE RULES ARE INERT ON THIS CLUSTER TODAY.
-# containerd does not verify images itself: it delegates to the
-# `io.containerd.image-verifier.v1.bindir` plugin, and permits every pull when
-# that plugin has no `bin_dir` or the directory holds no binary. No node
-# configures a `bin_dir` at all, so nothing below is evaluated and no pull is
-# gated by it. Installing and wiring the verifier is #3101; the finding is
-# #2856.
+# STATUS — Talos evaluates these rules on this cluster.
+# Talos v1.13 verifies images ITSELF. There is no external verifier binary, and
+# containerd's `io.containerd.image-verifier.v1.bindir` plugin is not the
+# mechanism here. `security.ImageVerificationConfigController` materialises each
+# rule below into an `ImageVerificationRules.security.talos.dev` resource on
+# every node, and `security.TUFTrustedRootController` maintains the Sigstore TUF
+# trust root that keyless verification needs.
+#
+# What is NOT established is that a matched rule has ever produced a
+# verification DECISION: every first-party image is already cached, so no
+# rule-matching pull occurs. Proving a refusal at pull is #3336. The original
+# finding is #2856.
 #
 # Check this, do not assume it. The repository cannot answer it — the rules read
-# as correct in exactly the state where they do nothing, which is why this went
-# unnoticed for weeks:
+# as correct whether or not anything evaluates them:
 #     scripts/validate-image-verifier-liveness.sh
-# Measured 2026-08-18: 7 of 7 nodes could not enforce.
+# Measured 2026-08-24: 7 of 7 nodes hold running rules and a running trust root.
 #
 # BEFORE ACTIVATING (#3101): an image that matches a rule but fails
 # verification is refused, so any first-party image that is running yet
