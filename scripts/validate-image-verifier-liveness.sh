@@ -219,7 +219,7 @@ get_resource_json() {
   out="$("${talosctl_bin}" -n "${node}" get "${type}" -o json 2>/dev/null)" || status=$?
   [[ "${status}" -eq 0 ]] || return "${status}"
   # `jq -s` on empty input yields `[]`, which is the "none present" verdict.
-  printf '%s' "${out}" | jq -s -c '[.[] | {id: (.metadata.id|tostring), phase: (.metadata.phase // ""), owner: (.metadata.owner // "")}]' 2>/dev/null
+  printf '%s' "${out}" | jq -s -c '[.[] | {phase: (.metadata.phase // ""), owner: (.metadata.owner // "")}]' 2>/dev/null
 }
 
 # Verdict for ONE node. Returns 0 when that node's verification mechanism is
