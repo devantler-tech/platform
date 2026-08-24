@@ -1376,8 +1376,7 @@ func validatePinnedUnifiSource(document map[string]any, identity resourceIdentit
 	return nil
 }
 
-const expectedUnifiSigningKeySHA = "40ce89d21fb075092d256f9fbf62a1c1" +
-	"9299d3282cb913d3e61d08235d0c491a"
+const expectedUnifiPublicMaterialSHA = "40ce89d21fb075092d256f9fbf62a1c19299d3282cb913d3e61d08235d0c491a"
 
 // validateUnifiSigningKey pins the public trust root used by the UniFi
 // GitRepository. A secretRef alone only proves that Flux will look up a name;
@@ -1406,7 +1405,7 @@ func validateUnifiSigningKey(documents []map[string]any) error {
 		if !ok || key == "" {
 			return errors.New("unifi Git signing key Secret must contain github.asc")
 		}
-		if actual := fingerprint([]byte(key)); actual != expectedUnifiSigningKeySHA {
+		if actual := fingerprint([]byte(key)); actual != expectedUnifiPublicMaterialSHA {
 			return fmt.Errorf("unapproved unifi Git signing key fingerprint: %s", actual)
 		}
 	}
