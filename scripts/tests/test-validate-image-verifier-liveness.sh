@@ -415,7 +415,6 @@ output="$(run_script 2>&1)" || fail 'case 16: a fleet of distinct nodes with dis
 require_text "${output}" 'OK   10.0.1.4' 'case 16: control reports the first discovered node'
 require_text "${output}" 'OK   10.0.1.6' 'case 16: control reports the second discovered node'
 
-
 # ===========================================================================
 # Case 17 — SECURITY: the check must never read a node FILE. Until 2026-08-24
 # it parsed /etc/cri/conf.d/cri.toml, which carries registry credentials on
