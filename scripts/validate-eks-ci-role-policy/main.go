@@ -1376,7 +1376,8 @@ func validatePinnedUnifiSource(document map[string]any, identity resourceIdentit
 	return nil
 }
 
-const expectedUnifiSigningKeySHA = "40ce89d21fb075092d256f9fbf62a1c19299d3282cb913d3e61d08235d0c491a"
+const expectedUnifiSigningKeySHA = "40ce89d21fb075092d256f9fbf62a1c1" +
+	"9299d3282cb913d3e61d08235d0c491a"
 
 // validateUnifiSigningKey pins the public trust root used by the UniFi
 // GitRepository. A secretRef alone only proves that Flux will look up a name;
