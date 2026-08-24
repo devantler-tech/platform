@@ -128,7 +128,7 @@ floor="$(sed -n 's/^readonly EXPECTED_MIN_SUBJECTS=\([0-9][0-9]*\).*/\1/p' "${gu
 for i in $(seq 8 -1 $((floor))); do
   rm -f "${tree}/k8s/subject-${i}.yaml"
 done
-survivors="$(ls "${tree}/k8s" | wc -l | tr -d ' ')"
+survivors="$(find "${tree}/k8s" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')"
 [ "${survivors}" -lt "${floor}" ] ||
   fail "red-floor fixture left ${survivors} subjects, not below the floor of ${floor}"
 if run_tree "${tree}"; then

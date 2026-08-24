@@ -57,6 +57,32 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
+// Measured against main d7062144 before approving this value: 550 documents on
+// main and 544 on this branch — six REMOVED, zero added, zero renamed, proven by
+// set difference in BOTH directions over the complete
+// apiVersion|kind|namespace|name identity across all five rendered overlays.
+// Neither side carries a duplicate identity, so that pairing is one-to-one. The
+// six removals are the decommissioned doggy-countdown tenant and nothing else:
+//
+//	kustomize.toolkit.fluxcd.io/v1  Kustomization   doggy-countdown/doggy-countdown
+//	networking.k8s.io/v1            NetworkPolicy   doggy-countdown/default-deny
+//	rbac.authorization.k8s.io/v1    RoleBinding     doggy-countdown/doggy-countdown
+//	source.toolkit.fluxcd.io/v1     OCIRepository   doggy-countdown/doggy-countdown
+//	v1                              Namespace       doggy-countdown
+//	v1                              ServiceAccount  doggy-countdown/doggy-countdown
+//
+// This is the exact inverse of the approval taken when the tenant was onboarded.
+// Grant-bearing documents fall from 80 to 78 (Role / ClusterRole / RoleBinding /
+// ClusterRoleBinding / ServiceAccount 11/24/16/12/17 -> 11/24/15/12/16) — exactly
+// the one RoleBinding and one ServiceAccount above, and no other grant moves.
+// Three surviving documents change content: the restrict-tenant-route-hostnames
+// ClusterPolicy, the flux-system/platform-reconciliation Alert and the homepage
+// ConfigMap. Each is purely subtractive — across those three sources the diff
+// adds no non-comment line, dropping only the doggy-countdown rule, watch entry
+// and dashboard entry. All 121 aws-bearing lines are byte-identical across the
+// two trees, so nothing granted to the aws/aws service account this validator
+// exists to protect is touched.
+//
 // Measured against main df5bcc39 before approving this value: 534 documents on
 // both sides, membership IDENTICAL — zero added, zero removed, zero renamed,
 // proven by set difference in BOTH directions over the complete
@@ -1247,7 +1273,7 @@ const (
 //
 //	2e5ff04e52117cdbdc88261c35845e51a17ff31b709ed5b7d449b5076c08d8e1
 //	bef0f81a74a01efa995543c82c4adf5c18123f3e1b31d0430719f9a3af53daa5
-const expectedRenderedSurfaceSHA = "54b0b907d2d6a870b9213927f246b79ba1fd7366e6d83a7792284d0c7e683a08"
+const expectedRenderedSurfaceSHA = "3ef2555fe188f77b84a5927739842929f637688713fa6510bf2c682adce3643b"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
