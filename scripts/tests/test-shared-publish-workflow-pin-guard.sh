@@ -118,9 +118,21 @@ assert_rejected "a partially grouped alternation" '([0-9a-f]{40})?refs/heads/.+'
 
 tree="${work_dir}/red-floor"
 build_tree "${tree}" "[0-9a-f]{40}"
-rm "${tree}/k8s/subject-8.yaml"
+# Derive how many to delete from the guard's OWN floor, rather than hard-coding "remove one".
+# build_tree writes 8 subjects; the case is only meaningful while the survivors are BELOW the
+# floor. Hard-coding it meant lowering the floor to 7 silently turned this RED case green — the
+# floor stopped being tested at the exact moment it changed, which is the failure this case exists
+# to catch.
+floor="$(sed -n 's/^readonly EXPECTED_MIN_SUBJECTS=\([0-9][0-9]*\).*/\1/p' "${guard}")"
+[ -n "${floor}" ] || fail "could not read EXPECTED_MIN_SUBJECTS from the guard; this case cannot be sized"
+for i in $(seq 8 -1 $((floor))); do
+  rm -f "${tree}/k8s/subject-${i}.yaml"
+done
+survivors="$(ls "${tree}/k8s" | wc -l | tr -d ' ')"
+[ "${survivors}" -lt "${floor}" ] ||
+  fail "red-floor fixture left ${survivors} subjects, not below the floor of ${floor}"
 if run_tree "${tree}"; then
-  fail "guard passed with only seven subjects — the floor did not fail closed"
+  fail "guard passed with ${survivors} subjects, below its floor of ${floor} — the floor did not fail closed"
 fi
 grep -q 'expected at least' "${tree}/stderr" || fail "floor fired but with the wrong message"
 ok "fails closed when fewer subjects are found than expected"
