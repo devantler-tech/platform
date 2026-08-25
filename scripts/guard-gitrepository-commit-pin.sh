@@ -27,6 +27,19 @@
 # therefore reports a Kustomization as an unpinned GitRepository — a false
 # refusal on a file that is correct. Only a top-level `.kind` decides.
 #
+# 🔴 AND `.kind` ALONE DOES NOT IDENTIFY A RESOURCE — `.apiVersion` IS HALF OF IT.
+#
+# `GitRepository` is not a reserved word. An unrelated CRD may declare that kind,
+# and such a resource has no `spec.ref.commit` and is not subject to this policy,
+# so counting it fails CI on a correct file. Only the Flux Source Controller group
+# `source.toolkit.fluxcd.io/*` is in scope.
+#
+# ⚠️ Narrowing the selector is itself a fail-open risk, which is why the group
+# decision is NOT made in the yq predicate: a document whose apiVersion is missing
+# or empty would then simply fail to match and disappear from the guard without a
+# word — deleting one line would hide an unpinned source. An apiVersion this guard
+# cannot decide is exit 2, exactly like YAML it cannot parse.
+#
 # ⚠️ ANTI-VACUITY: finding NO GitRepository at all is exit 2, not exit 0.
 # A selector that matched nothing is indistinguishable from a healthy tree, which
 # is the failure mode this guard exists to prevent one level down. "Nothing to
@@ -90,14 +103,59 @@ while IFS= read -r file; do
   # exits 2 on this repository's own manifests -- 1 of its 725 files is exactly that shape.
   # Two stages rather than one `and`, so the second never sees a non-mapping.
   # A genuinely unparseable file still fails, and is still cannot-check.
-  if ! rows="$(yq eval-all \
-    'select(tag == "!!map") | select(.kind == "GitRepository") | [(.metadata.namespace // "-"), (.metadata.name // "-"), (.spec.ref.commit // "")] | @tsv' \
+  #
+  # 🔴 `yq eval`, NEVER `yq eval-all`. `eval-all` merges every document in the file into ONE
+  # stream, so `@tsv` renders them as a SINGLE tab-joined line rather than one line per
+  # document. `read` then assigns document 1's namespace and name and absorbs everything
+  # else into `commit`, which can never match 40-hex — so a file holding TWO correctly
+  # pinned GitRepositories was refused as a violation, reported `1 of 1` instead of `2`, and
+  # printed the next document's fields inside the offending commit value. Multi-document
+  # files are the norm in Kubernetes manifests and no fixture used one, so every existing
+  # multi-document assertion passed by putting each document in its own file. `eval`
+  # evaluates each document independently and emits one row per document.
+  #
+  # 🔴 NO EMITTED FIELD BEFORE THE LAST MAY BE EMPTY. Tab is IFS *whitespace*, so `read`
+  # strips a leading empty field and collapses runs of tabs — every later field then shifts
+  # left, `name` lands empty, and the `-n "$name"` guard below skips the document silently.
+  # A GitRepository with no apiVersion would therefore vanish from the guard, which is the
+  # fail-open this apiVersion check exists to close. `// "x"` alone is NOT enough: yq's
+  # alternative operator fires on null but NOT on an empty string, so `apiVersion: ""`
+  # still emits an empty field. `(X // "" | select(. != "")) // "<sentinel>"` catches both.
+  # Only the trailing `commit` may be empty, because a stripped trailing field still reads
+  # back as the empty string.
+  if ! rows="$(yq eval \
+    'select(tag == "!!map") | select(.kind == "GitRepository") | [((.apiVersion // "" | select(. != "")) // "<absent>"), ((.metadata.namespace // "" | select(. != "")) // "-"), ((.metadata.name // "" | select(. != "")) // "-"), (.spec.ref.commit // "")] | @tsv' \
     "$file" 2>/dev/null)"; then
     die "could not parse '$file' — refusing to report a tree it could not read"
   fi
 
-  while IFS=$'\t' read -r ns name commit; do
+  while IFS=$'\t' read -r api ns name commit; do
     [ -n "${name:-}" ] || continue
+
+    # A Kubernetes resource is identified by apiVersion AND kind, never by kind alone.
+    # `GitRepository` is not a reserved word: an unrelated CRD may use it, and such a
+    # resource has no `spec.ref.commit` and is not subject to this policy, so counting it
+    # would fail CI on a correct file.
+    #
+    # 🔴 BUT AN UNDECIDABLE apiVersion IS `cannot-check`, NEVER `not-Flux`. Filtering this
+    # inside the yq predicate is the obvious form and it is a fail-open: `null | test(...)`
+    # does not error, it simply does not match, so a document that DROPS its apiVersion line
+    # disappears from the guard silently — and in a mixed tree the anti-vacuity check below
+    # is satisfied by some other resource, so the guard reports "all commit-pinned" with an
+    # unpinned GitRepository beside it. That is the exact regression class this guard exists
+    # to prevent (#3124), reachable by deleting one line. So the group decision is made HERE,
+    # where "I cannot tell which API this is" gets its own exit-2 branch.
+    case "$api" in
+      source.toolkit.fluxcd.io/?*) ;;
+      '<absent>' | '')
+        die "'$file': GitRepository $ns/$name declares no apiVersion — cannot tell whether it is a Flux source, so this tree is unverified"
+        ;;
+      source.toolkit.fluxcd.io | source.toolkit.fluxcd.io/)
+        die "'$file': GitRepository $ns/$name has a malformed apiVersion '$api' (no version after the group) — refusing to guess whether it is a Flux source"
+        ;;
+      *) continue ;;
+    esac
+
     checked=$((checked + 1))
     if printf '%s' "$commit" | grep -Eq '^[0-9a-f]{40}$'; then
       continue

@@ -314,6 +314,198 @@ YAML
 run_guard "$root"
 assert_rc "a JSON-patch array alongside a pinned source -> 0" 0 "$GUARD_RC"
 assert_contains "counted only the real document" "1 GitRepository document(s)"
+echo "== anti-false-positive: a FOREIGN CRD reusing kind GitRepository is not ours =="
+# A Kubernetes resource is identified by apiVersion AND kind. `GitRepository` is not a
+# reserved word, so an unrelated CRD may declare it; such a resource carries no
+# `spec.ref.commit` and is outside this policy. Selecting on kind alone failed CI on a
+# correct file. The Flux document beside it must still be counted, so the guard is proved
+# to be discriminating rather than simply ignoring the whole file.
+root="$(mkcase foreignkind)"
+cat >"$root/foreign.yaml" <<'YAML'
+apiVersion: example.dev/v1
+kind: GitRepository
+metadata:
+  name: case-foreign
+  namespace: ns-foreign
+spec:
+  endpoint: https://example.invalid
+YAML
+cat >"$root/flux.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-fluxsource
+  namespace: ns-foreign
+spec:
+  ref:
+    commit: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+YAML
+run_guard "$root"
+assert_rc "foreign kind ignored, Flux source accepted -> 0" 0 "$GUARD_RC"
+assert_contains "counted only the Flux document, not the foreign one" "1 GitRepository document(s)"
+
+echo "== anti-vacuity: a tree of ONLY foreign GitRepositories verified nothing =="
+# Narrowing the selector must not create a new silent pass: if every candidate was skipped
+# as foreign, nothing was checked, and that is cannot-check exactly as an empty tree is.
+root="$(mkcase foreignonly)"
+cat >"$root/foreign.yaml" <<'YAML'
+apiVersion: example.dev/v1
+kind: GitRepository
+metadata:
+  name: case-foreignonly
+  namespace: ns-foreignonly
+spec:
+  endpoint: https://example.invalid
+YAML
+run_guard "$root"
+assert_rc "only foreign GitRepositories -> 2" 2 "$GUARD_RC"
+assert_contains "says the selector matched nothing" "matched nothing"
+
+echo "== fail-open guard: a MISSING apiVersion is cannot-check, never not-Flux =="
+# Doing the group test inside the yq predicate is the obvious implementation and it is a
+# fail-open: `null | test(...)` does not error, it just fails to match, so deleting the
+# apiVersion line removes a GitRepository from the guard's view entirely. In a mixed tree
+# the anti-vacuity check is then satisfied by the pinned document beside it and the guard
+# reports success over an unpinned source. The unpinned document here is deliberately
+# paired with a healthy one so that a fail-open renders as exit 0, not exit 2.
+root="$(mkcase noapiversion)"
+cat >"$root/nover.yaml" <<'YAML'
+kind: GitRepository
+metadata:
+  name: case-noapiversion
+  namespace: ns-nover
+spec:
+  ref:
+    branch: main
+YAML
+cat >"$root/healthy.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-nover-healthy
+  namespace: ns-nover
+spec:
+  ref:
+    commit: ffffffffffffffffffffffffffffffffffffffff
+YAML
+run_guard "$root"
+assert_rc "GitRepository with no apiVersion -> 2" 2 "$GUARD_RC"
+assert_contains "names the undecidable resource" "ns-nover/case-noapiversion"
+
+echo "== fail-open guard: an EMPTY-STRING apiVersion is cannot-check too =="
+# Distinct from the missing-apiVersion case above, and it needs its own fixture: yq's `//`
+# alternative fires on null but NOT on an empty string, so `apiVersion: ""` slips past a
+# plain `// "<absent>"` and emits an EMPTY leading field. Tab is IFS whitespace, so `read`
+# then strips it, every field shifts left, `name` lands empty and the document is skipped
+# without a word. Paired with a healthy document so the fail-open renders as exit 0.
+root="$(mkcase emptyapiversion)"
+cat >"$root/emptyav.yaml" <<'YAML'
+apiVersion: ""
+kind: GitRepository
+metadata:
+  name: case-emptyapiversion
+  namespace: ns-emptyav
+spec:
+  ref:
+    branch: main
+YAML
+cat >"$root/healthy.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-emptyav-healthy
+  namespace: ns-emptyav
+spec:
+  ref:
+    commit: cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd
+YAML
+run_guard "$root"
+assert_rc "empty-string apiVersion -> 2" 2 "$GUARD_RC"
+assert_contains "names the empty-apiVersion resource" "ns-emptyav/case-emptyapiversion"
+
+echo "== fail-open guard: a Flux group with no version is cannot-check =="
+root="$(mkcase malformedapi)"
+cat >"$root/malformed.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io
+kind: GitRepository
+metadata:
+  name: case-malformedapi
+  namespace: ns-malformed
+spec:
+  ref:
+    branch: main
+YAML
+cat >"$root/healthy.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-malformed-healthy
+  namespace: ns-malformed
+spec:
+  ref:
+    commit: abababababababababababababababababababab
+YAML
+run_guard "$root"
+assert_rc "Flux group with no version -> 2" 2 "$GUARD_RC"
+assert_contains "names the malformed resource" "ns-malformed/case-malformedapi"
+
+echo "== regression: TWO GitRepository documents in ONE file are read separately =="
+# `yq eval-all` merges every document in a file into one stream, so `@tsv` emitted a single
+# tab-joined line and `read` absorbed document 2 into document 1's commit field. Two
+# correctly pinned sources in one file were therefore refused as a violation and counted
+# `1 of 1`. Multi-document files are the norm in Kubernetes manifests, and every earlier
+# multi-document assertion in this suite put each document in its own FILE, so nothing
+# covered this.
+root="$(mkcase multidocclean)"
+cat >"$root/both.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-multi-one
+  namespace: ns-multi
+spec:
+  ref:
+    commit: 1111111111111111111111111111111111111111
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-multi-two
+  namespace: ns-multi
+spec:
+  ref:
+    commit: 2222222222222222222222222222222222222222
+YAML
+run_guard "$root"
+assert_rc "two pinned documents in one file -> 0" 0 "$GUARD_RC"
+assert_contains "counted BOTH documents in the same file" "2 GitRepository document(s)"
+
+echo "== regression: an unpinned SECOND document in one file is still caught =="
+root="$(mkcase multidocdirty)"
+cat >"$root/both.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-multi-pinned
+  namespace: ns-multi2
+spec:
+  ref:
+    commit: 3333333333333333333333333333333333333333
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-multi-unpinned
+  namespace: ns-multi2
+spec:
+  ref:
+    branch: main
+YAML
+run_guard "$root"
+assert_rc "one unpinned document in a shared file -> 1" 1 "$GUARD_RC"
+assert_contains "names the SECOND document, not the first" "ns-multi2/case-multi-unpinned"
+assert_contains "counted both documents in the shared file" "1 of 2 GitRepository document(s)"
+
 echo "== cannot-check: usage and missing root =="
 run_guard ""
 assert_rc "empty root -> 2" 2 "$GUARD_RC"
