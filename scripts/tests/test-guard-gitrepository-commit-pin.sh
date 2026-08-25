@@ -212,6 +212,46 @@ YAML
 run_guard "$root"
 assert_rc "unparseable YAML -> 2" 2 "$GUARD_RC"
 
+echo "== regression: a tree grep could not fully read is CANNOT-CHECK, not clean =="
+# `grep -r` exits 2 on an unreadable path while still reporting the parts it DID
+# read, and the guard discards its stderr. In a MIXED tree the anti-vacuity check
+# is then satisfied by the file grep COULD read, so the pre-fix guard printed
+# "all commit-pinned", exit 0, with an unpinned GitRepository in the directory it
+# silently skipped. This case pins that shut.
+root="$(mkcase unreadable)"
+mkdir -p "$root/readable" "$root/hidden"
+cat >"$root/readable/good.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-unreadable-good
+  namespace: ns-unreadable
+spec:
+  ref:
+    commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+YAML
+cat >"$root/hidden/bad.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-unreadable-bad
+  namespace: ns-unreadable
+spec:
+  ref:
+    branch: main
+YAML
+chmod 000 "$root/hidden"
+# Running as root defeats the mode bits entirely, so the fixture would not model
+# the condition. Skipping loudly beats asserting against a fixture that did not
+# build — a control that cannot fire proves nothing.
+if cat "$root/hidden/bad.yaml" >/dev/null 2>&1; then
+  printf '  SKIP unreadable-path case: this user can read mode-000 dirs (root?)\n'
+else
+  run_guard "$root"
+  assert_rc "unreadable subtree -> 2" 2 "$GUARD_RC"
+  assert_contains "says it could not search the tree" "refusing to report a tree it could not fully read"
+fi
+chmod 755 "$root/hidden"
 echo "== cannot-check: usage and missing root =="
 run_guard ""
 assert_rc "empty root -> 2" 2 "$GUARD_RC"

@@ -64,7 +64,21 @@ command -v yq >/dev/null 2>&1 || die "yq is required but not installed"
 #
 # The authoritative selection remains the yq .kind test below. This line only
 # decides which files are OPENED, so it must over-match, never under-match.
+#
+# 🔴 AND AN ERRORING PREFILTER IS THE SAME FAIL-OPEN BY ANOTHER ROUTE.
+#
+# `grep -r` exits 2 when it could not read something -- an unreadable directory,
+# a broken symlink loop, a vanished file -- and it still exits 0/1 for the parts
+# it DID read. With stderr discarded, a truncated candidate list is byte-for-byte
+# indistinguishable from a complete one. In a MIXED tree the anti-vacuity check
+# below is then satisfied by a file grep could read, so the guard prints
+# "all commit-pinned", exit 0, with an unpinned GitRepository sitting in the
+# directory it silently skipped. Exit 1 (genuinely no matches anywhere) is NOT an
+# error and is left to the anti-vacuity check, which is what that check is for.
 candidates="$(grep -rl --include='*.yaml' --include='*.yml' 'GitRepository' "$root" 2>/dev/null)"
+grep_status=$?
+[ "$grep_status" -le 1 ] ||
+  die "could not search '$root' (grep exit $grep_status) — refusing to report a tree it could not fully read"
 
 checked=0
 violations=0
