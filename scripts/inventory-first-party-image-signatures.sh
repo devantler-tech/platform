@@ -19,12 +19,21 @@
 # 🔴 A cosign failure DOES NOT MEAN UNSIGNED, and treating it as one is the fail-open this guards.
 # GHCR answers `DENIED` both for a signature that is absent and for a package the credential may not
 # read. Those are opposite conclusions: absent is the outage this issue exists to prevent, while
-# unreadable says nothing at all. They are separated by probing the IMAGE MANIFEST itself — 401/403
-# means unreadable (UNKNOWN), anything else means the repository is readable and the verdict stands
-# (FAIL). Measured 2026-08-25: `ascoachingogvaner` and `wedding-app` are private and answer 401 on
-# the image manifest, while `doggy-countdown` answers 404 on its `.sig` TAG yet verifies fine,
-# because its signature is an OCI referrer rather than a tag. A probe that only looked at `.sig`
-# would have called that one unsigned.
+# unreadable says nothing at all. They are separated by probing the IMAGE MANIFEST itself, and ONLY
+# a manifest actually read (2xx) lets the verdict stand as FAIL — every other status, 401/403 and
+# 404 and 429 and 5xx alike, establishes nothing and is UNKNOWN. Measured 2026-08-25:
+# `ascoachingogvaner` and `wedding-app` are private and answer 401 to an ANONYMOUS read, while
+# `doggy-countdown` answers 404 on its `.sig` TAG yet verifies fine, because its signature is an OCI
+# referrer rather than a tag. A probe that only looked at `.sig` would have called that one unsigned.
+#
+# 🔴 401 IS NOT THE ONLY UNREADABLE STATUS, WHICH IS WHY THE CATCH-ALL IS THE LOAD-BEARING BRANCH.
+# An anonymous read of a private package answers 401, but an identity that AUTHENTICATES and simply
+# lacks read on that package gets 404 — GHCR masks existence rather than admitting the package is
+# there. Measured 2026-08-26 against prod with an under-privileged GHCR identity: both private
+# packages returned 404 and were correctly reported UNKNOWN with exit 1, not FAIL. An
+# under-privileged credential is the likelier real-world failure than an absent one, so a rule that
+# named only 401/403 as unreadable would call those two images REFUSED-at-pull on the strength of a
+# permission problem.
 #
 # EXIT STATUS
 #   0  every matched image PASSED
