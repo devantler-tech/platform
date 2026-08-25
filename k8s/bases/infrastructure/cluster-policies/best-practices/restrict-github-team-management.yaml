@@ -254,3 +254,71 @@ spec:
                   - triage
                   - push
                   - maintain
+    # The other rules constrain WHICH team a resource may touch; this one
+    # constrains what Crossplane is allowed to do to it. The github-config Role
+    # holds `delete` on these kinds and the tenant's Flux Kustomization runs with
+    # prune: true, so an artifact that grants Delete and a later artifact that
+    # simply drops the CR together delete the real GitHub team — with its
+    # membership and every CODEOWNERS assignment. That is the one path here that
+    # destroys org state rather than escalating access, and recovery is manual.
+    #
+    # 🔴 A Delete grant has THREE spellings on these CRDs, and only the first is
+    # obvious. Read from the live cluster on all three kinds (2026-08-25), the
+    # enum is Observe|Create|Update|Delete|LateInitialize|* and the field's
+    # default is ["*"]:
+    #   1. the literal `Delete`;
+    #   2. `*`, a legal member that expands to every action including Delete;
+    #   3. OMITTING the field, which takes that ["*"] default.
+    # So absence is the most permissive value available, not a safe one, and a
+    # rule written against the word `Delete` alone would leave the two quieter
+    # spellings wide open. Requiring an explicit Delete-free list is what makes
+    # this closed rather than merely stated.
+    #
+    # Costs nothing operationally: all 39 live resources in github-config set
+    # the field explicitly, 32 as [Observe, Create, Update, LateInitialize] and
+    # 7 as [Observe]. None omits it; none carries Delete or `*`. This is also
+    # exactly the "Never Delete" safety rail docs/github-management.md already
+    # documents — enforced at admission instead of relied on by convention.
+    - name: teams-forbid-delete-management-policy
+      match:
+        any:
+          - resources:
+              kinds:
+                - team.github.m.upbound.io/*/Team
+                - team.github.m.upbound.io/*/TeamMembership
+                - team.github.m.upbound.io/*/TeamRepository
+              namespaces:
+                - github-config
+      validate:
+        message: >-
+          GitHub team resources must set spec.managementPolicies to an explicit list that excludes
+          Delete and the "*" wildcard. Omitting the field takes the CRD default ["*"], which grants
+          Delete, so it is rejected too — use ["Observe"] while adopting, then ["Observe", "Create",
+          "Update", "LateInitialize"].
+        deny:
+          conditions:
+            any:
+              # ⚠️ Each spelling is matched with JMESPath contains() against a
+              # literal, NOT with AnyIn. Kyverno expands `*` inside an operator's
+              # value list as a WILDCARD rather than the literal character, so
+              # `AnyIn [Delete, "*"]` matches every policy set and denies the
+              # paved road too — measured here, by isolating that one list entry
+              # while changing nothing else: with it the four compliant fixtures
+              # failed, without it all eleven passed. contains() has no such
+              # second meaning, so each condition below says exactly what it reads.
+              #
+              # Spelling 1 — the literal verb.
+              - key: "{{ contains(request.object.spec.managementPolicies || `[]`, 'Delete') }}"
+                operator: Equals
+                value: true
+              # Spelling 2 — the `*` wildcard member, which expands to every
+              # action including Delete.
+              - key: "{{ contains(request.object.spec.managementPolicies || `[]`, '*') }}"
+                operator: Equals
+                value: true
+              # Spelling 3 — absent, which takes the CRD default ["*"]. An empty
+              # list is denied with it: it grants nothing, so it is never a
+              # legitimate intent, and allowing it would leave a second silent hole.
+              - key: "{{ length(request.object.spec.managementPolicies || `[]`) }}"
+                operator: Equals
+                value: 0

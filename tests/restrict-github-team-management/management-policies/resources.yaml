@@ -1,0 +1,177 @@
+---
+# The paved road, as production actually spells it: every live resource sets
+# managementPolicies explicitly and omits Delete. Measured 2026-08-25 across all
+# 39 resources in github-config — 32 carry exactly this set and 7 carry
+# ["Observe"]; none omits the field, and none carries Delete or "*".
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - LateInitialize
+  forProvider:
+    name: admins
+    privacy: closed
+---
+# Observe-first adoption, the other set in live use. Read-only, so trivially
+# Delete-free.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: maintainers
+  namespace: github-config
+spec:
+  managementPolicies:
+    - Observe
+  forProvider:
+    name: maintainers
+    privacy: closed
+---
+# The literal escalation: Delete spelled out. Deleting this CR — or a Flux prune
+# dropping it — would delete the real GitHub team, its membership and every
+# CODEOWNERS assignment with it.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: delete-policy-team
+  namespace: github-config
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - Delete
+  forProvider:
+    name: delete-policy-team
+    privacy: closed
+---
+# The SAME grant without the word. "*" is a legal enum member on these CRDs and
+# expands to every action including Delete, so a rule matching only the literal
+# "Delete" leaves this wide open.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: wildcard-policy-team
+  namespace: github-config
+spec:
+  managementPolicies:
+    - "*"
+  forProvider:
+    name: wildcard-policy-team
+    privacy: closed
+---
+# The same grant by saying NOTHING. The CRD default is ["*"] — read from the
+# live cluster on all three kinds, 2026-08-25 — so omitting the field is the
+# most permissive value available, not a safe one.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: absent-policy-team
+  namespace: github-config
+spec:
+  forProvider:
+    name: absent-policy-team
+    privacy: closed
+---
+# An empty list is not a Delete grant, but it is also not a coherent management
+# intent; Crossplane treats it as "manage nothing". Denied with the absent case
+# so the rule's requirement is simply "state a Delete-free intent".
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: empty-policy-team
+  namespace: github-config
+spec:
+  managementPolicies: []
+  forProvider:
+    name: empty-policy-team
+    privacy: closed
+---
+# The escalation reaches TeamMembership too — deleting a membership CR would
+# remove the real person from the real team.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: delete-policy-membership
+  namespace: github-config
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - Delete
+  forProvider:
+    teamIdRef:
+      name: admins
+    username: devantler
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: compliant-membership
+  namespace: github-config
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - LateInitialize
+  forProvider:
+    teamIdRef:
+      name: admins
+    username: devantler
+---
+# And TeamRepository — deleting one of these revokes the team's access to the
+# repository, taking its CODEOWNERS assignments with it.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: delete-policy-repo
+  namespace: github-config
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - Delete
+  forProvider:
+    teamIdRef:
+      name: admins
+    repository: platform
+    permission: push
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: wildcard-policy-repo
+  namespace: github-config
+spec:
+  managementPolicies:
+    - "*"
+  forProvider:
+    teamIdRef:
+      name: admins
+    repository: platform
+    permission: push
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: compliant-repo
+  namespace: github-config
+spec:
+  managementPolicies:
+    - Observe
+    - Create
+    - Update
+    - LateInitialize
+  forProvider:
+    teamIdRef:
+      name: admins
+    repository: platform
+    permission: push

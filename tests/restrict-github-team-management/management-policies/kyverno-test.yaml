@@ -1,0 +1,58 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-github-team-management-management-policies
+policies:
+  - >-
+    ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-github-team-management.yaml
+resources:
+  - resources.yaml
+results:
+  # A Delete grant is denied however it is spelled: the literal verb, the "*"
+  # wildcard that expands to it, and the omission the CRD defaults to ["*"].
+  # The last two are the ones a rule written against the word alone would miss.
+  - policy: restrict-github-team-management
+    rule: teams-forbid-delete-management-policy
+    resources:
+      - github-config/delete-policy-team
+      - github-config/wildcard-policy-team
+      - github-config/absent-policy-team
+      - github-config/empty-policy-team
+    kind: Team
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teams-forbid-delete-management-policy
+    resources:
+      - github-config/delete-policy-membership
+    kind: TeamMembership
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teams-forbid-delete-management-policy
+    resources:
+      - github-config/delete-policy-repo
+      - github-config/wildcard-policy-repo
+    kind: TeamRepository
+    result: fail
+  # The two sets production actually uses must keep passing, on every kind.
+  # admins/maintainers here are the paved road as prod spells it, so a rule that
+  # over-reached would fail these rather than only the escalations above.
+  - policy: restrict-github-team-management
+    rule: teams-forbid-delete-management-policy
+    resources:
+      - github-config/admins
+      - github-config/maintainers
+    kind: Team
+    result: pass
+  - policy: restrict-github-team-management
+    rule: teams-forbid-delete-management-policy
+    resources:
+      - github-config/compliant-membership
+    kind: TeamMembership
+    result: pass
+  - policy: restrict-github-team-management
+    rule: teams-forbid-delete-management-policy
+    resources:
+      - github-config/compliant-repo
+    kind: TeamRepository
+    result: pass
