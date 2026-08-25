@@ -52,7 +52,14 @@ declared ImageVerificationRules pattern is materialised in order and in phase
 against.
 
 Nodes are discovered from the cluster when --nodes/TALOS_NODES is not given, so
-autoscaled nodes are covered without anyone maintaining a list.
+autoscaled nodes are covered without anyone maintaining a list. A discovered
+fleet is read again after the sweep and the verdict is only reported once two
+consecutive readings agree, because a serial sweep is not instantaneous and a
+node that joins or is replaced midway would otherwise go uninspected under a
+green summary. Nodes are identified by UID and address together, so a
+replacement reusing a departed node's address is not mistaken for it. An
+explicitly pinned fleet is the caller's claim about what to check and is not
+re-read.
 
 Environment overrides: TALOSCTL, KUBECTL, KUBECTL_CONTEXT, TALOS_NODES
 Exit: 0 every node can enforce; 1 at least one cannot; 2 usage/infrastructure error.
@@ -133,27 +140,36 @@ readonly declared_patterns_json
 # name and fail. Pin the context with KUBECTL_CONTEXT instead — the deploy
 # composite pins `--context admin@prod` for the same reason, because the
 # restored kubeconfig's current-context is not guaranteed to be prod.
-discover_nodes() {
+# Emits one `<uid>\t<InternalIP>` row per node, sorted, or fails closed.
+#
+# Identity is the UID *and* the address, never the address alone. Cluster
+# Autoscaler replaces a worker by deleting the Node object and creating a new
+# one, and the replacement can reuse the departed node's InternalIP. An
+# address-only identity reads that replacement as the original — so a node this
+# script never inspected is reported healthy under a familiar address. The UID
+# is the only field that distinguishes them, and the API server always sets it.
+discover_node_identities() {
   local json bad_nodes
   local -a context_args=()
   [[ -n "${KUBECTL_CONTEXT:-}" ]] && context_args=(--context "${KUBECTL_CONTEXT}")
   json="$("${kubectl_bin}" "${context_args[@]+"${context_args[@]}"}" get nodes -o json 2>/dev/null)" ||
     fail_infra 'could not list cluster nodes (kubectl get nodes failed)'
 
-  # Every node must map to EXACTLY ONE InternalIP, and those addresses must be
-  # unique across the fleet. Both halves are fail-opens the flattening hides:
+  # Every node must map to EXACTLY ONE InternalIP and carry a non-empty UID, and
+  # both must be unique across the fleet. Each is a fail-open the flattening
+  # hides:
   #
-  #   * a node whose addresses hold only a Hostname or an ExternalIP matches
-  #     nothing and the select SUCCEEDS, so that node silently leaves the fleet;
+  #   * a node with NO InternalIP — it vanishes from the list entirely;
+  #   * a node with SEVERAL — it is checked more than once under different
+  #     addresses while another is missed;
   #   * two nodes publishing the SAME InternalIP — a malformed or stale cloud
-  #     registration — emit that address twice, so both passes inspect the same
-  #     machine while the other node is never looked at.
+  #     inventory, where one silently masks the other;
+  #   * a node with NO UID, or two sharing one — identity collapses back to the
+  #     address, which is precisely the confusion this pass exists to refuse.
   #
   # Either way the remaining nodes report OK and the run prints a green verdict
-  # for a fleet it never fully enumerated: the same fail-open this script exists
-  # to detect, one layer earlier. `scripts/refresh-flux-ghcr-auth.sh`'s
-  # `validate_talos_node_inventory` refuses the same two shapes before it mutates
-  # anything, for the same reason.
+  # for a fleet it only partly enumerated. `validate_talos_node_inventory`
+  # refuses the same shapes before it mutates anything, for the same reason.
   #
   # Checked as its own pass so the offending nodes can be NAMED. Deriving it from
   # a jq error instead would either lose the names or push kubectl's output into
@@ -162,30 +178,40 @@ discover_nodes() {
     jq -r '
       [.items[] | {
         name: (.metadata.name // "<unnamed node>"),
+        uid: ((.metadata.uid // "") | tostring),
         ips: [(.status.addresses // [])[]
               | select(.type == "InternalIP" and ((.address // "") | tostring) != "")
               | .address]
       }] as $nodes
       | ($nodes | map(select(.ips | length != 1))
           | map("\(.name) (has \(.ips | length) InternalIP addresses, expected 1)")),
+        ($nodes | map(select(.uid == ""))
+          | map("\(.name) (has no metadata.uid, so it cannot be told apart from a replacement reusing its address)")),
         ($nodes | map(select(.ips | length == 1))
           | group_by(.ips[0]) | map(select(length > 1))
-          | map("\(map(.name) | join(" and ")) share InternalIP \(.[0].ips[0])"))
+          | map("\(map(.name) | join(" and ")) share InternalIP \(.[0].ips[0])")),
+        ($nodes | map(select(.uid != ""))
+          | group_by(.uid) | map(select(length > 1))
+          | map("\(map(.name) | join(" and ")) share UID \(.[0].uid)"))
       | .[]
     ' 2>/dev/null)" ||
-    fail_infra 'could not parse node addresses from kubectl output'
+    fail_infra 'could not parse the node inventory from kubectl output'
   if [[ -n "${bad_nodes}" ]]; then
     fail_infra "unusable node inventory — refusing to report a fleet that was only partly enumerated: $(printf '%s' "${bad_nodes}" | tr '\n' ';' | sed 's/;$//')"
   fi
 
+  # Sorted so two readings of an unchanged fleet compare equal regardless of the
+  # order the API server happened to return them in.
   printf '%s' "${json}" |
     jq -r '
       .items[]
+      | ((.metadata.uid // "") | tostring) as $uid
       | (.status.addresses // [])[]
       | select(.type == "InternalIP" and ((.address // "") | tostring) != "")
-      | .address
-    ' 2>/dev/null ||
-    fail_infra 'could not parse node addresses from kubectl output'
+      | "\($uid)\t\(.address)"
+    ' 2>/dev/null |
+    LC_ALL=C sort ||
+    fail_infra 'could not parse the node inventory from kubectl output'
 }
 
 node_reachable() {
@@ -196,10 +222,33 @@ node_reachable() {
 # on bash 3.2 (macOS) as well as CI's bash 5. A check nobody can run locally is
 # a check nobody verifies before shipping.
 nodes=()
+inventory_signature=''
 if [[ "${nodes_requested}" -eq 1 && -z "${nodes_arg}" ]]; then
   printf 'ERROR: --nodes/TALOS_NODES was supplied but names no node — refusing to fall back to cluster discovery, which would check a different fleet than was asked for\n' >&2
   usage
 fi
+
+# Fills `nodes` and `inventory_signature` from the live cluster. Called once per
+# convergence attempt, so the fleet under test is re-read rather than inherited.
+load_discovered_nodes() {
+  local discovered_identities identity
+  # Discovery runs in a command substitution so its exit status reaches this
+  # shell. A process substitution would NOT: `fail_infra` inside it exits only
+  # that subshell, the loop keeps whatever partial output jq already emitted,
+  # and if those nodes happen to be healthy the script exits 0 having silently
+  # dropped the rest of the fleet. jq emitting a valid address and then failing
+  # on a malformed one is exactly that case.
+  discovered_identities="$(discover_node_identities)" ||
+    fail_infra 'node discovery failed — refusing to report a fleet that was only partly enumerated'
+  nodes=()
+  inventory_signature="${discovered_identities}"
+  while IFS= read -r identity; do
+    [[ -n "${identity}" ]] || continue
+    # `<uid>\t<address>` — the address is what talosctl is pointed at; the UID
+    # only ever participates in the identity comparison.
+    nodes+=("${identity#*$'\t'}")
+  done <<<"${discovered_identities}"
+}
 
 if [[ -n "${nodes_arg}" ]]; then
   # A malformed list ('a,,b', a leading or trailing comma, a shell variable that
@@ -217,18 +266,7 @@ if [[ -n "${nodes_arg}" ]]; then
   fi
   IFS=',' read -r -a nodes <<<"${nodes_arg}"
 else
-  # Discovery runs in a command substitution so its exit status reaches this
-  # shell. A process substitution would NOT: `fail_infra` inside it exits only
-  # that subshell, the loop keeps whatever partial output jq already emitted,
-  # and if those nodes happen to be healthy the script exits 0 having silently
-  # dropped the rest of the fleet. jq emitting a valid address and then failing
-  # on a malformed one is exactly that case.
-  discovered_nodes="$(discover_nodes)" ||
-    fail_infra 'node discovery failed — refusing to report a fleet that was only partly enumerated'
-  while IFS= read -r discovered; do
-    [[ -n "${discovered}" ]] || continue
-    nodes+=("${discovered}")
-  done <<<"${discovered_nodes}"
+  load_discovered_nodes
 fi
 
 [[ "${#nodes[@]}" -gt 0 ]] || fail_infra 'no nodes to check'
@@ -341,12 +379,63 @@ check_node() {
   return 0
 }
 
-failures=0
-for node in "${nodes[@]}"; do
-  check_node "${node}" || failures=$((failures + 1))
+# One serial sweep of the fleet. Verdict lines go to stdout so a caller can hold
+# them back until the inventory they describe is known to be current; returns 0
+# when every node enforces and 1 when any does not. `check_node`'s `fail_infra`
+# exits 2, and because this runs in a command substitution that status reaches
+# the caller instead of being swallowed.
+run_pass() {
+  local node failed=0
+  for node in "$@"; do
+    check_node "${node}" || failed=$((failed + 1))
+  done
+  [[ "${failed}" -eq 0 ]]
+}
+
+# How many times a changed inventory is re-checked before the run gives up.
+# Ordinary autoscaling changes the fleet occasionally, so a single change is a
+# retry rather than a failure; a fleet that changes on every attempt is churning
+# faster than this check can observe it, and reporting a verdict for one of
+# those transient snapshots would be exactly the stale-snapshot claim this pass
+# exists to refuse.
+readonly max_inventory_attempts=3
+
+pass_output=''
+pass_status=0
+attempt=1
+while :; do
+  pass_status=0
+  pass_output="$(run_pass "${nodes[@]}")" || pass_status=$?
+  # 2 is `fail_infra` from inside the pass: it has already explained itself on
+  # stderr, and it is not a verdict, so it is re-raised rather than retried.
+  [[ "${pass_status}" -le 1 ]] || exit "${pass_status}"
+
+  # An explicitly pinned fleet is the caller's claim about what to check, not a
+  # snapshot of a moving cluster, so there is nothing to converge on.
+  [[ -z "${nodes_arg}" ]] || break
+
+  # Re-read the inventory AFTER the pass. The snapshot the pass ran against was
+  # taken before it started, and a serial sweep of a real fleet is not
+  # instantaneous — a worker that joins, is replaced, or is removed midway is
+  # never inspected, yet the summary below would count only the nodes in the
+  # stale snapshot and call the fleet clean. Two consecutive identical readings
+  # are what make the verdict a statement about the fleet that exists now.
+  previous_signature="${inventory_signature}"
+  load_discovered_nodes
+  [[ "${inventory_signature}" != "${previous_signature}" ]] || break
+
+  attempt=$((attempt + 1))
+  if [[ "${attempt}" -gt "${max_inventory_attempts}" ]]; then
+    fail_infra "the node inventory changed on every one of ${max_inventory_attempts} attempts — refusing to report a fleet that will not hold still long enough to be checked"
+  fi
+  printf 'The node inventory changed while the fleet was being checked; re-checking (attempt %s of %s).\n' \
+    "${attempt}" "${max_inventory_attempts}" >&2
 done
 
-if [[ "${failures}" -gt 0 ]]; then
+printf '%s\n' "${pass_output}"
+
+if [[ "${pass_status}" -ne 0 ]]; then
+  failures="$(printf '%s\n' "${pass_output}" | grep -c '^FAIL ' || true)"
   printf '\n%s of %s node(s) cannot enforce image verification.\n' "${failures}" "${#nodes[@]}" >&2
   printf 'The ImageVerificationConfig rules in talos/cluster/verify-first-party-images.yaml are declared, but Talos is not enforcing them on those nodes.\n' >&2
   printf 'See devantler-tech/platform#2856 (finding) and #3336 (proving a refusal at pull).\n' >&2
