@@ -53,15 +53,36 @@ Test seams (override for hermetic tests; each must exit non-zero on failure):
 EOF
 }
 
-die() { echo "inventory: $*" >&2; exit 2; }
+die() {
+  echo "inventory: $*" >&2
+  exit 2
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --rules) [ $# -ge 2 ] || die "--rules needs a value"; RULES_FILE="$2"; shift 2 ;;
-    --context) [ $# -ge 2 ] || die "--context needs a value"; KUBE_CONTEXT="$2"; shift 2 ;;
-    --images) [ $# -ge 2 ] || die "--images needs a value"; IMAGES_FILE="$2"; shift 2 ;;
-    -h|--help) usage; exit 0 ;;
-    *) usage; die "unknown argument: $1" ;;
+    --rules)
+      [ $# -ge 2 ] || die "--rules needs a value"
+      RULES_FILE="$2"
+      shift 2
+      ;;
+    --context)
+      [ $# -ge 2 ] || die "--context needs a value"
+      KUBE_CONTEXT="$2"
+      shift 2
+      ;;
+    --images)
+      [ $# -ge 2 ] || die "--images needs a value"
+      IMAGES_FILE="$2"
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage
+      die "unknown argument: $1"
+      ;;
   esac
 done
 
@@ -72,8 +93,8 @@ command -v yq >/dev/null 2>&1 || die "yq (Mike Farah v4) is required to read the
 # Rules — read from the file, in order. Never restated here: a second copy of a
 # subjectRegex is a copy that can drift from the one the fleet enforces.
 # ---------------------------------------------------------------------------
-yq -e '.rules | tag == "!!seq"' "$RULES_FILE" >/dev/null 2>&1 \
-  || die "$RULES_FILE has no .rules sequence"
+yq -e '.rules | tag == "!!seq"' "$RULES_FILE" >/dev/null 2>&1 ||
+  die "$RULES_FILE has no .rules sequence"
 
 # 🔴 Completeness is asserted on the YAML, NOT on the rendered TSV. `yq ... | @tsv` renders a
 # MISSING field as the four-character string `null`, which is not empty — so a string test over the
@@ -85,11 +106,11 @@ incomplete="$(yq -r '
            or ((.keyless.issuer // "") | tostring | length) == 0
            or ((.keyless.subjectRegex // "") | tostring | length) == 0 )
   ] | length' "$RULES_FILE")" || die "could not validate rules in $RULES_FILE"
-[ "$incomplete" = "0" ] \
-  || die "incomplete rule in $RULES_FILE — ${incomplete} rule(s) missing image, issuer or subjectRegex"
+[ "$incomplete" = "0" ] ||
+  die "incomplete rule in $RULES_FILE — ${incomplete} rule(s) missing image, issuer or subjectRegex"
 
-rules_tsv="$(yq -r '.rules[] | [.image, .keyless.issuer, .keyless.subjectRegex] | @tsv' "$RULES_FILE")" \
-  || die "could not parse rules from $RULES_FILE"
+rules_tsv="$(yq -r '.rules[] | [.image, .keyless.issuer, .keyless.subjectRegex] | @tsv' "$RULES_FILE")" ||
+  die "could not parse rules from $RULES_FILE"
 [ -n "$rules_tsv" ] || die "no rules found in $RULES_FILE — refusing to report an empty blast radius"
 
 rule_count=$(printf '%s\n' "$rules_tsv" | grep -c .)
@@ -149,14 +170,30 @@ probe_manifest_status() { # ref
   fi
   local ref="$1" registry repo reference token
   registry="${ref%%/*}"
-  case "$registry" in *.*|*:*|localhost) ;; *) echo 000; return 0 ;; esac
+  case "$registry" in *.* | *:* | localhost) ;; *)
+    echo 000
+    return 0
+    ;;
+  esac
   local rest="${ref#*/}"
   case "$rest" in
-    *@*) repo="${rest%@*}"; reference="${rest##*@}" ;;
-    *:*) repo="${rest%:*}"; reference="${rest##*:}" ;;
-    *)   repo="$rest";      reference="latest" ;;
+    *@*)
+      repo="${rest%@*}"
+      reference="${rest##*@}"
+      ;;
+    *:*)
+      repo="${rest%:*}"
+      reference="${rest##*:}"
+      ;;
+    *)
+      repo="$rest"
+      reference="latest"
+      ;;
   esac
-  command -v curl >/dev/null 2>&1 || { echo 000; return 0; }
+  command -v curl >/dev/null 2>&1 || {
+    echo 000
+    return 0
+  }
   token="$(curl -sSf --max-time 20 \
     "https://${registry}/token?scope=repository:${repo}:pull&service=${registry}" 2>/dev/null |
     jq -r '.token // .access_token // empty' 2>/dev/null || true)"
@@ -188,7 +225,12 @@ while IFS= read -r ref; do
     [ -n "$glob" ] || continue
     # shellcheck disable=SC2254  # the glob is data from the rules file, and must stay a pattern
     case "$repo_name" in
-      $glob) hit_glob="$glob"; hit_issuer="$issuer"; hit_subject="$subject"; break ;;
+      $glob)
+        hit_glob="$glob"
+        hit_issuer="$issuer"
+        hit_subject="$subject"
+        break
+        ;;
     esac
   done <<EOF
 $rules_tsv
@@ -205,18 +247,21 @@ EOF
 
   status="$(probe_manifest_status "$ref")"
   case "$status" in
-    401|403)
+    401 | 403)
       unknown=$((unknown + 1))
       results="${results}UNKNOWN	${ref}	${hit_glob}	image manifest unreadable (HTTP ${status}) — credential lacks access, signature state not established
-" ;;
+"
+      ;;
     000)
       unknown=$((unknown + 1))
       results="${results}UNKNOWN	${ref}	${hit_glob}	manifest probe could not run — signature state not established
-" ;;
+"
+      ;;
     *)
       fail=$((fail + 1))
       results="${results}FAIL	${ref}	${hit_glob}	repository readable (HTTP ${status}) but no signature the rule accepts — this image would be REFUSED at pull
-" ;;
+"
+      ;;
   esac
 done <<EOF
 $all_images

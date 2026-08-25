@@ -18,19 +18,21 @@ check() { # label expected_exit expected_grep actual_exit output
   if [ "$got_rc" != "$want_rc" ]; then
     echo "FAIL  ${label}: expected exit ${want_rc}, got ${got_rc}"
     printf '%s\n' "$out" | sed 's/^/        /' | head -12
-    failures=$((failures + 1)); return
+    failures=$((failures + 1))
+    return
   fi
   if [ -n "$want" ] && ! printf '%s\n' "$out" | grep -qE "$want"; then
     echo "FAIL  ${label}: output did not match /${want}/"
     printf '%s\n' "$out" | sed 's/^/        /' | head -12
-    failures=$((failures + 1)); return
+    failures=$((failures + 1))
+    return
   fi
   echo "ok    ${label}"
 }
 
 # --- fixtures --------------------------------------------------------------
 # Three rules in the same shape and ORDER as the real file, so first-match-wins is exercised.
-cat > "${work}/rules.yaml" <<'EOF'
+cat >"${work}/rules.yaml" <<'EOF'
 apiVersion: v1alpha1
 kind: ImageVerificationConfig
 rules:
@@ -49,7 +51,7 @@ rules:
 EOF
 
 # verify stub: accepts only when the subjectRegex it was handed is in ACCEPT_SUBJECTS.
-cat > "${work}/verify" <<'EOF'
+cat >"${work}/verify" <<'EOF'
 #!/usr/bin/env bash
 for s in ${ACCEPT_SUBJECTS:-}; do [ "$3" = "$s" ] && exit 0; done
 exit 1
@@ -57,7 +59,7 @@ EOF
 chmod +x "${work}/verify"
 
 # probe stub: returns the status named for that image in PROBE_MAP ("<substr>=<code> ...").
-cat > "${work}/probe" <<'EOF'
+cat >"${work}/probe" <<'EOF'
 #!/usr/bin/env bash
 for pair in ${PROBE_MAP:-}; do
   case "$1" in *"${pair%%=*}"*) echo "${pair##*=}"; exit 0 ;; esac
@@ -67,7 +69,7 @@ EOF
 chmod +x "${work}/probe"
 
 run() { # images_multiline  -> sets RC / OUT
-  printf '%s\n' "$1" > "${work}/images"
+  printf '%s\n' "$1" >"${work}/images"
   set +e
   OUT="$(INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" \
     "$script" --rules "${work}/rules.yaml" --images "${work}/images" 2>&1)"
@@ -103,7 +105,8 @@ for code in 401 403; do
   ACCEPT_SUBJECTS='' PROBE_MAP="wedding-app=${code}" run 'ghcr.io/example/wedding-app@sha256:aa'
   check "HTTP ${code} on the image manifest -> UNKNOWN (not FAIL)" 1 'UNKNOWN.*unreadable' "$RC" "$OUT"
   if printf '%s\n' "$OUT" | grep -q 'FAIL='"[1-9]"; then
-    echo "FAIL  HTTP ${code} was counted as a FAIL"; failures=$((failures + 1))
+    echo "FAIL  HTTP ${code} was counted as a FAIL"
+    failures=$((failures + 1))
   fi
 done
 
@@ -120,10 +123,11 @@ check "one UNKNOWN withholds exit 0" 1 'PASS=1 FAIL=0 UNKNOWN=1' "$RC" "$OUT"
 # --- 7. an EMPTY enumeration is never "nothing to fix" ---------------------
 # The fail-open with the highest cost: a broken enumerator and a clean cluster look identical,
 # and only one of them should exit 0.
-: > "${work}/empty"
+: >"${work}/empty"
 set +e
 OUT="$(INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" \
-  "$script" --rules "${work}/rules.yaml" --images "${work}/empty" 2>&1)"; RC=$?
+  "$script" --rules "${work}/rules.yaml" --images "${work}/empty" 2>&1)"
+RC=$?
 set -e
 check "empty enumeration -> exit 2, never 0" 2 'no images at all' "$RC" "$OUT"
 
@@ -135,14 +139,15 @@ check "zero matches out of a non-empty enumeration -> exit 2" 2 'matcher or the 
 # --- 9. a failing enumerator is a producer error, not a clean run ----------
 set +e
 OUT="$(INVENTORY_ENUMERATE_CMD='exit 7' INVENTORY_VERIFY_CMD="${work}/verify" \
-  INVENTORY_PROBE_CMD="${work}/probe" "$script" --rules "${work}/rules.yaml" 2>&1)"; RC=$?
+  INVENTORY_PROBE_CMD="${work}/probe" "$script" --rules "${work}/rules.yaml" 2>&1)"
+RC=$?
 set -e
 check "enumerator failure -> exit 2" 2 'enumeration command failed' "$RC" "$OUT"
 
 # --- 10. malformed and empty rule sets fail closed ------------------------
-printf 'ghcr.io/example/wedding-app@sha256:aa\n' > "${work}/images-app"
+printf 'ghcr.io/example/wedding-app@sha256:aa\n' >"${work}/images-app"
 
-cat > "${work}/rules-incomplete.yaml" <<'EOF'
+cat >"${work}/rules-incomplete.yaml" <<'EOF'
 apiVersion: v1alpha1
 kind: ImageVerificationConfig
 rules:
@@ -151,18 +156,21 @@ rules:
       issuer: https://token.actions.githubusercontent.com
 EOF
 set +e
-OUT="$("$script" --rules "${work}/rules-incomplete.yaml" --images "${work}/images-app" 2>&1)"; RC=$?
+OUT="$("$script" --rules "${work}/rules-incomplete.yaml" --images "${work}/images-app" 2>&1)"
+RC=$?
 set -e
 check "a rule missing its subjectRegex -> exit 2" 2 'incomplete rule' "$RC" "$OUT"
 
-printf 'apiVersion: v1alpha1\nkind: ImageVerificationConfig\nrules: []\n' > "${work}/rules-empty.yaml"
+printf 'apiVersion: v1alpha1\nkind: ImageVerificationConfig\nrules: []\n' >"${work}/rules-empty.yaml"
 set +e
-OUT="$("$script" --rules "${work}/rules-empty.yaml" --images "${work}/images-app" 2>&1)"; RC=$?
+OUT="$("$script" --rules "${work}/rules-empty.yaml" --images "${work}/images-app" 2>&1)"
+RC=$?
 set -e
 check "an empty rule set -> exit 2" 2 'no rules found' "$RC" "$OUT"
 
 set +e
-OUT="$("$script" --rules "${work}/nope.yaml" --images "${work}/images-app" 2>&1)"; RC=$?
+OUT="$("$script" --rules "${work}/nope.yaml" --images "${work}/images-app" 2>&1)"
+RC=$?
 set -e
 check "an unreadable rules file -> exit 2" 2 'not readable' "$RC" "$OUT"
 
@@ -175,9 +183,11 @@ real_globs="$(yq -r '.rules[].image' "$real")"
 real_count="$(printf '%s\n' "$real_globs" | grep -c .)"
 real_last="$(printf '%s\n' "$real_globs" | grep . | tail -1)"
 if [ "$real_count" -ne 3 ]; then
-  echo "FAIL  the real rules file has ${real_count} rules, expected 3"; failures=$((failures + 1))
+  echo "FAIL  the real rules file has ${real_count} rules, expected 3"
+  failures=$((failures + 1))
 elif [ "$real_last" != 'ghcr.io/devantler-tech/*' ]; then
-  echo "FAIL  the catch-all is not the last rule (${real_last})"; failures=$((failures + 1))
+  echo "FAIL  the catch-all is not the last rule (${real_last})"
+  failures=$((failures + 1))
 else
   echo "ok    real rules: three rules, catch-all last"
 fi
@@ -185,14 +195,19 @@ fi
 # The real file must also satisfy the completeness gate the fixtures exercise.
 set +e
 OUT="$(INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" \
-  "$script" --rules "$real" --images "${work}/images-app" 2>&1)"; RC=$?
+  "$script" --rules "$real" --images "${work}/images-app" 2>&1)"
+RC=$?
 set -e
 if printf '%s\n' "$OUT" | grep -qE 'incomplete rule|no rules found|has no .rules sequence'; then
   echo "FAIL  the real rules file does not pass the completeness gate"
-  printf '%s\n' "$OUT" | sed 's/^/        /' | head -5; failures=$((failures + 1))
+  printf '%s\n' "$OUT" | sed 's/^/        /' | head -5
+  failures=$((failures + 1))
 else
   echo "ok    real rules: passes the completeness gate"
 fi
 
 echo
-if [ "$failures" -eq 0 ]; then echo "all checks passed"; else echo "${failures} check(s) failed"; exit 1; fi
+if [ "$failures" -eq 0 ]; then echo "all checks passed"; else
+  echo "${failures} check(s) failed"
+  exit 1
+fi
