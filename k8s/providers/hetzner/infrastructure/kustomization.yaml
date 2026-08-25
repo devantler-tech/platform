@@ -128,10 +128,6 @@ resources:
   # tenant Secret cross-namespace and stays Ready (Gateway Programmed) regardless.
 components:
   - ../../../bases/components/annotations-transformers
-  # Namespace prune-protection, unchanged for this layer (#3367). These are not
-  # tenants and are never removed as a routine act, so blanket protection here
-  # costs nothing and still guards against a speculative merge-group deploy.
-  - ../../../bases/components/namespace-prune-protection
   # Prod-only activation for platform#2689. The shared OpenCost base keeps this
   # bounded cAdvisor scraper default-off; Hetzner runs Kubernetes v1.36, whose
   # fine-grained kubelet authorization maps /metrics/* to nodes/metrics.

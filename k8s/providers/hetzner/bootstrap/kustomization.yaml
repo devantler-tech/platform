@@ -5,7 +5,3 @@ resources:
   - ../../../bases/bootstrap/
 components:
   - ../../../bases/components/annotations-transformers
-  # Namespace prune-protection, unchanged for this layer (#3367). These are not
-  # tenants and are never removed as a routine act, so blanket protection here
-  # costs nothing and still guards against a speculative merge-group deploy.
-  - ../../../bases/components/namespace-prune-protection

@@ -5,14 +5,23 @@ metadata:
   name: production-persistence-prune-protection
 annotations:
   kustomize.toolkit.fluxcd.io/prune: disabled
-# 🔴 NAMESPACE IS DELIBERATELY NOT HERE ANY MORE -- it moved to the opt-in
-# `bases/components/namespace-prune-protection` component (#3367).
+# 🔴 NAMESPACE IS DELIBERATELY NOT PROTECTED. THIS LIST IS "WHERE RELEVANT" (#3367).
 #
-# Blanket namespace protection made tenant removal impossible without a manual
-# `kubectl delete`: Flux drops the tenant from inventory and leaves it running. It is
-# still applied to bootstrap/infrastructure/controllers, which are not tenants, and to
-# every app base that owns persistence. Only stateless tenants lose it, and for them
-# there is no data the speculative-deploy hazard could destroy.
+# Flux's model is `spec.prune: true` on the Kustomization, with
+# `kustomize.toolkit.fluxcd.io/prune: disabled` on the individual resources that must
+# outlive their manifest. The annotation belongs on the things that hold STATE -- a PVC,
+# and a HelmRelease whose chart owns claims -- not on every object in the tree.
+#
+# A Namespace holds no state of its own, so protecting it bought nothing and cost the whole
+# tenant lifecycle: with the annotation present, removing a tenant's manifests left Flux
+# managing nothing while the namespace and everything in it kept running. Measured on
+# doggy-countdown, which served for a day after its manifests were deleted (#3367).
+#
+# ⚠️ The consequence is deliberate and worth stating: deleting a namespace cascades to the
+# PVCs inside it regardless of their own annotation, so removing a STATEFUL tenant's
+# directory does remove its data. That is what "GitOps is the source of truth" means here.
+# Recovery is the backup, not the annotation -- CNPG backs the databases up daily to its
+# object store and Velero takes a daily full. Retaining the volume too is #3369.
 fieldSpecs:
   - kind: PersistentVolumeClaim
     path: metadata/annotations
