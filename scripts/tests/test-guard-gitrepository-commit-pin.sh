@@ -252,6 +252,68 @@ else
   assert_contains "says it could not search the tree" "refusing to report a tree it could not fully read"
 fi
 chmod 755 "$root/hidden"
+
+echo "== regression: an ESCAPED kind must NOT escape selection =="
+# `kind: "Git\u0052epository"` is legal YAML that parses as GitRepository, and NO raw-text
+# search can see it — the file does not contain the string "GitRepository" at all. A merely
+# QUOTED kind would not model this: `kind: "GitRepository"` still contains the substring, so a
+# grep prefilter matches it and the fixture would pass with the bug present. With a text prefilter this document was never opened, so in a mixed tree
+# the anti-vacuity check was satisfied by the pinned document beside it and the guard printed
+# "all commit-pinned", exit 0, with an unpinned escaped GitRepository present. This is why
+# selection is now the parser's job and there is no text prefilter at all.
+root="$(mkcase escaped)"
+cat >"$root/pinned.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-escaped-pinned
+  namespace: ns-escaped
+spec:
+  ref:
+    commit: cccccccccccccccccccccccccccccccccccccccc
+YAML
+cat >"$root/escaped.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: "Git\u0052epository"
+metadata:
+  name: case-escaped-unpinned
+  namespace: ns-escaped
+spec:
+  ref:
+    branch: main
+YAML
+run_guard "$root"
+assert_rc "escaped kind in a mixed tree -> 1" 1 "$GUARD_RC"
+assert_contains "names the escaped resource" "case-escaped-unpinned"
+assert_contains "counted BOTH documents, not just the literal one" "1 of 2"
+
+echo "== regression: a SEQUENCE document is not an error =="
+# Now that every YAML file is parsed rather than only text-matching ones, sequence documents
+# are routine: a Kustomize JSON-patch file is a top-level ARRAY, and `.kind` against an array
+# is a yq ERROR, not an empty result. Without the `tag == "!!map"` stage the guard exits 2 on
+# this repository's own manifests. A genuinely unparseable file must STILL be cannot-check,
+# which the case above this one pins.
+root="$(mkcase sequence)"
+cat >"$root/patch.yaml" <<'YAML'
+- op: add
+  path: /spec/listeners/-
+  value:
+    name: example
+    kind: GitRepository
+YAML
+cat >"$root/real.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-sequence
+  namespace: ns-sequence
+spec:
+  ref:
+    commit: dddddddddddddddddddddddddddddddddddddddd
+YAML
+run_guard "$root"
+assert_rc "a JSON-patch array alongside a pinned source -> 0" 0 "$GUARD_RC"
+assert_contains "counted only the real document" "1 GitRepository document(s)"
 echo "== cannot-check: usage and missing root =="
 run_guard ""
 assert_rc "empty root -> 2" 2 "$GUARD_RC"

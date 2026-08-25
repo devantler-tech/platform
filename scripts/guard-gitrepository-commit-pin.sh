@@ -49,36 +49,31 @@ die() {
 root="$1"
 [ -d "$root" ] || die "root '$root' is not a directory"
 command -v yq >/dev/null 2>&1 || die "yq is required but not installed"
-# Cheap prefilter, matching the BARE kind name -- never "kind: GitRepository".
+# 🔴 NO TEXT PREFILTER AT ALL. THE PARSER DECIDES WHICH FILES HOLD A GitRepository.
 #
-# 🔴 A PREFILTER THAT MISSES A FILE IS A FAIL-OPEN, NOT A MISSED WARNING.
+# Every text prefilter tried here has been a fail-open, because the question "does this file
+# contain a GitRepository?" is a question about PARSED YAML and a text match only approximates
+# it. Three approximations failed in turn:
 #
-# Any YAML rendering of this kind contains the bare substring, but the canonical
-# "kind: GitRepository" does not survive an extra space ("kind:   GitRepository")
-# or a quoted scalar. Matching that exact text skipped such a file entirely, and
-# in a MIXED tree the anti-vacuity check below was then satisfied by some OTHER,
-# well-formed resource -- so the guard reported "all commit-pinned", exit 0, with
-# an unpinned GitRepository sitting right beside it. That was measured on this
-# guard before the prefilter was widened, and it is the failure this whole file
-# exists to prevent, one level down.
+#   `kind: GitRepository`   missed `kind:   GitRepository` and quoted scalars.
+#   `GitRepository`         misses `kind: "GitRepository"` -- a legal escape that yq
+#                           parses as GitRepository and no raw-text search can see.
+#   any grep at all         reported a truncated list as a complete one when it hit an
+#                           unreadable path, since it still exits 0/1 for what it did read.
 #
-# The authoritative selection remains the yq .kind test below. This line only
-# decides which files are OPENED, so it must over-match, never under-match.
+# Each one is the same failure: in a MIXED tree the anti-vacuity check below is satisfied by
+# some OTHER well-formed resource, so the guard prints "all commit-pinned", exit 0, with an
+# unpinned GitRepository sitting beside it. Widening the pattern once more would only move the
+# boundary; enumerating every YAML file and letting `yq` apply `.kind` removes it. That costs
+# one `yq` invocation per file -- measured at ~6s over this repository's 725 manifests, which
+# is noise next to the job it runs in, and correctness here is not worth trading for it.
 #
-# 🔴 AND AN ERRORING PREFILTER IS THE SAME FAIL-OPEN BY ANOTHER ROUTE.
-#
-# `grep -r` exits 2 when it could not read something -- an unreadable directory,
-# a broken symlink loop, a vanished file -- and it still exits 0/1 for the parts
-# it DID read. With stderr discarded, a truncated candidate list is byte-for-byte
-# indistinguishable from a complete one. In a MIXED tree the anti-vacuity check
-# below is then satisfied by a file grep could read, so the guard prints
-# "all commit-pinned", exit 0, with an unpinned GitRepository sitting in the
-# directory it silently skipped. Exit 1 (genuinely no matches anywhere) is NOT an
-# error and is left to the anti-vacuity check, which is what that check is for.
-candidates="$(grep -rl --include='*.yaml' --include='*.yml' 'GitRepository' "$root" 2>/dev/null)"
-grep_status=$?
-[ "$grep_status" -le 1 ] ||
-  die "could not search '$root' (grep exit $grep_status) — refusing to report a tree it could not fully read"
+# `find` exits non-zero when it cannot traverse something, which is the same
+# "could not read the tree" case handled below, so that check is kept and now keys on find.
+candidates="$(find "$root" \( -name '*.yaml' -o -name '*.yml' \) -type f -print 2>/dev/null)"
+find_status=$?
+[ "$find_status" -eq 0 ] ||
+  die "could not enumerate '$root' (find exit $find_status) — refusing to report a tree it could not fully read"
 
 checked=0
 violations=0
@@ -88,8 +83,15 @@ violations=0
 while IFS= read -r file; do
   [ -n "$file" ] || continue
 
+  # `select(tag == "!!map")` FIRST, as its own stage. Now that every YAML file is parsed
+  # rather than only those matching a text pattern, sequence documents are routine here: a
+  # Kustomize JSON-patch file is a top-level ARRAY, and `.kind` against an array is a yq
+  # ERROR ("cannot index array with 'kind'"), not an empty result. Without this the guard
+  # exits 2 on this repository's own manifests -- 1 of its 725 files is exactly that shape.
+  # Two stages rather than one `and`, so the second never sees a non-mapping.
+  # A genuinely unparseable file still fails, and is still cannot-check.
   if ! rows="$(yq eval-all \
-    'select(.kind == "GitRepository") | [(.metadata.namespace // "-"), (.metadata.name // "-"), (.spec.ref.commit // "")] | @tsv' \
+    'select(tag == "!!map") | select(.kind == "GitRepository") | [(.metadata.namespace // "-"), (.metadata.name // "-"), (.spec.ref.commit // "")] | @tsv' \
     "$file" 2>/dev/null)"; then
     die "could not parse '$file' — refusing to report a tree it could not read"
   fi
