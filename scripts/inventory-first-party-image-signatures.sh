@@ -29,7 +29,7 @@
 # 🔴 401 IS NOT THE ONLY UNREADABLE STATUS, WHICH IS WHY THE CATCH-ALL IS THE LOAD-BEARING BRANCH.
 # An anonymous read of a private package answers 401, but an identity that AUTHENTICATES and simply
 # lacks read on that package gets 404 — GHCR masks existence rather than admitting the package is
-# there. Measured 2026-08-26 against prod with an under-privileged GHCR identity: both private
+# there. Measured 2026-08-25 against prod with an under-privileged GHCR identity: both private
 # packages returned 404 and were correctly reported UNKNOWN with exit 1, not FAIL. An
 # under-privileged credential is the likelier real-world failure than an absent one, so a rule that
 # named only 401/403 as unreadable would call those two images REFUSED-at-pull on the strength of a
@@ -227,31 +227,53 @@ probe_manifest_status() { # ref
   }
   # The token exchange is what must carry the credential: an anonymous token for a PRIVATE
   # repository is issued happily and then buys a 401 on the manifest, which is exactly the
-  # "unreadable" answer this probe exists to distinguish from "unsigned". Basic auth is
-  # written to a curl config file rather than argv, so the credential is not visible in the
-  # process table of a shared runner and cannot be echoed by a traced shell.
+  # "unreadable" answer this probe exists to distinguish from "unsigned".
+  #
+  # 🔴 NEITHER SECRET MAY REACH argv, AND THE BEARER TOKEN IS THE ONE THAT IS EASY TO MISS.
+  # `curl` is an EXTERNAL command, so every argument it is given is world-readable in the process
+  # table for the life of the call — on a shared runner that is any other user, no privilege
+  # needed. The Basic credential is only half of it: the token the exchange hands back is itself a
+  # pull credential for this repository, so passing it as `-H "Authorization: Bearer ..."` leaks a
+  # working credential exactly as passing the password would. ONE 0600 config file therefore
+  # carries whichever header is in flight — Basic for the exchange, then Bearer for the manifest
+  # read — and neither value is ever an argument. (`printf` is a shell BUILTIN and forks no
+  # process, so writing the file exposes nothing; a traced shell would echo these values, but it
+  # would already have echoed the assignment above, so argv is the boundary that is actually
+  # defensible here.)
   local auth_b64 auth_conf="" curl_conf_args=()
   auth_b64="$(registry_credential_b64 "$registry" || true)"
-  if [ -n "$auth_b64" ]; then
-    # This function runs inside a command substitution, so the EXIT trap below belongs to THAT
-    # subshell and fires the moment this probe returns — exactly the lifetime the credential
-    # file should have. A plain `rm` after the call would not survive a signal; the trap does.
-    # `mktemp` creates the file 0600, so the credential is never briefly world-readable.
-    if auth_conf="$(mktemp 2>/dev/null)"; then
-      # shellcheck disable=SC2064  # expand now: the path must be named at trap time
-      trap "rm -f '${auth_conf}'" EXIT
-    fi
-    if [ -n "$auth_conf" ]; then
-      printf 'header = "Authorization: Basic %s"\n' "$auth_b64" >"$auth_conf"
-      curl_conf_args=(--config "$auth_conf")
-    fi
+  # This function runs inside a command substitution, so the EXIT trap below belongs to THAT
+  # subshell and fires the moment this probe returns — exactly the lifetime the credential
+  # file should have. A plain `rm` after the call would not survive a signal; the trap does.
+  # `mktemp` creates the file 0600, so the credential is never briefly world-readable.
+  if auth_conf="$(mktemp 2>/dev/null)"; then
+    # shellcheck disable=SC2064  # expand now: the path must be named at trap time
+    trap "rm -f '${auth_conf}'" EXIT
+  else
+    auth_conf=""
+  fi
+  if [ -n "$auth_b64" ] && [ -n "$auth_conf" ]; then
+    printf 'header = "Authorization: Basic %s"\n' "$auth_b64" >"$auth_conf"
+    curl_conf_args=(--config "$auth_conf")
   fi
   token="$(curl -sSf --max-time 20 ${curl_conf_args[@]+"${curl_conf_args[@]}"} \
     "https://${registry}/token?scope=repository:${repo}:pull&service=${registry}" 2>/dev/null |
     jq -r '.token // .access_token // empty' 2>/dev/null || true)"
-  [ -z "$auth_conf" ] || : >"$auth_conf"
+  # Re-aim the same file at the manifest read. With no writable config there is nowhere safe to
+  # put the token, so the read goes out ANONYMOUSLY and a private package answers 401 -> UNKNOWN.
+  # That is the correct direction to fail: an unproven verdict costs a re-run, whereas falling
+  # back to argv would trade a working credential for it.
+  curl_conf_args=()
+  if [ -n "$auth_conf" ]; then
+    if [ -n "$token" ]; then
+      printf 'header = "Authorization: Bearer %s"\n' "$token" >"$auth_conf"
+      curl_conf_args=(--config "$auth_conf")
+    else
+      : >"$auth_conf"
+    fi
+  fi
   curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
-    ${token:+-H "Authorization: Bearer ${token}"} \
+    ${curl_conf_args[@]+"${curl_conf_args[@]}"} \
     -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' \
     "https://${registry}/v2/${repo}/manifests/${reference}" 2>/dev/null || echo 000
 }
