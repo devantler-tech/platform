@@ -14,18 +14,23 @@ name: Validate Image Verifier Liveness
 # trust root keyless verification needs. The fleet check asserts both are live
 # on every node.
 #
-# The fleet check is DORMANT: it runs only on demand (`workflow_dispatch`).
-# Turning on a daily cadence belongs to #3336, which first establishes that a
-# matched rule actually refuses an unsigned pull — running rules and trust
-# material are necessary for enforcement, not proof of it, because a cached
-# image is never re-pulled.
+# Two read-only questions about the same control live here, and they are
+# different questions. The fleet check asks whether verification CAN enforce at
+# all. The signature inventory asks what enforcement WOULD refuse — the blast
+# radius that decides whether activation is safe to turn on (#3334).
 #
-# The checker's OWN tests need no cluster and no secrets, so they gate every PR
-# that touches the checker. They live in ci.yaml's `validate` job, which
+# Both are DORMANT: they run only on demand (`workflow_dispatch`). Turning on a
+# daily cadence belongs to #3336, which first establishes that a matched rule
+# actually refuses an unsigned pull — running rules and trust material are
+# necessary for enforcement, not proof of it, because a cached image is never
+# re-pulled.
+#
+# Both checkers' OWN tests need no cluster and no secrets, so they gate every PR
+# that touches them. They live in ci.yaml's `validate` job, which
 # `CI - Required Checks` depends on, so they actually block a merge — a test
 # that only reports is advisory, and a regression in a checker whose job is
 # noticing a silent condition would itself be silent. This workflow therefore
-# carries only the on-demand fleet check.
+# carries only the on-demand checks that need the fleet.
 
 on:
   workflow_dispatch:
@@ -98,3 +103,44 @@ jobs:
           # healthy fleet that is not the one being gated.
           KUBECTL_CONTEXT: admin@prod
         run: ./scripts/validate-image-verifier-liveness.sh
+
+  # The job above answers "can the fleet enforce at all". This one answers the other half of
+  # #3101 — "what would it REFUSE if it did" — which is the blast radius that decides whether
+  # activation is safe. Both are read-only against prod and both are dormant for the same
+  # reason: they belong to an epic that is not finished, and a permanently-red `main` spends
+  # the "something broke" signal on a state that is already tracked (#3336 activates them).
+  inventory-first-party-image-signatures:
+    name: 🔏 Inventory First-Party Image Signatures
+    runs-on: ubuntu-latest
+    # `prod` ENVIRONMENT secret, exactly as the job above — resolved to the empty string
+    # without this, which would leave the check unable to reach a single pod.
+    environment: prod
+    permissions:
+      contents: read # checkout repository
+    concurrency:
+      group: inventory-first-party-image-signatures
+      cancel-in-progress: true
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: 🔑 Restore kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          umask 077
+          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🔏 Inventory what enforcement would refuse
+        shell: bash
+        # Pinned for the same reason the fleet check pins its context: an inventory taken
+        # against another cluster would report a blast radius that is not this fleet's.
+        run: ./scripts/inventory-first-party-image-signatures.sh --context admin@prod
