@@ -117,13 +117,37 @@ exit 1
 FAKE
 chmod +x "${fake_bin}/talosctl"
 
+# ---------------------------------------------------------------------------
+# Fake kubectl: serves the node inventory, and can serve a DIFFERENT one per
+# call so a fleet that changes mid-run can be tested.
+#
+# `nodes.json.<n>` is served on the n-th call, `nodes.json.last` on any call
+# past the end of that sequence, and plain `nodes.json` when no sequence is
+# staged. A per-call inventory is the only way to exercise the convergence
+# pass: a single static fixture cannot distinguish a check that re-reads the
+# fleet from one that trusts its opening snapshot.
+# ---------------------------------------------------------------------------
 cat >"${fake_bin}/kubectl" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"${FIXTURES}/kubectl-args"
-cat "${FIXTURES}/nodes.json"
+calls=$(( $(cat "${FIXTURES}/kubectl-calls" 2>/dev/null || printf '0') + 1 ))
+printf '%s' "${calls}" >"${FIXTURES}/kubectl-calls"
+if [[ -f "${FIXTURES}/nodes.json.${calls}" ]]; then
+  cat "${FIXTURES}/nodes.json.${calls}"
+elif [[ -f "${FIXTURES}/nodes.json.last" ]]; then
+  cat "${FIXTURES}/nodes.json.last"
+else
+  cat "${FIXTURES}/nodes.json"
+fi
 FAKE
 chmod +x "${fake_bin}/kubectl"
+
+# Every staged inventory and the call counter, cleared between cases so one
+# case's sequence cannot leak into the next and silently change what it tests.
+reset_inventory() {
+  rm -f "${fixtures}"/nodes.json.* "${fixtures}/kubectl-calls"
+}
 
 readonly rules_type='imageverificationrules.security.talos.dev'
 readonly roots_type='tuftrustedroots.security.talos.dev'
@@ -367,8 +391,8 @@ resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.securit
   write_roots 10.0.1.5
 cat >"${fixtures}/nodes.json" <<'EOF'
 {"items":[
- {"metadata":{"name":"worker-1"},"status":{"addresses":[{"type":"Hostname","address":"worker-1"},{"type":"InternalIP","address":"10.0.1.4"}]}},
- {"metadata":{"name":"worker-2"},"status":{"addresses":[{"type":"Hostname","address":"worker-2"},{"type":"InternalIP","address":"10.0.1.5"}]}}
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"Hostname","address":"worker-1"},{"type":"InternalIP","address":"10.0.1.4"}]}},
+ {"metadata":{"name":"worker-2","uid":"uid-worker-2"},"status":{"addresses":[{"type":"Hostname","address":"worker-2"},{"type":"InternalIP","address":"10.0.1.5"}]}}
 ]}
 EOF
 status=0
@@ -385,7 +409,7 @@ refute_text "${output}" 'worker-1' 'case 11: used InternalIP, not Hostname'
 # ===========================================================================
 rm -f "${fixtures}/kubectl-args"
 cat >"${fixtures}/nodes.json" <<'EOF'
-{"items":[{"metadata":{"name":"worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.1.4"}]}}]}
+{"items":[{"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.1.4"}]}}]}
 EOF
 run_script KUBECTL_CONTEXT=admin@prod >/dev/null 2>&1 || true
 require_text "$(cat "${fixtures}/kubectl-args")" '--context admin@prod' 'case 12: KUBECTL_CONTEXT was not forwarded to kubectl'
@@ -423,8 +447,8 @@ refute_text "${output}" 'OK   ' 'case 14: reported a verdict for a fleet the cal
 # ===========================================================================
 cat >"${fixtures}/nodes.json" <<'EOF'
 {"items":[
- {"metadata":{"name":"worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.1.4"}]}},
- {"metadata":{"name":"worker-9"},"status":{"addresses":[{"type":"Hostname","address":"worker-9"}]}}
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.1.4"}]}},
+ {"metadata":{"name":"worker-9","uid":"uid-worker-9"},"status":{"addresses":[{"type":"Hostname","address":"worker-9"}]}}
 ]}
 EOF
 status=0
@@ -439,8 +463,8 @@ refute_text "${output}" 'All 1 node(s)' 'case 15: reported a verdict for a fleet
 # ===========================================================================
 cat >"${fixtures}/nodes.json" <<'EOF'
 {"items":[
- {"metadata":{"name":"worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.1.4"}]}},
- {"metadata":{"name":"worker-2"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.1.4"}]}}
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.1.4"}]}},
+ {"metadata":{"name":"worker-2","uid":"uid-worker-2"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.1.4"}]}}
 ]}
 EOF
 status=0
@@ -452,8 +476,8 @@ require_text "${output}" 'worker-1 and worker-2' 'case 16: names the nodes shari
 # an unrelated reason.
 cat >"${fixtures}/nodes.json" <<'EOF'
 {"items":[
- {"metadata":{"name":"worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.1.4"}]}},
- {"metadata":{"name":"worker-2"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.1.6"}]}}
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.1.4"}]}},
+ {"metadata":{"name":"worker-2","uid":"uid-worker-2"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.1.6"}]}}
 ]}
 EOF
 healthy_node 10.0.1.6
@@ -476,4 +500,203 @@ output="$(run_script TALOS_NODES=credsafe 2>&1)" || fail 'case 17: control — t
 require_text "${output}" 'OK   credsafe' 'case 17: control — reports the healthy node'
 [[ ! -e "${fixtures}/NODE_FILE_WAS_READ" ]] ||
   fail 'case 17: the check read a node file — registry credentials are reachable from a script whose output goes to CI logs'
+
+# ===========================================================================
+# Case 18 — RED: a node that JOINS while the serial pass is running must not be
+# skipped. The pass opens on a one-node fleet and a second, unenforcing worker
+# is present by the time it finishes.
+#
+# Reading the opening snapshot only, the script inspects 10.0.2.1, finds it
+# healthy and prints "All 1 node(s) can enforce image verification" — a green
+# verdict for a fleet that now contains a node it never looked at. That is the
+# same silence this whole script exists to break, one level up: not a node
+# lying about its state, but a node nobody asked.
+# ===========================================================================
+reset_inventory
+healthy_node 10.0.2.1
+write_node 10.0.2.2
+resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
+  write_roots 10.0.2.2
+cat >"${fixtures}/nodes.json.1" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.2.1"}]}}
+]}
+EOF
+cat >"${fixtures}/nodes.json.last" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.2.1"}]}},
+ {"metadata":{"name":"worker-2","uid":"uid-worker-2"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.2.2"}]}}
+]}
+EOF
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 1 ]] ||
+  fail "case 18: a node that joined mid-pass was never inspected (expected exit 1, got ${status})"
+require_text "${output}" 'FAIL 10.0.2.2' 'case 18: the node that joined mid-pass must be checked, not skipped'
+refute_text "${output}" 'All 1 node(s) can enforce' 'case 18: reported a green verdict for a stale one-node snapshot'
+
+# ===========================================================================
+# Case 18a — GREEN control: the SAME two-node fleet, held still. Differs from
+# case 18 in exactly one fixture — the opening inventory already lists both
+# nodes — which proves case 18 is about the inventory changing and not merely
+# about 10.0.2.2 being unhealthy.
+# ===========================================================================
+reset_inventory
+healthy_node 10.0.2.3
+healthy_node 10.0.2.4
+cat >"${fixtures}/nodes.json" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.2.3"}]}},
+ {"metadata":{"name":"worker-2","uid":"uid-worker-2"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.2.4"}]}}
+]}
+EOF
+output="$(run_script 2>&1)" || fail 'case 18a: control — a stable healthy fleet must pass'
+require_text "${output}" 'All 2 node(s) can enforce image verification.' 'case 18a: control — reports both nodes'
+
+# ===========================================================================
+# Case 19 — RED: an autoscaler replacement that REUSES the departed node's
+# InternalIP is a different node, and identity must say so.
+#
+# Every reading here lists exactly one node at 10.0.3.1; only the UID changes.
+# Compared on address alone the fleet looks perfectly stable, so the script
+# would converge immediately and report a node it never inspected as healthy.
+# Compared on UID the churn is visible, and the run refuses rather than
+# blessing one transient snapshot.
+# ===========================================================================
+reset_inventory
+healthy_node 10.0.3.1
+i=1
+while [[ "${i}" -le 8 ]]; do
+  cat >"${fixtures}/nodes.json.${i}" <<EOF
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-generation-${i}"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.3.1"}]}}
+]}
+EOF
+  i=$((i + 1))
+done
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 2 ]] ||
+  fail "case 19: a replacement reusing an address was mistaken for the original (expected exit 2, got ${status})"
+require_text "${output}" 'will not hold still' 'case 19: must name the churning inventory as the reason it refuses'
+refute_text "${output}" 'All 1 node(s) can enforce' 'case 19: reported a green verdict across a node replacement'
+
+# ===========================================================================
+# Case 19a — GREEN control: the same single node at the same address, with a
+# STABLE UID. Differs from case 19 in exactly one fixture, so it proves the
+# refusal above is caused by the identity changing rather than by re-reading
+# the inventory at all — a check that refused every fleet would pass case 19
+# while being useless.
+# ===========================================================================
+reset_inventory
+healthy_node 10.0.3.2
+cat >"${fixtures}/nodes.json" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-stable"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.3.2"}]}}
+]}
+EOF
+output="$(run_script 2>&1)" || fail 'case 19a: control — a stable node must pass'
+require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 19a: control — reports the stable node'
+
+# ===========================================================================
+# Case 19b — a fleet that settles after ONE change is retried, not failed.
+# Ordinary autoscaling changes the fleet occasionally, and a check that turned
+# every such change into a hard failure would flap often enough to be ignored —
+# which is indistinguishable from not having the check.
+# ===========================================================================
+reset_inventory
+healthy_node 10.0.3.3
+healthy_node 10.0.3.4
+cat >"${fixtures}/nodes.json.1" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.3.3"}]}}
+]}
+EOF
+cat >"${fixtures}/nodes.json.last" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.3.3"}]}},
+ {"metadata":{"name":"worker-2","uid":"uid-worker-2"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.3.4"}]}}
+]}
+EOF
+output="$(run_script 2>&1)" || fail 'case 19b: a fleet that settles after one change must be retried, not failed'
+require_text "${output}" 'All 2 node(s) can enforce image verification.' 'case 19b: the settled fleet is what the verdict describes'
+require_text "${output}" 're-checking (attempt 2 of 3)' 'case 19b: must say it re-checked rather than silently changing its answer'
+
+# ===========================================================================
+# Case 20 — RED: a node with no metadata.uid is refused, not silently given an
+# empty identity. Two such nodes would compare equal to each other, collapsing
+# identity back to the address exactly where it matters most. The API server
+# always sets a UID, so its absence is a malformed inventory.
+# ===========================================================================
+reset_inventory
+healthy_node 10.0.4.1
+cat >"${fixtures}/nodes.json" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.4.1"}]}}
+]}
+EOF
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 2 ]] || fail "case 20: a node with no UID must be refused (expected exit 2, got ${status})"
+require_text "${output}" 'has no metadata.uid' 'case 20: must name the node missing its UID'
+
+# ===========================================================================
+# Case 20a — RED: two nodes sharing one UID is the same collapse from the other
+# direction, and would make a replaced node compare equal to its predecessor.
+# ===========================================================================
+reset_inventory
+healthy_node 10.0.4.2
+healthy_node 10.0.4.3
+cat >"${fixtures}/nodes.json" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-duplicate"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.4.2"}]}},
+ {"metadata":{"name":"worker-2","uid":"uid-duplicate"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.4.3"}]}}
+]}
+EOF
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 2 ]] || fail "case 20a: two nodes sharing a UID must be refused (expected exit 2, got ${status})"
+require_text "${output}" 'share UID uid-duplicate' 'case 20a: must name the shared UID'
+
+# ===========================================================================
+# Case 21 — an explicitly pinned fleet is NOT converged on. --nodes is the
+# caller's claim about what to check, not a snapshot of a moving cluster, so
+# the convergence pass must not call kubectl at all — doing so would make a
+# pinned run depend on cluster access it deliberately does not need.
+# ===========================================================================
+reset_inventory
+rm -f "${fixtures}/kubectl-args"
+healthy_node pinned
+output="$(run_script TALOS_NODES=pinned 2>&1)" || fail 'case 21: a pinned fleet must still pass'
+require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 21: reports the pinned node'
+[[ ! -s "${fixtures}/kubectl-args" ]] ||
+  fail 'case 21: a pinned run consulted kubectl — convergence must not apply to an explicitly named fleet'
+
+# ===========================================================================
+# Case 22 — RED: the fleet draining to EMPTY between readings must not be
+# reported as a clean fleet.
+#
+# The "no nodes to check" guard runs once, before the sweep. The convergence
+# pass re-reads the inventory afterwards, so a reading that comes back empty —
+# a wrong context, an API server returning nothing, a cluster genuinely torn
+# down — would otherwise settle (empty equals empty), sweep zero nodes, and
+# print "All 0 node(s) can enforce image verification". Exit 0 over a fleet
+# that does not exist is the most confident wrong answer this script can give.
+# ===========================================================================
+reset_inventory
+healthy_node 10.0.5.1
+cat >"${fixtures}/nodes.json.1" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.5.1"}]}}
+]}
+EOF
+cat >"${fixtures}/nodes.json.last" <<'EOF'
+{"items":[]}
+EOF
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 2 ]] ||
+  fail "case 22: an empty inventory must be refused, not reported clean (expected exit 2, got ${status})"
+require_text "${output}" 'no nodes to check' 'case 22: must name the empty inventory as the reason it refuses'
+refute_text "${output}" 'All 0 node(s) can enforce' 'case 22: reported a green verdict for an empty fleet'
 printf 'all cases passed\n'
