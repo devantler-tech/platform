@@ -32,6 +32,19 @@
 #   2  usage, or the measurement could not be made at all (never reported as "nothing to fix")
 set -euo pipefail
 
+# Resolved with parameter expansion alone. `dirname` is an EXTERNAL command, and the cosign
+# gate below is exercised by a test that strips PATH — so calling one here turns a clean
+# "cosign is required" exit 2 into a crash, which is the fabricated verdict this script
+# exists to never produce.
+SCRIPT_DIR="${BASH_SOURCE[0]}"
+case "$SCRIPT_DIR" in
+  */*) SCRIPT_DIR="${SCRIPT_DIR%/*}" ;;
+  *) SCRIPT_DIR="." ;;
+esac
+readonly SCRIPT_DIR
+# shellcheck source=scripts/registry-auth-lib.sh
+source "${SCRIPT_DIR}/registry-auth-lib.sh"
+
 RULES_FILE="talos/cluster/verify-first-party-images.yaml"
 KUBE_CONTEXT="admin@prod"
 IMAGES_FILE=""
@@ -170,6 +183,21 @@ verify_signature() { # ref issuer subjectRegex
   cosign verify --certificate-oidc-issuer "$2" --certificate-identity-regexp "$3" "$1" >/dev/null 2>&1
 }
 
+# The probe writes a curl config carrying registry Basic auth. It goes in ONE 0700 directory
+# with an EXIT trap rather than a fresh mktemp per image, so an interrupted run cannot leave
+# credential material in TMPDIR. Created LAZILY and only when a credential actually exists:
+# `mktemp` is an external command, and creating it at startup would reintroduce exactly the
+# PATH-stripped crash the SCRIPT_DIR note above describes.
+AUTH_CONF_DIR=""
+ensure_auth_conf_dir() {
+  [ -z "$AUTH_CONF_DIR" ] || return 0
+  AUTH_CONF_DIR="$(mktemp -d 2>/dev/null)" || { AUTH_CONF_DIR=""; return 1; }
+  [ -n "$AUTH_CONF_DIR" ] || return 1
+  chmod 700 "$AUTH_CONF_DIR" 2>/dev/null || true
+  # shellcheck disable=SC2064  # expand now: the directory must be named at trap time
+  trap "rm -rf '${AUTH_CONF_DIR}'" EXIT
+}
+
 # Prints the HTTP status of a read of the IMAGE manifest — the discriminator between
 # "no signature" and "cannot look". Prints 000 when the probe itself could not run.
 probe_manifest_status() { # ref
@@ -203,9 +231,29 @@ probe_manifest_status() { # ref
     echo 000
     return 0
   }
-  token="$(curl -sSf --max-time 20 \
+  # The token exchange is what must carry the credential: an anonymous token for a PRIVATE
+  # repository is issued happily and then buys a 401 on the manifest, which is exactly the
+  # "unreadable" answer this probe exists to distinguish from "unsigned". Basic auth is
+  # written to a curl config file rather than argv, so the credential is not visible in the
+  # process table of a shared runner and cannot be echoed by a traced shell.
+  local auth_b64 auth_conf="" curl_conf_args=()
+  auth_b64="$(registry_credential_b64 "$registry" || true)"
+  if [ -n "$auth_b64" ]; then
+    if ensure_auth_conf_dir; then
+      auth_conf="${AUTH_CONF_DIR}/curl.conf"
+    else
+      auth_conf=""
+    fi
+    if [ -n "$auth_conf" ]; then
+      (umask 077 && : >"$auth_conf")
+      printf 'header = "Authorization: Basic %s"\n' "$auth_b64" >"$auth_conf"
+      curl_conf_args=(--config "$auth_conf")
+    fi
+  fi
+  token="$(curl -sSf --max-time 20 ${curl_conf_args[@]+"${curl_conf_args[@]}"} \
     "https://${registry}/token?scope=repository:${repo}:pull&service=${registry}" 2>/dev/null |
     jq -r '.token // .access_token // empty' 2>/dev/null || true)"
+  [ -z "$auth_conf" ] || : >"$auth_conf"
   curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
     ${token:+-H "Authorization: Bearer ${token}"} \
     -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' \

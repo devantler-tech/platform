@@ -82,6 +82,11 @@ jobs:
           shellcheck scripts/inventory-first-party-image-signatures.sh
           shellcheck scripts/tests/test-inventory-first-party-image-signatures.sh
           bash scripts/tests/test-inventory-first-party-image-signatures.sh
+          # The credential lookup the probe uses to tell "unreadable" from "unsigned" apart. Pure
+          # file parsing against fixtures — no registry and no credential of ours is involved.
+          shellcheck -x scripts/registry-auth-lib.sh
+          shellcheck -x scripts/tests/test-registry-auth-lib.sh
+          bash scripts/tests/test-registry-auth-lib.sh
 
       # The guard above proves every matcher pins A revision. It cannot say WHICH, and
       # narrowing them to approved revisions (#2818) needs that fact for each consumer.

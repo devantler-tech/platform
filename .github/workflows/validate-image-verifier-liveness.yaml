@@ -139,6 +139,48 @@ jobs:
           printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
           chmod 600 ~/.kube/config
 
+      # The two private first-party packages (`ascoachingogvaner`, `wedding-app`) answer 401 to an
+      # anonymous manifest read, so without a credential the inventory can only report UNKNOWN for
+      # them — and #3334 closes on zero UNKNOWNs. The credential used is the cluster's OWN Flux
+      # pull secret, decrypted from SOPS: it is the one identity already proven to pull these
+      # images, so no new secret path or registry grant is introduced here.
+      - name: ⚙️ Setup KSail
+        shell: bash
+        env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.178.36"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/setup-ksail.sh
+
+      - name: 🔐 Create SOPS Age key
+        shell: bash
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          mkdir -p ~/.config/sops/age
+          umask 077
+          printf '%s' "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
+          chmod 600 ~/.config/sops/age/keys.txt
+
+      - name: 🔑 Stage the GHCR pull credential
+        shell: bash
+        # DOCKER_CONFIG is the single wiring point: cosign reads it natively through
+        # go-containerregistry, and the manifest probe reads the same file through
+        # scripts/registry-auth-lib.sh, so both halves of a verdict use one identity.
+        # The decrypted config is written under RUNNER_TEMP with a restrictive umask and is
+        # never echoed: `decrypt_flux_ghcr_docker_config` redirects ksail's stdout to
+        # /dev/null and chmods the file, so the credential does not reach the job log.
+        run: |
+          set -euo pipefail
+          source scripts/ghcr-auth-lib.sh
+          require_flux_ghcr_yaml_tool
+          umask 077
+          docker_config_dir="${RUNNER_TEMP}/ghcr-docker-config"
+          mkdir -p "${docker_config_dir}"
+          chmod 700 "${docker_config_dir}"
+          decrypt_flux_ghcr_docker_config "${docker_config_dir}/config.json"
+          echo "DOCKER_CONFIG=${docker_config_dir}" >> "${GITHUB_ENV}"
+
       - name: 🔏 Inventory what enforcement would refuse
         shell: bash
         # Pinned for the same reason the fleet check pins its context: an inventory taken
