@@ -93,6 +93,12 @@ check "empty auth string yields nothing" "" "$(cred "${work}/emptyauth" ghcr.io)
 mkcfg "${work}/store" '{"auths":{"ghcr.io":{}},"credsStore":"osxkeychain"}'
 check "credsStore entry with no inline secret yields nothing" "" "$(cred "${work}/store" ghcr.io)"
 
+# An `auth` that is not valid Base64 at all decodes to nothing. Both GNU coreutils and BSD base64
+# reject this input, so the value never becomes a credential on either the CI runner or a developer
+# machine.
+mkcfg "${work}/undecodable" '{"auths":{"ghcr.io":{"auth":"%%%%"}}}'
+check "auth that is not valid base64 yields nothing" "" "$(cred "${work}/undecodable" ghcr.io)"
+
 # A non-empty `auth` that does not decode to user:secret is the one shape jq cannot filter:
 # it is present and well-formed as a string, and only decoding reveals it is not a credential.
 mkcfg "${work}/notapair" '{"auths":{"ghcr.io":{"auth":"bm9wYWly"}}}'
