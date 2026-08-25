@@ -1,6 +1,13 @@
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+components:
+  # Namespace prune-protection (#3367): this base holds live PVCs and a CNPG `Cluster` (umami-db),
+  # so its namespace must survive a speculative merge-group deploy that removes
+  # it -- deleting a namespace cascades to its PVCs regardless of their own
+  # annotation. Opt-in rather than blanket, so a STATELESS tenant's directory
+  # removal still cascades and cleans itself up.
+  - ../../components/namespace-prune-protection
 resources:
   # Namespace ownership lives in infrastructure-controllers/kyverno so the
   # namespaced background-controller grant exists before its ClusterPolicy.

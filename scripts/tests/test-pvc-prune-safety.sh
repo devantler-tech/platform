@@ -122,11 +122,32 @@ readonly current_resources="${temp_dir}/current-resources.tsv"
 render_protected_resources "${temp_dir}/base" "${base_resources}"
 render_protected_resources "${root_dir}" "${current_resources}"
 
+# PVCs and HelmReleases are protected unconditionally -- they ARE the persistent state.
 unprotected_current="$(awk -F '\t' '
-  NF >= 3 && $4 != "disabled" {print $1 " " $2 "/" $3}
+  NF >= 3 && $1 != "Namespace" && $4 != "disabled" {print $1 " " $2 "/" $3}
 ' "${current_resources}")"
 if [[ -n "${unprotected_current}" ]]; then
-  fail "every rendered production PVC, HelmRelease, and Namespace must disable Flux pruning; missing on: ${unprotected_current//$'\n'/, }"
+  fail "every rendered production PVC and HelmRelease must disable Flux pruning; missing on: ${unprotected_current//$'\n'/, }"
+fi
+
+# Namespaces are protected CONDITIONALLY (#3367): required exactly where the namespace
+# owns persistence, so that removing a STATELESS tenant's directory still cascades and
+# cleans itself up instead of orphaning a running workload.
+#
+# 🔴 THIS STATIC PASS IS NOT SUFFICIENT ON ITS OWN, AND MUST NOT BE READ AS IF IT WERE.
+# A tenant's workload arrives from its own OCI artifact, so this repository renders only
+# its plumbing: `wedding-app` renders no PVC, no HelmRelease and no CNPG Cluster here
+# while its namespace holds a three-PVC Postgres cluster. The live sweep further down is
+# what closes that gap; this pass only catches what is visible in the manifests.
+awk -F '\t' '$1 != "Namespace" && NF >= 3 {print $2}' "${current_resources}" |
+  sort -u >"${temp_dir}/stateful-namespaces.txt"
+
+unprotected_stateful_ns="$(awk -F '\t' '
+  NR == FNR {stateful[$0] = 1; next}
+  $1 == "Namespace" && $4 != "disabled" && ($3 in stateful) {print $3}
+' "${temp_dir}/stateful-namespaces.txt" "${current_resources}")"
+if [[ -n "${unprotected_stateful_ns}" ]]; then
+  fail "a namespace that renders a PVC or HelmRelease must disable Flux pruning; missing on: ${unprotected_stateful_ns//$'\n'/, }"
 fi
 
 force_enabled_current="$(awk -F '\t' '
@@ -194,6 +215,44 @@ if [[ -n "${PVC_PRUNE_LIVE_CONTEXT:-}" ]]; then
   if [[ -n "${unsafe_live_removals}" ]]; then
     unsafe_live_removals="${unsafe_live_removals%$'\n'}"
     fail "live Flux-owned resources must already be prune-protected before removal: ${unsafe_live_removals//$'\n'/, }"
+  fi
+
+  # 🔴 THE ONLY CHECK THAT SEES DYNAMICALLY-PROVISIONED PERSISTENCE (#3367).
+  #
+  # Namespace protection is opt-in, so something must verify the opt-in is actually
+  # correct -- and the manifests cannot answer that. A CNPG `Cluster`, a StatefulSet
+  # volumeClaimTemplate, or any chart-provisioned claim creates its PVCs at RUNTIME,
+  # and for a tenant those all live in the tenant's own artifact rather than here.
+  # `wedding-app` is the worked example: nothing in this repository reveals its
+  # three-PVC database, so a purely static rule would call it stateless and let a
+  # speculative merge-group deploy cascade the namespace away with the data in it.
+  #
+  # ⚠️ DELIBERATELY NOT FILTERED BY FLUX OWNERSHIP, unlike the sweep above. A
+  # CNPG-owned PVC carries no `kustomize.toolkit.fluxcd.io/*` labels at all, so the
+  # ownership filter would hide exactly the claims this check exists to find.
+  live_pvc_namespaces="$(
+    kubectl --context "${PVC_PRUNE_LIVE_CONTEXT}" get persistentvolumeclaims \
+      --all-namespaces -o json |
+      jq -r '.items[] | .metadata.namespace' |
+      sort -u
+  )" || fail 'could not enumerate live PVCs; refusing to certify namespace protection it could not check'
+
+  unprotected_live_ns=""
+  while IFS= read -r ns; do
+    [[ -n "${ns}" ]] || continue
+    # A namespace this repository does not render is not ours to protect; the
+    # transformer never reached it, before this change or after.
+    awk -F '\t' -v ns="${ns}" '$1 == "Namespace" && $3 == ns {found = 1} END {exit !found}' \
+      "${current_resources}" || continue
+    awk -F '\t' -v ns="${ns}" '
+      $1 == "Namespace" && $3 == ns && $4 == "disabled" {ok = 1}
+      END {exit !ok}
+    ' "${current_resources}" || unprotected_live_ns+="${ns}"$'\n'
+  done <<<"${live_pvc_namespaces}"
+
+  if [[ -n "${unprotected_live_ns}" ]]; then
+    unprotected_live_ns="${unprotected_live_ns%$'\n'}"
+    fail "a namespace holding live PVCs must disable Flux pruning; add the namespace-prune-protection component to: ${unprotected_live_ns//$'\n'/, }"
   fi
 fi
 

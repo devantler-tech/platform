@@ -5,13 +5,18 @@ metadata:
   name: production-persistence-prune-protection
 annotations:
   kustomize.toolkit.fluxcd.io/prune: disabled
+# 🔴 NAMESPACE IS DELIBERATELY NOT HERE ANY MORE -- it moved to the opt-in
+# `bases/components/namespace-prune-protection` component (#3367).
+#
+# Blanket namespace protection made tenant removal impossible without a manual
+# `kubectl delete`: Flux drops the tenant from inventory and leaves it running. It is
+# still applied to bootstrap/infrastructure/controllers, which are not tenants, and to
+# every app base that owns persistence. Only stateless tenants lose it, and for them
+# there is no data the speculative-deploy hazard could destroy.
 fieldSpecs:
   - kind: PersistentVolumeClaim
     path: metadata/annotations
     create: true
   - kind: HelmRelease
-    path: metadata/annotations
-    create: true
-  - kind: Namespace
     path: metadata/annotations
     create: true

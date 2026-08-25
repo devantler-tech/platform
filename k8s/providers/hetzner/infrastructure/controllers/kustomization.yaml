@@ -62,6 +62,10 @@ resources:
   # - ../../../../bases/infrastructure/controllers/chaos-mesh/
 components:
   - ../../../../bases/components/annotations-transformers
+  # Namespace prune-protection, unchanged for this layer (#3367). These are not
+  # tenants and are never removed as a routine act, so blanket protection here
+  # costs nothing and still guards against a speculative merge-group deploy.
+  - ../../../../bases/components/namespace-prune-protection
   # Platform-wide HelmRelease drift detection (mode: enabled). Restores
   # Helm-rendered resources deleted/mutated out-of-band — the cause of the
   # silently-broken keda external-scaler and homepage Deployments.
