@@ -87,6 +87,13 @@ while [ $# -gt 0 ]; do
 done
 
 command -v yq >/dev/null 2>&1 || die "yq (Mike Farah v4) is required to read the rules"
+# cosign is what decides PASS. Absent, every verification returns non-zero and each image whose
+# manifest reads 2xx would be classified FAIL — a blast radius produced entirely by a missing tool
+# rather than by the fleet. Checked here, beside the other prerequisites, so it fails before any
+# measurement is attempted rather than after one that cannot mean anything.
+if [ -z "${INVENTORY_VERIFY_CMD:-}" ]; then
+  command -v cosign >/dev/null 2>&1 || die "cosign is required to verify signatures"
+fi
 [ -r "$RULES_FILE" ] || die "rules file not readable: $RULES_FILE"
 
 # ---------------------------------------------------------------------------
@@ -246,7 +253,16 @@ EOF
   fi
 
   status="$(probe_manifest_status "$ref")"
+  # FAIL is reserved for a manifest we actually READ. Any other status — 404, 429, 5xx — says the
+  # read did not succeed, so it establishes nothing about the signature and must not be counted as
+  # an image that would be refused. Overstating the blast radius is the same class of confident-but-
+  # wrong verdict as #3108, just pointing the other way.
   case "$status" in
+    2??)
+      fail=$((fail + 1))
+      results="${results}FAIL	${ref}	${hit_glob}	image manifest readable (HTTP ${status}) but no signature the rule accepts — this image would be REFUSED at pull
+"
+      ;;
     401 | 403)
       unknown=$((unknown + 1))
       results="${results}UNKNOWN	${ref}	${hit_glob}	image manifest unreadable (HTTP ${status}) — credential lacks access, signature state not established
@@ -258,8 +274,8 @@ EOF
 "
       ;;
     *)
-      fail=$((fail + 1))
-      results="${results}FAIL	${ref}	${hit_glob}	repository readable (HTTP ${status}) but no signature the rule accepts — this image would be REFUSED at pull
+      unknown=$((unknown + 1))
+      results="${results}UNKNOWN	${ref}	${hit_glob}	image manifest read failed (HTTP ${status}) — signature state not established
 "
       ;;
   esac

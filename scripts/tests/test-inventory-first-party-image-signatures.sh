@@ -114,6 +114,41 @@ done
 ACCEPT_SUBJECTS='' PROBE_MAP='wedding-app=000' run 'ghcr.io/example/wedding-app@sha256:aa'
 check "probe unavailable -> UNKNOWN" 1 'UNKNOWN.*probe could not run' "$RC" "$OUT"
 
+# --- 5b. a manifest read that did not SUCCEED -> UNKNOWN, never FAIL ------
+# 404/429/5xx are not "readable but unsigned": the read did not succeed, so nothing about the
+# signature was established. Counting them FAIL invents images that would be refused and overstates
+# the very blast radius the activation decision rests on.
+for code in 404 429 500; do
+  ACCEPT_SUBJECTS='' PROBE_MAP="wedding-app=${code}" run 'ghcr.io/example/wedding-app@sha256:aa'
+  check "HTTP ${code} on the image manifest -> UNKNOWN (not FAIL)" 1 'UNKNOWN.*read failed' "$RC" "$OUT"
+  if printf '%s\n' "$OUT" | grep -q 'FAIL=[1-9]'; then
+    echo "FAIL  HTTP ${code} was counted as a FAIL"
+    failures=$((failures + 1))
+  fi
+done
+
+# --- 5c. only a 2xx read may produce FAIL ----------------------------------
+# The positive control for 5b: the same unsigned image, read successfully, MUST still be FAIL.
+# Without this, 5b would also pass if the classifier stopped producing FAIL at all.
+ACCEPT_SUBJECTS='' PROBE_MAP='wedding-app=204' run 'ghcr.io/example/wedding-app@sha256:aa'
+check "a 2xx read of an unsigned image is still FAIL" 1 'FAIL=1' "$RC" "$OUT"
+
+# --- 5d. cosign absent is a measurement that did not run -------------------
+# Without cosign every verification returns non-zero, so each 2xx image would be reported FAIL — a
+# blast radius produced by a missing tool rather than by the fleet. The gate sits beside the yq
+# check, so a PATH carrying yq but no cosign reaches it using only shell builtins.
+mkdir -p "${work}/onlyyq"
+printf '#!/bin/sh\nexit 0\n' >"${work}/onlyyq/yq"
+ln -sf "$(command -v bash)" "${work}/onlyyq/bash"
+chmod +x "${work}/onlyyq/yq"
+printf '%s\n' 'ghcr.io/example/wedding-app@sha256:aa' >"${work}/images"
+set +e
+OUT="$(PATH="${work}/onlyyq" INVENTORY_PROBE_CMD="${work}/probe" \
+  "$script" --rules "${work}/rules.yaml" --images "${work}/images" 2>&1)"
+RC=$?
+set -e
+check "cosign absent -> exit 2, never a fabricated FAIL" 2 'cosign is required' "$RC" "$OUT"
+
 # --- 6. an UNKNOWN alone is enough to withhold the all-clear ---------------
 ACCEPT_SUBJECTS='^KSAIL$' PROBE_MAP='wedding-app=401' \
   run 'ghcr.io/example/ksail:v1
