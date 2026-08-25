@@ -261,6 +261,9 @@ jobs:
               # Both halves, for the same reason as the guard above.
               - 'scripts/guard-limitrange-premise.sh'
               - 'scripts/tests/test-guard-limitrange-premise.sh'
+              # Both halves, for the same reason as the guard above.
+              - 'scripts/guard-gitrepository-commit-pin.sh'
+              - 'scripts/tests/test-guard-gitrepository-commit-pin.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
@@ -863,6 +866,21 @@ jobs:
         run: |
           bash scripts/guard-checkov-skip-reasons.sh k8s
           bash scripts/tests/test-guard-checkov-skip-reasons.sh
+
+      - name: 📌 Validate every GitRepository is pinned to a commit
+        if: needs.changes.outputs.k8s == 'true'
+        # A GitRepository naming a mutable ref reconciles whatever the branch tip is,
+        # so the trust boundary becomes the source repository's own enforcement.
+        # #2707 closed that on the unifi source by pinning the full commit, which fixes
+        # the content cryptographically and makes moving it a reviewed Platform change.
+        # That mitigation lived in one YAML file with nothing asserting it, so reverting
+        # it — deliberately or as collateral — would silently restore the exposure with
+        # nothing in CI noticing (#3124). This runs the guard over the tree and pins its
+        # verdict in all three directions, including the anti-vacuity case: finding NO
+        # GitRepository at all is cannot-check, never a clean pass.
+        run: |
+          bash scripts/guard-gitrepository-commit-pin.sh k8s
+          bash scripts/tests/test-guard-gitrepository-commit-pin.sh
 
       - name: 📐 Validate LimitRange-premised suppressions actually have a LimitRange
         if: needs.changes.outputs.k8s == 'true'
