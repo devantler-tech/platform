@@ -95,7 +95,7 @@ check "credsStore entry with no inline secret yields nothing" "" "$(cred "${work
 
 # A non-empty `auth` that does not decode to user:secret is the one shape jq cannot filter:
 # it is present and well-formed as a string, and only decoding reveals it is not a credential.
-mkcfg "${work}/notapair" '{"auths":{"ghcr.io":{"auth":"bm90LWEtcGFpcg=="}}}'
+mkcfg "${work}/notapair" '{"auths":{"ghcr.io":{"auth":"bm9wYWly"}}}'
 check "auth that decodes without a colon yields nothing" "" "$(cred "${work}/notapair" ghcr.io)"
 
 mkcfg "${work}/nouser" '{"auths":{"ghcr.io":{"auth":"OnBhc3N3b3Jk"}}}'
