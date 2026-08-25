@@ -71,6 +71,18 @@ jobs:
       - name: 🔐 Validate shared publish workflows are pinned
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
+      # The rules in talos/cluster/verify-first-party-images.yaml decide which images a node
+      # will REFUSE once verification enforces, so a change to their order or their identities
+      # silently changes the blast radius. This is the inventory tool's own hermetic suite —
+      # no cluster, no registry, no credential — and it lives here rather than in the dormant
+      # liveness workflow because a checker whose job is noticing a silent condition must not
+      # itself regress silently (#3334, under #3101).
+      - name: 🔐 Validate the first-party image signature inventory
+        run: |
+          shellcheck scripts/inventory-first-party-image-signatures.sh
+          shellcheck scripts/tests/test-inventory-first-party-image-signatures.sh
+          bash scripts/tests/test-inventory-first-party-image-signatures.sh
+
       # The guard above proves every matcher pins A revision. It cannot say WHICH, and
       # narrowing them to approved revisions (#2818) needs that fact for each consumer.
       # This runs the hermetic half of the report that computes it: the network resolver
