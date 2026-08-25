@@ -135,19 +135,30 @@ check "a 2xx read of an unsigned image is still FAIL" 1 'FAIL=1' "$RC" "$OUT"
 
 # --- 5d. cosign absent is a measurement that did not run -------------------
 # Without cosign every verification returns non-zero, so each 2xx image would be reported FAIL — a
-# blast radius produced by a missing tool rather than by the fleet. The gate sits beside the yq
-# check, so a PATH carrying yq but no cosign reaches it using only shell builtins.
-mkdir -p "${work}/onlyyq"
-printf '#!/bin/sh\nexit 0\n' >"${work}/onlyyq/yq"
-ln -sf "$(command -v bash)" "${work}/onlyyq/bash"
-chmod +x "${work}/onlyyq/yq"
+# blast radius produced by a missing tool rather than by the fleet. The gate runs after the rules
+# are validated, so this needs a real toolchain; the PATH below carries every binary the script
+# reaches before the gate, and deliberately not cosign. Listing them explicitly means a future
+# dependency shows up as a loud failure here rather than as a silently skipped check.
+mkdir -p "${work}/nocosign"
+for b in bash sh env yq grep sed sort cat tr awk; do
+  real="$(command -v "$b" 2>/dev/null)" && ln -sf "$real" "${work}/nocosign/${b}"
+done
 printf '%s\n' 'ghcr.io/example/wedding-app@sha256:aa' >"${work}/images"
 set +e
-OUT="$(PATH="${work}/onlyyq" INVENTORY_PROBE_CMD="${work}/probe" \
+OUT="$(PATH="${work}/nocosign" INVENTORY_PROBE_CMD="${work}/probe" \
   "$script" --rules "${work}/rules.yaml" --images "${work}/images" 2>&1)"
 RC=$?
 set -e
 check "cosign absent -> exit 2, never a fabricated FAIL" 2 'cosign is required' "$RC" "$OUT"
+
+# --- 5e. a rules error still wins over the cosign gate ---------------------
+# Ordering assertion: config problems must report themselves, not be masked by a missing tool.
+set +e
+OUT="$(PATH="${work}/nocosign" INVENTORY_PROBE_CMD="${work}/probe" \
+  "$script" --rules "${work}/nonexistent.yaml" --images "${work}/images" 2>&1)"
+RC=$?
+set -e
+check "an unreadable rules file outranks the cosign gate" 2 'not readable' "$RC" "$OUT"
 
 # --- 6. an UNKNOWN alone is enough to withhold the all-clear ---------------
 ACCEPT_SUBJECTS='^KSAIL$' PROBE_MAP='wedding-app=401' \

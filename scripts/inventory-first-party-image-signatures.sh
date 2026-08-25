@@ -87,13 +87,6 @@ while [ $# -gt 0 ]; do
 done
 
 command -v yq >/dev/null 2>&1 || die "yq (Mike Farah v4) is required to read the rules"
-# cosign is what decides PASS. Absent, every verification returns non-zero and each image whose
-# manifest reads 2xx would be classified FAIL — a blast radius produced entirely by a missing tool
-# rather than by the fleet. Checked here, beside the other prerequisites, so it fails before any
-# measurement is attempted rather than after one that cannot mean anything.
-if [ -z "${INVENTORY_VERIFY_CMD:-}" ]; then
-  command -v cosign >/dev/null 2>&1 || die "cosign is required to verify signatures"
-fi
 [ -r "$RULES_FILE" ] || die "rules file not readable: $RULES_FILE"
 
 # ---------------------------------------------------------------------------
@@ -121,6 +114,15 @@ rules_tsv="$(yq -r '.rules[] | [.image, .keyless.issuer, .keyless.subjectRegex] 
 [ -n "$rules_tsv" ] || die "no rules found in $RULES_FILE — refusing to report an empty blast radius"
 
 rule_count=$(printf '%s\n' "$rules_tsv" | grep -c .)
+
+# cosign is what decides PASS. Absent, every verification returns non-zero and each image whose
+# manifest reads 2xx would be classified FAIL — a blast radius produced entirely by a missing tool
+# rather than by the fleet. Checked after the rules are validated, so a malformed or unreadable
+# rules file still reports its own error first, and before enumeration, so it fails before doing
+# work whose result could not mean anything.
+if [ -z "${INVENTORY_VERIFY_CMD:-}" ]; then
+  command -v cosign >/dev/null 2>&1 || die "cosign is required to verify signatures"
+fi
 
 # ---------------------------------------------------------------------------
 # Enumeration
