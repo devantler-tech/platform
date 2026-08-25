@@ -56,7 +56,7 @@ assert_contains() { # <label> <needle>
   # that gives the upstream `printf` becomes the pipeline status under `pipefail`.
   # A needle matching EARLY would then read as a failed assertion while a needle
   # near the end passed — the harness silently inverting its own verdict.
-  if grep -qF -- "$2" <<< "$GUARD_OUT"; then
+  if grep -qF -- "$2" <<<"$GUARD_OUT"; then
     printf '  ok   %s\n' "$1"
   else
     printf '  FAIL %s: output did not contain %s\n' "$1" "$2"
@@ -73,7 +73,7 @@ mkcase() { # <name> -> echoes the root dir
 
 echo "== case: pinned commit is accepted =="
 root="$(mkcase pinned)"
-cat > "$root/gr.yaml" <<'YAML'
+cat >"$root/gr.yaml" <<'YAML'
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
@@ -90,7 +90,7 @@ assert_contains "reports the count it checked" "1 GitRepository document(s)"
 
 echo "== case: mutable branch ref is refused =="
 root="$(mkcase branchref)"
-cat > "$root/gr.yaml" <<'YAML'
+cat >"$root/gr.yaml" <<'YAML'
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
@@ -108,7 +108,7 @@ assert_contains "states the fix" "spec:"
 
 echo "== case: a short/malformed commit is refused =="
 root="$(mkcase shortsha)"
-cat > "$root/gr.yaml" <<'YAML'
+cat >"$root/gr.yaml" <<'YAML'
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
@@ -125,7 +125,7 @@ assert_contains "names the offending resource" "ns-short/case-short"
 
 echo "== anti-false-positive: a Kustomization sourceRef is NOT a GitRepository =="
 root="$(mkcase sourceref)"
-cat > "$root/ks.yaml" <<'YAML'
+cat >"$root/ks.yaml" <<'YAML'
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -136,7 +136,7 @@ spec:
     kind: GitRepository
     name: case-source
 YAML
-cat > "$root/gr.yaml" <<'YAML'
+cat >"$root/gr.yaml" <<'YAML'
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
@@ -158,7 +158,7 @@ echo "== regression: a non-canonically-spaced kind must NOT escape the prefilter
 # returned exit 0 -- reporting "all commit-pinned" with an unpinned GitRepository
 # right beside it. Both documents must be counted, and the odd one refused.
 root="$(mkcase mixedspacing)"
-cat > "$root/canonical.yaml" <<'YAML'
+cat >"$root/canonical.yaml" <<'YAML'
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
@@ -168,7 +168,7 @@ spec:
   ref:
     commit: 7b17f7e33ef507c24c395b884a433c62b92ace98
 YAML
-cat > "$root/odd.yaml" <<'YAML'
+cat >"$root/odd.yaml" <<'YAML'
 apiVersion: source.toolkit.fluxcd.io/v1
 kind:   GitRepository
 metadata:
@@ -185,7 +185,7 @@ assert_contains "counted BOTH documents, not just the canonical one" "1 of 2 Git
 
 echo "== anti-vacuity: no GitRepository anywhere is CANNOT-CHECK, not clean =="
 root="$(mkcase empty)"
-cat > "$root/other.yaml" <<'YAML'
+cat >"$root/other.yaml" <<'YAML'
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -198,7 +198,7 @@ assert_contains "says the selector matched nothing" "matched nothing"
 
 echo "== cannot-check: unparseable YAML is never reported as clean =="
 root="$(mkcase broken)"
-cat > "$root/gr.yaml" <<'YAML'
+cat >"$root/gr.yaml" <<'YAML'
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:

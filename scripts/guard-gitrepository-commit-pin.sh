@@ -40,7 +40,10 @@
 
 set -uo pipefail
 
-die() { printf 'guard-gitrepository-commit-pin: %s\n' "$*" >&2; exit 2; }
+die() {
+  printf 'guard-gitrepository-commit-pin: %s\n' "$*" >&2
+  exit 2
+}
 
 [ "$#" -eq 1 ] || die "usage: $0 <root-directory>"
 root="$1"
@@ -72,8 +75,8 @@ while IFS= read -r file; do
   [ -n "$file" ] || continue
 
   if ! rows="$(yq eval-all \
-      'select(.kind == "GitRepository") | [(.metadata.namespace // "-"), (.metadata.name // "-"), (.spec.ref.commit // "")] | @tsv' \
-      "$file" 2>/dev/null)"; then
+    'select(.kind == "GitRepository") | [(.metadata.namespace // "-"), (.metadata.name // "-"), (.spec.ref.commit // "")] | @tsv' \
+    "$file" 2>/dev/null)"; then
     die "could not parse '$file' — refusing to report a tree it could not read"
   fi
 
@@ -86,8 +89,8 @@ while IFS= read -r file; do
     violations=$((violations + 1))
     printf 'VIOLATION %s: GitRepository %s/%s is not pinned to a commit (spec.ref.commit=%s)\n' \
       "$file" "$ns" "$name" "${commit:-<absent>}" >&2
-  done <<< "$rows"
-done <<< "$candidates"
+  done <<<"$rows"
+done <<<"$candidates"
 
 if [ "$checked" -eq 0 ]; then
   die "no GitRepository document found under '$root' — selector matched nothing, so nothing was verified"
