@@ -252,7 +252,6 @@ else
   echo "ok    real rules: passes the completeness gate"
 fi
 
-
 # --- 9. THE DEFAULT PROBE PATH: no secret may reach argv -------------------
 # Every case above goes through INVENTORY_PROBE_CMD, so none of them exercises the real probe —
 # the credential lookup, the Basic-authenticated token exchange, the Bearer manifest read, and the
