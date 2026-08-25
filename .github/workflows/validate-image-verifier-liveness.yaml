@@ -173,7 +173,10 @@ jobs:
         run: |
           set -euo pipefail
           source scripts/ghcr-auth-lib.sh
-          require_flux_ghcr_yaml_tool
+          # `require_flux_ghcr_yaml_tool` is deliberately NOT called: it gates on Mike Farah yq v4,
+          # which only `flux_ghcr_revision` needs. `decrypt_flux_ghcr_docker_config` shells out to
+          # ksail alone, so calling the gate would add a hard dependency this job never uses and
+          # fail it on a runner image that drops yq.
           umask 077
           docker_config_dir="${RUNNER_TEMP}/ghcr-docker-config"
           mkdir -p "${docker_config_dir}"

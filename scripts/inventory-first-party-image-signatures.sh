@@ -183,21 +183,6 @@ verify_signature() { # ref issuer subjectRegex
   cosign verify --certificate-oidc-issuer "$2" --certificate-identity-regexp "$3" "$1" >/dev/null 2>&1
 }
 
-# The probe writes a curl config carrying registry Basic auth. It goes in ONE 0700 directory
-# with an EXIT trap rather than a fresh mktemp per image, so an interrupted run cannot leave
-# credential material in TMPDIR. Created LAZILY and only when a credential actually exists:
-# `mktemp` is an external command, and creating it at startup would reintroduce exactly the
-# PATH-stripped crash the SCRIPT_DIR note above describes.
-AUTH_CONF_DIR=""
-ensure_auth_conf_dir() {
-  [ -z "$AUTH_CONF_DIR" ] || return 0
-  AUTH_CONF_DIR="$(mktemp -d 2>/dev/null)" || { AUTH_CONF_DIR=""; return 1; }
-  [ -n "$AUTH_CONF_DIR" ] || return 1
-  chmod 700 "$AUTH_CONF_DIR" 2>/dev/null || true
-  # shellcheck disable=SC2064  # expand now: the directory must be named at trap time
-  trap "rm -rf '${AUTH_CONF_DIR}'" EXIT
-}
-
 # Prints the HTTP status of a read of the IMAGE manifest — the discriminator between
 # "no signature" and "cannot look". Prints 000 when the probe itself could not run.
 probe_manifest_status() { # ref
@@ -239,13 +224,15 @@ probe_manifest_status() { # ref
   local auth_b64 auth_conf="" curl_conf_args=()
   auth_b64="$(registry_credential_b64 "$registry" || true)"
   if [ -n "$auth_b64" ]; then
-    if ensure_auth_conf_dir; then
-      auth_conf="${AUTH_CONF_DIR}/curl.conf"
-    else
-      auth_conf=""
+    # This function runs inside a command substitution, so the EXIT trap below belongs to THAT
+    # subshell and fires the moment this probe returns — exactly the lifetime the credential
+    # file should have. A plain `rm` after the call would not survive a signal; the trap does.
+    # `mktemp` creates the file 0600, so the credential is never briefly world-readable.
+    if auth_conf="$(mktemp 2>/dev/null)"; then
+      # shellcheck disable=SC2064  # expand now: the path must be named at trap time
+      trap "rm -f '${auth_conf}'" EXIT
     fi
     if [ -n "$auth_conf" ]; then
-      (umask 077 && : >"$auth_conf")
       printf 'header = "Authorization: Basic %s"\n' "$auth_b64" >"$auth_conf"
       curl_conf_args=(--config "$auth_conf")
     fi
