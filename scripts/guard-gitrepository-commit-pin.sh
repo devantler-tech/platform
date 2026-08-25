@@ -46,10 +46,22 @@ die() { printf 'guard-gitrepository-commit-pin: %s\n' "$*" >&2; exit 2; }
 root="$1"
 [ -d "$root" ] || die "root '$root' is not a directory"
 command -v yq >/dev/null 2>&1 || die "yq is required but not installed"
-
-# Cheap prefilter: only files mentioning the kind can hold such a document. The
-# authoritative selection is the yq `.kind` test below.
-candidates="$(grep -rl --include='*.yaml' --include='*.yml' 'kind: GitRepository' "$root" 2>/dev/null)"
+# Cheap prefilter, matching the BARE kind name -- never "kind: GitRepository".
+#
+# 🔴 A PREFILTER THAT MISSES A FILE IS A FAIL-OPEN, NOT A MISSED WARNING.
+#
+# Any YAML rendering of this kind contains the bare substring, but the canonical
+# "kind: GitRepository" does not survive an extra space ("kind:   GitRepository")
+# or a quoted scalar. Matching that exact text skipped such a file entirely, and
+# in a MIXED tree the anti-vacuity check below was then satisfied by some OTHER,
+# well-formed resource -- so the guard reported "all commit-pinned", exit 0, with
+# an unpinned GitRepository sitting right beside it. That was measured on this
+# guard before the prefilter was widened, and it is the failure this whole file
+# exists to prevent, one level down.
+#
+# The authoritative selection remains the yq .kind test below. This line only
+# decides which files are OPENED, so it must over-match, never under-match.
+candidates="$(grep -rl --include='*.yaml' --include='*.yml' 'GitRepository' "$root" 2>/dev/null)"
 
 checked=0
 violations=0

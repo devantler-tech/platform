@@ -151,6 +151,38 @@ run_guard "$root"
 assert_rc "sourceRef ignored, pinned source accepted -> 0" 0 "$GUARD_RC"
 assert_contains "counted exactly one document, not two" "1 GitRepository document(s)"
 
+echo "== regression: a non-canonically-spaced kind must NOT escape the prefilter =="
+# The prefilter used to match the literal "kind: GitRepository", which an extra
+# space defeats. Alone that produced a safe exit 2, but in a MIXED tree the
+# anti-vacuity check was satisfied by the well-formed resource and the guard
+# returned exit 0 -- reporting "all commit-pinned" with an unpinned GitRepository
+# right beside it. Both documents must be counted, and the odd one refused.
+root="$(mkcase mixedspacing)"
+cat > "$root/canonical.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: case-canonical
+  namespace: ns-mixed
+spec:
+  ref:
+    commit: 7b17f7e33ef507c24c395b884a433c62b92ace98
+YAML
+cat > "$root/odd.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind:   GitRepository
+metadata:
+  name: case-spaced
+  namespace: ns-mixed
+spec:
+  ref:
+    branch: main
+YAML
+run_guard "$root"
+assert_rc "mixed spacing, one unpinned -> 1" 1 "$GUARD_RC"
+assert_contains "names the oddly-spaced resource" "ns-mixed/case-spaced"
+assert_contains "counted BOTH documents, not just the canonical one" "1 of 2 GitRepository document(s)"
+
 echo "== anti-vacuity: no GitRepository anywhere is CANNOT-CHECK, not clean =="
 root="$(mkcase empty)"
 cat > "$root/other.yaml" <<'YAML'
