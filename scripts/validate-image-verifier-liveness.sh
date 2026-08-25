@@ -248,6 +248,13 @@ load_discovered_nodes() {
     # only ever participates in the identity comparison.
     nodes+=("${identity#*$'\t'}")
   done <<<"${discovered_identities}"
+
+  # An inventory that comes back EMPTY is an infrastructure fault, never the
+  # verdict "no node fails to enforce". Asserted on every reading rather than
+  # once before the sweep: the convergence pass re-reads, so a fleet that drains
+  # to nothing between readings would otherwise settle (empty equals empty),
+  # sweep no nodes at all, and report a clean fleet that does not exist.
+  [[ "${#nodes[@]}" -gt 0 ]] || fail_infra 'no nodes to check'
 }
 
 if [[ -n "${nodes_arg}" ]]; then

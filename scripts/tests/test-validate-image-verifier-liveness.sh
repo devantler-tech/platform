@@ -671,4 +671,32 @@ output="$(run_script TALOS_NODES=pinned 2>&1)" || fail 'case 21: a pinned fleet 
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 21: reports the pinned node'
 [[ ! -s "${fixtures}/kubectl-args" ]] ||
   fail 'case 21: a pinned run consulted kubectl — convergence must not apply to an explicitly named fleet'
+
+# ===========================================================================
+# Case 22 — RED: the fleet draining to EMPTY between readings must not be
+# reported as a clean fleet.
+#
+# The "no nodes to check" guard runs once, before the sweep. The convergence
+# pass re-reads the inventory afterwards, so a reading that comes back empty —
+# a wrong context, an API server returning nothing, a cluster genuinely torn
+# down — would otherwise settle (empty equals empty), sweep zero nodes, and
+# print "All 0 node(s) can enforce image verification". Exit 0 over a fleet
+# that does not exist is the most confident wrong answer this script can give.
+# ===========================================================================
+reset_inventory
+healthy_node 10.0.5.1
+cat >"${fixtures}/nodes.json.1" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.5.1"}]}}
+]}
+EOF
+cat >"${fixtures}/nodes.json.last" <<'EOF'
+{"items":[]}
+EOF
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 2 ]] ||
+  fail "case 22: an empty inventory must be refused, not reported clean (expected exit 2, got ${status})"
+require_text "${output}" 'no nodes to check' 'case 22: must name the empty inventory as the reason it refuses'
+refute_text "${output}" 'All 0 node(s) can enforce' 'case 22: reported a green verdict for an empty fleet'
 printf 'all cases passed\n'
