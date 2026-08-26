@@ -137,6 +137,105 @@ spec:
                   - ""
                   - admins
                   - maintainers
+    # #3146: the reference rule above constrains WHICH team is written to and
+    # nothing constrains WHO is written into it. A TeamMembership naming `admins`
+    # with policy.resolve Always, no teamId and no selector satisfies every
+    # condition above while carrying any account at all, and the org-admin
+    # provider then adds that account to a CODEOWNERS team. The policy's own
+    # description promises this is prevented, which is worse than an
+    # acknowledged gap.
+    #
+    # The allow-list lives HERE rather than being derived from the github-config
+    # artifact's own team definitions. That artifact is the exact input this
+    # policy exists to constrain, so reading the permitted members out of it
+    # would let a compromised artifact supply both the membership and its own
+    # authorisation. Keeping the list in the reviewed manifest is also what the
+    # team allow-list above already does, and it makes adding a member a
+    # reviewed change to this file rather than something the delegation can do
+    # to itself. Measured live: the fleet is two TeamMemberships, both
+    # `devantler` (admins/maintainer and maintainers/maintainer), so this list
+    # admits the entire current fleet and denies every other identity.
+    - name: teammemberships-allow-listed-members
+      match:
+        any:
+          - resources:
+              kinds:
+                - team.github.m.upbound.io/*/TeamMembership
+              namespaces:
+                - github-config
+      validate:
+        message: GitHub TeamMembership resources may only add allow-listed org members; set spec.forProvider.username to an allow-listed login (currently devantler) and do not supply a different one under initProvider. Adding a member is a reviewed change to restrict-github-team-management.yaml.
+        deny:
+          conditions:
+            any:
+              # upjet merges initProvider into any UNSET forProvider field, so the
+              # account actually reconciled is forProvider's when set and
+              # initProvider's otherwise. Resolving the effective value across both
+              # is what stops an initProvider-only username skipping the rule, the
+              # same bypass the maintainers ceiling below had to widen for.
+              # GitHub logins are case-insensitive, so normalise before matching:
+              # without it an allow-listed account spelled with different case is
+              # refused, which is a false denial rather than a bypass but a real one.
+              - key: "{{ to_lower(request.object.spec.forProvider.username || request.object.spec.initProvider.username || '') }}"
+                operator: AnyNotIn
+                value:
+                  - devantler
+              # The initProvider value is constrained on its own as well, so an
+              # approved forProvider username cannot front a foreign account if
+              # the merge semantics ever widen. Same belt-and-braces the
+              # reference conditions above apply to initProvider.teamIdRef.
+              - key: "{{ to_lower(request.object.spec.initProvider.username || '') }}"
+                operator: AnyNotIn
+                value:
+                  - ""
+                  - devantler
+    # An allow-list, not a deny-list on `maintainer`: the team role is an
+    # enumeration the provider passes straight through to GitHub, so a value
+    # outside the two documented roles must be refused rather than assumed
+    # harmless — the same reasoning the repository-permission list below gives
+    # for not simply denying `admin`. An empty value is the provider default
+    # (`member`).
+    #
+    # NOT a per-member role ceiling. #3146 asked for `maintainer` to be
+    # constrained separately from `member` so that permission to add a member
+    # does not imply permission to make one a maintainer. Measured live, that
+    # distinction has nothing to bind to: the allow-list is a single account and
+    # both of its memberships already hold `maintainer`, so any ceiling either
+    # denies the whole live fleet or is vacuous. The identity rule above
+    # subsumes the concern for now — a role cannot be escalated for an account
+    # that cannot be added — and a ceiling becomes expressible, and worth
+    # adding, as soon as the allow-list holds more than one member.
+    - name: teammemberships-known-roles
+      match:
+        any:
+          - resources:
+              kinds:
+                - team.github.m.upbound.io/*/TeamMembership
+              namespaces:
+                - github-config
+      validate:
+        message: GitHub TeamMembership resources may grant only the member or maintainer role, in forProvider and initProvider.
+        deny:
+          conditions:
+            any:
+              # Each condition owns one block. Unlike the identity rule above, this
+              # needs no merge fallback: the allow-list here includes the empty
+              # string, so an unset forProvider.role is admitted and the
+              # initProvider condition below is what constrains the value the
+              # merge would supply. Folding the fallback in would add a conjunct
+              # no fixture can isolate.
+              - key: "{{ to_lower(request.object.spec.forProvider.role || '') }}"
+                operator: AnyNotIn
+                value:
+                  - ""
+                  - member
+                  - maintainer
+              - key: "{{ to_lower(request.object.spec.initProvider.role || '') }}"
+                operator: AnyNotIn
+                value:
+                  - ""
+                  - member
+                  - maintainer
     - name: teamrepositories-reference-allow-listed-teams
       match:
         any:

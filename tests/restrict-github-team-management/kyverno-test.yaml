@@ -86,3 +86,40 @@ results:
       - github-config/maintainers-repo
     kind: TeamRepository
     result: pass
+  # #3146: the member identity, independent of which team is referenced. Every
+  # fixture below is well-formed against the reference rule above, so a failure
+  # here can only come from the identity condition.
+  - policy: restrict-github-team-management
+    rule: teammemberships-allow-listed-members
+    resources:
+      - github-config/arbitrary-username
+      - github-config/initprovider-arbitrary-username
+      - github-config/initprovider-only-arbitrary-username
+    kind: TeamMembership
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teammemberships-allow-listed-members
+    resources:
+      - github-config/admins-member
+      - github-config/allow-listed-maintainer
+      - github-config/mixed-case-username
+      - github-config/initprovider-only-allow-listed-username
+    kind: TeamMembership
+    result: pass
+  # #3146: the granted role is an enumeration, so unknown values are refused
+  # rather than assumed harmless — in forProvider and through the merge.
+  - policy: restrict-github-team-management
+    rule: teammemberships-known-roles
+    resources:
+      - github-config/unknown-role
+      - github-config/initprovider-unknown-role
+      - github-config/initprovider-unknown-role-behind-valid-forprovider
+    kind: TeamMembership
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teammemberships-known-roles
+    resources:
+      - github-config/admins-member
+      - github-config/allow-listed-maintainer
+    kind: TeamMembership
+    result: pass
