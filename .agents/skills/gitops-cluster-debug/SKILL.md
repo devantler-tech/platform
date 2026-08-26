@@ -5,9 +5,9 @@ description: |
 license: Apache-2.0
 metadata:
     github-path: skills/gitops-cluster-debug
-    github-ref: refs/tags/v0.2.0
+    github-ref: refs/tags/v0.3.0
     github-repo: https://github.com/fluxcd/agent-skills
-    github-tree-sha: 5156df5cf57c74c49226cc9b2809c413588675cb
+    github-tree-sha: 724378b05c1cc319c6216c6f55d3b44ec973abfc
 name: gitops-cluster-debug
 ---
 # Flux Cluster Debugger
