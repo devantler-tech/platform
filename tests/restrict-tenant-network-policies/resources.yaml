@@ -447,3 +447,70 @@ spec:
     - toCIDRSet:
         - cidr: "::/1"
         - cidr: "8000::/1"
+---
+# ATTACK: top-level `specs` (CiliumNetworkPolicy's plural rule container). Every
+# boundary condition reads request.object.spec.*, so this shape is invisible to
+# them; the repository's own scripts/tests/test-crossplane-egress-policy.sh
+# already iterates `(.spec, .specs[]?)` for exactly this reason.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-specs-container-egress-world
+  namespace: tenant-ns
+specs:
+  - endpointSelector: {}
+    egress:
+      - toEntities:
+          - world
+---
+# ATTACK: an aggregate of /8 prefixes. Each entry clears the per-entry /8 floor,
+# but their union is an entire address family.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-aggregate-slash8
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 0.0.0.0/8
+        - 1.0.0.0/8
+        - 2.0.0.0/8
+        - 3.0.0.0/8
+---
+# ATTACK: a selector that is nonempty but semantically universal. The Cilium
+# identity label k8s:io.kubernetes.pod.namespace exists on every endpoint, so
+# `Exists` against it matches cluster-wide while passing a presence check.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-selector-exists-universal
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEndpoints:
+        - matchExpressions:
+            - key: k8s:io.kubernetes.pod.namespace
+              operator: Exists
+---
+# ATTACK: wildcard FQDN patterns that are not the literal `*` but cover
+# arbitrary names at each label depth.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-fqdn-wildcard-depths
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toFQDNs:
+        - matchPattern: "*.*"
+        - matchPattern: "*.*.*"

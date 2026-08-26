@@ -12,27 +12,49 @@
 # self-service, and the shapes that dissolve the boundary are refused.
 #
 # What counts as boundary-dissolving, and why each shape is listed:
-#   * A semantically empty source/destination EndpointSelector. Four spellings
-#     mean the same thing — `{}`, `matchLabels: {}`, `matchExpressions: []`, and
-#     both fields empty — and this repository's AGENTS.md already enumerates them
-#     for the same reason in the Cilium authentication context. The check is a
-#     WHITELIST (every selector must carry a constraint) rather than a blacklist
-#     of the four forms, so a fifth spelling is refused by default instead of
-#     slipping through.
+#   * A source/destination EndpointSelector that does not PIN A VALUE. The
+#     empty spellings — `{}`, `matchLabels: {}`, `matchExpressions: []`, both
+#     fields empty — are the obvious cases, but presence is not constraint: a
+#     nonempty `matchExpressions` using `Exists` against a label every endpoint
+#     carries (`k8s:io.kubernetes.pod.namespace`) matches cluster-wide, and so
+#     does `NotIn` against the tenant's own namespace. The check is therefore a
+#     WHITELIST OF OPERATORS — a selector counts as constrained only if it has
+#     `matchLabels`, or a `matchExpressions` entry whose operator is `In` — so
+#     `Exists`, `DoesNotExist` and `NotIn` are refused by default rather than
+#     enumerated.
 #   * Any entity but `kube-apiserver`. Cilium's entity vocabulary is open-ended
 #     — `all`, `world` and `cluster` are the obvious ones, but `remote-node`
 #     reaches host-networked workloads and `cluster-mesh` reaches meshed
 #     clusters — so the check is a WHITELIST of the one entity a namespaced
 #     workload legitimately names, not a list of the broad ones.
-#   * Any CIDR prefix shorter than /8. `0.0.0.0/0` and `::/0` are only the
+#   * Any CIDR prefix shorter than /16. `0.0.0.0/0` and `::/0` are only the
 #     shortest spellings of "everything": `0.0.0.0/1` plus `128.0.0.0/1` covers
 #     the same ground. A prefix-length floor refuses every such split at once.
+#     KNOWN LIMIT, stated rather than implied: this is a PER-ENTRY floor, and a
+#     per-entry rule cannot bound an AGGREGATE. A tenant supplying every /16 in
+#     turn still unions to an entire address family, and for IPv6 a single /16
+#     is astronomically large regardless. Closing that properly needs an
+#     allow-list of permitted ranges rather than a floor; the floor is a real
+#     but partial narrowing, and the allow-list is tracked separately.
 #   * A rule with no layer-3 stanza at all. Cilium's port-only rules permit
 #     every source (or destination) on the named port, so `toPorts` alone is
 #     allow-all wearing a layer-4 costume — the selector whitelist above never
 #     sees it, because there is no selector to inspect.
-#   * `toFQDNs` with the catch-all `*` pattern, which names a destination in
-#     form only.
+#   * A `toFQDNs` matchPattern whose labels are ALL wildcards. The literal `*`
+#     is only the shortest such spelling: `*.*` and `*.*.*` name a destination
+#     in form only too, and a short list of them covers essentially every
+#     practical public name. The check refuses the whole shape (`*`, `*.*`,
+#     `*.*.*`, …) rather than the one catch-all, so a fixed suffix is required
+#     somewhere in the pattern. A `matchName` is an exact name and unaffected —
+#     and the condition guards for its absence, because `regex_match` against a
+#     missing `matchPattern` ERRORS, and a Kyverno condition that errors never
+#     denies (a fail-open, measured on `allow-web-egress-named-fqdn`).
+#   * Rules placed under the plural `specs` container instead of `spec`.
+#     CiliumNetworkPolicy accepts either, and every condition here reads
+#     `spec`, so rules under `specs` reach admission unexamined whatever they
+#     contain. The container is refused outright — the WHITELIST form — rather
+#     than mirroring each condition across both paths, which would re-open the
+#     boundary the first time a future condition is added to one path only.
 #
 # What is deliberately NOT restricted: a top-level `endpointSelector: {}`. That
 # scopes the rule to all of the tenant's OWN pods, which is the tenant's call and
@@ -113,7 +135,7 @@ spec:
           Every ingress source in a tenant CiliumNetworkPolicy must be
           constrained. A fromEndpoints selector with no matchLabels and no
           matchExpressions allows all sources; `kube-apiserver` is the only
-          entity a tenant may name; and a CIDR prefix shorter than /8 reaches outside this
+          entity a tenant may name; and a CIDR prefix shorter than /16 reaches outside this
           namespace. A rule with only toPorts and no source at all allows every
           source on that port. Cilium unions allow rules, so one unconstrained
           source removes this namespace's isolation regardless of the generated
@@ -129,7 +151,7 @@ spec:
               # fail the same way.
               - key: "{{ length(request.object.spec.ingress[].fromEndpoints[] || `[]`) }}"
                 operator: NotEquals
-                value: "{{ length(request.object.spec.ingress[].fromEndpoints[] || `[]` | [?matchLabels || matchExpressions]) }}"
+                value: "{{ length(request.object.spec.ingress[].fromEndpoints[] || `[]` | [?matchLabels || length(matchExpressions[?operator == 'In'] || `[]`) > `0`]) }}"
               # A rule carrying ONLY toPorts and no layer-3 stanza is a fifth
               # spelling of allow-all: Cilium's own layer-4 examples pair a port
               # with a source, and a port-only ingress rule permits every source
@@ -156,10 +178,10 @@ spec:
               # family while matching neither literal. Refusing every prefix shorter
               # than /8 closes that whole family of splits without enumerating any of
               # them. A bare address carries no `/` and is unaffected.
-              - key: "{{ length(request.object.spec.ingress[].fromCIDR[] || `[]` | [?regex_match('^[^/]*/[0-7]$', @)]) }}"
+              - key: "{{ length(request.object.spec.ingress[].fromCIDR[] || `[]` | [?regex_match('^[^/]*/([0-9]|1[0-5])$', @)]) }}"
                 operator: GreaterThan
                 value: 0
-              - key: "{{ length(request.object.spec.ingress[].fromCIDRSet[].cidr || `[]` | [?regex_match('^[^/]*/[0-7]$', @)]) }}"
+              - key: "{{ length(request.object.spec.ingress[].fromCIDRSet[].cidr || `[]` | [?regex_match('^[^/]*/([0-9]|1[0-5])$', @)]) }}"
                 operator: GreaterThan
                 value: 0
     - name: cnp-egress-destinations-must-be-constrained
@@ -190,7 +212,7 @@ spec:
           Every egress destination in a tenant CiliumNetworkPolicy must be
           constrained. A toEndpoints selector with no matchLabels and no
           matchExpressions allows all destinations; `kube-apiserver` is the only
-          entity a tenant may name; and a CIDR prefix shorter than /8 reaches outside this
+          entity a tenant may name; and a CIDR prefix shorter than /16 reaches outside this
           namespace, as do a rule with only toPorts and a toFQDNs pattern of `*`.
           Name the destinations this workload actually needs.
         deny:
@@ -198,7 +220,7 @@ spec:
             any:
               - key: "{{ length(request.object.spec.egress[].toEndpoints[] || `[]`) }}"
                 operator: NotEquals
-                value: "{{ length(request.object.spec.egress[].toEndpoints[] || `[]` | [?matchLabels || matchExpressions]) }}"
+                value: "{{ length(request.object.spec.egress[].toEndpoints[] || `[]` | [?matchLabels || length(matchExpressions[?operator == 'In'] || `[]`) > `0`]) }}"
               # Port-only egress rules permit every destination on that port —
               # see the ingress note above.
               - key: "{{ length(request.object.spec.egress[] || `[]`) }}"
@@ -211,7 +233,7 @@ spec:
               # written against it also refuses a perfectly ordinary
               # `*.example.com` (measured). JMESPath `==` is an exact string
               # compare, so only the catch-all itself matches.
-              - key: "{{ length(request.object.spec.egress[].toFQDNs[] || `[]` | [?matchPattern == '*']) }}"
+              - key: "{{ length(request.object.spec.egress[].toFQDNs[] || `[]` | [?matchPattern && regex_match('^[*]([.][*])*$', matchPattern)]) }}"
                 operator: GreaterThan
                 value: 0
               # Entity whitelist and CIDR prefix-length floor — see the ingress rule
@@ -219,10 +241,10 @@ spec:
               - key: "{{ length(request.object.spec.egress[].toEntities[] || `[]` | [?@ != 'kube-apiserver']) }}"
                 operator: GreaterThan
                 value: 0
-              - key: "{{ length(request.object.spec.egress[].toCIDR[] || `[]` | [?regex_match('^[^/]*/[0-7]$', @)]) }}"
+              - key: "{{ length(request.object.spec.egress[].toCIDR[] || `[]` | [?regex_match('^[^/]*/([0-9]|1[0-5])$', @)]) }}"
                 operator: GreaterThan
                 value: 0
-              - key: "{{ length(request.object.spec.egress[].toCIDRSet[].cidr || `[]` | [?regex_match('^[^/]*/[0-7]$', @)]) }}"
+              - key: "{{ length(request.object.spec.egress[].toCIDRSet[].cidr || `[]` | [?regex_match('^[^/]*/([0-9]|1[0-5])$', @)]) }}"
                 operator: GreaterThan
                 value: 0
     - name: cnp-must-not-opt-out-of-default-deny
@@ -301,3 +323,52 @@ spec:
           unions allow rules, so a policy of your own is additive and does not
           need to replace the floor.
         deny: {}
+    - name: cnp-must-use-the-singular-spec-container
+      match:
+        any:
+          - resources:
+              kinds:
+                - CiliumNetworkPolicy
+              namespaceSelector:
+                matchLabels:
+                  app.kubernetes.io/managed-by: ksail
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: kustomize-controller
+                namespace: flux-system
+          - subjects:
+              - kind: ServiceAccount
+                name: kyverno-background-controller
+                namespace: kyverno
+      validate:
+        # Rule-level, not the deprecated top-level spec.validationFailureAction:
+        # if a future Kyverno stops honouring that field, a rule with no action
+        # of its own defaults to Audit and these violations would be ADMITTED.
+        failureAction: Enforce
+        message: >-
+          A tenant CiliumNetworkPolicy must carry its rules under `spec`, not the
+          plural `specs` container. Every boundary check in this policy reads
+          `spec`, so rules hidden under `specs` would reach admission unexamined.
+          Move the rules into `spec`; a policy needing several rule sets can be
+          split into several policies, which Cilium unions anyway.
+        deny:
+          # CiliumNetworkPolicy accepts EITHER a single `spec` or a plural
+          # `specs` list, and the two are equivalent to Cilium. Every condition
+          # in the rules above reads `request.object.spec.*`, so a rule placed
+          # under `specs` is invisible to all of them and is admitted whatever it
+          # contains — a complete bypass, not a missing spelling. (This
+          # repository already handles both shapes elsewhere, in
+          # scripts/tests/test-crossplane-egress-policy.sh.)
+          #
+          # Refusing the container outright is the WHITELIST form of the fix, and
+          # is deliberately preferred over mirroring every condition across both
+          # paths: mirroring doubles each check and re-opens the whole boundary
+          # the first time a future condition is added to one path and not the
+          # other. A tenant allow-list has no need for `specs`.
+          conditions:
+            any:
+              - key: "{{ length(request.object.specs || `[]`) }}"
+                operator: GreaterThan
+                value: 0

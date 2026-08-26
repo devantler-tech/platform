@@ -100,3 +100,33 @@ results:
       - platform-ns/platform-allow-all
     kind: CiliumNetworkPolicy
     result: skip
+  # ── Shapes that PASS a presence check but are semantically unbounded ───────
+  # Each of these was measured ADMITTED before the whitelist forms landed: the
+  # per-entry checks all saw "something is there" and never asked what it meant.
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/attack-cidr-aggregate-slash8
+      - tenant-ns/attack-fqdn-wildcard-depths
+    kind: CiliumNetworkPolicy
+    result: fail
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - tenant-ns/attack-selector-exists-universal
+    kind: CiliumNetworkPolicy
+    result: fail
+  # ── The plural rule container, which every `spec`-reading condition misses ──
+  - policy: restrict-tenant-network-policies
+    rule: cnp-must-use-the-singular-spec-container
+    resources:
+      - tenant-ns/attack-specs-container-egress-world
+    kind: CiliumNetworkPolicy
+    result: fail
+  - policy: restrict-tenant-network-policies
+    rule: cnp-must-use-the-singular-spec-container
+    resources:
+      - tenant-ns/allow-api-to-web
+      - tenant-ns/allow-web-egress-db
+    kind: CiliumNetworkPolicy
+    result: pass
