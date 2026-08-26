@@ -132,3 +132,24 @@ results:
       - tenant-ns/allow-web-egress-db
     kind: CiliumNetworkPolicy
     result: pass
+  # ── toServices: a reference that names nothing is still "present" ──────────
+  # Every one of these satisfied the egress presence check on the mere
+  # existence of a toServices key, and reached arbitrary Service backends
+  # without passing the toEndpoints selector whitelist.
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/attack-toservices-empty-selector
+      - tenant-ns/attack-toservices-empty-matchlabels
+      - tenant-ns/attack-toservices-unnamed-service
+      - tenant-ns/attack-toservices-empty-entry
+    kind: CiliumNetworkPolicy
+    result: fail
+  # CONTROL: the constrained spellings stay admitted.
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/allow-web-egress-named-service
+      - tenant-ns/allow-web-egress-selected-service
+    kind: CiliumNetworkPolicy
+    result: pass

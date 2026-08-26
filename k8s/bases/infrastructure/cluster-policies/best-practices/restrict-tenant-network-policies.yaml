@@ -217,7 +217,8 @@ spec:
           constrained. A toEndpoints selector with no matchLabels and no
           matchExpressions allows all destinations; `kube-apiserver` is the only
           entity a tenant may name; and a CIDR prefix shorter than /16 reaches outside this
-          namespace, as do a rule with only toPorts and a toFQDNs pattern of `*`.
+          namespace, as do a rule with only toPorts, a toFQDNs pattern of `*`,
+          and a toServices entry that names no service.
           Name the destinations this workload actually needs.
         deny:
           conditions:
@@ -251,6 +252,20 @@ spec:
               - key: "{{ length(request.object.spec.egress[].toCIDRSet[].cidr || `[]` | [?regex_match('^[^/]*/0*([0-9]|1[0-5])$', @)]) }}"
                 operator: GreaterThan
                 value: 0
+              # A toServices entry satisfied the presence check above on its
+              # mere existence, so the service reference itself was never asked
+              # what it meant. Cilium resolves each selected Service's backends
+              # into endpoint selectors, so an unconstrained reference reaches
+              # arbitrary backends WITHOUT passing the toEndpoints whitelist —
+              # measured admitted. Same whitelist shape as toEndpoints: count the
+              # entries that actually name something and require that to be all
+              # of them, so every empty spelling fails the same way. `namespace`
+              # is deliberately NOT required: Cilium defaults an omitted
+              # namespace to the policy's own, so omitting it is the CONSTRAINED
+              # spelling and demanding it would push tenants cross-namespace.
+              - key: "{{ length(request.object.spec.egress[].toServices[] || `[]`) }}"
+                operator: NotEquals
+                value: "{{ length(request.object.spec.egress[].toServices[] || `[]` | [?k8sService.serviceName || k8sServiceSelector.selector.matchLabels || length(k8sServiceSelector.selector.matchExpressions[?operator == 'In'] || `[]`) > `0`]) }}"
     - name: cnp-must-not-opt-out-of-default-deny
       match:
         any:

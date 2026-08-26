@@ -554,3 +554,109 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
+---
+# ATTACK: `toServices` satisfied the egress presence check on its mere
+# existence, so the service reference itself was never asked what it meant.
+# An EMPTY Kubernetes label selector matches every Service in its namespace
+# scope, and Cilium turns each selected Service's backends into endpoint
+# selectors — so this reaches arbitrary backends while never going through
+# the toEndpoints selector whitelist. Measured ADMITTED before this guard.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-toservices-empty-selector
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - k8sServiceSelector:
+            selector: {}
+---
+# ATTACK: the second empty spelling — `matchLabels` present but empty. Same
+# reasoning as the four empty fromEndpoints spellings the ingress rule refuses.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-toservices-empty-matchlabels
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - k8sServiceSelector:
+            selector:
+              matchLabels: {}
+---
+# ATTACK: the `k8sService` form naming no service at all. An absent
+# serviceName does not identify a destination, so this is the presence-check
+# bypass in its other spelling.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-toservices-unnamed-service
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - k8sService:
+            namespace: tenant-ns
+---
+# ATTACK: a toServices entry that is NEITHER form. It still counts as a
+# present toServices for a presence check, and constrains nothing.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-toservices-empty-entry
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - {}
+---
+# OK: a service named outright. This is the ordinary additive shape a tenant
+# needs, and it must keep being admitted — a guard that refuses it is a guard
+# that gets deleted.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-egress-named-service
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - k8sService:
+            serviceName: db
+---
+# OK: a selector that actually pins a label. Note the omitted `namespace`:
+# Cilium defaults it to the policy's OWN namespace, so omitting it is the
+# CONSTRAINED spelling — requiring a namespace here would push tenants toward
+# the cross-namespace form instead.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-egress-selected-service
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - k8sServiceSelector:
+            selector:
+              matchLabels:
+                app: db
