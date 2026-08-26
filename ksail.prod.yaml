@@ -172,9 +172,14 @@ spec:
       # worker carrying several attached volumes, and an over-budget drain
       # aborts the whole update.
       #
-      # Kept strictly below connection.timeout (35m) so a genuinely stuck
-      # drain still surfaces as a drain failure rather than as the outer CLI
-      # timeout.
+      # 30m is ~3x the 10m default. That default was reached on a worker
+      # carrying several attached volumes, so this leaves room for the
+      # evict/detach/PDB-release sequence above without being unbounded.
+      #
+      # This is an independent per-node drain limit. It is NOT bounded by
+      # connection.timeout, which governs the `workload reconcile` wait on the
+      # Flux Kustomization chain and is not consumed as this update's outer
+      # deadline.
       #
       # --force-drain is NOT the alternative here: it deletes pods bypassing
       # PodDisruptionBudgets, which on Longhorn risks removing the
