@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/../.." && pwd)"
+policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-network-policies.yaml"
+tests="${repo_root}/tests/restrict-tenant-network-policies"
+output_file="$(mktemp)"
+trap 'rm -f "${output_file}"' EXIT
+
+# `kyverno test` treats a rule that matches nothing as Excluded, and an Excluded
+# row satisfies `result: fail` too — so the declarative test can pass vacuously
+# if a rule silently stops matching. Exercise the policy directly as a second
+# gate, asserting the exact allow/deny counts rather than an exit code.
+apply() {
+  local resources="$1" values="$2" userinfo="$3"
+  kyverno apply "${policy}" \
+    --resource "${resources}" \
+    --values-file "${values}" \
+    --userinfo "${userinfo}" \
+    --remove-color >"${output_file}" 2>&1 || true
+}
+
+expect_summary() {
+  local expected="$1" what="$2"
+  if ! grep -Fq "${expected}" "${output_file}"; then
+    echo "::error::${what}: expected '${expected}'"
+    sed -n '1,80p' "${output_file}"
+    exit 1
+  fi
+}
+
+# 1. The tenant fixture set: 17 boundary-dissolving shapes denied, the ordinary
+#    additive allow-lists admitted. A drop in the fail count means a shape that
+#    used to be refused now admits.
+apply "${tests}/resources.yaml" "${tests}/values.yaml" "${tests}/user-info.yaml"
+expect_summary "pass: 31, fail: 17, warn: 0, error: 0, skip: 0" \
+  "tenant CiliumNetworkPolicy boundary"
+
+# 2. Carve-out: kyverno's background controller owns the generated floor. These
+#    are the verbatim generated bodies and both carry a reserved name, so a
+#    regression here would block the platform from creating its own default-deny.
+apply "${tests}/kyverno-author/resources.yaml" \
+  "${tests}/kyverno-author/values.yaml" "${tests}/kyverno-author/user-info.yaml"
+expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 0" \
+  "generated default-deny/allow-dns must remain creatable by kyverno"
+
+# 3. CONTROL for 2: the identical bodies, in the identical namespace, submitted
+#    by the TENANT. Only the applying identity differs. Without this the zero
+#    above is indistinguishable from the policy simply not matching.
+apply "${tests}/kyverno-author/resources.yaml" \
+  "${tests}/kyverno-author/values.yaml" "${tests}/user-info.yaml"
+expect_summary "pass: 4, fail: 2, warn: 0, error: 0, skip: 0" \
+  "control: a tenant must NOT be able to author the reserved generated names"
+
+# 4. Carve-out: platform-authored policies applied by flux-system's
+#    kustomize-controller stay permitted even when broad.
+apply "${tests}/platform-author/resources.yaml" \
+  "${tests}/platform-author/values.yaml" "${tests}/platform-author/user-info.yaml"
+expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 0" \
+  "platform-authored policies must stay permitted"
+
+# 5. CONTROL for 4: the identical broad body submitted by the TENANT is refused
+#    by both the ingress and the egress rule.
+apply "${tests}/platform-author/resources.yaml" \
+  "${tests}/platform-author/values.yaml" "${tests}/user-info.yaml"
+expect_summary "pass: 0, fail: 2, warn: 0, error: 0, skip: 0" \
+  "control: a tenant must NOT be able to submit the broad platform body"
+
+echo "Tenant CiliumNetworkPolicy policy enforced the expected boundary, and both"
+echo "platform carve-outs were proven to depend on the applying identity."

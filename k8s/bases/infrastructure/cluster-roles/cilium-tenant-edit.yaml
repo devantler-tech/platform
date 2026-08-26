@@ -5,9 +5,13 @@
 # Flux impersonates the tenant ServiceAccount and uses server-side apply plus
 # pruning, so PATCH and DELETE are required for this self-service workflow.
 # These verbs also let a tenant change any namespaced CiliumNetworkPolicy, and
-# Cilium combines matching allow rules; neither the generated default-deny
-# object nor the additive policy set is an immutable security boundary until
-# admission constraints land (platform#3150).
+# Cilium combines matching allow rules, so RBAC alone does not make the
+# namespace boundary hold. Admission does: the
+# `restrict-tenant-network-policies` ClusterPolicy requires every tenant ingress
+# source and egress destination to carry a real constraint, refuses the broad
+# `all`/`world`/`cluster` entities and the world-equivalent CIDRs, and reserves
+# the generated `default-deny` and `allow-dns` names — so these verbs stay
+# self-service without being able to dissolve the generated floor.
 #
 # This role is intentionally NOT aggregated into the built-in `edit` role.
 # Grants only the NAMESPACED `ciliumnetworkpolicies` — never the cluster-scoped

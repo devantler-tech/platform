@@ -1,0 +1,83 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-network-policies
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-network-policies.yaml
+resources:
+  - resources.yaml
+# The policy uses a namespaceSelector, so the CLI needs the namespace labels
+# declared explicitly or every case is reported as Excluded — which satisfies
+# `result: fail` too and would pass vacuously. The companion shell test
+# (scripts/tests/test-restrict-tenant-network-policies.sh) is the second gate:
+# it runs `kyverno apply` and asserts the exact allow/deny counts, so a rule
+# that stopped matching cannot go unnoticed here.
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  # ── Every semantically empty source selector, one spelling per case ─────────
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - tenant-ns/ingress-empty-object
+      - tenant-ns/ingress-empty-matchlabels
+      - tenant-ns/ingress-empty-matchexpressions
+      - tenant-ns/ingress-both-fields-empty
+      - tenant-ns/ingress-vacuous-beside-constrained
+      - tenant-ns/ingress-vacuous-in-second-rule
+      - tenant-ns/ingress-entity-all
+      - tenant-ns/ingress-entity-cluster
+      - tenant-ns/ingress-bare-l4
+    kind: CiliumNetworkPolicy
+    result: fail
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - tenant-ns/allow-api-to-web
+      - tenant-ns/allow-web-egress-db
+      - tenant-ns/allow-web-egress-specific-cidr
+      - tenant-ns/allow-web-egress-named-fqdn
+      - tenant-ns/allow-web-egress-subdomain-fqdn
+      - tenant-ns/allow-all-own-pods-from-api
+    kind: CiliumNetworkPolicy
+    result: pass
+  # ── Egress destinations ────────────────────────────────────────────────────
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/egress-empty-object
+      - tenant-ns/egress-entity-world
+      - tenant-ns/egress-cidr-world
+      - tenant-ns/egress-cidrset-world-v6
+      - tenant-ns/egress-bare-l4
+      - tenant-ns/egress-fqdn-wildcard
+    kind: CiliumNetworkPolicy
+    result: fail
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/allow-api-to-web
+      - tenant-ns/allow-web-egress-db
+      - tenant-ns/allow-web-egress-specific-cidr
+      - tenant-ns/allow-web-egress-named-fqdn
+      - tenant-ns/allow-web-egress-subdomain-fqdn
+      - tenant-ns/allow-all-own-pods-from-api
+    kind: CiliumNetworkPolicy
+    result: pass
+  # ── Ownership: the generated floor's names are reserved ────────────────────
+  - policy: restrict-tenant-network-policies
+    rule: cnp-generated-policy-names-are-reserved
+    resources:
+      - tenant-ns/default-deny
+      - tenant-ns/allow-dns
+    kind: CiliumNetworkPolicy
+    result: fail
+  # ── A platform namespace is out of scope entirely ──────────────────────────
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - platform-ns/platform-allow-all
+    kind: CiliumNetworkPolicy
+    result: skip

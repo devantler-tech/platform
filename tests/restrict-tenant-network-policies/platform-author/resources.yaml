@@ -1,0 +1,19 @@
+---
+# The platform legitimately places broad policies inside a tenant namespace — the
+# observability scrape path needs a cluster-wide source, and the shape below is
+# exactly what rules 1 and 2 refuse from a tenant. Applied by flux-system's
+# kustomize-controller (no impersonation), so it must be excluded; a tenant
+# submitting this identical body is denied (see the sibling control).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: platform-allow-observability
+  namespace: tenant-ns
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEntities:
+        - cluster
+  egress:
+    - toEndpoints:
+        - {}
