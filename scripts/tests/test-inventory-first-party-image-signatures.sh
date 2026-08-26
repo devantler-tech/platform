@@ -359,7 +359,7 @@ fi
 
 # End-to-end through the REAL probe: a non-2xx manifest read is UNKNOWN, never FAIL.
 run_default_probe 404
-check "default path: 404 on the manifest -> UNKNOWN (not FAIL)" 1 'UNKNOWN' "$RC" "$OUT"
+check "default path: 404 on the manifest -> UNKNOWN (not FAIL)" 1 'UNKNOWN=[1-9]' "$RC" "$OUT"
 if printf '%s\n' "$OUT" | grep -q 'FAIL=[1-9]'; then
   echo "FAIL  default path: 404 was counted as a FAIL"
   failures=$((failures + 1))
@@ -367,6 +367,10 @@ fi
 
 # The temporary credential file must not outlive the probe.
 leaked="$(printf '%s\n' "$log" | sed -n 's/^ARGV .*--config \([^ ]*\).*/\1/p' | sort -u)"
+if [ -z "$leaked" ]; then
+  echo "FAIL  no --config path was recorded — the cleanup assertion would be vacuous"
+  failures=$((failures + 1))
+fi
 leftover=0
 while IFS= read -r f; do
   [ -n "$f" ] || continue
