@@ -106,7 +106,7 @@ results:
   - policy: restrict-tenant-network-policies
     rule: cnp-egress-destinations-must-be-constrained
     resources:
-      - tenant-ns/attack-cidr-aggregate-slash8
+      - tenant-ns/attack-cidr-prefix-floor-slash8
       - tenant-ns/attack-fqdn-wildcard-depths
     kind: CiliumNetworkPolicy
     result: fail
