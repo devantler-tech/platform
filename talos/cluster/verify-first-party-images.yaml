@@ -8,22 +8,47 @@
 # every node, and `security.TUFTrustedRootController` maintains the Sigstore TUF
 # trust root that keyless verification needs.
 #
-# What is NOT established is that a matched rule has ever produced a
-# verification DECISION: every first-party image is already cached, so no
-# rule-matching pull occurs. Proving a refusal at pull is #3336. The original
-# finding is #2856.
+# A matched rule DOES produce a verification decision, and containerd records
+# it per image as a `talos.dev/verified` label. The label tracks rule MATCH,
+# not signedness: `ghcr.io/fluxcd/*` and `ghcr.io/cloudnative-pg/*` are
+# cosign-signed upstream and never carry it, because no rule below names them.
+# Measured 2026-08-26 across all 7 nodes: 755 of 755 cached
+# `ghcr.io/devantler-tech/*` images carry the label, and 0 of 1299 cached
+# images with a resolvable non-first-party repository name do — no exceptions.
+#
+# What is NOT established is the REFUSAL. Every first-party image pulled here
+# has PASSED, so a FAILING decision has never been observed to block a pull.
+# Proving that refusal is #3336. The original finding is #2856.
 #
 # Check this, do not assume it. The repository cannot answer it — the rules read
 # as correct whether or not anything evaluates them:
 #     scripts/validate-image-verifier-liveness.sh
 # Measured 2026-08-24: 7 of 7 nodes hold running rules and a running trust root.
 #
-# BEFORE ACTIVATING (#3101): an image that matches a rule but fails
-# verification is refused, so any first-party image that is running yet
-# unsigned goes ImagePullBackOff the moment the verifier starts working.
+# BEFORE ACTIVATING (#3101): a matched image that fails verification is
+# EXPECTED to be refused, so any first-party image that is running yet unsigned
+# should enter ImagePullBackOff the moment it is next pulled. That refusal is
+# exactly what #3336 exists to prove and has not been observed here, so treat it
+# as the risk to design around rather than as a settled outcome.
 # Enumerate the running first-party digests and confirm each carries a cosign
 # signature — attestations alone do not satisfy the catch-all rule below — then
 # sign or scope the rule off any that do not.
+#
+# Enumerated 2026-08-26 — of the four first-party images running on the
+# cluster, ksail and provider-upjet-unifi verify against the exact keyless
+# identity their rules require. wedding-app and ascoachingogvaner are PRIVATE
+# packages: an unauthenticated cosign verify returns DENIED, which is an ACCESS
+# result and NOT evidence that a signature is absent. Settling those two needs
+# an AUTHENTICATED read, and this repository already stages one: the
+# `🔑 Stage the GHCR pull credential` step in
+# .github/workflows/validate-image-verifier-liveness.yaml decrypts the cluster's
+# own Flux GHCR pull credential into DOCKER_CONFIG before it runs
+# scripts/inventory-first-party-image-signatures.sh, so no ADDITIONAL
+# `read:packages` token has to be minted. What is missing is a recorded RUN of
+# that authenticated inventory against the fleet — the newest run of that
+# workflow (2026-08-11) executed only its unit-test job — so until one is on
+# record their signature state stays UNKNOWN, and they are the two images the
+# catch-all rule governs.
 #
 # Declares the cosign signatures required at the containerd PULL layer on
 # every node — a defense-in-depth complement to the GitOps-source

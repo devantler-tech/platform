@@ -21,12 +21,16 @@
 # re-create the exact blind spot it exists to close.
 #
 # WHAT THIS DOES NOT PROVE. That the controllers hold running rules and trust
-# material is necessary for enforcement, not sufficient: it does not establish
-# that a matched rule has ever produced a verification DECISION, because a
-# cached image is never re-pulled. That behavioural proof — a known-unsigned
-# image demonstrably refused at pull — is devantler-tech/platform#3336's job.
-# This check's value is that it needs no rollout and fails loudly when the
-# mechanism itself is not running.
+# material is necessary for enforcement, not sufficient. A matched rule DOES
+# produce a verification decision: containerd records one per image as a
+# `talos.dev/verified` label, and that label tracks rule MATCH rather than
+# signedness — measured 2026-08-26, 755 of 755 cached first-party images carry
+# it and 0 of 1299 cached images with a resolvable non-first-party repository
+# name do. What remains unproven is the REFUSAL: every first-party image pulled
+# here has PASSED, so a FAILING decision has never been observed to block a
+# pull. That behavioural proof — a known-unsigned image demonstrably refused at
+# pull — is devantler-tech/platform#3336's job. This check's value is that it
+# needs no rollout and fails loudly when the mechanism itself is not running.
 #
 # HISTORY, because it changes how a reader should read a green result: until
 # 2026-08-24 this script asserted a containerd `bin_dir`. No `bin_dir` is
