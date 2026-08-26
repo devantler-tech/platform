@@ -157,10 +157,34 @@ spec:
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
-      version: v1.13.8
+      version: v1.13.9
       # Hetzner Talos ISO (x86_64). The v1.11.2 ISO (122630) was deprecated
       # and removed from Hetzner on 2026-03-18. Use v1.12.4 (125127).
       iso: 125127
+      # Per-node pod-eviction budget for the rolling drain during 'ksail
+      # cluster update'; KSail defaults to 10m. The static workers are the
+      # cluster's only Longhorn storage nodes, and Longhorn pins a
+      # per-instance-manager PodDisruptionBudget at zero allowed disruptions
+      # while that instance-manager still runs engines for attached volumes.
+      # Draining a worker therefore has to evict its workloads, let those
+      # volumes detach, and wait for Longhorn to release the PDB before the
+      # instance-manager itself can go — a sequence that exceeds 10m on a
+      # worker carrying several attached volumes, and an over-budget drain
+      # aborts the whole update.
+      #
+      # 30m is ~3x the 10m default. That default was reached on a worker
+      # carrying several attached volumes, so this leaves room for the
+      # evict/detach/PDB-release sequence above without being unbounded.
+      #
+      # This is an independent per-node drain limit. It is NOT bounded by
+      # connection.timeout, which governs the `workload reconcile` wait on the
+      # Flux Kustomization chain and is not consumed as this update's outer
+      # deadline.
+      #
+      # --force-drain is NOT the alternative here: it deletes pods bypassing
+      # PodDisruptionBudgets, which on Longhorn risks removing the
+      # instance-manager still serving a volume's last healthy replica.
+      drainTimeout: 30m
       # Talos Image Factory extensions baked into the node image. KSail
       # computes the schematic ID from this list and uses it both for
       # machine.install.image (derived during config generation — there is no
