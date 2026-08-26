@@ -30,11 +30,11 @@ expect_summary() {
   fi
 }
 
-# 1. The tenant fixture set: 19 boundary-dissolving shapes denied, the ordinary
+# 1. The tenant fixture set: 23 boundary-dissolving shapes denied, the ordinary
 #    additive allow-lists admitted. A drop in the fail count means a shape that
 #    used to be refused now admits.
 apply "${tests}/resources.yaml" "${tests}/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 58, fail: 19, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 66, fail: 23, warn: 0, error: 0, skip: 0" \
   "tenant CiliumNetworkPolicy boundary"
 
 # 2. Carve-out: kyverno's background controller owns the generated floor. These
@@ -66,6 +66,28 @@ apply "${tests}/platform-author/resources.yaml" \
   "${tests}/platform-author/values.yaml" "${tests}/user-info.yaml"
 expect_summary "pass: 1, fail: 2, warn: 0, error: 0, skip: 0" \
   "control: a tenant must NOT be able to submit the broad platform body"
+
+# 6. Static action guard. Every count above is a RULE result; none of them says
+#    what admission actually does on a violation. Enforcement lives in each
+#    rule's own `failureAction`, because the deprecated top-level
+#    spec.validationFailureAction defaults an action-less rule to Audit — which
+#    would admit every shape the counts above prove is "denied", with the whole
+#    suite still green. Assert the action itself, not just the verdicts.
+rule_count="$(yq '.spec.rules | length' "${policy}")"
+enforced="$(yq '[.spec.rules[] | select(.validate.failureAction == "Enforce")] | length' "${policy}")"
+top_level="$(yq '.spec.validationFailureAction // "absent"' "${policy}")"
+if [[ "${rule_count}" -lt 1 ]]; then
+  echo "::error::no rules found in ${policy}"
+  exit 1
+fi
+if [[ "${enforced}" != "${rule_count}" ]]; then
+  echo "::error::only ${enforced}/${rule_count} rules set validate.failureAction: Enforce"
+  exit 1
+fi
+if [[ "${top_level}" != "absent" ]]; then
+  echo "::error::spec.validationFailureAction is deprecated; enforcement must be rule-level"
+  exit 1
+fi
 
 echo "Tenant CiliumNetworkPolicy policy enforced the expected boundary, and both"
 echo "platform carve-outs were proven to depend on the applying identity."

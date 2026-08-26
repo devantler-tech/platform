@@ -30,6 +30,8 @@ results:
       - tenant-ns/ingress-entity-all
       - tenant-ns/ingress-entity-cluster
       - tenant-ns/ingress-bare-l4
+      - tenant-ns/ingress-entity-remote-node
+      - tenant-ns/ingress-cidr-split-v4
     kind: CiliumNetworkPolicy
     result: fail
   - policy: restrict-tenant-network-policies
@@ -53,6 +55,8 @@ results:
       - tenant-ns/egress-cidrset-world-v6
       - tenant-ns/egress-bare-l4
       - tenant-ns/egress-fqdn-wildcard
+      - tenant-ns/egress-entity-cluster-mesh
+      - tenant-ns/egress-cidrset-split-v6
     kind: CiliumNetworkPolicy
     result: fail
   - policy: restrict-tenant-network-policies
