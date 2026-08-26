@@ -7,9 +7,12 @@
 # is refused at pull. The rules DO produce decisions — containerd records each one per image as a
 # `talos.dev/verified` label, and every first-party image pulled here has PASSED. What has NOT been
 # observed is the REFUSAL: every such image is already cached on the fleet, so no rule-matching pull
-# of an unsigned first-party image happens today. The moment one does, every latent violation
-# becomes a simultaneous ImagePullBackOff. That blast radius is measurable now, without touching a
-# node — and until it is measured, enabling the control is a guess.
+# of an unsigned first-party image happens today. Enforcement is per image and happens AT THE PULL,
+# so a violation surfaces only when that particular image is next pulled — on node replacement,
+# cache eviction or a tag bump — while every other cached image keeps running. The blast radius is
+# therefore a count of latent violations surfacing one at a time, not one simultaneous outage. It
+# is measurable now, without touching a node — and until it is measured, enabling the control is a
+# guess.
 #
 # 🔴 THE ENUMERATION IS THE HARD HALF, AND A HAND-WRITTEN LIST CANNOT DO IT.
 # The apps that run here are not declared in this repository: they arrive as Flux OCIRepository
