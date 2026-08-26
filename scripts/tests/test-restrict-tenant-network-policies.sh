@@ -30,11 +30,11 @@ expect_summary() {
   fi
 }
 
-# 1. The tenant fixture set: 17 boundary-dissolving shapes denied, the ordinary
+# 1. The tenant fixture set: 19 boundary-dissolving shapes denied, the ordinary
 #    additive allow-lists admitted. A drop in the fail count means a shape that
 #    used to be refused now admits.
 apply "${tests}/resources.yaml" "${tests}/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 31, fail: 17, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 58, fail: 19, warn: 0, error: 0, skip: 0" \
   "tenant CiliumNetworkPolicy boundary"
 
 # 2. Carve-out: kyverno's background controller owns the generated floor. These
@@ -50,7 +50,7 @@ expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 0" \
 #    above is indistinguishable from the policy simply not matching.
 apply "${tests}/kyverno-author/resources.yaml" \
   "${tests}/kyverno-author/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 4, fail: 2, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 6, fail: 2, warn: 0, error: 0, skip: 0" \
   "control: a tenant must NOT be able to author the reserved generated names"
 
 # 4. Carve-out: platform-authored policies applied by flux-system's
@@ -64,7 +64,7 @@ expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 0" \
 #    by both the ingress and the egress rule.
 apply "${tests}/platform-author/resources.yaml" \
   "${tests}/platform-author/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 0, fail: 2, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 1, fail: 2, warn: 0, error: 0, skip: 0" \
   "control: a tenant must NOT be able to submit the broad platform body"
 
 echo "Tenant CiliumNetworkPolicy policy enforced the expected boundary, and both"

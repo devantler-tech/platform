@@ -35,6 +35,13 @@
 # reaches nothing outside the namespace — the generated `allow-dns` policy uses
 # exactly that shape. Only the rules' sources and destinations are constrained.
 #
+# Opting out: a tenant policy setting `enableDefaultDeny: false` is refused. It
+# is unverified whether that field can actually subtract the whitelist mode the
+# generated floor establishes — Cilium documents rule effects as cumulative but
+# does not state the interaction, and this repository does not run a cluster to
+# settle it. A tenant allow-list has no reason to set it either way, so the
+# ambiguity is resolved fail-closed rather than left open.
+#
 # Ownership: the generated `default-deny` and `allow-dns` names are reserved.
 # Without this a tenant would simply PATCH the generated floor into a permissive
 # body, leaving the object present and the namespace open.
@@ -204,6 +211,44 @@ spec:
                 value:
                   - 0.0.0.0/0
                   - ::/0
+    - name: cnp-must-not-opt-out-of-default-deny
+      match:
+        any:
+          - resources:
+              kinds:
+                - CiliumNetworkPolicy
+              namespaceSelector:
+                matchLabels:
+                  app.kubernetes.io/managed-by: ksail
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: kustomize-controller
+                namespace: flux-system
+          - subjects:
+              - kind: ServiceAccount
+                name: kyverno-background-controller
+                namespace: kyverno
+      validate:
+        message: >-
+          A tenant CiliumNetworkPolicy must not set enableDefaultDeny to false.
+          The namespace's whitelist mode is what the generated default-deny
+          establishes; opting out of it is never something a tenant allow-list
+          needs to do.
+        deny:
+          conditions:
+            any:
+              # to_string() rather than a `|| default` guard: JMESPath treats the
+              # boolean false as false-y, so `x || 'unset'` collapses an explicit
+              # false into the unset case and the check would never fire.
+              # to_string(null) is "null" and to_string(false) is "false".
+              - key: "{{ to_string(request.object.spec.enableDefaultDeny.ingress) }}"
+                operator: Equals
+                value: "false"
+              - key: "{{ to_string(request.object.spec.enableDefaultDeny.egress) }}"
+                operator: Equals
+                value: "false"
     - name: cnp-generated-policy-names-are-reserved
       match:
         any:

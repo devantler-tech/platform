@@ -66,6 +66,21 @@ results:
       - tenant-ns/allow-all-own-pods-from-api
     kind: CiliumNetworkPolicy
     result: pass
+  # ── Opting out of the namespace's default-deny ─────────────────────────────
+  - policy: restrict-tenant-network-policies
+    rule: cnp-must-not-opt-out-of-default-deny
+    resources:
+      - tenant-ns/opt-out-default-deny-ingress
+      - tenant-ns/opt-out-default-deny-egress
+    kind: CiliumNetworkPolicy
+    result: fail
+  - policy: restrict-tenant-network-policies
+    rule: cnp-must-not-opt-out-of-default-deny
+    resources:
+      - tenant-ns/allow-api-to-web
+      - tenant-ns/allow-web-egress-db
+    kind: CiliumNetworkPolicy
+    result: pass
   # ── Ownership: the generated floor's names are reserved ────────────────────
   - policy: restrict-tenant-network-policies
     rule: cnp-generated-policy-names-are-reserved

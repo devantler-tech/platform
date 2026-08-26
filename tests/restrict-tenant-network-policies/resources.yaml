@@ -360,3 +360,36 @@ spec:
     - toEndpoints:
         - matchLabels:
             app: anything
+---
+# ── DENY cases: opting out of the namespace's default-deny ───────────────────
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: opt-out-default-deny-ingress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  enableDefaultDeny:
+    ingress: false
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: api
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: opt-out-default-deny-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  enableDefaultDeny:
+    egress: false
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app: db
