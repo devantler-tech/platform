@@ -15,6 +15,35 @@ fail() {
   exit 1
 }
 
+# Kubernetes RBAC cannot limit patch/update on a Deployment to metadata, so ANY
+# cluster-wide Deployment write lets a compromised background-controller token
+# rewrite arbitrary workload pod templates. Assert no ClusterRole grants it,
+# whether or not the rule pins resourceNames -- a blanket rule (the shape that
+# shipped before #2721) carries no resourceNames at all, so a resourceNames-only
+# check cannot see the broadest, most dangerous form.
+#
+# Comparisons use anchored test() rather than ==: in yq, `. == "*"` is a GLOB and
+# matches every string, which would silently match rules that hold no wildcard.
+assert_no_cluster_wide_deployment_write() {
+  local rendered="$1"
+  local label="$2"
+  local offenders
+
+  offenders="$(yq -r '
+    select(.kind == "ClusterRole")
+    | select([ .rules[]?
+        | select([.apiGroups[]? | select(test("^(apps|\*)$"))] | length > 0)
+        | select([.resources[]? | select(test("^(deployments|\*)$"))] | length > 0)
+        | select([.verbs[]? | select(test("^(create|delete|deletecollection|patch|update|\*)$"))] | length > 0)
+      ] | length > 0)
+    | .metadata.name
+  ' "${rendered}")" || fail "${label} must render for the cluster-wide Deployment write check"
+
+  if [[ -n "${offenders//[[:space:]]/}" ]]; then
+    fail "${label} must not grant cluster-wide Deployment write to Kyverno: ${offenders//$'\n'/ }"
+  fi
+}
+
 extract_resource() {
   local kind="$1"
   local name="$2"
@@ -104,6 +133,8 @@ if yq -r \
   fail 'the Umami primary mutation grant must not remain cluster-wide'
 fi
 
+assert_no_cluster_wide_deployment_write "${rendered_file}" 'the Kyverno controller base'
+
 umami_rendered_file="$(mktemp)"
 trap 'rm -f "${rendered_file}" "${umami_rendered_file}"' EXIT
 kubectl kustomize "${umami_dir}" >"${umami_rendered_file}" ||
@@ -119,6 +150,8 @@ kubectl kustomize "${hetzner_apps_dir}" >"${hetzner_apps_rendered_file}" ||
   fail 'the Hetzner apps overlay must render without patching the moved Umami namespace'
 kubectl kustomize "${hetzner_controllers_dir}" >"${hetzner_controllers_rendered_file}" ||
   fail 'the Hetzner infrastructure-controllers overlay must render'
+
+assert_no_cluster_wide_deployment_write "${hetzner_controllers_rendered_file}" 'the Hetzner infrastructure-controllers overlay'
 
 if extract_resource Namespace umami <"${hetzner_apps_rendered_file}" >/dev/null; then
   fail 'the Hetzner apps layer must not co-own the Umami namespace'
