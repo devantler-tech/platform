@@ -25,9 +25,11 @@
 #     scripts/validate-image-verifier-liveness.sh
 # Measured 2026-08-24: 7 of 7 nodes hold running rules and a running trust root.
 #
-# BEFORE ACTIVATING (#3101): an image that matches a rule but fails
-# verification is refused, so any first-party image that is running yet
-# unsigned goes ImagePullBackOff the moment it is next pulled.
+# BEFORE ACTIVATING (#3101): a matched image that fails verification is
+# EXPECTED to be refused, so any first-party image that is running yet unsigned
+# should enter ImagePullBackOff the moment it is next pulled. That refusal is
+# exactly what #3336 exists to prove and has not been observed here, so treat it
+# as the risk to design around rather than as a settled outcome.
 # Enumerate the running first-party digests and confirm each carries a cosign
 # signature — attestations alone do not satisfy the catch-all rule below — then
 # sign or scope the rule off any that do not.
