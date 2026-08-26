@@ -19,18 +19,40 @@
 # 🔴 A cosign failure DOES NOT MEAN UNSIGNED, and treating it as one is the fail-open this guards.
 # GHCR answers `DENIED` both for a signature that is absent and for a package the credential may not
 # read. Those are opposite conclusions: absent is the outage this issue exists to prevent, while
-# unreadable says nothing at all. They are separated by probing the IMAGE MANIFEST itself — 401/403
-# means unreadable (UNKNOWN), anything else means the repository is readable and the verdict stands
-# (FAIL). Measured 2026-08-25: `ascoachingogvaner` and `wedding-app` are private and answer 401 on
-# the image manifest, while `doggy-countdown` answers 404 on its `.sig` TAG yet verifies fine,
-# because its signature is an OCI referrer rather than a tag. A probe that only looked at `.sig`
-# would have called that one unsigned.
+# unreadable says nothing at all. They are separated by probing the IMAGE MANIFEST itself, and ONLY
+# a manifest actually read (2xx) lets the verdict stand as FAIL — every other status, 401/403 and
+# 404 and 429 and 5xx alike, establishes nothing and is UNKNOWN. Measured 2026-08-25:
+# `ascoachingogvaner` and `wedding-app` are private and answer 401 to an ANONYMOUS read, while
+# `doggy-countdown` answers 404 on its `.sig` TAG yet verifies fine, because its signature is an OCI
+# referrer rather than a tag. A probe that only looked at `.sig` would have called that one unsigned.
+#
+# 🔴 401 IS NOT THE ONLY UNREADABLE STATUS, WHICH IS WHY THE CATCH-ALL IS THE LOAD-BEARING BRANCH.
+# An anonymous read of a private package answers 401, but an identity that AUTHENTICATES and simply
+# lacks read on that package gets 404 — GHCR masks existence rather than admitting the package is
+# there. Measured 2026-08-25 against prod with an under-privileged GHCR identity: both private
+# packages returned 404 and were correctly reported UNKNOWN with exit 1, not FAIL. An
+# under-privileged credential is the likelier real-world failure than an absent one, so a rule that
+# named only 401/403 as unreadable would call those two images REFUSED-at-pull on the strength of a
+# permission problem.
 #
 # EXIT STATUS
 #   0  every matched image PASSED
 #   1  at least one matched image is FAIL or UNKNOWN — the blast radius is non-empty or unproven
 #   2  usage, or the measurement could not be made at all (never reported as "nothing to fix")
 set -euo pipefail
+
+# Resolved with parameter expansion alone. `dirname` is an EXTERNAL command, and the cosign
+# gate below is exercised by a test that strips PATH — so calling one here turns a clean
+# "cosign is required" exit 2 into a crash, which is the fabricated verdict this script
+# exists to never produce.
+SCRIPT_DIR="${BASH_SOURCE[0]}"
+case "$SCRIPT_DIR" in
+  */*) SCRIPT_DIR="${SCRIPT_DIR%/*}" ;;
+  *) SCRIPT_DIR="." ;;
+esac
+readonly SCRIPT_DIR
+# shellcheck source=scripts/registry-auth-lib.sh
+source "${SCRIPT_DIR}/registry-auth-lib.sh"
 
 RULES_FILE="talos/cluster/verify-first-party-images.yaml"
 KUBE_CONTEXT="admin@prod"
@@ -203,11 +225,55 @@ probe_manifest_status() { # ref
     echo 000
     return 0
   }
-  token="$(curl -sSf --max-time 20 \
+  # The token exchange is what must carry the credential: an anonymous token for a PRIVATE
+  # repository is issued happily and then buys a 401 on the manifest, which is exactly the
+  # "unreadable" answer this probe exists to distinguish from "unsigned".
+  #
+  # 🔴 NEITHER SECRET MAY REACH argv, AND THE BEARER TOKEN IS THE ONE THAT IS EASY TO MISS.
+  # `curl` is an EXTERNAL command, so every argument it is given is world-readable in the process
+  # table for the life of the call — on a shared runner that is any other user, no privilege
+  # needed. The Basic credential is only half of it: the token the exchange hands back is itself a
+  # pull credential for this repository, so passing it as `-H "Authorization: Bearer ..."` leaks a
+  # working credential exactly as passing the password would. ONE 0600 config file therefore
+  # carries whichever header is in flight — Basic for the exchange, then Bearer for the manifest
+  # read — and neither value is ever an argument. (`printf` is a shell BUILTIN and forks no
+  # process, so writing the file exposes nothing; a traced shell would echo these values, but it
+  # would already have echoed the assignment above, so argv is the boundary that is actually
+  # defensible here.)
+  local auth_b64 auth_conf="" curl_conf_args=()
+  auth_b64="$(registry_credential_b64 "$registry" || true)"
+  # This function runs inside a command substitution, so the EXIT trap below belongs to THAT
+  # subshell and fires the moment this probe returns — exactly the lifetime the credential
+  # file should have. A plain `rm` after the call would not survive a signal; the trap does.
+  # `mktemp` creates the file 0600, so the credential is never briefly world-readable.
+  if auth_conf="$(mktemp 2>/dev/null)"; then
+    # shellcheck disable=SC2064  # expand now: the path must be named at trap time
+    trap "rm -f '${auth_conf}'" EXIT
+  else
+    auth_conf=""
+  fi
+  if [ -n "$auth_b64" ] && [ -n "$auth_conf" ]; then
+    printf 'header = "Authorization: Basic %s"\n' "$auth_b64" >"$auth_conf"
+    curl_conf_args=(--config "$auth_conf")
+  fi
+  token="$(curl -sSf --max-time 20 ${curl_conf_args[@]+"${curl_conf_args[@]}"} \
     "https://${registry}/token?scope=repository:${repo}:pull&service=${registry}" 2>/dev/null |
     jq -r '.token // .access_token // empty' 2>/dev/null || true)"
+  # Re-aim the same file at the manifest read. With no writable config there is nowhere safe to
+  # put the token, so the read goes out ANONYMOUSLY and a private package answers 401 -> UNKNOWN.
+  # That is the correct direction to fail: an unproven verdict costs a re-run, whereas falling
+  # back to argv would trade a working credential for it.
+  curl_conf_args=()
+  if [ -n "$auth_conf" ]; then
+    if [ -n "$token" ]; then
+      printf 'header = "Authorization: Bearer %s"\n' "$token" >"$auth_conf"
+      curl_conf_args=(--config "$auth_conf")
+    else
+      : >"$auth_conf"
+    fi
+  fi
   curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
-    ${token:+-H "Authorization: Bearer ${token}"} \
+    ${curl_conf_args[@]+"${curl_conf_args[@]}"} \
     -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' \
     "https://${registry}/v2/${repo}/manifests/${reference}" 2>/dev/null || echo 000
 }

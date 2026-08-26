@@ -252,6 +252,138 @@ else
   echo "ok    real rules: passes the completeness gate"
 fi
 
+# --- 9. THE DEFAULT PROBE PATH: no secret may reach argv -------------------
+# Every case above goes through INVENTORY_PROBE_CMD, so none of them exercises the real probe —
+# the credential lookup, the Basic-authenticated token exchange, the Bearer manifest read, and the
+# 0600 config file that carries both. That is the seam a coverage gap hides in: the override is
+# the tested path and the shipped path is the untested one.
+#
+# What is pinned here is the property, not the plumbing: `curl` is an external command, so ANY
+# argument it is handed is world-readable in the process table. Both the pull credential and the
+# token the exchange returns are working credentials for the repository, so neither may appear
+# there. A stub curl records its own argv and the config file it was pointed at, which is exactly
+# the split the assertion needs — secret in the file, never in the arguments.
+curlstub="${work}/bin"
+mkdir -p "$curlstub"
+cat >"${curlstub}/curl" <<'EOF'
+#!/usr/bin/env bash
+# Record the full argv, and the contents of any --config file AT CALL TIME (the real script
+# rewrites and finally deletes that file, so reading it afterwards would prove nothing).
+{
+  printf 'ARGV'
+  for a in "$@"; do printf ' %s' "$a"; done
+  printf '\n'
+} >>"${CURL_LOG}"
+conf=""
+prev=""
+for a in "$@"; do
+  [ "$prev" = "--config" ] && conf="$a"
+  prev="$a"
+done
+if [ -n "$conf" ] && [ -r "$conf" ]; then
+  sed 's/^/CONF /' "$conf" >>"${CURL_LOG}"
+else
+  printf 'CONF <none>\n' >>"${CURL_LOG}"
+fi
+case " $* " in
+  *"/token?"*) printf '{"token":"%s"}\n' "${STUB_TOKEN}" ;;
+  *) printf '%s' "${STUB_STATUS:-200}" ;;
+esac
+EOF
+chmod +x "${curlstub}/curl"
+
+readonly STUB_TOKEN_VALUE='s3cr3t-bearer-token-value'
+# Basic auth for user "u", password "p" — the same fixture shape the lib test uses.
+readonly STUB_BASIC_B64='dTpw'
+mkdir -p "${work}/dockercfg"
+printf '%s' '{"auths":{"ghcr.io":{"username":"u","password":"p"}}}' >"${work}/dockercfg/config.json"
+
+run_default_probe() { # stub_status -> sets RC / OUT / CURL_LOG contents
+  : >"${work}/curl.log"
+  printf '%s\n' 'ghcr.io/example/wedding-app@sha256:aa' >"${work}/images"
+  set +e
+  OUT="$(PATH="${curlstub}:${PATH}" \
+    HOME="${work}/no-such-home" \
+    DOCKER_CONFIG="${work}/dockercfg" \
+    CURL_LOG="${work}/curl.log" \
+    STUB_TOKEN="${STUB_TOKEN_VALUE}" \
+    STUB_STATUS="$1" \
+    INVENTORY_VERIFY_CMD="${work}/verify" \
+    ACCEPT_SUBJECTS='' \
+    "$script" --rules "${work}/rules.yaml" --images "${work}/images" 2>&1)"
+  RC=$?
+  set -e
+}
+
+run_default_probe 200
+log="$(cat "${work}/curl.log")"
+
+# The probe must actually have run through the real path, or every assertion below is vacuous.
+if printf '%s\n' "$log" | grep -q '^ARGV .*/token?'; then
+  echo "ok    default path: the token exchange was attempted"
+else
+  echo "FAIL  default path: no token exchange in the curl log — the probe never ran"
+  printf '%s\n' "$log" | sed 's/^/        /' | head -12
+  failures=$((failures + 1))
+fi
+
+for secret_label in "basic credential:${STUB_BASIC_B64}" "bearer token:${STUB_TOKEN_VALUE}"; do
+  label="${secret_label%%:*}"
+  secret="${secret_label#*:}"
+  if printf '%s\n' "$log" | grep '^ARGV ' | grep -qF -- "$secret"; then
+    echo "FAIL  the ${label} reached curl's argv (world-readable in the process table)"
+    failures=$((failures + 1))
+  else
+    echo "ok    the ${label} never reaches curl's argv"
+  fi
+done
+
+# ...and the Bearer header must still have been SENT — via the config file. Without this the
+# assertion above is satisfied just as well by dropping authentication altogether, which would
+# silently turn every private package into an UNKNOWN.
+if printf '%s\n' "$log" | grep -qF "CONF header = \"Authorization: Bearer ${STUB_TOKEN_VALUE}\""; then
+  echo "ok    the bearer token is delivered through the 0600 config file"
+else
+  echo "FAIL  the bearer token was never delivered — the manifest read went out unauthenticated"
+  printf '%s\n' "$log" | sed 's/^/        /' | head -20
+  failures=$((failures + 1))
+fi
+
+# The same 0600 file carries Basic auth for the exchange itself.
+if printf '%s\n' "$log" | grep -qF "CONF header = \"Authorization: Basic ${STUB_BASIC_B64}\""; then
+  echo "ok    the pull credential is delivered through the 0600 config file"
+else
+  echo "FAIL  the pull credential never reached the token exchange"
+  failures=$((failures + 1))
+fi
+
+# End-to-end through the REAL probe: a non-2xx manifest read is UNKNOWN, never FAIL.
+run_default_probe 404
+check "default path: 404 on the manifest -> UNKNOWN (not FAIL)" 1 'UNKNOWN=[1-9]' "$RC" "$OUT"
+if printf '%s\n' "$OUT" | grep -q 'FAIL=[1-9]'; then
+  echo "FAIL  default path: 404 was counted as a FAIL"
+  failures=$((failures + 1))
+fi
+
+# The temporary credential file must not outlive the probe.
+leaked="$(printf '%s\n' "$log" | sed -n 's/^ARGV .*--config \([^ ]*\).*/\1/p' | sort -u)"
+if [ -z "$leaked" ]; then
+  echo "FAIL  no --config path was recorded — the cleanup assertion would be vacuous"
+  failures=$((failures + 1))
+fi
+leftover=0
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  [ -e "$f" ] && leftover=$((leftover + 1))
+done <<EOF
+${leaked}
+EOF
+if [ "$leftover" -eq 0 ]; then
+  echo "ok    the temporary credential file is removed when the probe returns"
+else
+  echo "FAIL  ${leftover} temporary credential file(s) survived the probe"
+  failures=$((failures + 1))
+fi
 echo
 if [ "$failures" -eq 0 ]; then echo "all checks passed"; else
   echo "${failures} check(s) failed"
