@@ -161,6 +161,25 @@ spec:
       # Hetzner Talos ISO (x86_64). The v1.11.2 ISO (122630) was deprecated
       # and removed from Hetzner on 2026-03-18. Use v1.12.4 (125127).
       iso: 125127
+      # Per-node pod-eviction budget for the rolling drain during 'ksail
+      # cluster update'; KSail defaults to 10m. The static workers are the
+      # cluster's only Longhorn storage nodes, and Longhorn pins a
+      # per-instance-manager PodDisruptionBudget at zero allowed disruptions
+      # while that instance-manager still runs engines for attached volumes.
+      # Draining a worker therefore has to evict its workloads, let those
+      # volumes detach, and wait for Longhorn to release the PDB before the
+      # instance-manager itself can go — a sequence that exceeds 10m on a
+      # worker carrying several attached volumes, and an over-budget drain
+      # aborts the whole update.
+      #
+      # Kept strictly below connection.timeout (35m) so a genuinely stuck
+      # drain still surfaces as a drain failure rather than as the outer CLI
+      # timeout.
+      #
+      # --force-drain is NOT the alternative here: it deletes pods bypassing
+      # PodDisruptionBudgets, which on Longhorn risks removing the
+      # instance-manager still serving a volume's last healthy replica.
+      drainTimeout: 30m
       # Talos Image Factory extensions baked into the node image. KSail
       # computes the schematic ID from this list and uses it both for
       # machine.install.image (derived during config generation — there is no
