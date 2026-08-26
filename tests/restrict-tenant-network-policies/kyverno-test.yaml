@@ -143,6 +143,7 @@ results:
       - tenant-ns/attack-toservices-empty-matchlabels
       - tenant-ns/attack-toservices-unnamed-service
       - tenant-ns/attack-toservices-empty-entry
+      - tenant-ns/attack-toservices-vacuous-beside-constrained
     kind: CiliumNetworkPolicy
     result: fail
   # CONTROL: the constrained spellings stay admitted.

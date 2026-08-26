@@ -660,3 +660,22 @@ spec:
             selector:
               matchLabels:
                 app: db
+---
+# ATTACK: an unconstrained entry sitting BESIDE a properly named one. Cilium
+# unions allow rules, so the vacuous entry decides the outcome — the check has
+# to be per ENTRY, not "does this policy name any service at all".
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-toservices-vacuous-beside-constrained
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - k8sService:
+            serviceName: db
+        - k8sServiceSelector:
+            selector: {}
