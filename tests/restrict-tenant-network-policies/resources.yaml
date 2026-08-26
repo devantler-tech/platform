@@ -517,3 +517,40 @@ spec:
     - toFQDNs:
         - matchPattern: "*.*"
         - matchPattern: "*.*.*"
+---
+# ATTACK: the prefix-length floor compared the SPELLING, not the value. Cilium
+# accepts and normalises `/00` to `/0`, so a zero-padded prefix reached an entire
+# address family while the non-zero-padded `/0` was refused.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-zero-padded-prefix
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 0.0.0.0/00
+---
+# OK: `ingress` is the narrow identity Cilium gives traffic that has already
+# passed the shared Gateway, so a tenant fronting a public HTTPRoute names it
+# legitimately. Refusing it alongside `world`/`cluster` would deny the next
+# reconciliation of a tenant's own published-route policy.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-ingress-from-gateway
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

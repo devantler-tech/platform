@@ -43,6 +43,7 @@ results:
       - tenant-ns/allow-web-egress-named-fqdn
       - tenant-ns/allow-web-egress-subdomain-fqdn
       - tenant-ns/allow-all-own-pods-from-api
+      - tenant-ns/allow-web-ingress-from-gateway
     kind: CiliumNetworkPolicy
     result: pass
   # ── Egress destinations ────────────────────────────────────────────────────
@@ -107,6 +108,7 @@ results:
     rule: cnp-egress-destinations-must-be-constrained
     resources:
       - tenant-ns/attack-cidr-prefix-floor-slash8
+      - tenant-ns/attack-cidr-zero-padded-prefix
       - tenant-ns/attack-fqdn-wildcard-depths
     kind: CiliumNetworkPolicy
     result: fail

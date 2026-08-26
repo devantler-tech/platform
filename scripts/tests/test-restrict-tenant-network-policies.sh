@@ -30,11 +30,11 @@ expect_summary() {
   fi
 }
 
-# 1. The tenant fixture set: 27 boundary-dissolving shapes denied, the ordinary
+# 1. The tenant fixture set: 28 boundary-dissolving shapes denied, the ordinary
 #    additive allow-lists admitted. A drop in the fail count means a shape that
 #    used to be refused now admits.
 apply "${tests}/resources.yaml" "${tests}/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 107, fail: 27, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 114, fail: 28, warn: 0, error: 0, skip: 0" \
   "tenant CiliumNetworkPolicy boundary"
 
 # 2. Carve-out: kyverno's background controller owns the generated floor. These

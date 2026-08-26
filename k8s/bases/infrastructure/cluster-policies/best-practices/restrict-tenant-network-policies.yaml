@@ -22,11 +22,13 @@
 #     `matchLabels`, or a `matchExpressions` entry whose operator is `In` — so
 #     `Exists`, `DoesNotExist` and `NotIn` are refused by default rather than
 #     enumerated.
-#   * Any entity but `kube-apiserver`. Cilium's entity vocabulary is open-ended
-#     — `all`, `world` and `cluster` are the obvious ones, but `remote-node`
-#     reaches host-networked workloads and `cluster-mesh` reaches meshed
-#     clusters — so the check is a WHITELIST of the one entity a namespaced
-#     workload legitimately names, not a list of the broad ones.
+#   * Any entity but `kube-apiserver` — plus, on the INGRESS side only, `ingress`,
+#     the narrow identity Cilium gives traffic that has already passed the shared
+#     Gateway, which tenant-authored HTTPRoute workloads legitimately name.
+#     Cilium's entity vocabulary is open-ended: `all`, `world` and `cluster` are
+#     the obvious ones, but `remote-node` reaches host-networked workloads and
+#     `cluster-mesh` reaches meshed clusters — so the check is a WHITELIST of the
+#     entities a namespaced workload legitimately names, not a list of broad ones.
 #   * Any CIDR prefix shorter than /16. `0.0.0.0/0` and `::/0` are only the
 #     shortest spellings of "everything": `0.0.0.0/1` plus `128.0.0.0/1` covers
 #     the same ground. A prefix-length floor refuses every such split at once.
@@ -97,7 +99,8 @@ metadata:
       Blocks tenant-applied CiliumNetworkPolicy resources in ksail tenant
       namespaces from dissolving the generated default-deny floor: every
       ingress source and egress destination selector must carry a real
-      constraint, `kube-apiserver` is the only entity a tenant may name, CIDR
+      constraint, only `kube-apiserver` (and `ingress` on the ingress side) may be
+      named as an entity, CIDR
       prefixes shorter than /16 are refused, and the generated `default-deny` and
       `allow-dns` names are reserved. Ordinary additive allow-lists are
       unaffected, as are policies applied by flux-system's kustomize-controller
@@ -134,8 +137,8 @@ spec:
         message: >-
           Every ingress source in a tenant CiliumNetworkPolicy must be
           constrained. A fromEndpoints selector with no matchLabels and no
-          matchExpressions allows all sources; `kube-apiserver` is the only
-          entity a tenant may name; and a CIDR prefix shorter than /16 reaches outside this
+          matchExpressions allows all sources; only `kube-apiserver` and the
+          post-Gateway `ingress` identity may be named; and a CIDR prefix shorter than /16 reaches outside this
           namespace. A rule with only toPorts and no source at all allows every
           source on that port. Cilium unions allow rules, so one unconstrained
           source removes this namespace's isolation regardless of the generated
@@ -165,11 +168,12 @@ spec:
               # `all`/`world`/`cluster`, `remote-node` reaches remote nodes and
               # host-networked workloads and `cluster-mesh` reaches endpoints in
               # meshed clusters — so an exclusion list is one entity away from being
-              # incomplete again. `kube-apiserver` is the only entity a namespaced
+              # incomplete again. `kube-apiserver` and, here on the ingress side, the
+              # post-Gateway `ingress` identity are the entities a namespaced
               # tenant workload has a legitimate reason to name, and it does not
               # dissolve the namespace boundary. Compared with a JMESPath filter
               # rather than AnyIn, for the wildcard reason given in the egress rule.
-              - key: "{{ length(request.object.spec.ingress[].fromEntities[] || `[]` | [?@ != 'kube-apiserver']) }}"
+              - key: "{{ length(request.object.spec.ingress[].fromEntities[] || `[]` | [?@ != 'kube-apiserver' && @ != 'ingress']) }}"
                 operator: GreaterThan
                 value: 0
               # Refuse on PREFIX LENGTH, not on prefix text. `0.0.0.0/0` and `::/0`
@@ -178,10 +182,10 @@ spec:
               # family while matching neither literal. Refusing every prefix shorter
               # than /16 closes that whole family of splits without enumerating any of
               # them. A bare address carries no `/` and is unaffected.
-              - key: "{{ length(request.object.spec.ingress[].fromCIDR[] || `[]` | [?regex_match('^[^/]*/([0-9]|1[0-5])$', @)]) }}"
+              - key: "{{ length(request.object.spec.ingress[].fromCIDR[] || `[]` | [?regex_match('^[^/]*/0*([0-9]|1[0-5])$', @)]) }}"
                 operator: GreaterThan
                 value: 0
-              - key: "{{ length(request.object.spec.ingress[].fromCIDRSet[].cidr || `[]` | [?regex_match('^[^/]*/([0-9]|1[0-5])$', @)]) }}"
+              - key: "{{ length(request.object.spec.ingress[].fromCIDRSet[].cidr || `[]` | [?regex_match('^[^/]*/0*([0-9]|1[0-5])$', @)]) }}"
                 operator: GreaterThan
                 value: 0
     - name: cnp-egress-destinations-must-be-constrained
@@ -241,10 +245,10 @@ spec:
               - key: "{{ length(request.object.spec.egress[].toEntities[] || `[]` | [?@ != 'kube-apiserver']) }}"
                 operator: GreaterThan
                 value: 0
-              - key: "{{ length(request.object.spec.egress[].toCIDR[] || `[]` | [?regex_match('^[^/]*/([0-9]|1[0-5])$', @)]) }}"
+              - key: "{{ length(request.object.spec.egress[].toCIDR[] || `[]` | [?regex_match('^[^/]*/0*([0-9]|1[0-5])$', @)]) }}"
                 operator: GreaterThan
                 value: 0
-              - key: "{{ length(request.object.spec.egress[].toCIDRSet[].cidr || `[]` | [?regex_match('^[^/]*/([0-9]|1[0-5])$', @)]) }}"
+              - key: "{{ length(request.object.spec.egress[].toCIDRSet[].cidr || `[]` | [?regex_match('^[^/]*/0*([0-9]|1[0-5])$', @)]) }}"
                 operator: GreaterThan
                 value: 0
     - name: cnp-must-not-opt-out-of-default-deny
