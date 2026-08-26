@@ -297,3 +297,173 @@ spec:
       policy:
         resolve: Always
     permission: admin
+---
+# #3146: the member identity itself. Every condition on the reference rule above
+# passes here — allow-listed team, resolve Always, no teamId, no selector, empty
+# initProvider — and the org-admin provider still adds an arbitrary account to a
+# CODEOWNERS team. This fixture isolates the identity condition: it is a
+# well-formed membership in every other respect.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: arbitrary-username
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    username: attacker
+    role: member
+---
+# GitHub logins are case-insensitive, so this is the SAME account as the
+# allow-listed one and must be admitted. Without normalisation the allow-list
+# would refuse a legitimate identity — a false denial rather than a bypass, but
+# a real one, and the same reason the provider-identity rule above lowercases.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: mixed-case-username
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    username: DeVaNtLeR
+    role: member
+---
+# The initProvider merge, applied to the identity. forProvider is entirely
+# legitimate, so a rule keyed only on forProvider admits this while a foreign
+# account rides in underneath — the same shape as the foreign-team and
+# admin-grant bypasses already covered above.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: initprovider-arbitrary-username
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    username: devantler
+    role: member
+  initProvider:
+    username: attacker
+---
+# forProvider carries no username at all, so upjet merges initProvider's in and
+# that is the account actually reconciled. A rule reading forProvider alone sees
+# an empty string here, which is why the identity condition resolves the
+# effective value across both blocks.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: initprovider-only-arbitrary-username
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    role: member
+  initProvider:
+    username: attacker
+---
+# The paved road as it exists live: the allow-listed member holding maintainer.
+# Both live TeamMemberships have this exact shape, so the identity and role
+# rules must admit it or they deny the entire current fleet.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: allow-listed-maintainer
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+    username: devantler
+    role: maintainer
+---
+# An allow-list, not a deny-list on `maintainer`: GitHub team roles are an
+# enumeration the provider passes through, so a value outside the two documented
+# roles must be refused rather than assumed harmless. Same rationale as the
+# repository-permission list above.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: unknown-role
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    username: devantler
+    role: owner
+---
+# The same unknown role supplied under initProvider, where the merge makes it
+# the effective role because forProvider sets none.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: initprovider-unknown-role
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    username: devantler
+  initProvider:
+    role: owner
+---
+# The initProvider-only authoring style with an ALLOW-LISTED account. This is the
+# control that isolates the merge resolution: the foreign-username fixture above
+# cannot do it, because with the fallback removed its effective value collapses to
+# the empty string, which the allow-list denies anyway — so it fails either way and
+# proves nothing about the merge. Here the effective value is the allow-listed
+# login only if initProvider is consulted; drop the fallback and this legitimate
+# membership is refused.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: initprovider-only-allow-listed-username
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    role: member
+  initProvider:
+    username: devantler
+---
+# forProvider carries a legitimate role, so the merge never reaches initProvider
+# and the effective role is `member`. The initProvider condition is the only one
+# that sees the unknown value here, which is what isolates it — the fixture above
+# is caught by both conditions and so isolates neither.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: initprovider-unknown-role-behind-valid-forprovider
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+    username: devantler
+    role: member
+  initProvider:
+    role: owner
