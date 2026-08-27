@@ -10,10 +10,6 @@ resources:
   # the operator to create the key before the HelmRelease becomes Ready.
   - ../../../bases/infrastructure/audit-log-forwarder/
   - cluster-issuers/
-  # Prod-only workload isolation for the Hetzner instance metadata service.
-  # A Cilium endpoint selector covers pods, not Talos hosts, so bootstrap keeps
-  # its required metadata path while workloads cannot reuse node join material.
-  - cilium/
   # Crossplane provider-upjet-github package + activation policy. Lives in this
   # `infrastructure` layer (not `infrastructure/controllers/`) because these are
   # pkg.crossplane.io CRs that need the Crossplane CRDs the core HelmRelease in
