@@ -15,6 +15,13 @@ spec:
         operator: NotIn
         values:
           - crossplane-system
+  # Cilium turns on default-deny for every direction a policy has rules in, so
+  # an egressDeny rule on its own would revoke all egress from the endpoints
+  # selected above unless some other policy allows it back. This policy is
+  # meant to subtract one destination, not to become every workload's egress
+  # allow-list, so keep default-deny off and let the deny stand on its own.
+  enableDefaultDeny:
+    egress: false
   egressDeny:
     - toCIDR:
         - 169.254.169.254/32
