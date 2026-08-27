@@ -5,8 +5,14 @@ metadata:
 spec:
   # Cilium endpoint selectors match managed workload endpoints. Deliberately
   # omit nodeSelector so Talos and host bootstrap traffic remain outside this
-  # policy while every pod on Hetzner workers receives the deny.
-  endpointSelector: {}
+  # policy. Crossplane keeps the same deny in its existing namespaced egress
+  # policy so that policy remains its only static egress owner.
+  endpointSelector:
+    matchExpressions:
+      - key: k8s:io.kubernetes.pod.namespace
+        operator: NotIn
+        values:
+          - crossplane-system
   egressDeny:
     - toCIDR:
         - 169.254.169.254/32

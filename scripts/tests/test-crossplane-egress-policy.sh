@@ -943,13 +943,19 @@ fi
 
 assert_no_unrestricted_egress() {
   local candidate_policy="$1"
+  local cidr_allow_count
 
   if grep -Eq "^[[:space:]]*-[[:space:]]+['\"]?(world|all)['\"]?([[:space:]]+#.*)?$" <<<"${candidate_policy}" ||
     grep -Eq "^[[:space:]]*-[[:space:]]+toEntities:[[:space:]]*(\\[[[:space:]]*['\"]?(world|all)['\"]?[[:space:]]*\\]|['\"]?(world|all)['\"]?)([[:space:]]+#.*)?$" <<<"${candidate_policy}"; then
     fail 'Crossplane must not receive unrestricted world or all-entity egress'
   fi
 
-  if grep -Eq '^[[:space:]]*-[[:space:]]+toCIDR(Set)?:' <<<"${candidate_policy}"; then
+  cidr_allow_count="$(
+    yq e -N -r \
+      '[.spec.egress[]? | select(has("toCIDR") or has("toCIDRSet"))] | length' \
+      - <<<"${candidate_policy}"
+  )" || fail 'Crossplane egress CIDR rules could not be inspected'
+  if [ "${cidr_allow_count}" -ne 0 ]; then
     fail 'Crossplane must not receive CIDR-based egress'
   fi
 }
