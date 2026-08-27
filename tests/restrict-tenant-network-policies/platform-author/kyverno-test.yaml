@@ -1,0 +1,29 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-network-policies-platform-author
+policies:
+  - >-
+    ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-network-policies.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  # The apps-layer controller keeps the paved road for placing broad,
+  # platform-owned policies in a managed tenant namespace. This body is refused
+  # when a TENANT submits it — the sibling shell test asserts that control, so
+  # these skips cannot be mistaken for the policy simply not matching.
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - tenant-ns/platform-allow-observability
+    kind: CiliumNetworkPolicy
+    result: skip
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/platform-allow-observability
+    kind: CiliumNetworkPolicy
+    result: skip

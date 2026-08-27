@@ -168,6 +168,11 @@ jobs:
               - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/tests/test-restrict-tenant-network-policies.sh'
+              # The declarative fixtures are the other half of that test: a PR that
+              # touches only resources.yaml or kyverno-test.yaml would otherwise leave
+              # the k8s filter false, so neither kyverno test nor the shell gate runs.
+              - 'tests/restrict-tenant-network-policies/**'
               # The Homepage layout and the policy's allow-list are one contract:
               # either side changing alone is the drift this test exists to catch.
               - 'scripts/tests/test-restrict-homepage-service-groups.sh'
@@ -749,6 +754,8 @@ jobs:
           kyverno test ./tests
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
+          shellcheck scripts/tests/test-restrict-tenant-network-policies.sh
+          bash scripts/tests/test-restrict-tenant-network-policies.sh
           shellcheck scripts/tests/test-restrict-homepage-service-groups.sh
           bash scripts/tests/test-restrict-homepage-service-groups.sh
           shellcheck scripts/tests/test-kyverno-umami-mutation-rbac.sh

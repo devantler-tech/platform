@@ -1,0 +1,36 @@
+---
+# Verbatim bodies of what add-default-deny.yaml generates. Both use an empty
+# top-level endpointSelector, and `default-deny` also uses the reserved name, so
+# without the background-controller carve-out this policy would refuse to let the
+# platform create or re-synchronise the very floor it exists to protect.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny
+  namespace: tenant-ns
+spec:
+  endpointSelector: {}
+  ingress: []
+  egress: []
+  enableDefaultDeny:
+    ingress: true
+    egress: true
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: tenant-ns
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

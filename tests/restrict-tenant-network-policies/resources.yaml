@@ -1,0 +1,681 @@
+---
+# ── DENY cases: semantically empty ingress source selectors ───────────────────
+# Each of the four vacuous EndpointSelector spellings the repository's AGENTS.md
+# enumerates, as its own fixture, so a guard that closes one form cannot pass
+# vacuously against the others.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-empty-object
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEndpoints:
+        - {}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-empty-matchlabels
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEndpoints:
+        - matchLabels: {}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-empty-matchexpressions
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEndpoints:
+        - matchExpressions: []
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-both-fields-empty
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEndpoints:
+        - matchLabels: {}
+          matchExpressions: []
+---
+# A vacuous selector hidden BESIDE a constrained one in the same list: the union
+# semantics mean the allow-all still applies, so "some entry is constrained" is
+# not sufficient.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-vacuous-beside-constrained
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: api
+        - {}
+---
+# A vacuous selector in the SECOND ingress rule, not the first.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-vacuous-in-second-rule
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: api
+    - fromEndpoints:
+        - matchLabels: {}
+---
+# ── DENY cases: entity-based allow-all ────────────────────────────────────────
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-entity-all
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEntities:
+        - all
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-entity-cluster
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEntities:
+        - cluster
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-entity-world
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toEntities:
+        - world
+---
+# ── DENY cases: world-equivalent CIDR ─────────────────────────────────────────
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-cidr-world
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 0.0.0.0/0
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-cidrset-world-v6
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDRSet:
+        - cidr: ::/0
+---
+# ── DENY case: vacuous EGRESS destination selector ────────────────────────────
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-empty-object
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toEndpoints:
+        - {}
+---
+# ── DENY cases: a rule with NO layer-3 stanza (port-only = allow-all) ─────────
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-bare-l4
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-bare-l4
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+---
+# ── DENY case: a toFQDNs destination that names everything ───────────────────
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-fqdn-wildcard
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toFQDNs:
+        - matchPattern: "*"
+---
+# ── ADMIT cases: ordinary additive tenant allow-lists ─────────────────────────
+# Modelled on a real in-repo policy (apps/umami/cilium-network-policy.yaml):
+# a constrained cross-namespace source plus a port restriction.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-api-to-web
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: api
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-egress-db
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toEndpoints:
+        - matchExpressions:
+            - key: app
+              operator: In
+              values:
+                - db
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+---
+# A tenant policy that constrains its sources with matchExpressions ONLY, and an
+# egress to a specific external CIDR — narrow, so it must still admit.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-egress-specific-cidr
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 203.0.113.10/32
+---
+# A specific FQDN destination is a real constraint and must still admit.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-egress-named-fqdn
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toFQDNs:
+        - matchName: api.example.com
+---
+# A subdomain pattern is a real constraint, NOT the catch-all. This admits only
+# because the wildcard check uses an exact JMESPath compare; an `AnyIn` written
+# against `*` treats it as a Kyverno wildcard and refuses this too (measured).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-egress-subdomain-fqdn
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toFQDNs:
+        - matchPattern: "*.example.com"
+---
+# A tenant policy with an endpointSelector of {} — scoping the rule to all of
+# the tenant's OWN pods is the tenant's call and is not an isolation escape, so
+# long as the rule's sources stay constrained. Must admit.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-all-own-pods-from-api
+  namespace: tenant-ns
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: api
+---
+# ── SKIP case: a platform namespace is out of scope entirely ──────────────────
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: platform-allow-all
+  namespace: platform-ns
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEntities:
+        - cluster
+---
+# ── DENY case: ownership — the generated floor's reserved names ───────────────
+# The tenant ClusterRole grants update/patch/delete on namespaced
+# CiliumNetworkPolicies, so a tenant can otherwise overwrite the Kyverno-generated
+# default-deny with a permissive body of its own. Reserving the generated names
+# closes that path; the background controller that legitimately owns them is
+# excluded by applying identity.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny
+  namespace: tenant-ns
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: api
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: tenant-ns
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app: anything
+---
+# ── DENY cases: opting out of the namespace's default-deny ───────────────────
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: opt-out-default-deny-ingress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  enableDefaultDeny:
+    ingress: false
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: api
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: opt-out-default-deny-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  enableDefaultDeny:
+    egress: false
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app: db
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-entity-remote-node
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEntities:
+        - remote-node
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-entity-cluster-mesh
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toEntities:
+        - cluster-mesh
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-cidr-split-v4
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromCIDR:
+        - 0.0.0.0/1
+        - 128.0.0.0/1
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-cidrset-split-v6
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDRSet:
+        - cidr: "::/1"
+        - cidr: "8000::/1"
+---
+# ATTACK: top-level `specs` (CiliumNetworkPolicy's plural rule container). Every
+# boundary condition reads request.object.spec.*, so this shape is invisible to
+# them; the repository's own scripts/tests/test-crossplane-egress-policy.sh
+# already iterates `(.spec, .specs[]?)` for exactly this reason.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-specs-container-egress-world
+  namespace: tenant-ns
+specs:
+  - endpointSelector: {}
+    egress:
+      - toEntities:
+          - world
+---
+# ATTACK: four /8 prefixes. Each is individually shorter than the /16 floor, so
+# each entry is refused on its own — this fixture pins that per-entry rejection.
+# It deliberately does NOT demonstrate the AGGREGATE class: a per-entry floor
+# cannot bound a union, and closing that needs an allow-list of permitted
+# ranges (see the KNOWN LIMIT in the policy header).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-prefix-floor-slash8
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 0.0.0.0/8
+        - 1.0.0.0/8
+        - 2.0.0.0/8
+        - 3.0.0.0/8
+---
+# ATTACK: a selector that is nonempty but semantically universal. The Cilium
+# identity label k8s:io.kubernetes.pod.namespace exists on every endpoint, so
+# `Exists` against it matches cluster-wide while passing a presence check.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-selector-exists-universal
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEndpoints:
+        - matchExpressions:
+            - key: k8s:io.kubernetes.pod.namespace
+              operator: Exists
+---
+# ATTACK: wildcard FQDN patterns that are not the literal `*` but cover
+# arbitrary names at each label depth.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-fqdn-wildcard-depths
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toFQDNs:
+        - matchPattern: "*.*"
+        - matchPattern: "*.*.*"
+---
+# ATTACK: the prefix-length floor compared the SPELLING, not the value. Cilium
+# accepts and normalises `/00` to `/0`, so a zero-padded prefix reached an entire
+# address family while the non-zero-padded `/0` was refused.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-zero-padded-prefix
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 0.0.0.0/00
+---
+# OK: `ingress` is the narrow identity Cilium gives traffic that has already
+# passed the shared Gateway, so a tenant fronting a public HTTPRoute names it
+# legitimately. Refusing it alongside `world`/`cluster` would deny the next
+# reconciliation of a tenant's own published-route policy.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-ingress-from-gateway
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+---
+# ATTACK: `toServices` satisfied the egress presence check on its mere
+# existence, so the service reference itself was never asked what it meant.
+# An EMPTY Kubernetes label selector matches every Service in its namespace
+# scope, and Cilium turns each selected Service's backends into endpoint
+# selectors — so this reaches arbitrary backends while never going through
+# the toEndpoints selector whitelist. Measured ADMITTED before this guard.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-toservices-empty-selector
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - k8sServiceSelector:
+            selector: {}
+---
+# ATTACK: the second empty spelling — `matchLabels` present but empty. Same
+# reasoning as the four empty fromEndpoints spellings the ingress rule refuses.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-toservices-empty-matchlabels
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - k8sServiceSelector:
+            selector:
+              matchLabels: {}
+---
+# ATTACK: the `k8sService` form naming no service at all. An absent
+# serviceName does not identify a destination, so this is the presence-check
+# bypass in its other spelling.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-toservices-unnamed-service
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - k8sService:
+            namespace: tenant-ns
+---
+# ATTACK: a toServices entry that is NEITHER form. It still counts as a
+# present toServices for a presence check, and constrains nothing.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-toservices-empty-entry
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - {}
+---
+# OK: a service named outright. This is the ordinary additive shape a tenant
+# needs, and it must keep being admitted — a guard that refuses it is a guard
+# that gets deleted.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-egress-named-service
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - k8sService:
+            serviceName: db
+---
+# OK: a selector that actually pins a label. Note the omitted `namespace`:
+# Cilium defaults it to the policy's OWN namespace, so omitting it is the
+# CONSTRAINED spelling — requiring a namespace here would push tenants toward
+# the cross-namespace form instead.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-egress-selected-service
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - k8sServiceSelector:
+            selector:
+              matchLabels:
+                app: db
+---
+# ATTACK: an unconstrained entry sitting BESIDE a properly named one. Cilium
+# unions allow rules, so the vacuous entry decides the outcome — the check has
+# to be per ENTRY, not "does this policy name any service at all".
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-toservices-vacuous-beside-constrained
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toServices:
+        - k8sService:
+            serviceName: db
+        - k8sServiceSelector:
+            selector: {}

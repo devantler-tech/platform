@@ -1,0 +1,156 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-network-policies
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-network-policies.yaml
+resources:
+  - resources.yaml
+# The policy uses a namespaceSelector, so the CLI needs the namespace labels
+# declared explicitly or every case is reported as Excluded — which satisfies
+# `result: fail` too and would pass vacuously. The companion shell test
+# (scripts/tests/test-restrict-tenant-network-policies.sh) is the second gate:
+# it runs `kyverno apply` and asserts the exact allow/deny counts, so a rule
+# that stopped matching cannot go unnoticed here.
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  # ── Every semantically empty source selector, one spelling per case ─────────
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - tenant-ns/ingress-empty-object
+      - tenant-ns/ingress-empty-matchlabels
+      - tenant-ns/ingress-empty-matchexpressions
+      - tenant-ns/ingress-both-fields-empty
+      - tenant-ns/ingress-vacuous-beside-constrained
+      - tenant-ns/ingress-vacuous-in-second-rule
+      - tenant-ns/ingress-entity-all
+      - tenant-ns/ingress-entity-cluster
+      - tenant-ns/ingress-bare-l4
+      - tenant-ns/ingress-entity-remote-node
+      - tenant-ns/ingress-cidr-split-v4
+    kind: CiliumNetworkPolicy
+    result: fail
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - tenant-ns/allow-api-to-web
+      - tenant-ns/allow-web-egress-db
+      - tenant-ns/allow-web-egress-specific-cidr
+      - tenant-ns/allow-web-egress-named-fqdn
+      - tenant-ns/allow-web-egress-subdomain-fqdn
+      - tenant-ns/allow-all-own-pods-from-api
+      - tenant-ns/allow-web-ingress-from-gateway
+    kind: CiliumNetworkPolicy
+    result: pass
+  # ── Egress destinations ────────────────────────────────────────────────────
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/egress-empty-object
+      - tenant-ns/egress-entity-world
+      - tenant-ns/egress-cidr-world
+      - tenant-ns/egress-cidrset-world-v6
+      - tenant-ns/egress-bare-l4
+      - tenant-ns/egress-fqdn-wildcard
+      - tenant-ns/egress-entity-cluster-mesh
+      - tenant-ns/egress-cidrset-split-v6
+    kind: CiliumNetworkPolicy
+    result: fail
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/allow-api-to-web
+      - tenant-ns/allow-web-egress-db
+      - tenant-ns/allow-web-egress-specific-cidr
+      - tenant-ns/allow-web-egress-named-fqdn
+      - tenant-ns/allow-web-egress-subdomain-fqdn
+      - tenant-ns/allow-all-own-pods-from-api
+    kind: CiliumNetworkPolicy
+    result: pass
+  # ── Opting out of the namespace's default-deny ─────────────────────────────
+  - policy: restrict-tenant-network-policies
+    rule: cnp-must-not-opt-out-of-default-deny
+    resources:
+      - tenant-ns/opt-out-default-deny-ingress
+      - tenant-ns/opt-out-default-deny-egress
+    kind: CiliumNetworkPolicy
+    result: fail
+  - policy: restrict-tenant-network-policies
+    rule: cnp-must-not-opt-out-of-default-deny
+    resources:
+      - tenant-ns/allow-api-to-web
+      - tenant-ns/allow-web-egress-db
+    kind: CiliumNetworkPolicy
+    result: pass
+  # ── Ownership: the generated floor's names are reserved ────────────────────
+  - policy: restrict-tenant-network-policies
+    rule: cnp-generated-policy-names-are-reserved
+    resources:
+      - tenant-ns/default-deny
+      - tenant-ns/allow-dns
+    kind: CiliumNetworkPolicy
+    result: fail
+  # ── A platform namespace is out of scope entirely ──────────────────────────
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - platform-ns/platform-allow-all
+    kind: CiliumNetworkPolicy
+    result: skip
+  # ── Shapes that PASS a presence check but are semantically unbounded ───────
+  # Each of these was measured ADMITTED before the whitelist forms landed: the
+  # per-entry checks all saw "something is there" and never asked what it meant.
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/attack-cidr-prefix-floor-slash8
+      - tenant-ns/attack-cidr-zero-padded-prefix
+      - tenant-ns/attack-fqdn-wildcard-depths
+    kind: CiliumNetworkPolicy
+    result: fail
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - tenant-ns/attack-selector-exists-universal
+    kind: CiliumNetworkPolicy
+    result: fail
+  # ── The plural rule container, which every `spec`-reading condition misses ──
+  - policy: restrict-tenant-network-policies
+    rule: cnp-must-use-the-singular-spec-container
+    resources:
+      - tenant-ns/attack-specs-container-egress-world
+    kind: CiliumNetworkPolicy
+    result: fail
+  - policy: restrict-tenant-network-policies
+    rule: cnp-must-use-the-singular-spec-container
+    resources:
+      - tenant-ns/allow-api-to-web
+      - tenant-ns/allow-web-egress-db
+    kind: CiliumNetworkPolicy
+    result: pass
+  # ── toServices: a reference that names nothing is still "present" ──────────
+  # Every one of these satisfied the egress presence check on the mere
+  # existence of a toServices key, and reached arbitrary Service backends
+  # without passing the toEndpoints selector whitelist.
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/attack-toservices-empty-selector
+      - tenant-ns/attack-toservices-empty-matchlabels
+      - tenant-ns/attack-toservices-unnamed-service
+      - tenant-ns/attack-toservices-empty-entry
+      - tenant-ns/attack-toservices-vacuous-beside-constrained
+    kind: CiliumNetworkPolicy
+    result: fail
+  # CONTROL: the constrained spellings stay admitted.
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/allow-web-egress-named-service
+      - tenant-ns/allow-web-egress-selected-service
+    kind: CiliumNetworkPolicy
+    result: pass

@@ -1,0 +1,393 @@
+# Keeps a tenant namespace's isolation boundary intact regardless of what the
+# tenant submits as a CiliumNetworkPolicy.
+#
+# Why: Cilium network policy is ADDITIVE allow-listing — the effective allow-set
+# for an endpoint is the union across every policy selecting it, and traffic is
+# permitted if at least one rule matches. A namespace therefore holds its
+# generated `default-deny` floor only for as long as no policy beside it opens
+# everything back up. Tenants hold create/update/patch/delete on namespaced
+# ciliumnetworkpolicies (see cluster-roles/cilium-tenant-edit.yaml), which is the
+# point of self-service allow-lists, so RBAC alone cannot close this: the whole
+# grant would have to go. Admission is the right layer — the tenant keeps
+# self-service, and the shapes that dissolve the boundary are refused.
+#
+# What counts as boundary-dissolving, and why each shape is listed:
+#   * A source/destination EndpointSelector that does not PIN A VALUE. The
+#     empty spellings — `{}`, `matchLabels: {}`, `matchExpressions: []`, both
+#     fields empty — are the obvious cases, but presence is not constraint: a
+#     nonempty `matchExpressions` using `Exists` against a label every endpoint
+#     carries (`k8s:io.kubernetes.pod.namespace`) matches cluster-wide, and so
+#     does `NotIn` against the tenant's own namespace. The check is therefore a
+#     WHITELIST OF OPERATORS — a selector counts as constrained only if it has
+#     `matchLabels`, or a `matchExpressions` entry whose operator is `In` — so
+#     `Exists`, `DoesNotExist` and `NotIn` are refused by default rather than
+#     enumerated.
+#   * Any entity but `kube-apiserver` — plus, on the INGRESS side only, `ingress`,
+#     the narrow identity Cilium gives traffic that has already passed the shared
+#     Gateway, which tenant-authored HTTPRoute workloads legitimately name.
+#     Cilium's entity vocabulary is open-ended: `all`, `world` and `cluster` are
+#     the obvious ones, but `remote-node` reaches host-networked workloads and
+#     `cluster-mesh` reaches meshed clusters — so the check is a WHITELIST of the
+#     entities a namespaced workload legitimately names, not a list of broad ones.
+#   * Any CIDR prefix shorter than /16. `0.0.0.0/0` and `::/0` are only the
+#     shortest spellings of "everything": `0.0.0.0/1` plus `128.0.0.0/1` covers
+#     the same ground. A prefix-length floor refuses every such split at once.
+#     KNOWN LIMIT, stated rather than implied: this is a PER-ENTRY floor, and a
+#     per-entry rule cannot bound an AGGREGATE. A tenant supplying every /16 in
+#     turn still unions to an entire address family, and for IPv6 a single /16
+#     is astronomically large regardless. Closing that properly needs an
+#     allow-list of permitted ranges rather than a floor; the floor is a real
+#     but partial narrowing, and the allow-list is tracked separately.
+#   * A rule with no layer-3 stanza at all. Cilium's port-only rules permit
+#     every source (or destination) on the named port, so `toPorts` alone is
+#     allow-all wearing a layer-4 costume — the selector whitelist above never
+#     sees it, because there is no selector to inspect.
+#   * A `toFQDNs` matchPattern whose labels are ALL wildcards. The literal `*`
+#     is only the shortest such spelling: `*.*` and `*.*.*` name a destination
+#     in form only too, and a short list of them covers essentially every
+#     practical public name. The check refuses the whole shape (`*`, `*.*`,
+#     `*.*.*`, …) rather than the one catch-all, so a fixed suffix is required
+#     somewhere in the pattern. A `matchName` is an exact name and unaffected —
+#     and the condition guards for its absence, because `regex_match` against a
+#     missing `matchPattern` ERRORS, and a Kyverno condition that errors never
+#     denies (a fail-open, measured on `allow-web-egress-named-fqdn`).
+#   * Rules placed under the plural `specs` container instead of `spec`.
+#     CiliumNetworkPolicy accepts either, and every condition here reads
+#     `spec`, so rules under `specs` reach admission unexamined whatever they
+#     contain. The container is refused outright — the WHITELIST form — rather
+#     than mirroring each condition across both paths, which would re-open the
+#     boundary the first time a future condition is added to one path only.
+#
+# What is deliberately NOT restricted: a top-level `endpointSelector: {}`. That
+# scopes the rule to all of the tenant's OWN pods, which is the tenant's call and
+# reaches nothing outside the namespace — the generated `allow-dns` policy uses
+# exactly that shape. Only the rules' sources and destinations are constrained.
+#
+# Opting out: a tenant policy setting `enableDefaultDeny: false` is refused. It
+# is unverified whether that field can actually subtract the whitelist mode the
+# generated floor establishes — Cilium documents rule effects as cumulative but
+# does not state the interaction, and this repository does not run a cluster to
+# settle it. A tenant allow-list has no reason to set it either way, so the
+# ambiguity is resolved fail-closed rather than left open.
+#
+# Ownership: the generated `default-deny` and `allow-dns` names are reserved.
+# Without this a tenant would simply PATCH the generated floor into a permissive
+# body, leaving the object present and the namespace open.
+#
+# Scope and carve-outs: only ksail-generated tenant namespaces (labelled
+# app.kubernetes.io/managed-by: ksail), so the 50+ platform CiliumNetworkPolicies
+# are untouched. Two applying identities are excluded — flux-system's
+# kustomize-controller, which applies what the PLATFORM ships into a tenant
+# namespace, and kyverno's background-controller, which is what actually creates
+# and re-synchronises the generated default-deny/allow-dns objects. Without the
+# second exclusion this policy would refuse the very floor it exists to protect.
+# The discriminator is the applying identity, which a tenant cannot forge.
+# Because the excludes match on request.userInfo the policy is admission-only
+# (background: false); every escape is a create/update passing through admission,
+# so enforcement is unaffected.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-tenant-network-policies
+  annotations:
+    policies.kyverno.io/title: Restrict Tenant Network Policies
+    policies.kyverno.io/category: Security, Networking
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: CiliumNetworkPolicy
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Blocks tenant-applied CiliumNetworkPolicy resources in ksail tenant
+      namespaces from dissolving the generated default-deny floor: every
+      ingress source and egress destination selector must carry a real
+      constraint, only `kube-apiserver` (and `ingress` on the ingress side) may be
+      named as an entity, CIDR
+      prefixes shorter than /16 are refused, and the generated `default-deny` and
+      `allow-dns` names are reserved. Ordinary additive allow-lists are
+      unaffected, as are policies applied by flux-system's kustomize-controller
+      or generated by kyverno's background-controller.
+spec:
+  # Admission-only: the excludes match on request.userInfo (the applying
+  # ServiceAccount), which is unavailable during background scans.
+  background: false
+  rules:
+    - name: cnp-ingress-sources-must-be-constrained
+      match:
+        any:
+          - resources:
+              kinds:
+                - CiliumNetworkPolicy
+              namespaceSelector:
+                matchLabels:
+                  app.kubernetes.io/managed-by: ksail
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: kustomize-controller
+                namespace: flux-system
+          - subjects:
+              - kind: ServiceAccount
+                name: kyverno-background-controller
+                namespace: kyverno
+      validate:
+        # Rule-level, not the deprecated top-level spec.validationFailureAction:
+        # if a future Kyverno stops honouring that field, a rule with no action
+        # of its own defaults to Audit and these violations would be ADMITTED.
+        failureAction: Enforce
+        message: >-
+          Every ingress source in a tenant CiliumNetworkPolicy must be
+          constrained. A fromEndpoints selector with no matchLabels and no
+          matchExpressions allows all sources; only `kube-apiserver` and the
+          post-Gateway `ingress` identity may be named; and a CIDR prefix shorter than /16 reaches outside this
+          namespace. A rule with only toPorts and no source at all allows every
+          source on that port. Cilium unions allow rules, so one unconstrained
+          source removes this namespace's isolation regardless of the generated
+          default-deny.
+        deny:
+          conditions:
+            any:
+              # WHITELIST: count the fromEndpoints selectors that carry a real
+              # constraint and require that to be ALL of them. JMESPath treats
+              # `{}` and `[]` as false-y, so `matchLabels || matchExpressions`
+              # is true only for a selector that actually constrains something —
+              # which makes all four empty spellings, and any future fifth,
+              # fail the same way.
+              - key: "{{ length(request.object.spec.ingress[].fromEndpoints[] || `[]`) }}"
+                operator: NotEquals
+                value: "{{ length(request.object.spec.ingress[].fromEndpoints[] || `[]` | [?matchLabels || length(matchExpressions[?operator == 'In'] || `[]`) > `0`]) }}"
+              # A rule carrying ONLY toPorts and no layer-3 stanza is a fifth
+              # spelling of allow-all: Cilium's own layer-4 examples pair a port
+              # with a source, and a port-only ingress rule permits every source
+              # on that port. Require each rule to name its sources at all,
+              # which the selector whitelist above then constrains.
+              - key: "{{ length(request.object.spec.ingress[] || `[]`) }}"
+                operator: NotEquals
+                value: "{{ length(request.object.spec.ingress[] || `[]` | [?fromEndpoints || fromCIDR || fromCIDRSet || fromEntities || fromNodes || fromGroups]) }}"
+              # WHITELIST the entities a tenant may name, rather than blacklisting
+              # the broad ones. Cilium's entity vocabulary is open-ended — beyond
+              # `all`/`world`/`cluster`, `remote-node` reaches remote nodes and
+              # host-networked workloads and `cluster-mesh` reaches endpoints in
+              # meshed clusters — so an exclusion list is one entity away from being
+              # incomplete again. `kube-apiserver` and, here on the ingress side, the
+              # post-Gateway `ingress` identity are the entities a namespaced
+              # tenant workload has a legitimate reason to name, and it does not
+              # dissolve the namespace boundary. Compared with a JMESPath filter
+              # rather than AnyIn, for the wildcard reason given in the egress rule.
+              - key: "{{ length(request.object.spec.ingress[].fromEntities[] || `[]` | [?@ != 'kube-apiserver' && @ != 'ingress']) }}"
+                operator: GreaterThan
+                value: 0
+              # Refuse on PREFIX LENGTH, not on prefix text. `0.0.0.0/0` and `::/0`
+              # are merely the shortest spellings of "everything": `0.0.0.0/1` plus
+              # `128.0.0.0/1`, or `::/1` plus `8000::/1`, covers an entire address
+              # family while matching neither literal. Refusing every prefix shorter
+              # than /16 closes that whole family of splits without enumerating any of
+              # them. A bare address carries no `/` and is unaffected.
+              - key: "{{ length(request.object.spec.ingress[].fromCIDR[] || `[]` | [?regex_match('^[^/]*/0*([0-9]|1[0-5])$', @)]) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ length(request.object.spec.ingress[].fromCIDRSet[].cidr || `[]` | [?regex_match('^[^/]*/0*([0-9]|1[0-5])$', @)]) }}"
+                operator: GreaterThan
+                value: 0
+    - name: cnp-egress-destinations-must-be-constrained
+      match:
+        any:
+          - resources:
+              kinds:
+                - CiliumNetworkPolicy
+              namespaceSelector:
+                matchLabels:
+                  app.kubernetes.io/managed-by: ksail
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: kustomize-controller
+                namespace: flux-system
+          - subjects:
+              - kind: ServiceAccount
+                name: kyverno-background-controller
+                namespace: kyverno
+      validate:
+        # Rule-level, not the deprecated top-level spec.validationFailureAction:
+        # if a future Kyverno stops honouring that field, a rule with no action
+        # of its own defaults to Audit and these violations would be ADMITTED.
+        failureAction: Enforce
+        message: >-
+          Every egress destination in a tenant CiliumNetworkPolicy must be
+          constrained. A toEndpoints selector with no matchLabels and no
+          matchExpressions allows all destinations; `kube-apiserver` is the only
+          entity a tenant may name; and a CIDR prefix shorter than /16 reaches outside this
+          namespace, as do a rule with only toPorts, a toFQDNs pattern of `*`,
+          and a toServices entry that names no service.
+          Name the destinations this workload actually needs.
+        deny:
+          conditions:
+            any:
+              - key: "{{ length(request.object.spec.egress[].toEndpoints[] || `[]`) }}"
+                operator: NotEquals
+                value: "{{ length(request.object.spec.egress[].toEndpoints[] || `[]` | [?matchLabels || length(matchExpressions[?operator == 'In'] || `[]`) > `0`]) }}"
+              # Port-only egress rules permit every destination on that port —
+              # see the ingress note above.
+              - key: "{{ length(request.object.spec.egress[] || `[]`) }}"
+                operator: NotEquals
+                value: "{{ length(request.object.spec.egress[] || `[]` | [?toEndpoints || toCIDR || toCIDRSet || toEntities || toNodes || toGroups || toServices || toFQDNs]) }}"
+              # A toFQDNs destination counts as named above, so the catch-all
+              # pattern needs refusing on its own — `*` matches every name.
+              # Counted with a JMESPath equality filter rather than AnyIn: Kyverno
+              # expands `*` as a WILDCARD in operator comparisons, so an AnyIn
+              # written against it also refuses a perfectly ordinary
+              # `*.example.com` (measured). JMESPath `==` is an exact string
+              # compare, so only the catch-all itself matches.
+              - key: "{{ length(request.object.spec.egress[].toFQDNs[] || `[]` | [?matchPattern && regex_match('^[*]([.][*])*$', matchPattern)]) }}"
+                operator: GreaterThan
+                value: 0
+              # Entity whitelist and CIDR prefix-length floor — see the ingress rule
+              # for why each is a whitelist rather than a list of broad spellings.
+              - key: "{{ length(request.object.spec.egress[].toEntities[] || `[]` | [?@ != 'kube-apiserver']) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ length(request.object.spec.egress[].toCIDR[] || `[]` | [?regex_match('^[^/]*/0*([0-9]|1[0-5])$', @)]) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ length(request.object.spec.egress[].toCIDRSet[].cidr || `[]` | [?regex_match('^[^/]*/0*([0-9]|1[0-5])$', @)]) }}"
+                operator: GreaterThan
+                value: 0
+              # A toServices entry satisfied the presence check above on its
+              # mere existence, so the service reference itself was never asked
+              # what it meant. Cilium resolves each selected Service's backends
+              # into endpoint selectors, so an unconstrained reference reaches
+              # arbitrary backends WITHOUT passing the toEndpoints whitelist —
+              # measured admitted. Same whitelist shape as toEndpoints: count the
+              # entries that actually name something and require that to be all
+              # of them, so every empty spelling fails the same way. `namespace`
+              # is deliberately NOT required: Cilium defaults an omitted
+              # namespace to the policy's own, so omitting it is the CONSTRAINED
+              # spelling and demanding it would push tenants cross-namespace.
+              - key: "{{ length(request.object.spec.egress[].toServices[] || `[]`) }}"
+                operator: NotEquals
+                value: "{{ length(request.object.spec.egress[].toServices[] || `[]` | [?k8sService.serviceName || k8sServiceSelector.selector.matchLabels || length(k8sServiceSelector.selector.matchExpressions[?operator == 'In'] || `[]`) > `0`]) }}"
+    - name: cnp-must-not-opt-out-of-default-deny
+      match:
+        any:
+          - resources:
+              kinds:
+                - CiliumNetworkPolicy
+              namespaceSelector:
+                matchLabels:
+                  app.kubernetes.io/managed-by: ksail
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: kustomize-controller
+                namespace: flux-system
+          - subjects:
+              - kind: ServiceAccount
+                name: kyverno-background-controller
+                namespace: kyverno
+      validate:
+        # Rule-level, not the deprecated top-level spec.validationFailureAction:
+        # if a future Kyverno stops honouring that field, a rule with no action
+        # of its own defaults to Audit and these violations would be ADMITTED.
+        failureAction: Enforce
+        message: >-
+          A tenant CiliumNetworkPolicy must not set enableDefaultDeny to false.
+          The namespace's whitelist mode is what the generated default-deny
+          establishes; opting out of it is never something a tenant allow-list
+          needs to do.
+        deny:
+          conditions:
+            any:
+              # to_string() rather than a `|| default` guard: JMESPath treats the
+              # boolean false as false-y, so `x || 'unset'` collapses an explicit
+              # false into the unset case and the check would never fire.
+              # to_string(null) is "null" and to_string(false) is "false".
+              - key: "{{ to_string(request.object.spec.enableDefaultDeny.ingress) }}"
+                operator: Equals
+                value: "false"
+              - key: "{{ to_string(request.object.spec.enableDefaultDeny.egress) }}"
+                operator: Equals
+                value: "false"
+    - name: cnp-generated-policy-names-are-reserved
+      match:
+        any:
+          - resources:
+              kinds:
+                - CiliumNetworkPolicy
+              names:
+                - default-deny
+                - allow-dns
+              namespaceSelector:
+                matchLabels:
+                  app.kubernetes.io/managed-by: ksail
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: kustomize-controller
+                namespace: flux-system
+          - subjects:
+              - kind: ServiceAccount
+                name: kyverno-background-controller
+                namespace: kyverno
+      validate:
+        # Rule-level, not the deprecated top-level spec.validationFailureAction:
+        # if a future Kyverno stops honouring that field, a rule with no action
+        # of its own defaults to Audit and these violations would be ADMITTED.
+        failureAction: Enforce
+        message: >-
+          `default-deny` and `allow-dns` are generated and re-synchronised by the
+          platform (cluster-policies/best-practices/add-default-deny.yaml) and
+          are reserved names. Add your allow-list as a separate policy — Cilium
+          unions allow rules, so a policy of your own is additive and does not
+          need to replace the floor.
+        deny: {}
+    - name: cnp-must-use-the-singular-spec-container
+      match:
+        any:
+          - resources:
+              kinds:
+                - CiliumNetworkPolicy
+              namespaceSelector:
+                matchLabels:
+                  app.kubernetes.io/managed-by: ksail
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: kustomize-controller
+                namespace: flux-system
+          - subjects:
+              - kind: ServiceAccount
+                name: kyverno-background-controller
+                namespace: kyverno
+      validate:
+        # Rule-level, not the deprecated top-level spec.validationFailureAction:
+        # if a future Kyverno stops honouring that field, a rule with no action
+        # of its own defaults to Audit and these violations would be ADMITTED.
+        failureAction: Enforce
+        message: >-
+          A tenant CiliumNetworkPolicy must carry its rules under `spec`, not the
+          plural `specs` container. Every boundary check in this policy reads
+          `spec`, so rules hidden under `specs` would reach admission unexamined.
+          Move the rules into `spec`; a policy needing several rule sets can be
+          split into several policies, which Cilium unions anyway.
+        deny:
+          # CiliumNetworkPolicy accepts EITHER a single `spec` or a plural
+          # `specs` list, and the two are equivalent to Cilium. Every condition
+          # in the rules above reads `request.object.spec.*`, so a rule placed
+          # under `specs` is invisible to all of them and is admitted whatever it
+          # contains — a complete bypass, not a missing spelling. (This
+          # repository already handles both shapes elsewhere, in
+          # scripts/tests/test-crossplane-egress-policy.sh.)
+          #
+          # Refusing the container outright is the WHITELIST form of the fix, and
+          # is deliberately preferred over mirroring every condition across both
+          # paths: mirroring doubles each check and re-opens the whole boundary
+          # the first time a future condition is added to one path and not the
+          # other. A tenant allow-list has no need for `specs`.
+          conditions:
+            any:
+              - key: "{{ length(request.object.specs || `[]`) }}"
+                operator: GreaterThan
+                value: 0
