@@ -55,13 +55,18 @@ yq -e '.apiVersion == "cilium.io/v2" and .kind == "CiliumClusterwideNetworkPolic
   "${rendered_policy}" >/dev/null ||
   fail 'the rendered control is not a CiliumClusterwideNetworkPolicy'
 yq -e '(.spec.endpointSelector | keys | length) == 1 and
-  (.spec.endpointSelector.matchExpressions | length) == 1 and
-  .spec.endpointSelector.matchExpressions[0].key == "k8s:io.kubernetes.pod.namespace" and
-  .spec.endpointSelector.matchExpressions[0].operator == "NotIn" and
-  (.spec.endpointSelector.matchExpressions[0].values | length) == 1 and
-  .spec.endpointSelector.matchExpressions[0].values[0] == "crossplane-system"' \
+  (.spec.endpointSelector.matchExpressions | length) == 2 and
+  ([.spec.endpointSelector.matchExpressions[] |
+    select(.key == "k8s:io.kubernetes.pod.namespace" and
+      .operator == "Exists" and
+      has("values") == false)] | length) == 1 and
+  ([.spec.endpointSelector.matchExpressions[] |
+    select(.key == "k8s:io.kubernetes.pod.namespace" and
+      .operator == "NotIn" and
+      (.values | length) == 1 and
+      .values[0] == "crossplane-system")] | length) == 1' \
   "${rendered_policy}" >/dev/null ||
-  fail 'the cluster-wide policy must exclude Crossplane from its workload selection'
+  fail 'the cluster-wide policy must select workload namespaces, exclude reserved identities, and exclude Crossplane'
 yq -e '.spec | has("nodeSelector") == false' "${rendered_policy}" >/dev/null ||
   fail 'the workload policy must not select Talos hosts'
 yq -e '.spec.egressDeny | length == 1' "${rendered_policy}" >/dev/null ||
