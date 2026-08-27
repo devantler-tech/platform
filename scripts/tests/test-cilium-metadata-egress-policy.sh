@@ -12,53 +12,26 @@ fail() {
   exit 1
 }
 
-extract_policy() {
-  awk -v policy_name="${policy_name}" '
-    function reset_document() {
-      document = ""
-      is_clusterwide_policy = 0
-      is_target = 0
-    }
-
-    function finish_document() {
-      if (is_clusterwide_policy && is_target) {
-        count++
-        selected = document
-      }
-      reset_document()
-    }
-
-    BEGIN { reset_document() }
-    /^---[[:space:]]*$/ { finish_document(); next }
-    {
-      document = document $0 ORS
-      if ($0 ~ /^kind:[[:space:]]*CiliumClusterwideNetworkPolicy[[:space:]]*$/) {
-        is_clusterwide_policy = 1
-      }
-      if ($0 == "  name: " policy_name) {
-        is_target = 1
-      }
-    }
-    END {
-      finish_document()
-      if (count != 1) {
-        printf "expected exactly one rendered %s policy, found %d\n", policy_name, count > "/dev/stderr"
-        exit 1
-      }
-      printf "%s", selected
-    }
-  '
-}
-
 tmp_dir="$(mktemp -d)"
 readonly tmp_dir
 trap 'rm -rf "${tmp_dir}"' EXIT
+readonly prod_render="${tmp_dir}/prod.yaml"
 readonly rendered_policy="${tmp_dir}/policy.yaml"
 readonly local_render="${tmp_dir}/local.yaml"
 
-kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure" |
-  extract_policy >"${rendered_policy}" ||
-  fail 'the production build does not render exactly one metadata-egress deny policy'
+kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure" >"${prod_render}" ||
+  fail 'the production Hetzner infrastructure build did not render'
+policy_count="$(
+  yq ea \
+    "[select(.kind == \"CiliumClusterwideNetworkPolicy\" and .metadata.name == \"${policy_name}\")] | length" \
+    "${prod_render}"
+)" || fail 'the production policy count could not be read'
+[[ "${policy_count}" == 1 ]] ||
+  fail "the production build rendered ${policy_count} metadata-egress policies instead of one"
+yq ea \
+  "select(.kind == \"CiliumClusterwideNetworkPolicy\" and .metadata.name == \"${policy_name}\")" \
+  "${prod_render}" >"${rendered_policy}" ||
+  fail 'the production metadata-egress policy could not be extracted'
 
 kubectl kustomize "${root_dir}/k8s/providers/docker/infrastructure" >"${local_render}" ||
   fail 'the local Docker infrastructure build did not render'
