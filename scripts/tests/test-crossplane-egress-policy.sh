@@ -125,22 +125,18 @@ static_crossplane_policy_inventory() {
         select(
           (((($rule.egress // []) | length > 0) or
             (($rule.egressDeny // []) | length > 0)) and
-           ($rule.endpointSelector == {} or
-            $rule.endpointSelector == null or
-            $rule.endpointSelector.matchLabels."k8s:io.kubernetes.pod.namespace" ==
-              "crossplane-system" or
-            ($rule.endpointSelector.matchLabels."k8s:io.kubernetes.pod.namespace" == null and
-             ([$rule.endpointSelector.matchExpressions[]? |
-               select(.key == "k8s:io.kubernetes.pod.namespace")] | length == 0)) or
+           (($rule.endpointSelector.matchLabels."k8s:io.kubernetes.pod.namespace" == null or
+             $rule.endpointSelector.matchLabels."k8s:io.kubernetes.pod.namespace" ==
+               "crossplane-system") and
             ([$rule.endpointSelector.matchExpressions[]? |
               select(.key == "k8s:io.kubernetes.pod.namespace") |
               select(
                 (.operator == "In" and
-                 ((.values // []) | any_c(. == "crossplane-system"))) or
-                (.operator == "NotIn" and
                  (((.values // []) | any_c(. == "crossplane-system")) | not)) or
-                .operator == "Exists"
-              )] | length > 0)))
+                (.operator == "NotIn" and
+                 ((.values // []) | any_c(. == "crossplane-system"))) or
+                .operator == "DoesNotExist"
+              )] | length == 0)))
         )
       ),
       (
@@ -153,22 +149,18 @@ static_crossplane_policy_inventory() {
           (((($rule.egress // []) | length > 0) or
             (($rule.egressDeny // []) | length > 0)) and
            $rule.nodeSelector == null and
-           ($rule.endpointSelector == {} or
-            $rule.endpointSelector == null or
-            $rule.endpointSelector.matchLabels."k8s:io.kubernetes.pod.namespace" ==
-              "crossplane-system" or
-            ($rule.endpointSelector.matchLabels."k8s:io.kubernetes.pod.namespace" == null and
-             ([$rule.endpointSelector.matchExpressions[]? |
-               select(.key == "k8s:io.kubernetes.pod.namespace")] | length == 0)) or
+           (($rule.endpointSelector.matchLabels."k8s:io.kubernetes.pod.namespace" == null or
+             $rule.endpointSelector.matchLabels."k8s:io.kubernetes.pod.namespace" ==
+               "crossplane-system") and
             ([$rule.endpointSelector.matchExpressions[]? |
               select(.key == "k8s:io.kubernetes.pod.namespace") |
               select(
                 (.operator == "In" and
-                 ((.values // []) | any_c(. == "crossplane-system"))) or
-                (.operator == "NotIn" and
                  (((.values // []) | any_c(. == "crossplane-system")) | not)) or
-                .operator == "Exists"
-              )] | length > 0)))
+                (.operator == "NotIn" and
+                 ((.values // []) | any_c(. == "crossplane-system"))) or
+                .operator == "DoesNotExist"
+              )] | length == 0)))
         )
       ),
       select(
@@ -539,6 +531,12 @@ selected_policy_count="$(awk '/^kind: CiliumNetworkPolicy$/ { count++ } END { pr
   fail 'the deployed overlay must contain exactly one allow-crossplane CiliumNetworkPolicy'
 
 expected_static_policy='CiliumNetworkPolicy|crossplane-system|allow-crossplane'
+
+crossplane_excluded_by_conjunctive_selector=$'apiVersion: cilium.io/v2\nkind: CiliumClusterwideNetworkPolicy\nmetadata:\n  name: exclude-crossplane\nspec:\n  endpointSelector:\n    matchExpressions:\n    - key: k8s:io.kubernetes.pod.namespace\n      operator: Exists\n    - key: k8s:io.kubernetes.pod.namespace\n      operator: NotIn\n      values: [crossplane-system]\n  egressDeny:\n  - toCIDR:\n    - 169.254.169.254/32'
+if [ -n "$(static_crossplane_policy_inventory "${crossplane_excluded_by_conjunctive_selector}")" ]; then
+  fail 'the static guard must evaluate conjunctive Cilium selectors before deciding they can select Crossplane'
+fi
+
 static_crossplane_policies="$(static_crossplane_policy_inventory "${effective_policy_render}")"
 [ "${static_crossplane_policies}" = "${expected_static_policy}" ] ||
   fail 'allow-crossplane must be the only static policy that can select Crossplane pods across deployed layers'
