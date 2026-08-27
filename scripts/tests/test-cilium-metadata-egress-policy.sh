@@ -97,6 +97,15 @@ yq -e '.spec.egressDeny[0].toCIDR[0] == "169.254.169.254/32"' \
   "${rendered_policy}" >/dev/null ||
   fail 'the deny rule must target only the instance metadata address'
 
+# A policy carrying only egressDeny rules puts every selected endpoint into
+# default-deny egress: the CRD defaults enableDefaultDeny to true for each
+# direction that has rules. This policy selects every namespace except
+# crossplane-system and carries no egress allow rules, so leaving the field
+# unset silently revokes egress from every workload that has no allow policy
+# of its own. Pin it off so the deny stays a deny.
+yq -e '.spec.enableDefaultDeny.egress == false' "${rendered_policy}" >/dev/null ||
+  fail 'the metadata deny must not put selected endpoints into default-deny egress'
+
 yq -e '(.spec.endpointSelector | keys | length) == 1 and
   (.spec.endpointSelector.matchLabels | keys | length) == 1 and
   .spec.endpointSelector.matchLabels."k8s-app" == "kube-dns" and
