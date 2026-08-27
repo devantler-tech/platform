@@ -5,6 +5,7 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly policy_name="deny-workload-instance-metadata-egress"
+readonly coredns_policy_name="allow-coredns-control-plane-egress"
 readonly deleted_policy="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/cilium/cilium-clusterwide-network-policy.yaml"
 
 fail() {
@@ -17,6 +18,8 @@ readonly tmp_dir
 trap 'rm -rf "${tmp_dir}"' EXIT
 readonly prod_render="${tmp_dir}/prod.yaml"
 readonly rendered_policy="${tmp_dir}/policy.yaml"
+readonly rendered_coredns_policy="${tmp_dir}/coredns-policy.yaml"
+readonly controllers_layer_render="${tmp_dir}/controllers-layer.yaml"
 readonly controllers_render="${tmp_dir}/controllers.yaml"
 readonly crossplane_policy="${tmp_dir}/crossplane-policy.yaml"
 readonly local_render="${tmp_dir}/local.yaml"
@@ -34,6 +37,19 @@ yq ea \
   "select(.kind == \"CiliumClusterwideNetworkPolicy\" and .metadata.name == \"${policy_name}\")" \
   "${prod_render}" >"${rendered_policy}" ||
   fail 'the production metadata-egress policy could not be extracted'
+kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure/controllers" >"${controllers_layer_render}" ||
+  fail 'the production Hetzner controllers build did not render'
+coredns_policy_count="$(
+  yq ea \
+    "[select(.kind == \"CiliumNetworkPolicy\" and .metadata.namespace == \"kube-system\" and .metadata.name == \"${coredns_policy_name}\")] | length" \
+    "${controllers_layer_render}"
+)" || fail 'the production CoreDNS egress policy count could not be read'
+[[ "${coredns_policy_count}" == 1 ]] ||
+  fail "the production build rendered ${coredns_policy_count} CoreDNS egress policies instead of one"
+yq ea \
+  "select(.kind == \"CiliumNetworkPolicy\" and .metadata.namespace == \"kube-system\" and .metadata.name == \"${coredns_policy_name}\")" \
+  "${controllers_layer_render}" >"${rendered_coredns_policy}" ||
+  fail 'the production CoreDNS egress policy could not be extracted'
 
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/crossplane" >"${controllers_render}" ||
   fail 'the production Crossplane controller build did not render'
@@ -55,13 +71,18 @@ yq -e '.apiVersion == "cilium.io/v2" and .kind == "CiliumClusterwideNetworkPolic
   "${rendered_policy}" >/dev/null ||
   fail 'the rendered control is not a CiliumClusterwideNetworkPolicy'
 yq -e '(.spec.endpointSelector | keys | length) == 1 and
-  (.spec.endpointSelector.matchExpressions | length) == 1 and
-  .spec.endpointSelector.matchExpressions[0].key == "k8s:io.kubernetes.pod.namespace" and
-  .spec.endpointSelector.matchExpressions[0].operator == "NotIn" and
-  (.spec.endpointSelector.matchExpressions[0].values | length) == 1 and
-  .spec.endpointSelector.matchExpressions[0].values[0] == "crossplane-system"' \
+  (.spec.endpointSelector.matchExpressions | length) == 2 and
+  ([.spec.endpointSelector.matchExpressions[] |
+    select(.key == "k8s:io.kubernetes.pod.namespace" and
+      .operator == "Exists" and
+      has("values") == false)] | length) == 1 and
+  ([.spec.endpointSelector.matchExpressions[] |
+    select(.key == "k8s:io.kubernetes.pod.namespace" and
+      .operator == "NotIn" and
+      (.values | length) == 1 and
+      .values[0] == "crossplane-system")] | length) == 1' \
   "${rendered_policy}" >/dev/null ||
-  fail 'the cluster-wide policy must exclude Crossplane from its workload selection'
+  fail 'the cluster-wide policy must select workload namespaces, exclude reserved identities, and exclude Crossplane'
 yq -e '.spec | has("nodeSelector") == false' "${rendered_policy}" >/dev/null ||
   fail 'the workload policy must not select Talos hosts'
 yq -e '.spec.egressDeny | length == 1' "${rendered_policy}" >/dev/null ||
@@ -75,6 +96,30 @@ yq -e '.spec.egressDeny[0].toCIDR | length == 1' "${rendered_policy}" >/dev/null
 yq -e '.spec.egressDeny[0].toCIDR[0] == "169.254.169.254/32"' \
   "${rendered_policy}" >/dev/null ||
   fail 'the deny rule must target only the instance metadata address'
+
+yq -e '(.spec.endpointSelector | keys | length) == 1 and
+  (.spec.endpointSelector.matchLabels | keys | length) == 1 and
+  .spec.endpointSelector.matchLabels."k8s-app" == "kube-dns" and
+  (.spec.egress | length) == 2 and
+  ([.spec.egress[] |
+    select((keys | length) == 2 and
+      (.toEntities | length) == 1 and
+      .toEntities[0] == "host" and
+      (.toPorts | length) == 1 and
+      (.toPorts[0].ports | length) == 2 and
+      ([.toPorts[0].ports[] |
+        select(.port == "53" and (.protocol == "UDP" or .protocol == "TCP"))] | length) == 2)] | length) == 1 and
+  ([.spec.egress[] |
+    select((keys | length) == 2 and
+      (.toEntities | length) == 1 and
+      .toEntities[0] == "kube-apiserver" and
+      (.toPorts | length) == 1 and
+      (.toPorts[0].ports | length) == 1 and
+      .toPorts[0].ports[0].port == "6443" and
+      .toPorts[0].ports[0].protocol == "TCP")] | length) == 1 and
+  (.spec | has("egressDeny") == false)' \
+  "${rendered_coredns_policy}" >/dev/null ||
+  fail 'CoreDNS must retain only host DNS and Kubernetes API egress while the metadata deny selects it'
 
 yq -e '(.spec.egressDeny | length) == 1 and
   (.spec.egressDeny[0] | keys | length) == 1 and
