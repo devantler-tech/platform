@@ -1296,7 +1296,26 @@ const (
 // ServiceAccount 16. The previous approved aggregate digest was:
 //
 //	3ef2555fe188f77b84a5927739842929f637688713fa6510bf2c682adce3643b
-const expectedRenderedSurfaceSHA = "9309a857065fd3d675fd1a26414311d2c7a43717618c904a980c0fe8177839bd"
+//
+// Measured against main 022dc5c4 for the Tetragon argument-export field filter:
+// the five production projections hold 541 documents on BOTH sides. Set
+// difference in BOTH directions over apiVersion|kind|namespace|name is empty,
+// so this adds, removes and renames nothing. Exactly ONE existing rendered
+// identity changes:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  kube-system/tetragon
+//
+// Its only delta adds `tetragon.fieldFilters`, an exporter-side projection that
+// drops `process.arguments` and `parent.arguments` from emitted events. The
+// value grants nothing: it names neither a subject nor a resource, and it can
+// only remove fields from an exported event. Grant-bearing counts remain
+// byte-for-byte stable: Role 11, ClusterRole 24, RoleBinding 15,
+// ClusterRoleBinding 12, and ServiceAccount 16. All 541 identities were
+// compared pairwise, so the single-entry result is not a vacuous join. The
+// previous approved aggregate digest was:
+//
+//	9309a857065fd3d675fd1a26414311d2c7a43717618c904a980c0fe8177839bd
+const expectedRenderedSurfaceSHA = "54e239a1e85e29ed66523bd1d01bfb588678d88e5567d9522a013385ca1285f1"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
