@@ -1015,7 +1015,7 @@ assert_egress_shape() {
 dns_egress_contract() {
   awk '
     /^  - toEndpoints:$/ { in_dns_egress = 1 }
-    in_dns_egress && /^  endpointSelector:/ { exit }
+    in_dns_egress && /^  [[:alnum:]_-]+:/ { exit }
     in_dns_egress { print }
   ' <<<"$1"
 }
@@ -1058,9 +1058,8 @@ if (assert_direct_https_contract "${wildcard_policy}") >/dev/null 2>&1; then
   fail 'the regression guard must reject wildcard Crossplane FQDN selectors'
 fi
 
-extra_fqdn_rule=$'  - toFQDNs:\n    - matchPattern: "*"\n    toPorts:\n    - ports:\n      - port: "443"\n        protocol: TCP\n  endpointSelector: {}'
-empty_selector='  endpointSelector: {}'
-extra_fqdn_policy="${policy/${empty_selector}/${extra_fqdn_rule}}"
+extra_fqdn_rule=$'  - toFQDNs:\n    - matchPattern: "*"\n    toPorts:\n    - ports:\n      - port: "443"\n        protocol: TCP\n  - toEndpoints:'
+extra_fqdn_policy="${policy/  - toEndpoints:/${extra_fqdn_rule}}"
 if (assert_egress_shape "${extra_fqdn_policy}") >/dev/null 2>&1; then
   fail 'the regression guard must reject additional Crossplane FQDN egress rules'
 fi
