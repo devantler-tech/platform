@@ -1,0 +1,29 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-coredns-control-plane-egress
+  namespace: kube-system
+spec:
+  # The cluster-wide instance-metadata deny selects workload endpoints and
+  # therefore enables egress policy for CoreDNS too. Keep that explicit deny,
+  # while restoring only the two control-plane paths CoreDNS requires.
+  endpointSelector:
+    matchLabels:
+      k8s-app: kube-dns
+  egress:
+    - toEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            # Cilium enforces after the kubernetes Service is translated to
+            # the Talos API server backend port.
+            - port: "6443"
+              protocol: TCP
