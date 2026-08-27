@@ -943,13 +943,19 @@ fi
 
 assert_no_unrestricted_egress() {
   local candidate_policy="$1"
+  local cidr_allow_count
 
   if grep -Eq "^[[:space:]]*-[[:space:]]+['\"]?(world|all)['\"]?([[:space:]]+#.*)?$" <<<"${candidate_policy}" ||
     grep -Eq "^[[:space:]]*-[[:space:]]+toEntities:[[:space:]]*(\\[[[:space:]]*['\"]?(world|all)['\"]?[[:space:]]*\\]|['\"]?(world|all)['\"]?)([[:space:]]+#.*)?$" <<<"${candidate_policy}"; then
     fail 'Crossplane must not receive unrestricted world or all-entity egress'
   fi
 
-  if grep -Eq '^[[:space:]]*-[[:space:]]+toCIDR(Set)?:' <<<"${candidate_policy}"; then
+  cidr_allow_count="$(
+    yq e -N -r \
+      '[.spec.egress[]? | select(has("toCIDR") or has("toCIDRSet"))] | length' \
+      - <<<"${candidate_policy}"
+  )" || fail 'Crossplane egress CIDR rules could not be inspected'
+  if [ "${cidr_allow_count}" -ne 0 ]; then
     fail 'Crossplane must not receive CIDR-based egress'
   fi
 }
@@ -996,8 +1002,12 @@ assert_egress_shape() {
   local actual_rules
   local expected_rules
 
-  actual_rules="$(awk '/^  - / { print }' <<<"${candidate_policy}")"
-  expected_rules=$'  - toEntities:\n  - toFQDNs:\n  - toEndpoints:'
+  actual_rules="$(
+    yq e -N -r \
+      '.spec.egress[] | keys | map(select(. != "toPorts")) | .[]' \
+      - <<<"${candidate_policy}"
+  )" || fail 'Crossplane egress rule shapes could not be inspected'
+  expected_rules=$'toEntities\ntoFQDNs\ntoEndpoints'
   [ "${actual_rules}" = "${expected_rules}" ] ||
     fail 'Crossplane egress must contain only the reviewed Kubernetes API, HTTPS, and DNS rules'
 }
@@ -1005,7 +1015,7 @@ assert_egress_shape() {
 dns_egress_contract() {
   awk '
     /^  - toEndpoints:$/ { in_dns_egress = 1 }
-    in_dns_egress && /^  endpointSelector:/ { exit }
+    in_dns_egress && /^  [[:alnum:]_-]+:/ { exit }
     in_dns_egress { print }
   ' <<<"$1"
 }
@@ -1048,9 +1058,8 @@ if (assert_direct_https_contract "${wildcard_policy}") >/dev/null 2>&1; then
   fail 'the regression guard must reject wildcard Crossplane FQDN selectors'
 fi
 
-extra_fqdn_rule=$'  - toFQDNs:\n    - matchPattern: "*"\n    toPorts:\n    - ports:\n      - port: "443"\n        protocol: TCP\n  endpointSelector: {}'
-empty_selector='  endpointSelector: {}'
-extra_fqdn_policy="${policy/${empty_selector}/${extra_fqdn_rule}}"
+extra_fqdn_rule=$'  - toFQDNs:\n    - matchPattern: "*"\n    toPorts:\n    - ports:\n      - port: "443"\n        protocol: TCP\n  - toEndpoints:'
+extra_fqdn_policy="${policy/  - toEndpoints:/${extra_fqdn_rule}}"
 if (assert_egress_shape "${extra_fqdn_policy}") >/dev/null 2>&1; then
   fail 'the regression guard must reject additional Crossplane FQDN egress rules'
 fi
