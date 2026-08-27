@@ -84,6 +84,28 @@ spec:
       # TracingPolicies will rely on.
       enableProcessCred: true
       enableProcessNs: true
+      # Command-line arguments are excluded from every exported event. The
+      # export sidecar's JSON reaches Coroot's log store, which has a broader
+      # access boundary and a longer retention window than the pod that ran the
+      # process, so an argument passed by any workload -- including workloads
+      # this repo does not own and cannot change -- is otherwise durably
+      # searchable there. Excluding the field at the exporter covers every
+      # current and future workload from one reviewed point, instead of relying
+      # on each call site to keep sensitive values out of argv.
+      #
+      # EXCLUDE-only is deliberate: Tetragon treats the presence of any INCLUDE
+      # filter as default-exclude for that event set, which would silently drop
+      # every field not listed. Field paths are relative to the event body, and
+      # `arguments` hangs off both `process` and `parent`.
+      #
+      # Trade-off: exported events no longer carry the flags a process ran with.
+      # Binary path, identity (pod / container / uid / capabilities), parentage
+      # and timing are all retained, so the process visibility the sidecar is
+      # deployed for is unchanged. Redaction filters were the alternative; they
+      # keep arguments but only for argument spellings someone has enumerated in
+      # advance, which leaves the unbounded residual this is meant to remove.
+      fieldFilters: |-
+        {"fields": "process.arguments,parent.arguments", "action": "EXCLUDE"}
       prometheus:
         enabled: true
         # The prometheus-operator ServiceMonitor CRD left with
