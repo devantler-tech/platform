@@ -1,0 +1,12 @@
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: deny-workload-instance-metadata-egress
+spec:
+  # Cilium endpoint selectors match managed workload endpoints. Deliberately
+  # omit nodeSelector so Talos and host bootstrap traffic remain outside this
+  # policy while every pod on Hetzner workers receives the deny.
+  endpointSelector: {}
+  egressDeny:
+    - toCIDR:
+        - 169.254.169.254/32
