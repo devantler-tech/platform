@@ -1002,8 +1002,12 @@ assert_egress_shape() {
   local actual_rules
   local expected_rules
 
-  actual_rules="$(awk '/^  - / { print }' <<<"${candidate_policy}")"
-  expected_rules=$'  - toEntities:\n  - toFQDNs:\n  - toEndpoints:'
+  actual_rules="$(
+    yq e -N -r \
+      '.spec.egress[] | keys | map(select(. != "toPorts")) | .[]' \
+      - <<<"${candidate_policy}"
+  )" || fail 'Crossplane egress rule shapes could not be inspected'
+  expected_rules=$'toEntities\ntoFQDNs\ntoEndpoints'
   [ "${actual_rules}" = "${expected_rules}" ] ||
     fail 'Crossplane egress must contain only the reviewed Kubernetes API, HTTPS, and DNS rules'
 }
