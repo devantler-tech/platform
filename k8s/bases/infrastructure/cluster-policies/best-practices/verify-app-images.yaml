@@ -89,8 +89,8 @@ spec:
     # any non-tag ref before it checks anything out, so a v* tag is the sole
     # legitimate signing ref. Pinning it rejects a package signed from an
     # arbitrary branch, which an unconstrained ref accepts.
-    # The tag grammar is spelled out here rather than deferred to the publisher's
-    # own release-version.sh check: this verifier is the independent half of that
+    # The tag grammar mirrors the publisher's `scripts/release-version.sh` EXACTLY, spelled
+    # out here rather than deferred to it: this verifier is the independent half of that
     # pair, so it must not inherit its boundary from the repository it verifies.
     # A trailing `.+` after the version would accept refs/tags/v1latest and
     # refs/tags/v1.0.0/../evil, which are tags only in shape.
@@ -99,7 +99,7 @@ spec:
         keyless:
           identities:
             - issuer: https://token.actions.githubusercontent.com
-              subjectRegExp: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$
+              subjectRegExp: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
     - name: ksailcd
       cosign:
         keyless:

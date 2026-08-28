@@ -260,12 +260,15 @@ fi
 # own release-version.sh: this verifier is the independent half of that pair, and inheriting its
 # boundary from the repository it verifies would defeat the point.
 #
-# Both files must carry the SAME identity. The Kyverno ImageValidatingPolicy gates pod admission
-# and the Talos ImageVerificationConfig gates the kubelet pull, so a package accepted by one and
-# rejected by the other is an ImagePullBackOff that neither file explains alone.
+# Both files must carry the SAME identity AND the same issuer. The Kyverno ImageValidatingPolicy
+# gates pod admission and the Talos ImageVerificationConfig gates the kubelet pull, so a package
+# accepted by one and rejected by the other is an ImagePullBackOff that neither file explains alone.
+# Comparing only the subject regex would let the issuer drift between them unnoticed.
 kyverno_policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
 talos_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/provider-upjet-*") | .keyless.subjectRegex' "$real")"
+talos_issuer="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/provider-upjet-*") | .keyless.issuer' "$real")"
 kyverno_identity="$(yq -r '.spec.attestors[] | select(.name == "publishprovider") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"
+kyverno_issuer="$(yq -r '.spec.attestors[] | select(.name == "publishprovider") | .cosign.keyless.identities[].issuer' "$kyverno_policy")"
 
 if [ -z "$talos_identity" ] || [ "$talos_identity" = "null" ]; then
   echo "FAIL  no provider-upjet subjectRegex in ${real}"
@@ -275,19 +278,42 @@ elif [ "$talos_identity" != "$kyverno_identity" ]; then
   echo "        talos:   ${talos_identity}"
   echo "        kyverno: ${kyverno_identity}"
   failures=$((failures + 1))
+elif [ -z "$talos_issuer" ] || [ "$talos_issuer" = "null" ] || [ "$talos_issuer" != "$kyverno_issuer" ]; then
+  echo "FAIL  the provider ISSUER differs between the Talos and Kyverno verifiers"
+  echo "        talos:   ${talos_issuer}"
+  echo "        kyverno: ${kyverno_issuer}"
+  failures=$((failures + 1))
 else
-  echo "ok    provider identity: Talos and Kyverno carry the same regex"
+  echo "ok    provider identity: Talos and Kyverno carry the same regex and issuer"
+fi
+
+# The identity above only binds anything if Kyverno actually ROUTES provider-upjet-* images to that
+# attestor. Without this, `publishprovider` could be renamed, unreferenced, or the filter narrowed,
+# and every assertion above would still pass while nothing verified the provider images.
+provider_validation="$(yq -r '
+  [ .spec.validations[]
+    | select(.expression | test("startsWith\\(.ghcr\\.io/devantler-tech/provider-upjet-."))
+    | select(.expression | test("attestors\\.publishprovider")) ] | length' "$kyverno_policy")"
+if [ "$provider_validation" != "1" ]; then
+  echo "FAIL  expected exactly 1 Kyverno validation routing provider-upjet-* to attestors.publishprovider, found ${provider_validation}"
+  failures=$((failures + 1))
+else
+  echo "ok    provider identity: Kyverno routes provider-upjet-* to attestors.publishprovider"
 fi
 
 # accept -> a tag release-version.sh admits, so a signature can genuinely carry it.
 # reject -> a tag it refuses; the verifier must not accept what the publisher cannot produce.
+# The expression mirrors that script's OCI-semver grammar exactly, so the two columns agree on
+# prerelease internals too (a numeric prerelease identifier may not carry a leading zero).
 identity_prefix='https://github.com/devantler-tech/provider-upjet-unifi/.github/workflows/publish-provider-package.yml@refs/tags/'
 grammar_failures=0
 grammar_checked=0
 for tc in \
-  'accept v1.0.0' 'accept v0.1.0' 'accept v1.0.0-rc.1' 'accept v1.2.3-alpha.1.2' 'accept v10.20.30' \
+  'accept v1.0.0' 'accept v0.1.0' 'accept v10.20.30' 'accept v1.0.0-rc.1' 'accept v1.2.3-alpha.1.2' \
+  'accept v1.0.0-0' 'accept v1.0.0-alpha' 'accept v1.0.0-rc.1.2' \
   'reject v1latest' 'reject v1/anything' 'reject v1.0' 'reject v1' 'reject v1.0.0/../evil' \
-  'reject v01.0.0' 'reject v1.0.0-' 'reject v1.0.0-rc.1/evil'; do
+  'reject v01.0.0' 'reject v1.0.0-' 'reject v1.0.0-rc.1/evil' 'reject v1.0.0..0' \
+  'reject v1.0.0-01' 'reject v1.0.0-00' 'reject v1.0.0-1.01'; do
   grammar_checked=$((grammar_checked + 1))
   want="${tc%% *}"
   tag="${tc##* }"
