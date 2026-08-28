@@ -89,11 +89,19 @@ spec:
     # any non-tag ref before it checks anything out, so a v* tag is the sole
     # legitimate signing ref. Pinning it rejects a package signed from an
     # arbitrary branch, which an unconstrained ref accepts.
-    # The tag grammar mirrors the publisher's `scripts/release-version.sh` EXACTLY, spelled
+    # The tag grammar mirrors the publisher's `scripts/release-version.sh` OCI-semver
+    # grammar, spelled out here rather than deferred to it: this verifier is the independent
     # out here rather than deferred to it: this verifier is the independent half of that
     # pair, so it must not inherit its boundary from the repository it verifies.
     # A trailing `.+` after the version would accept refs/tags/v1latest and
     # refs/tags/v1.0.0/../evil, which are tags only in shape.
+    # DELIBERATE DIFFERENCE from the publisher, pinned by the inventory test: that script also
+    # caps the tag at 128 characters (the OCI tag-length limit); this expression does not.
+    # RE2 has no lookahead, so a joint length bound across the version components cannot be
+    # expressed without bounding each part separately, and a bound set too tight would REJECT a
+    # legitimate release — breaking admission of a real image, which is strictly worse than
+    # admitting an identity that cannot exist. An over-length tag is not a valid OCI reference,
+    # so no signature can carry one.
     - name: publishprovider
       cosign:
         keyless:

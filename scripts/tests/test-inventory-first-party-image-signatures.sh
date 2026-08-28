@@ -303,8 +303,9 @@ fi
 
 # accept -> a tag release-version.sh admits, so a signature can genuinely carry it.
 # reject -> a tag it refuses; the verifier must not accept what the publisher cannot produce.
-# The expression mirrors that script's OCI-semver grammar exactly, so the two columns agree on
-# prerelease internals too (a numeric prerelease identifier may not carry a leading zero).
+# The expression mirrors that script's OCI-semver GRAMMAR, so the two columns agree on prerelease
+# internals too (a numeric prerelease identifier may not carry a leading zero). It deliberately does
+# NOT mirror that script's 128-character tag cap; the block below pins that difference.
 identity_prefix='https://github.com/devantler-tech/provider-upjet-unifi/.github/workflows/publish-provider-package.yml@refs/tags/'
 grammar_failures=0
 grammar_checked=0
@@ -330,6 +331,22 @@ done
 failures=$((failures + grammar_failures))
 if [ "$grammar_failures" -eq 0 ]; then
   echo "ok    provider identity: release-tag grammar (${grammar_checked} tags)"
+fi
+
+# The one place the verifier deliberately does NOT mirror the publisher: release-version.sh caps
+# the tag at 128 characters (the OCI tag-length limit) while this subjectRegex carries no length
+# bound — RE2 has no lookahead, and a bound set too tight would reject a legitimate release.
+# Pin the difference so a change on either side is deliberate rather than silent.
+over_length_tag="v1.0.0-$(printf 'a%.0s' $(seq 1 122))"
+if [ "${#over_length_tag}" -ne 129 ]; then
+  echo "FAIL  boundary fixture is ${#over_length_tag} chars, expected 129"
+  failures=$((failures + 1))
+elif printf '%s' "${identity_prefix}${over_length_tag}" | grep -Eq "$talos_identity"; then
+  echo "ok    provider identity: the publisher's 128-char cap is deliberately NOT mirrored"
+else
+  echo "FAIL  the verifier now rejects a 129-char tag: the documented deliberate difference has"
+  echo "        changed, so update the DELIBERATE DIFFERENCE comment in both verifier files"
+  failures=$((failures + 1))
 fi
 
 # --- 9. THE DEFAULT PROBE PATH: no secret may reach argv -------------------
