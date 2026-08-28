@@ -17,12 +17,11 @@ scanner_tag="$(yq -er '.spec.values.kubescape.image.tag | select(tag == "!!str")
   fail 'the Kubescape scanner image tag is missing or is not a string'
 readonly scanner_tag
 
-scanner_version="${scanner_tag#v}"
-IFS=. read -r major minor patch extra <<<"${scanner_version}"
-readonly scanner_version major minor patch extra
-
-[[ -z "${extra}" && "${major}" =~ ^[0-9]+$ && "${minor}" =~ ^[0-9]+$ && "${patch}" =~ ^[0-9]+$ ]] ||
+[[ "${scanner_tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] ||
   fail "Kubescape scanner tag ${scanner_tag} is not an exact vMAJOR.MINOR.PATCH release"
+readonly major="${BASH_REMATCH[1]}"
+readonly minor="${BASH_REMATCH[2]}"
+readonly patch="${BASH_REMATCH[3]}"
 
 # Kubescape <=4.0.11 can override an explicit local-only request, enter SaaS
 # submission with no backend configured, and abort on account-ID chmod before
