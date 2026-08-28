@@ -47,4 +47,35 @@ readonly offline
 [[ "${offline}" == "disable" ]] ||
   fail 'Kubescape offline mode must stay disabled so the scanner can fetch policy artifacts'
 
+# The scanner's API-server persistence handler stores detailed
+# WorkloadConfigurationScan objects only when clusterData.continuousPostureScan
+# is true. Chart 1.40.3 derives that flag from this capability.
+continuous_scan="$(yq -er '.spec.values.capabilities.continuousScan' "${helm_release}")" ||
+  fail 'capabilities.continuousScan is missing'
+readonly continuous_scan
+[[ "${continuous_scan}" == "enable" ]] ||
+  fail 'continuousScan must be enabled so scheduled scans persist detailed posture results'
+
+# Enabling the capability also starts the operator's event-driven scanner. Keep
+# its resource set empty: the pinned operator turns an empty match list into an
+# empty watch pool, preserving scheduled persistence without scan-on-change
+# traffic that omits keepLocal.
+continuous_match_count="$(yq -er '
+  .spec.values.continuousScanning.matchingRules.match |
+  select(tag == "!!seq") |
+  length
+' "${helm_release}")" || fail 'continuous-scanning matchingRules.match must be an explicit list'
+readonly continuous_match_count
+[[ "${continuous_match_count}" == "0" ]] ||
+  fail 'continuous-scanning matchingRules.match must stay empty in this self-hosted deployment'
+
+continuous_namespace_count="$(yq -er '
+  .spec.values.continuousScanning.matchingRules.namespaces |
+  select(tag == "!!seq") |
+  length
+' "${helm_release}")" || fail 'continuous-scanning matchingRules.namespaces must be an explicit list'
+readonly continuous_namespace_count
+[[ "${continuous_namespace_count}" == "0" ]] ||
+  fail 'continuous-scanning matchingRules.namespaces must stay empty in this self-hosted deployment'
+
 printf 'Kubescape self-hosted scan persistence contract is valid (%s).\n' "${scanner_tag}"
