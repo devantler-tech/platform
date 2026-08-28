@@ -1329,7 +1329,20 @@ const (
 // or authorization value changes. The previous approved aggregate digest was:
 //
 //	54e239a1e85e29ed66523bd1d01bfb588678d88e5567d9522a013385ca1285f1
-const expectedRenderedSurfaceSHA = "820705ecf824f83fd8c693e46579dda594e51ce50a7044af5c340e8c3c013669"
+//
+// Measured against main 606d60e8 for the Kubescape detailed-result storage
+// repair: the five production projections retain the same selected identities,
+// every pinned per-identity fingerprint still passes, and the same 35 known
+// Flux-substitution diagnostics remain. Rendering chart 1.40.3 on both sides
+// produces byte-identical Roles, ClusterRoles, RoleBindings,
+// ClusterRoleBindings, and ServiceAccounts. The aggregate moves only because
+// the Kubescape HelmRelease enables continuousPostureScan and supplies an empty
+// event-scanning match set; neither value names a subject, grant, security
+// context, or authorization resource. The previous approved aggregate digest
+// was:
+//
+//	820705ecf824f83fd8c693e46579dda594e51ce50a7044af5c340e8c3c013669
+const expectedRenderedSurfaceSHA = "0490a49adb4aa2efac35428b70044db00542aca22747137377bfc1d8c99fed66"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

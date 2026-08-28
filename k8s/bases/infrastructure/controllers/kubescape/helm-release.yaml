@@ -46,20 +46,12 @@ spec:
     clusterName: ${cluster_name}
     capabilities:
       configurationScan: enable
-      # Chart default (disable) — deliberately NOT enabled on this air-gapped
-      # install. With continuousScan enabled the operator's continuous-scanning
-      # service fires a `kubescapeScan` command per watched-resource event, and
-      # that request path never carries `scanV1.keepLocal` (upstream's offline
-      # fix, helm-charts#862, only patched the scheduler CronJob request body —
-      # see kubescapeScheduler.requestBody below). Offline, every such scan runs
-      # Submit-mode, dies at cloud account-ID generation ("chmod
-      # /home/nonroot/.kubescape: read-only file system"), persists NO
-      # workloadconfigurationscan CRs, and the ~1-per-36s retry flood keeps the
-      # scan queue permanently backlogged — starving the daily keepLocal
-      # scheduler scan that DOES work (observed live 2026-07-04, issue #2463).
-      # Posture freshness offline = the daily scheduler scan. Re-enable only if
-      # upstream propagates keepLocal into the continuous-scan command path.
-      continuousScan: disable
+      # Chart 1.40.3 derives clusterData.continuousPostureScan from this value,
+      # and Kubescape only stores detailed WorkloadConfigurationScan results
+      # when that runtime flag is true. Summaries are stored unconditionally,
+      # so disabling this produces deceptively fresh summaries while detailed
+      # posture silently ages (observed live 2026-08-28, issue #3275).
+      continuousScan: enable
       vulnerabilityScan: enable
       # kubevuln emits an OpenVEX document per scanned image (stored in-cluster
       # as OpenVulnerabilityExchangeContainer CRs), marking CVEs not_affected
@@ -131,6 +123,15 @@ spec:
       # storage component (storage:true, keepLocal:true). Vulnerability scanning
       # (kubevuln) is unaffected either way — it never gated on the cloud submit.
       kubescapeOffline: disable
+    # Enabling continuousScan also starts the operator's event-driven scan
+    # service. Keep its resource set explicitly empty: operator v0.2.159 turns
+    # this into an empty GVR watch pool, so scheduled keepLocal scans persist
+    # detailed posture without restoring the per-resource queue flood observed
+    # in issue #2463. Add a match only after that command path carries keepLocal.
+    continuousScanning:
+      matchingRules:
+        match: []
+        namespaces: []
     hostScanner:
       enabled: true
     nodeAgent:
