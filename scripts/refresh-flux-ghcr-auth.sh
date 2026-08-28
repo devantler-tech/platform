@@ -1588,12 +1588,14 @@ image_verification_webhook_set_matches() {
   local webhook_file="$1"
   local operation="$2"
   local exclusive="$3"
+  local required="$4"
 
   jq -e \
     --argjson timeout "${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}" \
     --arg expected_path "/ivpol/${operation}/${IMAGE_VERIFICATION_POLICY}" \
     --arg retired "${RETIRED_IMAGE_VERIFICATION_POLICY}" \
-    --argjson exclusive "${exclusive}" '
+    --argjson exclusive "${exclusive}" \
+    --argjson required "${required}" '
     [
       .items[]?.webhooks[]?
       | select(
@@ -1601,19 +1603,31 @@ image_verification_webhook_set_matches() {
           and (.clientConfig.service.namespace // "") == "kyverno"
         )
     ] as $webhooks
-    | any(
-        $webhooks[];
-        (.clientConfig.service.path // "") == $expected_path
-        and .failurePolicy == "Fail"
-        and .timeoutSeconds == $timeout
-      )
+    | (
+      if $required then
+        any(
+          $webhooks[];
+          (.clientConfig.service.path // "") == $expected_path
+          and .failurePolicy == "Fail"
+          and .timeoutSeconds == $timeout
+        )
+      else
+        all(
+          $webhooks[];
+          ((.clientConfig.service.path // "") | contains($expected_path)) | not
+        )
+      end
+    )
     and (
       if $exclusive then
         all(
           $webhooks[];
           (.clientConfig.service.path // "") as $path
-          | if (($path | contains($expected_path)) or ($path | contains($retired))) then
-              $path == $expected_path
+          | if ($path | contains($retired)) then
+              false
+            elif ($path | contains($expected_path)) then
+              $required
+              and $path == $expected_path
               and .failurePolicy == "Fail"
               and .timeoutSeconds == $timeout
             else
@@ -1627,17 +1641,31 @@ image_verification_webhook_set_matches() {
   ' "${webhook_file}" >/dev/null
 }
 
+image_verification_policy_needs_mutating_webhook() {
+  # Kyverno v1.19 moved signature and attestation verification entirely into
+  # validation. Its IVPOL mutating webhook now only pins digests, and the API
+  # defaults mutateDigest to true when the field is absent.
+  yq -e \
+    '.spec.validationConfigurations.mutateDigest != false' \
+    "${IMAGE_VERIFICATION_POLICY_FILE}" >/dev/null
+}
+
 wait_for_image_verification_webhooks() {
   local exclusive="$1"
-  local attempt
+  local attempt mutation_required=false
+
+  if image_verification_policy_needs_mutating_webhook; then
+    mutation_required=true
+  fi
 
   for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
     assert_sync_lease_held || return 1
     read_image_verification_webhooks || return 1
     if image_verification_webhook_set_matches \
-      "${image_verification_mutating_webhooks_file}" "mutate" "${exclusive}" &&
+      "${image_verification_mutating_webhooks_file}" "mutate" "${exclusive}" \
+      "${mutation_required}" &&
       image_verification_webhook_set_matches \
-        "${image_verification_validating_webhooks_file}" "validate" "${exclusive}"; then
+        "${image_verification_validating_webhooks_file}" "validate" "${exclusive}" true; then
       return 0
     fi
     if ((attempt < SYNC_ATTEMPTS)); then
@@ -1653,7 +1681,12 @@ stage_image_verification_webhook_budget() {
       and .kind == "ImageValidatingPolicy"
       and .metadata.name == "verify-app-images"
       and .spec.failurePolicy == "Fail"
-      and .spec.webhookConfiguration.timeoutSeconds == 30' \
+      and .spec.webhookConfiguration.timeoutSeconds == 30
+      and (
+        .spec.validationConfigurations.mutateDigest == null
+        or .spec.validationConfigurations.mutateDigest == true
+        or .spec.validationConfigurations.mutateDigest == false
+      )' \
     "${IMAGE_VERIFICATION_POLICY_FILE}" >/dev/null; then
     echo "::error::The candidate consolidated image-verification policy is malformed or not fail-closed; refusing runtime pull probes."
     return 1
@@ -1697,10 +1730,11 @@ stage_image_verification_webhook_budget() {
   fi
 
   # The existing app-only policy can already own a webhook path with the same
-  # policy name. Require Kyverno to expose the new independent 30-second
-  # fail-closed mutate and validate paths while the retired KSail verifier is
-  # still present. This closes the policy-cache handoff gap: deletion is not
-  # evidence that the replacement has become effective.
+  # policy name. Require Kyverno to expose the candidate's exact independent
+  # fail-closed shape while the retired KSail verifier is still present:
+  # validation always, plus mutation only when digest pinning is enabled. This
+  # closes the policy-cache handoff gap: deletion is not evidence that the
+  # replacement has become effective.
   if ! wait_for_image_verification_webhooks false; then
     echo "::error::The consolidated fail-closed image-verification admission webhooks did not become effective before retirement of the existing KSail verifier."
     return 1
