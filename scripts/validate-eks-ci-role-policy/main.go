@@ -57,7 +57,28 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against main d7062144 before approving this value: 550 documents on
+// Measured against main 36eadf01 before approving this value: 548 documents on
+// both sides, membership IDENTICAL — zero added, zero removed, zero renamed,
+// proven by set difference in BOTH directions over the complete
+// apiVersion|kind|namespace|name identity across all five rendered overlays.
+// Neither side carries a duplicate identity, so that pairing is one-to-one.
+// Exactly ONE entry's content moves:
+//
+//	pkg.crossplane.io/v1  Provider  provider-upjet-unifi
+//
+// Its only rendered delta is the package tag, v0.1.0 -> v1.0.0. The complete
+// five-overlay render differs by exactly ONE line out of 16507, so nothing else
+// in the projection moves at all. The DeploymentRuntimeConfig comment rewording
+// carried by the same change renders to nothing, because comments are stripped.
+//
+// No grant-bearing object moved: the surface carries 78 Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount documents on BOTH sides
+// (11/24/15/12/16) and their canonical byte stream is identical. All 121
+// `aws`-bearing lines are byte-identical across the two trees, so nothing
+// granted to the aws/aws service account this validator exists to protect is
+// touched.
+//
+// Measured against main d7062144 before approving an earlier value: 550 documents on
 // main and 544 on this branch — six REMOVED, zero added, zero renamed, proven by
 // set difference in BOTH directions over the complete
 // apiVersion|kind|namespace|name identity across all five rendered overlays.
@@ -1315,7 +1336,7 @@ const (
 // previous approved aggregate digest was:
 //
 //	9309a857065fd3d675fd1a26414311d2c7a43717618c904a980c0fe8177839bd
-const expectedRenderedSurfaceSHA = "54e239a1e85e29ed66523bd1d01bfb588678d88e5567d9522a013385ca1285f1"
+const expectedRenderedSurfaceSHA = "d3dd99e90d1cd8d80cca5166aff3b52eea53d69352db7b834a1d197f60661ef4"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
