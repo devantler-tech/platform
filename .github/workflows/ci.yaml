@@ -1043,6 +1043,7 @@ jobs:
           ksail --config ksail.prod.yaml workload validate
 
       - name: 🛡️ Validate Kubescape self-hosted scan persistence
+        if: needs.changes.outputs.k8s == 'true'
         # The in-cluster scanner has no SaaS backend. Versions before v4.0.12
         # can override local-only intent and abort before persisting posture
         # results, while the scheduler Job still reports success (#3275).

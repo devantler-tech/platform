@@ -17,7 +17,7 @@ scanner_tag="$(yq -er '.spec.values.kubescape.image.tag | select(tag == "!!str")
   fail 'the Kubescape scanner image tag is missing or is not a string'
 readonly scanner_tag
 
-[[ "${scanner_tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] ||
+[[ "${scanner_tag}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
   fail "Kubescape scanner tag ${scanner_tag} is not an exact vMAJOR.MINOR.PATCH release"
 readonly major="${BASH_REMATCH[1]}"
 readonly minor="${BASH_REMATCH[2]}"
@@ -34,7 +34,8 @@ fi
 keep_local="$(yq -er '
   .spec.values.kubescapeScheduler.requestBody.commands[] |
   select(.CommandName == "kubescapeScan") |
-  .args.scanV1.keepLocal
+  .args.scanV1.keepLocal |
+  select(tag == "!!bool")
 ' "${helm_release}")" || fail 'the scheduled Kubescape scan has no explicit keepLocal setting'
 readonly keep_local
 [[ "${keep_local}" == "true" ]] ||
