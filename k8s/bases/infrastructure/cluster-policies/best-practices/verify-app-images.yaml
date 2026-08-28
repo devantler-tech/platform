@@ -85,16 +85,16 @@ spec:
     # publishapp would let a provider-workflow signature satisfy
     # verification for ANY app image (identities within one attestor are
     # OR'd per image).
-    # The ref is pinned to the default branch: publish-provider-package.yml is
-    # workflow_dispatch-only and publishes from main, so main is the sole
+    # The ref is pinned to release tags: publish-provider-package.yml rejects
+    # any non-tag ref before it checks anything out, so a v* tag is the sole
     # legitimate signing ref. Pinning it rejects a package signed from an
-    # arbitrary feature branch, which an unconstrained ref accepts.
+    # arbitrary branch, which an unconstrained ref accepts.
     - name: publishprovider
       cosign:
         keyless:
           identities:
             - issuer: https://token.actions.githubusercontent.com
-              subjectRegExp: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/heads/main$
+              subjectRegExp: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/tags/v.+$
     - name: ksailcd
       cosign:
         keyless:
@@ -118,7 +118,7 @@ spec:
         .all(e, e > 0)
       message: >-
         provider-upjet package image is not signed by its repo's
-        publish-provider-package workflow on main (keyless cosign)
+        publish-provider-package workflow from a release tag (keyless cosign)
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image, image.startsWith('ghcr.io/devantler-tech/ksail'))

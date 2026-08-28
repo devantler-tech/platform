@@ -112,14 +112,14 @@ rules:
   # Mirrors the verify-app-images ImageValidatingPolicy provider-upjet-*
   # attestor (#2382). MUST precede the catch-all below (first-match-wins) or the
   # catch-all's publish-app.yaml identity rejects these (ImagePullBackOff).
-  # The ref is pinned to the default branch: publish-provider-package.yml is
-  # workflow_dispatch-only and publishes from main, so main is the sole
+  # The ref is pinned to release tags: publish-provider-package.yml rejects
+  # any non-tag ref before it checks anything out, so a v* tag is the sole
   # legitimate signing ref. Pinning it rejects a package signed from an
-  # arbitrary feature branch, which an unconstrained ref accepts.
+  # arbitrary branch, which an unconstrained ref accepts.
   - image: ghcr.io/devantler-tech/provider-upjet-*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/heads/main$
+      subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/tags/v.+$
   # First-party APP images signed by the shared publish-app.yaml workflow in
   # devantler-tech/actions. Callers pin that reusable workflow by commit SHA, so
   # the ref admits that form alone and rejects everything else — a mutable ref
