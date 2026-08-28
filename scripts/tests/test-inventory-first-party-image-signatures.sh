@@ -292,7 +292,7 @@ fi
 # and every assertion above would still pass while nothing verified the provider images.
 provider_validation="$(yq -r '
   [ .spec.validations[]
-    | select(.expression | test("startsWith\\(.ghcr\\.io/devantler-tech/provider-upjet-."))
+    | select(.expression | test("startsWith\\(.ghcr\\.io/devantler-tech/provider-upjet-.\\)"))
     | select(.expression | test("attestors\\.publishprovider")) ] | length' "$kyverno_policy")"
 if [ "$provider_validation" != "1" ]; then
   echo "FAIL  expected exactly 1 Kyverno validation routing provider-upjet-* to attestors.publishprovider, found ${provider_validation}"
