@@ -252,6 +252,60 @@ else
   echo "ok    real rules: passes the completeness gate"
 fi
 
+# --- 12. the provider-package identity pins the RELEASE-TAG GRAMMAR --------
+# The identity's security value is "signed by publish-provider-package.yml, in a provider-upjet-*
+# repo, FROM A RELEASE TAG". An unanchored `.+` after the version satisfies every other clause of
+# that sentence while accepting refs that are tags only in shape (refs/tags/v1latest,
+# refs/tags/v1.0.0/../evil), so the grammar is asserted HERE rather than left to the publisher's
+# own release-version.sh: this verifier is the independent half of that pair, and inheriting its
+# boundary from the repository it verifies would defeat the point.
+#
+# Both files must carry the SAME identity. The Kyverno ImageValidatingPolicy gates pod admission
+# and the Talos ImageVerificationConfig gates the kubelet pull, so a package accepted by one and
+# rejected by the other is an ImagePullBackOff that neither file explains alone.
+kyverno_policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
+talos_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/provider-upjet-*") | .keyless.subjectRegex' "$real")"
+kyverno_identity="$(yq -r '.spec.attestors[] | select(.name == "publishprovider") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"
+
+if [ -z "$talos_identity" ] || [ "$talos_identity" = "null" ]; then
+  echo "FAIL  no provider-upjet subjectRegex in ${real}"
+  failures=$((failures + 1))
+elif [ "$talos_identity" != "$kyverno_identity" ]; then
+  echo "FAIL  the provider identity differs between the Talos and Kyverno verifiers"
+  echo "        talos:   ${talos_identity}"
+  echo "        kyverno: ${kyverno_identity}"
+  failures=$((failures + 1))
+else
+  echo "ok    provider identity: Talos and Kyverno carry the same regex"
+fi
+
+# accept -> a tag release-version.sh admits, so a signature can genuinely carry it.
+# reject -> a tag it refuses; the verifier must not accept what the publisher cannot produce.
+identity_prefix='https://github.com/devantler-tech/provider-upjet-unifi/.github/workflows/publish-provider-package.yml@refs/tags/'
+grammar_failures=0
+grammar_checked=0
+for tc in \
+  'accept v1.0.0' 'accept v0.1.0' 'accept v1.0.0-rc.1' 'accept v1.2.3-alpha.1.2' 'accept v10.20.30' \
+  'reject v1latest' 'reject v1/anything' 'reject v1.0' 'reject v1' 'reject v1.0.0/../evil' \
+  'reject v01.0.0' 'reject v1.0.0-' 'reject v1.0.0-rc.1/evil'; do
+  grammar_checked=$((grammar_checked + 1))
+  want="${tc%% *}"
+  tag="${tc##* }"
+  if printf '%s' "${identity_prefix}${tag}" | grep -Eq "$talos_identity"; then
+    got=accept
+  else
+    got=reject
+  fi
+  if [ "$got" != "$want" ]; then
+    echo "FAIL  provider identity should ${want} refs/tags/${tag}, got ${got}"
+    grammar_failures=$((grammar_failures + 1))
+  fi
+done
+failures=$((failures + grammar_failures))
+if [ "$grammar_failures" -eq 0 ]; then
+  echo "ok    provider identity: release-tag grammar (${grammar_checked} tags)"
+fi
+
 # --- 9. THE DEFAULT PROBE PATH: no secret may reach argv -------------------
 # Every case above goes through INVENTORY_PROBE_CMD, so none of them exercises the real probe —
 # the credential lookup, the Basic-authenticated token exchange, the Bearer manifest read, and the

@@ -116,10 +116,15 @@ rules:
   # any non-tag ref before it checks anything out, so a v* tag is the sole
   # legitimate signing ref. Pinning it rejects a package signed from an
   # arbitrary branch, which an unconstrained ref accepts.
+  # The tag grammar is spelled out here rather than deferred to the publisher's
+  # own release-version.sh check: this verifier is the independent half of that
+  # pair, so it must not inherit its boundary from the repository it verifies.
+  # A trailing `.+` after the version would accept refs/tags/v1latest and
+  # refs/tags/v1.0.0/../evil, which are tags only in shape.
   - image: ghcr.io/devantler-tech/provider-upjet-*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/tags/v[0-9].+$
+      subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$
   # First-party APP images signed by the shared publish-app.yaml workflow in
   # devantler-tech/actions. Callers pin that reusable workflow by commit SHA, so
   # the ref admits that form alone and rejects everything else — a mutable ref
