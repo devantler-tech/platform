@@ -45,6 +45,10 @@ grep -qF 'git apply --check' "${workflow}" ||
   fail 'the compatibility patch must be checked before application'
 grep -qF 'go test ./pkg/registry/file' "${workflow}" ||
   fail 'the patched upstream storage package must run its tests before publish'
+grep -qF 'uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0' "${workflow}" ||
+  fail 'the publish job must install the pinned Buildx container driver for attestations'
+grep -qF 'driver: docker-container' "${workflow}" ||
+  fail 'the publish job must select the attestation-capable Buildx container driver'
 # IMAGE/DIGEST must expand in the workflow, not here.
 # shellcheck disable=SC2016
 grep -qF 'cosign sign --yes "${IMAGE}@${DIGEST}"' "${workflow}" ||
