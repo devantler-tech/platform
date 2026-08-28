@@ -192,6 +192,8 @@ jobs:
               - 'scripts/tests/test-validate-image-verifier-liveness.sh'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
+              - 'scripts/tests/test-kubescape-storage-hotfix.sh'
+              - '.github/workflows/publish-kubescape-storage-hotfix.yaml'
               - 'scripts/kubescape-backlog-bridge/**'
               # The updater and its annotation helper are one fail-closed
               # contract for the vendored CDI/KubeVirt manifests.
@@ -1051,6 +1053,16 @@ jobs:
         run: |
           shellcheck scripts/tests/test-kubescape-self-hosted-scan-persistence.sh
           bash scripts/tests/test-kubescape-self-hosted-scan-persistence.sh
+
+      - name: 💾 Validate Kubescape storage compatibility image
+        if: needs.changes.outputs.k8s == 'true'
+        # Storage v0.0.303+ removes APIs this deployment still serves, while
+        # v0.0.297 drops contended SQLite writes after its default timeout.
+        # Keep the narrow compatibility build and its immutable deployment pin
+        # executable and reviewable until an upstream compatible release exists.
+        run: |
+          shellcheck scripts/tests/test-kubescape-storage-hotfix.sh
+          bash scripts/tests/test-kubescape-storage-hotfix.sh
 
       - name: 📤 Save kubeconform schema cache
         # Runs even if the validate step above failed (see the restore step's
