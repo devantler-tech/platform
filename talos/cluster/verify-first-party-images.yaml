@@ -117,9 +117,9 @@ rules:
   # legitimate signing ref. Pinning it rejects a package signed from an
   # arbitrary branch, which an unconstrained ref accepts.
   # The tag grammar mirrors the publisher's `scripts/release-version.sh` OCI-semver
-  # grammar, spelled out here rather than deferred to it: this verifier is the independent
-  # out here rather than deferred to it: this verifier is the independent half of that
-  # pair, so it must not inherit its boundary from the repository it verifies.
+  # grammar, spelled out here rather than deferred to it: this verifier is the
+  # independent half of that pair, so it must not inherit its boundary from the
+  # repository it verifies.
   # A trailing `.+` after the version would accept refs/tags/v1latest and
   # refs/tags/v1.0.0/../evil, which are tags only in shape.
   # DELIBERATE DIFFERENCE from the publisher, pinned by the inventory test: that script also
