@@ -262,6 +262,16 @@ func (f *fixture) runHelperWithClusterState(
 	overrides map[string]string,
 	preserveClusterState bool,
 ) commandResult {
+	return f.runHelperExecutable(config, helperArgs, overrides, preserveClusterState, helperPath)
+}
+
+func (f *fixture) runHelperExecutable(
+	config any,
+	helperArgs []string,
+	overrides map[string]string,
+	preserveClusterState bool,
+	executable string,
+) commandResult {
 	f.t.Helper()
 	mustWriteJSON(f.t, f.decryptedConfig, config)
 	f.clearRunStatePreservingCluster(true, preserveClusterState)
@@ -277,7 +287,57 @@ func (f *fixture) runHelperWithClusterState(
 	for key, value := range overrides {
 		env[key] = value
 	}
-	return runCaptured(f.t, rootPath, env, helperPath, helperArgs...)
+	return runCaptured(f.t, rootPath, env, executable, helperArgs...)
+}
+
+func (f *fixture) runHelperWithMutationEnabled(
+	config any,
+	helperArgs []string,
+	overrides map[string]string,
+) commandResult {
+	f.t.Helper()
+	policyPath := filepath.Join(f.workspace, "verify-app-images.yaml")
+	policy := mustReadFile(filepath.Join(
+		rootPath,
+		"k8s",
+		"bases",
+		"infrastructure",
+		"cluster-policies",
+		"best-practices",
+		"verify-app-images.yaml",
+	))
+	if strings.Count(policy, "    mutateDigest: false") != 1 {
+		f.t.Fatal("canonical policy does not contain exactly one disabled mutateDigest field")
+	}
+	policy = strings.Replace(policy, "    mutateDigest: false", "    mutateDigest: true", 1)
+	if err := os.WriteFile(policyPath, []byte(policy), 0o600); err != nil {
+		f.t.Fatalf("write mutation-enabled policy: %v", err)
+	}
+
+	helper := mustReadFile(helperPath)
+	original := `readonly IMAGE_VERIFICATION_POLICY_FILE="k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"`
+	if strings.Count(helper, original) != 1 {
+		f.t.Fatal("helper does not contain exactly one canonical image-verification policy path")
+	}
+	replacement := fmt.Sprintf(`readonly IMAGE_VERIFICATION_POLICY_FILE=%q`, policyPath)
+	helper = strings.Replace(helper, original, replacement, 1)
+	testHelper, err := os.CreateTemp(filepath.Join(rootPath, "scripts"), ".refresh-flux-ghcr-auth-test-*")
+	if err != nil {
+		f.t.Fatalf("create test helper: %v", err)
+	}
+	testHelperPath := testHelper.Name()
+	f.t.Cleanup(func() { _ = os.Remove(testHelperPath) })
+	if _, err := testHelper.WriteString(helper); err != nil {
+		_ = testHelper.Close()
+		f.t.Fatalf("write test helper: %v", err)
+	}
+	if err := testHelper.Close(); err != nil {
+		f.t.Fatalf("close test helper: %v", err)
+	}
+	if err := os.Chmod(testHelperPath, 0o700); err != nil {
+		f.t.Fatalf("make test helper executable: %v", err)
+	}
+	return f.runHelperExecutable(config, helperArgs, overrides, false, testHelperPath)
 }
 
 func (f *fixture) runKSailPullWrapper(config any, command []string, overrides map[string]string) commandResult {

@@ -803,7 +803,8 @@ func fakeKubectlGetImageVerificationWebhooks(operation string) int {
 			"timeoutSeconds": 10,
 		})
 	}
-	if consolidated {
+	mutationRequired := os.Getenv("FAKE_IMAGE_VERIFICATION_MUTATION_REQUIRED") == "true"
+	if consolidated && (operation != "mutate" || mutationRequired) {
 		webhooks = append(webhooks, map[string]any{
 			"name": operation + ".verify-app-images.ivpol.kyverno.svc-fail",
 			"clientConfig": map[string]any{

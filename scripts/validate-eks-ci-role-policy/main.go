@@ -57,28 +57,7 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against main 36eadf01 before approving this value: 548 documents on
-// both sides, membership IDENTICAL — zero added, zero removed, zero renamed,
-// proven by set difference in BOTH directions over the complete
-// apiVersion|kind|namespace|name identity across all five rendered overlays.
-// Neither side carries a duplicate identity, so that pairing is one-to-one.
-// Exactly ONE entry's content moves:
-//
-//	pkg.crossplane.io/v1  Provider  provider-upjet-unifi
-//
-// Its only rendered delta is the package tag, v0.1.0 -> v1.0.0. The complete
-// five-overlay render differs by exactly ONE line out of 16507, so nothing else
-// in the projection moves at all. The DeploymentRuntimeConfig comment rewording
-// carried by the same change renders to nothing, because comments are stripped.
-//
-// No grant-bearing object moved: the surface carries 78 Role / ClusterRole /
-// RoleBinding / ClusterRoleBinding / ServiceAccount documents on BOTH sides
-// (11/24/15/12/16) and their canonical byte stream is identical. All 121
-// `aws`-bearing lines are byte-identical across the two trees, so nothing
-// granted to the aws/aws service account this validator exists to protect is
-// touched.
-//
-// Measured against main d7062144 before approving an earlier value: 550 documents on
+// Measured against main d7062144 before approving this value: 550 documents on
 // main and 544 on this branch — six REMOVED, zero added, zero renamed, proven by
 // set difference in BOTH directions over the complete
 // apiVersion|kind|namespace|name identity across all five rendered overlays.
@@ -1336,7 +1315,35 @@ const (
 // previous approved aggregate digest was:
 //
 //	9309a857065fd3d675fd1a26414311d2c7a43717618c904a980c0fe8177839bd
-const expectedRenderedSurfaceSHA = "d3dd99e90d1cd8d80cca5166aff3b52eea53d69352db7b834a1d197f60661ef4"
+//
+// Measured against main 36eadf01 for the Kubescape self-hosted persistence
+// repair at 2a2dd717: the five production projections have identical
+// grant-bearing resources on both sides. Canonicalizing every Role,
+// ClusterRole, RoleBinding, ClusterRoleBinding, and ServiceAccount yields the
+// same digest, d328778e3d50a3c43346b6d012ab4c80b32a589e64ecaad74c63a68f078c3a53,
+// with stable counts: Role 11, ClusterRole 24, RoleBinding 15,
+// ClusterRoleBinding 12, and ServiceAccount 16. The validator reports no
+// missing, duplicate, or per-identity mismatches and the same 35 known Flux
+// substitution diagnostics. The aggregate changes only because the Kubescape
+// HelmRelease scanner image moves from v4.0.10 to v4.0.12; no security context
+// or authorization value changes. The previous approved aggregate digest was:
+//
+//	54e239a1e85e29ed66523bd1d01bfb588678d88e5567d9522a013385ca1285f1
+//
+// ⚠️ NOT AN APPROVAL — PENDING RECOMPUTATION AGAINST THE APPROVED RENDERER.
+// This merge brings together two independent re-approvals that BOTH moved this constant
+// from the same 54e239a1 baseline: main took it to 820705ec for the Kubescape scanner image
+// bump, and this branch took it to d3dd99e9 for the tag-signed provider package. The merged
+// tree therefore renders to a THIRD digest that neither side carries, and the value below is
+// simply main's — retained so the merge is a faithful record of the conflict rather than a
+// guess dressed up as a measurement.
+//
+// It was NOT rendered here: validateRendererVersion pins kubectl v1.36.2 and this host has
+// v1.36.1, so the validator refused to run and no local digest could be produced. The CI
+// validate step runs the approved renderer and is the authority; it will FAIL against this
+// value until the real merged digest replaces it, together with the usual per-identity
+// conservation evidence. Do not treat the line below as reviewed.
+const expectedRenderedSurfaceSHA = "820705ecf824f83fd8c693e46579dda594e51ce50a7044af5c340e8c3c013669"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
