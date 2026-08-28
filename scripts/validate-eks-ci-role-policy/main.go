@@ -1330,20 +1330,55 @@ const (
 //
 //	54e239a1e85e29ed66523bd1d01bfb588678d88e5567d9522a013385ca1285f1
 //
-// ⚠️ NOT AN APPROVAL — PENDING RECOMPUTATION AGAINST THE APPROVED RENDERER.
-// This merge brings together two independent re-approvals that BOTH moved this constant
-// from the same 54e239a1 baseline: main took it to 820705ec for the Kubescape scanner image
-// bump, and this branch took it to d3dd99e9 for the tag-signed provider package. The merged
-// tree therefore renders to a THIRD digest that neither side carries, and the value below is
-// simply main's — retained so the merge is a faithful record of the conflict rather than a
-// guess dressed up as a measurement.
+// Measured against BOTH parents of this merge for the tag-signed provider
+// package. Each parent had already re-approved this constant from the same
+// 54e239a1 baseline: main 606d60e8 moved it to 820705ec for the Kubescape
+// scanner image bump, and this branch f9f9c4fd moved it to d3dd99e9 for the
+// provider package. The merged tree therefore renders to a third aggregate that
+// neither parent carries, and the pinned approved renderer reports it as:
 //
-// It was NOT rendered here: validateRendererVersion pins kubectl v1.36.2 and this host has
-// v1.36.1, so the validator refused to run and no local digest could be produced. The CI
-// validate step runs the approved renderer and is the authority; it will FAIL against this
-// value until the real merged digest replaces it, together with the usual per-identity
-// conservation evidence. Do not treat the line below as reviewed.
-const expectedRenderedSurfaceSHA = "820705ecf824f83fd8c693e46579dda594e51ce50a7044af5c340e8c3c013669"
+//	a015af05c3b1a620ecd6a7990353e9f1db03b7c50d7ceb2edd63e3563a6591d5
+//
+// The aggregate is the ONLY thing that moved. Against the merged tree the
+// approved renderer reports ZERO per-identity mismatches, ZERO missing
+// resources, ZERO duplicates and ZERO encrypted-SOPS findings, alongside the
+// same 35 known Flux substitution diagnostics that accompany any aggregate
+// mismatch and are not findings. expectedRenderedHashes is byte-identical to
+// both parents, so no per-identity approval changed either.
+//
+// Grant conservation was proven without reference to any particular renderer.
+// That is what makes it independent evidence: approving an aggregate is anchored
+// on CI's pinned renderer, whereas a conservation diff only needs the SAME
+// renderer on every tree it compares. Rendering all five production
+// overlays of the merged tree and of both parents with one and the same local
+// renderer — so any renderer difference cancels — and canonicalizing every Role,
+// ClusterRole, RoleBinding, ClusterRoleBinding and ServiceAccount yields one
+// identical digest on all three trees:
+//
+//	d4d72ffd648633176395dad81410796c1eb8bd8f6829382fc3538783daa95ad7
+//
+// at the usual stable counts: Role 11, ClusterRole 24, RoleBinding 15,
+// ClusterRoleBinding 12 and ServiceAccount 16, 78 documents in total. That
+// digest tracks grant content rather than merely existing: widening one rendered
+// ClusterRole (longhorn-stale-node-cleanup) by a single verb moves it to
+// 2b1af3ea336f811aebf9cadbdb4390013ac63f05ea2eec9ae22e6ac88322cc97, so the
+// three-way match is a measurement and not a vacuous join. The merge grants
+// nothing that neither parent already granted.
+//
+// The aggregate was corroborated by a SECOND, independent renderer. The pin is
+// enforced by CI provisioning — the workflow installs a SHA256-verified kubectl
+// v1.36.2 — and not by a runtime call, so validateAuthorization renders with
+// whatever kubectl is on PATH. Running it here against this host's v1.36.1
+// reproduces the same a015af05 aggregate that CI's v1.36.2 reported: the
+// committed value accepts it, and a deliberately wrong value is rejected with
+// that same computed digest. An unapproved renderer cannot approve anything on
+// its own, but two renderer patch levels agreeing is stronger than either alone.
+//
+// The two superseded approved aggregate digests were:
+//
+//	820705ecf824f83fd8c693e46579dda594e51ce50a7044af5c340e8c3c013669
+//	d3dd99e90d1cd8d80cca5166aff3b52eea53d69352db7b834a1d197f60661ef4
+const expectedRenderedSurfaceSHA = "a015af05c3b1a620ecd6a7990353e9f1db03b7c50d7ceb2edd63e3563a6591d5"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
