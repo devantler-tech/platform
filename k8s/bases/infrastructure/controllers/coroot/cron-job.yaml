@@ -23,11 +23,11 @@
 # CiliumNetworkPolicy's world:443 + DNS egress; it does not depend on
 # Coroot itself.
 #
-# The URL is injected by Flux substitution from the per-cluster SOPS
-# secret; unset (local/CI) it defaults to an invalid URL so the ping
-# reaches nowhere. `|| true` keeps the Job from flapping into a failed
-# state when the monitor is unset/unreachable — the alarm signal is the
-# *absence* of pings, observed externally, never the Job's exit code.
+# The URL is injected by Flux substitution into a SECRET
+# (secret-cluster-heartbeat.yaml), which this Job mounts read-only -- not into
+# this spec. Substituting it here would persist a live third-party credential
+# in an object that any holder of the built-in `view` ClusterRole can read.
+# Unset (local/CI) it defaults to an invalid URL so the ping reaches nowhere.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -62,6 +62,14 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532
+            # fsGroup is what makes the mounted URL readable at all. Secret volume
+            # files are owned by root:root unless fsGroup is set, so a non-root
+            # container reading a mode-0440 file gets EACCES and the heartbeat stops
+            # -- which an external dead-man monitor reports as the CLUSTER being
+            # down. Setting fsGroup makes kubelet chown the volume to root:65532,
+            # which the group-readable mode then opens to this container and nothing
+            # else.
+            fsGroup: 65532
             seccompProfile:
               type: RuntimeDefault
           containers:
@@ -70,11 +78,40 @@ spec:
               command:
                 - /bin/sh
                 - -c
-                - >-
-                  curl -sf --max-time 10
-                  --retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused
-                  "${alertmanager_heartbeat_url:=https://example.invalid/no-heartbeat-configured}"
-                  || true
+                - |
+                  set -eu
+
+                  # Read from the mounted Secret rather than a substituted spec
+                  # value: anything that can `get cronjob` in this namespace could
+                  # otherwise read the live monitor URL straight off the object
+                  # (the built-in `view` ClusterRole grants batch, and is bound to
+                  # the OIDC identity). Secrets are deliberately not granted there.
+                  HEARTBEAT_URL=$(cat /etc/cluster-heartbeat/url)
+
+                  # The value becomes a curl CONFIG directive below, where a
+                  # newline starts a SECOND directive -- so an LF in the Secret
+                  # would let the config say `output = ...` or anything else curl
+                  # accepts. A valid URL cannot contain a control character, so
+                  # rejecting them costs nothing and turns a malformed Secret into
+                  # a loud failure instead of a silently reconfigured request.
+                  if [ "$(printf '%s' "$HEARTBEAT_URL" | tr -d '[:cntrl:]')" != "$HEARTBEAT_URL" ]; then
+                    echo "ERROR: heartbeat URL contains control characters" >&2
+                    exit 1
+                  fi
+
+                  # Passed via --config on stdin, not as an argv element, so the
+                  # URL never appears in /proc/<pid>/cmdline. Matches
+                  # cron-job-cnpg-degraded-alert.yaml.
+                  #
+                  # `|| true` is retained deliberately: the alarm signal is the
+                  # ABSENCE of pings observed externally, never this Job's exit
+                  # code, so an unreachable monitor must not flap the Job into a
+                  # failed state. It does not mask the guard above, which exits
+                  # before curl runs.
+                  printf 'url = %s\n' "$HEARTBEAT_URL" |
+                    curl -sf --max-time 10 \
+                      --retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused \
+                      --config - || true
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -85,6 +122,10 @@ spec:
                 capabilities:
                   drop:
                     - ALL
+              volumeMounts:
+                - name: heartbeat-url
+                  mountPath: /etc/cluster-heartbeat
+                  readOnly: true
               resources:
                 requests:
                   cpu: 5m
@@ -94,3 +135,21 @@ spec:
                   # the short-lived curl never throttles.
                   cpu: 50m
                   memory: 32Mi
+          volumes:
+            # 288 is 0440: readable by root and by the pod's fsGroup (65532, set
+            # above), rather than by anything else that lands in this pod. It must
+            # carry the GROUP bit: kubelet owns secret-volume files root:fsGroup,
+            # never uid:fsGroup, so an owner-only 0400 is unreadable by the
+            # container's own non-root user. The Secret is the one
+            # secret-cluster-heartbeat.yaml creates from the per-cluster Flux
+            # substitution.
+            #
+            # Written in DECIMAL deliberately, matching cron-job-cnpg-degraded-alert.yaml:
+            # an unquoted `0440` is read as octal 288 by Kubernetes' own parser
+            # (sigs.k8s.io/yaml, which is YAML 1.1) and as decimal 440 -- mode 0670 --
+            # by every YAML 1.2 reader, yq and kyaml included. The two disagree
+            # silently and nothing validates the difference.
+            - name: heartbeat-url
+              secret:
+                secretName: cluster-heartbeat-url
+                defaultMode: 288

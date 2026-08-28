@@ -168,9 +168,11 @@ Recommended monitor: [healthchecks.io](https://healthchecks.io) (free,
 open-source, native Slack integration). Create a check with a ~5 min period and
 ~10 min grace, connect it to Slack, and put its ping URL in
 `alertmanager_heartbeat_url` (below — the variable name is retained from the old
-stack for compatibility). The URL is injected by Flux substitution; unset, it
-defaults to an invalid URL, so local/CI simply never heartbeat — harmless
-(`|| true` keeps the Job from flapping).
+stack for compatibility). Flux substitutes the URL into the
+`cluster-heartbeat-url` Secret, which the Job mounts read-only, so it is not
+readable from the CronJob spec. Unset, it defaults to an invalid URL, so
+local/CI simply never heartbeat — harmless (`|| true` keeps the Job from
+flapping).
 
 ## Off-cluster backup
 
@@ -189,7 +191,7 @@ present in the per-cluster `secret.enc.yaml` (under
 - `alertmanager_webhook_url` — Slack incoming-webhook, reused by Coroot's
   webhook integration (prod-only).
 - `alertmanager_heartbeat_url` — external heartbeat monitor, reused by the
-  `cluster-heartbeat` CronJob.
+  `cluster-heartbeat` CronJob via the `cluster-heartbeat-url` Secret it mounts.
 
 | Env   | `alertmanager_webhook_url`        | `alertmanager_heartbeat_url`     |
 | ----- | --------------------------------- | -------------------------------- |

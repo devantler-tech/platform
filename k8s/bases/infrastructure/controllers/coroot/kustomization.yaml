@@ -13,6 +13,9 @@ resources:
   - http-route.yaml
   - cilium-network-policy.yaml
   - cron-job.yaml
+  # Heartbeat monitor URL, held in a Secret rather than substituted into the
+  # CronJob spec above (see that file and secret-cluster-heartbeat.yaml):
+  - secret-cluster-heartbeat.yaml
   # Degraded-CNPG-cluster alert (one resource per file, per the naming convention):
   - service-account-cnpg-degraded-alert.yaml
   - secret-cnpg-degraded-alert.yaml
