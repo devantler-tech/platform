@@ -171,36 +171,43 @@ readonly rendered_vulnerability_schedule
 [[ "${rendered_posture_schedule}" != "${rendered_vulnerability_schedule}" ]] ||
   fail 'the rendered posture and vulnerability CronJobs must use separate windows'
 
-# Docker Hub currently redirects some blob downloads to CloudFront rather than
-# its older Cloudflare hostname. If the redirect host is blocked, kubevuln
-# retries timeouts for hours and keeps the SQLite storage backend contended
-# while posture results try to persist.
-docker_cloudfront_matches="$(yq -er '
-  [.spec.egress[].toFQDNs[]? |
-    select(.matchName == "production.cloudfront.docker.com")] |
-  length
-' "${network_policy}")" || fail 'could not inspect the Kubescape egress policy'
-readonly docker_cloudfront_matches
-[[ "${docker_cloudfront_matches}" == "1" ]] ||
-  fail 'Kubescape egress must allow the Docker Hub CloudFront blob redirect host exactly once'
+# Registry blob pulls can redirect from their API hosts to separate CDN hosts.
+# If a redirect host is blocked, kubevuln retries timeouts for hours and keeps
+# the SQLite storage backend contended while posture results try to persist.
+assert_https_fqdn() {
+  local fqdn="$1"
+  local description="$2"
+  local matches
+  local https_rules
 
-docker_cloudfront_https_rules="$(yq -er '
-  [.spec.egress[] |
-    select(
-      (.toFQDNs // []) |
-      map(.matchName) |
-      contains(["production.cloudfront.docker.com"])
-    ) |
-    select(
-      (.toPorts | length) == 1 and
-      (.toPorts[0].ports | length) == 1 and
-      .toPorts[0].ports[0].port == "443" and
-      .toPorts[0].ports[0].protocol == "TCP"
-    )] |
-  length
-' "${network_policy}")" || fail 'could not inspect the Kubescape CloudFront port restriction'
-readonly docker_cloudfront_https_rules
-[[ "${docker_cloudfront_https_rules}" == "1" ]] ||
-  fail 'Kubescape CloudFront egress must be restricted to TCP port 443'
+  matches="$(REQUIRED_FQDN="${fqdn}" yq -er '
+    [.spec.egress[].toFQDNs[]? |
+      select(.matchName == strenv(REQUIRED_FQDN))] |
+    length
+  ' "${network_policy}")" || fail "could not inspect ${description} in the Kubescape egress policy"
+  [[ "${matches}" == "1" ]] ||
+    fail "Kubescape egress must allow ${description} exactly once"
+
+  https_rules="$(REQUIRED_FQDN="${fqdn}" yq -er '
+    [.spec.egress[] |
+      select(
+        (.toFQDNs // []) |
+        map(.matchName) |
+        contains([strenv(REQUIRED_FQDN)])
+      ) |
+      select(
+        (.toPorts | length) == 1 and
+        (.toPorts[0].ports | length) == 1 and
+        .toPorts[0].ports[0].port == "443" and
+        .toPorts[0].ports[0].protocol == "TCP"
+      )] |
+    length
+  ' "${network_policy}")" || fail "could not inspect ${description} port restriction"
+  [[ "${https_rules}" == "1" ]] ||
+    fail "Kubescape ${description} egress must be restricted to TCP port 443"
+}
+
+assert_https_fqdn 'production.cloudfront.docker.com' 'Docker Hub CloudFront blob redirect host'
+assert_https_fqdn 'cdn.registry.k8s.io' 'Kubernetes registry CDN redirect host'
 
 printf 'Kubescape self-hosted scan persistence contract is valid (%s).\n' "${scanner_tag}"
