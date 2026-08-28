@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly root_dir
+readonly workflow="${root_dir}/.github/workflows/publish-kubescape-storage-hotfix.yaml"
+readonly patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-busy-timeout.patch"
+readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
+readonly source_commit='b35788b68337134fc2514574cde1ba7f1225fd43'
+readonly image_repository='ghcr.io/devantler-tech/platform-kubescape-storage'
+
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
+
+command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
+[[ -f "${workflow}" ]] || fail 'the Kubescape storage compatibility-image workflow is missing'
+[[ -f "${patch_file}" ]] || fail 'the Kubescape storage compatibility patch is missing'
+
+[[ "$(yq -er '.permissions | length' "${workflow}")" == '0' ]] ||
+  fail 'the hotfix workflow must deny permissions by default'
+[[ "$(yq -er '.jobs.publish.permissions.contents' "${workflow}")" == 'read' ]] ||
+  fail 'the publish job needs only read access to repository contents'
+[[ "$(yq -er '.jobs.publish.permissions.packages' "${workflow}")" == 'write' ]] ||
+  fail 'the publish job must scope package write permission to itself'
+[[ "$(yq -er '.jobs.publish.permissions."id-token"' "${workflow}")" == 'write' ]] ||
+  fail 'the publish job must scope OIDC signing permission to itself'
+
+[[ "$(yq -er '.env.KUBESCAPE_STORAGE_SOURCE_COMMIT' "${workflow}")" == "${source_commit}" ]] ||
+  fail 'the workflow must pin the reviewed v0.0.297 source commit'
+[[ "$(yq -er '.env.IMAGE' "${workflow}")" == "${image_repository}" ]] ||
+  fail 'the workflow image destination drifted'
+
+grep -qF 'repository: kubescape/storage' "${workflow}" ||
+  fail 'the workflow must check out the upstream storage source explicitly'
+# The literal GitHub expression is the contract.
+# shellcheck disable=SC2016
+grep -qF 'ref: ${{ env.KUBESCAPE_STORAGE_SOURCE_COMMIT }}' "${workflow}" ||
+  fail 'the upstream checkout must use the exact pinned commit'
+grep -qF 'persist-credentials: false' "${workflow}" ||
+  fail 'workflow checkouts must not persist credentials'
+grep -qF 'git apply --check' "${workflow}" ||
+  fail 'the compatibility patch must be checked before application'
+grep -qF 'go test ./pkg/registry/file' "${workflow}" ||
+  fail 'the patched upstream storage package must run its tests before publish'
+# IMAGE/DIGEST must expand in the workflow, not here.
+# shellcheck disable=SC2016
+grep -qF 'cosign sign --yes "${IMAGE}@${DIGEST}"' "${workflow}" ||
+  fail 'the published compatibility image must be keylessly signed by digest'
+
+[[ "$(grep -c '^diff --git ' "${patch_file}")" == '2' ]] ||
+  fail 'the compatibility patch must touch only implementation and regression-test files'
+grep -qF 'diff --git a/pkg/registry/file/sqlite.go b/pkg/registry/file/sqlite.go' "${patch_file}" ||
+  fail 'the compatibility patch does not modify SQLite pool setup'
+grep -qF 'diff --git a/pkg/registry/file/sqlite_test.go b/pkg/registry/file/sqlite_test.go' "${patch_file}" ||
+  fail 'the compatibility patch lacks an executable busy-timeout regression test'
+grep -qF 'conn.SetBusyTimeout(60 * time.Second)' "${patch_file}" ||
+  fail 'the compatibility patch must apply the upstream-reviewed 60-second timeout'
+grep -qF 'assert.Equal(t, int64(60000), busyTimeoutMilliseconds)' "${patch_file}" ||
+  fail 'the compatibility patch must prove the effective SQLite timeout'
+
+# The publishing PR deliberately lands before the deployment pin so the image
+# can be built, signed, and resolved to an immutable digest. Once an override is
+# present, fail closed on anything other than that signed repository + digest.
+storage_repository="$(yq -r '.spec.values.storage.image.repository // ""' "${helm_release}")"
+readonly storage_repository
+if [[ -n "${storage_repository}" ]]; then
+  [[ "${storage_repository}" == "${image_repository}" ]] ||
+    fail 'the deployed Kubescape storage image must use the reviewed compatibility repository'
+  storage_tag="$(yq -er '.spec.values.storage.image.tag | select(tag == "!!str")' "${helm_release}")" ||
+    fail 'the deployed Kubescape storage image tag is missing'
+  readonly storage_tag
+  [[ "${storage_tag}" =~ ^v0\.0\.297-sqlite-busy-timeout\.1@sha256:[0-9a-f]{64}$ ]] ||
+    fail 'the compatibility image must be pinned by immutable sha256 digest'
+fi
+
+printf 'Kubescape storage compatibility-image contract is valid.\n'

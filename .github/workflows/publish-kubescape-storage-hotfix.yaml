@@ -1,0 +1,164 @@
+name: Publish Kubescape Storage Hotfix
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-kubescape-storage-hotfix.yaml
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-busy-timeout.patch
+      - scripts/tests/test-kubescape-storage-hotfix.sh
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-kubescape-storage-hotfix.yaml
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-busy-timeout.patch
+      - scripts/tests/test-kubescape-storage-hotfix.sh
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  KUBESCAPE_STORAGE_SOURCE_COMMIT: b35788b68337134fc2514574cde1ba7f1225fd43
+  IMAGE: ghcr.io/devantler-tech/platform-kubescape-storage
+  IMAGE_TAG: v0.0.297-sqlite-busy-timeout.1-${{ github.sha }}
+  PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-busy-timeout.patch
+
+jobs:
+  verify:
+    name: Verify pinned source and patch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Check out platform contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out exact Kubescape storage source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: kubescape/storage
+          ref: ${{ env.KUBESCAPE_STORAGE_SOURCE_COMMIT }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: upstream/go.mod
+          cache: false
+
+      - name: Apply and test compatibility patch
+        working-directory: upstream
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ env.KUBESCAPE_STORAGE_SOURCE_COMMIT }}
+          HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
+          git apply --check "${HOTFIX_PATCH}"
+          git apply "${HOTFIX_PATCH}"
+          git diff --check
+          go test ./pkg/registry/file
+
+      - name: Build compatibility image without publishing
+        working-directory: upstream
+        env:
+          VERSION: ${{ env.IMAGE_TAG }}
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --file build/Dockerfile \
+            --build-arg "image_version=${VERSION}" \
+            .
+
+  publish:
+    name: Publish and sign immutable image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Check out platform contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out exact Kubescape storage source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: kubescape/storage
+          ref: ${{ env.KUBESCAPE_STORAGE_SOURCE_COMMIT }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Reapply reviewed patch to exact source
+        working-directory: upstream
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ env.KUBESCAPE_STORAGE_SOURCE_COMMIT }}
+          HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
+          git apply --check "${HOTFIX_PATCH}"
+          git apply "${HOTFIX_PATCH}"
+          git diff --check
+
+      - name: Log in to GHCR
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push compatibility image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./upstream
+          file: ./upstream/build/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ env.IMAGE_TAG }}
+          build-args: image_version=${{ env.IMAGE_TAG }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.IMAGE_TAG }}
+            io.devantler.kubescape-storage.upstream-revision=${{ env.KUBESCAPE_STORAGE_SOURCE_COMMIT }}
+
+      - name: Set up Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign and verify published digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test -n "${DIGEST}"
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign verify \
+            --certificate-identity "https://github.com/devantler-tech/platform/.github/workflows/publish-kubescape-storage-hotfix.yaml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}@${DIGEST}"
+          printf 'Published signed image: %s@%s\n' "${IMAGE}" "${DIGEST}"
