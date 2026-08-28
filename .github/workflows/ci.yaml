@@ -191,6 +191,7 @@ jobs:
               - 'scripts/validate-image-verifier-liveness.sh'
               - 'scripts/tests/test-validate-image-verifier-liveness.sh'
               - 'scripts/generate-kubescape-exceptions/**'
+              - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/kubescape-backlog-bridge/**'
               # The updater and its annotation helper are one fail-closed
               # contract for the vendored CDI/KubeVirt manifests.
