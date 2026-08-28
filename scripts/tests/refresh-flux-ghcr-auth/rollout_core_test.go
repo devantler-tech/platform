@@ -108,7 +108,7 @@ func TestRefreshesRootAndFanoutWithoutLeakingPlaintext(t *testing.T) {
 		"devantler-tech/wedding-app:latest",
 		"devantler-tech/ascoachingogvaner:latest",
 		"devantler-tech/ksail:v" + ksailOperatorVersion,
-		"devantler-tech/provider-upjet-unifi:v0.1.0",
+		"devantler-tech/provider-upjet-unifi:v1.0.0",
 	}
 	requireLinesEqual(t, readLines(f.registryReadLog), append(append([]string{}, requiredRegistryReads...), requiredRegistryReads...))
 	requireLinesEqual(t, readLines(f.fanoutLog), []string{
