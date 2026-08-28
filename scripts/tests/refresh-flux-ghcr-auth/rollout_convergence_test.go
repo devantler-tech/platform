@@ -1717,3 +1717,49 @@ func TestNodeDiscoveryFailureAfterSafeFanoutKeepsRootUnchanged(t *testing.T) {
 		t.Error("failed discovery changed root auth")
 	}
 }
+
+// A probe the kubelet never reports on must not present as an unproved runtime
+// credential. The gate is fail-closed either way, but the emitted evidence has
+// to say what was actually observed, or the next occurrence costs another
+// production outage to diagnose (platform#3429).
+func TestRuntimeProbeTimeoutReportsObservedPodState(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_ALL_TALOS_NODES_STALE":       "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":       "prod-worker-2",
+		"FAKE_RUNTIME_PROBE_STALLED_NODES": "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_EMPTY_WORKLOAD_NODES":        "prod-worker-2",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output, "Timed out proving the running containerd GHCR credential")
+	// The whole point: the operator can tell a stuck probe from a bad credential.
+	requireContains(t, output, "phase=Pending")
+	requireContains(t, output, "containerStatus=absent")
+}
+
+// A probe the kubelet actively rejected (OutOfmemory/OutOfpods) reaches a
+// terminal Failed phase. Polling it for the full budget and then blaming the
+// runtime credential is both slow and wrong, so it must fail fast and say so.
+func TestRuntimeProbeKubeletRejectionFailsFastAndDistinctly(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_ALL_TALOS_NODES_STALE":         "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":         "prod-worker-2",
+		"FAKE_RUNTIME_PROBE_STALLED_NODES":   "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_RUNTIME_PROBE_STALLED_PHASE":   "Failed",
+		"FAKE_RUNTIME_PROBE_STALLED_REASON":  "OutOfmemory",
+		"FAKE_RUNTIME_PROBE_STALLED_MESSAGE": "Node didn't have enough resource: memory",
+		"FAKE_EMPTY_WORKLOAD_NODES":          "prod-worker-2",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output, "did not run")
+	requireContains(t, output, "podReason=OutOfmemory")
+	// Not a credential verdict: the runtime was never exercised.
+	requireNotContains(t, output, "Timed out proving the running containerd GHCR credential")
+	// Kubelet's raw message can carry node detail; it must not reach the log.
+	requireNotContains(t, output, "Node didn't have enough resource")
+}
