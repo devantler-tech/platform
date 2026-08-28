@@ -64,8 +64,8 @@
 #      ksail's OWN release pipeline (devantler-tech/ksail .github/workflows/
 #      cd.yaml; see that repo's GoReleaser `docker_signs` step), at a release tag.
 #   2. ghcr.io/devantler-tech/provider-upjet-* — the Crossplane provider packages
-#      — are signed by each provider repo's own publish-provider-package.yml, on
-#      its default branch (that workflow is workflow_dispatch-only).
+#      — are signed by each provider repo's own publish-provider-package.yml, at
+#      a release tag (that workflow rejects any non-tag ref).
 #   3. the app images (wedding-app, ascoachingogvaner, …) are signed by the
 #      shared publish-app.yaml workflow in devantler-tech/actions, pinned by
 #      commit SHA — the SAME form their Flux OCIRepository verify blocks and the
