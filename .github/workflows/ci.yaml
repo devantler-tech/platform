@@ -191,6 +191,7 @@ jobs:
               - 'scripts/validate-image-verifier-liveness.sh'
               - 'scripts/tests/test-validate-image-verifier-liveness.sh'
               - 'scripts/generate-kubescape-exceptions/**'
+              - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/kubescape-backlog-bridge/**'
               # The updater and its annotation helper are one fail-closed
               # contract for the vendored CDI/KubeVirt manifests.
@@ -1041,6 +1042,15 @@ jobs:
         run: |
           ksail workload validate
           ksail --config ksail.prod.yaml workload validate
+
+      - name: 🛡️ Validate Kubescape self-hosted scan persistence
+        if: needs.changes.outputs.k8s == 'true'
+        # The in-cluster scanner has no SaaS backend. Versions before v4.0.12
+        # can override local-only intent and abort before persisting posture
+        # results, while the scheduler Job still reports success (#3275).
+        run: |
+          shellcheck scripts/tests/test-kubescape-self-hosted-scan-persistence.sh
+          bash scripts/tests/test-kubescape-self-hosted-scan-persistence.sh
 
       - name: 📤 Save kubeconform schema cache
         # Runs even if the validate step above failed (see the restore step's
