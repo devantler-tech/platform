@@ -1315,7 +1315,21 @@ const (
 // previous approved aggregate digest was:
 //
 //	9309a857065fd3d675fd1a26414311d2c7a43717618c904a980c0fe8177839bd
-const expectedRenderedSurfaceSHA = "54e239a1e85e29ed66523bd1d01bfb588678d88e5567d9522a013385ca1285f1"
+//
+// Measured against main 36eadf01 for the Kubescape self-hosted persistence
+// repair at 2a2dd717: the five production projections have identical
+// grant-bearing resources on both sides. Canonicalizing every Role,
+// ClusterRole, RoleBinding, ClusterRoleBinding, and ServiceAccount yields the
+// same digest, d328778e3d50a3c43346b6d012ab4c80b32a589e64ecaad74c63a68f078c3a53,
+// with stable counts: Role 11, ClusterRole 24, RoleBinding 15,
+// ClusterRoleBinding 12, and ServiceAccount 16. The validator reports no
+// missing, duplicate, or per-identity mismatches and the same 35 known Flux
+// substitution diagnostics. The aggregate changes only because the Kubescape
+// HelmRelease scanner image moves from v4.0.10 to v4.0.12; no security context
+// or authorization value changes. The previous approved aggregate digest was:
+//
+//	54e239a1e85e29ed66523bd1d01bfb588678d88e5567d9522a013385ca1285f1
+const expectedRenderedSurfaceSHA = "820705ecf824f83fd8c693e46579dda594e51ce50a7044af5c340e8c3c013669"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
