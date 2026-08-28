@@ -200,12 +200,23 @@ spec:
     # failure mode is a scan that aborts before persisting results. This value
     # fully replaces the chart default, so it must stay complete.
     kubescapeScheduler:
+      # Preserve the current posture window explicitly. Chart 1.40.3 hashes one
+      # shared cluster seed for both scheduler defaults, so posture and
+      # vulnerability scans otherwise render to the same instant and contend
+      # for the storage service's single-writer SQLite database.
+      scanSchedule: "12 9 * * *"
       requestBody:
         commands:
           - CommandName: "kubescapeScan"
             args:
               scanV1:
                 keepLocal: true
+    # Run vulnerability collection in a separate authored window. Keep at
+    # least the present eight-hour gap: both scans emit high-volume writes, and
+    # storage v0.0.297 drops a request when another writer holds SQLite beyond
+    # its busy timeout.
+    kubevulnScheduler:
+      scanSchedule: "12 1 * * *"
     # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
     # to avoid Helm upgrade failures from PVC shrink rejection.
     persistence:

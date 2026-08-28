@@ -1342,7 +1342,18 @@ const (
 // was:
 //
 //	820705ecf824f83fd8c693e46579dda594e51ce50a7044af5c340e8c3c013669
-const expectedRenderedSurfaceSHA = "0490a49adb4aa2efac35428b70044db00542aca22747137377bfc1d8c99fed66"
+//
+// Measured against main ed70dc25 for the Kubescape scan-window separation:
+// rendering chart 1.40.3 before and after the change produces byte-identical
+// Roles, ClusterRoles, RoleBindings, ClusterRoleBindings, and ServiceAccounts
+// (digest e75cc993ff03e6fb60365e1dff3beb4b084aeea046c10d488bbe0a32b6af411c;
+// counts 2, 5, 3, 6, and 5 respectively). The aggregate changes only because
+// the Kubescape HelmRelease now authors distinct posture and vulnerability
+// CronJob schedules; neither value names a subject, grant, security context,
+// or authorization resource. The previous approved aggregate digest was:
+//
+//	0490a49adb4aa2efac35428b70044db00542aca22747137377bfc1d8c99fed66
+const expectedRenderedSurfaceSHA = "026c985d74ec1230e7272488d2a55c028bb78916c4c8362f22c447c862111d78"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

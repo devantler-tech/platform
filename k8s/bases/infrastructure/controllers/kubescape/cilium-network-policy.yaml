@@ -64,11 +64,13 @@ spec:
         # ghcr.io (GitHub Container Registry) — blobs on the GitHub package CDN:
         - matchName: "ghcr.io"
         - matchName: "pkg-containers.githubusercontent.com"
-        # docker.io — registry v2 + token endpoints; blobs on the Cloudflare CDN:
+        # docker.io — registry v2 + token endpoints; blobs may redirect through
+        # either Cloudflare or CloudFront:
         - matchName: "index.docker.io"
         - matchName: "registry-1.docker.io"
         - matchName: "auth.docker.io"
         - matchName: "production.cloudflare.docker.com"
+        - matchName: "production.cloudfront.docker.com"
         # quay.io — registry + its documented blob CDN hosts:
         - matchName: "quay.io"
         - matchName: "cdn01.quay.io"
