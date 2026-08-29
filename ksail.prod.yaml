@@ -295,6 +295,9 @@ spec:
           - issuer: '^https://token\.actions\.githubusercontent\.com$'
             subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/(ci\.yaml@refs/heads/gh-readonly-queue/main/.+|(cd|dr-rebuild)\.yaml@refs/heads/main)$'
     validation:
+      # Keep production parity with the local validation path. The rules inspect
+      # the effective Helm render, including controller RBAC emitted by charts.
+      rules: scripts/tests/production-authorization-rules.yaml
       # Parity with ksail.yaml: the prod kustomization pulls the same shared
       # bases (Coroot + Flagger), so `ksail --config ksail.prod.yaml workload
       # validate` hits the identical CRDs whose CRD-catalog schemas kubeconform

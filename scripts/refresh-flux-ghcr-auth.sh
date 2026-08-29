@@ -153,13 +153,14 @@ KSAIL_OPERATOR_VERSION="$(yq -er '.spec.chart.spec.version' \
   k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml)"
 readonly KSAIL_OPERATOR_VERSION
 readonly KSAIL_OPERATOR_IMAGE="ghcr.io/devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
-# Both tenant release workflows create/update latest alongside every semver
-# artifact and image tag. Flux still selects the signed semver artifact; latest
-# is the stable read-permission/existence probe for the same private packages.
+# Private first-party release workflows create/update latest alongside every
+# semver image or artifact tag. Flux still selects immutable releases; latest is
+# the stable read-permission/existence probe for the same private packages.
 readonly -a REQUIRED_PULL_TARGETS=(
   "devantler-tech/platform/manifests:latest"
   "devantler-tech/wedding-app/manifests:latest"
   "devantler-tech/ascoachingogvaner/manifests:latest"
+  "devantler-tech/data-product-controller:latest"
   "devantler-tech/wedding-app:latest"
   "devantler-tech/ascoachingogvaner:latest"
   "devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
@@ -169,10 +170,12 @@ readonly -a REQUIRED_PULL_TARGETS=(
 # image (including KSail itself) can prove registry reachability but cannot
 # prove that containerd loaded a working credential.
 readonly -a RUNTIME_CREDENTIAL_PROBE_IMAGES=(
+  "ghcr.io/devantler-tech/data-product-controller:latest"
   "ghcr.io/devantler-tech/wedding-app:latest"
   "ghcr.io/devantler-tech/ascoachingogvaner:latest"
 )
 readonly -a FANOUT_NAMESPACES=(
+  "data-product-controller"
   "wedding-app"
   "ascoachingogvaner"
   "kyverno"

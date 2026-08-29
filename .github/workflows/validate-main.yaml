@@ -35,7 +35,7 @@ concurrency:
 
 jobs:
   validate-eks-authorization:
-    name: 🔐 Validate EKS Authorization
+    name: 🔐 Validate Production Authorization
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
@@ -66,10 +66,24 @@ jobs:
           sudo install "$kubectl_path" /usr/local/bin/kubectl
           kubectl version --client
 
-      - name: 🔐 Validate EKS authorization surface
+      - name: 🔐 Validate static production authorization controls
         run: |
           go test ./scripts/validate-eks-ci-role-policy
           go run ./scripts/validate-eks-ci-role-policy .
+
+      - name: ⚙️ Setup KSail for effective authorization validation
+        shell: bash
+        env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.180.0"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/setup-ksail.sh
+
+      - name: 🔐 Validate Helm-rendered production authorization controls
+        run: |
+          shellcheck scripts/tests/test-production-authorization-rules.sh
+          bash scripts/tests/test-production-authorization-rules.sh
+          ksail --config ksail.prod.yaml workload validate
 
   # The cosign subjects that trust the SHARED actions publish workflows must pin a
   # fixed revision, or a compromised branch build could be verified as first-party.

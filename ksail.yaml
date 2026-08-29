@@ -36,6 +36,10 @@ spec:
     sourceDirectory: k8s
     kustomizationFile: clusters/local
     validation:
+      # Evaluate semantic authorization controls against authored manifests and
+      # the children rendered from every HelmRelease. This catches effective
+      # RBAC that kubectl kustomize and the EKS source validator cannot see.
+      rules: scripts/tests/production-authorization-rules.yaml
       # Skip CRs whose CRD-catalog schemas kubeconform cannot resolve during
       # `ksail workload validate` (requires ksail >= 7.26.0):
       #   - Coroot (coroot.com/v1): the datreeio catalog schema is stale

@@ -311,6 +311,8 @@ jobs:
               - 'scripts/guard-crossplane-provider-name-parity.sh'
               - 'scripts/tests/test-guard-crossplane-provider-name-parity.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
+              - 'scripts/tests/production-authorization-rules.yaml'
+              - 'scripts/tests/test-production-authorization-rules.sh'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
               - 'scripts/tests/validate-alert-coverage/**'
@@ -498,7 +500,7 @@ jobs:
           echo "=> the check above is not vacuous"
 
   validate-eks-authorization:
-    name: 🔐 Validate EKS Authorization
+    name: 🔐 Validate Production Authorization
     needs: [changes]
     if: >-
       needs.changes.outputs.k8s == 'true' &&
@@ -533,12 +535,28 @@ jobs:
           sudo install "$kubectl_path" /usr/local/bin/kubectl
           kubectl version --client
 
-      - name: 🔐 Validate EKS authorization surface
-        # The Go validator pins source, rendered, indirect, and substituted
-        # authorization before either a PR or merge-group commit may proceed.
+      - name: 🔐 Validate static production authorization controls
+        # The Go validator pins the EKS CI role and the authored authorization
+        # graph before either a PR or merge-group commit may proceed.
         run: |
           go test ./scripts/validate-eks-ci-role-policy
           go run ./scripts/validate-eks-ci-role-policy .
+
+      - name: ⚙️ Setup KSail for effective authorization validation
+        shell: bash
+        env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.180.0"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/setup-ksail.sh
+
+      - name: 🔐 Validate Helm-rendered production authorization controls
+        # KSail renders chart children before evaluating the CEL rules, closing
+        # the visibility gap in kubectl kustomize's HelmRelease-only output.
+        run: |
+          shellcheck scripts/tests/test-production-authorization-rules.sh
+          bash scripts/tests/test-production-authorization-rules.sh
+          ksail --config ksail.prod.yaml workload validate
 
   validate:
     name: 🧪 Validate Manifests

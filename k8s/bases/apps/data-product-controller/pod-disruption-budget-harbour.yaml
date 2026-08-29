@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: data-product-controller-harbour
+  namespace: data-product-controller
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: data-product-controller
+      app.kubernetes.io/instance: data-product-controller
+      app.kubernetes.io/component: harbour-product

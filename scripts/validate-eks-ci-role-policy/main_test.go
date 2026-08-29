@@ -933,6 +933,157 @@ subjects:
 	}
 }
 
+// TestEKSAuthorizationSelectionIgnoresUnrelatedHelmReleases captures the
+// production failure that prompted the guard redesign: adding an independently
+// scoped controller must not require an opaque EKS CI authorization approval.
+// Helm-rendered RBAC is checked separately from the actual rendered children;
+// the HelmRelease declaration is not itself a path to the aws/aws identity.
+func TestEKSAuthorizationSelectionIgnoresUnrelatedHelmReleases(t *testing.T) {
+	documents, err := decodeDocuments([]byte(`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+  annotations:
+    security.devantler.tech/authorization-scope: isolated-chart
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: data-product-controller
+  values:
+    rbac:
+      create: true
+    registry:
+      publicURL: https://data-products.${domain}
+`))
+	if err != nil || len(documents) != 1 {
+		t.Fatalf("decode unrelated HelmRelease: documents=%d error=%v", len(documents), err)
+	}
+
+	if isAuthorizationResource(documents[0], identityOf(documents[0])) {
+		t.Fatal("unrelated HelmRelease joined the EKS CI authorization surface")
+	}
+	if isAuthorizationCapableDocument(documents[0], identityOf(documents[0])) {
+		t.Fatal("unrelated HelmRelease substitution joined the EKS CI authorization surface")
+	}
+}
+
+// TestValidateAuthorizationIsolationFailsClosed pins every precondition behind
+// the isolated-chart escape hatch. The annotation is not a bypass: it is valid
+// only for a namespace-local Helm release and its immutable public OCI source.
+func TestValidateAuthorizationIsolationFailsClosed(t *testing.T) {
+	const validHelmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+  annotations:
+    security.devantler.tech/authorization-scope: isolated-chart
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: data-product-controller
+`
+	const validSource = `apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+  annotations:
+    security.devantler.tech/authorization-scope: isolated-chart
+spec:
+  url: oci://ghcr.io/devantler-tech/charts/data-product-controller
+  ref:
+    digest: sha256:6f941a096d16eb62bf2668be6e45eebc4dd481eec03e031f3fca8ca4b4db6598
+`
+
+	assertValid := func(name, manifest string) {
+		t.Helper()
+		documents, err := decodeDocuments([]byte(manifest))
+		if err != nil || len(documents) != 1 {
+			t.Fatalf("decode %s: documents=%d error=%v", name, len(documents), err)
+		}
+		if err := validateAuthorizationIsolation(documents[0], identityOf(documents[0])); err != nil {
+			t.Fatalf("validate %s: %v", name, err)
+		}
+	}
+	assertValid("HelmRelease", validHelmRelease)
+	assertValid("OCIRepository", validSource)
+
+	tests := []struct {
+		name     string
+		manifest string
+	}{
+		{
+			name: "protected namespace",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"namespace: data-product-controller",
+				"namespace: aws",
+				1,
+			),
+		},
+		{
+			name: "cross-namespace target",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"spec:\n",
+				"spec:\n  targetNamespace: aws\n",
+				1,
+			),
+		},
+		{
+			name: "privileged reconciliation identity",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"spec:\n",
+				"spec:\n  serviceAccountName: aws\n",
+				1,
+			),
+		},
+		{
+			name: "RBAC post-renderer",
+			manifest: validHelmRelease + `  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: RoleBinding
+            patch: '{}'
+`,
+		},
+		{
+			name: "floating source",
+			manifest: strings.Replace(
+				validSource,
+				"  ref:\n    digest: sha256:6f941a096d16eb62bf2668be6e45eebc4dd481eec03e031f3fca8ca4b4db6598\n",
+				"  ref:\n    tag: latest\n",
+				1,
+			),
+		},
+		{
+			name: "untrusted registry",
+			manifest: strings.Replace(
+				validSource,
+				"oci://ghcr.io/devantler-tech/charts/",
+				"oci://example.invalid/charts/",
+				1,
+			),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			documents, err := decodeDocuments([]byte(tt.manifest))
+			if err != nil || len(documents) != 1 {
+				t.Fatalf("decode fixture: documents=%d error=%v", len(documents), err)
+			}
+			if err := validateAuthorizationIsolation(documents[0], identityOf(documents[0])); err == nil {
+				t.Fatal("validateAuthorizationIsolation() error = nil, want fail-closed rejection")
+			}
+		})
+	}
+}
+
 // TestGrantsAuthorizationControlDetectsProtectedResourceWrites covers CRD mutation.
 func TestGrantsAuthorizationControlDetectsProtectedResourceWrites(t *testing.T) {
 	documents, err := decodeDocuments([]byte(`apiVersion: rbac.authorization.k8s.io/v1
@@ -1152,6 +1303,34 @@ func TestWorkflowValidatesAuthorizationBeforeMergeGroupDeploy(t *testing.T) {
 	with, _ := step["with"].(map[string]any)
 	if !strings.Contains(fmt.Sprint(with["job-results"]), "needs.validate-eks-authorization.result") {
 		t.Fatal("required-check aggregation omits validate-eks-authorization result")
+	}
+}
+
+// TestManifestValidationAppliesEffectiveAuthorizationRules keeps the generic
+// production RBAC boundary attached to both render paths. This is the layer
+// that inspects Helm chart children, which kubectl kustomize cannot see.
+func TestManifestValidationAppliesEffectiveAuthorizationRules(t *testing.T) {
+	const rulesPath = "scripts/tests/production-authorization-rules.yaml"
+	for _, configPath := range []string{"ksail.yaml", "ksail.prod.yaml"} {
+		contents, err := os.ReadFile(filepath.Join("..", "..", configPath)) //nolint:gosec // Explicit repository path.
+		if err != nil {
+			t.Fatalf("read %s: %v", configPath, err)
+		}
+		documents, err := decodeDocuments(contents)
+		if err != nil || len(documents) != 1 {
+			t.Fatalf("decode %s: documents=%d error=%v", configPath, len(documents), err)
+		}
+		validation, err := nestedMap(documents[0], "spec", "workload", "validation")
+		if err != nil {
+			t.Fatalf("%s: %v", configPath, err)
+		}
+		if got := fmt.Sprint(validation["rules"]); got != rulesPath {
+			t.Fatalf("%s validation rules = %q, want %q", configPath, got, rulesPath)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join("..", "..", rulesPath)); err != nil {
+		t.Fatalf("effective authorization rules are unavailable: %v", err)
 	}
 }
 

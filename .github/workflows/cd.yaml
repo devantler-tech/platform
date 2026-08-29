@@ -93,7 +93,7 @@ jobs:
   # shared deploy-prod action — that action runs inside the prod environment with
   # deploy secrets in scope, and a gate belongs before that, not inside it.
   validate-eks-authorization:
-    name: 🔐 Validate EKS Authorization
+    name: 🔐 Validate Production Authorization
     needs: [validate-pvc-prune-safety, validate-rgd-templates]
     runs-on: ubuntu-latest
     permissions:
@@ -125,10 +125,24 @@ jobs:
           sudo install "$kubectl_path" /usr/local/bin/kubectl
           kubectl version --client
 
-      - name: 🔐 Validate EKS authorization surface
+      - name: 🔐 Validate static production authorization controls
         run: |
           go test ./scripts/validate-eks-ci-role-policy
           go run ./scripts/validate-eks-ci-role-policy .
+
+      - name: ⚙️ Setup KSail for effective authorization validation
+        shell: bash
+        env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.180.0"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/setup-ksail.sh
+
+      - name: 🔐 Validate Helm-rendered production authorization controls
+        run: |
+          shellcheck scripts/tests/test-production-authorization-rules.sh
+          bash scripts/tests/test-production-authorization-rules.sh
+          ksail --config ksail.prod.yaml workload validate
 
   # Same reasoning as the authorization gate above, one property along. The
   # ordering contract — publish to an immutable staging reference, sign and

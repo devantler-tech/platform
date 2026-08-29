@@ -101,6 +101,9 @@ spec:
       namespace: crossview
     - kind: HelmRelease
       name: "*"
+      namespace: data-product-controller
+    - kind: HelmRelease
+      name: "*"
       namespace: dex
     - kind: HelmRelease
       name: "*"

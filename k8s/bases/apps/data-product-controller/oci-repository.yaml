@@ -1,0 +1,17 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+  annotations:
+    security.devantler.tech/authorization-scope: isolated-chart
+spec:
+  interval: 10m
+  url: oci://ghcr.io/devantler-tech/charts/data-product-controller
+  ref:
+    # v1.0.0. Pin the content digest so a moved registry tag cannot change the
+    # chart Flux installs.
+    digest: sha256:6f941a096d16eb62bf2668be6e45eebc4dd481eec03e031f3fca8ca4b4db6598
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy

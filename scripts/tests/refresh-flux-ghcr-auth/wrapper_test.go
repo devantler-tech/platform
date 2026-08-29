@@ -380,6 +380,7 @@ func TestMissingVariablesBaseFailsClosedWithoutBootstrapMode(t *testing.T) {
 func TestPartialBootstrapRepairsRootWithoutForcingMissingFanout(t *testing.T) {
 	missingResources := []string{
 		"pushsecret/flux-system/seed-ghcr",
+		"externalsecret/data-product-controller/ghcr-auth",
 		"externalsecret/wedding-app/ghcr-auth",
 		"externalsecret/ascoachingogvaner/ghcr-auth",
 		"externalsecret/kyverno/ghcr-auth",

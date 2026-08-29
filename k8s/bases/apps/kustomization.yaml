@@ -9,6 +9,7 @@ resources:
   # Crossplane CRDs, and Crossplane runs only on the Hetzner provider. The
   # docker provider deploys no apps, so it is naturally excluded from local.
   - crossview/
+  - data-product-controller/
   # fleetdm disabled 2026-06-03 — not in use. The manifests under
   # bases/apps/fleetdm/ are retained; re-enable by uncommenting the line below.
   # The prod-only HelmRelease patch (providers/hetzner/apps/fleetdm/) was
