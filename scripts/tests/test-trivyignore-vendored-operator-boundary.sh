@@ -56,6 +56,11 @@ readonly first_party_pairs=(
   'KSV-0056:k8s/bases/infrastructure/resource-graph-definitions/tenant/cluster-role.yaml'
   'KSV-0056:k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml'
   'KSV-0046:k8s/bases/infrastructure/cluster-roles/cluster-reader.yaml'
+  'KSV-0048:k8s/bases/infrastructure/cluster-roles/tenant-base-edit.yaml'
+  'KSV-0049:k8s/bases/infrastructure/cluster-roles/tenant-base-edit.yaml'
+  'KSV-0048:k8s/bases/infrastructure/controllers/kyverno/role.yaml'
+  'KSV-0048:k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml'
+  'KSV-0113:k8s/bases/infrastructure/vault-config/role.yaml'
 )
 
 # Reviewed NON-RBAC dispositions for these same check ids, as exact CHECK:PATH pairs. Kept
@@ -104,7 +109,7 @@ readonly reviewed_admission_pairs=(
 )
 
 # Every check id dispositioned for the vendored bundles. Keep in sync with .trivyignore.yaml.
-readonly checks=(KSV-0011 KSV-0014 KSV-0018 KSV-0020 KSV-0021 KSV-0041 KSV-0046 KSV-0053 KSV-0056 KSV-0114)
+readonly checks=(KSV-0011 KSV-0014 KSV-0018 KSV-0020 KSV-0021 KSV-0041 KSV-0046 KSV-0048 KSV-0049 KSV-0053 KSV-0056 KSV-0113 KSV-0114)
 
 status=0
 
@@ -187,6 +192,51 @@ for check in "${checks[@]}"; do
     status=1
   }
 done
+
+# ----------------------------------------------------------------- coverage --
+# Everything above examines the ids in `checks`, and `checks` is a by-hand list carrying the comment
+# "Keep in sync with .trivyignore.yaml". That is the same shape of invariant this whole file exists
+# to protect one level up, and it had already gone stale: KSV-0048, KSV-0049 and KSV-0113 were
+# scoped to both vendored bundles in the file and absent from the array, so NARROWED SKIP never ran
+# for them and either bundle could be dropped from their scoping in silence (#3213, #3230).
+#
+# So derive the vendored-scoped set from the file and require the array to contain it. Direction
+# matters: MISSING DISPOSITION and NARROWED SKIP above already cover a reviewed id that leaves the
+# file or loses a bundle; this covers the reverse — an id that ENTERS the file scoped to a bundle
+# without joining the reviewed set, which is the only way the array can fall behind again.
+#
+# Deliberately NOT a whole-file "every entry must carry paths:" rule: KSV-0039 is a pre-existing,
+# legitimately unscoped entry, so that invariant is false on this file today.
+derived_ids="$(
+  # shellcheck disable=SC2016 # $id is a yq variable.
+  yq -r '.misconfigurations[] | .id as $id | (.paths // [])[] | $id + " " + .' "$ignorefile" |
+    while IFS=' ' read -r derived_id derived_path; do
+      # An `if` rather than the `case` used elsewhere in this file: bash 3.2 (still the system bash
+      # on macOS, where these tests also run) mis-parses a `case` nested inside $(...) and dies with
+      # a spurious syntax error. Same literal comparison, no globbing either way.
+      if [ "$derived_path" = "$vendored_cdi" ] || [ "$derived_path" = "$vendored_kubevirt" ]; then
+        printf '%s\n' "$derived_id"
+      fi
+    done | sort -u
+)"
+
+# Without this the comparison below passes vacuously whenever the derivation breaks — a yq change, a
+# renamed bundle path — and a broken read is indistinguishable from a fully covered file.
+if [ -z "$derived_ids" ]; then
+  printf 'COVERAGE UNCHECKABLE: no id could be derived as scoped to the vendored bundles, so an empty comparison would be meaningless\n' >&2
+  status=1
+fi
+
+while IFS= read -r derived_id; do
+  [ -n "$derived_id" ] || continue
+  case " ${checks[*]} " in
+    *" $derived_id "*) ;;
+    *)
+      printf 'UNGUARDED DISPOSITION: %s is scoped to a vendored operator bundle but is absent from this test'"'"'s check list, so nothing above examines its scoping\n' "$derived_id" >&2
+      status=1
+      ;;
+  esac
+done <<<"$derived_ids"
 
 # ------------------------------------------------------------------ premise --
 # The KSV-0014 disposition rests on a claim the structural layer cannot see: these two Deployments
@@ -307,6 +357,29 @@ rules:
   - apiGroups: [""]
     resources: ["services", "endpoints"]
     verbs: ["get", "list", "create", "update", "delete"]
+  # The wildcard rule above does NOT trip KSV-0048/0049/0113 — those match explicit resources, so
+  # without these three the control half below would pass vacuously for them (#3230).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "update", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets", "statefulsets"]
+    verbs: ["create", "update", "delete"]
+---
+# A namespaced Role, not a ClusterRole: KSV-0113 fires only on this shape, so the ClusterRole above
+# cannot stand in for it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: boundary-probe
+  namespace: boundary-probe
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "update", "patch"]
 ---
 apiVersion: apps/v1
 kind: Deployment
