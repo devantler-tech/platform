@@ -15,6 +15,11 @@
 # re-admitted, so the denial only surfaces when a revision bump forces a
 # recreate — at which point the whole provider fleet goes to zero pods
 # (platform#3470). This gate keeps that from regressing.
+#
+# It also pins the rest of the pod securityContext. Crossplane applies its own
+# pod-level defaults ONLY when the DRC supplies no securityContext at all, so a
+# DRC that declares seccompProfile alone silently drops runAsNonRoot and the
+# uid/gid the provider images run as. The block has to stay complete.
 
 set -euo pipefail
 
@@ -66,9 +71,20 @@ for f in "${files[@]}"; do
       ;;
   esac
 
+  # Crossplane's package-manager defaults are applied only when the DRC gives no
+  # securityContext at all, so declaring one makes these our responsibility.
+  for field in runAsNonRoot:true runAsUser:2000 runAsGroup:2000; do
+    key="${field%%:*}"
+    want="${field#*:}"
+    got="$(yq -r ".spec.deploymentTemplate.spec.template.spec.securityContext.${key} // \"\"" "$f")"
+    [ "${got}" = "${want}" ] || fail "${name} ($(basename "$f")): pod-level ${key} is '${got}', expected '${want}'
+       Declaring a pod securityContext suppresses Crossplane's own defaults, so
+       the DRC must restate them or the provider silently changes uid."
+  done
+
   checked=$((checked + 1))
 done
 
 [ "${checked}" -gt 0 ] || fail "no DeploymentRuntimeConfig found under ${drc_dir} — the gate asserted nothing"
 
-printf 'PASS: %d provider DeploymentRuntimeConfig(s) set a pod-level seccompProfile.\n' "${checked}"
+printf 'PASS: %d provider DeploymentRuntimeConfig(s) declare a complete pod securityContext.\n' "${checked}"
