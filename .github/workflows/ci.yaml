@@ -298,6 +298,9 @@ jobs:
               # The reviewed disposition list the guard reads: editing a row
               # changes what the guard permits, so it must re-run.
               - 'scripts/render-remote-resource-exceptions.tsv'
+              # Both halves, for the same reason as the guards above.
+              - 'scripts/guard-pod-security-exception-scope.sh'
+              - 'scripts/tests/test-guard-pod-security-exception-scope.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
@@ -945,6 +948,27 @@ jobs:
         run: |
           bash scripts/guard-render-remote-resources.sh k8s
           bash scripts/tests/test-guard-render-remote-resources.sh
+
+      - name: 🔗 Validate the pod-security exception still matches its mutation's scope
+        if: needs.changes.outputs.k8s == 'true'
+        # The exception suppresses C-0016/C-0055 everywhere EXCEPT the twelve
+        # namespaces its compensating mutation does not reach. #2824 happened because
+        # those two scopes drifted apart in silence, and the narrowing that fixed it
+        # left the agreement resting on a code comment. Both directions of drift read
+        # as compliance: a namespace added to the mutation's exclusions and not the
+        # exception re-creates the original defect, and one removed from the
+        # exclusions but left in the exception enforces controls where the mutation
+        # now runs, producing findings that are not real gaps.
+        #
+        # The comparison is NOT against the exclusion list: add-pod-security-context
+        # excludes fifteen namespaces, and three of them (cert-manager, keda,
+        # opencost) are reached by the by-name add-imageuid rule. Reading exclusions
+        # alone reports three false differences on a correct tree, and the natural way
+        # to silence that is to add them to the exception — the very drift this
+        # catches (#3224).
+        run: |
+          bash scripts/guard-pod-security-exception-scope.sh
+          bash scripts/tests/test-guard-pod-security-exception-scope.sh
 
       - name: 📐 Validate LimitRange-premised suppressions actually have a LimitRange
         if: needs.changes.outputs.k8s == 'true'
