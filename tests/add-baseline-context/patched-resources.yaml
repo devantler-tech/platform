@@ -64,6 +64,9 @@ metadata:
   name: podlevel
   namespace: velero
 spec:
+  initContainers:
+    - name: init
+      image: velero/velero-plugin:v1.0.0
   containers:
     - name: app
       image: velero/velero:v1.0.0

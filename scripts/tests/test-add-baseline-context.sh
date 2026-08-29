@@ -101,6 +101,8 @@ check unlabelled-mutated.yaml '.spec.containers[0].securityContext.seLinuxOption
 # that silently stopped matching cannot make the other three pass vacuously.
 check podlevel-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions' \
   null "pod-level SELinux options were overridden by a container-level injection"
+check podlevel-mutated.yaml '.spec.initContainers[0].securityContext.seLinuxOptions' \
+  null "pod-level SELinux options were overridden by an initContainer-level injection"
 check podlevel-mutated.yaml '.spec.securityContext.seLinuxOptions.level' \
   s9 "pod-level seLinuxOptions.level was not preserved"
 check podlevel-mutated.yaml '.spec.securityContext.seLinuxOptions.user' \
