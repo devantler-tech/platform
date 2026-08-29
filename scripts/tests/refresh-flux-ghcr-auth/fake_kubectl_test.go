@@ -2026,6 +2026,23 @@ func fakeKubectlGetRuntimeProbe(args []string) int {
 	}
 	status := map[string]any{}
 	probeIP, _ := fakeNodeAddress(probeNode)
+	// A probe the kubelet never reported on: the Pod exists but carries no
+	// containerStatuses at all. This is what a still-Pending probe, or one the
+	// kubelet rejected outright (OutOfmemory/OutOfpods), actually looks like.
+	if wordListContains(os.Getenv("FAKE_RUNTIME_PROBE_STALLED_NODES"), probeNode) {
+		status["phase"] = defaultString(os.Getenv("FAKE_RUNTIME_PROBE_STALLED_PHASE"), "Pending")
+		if reason := os.Getenv("FAKE_RUNTIME_PROBE_STALLED_REASON"); reason != "" {
+			status["reason"] = reason
+		}
+		if message := os.Getenv("FAKE_RUNTIME_PROBE_STALLED_MESSAGE"); message != "" {
+			status["message"] = message
+		}
+		fmt.Println(encodeJSON(map[string]any{
+			"spec":   map[string]any{"imagePullSecrets": pullSecrets},
+			"status": status,
+		}))
+		return 0
+	}
 	if (wordListContains(os.Getenv("FAKE_RUNTIME_PULL_FAIL_NODES"), probeNode) &&
 		!markerExists("talos-reboot-"+probeIP)) ||
 		wordListContains(os.Getenv("FAKE_RUNTIME_PULL_FAIL_IMAGES"), probeImage) {

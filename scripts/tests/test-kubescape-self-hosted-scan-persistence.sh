@@ -5,6 +5,7 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
+readonly network_policy="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/cilium-network-policy.yaml"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -12,6 +13,7 @@ fail() {
 }
 
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required to inspect the Kubescape HelmRelease'
+command -v helm >/dev/null 2>&1 || fail 'helm is required to render the pinned Kubescape chart'
 
 scanner_tag="$(yq -er '.spec.values.kubescape.image.tag | select(tag == "!!str")' "${helm_release}")" ||
   fail 'the Kubescape scanner image tag is missing or is not a string'
@@ -46,5 +48,166 @@ offline="$(yq -er '.spec.values.capabilities.kubescapeOffline' "${helm_release}"
 readonly offline
 [[ "${offline}" == "disable" ]] ||
   fail 'Kubescape offline mode must stay disabled so the scanner can fetch policy artifacts'
+
+# The scanner's API-server persistence handler stores detailed
+# WorkloadConfigurationScan objects only when clusterData.continuousPostureScan
+# is true. Chart 1.40.3 derives that flag from this capability.
+continuous_scan="$(yq -er '.spec.values.capabilities.continuousScan' "${helm_release}")" ||
+  fail 'capabilities.continuousScan is missing'
+readonly continuous_scan
+[[ "${continuous_scan}" == "enable" ]] ||
+  fail 'continuousScan must be enabled so scheduled scans persist detailed posture results'
+
+# Enabling the capability also starts the operator's event-driven scanner. Keep
+# its resource set empty: the pinned operator turns an empty match list into an
+# empty watch pool, preserving scheduled persistence without scan-on-change
+# traffic that omits keepLocal.
+continuous_match_count="$(yq -er '
+  .spec.values.continuousScanning.matchingRules.match |
+  select(tag == "!!seq") |
+  length
+' "${helm_release}")" || fail 'continuous-scanning matchingRules.match must be an explicit list'
+readonly continuous_match_count
+[[ "${continuous_match_count}" == "0" ]] ||
+  fail 'continuous-scanning matchingRules.match must stay empty in this self-hosted deployment'
+
+continuous_namespace_count="$(yq -er '
+  .spec.values.continuousScanning.matchingRules.namespaces |
+  select(tag == "!!seq") |
+  length
+' "${helm_release}")" || fail 'continuous-scanning matchingRules.namespaces must be an explicit list'
+readonly continuous_namespace_count
+[[ "${continuous_namespace_count}" == "0" ]] ||
+  fail 'continuous-scanning matchingRules.namespaces must stay empty in this self-hosted deployment'
+
+# The chart hashes one shared cluster seed for both default schedules, so its
+# nominally different posture/vulnerability defaults render to the same cron
+# instant. Both scans are high-volume writers to one SQLite-backed storage API;
+# keep their authored windows separated so detailed posture writes do not lose
+# the single-writer lock to vulnerability results. These value paths and their
+# CronJob mapping were verified against immutable chart 1.40.3; fail on a chart
+# bump so the new chart must be rendered and this contract deliberately renewed.
+chart_version="$(yq -er '
+  .spec.chart.spec.version |
+  select(tag == "!!str" and length > 0)
+' "${helm_release}")" || fail 'the Kubescape chart version must be an exact string'
+readonly chart_version
+[[ "${chart_version}" == "1.40.3" ]] ||
+  fail 'the Kubescape chart changed; revalidate both rendered scheduler CronJobs before updating this guard'
+
+posture_schedule="$(yq -er '
+  .spec.values.kubescapeScheduler.scanSchedule |
+  select(tag == "!!str" and length > 0)
+' "${helm_release}")" || fail 'the Kubescape posture schedule must be explicit'
+readonly posture_schedule
+[[ "${posture_schedule}" == "12 9 * * *" ]] ||
+  fail 'the Kubescape posture scan must stay in its authored daily window'
+
+vulnerability_schedule="$(yq -er '
+  .spec.values.kubevulnScheduler.scanSchedule |
+  select(tag == "!!str" and length > 0)
+' "${helm_release}")" || fail 'the Kubescape vulnerability schedule must be explicit'
+readonly vulnerability_schedule
+[[ "${vulnerability_schedule}" == "12 1 * * *" ]] ||
+  fail 'the Kubescape vulnerability scan must stay separated from posture persistence'
+
+[[ "${posture_schedule}" != "${vulnerability_schedule}" ]] ||
+  fail 'posture and vulnerability scans must not contend for storage in the same window'
+
+# Exercise the immutable chart contract rather than trusting value-path names.
+# The K8s validation job already fetches Helm sources through KSail; this direct
+# render additionally proves that the reviewed chart maps each authored value to
+# the intended CronJob. Pin the archive bytes so a republished tag fails closed.
+readonly chart_repository='https://kubescape.github.io/helm-charts/'
+readonly chart_archive_sha256='2a0ffaa69068218f03a44139ac77c81905350208413c14ba697e9514f204af07'
+chart_dir="$(mktemp -d "${TMPDIR:-/tmp}/kubescape-chart.XXXXXX")" ||
+  fail 'could not create a temporary directory for the Kubescape chart'
+readonly chart_dir
+cleanup() {
+  rm -rf -- "${chart_dir}"
+}
+trap cleanup EXIT
+
+helm pull kubescape-operator \
+  --repo "${chart_repository}" \
+  --version "${chart_version}" \
+  --destination "${chart_dir}" >/dev/null || fail 'could not fetch the pinned Kubescape chart'
+readonly chart_archive="${chart_dir}/kubescape-operator-${chart_version}.tgz"
+
+if command -v sha256sum >/dev/null 2>&1; then
+  chart_archive_actual_sha256="$(sha256sum "${chart_archive}" | cut -d ' ' -f 1)"
+else
+  chart_archive_actual_sha256="$(shasum -a 256 "${chart_archive}" | cut -d ' ' -f 1)"
+fi
+readonly chart_archive_actual_sha256
+[[ "${chart_archive_actual_sha256}" == "${chart_archive_sha256}" ]] ||
+  fail 'the pinned Kubescape chart archive checksum changed'
+
+readonly chart_values="${chart_dir}/values.yaml"
+readonly rendered_chart="${chart_dir}/rendered.yaml"
+yq '.spec.values' "${helm_release}" >"${chart_values}"
+helm template kubescape "${chart_archive}" \
+  --namespace kubescape \
+  --values "${chart_values}" >"${rendered_chart}" || fail 'the pinned Kubescape chart did not render'
+
+rendered_posture_schedule="$(yq ea -er '
+  select(.kind == "CronJob" and .metadata.name == "kubescape-scheduler") |
+  .spec.schedule |
+  select(tag == "!!str")
+' "${rendered_chart}")" || fail 'the rendered posture CronJob schedule is missing'
+readonly rendered_posture_schedule
+[[ "${rendered_posture_schedule}" == "${posture_schedule}" ]] ||
+  fail 'the rendered posture CronJob does not use the authored schedule'
+
+rendered_vulnerability_schedule="$(yq ea -er '
+  select(.kind == "CronJob" and .metadata.name == "kubevuln-scheduler") |
+  .spec.schedule |
+  select(tag == "!!str")
+' "${rendered_chart}")" || fail 'the rendered vulnerability CronJob schedule is missing'
+readonly rendered_vulnerability_schedule
+[[ "${rendered_vulnerability_schedule}" == "${vulnerability_schedule}" ]] ||
+  fail 'the rendered vulnerability CronJob does not use the authored schedule'
+
+[[ "${rendered_posture_schedule}" != "${rendered_vulnerability_schedule}" ]] ||
+  fail 'the rendered posture and vulnerability CronJobs must use separate windows'
+
+# Registry blob pulls can redirect from their API hosts to separate CDN hosts.
+# If a redirect host is blocked, kubevuln retries timeouts for hours and keeps
+# the SQLite storage backend contended while posture results try to persist.
+assert_https_fqdn() {
+  local fqdn="$1"
+  local description="$2"
+  local matches
+  local https_rules
+
+  matches="$(REQUIRED_FQDN="${fqdn}" yq -er '
+    [.spec.egress[].toFQDNs[]? |
+      select(.matchName == strenv(REQUIRED_FQDN))] |
+    length
+  ' "${network_policy}")" || fail "could not inspect ${description} in the Kubescape egress policy"
+  [[ "${matches}" == "1" ]] ||
+    fail "Kubescape egress must allow ${description} exactly once"
+
+  https_rules="$(REQUIRED_FQDN="${fqdn}" yq -er '
+    [.spec.egress[] |
+      select(
+        (.toFQDNs // []) |
+        map(.matchName) |
+        contains([strenv(REQUIRED_FQDN)])
+      ) |
+      select(
+        (.toPorts | length) == 1 and
+        (.toPorts[0].ports | length) == 1 and
+        .toPorts[0].ports[0].port == "443" and
+        .toPorts[0].ports[0].protocol == "TCP"
+      )] |
+    length
+  ' "${network_policy}")" || fail "could not inspect ${description} port restriction"
+  [[ "${https_rules}" == "1" ]] ||
+    fail "Kubescape ${description} egress must be restricted to TCP port 443"
+}
+
+assert_https_fqdn 'production.cloudfront.docker.com' 'Docker Hub CloudFront blob redirect host'
+assert_https_fqdn 'cdn.registry.k8s.io' 'Kubernetes registry CDN redirect host'
 
 printf 'Kubescape self-hosted scan persistence contract is valid (%s).\n' "${scanner_tag}"

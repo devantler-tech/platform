@@ -1379,12 +1379,36 @@ delete_runtime_pull_probe() {
 # the legacy outage state, machine config already held the new token while the
 # running runtime still presented a revoked predecessor. imagePullPolicy Always
 # forces a registry resolution even when the exact private image is cached.
+# Describe an observed probe Pod in bounded, non-sensitive terms. Kubelet and
+# registry messages can carry node detail and scoped token URLs, so this reports
+# only the enumerated state fields that make a failure diagnosable, never a raw
+# message. An unreadable document degrades to "unavailable" rather than failing
+# the caller: this is evidence for an error path that has already been decided.
+summarize_runtime_probe_state() {
+  jq -r '
+    (first(.status.containerStatuses[]? | select(.name == "pull-probe")) // null) as $cs
+    | [
+        "phase=" + (.status.phase // "unknown"),
+        "podReason=" + (.status.reason // "none"),
+        (if $cs == null then
+           "containerStatus=absent"
+         else
+           "containerStatus=present",
+           "waitingReason=" + ($cs.state.waiting.reason // "none"),
+           "terminatedReason=" + ($cs.state.terminated.reason // "none")
+         end)
+      ]
+    | join(" ")
+  ' "$1" 2>/dev/null || printf 'unavailable'
+}
+
 probe_node_runtime_pull() {
   local node_name="$1"
   local probe_image="$2"
   local probe_name
   local attempt create_attempt image_id waiting_reason auth_rejected
   local probe_created=0
+  local probe_phase probe_state_summary="unavailable"
 
   assert_sync_lease_held || return 1
   runtime_probe_sequence=$((runtime_probe_sequence + 1))
@@ -1501,6 +1525,8 @@ probe_node_runtime_pull() {
       echo "::error::Runtime probe on ${node_name} received an imagePullSecret, so it did not prove the running containerd credential; refusing the drain."
       return 1
     fi
+    probe_state_summary="$(summarize_runtime_probe_state \
+      "${runtime_probe_state_file}")"
     image_id="$(jq -r '
       first(.status.containerStatuses[]?
         | select(.name == "pull-probe")
@@ -1510,6 +1536,23 @@ probe_node_runtime_pull() {
     if [[ -n "${image_id}" ]]; then
       delete_runtime_pull_probe "${probe_name}" || return 1
       return 0
+    fi
+    # A terminal phase with no container status means the kubelet disposed of
+    # the Pod without ever starting the probe container (for example
+    # OutOfmemory/OutOfpods admission on the pinned node). The running
+    # containerd credential was never exercised, so this is a mechanism
+    # failure, not credential evidence. Polling it to the end of the budget
+    # would spend the whole window and then misreport it as an unproved
+    # runtime, which is exactly what made this undiagnosable in production.
+    probe_phase="$(jq -r '.status.phase // ""' \
+      "${runtime_probe_state_file}")"
+    if [[ "${probe_phase}" == "Failed" || "${probe_phase}" == "Succeeded" ]] &&
+      ! jq -e \
+        'any(.status.containerStatuses[]?; .name == "pull-probe")' \
+        "${runtime_probe_state_file}" >/dev/null; then
+      delete_runtime_pull_probe "${probe_name}" || true
+      echo "::error::The runtime pull probe on ${node_name} did not run (${probe_state_summary}); the running containerd credential was never exercised, so this is not credential evidence. Refusing the drain."
+      return 1
     fi
     waiting_reason="$(jq -r '
       first(.status.containerStatuses[]?
@@ -1545,7 +1588,7 @@ probe_node_runtime_pull() {
   done
 
   delete_runtime_pull_probe "${probe_name}" || true
-  echo "::error::Timed out proving the running containerd GHCR credential on ${node_name}; refusing to drain workloads onto an unproved runtime."
+  echo "::error::Timed out proving the running containerd GHCR credential on ${node_name} after $((SYNC_ATTEMPTS))x${SYNC_INTERVAL}s (last observed probe state: ${probe_state_summary}); refusing to drain workloads onto an unproved runtime."
   return 1
 }
 

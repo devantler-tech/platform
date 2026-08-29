@@ -64,22 +64,24 @@ spec:
         # ghcr.io (GitHub Container Registry) — blobs on the GitHub package CDN:
         - matchName: "ghcr.io"
         - matchName: "pkg-containers.githubusercontent.com"
-        # docker.io — registry v2 + token endpoints; blobs on the Cloudflare CDN:
+        # docker.io — registry v2 + token endpoints; blobs may redirect through
+        # either Cloudflare or CloudFront:
         - matchName: "index.docker.io"
         - matchName: "registry-1.docker.io"
         - matchName: "auth.docker.io"
         - matchName: "production.cloudflare.docker.com"
+        - matchName: "production.cloudfront.docker.com"
         # quay.io — registry + its documented blob CDN hosts:
         - matchName: "quay.io"
         - matchName: "cdn01.quay.io"
         - matchName: "cdn02.quay.io"
         - matchName: "cdn03.quay.io"
-        # registry.k8s.io — redirects blob pulls to its Google Artifact Registry
-        # backing store (*.pkg.dev) and, for EU clients, to its prod S3 mirror
-        # buckets — kubevuln logged i/o timeouts pulling e.g. vpa-recommender from
-        # prod-registry-k8s-io-eu-central-1.s3.dualstack.eu-central-1.amazonaws.com.
-        # The pattern is scoped to the registry's own prod buckets (not all of S3):
+        # registry.k8s.io — redirects blob pulls through its CDN, its Google
+        # Artifact Registry backing store (*.pkg.dev), or, for EU clients, its
+        # prod S3 mirror buckets. The S3 pattern is scoped to the registry's own
+        # prod buckets rather than all of S3:
         - matchName: "registry.k8s.io"
+        - matchName: "cdn.registry.k8s.io"
         - matchPattern: "*.pkg.dev"
         - matchPattern: "prod-registry-k8s-io-*.s3.dualstack.*.amazonaws.com"
         # reg.kyverno.io — Kyverno's image registry:

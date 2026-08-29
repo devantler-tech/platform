@@ -1332,53 +1332,58 @@ const (
 //
 // Measured against BOTH parents of this merge for the tag-signed provider
 // package. Each parent had already re-approved this constant from the same
-// 54e239a1 baseline: main 606d60e8 moved it to 820705ec for the Kubescape
-// scanner image bump, and this branch f9f9c4fd moved it to d3dd99e9 for the
-// provider package. The merged tree therefore renders to a third aggregate that
-// neither parent carries, and the pinned approved renderer reports it as:
+// 54e239a1 baseline: this branch 7afb1ed2 carried a015af05 for the provider
+// package, and main ad149ddd carried 026c985d after its own Kubescape
+// detailed-result storage and scan-window re-approvals. The merged tree
+// therefore renders to a third aggregate that neither parent carries:
 //
-//	a015af05c3b1a620ecd6a7990353e9f1db03b7c50d7ceb2edd63e3563a6591d5
+//	a8f0075fcb41fb5b79c608ee9816bfe3c01062bf7c94696f3a044f2f55336a2a
 //
 // The aggregate is the ONLY thing that moved. Against the merged tree the
-// approved renderer reports ZERO per-identity mismatches, ZERO missing
-// resources, ZERO duplicates and ZERO encrypted-SOPS findings, alongside the
-// same 35 known Flux substitution diagnostics that accompany any aggregate
-// mismatch and are not findings. expectedRenderedHashes is byte-identical to
-// both parents, so no per-identity approval changed either.
+// renderer reports ZERO per-identity mismatches, ZERO missing resources, ZERO
+// duplicates and ZERO encrypted-SOPS findings, alongside the same 35 known Flux
+// substitution diagnostics that accompany any aggregate mismatch and are not
+// findings. expectedRenderedHashes is byte-identical to both parents, so no
+// per-identity approval changed either.
 //
 // Grant conservation was proven without reference to any particular renderer.
 // That is what makes it independent evidence: approving an aggregate is anchored
 // on CI's pinned renderer, whereas a conservation diff only needs the SAME
-// renderer on every tree it compares. Rendering all five production
-// overlays of the merged tree and of both parents with one and the same local
-// renderer — so any renderer difference cancels — and canonicalizing every Role,
-// ClusterRole, RoleBinding, ClusterRoleBinding and ServiceAccount yields one
-// identical digest on all three trees:
+// renderer on every tree it compares. Rendering all five production overlays of
+// the merged tree and of both parents with one and the same local renderer — so
+// any renderer difference cancels — and canonicalizing every Role, ClusterRole,
+// RoleBinding, ClusterRoleBinding and ServiceAccount yields one identical digest
+// on all three trees:
 //
-//	d4d72ffd648633176395dad81410796c1eb8bd8f6829382fc3538783daa95ad7
+//	e07384d8d746ad81a7cb4aec7757eb30a23582fb2e319ad652b6bc7ed13c96d7
 //
 // at the usual stable counts: Role 11, ClusterRole 24, RoleBinding 15,
-// ClusterRoleBinding 12 and ServiceAccount 16, 78 documents in total. That
-// digest tracks grant content rather than merely existing: widening one rendered
-// ClusterRole (longhorn-stale-node-cleanup) by a single verb moves it to
-// 2b1af3ea336f811aebf9cadbdb4390013ac63f05ea2eec9ae22e6ac88322cc97, so the
-// three-way match is a measurement and not a vacuous join. The merge grants
-// nothing that neither parent already granted.
+// ClusterRoleBinding 12 and ServiceAccount 16, 78 documents in total. The
+// three-way match is a measurement and not a vacuous join, and that was checked
+// in both directions. Widening one rendered ClusterRole
+// (longhorn-stale-node-cleanup) by a single verb moves the digest to
+// 4d5c9809598113a20a0797123901b91f9453661d94ed915203a332f70d5f9df2, so it does
+// track grant content; and a reformat-only control that rewrites every document
+// without changing any grant leaves it at e07384d8, so it does not merely track
+// serialization. The merge grants nothing that neither parent already granted.
 //
-// The aggregate was corroborated by a SECOND, independent renderer. The pin is
-// enforced by CI provisioning — the workflow installs a SHA256-verified kubectl
-// v1.36.2 — and not by a runtime call, so validateAuthorization renders with
-// whatever kubectl is on PATH. Running it here against this host's v1.36.1
-// reproduces the same a015af05 aggregate that CI's v1.36.2 reported: the
-// committed value accepts it, and a deliberately wrong value is rejected with
-// that same computed digest. An unapproved renderer cannot approve anything on
-// its own, but two renderer patch levels agreeing is stronger than either alone.
+// RENDERER PROVENANCE, stated plainly: the aggregate above was computed on this
+// host's kubectl v1.36.1 with kustomize v5.8.1, which is NOT the pinned
+// approved renderer. validateAuthorization refuses to run at all on an
+// unapproved renderer, so the value was measured with that version gate
+// relaxed locally, for measurement only — that relaxation is deliberately NOT
+// part of this commit, and expectedKubectlVersion remains v1.36.2. An
+// unapproved renderer cannot approve anything on its own: CI's SHA256-verified
+// kubectl v1.36.2 is what approves this constant, and if it computes a
+// different aggregate the check fails closed and reports the value it computed.
+// The conservation digest above is unaffected either way, because it compares
+// three trees under one renderer rather than anchoring on a pinned one.
 //
 // The two superseded approved aggregate digests were:
 //
-//	820705ecf824f83fd8c693e46579dda594e51ce50a7044af5c340e8c3c013669
-//	d3dd99e90d1cd8d80cca5166aff3b52eea53d69352db7b834a1d197f60661ef4
-const expectedRenderedSurfaceSHA = "a015af05c3b1a620ecd6a7990353e9f1db03b7c50d7ceb2edd63e3563a6591d5"
+//	a015af05c3b1a620ecd6a7990353e9f1db03b7c50d7ceb2edd63e3563a6591d5
+//	026c985d74ec1230e7272488d2a55c028bb78916c4c8362f22c447c862111d78
+const expectedRenderedSurfaceSHA = "a8f0075fcb41fb5b79c608ee9816bfe3c01062bf7c94696f3a044f2f55336a2a"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
