@@ -1397,7 +1397,42 @@ const (
 // approved aggregate digest was:
 //
 //	8758aca997ecdf37b536b18420803f46e67e0af05b851fafefbaa83e02b01fe3
-const expectedRenderedSurfaceSHA = "ec7889f10c850126e206c93669adbd2c1406c5f189e07b2cbfe5e63e7d24e287"
+//
+// Moved again by the Crossplane provider rename that fixes the dead provider
+// fleet (#3454): provider-family-aws becomes upbound-provider-family-aws, the
+// name Crossplane derives from its package, so the dependency manager stops
+// creating a duplicate Provider for a source the lock already holds.
+//
+// Measured against main 14351b35 by rendering all five roots from both trees
+// with ONE renderer, so renderer differences cancel: 544 documents on main and
+// 544 on this branch. Neither side carries a duplicate apiVersion|kind|
+// namespace|name identity, so the pairing is one-to-one. Set difference in BOTH
+// directions returns exactly one document each way — the rename, and nothing
+// else:
+//
+//	removed  pkg.crossplane.io/v1  Provider  provider-family-aws
+//	added    pkg.crossplane.io/v1  Provider  upbound-provider-family-aws
+//
+// A Crossplane Provider is not a grant-bearing kind, and the grant-bearing
+// counts confirm nothing moved: Role / ClusterRole / RoleBinding /
+// ClusterRoleBinding / ServiceAccount are 11/24/15/12/16 on BOTH sides.
+//
+// Exactly two surviving documents change content, both because provider RBAC is
+// named after the provider revision, so the rename moves the ClusterRole these
+// two match by anchored regex:
+//
+//	kubescape.io/v1beta1  ClusterSecurityException  secret-reader-rbac
+//	v1                    ConfigMap                 kubescape/headlamp-exceptions
+//
+// Both are byte-identical to main after un-substituting the rename in the
+// rendered output, so the regex is their ONLY change; the negative control (the
+// same comparison without that substitution) reports a difference, so the check
+// is not vacuous. No subject, grant, security context, or authorization
+// resource is added, removed or widened. The previous approved aggregate digest
+// was:
+//
+//	ec7889f10c850126e206c93669adbd2c1406c5f189e07b2cbfe5e63e7d24e287
+const expectedRenderedSurfaceSHA = "a3199d02a7c8b32c0c82bd6a619ea020993d0e37f2dc1e4fe1b23e96d3a91f5d"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
