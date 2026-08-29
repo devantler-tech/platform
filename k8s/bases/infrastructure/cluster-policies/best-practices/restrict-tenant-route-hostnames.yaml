@@ -39,7 +39,9 @@
 #
 # Because the excludes match on request.userInfo, the policy is admission-only
 # (background: false); every escalation is a create/update that passes through
-# admission, so enforcement is unaffected.
+# admission, so enforcement is unaffected. DELETE is deliberately excluded:
+# removing a route cannot claim a hostname, and retired tenant resources must
+# remain removable after their allow-list entry is gone.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -70,6 +72,9 @@ spec:
           - resources:
               kinds:
                 - HTTPRoute
+              operations:
+                - CREATE
+                - UPDATE
               namespaces:
                 - wedding-app
       exclude:
@@ -102,6 +107,9 @@ spec:
           - resources:
               kinds:
                 - HTTPRoute
+              operations:
+                - CREATE
+                - UPDATE
               namespaces:
                 - ascoachingogvaner
       exclude:
@@ -138,6 +146,9 @@ spec:
           - resources:
               kinds:
                 - HTTPRoute
+              operations:
+                - CREATE
+                - UPDATE
               namespaceSelector:
                 matchLabels:
                   app.kubernetes.io/managed-by: ksail
