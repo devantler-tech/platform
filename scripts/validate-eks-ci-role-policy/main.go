@@ -1330,30 +1330,60 @@ const (
 //
 //	54e239a1e85e29ed66523bd1d01bfb588678d88e5567d9522a013385ca1285f1
 //
-// Measured against main 606d60e8 for the Kubescape detailed-result storage
-// repair: the five production projections retain the same selected identities,
-// every pinned per-identity fingerprint still passes, and the same 35 known
-// Flux-substitution diagnostics remain. Rendering chart 1.40.3 on both sides
-// produces byte-identical Roles, ClusterRoles, RoleBindings,
-// ClusterRoleBindings, and ServiceAccounts. The aggregate moves only because
-// the Kubescape HelmRelease enables continuousPostureScan and supplies an empty
-// event-scanning match set; neither value names a subject, grant, security
-// context, or authorization resource. The previous approved aggregate digest
-// was:
+// Measured against BOTH parents of this merge for the tag-signed provider
+// package. Each parent had already re-approved this constant from the same
+// 54e239a1 baseline: this branch 7afb1ed2 carried a015af05 for the provider
+// package, and main ad149ddd carried 026c985d after its own Kubescape
+// detailed-result storage and scan-window re-approvals. The merged tree
+// therefore renders to a third aggregate that neither parent carries:
 //
-//	820705ecf824f83fd8c693e46579dda594e51ce50a7044af5c340e8c3c013669
+//	a8f0075fcb41fb5b79c608ee9816bfe3c01062bf7c94696f3a044f2f55336a2a
 //
-// Measured against main ed70dc25 for the Kubescape scan-window separation:
-// rendering chart 1.40.3 before and after the change produces byte-identical
-// Roles, ClusterRoles, RoleBindings, ClusterRoleBindings, and ServiceAccounts
-// (digest e75cc993ff03e6fb60365e1dff3beb4b084aeea046c10d488bbe0a32b6af411c;
-// counts 2, 5, 3, 6, and 5 respectively). The aggregate changes only because
-// the Kubescape HelmRelease now authors distinct posture and vulnerability
-// CronJob schedules; neither value names a subject, grant, security context,
-// or authorization resource. The previous approved aggregate digest was:
+// The aggregate is the ONLY thing that moved. Against the merged tree the
+// renderer reports ZERO per-identity mismatches, ZERO missing resources, ZERO
+// duplicates and ZERO encrypted-SOPS findings, alongside the same 35 known Flux
+// substitution diagnostics that accompany any aggregate mismatch and are not
+// findings. expectedRenderedHashes is byte-identical to both parents, so no
+// per-identity approval changed either.
 //
-//	0490a49adb4aa2efac35428b70044db00542aca22747137377bfc1d8c99fed66
-const expectedRenderedSurfaceSHA = "026c985d74ec1230e7272488d2a55c028bb78916c4c8362f22c447c862111d78"
+// Grant conservation was proven without reference to any particular renderer.
+// That is what makes it independent evidence: approving an aggregate is anchored
+// on CI's pinned renderer, whereas a conservation diff only needs the SAME
+// renderer on every tree it compares. Rendering all five production overlays of
+// the merged tree and of both parents with one and the same local renderer — so
+// any renderer difference cancels — and canonicalizing every Role, ClusterRole,
+// RoleBinding, ClusterRoleBinding and ServiceAccount yields one identical digest
+// on all three trees:
+//
+//	e07384d8d746ad81a7cb4aec7757eb30a23582fb2e319ad652b6bc7ed13c96d7
+//
+// at the usual stable counts: Role 11, ClusterRole 24, RoleBinding 15,
+// ClusterRoleBinding 12 and ServiceAccount 16, 78 documents in total. The
+// three-way match is a measurement and not a vacuous join, and that was checked
+// in both directions. Widening one rendered ClusterRole
+// (longhorn-stale-node-cleanup) by a single verb moves the digest to
+// 4d5c9809598113a20a0797123901b91f9453661d94ed915203a332f70d5f9df2, so it does
+// track grant content; and a reformat-only control that rewrites every document
+// without changing any grant leaves it at e07384d8, so it does not merely track
+// serialization. The merge grants nothing that neither parent already granted.
+//
+// RENDERER PROVENANCE, stated plainly: the aggregate above was computed on this
+// host's kubectl v1.36.1 with kustomize v5.8.1, which is NOT the pinned
+// approved renderer. validateAuthorization refuses to run at all on an
+// unapproved renderer, so the value was measured with that version gate
+// relaxed locally, for measurement only — that relaxation is deliberately NOT
+// part of this commit, and expectedKubectlVersion remains v1.36.2. An
+// unapproved renderer cannot approve anything on its own: CI's SHA256-verified
+// kubectl v1.36.2 is what approves this constant, and if it computes a
+// different aggregate the check fails closed and reports the value it computed.
+// The conservation digest above is unaffected either way, because it compares
+// three trees under one renderer rather than anchoring on a pinned one.
+//
+// The two superseded approved aggregate digests were:
+//
+//	a015af05c3b1a620ecd6a7990353e9f1db03b7c50d7ceb2edd63e3563a6591d5
+//	026c985d74ec1230e7272488d2a55c028bb78916c4c8362f22c447c862111d78
+const expectedRenderedSurfaceSHA = "a8f0075fcb41fb5b79c608ee9816bfe3c01062bf7c94696f3a044f2f55336a2a"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

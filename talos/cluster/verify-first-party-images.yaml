@@ -64,8 +64,8 @@
 #      ksail's OWN release pipeline (devantler-tech/ksail .github/workflows/
 #      cd.yaml; see that repo's GoReleaser `docker_signs` step), at a release tag.
 #   2. ghcr.io/devantler-tech/provider-upjet-* — the Crossplane provider packages
-#      — are signed by each provider repo's own publish-provider-package.yml, on
-#      its default branch (that workflow is workflow_dispatch-only).
+#      — are signed by each provider repo's own publish-provider-package.yml, at
+#      a release tag (that workflow rejects any non-tag ref).
 #   3. the app images (wedding-app, ascoachingogvaner, …) are signed by the
 #      shared publish-app.yaml workflow in devantler-tech/actions, pinned by
 #      commit SHA — the SAME form their Flux OCIRepository verify blocks and the
@@ -112,14 +112,27 @@ rules:
   # Mirrors the verify-app-images ImageValidatingPolicy provider-upjet-*
   # attestor (#2382). MUST precede the catch-all below (first-match-wins) or the
   # catch-all's publish-app.yaml identity rejects these (ImagePullBackOff).
-  # The ref is pinned to the default branch: publish-provider-package.yml is
-  # workflow_dispatch-only and publishes from main, so main is the sole
+  # The ref is pinned to release tags: publish-provider-package.yml rejects
+  # any non-tag ref before it checks anything out, so a v* tag is the sole
   # legitimate signing ref. Pinning it rejects a package signed from an
-  # arbitrary feature branch, which an unconstrained ref accepts.
+  # arbitrary branch, which an unconstrained ref accepts.
+  # The tag grammar mirrors the publisher's `scripts/release-version.sh` OCI-semver
+  # grammar, spelled out here rather than deferred to it: this verifier is the
+  # independent half of that pair, so it must not inherit its boundary from the
+  # repository it verifies.
+  # A trailing `.+` after the version would accept refs/tags/v1latest and
+  # refs/tags/v1.0.0/../evil, which are tags only in shape.
+  # DELIBERATE DIFFERENCE from the publisher, pinned by the inventory test: that script also
+  # caps the tag at 128 characters (the OCI tag-length limit); this expression does not.
+  # RE2 has no lookahead, so a joint length bound across the version components cannot be
+  # expressed without bounding each part separately, and a bound set too tight would REJECT a
+  # legitimate release — breaking admission of a real image, which is strictly worse than
+  # admitting an identity that cannot exist. An over-length tag is not a valid OCI reference,
+  # so no signature can carry one.
   - image: ghcr.io/devantler-tech/provider-upjet-*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/heads/main$
+      subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
   # First-party APP images signed by the shared publish-app.yaml workflow in
   # devantler-tech/actions. Callers pin that reusable workflow by commit SHA, so
   # the ref admits that form alone and rejects everything else — a mutable ref

@@ -252,6 +252,103 @@ else
   echo "ok    real rules: passes the completeness gate"
 fi
 
+# --- 12. the provider-package identity pins the RELEASE-TAG GRAMMAR --------
+# The identity's security value is "signed by publish-provider-package.yml, in a provider-upjet-*
+# repo, FROM A RELEASE TAG". An unanchored `.+` after the version satisfies every other clause of
+# that sentence while accepting refs that are tags only in shape (refs/tags/v1latest,
+# refs/tags/v1.0.0/../evil), so the grammar is asserted HERE rather than left to the publisher's
+# own release-version.sh: this verifier is the independent half of that pair, and inheriting its
+# boundary from the repository it verifies would defeat the point.
+#
+# Both files must carry the SAME identity AND the same issuer. The Kyverno ImageValidatingPolicy
+# gates pod admission and the Talos ImageVerificationConfig gates the kubelet pull, so a package
+# accepted by one and rejected by the other is an ImagePullBackOff that neither file explains alone.
+# Comparing only the subject regex would let the issuer drift between them unnoticed.
+kyverno_policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
+talos_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/provider-upjet-*") | .keyless.subjectRegex' "$real")"
+talos_issuer="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/provider-upjet-*") | .keyless.issuer' "$real")"
+kyverno_identity="$(yq -r '.spec.attestors[] | select(.name == "publishprovider") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"
+kyverno_issuer="$(yq -r '.spec.attestors[] | select(.name == "publishprovider") | .cosign.keyless.identities[].issuer' "$kyverno_policy")"
+
+if [ -z "$talos_identity" ] || [ "$talos_identity" = "null" ]; then
+  echo "FAIL  no provider-upjet subjectRegex in ${real}"
+  failures=$((failures + 1))
+elif [ "$talos_identity" != "$kyverno_identity" ]; then
+  echo "FAIL  the provider identity differs between the Talos and Kyverno verifiers"
+  echo "        talos:   ${talos_identity}"
+  echo "        kyverno: ${kyverno_identity}"
+  failures=$((failures + 1))
+elif [ -z "$talos_issuer" ] || [ "$talos_issuer" = "null" ] || [ "$talos_issuer" != "$kyverno_issuer" ]; then
+  echo "FAIL  the provider ISSUER differs between the Talos and Kyverno verifiers"
+  echo "        talos:   ${talos_issuer}"
+  echo "        kyverno: ${kyverno_issuer}"
+  failures=$((failures + 1))
+else
+  echo "ok    provider identity: Talos and Kyverno carry the same regex and issuer"
+fi
+
+# The identity above only binds anything if Kyverno actually ROUTES provider-upjet-* images to that
+# attestor. Without this, `publishprovider` could be renamed, unreferenced, or the filter narrowed,
+# and every assertion above would still pass while nothing verified the provider images.
+provider_validation="$(yq -r '
+  [ .spec.validations[]
+    | select(.expression | test("startsWith\\(.ghcr\\.io/devantler-tech/provider-upjet-.\\)"))
+    | select(.expression | test("attestors\\.publishprovider")) ] | length' "$kyverno_policy")"
+if [ "$provider_validation" != "1" ]; then
+  echo "FAIL  expected exactly 1 Kyverno validation routing provider-upjet-* to attestors.publishprovider, found ${provider_validation}"
+  failures=$((failures + 1))
+else
+  echo "ok    provider identity: Kyverno routes provider-upjet-* to attestors.publishprovider"
+fi
+
+# accept -> a tag release-version.sh admits, so a signature can genuinely carry it.
+# reject -> a tag it refuses; the verifier must not accept what the publisher cannot produce.
+# The expression mirrors that script's OCI-semver GRAMMAR, so the two columns agree on prerelease
+# internals too (a numeric prerelease identifier may not carry a leading zero). It deliberately does
+# NOT mirror that script's 128-character tag cap; the block below pins that difference.
+identity_prefix='https://github.com/devantler-tech/provider-upjet-unifi/.github/workflows/publish-provider-package.yml@refs/tags/'
+grammar_failures=0
+grammar_checked=0
+for tc in \
+  'accept v1.0.0' 'accept v0.1.0' 'accept v10.20.30' 'accept v1.0.0-rc.1' 'accept v1.2.3-alpha.1.2' \
+  'accept v1.0.0-0' 'accept v1.0.0-alpha' 'accept v1.0.0-rc.1.2' \
+  'reject v1latest' 'reject v1/anything' 'reject v1.0' 'reject v1' 'reject v1.0.0/../evil' \
+  'reject v01.0.0' 'reject v1.0.0-' 'reject v1.0.0-rc.1/evil' 'reject v1.0.0..0' \
+  'reject v1.0.0-01' 'reject v1.0.0-00' 'reject v1.0.0-1.01'; do
+  grammar_checked=$((grammar_checked + 1))
+  want="${tc%% *}"
+  tag="${tc##* }"
+  if printf '%s' "${identity_prefix}${tag}" | grep -Eq "$talos_identity"; then
+    got=accept
+  else
+    got=reject
+  fi
+  if [ "$got" != "$want" ]; then
+    echo "FAIL  provider identity should ${want} refs/tags/${tag}, got ${got}"
+    grammar_failures=$((grammar_failures + 1))
+  fi
+done
+failures=$((failures + grammar_failures))
+if [ "$grammar_failures" -eq 0 ]; then
+  echo "ok    provider identity: release-tag grammar (${grammar_checked} tags)"
+fi
+
+# The one place the verifier deliberately does NOT mirror the publisher: release-version.sh caps
+# the tag at 128 characters (the OCI tag-length limit) while this subjectRegex carries no length
+# bound — RE2 has no lookahead, and a bound set too tight would reject a legitimate release.
+# Pin the difference so a change on either side is deliberate rather than silent.
+over_length_tag="v1.0.0-$(printf 'a%.0s' $(seq 1 122))"
+if [ "${#over_length_tag}" -ne 129 ]; then
+  echo "FAIL  boundary fixture is ${#over_length_tag} chars, expected 129"
+  failures=$((failures + 1))
+elif printf '%s' "${identity_prefix}${over_length_tag}" | grep -Eq "$talos_identity"; then
+  echo "ok    provider identity: the publisher's 128-char cap is deliberately NOT mirrored"
+else
+  echo "FAIL  the verifier now rejects a 129-char tag: the documented deliberate difference has"
+  echo "        changed, so update the DELIBERATE DIFFERENCE comment in both verifier files"
+  failures=$((failures + 1))
+fi
+
 # --- 9. THE DEFAULT PROBE PATH: no secret may reach argv -------------------
 # Every case above goes through INVENTORY_PROBE_CMD, so none of them exercises the real probe —
 # the credential lookup, the Basic-authenticated token exchange, the Bearer manifest read, and the
