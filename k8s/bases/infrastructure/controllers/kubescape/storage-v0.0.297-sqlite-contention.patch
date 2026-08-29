@@ -1,3 +1,41 @@
+diff --git a/pkg/registry/file/containerprofile_processor.go b/pkg/registry/file/containerprofile_processor.go
+index db4a8ee1..f31119a7 100644
+--- a/pkg/registry/file/containerprofile_processor.go
++++ b/pkg/registry/file/containerprofile_processor.go
+@@ -75,7 +75,7 @@ func NewContainerProfileProcessor(cfg config.Config, cleanupHandler *ResourcesCl
+ 		Interval:                30 * time.Second,
+ 		MaxContainerProfileSize: cfg.MaxApplicationProfileSize,
+ 		CollapseSettings:        dynamicpathdetector.DefaultCollapseSettings,
+-		Workers:                 max(1, DefaultPoolSize/4),
++		Workers:                 1,
+ 	}
+ }
+ 
+diff --git a/pkg/registry/file/containerprofile_processor_test.go b/pkg/registry/file/containerprofile_processor_test.go
+index 384d059e..b9b57458 100644
+--- a/pkg/registry/file/containerprofile_processor_test.go
++++ b/pkg/registry/file/containerprofile_processor_test.go
+@@ -12,6 +12,7 @@ import (
+ 	"github.com/armosec/armoapi-go/armotypes"
+ 	helpersv1 "github.com/kubescape/k8s-interface/instanceidhandler/v1/helpers"
+ 	"github.com/kubescape/storage/pkg/apis/softwarecomposition"
++	"github.com/kubescape/storage/pkg/config"
+ 	"github.com/kubescape/storage/pkg/generated/clientset/versioned/scheme"
+ 	"github.com/kubescape/storage/pkg/utils"
+ 	"github.com/spf13/afero"
+@@ -23,6 +24,12 @@ import (
+ 	"zombiezen.com/go/sqlite/sqlitemigration"
+ )
+ 
++func TestNewContainerProfileProcessorUsesOneMaintenanceWriter(t *testing.T) {
++	processor := NewContainerProfileProcessor(config.Config{}, nil)
++	require.Equal(t, 1, processor.Workers,
++		"multiple background writers can continuously hand off SQLite's writer lock and starve REST persistence")
++}
++
+ func TestConsolidateData(t *testing.T) {
+ 	// Prepare pool and connection
+ 	pool := NewTestPool("/tmp")
 diff --git a/pkg/registry/file/sqlite.go b/pkg/registry/file/sqlite.go
 index 3d706533..c219537a 100644
 --- a/pkg/registry/file/sqlite.go
@@ -61,25 +99,11 @@ index 9a1ba4ed..fb1e6a80 100644
  func TestMemoryConn(t *testing.T) {
  	pod := v1.Pod{
  		ObjectMeta: metav1.ObjectMeta{
-diff --git a/pkg/registry/file/containerprofile_storage.go b/pkg/registry/file/containerprofile_storage.go
-index 958c5fd6..1126376e 100644
---- a/pkg/registry/file/containerprofile_storage.go
-+++ b/pkg/registry/file/containerprofile_storage.go
-@@ -78,7 +78,7 @@ func (c *ContainerProfileStorageImpl) WithConnection(ctx context.Context) (conte
- // to commit or rollback based on the error state.
- func (c *ContainerProfileStorageImpl) BeginTransaction(ctx context.Context) (func(*error), error) {
- 	conn := ctx.Value(connKey).(*sqlite.Conn)
--	return sqlitex.Transaction(conn), nil
-+	return sqlitex.ImmediateTransaction(conn)
- }
- 
- func (c *ContainerProfileStorageImpl) DeleteContainerProfile(ctx context.Context, key string) error {
 diff --git a/pkg/registry/file/containerprofile_storage_test.go b/pkg/registry/file/containerprofile_storage_test.go
 new file mode 100644
-index 00000000..8f3aa946
 --- /dev/null
 +++ b/pkg/registry/file/containerprofile_storage_test.go
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,41 @@
 +package file
 +
 +import (
@@ -91,7 +115,7 @@ index 00000000..8f3aa946
 +	"zombiezen.com/go/sqlite/sqlitex"
 +)
 +
-+func TestBeginTransactionSerializesWriters(t *testing.T) {
++func TestBeginTransactionLeavesWriterAvailableDuringReadPhase(t *testing.T) {
 +	pool := NewPool(t.TempDir()+"/transactions.sq3", 2)
 +	require.NotNil(t, pool)
 +	defer func() {
@@ -108,22 +132,16 @@ index 00000000..8f3aa946
 +
 +	finishFirst, err := storage.BeginTransaction(firstCtx)
 +	require.NoError(t, err)
++	firstConn := firstCtx.Value(connKey).(*sqlite.Conn)
++	require.NoError(t, sqlitex.Execute(firstConn, "SELECT name FROM sqlite_schema LIMIT 1;", nil))
 +
 +	secondConn := secondCtx.Value(connKey).(*sqlite.Conn)
 +	secondConn.SetBusyTimeout(0)
-+	if err := sqlitex.Execute(secondConn, "BEGIN IMMEDIATE;", nil); err == nil {
-+		require.NoError(t, sqlitex.Execute(secondConn, "ROLLBACK;", nil))
-+		var firstErr error
-+		finishFirst(&firstErr)
-+		t.Fatal("second writer acquired SQLite's write reservation before the first transaction completed")
-+	} else {
-+		require.Equal(t, sqlite.ResultBusy, sqlite.ErrCode(err).ToPrimary())
-+	}
++	require.NoError(t, sqlitex.Execute(secondConn, "BEGIN IMMEDIATE;", nil),
++		"a read-heavy background transaction must not reserve SQLite's sole writer")
++	require.NoError(t, sqlitex.Execute(secondConn, "ROLLBACK;", nil))
 +
 +	var firstErr error
 +	finishFirst(&firstErr)
 +	require.NoError(t, firstErr)
-+
-+	require.NoError(t, sqlitex.Execute(secondConn, "BEGIN IMMEDIATE;", nil))
-+	require.NoError(t, sqlitex.Execute(secondConn, "ROLLBACK;", nil))
 +}
