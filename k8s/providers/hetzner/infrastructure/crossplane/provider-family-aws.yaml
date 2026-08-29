@@ -6,9 +6,21 @@
 # controllers/crossplane/ installs first. Prod-only (Crossplane is Hetzner-only).
 #
 # provider-family-aws ships the shared AWS ProviderConfig CRD consumed by every
-# family member. Crossplane would auto-resolve it as a dependency of provider-aws-iam,
-# but it is declared explicitly so its version is pinned and its runtime pod is
-# resource-bounded (see deployment-runtime-config-family-aws.yaml).
+# family member. It is a DEPENDENCY of provider-aws-iam, and is declared explicitly
+# here so its version is pinned and its runtime pod is resource-bounded (see
+# deployment-runtime-config-family-aws.yaml).
+#
+# 🔴 THE NAME IS LOAD-BEARING — it must be the name Crossplane derives from the
+# package (`<org>-<repo>`, here `upbound-provider-family-aws`), NOT a shortened
+# alias. Crossplane's dependency manager resolves a declared dependency by looking
+# for a Provider with that derived NAME and creating one when it is absent, while
+# the Lock is keyed by package SOURCE. Under a shorter alias the lookup misses, a
+# second Provider is created for a source the Lock already holds, and building the
+# dependency graph then fails with `node <source> already exists` — which marks
+# EVERY provider in the cluster Unhealthy, not just this one, and stops all
+# Crossplane reconciliation (platform#3454; hit live on the 2.3.4 → 2.4.0 bump,
+# where the duplicate appeared 21 seconds after the new core rolled out).
+# scripts/guard-crossplane-provider-name-parity.sh pins this.
 #
 # No ProviderConfig/credentials yet: a Provider package becomes Healthy on its own;
 # credentials are only consulted when reconciling managed resources. SafeStart +
@@ -20,7 +32,7 @@
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
-  name: provider-family-aws
+  name: upbound-provider-family-aws
 spec:
   package: xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
   runtimeConfigRef:
