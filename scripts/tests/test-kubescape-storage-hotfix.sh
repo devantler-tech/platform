@@ -117,7 +117,11 @@ grep -qF 'TestBeginTransactionLeavesWriterAvailableDuringReadPhase' "${patch_fil
   fail 'the compatibility patch must prove profile reads do not reserve SQLite write access'
 grep -qF 'TestConsolidateKeyDoesNotHoldWriterAcrossProfileProcessing' "${patch_file}" ||
   fail 'the compatibility patch must prove maintenance does not hold one transaction across artifact processing'
-grep -qF 'autocommit so foreground persistence can run between maintenance writes' "${patch_file}" ||
+grep -qF 'TestUpdateProfileKeepsTimeSeriesPendingUntilAllProfileWritesSucceed' "${patch_file}" ||
+  fail 'the compatibility patch must prove every partial profile-write boundary remains retryable'
+grep -qF 'source rows must be retired only after every profile write succeeds' "${patch_file}" ||
+  fail 'time-series observations must stay pending until all derived writes succeed'
+grep -qF 'persistence can run between maintenance writes' "${patch_file}" ||
   fail 'container-profile maintenance must release SQLite between idempotent artifact writes'
 if grep -qF 'ImmediateTransaction' "${patch_file}"; then
   fail 'read-heavy profile transactions must not reserve SQLite write access before their write phase'
