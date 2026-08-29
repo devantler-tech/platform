@@ -616,8 +616,11 @@ func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 		"name: publishprovider",
 		"name: ksailcd",
 		"^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-storage-hotfix\\.yaml@refs/heads/main$",
+		"image != 'ghcr.io/devantler-tech/platform-kubescape-storage'",
+		"image == 'ghcr.io/devantler-tech/platform-kubescape-storage'",
 		"image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:')",
 		"image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@')",
+		"verifyImageSignatures(image, [attestors.publishkubescapestorage])",
 		"image.startsWith('ghcr.io/devantler-tech/ksail')",
 	} {
 		requireContains(t, policy, expected)

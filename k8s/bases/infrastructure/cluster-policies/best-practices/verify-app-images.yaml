@@ -121,6 +121,7 @@ spec:
         .filter(image, image.startsWith('ghcr.io/devantler-tech/') &&
           !image.startsWith('ghcr.io/devantler-tech/ksail') &&
           !image.startsWith('ghcr.io/devantler-tech/provider-upjet-') &&
+          image != 'ghcr.io/devantler-tech/platform-kubescape-storage' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@'))
         .map(image, verifyImageSignatures(image, [attestors.publishapp]))
@@ -132,6 +133,7 @@ spec:
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-kubescape-storage' ||
           image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:') ||
           image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@'))
         .map(image, verifyImageSignatures(image, [attestors.publishkubescapestorage]))
