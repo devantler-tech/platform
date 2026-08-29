@@ -124,6 +124,9 @@ spec:
             # /openid/callback (ACTUAL_OPENID_SERVER_HOSTNAME=https://budget.${domain}).
             - "https://budget.${domain}/openid/callback"
             - "https://vault.${domain}/ui/vault/auth/oidc/oidc/callback"
+            # OpenBao CLI OIDC login starts a loopback callback listener. Keep
+            # this paired with the admin role's allowed_redirect_uris.
+            - "http://localhost:8250/oidc/callback"
             - "https://ksail.${domain}/api/v1/auth/callback"
             # Crossview authenticates natively against Dex on its public HTTPS
             # route; Dex matches this callback exactly.

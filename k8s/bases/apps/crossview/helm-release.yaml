@@ -113,6 +113,13 @@ spec:
       # The namespace is managed declaratively (namespace.yaml) so it carries the
       # Pod Security Standards labels; don't let the chart create it.
       createNamespace: false
+    # The upstream chart grants its ServiceAccount get/list/watch over every
+    # resource in every API group. That includes core Secrets, so a dashboard
+    # session would bypass the human OIDC boundary. Repository-managed bindings
+    # below replace it with built-in view + the platform's Secret-free
+    # cluster-reader role.
+    rbac:
+      create: false
     # Crossview creates its tables (and the break-glass admin) once, at its OWN
     # startup, so an empty database only gains a schema when the APP restarts —
     # never when Postgres alone does.
@@ -290,8 +297,9 @@ spec:
       # this service. Crossview then maps the same user's native OIDC session to
       # a non-admin `user` on the read-only dashboard (the first login is the
       # break-glass `admin` seeded at boot, so SSO users are never `admin`). The
-      # outer team gate is required because Crossview's ServiceAccount retains
-      # broad cluster reads; native org membership alone is not sufficient.
+      # ServiceAccount is independently restricted to view + cluster-reader, so
+      # neither authentication layer can turn the dashboard into a Secret-read
+      # proxy.
       sso:
         oidc:
           enabled: true

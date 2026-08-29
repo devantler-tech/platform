@@ -119,8 +119,11 @@ posture is:
 
 1. **Do not commit it to git.** It is `.gitignore`d via the default
    `~/.talos/config` location.
-2. **Keep one copy on each operator workstation** that needs to manage
-   nodes. Replacing a workstation = re-run
+2. **Keep the root copy out of the ambient Talos configuration.** Store it in
+   the locked iCloud Note on the trusted operator device and in the approved
+   OpenBao break-glass path. Day-to-day `~/.talos/config` carries only
+   `os:reader`; see [Talos API access](../talos-access.md). Replacing a
+   workstation = re-run
    `./scripts/run-ksail-prod-with-pull-auth.sh cluster update`
    (which regenerates the local `~/.talos/config` from the cluster's
    running PKI), or use `talosctl config merge <talosconfig>` against
