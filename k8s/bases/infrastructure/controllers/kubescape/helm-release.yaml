@@ -213,9 +213,8 @@ spec:
                 keepLocal: true
     # Run vulnerability collection in a separate authored window. Keep at
     # least the present eight-hour gap: both scans emit high-volume writes, and
-    # storage v0.0.297 serializes writers only after a statement reaches the
-    # database, so keep bursty scanners separated even with the compatibility
-    # image's transaction-level serialization.
+    # the compatibility image still has one SQLite writer. Keep bursty scanners
+    # separated to limit write bursts; it reserves the writer before profile reads.
     kubevulnScheduler:
       scanSchedule: "12 1 * * *"
     storage:
