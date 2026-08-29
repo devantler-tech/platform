@@ -220,22 +220,27 @@ RC=$?
 set -e
 check "an unreadable rules file -> exit 2" 2 'not readable' "$RC" "$OUT"
 
-# --- 11. the REAL rules file parses, and keeps its three ordered rules -----
+# --- 11. the REAL rules file parses, and keeps its four ordered rules ------
 # Guards the shape this script reads from drifting without anyone noticing: the catch-all must stay
-# LAST, or ksail and the provider packages get held to the app identity and go ImagePullBackOff.
+# LAST, or ksail, provider packages, and the storage compatibility image get held to the app
+# identity and go ImagePullBackOff.
 real="${repo_root}/talos/cluster/verify-first-party-images.yaml"
 # macOS ships bash 3.2, which has no `mapfile` — read the globs without it.
 real_globs="$(yq -r '.rules[].image' "$real")"
 real_count="$(printf '%s\n' "$real_globs" | grep -c .)"
 real_last="$(printf '%s\n' "$real_globs" | grep . | tail -1)"
-if [ "$real_count" -ne 3 ]; then
-  echo "FAIL  the real rules file has ${real_count} rules, expected 3"
+real_penultimate="$(printf '%s\n' "$real_globs" | grep . | tail -2 | head -1)"
+if [ "$real_count" -ne 4 ]; then
+  echo "FAIL  the real rules file has ${real_count} rules, expected 4"
+  failures=$((failures + 1))
+elif [ "$real_penultimate" != 'ghcr.io/devantler-tech/platform-kubescape-storage' ]; then
+  echo "FAIL  the dedicated storage rule does not immediately precede the catch-all (${real_penultimate})"
   failures=$((failures + 1))
 elif [ "$real_last" != 'ghcr.io/devantler-tech/*' ]; then
   echo "FAIL  the catch-all is not the last rule (${real_last})"
   failures=$((failures + 1))
 else
-  echo "ok    real rules: three rules, catch-all last"
+  echo "ok    real rules: four rules, dedicated storage rule before catch-all"
 fi
 
 # The real file must also satisfy the completeness gate the fixtures exercise.
@@ -252,6 +257,25 @@ else
   echo "ok    real rules: passes the completeness gate"
 fi
 
+# The storage image passes Kyverno admission and Talos host verification through independent
+# controls. They must route the exact repository to the same main-only publisher identity; a
+# missing Talos rule falls through to the generic app identity and fails only after scheduling.
+kyverno_policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
+talos_storage_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-kubescape-storage") | .keyless.subjectRegex' "$real")"
+talos_storage_issuer="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-kubescape-storage") | .keyless.issuer' "$real")"
+kyverno_storage_identity="$(yq -r '.spec.attestors[] | select(.name == "publishkubescapestorage") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"
+kyverno_storage_issuer="$(yq -r '.spec.attestors[] | select(.name == "publishkubescapestorage") | .cosign.keyless.identities[].issuer' "$kyverno_policy")"
+if [ -z "$talos_storage_identity" ] || [ "$talos_storage_identity" = "null" ]; then
+  echo "FAIL  no dedicated storage subjectRegex in ${real}"
+  failures=$((failures + 1))
+elif [ "$talos_storage_identity" != "$kyverno_storage_identity" ] ||
+  [ "$talos_storage_issuer" != "$kyverno_storage_issuer" ]; then
+  echo "FAIL  the storage identity differs between the Talos and Kyverno verifiers"
+  failures=$((failures + 1))
+else
+  echo "ok    storage identity: Talos and Kyverno carry the same regex and issuer"
+fi
+
 # --- 12. the provider-package identity pins the RELEASE-TAG GRAMMAR --------
 # The identity's security value is "signed by publish-provider-package.yml, in a provider-upjet-*
 # repo, FROM A RELEASE TAG". An unanchored `.+` after the version satisfies every other clause of
@@ -264,7 +288,6 @@ fi
 # gates pod admission and the Talos ImageVerificationConfig gates the kubelet pull, so a package
 # accepted by one and rejected by the other is an ImagePullBackOff that neither file explains alone.
 # Comparing only the subject regex would let the issuer drift between them unnoticed.
-kyverno_policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
 talos_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/provider-upjet-*") | .keyless.subjectRegex' "$real")"
 talos_issuer="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/provider-upjet-*") | .keyless.issuer' "$real")"
 kyverno_identity="$(yq -r '.spec.attestors[] | select(.name == "publishprovider") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"

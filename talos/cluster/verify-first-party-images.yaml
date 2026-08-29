@@ -59,18 +59,21 @@
 # pods, a compromised registry serving a tampered image).
 #
 # Scope: FIRST-PARTY images (ghcr.io/devantler-tech/*). All are keyless-cosign
-# signed, but by THREE different signing identities, so they need three rules:
+# signed, but by FOUR different signing identities, so they need four rules:
 #   1. ghcr.io/devantler-tech/ksail — the ksail-operator image — is signed by
 #      ksail's OWN release pipeline (devantler-tech/ksail .github/workflows/
 #      cd.yaml; see that repo's GoReleaser `docker_signs` step), at a release tag.
 #   2. ghcr.io/devantler-tech/provider-upjet-* — the Crossplane provider packages
 #      — are signed by each provider repo's own publish-provider-package.yml, at
 #      a release tag (that workflow rejects any non-tag ref).
-#   3. the app images (wedding-app, ascoachingogvaner, …) are signed by the
+#   3. ghcr.io/devantler-tech/platform-kubescape-storage — the compatibility
+#      image — is signed by this repository's dedicated main-only
+#      publish-kubescape-storage-hotfix.yaml workflow.
+#   4. the app images (wedding-app, ascoachingogvaner, …) are signed by the
 #      shared publish-app.yaml workflow in devantler-tech/actions, pinned by
 #      commit SHA — the SAME form their Flux OCIRepository verify blocks and the
 #      verify-app-images ImageValidatingPolicy pin (#3022).
-# Talos evaluates rules in order, first match wins, so the two specific rules
+# Talos evaluates rules in order, first match wins, so the three specific rules
 # MUST precede the ghcr.io/devantler-tech/* catch-all.
 #
 # FAIL-OPEN by design for everything else: an image matching NO rule is pulled
@@ -133,6 +136,14 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
+  # Kubescape storage compatibility image — signed by this repository's
+  # dedicated main-only publisher. This exact repository rule must precede the
+  # first-party catch-all: Talos evaluates the first matching rule, and the
+  # generic app publisher did not produce this image.
+  - image: ghcr.io/devantler-tech/platform-kubescape-storage
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kubescape-storage-hotfix\.yaml@refs/heads/main$
   # First-party APP images signed by the shared publish-app.yaml workflow in
   # devantler-tech/actions. Callers pin that reusable workflow by commit SHA, so
   # the ref admits that form alone and rejects everything else — a mutable ref
