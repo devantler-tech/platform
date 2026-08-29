@@ -301,6 +301,9 @@ jobs:
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-pod-security-exception-scope.sh'
               - 'scripts/tests/test-guard-pod-security-exception-scope.sh'
+              # Both halves, for the same reason as the guards above.
+              - 'scripts/guard-crossplane-provider-name-parity.sh'
+              - 'scripts/tests/test-guard-crossplane-provider-name-parity.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
@@ -969,6 +972,28 @@ jobs:
         run: |
           bash scripts/guard-pod-security-exception-scope.sh
           bash scripts/tests/test-guard-pod-security-exception-scope.sh
+
+      - name: 🧬 Validate Crossplane provider names match their derived names
+        if: needs.changes.outputs.k8s == 'true'
+        # A Crossplane Provider declared under a shortened alias instead of the name
+        # Crossplane derives from its package (`<org>-<repo>`) is invisible until
+        # something depends on it — then the dependency manager, which resolves by
+        # derived NAME while the Lock is keyed by package SOURCE, creates a SECOND
+        # Provider for a source already present. Building the dependency graph then
+        # fails with `node <source> already exists`, which marks EVERY provider
+        # Unhealthy and stops all Crossplane reconciliation, not just the duplicated
+        # one. That is #3454: it went live 21 seconds into the 2.3.4 -> 2.4.0 bump and
+        # ran for 15 hours, because nothing in GitHub can see a dead provider fleet.
+        #
+        # The same guard pins the other half, which the rename itself breaks: provider
+        # RBAC is named after the revision (`crossplane:provider:<name>-<hash>:system`),
+        # so two Kubescape exception lists match the provider name by anchored regex.
+        # Renaming without updating both fails nothing — the manifests build, the
+        # provider runs, and a C-0015 finding just reappears days later. Those two
+        # lists are synced by hand, so one-updated-one-forgotten is the realistic drift.
+        run: |
+          bash scripts/guard-crossplane-provider-name-parity.sh k8s
+          bash scripts/tests/test-guard-crossplane-provider-name-parity.sh
 
       - name: 📐 Validate LimitRange-premised suppressions actually have a LimitRange
         if: needs.changes.outputs.k8s == 'true'
