@@ -54,6 +54,8 @@ func TestCurrentTalosNodesSkipTalosAPI(t *testing.T) {
 	if !pathExists(f.patchCapture) {
 		t.Error("root patch missing")
 	}
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "ivpol-policy-apply:verify-app-images")
 }
 
 func TestClusterUpdateCannotEraseVerifiedRuntimeProof(t *testing.T) {
@@ -1332,11 +1334,21 @@ func TestEveryRuntimeProbeReassertsImageVerificationPolicy(t *testing.T) {
 	if len(probePositions) == 0 {
 		t.Fatal("fixture did not exercise runtime probes")
 	}
-	if len(applyPositions) != len(probePositions) {
+	if len(applyPositions) != len(probePositions)+1 {
 		t.Fatalf(
-			"policy reassertions = %d, runtime probes = %d",
+			"policy applications = %d, want one transaction stage plus %d runtime probe reassertions",
 			len(applyPositions),
 			len(probePositions),
+		)
+	}
+	policyHandoff := lineIndex(t, operations, "flux-policy-pause:infrastructure")
+	firstFanout := lineIndex(t, operations, "variables-patch")
+	if policyHandoff >= applyPositions[0] || applyPositions[0] >= firstFanout {
+		t.Fatalf(
+			"transaction policy stage was outside the fenced pre-fanout window: handoff=%d apply=%d fanout=%d",
+			policyHandoff,
+			applyPositions[0],
+			firstFanout,
 		)
 	}
 	for index := range probePositions {
@@ -1344,13 +1356,13 @@ func TestEveryRuntimeProbeReassertsImageVerificationPolicy(t *testing.T) {
 		if index > 0 {
 			previousProbe = probePositions[index-1]
 		}
-		if applyPositions[index] <= previousProbe ||
-			applyPositions[index] >= probePositions[index] {
+		probeApply := applyPositions[index+1]
+		if probeApply <= previousProbe || probeApply >= probePositions[index] {
 			t.Fatalf(
 				"runtime probe %d was not immediately fenced by a fresh policy reassertion: previous probe=%d apply=%d probe=%d",
 				index,
 				previousProbe,
-				applyPositions[index],
+				probeApply,
 				probePositions[index],
 			)
 		}
@@ -1554,9 +1566,9 @@ func TestRuntimeProbeRetriesTransientAdmissionTimeout(t *testing.T) {
 			probeCount++
 		}
 	}
-	if applyCount != probeCount+1 {
+	if applyCount != probeCount+2 {
 		t.Fatalf(
-			"policy reassertions = %d, successful probes = %d; timeout retry was not freshly fenced",
+			"policy applications = %d, successful probes = %d; want one transaction stage and one fresh timeout retry fence",
 			applyCount,
 			probeCount,
 		)

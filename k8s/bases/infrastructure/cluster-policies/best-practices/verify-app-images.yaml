@@ -18,9 +18,10 @@ metadata:
     policies.kyverno.io/description: >-
       Requires keyless cosign signatures from the matching devantler-tech
       release pipeline on first-party container images at Pod admission:
-      publish-app for app images, each Crossplane provider's own package
-      workflow, and KSail's release workflow. Each class is verified only
-      against its own identity; third-party images admit unverified.
+      publish-app for app images, the platform's dedicated Kubescape storage
+      compatibility publisher, each Crossplane provider's own package workflow,
+      and KSail's release workflow. Each class is verified only against its own
+      identity; third-party images admit unverified.
 spec:
   failurePolicy: Fail
   validationActions: [Deny]
@@ -72,6 +73,19 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$
+    # The Kubescape storage compatibility image is produced inside this
+    # repository rather than through actions/publish-app.yaml: its publisher
+    # checks out one immutable upstream storage commit, applies the reviewed
+    # timeout patch, tests it, and signs only from main. Keep this identity in a
+    # separate attestor and route only the exact storage repository to it; adding
+    # the identity to publishapp would let this one-off workflow satisfy
+    # verification for every ordinary first-party app image.
+    - name: publishkubescapestorage
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kubescape-storage-hotfix\.yaml@refs/heads/main$
     # Crossplane provider packages (provider-upjet-*): the crossplane-contrib
     # reusable publish workflow they use cannot sign, so each provider repo
     # attaches the keyless signature in its own publish-provider-package.yml
@@ -117,13 +131,29 @@ spec:
   validations:
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
-        .filter(image, image.startsWith('ghcr.io/devantler-tech/') && !image.startsWith('ghcr.io/devantler-tech/ksail') && !image.startsWith('ghcr.io/devantler-tech/provider-upjet-'))
+        .filter(image, image.startsWith('ghcr.io/devantler-tech/') &&
+          !image.startsWith('ghcr.io/devantler-tech/ksail') &&
+          !image.startsWith('ghcr.io/devantler-tech/provider-upjet-') &&
+          image != 'ghcr.io/devantler-tech/platform-kubescape-storage' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@'))
         .map(image, verifyImageSignatures(image, [attestors.publishapp]))
         .all(e, e > 0)
       message: >-
         first-party app image is not signed by the publish-app release
         pipeline (keyless cosign, actions publish-app.yaml identity, pinned by
         commit SHA — a release tag is not accepted)
+    - expression: >-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-kubescape-storage' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishkubescapestorage]))
+        .all(e, e > 0)
+      message: >-
+        Kubescape storage compatibility image is not signed by the platform
+        repository's dedicated main-branch publisher (keyless cosign)
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image, image.startsWith('ghcr.io/devantler-tech/provider-upjet-'))

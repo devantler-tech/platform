@@ -739,8 +739,44 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	spec, _ := patch["spec"].(map[string]any)
 	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
 	attestors, _ := spec["attestors"].([]any)
-	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 3 {
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 4 {
 		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
+	}
+	storageAttestorValid := false
+	for _, rawAttestor := range attestors {
+		attestor, _ := rawAttestor.(map[string]any)
+		if attestor["name"] != "publishkubescapestorage" {
+			continue
+		}
+		cosign, _ := attestor["cosign"].(map[string]any)
+		keyless, _ := cosign["keyless"].(map[string]any)
+		identities, _ := keyless["identities"].([]any)
+		if len(identities) != 1 {
+			break
+		}
+		identity, _ := identities[0].(map[string]any)
+		storageAttestorValid = identity["issuer"] == "https://token.actions.githubusercontent.com" &&
+			identity["subjectRegExp"] == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-storage-hotfix\\.yaml@refs/heads/main$"
+	}
+	validations, _ := spec["validations"].([]any)
+	genericExcludesStorage := false
+	dedicatedRoutesStorage := false
+	for _, rawValidation := range validations {
+		validation, _ := rawValidation.(map[string]any)
+		expression, _ := validation["expression"].(string)
+		if strings.Contains(expression, "attestors.publishapp") {
+			genericExcludesStorage = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-kubescape-storage'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@')")
+		}
+		if strings.Contains(expression, "attestors.publishkubescapestorage") {
+			dedicatedRoutesStorage = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-kubescape-storage'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@')")
+		}
+	}
+	if !storageAttestorValid || !genericExcludesStorage || !dedicatedRoutesStorage {
+		return commandFailure(91, "consolidated image-validating policy patch omitted the dedicated storage publisher identity or exact repository routing")
 	}
 	if containsArg(args, "--dry-run=server") {
 		if os.Getenv("FAKE_IMAGE_VERIFICATION_POLICY_DRY_RUN_FAILURE") == "true" {

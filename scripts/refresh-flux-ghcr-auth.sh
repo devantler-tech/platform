@@ -5307,6 +5307,11 @@ fi
 # Root Flux auth remains last so any failed node proof leaves it unchanged.
 pause_flux_policy_parent
 pause_flux_policy_handoff
+# Apply every reviewed policy-only change even when all node credentials are
+# already current and the convergence loop therefore needs no runtime probe.
+# The per-probe reassertion remains necessary because a long node roll can
+# overlap reconciliation of the still-published predecessor artifact.
+stage_image_verification_webhook_budget
 stage_fanout_before_talos \
   "${pull_revision}" \
   "${KSAIL_OPERATOR_IMAGE}" \
