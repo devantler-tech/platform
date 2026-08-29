@@ -214,22 +214,26 @@ spec:
     # Run vulnerability collection in a separate authored window. Keep at
     # least the present eight-hour gap: both scans emit high-volume writes, and
     # the compatibility image still has one SQLite writer. Keep bursty scanners
-    # separated to limit write bursts; it reserves the writer before profile reads.
+    # separated to limit write bursts; one deferred maintenance worker keeps
+    # read-heavy consolidation from holding SQLite's sole writer unnecessarily.
     kubevulnScheduler:
       scanSchedule: "12 1 * * *"
     storage:
       image:
-        # Storage v0.0.297 starts deferred transactions, so concurrent profile
-        # workers can both read and then deadlock while promoting to SQLite's
-        # single writer; a longer busy timeout cannot recover that promotion.
+        # Storage v0.0.297 starts two deferred profile-maintenance workers. They
+        # can both read and then race while promoting to SQLite's single writer;
+        # a longer busy timeout cannot recover that promotion. Reserving the
+        # writer before their read-heavy work prevents the promotion race but
+        # can starve foreground scan persistence past the scanner's deadline.
         # v0.0.303+ removes the ApplicationProfile and NetworkNeighborhood APIs
         # that this deployment still serves with live data. This compatibility
         # image is the exact v0.0.297 source plus the reviewed 60-second busy
-        # timeout and immediate writer reservation, with executable regressions
-        # for both. The main-only publisher attaches SBOM/provenance and signs
-        # the digest before this pin may advance.
+        # timeout and one deferred maintenance writer, with executable
+        # regressions proving both background serialization and foreground write
+        # availability. The main-only publisher attaches SBOM/provenance and
+        # signs the digest before this pin may advance.
         repository: ghcr.io/devantler-tech/platform-kubescape-storage
-        tag: "v0.0.297-sqlite-contention.2-d6c1111e8c7cc34aab21d55441b0cd5c50e9bbf4@sha256:c20facb86f1ceba7d1769c1bdc383e89a2d9d4f49dc176ef59932d7ec2c6bd01"
+        tag: "v0.0.297-sqlite-contention.3-04c50922ddf1d4a2f9d2030ccc15318036c68b2a@sha256:254b0f74edf4206c623cf6c49a4087a851ee02493433f8220865f42bafffc597"
         pullPolicy: IfNotPresent
     # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
     # to avoid Helm upgrade failures from PVC shrink rejection.
