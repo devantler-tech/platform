@@ -9,6 +9,7 @@ readonly patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
 readonly source_commit='b35788b68337134fc2514574cde1ba7f1225fd43'
 readonly image_repository='ghcr.io/devantler-tech/platform-kubescape-storage'
+readonly image_tag='v0.0.297-sqlite-busy-timeout.1-6cf966641304389dcc414630ff92ed5876e1d019@sha256:a5abb439496eb1ffdb7c388aa0e4a06f2be70cc2e31e7ab1597b5c5c2a016b52'
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -97,19 +98,20 @@ grep -qF 'conn.SetBusyTimeout(60 * time.Second)' "${patch_file}" ||
 grep -qF 'assert.Equal(t, int64(60000), busyTimeoutMilliseconds)' "${patch_file}" ||
   fail 'the compatibility patch must prove the effective SQLite timeout'
 
-# The publishing PR deliberately lands before the deployment pin so the image
-# can be built, signed, and resolved to an immutable digest. Once an override is
-# present, fail closed on anything other than that signed repository + digest.
-storage_repository="$(yq -r '.spec.values.storage.image.repository // ""' "${helm_release}")"
+storage_repository="$(yq -er '
+  .spec.values.storage.image.repository |
+  select(tag == "!!str" and length > 0)
+' "${helm_release}")" || fail 'the deployed Kubescape storage image repository is missing'
 readonly storage_repository
-if [[ -n "${storage_repository}" ]]; then
-  [[ "${storage_repository}" == "${image_repository}" ]] ||
-    fail 'the deployed Kubescape storage image must use the reviewed compatibility repository'
-  storage_tag="$(yq -er '.spec.values.storage.image.tag | select(tag == "!!str")' "${helm_release}")" ||
-    fail 'the deployed Kubescape storage image tag is missing'
-  readonly storage_tag
-  [[ "${storage_tag}" =~ ^v0\.0\.297-sqlite-busy-timeout\.1@sha256:[0-9a-f]{64}$ ]] ||
-    fail 'the compatibility image must be pinned by immutable sha256 digest'
-fi
+[[ "${storage_repository}" == "${image_repository}" ]] ||
+  fail 'the deployed Kubescape storage image must use the reviewed compatibility repository'
+
+storage_tag="$(yq -er '
+  .spec.values.storage.image.tag |
+  select(tag == "!!str" and length > 0)
+' "${helm_release}")" || fail 'the deployed Kubescape storage image tag is missing'
+readonly storage_tag
+[[ "${storage_tag}" == "${image_tag}" ]] ||
+  fail 'the deployed compatibility image must match the signed immutable tag and digest'
 
 printf 'Kubescape storage compatibility-image contract is valid.\n'
