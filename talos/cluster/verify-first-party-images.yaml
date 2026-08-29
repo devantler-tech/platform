@@ -133,6 +133,14 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
+  # Kubescape storage compatibility image — signed by this repository's
+  # dedicated main-only publisher. This exact repository rule must precede the
+  # first-party catch-all: Talos evaluates the first matching rule, and the
+  # generic app publisher did not produce this image.
+  - image: ghcr.io/devantler-tech/platform-kubescape-storage
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kubescape-storage-hotfix\.yaml@refs/heads/main$
   # First-party APP images signed by the shared publish-app.yaml workflow in
   # devantler-tech/actions. Callers pin that reusable workflow by commit SHA, so
   # the ref admits that form alone and rejects everything else — a mutable ref

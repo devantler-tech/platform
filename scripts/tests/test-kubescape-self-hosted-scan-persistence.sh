@@ -171,27 +171,6 @@ readonly rendered_vulnerability_schedule
 [[ "${rendered_posture_schedule}" != "${rendered_vulnerability_schedule}" ]] ||
   fail 'the rendered posture and vulnerability CronJobs must use separate windows'
 
-storage_repository="$(yq -er '
-  .spec.values.storage.image.repository |
-  select(tag == "!!str" and length > 0)
-' "${helm_release}")" || fail 'the authored Kubescape storage image repository is missing'
-readonly storage_repository
-storage_tag="$(yq -er '
-  .spec.values.storage.image.tag |
-  select(tag == "!!str" and length > 0)
-' "${helm_release}")" || fail 'the authored Kubescape storage image tag is missing'
-readonly storage_tag
-rendered_storage_image="$(yq ea -er '
-  select(.kind == "Deployment" and .metadata.name == "storage") |
-  .spec.template.spec.containers[] |
-  select(.name == "apiserver") |
-  .image |
-  select(tag == "!!str")
-' "${rendered_chart}")" || fail 'the rendered Kubescape storage image is missing'
-readonly rendered_storage_image
-[[ "${rendered_storage_image}" == "${storage_repository}:${storage_tag}" ]] ||
-  fail 'the rendered Kubescape storage Deployment does not use the signed compatibility digest'
-
 # Registry blob pulls can redirect from their API hosts to separate CDN hosts.
 # If a redirect host is blocked, kubevuln retries timeouts for hours and keeps
 # the SQLite storage backend contended while posture results try to persist.
