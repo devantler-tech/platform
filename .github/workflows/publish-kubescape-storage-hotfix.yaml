@@ -122,6 +122,11 @@ jobs:
           git apply "${HOTFIX_PATCH}"
           git diff --check
 
+      - name: Set up Buildx container driver
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver: docker-container
+
       - name: Log in to GHCR
         uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
         with:
