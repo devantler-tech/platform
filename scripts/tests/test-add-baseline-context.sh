@@ -91,6 +91,23 @@ check unlabelled-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' \
 check unlabelled-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions' \
   null "unlabelled namespace had seLinuxOptions injected"
 
+# A pod whose POD-level securityContext already declares SELinux options, with a
+# container carrying none. A container-level seLinuxOptions REPLACES the pod-level
+# struct wholesale, so injecting `level` would override the operator's level AND
+# drop the sibling `user` for that container. Measured 2026-08-29 without the
+# foreach precondition: the pod declared `{user: system_u, level: s9}` and the
+# container came back `{level: s0}`. The first assertion below is the regression;
+# the fsGroupChangePolicy one proves the fixture is processed at all, so a rule
+# that silently stopped matching cannot make the other three pass vacuously.
+check podlevel-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions' \
+  null "pod-level SELinux options were overridden by a container-level injection"
+check podlevel-mutated.yaml '.spec.securityContext.seLinuxOptions.level' \
+  s9 "pod-level seLinuxOptions.level was not preserved"
+check podlevel-mutated.yaml '.spec.securityContext.seLinuxOptions.user' \
+  system_u "pod-level seLinuxOptions.user was not preserved"
+check podlevel-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "pod-level rule did not fire on the podlevel fixture"
+
 if [ "${fail}" -ne 0 ]; then
   exit 1
 fi

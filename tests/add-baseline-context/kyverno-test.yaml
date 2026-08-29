@@ -21,6 +21,7 @@ results:
       - velero/plain
       - velero/no-init
       - velero/partial
+      - velero/podlevel
     kind: Pod
     result: pass
     patchedResources: patched-resources.yaml
@@ -49,5 +50,6 @@ results:
     resources:
       - chaos-mesh/unlabelled
       - velero/preset
+      - velero/podlevel
     kind: Pod
     result: skip

@@ -317,6 +317,21 @@ spec:
       mutate:
         foreach:
           - list: "request.object.spec.containers"
+            # A container-level seLinuxOptions REPLACES the pod-level struct wholesale
+            # (kubelet DetermineEffectiveSecurityContext), so injecting `level` into a
+            # container that has none would discard the pod's ENTIRE SELinux identity for
+            # that container — measured 2026-08-29: a pod declaring
+            # `{user: system_u, level: s9}` came back with the container on `{level: s0}`,
+            # losing both the operator's level and its user. Inject only when the pod sets
+            # no SELinux options at all, or when the container already overrides them.
+            preconditions:
+              any:
+                - key: "{{ request.object.spec.securityContext.seLinuxOptions || '' }}"
+                  operator: Equals
+                  value: ''
+                - key: "{{ element.securityContext.seLinuxOptions || '' }}"
+                  operator: NotEquals
+                  value: ''
             patchStrategicMerge:
               spec:
                 containers:
@@ -325,6 +340,21 @@ spec:
                       seLinuxOptions:
                         +(level): s0
           - list: "request.object.spec.initContainers[]"
+            # A container-level seLinuxOptions REPLACES the pod-level struct wholesale
+            # (kubelet DetermineEffectiveSecurityContext), so injecting `level` into a
+            # container that has none would discard the pod's ENTIRE SELinux identity for
+            # that container — measured 2026-08-29: a pod declaring
+            # `{user: system_u, level: s9}` came back with the container on `{level: s0}`,
+            # losing both the operator's level and its user. Inject only when the pod sets
+            # no SELinux options at all, or when the container already overrides them.
+            preconditions:
+              any:
+                - key: "{{ request.object.spec.securityContext.seLinuxOptions || '' }}"
+                  operator: Equals
+                  value: ''
+                - key: "{{ element.securityContext.seLinuxOptions || '' }}"
+                  operator: NotEquals
+                  value: ''
             patchStrategicMerge:
               spec:
                 initContainers:

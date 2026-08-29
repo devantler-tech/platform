@@ -57,3 +57,18 @@ spec:
           user: system_u
   securityContext:
     fsGroupChangePolicy: OnRootMismatch
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: podlevel
+  namespace: velero
+spec:
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+  securityContext:
+    fsGroupChangePolicy: OnRootMismatch
+    seLinuxOptions:
+      level: s9
+      user: system_u

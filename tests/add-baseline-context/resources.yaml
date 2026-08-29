@@ -85,3 +85,25 @@ spec:
       securityContext:
         seLinuxOptions:
           user: system_u
+---
+# Opted-in namespace whose POD-level securityContext already declares SELinux
+# options, with a container carrying none of its own. A container-level
+# seLinuxOptions REPLACES the pod-level struct wholesale (kubelet
+# DetermineEffectiveSecurityContext), so injecting `level` here would override
+# the operator's level AND silently drop the sibling `user` for that container.
+# Measured 2026-08-29 before the foreach precondition existed: this pod declared
+# `{user: system_u, level: s9}` and its container came back `{level: s0}`.
+# The container mutation must therefore not fire at all for this shape.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: podlevel
+  namespace: velero
+spec:
+  securityContext:
+    seLinuxOptions:
+      user: system_u
+      level: s9
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
