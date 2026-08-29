@@ -68,6 +68,9 @@ opaque_value_hits() {
   case "$status" in
     0) ;;
     1) return 0 ;;
+    # Defence in depth, and deliberately NOT covered by a fixture below: the -f/-r guards already
+    # reject every unreadable path a test can construct portably, so this branch only catches a
+    # read that fails after those checks pass (an I/O error, a path that changes underneath us).
     *) fail "opaque_value_hits: grep exited $status reading $file" ;;
   esac
 
@@ -228,7 +231,7 @@ check_fixture no no "public client id" 'Iv23limfvbk93bAXZI6b'
 # --- run as a user for whom mode bits are advisory and that fixture would pass vacuously.
 check_rejects_unreadable() {
   local label="$1" path="$2"
-  if ( opaque_value_hits "$path" ) >/dev/null 2>&1; then
+  if (opaque_value_hits "$path") >/dev/null 2>&1; then
     echo "FAIL(selftest): opaque_value_hits accepted $label — an unreadable ConfigMap would pass \
 the premise check as though it held no credential material" >&2
     selftest_failures=$((selftest_failures + 1))
