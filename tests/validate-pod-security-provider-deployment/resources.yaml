@@ -1,0 +1,69 @@
+---
+# Mirrors the Deployment Crossplane's package manager generates in
+# crossplane-system from a provider DeploymentRuntimeConfig. The DRC only ever
+# supplies a CONTAINER securityContext, so this is the exact shape the admission
+# webhook sees on every provider revision bump.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provider-container-seccomp-only
+  namespace: crossplane-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      pkg.crossplane.io/revision: provider-container-seccomp-only
+  template:
+    metadata:
+      labels:
+        pkg.crossplane.io/revision: provider-container-seccomp-only
+    spec:
+      containers:
+        - name: package-runtime
+          image: xpkg.upbound.io/upbound/provider-aws-iam:v2.4.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+            seLinuxOptions:
+              level: s0
+---
+# The same Deployment once the DRC also sets the profile at POD level, which is
+# the path validate-pod-security actually asserts.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provider-pod-seccomp
+  namespace: crossplane-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      pkg.crossplane.io/revision: provider-pod-seccomp
+  template:
+    metadata:
+      labels:
+        pkg.crossplane.io/revision: provider-pod-seccomp
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: package-runtime
+          image: xpkg.upbound.io/upbound/provider-aws-iam:v2.4.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+            seLinuxOptions:
+              level: s0
