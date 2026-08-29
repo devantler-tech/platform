@@ -208,6 +208,7 @@ done
 # Deliberately NOT a whole-file "every entry must carry paths:" rule: KSV-0039 is a pre-existing,
 # legitimately unscoped entry, so that invariant is false on this file today.
 derived_ids="$(
+  # shellcheck disable=SC2016 # $id is a yq variable.
   yq -r '.misconfigurations[] | .id as $id | (.paths // [])[] | $id + " " + .' "$ignorefile" |
     while IFS=' ' read -r derived_id derived_path; do
       # An `if` rather than the `case` used elsewhere in this file: bash 3.2 (still the system bash
