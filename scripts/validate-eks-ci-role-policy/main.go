@@ -1384,18 +1384,18 @@ const (
 //	a015af05c3b1a620ecd6a7990353e9f1db03b7c50d7ceb2edd63e3563a6591d5
 //	026c985d74ec1230e7272488d2a55c028bb78916c4c8362f22c447c862111d78
 //
-// Measured against main 1d7e98af for the Kubescape contended-write storage
-// repair: the five production projections retain the same selected identities,
-// every pinned per-identity fingerprint still passes, and the same 35 known
-// Flux substitution diagnostics remain. The authored delta is one image
-// override in the Kubescape HelmRelease, pinning the storage Deployment to the
-// signed digest built from storage v0.0.297 plus the upstream-reviewed
-// 60-second SQLite busy timeout. It adds no subject, grant, security context,
-// authorization resource, or rendered object. The previous approved aggregate
-// digest was:
+// Measured against main d6c1111e for the Kubescape writer-serialization
+// deployment: the five production projections retain the same selected
+// identities, every pinned per-identity fingerprint still passes, and the same
+// 35 known Flux substitution diagnostics remain. The authored delta is one
+// image override in the Kubescape HelmRelease, advancing storage v0.0.297 from
+// the 60-second busy-timeout image to the signed build that also reserves the
+// SQLite writer before each profile transaction. It adds no subject, grant,
+// security context, authorization resource, or rendered object. The previous
+// approved aggregate digest was:
 //
-//	a8f0075fcb41fb5b79c608ee9816bfe3c01062bf7c94696f3a044f2f55336a2a
-const expectedRenderedSurfaceSHA = "c6545d119e6811f72a00783fa66c478ce5e330411a69a87a181ef0111d67479e"
+//	c6545d119e6811f72a00783fa66c478ce5e330411a69a87a181ef0111d67479e
+const expectedRenderedSurfaceSHA = "010155143ff52d6f576a406ddb891306333bf27eb9d8ed237b215bf8150073b9"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
