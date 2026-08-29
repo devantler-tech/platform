@@ -5,7 +5,7 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly workflow="${root_dir}/.github/workflows/publish-kubescape-storage-hotfix.yaml"
-readonly patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-busy-timeout.patch"
+readonly patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch"
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
 readonly source_commit='b35788b68337134fc2514574cde1ba7f1225fd43'
 readonly image_repository='ghcr.io/devantler-tech/platform-kubescape-storage'
@@ -33,6 +33,10 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
   fail 'the workflow must pin the reviewed v0.0.297 source commit'
 [[ "$(yq -er '.env.IMAGE' "${workflow}")" == "${image_repository}" ]] ||
   fail 'the workflow image destination drifted'
+# The literal GitHub expression is the contract.
+# shellcheck disable=SC2016
+[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.2-${{ github.sha }}' ]] ||
+  fail 'the workflow image tag must identify the writer-serialization revision'
 
 grep -qF 'repository: kubescape/storage' "${workflow}" ||
   fail 'the workflow must check out the upstream storage source explicitly'
@@ -87,7 +91,7 @@ readonly image_build_index
 grep -qF 'cosign sign --yes "${IMAGE}@${DIGEST}"' "${workflow}" ||
   fail 'the published compatibility image must be keylessly signed by digest'
 
-[[ "$(grep -c '^diff --git ' "${patch_file}")" == '2' ]] ||
+[[ "$(grep -c '^diff --git ' "${patch_file}")" == '4' ]] ||
   fail 'the compatibility patch must touch only implementation and regression-test files'
 grep -qF 'diff --git a/pkg/registry/file/sqlite.go b/pkg/registry/file/sqlite.go' "${patch_file}" ||
   fail 'the compatibility patch does not modify SQLite pool setup'
@@ -97,6 +101,14 @@ grep -qF 'conn.SetBusyTimeout(60 * time.Second)' "${patch_file}" ||
   fail 'the compatibility patch must apply the upstream-reviewed 60-second timeout'
 grep -qF 'assert.Equal(t, int64(60000), busyTimeoutMilliseconds)' "${patch_file}" ||
   fail 'the compatibility patch must prove the effective SQLite timeout'
+grep -qF 'diff --git a/pkg/registry/file/containerprofile_storage.go b/pkg/registry/file/containerprofile_storage.go' "${patch_file}" ||
+  fail 'the compatibility patch does not serialize container-profile writer transactions'
+grep -qF 'diff --git a/pkg/registry/file/containerprofile_storage_test.go b/pkg/registry/file/containerprofile_storage_test.go' "${patch_file}" ||
+  fail 'the compatibility patch lacks a writer-serialization regression test'
+grep -qF 'return sqlitex.ImmediateTransaction(conn)' "${patch_file}" ||
+  fail 'container-profile transactions must reserve SQLite write access before reading'
+grep -qF 'TestBeginTransactionSerializesWriters' "${patch_file}" ||
+  fail 'the compatibility patch must prove concurrent writers serialize'
 
 storage_repository="$(yq -er '
   .spec.values.storage.image.repository |

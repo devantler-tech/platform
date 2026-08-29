@@ -1,0 +1,129 @@
+diff --git a/pkg/registry/file/sqlite.go b/pkg/registry/file/sqlite.go
+index 3d706533..c219537a 100644
+--- a/pkg/registry/file/sqlite.go
++++ b/pkg/registry/file/sqlite.go
+@@ -61,6 +61,14 @@ func NewPool(path string, size int) *sqlitemigration.Pool {
+ 		},
+ 		sqlitemigration.Options{
+ 			PoolSize: size,
++			// Under write bursts (per-container profile churn plus the
++			// RogueArtifact class) a writer can hold the lock beyond the
++			// driver's 10s default busy timeout on slow disks, surfacing raw
++			// "database is locked" to API clients. Wait instead of failing.
++			PrepareConn: func(conn *sqlite.Conn) error {
++				conn.SetBusyTimeout(60 * time.Second)
++				return nil
++			},
+ 		})
+ }
+ 
+diff --git a/pkg/registry/file/sqlite_test.go b/pkg/registry/file/sqlite_test.go
+index 9a1ba4ed..fb1e6a80 100644
+--- a/pkg/registry/file/sqlite_test.go
++++ b/pkg/registry/file/sqlite_test.go
+@@ -2,15 +2,39 @@ package file
+ 
+ import (
+ 	"context"
++	"path/filepath"
+ 	"testing"
+ 
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ 	v1 "k8s.io/api/core/v1"
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"zombiezen.com/go/sqlite"
+ 	"zombiezen.com/go/sqlite/sqlitemigration"
++	"zombiezen.com/go/sqlite/sqlitex"
+ )
+ 
++func TestNewPoolSetsBusyTimeout(t *testing.T) {
++	pool := NewPool(filepath.Join(t.TempDir(), "busy-timeout.sq3"), 1)
++	require.NotNil(t, pool)
++	defer func() {
++		assert.NoError(t, pool.Close())
++	}()
++
++	conn, err := pool.Take(context.Background())
++	require.NoError(t, err)
++	defer pool.Put(conn)
++
++	var busyTimeoutMilliseconds int64
++	require.NoError(t, sqlitex.Execute(conn, "PRAGMA busy_timeout;", &sqlitex.ExecOptions{
++		ResultFunc: func(stmt *sqlite.Stmt) error {
++			busyTimeoutMilliseconds = stmt.ColumnInt64(0)
++			return nil
++		},
++	}))
++	assert.Equal(t, int64(60000), busyTimeoutMilliseconds)
++}
++
+ func TestMemoryConn(t *testing.T) {
+ 	pod := v1.Pod{
+ 		ObjectMeta: metav1.ObjectMeta{
+diff --git a/pkg/registry/file/containerprofile_storage.go b/pkg/registry/file/containerprofile_storage.go
+index 958c5fd6..1126376e 100644
+--- a/pkg/registry/file/containerprofile_storage.go
++++ b/pkg/registry/file/containerprofile_storage.go
+@@ -78,7 +78,7 @@ func (c *ContainerProfileStorageImpl) WithConnection(ctx context.Context) (conte
+ // to commit or rollback based on the error state.
+ func (c *ContainerProfileStorageImpl) BeginTransaction(ctx context.Context) (func(*error), error) {
+ 	conn := ctx.Value(connKey).(*sqlite.Conn)
+-	return sqlitex.Transaction(conn), nil
++	return sqlitex.ImmediateTransaction(conn)
+ }
+ 
+ func (c *ContainerProfileStorageImpl) DeleteContainerProfile(ctx context.Context, key string) error {
+diff --git a/pkg/registry/file/containerprofile_storage_test.go b/pkg/registry/file/containerprofile_storage_test.go
+new file mode 100644
+index 00000000..8f3aa946
+--- /dev/null
++++ b/pkg/registry/file/containerprofile_storage_test.go
+@@ -0,0 +1,47 @@
++package file
++
++import (
++	"context"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++	"zombiezen.com/go/sqlite"
++	"zombiezen.com/go/sqlite/sqlitex"
++)
++
++func TestBeginTransactionSerializesWriters(t *testing.T) {
++	pool := NewPool(t.TempDir()+"/transactions.sq3", 2)
++	require.NotNil(t, pool)
++	defer func() {
++		require.NoError(t, pool.Close())
++	}()
++
++	storage := NewContainerProfileStorageImpl(nil, pool)
++	firstCtx, firstCleanup, err := storage.WithConnection(context.Background())
++	require.NoError(t, err)
++	defer firstCleanup()
++	secondCtx, secondCleanup, err := storage.WithConnection(context.Background())
++	require.NoError(t, err)
++	defer secondCleanup()
++
++	finishFirst, err := storage.BeginTransaction(firstCtx)
++	require.NoError(t, err)
++
++	secondConn := secondCtx.Value(connKey).(*sqlite.Conn)
++	secondConn.SetBusyTimeout(0)
++	if err := sqlitex.Execute(secondConn, "BEGIN IMMEDIATE;", nil); err == nil {
++		require.NoError(t, sqlitex.Execute(secondConn, "ROLLBACK;", nil))
++		var firstErr error
++		finishFirst(&firstErr)
++		t.Fatal("second writer acquired SQLite's write reservation before the first transaction completed")
++	} else {
++		require.Equal(t, sqlite.ResultBusy, sqlite.ErrCode(err).ToPrimary())
++	}
++
++	var firstErr error
++	finishFirst(&firstErr)
++	require.NoError(t, firstErr)
++
++	require.NoError(t, sqlitex.Execute(secondConn, "BEGIN IMMEDIATE;", nil))
++	require.NoError(t, sqlitex.Execute(secondConn, "ROLLBACK;", nil))
++}
