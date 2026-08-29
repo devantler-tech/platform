@@ -217,6 +217,20 @@ spec:
     # its busy timeout.
     kubevulnScheduler:
       scanSchedule: "12 1 * * *"
+    storage:
+      image:
+        # Storage v0.0.297 uses SQLite's 10-second default busy timeout, so
+        # concurrent vulnerability/profile writes can make a completed posture
+        # scan lose its detailed result with `database is locked`. The upstream
+        # 60-second fix first ships in v0.0.306, but v0.0.303+ removes the
+        # ApplicationProfile and NetworkNeighborhood APIs that this deployment
+        # still serves with live data. This compatibility image is the exact
+        # v0.0.297 source plus that upstream-reviewed timeout change and its
+        # executable PRAGMA regression test; the main-only publisher attaches
+        # SBOM/provenance and signs the digest before this pin may advance.
+        repository: ghcr.io/devantler-tech/platform-kubescape-storage
+        tag: "v0.0.297-sqlite-busy-timeout.1-6cf966641304389dcc414630ff92ed5876e1d019@sha256:a5abb439496eb1ffdb7c388aa0e4a06f2be70cc2e31e7ab1597b5c5c2a016b52"
+        pullPolicy: IfNotPresent
     # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
     # to avoid Helm upgrade failures from PVC shrink rejection.
     persistence:
