@@ -1397,7 +1397,44 @@ const (
 // approved aggregate digest was:
 //
 //	8758aca997ecdf37b536b18420803f46e67e0af05b851fafefbaa83e02b01fe3
-const expectedRenderedSurfaceSHA = "ec7889f10c850126e206c93669adbd2c1406c5f189e07b2cbfe5e63e7d24e287"
+//
+// Measured against main 14351b35 for the flux-system controller identity pins:
+// 548 documents on both sides, with membership IDENTICAL — set difference in
+// BOTH directions over apiVersion|kind|namespace|name returned zero, so nothing
+// was added, removed or renamed (count alone cannot see a rename). The
+// comparison was proven live by a negative control: deleting one line from the
+// branch set makes the same set difference report exactly that identity.
+// Exactly THREE entries' content moved, and they are the three authored files:
+//
+//	fluxcd.controlplane.io/v1  FluxInstance  flux-system/flux
+//	helm.toolkit.fluxcd.io/v2  HelmRelease   flux-system/flux-operator
+//	helm.toolkit.fluxcd.io/v2  HelmRelease   flux-system/tofu-controller
+//
+// Their rendered delta is a kustomize patch (FluxInstance) and a postRenderers
+// block (both HelmReleases) pinning each Flux controller's runAsUser and
+// runAsGroup to the uid/gid its own image already declares — 65534 for the four
+// ghcr.io/fluxcd/* controllers, 65532 for flux-operator and tofu-controller.
+// Those values are read from the image configs, so the effective uid and gid do
+// not change at runtime: kubelet already resolves an unset runAsUser from the
+// image USER, and this only makes that value explicit so C-0013 can read it.
+// The block constrains the workloads; it grants nothing. Same shape as the
+// longhorn-ui non-root identity pin approved earlier in this file.
+//
+// No grant-bearing object moved: the surface carries 78 Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount documents on BOTH sides,
+// their identity sets are byte-identical, and none of them is in the moved set
+// above. Every `aws`-bearing line in the rendered surface is byte-identical
+// across the two trees (121 on each side), so nothing granted to the aws/aws
+// service account this validator exists to protect is touched.
+//
+// The aggregate digest was read from the required job's own output on the
+// approved renderer. This host runs kubectl v1.36.1 / kustomize v5.8.1, which
+// the validator rejects as unapproved — it can therefore measure the
+// conservation above but cannot produce the digest. The previous approved
+// aggregate digest was:
+//
+//	ec7889f10c850126e206c93669adbd2c1406c5f189e07b2cbfe5e63e7d24e287
+const expectedRenderedSurfaceSHA = "3692409fb9de285a396f8b24dc36b2cbca07fada5254ed21c9d7ccb37456186c"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
