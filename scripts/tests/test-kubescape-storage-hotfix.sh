@@ -9,7 +9,7 @@ readonly patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
 readonly source_commit='b35788b68337134fc2514574cde1ba7f1225fd43'
 readonly image_repository='ghcr.io/devantler-tech/platform-kubescape-storage'
-readonly image_tag='v0.0.297-sqlite-busy-timeout.1-6cf966641304389dcc414630ff92ed5876e1d019@sha256:a5abb439496eb1ffdb7c388aa0e4a06f2be70cc2e31e7ab1597b5c5c2a016b52'
+readonly image_tag='v0.0.297-sqlite-contention.2-d6c1111e8c7cc34aab21d55441b0cd5c50e9bbf4@sha256:c20facb86f1ceba7d1769c1bdc383e89a2d9d4f49dc176ef59932d7ec2c6bd01'
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
