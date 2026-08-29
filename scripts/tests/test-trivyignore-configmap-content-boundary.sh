@@ -37,6 +37,26 @@ readonly CHECK_ID="KSV-01010"
 readonly OPAQUE_VALUE_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?[A-Za-z0-9+/=_.-]{40,}"?[[:space:]]*$'
 readonly ISSUED_PREFIX_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?(gh[pousr]_|github_pat_|xox[abprs]-|sk-[A-Za-z0-9]|AKIA[A-Z0-9]{8}|ASIA[A-Z0-9]{8}|eyJ[A-Za-z0-9_-]{8,}\.)'
 
+# A registry/image reference is 40+ characters drawn from the SAME class the opaque-value detector
+# uses — `/`, `.` and `-` are all members — so it matched (#3243). The exclusion is by SHAPE: a value
+# whose leading segment looks like a host (`ghcr.io/`, `registry.k8s.io/`) is a reference, not
+# credential material.
+#
+# Deliberately NOT done by dropping `/` from the value class: standard base64 contains `/`, so that
+# would have removed real coverage. The "standard base64 containing a slash" fixture pins that.
+readonly IMAGE_REF_VALUE_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?[a-z0-9-]+(\.[a-z0-9-]+)+/'
+
+# Credential-shaped lines in a file, minus image/registry references. Defined once so the file loop
+# and the self-test exercise the SAME composition — a self-test against a differently-composed
+# detector proves nothing about the one that runs.
+#
+# No `grep -q` in the second stage: under `set -o pipefail` a quiet grep exits on its first match,
+# the upstream grep dies with SIGPIPE, and the pipeline reports non-zero for a line that DID match
+# (#2787). Emitting the lines and testing for emptiness has no such edge.
+opaque_value_hits() {
+  grep -E "$OPAQUE_VALUE_RE" "$1" | grep -vE "$IMAGE_REF_VALUE_RE" || true
+}
+
 fail() {
   echo "FAIL: $*" >&2
   exit 1
@@ -96,7 +116,7 @@ while IFS= read -r cm; do
   # dropped into an EXISTING reviewed key leaves the key set unchanged, so the matched-key
   # assertion below would not catch it either, and the file would keep its exception while
   # holding live credential material.
-  if grep -qE "$OPAQUE_VALUE_RE" "$REPO_ROOT/$cm"; then
+  if [ -n "$(opaque_value_hits "$REPO_ROOT/$cm")" ]; then
     echo "FAIL: $cm assigns a long opaque value that looks like credential material, but \
 $CHECK_ID is excepted for it" >&2
     premise_failures=$((premise_failures + 1))
@@ -138,7 +158,7 @@ check_fixture() {
   local want_opaque="$1" want_prefix="$2" label="$3" value="$4"
   printf '  admin_email: "%s"\n' "$value" >"$selftest_probe"
   local got_opaque=no got_prefix=no
-  grep -qE "$OPAQUE_VALUE_RE" "$selftest_probe" && got_opaque=yes
+  [ -n "$(opaque_value_hits "$selftest_probe")" ] && got_opaque=yes
   grep -qE "$ISSUED_PREFIX_RE" "$selftest_probe" && got_prefix=yes
   if [ "$got_opaque" != "$want_opaque" ] || [ "$got_prefix" != "$want_prefix" ]; then
     echo "FAIL(selftest): $label — opaque expected=$want_opaque got=$got_opaque; \
@@ -166,6 +186,17 @@ check_fixture yes yes "jwt" "$(mk 'eyJ' "hbGciOiJIUzI1NiJ9.$(mk 'eyJ' 'zdWIiOiIx
 check_fixture yes no "long base64 blob" 'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWY='
 check_fixture yes no "base64url blob" 'dGVzdF92YWx1ZS13aXRoX3VuZGVyc2NvcmVzLWFuZC1kYXNoZXM_zQ'
 
+# Registry/image references are 40+ characters drawn from the same class (`/`, `.` and `-` are all
+# members), so the opaque-value detector matched them (#3243). Excluded by SHAPE, not by removing a
+# character from the class: dropping `/` would also stop catching standard base64, which is the
+# detector's original purpose — the fixture below that case pins.
+check_fixture no no "registry image reference" 'ghcr.io/devantler-tech/provider-upjet-unifi'
+check_fixture no no "k8s registry image reference" 'registry.k8s.io/kube-state-metrics/kube-state-metrics'
+
+# The case the naive fix (dropping `/` from the value class) would have broken: a standard-base64
+# credential containing `/` must still be caught.
+check_fixture yes no "standard base64 containing a slash" 'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVph/2NkZWZnaGlq='
+
 # MUST NOT be detected by either — the real reviewed values these exceptions exist for.
 check_fixture no no "acme contact address" 'ned@devantler.tech'
 check_fixture no no "public domain" 'platform.devantler.tech'
@@ -176,7 +207,7 @@ rm -f "$selftest_probe"
 [ "$selftest_failures" -eq 0 ] || fail \
   "$selftest_failures detector self-test failure(s). The content-premise checks above cannot be \
 trusted until these pass — a detector that no longer matches reports success identically."
-echo "PASS(selftest): both content detectors pin their own coverage (8 credential fixtures, 3 cleared)."
+echo "PASS(selftest): both content detectors pin their own coverage (9 credential fixtures, 5 cleared)."
 
 # --- Layer 2: behavioural paired control. Needs trivy; skips (loudly) where it is unavailable.
 command -v trivy >/dev/null 2>&1 || {
