@@ -169,6 +169,7 @@ jobs:
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
               - 'scripts/tests/test-restrict-tenant-network-policies.sh'
+              - 'scripts/tests/test-add-baseline-context.sh'
               # The declarative fixtures are the other half of that test: a PR that
               # touches only resources.yaml or kyverno-test.yaml would otherwise leave
               # the k8s filter false, so neither kyverno test nor the shell gate runs.
@@ -777,6 +778,8 @@ jobs:
           bash scripts/tests/test-tenant-route-hostname-boundary.sh
           shellcheck scripts/tests/test-actual-budget-auth-route.sh
           bash scripts/tests/test-actual-budget-auth-route.sh
+          shellcheck scripts/tests/test-add-baseline-context.sh
+          bash scripts/tests/test-add-baseline-context.sh
 
       - name: 🚦 Validate default-off Cilium bandwidth manager
         if: needs.changes.outputs.k8s == 'true'

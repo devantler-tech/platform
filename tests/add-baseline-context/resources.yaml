@@ -1,0 +1,49 @@
+---
+# Opted-in namespace, nothing preset: both fields must be injected.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: plain
+  namespace: velero
+spec:
+  initContainers:
+    - name: init
+      image: velero/velero-plugin:v1.0.0
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+---
+# Opted-in namespace with both fields already set to NON-default values. The
+# conditional anchors must preserve them; a regression to +() would overwrite.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: preset
+  namespace: velero
+spec:
+  securityContext:
+    fsGroupChangePolicy: Always
+  initContainers:
+    - name: init
+      image: velero/velero-plugin:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s9
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s9
+---
+# Excluded namespace WITHOUT the opt-in label: the default-off control. Nothing
+# may be injected here, or the rule is not default-off.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unlabelled
+  namespace: chaos-mesh
+spec:
+  containers:
+    - name: app
+      image: chaos-mesh/chaos-daemon:v1.0.0

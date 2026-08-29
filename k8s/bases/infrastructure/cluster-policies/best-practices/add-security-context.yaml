@@ -250,3 +250,78 @@ spec:
               +(runAsNonRoot): true
               +(fsGroup): 1000
               +(fsGroupChangePolicy): OnRootMismatch
+    # The twelve namespaces excluded from add-pod-security-context and
+    # add-container-security-context are excluded because their workloads need
+    # elevated PRIVILEGE. That rationale covers runAsUser/runAsGroup/fsGroup and
+    # the container hardening fields — it does not cover fsGroupChangePolicy or
+    # seLinuxOptions, which are not privilege fields:
+    # - fsGroupChangePolicy only governs ownership-relabel behaviour when the
+    #   kubelet applies an fsGroup to a volume. It grants nothing.
+    # - seLinuxOptions {level: s0} is the default non-privileged MCS level and is
+    #   a no-op on this AppArmor cluster (runc ignores SELinux labels when SELinux
+    #   is not the active LSM), retained as CIS-5.7.3 defense-in-depth.
+    # Excluding them cost both controls across the whole excluded population:
+    # measured against live prod specs 2026-08-29, 210/210 pods in those twelve
+    # namespaces have no fsGroupChangePolicy and 189/210 have at least one
+    # container with no seLinuxOptions.
+    #
+    # DEFAULT-OFF. This rule is gated on an explicit namespace opt-in label, the
+    # same mechanism add-user-namespaces uses, so merging it changes nothing until
+    # a namespace is labelled. Roll out one namespace at a time.
+    #
+    # Deliberately NOT injected here: fsGroup. It is a group field, so supplying it
+    # is exactly the privilege change the exclusion exists to prevent. The
+    # consequence is recorded rather than hidden — where a pod sets no fsGroup
+    # (119 of the 210 measured), fsGroupChangePolicy has no runtime effect at all
+    # and only satisfies the control. That inertness is the point: this rule can
+    # change a pod's declared posture without changing how it runs.
+    #
+    # Neither field carries the runAsGroup-without-runAsUser coupling documented
+    # above, so no pod sandbox can fail to build on account of this rule.
+    - name: add-baseline-context-optin-namespaces
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              # CREATE only — same pod-spec immutability rationale as the rules
+              # above; existing pods pick this up when they are next recreated.
+              operations:
+                - CREATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context: enabled
+      mutate:
+        patchStrategicMerge:
+          spec:
+            securityContext:
+              +(fsGroupChangePolicy): OnRootMismatch
+    - name: add-baseline-context-optin-containers
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              operations:
+                - CREATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context: enabled
+      mutate:
+        foreach:
+          - list: "request.object.spec.containers"
+            patchStrategicMerge:
+              spec:
+                containers:
+                  - (name): "{{element.name}}"
+                    securityContext:
+                      +(seLinuxOptions):
+                        level: s0
+          - list: "request.object.spec.initContainers[]"
+            patchStrategicMerge:
+              spec:
+                initContainers:
+                  - (name): "{{element.name}}"
+                    securityContext:
+                      +(seLinuxOptions):
+                        level: s0

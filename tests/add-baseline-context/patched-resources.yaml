@@ -1,0 +1,21 @@
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: plain
+  namespace: velero
+spec:
+  initContainers:
+    - name: init
+      image: velero/velero-plugin:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s0
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s0
+  securityContext:
+    fsGroupChangePolicy: OnRootMismatch

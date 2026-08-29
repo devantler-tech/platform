@@ -1,0 +1,49 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: add-baseline-context-optin
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/add-security-context.yaml
+resources:
+  - resources.yaml
+# Declares the namespace labels the namespaceSelector matches on. Without it the
+# CLI reports every resource "Excluded" and the fixture passes vacuously —
+# including the default-off control, which would then prove nothing.
+variables: values.yaml
+results:
+  # ON state: an opted-in namespace gets both fields, pod level and every
+  # container/initContainer.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-namespaces
+    resources:
+      - velero/plain
+    kind: Pod
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-containers
+    resources:
+      - velero/plain
+    kind: Pod
+    result: pass
+    patchedResources: patched-resources.yaml
+  # OFF state, and the anchor-preservation case. chaos-mesh carries no opt-in
+  # label so neither rule may touch it; velero/preset already sets both fields to
+  # non-default values, so the conditional anchors leave it unchanged and the
+  # mutation is reported as skipped.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-namespaces
+    resources:
+      - chaos-mesh/unlabelled
+      - velero/preset
+    kind: Pod
+    result: skip
+  - policy: add-security-context
+    rule: add-baseline-context-optin-containers
+    resources:
+      - chaos-mesh/unlabelled
+      - velero/preset
+    kind: Pod
+    result: skip
