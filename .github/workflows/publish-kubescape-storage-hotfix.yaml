@@ -24,7 +24,7 @@ concurrency:
 env:
   KUBESCAPE_STORAGE_SOURCE_COMMIT: b35788b68337134fc2514574cde1ba7f1225fd43
   IMAGE: ghcr.io/devantler-tech/platform-kubescape-storage
-  IMAGE_TAG: v0.0.297-sqlite-contention.2-${{ github.sha }}
+  IMAGE_TAG: v0.0.297-sqlite-contention.3-${{ github.sha }}
   PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch
 
 jobs:
