@@ -19,3 +19,18 @@ spec:
           level: s0
   securityContext:
     fsGroupChangePolicy: OnRootMismatch
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-init
+  namespace: velero
+spec:
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s0
+  securityContext:
+    fsGroupChangePolicy: OnRootMismatch

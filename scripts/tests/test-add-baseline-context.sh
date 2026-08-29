@@ -54,6 +54,14 @@ check plain-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions.lev
 check plain-mutated.yaml '.spec.initContainers[0].securityContext.seLinuxOptions.level' \
   s0 "opted-in initContainer did not receive seLinuxOptions"
 
+# A pod with no initContainers at all is the common shape; the foreach over
+# `spec.initContainers[]` must tolerate the field being absent rather than
+# erroring, which would drop the container mutation with it.
+check no-init-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "pod without initContainers did not receive fsGroupChangePolicy"
+check no-init-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "pod without initContainers did not receive seLinuxOptions"
+
 # Conditional anchors — a workload that sets its own values keeps them.
 check preset-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' \
   Always "preset fsGroupChangePolicy was overwritten"

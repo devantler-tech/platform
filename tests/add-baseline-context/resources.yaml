@@ -47,3 +47,16 @@ spec:
   containers:
     - name: app
       image: chaos-mesh/chaos-daemon:v1.0.0
+---
+# Opted-in namespace with NO initContainers — the common shape. The foreach over
+# `spec.initContainers[]` must tolerate the field being absent rather than
+# erroring, so the pod-level and container mutations still land.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-init
+  namespace: velero
+spec:
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0

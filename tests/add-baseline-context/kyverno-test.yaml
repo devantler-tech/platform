@@ -19,6 +19,7 @@ results:
     rule: add-baseline-context-optin-namespaces
     resources:
       - velero/plain
+      - velero/no-init
     kind: Pod
     result: pass
     patchedResources: patched-resources.yaml
@@ -26,6 +27,7 @@ results:
     rule: add-baseline-context-optin-containers
     resources:
       - velero/plain
+      - velero/no-init
     kind: Pod
     result: pass
     patchedResources: patched-resources.yaml
