@@ -28,14 +28,7 @@
 #      kube-controller-manager error are never
 #      touched (they are a different pattern / fingerprint and still alert).
 #
-#   2. tofu-empty-aaaa - tofu-controller "DNS NXDOMAIN errors". This cluster is
-#      single-stack IPv4 (cilium enable-ipv6=false), so the Go tf-runner's parallel
-#      AAAA lookups for IPv4-only hosts correctly return empty (NODATA). The DNS
-#      check is not sub-pattern granular, so this is scoped to the app+rule; the
-#      separate `dns-server-errors` (SERVFAIL) builtin still covers genuine DNS
-#      faults for this app, so real "host does not exist" signal is not fully lost.
-#
-#   3. extensions-host-failed-conns - the `network-tcp-connections` ("failed to
+#   2. extensions-host-failed-conns - the `network-tcp-connections` ("failed to
 #      connect to N upstream services") warning on `_:Unknown:extensions`. This is
 #      NOT a Kubernetes workload: Coroot groups the Talos host-level processes it
 #      sees via eBPF but cannot map to a pod into per-node "Unknown" apps, and
@@ -143,16 +136,8 @@ spec:
                     [ "$hit" = "y" ] && { ids="$ids $id"; echo "match kcm-keda-gc-reflector: $id"; }
                   done
 
-                  # Exemption 2 - tofu-controller benign empty AAAA (single-stack).
-                  for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]
-                      | select(.suppressed==false and .resolved_at==null and .rule_id=="dns-nxdomain-errors"
-                               and (.application_id | endswith(":flux-system:Deployment:tofu-controller")))
-                      | .id'); do
-                    ids="$ids $id"; echo "match tofu-empty-aaaa: $id"
-                  done
-
-                  # Exemption 3 - Talos host system-extension group benign failed
-                  # TCP connections (see header entry 3). Coroot-synthesised non-k8s
+                  # Exemption 2 - Talos host system-extension group benign failed
+                  # TCP connections (see header entry 2). Coroot-synthesised non-k8s
                   # host app, so a genuine fault surfaces elsewhere (Longhorn volume
                   # health, instance-manager SLOs), not here.
                   for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]

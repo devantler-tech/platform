@@ -16,9 +16,8 @@
 # Deliberately explicit (one entry per binding) so C-0007 still flags any NEW or
 # accidental delete-capable grant elsewhere — that residual signal is wanted.
 # Names are regex-compared, so the one revision-hashed entry (the Crossplane
-# provider CRB) matches by pattern and survives provider re-installs; the
-# tofu-controller `tf-runner` RoleBinding is created on demand per Terraform
-# apply (the exception no-ops while it is absent). Keep this list reconciled
+# provider CRB) matches by pattern and survives provider re-installs. Keep this
+# list reconciled
 # against a fresh scan (it can only be re-verified live once the scanner mount
 # fix lands — see the kubescape HelmRelease postRenderer / helm-charts#862).
 #
@@ -138,11 +137,6 @@ spec:
       - apiGroup: rbac.authorization.k8s.io
         kind: RoleBinding
         name: longhorn
-      - apiGroup: rbac.authorization.k8s.io
-        kind: RoleBinding
-        # FRAGILE: tofu-controller creates this on demand per Terraform apply;
-        # it is absent between runs (the exception simply no-ops while absent).
-        name: tf-runner
       - apiGroup: rbac.authorization.k8s.io
         kind: RoleBinding
         name: velero-server                              # backup/restore

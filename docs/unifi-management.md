@@ -21,10 +21,8 @@ provider-upjet-unifi (Crossplane, crossplane-system)
 UniFi Controller API   (reached from Hetzner)
 ```
 
-This is the steady-state Crossplane model; it replaced an interim OpenTofu +
-tofu-controller setup. Broadening coverage (VLANs/WLANs/firewall) and a
-cross-resource reference for `TrafficRoute.networkId` are tracked in the
-`provider-upjet-unifi` issues.
+Broadening coverage (VLANs/WLANs/firewall) and a cross-resource reference for
+`TrafficRoute.networkId` are tracked in the `provider-upjet-unifi` issues.
 
 ## Where it lives
 
@@ -127,8 +125,7 @@ for the full procedure and how to find a live object's `_id`.
   (`ghcr.io/devantler-tech/provider-upjet-unifi`).
 - **No tenant pods.** The provider runs in `crossplane-system`; the `unifi` namespace
   holds only Managed Resources, the `ProviderConfig`, and credential Secrets — hence
-  the `default-deny` NetworkPolicy (no per-workload allow needed, unlike the former
-  tofu-controller runner).
+  the `default-deny` NetworkPolicy with no per-workload allow needed.
 - **Egress to the controller.** The provider pod (crossplane-system) reaches the
   UniFi controller API over the Hetzner network; confirm reachability if a `Client`/
   `Record` stays `Synced=False` with a dial error.
