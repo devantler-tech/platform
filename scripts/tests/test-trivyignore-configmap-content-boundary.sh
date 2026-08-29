@@ -53,8 +53,27 @@ readonly IMAGE_REF_VALUE_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?[a-z0-9-
 # No `grep -q` in the second stage: under `set -o pipefail` a quiet grep exits on its first match,
 # the upstream grep dies with SIGPIPE, and the pipeline reports non-zero for a line that DID match
 # (#2787). Emitting the lines and testing for emptiness has no such edge.
+#
+# The `|| true` that used to close this pipeline made an unreadable file indistinguishable from a
+# clean one: grep's exit 2 was swallowed and the caller saw empty output, so a ConfigMap nobody
+# could read PASSED the premise check that exists to fail on it. Both call sites test the output
+# with `[ -n ... ]` and discard the status, so the guard has to be inside the function.
 opaque_value_hits() {
-  grep -E "$OPAQUE_VALUE_RE" "$1" | grep -vE "$IMAGE_REF_VALUE_RE" || true
+  local file="$1" candidates status=0
+
+  [ -f "$file" ] || fail "opaque_value_hits: not a regular file: $file"
+  [ -r "$file" ] || fail "opaque_value_hits: unreadable: $file"
+
+  candidates="$(grep -E "$OPAQUE_VALUE_RE" "$file")" || status=$?
+  case "$status" in
+    0) ;;
+    1) return 0 ;;
+    *) fail "opaque_value_hits: grep exited $status reading $file" ;;
+  esac
+
+  # This stage filters an in-memory string, so there is nothing left to fail on a read and exit 1
+  # means every candidate was an image reference — a legitimate empty result.
+  printf '%s\n' "$candidates" | grep -vE "$IMAGE_REF_VALUE_RE" || true
 }
 
 fail() {
@@ -202,12 +221,29 @@ check_fixture no no "acme contact address" 'ned@devantler.tech'
 check_fixture no no "public domain" 'platform.devantler.tech'
 check_fixture no no "public client id" 'Iv23limfvbk93bAXZI6b'
 
+# --- Unreadable input must not read as clean. This is the other half of the detector's honesty:
+# --- the fixtures above prove it still MATCHES, and these prove it cannot silently match NOTHING
+# --- because it never read the file. Run in a subshell so `fail` ends the probe, not this script.
+# --- The probes are a missing path and a directory rather than a chmod-000 file, because CI may
+# --- run as a user for whom mode bits are advisory and that fixture would pass vacuously.
+check_rejects_unreadable() {
+  local label="$1" path="$2"
+  if ( opaque_value_hits "$path" ) >/dev/null 2>&1; then
+    echo "FAIL(selftest): opaque_value_hits accepted $label — an unreadable ConfigMap would pass \
+the premise check as though it held no credential material" >&2
+    selftest_failures=$((selftest_failures + 1))
+  fi
+}
+
+check_rejects_unreadable "a missing file" "${selftest_probe}.does-not-exist"
+check_rejects_unreadable "a directory" "$(dirname "$selftest_probe")"
+
 rm -f "$selftest_probe"
 
 [ "$selftest_failures" -eq 0 ] || fail \
   "$selftest_failures detector self-test failure(s). The content-premise checks above cannot be \
 trusted until these pass — a detector that no longer matches reports success identically."
-echo "PASS(selftest): both content detectors pin their own coverage (9 credential fixtures, 5 cleared)."
+echo "PASS(selftest): both content detectors pin their own coverage (9 credential fixtures, 5 cleared, 2 unreadable-input rejections)."
 
 # --- Layer 2: behavioural paired control. Needs trivy; skips (loudly) where it is unavailable.
 command -v trivy >/dev/null 2>&1 || {
