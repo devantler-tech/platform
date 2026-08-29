@@ -128,7 +128,7 @@ while IFS= read -r row || [ -n "$row" ]; do
   [ -n "$reason" ] ||
     die "$exceptions_file:$exception_lineno: '$url' carries no reason (column 3) — an exception without a stated reason is not reviewable"
   excepted_urls="$excepted_urls$url"$'\n'
-done < "$exceptions_file"
+done <"$exceptions_file"
 
 # ⚠️ AN EMPTY EXCEPTIONS FILE IS THE GOAL STATE, NOT A FAILURE.
 #
@@ -192,10 +192,10 @@ canonicalize() { # <dir> <entry>
 # tested against it.
 is_remote_form() { # <entry>
   case $1 in
-    *"://"*) return 0 ;;      # https://, http://, git::https://, ssh://
-    git@*) return 0 ;;        # scp-style SSH
-    git::*) return 0 ;;       # kustomize's explicit git prefix
-    gh:*) return 0 ;;         # kustomize's github shorthand
+    *"://"*) return 0 ;; # https://, http://, git::https://, ssh://
+    git@*) return 0 ;;   # scp-style SSH
+    git::*) return 0 ;;  # kustomize's explicit git prefix
+    gh:*) return 0 ;;    # kustomize's github shorthand
   esac
   # Schemeless host shorthand: `github.com/org/repo//path?ref=v1`. Requires a dot
   # in the first segment and a following slash, which no relative path in this tree

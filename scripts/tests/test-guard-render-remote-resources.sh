@@ -95,7 +95,8 @@ mk() { # <name> -> echoes the root dir
 }
 
 printf '\n== exit 0: a clean tree ==\n'
-r=$(mk clean); mkdir -p "$r/base"
+r=$(mk clean)
+mkdir -p "$r/base"
 cat >"$r/base/cm.yaml" <<'Y'
 apiVersion: v1
 kind: ConfigMap
@@ -113,7 +114,8 @@ run_guard "$r"
 assert_rc "clean tree passes" 0 "$GUARD_RC"
 
 printf '\n== exit 0: a LOCAL directory named like a host is not a remote ==\n'
-r=$(mk hostnamed); mkdir -p "$r/cert-manager.k8s.cloudflare.com"
+r=$(mk hostnamed)
+mkdir -p "$r/cert-manager.k8s.cloudflare.com"
 cat >"$r/cert-manager.k8s.cloudflare.com/cm.yaml" <<'Y'
 apiVersion: v1
 kind: ConfigMap
@@ -170,7 +172,8 @@ assert_rc "remote under bases: is rejected" 1 "$GUARD_RC"
 assert_contains "names the bases url" "bases-field-marker"
 
 printf '\n== exit 1: a kustomize-native helm fetch ==\n'
-r=$(mk helmchart); mkdir -p "$r/local"
+r=$(mk helmchart)
+mkdir -p "$r/local"
 cat >"$r/local/cm.yaml" <<'Y'
 apiVersion: v1
 kind: ConfigMap
@@ -192,7 +195,8 @@ assert_rc "helmCharts remote repo is rejected" 1 "$GUARD_RC"
 assert_contains "names the helm repo" "helm-repo-marker"
 
 printf '\n== exit 1: an exception row that has gone stale ==\n'
-r=$(mk stale); mkdir -p "$r/base"
+r=$(mk stale)
+mkdir -p "$r/base"
 cat >"$r/base/cm.yaml" <<'Y'
 apiVersion: v1
 kind: ConfigMap
@@ -266,7 +270,8 @@ assert_rc "an unclassifiable entry is cannot-check" 2 "$GUARD_RC"
 assert_contains "says it cannot classify it" "cannot classify"
 
 printf '\n== exit 2: anti-vacuity — a tree with no kustomization at all ==\n'
-r=$(mk emptytree); mkdir -p "$r/sub"
+r=$(mk emptytree)
+mkdir -p "$r/sub"
 printf 'not a kustomization\n' >"$r/sub/readme.txt"
 run_guard "$r"
 assert_rc "no kustomization found is cannot-check, NOT a clean pass" 2 "$GUARD_RC"
