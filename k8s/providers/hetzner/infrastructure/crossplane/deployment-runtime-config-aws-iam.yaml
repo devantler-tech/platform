@@ -9,6 +9,25 @@ spec:
       selector: {}
       template:
         spec:
+          # validate-pod-security's require-seccomp-profile asserts the POD-level
+          # path, and Crossplane's package manager creates this Deployment
+          # directly, so the container-level value below does not satisfy it and
+          # the create is denied by the fail-closed webhook. add-security-context
+          # cannot fill the gap either: its match/exclude carry pod selectors, so
+          # Kyverno generates no pod-controller rules for it and it never sees a
+          # Deployment. The DRC therefore has to state this itself.
+          #
+          # The package manager applies its pod-level defaults only when the DRC
+          # provides no securityContext at all, so this block has to restate
+          # them verbatim (runAsNonRoot/runAsUser/runAsGroup = Crossplane's
+          # documented 2000) — adding seccompProfile alone would drop the uid
+          # the provider images run as.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 2000
+            runAsGroup: 2000
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: package-runtime
               # IAM is global, but the provider validates credentials through

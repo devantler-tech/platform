@@ -1432,7 +1432,30 @@ const (
 // was:
 //
 //	ec7889f10c850126e206c93669adbd2c1406c5f189e07b2cbfe5e63e7d24e287
-const expectedRenderedSurfaceSHA = "a3199d02a7c8b32c0c82bd6a619ea020993d0e37f2dc1e4fe1b23e96d3a91f5d"
+//
+// Moved again by the Crossplane provider pod securityContext that fixes the
+// same dead provider fleet from the other side (platform#3470), rebased onto
+// the rename above. The four provider DeploymentRuntimeConfigs each gain a
+// pod-level securityContext so Kyverno's require-seccomp-profile — which
+// asserts the POD path and is auto-generated for pod controllers — stops
+// denying the Deployment its package manager builds. Crossplane applies its own
+// pod defaults only when the config supplies no securityContext at all, so the
+// block restates runAsNonRoot/runAsUser/runAsGroup 2000 verbatim rather than
+// changing the uid.
+//
+// Re-measured against main after the rename landed, because the previously
+// approved value for this change was computed against the pre-rename tree and
+// says nothing about this one. Conservation, by rendering both trees under one
+// renderer and diffing: the render differs by exactly 24 lines, all additions,
+// all four copies of that same six-line block, zero deletions. Extracting every
+// grant-bearing object with its rules, subjects and roleRef, the two trees are
+// byte-identical, and a perturbed-row negative control fires. It adds no
+// subject, grant, authorization resource, or rendered object; it adds a
+// security context, and that is the entire authored delta. The previous
+// approved aggregate digest was:
+//
+//	a3199d02a7c8b32c0c82bd6a619ea020993d0e37f2dc1e4fe1b23e96d3a91f5d
+const expectedRenderedSurfaceSHA = "d07fdcf550827d5b62d48c0ce9e110dea819f8d9168c7ac3abb7f01144939d93"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

@@ -164,6 +164,12 @@ jobs:
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-actual-budget-auth-route.sh'
+              # The provider DeploymentRuntimeConfigs, this gate and its kyverno
+              # fixture are one contract: a container-only seccompProfile is
+              # denied by the fail-closed webhook and takes the whole provider
+              # fleet to zero pods on the next revision bump (#3470).
+              - 'scripts/tests/test-provider-drc-pod-seccomp.sh'
+              - 'tests/validate-pod-security-provider-deployment/**'
               - 'scripts/tests/test-pvc-prune-safety.sh'
               - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
@@ -780,6 +786,8 @@ jobs:
           bash scripts/tests/test-tenant-route-hostname-boundary.sh
           shellcheck scripts/tests/test-actual-budget-auth-route.sh
           bash scripts/tests/test-actual-budget-auth-route.sh
+          shellcheck scripts/tests/test-provider-drc-pod-seccomp.sh
+          bash scripts/tests/test-provider-drc-pod-seccomp.sh
 
       - name: 🚦 Validate default-off Cilium bandwidth manager
         if: needs.changes.outputs.k8s == 'true'

@@ -1,0 +1,41 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: validate-pod-security-provider-deployment
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/validate-pod-security.yaml
+resources:
+  - resources.yaml
+results:
+  # A container-only seccompProfile does NOT satisfy the pod-level pattern, so
+  # every provider Deployment is denied at create. add-security-context cannot
+  # rescue it: that mutate policy carries match/exclude selectors, so Kyverno
+  # generates no pod-controller rules for it and it never sees a Deployment.
+  - policy: validate-pod-security
+    rule: autogen-require-seccomp-profile
+    resources:
+      - provider-container-seccomp-only
+    kind: Deployment
+    result: fail
+  - policy: validate-pod-security
+    rule: autogen-require-seccomp-profile
+    resources:
+      - provider-pod-seccomp
+    kind: Deployment
+    result: pass
+  - policy: validate-pod-security
+    rule: autogen-validate-container-security
+    resources:
+      - provider-container-seccomp-only
+      - provider-pod-seccomp
+    kind: Deployment
+    result: pass
+  - policy: validate-pod-security
+    rule: autogen-deny-container-seccomp-unconfined
+    resources:
+      - provider-container-seccomp-only
+      - provider-pod-seccomp
+    kind: Deployment
+    result: pass
