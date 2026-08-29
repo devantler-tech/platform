@@ -7,9 +7,11 @@ readonly root_dir
 readonly workflow="${root_dir}/.github/workflows/publish-kubescape-storage-hotfix.yaml"
 readonly patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-busy-timeout.patch"
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
+readonly image_verification_policy="${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
 readonly source_commit='b35788b68337134fc2514574cde1ba7f1225fd43'
 readonly image_repository='ghcr.io/devantler-tech/platform-kubescape-storage'
 readonly image_tag='v0.0.297-sqlite-busy-timeout.1-6cf966641304389dcc414630ff92ed5876e1d019@sha256:a5abb439496eb1ffdb7c388aa0e4a06f2be70cc2e31e7ab1597b5c5c2a016b52'
+readonly image_signing_subject='^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kubescape-storage-hotfix\.yaml@refs/heads/main$'
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -19,6 +21,7 @@ fail() {
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
 [[ -f "${workflow}" ]] || fail 'the Kubescape storage compatibility-image workflow is missing'
 [[ -f "${patch_file}" ]] || fail 'the Kubescape storage compatibility patch is missing'
+[[ -f "${image_verification_policy}" ]] || fail 'the first-party image verification policy is missing'
 
 [[ "$(yq -er '.permissions | length' "${workflow}")" == '0' ]] ||
   fail 'the hotfix workflow must deny permissions by default'
@@ -113,5 +116,41 @@ storage_tag="$(yq -er '
 readonly storage_tag
 [[ "${storage_tag}" == "${image_tag}" ]] ||
   fail 'the deployed compatibility image must match the signed immutable tag and digest'
+
+hotfix_attestor_count="$(
+  IMAGE_SIGNING_SUBJECT="${image_signing_subject}" yq -er '
+    [.spec.attestors[] | select(
+      .name == "publishkubescapestorage" and
+      (.cosign.keyless.identities | length == 1) and
+      .cosign.keyless.identities[0].issuer == "https://token.actions.githubusercontent.com" and
+      .cosign.keyless.identities[0].subjectRegExp == strenv(IMAGE_SIGNING_SUBJECT)
+    )] | length
+  ' "${image_verification_policy}"
+)" || fail 'could not inspect the Kubescape storage signing attestor'
+readonly hotfix_attestor_count
+[[ "${hotfix_attestor_count}" == '1' ]] ||
+  fail 'the storage image must trust exactly the dedicated main-branch publisher identity'
+
+publish_app_expression="$(yq -er '
+  .spec.validations[] |
+  select(.expression | contains("attestors.publishapp")) |
+  .expression
+' "${image_verification_policy}")" || fail 'the generic app-image validation is missing'
+readonly publish_app_expression
+grep -qF "!image.startsWith('${image_repository}:')" <<<"${publish_app_expression}" ||
+  fail 'the generic app signer must exclude tagged Kubescape storage images'
+grep -qF "!image.startsWith('${image_repository}@')" <<<"${publish_app_expression}" ||
+  fail 'the generic app signer must exclude digest-only Kubescape storage images'
+
+hotfix_expression="$(yq -er '
+  .spec.validations[] |
+  select(.expression | contains("attestors.publishkubescapestorage")) |
+  .expression
+' "${image_verification_policy}")" || fail 'the dedicated storage-image validation is missing'
+readonly hotfix_expression
+grep -qF "image.startsWith('${image_repository}:')" <<<"${hotfix_expression}" ||
+  fail 'the dedicated signer must match tagged Kubescape storage images'
+grep -qF "image.startsWith('${image_repository}@')" <<<"${hotfix_expression}" ||
+  fail 'the dedicated signer must match digest-only Kubescape storage images'
 
 printf 'Kubescape storage compatibility-image contract is valid.\n'
