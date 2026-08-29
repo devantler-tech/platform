@@ -1397,7 +1397,27 @@ const (
 // approved aggregate digest was:
 //
 //	8758aca997ecdf37b536b18420803f46e67e0af05b851fafefbaa83e02b01fe3
-const expectedRenderedSurfaceSHA = "ec7889f10c850126e206c93669adbd2c1406c5f189e07b2cbfe5e63e7d24e287"
+//
+// Measured against main 14351b35 for the Crossplane provider pod securityContext
+// (platform#3470). The four provider DeploymentRuntimeConfigs each gain a
+// pod-level securityContext so Kyverno's require-seccomp-profile — which asserts
+// the POD path and is auto-generated for pod controllers — stops denying the
+// Deployment its package manager builds. Crossplane applies its own pod defaults
+// only when the config supplies no securityContext at all, so the block restates
+// runAsNonRoot/runAsUser/runAsGroup 2000 verbatim rather than changing the uid.
+//
+// Conservation, measured by rendering both trees under one renderer and diffing:
+// the full five-projection render differs by exactly 24 lines, all additions, all
+// four copies of that same six-line block, zero deletions. Extracting every
+// grant-bearing object — 78 of them (24 ClusterRole, 12 ClusterRoleBinding, 11
+// Role, 15 RoleBinding, 16 ServiceAccount) with their rules, subjects and roleRef
+// — the two trees are byte-identical, and a perturbed-row negative control fires.
+// It adds no subject, grant, authorization resource, or rendered object; it adds a
+// security context, and that is the entire authored delta. The previous approved
+// aggregate digest was:
+//
+//	ec7889f10c850126e206c93669adbd2c1406c5f189e07b2cbfe5e63e7d24e287
+const expectedRenderedSurfaceSHA = "2bcfef7897832dec241d1a37e70d575f11b0a4e021e610258dee23b04f95644c"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
