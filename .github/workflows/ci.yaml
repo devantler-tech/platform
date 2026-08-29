@@ -292,6 +292,12 @@ jobs:
               # Both halves, for the same reason as the guard above.
               - 'scripts/guard-gitrepository-commit-pin.sh'
               - 'scripts/tests/test-guard-gitrepository-commit-pin.sh'
+              # Both halves, for the same reason as the guard above.
+              - 'scripts/guard-render-remote-resources.sh'
+              - 'scripts/tests/test-guard-render-remote-resources.sh'
+              # The reviewed disposition list the guard reads: editing a row
+              # changes what the guard permits, so it must re-run.
+              - 'scripts/render-remote-resource-exceptions.tsv'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
@@ -920,6 +926,25 @@ jobs:
         run: |
           bash scripts/guard-gitrepository-commit-pin.sh k8s
           bash scripts/tests/test-guard-gitrepository-commit-pin.sh
+
+      - name: 🌐 Validate no render path fetches over the network
+        if: needs.changes.outputs.k8s == 'true'
+        # Two entries in the prod controllers render fetch third-party manifests at
+        # render time, one of them from Cloudflare's `trunk` BRANCH. That makes the
+        # render irreproducible (the same commit can yield two different rendered
+        # surfaces), puts unreviewed third-party content into the prod authorization
+        # surface the EKS CI role validator exists to pin, and makes a required
+        # security gate hostage to a CDN — which is how it was found, when
+        # raw.githubusercontent.com returned 429 and took four authorization tests
+        # down on clean `main` (#3196).
+        #
+        # The two known entries carry rows in the reviewed exceptions list, so this
+        # runs green today and a THIRD one fails the build. A row must name a
+        # tracking issue, and a row whose URL is no longer referenced is itself a
+        # violation — so the list cannot quietly become the place remotes accumulate.
+        run: |
+          bash scripts/guard-render-remote-resources.sh k8s
+          bash scripts/tests/test-guard-render-remote-resources.sh
 
       - name: 📐 Validate LimitRange-premised suppressions actually have a LimitRange
         if: needs.changes.outputs.k8s == 'true'
