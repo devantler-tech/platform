@@ -121,6 +121,8 @@ grep -qF 'TestUpdateProfileKeepsTimeSeriesPendingUntilAllProfileWritesSucceed' "
   fail 'the compatibility patch must prove every partial profile-write boundary remains retryable'
 grep -qF 'source rows must be retired only after every profile write succeeds' "${patch_file}" ||
   fail 'time-series observations must stay pending until all derived writes succeed'
+grep -qF 'the next maintenance tick must replay and converge after the failed write clears' "${patch_file}" ||
+  fail 'the partial-write failpoints must prove replay convergence, not only row retention'
 grep -qF 'finalize only the source rows in one short transaction' "${patch_file}" ||
   fail 'source-row retirement must remain atomic without spanning derived profile writes'
 grep -qF 'persistence can run between maintenance writes' "${patch_file}" ||
