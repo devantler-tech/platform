@@ -1,5 +1,26 @@
+diff --git a/pkg/registry/file/containerprofile_aggregator_test.go b/pkg/registry/file/containerprofile_aggregator_test.go
+index 241cb91e..d50d3728 100644
+--- a/pkg/registry/file/containerprofile_aggregator_test.go
++++ b/pkg/registry/file/containerprofile_aggregator_test.go
+@@ -17,13 +17,15 @@ import (
+ // fakeStorage implements ContainerProfileStorage with minimal behavior for tests.
+ // Only GetContainerProfileMetadata is used by ComputeAggregatedData; other methods are stubs.
+ type fakeStorage struct {
+-	profiles map[string]softwarecomposition.ContainerProfile
++	profiles              map[string]softwarecomposition.ContainerProfile
++	beginTransactionCalls int
+ }
+ 
+ func (f *fakeStorage) WithConnection(ctx context.Context) (context.Context, func(), error) {
+ 	return ctx, func() {}, nil
+ }
+ func (f *fakeStorage) BeginTransaction(ctx context.Context) (func(*error), error) {
++	f.beginTransactionCalls++
+ 	return func(*error) {}, nil
+ }
+ 
 diff --git a/pkg/registry/file/containerprofile_processor.go b/pkg/registry/file/containerprofile_processor.go
-index db4a8ee1..f31119a7 100644
+index db4a8ee1..255f6e9c 100644
 --- a/pkg/registry/file/containerprofile_processor.go
 +++ b/pkg/registry/file/containerprofile_processor.go
 @@ -75,7 +75,7 @@ func NewContainerProfileProcessor(cfg config.Config, cleanupHandler *ResourcesCl
@@ -11,8 +32,50 @@ index db4a8ee1..f31119a7 100644
  	}
  }
  
+@@ -383,6 +383,16 @@ func (a *ContainerProfileProcessor) consolidateKeyTimeSeries(ctx context.Context
+-	processed, err := a.processTimeSeriesInTransaction(ctx, timeSeries, key, profile, prefix, root, id, expired)
++	// Do not wrap the complete cross-artifact update in one SQLite transaction.
++	// updateProfile performs expensive aggregation between its observed,
++	// ApplicationProfile, NetworkNeighborhood, and merged-profile writes. Once
++	// the first write upgrades a deferred transaction, SQLite's sole writer stays
++	// reserved until all of that work finishes; a live configuration scan can
++	// then miss its request deadline even with one maintenance worker and a long
++	// busy timeout. Each storage write is idempotent and the maintenance loop
++	// retries incomplete work on its next tick, while the payload files were
++	// never covered by the SQLite rollback in the first place. Let each write
++	// autocommit so foreground persistence can run between maintenance writes.
++	processed, err := a.updateProfile(ctx, timeSeries, key, profile, prefix, root, id, expired)
+ 	if err != nil {
+-		return err
++		return fmt.Errorf("failed to process time series data for key %s: %w", key, err)
+ 	}
+ 
+ 	// Send consolidated slug to channel before deleting processed time series
+@@ -479,22 +489,3 @@ func (a *ContainerProfileProcessor) loadOrInitializeProfile(ctx context.Context,
+-// processTimeSeriesInTransaction processes time series data within a database transaction
+-func (a *ContainerProfileProcessor) processTimeSeriesInTransaction(ctx context.Context,
+-	timeSeries map[string][]softwarecomposition.TimeSeriesContainers, key string,
+-	profile softwarecomposition.ContainerProfile, prefix, root string, id armotypes.ProfileIdentifier, expired bool) ([]string, error) {
+-
+-	endFn, err := a.ContainerProfileStorage.BeginTransaction(ctx)
+-	if err != nil {
+-		return nil, fmt.Errorf("failed to begin nested transaction: %w", err)
+-	}
+-	processed, err := a.updateProfile(ctx, timeSeries, key, profile, prefix, root, id, expired)
+-	endFn(&err)
+-
+-	if err != nil {
+-		return nil, fmt.Errorf("failed to process time series data for key %s (transaction rolled back): %w", key, err)
+-	}
+-
+-	return processed, nil
+-}
+-
+ // deleteProcessedTimeSeries removes processed time series profiles from storage.
+ // Treats "key not found" as success (idempotent delete): the profile may already have been
+ // deleted by a concurrent consolidation run for the same customer/cluster.
 diff --git a/pkg/registry/file/containerprofile_processor_test.go b/pkg/registry/file/containerprofile_processor_test.go
-index 384d059e..b9b57458 100644
+index 384d059e..054a28e2 100644
 --- a/pkg/registry/file/containerprofile_processor_test.go
 +++ b/pkg/registry/file/containerprofile_processor_test.go
 @@ -12,6 +12,7 @@ import (
@@ -23,7 +86,7 @@ index 384d059e..b9b57458 100644
  	"github.com/kubescape/storage/pkg/generated/clientset/versioned/scheme"
  	"github.com/kubescape/storage/pkg/utils"
  	"github.com/spf13/afero"
-@@ -23,6 +24,12 @@ import (
+@@ -23,6 +24,24 @@ import (
  	"zombiezen.com/go/sqlite/sqlitemigration"
  )
  
@@ -31,6 +94,18 @@ index 384d059e..b9b57458 100644
 +	processor := NewContainerProfileProcessor(config.Config{}, nil)
 +	require.Equal(t, 1, processor.Workers,
 +		"multiple background writers can continuously hand off SQLite's writer lock and starve REST persistence")
++}
++
++func TestConsolidateKeyDoesNotHoldWriterAcrossProfileProcessing(t *testing.T) {
++	storage := &fakeStorage{}
++	processor := &ContainerProfileProcessor{
++		ContainerProfileStorage: storage,
++	}
++
++	key := K8sKeysToPath("", "spdx.softwarecomposition.kubescape.io", "containerprofile", "", "default", "example")
++	require.NoError(t, processor.consolidateKeyTimeSeries(context.Background(), key, false))
++	require.Zero(t, storage.beginTransactionCalls,
++		"profile maintenance must not hold SQLite's sole writer across multi-artifact processing")
 +}
 +
  func TestConsolidateData(t *testing.T) {

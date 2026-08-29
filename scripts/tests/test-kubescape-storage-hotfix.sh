@@ -35,8 +35,8 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
   fail 'the workflow image destination drifted'
 # The literal GitHub expression is the contract.
 # shellcheck disable=SC2016
-[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.3-${{ github.sha }}' ]] ||
-  fail 'the workflow image tag must identify the foreground-safe transaction revision'
+[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.4-${{ github.sha }}' ]] ||
+  fail 'the workflow image tag must identify the short-transaction revision'
 
 grep -qF 'repository: kubescape/storage' "${workflow}" ||
   fail 'the workflow must check out the upstream storage source explicitly'
@@ -91,7 +91,7 @@ readonly image_build_index
 grep -qF 'cosign sign --yes "${IMAGE}@${DIGEST}"' "${workflow}" ||
   fail 'the published compatibility image must be keylessly signed by digest'
 
-[[ "$(grep -c '^diff --git ' "${patch_file}")" == '5' ]] ||
+[[ "$(grep -c '^diff --git ' "${patch_file}")" == '6' ]] ||
   fail 'the compatibility patch must touch only implementation and regression-test files'
 grep -qF 'diff --git a/pkg/registry/file/sqlite.go b/pkg/registry/file/sqlite.go' "${patch_file}" ||
   fail 'the compatibility patch does not modify SQLite pool setup'
@@ -105,6 +105,8 @@ grep -qF 'diff --git a/pkg/registry/file/containerprofile_processor.go b/pkg/reg
   fail 'the compatibility patch does not bound background SQLite writers'
 grep -qF 'diff --git a/pkg/registry/file/containerprofile_processor_test.go b/pkg/registry/file/containerprofile_processor_test.go' "${patch_file}" ||
   fail 'the compatibility patch lacks a background-writer regression test'
+grep -qF 'diff --git a/pkg/registry/file/containerprofile_aggregator_test.go b/pkg/registry/file/containerprofile_aggregator_test.go' "${patch_file}" ||
+  fail 'the compatibility patch lacks a cross-artifact transaction regression seam'
 grep -qF 'diff --git a/pkg/registry/file/containerprofile_storage_test.go b/pkg/registry/file/containerprofile_storage_test.go' "${patch_file}" ||
   fail 'the compatibility patch lacks a foreground-writer regression test'
 grep -qF 'Workers:                 1' "${patch_file}" ||
@@ -113,6 +115,10 @@ grep -qF 'TestNewContainerProfileProcessorUsesOneMaintenanceWriter' "${patch_fil
   fail 'the compatibility patch must prove background writer concurrency is bounded'
 grep -qF 'TestBeginTransactionLeavesWriterAvailableDuringReadPhase' "${patch_file}" ||
   fail 'the compatibility patch must prove profile reads do not reserve SQLite write access'
+grep -qF 'TestConsolidateKeyDoesNotHoldWriterAcrossProfileProcessing' "${patch_file}" ||
+  fail 'the compatibility patch must prove maintenance does not hold one transaction across artifact processing'
+grep -qF 'autocommit so foreground persistence can run between maintenance writes' "${patch_file}" ||
+  fail 'container-profile maintenance must release SQLite between idempotent artifact writes'
 if grep -qF 'ImmediateTransaction' "${patch_file}"; then
   fail 'read-heavy profile transactions must not reserve SQLite write access before their write phase'
 fi
