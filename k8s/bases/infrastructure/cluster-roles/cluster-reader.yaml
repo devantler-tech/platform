@@ -83,7 +83,6 @@ rules:
       - groupsnapshot.storage.k8s.io
       - hostdata.kubescape.cloud
       - image.toolkit.fluxcd.io
-      - infra.contrib.fluxcd.io
       - instancetype.kubevirt.io
       - internal.kro.run
       - keda.sh

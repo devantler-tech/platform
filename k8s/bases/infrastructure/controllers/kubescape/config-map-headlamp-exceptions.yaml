@@ -370,13 +370,6 @@ data:
             "designatorType": "Attributes",
             "attributes": {
               "kind": "^RoleBinding$",
-              "name": "^tf-runner$"
-            }
-          },
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "kind": "^RoleBinding$",
               "name": "^velero-server$"
             }
           },
@@ -719,7 +712,7 @@ data:
             "controlID": "^C-0211$"
           }
         ],
-        "reason": "Kyverno mutate policy \"add-security-context\" injects runAsNonRoot, runAsUser, runAsGroup and fsGroupChangePolicy at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. These two controls remain cluster-wide because narrowing them is blocked on evidence rather than on expressiveness: C-0013 has a measured six-workload gap in flux-system (#3223) and C-0211's residual population is every scanned workload the mutation does not reach, sized at 33 (#3217)."
+        "reason": "Kyverno mutate policy \"add-security-context\" injects runAsNonRoot, runAsUser, runAsGroup and fsGroupChangePolicy at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. These two controls remain cluster-wide because narrowing them is blocked on evidence rather than on expressiveness: C-0013 has a measured five-workload gap in flux-system (#3223) and C-0211's residual population is every scanned workload the mutation does not reach, sized at 33 (#3217)."
       },
       {
         "name": "readonly-rootfs-pending",
@@ -754,27 +747,6 @@ data:
             "attributes": {
               "kind": "^ClusterRole$",
               "name": "^crd-controller-flux-system$"
-            }
-          },
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "kind": "^ClusterRole$",
-              "name": "^tf-runner-role$"
-            }
-          },
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "kind": "^ClusterRole$",
-              "name": "^tofu-cluster-reconciler-role$"
-            }
-          },
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "kind": "^ClusterRole$",
-              "name": "^tofu-manager-role$"
             }
           },
           {
@@ -1210,7 +1182,7 @@ data:
             "controlID": "^C-0015$"
           }
         ],
-        "reason": "Controllers, operators and databases that read Kubernetes Secrets by design (cert-manager, External Secrets, CloudNativePG + Barman backups, Crossplane and its providers, Kyverno, Flux/tofu, KEDA, Longhorn, Cilium, the Kubescape operator, the built-in kube-controller-manager controllers, and the tenant databases). Matched by the specific RBAC object (Role/ClusterRole, or the binding for cluster-admin holders) so a new/accidental secret-reader elsewhere still trips C-0015. Over-privileged or admin identities (unused tenant `edit` SAs, crossview's wildcard read, the cluster-admin / crossplane admin groups) are intentionally left flagged."
+        "reason": "Controllers, operators and databases that read Kubernetes Secrets by design (cert-manager, External Secrets, CloudNativePG + Barman backups, Crossplane and its providers, Kyverno, Flux, KEDA, Longhorn, Cilium, the Kubescape operator, the built-in kube-controller-manager controllers, and the tenant databases). Matched by the specific RBAC object (Role/ClusterRole, or the binding for cluster-admin holders) so a new/accidental secret-reader elsewhere still trips C-0015. Over-privileged or admin identities (unused tenant `edit` SAs, crossview's wildcard read, the cluster-admin / crossplane admin groups) are intentionally left flagged."
       },
       {
         "name": "service-account-tokens",

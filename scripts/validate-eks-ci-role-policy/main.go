@@ -1455,7 +1455,37 @@ const (
 // approved aggregate digest was:
 //
 //	a3199d02a7c8b32c0c82bd6a619ea020993d0e37f2dc1e4fe1b23e96d3a91f5d
-const expectedRenderedSurfaceSHA = "d07fdcf550827d5b62d48c0ce9e110dea819f8d9168c7ac3abb7f01144939d93"
+//
+// Moved again by the staged tofu-controller retirement. Measured by comparing
+// exact current main f19f67e2 with merge head d35c1e96 using the
+// checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer. Across all five
+// production roots, main renders 548 distinct apiVersion|kind|namespace|name
+// identities and this branch renders 547; neither tree has a duplicate. The
+// bidirectional set difference is exactly:
+//
+//	removed  helm.toolkit.fluxcd.io/v2     HelmRelease               flux-system/tofu-controller
+//	removed  source.toolkit.fluxcd.io/v1   HelmRepository            flux-system/tofu-controller
+//	added    apiextensions.k8s.io/v1       CustomResourceDefinition  terraforms.infra.contrib.fluxcd.io
+//
+// The added CRD is the byte-verified v0.16.5 chart CRD temporarily inventoried
+// by Flux so the follow-up retirement can prune it rather than orphan it. It
+// grants no subject or verb. Grant-bearing membership remains 78 objects on
+// BOTH sides (Role / ClusterRole / RoleBinding / ClusterRoleBinding /
+// ServiceAccount 11/24/15/12/16). Exactly one of those objects changes:
+// ClusterRole cluster-reader removes the infra.contrib.fluxcd.io API group.
+// That is a strict read-grant reduction; no binding, subject, roleRef, resource
+// or verb is added or widened.
+//
+// Five other surviving documents change: the Coroot autosuppressor drops only
+// the retired controller's alert exemption; two Kubescape exceptions remove
+// only tofu-specific RBAC matches; one Kubescape exception updates measured
+// controller-count prose; and its generated Headlamp ConfigMap mirror follows
+// those exception changes. The apps, bootstrap and root production renders are
+// byte-identical. The AWS manifests and the recovered provider fleet base are
+// untouched by this branch. The previous approved aggregate digest was:
+//
+//	d07fdcf550827d5b62d48c0ce9e110dea819f8d9168c7ac3abb7f01144939d93
+const expectedRenderedSurfaceSHA = "2304ac067cc7ec446ddeff107477bb1f34f859b4cd5bca708a3ba0926ef5fc49"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

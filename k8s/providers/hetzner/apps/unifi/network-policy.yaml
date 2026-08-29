@@ -5,8 +5,7 @@
 # already runs under. The unifi tenant runs NO pods — the Crossplane provider
 # runs in crossplane-system, Flux in flux-system, ESO in external-secrets — so the
 # namespace holds only managed resources, the ProviderConfig, and credential
-# Secrets, and needs no per-workload allow policy (unlike the old tofu-controller
-# runner, which required a gRPC ingress allow).
+# Secrets, and needs no per-workload allow policy.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
