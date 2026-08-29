@@ -59,7 +59,7 @@ index 27fe6a147f8b38fdd4e79da6dbe2f4e23e70fbf9..d714d586fade98701a121df8a759dae3
  func (f *fakeStorage) GetStorageImpl() *StorageImpl {
  	return nil
 diff --git a/pkg/registry/file/containerprofile_processor.go b/pkg/registry/file/containerprofile_processor.go
-index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f2ed1efd5 100644
+index db4a8ee109787ad75e0c5333046832ea53322637..610b7cd097d8242bb21b8980c231cf4420f4f4b8 100644
 --- a/pkg/registry/file/containerprofile_processor.go
 +++ b/pkg/registry/file/containerprofile_processor.go
 @@ -75,7 +75,7 @@ func NewContainerProfileProcessor(cfg config.Config, cleanupHandler *ResourcesCl
@@ -93,7 +93,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  	ctx, cleanup, err := a.ContainerProfileStorage.WithConnection(ctx)
  	if err != nil {
  		return fmt.Errorf("failed to take connection for key %s: %w", key, err)
-@@ -383,9 +383,20 @@ func (a *ContainerProfileProcessor) consolidateKeyTimeSeries(ctx context.Context
+@@ -383,9 +383,21 @@ func (a *ContainerProfileProcessor) consolidateKeyTimeSeries(ctx context.Context
  		return err
  	}
  
@@ -107,7 +107,8 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
 +	// busy timeout. Each profile write is idempotent, and updateProfile leaves
 +	// source time series pending until all profile writes succeed so a partial
 +	// pass is retried on the next tick. The payload files were never covered by
-+	// SQLite rollback in the first place. Let each write autocommit so foreground
++	// SQLite rollback in the first place. Let each profile write autocommit, then
++	// finalize only the source rows in one short transaction, so foreground
 +	// persistence can run between maintenance writes.
 +	processed, err := a.updateProfile(ctx, timeSeries, key, profile, prefix, root, id, expired)
  	if err != nil {
@@ -116,7 +117,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  	}
  
  	// Send consolidated slug to channel before deleting processed time series
-@@ -479,25 +490,6 @@ func (a *ContainerProfileProcessor) loadOrInitializeProfile(ctx context.Context,
+@@ -479,25 +491,6 @@ func (a *ContainerProfileProcessor) loadOrInitializeProfile(ctx context.Context,
  	return profile, id, prefix, root, err
  }
  
@@ -142,7 +143,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  // deleteProcessedTimeSeries removes processed time series profiles from storage.
  // Treats "key not found" as success (idempotent delete): the profile may already have been
  // deleted by a concurrent consolidation run for the same customer/cluster.
-@@ -518,6 +510,7 @@ func (a *ContainerProfileProcessor) deleteProcessedTimeSeries(ctx context.Contex
+@@ -518,6 +511,7 @@ func (a *ContainerProfileProcessor) deleteProcessedTimeSeries(ctx context.Contex
  
  func (a *ContainerProfileProcessor) updateProfile(ctx context.Context, timeSeries map[string][]softwarecomposition.TimeSeriesContainers, key string, profile softwarecomposition.ContainerProfile, prefix, root string, id armotypes.ProfileIdentifier, expired bool) ([]string, error) {
  	var processed []string
@@ -150,7 +151,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  	creationTimestamp := metav1.Now()
  	var newData bool
  
-@@ -527,6 +520,7 @@ func (a *ContainerProfileProcessor) updateProfile(ctx context.Context, timeSerie
+@@ -527,6 +521,7 @@ func (a *ContainerProfileProcessor) updateProfile(ctx context.Context, timeSerie
  		if err != nil {
  			return nil, err
  		}
@@ -158,7 +159,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  		processed = append(processed, processResult.processed...)
  		if processResult.hasNewData {
  			newData = true
-@@ -540,6 +534,9 @@ func (a *ContainerProfileProcessor) updateProfile(ctx context.Context, timeSerie
+@@ -540,6 +535,9 @@ func (a *ContainerProfileProcessor) updateProfile(ctx context.Context, timeSerie
  		// Without an InstanceID annotation we cannot derive the workload slug,
  		// so neither the observed save nor the merged refresh have a target.
  		logger.L().Debug("ContainerProfileProcessor.updateProfile - skip saving invalid profile", loggerhelpers.String("key", key), loggerhelpers.Interface("profile", profile))
@@ -168,7 +169,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  		return processed, nil
  	}
  
-@@ -564,9 +561,8 @@ func (a *ContainerProfileProcessor) updateProfile(ctx context.Context, timeSerie
+@@ -564,9 +562,8 @@ func (a *ContainerProfileProcessor) updateProfile(ctx context.Context, timeSerie
  	// from (observed, ug-AP, ug-NN), so retractions land naturally.
  	effective, err := a.refreshMergedProfile(ctx, &profile, id, key)
  	if err != nil {
@@ -180,7 +181,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  		return nil, err
  	}
  
-@@ -581,9 +577,31 @@ func (a *ContainerProfileProcessor) updateProfile(ctx context.Context, timeSerie
+@@ -581,9 +578,41 @@ func (a *ContainerProfileProcessor) updateProfile(ctx context.Context, timeSerie
  		}
  	}
  
@@ -194,7 +195,17 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  	return processed, nil
  }
  
-+func (a *ContainerProfileProcessor) finalizeTimeSeriesUpdates(ctx context.Context, key string, updates []timeSeriesProcessResult) error {
++func (a *ContainerProfileProcessor) finalizeTimeSeriesUpdates(ctx context.Context, key string, updates []timeSeriesProcessResult) (err error) {
++	if len(updates) == 0 {
++		return nil
++	}
++
++	endFn, err := a.ContainerProfileStorage.BeginTransaction(ctx)
++	if err != nil {
++		return fmt.Errorf("failed to begin time series finalization transaction: %w", err)
++	}
++	defer endFn(&err)
++
 +	for _, update := range updates {
 +		if update.deleteAll {
 +			if err := a.ContainerProfileStorage.DeleteTimeSeriesContainerEntries(ctx, key); err != nil {
@@ -212,7 +223,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  // refreshMergedProfile rebuilds the merged (effective) ContainerProfile from
  // the observed CP plus the live user-managed (ug-) AP/NN overlay, and
  // reconciles the persisted merged artifact with the result:
-@@ -609,9 +627,9 @@ func (a *ContainerProfileProcessor) refreshMergedProfile(ctx context.Context, ob
+@@ -609,9 +638,9 @@ func (a *ContainerProfileProcessor) refreshMergedProfile(ctx context.Context, ob
  		// lock-free existence probe and treats not-found as success), so the
  		// common no-merged-yet path is quiet — no error log and no futile
  		// delete — without a separate existence probe here. A genuine delete
@@ -225,7 +236,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  		if delErr := a.ContainerProfileStorage.DeleteMergedContainerProfile(ctx, observedKey); delErr != nil {
  			return observed, fmt.Errorf("failed to delete stale merged container profile: %w", delErr)
  		}
-@@ -629,6 +647,10 @@ type timeSeriesProcessResult struct {
+@@ -629,6 +658,10 @@ type timeSeriesProcessResult struct {
  	processed             []string
  	hasNewData            bool
  	skipFurtherProcessing bool
@@ -236,7 +247,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  }
  
  // processTimeSeries processes a single time series and returns the result
-@@ -636,7 +658,7 @@ func (a *ContainerProfileProcessor) processTimeSeries(ctx context.Context,
+@@ -636,7 +669,7 @@ func (a *ContainerProfileProcessor) processTimeSeries(ctx context.Context,
  	timeSeries map[string][]softwarecomposition.TimeSeriesContainers, seriesID, key string,
  	profile *softwarecomposition.ContainerProfile, creationTimestamp *metav1.Time, expired bool) (timeSeriesProcessResult, error) {
  
@@ -245,7 +256,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  
  	// Merge time series data
  	deleteTimeSeries, processed, hasNewData := a.mergeTimeSeriesData(ctx, timeSeries[seriesID], key, profile)
-@@ -652,11 +674,9 @@ func (a *ContainerProfileProcessor) processTimeSeries(ctx context.Context,
+@@ -652,11 +685,9 @@ func (a *ContainerProfileProcessor) processTimeSeries(ctx context.Context,
  		return result, err
  	}
  	result.skipFurtherProcessing = skipFurtherProcessing
@@ -260,7 +271,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  
  	return result, nil
  }
-@@ -734,6 +754,7 @@ func (a *ContainerProfileProcessor) consolidateContinuousTimeSeries(
+@@ -734,6 +765,7 @@ func (a *ContainerProfileProcessor) consolidateContinuousTimeSeries(
  // Returns true if further processing should be skipped (e.g., profile is fully completed).
  func (a *ContainerProfileProcessor) updateProfileStatus(ctx context.Context, key, seriesID string,
  	profile *softwarecomposition.ContainerProfile, newTimeSeries []softwarecomposition.TimeSeriesContainers, expired bool) ([]softwarecomposition.TimeSeriesContainers, bool, error) {
@@ -268,7 +279,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  
  	// If the time series is expired, we finalize it as Completed/Partial (unless it is already Completed/Full)
  	// and clear the time series data so we don't leak zombie records.
-@@ -748,10 +769,8 @@ func (a *ContainerProfileProcessor) updateProfileStatus(ctx context.Context, key
+@@ -748,10 +780,8 @@ func (a *ContainerProfileProcessor) updateProfileStatus(ctx context.Context, key
  			logger.L().Debug("ContainerProfileProcessor.updateProfileStatus - expired profile is completed/full, skipping further processing",
  				loggerhelpers.String("key", key), loggerhelpers.String("seriesID", seriesID))
  
@@ -281,7 +292,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  			return newTimeSeries[:0], true, nil
  		}
  
-@@ -777,10 +796,8 @@ func (a *ContainerProfileProcessor) updateProfileStatus(ctx context.Context, key
+@@ -777,10 +807,8 @@ func (a *ContainerProfileProcessor) updateProfileStatus(ctx context.Context, key
  			logger.L().Debug("ContainerProfileProcessor.updateProfileStatus - profile is completed/full, skipping further processing",
  				loggerhelpers.String("key", key), loggerhelpers.String("seriesID", seriesID))
  
@@ -295,7 +306,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..dfe389f7d653dd9e489449eabb6b4b1f
  		}
  		// Clear this time series as it is finished
 diff --git a/pkg/registry/file/containerprofile_processor_test.go b/pkg/registry/file/containerprofile_processor_test.go
-index 384d059e98f73e9a97dbceb79912f489f13476e9..fb398d32b6079ad042a48d56c0949f0da3b7b3be 100644
+index 384d059e98f73e9a97dbceb79912f489f13476e9..67b10aa4d957038f35fc6d0c1314e524735ca9b5 100644
 --- a/pkg/registry/file/containerprofile_processor_test.go
 +++ b/pkg/registry/file/containerprofile_processor_test.go
 @@ -12,6 +12,7 @@ import (
@@ -306,7 +317,7 @@ index 384d059e98f73e9a97dbceb79912f489f13476e9..fb398d32b6079ad042a48d56c0949f0d
  	"github.com/kubescape/storage/pkg/generated/clientset/versioned/scheme"
  	"github.com/kubescape/storage/pkg/utils"
  	"github.com/spf13/afero"
-@@ -23,6 +24,64 @@ import (
+@@ -23,6 +24,67 @@ import (
  	"zombiezen.com/go/sqlite/sqlitemigration"
  )
  
@@ -334,12 +345,13 @@ index 384d059e98f73e9a97dbceb79912f489f13476e9..fb398d32b6079ad042a48d56c0949f0d
 +		storage     *fakeStorage
 +		wantErr     string
 +		wantReplace int
++		wantBegin   int
 +	}{
 +		{name: "observed save", storage: &fakeStorage{saveContainerErr: errors.New("observed save failed")}, wantErr: "observed save failed"},
 +		{name: "merged refresh", storage: &fakeStorage{deleteMergedErr: errors.New("merged refresh failed")}, wantErr: "merged refresh failed"},
 +		{name: "application profile", storage: &fakeStorage{updateApplicationErr: errors.New("application profile failed")}, wantErr: "application profile failed"},
 +		{name: "network neighborhood", storage: &fakeStorage{updateNetworkErr: errors.New("network neighborhood failed")}, wantErr: "network neighborhood failed"},
-+		{name: "all profile writes succeed", storage: &fakeStorage{}, wantReplace: 1},
++		{name: "all profile writes succeed", storage: &fakeStorage{}, wantReplace: 1, wantBegin: 1},
 +	}
 +
 +	for _, tt := range tests {
@@ -364,6 +376,8 @@ index 384d059e98f73e9a97dbceb79912f489f13476e9..fb398d32b6079ad042a48d56c0949f0d
 +			}
 +			require.Equal(t, tt.wantReplace, tt.storage.replaceTimeSeriesCalls,
 +				"source rows must be retired only after every profile write succeeds")
++			require.Equal(t, tt.wantBegin, tt.storage.beginTransactionCalls,
++				"the short source-row finalization transaction must start only after every profile write succeeds")
 +		})
 +	}
 +}
@@ -371,7 +385,7 @@ index 384d059e98f73e9a97dbceb79912f489f13476e9..fb398d32b6079ad042a48d56c0949f0d
  func TestConsolidateData(t *testing.T) {
  	// Prepare pool and connection
  	pool := NewTestPool("/tmp")
-@@ -571,8 +630,7 @@ func TestUpdateProfileStatusExpiredFull(t *testing.T) {
+@@ -571,8 +633,7 @@ func TestUpdateProfileStatusExpiredFull(t *testing.T) {
  	assert.NoError(t, err)
  	assert.True(t, skip)
  	assert.Len(t, res, 0) // should be cleared

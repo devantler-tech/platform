@@ -121,6 +121,8 @@ grep -qF 'TestUpdateProfileKeepsTimeSeriesPendingUntilAllProfileWritesSucceed' "
   fail 'the compatibility patch must prove every partial profile-write boundary remains retryable'
 grep -qF 'source rows must be retired only after every profile write succeeds' "${patch_file}" ||
   fail 'time-series observations must stay pending until all derived writes succeed'
+grep -qF 'finalize only the source rows in one short transaction' "${patch_file}" ||
+  fail 'source-row retirement must remain atomic without spanning derived profile writes'
 grep -qF 'persistence can run between maintenance writes' "${patch_file}" ||
   fail 'container-profile maintenance must release SQLite between idempotent artifact writes'
 if grep -qF 'ImmediateTransaction' "${patch_file}"; then
