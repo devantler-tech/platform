@@ -296,6 +296,13 @@ spec:
           spec:
             securityContext:
               +(fsGroupChangePolicy): OnRootMismatch
+    # The anchor is on the LEAF (`+(level)`), not the whole object. Anchoring
+    # `+(seLinuxOptions)` would fire only when the object is entirely absent, so a
+    # container carrying some other SELinux field with no `level` would be reported
+    # as mutated while `level` stayed unset — measured 2026-08-29: such a container
+    # came back `{user: system_u}`. The leaf anchor fills the missing field and
+    # preserves siblings. `tests/add-baseline-context` pins all three states; do not
+    # collapse this back to an object-level anchor.
     - name: add-baseline-context-optin-containers
       match:
         any:
@@ -315,13 +322,13 @@ spec:
                 containers:
                   - (name): "{{element.name}}"
                     securityContext:
-                      +(seLinuxOptions):
-                        level: s0
+                      seLinuxOptions:
+                        +(level): s0
           - list: "request.object.spec.initContainers[]"
             patchStrategicMerge:
               spec:
                 initContainers:
                   - (name): "{{element.name}}"
                     securityContext:
-                      +(seLinuxOptions):
-                        level: s0
+                      seLinuxOptions:
+                        +(level): s0

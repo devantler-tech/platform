@@ -20,6 +20,7 @@ results:
     resources:
       - velero/plain
       - velero/no-init
+      - velero/partial
     kind: Pod
     result: pass
     patchedResources: patched-resources.yaml
@@ -28,6 +29,7 @@ results:
     resources:
       - velero/plain
       - velero/no-init
+      - velero/partial
     kind: Pod
     result: pass
     patchedResources: patched-resources.yaml

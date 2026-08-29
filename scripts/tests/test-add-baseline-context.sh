@@ -70,6 +70,20 @@ check preset-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions.le
 check preset-mutated.yaml '.spec.initContainers[0].securityContext.seLinuxOptions.level' \
   s9 "preset initContainer seLinuxOptions was overwritten"
 
+# A container that already carries a PARTIAL seLinuxOptions object — a sibling
+# field set, `level` absent. Anchoring the whole object would see it present and
+# skip, leaving `level` unset while the rule still reports as applied; anchoring
+# the leaf fills the gap and preserves the sibling. Measured 2026-08-29: with the
+# object-level anchor this came back `{user: system_u}` with no level at all.
+check partial-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "partial container seLinuxOptions did not receive the missing level"
+check partial-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions.user' \
+  system_u "partial container seLinuxOptions lost its pre-existing user"
+check partial-mutated.yaml '.spec.initContainers[0].securityContext.seLinuxOptions.level' \
+  s0 "partial initContainer seLinuxOptions did not receive the missing level"
+check partial-mutated.yaml '.spec.initContainers[0].securityContext.seLinuxOptions.user' \
+  system_u "partial initContainer seLinuxOptions lost its pre-existing user"
+
 # OFF state — a namespace without the opt-in label is untouched. The rule ships
 # default-off; if this regresses, merging it silently mutates twelve namespaces.
 check unlabelled-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' \

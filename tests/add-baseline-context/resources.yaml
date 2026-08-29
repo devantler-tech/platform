@@ -60,3 +60,28 @@ spec:
   containers:
     - name: app
       image: velero/velero:v1.0.0
+---
+# Opted-in namespace whose container already carries a PARTIAL seLinuxOptions —
+# some other field set, `level` absent. A conditional anchor on the whole object
+# (`+(seLinuxOptions)`) sees it present and skips, leaving `level` unset while
+# still reporting the rule as applied. Anchoring the leaf (`+(level)`) instead
+# fills in the missing field and preserves the sibling. Measured 2026-08-29:
+# with the object-level anchor this pod came back `{user: system_u}` — no level.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: partial
+  namespace: velero
+spec:
+  initContainers:
+    - name: init
+      image: velero/velero-plugin:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          user: system_u
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          user: system_u
