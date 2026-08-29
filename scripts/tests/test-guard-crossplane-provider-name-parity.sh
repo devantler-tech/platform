@@ -226,5 +226,29 @@ assert_rc 'still refuses the aliased provider alongside a correct one' 1 "$GUARD
 assert_contains 'blames the file the aliased provider is in' 'crossplane/provider-family-aws.yaml'
 assert_not_contains 'does not blame the innocent later file' 'crossplane/upbound-provider-zzz-later.yaml ('
 
+# --- 12. a Provider this parser cannot read is exit 2, never a silent skip ------
+# Regression: flush() emitted a record only when BOTH name and package matched its
+# narrow block-style patterns, and dropped the document otherwise. A flow-style
+# Provider therefore vanished while its neighbours still parsed, so `checked` stayed
+# non-zero, the anti-vacuity backstop never fired, and the guard exited 0 over
+# exactly the aliased shape it exists to catch — the platform#3454 outage, re-armed.
+t="$(new_tree unparseable)"
+add_provider "$t" upbound-provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
+add_exception "$t" upbound-provider-family-aws both
+run_guard "$t"
+# Negative control FIRST: without the unreadable document this very tree passes, so
+# the assertion below can only be satisfied by the document the case is about.
+assert_rc 'control: the same tree without the unreadable document passes' 0 "$GUARD_RC"
+cat >"$t/providers/hetzner/infrastructure/crossplane/flow-style.yaml" <<'YAML'
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata: { name: sneaky-alias }
+spec: { package: xpkg.upbound.io/upbound/provider-family-aws:v2.6.1 }
+YAML
+run_guard "$t"
+assert_rc 'an unreadable Provider is exit 2, not a silent skip' 2 "$GUARD_RC"
+assert_contains 'blames the file it could not read' 'flow-style.yaml'
+assert_contains 'names the field it could not read' 'metadata.name'
+
 printf '\n%d assertion(s), %d failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ]

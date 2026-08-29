@@ -84,9 +84,17 @@ provider-upjet-unifi
 providers="$(
   find "$root" -type f -name '*.yaml' -print0 |
     xargs -0 awk '
-      function flush() {
-        if (is_xp && is_provider && name != "" && pkg != "")
-          printf "%s\t%s\t%s\n", name, pkg, srcfile
+      function flush(  where) {
+        if (is_xp && is_provider) {
+          where = (srcfile == "" ? FILENAME : srcfile)
+          if (name != "" && pkg != "")
+            printf "%s\t%s\t%s\n", name, pkg, where
+          else
+            # A Provider this line-oriented parser cannot read is NOT skipped: a
+            # silently omitted document is exactly how an aliased provider would
+            # slip past a guard that still exits 0 on its neighbours.
+            printf "!unparseable\t%s\t%s\n", (name == "" ? "metadata.name" : "spec.package"), where
+        }
         is_xp = 0; is_provider = 0; name = ""; pkg = ""; srcfile = ""
       }
       FNR == 1 { flush() }
@@ -133,6 +141,11 @@ checked=0
 
 while IFS="$(printf '\t')" read -r name pkg file; do
   [ -n "$name" ] || continue
+
+  if [ "$name" = "!unparseable" ]; then
+    die "$(printf '%s declares a pkg.crossplane.io Provider whose %s this guard could not read.\n  Refusing to pass: an unreadable Provider is indistinguishable from an aliased one, and skipping it is how platform#3454 would recur.\n  Write it in block style (the shape the rest of the tree uses), or teach this parser the shape.' "$file" "$pkg")"
+  fi
+
   checked=$((checked + 1))
 
   derived="$(derive_name "$pkg")"
