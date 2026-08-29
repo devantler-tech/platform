@@ -225,6 +225,26 @@ run_guard "$r" "$scratch/ok.tsv"
 assert_rc "an excepted remote passes" 0 "$GUARD_RC"
 assert_contains "reports it as a tracked exception" "1 tracked exception"
 
+printf '\n== exit 1: a glob-shaped entry must NOT match an exception row ==\n'
+# Self-review of the first draft found this: the entry was interpolated into the
+# PATTERN side of a `case`, so `https://*` matched the body of the first excepted
+# row and passed as a "tracked exception". One line in a kustomization bypassed the
+# whole guard, and it also marked that row used, silencing the stale-row check.
+r=$(mk globinject)
+cat >"$r/kustomization.yaml" <<'Y'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://*
+Y
+printf 'https://example.invalid/glob-victim-marker/install.yaml\t#3196\ta row a glob must not match\n' >"$scratch/globvictim.tsv"
+fixture "$r/kustomization.yaml" "https://*"
+fixture "$scratch/globvictim.tsv" "glob-victim-marker"
+run_guard "$r" "$scratch/globvictim.tsv"
+assert_rc "a glob-shaped remote entry is NOT excepted" 1 "$GUARD_RC"
+assert_contains "reports the glob entry itself" "remote resource entry https://*"
+assert_contains "and still reports the row as stale" "glob-victim-marker"
+
 printf '\n== exit 2: an exception row naming no issue ==\n'
 printf 'https://example.invalid/no-issue-marker/x.yaml\t\tmissing the issue column\n' >"$scratch/noissue.tsv"
 fixture "$scratch/noissue.tsv" "no-issue-marker"

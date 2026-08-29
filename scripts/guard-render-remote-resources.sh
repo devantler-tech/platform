@@ -106,9 +106,6 @@ root="$1"
 [ -d "$root" ] || die "root '$root' is not a directory"
 command -v yq >/dev/null 2>&1 || die "yq is required but not installed"
 
-# `find` exits non-zero when it cannot traverse part of the tree. Reporting on a
-# partially-read tree is the same "could not read it" case as a parse failure, so it
-# is cannot-check rather than a verdict on what happened to be readable.
 exceptions_file="${RENDER_REMOTE_EXCEPTIONS:-$(dirname "$0")/render-remote-resource-exceptions.tsv}"
 [ -f "$exceptions_file" ] ||
   die "exceptions file '$exceptions_file' not found — refusing to run without the reviewed disposition list"
@@ -142,6 +139,18 @@ done < "$exceptions_file"
 # for was fixed. Anti-vacuity protects a SELECTOR that silently matched nothing; an
 # empty disposition list is a measured fact about the tree, and a good one.
 
+# 🔴 THE QUOTES AROUND "$1" ARE LOAD-BEARING, NOT STYLE.
+#
+# The value tested here comes from a kustomization, and it sits on the PATTERN side
+# of this `case`. Quoted, it is matched LITERALLY, which is what makes this safe.
+# Unquoted — the obvious "simplification" — a metacharacter in the entry becomes an
+# active glob, so `resources: [ "https://*" ]` would match the body of the first
+# excepted row, be counted as a tracked exception, and pass. That is a one-line
+# bypass of the entire guard, and it would also mark that row used, silencing the
+# stale-row check that would otherwise fire.
+#
+# Probed directly (2026-08-29): quoted → no match; the same expansion unquoted →
+# match. The test suite pins the behaviour so the quotes cannot be dropped silently.
 is_excepted() { # <url>
   case $'\n'"$excepted_urls" in *$'\n'"$1"$'\n'*) return 0 ;; esac
   return 1
@@ -149,6 +158,9 @@ is_excepted() { # <url>
 
 used_urls=""
 
+# `find` exits non-zero when it cannot traverse part of the tree. Reporting on a
+# partially-read tree is the same "could not read it" case as a parse failure, so it
+# is cannot-check rather than a verdict on what happened to be readable.
 candidates="$(find "$root" -name kustomization.yaml -type f -print 2>/dev/null)"
 find_status=$?
 [ "$find_status" -eq 0 ] ||
