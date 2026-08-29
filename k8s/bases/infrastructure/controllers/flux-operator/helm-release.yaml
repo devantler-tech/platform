@@ -26,3 +26,38 @@ spec:
       # release is the operator/reconciler only and must stay running at all
       # times.
       enabled: false
+  # Give the operator container the uid AND gid its own image declares, so
+  # Kubescape C-0013 (non-root containers) passes on its own terms rather than
+  # through an exception. The chart sets runAsNonRoot but no runAsUser, and
+  # C-0013 also requires runAsGroup.
+  #
+  # 🔴 SET BOTH FIELDS, NEVER runAsGroup ALONE. With no runAsUser resolvable,
+  # adding only runAsGroup leaves the OCI spec an empty uid and a group
+  # ("":65532), which containerd refuses — the patch intended to close a
+  # posture gap would stop the operator starting. add-security-context.yaml
+  # documents the same trap.
+  #
+  # 65532 is measured, not chosen: ghcr.io/controlplaneio-fluxcd/flux-operator
+  # declares USER 65532:65532 in its image config (read from the registry
+  # 2026-08-29). This is a DIFFERENT value from the four Flux controllers the
+  # FluxInstance renders — those are ghcr.io/fluxcd/* and declare 65534. One
+  # namespace, two image families, two uids; do not unify them.
+  #
+  # Applied here rather than in the FluxInstance because the operator is
+  # installed by Helm, so the FluxInstance's kustomize patches never reach it.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: flux-operator
+            patch: |
+              - op: test
+                path: /spec/template/spec/containers/0/name
+                value: manager
+              - op: add
+                path: /spec/template/spec/containers/0/securityContext/runAsUser
+                value: 65532
+              - op: add
+                path: /spec/template/spec/containers/0/securityContext/runAsGroup
+                value: 65532
