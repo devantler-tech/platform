@@ -55,6 +55,11 @@ case "${args}" in
     printf 'the server could not find the requested resource\n' >&2
     exit 1
   fi
+  # Fail EXACTLY one call, so a snapshot comes back PARTIAL rather than empty.
+  if [[ -n "${GEN_FAIL_ONLY_CALL:-}" && "${calls}" == "${GEN_FAIL_ONLY_CALL}" ]]; then
+    printf 'the server could not find the requested resource\n' >&2
+    exit 1
+  fi
   n=0
   [[ -f "${snapshot_file}" ]] && n="$(cat "${snapshot_file}")"
   if [[ "${args}" == *"flux-operator"* ]]; then
@@ -91,11 +96,13 @@ chmod +x "${fake_reconcile}"
 run_case() {
   local name="$1" gen_before="$2" gen_after="$3" exits="$4"
   local gen_read_fails="${5:-0}"
+  local gen_fail_only_call="${6:-}"
   : >"${call_log}"
   rm -f "${tmp_dir}/genstate" "${tmp_dir}/callcount"
   set +e
   GEN_STATE="${tmp_dir}/genstate" \
     GEN_READ_FAILS="${gen_read_fails:-0}" \
+    GEN_FAIL_ONLY_CALL="${gen_fail_only_call:-}" \
     CALL_COUNT="${tmp_dir}/callcount" \
     GEN_BEFORE="${gen_before}" \
     GEN_AFTER="${gen_after}" \
@@ -150,6 +157,28 @@ run_case unreadable 1 2 "1 0" 1
   fail 'an unreadable second snapshot must not buy a free retry'
 [[ "${case_calls}" -eq 1 ]] ||
   fail "an unreadable snapshot must still run the reconcile exactly once (ran ${case_calls})"
+
+# 5b. PARTIAL snapshot: the second snapshot's labelled query fails while the
+#     flux-operator query succeeds, so it comes back NON-EMPTY but incomplete.
+#     The emptiness guard cannot catch this shape — the partial differs from the
+#     complete first snapshot for a reason that is not a restart, so checking
+#     each query's own status is the only thing between it and a free retry.
+run_case partial 1 2 "1 0" 0 3
+[[ "${case_status}" -ne 0 ]] ||
+  fail 'a partial second snapshot must not buy a free retry'
+[[ "${case_calls}" -eq 1 ]] ||
+  fail "a partial snapshot must still run the reconcile exactly once (ran ${case_calls})"
+
+# 5c. Both snapshot queries must carry a FINITE --request-timeout. kubectl's
+#     default is 0, i.e. wait forever, and these reads run at precisely the
+#     moment this deploy may be restarting the API server's clients — so an
+#     unbounded read would hang the deploy rather than fail it. Structural,
+#     because the fake kubectl cannot observe a real client-side timeout.
+snapshot_queries="$(grep -c -- '--request-timeout="${kubectl_request_timeout}"' "${script}")"
+[[ "${snapshot_queries}" -eq 2 ]] ||
+  fail "both generation queries must bound their read (found ${snapshot_queries} of 2)"
+grep -Eq '^readonly kubectl_request_timeout=.*:-[0-9]+[smh]\}"$' "${script}" ||
+  fail 'the snapshot read timeout must default to a finite duration'
 
 # 6. Wiring: the deploy composite must reconcile THROUGH the wrapper, so the
 #    tolerance actually reaches the merge-queue deploy rather than only existing.

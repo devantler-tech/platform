@@ -32,6 +32,10 @@ set -euo pipefail
 readonly kubectl_bin="${KUBECTL:-kubectl}"
 readonly reconcile_bin="${RECONCILE_BIN:-./scripts/run-ksail-prod-with-pull-auth.sh}"
 readonly rollout_timeout="${FLUX_CONTROL_PLANE_ROLLOUT_TIMEOUT:-10m}"
+# The snapshots run while this deploy may be restarting the API server's clients,
+# so an unbounded read is exactly the wrong default: kubectl's --request-timeout
+# defaults to 0 (wait forever), which would hang the deploy instead of failing it.
+readonly kubectl_request_timeout="${FLUX_CONTROL_PLANE_QUERY_TIMEOUT:-30s}"
 # The four controllers carry this label; flux-operator does not (it is installed
 # by Helm rather than rendered by the FluxInstance) and is therefore read by name.
 # tofu-controller carries neither and is deliberately out of scope: it is being
@@ -47,14 +51,22 @@ kubectl_prod() {
 # name=generation for every Flux control-plane Deployment, sorted so the snapshot
 # is comparable as plain text.
 control_plane_generations() {
-  {
-    kubectl_prod -n flux-system get deploy \
-      -l "${controller_selector}" \
-      -o jsonpath='{range .items[*]}{.metadata.name}={.metadata.generation}{"\n"}{end}'
-    kubectl_prod -n flux-system get deploy "${operator_deployment}" \
-      --ignore-not-found \
-      -o jsonpath='{.metadata.name}={.metadata.generation}{"\n"}'
-  } | grep -v '^$' | sort
+  # Each query is captured and checked on its own. Grouping them and piping the
+  # group reports only the PIPELINE's status, so a failed first query would be
+  # masked by a successful second one and yield a PARTIAL snapshot. Being
+  # non-empty, that partial would compare unequal to a complete one and buy a
+  # retry no restart evidence supports — and it would also make the unreadable
+  # case pass the emptiness guard below instead of failing closed.
+  local controllers operator
+  controllers="$(kubectl_prod -n flux-system get deploy \
+    -l "${controller_selector}" \
+    --request-timeout="${kubectl_request_timeout}" \
+    -o jsonpath='{range .items[*]}{.metadata.name}={.metadata.generation}{"\n"}{end}')" || return 1
+  operator="$(kubectl_prod -n flux-system get deploy "${operator_deployment}" \
+    --ignore-not-found \
+    --request-timeout="${kubectl_request_timeout}" \
+    -o jsonpath='{.metadata.name}={.metadata.generation}{"\n"}')" || return 1
+  printf '%s\n%s\n' "${controllers}" "${operator}" | grep -v '^$' | sort
 }
 
 wait_for_control_plane_rollout() {
