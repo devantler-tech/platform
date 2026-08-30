@@ -1,0 +1,15 @@
+---
+# The Kyverno CLI does not read namespace labels from Namespace objects in
+# resources.yaml — a rule matched by namespaceSelector is reported "Excluded"
+# for every resource unless the labels are declared here, and the whole fixture
+# then passes vacuously including the default-off control.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+namespaceSelector:
+  - name: velero
+    labels:
+      pod-security.devantler.tech/baseline-context: enabled
+  - name: chaos-mesh
+    labels: {}

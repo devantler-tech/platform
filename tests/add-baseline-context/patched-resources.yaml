@@ -1,0 +1,95 @@
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: plain
+  namespace: velero
+spec:
+  initContainers:
+    - name: init
+      image: velero/velero-plugin:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s0
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s0
+  securityContext:
+    fsGroupChangePolicy: OnRootMismatch
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-init
+  namespace: velero
+spec:
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s0
+  securityContext:
+    fsGroupChangePolicy: OnRootMismatch
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: partial
+  namespace: velero
+spec:
+  initContainers:
+    - name: init
+      image: velero/velero-plugin:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s0
+          user: system_u
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s0
+          user: system_u
+  securityContext:
+    fsGroupChangePolicy: OnRootMismatch
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: podlevel
+  namespace: velero
+spec:
+  initContainers:
+    - name: init
+      image: velero/velero-plugin:v1.0.0
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+  securityContext:
+    fsGroupChangePolicy: OnRootMismatch
+    seLinuxOptions:
+      level: s9
+      user: system_u
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: podlevel-partial
+  namespace: velero
+spec:
+  initContainers:
+    - name: init
+      image: velero/velero-plugin:v1.0.0
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+  securityContext:
+    fsGroupChangePolicy: OnRootMismatch
+    seLinuxOptions:
+      level: s0
+      user: system_u

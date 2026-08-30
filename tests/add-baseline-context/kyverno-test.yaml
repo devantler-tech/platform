@@ -1,0 +1,81 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: add-baseline-context-optin
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/add-security-context.yaml
+resources:
+  - resources.yaml
+# Declares the namespace labels the namespaceSelector matches on. Without it the
+# CLI reports every resource "Excluded" and the fixture passes vacuously —
+# including the default-off control, which would then prove nothing.
+variables: values.yaml
+results:
+  # ON state: an opted-in namespace gets both fields, pod level and every
+  # container/initContainer.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-namespaces
+    resources:
+      - velero/plain
+      - velero/no-init
+      - velero/partial
+      - velero/podlevel
+      - velero/podlevel-partial
+    kind: Pod
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-containers
+    resources:
+      - velero/plain
+      - velero/no-init
+      - velero/partial
+    kind: Pod
+    result: pass
+    patchedResources: patched-resources.yaml
+  # The pod-scope SELinux fill closes the one shape the container foreach must
+  # leave alone: a pod-level object that exists but carries no `level`. It fires
+  # for exactly that shape and nothing else.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-pod-selinux-level
+    resources:
+      - velero/podlevel-partial
+    kind: Pod
+    result: pass
+    patchedResources: patched-resources.yaml
+  # OFF state, and the anchor-preservation case. chaos-mesh carries no opt-in
+  # label so neither rule may touch it; velero/preset already sets both fields to
+  # non-default values, so the conditional anchors leave it unchanged and the
+  # mutation is reported as skipped.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-namespaces
+    resources:
+      - chaos-mesh/unlabelled
+      - velero/preset
+    kind: Pod
+    result: skip
+  - policy: add-security-context
+    rule: add-baseline-context-optin-containers
+    resources:
+      - chaos-mesh/unlabelled
+      - velero/preset
+      - velero/podlevel
+      - velero/podlevel-partial
+    kind: Pod
+    result: skip
+  # The pod-scope fill must NOT fire anywhere else: not where the pod sets no
+  # SELinux object at all (that shape belongs to the container rule), and not
+  # where the pod-level object is already complete.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-pod-selinux-level
+    resources:
+      - chaos-mesh/unlabelled
+      - velero/plain
+      - velero/no-init
+      - velero/partial
+      - velero/preset
+      - velero/podlevel
+    kind: Pod
+    result: skip
