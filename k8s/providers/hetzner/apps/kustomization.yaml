@@ -3,11 +3,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/apps/
-  # Prod-only tenant: the UniFi network managed declaratively via tofu-controller
-  # (providers/hetzner/apps/unifi/). Lives in the hetzner apps overlay rather than
-  # bases/apps/ because both its reconciler (tofu-controller) and the controller
-  # API it reaches are Hetzner-only — on local/CI clusters the Terraform CRD is
-  # absent. Reconciled by the shared `apps` Flux Kustomization like any tenant.
+  # Prod-only tenant: the UniFi network managed declaratively through Crossplane
+  # Managed Resources (providers/hetzner/apps/unifi/). Lives in the hetzner apps
+  # overlay because its provider and the controller API it reaches are
+  # Hetzner-only. Reconciled by the shared `apps` Flux Kustomization like any
+  # tenant.
   - unifi/
   # Prod-only tenant: AWS-as-code via the upbound Crossplane family providers
   # (providers/hetzner/apps/aws/ — platform#2325). Credential plumbing only for

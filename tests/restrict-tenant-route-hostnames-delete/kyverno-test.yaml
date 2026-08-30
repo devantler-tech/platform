@@ -1,0 +1,31 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-route-hostnames-delete
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-route-hostnames.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  - policy: restrict-tenant-route-hostnames
+    rule: wedding-app-approved-hostnames
+    resources:
+      - wedding-app/retired-route
+    kind: HTTPRoute
+    result: skip
+  - policy: restrict-tenant-route-hostnames
+    rule: ascoachingogvaner-approved-hostnames
+    resources:
+      - ascoachingogvaner/retired-route
+    kind: HTTPRoute
+    result: skip
+  - policy: restrict-tenant-route-hostnames
+    rule: unlisted-tenant-namespace-has-no-approved-hostnames
+    resources:
+      - future-tenant/retired-route
+    kind: HTTPRoute
+    result: skip

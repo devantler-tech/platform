@@ -9,11 +9,11 @@
 #
 # C-0013 — flux-system is the one namespace the mutation excludes that no other
 # exception covers and that IS scanned in-cluster. Measured there 2026-08-18 on the
-# pre-exception scan surface, all six Flux controllers (flux-operator,
-# helm-controller, kustomize-controller, notification-controller, source-controller,
-# tofu-controller) fail C-0013 on a single missing field,
+# pre-exception scan surface, all five Flux controllers (flux-operator,
+# helm-controller, kustomize-controller, notification-controller and
+# source-controller) fail C-0013 on a single missing field,
 # `spec.template.spec.containers[0].securityContext.runAsGroup`. Narrowing C-0013
-# today would therefore surface six real findings with no fix behind them, which
+# today would therefore surface five real findings with no fix behind them, which
 # lowers the score to absorb a gap instead of closing it. Setting runAsGroup on
 # those six is tracked in #3223; C-0013 narrows once that lands.
 #
@@ -70,7 +70,7 @@ spec:
     runAsGroup and fsGroupChangePolicy at pod admission. The Deployment spec does
     not contain them and Kubescape scans the stored spec, not the live pod. These
     two controls remain cluster-wide because narrowing them is blocked on evidence
-    rather than on expressiveness: C-0013 has a measured six-workload gap in
+    rather than on expressiveness: C-0013 has a measured five-workload gap in
     flux-system (#3223) and C-0211's residual population is every scanned workload
     the mutation does not reach, sized at 33 (#3217).
   posture:

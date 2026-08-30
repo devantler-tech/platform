@@ -1398,43 +1398,119 @@ const (
 //
 //	8758aca997ecdf37b536b18420803f46e67e0af05b851fafefbaa83e02b01fe3
 //
-// Measured against main 14351b35 for the flux-system controller identity pins:
-// 548 documents on both sides, with membership IDENTICAL — set difference in
-// BOTH directions over apiVersion|kind|namespace|name returned zero, so nothing
-// was added, removed or renamed (count alone cannot see a rename). The
-// comparison was proven live by a negative control: deleting one line from the
-// branch set makes the same set difference report exactly that identity.
-// Exactly THREE entries' content moved, and they are the three authored files:
+// Moved again by the Crossplane provider rename that fixes the dead provider
+// fleet (#3454): provider-family-aws becomes upbound-provider-family-aws, the
+// name Crossplane derives from its package, so the dependency manager stops
+// creating a duplicate Provider for a source the lock already holds.
 //
-//	fluxcd.controlplane.io/v1  FluxInstance  flux-system/flux
-//	helm.toolkit.fluxcd.io/v2  HelmRelease   flux-system/flux-operator
-//	helm.toolkit.fluxcd.io/v2  HelmRelease   flux-system/tofu-controller
+// Measured against main 14351b35 by rendering all five roots from both trees
+// with ONE renderer, so renderer differences cancel: 544 documents on main and
+// 544 on this branch. Neither side carries a duplicate apiVersion|kind|
+// namespace|name identity, so the pairing is one-to-one. Set difference in BOTH
+// directions returns exactly one document each way — the rename, and nothing
+// else:
 //
-// Their rendered delta is a kustomize patch (FluxInstance) and a postRenderers
-// block (both HelmReleases) pinning each Flux controller's runAsUser and
-// runAsGroup to the uid/gid its own image already declares — 65534 for the four
-// ghcr.io/fluxcd/* controllers, 65532 for flux-operator and tofu-controller.
-// Those values are read from the image configs, so the effective uid and gid do
-// not change at runtime: kubelet already resolves an unset runAsUser from the
-// image USER, and this only makes that value explicit so C-0013 can read it.
-// The block constrains the workloads; it grants nothing. Same shape as the
-// longhorn-ui non-root identity pin approved earlier in this file.
+//	removed  pkg.crossplane.io/v1  Provider  provider-family-aws
+//	added    pkg.crossplane.io/v1  Provider  upbound-provider-family-aws
 //
-// No grant-bearing object moved: the surface carries 78 Role / ClusterRole /
-// RoleBinding / ClusterRoleBinding / ServiceAccount documents on BOTH sides,
-// their identity sets are byte-identical, and none of them is in the moved set
-// above. Every `aws`-bearing line in the rendered surface is byte-identical
-// across the two trees (121 on each side), so nothing granted to the aws/aws
-// service account this validator exists to protect is touched.
+// A Crossplane Provider is not a grant-bearing kind, and the grant-bearing
+// counts confirm nothing moved: Role / ClusterRole / RoleBinding /
+// ClusterRoleBinding / ServiceAccount are 11/24/15/12/16 on BOTH sides.
 //
-// The aggregate digest was read from the required job's own output on the
-// approved renderer. This host runs kubectl v1.36.1 / kustomize v5.8.1, which
-// the validator rejects as unapproved — it can therefore measure the
-// conservation above but cannot produce the digest. The previous approved
-// aggregate digest was:
+// Exactly two surviving documents change content, both because provider RBAC is
+// named after the provider revision, so the rename moves the ClusterRole these
+// two match by anchored regex:
+//
+//	kubescape.io/v1beta1  ClusterSecurityException  secret-reader-rbac
+//	v1                    ConfigMap                 kubescape/headlamp-exceptions
+//
+// Both are byte-identical to main after un-substituting the rename in the
+// rendered output, so the regex is their ONLY change; the negative control (the
+// same comparison without that substitution) reports a difference, so the check
+// is not vacuous. No subject, grant, security context, or authorization
+// resource is added, removed or widened. The previous approved aggregate digest
+// was:
 //
 //	ec7889f10c850126e206c93669adbd2c1406c5f189e07b2cbfe5e63e7d24e287
-const expectedRenderedSurfaceSHA = "3692409fb9de285a396f8b24dc36b2cbca07fada5254ed21c9d7ccb37456186c"
+//
+// Moved again by the Crossplane provider pod securityContext that fixes the
+// same dead provider fleet from the other side (platform#3470), rebased onto
+// the rename above. The four provider DeploymentRuntimeConfigs each gain a
+// pod-level securityContext so Kyverno's require-seccomp-profile — which
+// asserts the POD path and is auto-generated for pod controllers — stops
+// denying the Deployment its package manager builds. Crossplane applies its own
+// pod defaults only when the config supplies no securityContext at all, so the
+// block restates runAsNonRoot/runAsUser/runAsGroup 2000 verbatim rather than
+// changing the uid.
+//
+// Re-measured against main after the rename landed, because the previously
+// approved value for this change was computed against the pre-rename tree and
+// says nothing about this one. Conservation, by rendering both trees under one
+// renderer and diffing: the render differs by exactly 24 lines, all additions,
+// all four copies of that same six-line block, zero deletions. Extracting every
+// grant-bearing object with its rules, subjects and roleRef, the two trees are
+// byte-identical, and a perturbed-row negative control fires. It adds no
+// subject, grant, authorization resource, or rendered object; it adds a
+// security context, and that is the entire authored delta. The previous
+// approved aggregate digest was:
+//
+//	a3199d02a7c8b32c0c82bd6a619ea020993d0e37f2dc1e4fe1b23e96d3a91f5d
+//
+// Moved again by the staged tofu-controller retirement. Measured by comparing
+// exact current main f19f67e2 with merge head d35c1e96 using the
+// checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer. Across all five
+// production roots, main renders 548 distinct apiVersion|kind|namespace|name
+// identities and this branch renders 547; neither tree has a duplicate. The
+// bidirectional set difference is exactly:
+//
+//	removed  helm.toolkit.fluxcd.io/v2     HelmRelease               flux-system/tofu-controller
+//	removed  source.toolkit.fluxcd.io/v1   HelmRepository            flux-system/tofu-controller
+//	added    apiextensions.k8s.io/v1       CustomResourceDefinition  terraforms.infra.contrib.fluxcd.io
+//
+// The added CRD is the byte-verified v0.16.5 chart CRD temporarily inventoried
+// by Flux so the follow-up retirement can prune it rather than orphan it. It
+// grants no subject or verb. Grant-bearing membership remains 78 objects on
+// BOTH sides (Role / ClusterRole / RoleBinding / ClusterRoleBinding /
+// ServiceAccount 11/24/15/12/16). Exactly one of those objects changes:
+// ClusterRole cluster-reader removes the infra.contrib.fluxcd.io API group.
+// That is a strict read-grant reduction; no binding, subject, roleRef, resource
+// or verb is added or widened.
+//
+// Five other surviving documents change: the Coroot autosuppressor drops only
+// the retired controller's alert exemption; two Kubescape exceptions remove
+// only tofu-specific RBAC matches; one Kubescape exception updates measured
+// controller-count prose; and its generated Headlamp ConfigMap mirror follows
+// those exception changes. The apps, bootstrap and root production renders are
+// byte-identical. The AWS manifests and the recovered provider fleet base are
+// untouched by this branch. The previous approved aggregate digest was:
+//
+//	d07fdcf550827d5b62d48c0ce9e110dea819f8d9168c7ac3abb7f01144939d93
+//
+// Moved again by the per-controller uid/gid pin on this branch, re-measured
+// against main after the tofu-controller retirement landed. The branch's
+// tofu-controller postRenderer is gone with the controller itself, so the
+// authored delta is now exactly two files: the flux-operator HelmRelease and
+// the FluxInstance kustomize patch.
+//
+// Conservation, rendering all five production roots from both trees with ONE
+// renderer so renderer differences cancel: 548 documents on both sides. The
+// rendered diff is 29 lines, ALL additions, zero deletions, and every one of
+// them belongs to those two patch blocks — `op: test` container-name guards
+// and `op: add` writes of runAsUser/runAsGroup under
+// /spec/template/spec/containers/0/securityContext.
+//
+// Grant-bearing membership is unchanged: extracting every Role, ClusterRole,
+// RoleBinding, ClusterRoleBinding and ServiceAccount with its rules, subjects
+// and roleRef yields 78 objects on BOTH sides, byte-identical. The negative
+// control fires for the right reason — injecting one `escalate` verb into
+// ClusterRole cert-manager-tenant-edit still extracts 78 objects (so the
+// fixture is intact, not broken) and the comparison names exactly that role.
+// No subject, grant, roleRef or authorization resource is added or widened;
+// the delta is a security context, and it constrains rather than grants.
+// The previous approved aggregate digest was:
+//
+//	2304ac067cc7ec446ddeff107477bb1f34f859b4cd5bca708a3ba0926ef5fc49
+const expectedRenderedSurfaceSHA = "a8383404dd948c286fc274aed91164b2156c47b0cf66de9deebc7025833a8c20"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
