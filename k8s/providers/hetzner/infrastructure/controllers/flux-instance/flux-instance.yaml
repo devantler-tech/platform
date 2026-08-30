@@ -147,6 +147,44 @@ spec:
               options:
                 - name: ndots
                   value: "1"
+      # Give every Flux controller container the uid AND gid its own image
+      # already declares, so Kubescape C-0013 (non-root containers) passes on
+      # its own terms rather than through an exception.
+      #
+      # 🔴 SET BOTH FIELDS, NEVER runAsGroup ALONE. None of the four
+      # controllers sets runAsUser at container or pod level — only
+      # runAsNonRoot: true — so adding just runAsGroup leaves the OCI spec with
+      # an empty uid and a group ("":65534), which containerd refuses, and the
+      # patch meant to close a posture gap stops the controller starting
+      # instead. That failure mode is documented in add-security-context.yaml
+      # and it lands on kustomize-/source-controller, i.e. the components a
+      # revert would have to run through.
+      #
+      # 65534 is measured, not chosen: ghcr.io/fluxcd/{source,kustomize,helm,
+      # notification}-controller all declare USER 65534:65534 in their image
+      # config (read from the registry 2026-08-29). Do NOT reuse 65532 here —
+      # that is the flux-operator image family's uid, and it is patched at its
+      # own HelmRelease.
+      #
+      # Targeted by the shared app.kubernetes.io/part-of=flux label, the same
+      # selector the topology-spread and ndots patches use, so it covers the
+      # four installed components and any future one from the same family. The
+      # `op: test` guard asserts container 0 is `manager` before writing, so a
+      # future chart that reorders containers fails the patch loudly instead of
+      # writing a uid onto the wrong container.
+      - target:
+          kind: Deployment
+          labelSelector: app.kubernetes.io/part-of=flux
+        patch: |
+          - op: test
+            path: /spec/template/spec/containers/0/name
+            value: manager
+          - op: add
+            path: /spec/template/spec/containers/0/securityContext/runAsUser
+            value: 65534
+          - op: add
+            path: /spec/template/spec/containers/0/securityContext/runAsGroup
+            value: 65534
       # Enforce cosign signature verification on the ROOT source — the
       # flux-system OCIRepository every controller, tenant binding and policy
       # arrives through. Without this the root artifact is pulled from a mutable
