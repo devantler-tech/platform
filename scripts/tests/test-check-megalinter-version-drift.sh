@@ -181,6 +181,7 @@ case "$args" in
     run="${run%%/jobs*}"
     printf 'job%s\n' "$run" ;;
   *actions/runs*per_page*)
+    [ -z "${GH_STUB_RUNS_URL_LOG:-}" ] || printf '%s\n' "$args" >>"$GH_STUB_RUNS_URL_LOG"
     per_page="${args#*per_page=}"
     per_page="${per_page%%&*}"
     per_page="${per_page%% *}"
@@ -349,6 +350,33 @@ else
   printf 'ok: a candidate whose revision does not resolve is not trusted\n'
 fi
 : >"$scratch/unresolvable.txt"
+
+# The repository emits enough workflow runs that an unfiltered newest-first walk cannot reach an
+# EXECUTED mega-linter job at all. Measured 2026-08-30: 300 repository-wide runs spanned only ~23
+# hours and contained a single run of the managed workflow, whose mega-linter job was `skipped`;
+# the newest executed one sat at ordinal ~305 and main went red. mega-linter is skipped on main, so
+# every push, merge_group, dynamic and schedule run is noise that can only crowd out the evidence.
+# Scoping the query to pull_request runs is what keeps the bounded budget spent on candidates.
+: >"$scratch/tainted.txt"
+: >"$scratch/unresolvable.txt"
+make_log "$ci_megalinter" "$ci_checkov" "$ci_trivy" "$scratch/logs/job111.log"
+printf '111 %s\n' "$genuine_sha" >"$scratch/runs.txt"
+GH_STUB_RUNS_URL_LOG="$scratch/runs-urls.txt"
+: >"$GH_STUB_RUNS_URL_LOG"
+export GH_STUB_RUNS_URL_LOG
+run_live
+if [ ! -s "$GH_STUB_RUNS_URL_LOG" ]; then
+  printf 'FAIL: run-listing query was never issued, so the event scope cannot be asserted\n%s\n' \
+    "$out" >&2
+  failures=$((failures + 1))
+elif ! grep -qF 'event=pull_request' "$GH_STUB_RUNS_URL_LOG"; then
+  printf 'FAIL: run listing is not scoped to pull_request runs\n%s\n' \
+    "$(cat "$GH_STUB_RUNS_URL_LOG")" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: the run listing is scoped to pull_request runs\n'
+fi
+unset GH_STUB_RUNS_URL_LOG
 
 if [ "$failures" -ne 0 ]; then
   printf '\n%d check(s) failed\n' "$failures" >&2

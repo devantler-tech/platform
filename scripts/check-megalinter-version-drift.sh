@@ -37,12 +37,18 @@ set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:-devantler-tech/platform}"
 MEGALINTER_JOB_MATCH='mega-linter'
-# A burst of dependency updates can emit several workflows per pull request; 40 repository-wide
-# runs buried a valid MegaLinter job even though it was less than an hour old (observed 2026-08-22),
-# and one full 100-result page can be exhausted just as easily. Walk a bounded three pages in newest-
-# first order. The cap prevents an unbounded historical scan; exhausting it still fails closed below.
+# The listing is scoped to pull_request runs, and that scope is what makes the bounded budget
+# viable. mega-linter is skipped on main, so push, merge_group, dynamic and schedule runs can never
+# supply an executed job — they can only crowd one out. Measured 2026-08-30: 300 repository-wide
+# runs spanned ~23 hours and held a single run of the managed workflow whose mega-linter job was
+# skipped, while the newest executed job sat at ordinal ~305, just past the cap; main went red on a
+# check that had nothing to compare. Filtering to pull_request removed ~61% of that window.
+# A burst of dependency updates can still emit several workflows per pull request, and one full
+# 100-result page is exhausted easily, so walk a bounded five pages in newest-first order. Pages are
+# fetched only until evidence is found, so the extra depth costs nothing in the common case. The cap
+# prevents an unbounded historical scan; exhausting it still fails closed below.
 RUNS_PER_PAGE=100
-MAX_RUN_PAGES=3
+MAX_RUN_PAGES=5
 MAX_RUNS=$((RUNS_PER_PAGE * MAX_RUN_PAGES))
 
 # The org-managed workflow that runs mega-linter for this repository. Binding to it is a PROVENANCE
@@ -185,7 +191,7 @@ prove org-managed provenance. Re-establish how the mega-linter job is identified
   page=1
   while [ "$page" -le "$MAX_RUN_PAGES" ]; do
     page_runs="$(gh api \
-      "repos/$REPO/actions/runs?per_page=$RUNS_PER_PAGE&page=$page" \
+      "repos/$REPO/actions/runs?event=pull_request&per_page=$RUNS_PER_PAGE&page=$page" \
       --jq ".workflow_runs[] | select(.path == \"$MANAGED_WORKFLOW_PATH\") | \"\(.id) \(.head_sha)\"" \
       2>/dev/null)" ||
       die_unverifiable "could not list recent runs page $page for $REPO"
