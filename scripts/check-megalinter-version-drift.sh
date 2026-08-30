@@ -225,9 +225,9 @@ EOF
     page=$((page + 1))
   done
   [ "$saw_managed" = yes ] ||
-    die_unverifiable "no recent runs of $MANAGED_WORKFLOW_PATH in the last $MAX_RUNS runs of $REPO"
+    die_unverifiable "no recent runs of $MANAGED_WORKFLOW_PATH in the last $MAX_RUNS pull_request runs of $REPO"
   die_unverifiable "no completed '$MEGALINTER_JOB_MATCH' job from a provably org-managed run in the
-last $MAX_RUNS runs of $REPO"
+last $MAX_RUNS pull_request runs of $REPO"
 }
 
 ci_megalinter="$(read_const CI_MEGALINTER_VERSION)"
