@@ -130,6 +130,36 @@ check podlevel-partial-mutated.yaml '.spec.initContainers[0].securityContext.seL
   null "initContainer-level injection replaced the partial pod-level SELinux object"
 check podlevel-partial-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' \
   OnRootMismatch "pod-level rule did not fire on the podlevel-partial fixture"
+# ROLLOUT INVENTORY. The rules above ship default-off, so what they actually do
+# in the cluster is decided entirely by which namespaces carry the opt-in label —
+# a fact no mutation fixture can see. Without this gate, widening the rollout from
+# one namespace to all twelve is a one-line diff with no test signal at all, and a
+# dropped label silently reverts the feature while every assertion above still
+# passes. Pin the inventory so each namespace is added deliberately and reviewed.
+#
+# Each namespace is opted in only after its live workloads are measured to still
+# start; see the rationale recorded on the namespace manifest itself.
+expected_optin="velero"
+
+# grep only prefilters candidate files; yq decides, so a mention in a comment or
+# in the policy that DEFINES the label cannot be counted as an opted-in namespace.
+actual_optin="$(
+  grep -rl 'pod-security.devantler.tech/baseline-context' --include='*.yaml' "${repo_root}/k8s" 2>/dev/null |
+    while IFS= read -r f; do
+      yq -N '
+        select(.kind == "Namespace" and
+               .metadata.labels."pod-security.devantler.tech/baseline-context" == "enabled") |
+        .metadata.name
+      ' "${f}" 2>/dev/null
+    done | awk 'NF' | LC_ALL=C sort -u | paste -sd, -
+)"
+
+if [ "${actual_optin}" != "${expected_optin}" ]; then
+  echo "::error::baseline-context opt-in inventory changed: expected '${expected_optin}', got '${actual_optin}'"
+  echo "::error::add or remove a namespace here only together with its measured rollout evidence"
+  fail=1
+fi
+
 if [ "${fail}" -ne 0 ]; then
   exit 1
 fi
