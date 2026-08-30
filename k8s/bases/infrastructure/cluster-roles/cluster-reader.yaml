@@ -52,6 +52,8 @@ rules:
       - autoscaling
       - autoscaling.k8s.io
       - autoscaling.x-k8s.io
+      - aws.m.upbound.io
+      - aws.upbound.io
       - backup.kubevirt.io
       - barmancloud.cnpg.io
       - batch
@@ -65,6 +67,7 @@ rules:
       - coordination.k8s.io
       - dex.coreos.com
       - discovery.k8s.io
+      - dns.unifi.m.crossplane.io
       - enterprise.github.m.upbound.io
       - eventing.keda.sh
       - events.k8s.io
@@ -82,6 +85,7 @@ rules:
       - github.upbound.io
       - groupsnapshot.storage.k8s.io
       - hostdata.kubescape.cloud
+      - iam.aws.m.upbound.io
       - image.toolkit.fluxcd.io
       - instancetype.kubevirt.io
       - internal.kro.run
@@ -111,6 +115,7 @@ rules:
       - repo.github.m.upbound.io
       - reports.kyverno.io
       - resource.k8s.io
+      - route.unifi.m.crossplane.io
       - scheduling.k8s.io
       - snapshot.kubevirt.io
       - snapshot.storage.k8s.io
@@ -119,7 +124,10 @@ rules:
       - storage.k8s.io
       - team.github.m.upbound.io
       - trust.cert-manager.io
+      - unifi.crossplane.io
+      - unifi.m.crossplane.io
       - velero.io
+      - vpn.unifi.m.crossplane.io
       - wgpolicyk8s.io
     resources: ["*"]
     verbs: ["get", "list", "watch"]
