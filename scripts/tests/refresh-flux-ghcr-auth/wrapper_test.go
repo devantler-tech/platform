@@ -441,6 +441,42 @@ func TestPartialFanoutFailsClosedWithoutBootstrapMode(t *testing.T) {
 	requireWrapperPathExists(t, f.fanoutLog, false)
 }
 
+func TestFirstDeployStagesExistingFanoutBeforeNewConsumerNamespaceExists(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(
+		validConfig(),
+		[]string{"--record-runtime-proof", f.workspace + "/runtime-proof.json"},
+		map[string]string{
+			"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/data-product-controller/ghcr-auth",
+			"FAKE_MISSING_NAMESPACE":       "data-product-controller",
+		},
+	)
+
+	requireWrapperExitCode(t, result, 0)
+	requireWrapperPathExists(t, f.patchCapture, true)
+	requireWrapperPathExists(t, f.variablesPatchCapture, true)
+	fanout := mustRead(f.fanoutLog)
+	requireContains(t, fanout, "externalsecret/wedding-app/ghcr-auth")
+	requireContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
+	requireContains(t, fanout, "externalsecret/kyverno/ghcr-auth")
+	requireNotContains(t, fanout, "externalsecret/data-product-controller/ghcr-auth")
+}
+
+func TestAbsentFanoutNamespaceFailsOutsidePrepublishStage(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/data-product-controller/ghcr-auth",
+		"FAKE_MISSING_NAMESPACE":       "data-product-controller",
+	})
+
+	if result.exitCode == 0 {
+		t.Fatalf("absent fanout namespace unexpectedly succeeded outside pre-publish staging")
+	}
+	requireWrapperPathExists(t, f.variablesPatchCapture, false)
+	requireWrapperPathExists(t, f.patchCapture, false)
+	requireWrapperPathExists(t, f.fanoutLog, false)
+}
+
 func TestMissingESOCRDsFailsWithoutStagingVariables(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_FANOUT_CRDS_ABSENT": "true"})

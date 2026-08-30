@@ -61,6 +61,8 @@ func fakeKubectlImplementation(args []string) int {
 	case containsSequence(args, "get", "pods") &&
 		flagValue(args, "--selector") == "app=kustomize-controller":
 		return fakeKubectlGetFluxControllerPods(namespace)
+	case containsSequence(args, "get", "namespace"):
+		return fakeKubectlGetNamespace(args)
 	case containsSequence(args, "get", "lease"):
 		return fakeKubectlGetSyncLease(args, namespace)
 	case containsSequence(args, "patch", "lease"):
@@ -125,6 +127,18 @@ func fakeKubectlImplementation(args []string) int {
 	}
 
 	return commandFailure(91, "unexpected kubectl invocation: %s", strings.Join(args, " "))
+}
+
+func fakeKubectlGetNamespace(args []string) int {
+	name := argumentAfter(args, "namespace")
+	if name == "" {
+		return commandFailure(91, "namespace name is required")
+	}
+	if containsArg(args, "--ignore-not-found") && name == os.Getenv("FAKE_MISSING_NAMESPACE") {
+		return 0
+	}
+	fmt.Printf("namespace/%s\n", name)
+	return 0
 }
 
 func fakeKubectlGetFluxPolicyKustomization(args []string, namespace string) int {

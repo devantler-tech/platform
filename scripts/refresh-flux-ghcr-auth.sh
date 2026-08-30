@@ -5260,6 +5260,7 @@ if ! kubectl \
 fi
 
 fanout_complete=true
+prepublish_fanout_namespaces=()
 if ! grep -qx 'pushsecrets.external-secrets.io' "${fanout_api_resources}" ||
   ! grep -qx 'externalsecrets.external-secrets.io' "${fanout_api_resources}"; then
   fanout_complete=false
@@ -5288,8 +5289,31 @@ else
       exit 1
     fi
     if [[ -z "${externalsecret_name}" ]]; then
+      # A new consumer cannot have its ExternalSecret until Flux is allowed to
+      # publish and reconcile the candidate that creates its namespace. Only
+      # the pre-publish staging invocation may omit a target whose entire
+      # namespace is absent. The post-reconcile reassertion runs without this
+      # exemption and therefore proves the newly-created fan-out before the
+      # deployment can succeed. A missing object in an existing namespace is
+      # always an incomplete fan-out.
+      if [[ -n "${record_runtime_proof_path}" ]]; then
+        if ! namespace_name="$(kubectl \
+          --context "${KUBE_CONTEXT}" \
+          get namespace "${namespace}" \
+          --ignore-not-found \
+          -o name)"; then
+          echo "::error::Could not determine whether namespace ${namespace} exists; refusing to change root Flux auth."
+          exit 1
+        fi
+        if [[ -z "${namespace_name}" ]]; then
+          echo "::notice::Deferring new GHCR fan-out target ${namespace}/ghcr-auth until the candidate creates its namespace; the post-reconcile reassertion remains mandatory."
+          continue
+        fi
+      fi
       fanout_complete=false
+      continue
     fi
+    prepublish_fanout_namespaces+=("${namespace}")
   done
 fi
 
@@ -5319,7 +5343,7 @@ stage_fanout_before_talos \
   "${pull_revision}" \
   "${KSAIL_OPERATOR_IMAGE}" \
   "${talos_stage_result_file}" \
-  "${FANOUT_NAMESPACES[@]}"
+  "${prepublish_fanout_namespaces[@]}"
 resume_flux_policy_handoff
 resume_flux_policy_parent
 
