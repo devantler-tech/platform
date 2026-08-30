@@ -110,6 +110,26 @@ check podlevel-mutated.yaml '.spec.securityContext.seLinuxOptions.user' \
 check podlevel-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' \
   OnRootMismatch "pod-level rule did not fire on the podlevel fixture"
 
+
+# A pod-level SELinux object that EXISTS but has no `level`, with containers
+# carrying none of their own. The container foreach must stay skipped for this
+# shape — writing a container-level object would replace the pod struct wholesale
+# and drop `user` — so the missing field can only be supplied at pod scope.
+# Measured 2026-08-30 with add-baseline-context-optin-pod-selinux-level removed:
+# both containers inherited `{user: system_u}` with no level, so C-0211 went
+# unmet while every rule still reported success. The fsGroupChangePolicy
+# assertion proves the fixture is processed at all, so a rule that stopped
+# matching cannot make the others pass vacuously.
+check podlevel-partial-mutated.yaml '.spec.securityContext.seLinuxOptions.level' \
+  s0 "partial pod-level seLinuxOptions did not receive the missing level"
+check podlevel-partial-mutated.yaml '.spec.securityContext.seLinuxOptions.user' \
+  system_u "partial pod-level seLinuxOptions lost its pre-existing user"
+check podlevel-partial-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions' \
+  null "container-level injection replaced the partial pod-level SELinux object"
+check podlevel-partial-mutated.yaml '.spec.initContainers[0].securityContext.seLinuxOptions' \
+  null "initContainer-level injection replaced the partial pod-level SELinux object"
+check podlevel-partial-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "pod-level rule did not fire on the podlevel-partial fixture"
 if [ "${fail}" -ne 0 ]; then
   exit 1
 fi

@@ -296,6 +296,49 @@ spec:
           spec:
             securityContext:
               +(fsGroupChangePolicy): OnRootMismatch
+    # A pod-level seLinuxOptions that EXISTS but carries no `level` is the one
+    # shape neither rule above closes, and both still report success. The
+    # container foreach below deliberately skips it — a container-level object
+    # REPLACES the pod-level struct wholesale, so writing `level` there would
+    # discard the operator's sibling fields — and the pod rule above fills only
+    # fsGroupChangePolicy. Every container with no override therefore inherits
+    # `{user: system_u}` with no level, and the promised C-0211 field is never
+    # supplied. Measured 2026-08-30: `velero/podlevel-partial` came back with
+    # its containers inheriting a level-less object.
+    #
+    # Fill the missing leaf at POD scope, where it is free: the `+(level)`
+    # anchor preserves every sibling, and one write covers all containers and
+    # initContainers that do not override.
+    #
+    # The precondition scopes this to pods that ALREADY carry a pod-level
+    # object, so it never creates one where the author set none — that shape is
+    # the container rule's, and creating a pod-level object here would silently
+    # move ownership between rules and change the `plain` case.
+    - name: add-baseline-context-optin-pod-selinux-level
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              operations:
+                - CREATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context: enabled
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.securityContext.seLinuxOptions || '' }}"
+            operator: NotEquals
+            value: ''
+          - key: "{{ request.object.spec.securityContext.seLinuxOptions.level || '' }}"
+            operator: Equals
+            value: ''
+      mutate:
+        patchStrategicMerge:
+          spec:
+            securityContext:
+              seLinuxOptions:
+                +(level): s0
     # The anchor is on the LEAF (`+(level)`), not the whole object. Anchoring
     # `+(seLinuxOptions)` would fire only when the object is entirely absent, so a
     # container carrying some other SELinux field with no `level` would be reported

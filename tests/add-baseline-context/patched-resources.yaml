@@ -75,3 +75,21 @@ spec:
     seLinuxOptions:
       level: s9
       user: system_u
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: podlevel-partial
+  namespace: velero
+spec:
+  initContainers:
+    - name: init
+      image: velero/velero-plugin:v1.0.0
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+  securityContext:
+    fsGroupChangePolicy: OnRootMismatch
+    seLinuxOptions:
+      level: s0
+      user: system_u
