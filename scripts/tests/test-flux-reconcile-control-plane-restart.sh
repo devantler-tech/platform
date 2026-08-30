@@ -97,6 +97,7 @@ run_case() {
   local name="$1" gen_before="$2" gen_after="$3" exits="$4"
   local gen_read_fails="${5:-0}"
   local gen_fail_only_call="${6:-}"
+  local baseline_file="${7:-}"
   : >"${call_log}"
   rm -f "${tmp_dir}/genstate" "${tmp_dir}/callcount"
   set +e
@@ -110,6 +111,7 @@ run_case() {
     CALL_LOG="${call_log}" \
     KUBECTL="${fake_kubectl}" \
     RECONCILE_BIN="${fake_reconcile}" \
+    FLUX_CONTROL_PLANE_BASELINE_FILE="${baseline_file}" \
     FLUX_CONTROL_PLANE_ROLLOUT_TIMEOUT=1s \
     "${script}" >"${tmp_dir}/out.${name}" 2>&1
   case_status=$?
@@ -180,11 +182,90 @@ snapshot_queries="$(grep -c -- '--request-timeout="${kubectl_request_timeout}"' 
 grep -Eq '^readonly kubectl_request_timeout=.*:-[0-9]+[smh]\}"$' "${script}" ||
   fail 'the snapshot read timeout must default to a finite duration'
 
+# 5d. THE PRE-PUBLISH BASELINE. Flux may observe the newly published revision
+#     before this wrapper even starts — the deploy composite says so where it
+#     suspends autoscaling "before the mutable artifact is published" — so a
+#     control-plane rollout can already have advanced the generation by the time
+#     the wrapper takes its own "before" snapshot. Both of the wrapper's
+#     snapshots then show the SAME advanced generation, and the cancellation this
+#     deploy inflicted on itself is reported as a genuine failure: exactly the
+#     outage this wrapper exists to prevent. A baseline captured before the tag
+#     moved is what closes that window.
+printf 'flux-operator=1\nkustomize-controller=1\nsource-controller=1\n' >"${tmp_dir}/baseline"
+run_case baseline 2 2 "1 0" 0 "" "${tmp_dir}/baseline"
+[[ "${case_status}" -eq 0 ]] ||
+  fail "a rollout that began before the wrapper started must still be recognised from the pre-publish baseline (got ${case_status})"
+[[ "${case_calls}" -eq 2 ]] ||
+  fail "the pre-publish-baseline case must reconcile exactly twice (ran ${case_calls})"
+
+# 5e. NEGATIVE CONTROL for that path: a baseline MATCHING the post-reconcile
+#     snapshot is not restart evidence and must not buy a retry. Without it,
+#     "prefer the baseline" could degenerate into "always retry" and still pass.
+printf 'flux-operator=1\nkustomize-controller=1\nsource-controller=2\n' >"${tmp_dir}/baseline-same"
+run_case baseline_same 2 2 "1 0" 0 "" "${tmp_dir}/baseline-same"
+[[ "${case_status}" -ne 0 ]] ||
+  fail 'a baseline equal to the post-reconcile snapshot is not restart evidence and must not buy a retry'
+[[ "${case_calls}" -eq 1 ]] ||
+  fail "the matching-baseline case must not be retried (ran ${case_calls})"
+
+# 5f. An empty or unreadable baseline must fall back to the wrapper's own read
+#     rather than becoming a new way for the deploy to fail.
+: >"${tmp_dir}/baseline-empty"
+run_case baseline_empty 1 2 "1 0" 0 "" "${tmp_dir}/baseline-empty"
+[[ "${case_status}" -eq 0 ]] ||
+  fail "an empty baseline must fall back to reading the generations in-wrapper (got ${case_status})"
+
+# 5g. `--snapshot-baseline` must print the snapshot and exit WITHOUT reconciling,
+#     or the pre-publish step would trigger the very reconcile it precedes.
+: >"${call_log}"
+rm -f "${tmp_dir}/genstate" "${tmp_dir}/callcount"
+set +e
+GEN_STATE="${tmp_dir}/genstate" CALL_COUNT="${tmp_dir}/callcount" \
+  GEN_BEFORE=1 GEN_AFTER=1 RECONCILE_EXITS="0" CALL_LOG="${call_log}" \
+  KUBECTL="${fake_kubectl}" RECONCILE_BIN="${fake_reconcile}" \
+  "${script}" --snapshot-baseline >"${tmp_dir}/out.snapshot" 2>&1
+snapshot_status=$?
+set -e
+[[ "${snapshot_status}" -eq 0 ]] ||
+  fail "--snapshot-baseline must exit 0 (got ${snapshot_status})"
+[[ "$(grep -c . "${call_log}" || true)" -eq 0 ]] ||
+  fail '--snapshot-baseline must not run a reconcile'
+grep -Fq 'source-controller=1' "${tmp_dir}/out.snapshot" ||
+  fail '--snapshot-baseline must print the control-plane generations on stdout'
+
 # 6. Wiring: the deploy composite must reconcile THROUGH the wrapper, so the
 #    tolerance actually reaches the merge-queue deploy rather than only existing.
 grep -Fq 'run: ./scripts/reconcile-flux-workloads.sh' "${deploy_action}" ||
   fail 'the deploy composite must trigger reconciliation through the wrapper'
 grep -Fq 'run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile' "${deploy_action}" &&
   fail 'the deploy composite must not still call the bare reconcile, or the wrapper is bypassed'
+
+# 6b. ORDERING: the baseline must be captured BEFORE the mutable tag is
+#     published. Capturing it anywhere after publish leaves the window open,
+#     because Flux can observe the new revision the moment the tag moves — which
+#     is why a wrapper-local snapshot was not enough in the first place.
+baseline_line="$(awk '/--snapshot-baseline/{print NR; exit}' "${deploy_action}")"
+publish_line="$(awk '/publish-platform-manifests/{print NR; exit}' "${deploy_action}")"
+[[ -n "${baseline_line}" ]] ||
+  fail 'the deploy composite must capture the control-plane baseline before publishing'
+[[ -n "${publish_line}" ]] ||
+  fail 'could not locate the publish step in the deploy composite'
+[[ "${baseline_line}" -lt "${publish_line}" ]] ||
+  fail "the baseline must be captured BEFORE the publish step (baseline at line ${baseline_line}, publish at ${publish_line})"
+
+# 6c. The baseline is only useful if the RECONCILE step is handed it. Assert that
+#     structurally, per step: an earlier draft counted references to the variable
+#     across the whole file, which the capture step alone already satisfies — so
+#     it passed unchanged when the reconcile step's env was deleted, reading as
+#     enforcement while enforcing nothing.
+baseline_env_path='.runs.steps[] | select(.run | test("reconcile-flux-workloads\.sh")) | select(.run | test("--snapshot-baseline") | not) | .env.FLUX_CONTROL_PLANE_BASELINE_FILE // "MISSING"'
+reconcile_baseline="$(yq -r "${baseline_env_path}" "${deploy_action}")"
+[[ -n "${reconcile_baseline}" && "${reconcile_baseline}" != "MISSING" ]] ||
+  fail 'the reconcile step must receive FLUX_CONTROL_PLANE_BASELINE_FILE, or the captured baseline never reaches the wrapper'
+
+capture_env_path='.runs.steps[] | select(.run | test("--snapshot-baseline")) | .env.FLUX_CONTROL_PLANE_BASELINE_FILE // "MISSING"'
+capture_baseline="$(yq -r "${capture_env_path}" "${deploy_action}")"
+[[ "${capture_baseline}" == "${reconcile_baseline}" ]] ||
+  fail "the capture and the read must name the SAME baseline file (capture=${capture_baseline}, reconcile=${reconcile_baseline})"
 
 printf 'PASS: %s\n' "${0##*/}"

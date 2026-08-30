@@ -85,11 +85,37 @@ reconcile() {
   "${reconcile_bin}" workload reconcile
 }
 
+# `--snapshot-baseline` prints the snapshot and exits, so the deploy can capture
+# a baseline BEFORE it publishes the mutable tag. It deliberately reuses the same
+# producer rather than a second implementation: the comparison below is textual,
+# so a baseline rendered by different code could differ for reasons that are not
+# a restart and buy a retry no evidence supports.
+if [[ "${1:-}" == "--snapshot-baseline" ]]; then
+  # A baseline that cannot be read must not become a new way for the deploy to
+  # fail; the wrapper simply falls back to reading the generations itself.
+  if ! control_plane_generations; then
+    printf 'Could not read the Flux control-plane baseline before publishing; the reconcile will read it itself.\n' >&2
+  fi
+  exit 0
+fi
+
+# Prefer a baseline captured before the mutable tag was published. Flux may
+# observe the new revision before this wrapper even starts — the deploy composite
+# says so where it suspends autoscaling "before the mutable artifact is
+# published" — and a control-plane rollout that began in that window is already
+# reflected in a snapshot taken here. `before` and `after` would then be equal,
+# and the cancellation this deploy inflicted on itself would be reported as a
+# genuine failure: exactly the outage this wrapper exists to prevent (#3478).
+#
 # A snapshot that cannot be read must not become a new way for the deploy to
 # fail: without it there is simply no restart evidence, so the reconcile runs
 # exactly as it did before this wrapper existed and is never retried.
 before=""
-if ! before="$(control_plane_generations)"; then
+baseline_file="${FLUX_CONTROL_PLANE_BASELINE_FILE:-}"
+if [[ -n "${baseline_file}" && -s "${baseline_file}" ]]; then
+  before="$(cat "${baseline_file}")"
+  printf 'Using the Flux control-plane baseline captured before this deploy published its manifests.\n' >&2
+elif ! before="$(control_plane_generations)"; then
   before=""
   printf 'Could not read the Flux control-plane generations before reconciling; a failure will not be retried.\n' >&2
 fi
