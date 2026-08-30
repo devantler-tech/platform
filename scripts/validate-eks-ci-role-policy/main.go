@@ -2099,6 +2099,9 @@ func validateAuthorizationIsolation(document map[string]any, identity resourceId
 		if targetNamespace := optionalString(spec, "targetNamespace"); targetNamespace != "" && targetNamespace != identity.namespace {
 			return errors.New("isolated-chart HelmRelease must target only its own namespace")
 		}
+		if storageNamespace := optionalString(spec, "storageNamespace"); storageNamespace != "" && storageNamespace != identity.namespace {
+			return errors.New("isolated-chart HelmRelease must store release metadata only in its own namespace")
+		}
 		if serviceAccountName := optionalString(spec, "serviceAccountName"); serviceAccountName != "" {
 			return errors.New("isolated-chart HelmRelease must not select a reconciliation service account")
 		}

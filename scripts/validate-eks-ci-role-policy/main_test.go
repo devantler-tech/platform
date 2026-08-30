@@ -1033,6 +1033,15 @@ spec:
 			),
 		},
 		{
+			name: "cross-namespace storage",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"spec:\n",
+				"spec:\n  storageNamespace: aws\n",
+				1,
+			),
+		},
+		{
 			name: "privileged reconciliation identity",
 			manifest: strings.Replace(
 				validHelmRelease,
