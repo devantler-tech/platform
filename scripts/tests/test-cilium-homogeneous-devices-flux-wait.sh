@@ -23,7 +23,10 @@ line_of() {
 [[ -x "${wait_script}" ]] ||
   fail 'the exact Flux revision wait must be an executable script'
 
-deploy_reconcile_line="$(line_of "${deploy_action}" 'run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile')"
+# The deploy composite reconciles through the wrapper that tolerates a
+# control-plane restart it caused itself (#3478); the DR workflow below still
+# invokes the bare command, so the two anchors deliberately differ.
+deploy_reconcile_line="$(line_of "${deploy_action}" 'run: ./scripts/reconcile-flux-workloads.sh')"
 deploy_wait_line="$(line_of "${deploy_action}" "run: ./scripts/wait-for-platform-flux-revision.sh \"\${PLATFORM_MANIFEST_DIGEST}\"")" ||
   fail 'normal deploy must pass the published digest to the Flux wait through the environment'
 deploy_cluster_update_line="$(line_of "${deploy_action}" 'run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update')"
