@@ -152,7 +152,8 @@ spec:
       # restart) pins the limit near ~400Mi — below the load burst — and the pod
       # is OOMKilled mid-request. Every dashboard widget then shows "Error
       # loading", so Crossview looks like it lost kube-API access when it hasn't:
-      # the SA token, RBAC (wildcard get/list/watch) and network are all fine.
+      # the SA token, the read-only view + cluster-reader RBAC, and network are
+      # all fine.
       #
       # Fix (same auto-vpa footgun the homepage HelmRelease documents): author
       # resources explicitly with a WIDE memory ratio (8:1). VPA still scales the

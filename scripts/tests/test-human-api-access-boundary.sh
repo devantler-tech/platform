@@ -96,9 +96,9 @@ done
 [ "$(count_selected '
   select(.kind == "RoleBinding" or .kind == "ClusterRoleBinding") |
   .subjects[]? |
-  select(.kind == "User")
+  select(.kind != "ServiceAccount")
 ' "${rendered_manifests}")" -eq 0 ] ||
-  fail 'Crossview must not grant a human identity a port-forward bypass'
+  fail 'Crossview must bind only ServiceAccount subjects — no human User or Group identity'
 
 [ "$(count_selected "
   select(.kind == \"Role\" or .kind == \"ClusterRole\") |
