@@ -73,7 +73,14 @@ reconcile() {
   "${reconcile_bin}" workload reconcile
 }
 
-before="$(control_plane_generations)"
+# A snapshot that cannot be read must not become a new way for the deploy to
+# fail: without it there is simply no restart evidence, so the reconcile runs
+# exactly as it did before this wrapper existed and is never retried.
+before=""
+if ! before="$(control_plane_generations)"; then
+  before=""
+  printf 'Could not read the Flux control-plane generations before reconciling; a failure will not be retried.\n' >&2
+fi
 
 set +e
 reconcile
@@ -84,7 +91,18 @@ if [[ "${reconcile_status}" -eq 0 ]]; then
   exit 0
 fi
 
-after="$(control_plane_generations)"
+after=""
+if ! after="$(control_plane_generations)"; then
+  after=""
+fi
+
+# Retry only on positive evidence: both snapshots readable, non-empty, and
+# different. An unreadable or empty snapshot proves nothing, so it fails closed
+# onto the original single-attempt behaviour rather than buying a free retry.
+if [[ -z "${before}" || -z "${after}" ]]; then
+  printf 'Reconciliation failed and the control-plane generations could not be compared, so this is treated as a genuine failure — not retrying.\n' >&2
+  exit "${reconcile_status}"
+fi
 
 if [[ "${before}" == "${after}" ]]; then
   printf 'Reconciliation failed and the Flux control plane did not restart, so this is a genuine failure — not retrying.\n' >&2

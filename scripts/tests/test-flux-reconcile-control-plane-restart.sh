@@ -44,6 +44,17 @@ case "${args}" in
   ;;
 *"get deploy"*)
   snapshot_file="${GEN_STATE}"
+  # Count kubectl calls. One snapshot costs two calls (label query + operator),
+  # so failing from call 3 onward fails the SECOND snapshot only, leaving the
+  # first readable — the asymmetry the emptiness guard exists for.
+  calls=0
+  [[ -f "${CALL_COUNT}" ]] && calls="$(cat "${CALL_COUNT}")"
+  calls=$((calls + 1))
+  printf '%s' "${calls}" >"${CALL_COUNT}"
+  if [[ "${GEN_READ_FAILS:-0}" == "1" && "${calls}" -ge 3 ]]; then
+    printf 'the server could not find the requested resource\n' >&2
+    exit 1
+  fi
   n=0
   [[ -f "${snapshot_file}" ]] && n="$(cat "${snapshot_file}")"
   if [[ "${args}" == *"flux-operator"* ]]; then
@@ -79,10 +90,13 @@ chmod +x "${fake_reconcile}"
 
 run_case() {
   local name="$1" gen_before="$2" gen_after="$3" exits="$4"
+  local gen_read_fails="${5:-0}"
   : >"${call_log}"
-  rm -f "${tmp_dir}/genstate"
+  rm -f "${tmp_dir}/genstate" "${tmp_dir}/callcount"
   set +e
   GEN_STATE="${tmp_dir}/genstate" \
+    GEN_READ_FAILS="${gen_read_fails:-0}" \
+    CALL_COUNT="${tmp_dir}/callcount" \
     GEN_BEFORE="${gen_before}" \
     GEN_AFTER="${gen_after}" \
     RECONCILE_EXITS="${exits}" \
@@ -125,7 +139,19 @@ run_case persistent 1 2 "1 1"
 [[ "${case_calls}" -eq 2 ]] ||
   fail "the retry must be granted exactly once (ran ${case_calls})"
 
-# 5. Wiring: the deploy composite must reconcile THROUGH the wrapper, so the
+# 5. Asymmetric snapshot: the FIRST read succeeds and the second fails, so the
+#    two snapshots differ only because one is missing. That is not evidence of a
+#    restart, so it must not buy a retry — and, equally, reading generations must
+#    never become a NEW way for the deploy to fail before the reconcile even runs.
+#    Both-empty is already caught by the equality check; only this shape isolates
+#    the emptiness guard.
+run_case unreadable 1 2 "1 0" 1
+[[ "${case_status}" -ne 0 ]] ||
+  fail 'an unreadable second snapshot must not buy a free retry'
+[[ "${case_calls}" -eq 1 ]] ||
+  fail "an unreadable snapshot must still run the reconcile exactly once (ran ${case_calls})"
+
+# 6. Wiring: the deploy composite must reconcile THROUGH the wrapper, so the
 #    tolerance actually reaches the merge-queue deploy rather than only existing.
 grep -Fq 'run: ./scripts/reconcile-flux-workloads.sh' "${deploy_action}" ||
   fail 'the deploy composite must trigger reconciliation through the wrapper'
