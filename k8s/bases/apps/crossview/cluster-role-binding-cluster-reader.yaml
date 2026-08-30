@@ -1,0 +1,19 @@
+---
+# Safe cluster-scoped and custom-resource reads for Crossview. The shared
+# cluster-reader role enumerates the core resources and API groups that may be
+# displayed; it excludes Secrets and API groups whose specs may embed them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crossview-cluster-reader
+  labels:
+    app.kubernetes.io/name: crossview
+    app.kubernetes.io/managed-by: ksail
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-reader
+subjects:
+  - kind: ServiceAccount
+    name: crossview-sa
+    namespace: crossview

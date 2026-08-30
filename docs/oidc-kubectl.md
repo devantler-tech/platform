@@ -6,7 +6,8 @@ OIDC is the **default, day-to-day** way to reach the cluster and is intentionall
 
 ## Prerequisites
 
-- Access to the cluster (kubeconfig with server address)
+- A kubeconfig containing the cluster connection details but no administrative
+  user credential
 - A GitHub account that is a member of the [`devantler-tech`](https://github.com/devantler-tech) organization
 - Your OIDC identity must be bound to the read-only roles (see [RBAC](#rbac))
 
@@ -29,6 +30,7 @@ Verify: `kubectl oidc-login --help`
 ```bash
 kubectl config set-credentials oidc-local \
   --exec-api-version=client.authentication.k8s.io/v1 \
+  --exec-interactive-mode=IfAvailable \
   --exec-command=kubectl \
   --exec-arg=oidc-login \
   --exec-arg=get-token \
@@ -37,6 +39,8 @@ kubectl config set-credentials oidc-local \
   --exec-arg=--oidc-extra-scope=email \
   --exec-arg=--oidc-extra-scope=profile \
   --exec-arg=--oidc-extra-scope=groups \
+  --exec-arg=--oidc-extra-scope=audience:server:client_id:public-client \
+  --exec-arg=--token-cache-storage=keyring \
   --exec-arg=--certificate-authority-data=$(cat "$(mkcert -CAROOT)/rootCA.pem" | base64 | tr -d '\n')
 ```
 
@@ -49,6 +53,7 @@ kubectl config set-credentials oidc-local \
 ```bash
 kubectl config set-credentials oidc-prod \
   --exec-api-version=client.authentication.k8s.io/v1 \
+  --exec-interactive-mode=IfAvailable \
   --exec-command=kubectl \
   --exec-arg=oidc-login \
   --exec-arg=get-token \
@@ -56,7 +61,9 @@ kubectl config set-credentials oidc-prod \
   --exec-arg=--oidc-client-id=kubectl \
   --exec-arg=--oidc-extra-scope=email \
   --exec-arg=--oidc-extra-scope=profile \
-  --exec-arg=--oidc-extra-scope=groups
+  --exec-arg=--oidc-extra-scope=groups \
+  --exec-arg=--oidc-extra-scope=audience:server:client_id:public-client \
+  --exec-arg=--token-cache-storage=keyring
 ```
 
 ## 3 — Create a context that uses the OIDC user
@@ -153,27 +160,41 @@ bindings (or switch the subject to a Dex group such as
 ## Break-glass admin access
 
 There is **no admin path via OIDC** — by design. When a write or an
-otherwise-forbidden operation is genuinely required, use the root
-**client-certificate** kubeconfig stored in the vault:
+otherwise-forbidden operation is genuinely required, retrieve the root
+**client-certificate** kubeconfig from either the locked iCloud Note on the
+trusted operator device or the approved OpenBao break-glass path. OpenBao is
+itself protected by Dex OIDC and restricts the admin role to the configured
+platform administrator.
 
-1. Retrieve the root kubeconfig from the vault and point `KUBECONFIG` at it
-   (or merge its `admin@prod` context), e.g.:
+The ambient `~/.kube/config` must contain only the OIDC reader context. Never
+merge the root user into it; materialize the break-glass kubeconfig as a
+short-lived, mode-`0600` file instead:
+
+1. Retrieve the root kubeconfig from the vault and point `KUBECONFIG` at its
+   short-lived path, e.g.:
 
    ```bash
-   export KUBECONFIG=/path/to/root-kubeconfig.yaml
+   export KUBECONFIG=/private/path/to/root-kubeconfig.yaml
    kubectl config use-context admin@prod
    ```
 
 2. Do the minimal change, then switch back to the OIDC context:
 
    ```bash
-   unset KUBECONFIG                       # back to ~/.kube/config
+   unset KUBECONFIG                       # back to OIDC-only ~/.kube/config
    kubectl config use-context oidc@prod
    ```
+
+3. Remove the temporary root kubeconfig from the workstation and verify both
+   `kubectl config current-context` and `kubectl auth whoami` use the OIDC
+   identity again.
 
 The root cert authenticates directly against the cluster CA and bypasses
 OIDC/RBAC role limits (it is `cluster-admin`), so treat it accordingly: pull
 it only when needed and never persist it in your day-to-day kubeconfig.
+
+Talos follows the same reader-by-default pattern; see
+[Talos API access](./talos-access.md).
 
 Last-resort regeneration (if the vault copy is lost): a fresh admin
 kubeconfig can be minted from the Talos control plane with
@@ -184,8 +205,11 @@ kubeconfig can be minted from the Talos control plane with
 `kubelogin` uses the `kubectl` static client defined in the Dex
 HelmRelease. This is a **public client** (no secret required) that uses
 Dex's [cross-client trust](https://dexidp.io/docs/configuration/custom-scopes-claims-clients/#cross-client-trust-and-authorized-party)
-(`trustedPeers`) so the issued token has `aud: public-client`, matching the
-kube-apiserver's `--oidc-client-id` flag.
+(`trustedPeers`) so the explicit
+`audience:server:client_id:public-client` scope issues a token with
+`aud: public-client`, matching the kube-apiserver's `--oidc-client-id` flag.
+The token cache is stored in the macOS keychain instead of as a bearer-token
+file under `~/.kube/cache`.
 
 ## Troubleshooting
 

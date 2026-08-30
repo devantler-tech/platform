@@ -5,6 +5,7 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly vault_config_dir="${root_dir}/k8s/bases/infrastructure/vault-config"
+readonly dex_release="${root_dir}/k8s/bases/infrastructure/controllers/dex/helm-release.yaml"
 readonly ci_workflow="${root_dir}/.github/workflows/ci.yaml"
 
 fail() {
@@ -60,6 +61,7 @@ role_payload="$(
 
 jq -e '
   .bound_claims == {
+    "email": ["${admin_email}"],
     "groups": ["devantler-tech:maintainers"]
   } and
   .bound_audiences == ["public-client"] and
@@ -75,4 +77,11 @@ jq -e '
 ' <<<"${role_payload}" >/dev/null ||
   fail 'the OpenBao admin role JSON must preserve every authorization field'
 
-printf 'PASS: OpenBao OIDC admin access is bound to the maintainer group with a typed JSON payload\n'
+yq eval -r '
+  .spec.values.config.staticClients[] |
+  select(.id == "public-client") |
+  .redirectURIs[]
+' "${dex_release}" | grep -Fx 'http://localhost:8250/oidc/callback' >/dev/null ||
+  fail 'Dex public-client must register the OpenBao CLI localhost callback'
+
+printf 'PASS: OpenBao OIDC admin access is bound to the configured maintainer identity with a typed JSON payload\n'

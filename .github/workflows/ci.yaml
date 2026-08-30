@@ -163,6 +163,11 @@ jobs:
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
+              - 'scripts/tests/test-human-api-access-boundary.sh'
+              # The boundary test asserts over these two guides, so a docs-only
+              # change to either must trigger it or those assertions can drift.
+              - 'docs/oidc-kubectl.md'
+              - 'docs/talos-access.md'
               - 'scripts/tests/test-actual-budget-auth-route.sh'
               # The provider DeploymentRuntimeConfigs, this gate and its kyverno
               # fixture are one contract: a container-only seccompProfile is
@@ -738,6 +743,12 @@ jobs:
         # bound_claims is a map. Passing JSON-looking text as one CLI argument
         # serializes it as a string and leaves the role unenforced.
         run: bash scripts/tests/test-openbao-oidc-role.sh
+
+      - name: 🧯 Validate daily and break-glass API boundaries
+        if: needs.changes.outputs.k8s == 'true'
+        # Daily Kubernetes/Talos access must stay read-only, while the root
+        # credentials remain explicit break-glass artifacts.
+        run: bash scripts/tests/test-human-api-access-boundary.sh
 
       - name: 🧩 Validate Headlamp plugin removal
         if: needs.changes.outputs.k8s == 'true'
