@@ -37,6 +37,56 @@ readonly CHECK_ID="KSV-01010"
 readonly OPAQUE_VALUE_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?[A-Za-z0-9+/=_.-]{40,}"?[[:space:]]*$'
 readonly ISSUED_PREFIX_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?(gh[pousr]_|github_pat_|xox[abprs]-|sk-[A-Za-z0-9]|AKIA[A-Z0-9]{8}|ASIA[A-Z0-9]{8}|eyJ[A-Za-z0-9_-]{8,}\.)'
 
+# A registry/image reference is 40+ characters drawn from the SAME class the opaque-value detector
+# uses — `/`, `.` and `-` are all members — so it matched (#3243). The exclusion is by SHAPE: a
+# value whose WHOLE text is a host followed by lowercase path segments (`ghcr.io/...`,
+# `registry.k8s.io/...`) is a reference, not credential material.
+#
+# ANCHORED AT BOTH ENDS, with the path segments restricted to the lowercase class an image
+# reference is actually limited to. Matching only a host-like PREFIX excluded any credential that
+# merely begins host-like, which is a fail-open in the guard rather than a cosmetic gap:
+# `hooks.slack.com/services/T00000000/B00000000/AbCdEfGhIjKlMnOpQrStUvWx` matched both expressions,
+# so a live Slack webhook added to an excepted ConfigMap would be discarded before the opaque-value
+# check and KSV-01010 would stay suppressed over it. Measured 2026-08-30; the
+# "hostname-prefixed credential" fixture below pins it.
+#
+# Deliberately NOT done by dropping `/` from the value class: standard base64 contains `/`, so that
+# would have removed real coverage. The "standard base64 containing a slash" fixture pins that.
+readonly IMAGE_REF_VALUE_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?[a-z0-9-]+(\.[a-z0-9-]+)+(/[a-z0-9._-]+)+"?[[:space:]]*$'
+
+# Credential-shaped lines in a file, minus image/registry references. Defined once so the file loop
+# and the self-test exercise the SAME composition — a self-test against a differently-composed
+# detector proves nothing about the one that runs.
+#
+# No `grep -q` in the second stage: under `set -o pipefail` a quiet grep exits on its first match,
+# the upstream grep dies with SIGPIPE, and the pipeline reports non-zero for a line that DID match
+# (#2787). Emitting the lines and testing for emptiness has no such edge.
+#
+# The `|| true` that used to close this pipeline made an unreadable file indistinguishable from a
+# clean one: grep's exit 2 was swallowed and the caller saw empty output, so a ConfigMap nobody
+# could read PASSED the premise check that exists to fail on it. Both call sites test the output
+# with `[ -n ... ]` and discard the status, so the guard has to be inside the function.
+opaque_value_hits() {
+  local file="$1" candidates status=0
+
+  [ -f "$file" ] || fail "opaque_value_hits: not a regular file: $file"
+  [ -r "$file" ] || fail "opaque_value_hits: unreadable: $file"
+
+  candidates="$(grep -E "$OPAQUE_VALUE_RE" "$file")" || status=$?
+  case "$status" in
+    0) ;;
+    1) return 0 ;;
+    # Defence in depth, and deliberately NOT covered by a fixture below: the -f/-r guards already
+    # reject every unreadable path a test can construct portably, so this branch only catches a
+    # read that fails after those checks pass (an I/O error, a path that changes underneath us).
+    *) fail "opaque_value_hits: grep exited $status reading $file" ;;
+  esac
+
+  # This stage filters an in-memory string, so there is nothing left to fail on a read and exit 1
+  # means every candidate was an image reference — a legitimate empty result.
+  printf '%s\n' "$candidates" | grep -vE "$IMAGE_REF_VALUE_RE" || true
+}
+
 fail() {
   echo "FAIL: $*" >&2
   exit 1
@@ -96,7 +146,16 @@ while IFS= read -r cm; do
   # dropped into an EXISTING reviewed key leaves the key set unchanged, so the matched-key
   # assertion below would not catch it either, and the file would keep its exception while
   # holding live credential material.
-  if grep -qE "$OPAQUE_VALUE_RE" "$REPO_ROOT/$cm"; then
+  # Capture the status, not just the output. opaque_value_hits reports an unusable ConfigMap via
+  # fail(), which exits the COMMAND SUBSTITUTION's subshell rather than this script — so testing
+  # only `-n` reads a missing or unreadable file as "no credential material found" and silently
+  # retires this control on exactly the input it exists to catch.
+  opaque_status=0
+  opaque_hits="$(opaque_value_hits "$REPO_ROOT/$cm")" || opaque_status=$?
+  if [ "$opaque_status" -ne 0 ]; then
+    echo "FAIL: $cm could not be scanned for opaque values (opaque_value_hits exited $opaque_status); an unverifiable ConfigMap is not evidence of a credential-free one" >&2
+    premise_failures=$((premise_failures + 1))
+  elif [ -n "$opaque_hits" ]; then
     echo "FAIL: $cm assigns a long opaque value that looks like credential material, but \
 $CHECK_ID is excepted for it" >&2
     premise_failures=$((premise_failures + 1))
@@ -138,7 +197,14 @@ check_fixture() {
   local want_opaque="$1" want_prefix="$2" label="$3" value="$4"
   printf '  admin_email: "%s"\n' "$value" >"$selftest_probe"
   local got_opaque=no got_prefix=no
-  grep -qE "$OPAQUE_VALUE_RE" "$selftest_probe" && got_opaque=yes
+  local opaque_hits opaque_status=0
+  opaque_hits="$(opaque_value_hits "$selftest_probe")" || opaque_status=$?
+  if [ "$opaque_status" -ne 0 ]; then
+    echo "FAIL(selftest): $label — opaque_value_hits exited $opaque_status" >&2
+    selftest_failures=$((selftest_failures + 1))
+    return
+  fi
+  [ -n "$opaque_hits" ] && got_opaque=yes
   grep -qE "$ISSUED_PREFIX_RE" "$selftest_probe" && got_prefix=yes
   if [ "$got_opaque" != "$want_opaque" ] || [ "$got_prefix" != "$want_prefix" ]; then
     echo "FAIL(selftest): $label — opaque expected=$want_opaque got=$got_opaque; \
@@ -166,17 +232,54 @@ check_fixture yes yes "jwt" "$(mk 'eyJ' "hbGciOiJIUzI1NiJ9.$(mk 'eyJ' 'zdWIiOiIx
 check_fixture yes no "long base64 blob" 'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWY='
 check_fixture yes no "base64url blob" 'dGVzdF92YWx1ZS13aXRoX3VuZGVyc2NvcmVzLWFuZC1kYXNoZXM_zQ'
 
+# Registry/image references are 40+ characters drawn from the same class (`/`, `.` and `-` are all
+# members), so the opaque-value detector matched them (#3243). Excluded by SHAPE, not by removing a
+# character from the class: dropping `/` would also stop catching standard base64, which is the
+# detector's original purpose — the fixture below that case pins.
+check_fixture no no "registry image reference" 'ghcr.io/devantler-tech/provider-upjet-unifi'
+check_fixture no no "k8s registry image reference" 'registry.k8s.io/kube-state-metrics/kube-state-metrics'
+
+# The fail-open the SHAPE exclusion opened if it matched only a host-like PREFIX: a credential whose
+# value merely BEGINS host-like was discarded before the opaque-value check ran, so it could sit in
+# an excepted ConfigMap with KSV-01010 still suppressed over it. A Slack webhook is the realistic
+# instance — it is a bearer credential whose whole URL is the secret. It must be DETECTED (opaque
+# yes), which is what distinguishes it from the two image references above; the uppercase path
+# segments are what an image reference may not contain.
+check_fixture yes no "hostname-prefixed credential (slack webhook)" \
+  'hooks.slack.com/services/T00000000/B00000000/AbCdEfGhIjKlMnOpQrStUvWx'
+
+# The case the naive fix (dropping `/` from the value class) would have broken: a standard-base64
+# credential containing `/` must still be caught.
+check_fixture yes no "standard base64 containing a slash" 'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVph/2NkZWZnaGlq='
+
 # MUST NOT be detected by either — the real reviewed values these exceptions exist for.
 check_fixture no no "acme contact address" 'ned@devantler.tech'
 check_fixture no no "public domain" 'platform.devantler.tech'
 check_fixture no no "public client id" 'Iv23limfvbk93bAXZI6b'
+
+# --- Unreadable input must not read as clean. This is the other half of the detector's honesty:
+# --- the fixtures above prove it still MATCHES, and these prove it cannot silently match NOTHING
+# --- because it never read the file. Run in a subshell so `fail` ends the probe, not this script.
+# --- The probes are a missing path and a directory rather than a chmod-000 file, because CI may
+# --- run as a user for whom mode bits are advisory and that fixture would pass vacuously.
+check_rejects_unreadable() {
+  local label="$1" path="$2"
+  if (opaque_value_hits "$path") >/dev/null 2>&1; then
+    echo "FAIL(selftest): opaque_value_hits accepted $label — an unreadable ConfigMap would pass \
+the premise check as though it held no credential material" >&2
+    selftest_failures=$((selftest_failures + 1))
+  fi
+}
+
+check_rejects_unreadable "a missing file" "${selftest_probe}.does-not-exist"
+check_rejects_unreadable "a directory" "$(dirname "$selftest_probe")"
 
 rm -f "$selftest_probe"
 
 [ "$selftest_failures" -eq 0 ] || fail \
   "$selftest_failures detector self-test failure(s). The content-premise checks above cannot be \
 trusted until these pass — a detector that no longer matches reports success identically."
-echo "PASS(selftest): both content detectors pin their own coverage (8 credential fixtures, 3 cleared)."
+echo "PASS(selftest): both content detectors pin their own coverage (9 credential fixtures, 5 cleared, 2 unreadable-input rejections)."
 
 # --- Layer 2: behavioural paired control. Needs trivy; skips (loudly) where it is unavailable.
 command -v trivy >/dev/null 2>&1 || {

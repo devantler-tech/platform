@@ -264,6 +264,10 @@ jobs:
               - 'scripts/report-cilium-rollout-gate-suppression.sh'
               - 'scripts/tests/test-cilium-rollout-gate-suppression-signal.sh'
               - 'scripts/wait-for-platform-flux-revision.sh'
+              # Both halves, so editing the reconcile wrapper alone — or its
+              # test alone — still runs the check that covers it.
+              - 'scripts/reconcile-flux-workloads.sh'
+              - 'scripts/tests/test-flux-reconcile-control-plane-restart.sh'
               - 'scripts/tests/test-opencost-usage-scraper.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
               - 'scripts/tests/test-crossplane-egress-policy.sh'
@@ -849,6 +853,14 @@ jobs:
           bash scripts/tests/test-cilium-homogeneous-devices-activation.sh
           bash scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh
           bash scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh
+
+      - name: 🔁 Validate the deploy tolerates a control-plane restart
+        if: needs.changes.outputs.k8s == 'true'
+        # A change to the Flux control plane restarts the controllers the deploy's
+        # own reconcile runs through, cancelling it (#3478). Pin that the deploy
+        # retries that self-inflicted failure exactly once — and, in the other
+        # direction, that a genuine reconcile failure is still never retried.
+        run: bash scripts/tests/test-flux-reconcile-control-plane-restart.sh
 
       - name: 📣 Validate the rollout gate cannot suppress sync silently
         if: needs.changes.outputs.k8s == 'true'

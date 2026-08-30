@@ -32,7 +32,9 @@ third_guard_call_line="$(printf '%s\n' "${guard_calls}" | sed -n '3p')"
 readonly first_guard_call_line second_guard_call_line third_guard_call_line
 
 push_line="$(grep -nF 'id: publish_platform_manifest' "${deploy_action}" | cut -d: -f1)"
-reconcile_line="$(grep -nF 'run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile' "${deploy_action}" | cut -d: -f1)"
+# The deploy composite reconciles through the wrapper that tolerates a
+# control-plane restart it caused itself (#3478).
+reconcile_line="$(grep -nF 'run: ./scripts/reconcile-flux-workloads.sh' "${deploy_action}" | cut -d: -f1)"
 revision_line="$(grep -nF 'id: wait_flux_revision' "${deploy_action}" | cut -d: -f1)"
 cluster_update_line="$(grep -nF 'run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update' "${deploy_action}" | cut -d: -f1)"
 

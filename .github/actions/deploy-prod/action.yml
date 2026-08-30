@@ -209,6 +209,22 @@ runs:
         --record-runtime-proof
         "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 
+    - name: 📋 Record the Flux control-plane baseline
+      # Before the mutable tag moves, because Flux may observe the new revision
+      # before the reconcile step runs — the same reason the Cilium gate suspends
+      # autoscaling pre-publish. A control-plane rollout that begins in that
+      # window would already be reflected in a snapshot taken inside the reconcile
+      # wrapper, making its "before" and "after" identical and reporting a
+      # cancellation this deploy inflicted on itself as a workload failure
+      # (#3478). Never fails the deploy: without a baseline the wrapper reads the
+      # generations itself, exactly as it did before this step existed.
+      shell: bash
+      env:
+        FLUX_CONTROL_PLANE_BASELINE_FILE: ${{ runner.temp }}/flux-control-plane-baseline
+      run: |
+        ./scripts/reconcile-flux-workloads.sh --snapshot-baseline \
+          >"${FLUX_CONTROL_PLANE_BASELINE_FILE}"
+
     # Publish the GitOps manifests (stage → sign → attest → promote → reconcile) BEFORE
     # syncing Talos machine config (the "🔄 Update cluster" step runs LAST).
     # Manifest delivery never touches the nodes, so it must not be gated on
@@ -236,7 +252,13 @@ runs:
       env:
         GITHUB_ACTOR: ${{ github.actor }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
+        FLUX_CONTROL_PLANE_BASELINE_FILE: ${{ runner.temp }}/flux-control-plane-baseline
+      # Through the wrapper, not the bare command: a deploy that changes the Flux
+      # control plane restarts the controllers this reconcile runs through, which
+      # cancels the reconcile the deploy itself triggered (#3478). The wrapper
+      # retries once, and ONLY on evidence that this deploy restarted the control
+      # plane; a genuine failure still fails on the first attempt.
+      run: ./scripts/reconcile-flux-workloads.sh
 
     - name: 🩺 Diagnose Flux on failure
       if: failure() && steps.reconcile.outcome == 'failure'

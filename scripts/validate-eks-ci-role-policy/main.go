@@ -1485,7 +1485,47 @@ const (
 // untouched by this branch. The previous approved aggregate digest was:
 //
 //	d07fdcf550827d5b62d48c0ce9e110dea819f8d9168c7ac3abb7f01144939d93
-const expectedRenderedSurfaceSHA = "37b87e230dcf15931ed985e2dfdc5b0e019f5c901ecd8a4bb704314fbaadf2b2"
+//
+// Moved again by the per-controller uid/gid pin on this branch, re-measured
+// against main after the tofu-controller retirement landed. The branch's
+// tofu-controller postRenderer is gone with the controller itself, so the
+// authored delta is now exactly two files: the flux-operator HelmRelease and
+// the FluxInstance kustomize patch.
+//
+// Conservation, rendering all five production roots from both trees with ONE
+// renderer so renderer differences cancel: 548 documents on both sides. The
+// rendered diff is 29 lines, ALL additions, zero deletions, and every one of
+// them belongs to those two patch blocks — `op: test` container-name guards
+// and `op: add` writes of runAsUser/runAsGroup under
+// /spec/template/spec/containers/0/securityContext.
+//
+// Grant-bearing membership is unchanged: extracting every Role, ClusterRole,
+// RoleBinding, ClusterRoleBinding and ServiceAccount with its rules, subjects
+// and roleRef yields 78 objects on BOTH sides, byte-identical. The negative
+// control fires for the right reason — injecting one `escalate` verb into
+// ClusterRole cert-manager-tenant-edit still extracts 78 objects (so the
+// fixture is intact, not broken) and the comparison names exactly that role.
+// No subject, grant, roleRef or authorization resource is added or widened;
+// the delta is a security context, and it constrains rather than grants.
+// The previous approved aggregate digest was:
+//
+//	2304ac067cc7ec446ddeff107477bb1f34f859b4cd5bca708a3ba0926ef5fc49
+//
+// Re-measured on the MERGE of this branch with main (a5c6ec2e), not carried over
+// from either side. Both parents changed this constant independently -- main via
+// the per-controller uid/gid pin (#3459), this branch via the reader-only human
+// access surface -- so neither parent's value describes the merged tree and
+// taking either side would have produced a validator that is red on the state it
+// is meant to approve.
+//
+// The renderer used for this measurement was verified against a known answer
+// first: running this validator on main a5c6ec2e reproduced main's approved
+// digest a8383404... exactly and reported the contract as passing, so the local
+// toolchain renders identically to CI's for this computation. The merged tree
+// then measured as the value below. The previous approved aggregate digest was:
+//
+//	a8383404dd948c286fc274aed91164b2156c47b0cf66de9deebc7025833a8c20
+const expectedRenderedSurfaceSHA = "5b298b96eba875cb5c05ba09c82eaf2833676930d1f76a3b7c4a954d104ceebd"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
