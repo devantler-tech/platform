@@ -1525,7 +1525,34 @@ const (
 // then measured as the value below. The previous approved aggregate digest was:
 //
 //	a8383404dd948c286fc274aed91164b2156c47b0cf66de9deebc7025833a8c20
-const expectedRenderedSurfaceSHA = "5b298b96eba875cb5c05ba09c82eaf2833676930d1f76a3b7c4a954d104ceebd"
+//
+// Re-approved for the cluster-reader provider-group gap (2026-08-30). The
+// surface moved because cluster-reader gained the eight API groups that are
+// live on the cluster but were absent from its enumerated list: the three AWS
+// provider groups and the five UniFi Crossplane groups. Reading the live
+// ClusterRole confirmed all eight were missing in production, so Headlamp OIDC
+// identities already could not see those managed resources; this PR would have
+// extended the same blind spot to Crossview.
+//
+// Two independent renderers agree on this value: the required CI job on the
+// approved toolchain (job 99316243854, kubectl v1.36.2) and a local render
+// (kubectl v1.36.1). The local toolchain was verified against a known answer
+// first -- running this validator on the parent commit 63795e6e reproduced the
+// previously approved digest below and reported the contract as passing -- so
+// the patch-version difference does not affect this computation.
+//
+// The delta is single-variable: the parent was green on this check and the only
+// change since is eight added lines in one file, so nothing else moved the
+// surface. Secrets remain excluded because the core group stays enumerated, and
+// every sensitive field in the added groups' CRDs is a reference
+// (presharedKeySecretRef, privateKeySecretRef, contentSecretRef,
+// writeConnectionSecretToRef, ProviderConfig spec.credentials.secretRef) rather
+// than inline material.
+//
+// The previous approved aggregate digest was:
+//
+//	5b298b96eba875cb5c05ba09c82eaf2833676930d1f76a3b7c4a954d104ceebd
+const expectedRenderedSurfaceSHA = "005c333f114ad4a2a5706ef9b0d4989623203eadc67657ffd15d2b4d9bb369dc"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
