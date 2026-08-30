@@ -122,12 +122,27 @@ posture is:
 2. **Keep the root copy out of the ambient Talos configuration.** Store it in
    the locked iCloud Note on the trusted operator device and in the approved
    OpenBao break-glass path. Day-to-day `~/.talos/config` carries only
-   `os:reader`; see [Talos API access](../talos-access.md). Replacing a
-   workstation = re-run
-   `./scripts/run-ksail-prod-with-pull-auth.sh cluster update`
-   (which regenerates the local `~/.talos/config` from the cluster's
-   running PKI), or use `talosctl config merge <talosconfig>` against
-   a backup file. Talos does not have SSH-equivalent — see DR Scenario 4
+   `os:reader`; see [Talos API access](../talos-access.md).
+
+   Replacing a workstation therefore recovers the root credential and then
+   steps back down to the reader identity. Both halves are required, because
+   `./scripts/run-ksail-prod-with-pull-auth.sh cluster update` and
+   `talosctl config merge <talosconfig>` each write a **root** context to
+   `~/.talos/config`:
+
+   1. Recover the root material into a short-lived mode-`0600` file outside
+      `~/.talos`, either from a custody store or by re-running
+      `./scripts/run-ksail-prod-with-pull-auth.sh cluster update` (which
+      regenerates it from the cluster's running PKI) and moving the result
+      out of `~/.talos/config`.
+   2. Restore that file to both custody stores if it changed.
+   3. Generate a fresh `os:reader` configuration from it and install that as
+      `~/.talos/config`, per
+      [Talos API access](../talos-access.md#reader-configuration).
+   4. Remove the short-lived root file, then confirm `talosctl config info`
+      reports `Roles: os:reader`.
+
+   Talos does not have SSH-equivalent — see DR Scenario 4
    in [runbook.md](runbook.md) for the rebuild-from-zero path when no
    talosconfig copy exists anywhere.
 3. **CI:** stored as the `TALOS_CONFIG` secret in the GitHub `prod`

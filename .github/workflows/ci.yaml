@@ -164,6 +164,10 @@ jobs:
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
+              # The boundary test asserts over these two guides, so a docs-only
+              # change to either must trigger it or those assertions can drift.
+              - 'docs/oidc-kubectl.md'
+              - 'docs/talos-access.md'
               - 'scripts/tests/test-actual-budget-auth-route.sh'
               # The provider DeploymentRuntimeConfigs, this gate and its kyverno
               # fixture are one contract: a container-only seccompProfile is
