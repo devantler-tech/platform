@@ -38,13 +38,21 @@ readonly OPAQUE_VALUE_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?[A-Za-z0-9+
 readonly ISSUED_PREFIX_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?(gh[pousr]_|github_pat_|xox[abprs]-|sk-[A-Za-z0-9]|AKIA[A-Z0-9]{8}|ASIA[A-Z0-9]{8}|eyJ[A-Za-z0-9_-]{8,}\.)'
 
 # A registry/image reference is 40+ characters drawn from the SAME class the opaque-value detector
-# uses — `/`, `.` and `-` are all members — so it matched (#3243). The exclusion is by SHAPE: a value
-# whose leading segment looks like a host (`ghcr.io/`, `registry.k8s.io/`) is a reference, not
-# credential material.
+# uses — `/`, `.` and `-` are all members — so it matched (#3243). The exclusion is by SHAPE: a
+# value whose WHOLE text is a host followed by lowercase path segments (`ghcr.io/...`,
+# `registry.k8s.io/...`) is a reference, not credential material.
+#
+# ANCHORED AT BOTH ENDS, with the path segments restricted to the lowercase class an image
+# reference is actually limited to. Matching only a host-like PREFIX excluded any credential that
+# merely begins host-like, which is a fail-open in the guard rather than a cosmetic gap:
+# `hooks.slack.com/services/T00000000/B00000000/AbCdEfGhIjKlMnOpQrStUvWx` matched both expressions,
+# so a live Slack webhook added to an excepted ConfigMap would be discarded before the opaque-value
+# check and KSV-01010 would stay suppressed over it. Measured 2026-08-30; the
+# "hostname-prefixed credential" fixture below pins it.
 #
 # Deliberately NOT done by dropping `/` from the value class: standard base64 contains `/`, so that
 # would have removed real coverage. The "standard base64 containing a slash" fixture pins that.
-readonly IMAGE_REF_VALUE_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?[a-z0-9-]+(\.[a-z0-9-]+)+/'
+readonly IMAGE_REF_VALUE_RE='^[[:space:]]*[A-Za-z0-9_.-]+:[[:space:]]*"?[a-z0-9-]+(\.[a-z0-9-]+)+(/[a-z0-9._-]+)+"?[[:space:]]*$'
 
 # Credential-shaped lines in a file, minus image/registry references. Defined once so the file loop
 # and the self-test exercise the SAME composition — a self-test against a differently-composed
@@ -230,6 +238,15 @@ check_fixture yes no "base64url blob" 'dGVzdF92YWx1ZS13aXRoX3VuZGVyc2NvcmVzLWFuZ
 # detector's original purpose — the fixture below that case pins.
 check_fixture no no "registry image reference" 'ghcr.io/devantler-tech/provider-upjet-unifi'
 check_fixture no no "k8s registry image reference" 'registry.k8s.io/kube-state-metrics/kube-state-metrics'
+
+# The fail-open the SHAPE exclusion opened if it matched only a host-like PREFIX: a credential whose
+# value merely BEGINS host-like was discarded before the opaque-value check ran, so it could sit in
+# an excepted ConfigMap with KSV-01010 still suppressed over it. A Slack webhook is the realistic
+# instance — it is a bearer credential whose whole URL is the secret. It must be DETECTED (opaque
+# yes), which is what distinguishes it from the two image references above; the uppercase path
+# segments are what an image reference may not contain.
+check_fixture yes no "hostname-prefixed credential (slack webhook)" \
+  'hooks.slack.com/services/T00000000/B00000000/AbCdEfGhIjKlMnOpQrStUvWx'
 
 # The case the naive fix (dropping `/` from the value class) would have broken: a standard-base64
 # credential containing `/` must still be caught.
