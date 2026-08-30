@@ -138,7 +138,16 @@ while IFS= read -r cm; do
   # dropped into an EXISTING reviewed key leaves the key set unchanged, so the matched-key
   # assertion below would not catch it either, and the file would keep its exception while
   # holding live credential material.
-  if [ -n "$(opaque_value_hits "$REPO_ROOT/$cm")" ]; then
+  # Capture the status, not just the output. opaque_value_hits reports an unusable ConfigMap via
+  # fail(), which exits the COMMAND SUBSTITUTION's subshell rather than this script — so testing
+  # only `-n` reads a missing or unreadable file as "no credential material found" and silently
+  # retires this control on exactly the input it exists to catch.
+  opaque_status=0
+  opaque_hits="$(opaque_value_hits "$REPO_ROOT/$cm")" || opaque_status=$?
+  if [ "$opaque_status" -ne 0 ]; then
+    echo "FAIL: $cm could not be scanned for opaque values (opaque_value_hits exited $opaque_status); an unverifiable ConfigMap is not evidence of a credential-free one" >&2
+    premise_failures=$((premise_failures + 1))
+  elif [ -n "$opaque_hits" ]; then
     echo "FAIL: $cm assigns a long opaque value that looks like credential material, but \
 $CHECK_ID is excepted for it" >&2
     premise_failures=$((premise_failures + 1))
@@ -180,7 +189,14 @@ check_fixture() {
   local want_opaque="$1" want_prefix="$2" label="$3" value="$4"
   printf '  admin_email: "%s"\n' "$value" >"$selftest_probe"
   local got_opaque=no got_prefix=no
-  [ -n "$(opaque_value_hits "$selftest_probe")" ] && got_opaque=yes
+  local opaque_hits opaque_status=0
+  opaque_hits="$(opaque_value_hits "$selftest_probe")" || opaque_status=$?
+  if [ "$opaque_status" -ne 0 ]; then
+    echo "FAIL(selftest): $label — opaque_value_hits exited $opaque_status" >&2
+    selftest_failures=$((selftest_failures + 1))
+    return
+  fi
+  [ -n "$opaque_hits" ] && got_opaque=yes
   grep -qE "$ISSUED_PREFIX_RE" "$selftest_probe" && got_prefix=yes
   if [ "$got_opaque" != "$want_opaque" ] || [ "$got_prefix" != "$want_prefix" ]; then
     echo "FAIL(selftest): $label — opaque expected=$want_opaque got=$got_opaque; \
