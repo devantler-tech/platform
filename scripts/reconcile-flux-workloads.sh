@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+
+# Trigger Flux reconciliation, tolerating the control-plane restart this deploy
+# may itself have caused.
+#
+# A change to the Flux control plane (controller securityContext, resources,
+# placement, a flux-operator/FluxInstance bump) restarts source-controller and
+# kustomize-controller — the two components the reconcile's own readiness check
+# runs through. source-controller comes back without its artifact yet rebuilt, so
+# every Kustomization transiently reports ArtifactFailed, and kustomize-controller
+# being terminated cancels the in-flight health checks ("context canceled").
+# The single-shot reconcile then fails over a cluster that converges correctly a
+# minute later. Observed on platform#3459's merge-queue deploy: the deploy failed
+# in 40 s while every Kustomization reached Ready shortly afterwards (#3478).
+#
+# The tolerance is deliberately narrow, because this step is the gate that keeps
+# a broken artifact out of production:
+#
+#   * a reconcile that succeeds is never retried;
+#   * a reconcile that fails while the control plane did NOT restart is a genuine
+#     failure and fails the deploy immediately, with no second attempt;
+#   * only positive evidence that THIS deploy restarted the control plane — a
+#     Deployment generation that advanced across the reconcile — buys exactly one
+#     further attempt, after that rollout has been waited out.
+#
+# So the deploy still requires a successful reconcile in every case. What changes
+# is that a failure the deploy inflicted on itself is retried once instead of
+# being reported as a workload failure.
+
+set -euo pipefail
+
+readonly kubectl_bin="${KUBECTL:-kubectl}"
+readonly reconcile_bin="${RECONCILE_BIN:-./scripts/run-ksail-prod-with-pull-auth.sh}"
+readonly rollout_timeout="${FLUX_CONTROL_PLANE_ROLLOUT_TIMEOUT:-10m}"
+# The four controllers carry this label; flux-operator does not (it is installed
+# by Helm rather than rendered by the FluxInstance) and is therefore read by name.
+# tofu-controller carries neither and is deliberately out of scope: it is being
+# retired and its HelmRelease is expected to stay non-Ready, so waiting on it
+# would hang a healthy deploy.
+readonly controller_selector='app.kubernetes.io/part-of=flux'
+readonly operator_deployment='flux-operator'
+
+kubectl_prod() {
+  "${kubectl_bin}" --context admin@prod "$@"
+}
+
+# name=generation for every Flux control-plane Deployment, sorted so the snapshot
+# is comparable as plain text.
+control_plane_generations() {
+  {
+    kubectl_prod -n flux-system get deploy \
+      -l "${controller_selector}" \
+      -o jsonpath='{range .items[*]}{.metadata.name}={.metadata.generation}{"\n"}{end}'
+    kubectl_prod -n flux-system get deploy "${operator_deployment}" \
+      --ignore-not-found \
+      -o jsonpath='{.metadata.name}={.metadata.generation}{"\n"}'
+  } | grep -v '^$' | sort
+}
+
+wait_for_control_plane_rollout() {
+  local entry name
+  while IFS= read -r entry; do
+    [[ -n "${entry}" ]] || continue
+    name="${entry%%=*}"
+    printf 'Waiting for %s to finish rolling out...\n' "${name}"
+    # A rollout that does not settle is itself a real problem: let it fail.
+    kubectl_prod -n flux-system rollout status "deploy/${name}" \
+      --timeout="${rollout_timeout}"
+  done <<<"$1"
+}
+
+reconcile() {
+  "${reconcile_bin}" workload reconcile
+}
+
+before="$(control_plane_generations)"
+
+set +e
+reconcile
+reconcile_status=$?
+set -e
+
+if [[ "${reconcile_status}" -eq 0 ]]; then
+  exit 0
+fi
+
+after="$(control_plane_generations)"
+
+if [[ "${before}" == "${after}" ]]; then
+  printf 'Reconciliation failed and the Flux control plane did not restart, so this is a genuine failure — not retrying.\n' >&2
+  exit "${reconcile_status}"
+fi
+
+printf 'Reconciliation failed while this deploy restarted the Flux control plane:\n' >&2
+diff <(printf '%s\n' "${before}") <(printf '%s\n' "${after}") >&2 || true
+printf 'Waiting for the control plane to settle, then retrying the reconcile once.\n' >&2
+
+wait_for_control_plane_rollout "${after}"
+
+reconcile

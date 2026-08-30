@@ -236,7 +236,12 @@ runs:
       env:
         GITHUB_ACTOR: ${{ github.actor }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
+      # Through the wrapper, not the bare command: a deploy that changes the Flux
+      # control plane restarts the controllers this reconcile runs through, which
+      # cancels the reconcile the deploy itself triggered (#3478). The wrapper
+      # retries once, and ONLY on evidence that this deploy restarted the control
+      # plane; a genuine failure still fails on the first attempt.
+      run: ./scripts/reconcile-flux-workloads.sh
 
     - name: 🩺 Diagnose Flux on failure
       if: failure() && steps.reconcile.outcome == 'failure'
