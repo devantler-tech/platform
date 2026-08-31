@@ -2203,17 +2203,58 @@ func kindSelectorIncludesAuthorization(value any) bool {
 	return false
 }
 
-// containsAuthorizationKind finds protected kinds inside Kyverno match and
-// target shapes, including Flux sources and controller package resources.
-func containsAuthorizationKind(value any) bool {
-	switch typedValue := value.(type) {
-	case []any:
-		for _, item := range typedValue {
-			switch item.(type) {
-			case []any, map[string]any:
-				if containsAuthorizationKind(item) {
+// maxEmbeddedTextDepth bounds how many times a string leaf may be decoded into
+// a further document. Real manifests nest once — a post-renderer patch string
+// holding one YAML document — so the bound only guards against a pathological
+// input; beyond it the declaration scan still applies, so deep nesting fails
+// closed rather than escaping inspection.
+const maxEmbeddedTextDepth = 4
+
+// embeddedAuthorizationKindDeclaration matches a `kind:` line naming an RBAC
+// kind. It backs the fail-closed scan for a string that does not parse, where
+// there is no decoded `kind` key to test. It deliberately requires the `kind:`
+// key rather than the bare word, so prose that merely mentions a role is not
+// mistaken for a declaration.
+var embeddedAuthorizationKindDeclaration = regexp.MustCompile(
+	`(?m)^[\t ]*kind[\t ]*:[\t ]*["']?(ClusterRoleBinding|ClusterRole|RoleBinding|Role)["']?[\t ]*$`,
+)
+
+// textDeclaresAuthorizationKind inspects a string leaf. Flux stores a
+// post-renderer patch as a string, and Kustomize matches a target-less
+// strategic-merge patch on the GVK and name inside that string, so a string
+// leaf can introduce an authorization object with no map for a kind selector to
+// catch. Decode it and test the real `kind`; when it does not parse — or when
+// nesting exceeds the bound — there is nothing left to decode, so fall back to
+// the declaration scan and fail closed rather than pass for want of a decode.
+func textDeclaresAuthorizationKind(text string, textDepth int) bool {
+	if textDepth < maxEmbeddedTextDepth {
+		if documents, err := decodeDocuments([]byte(text)); err == nil {
+			for _, document := range documents {
+				if containsAuthorizationKindAtDepth(document, textDepth) {
 					return true
 				}
+			}
+			return false
+		}
+	}
+	return embeddedAuthorizationKindDeclaration.MatchString(text)
+}
+
+// containsAuthorizationKind finds protected kinds inside Kyverno match and
+// target shapes, including Flux sources and controller package resources, and
+// inside string leaves that carry an embedded document.
+func containsAuthorizationKind(value any) bool {
+	return containsAuthorizationKindAtDepth(value, 0)
+}
+
+func containsAuthorizationKindAtDepth(value any, textDepth int) bool {
+	switch typedValue := value.(type) {
+	case string:
+		return textDeclaresAuthorizationKind(typedValue, textDepth+1)
+	case []any:
+		for _, item := range typedValue {
+			if containsAuthorizationKindAtDepth(item, textDepth) {
+				return true
 			}
 		}
 	case map[string]any:
@@ -2221,11 +2262,8 @@ func containsAuthorizationKind(value any) bool {
 			if (key == "kind" || key == "kinds") && kindSelectorIncludesAuthorization(item) {
 				return true
 			}
-			switch item.(type) {
-			case []any, map[string]any:
-				if containsAuthorizationKind(item) {
-					return true
-				}
+			if containsAuthorizationKindAtDepth(item, textDepth) {
+				return true
 			}
 		}
 	}

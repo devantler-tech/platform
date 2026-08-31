@@ -1154,6 +1154,57 @@ spec:
   path: ./k8s
 `,
 		},
+		{
+			// Flux stores a post-renderer patch as a STRING, and Kustomize matches a
+			// target-less strategic-merge patch on the GVK and name inside that string.
+			// The map/list traversal never descends into a string leaf, so this shape
+			// reached the release with no target for the kind selector to catch.
+			name: "target-less RBAC post-renderer patch body",
+			manifest: validHelmRelease + `  postRenderers:
+    - kustomize:
+        patches:
+          - patch: |
+              apiVersion: rbac.authorization.k8s.io/v1
+              kind: ClusterRole
+              metadata:
+                name: data-product-controller
+              rules:
+                - apiGroups: ['*']
+                  resources: ['*']
+                  verbs: ['*']
+`,
+		},
+		{
+			// The same bypass with a target present but naming an unprotected kind:
+			// the kind selector passes and the authorization object rides in the body.
+			name: "RBAC post-renderer patch body behind an innocuous target",
+			manifest: validHelmRelease + `  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+            patch: |
+              apiVersion: rbac.authorization.k8s.io/v1
+              kind: ClusterRoleBinding
+              metadata:
+                name: data-product-controller
+              roleRef:
+                apiGroup: rbac.authorization.k8s.io
+                kind: ClusterRole
+                name: cluster-admin
+              subjects: []
+`,
+		},
+		{
+			// A patch string that does not parse as YAML cannot be inspected, so it
+			// must fail closed rather than pass for want of a decode.
+			name: "undecodable post-renderer patch naming an authorization kind",
+			manifest: validHelmRelease + `  postRenderers:
+    - kustomize:
+        patches:
+          - patch: "kind: ClusterRole\n\tapiVersion: [rbac.authorization.k8s.io/v1"
+`,
+		},
 	}
 
 	for _, tt := range tests {
