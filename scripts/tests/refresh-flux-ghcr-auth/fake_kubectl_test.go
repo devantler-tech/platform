@@ -1345,7 +1345,7 @@ func fakeInventoryNode(
 
 func fakeKubectlGetPods(args []string) int {
 	if containsSequence(args, "-o", "name") || containsArg(args, "-o=name") {
-		return fakeKubectlGetNamespaceWorkloads(flagValue(args, "--namespace"))
+		return fakeKubectlGetNamespaceWorkloads(args, flagValue(args, "--namespace"))
 	}
 	nodeName := flagValue(args, "--field-selector")
 	nodeName = strings.TrimPrefix(nodeName, "spec.nodeName=")
@@ -2430,8 +2430,22 @@ func anySlice(value any) []any {
 // uses to tell a brand-new consumer apart from an established one. A namespace
 // left behind by a failed candidate still runs nothing, so it reports empty
 // unless the fixture explicitly declares a running workload.
-func fakeKubectlGetNamespaceWorkloads(namespace string) int {
-	if namespace != "" && namespace == os.Getenv("FAKE_NAMESPACE_WITH_WORKLOAD") {
+//
+// A failed candidate can also leave a Pod OBJECT behind that never reached
+// Running (the ghcr-auth ExternalSecret it needed was missing, so its image
+// pull never succeeded). That pod is not a consumer whose pull credential this
+// staging step could break, so it is reported only when the probe asks for
+// every Pod rather than for running ones.
+func fakeKubectlGetNamespaceWorkloads(args []string, namespace string) int {
+	if namespace == "" {
+		return 0
+	}
+	if namespace == os.Getenv("FAKE_NAMESPACE_WITH_WORKLOAD") {
+		fmt.Printf("pod/%s-0\n", namespace)
+		return 0
+	}
+	if namespace == os.Getenv("FAKE_NAMESPACE_WITH_NONRUNNING_POD") &&
+		!strings.Contains(flagValue(args, "--field-selector"), "status.phase=Running") {
 		fmt.Printf("pod/%s-0\n", namespace)
 	}
 	return 0

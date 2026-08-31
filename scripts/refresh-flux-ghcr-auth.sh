@@ -5304,6 +5304,12 @@ else
       # state has a running consumer whose pull credential this staging step
       # could break. A missing object in a namespace that already runs
       # workloads is always an incomplete fan-out.
+      #
+      # The probe asks for RUNNING pods specifically. A candidate that failed
+      # before its ExternalSecret existed can leave a Pod object that never
+      # pulled its image - the missing pull credential is precisely why - and
+      # counting that object as a workload would deny the exemption on every
+      # retry, recreating the deadlock this exemption exists to prevent.
       if [[ -n "${record_runtime_proof_path}" ]]; then
         if ! namespace_name="$(kubectl \
           --context "${KUBE_CONTEXT}" \
@@ -5319,6 +5325,7 @@ else
             --context "${KUBE_CONTEXT}" \
             --namespace "${namespace}" \
             get pods \
+            --field-selector=status.phase=Running \
             -o name)"; then
             echo "::error::Could not determine whether namespace ${namespace} runs a workload; refusing to change root Flux auth."
             exit 1
