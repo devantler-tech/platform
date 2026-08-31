@@ -2071,6 +2071,19 @@ func authorizationIsolationRequested(document map[string]any) bool {
 	return ok && fmt.Sprint(annotations[authorizationIsolationAnnotation]) == "isolated-chart"
 }
 
+// reviewedIsolatedChartIdentities is the explicit allowlist of namespace/name
+// pairs whose isolated-chart declaration has been reviewed.
+//
+// A namespace denylist is not sufficient. Denying only "", "aws" and
+// "flux-system" leaves every other namespace able to exempt itself from the
+// production CEL authorization rules by adding the annotation to its own
+// manifest -- the resource declaring the scope is the same resource the scope
+// is granted to, so nothing outside this list constrains it. Adding an entry
+// here is a deliberate, reviewed act.
+var reviewedIsolatedChartIdentities = map[string]struct{}{
+	"data-product-controller/data-product-controller": {},
+}
+
 // validateAuthorizationIsolation fails closed on every precondition behind an
 // isolated-chart declaration. It is intentionally limited to a namespace-local
 // HelmRelease and its immutable public OCIRepository; the rendered chart
@@ -2079,8 +2092,8 @@ func validateAuthorizationIsolation(document map[string]any, identity resourceId
 	if !authorizationIsolationRequested(document) {
 		return nil
 	}
-	if identity.namespace == "" || identity.namespace == "aws" || identity.namespace == "flux-system" {
-		return fmt.Errorf("isolated-chart authorization scope is forbidden for namespace %q", identity.namespace)
+	if _, reviewed := reviewedIsolatedChartIdentities[identity.namespace+"/"+identity.name]; !reviewed {
+		return fmt.Errorf("isolated-chart authorization scope is not reviewed for identity %q", identity.namespace+"/"+identity.name)
 	}
 
 	spec, ok := document["spec"].(map[string]any)

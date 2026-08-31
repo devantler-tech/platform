@@ -297,6 +297,7 @@ spec:
     validation:
       # Keep production parity with the local validation path. The rules inspect
       # the effective Helm render, including controller RBAC emitted by charts.
+      # `rules:` requires ksail >= 7.166.3 (the workflows pin 7.180.0).
       rules: scripts/tests/production-authorization-rules.yaml
       # Parity with ksail.yaml: the prod kustomization pulls the same shared
       # bases (Coroot + Flagger), so `ksail --config ksail.prod.yaml workload

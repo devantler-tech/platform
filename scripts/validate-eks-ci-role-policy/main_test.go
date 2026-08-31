@@ -1013,9 +1013,14 @@ spec:
 	tests := []struct {
 		name     string
 		manifest string
+		// wantErr attributes the rejection to a named rule. Asserting only that
+		// some error occurred lets a fixture stay green while being refused by an
+		// unrelated branch, so removing the rule it targets would go unreported.
+		wantErr string
 	}{
 		{
-			name: "protected namespace",
+			name:    "protected namespace",
+			wantErr: "isolated-chart authorization scope is not reviewed for identity \"aws/data-product-controller\"",
 			manifest: strings.Replace(
 				validHelmRelease,
 				"namespace: data-product-controller",
@@ -1024,7 +1029,8 @@ spec:
 			),
 		},
 		{
-			name: "cross-namespace target",
+			name:    "cross-namespace target",
+			wantErr: "isolated-chart HelmRelease must target only its own namespace",
 			manifest: strings.Replace(
 				validHelmRelease,
 				"spec:\n",
@@ -1033,7 +1039,8 @@ spec:
 			),
 		},
 		{
-			name: "cross-namespace storage",
+			name:    "cross-namespace storage",
+			wantErr: "isolated-chart HelmRelease must store release metadata only in its own namespace",
 			manifest: strings.Replace(
 				validHelmRelease,
 				"spec:\n",
@@ -1042,7 +1049,8 @@ spec:
 			),
 		},
 		{
-			name: "privileged reconciliation identity",
+			name:    "privileged reconciliation identity",
+			wantErr: "isolated-chart HelmRelease must not select a reconciliation service account",
 			manifest: strings.Replace(
 				validHelmRelease,
 				"spec:\n",
@@ -1051,7 +1059,8 @@ spec:
 			),
 		},
 		{
-			name: "RBAC post-renderer",
+			name:    "RBAC post-renderer",
+			wantErr: "isolated-chart HelmRelease must not post-render authorization resources",
 			manifest: validHelmRelease + `  postRenderers:
     - kustomize:
         patches:
@@ -1061,7 +1070,8 @@ spec:
 `,
 		},
 		{
-			name: "floating source",
+			name:    "floating source",
+			wantErr: "isolated-chart OCIRepository must use exactly one immutable sha256 digest",
 			manifest: strings.Replace(
 				validSource,
 				"  ref:\n    digest: sha256:6f941a096d16eb62bf2668be6e45eebc4dd481eec03e031f3fca8ca4b4db6598\n",
@@ -1070,7 +1080,8 @@ spec:
 			),
 		},
 		{
-			name: "untrusted registry",
+			name:    "untrusted registry",
+			wantErr: "isolated-chart OCIRepository must use the reviewed public chart registry",
 			manifest: strings.Replace(
 				validSource,
 				"oci://ghcr.io/devantler-tech/charts/",
@@ -1079,7 +1090,8 @@ spec:
 			),
 		},
 		{
-			name: "cross-cluster kubeconfig",
+			name:    "cross-cluster kubeconfig",
+			wantErr: "isolated-chart HelmRelease must not target another cluster",
 			manifest: strings.Replace(
 				validHelmRelease,
 				"spec:\n",
@@ -1088,7 +1100,8 @@ spec:
 			),
 		},
 		{
-			name: "cross-namespace chart reference",
+			name:    "cross-namespace chart reference",
+			wantErr: "isolated-chart HelmRelease must reference an OCIRepository in its own namespace",
 			manifest: strings.Replace(
 				validHelmRelease,
 				"    name: data-product-controller\n",
@@ -1097,7 +1110,8 @@ spec:
 			),
 		},
 		{
-			name: "non-OCIRepository chart reference",
+			name:    "non-OCIRepository chart reference",
+			wantErr: "isolated-chart HelmRelease must reference an OCIRepository",
 			manifest: strings.Replace(
 				validHelmRelease,
 				"    kind: OCIRepository\n",
@@ -1106,7 +1120,8 @@ spec:
 			),
 		},
 		{
-			name: "source secretRef",
+			name:    "source secretRef",
+			wantErr: "isolated-chart OCIRepository must not configure secretRef",
 			manifest: strings.Replace(
 				validSource,
 				"spec:\n",
@@ -1115,7 +1130,8 @@ spec:
 			),
 		},
 		{
-			name: "source certSecretRef",
+			name:    "source certSecretRef",
+			wantErr: "isolated-chart OCIRepository must not configure certSecretRef",
 			manifest: strings.Replace(
 				validSource,
 				"spec:\n",
@@ -1124,7 +1140,8 @@ spec:
 			),
 		},
 		{
-			name: "source proxySecretRef",
+			name:    "source proxySecretRef",
+			wantErr: "isolated-chart OCIRepository must not configure proxySecretRef",
 			manifest: strings.Replace(
 				validSource,
 				"spec:\n",
@@ -1133,7 +1150,8 @@ spec:
 			),
 		},
 		{
-			name: "source serviceAccountName",
+			name:    "source serviceAccountName",
+			wantErr: "isolated-chart OCIRepository must not configure serviceAccountName",
 			manifest: strings.Replace(
 				validSource,
 				"spec:\n",
@@ -1142,7 +1160,8 @@ spec:
 			),
 		},
 		{
-			name: "unsupported annotated kind",
+			name:    "unsupported annotated kind",
+			wantErr: "isolated-chart authorization scope is unsupported for kustomize.toolkit.fluxcd.io/v1/Kustomization",
 			manifest: `apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -1159,7 +1178,8 @@ spec:
 			// target-less strategic-merge patch on the GVK and name inside that string.
 			// The map/list traversal never descends into a string leaf, so this shape
 			// reached the release with no target for the kind selector to catch.
-			name: "target-less RBAC post-renderer patch body",
+			name:    "target-less RBAC post-renderer patch body",
+			wantErr: "isolated-chart HelmRelease must not post-render authorization resources",
 			manifest: validHelmRelease + `  postRenderers:
     - kustomize:
         patches:
@@ -1177,7 +1197,8 @@ spec:
 		{
 			// The same bypass with a target present but naming an unprotected kind:
 			// the kind selector passes and the authorization object rides in the body.
-			name: "RBAC post-renderer patch body behind an innocuous target",
+			name:    "RBAC post-renderer patch body behind an innocuous target",
+			wantErr: "isolated-chart HelmRelease must not post-render authorization resources",
 			manifest: validHelmRelease + `  postRenderers:
     - kustomize:
         patches:
@@ -1198,7 +1219,8 @@ spec:
 		{
 			// A patch string that does not parse as YAML cannot be inspected, so it
 			// must fail closed rather than pass for want of a decode.
-			name: "undecodable post-renderer patch naming an authorization kind",
+			name:    "undecodable post-renderer patch naming an authorization kind",
+			wantErr: "isolated-chart HelmRelease must not post-render authorization resources",
 			manifest: validHelmRelease + `  postRenderers:
     - kustomize:
         patches:
@@ -1208,11 +1230,31 @@ spec:
 		{
 			// The declaration scan must not be defeated by an ordinary YAML comment
 			// on the kind line, which is a one-character edit away from the case above.
-			name: "undecodable post-renderer patch with a commented authorization kind line",
+			name:    "undecodable post-renderer patch with a commented authorization kind line",
+			wantErr: "isolated-chart HelmRelease must not post-render authorization resources",
 			manifest: validHelmRelease + `  postRenderers:
     - kustomize:
         patches:
           - patch: "kind: ClusterRoleBinding # bind the controller\n\tapiVersion: [rbac.authorization.k8s.io/v1"
+`,
+		},
+		{
+			// The reviewed-identity allowlist, not a namespace denylist. Any chart
+			// outside the three denied namespaces could otherwise self-exempt from
+			// the production authorization rules by adding the annotation to itself.
+			name:    "isolated-chart declared by an unreviewed identity",
+			wantErr: "isolated-chart authorization scope is not reviewed for identity \"rogue/rogue\"",
+			manifest: `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: rogue
+  namespace: rogue
+  annotations:
+    security.devantler.tech/authorization-scope: isolated-chart
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: rogue
 `,
 		},
 	}
@@ -1223,8 +1265,15 @@ spec:
 			if err != nil || len(documents) != 1 {
 				t.Fatalf("decode fixture: documents=%d error=%v", len(documents), err)
 			}
-			if err := validateAuthorizationIsolation(documents[0], identityOf(documents[0])); err == nil {
+			err = validateAuthorizationIsolation(documents[0], identityOf(documents[0]))
+			if err == nil {
 				t.Fatal("validateAuthorizationIsolation() error = nil, want fail-closed rejection")
+			}
+			if tt.wantErr == "" {
+				t.Fatal("fixture declares no wantErr, so the rejecting rule is unattributed")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateAuthorizationIsolation() error = %q, want it to contain %q", err, tt.wantErr)
 			}
 		})
 	}

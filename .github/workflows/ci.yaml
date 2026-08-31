@@ -550,13 +550,22 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
-      - name: 🔐 Validate Helm-rendered production authorization controls
-        # KSail renders chart children before evaluating the CEL rules, closing
-        # the visibility gap in kubectl kustomize's HelmRelease-only output.
+      - name: 🔐 Validate the production authorization rule suite
+        # Split from the render below so the job summary attributes a failure to
+        # the rule suite rather than to an unreachable chart registry.
         run: |
           shellcheck scripts/tests/test-production-authorization-rules.sh
           bash scripts/tests/test-production-authorization-rules.sh
-          ksail --config ksail.prod.yaml workload validate
+
+      - name: 🔐 Validate Helm-rendered production authorization controls
+        # KSail renders chart children before evaluating the CEL rules, closing
+        # the visibility gap in kubectl kustomize's HelmRelease-only output.
+        #
+        # This reaches every upstream chart registry, and the job gates
+        # deploy-prod, so an unreachable registry would otherwise hang a
+        # required check and hold the merge queue for the job's full budget.
+        timeout-minutes: 10
+        run: ksail --config ksail.prod.yaml workload validate
 
   validate:
     name: 🧪 Validate Manifests
