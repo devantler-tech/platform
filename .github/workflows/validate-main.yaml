@@ -308,7 +308,29 @@ jobs:
         # a token a fork PR does not have, and version drift is slow-moving, so
         # per-PR is the wrong cadence. The offline parsing contract IS gated on
         # PRs, in ci.yaml.
+        #
+        # Exit 1 (measured drift) fails: the constants are wrong and #2787's counts cannot be read
+        # until they are corrected. Exit 2 (could not verify) warns instead, because it is not a
+        # statement about this repository at all — the managed workflow runs on its own path filter
+        # and can simply go quiet here for longer than the bounded scan window reaches back. This
+        # job runs after merge and gates nothing, so holding main red on another repository's
+        # pipeline cadence costs the whole repository a red default branch while telling nobody
+        # anything actionable. The warning is visible in the run summary and the next genuine run
+        # resolves it either way.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: bash scripts/check-megalinter-version-drift.sh
+        run: |
+          set +e
+          bash scripts/check-megalinter-version-drift.sh
+          rc=$?
+          set -e
+          case "$rc" in
+            0) ;;
+            2)
+              echo "::warning title=Scanner versions unverified::Could not establish the live \
+          MegaLinter scanner versions (exit 2). The recorded constants are unchanged and no drift \
+          is claimed; see the step log for which evidence was refused."
+              ;;
+            *) exit "$rc" ;;
+          esac
