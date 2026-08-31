@@ -5,3 +5,15 @@ metadata:
   labels:
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/enforce-version: latest
+    # kubescape is excluded from add-pod-security-context / add-container-security-context
+    # because its workloads need elevated privilege by design. fsGroupChangePolicy and
+    # seLinuxOptions are not privilege fields — the first governs volume ownership
+    # relabelling, the second is a documented no-op on this AppArmor cluster kept for
+    # CIS-5.7.3 — so the blanket exclusion suppressed two C-0211 controls it never
+    # needed to. This label opts the namespace into add-baseline-context-optin-*, which
+    # supplies only those two through conditional anchors and touches no user, group or
+    # privilege field. Second namespace opted in, after velero: measured against live
+    # prod specs on 2026-08-31, none of kubescape's pods carried either field, while
+    # every velero pod created since that namespace opted in carried both and none
+    # failed to start.
+    pod-security.devantler.tech/baseline-context: enabled
