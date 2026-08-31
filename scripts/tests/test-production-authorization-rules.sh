@@ -17,13 +17,30 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Both helpers keep the validator's output. A bare non-zero exit is not proof of
+# rejection: a missing ksail, an unknown flag, or an unparsable fixture also exits
+# non-zero, and would otherwise let assert_rejected pass without the rule ever
+# firing. Rejections must therefore name the rule that refused the fixture.
+run_validate() {
+  local path="$1"
+  ksail workload validate "${path}" --skip-helm-render --rules "${rules_path}" 2>&1
+}
+
 assert_rejected() {
   local name="$1"
   local manifest="$2"
+  local expected_rule="$3"
   local path="${test_root}/${name}.yaml"
+  local output
   printf '%s\n' "${manifest}" >"${path}"
-  if ksail workload validate "${path}" --skip-helm-render --rules "${rules_path}" >/dev/null 2>&1; then
+  if output="$(run_validate "${path}")"; then
     printf 'FAIL: unsafe fixture %s passed effective authorization validation\n' "${name}" >&2
+    printf '%s\n' "${output}" >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "${output}" | grep -qF "rule \"${expected_rule}\""; then
+    printf 'FAIL: fixture %s was refused, but not by rule %s\n' "${name}" "${expected_rule}" >&2
+    printf '%s\n' "${output}" >&2
     exit 1
   fi
 }
@@ -32,9 +49,11 @@ assert_accepted() {
   local name="$1"
   local manifest="$2"
   local path="${test_root}/${name}.yaml"
+  local output
   printf '%s\n' "${manifest}" >"${path}"
-  if ! ksail workload validate "${path}" --skip-helm-render --rules "${rules_path}" >/dev/null 2>&1; then
+  if ! output="$(run_validate "${path}")"; then
     printf 'FAIL: least-privilege fixture %s failed effective authorization validation\n' "${name}" >&2
+    printf '%s\n' "${output}" >&2
     exit 1
   fi
 }
@@ -50,7 +69,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: aws
-    namespace: aws'
+    namespace: aws' 'restrict-aws-service-account-bindings'
 
 assert_rejected 'cluster-admin-binding' 'apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -63,7 +82,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: controller
-    namespace: controller'
+    namespace: controller' 'reject-new-cluster-admin-bindings'
 
 assert_rejected 'forged-known-cluster-admin-binding' 'apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -76,7 +95,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: attacker
-    namespace: attacker'
+    namespace: attacker' 'reject-new-cluster-admin-bindings'
 
 assert_accepted 'data-product-controller-rbac' 'apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

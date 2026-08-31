@@ -1078,6 +1078,82 @@ spec:
 				1,
 			),
 		},
+		{
+			name: "cross-cluster kubeconfig",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"spec:\n",
+				"spec:\n  kubeConfig:\n    secretRef:\n      name: aws\n",
+				1,
+			),
+		},
+		{
+			name: "cross-namespace chart reference",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"    name: data-product-controller\n",
+				"    name: data-product-controller\n    namespace: aws\n",
+				1,
+			),
+		},
+		{
+			name: "non-OCIRepository chart reference",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"    kind: OCIRepository\n",
+				"    kind: HelmChart\n",
+				1,
+			),
+		},
+		{
+			name: "source secretRef",
+			manifest: strings.Replace(
+				validSource,
+				"spec:\n",
+				"spec:\n  secretRef:\n    name: aws\n",
+				1,
+			),
+		},
+		{
+			name: "source certSecretRef",
+			manifest: strings.Replace(
+				validSource,
+				"spec:\n",
+				"spec:\n  certSecretRef:\n    name: aws\n",
+				1,
+			),
+		},
+		{
+			name: "source proxySecretRef",
+			manifest: strings.Replace(
+				validSource,
+				"spec:\n",
+				"spec:\n  proxySecretRef:\n    name: aws\n",
+				1,
+			),
+		},
+		{
+			name: "source serviceAccountName",
+			manifest: strings.Replace(
+				validSource,
+				"spec:\n",
+				"spec:\n  serviceAccountName: aws\n",
+				1,
+			),
+		},
+		{
+			name: "unsupported annotated kind",
+			manifest: `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+  annotations:
+    security.devantler.tech/authorization-scope: isolated-chart
+spec:
+  path: ./k8s
+`,
+		},
 	}
 
 	for _, tt := range tests {
