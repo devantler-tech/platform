@@ -1344,6 +1344,9 @@ func fakeInventoryNode(
 }
 
 func fakeKubectlGetPods(args []string) int {
+	if containsSequence(args, "-o", "name") || containsArg(args, "-o=name") {
+		return fakeKubectlGetNamespaceWorkloads(flagValue(args, "--namespace"))
+	}
 	nodeName := flagValue(args, "--field-selector")
 	nodeName = strings.TrimPrefix(nodeName, "spec.nodeName=")
 	if nodeName == "" || (!containsSequence(args, "-o", "json") && !containsArg(args, "-o=json")) {
@@ -2421,4 +2424,15 @@ func anySlice(value any) []any {
 	}
 	items, _ := value.([]any)
 	return items
+}
+
+// fakeKubectlGetNamespaceWorkloads models the workload probe the fan-out gate
+// uses to tell a brand-new consumer apart from an established one. A namespace
+// left behind by a failed candidate still runs nothing, so it reports empty
+// unless the fixture explicitly declares a running workload.
+func fakeKubectlGetNamespaceWorkloads(namespace string) int {
+	if namespace != "" && namespace == os.Getenv("FAKE_NAMESPACE_WITH_WORKLOAD") {
+		fmt.Printf("pod/%s-0\n", namespace)
+	}
+	return 0
 }

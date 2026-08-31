@@ -5290,12 +5290,20 @@ else
     fi
     if [[ -z "${externalsecret_name}" ]]; then
       # A new consumer cannot have its ExternalSecret until Flux is allowed to
-      # publish and reconcile the candidate that creates its namespace. Only
-      # the pre-publish staging invocation may omit a target whose entire
-      # namespace is absent. The post-reconcile reassertion runs without this
-      # exemption and therefore proves the newly-created fan-out before the
-      # deployment can succeed. A missing object in an existing namespace is
-      # always an incomplete fan-out.
+      # publish and reconcile the candidate that introduces it. Only the
+      # pre-publish staging invocation may omit such a target. The
+      # post-reconcile reassertion runs without this exemption and therefore
+      # proves the newly-created fan-out before the deployment can succeed.
+      #
+      # Namespace absence alone cannot decide this. A candidate that fails
+      # after its namespace is applied leaves that namespace behind, because
+      # app namespaces carry prune: disabled and the rollback cannot remove
+      # them. Keying the exemption on absence would then refuse every later
+      # attempt, deadlocking the very change that introduces the consumer.
+      # Defer while the namespace is absent or still runs no workload: neither
+      # state has a running consumer whose pull credential this staging step
+      # could break. A missing object in a namespace that already runs
+      # workloads is always an incomplete fan-out.
       if [[ -n "${record_runtime_proof_path}" ]]; then
         if ! namespace_name="$(kubectl \
           --context "${KUBE_CONTEXT}" \
@@ -5305,8 +5313,19 @@ else
           echo "::error::Could not determine whether namespace ${namespace} exists; refusing to change root Flux auth."
           exit 1
         fi
-        if [[ -z "${namespace_name}" ]]; then
-          echo "::notice::Deferring new GHCR fan-out target ${namespace}/ghcr-auth until the candidate creates its namespace; the post-reconcile reassertion remains mandatory."
+        namespace_workloads=""
+        if [[ -n "${namespace_name}" ]]; then
+          if ! namespace_workloads="$(kubectl \
+            --context "${KUBE_CONTEXT}" \
+            --namespace "${namespace}" \
+            get pods \
+            -o name)"; then
+            echo "::error::Could not determine whether namespace ${namespace} runs a workload; refusing to change root Flux auth."
+            exit 1
+          fi
+        fi
+        if [[ -z "${namespace_name}" || -z "${namespace_workloads}" ]]; then
+          echo "::notice::Deferring new GHCR fan-out target ${namespace}/ghcr-auth until the candidate reconciles it; the post-reconcile reassertion remains mandatory."
           continue
         fi
       fi

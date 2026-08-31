@@ -537,3 +537,41 @@ func TestMaterialisedConsumerMismatchIsNotHidden(t *testing.T) {
 	requireWrapperPathExists(t, f.patchCapture, false)
 	requireWrapperSecretAbsent(t, result, "fixture-secret-token")
 }
+
+func TestFirstDeployStagesNewConsumerWhoseNamespaceSurvivedAFailedAttempt(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(
+		validConfig(),
+		[]string{"--record-runtime-proof", f.workspace + "/runtime-proof.json"},
+		map[string]string{
+			"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/data-product-controller/ghcr-auth",
+		},
+	)
+
+	requireWrapperExitCode(t, result, 0)
+	requireWrapperPathExists(t, f.patchCapture, true)
+	requireWrapperPathExists(t, f.variablesPatchCapture, true)
+	fanout := mustRead(f.fanoutLog)
+	requireContains(t, fanout, "externalsecret/wedding-app/ghcr-auth")
+	requireContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
+	requireContains(t, fanout, "externalsecret/kyverno/ghcr-auth")
+	requireNotContains(t, fanout, "externalsecret/data-product-controller/ghcr-auth")
+}
+
+func TestPrepublishStagingStillFailsClosedForAnEstablishedConsumer(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(
+		validConfig(),
+		[]string{"--record-runtime-proof", f.workspace + "/runtime-proof.json"},
+		map[string]string{
+			"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/kyverno/ghcr-auth",
+			"FAKE_NAMESPACE_WITH_WORKLOAD": "kyverno",
+		},
+	)
+
+	if result.exitCode == 0 {
+		t.Fatalf("an established consumer missing its ghcr-auth unexpectedly passed pre-publish staging")
+	}
+	requireWrapperPathExists(t, f.variablesPatchCapture, false)
+	requireWrapperPathExists(t, f.patchCapture, false)
+}
