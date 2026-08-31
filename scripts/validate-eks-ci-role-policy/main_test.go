@@ -1205,6 +1205,16 @@ spec:
           - patch: "kind: ClusterRole\n\tapiVersion: [rbac.authorization.k8s.io/v1"
 `,
 		},
+		{
+			// The declaration scan must not be defeated by an ordinary YAML comment
+			// on the kind line, which is a one-character edit away from the case above.
+			name: "undecodable post-renderer patch with a commented authorization kind line",
+			manifest: validHelmRelease + `  postRenderers:
+    - kustomize:
+        patches:
+          - patch: "kind: ClusterRoleBinding # bind the controller\n\tapiVersion: [rbac.authorization.k8s.io/v1"
+`,
+		},
 	}
 
 	for _, tt := range tests {

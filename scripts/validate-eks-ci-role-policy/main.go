@@ -2216,7 +2216,7 @@ const maxEmbeddedTextDepth = 4
 // key rather than the bare word, so prose that merely mentions a role is not
 // mistaken for a declaration.
 var embeddedAuthorizationKindDeclaration = regexp.MustCompile(
-	`(?m)^[\t ]*kind[\t ]*:[\t ]*["']?(ClusterRoleBinding|ClusterRole|RoleBinding|Role)["']?[\t ]*$`,
+	`(?m)^[\t ]*kind[\t ]*:[\t ]*["']?(ClusterRoleBinding|ClusterRole|RoleBinding|Role)["']?[\t ]*(#.*)?$`,
 )
 
 // textDeclaresAuthorizationKind inspects a string leaf. Flux stores a
