@@ -229,6 +229,19 @@ export GH_STUB_MIN_PER_PAGE=0
 tainted_sha='deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
 genuine_sha='cafebabecafebabecafebabecafebabecafebabe'
 
+# Candidate runs carry a creation timestamp, and the guard refuses evidence older than its cutoff.
+# Every existing case is about selection rather than age, so they all use a run made "now"; the
+# staleness cases below set their own. Computed the same both-dialects way the guard uses.
+fresh_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+stale_ts="$(
+  date -u -d '90 days ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
+    date -u -v-90d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null
+)"
+if [ -z "$fresh_ts" ] || [ -z "$stale_ts" ]; then
+  printf 'FAIL: could not compute test timestamps with either GNU or BSD date\n' >&2
+  exit 1
+fi
+
 # Run 111 is attacker-controlled: its revision defines the managed workflow, and its log states
 # versions that do NOT match the constants — so trusting it is visible as drift.
 make_log '9.9.9' '9.9.9' '9.9.9' "$scratch/logs/job111.log"
@@ -240,7 +253,7 @@ run_live() {
 }
 
 # A tainted run as the ONLY candidate must never have its log consumed.
-printf '111 %s\n' "$tainted_sha" >"$scratch/runs.txt"
+printf '111 %s '"$fresh_ts"'\n' "$tainted_sha" >"$scratch/runs.txt"
 run_live
 if [ "$rc" -ne 2 ]; then
   printf 'FAIL: tainted-only candidate — expected exit 2, got %d (its log was trusted)\n%s\n' \
@@ -271,7 +284,7 @@ fi
 # at ordinal 99 even though it was less than an hour old. The selector must use the API's full
 # single-page capacity so unrelated workflows do not make recent evidence unreachable.
 GH_STUB_MIN_PER_PAGE=100
-printf '111 %s\n' "$genuine_sha" >"$scratch/runs.txt"
+printf '111 %s '"$fresh_ts"'\n' "$genuine_sha" >"$scratch/runs.txt"
 run_live
 if [ "$rc" -ne 0 ]; then
   printf 'FAIL: busy repository history — expected recent genuine run to be reachable, got %d\n%s\n' \
@@ -288,7 +301,7 @@ GH_STUB_MIN_PER_PAGE=0
 # bounded multi-page lookup reaches the same genuine, provenance-checked candidate.
 mkdir -p "$scratch/run-pages"
 : >"$scratch/run-pages/1"
-printf '111 %s\n' "$genuine_sha" >"$scratch/run-pages/2"
+printf '111 %s '"$fresh_ts"'\n' "$genuine_sha" >"$scratch/run-pages/2"
 : >"$scratch/run-pages/3"
 GH_STUB_RUN_PAGES_DIR="$scratch/run-pages"
 export GH_STUB_RUN_PAGES_DIR
@@ -305,7 +318,7 @@ unset GH_STUB_RUN_PAGES_DIR
 # Once a usable candidate on page one has passed every provenance check, later pages are irrelevant.
 # A transient failure fetching page two must not discard that already-validated evidence. The eager
 # collector does exactly that; processing each page before requesting the next one returns first.
-printf '111 %s\n' "$genuine_sha" >"$scratch/run-pages/1"
+printf '111 %s '"$fresh_ts"'\n' "$genuine_sha" >"$scratch/run-pages/1"
 : >"$scratch/run-pages/2"
 GH_STUB_RUN_PAGES_DIR="$scratch/run-pages"
 GH_STUB_FAIL_RUNS_PAGE=2
@@ -325,7 +338,7 @@ unset GH_STUB_RUN_PAGES_DIR GH_STUB_FAIL_RUNS_PAGE
 # closed (exit 2), so only skipping-and-continuing yields exit 0.
 make_log '9.9.9' '9.9.9' '9.9.9' "$scratch/logs/job111.log"
 printf '%s\n' "$tainted_sha" >"$scratch/tainted.txt"
-printf '111 %s\n222 %s\n' "$tainted_sha" "$genuine_sha" >"$scratch/runs.txt"
+printf '111 %s '"$fresh_ts"'\n222 %s '"$fresh_ts"'\n' "$tainted_sha" "$genuine_sha" >"$scratch/runs.txt"
 run_live
 if [ "$rc" -ne 0 ]; then
   printf 'FAIL: discrimination — expected exit 0 from the genuine run, got %d\n%s\n' "$rc" "$out" >&2
@@ -340,7 +353,7 @@ fi
 printf '%s\n' "$genuine_sha" >"$scratch/unresolvable.txt"
 : >"$scratch/tainted.txt"
 make_log '9.9.9' '9.9.9' '9.9.9' "$scratch/logs/job222.log"
-printf '222 %s\n' "$genuine_sha" >"$scratch/runs.txt"
+printf '222 %s '"$fresh_ts"'\n' "$genuine_sha" >"$scratch/runs.txt"
 run_live
 if [ "$rc" -ne 2 ]; then
   printf 'FAIL: unresolvable revision — expected exit 2, got %d (its log was trusted)\n%s\n' \
@@ -360,7 +373,7 @@ fi
 : >"$scratch/tainted.txt"
 : >"$scratch/unresolvable.txt"
 make_log "$ci_megalinter" "$ci_checkov" "$ci_trivy" "$scratch/logs/job111.log"
-printf '111 %s\n' "$genuine_sha" >"$scratch/runs.txt"
+printf '111 %s '"$fresh_ts"'\n' "$genuine_sha" >"$scratch/runs.txt"
 GH_STUB_RUNS_URL_LOG="$scratch/runs-urls.txt"
 : >"$GH_STUB_RUNS_URL_LOG"
 export GH_STUB_RUNS_URL_LOG
@@ -378,6 +391,87 @@ else
 fi
 unset GH_STUB_RUNS_URL_LOG
 
+# ---- EVIDENCE STALENESS ------------------------------------------------------------------------
+# The scan window bounds how far back the walk reaches; it does not bound how OLD the winning run
+# may be. On a busy repository the newest genuine run ages out of the window while older ones stay
+# reachable, and their versions are then reported as live. Measured 2026-08-31 on this repository:
+# with no code change between them, one run read a two-day-old job and agreed with the constants
+# while the next reached a job from 2026-08-09 — before the pin moved — and reported its versions as
+# drift, wedging main. The remedy that failure prints is to record those stale versions, which would
+# have made the constants wrong.
+#
+# So a stale candidate must produce CANNOT VERIFY (2), never drift (1). Exit 1 is the dangerous
+# answer precisely because it is actionable and its action is wrong.
+: >"$scratch/tainted.txt"
+: >"$scratch/unresolvable.txt"
+make_log '9.9.9' '9.9.9' '9.9.9' "$scratch/logs/job111.log"
+printf '111 %s '"$stale_ts"'\n' "$genuine_sha" >"$scratch/runs.txt"
+run_live
+if [ "$rc" -eq 1 ]; then
+  printf 'FAIL: stale evidence — reported DRIFT from a %s run; recording those versions would be wrong\n%s\n' \
+    "$stale_ts" "$out" >&2
+  failures=$((failures + 1))
+elif [ "$rc" -ne 2 ]; then
+  printf 'FAIL: stale evidence — expected exit 2, got %d\n%s\n' "$rc" "$out" >&2
+  failures=$((failures + 1))
+elif ! printf '%s' "$out" | grep -qF 'evidence cutoff'; then
+  printf 'FAIL: stale evidence — exit 2 but the refusal does not name the cutoff\n%s\n' "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: evidence older than the cutoff is refused rather than reported as drift\n'
+fi
+
+# CONTROL — the same log at the same versions, from a run made NOW, must still be reachable and
+# still be reported as drift. Without this the case above would pass just as well if the guard had
+# stopped selecting runs altogether.
+printf '111 %s '"$fresh_ts"'\n' "$genuine_sha" >"$scratch/runs.txt"
+run_live
+if [ "$rc" -ne 1 ]; then
+  printf 'FAIL: control — a fresh run stating 9.9.9 should still be drift, got %d\n%s\n' "$rc" "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: control — the cutoff refuses stale evidence without disabling drift detection\n'
+fi
+
+# A stale candidate sitting alongside a fresh one that was refused for a DIFFERENT reason must not
+# be summarised as "every reachable run predates the cutoff". Both paths refuse (exit 2), so the
+# behaviour is identical and only the diagnosis differs — which is precisely what this guard exists
+# to get right, because the operator's next action follows the message. Told that all the evidence
+# aged out, the reasonable response is to widen the cutoff, which restores the stale-evidence bug
+# this file was written to close; and the real cause — a run whose own revision defines the managed
+# workflow, i.e. a provenance refusal — has meanwhile been hidden behind it.
+: >"$scratch/unresolvable.txt"
+printf '%s\n' "$tainted_sha" >"$scratch/tainted.txt"
+make_log '9.9.9' '9.9.9' '9.9.9' "$scratch/logs/job111.log"
+printf '111 %s '"$stale_ts"'\n222 %s '"$fresh_ts"'\n' "$genuine_sha" "$tainted_sha" >"$scratch/runs.txt"
+run_live
+if [ "$rc" -ne 2 ]; then
+  printf 'FAIL: mixed refusals — expected exit 2, got %d\n%s\n' "$rc" "$out" >&2
+  failures=$((failures + 1))
+elif printf '%s' "$out" | grep -qF 'predates the'; then
+  printf 'FAIL: mixed refusals — blamed the cutoff, but a fresh candidate was refused for provenance\n%s\n' \
+    "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: a stale candidate does not mask a fresh one refused for another reason\n'
+fi
+
+# CONTROL — with the fresh provenance-refused candidate removed, the cutoff really IS the whole
+# story, and the message must still say so. Without this the case above would pass just as well if
+# the stale-specific diagnosis had simply been deleted.
+: >"$scratch/tainted.txt"
+printf '111 %s '"$stale_ts"'\n' "$genuine_sha" >"$scratch/runs.txt"
+run_live
+if [ "$rc" -ne 2 ]; then
+  printf 'FAIL: control — stale-only candidate should still refuse, got %d\n%s\n' "$rc" "$out" >&2
+  failures=$((failures + 1))
+elif ! printf '%s' "$out" | grep -qF 'predates the'; then
+  printf 'FAIL: control — stale-only candidate no longer names the cutoff as the reason\n%s\n' \
+    "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: control — a stale-only refusal still names the cutoff\n'
+fi
 if [ "$failures" -ne 0 ]; then
   printf '\n%d check(s) failed\n' "$failures" >&2
   exit 1
