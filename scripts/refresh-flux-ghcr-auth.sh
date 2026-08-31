@@ -175,7 +175,15 @@ readonly -a RUNTIME_CREDENTIAL_PROBE_IMAGES=(
   "ghcr.io/devantler-tech/ascoachingogvaner:latest"
 )
 readonly -a FANOUT_NAMESPACES=(
-  "data-product-controller"
+  # data-product-controller is staged off in k8s/bases/apps/kustomization.yaml,
+  # so production never reconciles data-product-controller/ghcr-auth and this
+  # entry must stay commented out while that gate is closed. Listing it anyway
+  # fails EVERY prod deploy: the pre-publish invocation defers a missing new
+  # consumer, but the post-reconcile reassertion runs with --reuse-runtime-proof
+  # and has no such exemption, so it marks the fan-out incomplete and exits 1.
+  # Uncomment this in the SAME change that enables the component in the apps
+  # base — scripts/guard-ghcr-fanout-component-gate.sh fails if the two disagree.
+  # "data-product-controller"
   "wedding-app"
   "ascoachingogvaner"
   "kyverno"

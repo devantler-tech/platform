@@ -380,7 +380,6 @@ func TestMissingVariablesBaseFailsClosedWithoutBootstrapMode(t *testing.T) {
 func TestPartialBootstrapRepairsRootWithoutForcingMissingFanout(t *testing.T) {
 	missingResources := []string{
 		"pushsecret/flux-system/seed-ghcr",
-		"externalsecret/data-product-controller/ghcr-auth",
 		"externalsecret/wedding-app/ghcr-auth",
 		"externalsecret/ascoachingogvaner/ghcr-auth",
 		"externalsecret/kyverno/ghcr-auth",
@@ -447,8 +446,8 @@ func TestFirstDeployStagesExistingFanoutBeforeNewConsumerNamespaceExists(t *test
 		validConfig(),
 		[]string{"--record-runtime-proof", f.workspace + "/runtime-proof.json"},
 		map[string]string{
-			"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/data-product-controller/ghcr-auth",
-			"FAKE_MISSING_NAMESPACE":       "data-product-controller",
+			"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/ascoachingogvaner/ghcr-auth",
+			"FAKE_MISSING_NAMESPACE":       "ascoachingogvaner",
 		},
 	)
 
@@ -457,16 +456,15 @@ func TestFirstDeployStagesExistingFanoutBeforeNewConsumerNamespaceExists(t *test
 	requireWrapperPathExists(t, f.variablesPatchCapture, true)
 	fanout := mustRead(f.fanoutLog)
 	requireContains(t, fanout, "externalsecret/wedding-app/ghcr-auth")
-	requireContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
 	requireContains(t, fanout, "externalsecret/kyverno/ghcr-auth")
-	requireNotContains(t, fanout, "externalsecret/data-product-controller/ghcr-auth")
+	requireNotContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
 }
 
 func TestAbsentFanoutNamespaceFailsOutsidePrepublishStage(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
-		"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/data-product-controller/ghcr-auth",
-		"FAKE_MISSING_NAMESPACE":       "data-product-controller",
+		"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/ascoachingogvaner/ghcr-auth",
+		"FAKE_MISSING_NAMESPACE":       "ascoachingogvaner",
 	})
 
 	if result.exitCode == 0 {
@@ -544,7 +542,7 @@ func TestFirstDeployStagesNewConsumerWhoseNamespaceSurvivedAFailedAttempt(t *tes
 		validConfig(),
 		[]string{"--record-runtime-proof", f.workspace + "/runtime-proof.json"},
 		map[string]string{
-			"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/data-product-controller/ghcr-auth",
+			"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/ascoachingogvaner/ghcr-auth",
 		},
 	)
 
@@ -553,9 +551,8 @@ func TestFirstDeployStagesNewConsumerWhoseNamespaceSurvivedAFailedAttempt(t *tes
 	requireWrapperPathExists(t, f.variablesPatchCapture, true)
 	fanout := mustRead(f.fanoutLog)
 	requireContains(t, fanout, "externalsecret/wedding-app/ghcr-auth")
-	requireContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
 	requireContains(t, fanout, "externalsecret/kyverno/ghcr-auth")
-	requireNotContains(t, fanout, "externalsecret/data-product-controller/ghcr-auth")
+	requireNotContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
 }
 
 func TestPrepublishStagingStillFailsClosedForAnEstablishedConsumer(t *testing.T) {
@@ -588,8 +585,8 @@ func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftANonRunningPod(t *tes
 		validConfig(),
 		[]string{"--record-runtime-proof", f.workspace + "/runtime-proof.json"},
 		map[string]string{
-			"FAKE_MISSING_FANOUT_RESOURCE":       "externalsecret/data-product-controller/ghcr-auth",
-			"FAKE_NAMESPACE_WITH_NONRUNNING_POD": "data-product-controller",
+			"FAKE_MISSING_FANOUT_RESOURCE":       "externalsecret/ascoachingogvaner/ghcr-auth",
+			"FAKE_NAMESPACE_WITH_NONRUNNING_POD": "ascoachingogvaner",
 		},
 	)
 
@@ -597,5 +594,5 @@ func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftANonRunningPod(t *tes
 	requireWrapperPathExists(t, f.patchCapture, true)
 	requireWrapperPathExists(t, f.variablesPatchCapture, true)
 	fanout := mustRead(f.fanoutLog)
-	requireNotContains(t, fanout, "externalsecret/data-product-controller/ghcr-auth")
+	requireNotContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
 }
