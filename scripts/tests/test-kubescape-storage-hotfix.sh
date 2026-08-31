@@ -50,39 +50,74 @@ grep -qF 'git apply --check' "${workflow}" ||
   fail 'the compatibility patch must be checked before application'
 grep -qF 'go test ./pkg/registry/file' "${workflow}" ||
   fail 'the patched upstream storage package must run its tests before publish'
-readonly buildx_action='docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e'
-readonly build_action='docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a'
-buildx_count="$(BUILD_ACTION="${buildx_action}" yq -er '
-  [.jobs.publish.steps[] | select(.uses == strenv(BUILD_ACTION))] | length
-' "${workflow}")" || fail 'could not inspect the publish job Buildx setup'
+# Identity is the action path; the commit pin is asserted separately below. Binding identity to one
+# specific SHA made every reviewed version bump read as a missing step, so dependency automation
+# could never update these actions and a present, correctly pinned step was reported as absent.
+readonly buildx_action='docker/setup-buildx-action'
+readonly build_action='docker/build-push-action'
+
+step_count() {
+  ACTION="$1" yq -er '
+    [.jobs.publish.steps[] | select((.uses // "") | split("@") | .[0] == strenv(ACTION))] | length
+  ' "${workflow}"
+}
+
+step_ref() {
+  ACTION="$1" yq -er '
+    .jobs.publish.steps[] |
+    select((.uses // "") | split("@") | .[0] == strenv(ACTION)) |
+    (.uses // "") | split("@") | .[1] // "unpinned"
+  ' "${workflow}"
+}
+
+step_index() {
+  ACTION="$1" yq -er '
+    .jobs.publish.steps |
+    to_entries |
+    .[] |
+    select((.value.uses // "") | split("@") | .[0] == strenv(ACTION)) |
+    .key
+  ' "${workflow}"
+}
+
+buildx_count="$(step_count "${buildx_action}")" ||
+  fail 'could not inspect the publish job Buildx setup'
 readonly buildx_count
 [[ "${buildx_count}" == '1' ]] ||
-  fail 'the publish job must contain exactly one pinned Buildx setup step'
+  fail 'the publish job must contain exactly one Buildx setup step'
 
-buildx_driver="$(BUILD_ACTION="${buildx_action}" yq -er '
+buildx_ref="$(step_ref "${buildx_action}")" ||
+  fail 'could not read the publish Buildx setup pin'
+readonly buildx_ref
+[[ "${buildx_ref}" =~ ^[0-9a-f]{40}$ ]] ||
+  fail 'the publish Buildx setup step must be pinned to a commit SHA, not a mutable tag'
+
+build_count="$(step_count "${build_action}")" ||
+  fail 'could not inspect the publish job image build'
+readonly build_count
+[[ "${build_count}" == '1' ]] ||
+  fail 'the publish job must contain exactly one image-build step'
+
+build_ref="$(step_ref "${build_action}")" ||
+  fail 'could not read the publish image-build pin'
+readonly build_ref
+[[ "${build_ref}" =~ ^[0-9a-f]{40}$ ]] ||
+  fail 'the publish image-build step must be pinned to a commit SHA, not a mutable tag'
+
+buildx_driver="$(ACTION="${buildx_action}" yq -er '
   .jobs.publish.steps[] |
-  select(.uses == strenv(BUILD_ACTION)) |
+  select((.uses // "") | split("@") | .[0] == strenv(ACTION)) |
   .with.driver
 ' "${workflow}")" || fail 'the publish Buildx step has no explicit driver'
 readonly buildx_driver
 [[ "${buildx_driver}" == 'docker-container' ]] ||
   fail 'the publish Buildx step must select the attestation-capable container driver'
 
-buildx_index="$(BUILD_ACTION="${buildx_action}" yq -er '
-  .jobs.publish.steps |
-  to_entries |
-  .[] |
-  select(.value.uses == strenv(BUILD_ACTION)) |
-  .key
-' "${workflow}")" || fail 'could not locate the publish Buildx setup step'
+buildx_index="$(step_index "${buildx_action}")" ||
+  fail 'could not locate the publish Buildx setup step'
 readonly buildx_index
-image_build_index="$(BUILD_ACTION="${build_action}" yq -er '
-  .jobs.publish.steps |
-  to_entries |
-  .[] |
-  select(.value.uses == strenv(BUILD_ACTION)) |
-  .key
-' "${workflow}")" || fail 'could not locate the publish image-build step'
+image_build_index="$(step_index "${build_action}")" ||
+  fail 'could not locate the publish image-build step'
 readonly image_build_index
 ((buildx_index < image_build_index)) ||
   fail 'the Buildx container driver must be active before the attested image build'
