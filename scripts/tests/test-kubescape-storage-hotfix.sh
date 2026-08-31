@@ -50,7 +50,7 @@ grep -qF 'git apply --check' "${workflow}" ||
   fail 'the compatibility patch must be checked before application'
 grep -qF 'go test ./pkg/registry/file' "${workflow}" ||
   fail 'the patched upstream storage package must run its tests before publish'
-readonly buildx_action='docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c'
+readonly buildx_action='docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e'
 readonly build_action='docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a'
 buildx_count="$(BUILD_ACTION="${buildx_action}" yq -er '
   [.jobs.publish.steps[] | select(.uses == strenv(BUILD_ACTION))] | length
