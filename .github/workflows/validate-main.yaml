@@ -328,9 +328,13 @@ jobs:
           case "$rc" in
             0) ;;
             2)
-              echo "::warning title=Scanner versions unverified::Could not establish the live \
-          MegaLinter scanner versions (exit 2). The recorded constants are unchanged and no drift \
-          is claimed; see the step log for which evidence was refused."
+              # Built up in parts rather than one continued string: a backslash-continuation inside
+              # double quotes keeps the next line's YAML indentation, which lands as a run of spaces
+              # in the middle of the annotation.
+              msg="Could not establish the live MegaLinter scanner versions (exit 2)."
+              msg="$msg The recorded constants are unchanged and no drift is claimed;"
+              msg="$msg see the step log for which evidence was refused."
+              echo "::warning title=Scanner versions unverified::$msg"
               ;;
             *) exit "$rc" ;;
           esac

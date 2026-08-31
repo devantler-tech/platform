@@ -433,6 +433,45 @@ else
   printf 'ok: control — the cutoff refuses stale evidence without disabling drift detection\n'
 fi
 
+# A stale candidate sitting alongside a fresh one that was refused for a DIFFERENT reason must not
+# be summarised as "every reachable run predates the cutoff". Both paths refuse (exit 2), so the
+# behaviour is identical and only the diagnosis differs — which is precisely what this guard exists
+# to get right, because the operator's next action follows the message. Told that all the evidence
+# aged out, the reasonable response is to widen the cutoff, which restores the stale-evidence bug
+# this file was written to close; and the real cause — a run whose own revision defines the managed
+# workflow, i.e. a provenance refusal — has meanwhile been hidden behind it.
+: >"$scratch/unresolvable.txt"
+printf '%s\n' "$tainted_sha" >"$scratch/tainted.txt"
+make_log '9.9.9' '9.9.9' '9.9.9' "$scratch/logs/job111.log"
+printf '111 %s '"$stale_ts"'\n222 %s '"$fresh_ts"'\n' "$genuine_sha" "$tainted_sha" >"$scratch/runs.txt"
+run_live
+if [ "$rc" -ne 2 ]; then
+  printf 'FAIL: mixed refusals — expected exit 2, got %d\n%s\n' "$rc" "$out" >&2
+  failures=$((failures + 1))
+elif printf '%s' "$out" | grep -qF 'predates the'; then
+  printf 'FAIL: mixed refusals — blamed the cutoff, but a fresh candidate was refused for provenance\n%s\n' \
+    "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: a stale candidate does not mask a fresh one refused for another reason\n'
+fi
+
+# CONTROL — with the fresh provenance-refused candidate removed, the cutoff really IS the whole
+# story, and the message must still say so. Without this the case above would pass just as well if
+# the stale-specific diagnosis had simply been deleted.
+: >"$scratch/tainted.txt"
+printf '111 %s '"$stale_ts"'\n' "$genuine_sha" >"$scratch/runs.txt"
+run_live
+if [ "$rc" -ne 2 ]; then
+  printf 'FAIL: control — stale-only candidate should still refuse, got %d\n%s\n' "$rc" "$out" >&2
+  failures=$((failures + 1))
+elif ! printf '%s' "$out" | grep -qF 'predates the'; then
+  printf 'FAIL: control — stale-only candidate no longer names the cutoff as the reason\n%s\n' \
+    "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: control — a stale-only refusal still names the cutoff\n'
+fi
 if [ "$failures" -ne 0 ]; then
   printf '\n%d check(s) failed\n' "$failures" >&2
   exit 1

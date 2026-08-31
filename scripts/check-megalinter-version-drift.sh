@@ -213,6 +213,7 @@ prove org-managed provenance. Re-establish how the mega-linter job is identified
   # returned immediately and cannot be discarded by a later, unnecessary API failure.
   saw_managed=no
   saw_stale=no
+  saw_fresh=no
   page=1
   while [ "$page" -le "$MAX_RUN_PAGES" ]; do
     page_runs="$(gh api \
@@ -241,6 +242,7 @@ prove org-managed provenance. Re-establish how the mega-linter job is identified
         saw_stale=yes
         continue
       fi
+      saw_fresh=yes
       if ! managed_path_absent_at "$head_sha"; then
         printf 'Skipping run %s: %s is not provably absent at its revision %s, so that run is not\n' \
           "$run_id" "$MANAGED_WORKFLOW_PATH" "$head_sha" >&2
@@ -267,11 +269,18 @@ EOF
   done
   [ "$saw_managed" = yes ] ||
     die_unverifiable "no recent runs of $MANAGED_WORKFLOW_PATH in the last $MAX_RUNS pull_request runs of $REPO"
-  [ "$saw_stale" = no ] ||
-    die_unverifiable "every reachable '$MEGALINTER_JOB_MATCH' job predates the $MAX_EVIDENCE_AGE_DAYS-day
-evidence cutoff $EVIDENCE_CUTOFF. $MANAGED_WORKFLOW_PATH runs only on its own path filter, so it can go
-quiet on this repository for longer than the bounded scan window reaches back. That is not drift, and
-recording the versions such a run printed would make the constants wrong."
+  # Blame the cutoff only when it is the WHOLE story. A stale candidate alongside a fresh one that
+  # was refused for another reason — a provenance taint, an unresolvable revision — leaves both
+  # exiting 2, so the only thing that differs is what the operator is told to do next. "Everything
+  # aged out" invites widening the cutoff, which restores the stale-evidence bug; and it buries the
+  # provenance refusal, which is the finding that actually mattered. Fall through to the generic
+  # refusal whenever any candidate survived the age gate.
+  if [ "$saw_stale" = yes ] && [ "$saw_fresh" = no ]; then
+    die_unverifiable "every reachable run of $MANAGED_WORKFLOW_PATH predates the $MAX_EVIDENCE_AGE_DAYS-day
+evidence cutoff $EVIDENCE_CUTOFF. It runs only on its own path filter, so it can go quiet on this
+repository for longer than the bounded scan window reaches back. That is not drift, and recording the
+versions such a run printed would make the constants wrong."
+  fi
   die_unverifiable "no completed '$MEGALINTER_JOB_MATCH' job from a provably org-managed run in the
 last $MAX_RUNS pull_request runs of $REPO"
 }
