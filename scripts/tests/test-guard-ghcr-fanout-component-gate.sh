@@ -238,5 +238,51 @@ printf 'case: missing apps base (anti-vacuity)\n'
 run_guard "$scratch/does-not-exist"
 assert_rc 'a missing root is UNKNOWN' 2 "$GUARD_RC"
 
+# --- case 9: an entry the parser cannot represent is REJECTED, not dropped --
+# `foo` and 'foo' are equally valid Bash array entries, but this guard only
+# understands a "double-quoted" token. Silently dropping the others would make
+# it compare against a SMALLER namespace set than the array really expands to,
+# and so report parity for a staged-off app whose ExternalSecret production
+# still demands — the every-deploy failure this guard exists to catch,
+# reintroduced through the guard itself.
+printf 'case: an unquoted fan-out entry is rejected, never silently dropped\n'
+root="$(make_root unquoted-entry)"
+add_app "$root" juliet-consumer yes
+add_app "$root" kilo-staged yes
+write_kustomization "$root" juliet-consumer
+{
+  printf '#!/usr/bin/env bash\nreadonly -a FANOUT_NAMESPACES=(\n'
+  printf '  kilo-staged\n'
+  printf '  "juliet-consumer"\n'
+  printf '  "kyverno"\n'
+  printf ')\n'
+} >"$root/scripts/refresh-flux-ghcr-auth.sh"
+# Premise first: assert the unquoted entry really IS in the array Bash builds,
+# so this case cannot pass by testing a value that was never live.
+assertions=$((assertions + 1))
+# A here-string, NOT a pipe: `grep -q` exits on first match and the SIGPIPE it
+# gives the upstream writer becomes the pipeline status under pipefail.
+fanout_runtime="$(bash -c 'source "$1"; printf "%s\n" "${FANOUT_NAMESPACES[@]}"' _ \
+  "$root/scripts/refresh-flux-ghcr-auth.sh")"
+if grep -qxF -- 'kilo-staged' <<<"$fanout_runtime"; then
+  printf '  ok   premise: the unquoted entry is a live value in the runtime array\n'
+else
+  printf '  FAIL premise: kilo-staged is absent from the runtime array\n'
+  failures=$((failures + 1))
+fi
+run_guard "$root"
+assert_rc 'an unparseable entry is UNKNOWN, not clean' 2 "$GUARD_RC"
+# `kilo-staged` alone does NOT discriminate — the pre-fix guard printed that
+# same name in its (wrong) "ok ... absent from FANOUT_NAMESPACES" line. The
+# load-bearing assertion is that the guard did not claim parity at all.
+assertions=$((assertions + 1))
+if grep -qF -- 'follows the apps-base component gate' <<<"$GUARD_OUT"; then
+  printf '  FAIL claimed parity over an entry it could not parse\n'
+  failures=$((failures + 1))
+else
+  printf '  ok   refuses rather than claiming parity\n'
+fi
+assert_contains 'says it could not parse it' 'cannot parse'
+
 printf '\n%s assertion(s), %s failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ] || exit 1

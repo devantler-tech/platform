@@ -102,13 +102,27 @@ is_enabled() { # <app>
 # --- the declared fan-out namespaces ----------------------------------------
 # Take only the FANOUT_NAMESPACES array body, dropping comment lines so a
 # commented-out entry reads as absent (the same semantics as the base gate).
-fanout_list="$(
+fanout_body="$(
   sed -n '/^readonly -a FANOUT_NAMESPACES=(/,/^)/p' "$fanout_script" |
     sed '1d;$d' |
-    sed 's/#.*$//' |
-    grep -oE '"[^"]+"' |
-    tr -d '"'
+    sed 's/#.*$//'
 )"
+
+# Fail closed on an entry this guard cannot represent. Only a "double-quoted"
+# token is understood, but `foo` and 'foo' are equally valid Bash array entries
+# that the extraction below would SILENTLY DROP, leaving the guard to compare
+# against a namespace set smaller than the one the array really expands to. It
+# would then report parity for an app staged off in the base whose ExternalSecret
+# the post-reconcile reassertion still demands — the every-deploy failure this
+# guard exists to prevent. Reject the entry rather than guess at its value.
+while IFS= read -r fanout_line; do
+  [ -n "${fanout_line//[[:space:]]/}" ] || continue
+  fanout_residue="$(printf '%s' "$fanout_line" | sed 's/"[^"]*"//g; s/[[:space:]]//g')"
+  [ -z "$fanout_residue" ] ||
+    die "guard: FANOUT_NAMESPACES in $fanout_script has an entry this guard cannot parse (only \"double-quoted\" tokens are understood): ${fanout_line}"
+done <<<"$fanout_body"
+
+fanout_list="$(printf '%s\n' "$fanout_body" | grep -oE '"[^"]+"' | tr -d '"')"
 [ -n "$fanout_list" ] ||
   die "guard: FANOUT_NAMESPACES in $fanout_script parsed as EMPTY — refusing to report parity"
 

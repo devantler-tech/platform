@@ -3390,7 +3390,7 @@ process_talos_node_target() {
 
     # Talos' image API authenticates from machine config, not through the
     # kubelet's running CRI client. Before this freshly rebooted node can
-    # receive workloads, prove both private images through kubelet/containerd
+    # receive workloads, prove all three private images through kubelet/containerd
     # while the bridge-owned cordon is still in place.
     if [[ "${node_mode}" == "reboot" ]]; then
       for probe_image in "${RUNTIME_CREDENTIAL_PROBE_IMAGES[@]}"; do
