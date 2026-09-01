@@ -933,6 +933,352 @@ subjects:
 	}
 }
 
+// TestEKSAuthorizationSelectionIgnoresUnrelatedHelmReleases captures the
+// production failure that prompted the guard redesign: adding an independently
+// scoped controller must not require an opaque EKS CI authorization approval.
+// Helm-rendered RBAC is checked separately from the actual rendered children;
+// the HelmRelease declaration is not itself a path to the aws/aws identity.
+func TestEKSAuthorizationSelectionIgnoresUnrelatedHelmReleases(t *testing.T) {
+	documents, err := decodeDocuments([]byte(`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+  annotations:
+    security.devantler.tech/authorization-scope: isolated-chart
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: data-product-controller
+  values:
+    rbac:
+      create: true
+    registry:
+      publicURL: https://data-products.${domain}
+`))
+	if err != nil || len(documents) != 1 {
+		t.Fatalf("decode unrelated HelmRelease: documents=%d error=%v", len(documents), err)
+	}
+
+	if isAuthorizationResource(documents[0], identityOf(documents[0])) {
+		t.Fatal("unrelated HelmRelease joined the EKS CI authorization surface")
+	}
+	if isAuthorizationCapableDocument(documents[0], identityOf(documents[0])) {
+		t.Fatal("unrelated HelmRelease substitution joined the EKS CI authorization surface")
+	}
+}
+
+// TestValidateAuthorizationIsolationFailsClosed pins every precondition behind
+// the isolated-chart escape hatch. The annotation is not a bypass: it is valid
+// only for a namespace-local Helm release and its immutable public OCI source.
+func TestValidateAuthorizationIsolationFailsClosed(t *testing.T) {
+	const validHelmRelease = `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+  annotations:
+    security.devantler.tech/authorization-scope: isolated-chart
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: data-product-controller
+`
+	const validSource = `apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+  annotations:
+    security.devantler.tech/authorization-scope: isolated-chart
+spec:
+  url: oci://ghcr.io/devantler-tech/charts/data-product-controller
+  ref:
+    digest: sha256:6f941a096d16eb62bf2668be6e45eebc4dd481eec03e031f3fca8ca4b4db6598
+`
+
+	assertValid := func(name, manifest string) {
+		t.Helper()
+		documents, err := decodeDocuments([]byte(manifest))
+		if err != nil || len(documents) != 1 {
+			t.Fatalf("decode %s: documents=%d error=%v", name, len(documents), err)
+		}
+		if err := validateAuthorizationIsolation(documents[0], identityOf(documents[0])); err != nil {
+			t.Fatalf("validate %s: %v", name, err)
+		}
+	}
+	assertValid("HelmRelease", validHelmRelease)
+	assertValid("OCIRepository", validSource)
+
+	tests := []struct {
+		name     string
+		manifest string
+		// wantErr attributes the rejection to a named rule. Asserting only that
+		// some error occurred lets a fixture stay green while being refused by an
+		// unrelated branch, so removing the rule it targets would go unreported.
+		wantErr string
+	}{
+		{
+			name:    "protected namespace",
+			wantErr: "isolated-chart authorization scope is not reviewed for identity \"aws/data-product-controller\"",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"namespace: data-product-controller",
+				"namespace: aws",
+				1,
+			),
+		},
+		{
+			name:    "cross-namespace target",
+			wantErr: "isolated-chart HelmRelease must target only its own namespace",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"spec:\n",
+				"spec:\n  targetNamespace: aws\n",
+				1,
+			),
+		},
+		{
+			name:    "cross-namespace storage",
+			wantErr: "isolated-chart HelmRelease must store release metadata only in its own namespace",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"spec:\n",
+				"spec:\n  storageNamespace: aws\n",
+				1,
+			),
+		},
+		{
+			name:    "privileged reconciliation identity",
+			wantErr: "isolated-chart HelmRelease must not select a reconciliation service account",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"spec:\n",
+				"spec:\n  serviceAccountName: aws\n",
+				1,
+			),
+		},
+		{
+			name:    "RBAC post-renderer",
+			wantErr: "isolated-chart HelmRelease must not post-render authorization resources",
+			manifest: validHelmRelease + `  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: RoleBinding
+            patch: '{}'
+`,
+		},
+		{
+			name:    "floating source",
+			wantErr: "isolated-chart OCIRepository must use exactly one immutable sha256 digest",
+			manifest: strings.Replace(
+				validSource,
+				"  ref:\n    digest: sha256:6f941a096d16eb62bf2668be6e45eebc4dd481eec03e031f3fca8ca4b4db6598\n",
+				"  ref:\n    tag: latest\n",
+				1,
+			),
+		},
+		{
+			name:    "untrusted registry",
+			wantErr: "isolated-chart OCIRepository must use the reviewed public chart registry",
+			manifest: strings.Replace(
+				validSource,
+				"oci://ghcr.io/devantler-tech/charts/",
+				"oci://example.invalid/charts/",
+				1,
+			),
+		},
+		{
+			name:    "cross-cluster kubeconfig",
+			wantErr: "isolated-chart HelmRelease must not target another cluster",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"spec:\n",
+				"spec:\n  kubeConfig:\n    secretRef:\n      name: aws\n",
+				1,
+			),
+		},
+		{
+			name:    "cross-namespace chart reference",
+			wantErr: "isolated-chart HelmRelease must reference an OCIRepository in its own namespace",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"    name: data-product-controller\n",
+				"    name: data-product-controller\n    namespace: aws\n",
+				1,
+			),
+		},
+		{
+			name:    "non-OCIRepository chart reference",
+			wantErr: "isolated-chart HelmRelease must reference an OCIRepository",
+			manifest: strings.Replace(
+				validHelmRelease,
+				"    kind: OCIRepository\n",
+				"    kind: HelmChart\n",
+				1,
+			),
+		},
+		{
+			name:    "source secretRef",
+			wantErr: "isolated-chart OCIRepository must not configure secretRef",
+			manifest: strings.Replace(
+				validSource,
+				"spec:\n",
+				"spec:\n  secretRef:\n    name: aws\n",
+				1,
+			),
+		},
+		{
+			name:    "source certSecretRef",
+			wantErr: "isolated-chart OCIRepository must not configure certSecretRef",
+			manifest: strings.Replace(
+				validSource,
+				"spec:\n",
+				"spec:\n  certSecretRef:\n    name: aws\n",
+				1,
+			),
+		},
+		{
+			name:    "source proxySecretRef",
+			wantErr: "isolated-chart OCIRepository must not configure proxySecretRef",
+			manifest: strings.Replace(
+				validSource,
+				"spec:\n",
+				"spec:\n  proxySecretRef:\n    name: aws\n",
+				1,
+			),
+		},
+		{
+			name:    "source serviceAccountName",
+			wantErr: "isolated-chart OCIRepository must not configure serviceAccountName",
+			manifest: strings.Replace(
+				validSource,
+				"spec:\n",
+				"spec:\n  serviceAccountName: aws\n",
+				1,
+			),
+		},
+		{
+			name:    "unsupported annotated kind",
+			wantErr: "isolated-chart authorization scope is unsupported for kustomize.toolkit.fluxcd.io/v1/Kustomization",
+			manifest: `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+  annotations:
+    security.devantler.tech/authorization-scope: isolated-chart
+spec:
+  path: ./k8s
+`,
+		},
+		{
+			// Flux stores a post-renderer patch as a STRING, and Kustomize matches a
+			// target-less strategic-merge patch on the GVK and name inside that string.
+			// The map/list traversal never descends into a string leaf, so this shape
+			// reached the release with no target for the kind selector to catch.
+			name:    "target-less RBAC post-renderer patch body",
+			wantErr: "isolated-chart HelmRelease must not post-render authorization resources",
+			manifest: validHelmRelease + `  postRenderers:
+    - kustomize:
+        patches:
+          - patch: |
+              apiVersion: rbac.authorization.k8s.io/v1
+              kind: ClusterRole
+              metadata:
+                name: data-product-controller
+              rules:
+                - apiGroups: ['*']
+                  resources: ['*']
+                  verbs: ['*']
+`,
+		},
+		{
+			// The same bypass with a target present but naming an unprotected kind:
+			// the kind selector passes and the authorization object rides in the body.
+			name:    "RBAC post-renderer patch body behind an innocuous target",
+			wantErr: "isolated-chart HelmRelease must not post-render authorization resources",
+			manifest: validHelmRelease + `  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+            patch: |
+              apiVersion: rbac.authorization.k8s.io/v1
+              kind: ClusterRoleBinding
+              metadata:
+                name: data-product-controller
+              roleRef:
+                apiGroup: rbac.authorization.k8s.io
+                kind: ClusterRole
+                name: cluster-admin
+              subjects: []
+`,
+		},
+		{
+			// A patch string that does not parse as YAML cannot be inspected, so it
+			// must fail closed rather than pass for want of a decode.
+			name:    "undecodable post-renderer patch naming an authorization kind",
+			wantErr: "isolated-chart HelmRelease must not post-render authorization resources",
+			manifest: validHelmRelease + `  postRenderers:
+    - kustomize:
+        patches:
+          - patch: "kind: ClusterRole\n\tapiVersion: [rbac.authorization.k8s.io/v1"
+`,
+		},
+		{
+			// The declaration scan must not be defeated by an ordinary YAML comment
+			// on the kind line, which is a one-character edit away from the case above.
+			name:    "undecodable post-renderer patch with a commented authorization kind line",
+			wantErr: "isolated-chart HelmRelease must not post-render authorization resources",
+			manifest: validHelmRelease + `  postRenderers:
+    - kustomize:
+        patches:
+          - patch: "kind: ClusterRoleBinding # bind the controller\n\tapiVersion: [rbac.authorization.k8s.io/v1"
+`,
+		},
+		{
+			// The reviewed-identity allowlist, not a namespace denylist. Any chart
+			// outside the three denied namespaces could otherwise self-exempt from
+			// the production authorization rules by adding the annotation to itself.
+			name:    "isolated-chart declared by an unreviewed identity",
+			wantErr: "isolated-chart authorization scope is not reviewed for identity \"rogue/rogue\"",
+			manifest: `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: rogue
+  namespace: rogue
+  annotations:
+    security.devantler.tech/authorization-scope: isolated-chart
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: rogue
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			documents, err := decodeDocuments([]byte(tt.manifest))
+			if err != nil || len(documents) != 1 {
+				t.Fatalf("decode fixture: documents=%d error=%v", len(documents), err)
+			}
+			err = validateAuthorizationIsolation(documents[0], identityOf(documents[0]))
+			if err == nil {
+				t.Fatal("validateAuthorizationIsolation() error = nil, want fail-closed rejection")
+			}
+			if tt.wantErr == "" {
+				t.Fatal("fixture declares no wantErr, so the rejecting rule is unattributed")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateAuthorizationIsolation() error = %q, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // TestGrantsAuthorizationControlDetectsProtectedResourceWrites covers CRD mutation.
 func TestGrantsAuthorizationControlDetectsProtectedResourceWrites(t *testing.T) {
 	documents, err := decodeDocuments([]byte(`apiVersion: rbac.authorization.k8s.io/v1
@@ -1152,6 +1498,34 @@ func TestWorkflowValidatesAuthorizationBeforeMergeGroupDeploy(t *testing.T) {
 	with, _ := step["with"].(map[string]any)
 	if !strings.Contains(fmt.Sprint(with["job-results"]), "needs.validate-eks-authorization.result") {
 		t.Fatal("required-check aggregation omits validate-eks-authorization result")
+	}
+}
+
+// TestManifestValidationAppliesEffectiveAuthorizationRules keeps the generic
+// production RBAC boundary attached to both render paths. This is the layer
+// that inspects Helm chart children, which kubectl kustomize cannot see.
+func TestManifestValidationAppliesEffectiveAuthorizationRules(t *testing.T) {
+	const rulesPath = "scripts/tests/production-authorization-rules.yaml"
+	for _, configPath := range []string{"ksail.yaml", "ksail.prod.yaml"} {
+		contents, err := os.ReadFile(filepath.Join("..", "..", configPath)) //nolint:gosec // Explicit repository path.
+		if err != nil {
+			t.Fatalf("read %s: %v", configPath, err)
+		}
+		documents, err := decodeDocuments(contents)
+		if err != nil || len(documents) != 1 {
+			t.Fatalf("decode %s: documents=%d error=%v", configPath, len(documents), err)
+		}
+		validation, err := nestedMap(documents[0], "spec", "workload", "validation")
+		if err != nil {
+			t.Fatalf("%s: %v", configPath, err)
+		}
+		if got := fmt.Sprint(validation["rules"]); got != rulesPath {
+			t.Fatalf("%s validation rules = %q, want %q", configPath, got, rulesPath)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join("..", "..", rulesPath)); err != nil {
+		t.Fatalf("effective authorization rules are unavailable: %v", err)
 	}
 }
 

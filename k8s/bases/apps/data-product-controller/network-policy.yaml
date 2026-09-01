@@ -1,0 +1,12 @@
+# Keep a standard NetworkPolicy default-deny alongside the Cilium allow policy
+# so static scanners and non-Cilium fallback behavior see the namespace closed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: data-product-controller
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

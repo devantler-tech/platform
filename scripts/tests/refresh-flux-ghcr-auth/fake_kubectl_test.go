@@ -61,6 +61,8 @@ func fakeKubectlImplementation(args []string) int {
 	case containsSequence(args, "get", "pods") &&
 		flagValue(args, "--selector") == "app=kustomize-controller":
 		return fakeKubectlGetFluxControllerPods(namespace)
+	case containsSequence(args, "get", "namespace"):
+		return fakeKubectlGetNamespace(args)
 	case containsSequence(args, "get", "lease"):
 		return fakeKubectlGetSyncLease(args, namespace)
 	case containsSequence(args, "patch", "lease"):
@@ -125,6 +127,18 @@ func fakeKubectlImplementation(args []string) int {
 	}
 
 	return commandFailure(91, "unexpected kubectl invocation: %s", strings.Join(args, " "))
+}
+
+func fakeKubectlGetNamespace(args []string) int {
+	name := argumentAfter(args, "namespace")
+	if name == "" {
+		return commandFailure(91, "namespace name is required")
+	}
+	if containsArg(args, "--ignore-not-found") && name == os.Getenv("FAKE_MISSING_NAMESPACE") {
+		return 0
+	}
+	fmt.Printf("namespace/%s\n", name)
+	return 0
 }
 
 func fakeKubectlGetFluxPolicyKustomization(args []string, namespace string) int {
@@ -1330,6 +1344,9 @@ func fakeInventoryNode(
 }
 
 func fakeKubectlGetPods(args []string) int {
+	if containsSequence(args, "-o", "name") || containsArg(args, "-o=name") {
+		return fakeKubectlGetNamespaceWorkloads(args, flagValue(args, "--namespace"))
+	}
 	nodeName := flagValue(args, "--field-selector")
 	nodeName = strings.TrimPrefix(nodeName, "spec.nodeName=")
 	if nodeName == "" || (!containsSequence(args, "-o", "json") && !containsArg(args, "-o=json")) {
@@ -1986,7 +2003,9 @@ func fakeKubectlCreateRuntimeProbe(namespace, manifestFile string) int {
 	container, _ := containers[0].(map[string]any)
 	securityContext, _ := container["securityContext"].(map[string]any)
 	image, _ := container["image"].(string)
-	if (image != "ghcr.io/devantler-tech/wedding-app:latest" && image != "ghcr.io/devantler-tech/ascoachingogvaner:latest") ||
+	if (image != "ghcr.io/devantler-tech/data-product-controller:latest" &&
+		image != "ghcr.io/devantler-tech/wedding-app:latest" &&
+		image != "ghcr.io/devantler-tech/ascoachingogvaner:latest") ||
 		container["imagePullPolicy"] != "Always" || securityContext["allowPrivilegeEscalation"] != false {
 		return commandFailure(91, "runtime probe does not prove a private package pull")
 	}
@@ -2405,4 +2424,29 @@ func anySlice(value any) []any {
 	}
 	items, _ := value.([]any)
 	return items
+}
+
+// fakeKubectlGetNamespaceWorkloads models the workload probe the fan-out gate
+// uses to tell a brand-new consumer apart from an established one. A namespace
+// left behind by a failed candidate still runs nothing, so it reports empty
+// unless the fixture explicitly declares a running workload.
+//
+// A failed candidate can also leave a Pod OBJECT behind that never reached
+// Running (the ghcr-auth ExternalSecret it needed was missing, so its image
+// pull never succeeded). That pod is not a consumer whose pull credential this
+// staging step could break, so it is reported only when the probe asks for
+// every Pod rather than for running ones.
+func fakeKubectlGetNamespaceWorkloads(args []string, namespace string) int {
+	if namespace == "" {
+		return 0
+	}
+	if namespace == os.Getenv("FAKE_NAMESPACE_WITH_WORKLOAD") {
+		fmt.Printf("pod/%s-0\n", namespace)
+		return 0
+	}
+	if namespace == os.Getenv("FAKE_NAMESPACE_WITH_NONRUNNING_POD") &&
+		!strings.Contains(flagValue(args, "--field-selector"), "status.phase=Running") {
+		fmt.Printf("pod/%s-0\n", namespace)
+	}
+	return 0
 }

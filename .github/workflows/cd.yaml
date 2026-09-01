@@ -93,7 +93,7 @@ jobs:
   # shared deploy-prod action — that action runs inside the prod environment with
   # deploy secrets in scope, and a gate belongs before that, not inside it.
   validate-eks-authorization:
-    name: 🔐 Validate EKS Authorization
+    name: 🔐 Validate Production Authorization
     needs: [validate-pvc-prune-safety, validate-rgd-templates]
     runs-on: ubuntu-latest
     permissions:
@@ -125,10 +125,28 @@ jobs:
           sudo install "$kubectl_path" /usr/local/bin/kubectl
           kubectl version --client
 
-      - name: 🔐 Validate EKS authorization surface
+      - name: 🔐 Validate static production authorization controls
         run: |
           go test ./scripts/validate-eks-ci-role-policy
           go run ./scripts/validate-eks-ci-role-policy .
+
+      - name: ⚙️ Setup KSail for effective authorization validation
+        shell: bash
+        env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.180.0"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/setup-ksail.sh
+
+      - name: 🔐 Validate Helm-rendered production authorization controls
+        # Same reasoning as the identical step in ci.yaml: this reaches every
+        # upstream chart registry, so an unreachable registry would otherwise
+        # stall the step for the job's full budget instead of failing promptly.
+        timeout-minutes: 10
+        run: |
+          shellcheck scripts/tests/test-production-authorization-rules.sh
+          bash scripts/tests/test-production-authorization-rules.sh
+          ksail --config ksail.prod.yaml workload validate
 
   # Same reasoning as the authorization gate above, one property along. The
   # ordering contract — publish to an immutable staging reference, sign and
@@ -196,9 +214,43 @@ jobs:
       - name: 🔐 Validate shared publish workflows are pinned
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
+  # The apps-base component gate and FANOUT_NAMESPACES must agree, or the
+  # post-reconcile reassertion in deploy-prod (--reuse-runtime-proof, no
+  # exemption) marks the fan-out incomplete and FAILS THE DEPLOY (#3476).
+  #
+  # This is the manual recovery path for a direct push to main, which is exactly
+  # the case ci.yaml cannot cover: it gates the guard on `pull_request`, and
+  # validate-main.yaml runs it asynchronously AFTER a push, so it gates nothing.
+  # Without this job a dispatched deploy reconciles an apps-base/fan-out
+  # disagreement to production and the guard's verdict arrives too late to stop
+  # it — the same way leaving validate-eks-authorization out would have made this
+  # route the way around that gate.
+  validate-ghcr-fanout-component-gate:
+    name: 🔗 Validate GHCR Fan-out Component Gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🔗 Validate the GHCR fan-out follows the apps-base component gate
+        run: |
+          shellcheck scripts/guard-ghcr-fanout-component-gate.sh
+          shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+          bash scripts/guard-ghcr-fanout-component-gate.sh
+          bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+
   deploy-prod:
     name: 🚀 Deploy to Production
-    needs: [validate-eks-authorization, validate-publication-contract]
+    needs:
+      [
+        validate-eks-authorization,
+        validate-publication-contract,
+        validate-ghcr-fanout-component-gate,
+      ]
     runs-on: ubuntu-latest
     environment: prod
     permissions:

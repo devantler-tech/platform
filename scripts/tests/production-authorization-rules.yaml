@@ -1,0 +1,76 @@
+rules:
+  # The EKS CI role is assumed through this service account. Bindings that name
+  # it directly, through its canonical user name, or through a containing group
+  # must remain the one reviewed namespace-local grant.
+  - name: restrict-aws-service-account-bindings
+    expression: >-
+      !has(object.apiVersion) ||
+      object.apiVersion != 'rbac.authorization.k8s.io/v1' ||
+      !(object.kind in ['RoleBinding', 'ClusterRoleBinding']) ||
+      !has(object.subjects) ||
+      !object.subjects.exists(subject,
+        (subject.kind == 'ServiceAccount' &&
+         subject.name == 'aws' &&
+         ((has(subject.namespace) && subject.namespace == 'aws') ||
+          (!has(subject.namespace) &&
+           object.kind == 'RoleBinding' &&
+           has(object.metadata.namespace) &&
+           object.metadata.namespace == 'aws'))) ||
+        (subject.kind == 'User' &&
+         subject.name == 'system:serviceaccount:aws:aws') ||
+        (subject.kind == 'Group' &&
+         subject.name in [
+           'system:serviceaccounts:aws',
+           'system:serviceaccounts',
+           'system:authenticated'
+         ])) ||
+      (object.kind == 'RoleBinding' &&
+       has(object.metadata.namespace) &&
+       object.metadata.namespace == 'aws' &&
+       object.metadata.name == 'aws-managed-resources' &&
+       has(object.roleRef) &&
+       object.roleRef.apiGroup == 'rbac.authorization.k8s.io' &&
+       object.roleRef.kind == 'Role' &&
+       object.roleRef.name == 'aws-managed-resources' &&
+       object.subjects.size() == 1 &&
+       object.subjects[0].kind == 'ServiceAccount' &&
+       object.subjects[0].name == 'aws' &&
+       has(object.subjects[0].namespace) &&
+       object.subjects[0].namespace == 'aws')
+    message: >-
+      only RoleBinding/aws/aws-managed-resources may grant a role to the
+      aws/aws service account
+    severity: error
+
+  # Some infrastructure charts still require cluster-admin today. Naming the
+  # three measured exceptions turns additions into an explicit review event;
+  # it also inspects chart children the old Kustomize checksum could not see.
+  - name: reject-new-cluster-admin-bindings
+    expression: >-
+      !has(object.apiVersion) ||
+      object.apiVersion != 'rbac.authorization.k8s.io/v1' ||
+      !(object.kind in ['RoleBinding', 'ClusterRoleBinding']) ||
+      !has(object.roleRef) ||
+      object.roleRef.apiGroup != 'rbac.authorization.k8s.io' ||
+      object.roleRef.kind != 'ClusterRole' ||
+      object.roleRef.name != 'cluster-admin' ||
+      (object.kind == 'ClusterRoleBinding' &&
+       has(object.subjects) &&
+       object.subjects.size() == 1 &&
+       object.subjects[0].kind == 'ServiceAccount' &&
+       ((object.metadata.name == 'flux-operator' &&
+         object.subjects[0].name == 'flux-operator' &&
+         has(object.subjects[0].namespace) &&
+         object.subjects[0].namespace == 'flux-system') ||
+        (object.metadata.name == 'longhorn-support-bundle' &&
+         object.subjects[0].name == 'longhorn-support-bundle' &&
+         has(object.subjects[0].namespace) &&
+         object.subjects[0].namespace == 'longhorn-system') ||
+        (object.metadata.name == 'velero-server' &&
+         object.subjects[0].name == 'velero-server' &&
+         has(object.subjects[0].namespace) &&
+         object.subjects[0].namespace == 'velero')))
+    message: >-
+      a new cluster-admin binding is not part of the reviewed production
+      authorization contract
+    severity: error

@@ -153,13 +153,14 @@ KSAIL_OPERATOR_VERSION="$(yq -er '.spec.chart.spec.version' \
   k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml)"
 readonly KSAIL_OPERATOR_VERSION
 readonly KSAIL_OPERATOR_IMAGE="ghcr.io/devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
-# Both tenant release workflows create/update latest alongside every semver
-# artifact and image tag. Flux still selects the signed semver artifact; latest
-# is the stable read-permission/existence probe for the same private packages.
+# Private first-party release workflows create/update latest alongside every
+# semver image or artifact tag. Flux still selects immutable releases; latest is
+# the stable read-permission/existence probe for the same private packages.
 readonly -a REQUIRED_PULL_TARGETS=(
   "devantler-tech/platform/manifests:latest"
   "devantler-tech/wedding-app/manifests:latest"
   "devantler-tech/ascoachingogvaner/manifests:latest"
+  "devantler-tech/data-product-controller:latest"
   "devantler-tech/wedding-app:latest"
   "devantler-tech/ascoachingogvaner:latest"
   "devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
@@ -169,10 +170,20 @@ readonly -a REQUIRED_PULL_TARGETS=(
 # image (including KSail itself) can prove registry reachability but cannot
 # prove that containerd loaded a working credential.
 readonly -a RUNTIME_CREDENTIAL_PROBE_IMAGES=(
+  "ghcr.io/devantler-tech/data-product-controller:latest"
   "ghcr.io/devantler-tech/wedding-app:latest"
   "ghcr.io/devantler-tech/ascoachingogvaner:latest"
 )
 readonly -a FANOUT_NAMESPACES=(
+  # data-product-controller is staged off in k8s/bases/apps/kustomization.yaml,
+  # so production never reconciles data-product-controller/ghcr-auth and this
+  # entry must stay commented out while that gate is closed. Listing it anyway
+  # fails EVERY prod deploy: the pre-publish invocation defers a missing new
+  # consumer, but the post-reconcile reassertion runs with --reuse-runtime-proof
+  # and has no such exemption, so it marks the fan-out incomplete and exits 1.
+  # Uncomment this in the SAME change that enables the component in the apps
+  # base — scripts/guard-ghcr-fanout-component-gate.sh fails if the two disagree.
+  # "data-product-controller"
   "wedding-app"
   "ascoachingogvaner"
   "kyverno"
@@ -3379,7 +3390,7 @@ process_talos_node_target() {
 
     # Talos' image API authenticates from machine config, not through the
     # kubelet's running CRI client. Before this freshly rebooted node can
-    # receive workloads, prove both private images through kubelet/containerd
+    # receive workloads, prove all three private images through kubelet/containerd
     # while the bridge-owned cordon is still in place.
     if [[ "${node_mode}" == "reboot" ]]; then
       for probe_image in "${RUNTIME_CREDENTIAL_PROBE_IMAGES[@]}"; do
@@ -5257,6 +5268,7 @@ if ! kubectl \
 fi
 
 fanout_complete=true
+prepublish_fanout_namespaces=()
 if ! grep -qx 'pushsecrets.external-secrets.io' "${fanout_api_resources}" ||
   ! grep -qx 'externalsecrets.external-secrets.io' "${fanout_api_resources}"; then
   fanout_complete=false
@@ -5285,8 +5297,57 @@ else
       exit 1
     fi
     if [[ -z "${externalsecret_name}" ]]; then
+      # A new consumer cannot have its ExternalSecret until Flux is allowed to
+      # publish and reconcile the candidate that introduces it. Only the
+      # pre-publish staging invocation may omit such a target. The
+      # post-reconcile reassertion runs without this exemption and therefore
+      # proves the newly-created fan-out before the deployment can succeed.
+      #
+      # Namespace absence alone cannot decide this. A candidate that fails
+      # after its namespace is applied leaves that namespace behind, because
+      # app namespaces carry prune: disabled and the rollback cannot remove
+      # them. Keying the exemption on absence would then refuse every later
+      # attempt, deadlocking the very change that introduces the consumer.
+      # Defer while the namespace is absent or still runs no workload: neither
+      # state has a running consumer whose pull credential this staging step
+      # could break. A missing object in a namespace that already runs
+      # workloads is always an incomplete fan-out.
+      #
+      # The probe asks for RUNNING pods specifically. A candidate that failed
+      # before its ExternalSecret existed can leave a Pod object that never
+      # pulled its image - the missing pull credential is precisely why - and
+      # counting that object as a workload would deny the exemption on every
+      # retry, recreating the deadlock this exemption exists to prevent.
+      if [[ -n "${record_runtime_proof_path}" ]]; then
+        if ! namespace_name="$(kubectl \
+          --context "${KUBE_CONTEXT}" \
+          get namespace "${namespace}" \
+          --ignore-not-found \
+          -o name)"; then
+          echo "::error::Could not determine whether namespace ${namespace} exists; refusing to change root Flux auth."
+          exit 1
+        fi
+        namespace_workloads=""
+        if [[ -n "${namespace_name}" ]]; then
+          if ! namespace_workloads="$(kubectl \
+            --context "${KUBE_CONTEXT}" \
+            --namespace "${namespace}" \
+            get pods \
+            --field-selector=status.phase=Running \
+            -o name)"; then
+            echo "::error::Could not determine whether namespace ${namespace} runs a workload; refusing to change root Flux auth."
+            exit 1
+          fi
+        fi
+        if [[ -z "${namespace_name}" || -z "${namespace_workloads}" ]]; then
+          echo "::notice::Deferring new GHCR fan-out target ${namespace}/ghcr-auth until the candidate reconciles it; the post-reconcile reassertion remains mandatory."
+          continue
+        fi
+      fi
       fanout_complete=false
+      continue
     fi
+    prepublish_fanout_namespaces+=("${namespace}")
   done
 fi
 
@@ -5316,7 +5377,7 @@ stage_fanout_before_talos \
   "${pull_revision}" \
   "${KSAIL_OPERATOR_IMAGE}" \
   "${talos_stage_result_file}" \
-  "${FANOUT_NAMESPACES[@]}"
+  "${prepublish_fanout_namespaces[@]}"
 resume_flux_policy_handoff
 resume_flux_policy_parent
 

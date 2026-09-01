@@ -1574,6 +1574,9 @@ var exactPinnedHelmChartVersion = regexp.MustCompile(
 )
 
 var exactGitCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
+var exactSHA256Digest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+const authorizationIsolationAnnotation = "security.devantler.tech/authorization-scope"
 
 // commandExecutor makes the renderer orchestration independently testable
 // without weakening the production command and deadline contract.
@@ -2124,6 +2127,105 @@ func isControllerRBACEmitter(identity resourceIdentity) bool {
 	return strings.HasPrefix(identity.apiVersion, "pkg.crossplane.io/")
 }
 
+// authorizationIsolationRequested identifies the explicit reviewed contract
+// used by namespace-local charts whose effective RBAC is validated after Helm
+// rendering. Merely adding the annotation never makes it valid.
+func authorizationIsolationRequested(document map[string]any) bool {
+	metadata, ok := document["metadata"].(map[string]any)
+	if !ok {
+		return false
+	}
+	annotations, ok := metadata["annotations"].(map[string]any)
+	return ok && fmt.Sprint(annotations[authorizationIsolationAnnotation]) == "isolated-chart"
+}
+
+// reviewedIsolatedChartIdentities is the explicit allowlist of namespace/name
+// pairs whose isolated-chart declaration has been reviewed.
+//
+// A namespace denylist is not sufficient. Denying only "", "aws" and
+// "flux-system" leaves every other namespace able to exempt itself from the
+// production CEL authorization rules by adding the annotation to its own
+// manifest -- the resource declaring the scope is the same resource the scope
+// is granted to, so nothing outside this list constrains it. Adding an entry
+// here is a deliberate, reviewed act.
+var reviewedIsolatedChartIdentities = map[string]struct{}{
+	"data-product-controller/data-product-controller": {},
+}
+
+// validateAuthorizationIsolation fails closed on every precondition behind an
+// isolated-chart declaration. It is intentionally limited to a namespace-local
+// HelmRelease and its immutable public OCIRepository; the rendered chart
+// children remain subject to the production CEL authorization rules.
+func validateAuthorizationIsolation(document map[string]any, identity resourceIdentity) error {
+	if !authorizationIsolationRequested(document) {
+		return nil
+	}
+	if _, reviewed := reviewedIsolatedChartIdentities[identity.namespace+"/"+identity.name]; !reviewed {
+		return fmt.Errorf("isolated-chart authorization scope is not reviewed for identity %q", identity.namespace+"/"+identity.name)
+	}
+
+	spec, ok := document["spec"].(map[string]any)
+	if !ok {
+		return errors.New("isolated-chart resource must have an object spec")
+	}
+	optionalString := func(object map[string]any, key string) string {
+		value, exists := object[key]
+		if !exists || value == nil {
+			return ""
+		}
+		return fmt.Sprint(value)
+	}
+	switch {
+	case strings.HasPrefix(identity.apiVersion, "helm.toolkit.fluxcd.io/") && identity.kind == "HelmRelease":
+		if targetNamespace := optionalString(spec, "targetNamespace"); targetNamespace != "" && targetNamespace != identity.namespace {
+			return errors.New("isolated-chart HelmRelease must target only its own namespace")
+		}
+		if storageNamespace := optionalString(spec, "storageNamespace"); storageNamespace != "" && storageNamespace != identity.namespace {
+			return errors.New("isolated-chart HelmRelease must store release metadata only in its own namespace")
+		}
+		if serviceAccountName := optionalString(spec, "serviceAccountName"); serviceAccountName != "" {
+			return errors.New("isolated-chart HelmRelease must not select a reconciliation service account")
+		}
+		if _, hasKubeConfig := spec["kubeConfig"]; hasKubeConfig {
+			return errors.New("isolated-chart HelmRelease must not target another cluster")
+		}
+		chartRef, ok := spec["chartRef"].(map[string]any)
+		if !ok || fmt.Sprint(chartRef["kind"]) != "OCIRepository" || fmt.Sprint(chartRef["name"]) == "" {
+			return errors.New("isolated-chart HelmRelease must reference an OCIRepository")
+		}
+		if chartNamespace := optionalString(chartRef, "namespace"); chartNamespace != "" && chartNamespace != identity.namespace {
+			return errors.New("isolated-chart HelmRelease must reference an OCIRepository in its own namespace")
+		}
+		if containsAuthorizationKind(spec["postRenderers"]) ||
+			containsEmbeddedAuthorizationTemplate(spec["postRenderers"], 0) {
+			return errors.New("isolated-chart HelmRelease must not post-render authorization resources")
+		}
+		return nil
+
+	case strings.HasPrefix(identity.apiVersion, "source.toolkit.fluxcd.io/") && identity.kind == "OCIRepository":
+		url := fmt.Sprint(spec["url"])
+		if !strings.HasPrefix(url, "oci://ghcr.io/devantler-tech/charts/") {
+			return errors.New("isolated-chart OCIRepository must use the reviewed public chart registry")
+		}
+		ref, ok := spec["ref"].(map[string]any)
+		if !ok || requireExactKeys(ref, "digest") != nil || !exactSHA256Digest.MatchString(fmt.Sprint(ref["digest"])) {
+			return errors.New("isolated-chart OCIRepository must use exactly one immutable sha256 digest")
+		}
+		for _, key := range []string{"secretRef", "certSecretRef", "proxySecretRef", "serviceAccountName"} {
+			if _, exists := spec[key]; exists {
+				return fmt.Errorf("isolated-chart OCIRepository must not configure %s", key)
+			}
+		}
+		return nil
+	}
+
+	return fmt.Errorf("isolated-chart authorization scope is unsupported for %s/%s", identity.apiVersion, identity.kind)
+}
+
+func isAuthorizationIsolated(document map[string]any, identity resourceIdentity) bool {
+	return authorizationIsolationRequested(document) && validateAuthorizationIsolation(document, identity) == nil
+}
+
 // isCurrentKyvernoMutationPolicy recognizes the non-legacy Kyverno resources
 // that can generate or mutate objects using CEL-based policy APIs.
 func isCurrentKyvernoMutationPolicy(identity resourceIdentity) bool {
@@ -2182,17 +2284,58 @@ func kindSelectorIncludesAuthorization(value any) bool {
 	return false
 }
 
-// containsAuthorizationKind finds protected kinds inside Kyverno match and
-// target shapes, including Flux sources and controller package resources.
-func containsAuthorizationKind(value any) bool {
-	switch typedValue := value.(type) {
-	case []any:
-		for _, item := range typedValue {
-			switch item.(type) {
-			case []any, map[string]any:
-				if containsAuthorizationKind(item) {
+// maxEmbeddedTextDepth bounds how many times a string leaf may be decoded into
+// a further document. Real manifests nest once — a post-renderer patch string
+// holding one YAML document — so the bound only guards against a pathological
+// input; beyond it the declaration scan still applies, so deep nesting fails
+// closed rather than escaping inspection.
+const maxEmbeddedTextDepth = 4
+
+// embeddedAuthorizationKindDeclaration matches a `kind:` line naming an RBAC
+// kind. It backs the fail-closed scan for a string that does not parse, where
+// there is no decoded `kind` key to test. It deliberately requires the `kind:`
+// key rather than the bare word, so prose that merely mentions a role is not
+// mistaken for a declaration.
+var embeddedAuthorizationKindDeclaration = regexp.MustCompile(
+	`(?m)^[\t ]*kind[\t ]*:[\t ]*["']?(ClusterRoleBinding|ClusterRole|RoleBinding|Role)["']?[\t ]*(#.*)?$`,
+)
+
+// textDeclaresAuthorizationKind inspects a string leaf. Flux stores a
+// post-renderer patch as a string, and Kustomize matches a target-less
+// strategic-merge patch on the GVK and name inside that string, so a string
+// leaf can introduce an authorization object with no map for a kind selector to
+// catch. Decode it and test the real `kind`; when it does not parse — or when
+// nesting exceeds the bound — there is nothing left to decode, so fall back to
+// the declaration scan and fail closed rather than pass for want of a decode.
+func textDeclaresAuthorizationKind(text string, textDepth int) bool {
+	if textDepth < maxEmbeddedTextDepth {
+		if documents, err := decodeDocuments([]byte(text)); err == nil {
+			for _, document := range documents {
+				if containsAuthorizationKindAtDepth(document, textDepth) {
 					return true
 				}
+			}
+			return false
+		}
+	}
+	return embeddedAuthorizationKindDeclaration.MatchString(text)
+}
+
+// containsAuthorizationKind finds protected kinds inside Kyverno match and
+// target shapes, including Flux sources and controller package resources, and
+// inside string leaves that carry an embedded document.
+func containsAuthorizationKind(value any) bool {
+	return containsAuthorizationKindAtDepth(value, 0)
+}
+
+func containsAuthorizationKindAtDepth(value any, textDepth int) bool {
+	switch typedValue := value.(type) {
+	case string:
+		return textDeclaresAuthorizationKind(typedValue, textDepth+1)
+	case []any:
+		for _, item := range typedValue {
+			if containsAuthorizationKindAtDepth(item, textDepth) {
+				return true
 			}
 		}
 	case map[string]any:
@@ -2200,11 +2343,8 @@ func containsAuthorizationKind(value any) bool {
 			if (key == "kind" || key == "kinds") && kindSelectorIncludesAuthorization(item) {
 				return true
 			}
-			switch item.(type) {
-			case []any, map[string]any:
-				if containsAuthorizationKind(item) {
-					return true
-				}
+			if containsAuthorizationKindAtDepth(item, textDepth) {
+				return true
 			}
 		}
 	}
@@ -2353,8 +2493,8 @@ func isAuthorizationCapableDocument(document map[string]any, identity resourceId
 		return true
 	}
 	if identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" && identity.kind == "Kustomization" ||
-		isFluxSourceResource(identity) ||
-		isControllerRBACEmitter(identity) ||
+		(isFluxSourceResource(identity) || isControllerRBACEmitter(identity)) &&
+			!isAuthorizationIsolated(document, identity) ||
 		isCurrentKyvernoMutationPolicy(identity) ||
 		isLegacyKyvernoPolicy(identity) {
 		return true
@@ -2384,8 +2524,8 @@ func isAuthorizationResource(
 	}
 	if isIndirectAuthorizationPolicy(document, identity) ||
 		isCurrentKyvernoMutationPolicy(identity) ||
-		isFluxSourceResource(identity) ||
-		isControllerRBACEmitter(identity) {
+		(isFluxSourceResource(identity) || isControllerRBACEmitter(identity)) &&
+			!isAuthorizationIsolated(document, identity) {
 		return true
 	}
 	if containsEmbeddedAuthorizationTemplate(document, 0) {
@@ -2686,6 +2826,9 @@ func validateRendered(rendered []byte) error {
 	substitutionProblems := make([]error, 0)
 	for _, document := range documents {
 		identity := identityOf(document)
+		if isolationErr := validateAuthorizationIsolation(document, identity); isolationErr != nil {
+			problems = append(problems, fmt.Errorf("invalid authorization isolation for %+v: %w", identity, isolationErr))
+		}
 		if sourceErr := validatePinnedUnifiSource(document, identity); sourceErr != nil {
 			problems = append(problems, sourceErr)
 		}

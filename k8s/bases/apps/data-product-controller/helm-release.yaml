@@ -1,0 +1,123 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+  annotations:
+    security.devantler.tech/authorization-scope: isolated-chart
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  timeout: 10m
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  chartRef:
+    kind: OCIRepository
+    name: data-product-controller
+  values:
+    image:
+      repository: ghcr.io/devantler-tech/data-product-controller
+      tag: 1.0.2
+      digest: sha256:ce5d5a61b5e9e38b6ae8ed838ddc6e055977a145c9c14fb67f572ffb88e82b56
+      pullPolicy: IfNotPresent
+    registryUI:
+      enabled: true
+    route:
+      enabled: true
+      host: data-products.${domain}
+      parentRef:
+        name: platform
+        namespace: kube-system
+        sectionName: https
+    controller:
+      replicas: 2
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+    demoProduct:
+      enabled: true
+      replicas: 2
+      resources:
+        requests:
+          cpu: 10m
+          memory: 24Mi
+        limits:
+          memory: 64Mi
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: data-product-controller
+            patch: |
+              - op: add
+                path: /spec/template/spec/imagePullSecrets
+                value:
+                  - name: ghcr-auth
+              - op: add
+                path: /spec/template/spec/topologySpreadConstraints
+                value:
+                  - maxSkew: 1
+                    topologyKey: kubernetes.io/hostname
+                    whenUnsatisfiable: ScheduleAnyway
+                    labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/name: data-product-controller
+                        app.kubernetes.io/instance: data-product-controller
+                        app.kubernetes.io/component: controller
+          - target:
+              kind: Deployment
+              name: data-product-controller-harbour
+            patch: |
+              - op: add
+                path: /spec/template/spec/imagePullSecrets
+                value:
+                  - name: ghcr-auth
+              - op: add
+                path: /spec/template/spec/topologySpreadConstraints
+                value:
+                  - maxSkew: 1
+                    topologyKey: kubernetes.io/hostname
+                    whenUnsatisfiable: ScheduleAnyway
+                    labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/name: data-product-controller
+                        app.kubernetes.io/instance: data-product-controller
+                        app.kubernetes.io/component: harbour-product
+          - target:
+              kind: HTTPRoute
+              name: data-product-controller
+            patch: |
+              - op: add
+                path: /metadata/annotations
+                value:
+                  gethomepage.dev/enabled: "true"
+                  gethomepage.dev/name: Data Products
+                  gethomepage.dev/description: Discover and explore composable data products.
+                  gethomepage.dev/group: Analytics
+                  gethomepage.dev/icon: mdi-database-search
+                  gethomepage.dev/href: https://data-products.${domain}
+                  gethomepage.dev/pod-selector: app.kubernetes.io/component=controller
+              - op: add
+                path: /spec/rules/0/filters/-
+                value:
+                  type: ResponseHeaderModifier
+                  responseHeaderModifier:
+                    set:
+                      - name: Strict-Transport-Security
+                        value: max-age=63072000; includeSubDomains; preload
+              - op: add
+                path: /spec/rules/1/filters
+                value:
+                  - type: ResponseHeaderModifier
+                    responseHeaderModifier:
+                      set:
+                        - name: Strict-Transport-Security
+                          value: max-age=63072000; includeSubDomains; preload

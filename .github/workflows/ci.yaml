@@ -325,7 +325,14 @@ jobs:
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-crossplane-provider-name-parity.sh'
               - 'scripts/tests/test-guard-crossplane-provider-name-parity.sh'
+              # Both halves, for the same reason as the guards above. This guard
+              # also reads scripts/refresh-flux-ghcr-auth.sh, already selected
+              # below, and k8s/bases/apps/kustomization.yaml, covered by 'k8s/**'.
+              - 'scripts/guard-ghcr-fanout-component-gate.sh'
+              - 'scripts/tests/test-guard-ghcr-fanout-component-gate.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
+              - 'scripts/tests/production-authorization-rules.yaml'
+              - 'scripts/tests/test-production-authorization-rules.sh'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
               - 'scripts/tests/validate-alert-coverage/**'
@@ -513,7 +520,7 @@ jobs:
           echo "=> the check above is not vacuous"
 
   validate-eks-authorization:
-    name: 🔐 Validate EKS Authorization
+    name: 🔐 Validate Production Authorization
     needs: [changes]
     if: >-
       needs.changes.outputs.k8s == 'true' &&
@@ -548,12 +555,37 @@ jobs:
           sudo install "$kubectl_path" /usr/local/bin/kubectl
           kubectl version --client
 
-      - name: 🔐 Validate EKS authorization surface
-        # The Go validator pins source, rendered, indirect, and substituted
-        # authorization before either a PR or merge-group commit may proceed.
+      - name: 🔐 Validate static production authorization controls
+        # The Go validator pins the EKS CI role and the authored authorization
+        # graph before either a PR or merge-group commit may proceed.
         run: |
           go test ./scripts/validate-eks-ci-role-policy
           go run ./scripts/validate-eks-ci-role-policy .
+
+      - name: ⚙️ Setup KSail for effective authorization validation
+        shell: bash
+        env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.180.0"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/setup-ksail.sh
+
+      - name: 🔐 Validate the production authorization rule suite
+        # Split from the render below so the job summary attributes a failure to
+        # the rule suite rather than to an unreachable chart registry.
+        run: |
+          shellcheck scripts/tests/test-production-authorization-rules.sh
+          bash scripts/tests/test-production-authorization-rules.sh
+
+      - name: 🔐 Validate Helm-rendered production authorization controls
+        # KSail renders chart children before evaluating the CEL rules, closing
+        # the visibility gap in kubectl kustomize's HelmRelease-only output.
+        #
+        # This reaches every upstream chart registry, and the job gates
+        # deploy-prod, so an unreachable registry would otherwise hang a
+        # required check and hold the merge queue for the job's full budget.
+        timeout-minutes: 10
+        run: ksail --config ksail.prod.yaml workload validate
 
   validate:
     name: 🧪 Validate Manifests
@@ -1033,6 +1065,27 @@ jobs:
         run: |
           bash scripts/guard-crossplane-provider-name-parity.sh k8s
           bash scripts/tests/test-guard-crossplane-provider-name-parity.sh
+
+      - name: 🔗 Validate the GHCR fan-out follows the apps-base component gate
+        if: needs.changes.outputs.k8s == 'true'
+        # An app that pulls private first-party images is declared twice: enabled
+        # in k8s/bases/apps/kustomization.yaml, and listed in FANOUT_NAMESPACES so
+        # the post-reconcile reassertion proves its pull credential arrived. Two
+        # hand-edited files, one switch, and nothing made them agree.
+        #
+        # The expensive direction is staging a component OFF and leaving it
+        # listed. The pre-publish invocation defers a missing new consumer
+        # (--record-runtime-proof), but the reassertion in deploy-prod runs with
+        # --reuse-runtime-proof and has no such exemption, so it marks the
+        # fan-out incomplete and FAILS EVERY OTHERWISE-SUCCESSFUL DEPLOY. Nothing
+        # else catches it: the manifests build, CI is green, and the failure only
+        # appears on the next production deploy. That is exactly what staging the
+        # data-product-controller off introduced (#3476).
+        run: |
+          shellcheck scripts/guard-ghcr-fanout-component-gate.sh
+          shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+          bash scripts/guard-ghcr-fanout-component-gate.sh
+          bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
 
       - name: 📐 Validate LimitRange-premised suppressions actually have a LimitRange
         if: needs.changes.outputs.k8s == 'true'
@@ -1555,6 +1608,36 @@ jobs:
           shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
           bash scripts/tests/test-rgd-template-static-scan.sh
 
+  validate-ghcr-fanout-merge-group:
+    name: 🔗 Validate GHCR Fan-out Component Gate (merge group)
+    needs: [changes]
+    # Same reason as the RGD job above: the PR job proves the proposed head, but
+    # production deploys the speculative merge-group revision. This guard is what
+    # stands between an enabled-but-unlisted consumer and a post-reconcile
+    # reassertion that FAILS EVERY SUBSEQUENT DEPLOY, and the pull_request-only
+    # invocation cannot see a mismatch main inherited from a direct push. cd.yaml
+    # already gates its manual deploy on this guard (validate-ghcr-fanout-component-gate);
+    # the merge queue is the path that actually deploys, so it needs the same
+    # prerequisite rather than a weaker one.
+    if: >-
+      github.event_name == 'merge_group' &&
+      needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🔗 Validate the GHCR fan-out follows the apps-base component gate
+        run: |
+          shellcheck scripts/guard-ghcr-fanout-component-gate.sh
+          shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+          bash scripts/guard-ghcr-fanout-component-gate.sh
+          bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+
   deploy-prod:
     name: 🚀 Deploy to Prod
     needs:
@@ -1563,6 +1646,7 @@ jobs:
         validate-eks-authorization,
         validate-publication-contract,
         validate-rgd-templates-merge-group,
+        validate-ghcr-fanout-merge-group,
       ]
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
@@ -1705,6 +1789,7 @@ jobs:
         naming,
         validate-talos,
         validate-rgd-templates-merge-group,
+        validate-ghcr-fanout-merge-group,
         deploy-prod,
       ]
     if: always()
@@ -1722,4 +1807,5 @@ jobs:
             ${{ needs.naming.result }}
             ${{ needs.validate-talos.result }}
             ${{ needs.validate-rgd-templates-merge-group.result }}
+            ${{ needs.validate-ghcr-fanout-merge-group.result }}
             ${{ needs.deploy-prod.result }}

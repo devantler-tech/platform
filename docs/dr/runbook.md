@@ -637,10 +637,11 @@ machine/autoscaler template.
 The production deploy closes the bootstrap loop in this order:
 
 1. Decrypt only `ghcr_dockerconfigjson` and perform real OCI manifest reads for
-   all seven private consumers: Platform manifests, both tenant manifest
-   artifacts, both tenant application images, and the KSail plus
-   provider-upjet-unifi packages used by Kyverno verification. During DR, a
-   read-only `--check-only` pass happens before infrastructure creation.
+   all eight private consumers: Platform manifests, both tenant manifest
+   artifacts, the data-product-controller image, both tenant application
+   images, and the KSail plus provider-upjet-unifi packages used by Kyverno
+   verification. During DR, a read-only `--check-only` pass happens before
+   infrastructure creation.
 2. Before changing mutable `latest`, list every Kubernetes Node (including
    NotReady/autoscaled nodes). For each node whose **verified** ciphertext
    revision or verified image differs from the declared incoming KSail image,

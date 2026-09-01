@@ -151,7 +151,7 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 	// rather than fixing quietly.
 	for name, ablate := range map[string]func(string, string) (string, string){
 		"unwired": func(w, a string) (string, string) {
-			return strings.Replace(w, ", validate-publication-contract]", "]", 1), a
+			return strings.Replace(w, "        validate-publication-contract,\n", "", 1), a
 		},
 		"gate job removed": func(w, a string) (string, string) {
 			return strings.Replace(w, "  validate-publication-contract:", "  unrelated-job:", 1), a
@@ -187,8 +187,11 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 		"needs deleted while a heredoc still contains the text": func(w, a string) (string, string) {
 			return strings.Replace(
 				w,
-				"    needs: [validate-eks-authorization, validate-publication-contract]",
-				"    needs: [validate-eks-authorization]\n    env:\n      NOTE: \"needs: [validate-publication-contract]\"",
+				"    needs:\n      [\n        validate-eks-authorization,\n"+
+					"        validate-publication-contract,\n"+
+					"        validate-ghcr-fanout-component-gate,\n      ]",
+				"    needs: [validate-eks-authorization, validate-ghcr-fanout-component-gate]\n"+
+					"    env:\n      NOTE: \"needs: [validate-publication-contract]\"",
 				1,
 			), a
 		},
@@ -198,8 +201,8 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 		"deploy carries a job-level condition that survives a failed gate": func(w, a string) (string, string) {
 			return strings.Replace(
 				w,
-				"    needs: [validate-eks-authorization, validate-publication-contract]",
-				"    needs: [validate-eks-authorization, validate-publication-contract]\n    if: always()",
+				"        validate-ghcr-fanout-component-gate,\n      ]",
+				"        validate-ghcr-fanout-component-gate,\n      ]\n    if: always()",
 				1,
 			), a
 		},
@@ -1553,12 +1556,14 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
         validate-eks-authorization,
         validate-publication-contract,
         validate-rgd-templates-merge-group,
+        validate-ghcr-fanout-merge-group,
       ]`
 		deployNeedsWithoutGate = `    needs:
       [
         changes,
         validate-eks-authorization,
         validate-rgd-templates-merge-group,
+        validate-ghcr-fanout-merge-group,
       ]`
 		healNeeds = "    needs: [changes, deploy-prod, validate-publication-contract]"
 	)

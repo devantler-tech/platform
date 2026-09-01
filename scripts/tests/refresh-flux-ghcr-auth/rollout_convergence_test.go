@@ -287,14 +287,16 @@ func TestRevokedPreviousCredentialBootstrapsThroughEmptyWorker(t *testing.T) {
 	seedDrain := lineIndex(t, operations, "node-drain:prod-worker-2")
 	seedReboot := lineIndex(t, operations, "talos-reboot:10.0.0.5")
 	seedPull := lineIndex(t, operations, "talos-pull:10.0.0.5:"+ksailTargetImage)
+	seedDataProductProbe := lineIndex(t, operations, "runtime-probe-success:prod-worker-2:ghcr.io/devantler-tech/data-product-controller:latest")
 	seedWeddingProbe := lineIndex(t, operations, "runtime-probe-success:prod-worker-2:ghcr.io/devantler-tech/wedding-app:latest")
 	seedCoachingProbe := lineIndex(t, operations, "runtime-probe-success:prod-worker-2:ghcr.io/devantler-tech/ascoachingogvaner:latest")
 	seedRelease := lineIndex(t, operations, "node-uncordon:prod-worker-2")
 	firstWorkloadDrain := lineIndex(t, operations, "node-drain:prod-worker-1")
 	if seedDrain >= seedReboot || seedReboot >= seedPull ||
-		seedPull >= seedWeddingProbe || seedWeddingProbe >= seedCoachingProbe ||
+		seedPull >= seedDataProductProbe || seedDataProductProbe >= seedWeddingProbe ||
+		seedWeddingProbe >= seedCoachingProbe ||
 		seedCoachingProbe >= seedRelease || seedRelease >= firstWorkloadDrain {
-		t.Fatalf("unsafe bootstrap ordering: seed drain=%d reboot=%d Talos pull=%d runtime probes=(%d,%d) release=%d workload drain=%d", seedDrain, seedReboot, seedPull, seedWeddingProbe, seedCoachingProbe, seedRelease, firstWorkloadDrain)
+		t.Fatalf("unsafe bootstrap ordering: seed drain=%d reboot=%d Talos pull=%d runtime probes=(%d,%d,%d) release=%d workload drain=%d", seedDrain, seedReboot, seedPull, seedDataProductProbe, seedWeddingProbe, seedCoachingProbe, seedRelease, firstWorkloadDrain)
 	}
 	for _, nodeName := range []string{
 		"prod-worker-1",
@@ -799,7 +801,7 @@ func TestFluxPolicyHandoffSuspendsOwningReconcileAcrossRuntimeProof(t *testing.T
 	firstRuntimeProbe := lineIndex(
 		t,
 		operations,
-		"runtime-probe-success:prod-control-plane-2:ghcr.io/devantler-tech/wedding-app:latest",
+		"runtime-probe-success:prod-control-plane-2:ghcr.io/devantler-tech/data-product-controller:latest",
 	)
 	rootPatch := lineIndex(t, operations, "root-patch")
 	resume := lineIndex(t, operations, "flux-policy-resume:infrastructure")
@@ -1297,7 +1299,7 @@ func TestStaleImageVerificationWebhookBudgetIsStagedBeforeRuntimeProbe(t *testin
 	firstRuntimeProbe := lineIndex(
 		t,
 		operations,
-		"runtime-probe-success:prod-control-plane-2:ghcr.io/devantler-tech/wedding-app:latest",
+		"runtime-probe-success:prod-control-plane-2:ghcr.io/devantler-tech/data-product-controller:latest",
 	)
 	if dryRun >= appApply ||
 		appApply >= consolidatedReady ||
@@ -1415,7 +1417,7 @@ func TestValidationOnlyImageVerificationWebhookConverges(t *testing.T) {
 	firstRuntimeProbe := lineIndex(
 		t,
 		operations,
-		"runtime-probe-success:prod-control-plane-2:ghcr.io/devantler-tech/wedding-app:latest",
+		"runtime-probe-success:prod-control-plane-2:ghcr.io/devantler-tech/data-product-controller:latest",
 	)
 	if consolidatedReady >= ksailDelete || ksailDelete >= webhookReady || webhookReady >= firstRuntimeProbe {
 		t.Fatalf(
@@ -1589,8 +1591,8 @@ func TestRuntimeProbeSurvivesThreeConsecutiveAdmissionTimeouts(t *testing.T) {
 		f.syncStateDir,
 		"runtime-probe-create-timeout-count-prod-control-plane-2",
 	)))
-	if attempts != "5" {
-		t.Fatalf("runtime probe create attempts = %s, want 5", attempts)
+	if attempts != "6" {
+		t.Fatalf("runtime probe create attempts = %s, want 6", attempts)
 	}
 	operations := readLines(f.operationLog)
 	requireLine(t, operations, "node-drain:prod-worker-1")
@@ -1608,10 +1610,10 @@ func TestRuntimeProbeReusesPersistedPodAfterAmbiguousAdmissionTimeout(t *testing
 		f.syncStateDir,
 		"runtime-probe-create-attempts-prod-control-plane-2",
 	)))
-	// This node receives one probe per private image. A third create would mean
+	// This node receives one probe per private image. A fourth create would mean
 	// the first, already-persisted Pod was retried instead of reused.
-	if attempts != "2" {
-		t.Fatalf("persisted runtime probe create attempts = %s, want 2", attempts)
+	if attempts != "3" {
+		t.Fatalf("persisted runtime probe create attempts = %s, want 3", attempts)
 	}
 	staleProbes, err := filepath.Glob(filepath.Join(
 		f.syncStateDir,
@@ -1641,6 +1643,7 @@ func TestRuntimeProbePersistentAdmissionTimeoutFailsClosed(t *testing.T) {
 func TestEachPrivateRuntimePackageACLMustPass(t *testing.T) {
 	t.Parallel()
 	for _, image := range []string{
+		"ghcr.io/devantler-tech/data-product-controller:latest",
 		"ghcr.io/devantler-tech/wedding-app:latest",
 		"ghcr.io/devantler-tech/ascoachingogvaner:latest",
 	} {

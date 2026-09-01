@@ -440,6 +440,41 @@ func TestPartialFanoutFailsClosedWithoutBootstrapMode(t *testing.T) {
 	requireWrapperPathExists(t, f.fanoutLog, false)
 }
 
+func TestFirstDeployStagesExistingFanoutBeforeNewConsumerNamespaceExists(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(
+		validConfig(),
+		[]string{"--record-runtime-proof", f.workspace + "/runtime-proof.json"},
+		map[string]string{
+			"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/ascoachingogvaner/ghcr-auth",
+			"FAKE_MISSING_NAMESPACE":       "ascoachingogvaner",
+		},
+	)
+
+	requireWrapperExitCode(t, result, 0)
+	requireWrapperPathExists(t, f.patchCapture, true)
+	requireWrapperPathExists(t, f.variablesPatchCapture, true)
+	fanout := mustRead(f.fanoutLog)
+	requireContains(t, fanout, "externalsecret/wedding-app/ghcr-auth")
+	requireContains(t, fanout, "externalsecret/kyverno/ghcr-auth")
+	requireNotContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
+}
+
+func TestAbsentFanoutNamespaceFailsOutsidePrepublishStage(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/ascoachingogvaner/ghcr-auth",
+		"FAKE_MISSING_NAMESPACE":       "ascoachingogvaner",
+	})
+
+	if result.exitCode == 0 {
+		t.Fatalf("absent fanout namespace unexpectedly succeeded outside pre-publish staging")
+	}
+	requireWrapperPathExists(t, f.variablesPatchCapture, false)
+	requireWrapperPathExists(t, f.patchCapture, false)
+	requireWrapperPathExists(t, f.fanoutLog, false)
+}
+
 func TestMissingESOCRDsFailsWithoutStagingVariables(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_FANOUT_CRDS_ABSENT": "true"})
@@ -499,4 +534,65 @@ func TestMaterialisedConsumerMismatchIsNotHidden(t *testing.T) {
 	requireContains(t, result.stdout+result.stderr, "wedding-app/ghcr-auth did not materialise")
 	requireWrapperPathExists(t, f.patchCapture, false)
 	requireWrapperSecretAbsent(t, result, "fixture-secret-token")
+}
+
+func TestFirstDeployStagesNewConsumerWhoseNamespaceSurvivedAFailedAttempt(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(
+		validConfig(),
+		[]string{"--record-runtime-proof", f.workspace + "/runtime-proof.json"},
+		map[string]string{
+			"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/ascoachingogvaner/ghcr-auth",
+		},
+	)
+
+	requireWrapperExitCode(t, result, 0)
+	requireWrapperPathExists(t, f.patchCapture, true)
+	requireWrapperPathExists(t, f.variablesPatchCapture, true)
+	fanout := mustRead(f.fanoutLog)
+	requireContains(t, fanout, "externalsecret/wedding-app/ghcr-auth")
+	requireContains(t, fanout, "externalsecret/kyverno/ghcr-auth")
+	requireNotContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
+}
+
+func TestPrepublishStagingStillFailsClosedForAnEstablishedConsumer(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(
+		validConfig(),
+		[]string{"--record-runtime-proof", f.workspace + "/runtime-proof.json"},
+		map[string]string{
+			"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/kyverno/ghcr-auth",
+			"FAKE_NAMESPACE_WITH_WORKLOAD": "kyverno",
+		},
+	)
+
+	if result.exitCode == 0 {
+		t.Fatalf("an established consumer missing its ghcr-auth unexpectedly passed pre-publish staging")
+	}
+	requireWrapperPathExists(t, f.variablesPatchCapture, false)
+	requireWrapperPathExists(t, f.patchCapture, false)
+}
+
+// A failed candidate that got as far as creating its workload leaves a Pod
+// object behind that never reached Running, because the ghcr-auth
+// ExternalSecret it needed is exactly what is missing. Keying the exemption on
+// Pod existence would let that leftover deny every retry, deadlocking the very
+// change that introduces the consumer - the same deadlock namespace-presence
+// keying caused, one level down.
+func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftANonRunningPod(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(
+		validConfig(),
+		[]string{"--record-runtime-proof", f.workspace + "/runtime-proof.json"},
+		map[string]string{
+			"FAKE_MISSING_FANOUT_RESOURCE":       "externalsecret/ascoachingogvaner/ghcr-auth",
+			"FAKE_NAMESPACE_WITH_NONRUNNING_POD": "ascoachingogvaner",
+		},
+	)
+
+	requireWrapperExitCode(t, result, 0)
+	requireWrapperPathExists(t, f.patchCapture, true)
+	requireWrapperPathExists(t, f.variablesPatchCapture, true)
+	fanout := mustRead(f.fanoutLog)
+	requireNotContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
 }

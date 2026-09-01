@@ -35,7 +35,7 @@ concurrency:
 
 jobs:
   validate-eks-authorization:
-    name: 🔐 Validate EKS Authorization
+    name: 🔐 Validate Production Authorization
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
@@ -66,10 +66,28 @@ jobs:
           sudo install "$kubectl_path" /usr/local/bin/kubectl
           kubectl version --client
 
-      - name: 🔐 Validate EKS authorization surface
+      - name: 🔐 Validate static production authorization controls
         run: |
           go test ./scripts/validate-eks-ci-role-policy
           go run ./scripts/validate-eks-ci-role-policy .
+
+      - name: ⚙️ Setup KSail for effective authorization validation
+        shell: bash
+        env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.180.0"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/setup-ksail.sh
+
+      - name: 🔐 Validate Helm-rendered production authorization controls
+        # Same reasoning as the identical step in ci.yaml: this reaches every
+        # upstream chart registry, so an unreachable registry would otherwise
+        # stall the step for the job's full budget instead of failing promptly.
+        timeout-minutes: 10
+        run: |
+          shellcheck scripts/tests/test-production-authorization-rules.sh
+          bash scripts/tests/test-production-authorization-rules.sh
+          ksail --config ksail.prod.yaml workload validate
 
   # The cosign subjects that trust the SHARED actions publish workflows must pin a
   # fixed revision, or a compromised branch build could be verified as first-party.
@@ -338,3 +356,35 @@ jobs:
               ;;
             *) exit "$rc" ;;
           esac
+
+  # The apps-base component gate and FANOUT_NAMESPACES must agree, or the
+  # post-reconcile reassertion in deploy-prod (--reuse-runtime-proof, no
+  # exemption) marks the fan-out incomplete and FAILS EVERY OTHERWISE-SUCCESSFUL
+  # DEPLOY (#3476). ci.yaml gates that on `pull_request` only, so a direct push
+  # to main — or an apps-base edit that reaches production by the manual CD
+  # route — never exercises the invariant, and the disagreement surfaces for the
+  # first time as a failed production deploy.
+  #
+  # Its own job, for the same reason as validate-shared-publish-pin above: this
+  # validator must not share a job with steps that could subvert it.
+  #
+  # Deliberately not path-filtered, matching this workflow's header: the guard
+  # reads both the apps base and the fan-out list, and a change to either side —
+  # or to the guard itself — can move the result.
+  validate-ghcr-fanout-component-gate:
+    name: 🔗 Validate GHCR Fan-out Component Gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🔗 Validate the GHCR fan-out follows the apps-base component gate
+        run: |
+          shellcheck scripts/guard-ghcr-fanout-component-gate.sh
+          shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+          bash scripts/guard-ghcr-fanout-component-gate.sh
+          bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh

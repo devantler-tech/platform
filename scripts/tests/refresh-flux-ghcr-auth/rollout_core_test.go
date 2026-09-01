@@ -105,6 +105,7 @@ func TestRefreshesRootAndFanoutWithoutLeakingPlaintext(t *testing.T) {
 		"devantler-tech/platform/manifests:latest",
 		"devantler-tech/wedding-app/manifests:latest",
 		"devantler-tech/ascoachingogvaner/manifests:latest",
+		"devantler-tech/data-product-controller:latest",
 		"devantler-tech/wedding-app:latest",
 		"devantler-tech/ascoachingogvaner:latest",
 		"devantler-tech/ksail:v" + ksailOperatorVersion,

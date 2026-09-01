@@ -1,0 +1,36 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-data-product-controller
+  namespace: data-product-controller
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s:app.kubernetes.io/name: data-product-controller
+  ingress:
+    # Public registry, descriptor API, product UI, contract, and query traffic
+    # arrive through the shared Cilium Gateway.
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8082"
+              protocol: TCP
+            - port: "8080"
+              protocol: TCP
+  egress:
+    # The controller watches DataProducts and coordinates leader election.
+    - toEntities:
+        - kube-apiserver
+    # Keep DNS available for controller-runtime and future standard-contract
+    # integrations without allowing arbitrary data-plane egress.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
