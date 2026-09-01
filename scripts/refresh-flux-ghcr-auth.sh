@@ -5308,16 +5308,17 @@ else
       # app namespaces carry prune: disabled and the rollback cannot remove
       # them. Keying the exemption on absence would then refuse every later
       # attempt, deadlocking the very change that introduces the consumer.
-      # Defer while the namespace is absent or still runs no workload: neither
-      # state has a running consumer whose pull credential this staging step
-      # could break. A missing object in a namespace that already runs
-      # workloads is always an incomplete fan-out.
+      # Defer while the namespace is absent or still runs no active workload:
+      # neither state has a consumer whose pull credential this staging step
+      # could break. A missing object in a namespace that already runs an
+      # active workload is always an incomplete fan-out.
       #
-      # The probe asks for RUNNING pods specifically. A candidate that failed
-      # before its ExternalSecret existed can leave a Pod object that never
-      # pulled its image - the missing pull credential is precisely why - and
-      # counting that object as a workload would deny the exemption on every
-      # retry, recreating the deadlock this exemption exists to prevent.
+      # The probe asks for Running Pods and then excludes terminating objects.
+      # A candidate that failed before its ExternalSecret existed can leave a
+      # Pod that never pulled its image, while a rolled-back candidate can
+      # leave a terminating Pod whose last phase is still Running. Counting
+      # either as active would deny the exemption on every retry, recreating
+      # the deadlock this exemption exists to prevent.
       if [[ -n "${record_runtime_proof_path}" ]]; then
         if ! namespace_name="$(kubectl \
           --context "${KUBE_CONTEXT}" \
@@ -5327,19 +5328,40 @@ else
           echo "::error::Could not determine whether namespace ${namespace} exists; refusing to change root Flux auth."
           exit 1
         fi
-        namespace_workloads=""
+        namespace_has_active_workload=false
         if [[ -n "${namespace_name}" ]]; then
-          if ! namespace_workloads="$(kubectl \
-            --context "${KUBE_CONTEXT}" \
-            --namespace "${namespace}" \
-            get pods \
-            --field-selector=status.phase=Running \
-            -o name)"; then
-            echo "::error::Could not determine whether namespace ${namespace} runs a workload; refusing to change root Flux auth."
+          if ! namespace_has_active_workload="$(
+            kubectl \
+              --context "${KUBE_CONTEXT}" \
+              --namespace "${namespace}" \
+              get pods \
+              --field-selector=status.phase=Running \
+              -o json |
+              jq -er '
+                if (.items | type) != "array" or any(.items[];
+                  type != "object"
+                  or (.metadata | type) != "object"
+                  or (.status | type) != "object"
+                  or (.status.phase | type) != "string"
+                  or ((.metadata.deletionTimestamp | type) != "null"
+                    and (.metadata.deletionTimestamp | type) != "string")
+                ) then
+                  error("malformed Pod inventory")
+                elif any(.items[];
+                  .status.phase == "Running"
+                  and .metadata.deletionTimestamp == null
+                ) then
+                  "true"
+                else
+                  "false"
+                end
+              '
+          )"; then
+            echo "::error::Could not determine whether namespace ${namespace} runs an active workload; refusing to change root Flux auth."
             exit 1
           fi
         fi
-        if [[ -z "${namespace_name}" || -z "${namespace_workloads}" ]]; then
+        if [[ -z "${namespace_name}" || "${namespace_has_active_workload}" != "true" ]]; then
           echo "::notice::Deferring new GHCR fan-out target ${namespace}/ghcr-auth until the candidate reconciles it; the post-reconcile reassertion remains mandatory."
           continue
         fi

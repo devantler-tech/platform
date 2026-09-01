@@ -555,6 +555,8 @@ func TestFirstDeployStagesNewConsumerWhoseNamespaceSurvivedAFailedAttempt(t *tes
 	requireNotContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
 }
 
+// TestPrepublishStagingStillFailsClosedForAnEstablishedConsumer verifies that
+// an active consumer without ghcr-auth blocks the pre-publish credential change.
 func TestPrepublishStagingStillFailsClosedForAnEstablishedConsumer(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(
@@ -573,12 +575,9 @@ func TestPrepublishStagingStillFailsClosedForAnEstablishedConsumer(t *testing.T)
 	requireWrapperPathExists(t, f.patchCapture, false)
 }
 
-// A failed candidate that got as far as creating its workload leaves a Pod
-// object behind that never reached Running, because the ghcr-auth
-// ExternalSecret it needed is exactly what is missing. Keying the exemption on
-// Pod existence would let that leftover deny every retry, deadlocking the very
-// change that introduces the consumer - the same deadlock namespace-presence
-// keying caused, one level down.
+// TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftANonRunningPod verifies
+// that a failed candidate's non-running Pod cannot deny every retry when the
+// missing ghcr-auth ExternalSecret is what prevented that Pod from starting.
 func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftANonRunningPod(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(
@@ -587,6 +586,27 @@ func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftANonRunningPod(t *tes
 		map[string]string{
 			"FAKE_MISSING_FANOUT_RESOURCE":       "externalsecret/ascoachingogvaner/ghcr-auth",
 			"FAKE_NAMESPACE_WITH_NONRUNNING_POD": "ascoachingogvaner",
+		},
+	)
+
+	requireWrapperExitCode(t, result, 0)
+	requireWrapperPathExists(t, f.patchCapture, true)
+	requireWrapperPathExists(t, f.variablesPatchCapture, true)
+	fanout := mustRead(f.fanoutLog)
+	requireNotContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
+}
+
+// TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftATerminatingRunningPod
+// verifies that a terminating Pod whose phase remains Running cannot recreate
+// the retry deadlock while its deletion grace period elapses.
+func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftATerminatingRunningPod(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(
+		validConfig(),
+		[]string{"--record-runtime-proof", f.workspace + "/runtime-proof.json"},
+		map[string]string{
+			"FAKE_MISSING_FANOUT_RESOURCE":                "externalsecret/ascoachingogvaner/ghcr-auth",
+			"FAKE_NAMESPACE_WITH_TERMINATING_RUNNING_POD": "ascoachingogvaner",
 		},
 	)
 
