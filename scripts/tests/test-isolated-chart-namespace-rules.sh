@@ -196,6 +196,25 @@ subjects:
     name: kustomize-controller
     namespace: flux-system'
 
+# A cluster-scoped binding that DECLARES the release namespace. The API server
+# silently discards `metadata.namespace` on a cluster-scoped object, so this
+# object reaches the cluster as an unreviewed cluster-admin grant to a subject
+# in another namespace. It must be judged by kind — never accepted on the
+# strength of a field that does not survive apply.
+assert_rejected 'namespaced-clusterrolebinding' 'apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: totally-unreviewed-escalation
+  namespace: data-product-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: kustomize-controller
+    namespace: flux-system'
+
 # A cluster-scoped subject carries no namespace at all. It must fail closed
 # rather than pass vacuously.
 assert_rejected 'cluster-scoped-subject-binding' 'apiVersion: rbac.authorization.k8s.io/v1

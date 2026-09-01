@@ -15,31 +15,40 @@ rules:
     # A binding must additionally reference the reviewed ClusterRole and carry
     # only subjects in the release namespace; one with no subjects at all fails
     # closed, because `all` over an absent field cannot be evaluated.
+    #
+    # The branch is chosen by KIND, never by whether a namespace field is
+    # present. `metadata.namespace` is silently ignored by the API server on a
+    # cluster-scoped object, so a namespace-presence test lets a rendered
+    # ClusterRoleBinding declare the release namespace and satisfy the
+    # namespaced branch without ever reaching the pinned name, roleRef, and
+    # subject checks — a cluster-admin grant to a foreign subject would pass.
+    # Dispatching on kind first makes that shape unreachable, and a
+    # cluster-scoped object carrying a namespace field is rejected outright
+    # rather than silently accepted on a field that does not survive apply.
     expression: >-
       has(object.metadata) &&
-      ((has(object.metadata.namespace) &&
-        object.metadata.namespace == 'data-product-controller') ||
-       (!has(object.metadata.namespace) &&
-        ((has(object.kind) &&
-          object.kind == 'ClusterRole' &&
-          has(object.metadata.name) &&
-          object.metadata.name == 'data-product-controller') ||
-         (has(object.kind) &&
-          object.kind == 'ClusterRoleBinding' &&
-          has(object.metadata.name) &&
-          object.metadata.name == 'data-product-controller' &&
-          has(object.roleRef) &&
-          has(object.roleRef.kind) &&
-          object.roleRef.kind == 'ClusterRole' &&
-          has(object.roleRef.name) &&
-          object.roleRef.name == 'data-product-controller' &&
-          has(object.subjects) &&
-          object.subjects.all(s,
-            has(s.namespace) && s.namespace == 'data-product-controller')) ||
-         (has(object.kind) &&
-          object.kind == 'Namespace' &&
-          has(object.metadata.name) &&
-          object.metadata.name == 'data-product-controller'))))
+      has(object.kind) &&
+      (object.kind in ['ClusterRole', 'ClusterRoleBinding', 'Namespace']
+        ? (!has(object.metadata.namespace) &&
+           ((object.kind == 'ClusterRole' &&
+             has(object.metadata.name) &&
+             object.metadata.name == 'data-product-controller') ||
+            (object.kind == 'ClusterRoleBinding' &&
+             has(object.metadata.name) &&
+             object.metadata.name == 'data-product-controller' &&
+             has(object.roleRef) &&
+             has(object.roleRef.kind) &&
+             object.roleRef.kind == 'ClusterRole' &&
+             has(object.roleRef.name) &&
+             object.roleRef.name == 'data-product-controller' &&
+             has(object.subjects) &&
+             object.subjects.all(s,
+               has(s.namespace) && s.namespace == 'data-product-controller')) ||
+            (object.kind == 'Namespace' &&
+             has(object.metadata.name) &&
+             object.metadata.name == 'data-product-controller')))
+        : (has(object.metadata.namespace) &&
+           object.metadata.namespace == 'data-product-controller'))
     message: >-
       data-product-controller chart children must remain in the reviewed
       data-product-controller namespace

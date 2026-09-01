@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,11 +44,47 @@ type job struct {
 }
 
 type step struct {
-	Run            string     `yaml:"run"`
-	Uses           string     `yaml:"uses"`
-	TimeoutMinutes int        `yaml:"timeout-minutes"`
-	With           stepInputs `yaml:"with"`
+	Run            string         `yaml:"run"`
+	Uses           string         `yaml:"uses"`
+	If             string         `yaml:"if"`
+	TimeoutMinutes templatableInt `yaml:"timeout-minutes"`
+	With           stepInputs     `yaml:"with"`
 }
+
+// templatableInt decodes an Actions integer field that MAY be written as an
+// expression. `timeout-minutes: ${{ fromJSON(inputs.t) }}` is a YAML string,
+// so decoding straight into an int fails — and because every guard in this file
+// shares ONE loader, that failure aborts all of them at once rather than failing
+// the single contract the offending workflow touches. A guard suite that one
+// unrelated workflow edit can silently switch off is worse than no guard, so an
+// expression decodes cleanly and simply satisfies no numeric contract.
+type templatableInt struct {
+	Value     int
+	IsLiteral bool
+}
+
+func (t *templatableInt) UnmarshalYAML(node *yaml.Node) error {
+	var n int
+	if err := node.Decode(&n); err == nil {
+		t.Value, t.IsLiteral = n, true
+
+		return nil
+	}
+
+	var s string
+	if err := node.Decode(&s); err != nil {
+		return fmt.Errorf("timeout-minutes is neither an integer nor an expression: %w", err)
+	}
+
+	t.Value, t.IsLiteral = 0, false
+
+	return nil
+}
+
+// is reports whether the field is a literal equal to want. An expression is
+// never equal to a reviewed constant: its value is not knowable until the
+// runner resolves it, so a contract pinning a timeout must not treat it as met.
+func (t templatableInt) is(want int) bool { return t.IsLiteral && t.Value == want }
 
 // stepInputs is the slice of an action's `with:` block these contracts read.
 // Actions inputs are heterogenous, so unknown keys are simply ignored.
@@ -318,7 +355,8 @@ func (w workflow) runsIsolatedChartNamespaceValidator() bool {
 			if runsCommand(step.Run, ".github/scripts/setup-ksail.sh") {
 				ksailReady = true
 			}
-			if ksailReady && step.TimeoutMinutes == 10 && runsCommand(step.Run, isolatedChartNamespaceValidatorInvocation) {
+			if ksailReady && step.If == "" && step.TimeoutMinutes.is(10) &&
+				runsCommand(step.Run, isolatedChartNamespaceValidatorInvocation) {
 				return true
 			}
 		}
@@ -474,7 +512,7 @@ func TestIsolatedChartNamespaceGateCoverageIsNotVacuous(t *testing.T) {
 	covered := workflow{Jobs: map[string]job{
 		"gate": {Steps: []step{
 			{Run: ".github/scripts/setup-ksail.sh"},
-			{Run: isolatedChartNamespaceValidatorInvocation, TimeoutMinutes: 10},
+			{Run: isolatedChartNamespaceValidatorInvocation, TimeoutMinutes: templatableInt{Value: 10, IsLiteral: true}},
 		}},
 	}}
 	if !covered.runsIsolatedChartNamespaceValidator() {
