@@ -555,6 +555,8 @@ func TestFirstDeployStagesNewConsumerWhoseNamespaceSurvivedAFailedAttempt(t *tes
 	requireNotContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
 }
 
+// TestPrepublishStagingStillFailsClosedForAnEstablishedConsumer verifies that
+// an active consumer without ghcr-auth blocks the pre-publish credential change.
 func TestPrepublishStagingStillFailsClosedForAnEstablishedConsumer(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(

@@ -1345,6 +1345,8 @@ func fakeInventoryNode(
 	}
 }
 
+// fakeKubectlGetPods dispatches Pod inventory requests either to the namespace
+// workload probe or to the node-scoped runtime probe used by the bridge tests.
 func fakeKubectlGetPods(args []string) int {
 	if containsSequence(args, "-o", "name") || containsArg(args, "-o=name") ||
 		flagValue(args, "--field-selector") == "status.phase=Running" {
@@ -2421,6 +2423,7 @@ func wordListContains(list, target string) bool {
 	return false
 }
 
+// anySlice returns value as a generic slice, or nil when it is absent or not a slice.
 func anySlice(value any) []any {
 	if value == nil {
 		return nil
@@ -2435,8 +2438,8 @@ func anySlice(value any) []any {
 // unless the fixture explicitly declares a running workload.
 //
 // A failed candidate can also leave a Pod OBJECT behind that never reached
-// Running, or a terminating Pod whose last phase is still Running. Neither is
-// an active consumer whose pull credential this staging step could break.
+// A non-Running Pod, or a terminating Pod whose last phase is still Running.
+// Neither is an active consumer whose pull credential this staging step could break.
 func fakeKubectlGetNamespaceWorkloads(args []string, namespace string) int {
 	if namespace == "" {
 		return 0
