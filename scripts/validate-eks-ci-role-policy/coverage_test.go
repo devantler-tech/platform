@@ -234,8 +234,8 @@ func runsGate(script, needle string) bool {
 // the LAST pipeline stage instead — GitHub Actions runs a `run:` block under
 // `bash -e`, without `pipefail` — so an earlier stage's failure is lost. A
 // trailing `&` backgrounds the command, and its status is never waited for.
-// `;`, `&&`, a newline, a closing paren, and end-of-script all leave the
-// failure intact.
+// `;`, `&&`, a newline, and end-of-script all leave the
+// failure intact; a closing paren does not, because the subshell continues outside it.
 //
 // Strict in the same direction as the scanner above: a pipeline is refused
 // even where the script does set pipefail, because deciding that reliably
@@ -259,8 +259,14 @@ func failurePropagates(script string, i int) bool {
 			// `&&` runs on SUCCESS, so a failure still stops the chain and
 			// reaches the step. A lone `&` backgrounds the command.
 			return i+1 < len(script) && script[i+1] == '&'
-		case c == ';', c == '\n', c == ')':
+		case c == ';', c == '\n':
 			return true
+		case c == ')':
+			// A subshell hands its status to whatever follows the ')', which this
+			// scan has not looked at: `( gate ) || true` discards it out there.
+			// Refusing keeps the strict direction — a genuinely enforcing subshell
+			// reads as UNCOVERED and fails loudly.
+			return false
 		default:
 			i++
 		}
@@ -765,6 +771,7 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		gate + " || echo ignored",
 		gate + " | tee gate.log",
 		gate + " &",
+		"( " + gate + " ) || true",
 	}
 	for _, script := range defused {
 		if !runsCommand(script, gate) {
