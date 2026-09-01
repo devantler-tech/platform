@@ -47,6 +47,7 @@ type step struct {
 	Run            string         `yaml:"run"`
 	Uses           string         `yaml:"uses"`
 	If             string         `yaml:"if"`
+	Shell          string         `yaml:"shell"`
 	TimeoutMinutes templatableInt `yaml:"timeout-minutes"`
 	With           stepInputs     `yaml:"with"`
 }
@@ -410,12 +411,31 @@ func skipHeredoc(script string, i int) int {
 	return len(script)
 }
 
+// shellKeepsErrexit reports whether a step's `shell:` still aborts on a failed
+// command. A gate can be defused by the shell it runs under, not only by the
+// operators around it: `shell: bash {0}` is a custom template with no `-e`, so a
+// failing validator followed by any successful command leaves the step green.
+//
+// Allow-listed rather than deny-listed, and matched on the documented keywords
+// GitHub maps to an errexit invocation: the default (`bash -e`), `bash`
+// (`bash --noprofile --norc -eo pipefail`), and `sh` (`sh -e`). Anything else —
+// another interpreter, or any custom template carrying `{0}` — reads as
+// UNCOVERED and fails the build loudly, which is the same strict direction the
+// rest of this file takes.
+func shellKeepsErrexit(shell string) bool {
+	switch shell {
+	case "", "bash", "sh":
+		return true
+	}
+	return false
+}
+
 // runsValidator reports whether any job in the workflow actually executes the
 // gate.
 func (w workflow) runsValidator() bool {
 	for _, job := range w.Jobs {
 		for _, step := range job.Steps {
-			if runsGate(step.Run, validatorInvocation) {
+			if shellKeepsErrexit(step.Shell) && runsGate(step.Run, validatorInvocation) {
 				return true
 			}
 		}
@@ -434,6 +454,7 @@ func (w workflow) runsIsolatedChartNamespaceValidator() bool {
 				ksailReady = true
 			}
 			if ksailReady && step.If == "" && step.TimeoutMinutes.is(10) &&
+				shellKeepsErrexit(step.Shell) &&
 				runsGate(step.Run, isolatedChartNamespaceValidatorInvocation) {
 				return true
 			}
@@ -561,6 +582,20 @@ func TestAuthorizationGateGuardIsNotVacuous(t *testing.T) {
 		}
 	})
 
+	t.Run("a shell without errexit does not count", func(t *testing.T) {
+		perturbed := covering
+		perturbed.Jobs = map[string]job{
+			"gate": {Steps: []step{{
+				Run:   validatorInvocation + " .\necho continued",
+				Shell: "bash {0}",
+			}}},
+		}
+		if perturbed.coversPushToMain() {
+			t.Fatal("`shell: bash {0}` is a custom template with no `-e`, so a failing " +
+				"gate followed by a successful command leaves the step green")
+		}
+	})
+
 	t.Run("a defused gate does not count", func(t *testing.T) {
 		perturbed := covering
 		perturbed.Jobs = map[string]job{
@@ -648,6 +683,23 @@ func TestIsolatedChartNamespaceGateCoverageIsNotVacuous(t *testing.T) {
 		}}
 		if ablated.runsIsolatedChartNamespaceValidator() {
 			t.Fatal("an unbounded chart render must not satisfy the namespace gate")
+		}
+	})
+
+	t.Run("shell without errexit", func(t *testing.T) {
+		ablated := workflow{Jobs: map[string]job{
+			"gate": {Steps: []step{
+				{Run: ".github/scripts/setup-ksail.sh"},
+				{
+					Run:            isolatedChartNamespaceValidatorInvocation + "\necho continued",
+					Shell:          "bash {0}",
+					TimeoutMinutes: templatableInt{Value: 10, IsLiteral: true},
+				},
+			}},
+		}}
+		if ablated.runsIsolatedChartNamespaceValidator() {
+			t.Fatal("a gate under a shell template without `-e` cannot fail its step, " +
+				"so it must not satisfy the coverage guard")
 		}
 	})
 
