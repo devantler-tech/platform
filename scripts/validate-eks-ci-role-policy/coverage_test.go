@@ -448,11 +448,14 @@ func TestAuthorizationGateGuardIsNotVacuous(t *testing.T) {
 
 // TestIsolatedChartNamespaceGateCoversEveryDeploymentRoute prevents the
 // reviewed isolated-chart allowlist from outliving the rendered-child proof it
-// depends on. These three workflows cover pull requests and merge groups,
-// direct pushes to main, and the manual production deployment respectively.
+// depends on. These four workflows cover pull requests and merge groups,
+// direct pushes to main, the manual production deployment, and the
+// disaster-recovery rebuild respectively. Recovery publishes and reconciles a
+// revision, so omitting it left a real deployment route ungated while the test
+// name claimed otherwise.
 func TestIsolatedChartNamespaceGateCoversEveryDeploymentRoute(t *testing.T) {
 	workflows := loadWorkflows(t)
-	for _, name := range []string{"ci.yaml", "validate-main.yaml", "cd.yaml"} {
+	for _, name := range []string{"ci.yaml", "validate-main.yaml", "cd.yaml", "dr-rebuild.yaml"} {
 		parsed, ok := workflows[name]
 		if !ok {
 			t.Errorf("required workflow %s is missing", name)
