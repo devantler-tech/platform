@@ -1608,6 +1608,36 @@ jobs:
           shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
           bash scripts/tests/test-rgd-template-static-scan.sh
 
+  validate-ghcr-fanout-merge-group:
+    name: 🔗 Validate GHCR Fan-out Component Gate (merge group)
+    needs: [changes]
+    # Same reason as the RGD job above: the PR job proves the proposed head, but
+    # production deploys the speculative merge-group revision. This guard is what
+    # stands between an enabled-but-unlisted consumer and a post-reconcile
+    # reassertion that FAILS EVERY SUBSEQUENT DEPLOY, and the pull_request-only
+    # invocation cannot see a mismatch main inherited from a direct push. cd.yaml
+    # already gates its manual deploy on this guard (validate-ghcr-fanout-component-gate);
+    # the merge queue is the path that actually deploys, so it needs the same
+    # prerequisite rather than a weaker one.
+    if: >-
+      github.event_name == 'merge_group' &&
+      needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🔗 Validate the GHCR fan-out follows the apps-base component gate
+        run: |
+          shellcheck scripts/guard-ghcr-fanout-component-gate.sh
+          shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+          bash scripts/guard-ghcr-fanout-component-gate.sh
+          bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+
   deploy-prod:
     name: 🚀 Deploy to Prod
     needs:
@@ -1616,6 +1646,7 @@ jobs:
         validate-eks-authorization,
         validate-publication-contract,
         validate-rgd-templates-merge-group,
+        validate-ghcr-fanout-merge-group,
       ]
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
