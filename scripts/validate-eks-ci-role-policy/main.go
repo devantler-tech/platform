@@ -1485,7 +1485,74 @@ const (
 // untouched by this branch. The previous approved aggregate digest was:
 //
 //	d07fdcf550827d5b62d48c0ce9e110dea819f8d9168c7ac3abb7f01144939d93
-const expectedRenderedSurfaceSHA = "2304ac067cc7ec446ddeff107477bb1f34f859b4cd5bca708a3ba0926ef5fc49"
+//
+// Moved again by the per-controller uid/gid pin on this branch, re-measured
+// against main after the tofu-controller retirement landed. The branch's
+// tofu-controller postRenderer is gone with the controller itself, so the
+// authored delta is now exactly two files: the flux-operator HelmRelease and
+// the FluxInstance kustomize patch.
+//
+// Conservation, rendering all five production roots from both trees with ONE
+// renderer so renderer differences cancel: 548 documents on both sides. The
+// rendered diff is 29 lines, ALL additions, zero deletions, and every one of
+// them belongs to those two patch blocks — `op: test` container-name guards
+// and `op: add` writes of runAsUser/runAsGroup under
+// /spec/template/spec/containers/0/securityContext.
+//
+// Grant-bearing membership is unchanged: extracting every Role, ClusterRole,
+// RoleBinding, ClusterRoleBinding and ServiceAccount with its rules, subjects
+// and roleRef yields 78 objects on BOTH sides, byte-identical. The negative
+// control fires for the right reason — injecting one `escalate` verb into
+// ClusterRole cert-manager-tenant-edit still extracts 78 objects (so the
+// fixture is intact, not broken) and the comparison names exactly that role.
+// No subject, grant, roleRef or authorization resource is added or widened;
+// the delta is a security context, and it constrains rather than grants.
+// The previous approved aggregate digest was:
+//
+//	2304ac067cc7ec446ddeff107477bb1f34f859b4cd5bca708a3ba0926ef5fc49
+//
+// Re-measured on the MERGE of this branch with main (a5c6ec2e), not carried over
+// from either side. Both parents changed this constant independently -- main via
+// the per-controller uid/gid pin (#3459), this branch via the reader-only human
+// access surface -- so neither parent's value describes the merged tree and
+// taking either side would have produced a validator that is red on the state it
+// is meant to approve.
+//
+// The renderer used for this measurement was verified against a known answer
+// first: running this validator on main a5c6ec2e reproduced main's approved
+// digest a8383404... exactly and reported the contract as passing, so the local
+// toolchain renders identically to CI's for this computation. The merged tree
+// then measured as the value below. The previous approved aggregate digest was:
+//
+//	a8383404dd948c286fc274aed91164b2156c47b0cf66de9deebc7025833a8c20
+//
+// Re-approved for the cluster-reader provider-group gap (2026-08-30). The
+// surface moved because cluster-reader gained the eight API groups that are
+// live on the cluster but were absent from its enumerated list: the three AWS
+// provider groups and the five UniFi Crossplane groups. Reading the live
+// ClusterRole confirmed all eight were missing in production, so Headlamp OIDC
+// identities already could not see those managed resources; this PR would have
+// extended the same blind spot to Crossview.
+//
+// Two independent renderers agree on this value: the required CI job on the
+// approved toolchain (job 99316243854, kubectl v1.36.2) and a local render
+// (kubectl v1.36.1). The local toolchain was verified against a known answer
+// first -- running this validator on the parent commit 63795e6e reproduced the
+// previously approved digest below and reported the contract as passing -- so
+// the patch-version difference does not affect this computation.
+//
+// The delta is single-variable: the parent was green on this check and the only
+// change since is eight added lines in one file, so nothing else moved the
+// surface. Secrets remain excluded because the core group stays enumerated, and
+// every sensitive field in the added groups' CRDs is a reference
+// (presharedKeySecretRef, privateKeySecretRef, contentSecretRef,
+// writeConnectionSecretToRef, ProviderConfig spec.credentials.secretRef) rather
+// than inline material.
+//
+// The previous approved aggregate digest was:
+//
+//	5b298b96eba875cb5c05ba09c82eaf2833676930d1f76a3b7c4a954d104ceebd
+const expectedRenderedSurfaceSHA = "005c333f114ad4a2a5706ef9b0d4989623203eadc67657ffd15d2b4d9bb369dc"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -1686,9 +1753,10 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:                       "6f14b5243c945d0d2230821733ea12096d6e92ab155a35482b20a6080c03c037",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "aws", name: "aws-managed-resources"}:                         "ff4c3264c519b1b4a7ec9b5145412f39ea2ba7b6163d8dc50fb029b1460edcda",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}:                  "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "crossview", name: "crossview-portforward"}:            "78992d9727763fdcf1bda05969fdc881e6d0e54cc72efc07555304b47d25bc3a",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                           "4447f41c03e8297fafdabcadf4fdd8ca3260f2c84264c531b2179cb7df2c1556",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "opencost-usage-scraper"}:                                   "3cb22a5a2d178e9cc93ebc3995d936d124800c441785dc23d780281746569937",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "crossview-cluster-reader"}:                        "bc6c370f5bff72c541428274f9ef7ab13e3bb5a2b804ec5f4c81087171311c0d",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "crossview-view"}:                                  "536a4baa1970100ea117d1655f80e06ed874e2248b75f33f161e8b44ca3df50c",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "opencost-usage-scraper"}:                            "4b28e1da280a7940a1cb4d538bc31ede1b5d272c17189a81afeae48acbb8b7a0",

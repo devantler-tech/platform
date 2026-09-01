@@ -37,13 +37,43 @@ set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:-devantler-tech/platform}"
 MEGALINTER_JOB_MATCH='mega-linter'
-# A burst of dependency updates can emit several workflows per pull request; 40 repository-wide
-# runs buried a valid MegaLinter job even though it was less than an hour old (observed 2026-08-22),
-# and one full 100-result page can be exhausted just as easily. Walk a bounded three pages in newest-
-# first order. The cap prevents an unbounded historical scan; exhausting it still fails closed below.
+# The listing is scoped to pull_request runs, and that scope is what makes the bounded budget
+# viable. mega-linter is skipped on main, so push, merge_group, dynamic and schedule runs can never
+# supply an executed job — they can only crowd one out. Measured 2026-08-30: 300 repository-wide
+# runs spanned ~23 hours and held a single run of the managed workflow whose mega-linter job was
+# skipped, while the newest executed job sat at ordinal ~305, just past the cap; main went red on a
+# check that had nothing to compare. Filtering to pull_request removed ~61% of that window.
+# A burst of dependency updates can still emit several workflows per pull request, and one full
+# 100-result page is exhausted easily, so walk a bounded five pages in newest-first order. Pages are
+# fetched only until evidence is found, so the extra depth costs nothing in the common case. The cap
+# prevents an unbounded historical scan; exhausting it still fails closed below.
 RUNS_PER_PAGE=100
-MAX_RUN_PAGES=3
+MAX_RUN_PAGES=5
 MAX_RUNS=$((RUNS_PER_PAGE * MAX_RUN_PAGES))
+
+# The scan window above bounds HOW FAR BACK we look; this bounds HOW OLD the evidence may be. They
+# are different limits, and only the second makes the answer true: a run reachable inside the window
+# can still be weeks old, and the versions it printed say nothing about the pin today. Without this
+# the guard degrades silently as the managed workflow goes quiet — reaching further and further
+# back, then reporting the difference as drift. Widening the window makes that worse, not better.
+# 14 days is far longer than the normal gap between runs of that workflow here, so a healthy
+# repository never trips it.
+MAX_EVIDENCE_AGE_DAYS="${DRIFT_MAX_EVIDENCE_AGE_DAYS:-14}"
+# GNU and BSD `date` spell relative arithmetic differently and neither accepts the other's flag, so
+# try both rather than assuming the platform (CI is Linux, the pre-push path is macOS). A cutoff
+# that cannot be computed is fatal: skipping the bound would silently restore the stale-evidence
+# behaviour it exists to prevent.
+EVIDENCE_CUTOFF="$(
+  date -u -d "${MAX_EVIDENCE_AGE_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
+    date -u -v"-${MAX_EVIDENCE_AGE_DAYS}d" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
+    true
+)"
+if [ -z "$EVIDENCE_CUTOFF" ]; then
+  printf 'CANNOT VERIFY: could not compute the %s-day evidence cutoff with either GNU or BSD date.\n' \
+    "$MAX_EVIDENCE_AGE_DAYS" >&2
+  exit 2
+fi
+readonly MAX_EVIDENCE_AGE_DAYS EVIDENCE_CUTOFF
 
 # The org-managed workflow that runs mega-linter for this repository. Binding to it is a PROVENANCE
 # check, not decoration: the job is selected out of arbitrary recent runs, and a job's display name
@@ -182,18 +212,37 @@ prove org-managed provenance. Re-establish how the mega-linter job is identified
   # preserving newest-first order. Process each page before fetching the next so valid evidence is
   # returned immediately and cannot be discarded by a later, unnecessary API failure.
   saw_managed=no
+  saw_stale=no
+  saw_fresh=no
   page=1
   while [ "$page" -le "$MAX_RUN_PAGES" ]; do
     page_runs="$(gh api \
-      "repos/$REPO/actions/runs?per_page=$RUNS_PER_PAGE&page=$page" \
-      --jq ".workflow_runs[] | select(.path == \"$MANAGED_WORKFLOW_PATH\") | \"\(.id) \(.head_sha)\"" \
+      "repos/$REPO/actions/runs?event=pull_request&per_page=$RUNS_PER_PAGE&page=$page" \
+      --jq ".workflow_runs[] | select(.path == \"$MANAGED_WORKFLOW_PATH\") | \"\(.id) \(.head_sha) \(.created_at)\"" \
       2>/dev/null)" ||
       die_unverifiable "could not list recent runs page $page for $REPO"
     if [ -n "$page_runs" ]; then
       saw_managed=yes
     fi
-    while read -r run_id head_sha; do
+    while read -r run_id head_sha created_at; do
       [ -n "$run_id" ] || continue
+      # An OLD run is not evidence of what CI runs TODAY. The scan window is bounded, so on a busy
+      # repository the newest genuine run can age out of it while older ones remain reachable —
+      # and the versions those printed are then reported as "live", which is a drift claim about a
+      # scanner pin that may have moved several times since. Measured 2026-08-31 on this
+      # repository: the 06:46Z run read a two-day-old run and agreed with the constants; the 08:43Z
+      # and 08:53Z runs, with no code change between them, reached a run from 2026-08-09 — eight
+      # days before the pin moved to 10.0.0 — and reported its 9.6.0 as drift, wedging main. Worse,
+      # the remedy that failure prints is to record those stale versions, which would have made the
+      # constants wrong in a way the next genuine run would flag all over again.
+      if [ -z "$created_at" ] || [ "$created_at" \< "$EVIDENCE_CUTOFF" ]; then
+        printf 'Skipping run %s: it ran at %s, before the %s-day evidence cutoff %s, so its log\n' \
+          "$run_id" "${created_at:-unknown}" "$MAX_EVIDENCE_AGE_DAYS" "$EVIDENCE_CUTOFF" >&2
+        printf '  states versions that may since have moved.\n' >&2
+        saw_stale=yes
+        continue
+      fi
+      saw_fresh=yes
       if ! managed_path_absent_at "$head_sha"; then
         printf 'Skipping run %s: %s is not provably absent at its revision %s, so that run is not\n' \
           "$run_id" "$MANAGED_WORKFLOW_PATH" "$head_sha" >&2
@@ -219,9 +268,21 @@ EOF
     page=$((page + 1))
   done
   [ "$saw_managed" = yes ] ||
-    die_unverifiable "no recent runs of $MANAGED_WORKFLOW_PATH in the last $MAX_RUNS runs of $REPO"
+    die_unverifiable "no recent runs of $MANAGED_WORKFLOW_PATH in the last $MAX_RUNS pull_request runs of $REPO"
+  # Blame the cutoff only when it is the WHOLE story. A stale candidate alongside a fresh one that
+  # was refused for another reason — a provenance taint, an unresolvable revision — leaves both
+  # exiting 2, so the only thing that differs is what the operator is told to do next. "Everything
+  # aged out" invites widening the cutoff, which restores the stale-evidence bug; and it buries the
+  # provenance refusal, which is the finding that actually mattered. Fall through to the generic
+  # refusal whenever any candidate survived the age gate.
+  if [ "$saw_stale" = yes ] && [ "$saw_fresh" = no ]; then
+    die_unverifiable "every reachable run of $MANAGED_WORKFLOW_PATH predates the $MAX_EVIDENCE_AGE_DAYS-day
+evidence cutoff $EVIDENCE_CUTOFF. It runs only on its own path filter, so it can go quiet on this
+repository for longer than the bounded scan window reaches back. That is not drift, and recording the
+versions such a run printed would make the constants wrong."
+  fi
   die_unverifiable "no completed '$MEGALINTER_JOB_MATCH' job from a provably org-managed run in the
-last $MAX_RUNS runs of $REPO"
+last $MAX_RUNS pull_request runs of $REPO"
 }
 
 ci_megalinter="$(read_const CI_MEGALINTER_VERSION)"

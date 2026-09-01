@@ -8,14 +8,30 @@
 # two different reasons, so they stay cluster-wide here until each is resolved.
 #
 # C-0013 — flux-system is the one namespace the mutation excludes that no other
-# exception covers and that IS scanned in-cluster. Measured there 2026-08-18 on the
-# pre-exception scan surface, all five Flux controllers (flux-operator,
-# helm-controller, kustomize-controller, notification-controller and
-# source-controller) fail C-0013 on a single missing field,
-# `spec.template.spec.containers[0].securityContext.runAsGroup`. Narrowing C-0013
-# today would therefore surface five real findings with no fix behind them, which
-# lowers the score to absorb a gap instead of closing it. Setting runAsGroup on
-# those six is tracked in #3223; C-0013 narrows once that lands.
+# exception covers and that IS scanned in-cluster. Five of its six workloads now
+# set the field genuinely: flux-operator at 65532 (patched at its own HelmRelease)
+# and helm-, kustomize-, notification- and source-controller at 65534 (patched in
+# the FluxInstance via the part-of=flux selector). Measured from the live
+# Deployment specs 2026-08-30.
+#
+# The sole remaining gap is tofu-controller, which has no runAsGroup at container
+# or pod level. It is not awaiting a patch: it is a retired workload whose
+# HelmRelease can never reconcile again (the retirement pruned its HelmRepository),
+# and it is already absent from this repository. Removing it is tracked in #3480,
+# and C-0013 narrows once that lands — closing the gap by deletion rather than by
+# setting a uid on a controller that is on its way out. #3223 tracks the narrowing
+# itself and is blocked on #3480.
+#
+# 🔴 DO NOT RE-VERIFY THIS ON workloadconfigurationscans ALONE — IT NOW FAILS OPEN.
+# That surface was pre-exception when this gate was written, but today every one of
+# the six carries appliedIgnoreRules: [pod-security-mutations-unscoped/C-0013] and
+# reports status: passed with subStatus: "w/exceptions" — including tofu-controller,
+# which is genuinely broken. Reading .spec.controls["C-0013"].status.status
+# therefore says this gate is clearable when it is not. The discriminator is
+# subStatus plus a populated appliedIgnoreRules, never status. `fixPath` is NOT a
+# discriminator either: it is a static hint from the rule definition and is
+# populated identically on all six, including the five that pass. Verify against the
+# live Deployment spec, which is independent of the scanner and of this exception.
 #
 # C-0211 — CIS-5.7.3, and it is a twelve-rule control rather than the three-field
 # check its name suggests. The rules this exception suppresses include
@@ -62,7 +78,7 @@ metadata:
     # Cluster-wide, and knowingly wider than its own rationale: in the twelve
     # namespaces "add-security-context" excludes, nothing injects these fields.
     # Both controls are retained rather than narrowed on an unmeasured guess —
-    # C-0013 pending #3223; C-0211 sized 2026-08-19 and pending #3217.
+    # C-0013 pending #3480 (via #3223); C-0211 sized 2026-08-19 and pending #3217.
     platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
@@ -70,9 +86,10 @@ spec:
     runAsGroup and fsGroupChangePolicy at pod admission. The Deployment spec does
     not contain them and Kubescape scans the stored spec, not the live pod. These
     two controls remain cluster-wide because narrowing them is blocked on evidence
-    rather than on expressiveness: C-0013 has a measured five-workload gap in
-    flux-system (#3223) and C-0211's residual population is every scanned workload
-    the mutation does not reach, sized at 33 (#3217).
+    rather than on expressiveness: C-0013 has a measured one-workload gap in
+    flux-system (tofu-controller, pending its removal in #3480), and C-0211's
+    residual population is every scanned workload the mutation does not reach,
+    sized at 33 (#3217).
   posture:
     - controlID: C-0013
       action: ignore

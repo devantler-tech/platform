@@ -1143,6 +1143,7 @@ spec:
                     "groups_claim": "groups",
                     "oidc_scopes": ["openid", "email", "profile", "groups"],
                     "bound_claims": {
+                      "email": ["${admin_email}"],
                       "groups": ["devantler-tech:maintainers"]
                     },
                     "policies": ["vault-admin"],

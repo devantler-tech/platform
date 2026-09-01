@@ -142,11 +142,15 @@ func TestDeployActionClusterLifecycleUsesSOPSAuthButPublishKeepsActionsToken(t *
 	action := readRepositoryFile(t, ".github/actions/deploy-prod/action.yml")
 	workflow := readRepositoryFile(t, ".github/workflows/dr-rebuild.yaml")
 	wrapper := "./scripts/run-ksail-prod-with-pull-auth.sh"
+	// The deploy composite reconciles through the wrapper that tolerates a
+	// control-plane restart it caused itself (#3478); DR below still invokes the
+	// bare command, so the two anchors deliberately differ.
+	reconcileWrapper := "./scripts/reconcile-flux-workloads.sh"
 
 	actionReconcile := requireIndex(t, action, "id: reconcile")
 	actionUpdate := requireIndex(t, action, "name: 🔄 Update cluster")
 	actionReassert := requireIndex(t, action, "id: reassert_flux_ghcr_auth")
-	requireContains(t, action[actionReconcile:actionUpdate], "run: "+wrapper+" workload reconcile")
+	requireContains(t, action[actionReconcile:actionUpdate], "run: "+reconcileWrapper)
 	requireNotContains(t, action[actionReconcile:actionUpdate], "GHCR_TOKEN:")
 	requireContains(t, action[actionUpdate:actionReassert], "run: "+wrapper+" cluster update")
 	requireNotContains(t, action[actionUpdate:actionReassert], "GHCR_TOKEN:")

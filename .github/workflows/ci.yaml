@@ -163,6 +163,11 @@ jobs:
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
+              - 'scripts/tests/test-human-api-access-boundary.sh'
+              # The boundary test asserts over these two guides, so a docs-only
+              # change to either must trigger it or those assertions can drift.
+              - 'docs/oidc-kubectl.md'
+              - 'docs/talos-access.md'
               - 'scripts/tests/test-actual-budget-auth-route.sh'
               # The provider DeploymentRuntimeConfigs, this gate and its kyverno
               # fixture are one contract: a container-only seccompProfile is
@@ -175,6 +180,12 @@ jobs:
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
               - 'scripts/tests/test-restrict-tenant-network-policies.sh'
+              - 'scripts/tests/test-add-baseline-context.sh'
+              # The fixtures are the other half of that test: a PR touching only
+              # resources.yaml, patched-resources.yaml, values.yaml or
+              # kyverno-test.yaml would otherwise leave this filter false, so
+              # neither kyverno test nor the shell gate would run on its own change.
+              - 'tests/add-baseline-context/**'
               # The declarative fixtures are the other half of that test: a PR that
               # touches only resources.yaml or kyverno-test.yaml would otherwise leave
               # the k8s filter false, so neither kyverno test nor the shell gate runs.
@@ -263,6 +274,10 @@ jobs:
               - 'scripts/report-cilium-rollout-gate-suppression.sh'
               - 'scripts/tests/test-cilium-rollout-gate-suppression-signal.sh'
               - 'scripts/wait-for-platform-flux-revision.sh'
+              # Both halves, so editing the reconcile wrapper alone — or its
+              # test alone — still runs the check that covers it.
+              - 'scripts/reconcile-flux-workloads.sh'
+              - 'scripts/tests/test-flux-reconcile-control-plane-restart.sh'
               - 'scripts/tests/test-opencost-usage-scraper.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
               - 'scripts/tests/test-crossplane-egress-policy.sh'
@@ -761,6 +776,12 @@ jobs:
         # serializes it as a string and leaves the role unenforced.
         run: bash scripts/tests/test-openbao-oidc-role.sh
 
+      - name: 🧯 Validate daily and break-glass API boundaries
+        if: needs.changes.outputs.k8s == 'true'
+        # Daily Kubernetes/Talos access must stay read-only, while the root
+        # credentials remain explicit break-glass artifacts.
+        run: bash scripts/tests/test-human-api-access-boundary.sh
+
       - name: 🧩 Validate Headlamp plugin removal
         if: needs.changes.outputs.k8s == 'true'
         # Removing runtime-downloaded plugins must also prune upgrade state and
@@ -820,6 +841,8 @@ jobs:
           bash scripts/tests/test-actual-budget-auth-route.sh
           shellcheck scripts/tests/test-provider-drc-pod-seccomp.sh
           bash scripts/tests/test-provider-drc-pod-seccomp.sh
+          shellcheck scripts/tests/test-add-baseline-context.sh
+          bash scripts/tests/test-add-baseline-context.sh
 
       - name: 🚦 Validate default-off Cilium bandwidth manager
         if: needs.changes.outputs.k8s == 'true'
@@ -874,6 +897,14 @@ jobs:
           bash scripts/tests/test-cilium-homogeneous-devices-activation.sh
           bash scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh
           bash scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh
+
+      - name: 🔁 Validate the deploy tolerates a control-plane restart
+        if: needs.changes.outputs.k8s == 'true'
+        # A change to the Flux control plane restarts the controllers the deploy's
+        # own reconcile runs through, cancelling it (#3478). Pin that the deploy
+        # retries that self-inflicted failure exactly once — and, in the other
+        # direction, that a genuine reconcile failure is still never retried.
+        run: bash scripts/tests/test-flux-reconcile-control-plane-restart.sh
 
       - name: 📣 Validate the rollout gate cannot suppress sync silently
         if: needs.changes.outputs.k8s == 'true'
@@ -1733,7 +1764,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@0de1d284f879d62d6fe316d3997fd3ea8f092fb3 # v13.2.1
+        uses: devantler-tech/actions/aggregate-job-checks@3ee6cb9bbd616c2a38779be41a5e41f3e77282d0 # v13.2.3
         with:
           job-results: >-
             ${{ needs.changes.result }}
