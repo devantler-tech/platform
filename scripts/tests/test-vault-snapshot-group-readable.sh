@@ -71,7 +71,66 @@ for target in "${targets[@]}"; do
   [ -n "${save_operand}" ] || fail "${manifest}: could not extract the snapshot save operand"
 
   # Now require a chmod naming that SAME operand.
-  chmod_lines="$(printf '%s\n' "${commands}" | grep -E '^[[:space:]]*chmod[[:space:]]' || true)"
+  #
+  # `chmod` is a COMMAND, and a command is not the only thing that can start a line. An anchored
+  # `^[[:space:]]*chmod[[:space:]]` match therefore checks a chmod only where it happens to be
+  # written first — so `if chmod 0600 "$SNAP"; then`, `... && chmod 0600 "$B"` and
+  # `... || chmod 0600 "$SNAP"` are all INVISIBLE to it. That is the fail-open this guard exists to
+  # prevent, one level down (#3268): a narrowing chmod hiding behind an `if` would re-couple the
+  # mirror to file ownership with the guard still green. Found while working #3265, where rewriting
+  # a widen as `if chmod 0640 "$EXISTING"; then` silently dropped the reported modes from two to one.
+  #
+  # So the command text is normalised into one command per line BEFORE matching, in three steps:
+  #
+  #   1. Truncate an unquoted trailing comment. Whole-line comments are already stripped above, but
+  #      a trailing one is command text to the old matcher, and step 2 would split on any `;` or
+  #      `&&` inside it — inventing a chmod out of prose. Quote state is tracked so a `#` inside an
+  #      operand (a mode string, a path) is not mistaken for a comment.
+  #   2. Split on the shell command separators `;`, `&&`, `||` and `|`, so a command that FOLLOWS one
+  #      starts its own line. Deliberately NOT on `(`/`)`/`{`/`}`: those appear inside operands and
+  #      arithmetic (`$((widened + 1))`), and splitting there would truncate an operand and fail a
+  #      correct script — a check that cries wolf is a check that gets deleted.
+  #   3. Strip leading shell keywords, so `if chmod ...` and `then chmod ...` reduce to `chmod ...`.
+  #
+  # Only then is the anchor applied. Because each surviving line now STARTS with `chmod`, the
+  # positional `$2`/`$3` mode and operand extraction below stays correct and unchanged — the fix is
+  # in what counts as a chmod, not in how one is read. Splitting also means a line carrying TWO of
+  # them (`chmod 0640 "$A" && chmod 0600 "$B"`) contributes both, where the old matcher saw one.
+  chmod_lines="$(printf '%s\n' "${commands}" |
+    awk '
+      {
+        line = $0
+        sq = 0
+        dq = 0
+        cut = 0
+        n = length(line)
+        for (i = 1; i <= n; i++) {
+          c = substr(line, i, 1)
+          # A backslash escapes the next character everywhere except inside single quotes, where
+          # the shell takes it literally. Without this, `"a\\"# b"` closes the string one quote
+          # early and the `#` reads as a comment, TRUNCATING away any chmod that follows it on
+          # the line — a fail-open introduced by the truncation itself.
+          if (c == "\\" && sq == 0) { i++; continue }
+          if (c == "\047" && dq == 0) { sq = 1 - sq; continue }
+          if (c == "\"" && sq == 0) { dq = 1 - dq; continue }
+          if (c == "#" && sq == 0 && dq == 0) {
+            if (i == 1 || substr(line, i - 1, 1) ~ /[ \t]/) { cut = i; break }
+          }
+        }
+        if (cut > 0) line = substr(line, 1, cut - 1)
+        gsub(/\|\||&&|\||;/, "\n", line)
+        print line
+      }' |
+    awk '
+      {
+        line = $0
+        sub(/^[ \t]+/, "", line)
+        while (match(line, /^(if|then|else|elif|do|while|until|!|time|exec|command|eval)[ \t]+/)) {
+          line = substr(line, RLENGTH + 1)
+        }
+        print line
+      }' |
+    grep -E '^[[:space:]]*chmod[[:space:]]' || true)"
   [ -n "${chmod_lines}" ] ||
     fail "${manifest}: the snapshot script never chmods the snapshot; the mirror still depends on owning it (#3202)"
 
