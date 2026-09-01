@@ -35,6 +35,77 @@ fail() {
 
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required to read the snapshot container script'
 
+# The command splitter, kept as ONE definition so the regression table below and the real-manifest
+# scan below cannot drift apart. `esc` records whether the character most recently appended to
+# `out` arrived via a backslash escape: an escaped `\>` or `\<` is a LITERAL character, not a
+# redirection operator, so an `&` following it IS an asynchronous-list separator and must split.
+# Without that distinction `... \>& chmod 0600 "$SNAP"` hides the chmod behind a separator the
+# scan refuses to break on — the same fail-open this guard exists to close.
+# shellcheck disable=SC2016  # an awk program is data, not shell: $0/$SNAP must reach awk unexpanded.
+readonly split_commands_awk='
+      {
+        line = $0
+        out = ""
+        sq = 0
+        dq = 0
+        esc = 0
+        n = length(line)
+        i = 1
+        while (i <= n) {
+          c = substr(line, i, 1)
+          if (c == "\\" && sq == 0) { out = out c substr(line, i + 1, 1); esc = 1; i += 2; continue }
+          if (c == "\047" && dq == 0) { sq = 1 - sq; out = out c; esc = 0; i++; continue }
+          if (c == "\"" && sq == 0) { dq = 1 - dq; out = out c; esc = 0; i++; continue }
+          if (sq == 0 && dq == 0) {
+            if (c == "#") {
+              last = (out == "") ? "" : substr(out, length(out), 1)
+              if (out == "" || last == " " || last == "\t" || last == "\n") break
+            }
+            if (c == ";") { out = out "\n"; esc = 0; i++; continue }
+            if (c == "&" && substr(line, i + 1, 1) == "&") { out = out "\n"; esc = 0; i += 2; continue }
+            if (c == "&") {
+              nxt = substr(line, i + 1, 1)
+              prv = (out == "") ? "" : substr(out, length(out), 1)
+              redir = (esc == 0 && (prv == ">" || prv == "<"))
+              if (nxt != ">" && !redir) { out = out "\n"; esc = 0; i++; continue }
+            }
+            if (c == "|" && substr(line, i + 1, 1) == "|") { out = out "\n"; esc = 0; i += 2; continue }
+            if (c == "|") { out = out "\n"; esc = 0; i++; continue }
+          }
+          out = out c
+          esc = 0
+          i++
+        }
+        print out
+      }'
+
+# Regression table for the splitter. Each case is `segments:input` where `segments` is how many
+# commands the input must break into. The escaped-redirection cases are the ones that matter:
+# a literal `\>` must NOT suppress the split, while a real `>&`/`&>`/`<&` still must.
+readonly splitter_cases=(
+  "1:vault operator raft snapshot save \$SNAP >&2"
+  "1:vault operator raft snapshot save \$SNAP &> /tmp/log"
+  "1:vault operator raft snapshot save \$SNAP <&0"
+  "2:printf x \\>& chmod 0600 \$SNAP"
+  "2:printf x \\<& chmod 0600 \$SNAP"
+  "1:printf x \\\\>& chmod 0600 \$SNAP"
+  "1:printf x \\\\<& chmod 0600 \$SNAP"
+  "2:vault operator raft snapshot save \$SNAP & chmod 0600 \$SNAP"
+  "2:vault operator raft snapshot save \$SNAP && chmod 0640 \$SNAP"
+  "1:echo 'a & b'"
+)
+
+for splitter_case in "${splitter_cases[@]}"; do
+  want="${splitter_case%%:*}"
+  input="${splitter_case#*:}"
+  got="$(printf '%s\n' "${input}" | awk "${split_commands_awk}" | grep -c . || true)"
+  [ "${got}" = "${want}" ] ||
+    fail "command splitter: '${input}' split into ${got} command(s), expected ${want}"
+done
+
+printf 'ok: command splitter — %d case(s), escaped \\> and \\< do not suppress an & separator\n' \
+  "${#splitter_cases[@]}"
+
 # manifest:yq-path-to-the-snapshot-container-script
 readonly targets=(
   "k8s/bases/infrastructure/vault-backup/job.yaml:.spec.template.spec.initContainers[]|select(.name==\"snapshot\")|.command[-1]"
@@ -115,39 +186,7 @@ for target in "${targets[@]}"; do
   # is in what counts as a chmod, not in how one is read. Splitting also means a line carrying TWO
   # of them (`chmod 0640 "$A" && chmod 0600 "$B"`) contributes both, where the old matcher saw one.
   chmod_lines="$(printf '%s\n' "${commands}" |
-    awk '
-      {
-        line = $0
-        out = ""
-        sq = 0
-        dq = 0
-        n = length(line)
-        i = 1
-        while (i <= n) {
-          c = substr(line, i, 1)
-          if (c == "\\" && sq == 0) { out = out c substr(line, i + 1, 1); i += 2; continue }
-          if (c == "\047" && dq == 0) { sq = 1 - sq; out = out c; i++; continue }
-          if (c == "\"" && sq == 0) { dq = 1 - dq; out = out c; i++; continue }
-          if (sq == 0 && dq == 0) {
-            if (c == "#") {
-              last = (out == "") ? "" : substr(out, length(out), 1)
-              if (out == "" || last == " " || last == "\t" || last == "\n") break
-            }
-            if (c == ";") { out = out "\n"; i++; continue }
-            if (c == "&" && substr(line, i + 1, 1) == "&") { out = out "\n"; i += 2; continue }
-            if (c == "&") {
-              nxt = substr(line, i + 1, 1)
-              prv = (out == "") ? "" : substr(out, length(out), 1)
-              if (nxt != ">" && prv != ">" && prv != "<") { out = out "\n"; i++; continue }
-            }
-            if (c == "|" && substr(line, i + 1, 1) == "|") { out = out "\n"; i += 2; continue }
-            if (c == "|") { out = out "\n"; i++; continue }
-          }
-          out = out c
-          i++
-        }
-        print out
-      }' |
+    awk "${split_commands_awk}" |
     awk '
       {
         line = $0
