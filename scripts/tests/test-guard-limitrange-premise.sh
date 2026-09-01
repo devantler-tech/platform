@@ -68,10 +68,38 @@ spec:
 YAML
 }
 
+# The Flux layer roots the guard seeds its walk from. Every fixture needs these:
+# the guard reads clusters/base rather than hardcoding the layers, so a tree with
+# no layer definition is "cannot determine what is deployed" (exit 2), not clean.
+# Only the `infrastructure` layer is declared here because that is the path every
+# fixture's provider overlay lives at; `bootstrap` is deliberately included with a
+# cluster-scoped path so the fixtures also pin that a NON-provider layer is skipped
+# rather than having a provider name substituted into it.
+make_layer_roots() { # <root>
+  mkdir -p "$1/clusters/base"
+  cat >"$1/clusters/base/flux-kustomization-infrastructure.yaml" <<YAML
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infrastructure
+spec:
+  path: providers/__PROVIDER__/infrastructure
+YAML
+  cat >"$1/clusters/base/flux-kustomization-bootstrap.yaml" <<YAML
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: bootstrap
+spec:
+  path: clusters/__CLUSTER__/bootstrap
+YAML
+}
+
 # One provider shipping one annotated workload. <extra> is spliced into the
 # overlay's resource list, so neighbouring cases differ in exactly one line.
 make_provider() { # <root> <provider> <workload-basename> <namespace> <skip-reason> <extra-resource>
   local root=$1 prov=$2 base=$3 ns=$4 reason=$5 extra=$6
+  make_layer_roots "$root"
   mkdir -p "$root/providers/$prov/infrastructure"
   {
     printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n'
@@ -170,6 +198,7 @@ expect 'unrelated-skip-is-not-matched' 0 "$unrelated" 'no suppression'
 
 # --- 6. ANTI-VACUITY: no suppression at all --------------------------------
 bare="$scratch/bare"
+make_layer_roots "$bare"
 mkdir -p "$bare/providers/barelike/infrastructure"
 cat >"$bare/providers/barelike/infrastructure/kustomization.yaml" <<'YAML'
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -193,6 +222,7 @@ expect 'missing-providers-dir-is-exit-2' 2 "$noprov" 'providers'
 
 # --- 9. COULD-NOT-CHECK: premised skip on a namespace-less resource --------
 nons="$scratch/nons"
+make_layer_roots "$nons"
 mkdir -p "$nons/providers/nonslike/infrastructure"
 cat >"$nons/providers/nonslike/infrastructure/kustomization.yaml" <<'YAML'
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -260,6 +290,7 @@ expect 'absolute-resources-entry-resolves' 0 "$absentry" 'absolute-dns'
 # in document 1 states `multidoc-ns`, where the LimitRange is shipped. The correct
 # verdict is exit 0.
 multidoc="$scratch/multidoc"
+make_layer_roots "$multidoc"
 mkdir -p "$multidoc/providers/multidoclike/infrastructure"
 {
   printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n'
@@ -319,5 +350,73 @@ spec:
         memory: 1Gi
 YAML
 expect 'limitrange-without-default-cpu-fails' 1 "$capless" 'capless-dns'
+# --- 16. THE DEFECT THIS FIX CLOSES: a LimitRange in an UNREFERENCED subtree ---
+# The overlay ships the annotated workload but does NOT reference limit-ranges/.
+# `find` reaches that subtree's kustomization.yaml, the Flux layer graph does not.
+# Seeding from `find` therefore credited the provider with a LimitRange it never
+# deploys and PASSED — a fail-open suppression. Seeded from the layer root, the
+# subtree is correctly invisible and the premise is reported as unshielded.
+unref="$scratch/unref"
+make_provider "$unref" unreflike orphan-dns kube-system \
+  "CKV_K8S_11=the kube-system default-limitrange supplies the CPU limit at admission" ""
+mkdir -p "$unref/providers/unreflike/infrastructure/opt-in"
+cat >"$unref/providers/unreflike/infrastructure/opt-in/kustomization.yaml" <<'YAML'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - range.yaml
+YAML
+cat >"$unref/providers/unreflike/infrastructure/opt-in/range.yaml" <<'YAML'
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-limitrange
+  namespace: kube-system
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "2"
+YAML
+expect 'unreferenced-subtree-limitrange-does-not-shield' 1 "$unref" 'orphan-dns'
+
+# --- 17. THE PAIRED CONTROL: the SAME subtree, now REFERENCED, does shield ----
+# Differs from case 16 in exactly one line — the overlay's `resources:` entry — so
+# a pass here can only be attributed to reachability, not to the fixture shape.
+refd="$scratch/refd"
+make_provider "$refd" refdlike adopted-dns kube-system \
+  "CKV_K8S_11=the kube-system default-limitrange supplies the CPU limit at admission" "opt-in"
+mkdir -p "$refd/providers/refdlike/infrastructure/opt-in"
+cat >"$refd/providers/refdlike/infrastructure/opt-in/kustomization.yaml" <<'YAML'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - range.yaml
+YAML
+cat >"$refd/providers/refdlike/infrastructure/opt-in/range.yaml" <<'YAML'
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-limitrange
+  namespace: kube-system
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "2"
+YAML
+expect 'referenced-subtree-limitrange-does-shield' 0 "$refd" 'adopted-dns'
+
+# --- 18. COULD-NOT-CHECK: no Flux layer definitions to seed from -------------
+# Without clusters/base the guard cannot know which paths a provider deploys.
+# That must be exit 2, never a clean 0: an unknown deployment surface and a clean
+# tree would otherwise be indistinguishable — the property this guard's header
+# calls out explicitly.
+nolayer="$scratch/nolayer"
+make_provider "$nolayer" nolayerlike blind-dns kube-system \
+  "CKV_K8S_11=the kube-system default-limitrange supplies the CPU limit at admission" ""
+rm -rf "$nolayer/clusters"
+expect 'missing-layer-definitions-is-exit-2' 2 "$nolayer" 'flux-kustomization'
+
 printf '\n%d assertion(s), %d failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ] || exit 1

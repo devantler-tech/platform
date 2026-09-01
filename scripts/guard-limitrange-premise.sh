@@ -83,10 +83,46 @@ canonicalize() { # <dir> <entry>
 # Every filesystem path a provider's kustomize graph reaches, one per line.
 reachable_files() { # <provider-dir>
   local provider=$1 queue seen_k="" files="" k dir entry target
-  # Seed with every kustomization under the provider. Flux applies each layer
-  # separately, so a LimitRange reached by ANY of them lands on that cluster.
-  queue=$(find "$provider" -name kustomization.yaml -type f 2>/dev/null)
-  [ -n "$queue" ] && queue="$queue"$'\n'
+  local lroot lpath lfile seeded=0 layer_defs=0
+  # SEED FROM THE FLUX LAYER ROOTS, NEVER FROM `find`.
+  #
+  # Flux does not apply "every kustomization under the provider" — each layer
+  # Kustomization in clusters/base targets ONE path, and a subtree that no layer
+  # root reaches through its resources/components graph is NOT deployed. Seeding
+  # with `find` swept those in, and because extra subtrees can only ADD LimitRange
+  # namespaces, the error was fail-open: an unreferenced opt-in overlay could
+  # supply the only LimitRange for a premised skip and the guard would approve a
+  # suppression nothing actually shields. `providers/docker/infrastructure/
+  # controllers/minio/` is exactly that shape — referenced only from comments.
+  #
+  # The roots are READ from clusters/base rather than hardcoded, so adding a layer
+  # widens this guard automatically instead of silently narrowing it.
+  for lfile in "$root"/clusters/base/flux-kustomization-*.yaml; do
+    [ -f "$lfile" ] || continue
+    layer_defs=$((layer_defs + 1))
+    lpath=$(yq -r '.spec.path // ""' "$lfile" 2>/dev/null) ||
+      die "could not parse layer definition $lfile"
+    [ -n "$lpath" ] || continue
+    # Only provider-scoped layers seed a provider walk. `bootstrap` targets
+    # clusters/__CLUSTER__/bootstrap — a different tree that ships no provider
+    # overlay — so substituting a provider name into it would name nothing.
+    case $lpath in
+      providers/__PROVIDER__ | providers/__PROVIDER__/*) ;;
+      *) continue ;;
+    esac
+    lroot="$root/${lpath//__PROVIDER__/$(basename "$provider")}"
+    [ -f "$lroot/kustomization.yaml" ] || continue
+    queue="${queue}$lroot/kustomization.yaml"$'\n'
+    seeded=$((seeded + 1))
+  done
+  # A guard that cannot find the layer definitions cannot know what is deployed,
+  # and must not report a clean tree. Distinguish the two causes: no definitions
+  # at all is a broken/unknown checkout, while definitions that name no existing
+  # path for THIS provider is a provider that ships nothing through any layer.
+  if [ "$layer_defs" -eq 0 ]; then
+    die "no clusters/base/flux-kustomization-*.yaml layer definitions under $root; cannot determine what each provider deploys"
+  fi
+  [ "$seeded" -gt 0 ] || return 0
   while [ -n "$queue" ]; do
     k=${queue%%$'\n'*}
     if [ "$k" = "$queue" ]; then queue=""; else queue=${queue#*$'\n'}; fi
