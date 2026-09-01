@@ -284,5 +284,61 @@ else
 fi
 assert_contains 'says it could not parse it' 'cannot parse'
 
+# --- case 10: the merge-group guard is wired into the REQUIRED check --------
+# Gating deploy-prod is necessary but NOT sufficient. When this guard fails,
+# deploy-prod is SKIPPED, and aggregate-job-checks treats `skipped` as
+# acceptable — so a required check that only sees deploy-prod stays GREEN and
+# the merge group merges a revision the guard rejected. The sibling RGD gate is
+# listed in ci-required-checks for exactly this reason; a weaker wiring here
+# would make the guard block the deploy while letting the bad revision land.
+printf 'case: the merge-group guard is wired into the required check\n'
+ci_workflow="${repo_root}/.github/workflows/ci.yaml"
+guard_job='validate-ghcr-fanout-merge-group'
+# Fail CLOSED on a missing tool or unreadable workflow: an unchecked wiring
+# assertion must never render as a pass.
+assertions=$((assertions + 1))
+if ! command -v yq >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+  printf '  FAIL cannot check wiring: yq and jq are both required\n'
+  failures=$((failures + 1))
+elif ! ci_json="$(yq -o=json -I=0 '.' "$ci_workflow" 2>/dev/null)" || [ -z "$ci_json" ]; then
+  printf '  FAIL cannot check wiring: %s is unreadable as YAML\n' "$ci_workflow"
+  failures=$((failures + 1))
+else
+  printf '  ok   premise: ci.yaml parsed and both tools present\n'
+
+  assertions=$((assertions + 1))
+  if jq -e --arg j "$guard_job" '
+      (.jobs["deploy-prod"].needs | if type == "array" then . else [.] end)
+      | index($j) != null' <<<"$ci_json" >/dev/null; then
+    printf '  ok   deploy-prod depends on the guard\n'
+  else
+    printf '  FAIL deploy-prod does not depend on %s\n' "$guard_job"
+    failures=$((failures + 1))
+  fi
+
+  assertions=$((assertions + 1))
+  if jq -e --arg j "$guard_job" '
+      (.jobs["ci-required-checks"].needs | if type == "array" then . else [.] end)
+      | index($j) != null' <<<"$ci_json" >/dev/null; then
+    printf '  ok   ci-required-checks depends on the guard\n'
+  else
+    printf '  FAIL ci-required-checks does not depend on %s — a guard failure\n' "$guard_job"
+    printf '       skips deploy-prod, which the aggregate accepts, so the\n'
+    printf '       required check stays green and the revision merges\n'
+    failures=$((failures + 1))
+  fi
+
+  assertions=$((assertions + 1))
+  if jq -e --arg j "$guard_job" '
+      ([.jobs["ci-required-checks"].steps[]?.with["job-results"]? // empty] | join(" "))
+      | contains("needs." + $j + ".result")' <<<"$ci_json" >/dev/null; then
+    printf '  ok   the guard result is aggregated into the required check\n'
+  else
+    printf '  FAIL %s.result is absent from ci-required-checks job-results, so\n' "$guard_job"
+    printf '       its failure is never evaluated even once the job is a dependency\n'
+    failures=$((failures + 1))
+  fi
+fi
+
 printf '\n%s assertion(s), %s failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ] || exit 1

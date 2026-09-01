@@ -1789,6 +1789,7 @@ jobs:
         naming,
         validate-talos,
         validate-rgd-templates-merge-group,
+        validate-ghcr-fanout-merge-group,
         deploy-prod,
       ]
     if: always()
@@ -1806,4 +1807,5 @@ jobs:
             ${{ needs.naming.result }}
             ${{ needs.validate-talos.result }}
             ${{ needs.validate-rgd-templates-merge-group.result }}
+            ${{ needs.validate-ghcr-fanout-merge-group.result }}
             ${{ needs.deploy-prod.result }}
