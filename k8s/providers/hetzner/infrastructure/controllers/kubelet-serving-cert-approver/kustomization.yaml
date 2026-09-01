@@ -18,6 +18,6 @@ resources:
   # custom manager in .github/renovate.json (the project ships no Helm chart, only
   # these raw install manifests, so a kustomize remote resource is the install
   # path). On a bump, re-check the PDB selector still matches the upstream labels.
-  - https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/v0.11.0/deploy/ha-install.yaml
+  - https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/v0.11.1/deploy/ha-install.yaml
   - cilium-network-policy.yaml
   - pod-disruption-budget.yaml
