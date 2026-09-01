@@ -82,7 +82,7 @@ canonicalize() { # <dir> <entry>
 
 # Every filesystem path a provider's kustomize graph reaches, one per line.
 reachable_files() { # <provider-dir>
-  local provider=$1 queue seen_k="" files="" k dir entry target
+  local provider=$1 queue="" seen_k="" files="" k dir entry target
   local lroot lpath lfile seeded=0 layer_defs=0
   # SEED FROM THE FLUX LAYER ROOTS, NEVER FROM `find`.
   #
