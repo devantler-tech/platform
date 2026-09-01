@@ -1556,12 +1556,14 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
         validate-eks-authorization,
         validate-publication-contract,
         validate-rgd-templates-merge-group,
+        validate-ghcr-fanout-merge-group,
       ]`
 		deployNeedsWithoutGate = `    needs:
       [
         changes,
         validate-eks-authorization,
         validate-rgd-templates-merge-group,
+        validate-ghcr-fanout-merge-group,
       ]`
 		healNeeds = "    needs: [changes, deploy-prod, validate-publication-contract]"
 	)
