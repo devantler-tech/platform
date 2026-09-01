@@ -214,9 +214,43 @@ jobs:
       - name: 🔐 Validate shared publish workflows are pinned
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
+  # The apps-base component gate and FANOUT_NAMESPACES must agree, or the
+  # post-reconcile reassertion in deploy-prod (--reuse-runtime-proof, no
+  # exemption) marks the fan-out incomplete and FAILS THE DEPLOY (#3476).
+  #
+  # This is the manual recovery path for a direct push to main, which is exactly
+  # the case ci.yaml cannot cover: it gates the guard on `pull_request`, and
+  # validate-main.yaml runs it asynchronously AFTER a push, so it gates nothing.
+  # Without this job a dispatched deploy reconciles an apps-base/fan-out
+  # disagreement to production and the guard's verdict arrives too late to stop
+  # it — the same way leaving validate-eks-authorization out would have made this
+  # route the way around that gate.
+  validate-ghcr-fanout-component-gate:
+    name: 🔗 Validate GHCR Fan-out Component Gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🔗 Validate the GHCR fan-out follows the apps-base component gate
+        run: |
+          shellcheck scripts/guard-ghcr-fanout-component-gate.sh
+          shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+          bash scripts/guard-ghcr-fanout-component-gate.sh
+          bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+
   deploy-prod:
     name: 🚀 Deploy to Production
-    needs: [validate-eks-authorization, validate-publication-contract]
+    needs:
+      [
+        validate-eks-authorization,
+        validate-publication-contract,
+        validate-ghcr-fanout-component-gate,
+      ]
     runs-on: ubuntu-latest
     environment: prod
     permissions:
