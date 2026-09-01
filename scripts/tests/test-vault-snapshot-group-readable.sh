@@ -123,14 +123,58 @@ readonly split_commands_awk='
 # chmod; leaving the assignment in front of it hides the command from the anchored match that
 # follows, which is this guard's fail-open one level down. Grouping is stripped only at the START
 # of a segment, never mid-line, so an operand carrying arithmetic like `$((widened + 1))` survives.
+#
+# The assignment VALUE is consumed by a quote-aware walk rather than by `[^ \t]*`, because that
+# expression stops at the first space — including one INSIDE quotes. On
+# `LABEL="nightly snapshot" chmod 0600 "$SNAP"` it consumed only `LABEL="nightly`, leaving
+# `snapshot" chmod ...`, which the anchored match below then failed to read as a chmod. Since this
+# guard requires EVERY chmod to widen, a chmod it cannot see is a narrowing one it cannot reject:
+# the fail-open this pass exists to close, reachable through any assignment value with a space.
+#
+# An UNTERMINATED quote returns 0 (do not strip), which is correct rather than merely cautious: the
+# shell would treat the rest of the input as string data, so there is no command hiding behind it.
 # shellcheck disable=SC2016  # an awk program is data, not shell.
 readonly strip_prefixes_awk='
+      function assignment_word_end(s,   i, n, c, q) {
+        if (!match(s, /^[A-Za-z_][A-Za-z0-9_]*=/)) { return 0 }
+        n = length(s)
+        i = RLENGTH + 1
+        q = ""
+        while (i <= n) {
+          c = substr(s, i, 1)
+          if (q == "") {
+            if (c == " " || c == "\t") { return i - 1 }
+            if (c == "\\") { i += 2; continue }
+            if (c == "\047" || c == "\"") { q = c; i++; continue }
+            i++
+            continue
+          }
+          if (q == "\"" && c == "\\") { i += 2; continue }
+          if (c == q) { q = ""; i++; continue }
+          i++
+        }
+        if (q != "") { return 0 }
+        return n
+      }
       {
         line = $0
         sub(/^[ \t]+/, "", line)
-        while (match(line, /^((if|then|else|elif|do|while|until|!|time|exec|command|eval)[ \t]+|[A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+|[({][ \t]*)/)) {
-          line = substr(line, RLENGTH + 1)
-          sub(/^[ \t]+/, "", line)
+        moved = 1
+        while (moved) {
+          moved = 0
+          if (match(line, /^((if|then|else|elif|do|while|until|!|time|exec|command|eval)[ \t]+|[({][ \t]*)/)) {
+            line = substr(line, RLENGTH + 1)
+            sub(/^[ \t]+/, "", line)
+            moved = 1
+            continue
+          }
+          e = assignment_word_end(line)
+          if (e > 0 && e < length(line) && substr(line, e + 1, 1) ~ /^[ \t]$/) {
+            line = substr(line, e + 1)
+            sub(/^[ \t]+/, "", line)
+            moved = 1
+            continue
+          }
         }
         print line
       }'
@@ -179,6 +223,11 @@ readonly normaliser_cases=(
   "1:true && LC_ALL=C chmod 0600 \"\$SNAP\""
   "1:printf '%s' \"note\ncontinued\" && chmod 0600 \"\$SNAP\""
   "0:printf '%s' \"note\ncontinued && chmod 0600 \$SNAP\""
+  "1:LABEL=\"nightly snapshot\" chmod 0600 \"\$SNAP\""
+  "1:LABEL='nightly snapshot' chmod 0600 \"\$SNAP\""
+  "1:A=\"x y\" B=\"p q\" chmod 0600 \"\$SNAP\""
+  "1:LABEL=nightly\\\\ snapshot chmod 0600 \"\$SNAP\""
+  "0:LABEL=\"unterminated chmod 0600 \$SNAP"
 )
 
 for normaliser_case in "${normaliser_cases[@]}"; do
