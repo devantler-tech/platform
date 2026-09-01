@@ -2140,7 +2140,10 @@ func authorizationIsolationRequested(document map[string]any) bool {
 }
 
 // reviewedIsolatedChartIdentities is the explicit allowlist of namespace/name
-// pairs whose isolated-chart declaration has been reviewed.
+// pairs whose isolated-chart declaration and exact rendered-child namespace
+// gate have both been reviewed. Each entry needs a path-scoped Helm render that
+// rejects every namespaced child outside the identity's namespace; the
+// data-product-controller gate is test-isolated-chart-namespace-rules.sh.
 //
 // A namespace denylist is not sufficient. Denying only "", "aws" and
 // "flux-system" leaves every other namespace able to exempt itself from the
@@ -2154,8 +2157,9 @@ var reviewedIsolatedChartIdentities = map[string]struct{}{
 
 // validateAuthorizationIsolation fails closed on every precondition behind an
 // isolated-chart declaration. It is intentionally limited to a namespace-local
-// HelmRelease and its immutable public OCIRepository; the rendered chart
-// children remain subject to the production CEL authorization rules.
+// HelmRelease and its immutable public OCIRepository. A separate path-scoped
+// KSail gate Helm-renders that exact artifact, constrains every child namespace,
+// and applies the production CEL authorization rules to its effective RBAC.
 func validateAuthorizationIsolation(document map[string]any, identity resourceIdentity) error {
 	if !authorizationIsolationRequested(document) {
 		return nil

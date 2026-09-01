@@ -79,6 +79,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
+      - name: 🔐 Validate isolated chart child namespaces
+        # Direct pushes must prove the same exact staged-off chart property as
+        # pull requests and merge groups before main is accepted as healthy.
+        timeout-minutes: 10
+        run: |
+          shellcheck scripts/tests/test-isolated-chart-namespace-rules.sh
+          bash scripts/tests/test-isolated-chart-namespace-rules.sh
+
       - name: 🔐 Validate Helm-rendered production authorization controls
         # Same reasoning as the identical step in ci.yaml: this reaches every
         # upstream chart registry, so an unreachable registry would otherwise

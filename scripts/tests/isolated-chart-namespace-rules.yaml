@@ -1,0 +1,23 @@
+rules:
+  - name: restrict-data-product-controller-rendered-child-namespaces
+    # This rule is deliberately path-scoped by its caller to the reviewed
+    # data-product-controller component. That gives every rendered child the
+    # chart provenance which a cluster-wide admission rule cannot recover from
+    # the final object alone. Namespace, ClusterRole, and ClusterRoleBinding are
+    # the only reviewed cluster-scoped shapes in the exact pinned render; every
+    # namespaced child must declare the release namespace explicitly.
+    expression: >-
+      has(object.metadata) &&
+      ((has(object.metadata.namespace) &&
+        object.metadata.namespace == 'data-product-controller') ||
+       (!has(object.metadata.namespace) &&
+        ((has(object.kind) &&
+          object.kind in ['ClusterRole', 'ClusterRoleBinding']) ||
+         (has(object.kind) &&
+          object.kind == 'Namespace' &&
+          has(object.metadata.name) &&
+          object.metadata.name == 'data-product-controller'))))
+    message: >-
+      data-product-controller chart children must remain in the reviewed
+      data-product-controller namespace
+    severity: error

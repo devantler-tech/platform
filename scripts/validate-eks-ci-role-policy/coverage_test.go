@@ -18,6 +18,11 @@ const workflowsDir = "../../.github/workflows"
 // the gate by name.
 const validatorInvocation = "go run ./scripts/validate-eks-ci-role-policy"
 
+// isolatedChartNamespaceValidatorInvocation renders the reviewed staged-off
+// chart and checks every child namespace. It is a separate command because the
+// static Go validator runs before KSail is installed in each workflow.
+const isolatedChartNamespaceValidatorInvocation = "bash scripts/tests/test-isolated-chart-namespace-rules.sh"
+
 // workflow is the narrow slice of Actions schema this contract needs.
 //
 // It is parsed as YAML rather than string-matched on purpose: the workflow
@@ -38,9 +43,10 @@ type job struct {
 }
 
 type step struct {
-	Run  string     `yaml:"run"`
-	Uses string     `yaml:"uses"`
-	With stepInputs `yaml:"with"`
+	Run            string     `yaml:"run"`
+	Uses           string     `yaml:"uses"`
+	TimeoutMinutes int        `yaml:"timeout-minutes"`
+	With           stepInputs `yaml:"with"`
 }
 
 // stepInputs is the slice of an action's `with:` block these contracts read.
@@ -105,6 +111,24 @@ func (w workflow) runsValidator() bool {
 	for _, job := range w.Jobs {
 		for _, step := range job.Steps {
 			if strings.Contains(step.Run, validatorInvocation) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// runsIsolatedChartNamespaceValidator reports whether one job installs KSail
+// before executing the rendered-child namespace gate. Keeping both steps in
+// the same job matters: setup in another job does not share the runner.
+func (w workflow) runsIsolatedChartNamespaceValidator() bool {
+	for _, job := range w.Jobs {
+		ksailReady := false
+		for _, step := range job.Steps {
+			if strings.Contains(step.Run, ".github/scripts/setup-ksail.sh") {
+				ksailReady = true
+			}
+			if ksailReady && step.TimeoutMinutes == 10 && strings.Contains(step.Run, isolatedChartNamespaceValidatorInvocation) {
 				return true
 			}
 		}
@@ -228,6 +252,82 @@ func TestAuthorizationGateGuardIsNotVacuous(t *testing.T) {
 		}
 		if perturbed.coversPushToMain() {
 			t.Fatal("merely mentioning the validator must not count as running it")
+		}
+	})
+}
+
+// TestIsolatedChartNamespaceGateCoversEveryDeploymentRoute prevents the
+// reviewed isolated-chart allowlist from outliving the rendered-child proof it
+// depends on. These three workflows cover pull requests and merge groups,
+// direct pushes to main, and the manual production deployment respectively.
+func TestIsolatedChartNamespaceGateCoversEveryDeploymentRoute(t *testing.T) {
+	workflows := loadWorkflows(t)
+	for _, name := range []string{"ci.yaml", "validate-main.yaml", "cd.yaml"} {
+		parsed, ok := workflows[name]
+		if !ok {
+			t.Errorf("required workflow %s is missing", name)
+			continue
+		}
+		if !parsed.runsIsolatedChartNamespaceValidator() {
+			t.Errorf("%s must install KSail and then run %q in the same job", name, isolatedChartNamespaceValidatorInvocation)
+		}
+	}
+}
+
+// TestIsolatedChartNamespaceGateCoverageIsNotVacuous ablates the ordering and
+// same-runner properties independently so the deployment-route guard above
+// cannot pass on an inert command or setup performed in another job.
+func TestIsolatedChartNamespaceGateCoverageIsNotVacuous(t *testing.T) {
+	covered := workflow{Jobs: map[string]job{
+		"gate": {Steps: []step{
+			{Run: ".github/scripts/setup-ksail.sh"},
+			{Run: isolatedChartNamespaceValidatorInvocation, TimeoutMinutes: 10},
+		}},
+	}}
+	if !covered.runsIsolatedChartNamespaceValidator() {
+		t.Fatal("positive control failed: setup followed by the namespace gate in one job must count")
+	}
+
+	t.Run("missing gate", func(t *testing.T) {
+		ablated := workflow{Jobs: map[string]job{
+			"gate": {Steps: []step{{Run: ".github/scripts/setup-ksail.sh"}}},
+		}}
+		if ablated.runsIsolatedChartNamespaceValidator() {
+			t.Fatal("KSail setup without the namespace gate must not count")
+		}
+	})
+
+	t.Run("gate before setup", func(t *testing.T) {
+		ablated := workflow{Jobs: map[string]job{
+			"gate": {Steps: []step{
+				{Run: isolatedChartNamespaceValidatorInvocation},
+				{Run: ".github/scripts/setup-ksail.sh"},
+			}},
+		}}
+		if ablated.runsIsolatedChartNamespaceValidator() {
+			t.Fatal("the namespace gate must not count before KSail is installed")
+		}
+	})
+
+	t.Run("setup in another job", func(t *testing.T) {
+		ablated := workflow{Jobs: map[string]job{
+			"setup": {Steps: []step{{Run: ".github/scripts/setup-ksail.sh"}}},
+			"gate":  {Steps: []step{{Run: isolatedChartNamespaceValidatorInvocation}}},
+		}}
+		if ablated.runsIsolatedChartNamespaceValidator() {
+			t.Fatal("KSail setup in another runner job must not count")
+		}
+	})
+
+	t.Run("unbounded render", func(t *testing.T) {
+		ablated := workflow{Jobs: map[string]job{
+			"gate": {Steps: []step{
+				{Run: ".github/scripts/setup-ksail.sh"},
+				{Run: isolatedChartNamespaceValidatorInvocation},
+			}},
+		}}
+		if ablated.runsIsolatedChartNamespaceValidator() {
+			t.Fatal("an unbounded chart render must not satisfy the namespace gate")
 		}
 	})
 }
