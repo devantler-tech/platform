@@ -1344,7 +1344,8 @@ func fakeInventoryNode(
 }
 
 func fakeKubectlGetPods(args []string) int {
-	if containsSequence(args, "-o", "name") || containsArg(args, "-o=name") {
+	if containsSequence(args, "-o", "name") || containsArg(args, "-o=name") ||
+		flagValue(args, "--field-selector") == "status.phase=Running" {
 		return fakeKubectlGetNamespaceWorkloads(args, flagValue(args, "--namespace"))
 	}
 	nodeName := flagValue(args, "--field-selector")
@@ -2432,21 +2433,45 @@ func anySlice(value any) []any {
 // unless the fixture explicitly declares a running workload.
 //
 // A failed candidate can also leave a Pod OBJECT behind that never reached
-// Running (the ghcr-auth ExternalSecret it needed was missing, so its image
-// pull never succeeded). That pod is not a consumer whose pull credential this
-// staging step could break, so it is reported only when the probe asks for
-// every Pod rather than for running ones.
+// Running, or a terminating Pod whose last phase is still Running. Neither is
+// an active consumer whose pull credential this staging step could break.
 func fakeKubectlGetNamespaceWorkloads(args []string, namespace string) int {
 	if namespace == "" {
 		return 0
 	}
+	outputJSON := containsSequence(args, "-o", "json") || containsArg(args, "-o=json")
+	fieldSelector := flagValue(args, "--field-selector")
+	items := []any{}
 	if namespace == os.Getenv("FAKE_NAMESPACE_WITH_WORKLOAD") {
-		fmt.Printf("pod/%s-0\n", namespace)
-		return 0
+		items = append(items, map[string]any{
+			"metadata": map[string]any{"name": namespace + "-0"},
+			"status":   map[string]any{"phase": "Running"},
+		})
 	}
 	if namespace == os.Getenv("FAKE_NAMESPACE_WITH_NONRUNNING_POD") &&
-		!strings.Contains(flagValue(args, "--field-selector"), "status.phase=Running") {
-		fmt.Printf("pod/%s-0\n", namespace)
+		fieldSelector != "status.phase=Running" {
+		items = append(items, map[string]any{
+			"metadata": map[string]any{"name": namespace + "-0"},
+			"status":   map[string]any{"phase": "Pending"},
+		})
+	}
+	if namespace == os.Getenv("FAKE_NAMESPACE_WITH_TERMINATING_RUNNING_POD") {
+		items = append(items, map[string]any{
+			"metadata": map[string]any{
+				"name":              namespace + "-0",
+				"deletionTimestamp": "2026-09-01T00:00:00Z",
+			},
+			"status": map[string]any{"phase": "Running"},
+		})
+	}
+	if outputJSON {
+		fmt.Println(encodeJSON(map[string]any{"items": items}))
+		return 0
+	}
+	for _, item := range items {
+		pod, _ := item.(map[string]any)
+		metadata, _ := pod["metadata"].(map[string]any)
+		fmt.Printf("pod/%s\n", metadata["name"])
 	}
 	return 0
 }

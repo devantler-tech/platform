@@ -596,3 +596,24 @@ func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftANonRunningPod(t *tes
 	fanout := mustRead(f.fanoutLog)
 	requireNotContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
 }
+
+// Kubernetes leaves a terminating Pod's phase at Running until the object is
+// reaped. That leftover is no longer an active consumer and must not recreate
+// the retry deadlock while its deletion grace period elapses.
+func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftATerminatingRunningPod(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(
+		validConfig(),
+		[]string{"--record-runtime-proof", f.workspace + "/runtime-proof.json"},
+		map[string]string{
+			"FAKE_MISSING_FANOUT_RESOURCE":                "externalsecret/ascoachingogvaner/ghcr-auth",
+			"FAKE_NAMESPACE_WITH_TERMINATING_RUNNING_POD": "ascoachingogvaner",
+		},
+	)
+
+	requireWrapperExitCode(t, result, 0)
+	requireWrapperPathExists(t, f.patchCapture, true)
+	requireWrapperPathExists(t, f.variablesPatchCapture, true)
+	fanout := mustRead(f.fanoutLog)
+	requireNotContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
+}
