@@ -74,59 +74,79 @@ for target in "${targets[@]}"; do
   #
   # `chmod` is a COMMAND, and a command is not the only thing that can start a line. An anchored
   # `^[[:space:]]*chmod[[:space:]]` match therefore checks a chmod only where it happens to be
-  # written first — so `if chmod 0600 "$SNAP"; then`, `... && chmod 0600 "$B"` and
-  # `... || chmod 0600 "$SNAP"` are all INVISIBLE to it. That is the fail-open this guard exists to
-  # prevent, one level down (#3268): a narrowing chmod hiding behind an `if` would re-couple the
-  # mirror to file ownership with the guard still green. Found while working #3265, where rewriting
-  # a widen as `if chmod 0640 "$EXISTING"; then` silently dropped the reported modes from two to one.
+  # written first — so `if chmod 0600 "$SNAP"; then`, `... && chmod 0600 "$B"`,
+  # `... || chmod 0600 "$SNAP"`, `if ( chmod 0600 "$SNAP" ); then` and
+  # `if { chmod 0600 "$SNAP"; }; then` are all INVISIBLE to it. That is the fail-open this guard
+  # exists to prevent, one level down (#3268): a narrowing chmod hiding behind an `if` would
+  # re-couple the mirror to file ownership with the guard still green. Found while working #3265,
+  # where rewriting a widen as `if chmod 0640 "$EXISTING"; then` silently dropped the reported
+  # modes from two to one.
   #
-  # So the command text is normalised into one command per line BEFORE matching, in three steps:
+  # So the command text is normalised into one command per line BEFORE matching, in two passes.
   #
-  #   1. Truncate an unquoted trailing comment. Whole-line comments are already stripped above, but
-  #      a trailing one is command text to the old matcher, and step 2 would split on any `;` or
-  #      `&&` inside it — inventing a chmod out of prose. Quote state is tracked so a `#` inside an
-  #      operand (a mode string, a path) is not mistaken for a comment.
-  #   2. Split on the shell command separators `;`, `&&`, `||` and `|`, so a command that FOLLOWS one
-  #      starts its own line. Deliberately NOT on `(`/`)`/`{`/`}`: those appear inside operands and
-  #      arithmetic (`$((widened + 1))`), and splitting there would truncate an operand and fail a
-  #      correct script — a check that cries wolf is a check that gets deleted.
-  #   3. Strip leading shell keywords, so `if chmod ...` and `then chmod ...` reduce to `chmod ...`.
+  # PASS 1 walks each line ONCE, carrying shell quote state, and is deliberately a single scan
+  # rather than a comment-strip followed by a `gsub` split. Those are not equivalent: a `gsub`
+  # cannot see quote state, so it splits a separator inside `echo 'note; chmod 0600 x'` and
+  # invents a chmod out of a string literal; and a comment test that only accepts `#` after
+  # whitespace misses `true;# note; chmod 0600 "$SNAP"`, where the comment opens straight after a
+  # separator. Both are FALSE POSITIVES, and a guard that cries wolf on correct code is how a
+  # guard gets ignored and then deleted. Walking once fixes both, because the same scan knows
+  # whether it is inside quotes AND whether it is at a command boundary:
+  #
+  #   * a backslash escapes the next character outside single quotes (so `"a\"# b"` does not end
+  #     the string early, which would truncate away a real chmod after it);
+  #   * `'` and `"` toggle their quote state, and nothing inside a quote is a separator;
+  #   * an UNQUOTED `;`, `&&`, `||` or `|` becomes a newline, so a command that FOLLOWS one starts
+  #     its own line;
+  #   * an UNQUOTED `#` ends the line, but only at a command boundary — nothing emitted yet, or
+  #     the last thing emitted was whitespace or a separator. `a#b` is one word to the shell, and
+  #     it is one word here too.
+  #
+  # PASS 2 strips what can still precede a command once the separators are gone: leading shell
+  # keywords, and the `(` / `{` grouping tokens, repeatedly so `if ( chmod ... )` reduces all the
+  # way. Grouping is stripped only at the START of a segment, never mid-line, so an operand
+  # carrying a bracket and arithmetic like `$((widened + 1))` is left intact.
   #
   # Only then is the anchor applied. Because each surviving line now STARTS with `chmod`, the
-  # positional `$2`/`$3` mode and operand extraction below stays correct and unchanged — the fix is
-  # in what counts as a chmod, not in how one is read. Splitting also means a line carrying TWO of
-  # them (`chmod 0640 "$A" && chmod 0600 "$B"`) contributes both, where the old matcher saw one.
+  # positional `$2`/`$3` mode and operand extraction below stays correct and unchanged — the fix
+  # is in what counts as a chmod, not in how one is read. Splitting also means a line carrying TWO
+  # of them (`chmod 0640 "$A" && chmod 0600 "$B"`) contributes both, where the old matcher saw one.
   chmod_lines="$(printf '%s\n' "${commands}" |
     awk '
       {
         line = $0
+        out = ""
         sq = 0
         dq = 0
-        cut = 0
         n = length(line)
-        for (i = 1; i <= n; i++) {
+        i = 1
+        while (i <= n) {
           c = substr(line, i, 1)
-          # A backslash escapes the next character everywhere except inside single quotes, where
-          # the shell takes it literally. Without this, `"a\\"# b"` closes the string one quote
-          # early and the `#` reads as a comment, TRUNCATING away any chmod that follows it on
-          # the line — a fail-open introduced by the truncation itself.
-          if (c == "\\" && sq == 0) { i++; continue }
-          if (c == "\047" && dq == 0) { sq = 1 - sq; continue }
-          if (c == "\"" && sq == 0) { dq = 1 - dq; continue }
-          if (c == "#" && sq == 0 && dq == 0) {
-            if (i == 1 || substr(line, i - 1, 1) ~ /[ \t]/) { cut = i; break }
+          if (c == "\\" && sq == 0) { out = out c substr(line, i + 1, 1); i += 2; continue }
+          if (c == "\047" && dq == 0) { sq = 1 - sq; out = out c; i++; continue }
+          if (c == "\"" && sq == 0) { dq = 1 - dq; out = out c; i++; continue }
+          if (sq == 0 && dq == 0) {
+            if (c == "#") {
+              last = (out == "") ? "" : substr(out, length(out), 1)
+              if (out == "" || last == " " || last == "\t" || last == "\n") break
+            }
+            if (c == ";") { out = out "\n"; i++; continue }
+            if (c == "&" && substr(line, i + 1, 1) == "&") { out = out "\n"; i += 2; continue }
+            if (c == "|" && substr(line, i + 1, 1) == "|") { out = out "\n"; i += 2; continue }
+            if (c == "|") { out = out "\n"; i++; continue }
           }
+          out = out c
+          i++
         }
-        if (cut > 0) line = substr(line, 1, cut - 1)
-        gsub(/\|\||&&|\||;/, "\n", line)
-        print line
+        print out
       }' |
     awk '
       {
         line = $0
         sub(/^[ \t]+/, "", line)
-        while (match(line, /^(if|then|else|elif|do|while|until|!|time|exec|command|eval)[ \t]+/)) {
+        while (match(line, /^((if|then|else|elif|do|while|until|!|time|exec|command|eval)[ \t]+|[({][ \t]*)/)) {
           line = substr(line, RLENGTH + 1)
+          sub(/^[ \t]+/, "", line)
         }
         print line
       }' |
