@@ -302,8 +302,23 @@ else
   # Capture the guard's status DIRECTLY rather than reading $? after an `if` compound, which
   # yields the compound's status (0 when the condition merely failed) and would collapse
   # "could not check" into "checked".
+  # NOTE: set -e defeats that on its own. A command substitution in an assignment is itself
+  # a simple command, so a non-zero guard aborts this script AT the assignment - before
+  # premise_rc is read and before either branch below can print premise_out. The whole
+  # guard diagnosis lives in that variable, so a guard failure surfaced as a silent exit 1
+  # with no output at all, which is unactionable. Disable errexit across the capture only.
+  set +e
   premise_out="$(cd "$repo_root" && "$premise_guard" k8s 2>&1)"
   premise_rc=$?
+  set -e
+  # A non-zero guard already explained itself on its own stderr, and that text is the
+  # evidence for every verdict below. Echo it whenever the guard did not exit clean, so a
+  # CI failure carries the reason and not just the conclusion. rc 2 is handled separately
+  # below, where it means UNCHECKABLE rather than a violation.
+  if [ "$premise_rc" -ne 0 ] && [ "$premise_rc" -ne 2 ]; then
+    printf %s\\n "guard-limitrange-premise.sh exited $premise_rc; its report follows:" >&2
+    printf %s\\n "$premise_out" >&2
+  fi
   if [ "$premise_rc" -eq 2 ]; then
     printf 'ADMISSION PREMISE UNCHECKABLE: guard-limitrange-premise.sh exited 2, so an absent verdict below would mean nothing rather than a broken premise\n' >&2
     printf '%s\n' "$premise_out" >&2
