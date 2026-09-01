@@ -2437,9 +2437,9 @@ func anySlice(value any) []any {
 // left behind by a failed candidate still runs nothing, so it reports empty
 // unless the fixture explicitly declares a running workload.
 //
-// A failed candidate can also leave a Pod OBJECT behind that never reached
-// A non-Running Pod, or a terminating Pod whose last phase is still Running.
-// Neither is an active consumer whose pull credential this staging step could break.
+// A failed candidate can also leave a Pod OBJECT behind that never reached Running,
+// or a terminating Pod whose last phase is still Running. Neither is an active
+// consumer whose pull credential this staging step could break.
 func fakeKubectlGetNamespaceWorkloads(args []string, namespace string) int {
 	if namespace == "" {
 		return 0
