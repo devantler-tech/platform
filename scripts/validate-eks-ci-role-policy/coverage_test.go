@@ -204,6 +204,75 @@ func assignmentPrefix(s string) int {
 // an unrecognised wrapper makes a covered gate read as UNCOVERED, failing the
 // build loudly, rather than passing an absent gate silently.
 func runsCommand(script, needle string) bool {
+	return scanCommandRuns(script, needle, nil)
+}
+
+// runsGate reports whether script runs needle AS A GATE: at a command word,
+// and with its failure status still able to fail the step.
+//
+// runsCommand alone cannot answer that. `bash <gate>.sh || true` executes the
+// gate and then throws its verdict away, so a neutralised gate reads as
+// covered. That is the same hole as a gate which is merely mentioned, one
+// level down: the command runs, and nothing it discovers can stop the build.
+// A gate whose failure cannot fail the step is not a gate.
+//
+// Kept separate from runsCommand deliberately. Most callers are asking the
+// plain question "does this script invoke X" — a setup step, for instance,
+// where the answer is about presence rather than enforcement. Only a coverage
+// assertion about a GATE needs failure propagation, so only those opt in.
+func runsGate(script, needle string) bool {
+	return scanCommandRuns(script, needle, func(end int) bool {
+		return failurePropagates(script, end)
+	})
+}
+
+// failurePropagates reports whether the command whose word ends at i can still
+// fail its step. It walks that command's remaining arguments and inspects the
+// operator that terminates it.
+//
+// `||` discards the failure outright. A single `|` hands the step the status of
+// the LAST pipeline stage instead — GitHub Actions runs a `run:` block under
+// `bash -e`, without `pipefail` — so an earlier stage's failure is lost. A
+// trailing `&` backgrounds the command, and its status is never waited for.
+// `;`, `&&`, a newline, a closing paren, and end-of-script all leave the
+// failure intact.
+//
+// Strict in the same direction as the scanner above: a pipeline is refused
+// even where the script does set pipefail, because deciding that reliably
+// means tracking shell options across the block. Refusing makes a genuine gate
+// read as UNCOVERED and fails the build loudly, which is recoverable; the
+// other direction passes a defused gate in silence.
+func failurePropagates(script string, i int) bool {
+	for i < len(script) {
+		switch c := script[i]; {
+		case c == '\\':
+			i += 2
+		case c == '<' && i+1 < len(script) && script[i+1] == '<':
+			i = skipHeredoc(script, i)
+		case c == '\'', c == '"':
+			i = skipQuoted(script, i)
+		case c == '|':
+			// `||` swallows the failure; a lone `|` hides it behind the
+			// last stage of the pipeline.
+			return false
+		case c == '&':
+			// `&&` runs on SUCCESS, so a failure still stops the chain and
+			// reaches the step. A lone `&` backgrounds the command.
+			return i+1 < len(script) && script[i+1] == '&'
+		case c == ';', c == '\n', c == ')':
+			return true
+		default:
+			i++
+		}
+	}
+	return true
+}
+
+// scanCommandRuns walks script for needle at a command word. accept, when
+// non-nil, is offered the index just past each match and decides whether that
+// occurrence counts; scanning continues past a rejected one, so one defused
+// invocation does not mask a sound one elsewhere in the same block.
+func scanCommandRuns(script, needle string, accept func(end int) bool) bool {
 	if needle == "" {
 		return false
 	}
@@ -241,9 +310,12 @@ func runsCommand(script, needle string) bool {
 			continue
 		case atCommandStart:
 			if strings.HasPrefix(script[i:], needle) {
-				rest := script[i+len(needle):]
+				end := i + len(needle)
+				rest := script[end:]
 				if rest == "" || endsWord(rest[0]) {
-					return true
+					if accept == nil || accept(end) {
+						return true
+					}
 				}
 			}
 			if n := assignmentPrefix(script[i:]); n > 0 {
@@ -337,7 +409,7 @@ func skipHeredoc(script string, i int) int {
 func (w workflow) runsValidator() bool {
 	for _, job := range w.Jobs {
 		for _, step := range job.Steps {
-			if runsCommand(step.Run, validatorInvocation) {
+			if runsGate(step.Run, validatorInvocation) {
 				return true
 			}
 		}
@@ -356,7 +428,7 @@ func (w workflow) runsIsolatedChartNamespaceValidator() bool {
 				ksailReady = true
 			}
 			if ksailReady && step.If == "" && step.TimeoutMinutes.is(10) &&
-				runsCommand(step.Run, isolatedChartNamespaceValidatorInvocation) {
+				runsGate(step.Run, isolatedChartNamespaceValidatorInvocation) {
 				return true
 			}
 		}
@@ -482,6 +554,17 @@ func TestAuthorizationGateGuardIsNotVacuous(t *testing.T) {
 			t.Fatal("merely mentioning the validator must not count as running it")
 		}
 	})
+
+	t.Run("a defused gate does not count", func(t *testing.T) {
+		perturbed := covering
+		perturbed.Jobs = map[string]job{
+			"gate": {Steps: []step{{Run: validatorInvocation + " . || true"}}},
+		}
+		if perturbed.coversPushToMain() {
+			t.Fatal("`|| true` discards the gate's verdict, so the step passes " +
+				"however the gate rules — that must not count as coverage")
+		}
+	})
 }
 
 // TestIsolatedChartNamespaceGateCoversEveryDeploymentRoute prevents the
@@ -561,6 +644,22 @@ func TestIsolatedChartNamespaceGateCoverageIsNotVacuous(t *testing.T) {
 			t.Fatal("an unbounded chart render must not satisfy the namespace gate")
 		}
 	})
+
+	t.Run("defused gate", func(t *testing.T) {
+		ablated := workflow{Jobs: map[string]job{
+			"gate": {Steps: []step{
+				{Run: ".github/scripts/setup-ksail.sh"},
+				{
+					Run:            isolatedChartNamespaceValidatorInvocation + " || true",
+					TimeoutMinutes: templatableInt{Value: 10, IsLiteral: true},
+				},
+			}},
+		}}
+		if ablated.runsIsolatedChartNamespaceValidator() {
+			t.Fatal("a gate whose failure is discarded by `|| true` runs but " +
+				"cannot fail the step, so it must not satisfy the coverage guard")
+		}
+	})
 }
 
 // TestRunsCommandRejectsInertMentions is the non-vacuity proof for the
@@ -636,5 +735,44 @@ func TestRunsCommandMatchesTheOtherGateInvocations(t *testing.T) {
 	if runsCommand("# bash scripts/tests/test-isolated-chart-namespace-rules.sh",
 		isolatedChartNamespaceValidatorInvocation) {
 		t.Error("a commented-out isolated-chart invocation was reported as executed")
+	}
+}
+
+// TestRunsGateRequiresFailurePropagation pins the distinction runsGate adds
+// over runsCommand: the gate must not only run, but be able to fail the step.
+// Each defused form below RUNS the gate — runsCommand accepts every one of
+// them — so this table is what separates "invoked" from "enforcing".
+func TestRunsGateRequiresFailurePropagation(t *testing.T) {
+	const gate = isolatedChartNamespaceValidatorInvocation
+
+	enforcing := []string{
+		gate,
+		gate + " .",
+		"shellcheck x.sh\n" + gate,
+		gate + " ; echo done",
+		gate + " && echo ok",
+		gate + "\necho after",
+	}
+	for _, script := range enforcing {
+		if !runsGate(script, gate) {
+			t.Errorf("a gate whose failure reaches the step must count: %q", script)
+		}
+	}
+
+	defused := []string{
+		gate + " || true",
+		gate + " || :",
+		gate + " || echo ignored",
+		gate + " | tee gate.log",
+		gate + " &",
+	}
+	for _, script := range defused {
+		if !runsCommand(script, gate) {
+			t.Fatalf("precondition: runsCommand must still see the gate run in %q — "+
+				"otherwise this case proves nothing about failure propagation", script)
+		}
+		if runsGate(script, gate) {
+			t.Errorf("a gate that cannot fail the step must not count: %q", script)
+		}
 	}
 }
