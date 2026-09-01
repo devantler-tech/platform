@@ -96,8 +96,11 @@ for target in "${targets[@]}"; do
   #   * a backslash escapes the next character outside single quotes (so `"a\"# b"` does not end
   #     the string early, which would truncate away a real chmod after it);
   #   * `'` and `"` toggle their quote state, and nothing inside a quote is a separator;
-  #   * an UNQUOTED `;`, `&&`, `||` or `|` becomes a newline, so a command that FOLLOWS one starts
-  #     its own line;
+  #   * an UNQUOTED `;`, `&&`, `||`, `|` or a standalone `&` becomes a newline, so a command that
+  #     FOLLOWS one starts its own line. A standalone `&` is the async-list separator, so
+  #     `true & chmod 0600 "$SNAP"` is two commands and the narrowing one must still be seen. The
+  #     redirection forms `>&`, `&>` and `<&` are NOT separators and are left intact, so a
+  #     `cmd >&2` stays a single command;
   #   * an UNQUOTED `#` ends the line, but only at a command boundary — nothing emitted yet, or
   #     the last thing emitted was whitespace or a separator. `a#b` is one word to the shell, and
   #     it is one word here too.
@@ -132,6 +135,11 @@ for target in "${targets[@]}"; do
             }
             if (c == ";") { out = out "\n"; i++; continue }
             if (c == "&" && substr(line, i + 1, 1) == "&") { out = out "\n"; i += 2; continue }
+            if (c == "&") {
+              nxt = substr(line, i + 1, 1)
+              prv = (out == "") ? "" : substr(out, length(out), 1)
+              if (nxt != ">" && prv != ">" && prv != "<") { out = out "\n"; i++; continue }
+            }
             if (c == "|" && substr(line, i + 1, 1) == "|") { out = out "\n"; i += 2; continue }
             if (c == "|") { out = out "\n"; i++; continue }
           }
