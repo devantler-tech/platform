@@ -105,12 +105,202 @@ func (t *triggerSpec) UnmarshalYAML(value *yaml.Node) error {
 	return value.Decode((*rawTrigger)(t))
 }
 
+// endsCommand reports whether b terminates a command, so that the next word
+// begins a new one. `&&` and `||` are repeats of these single bytes, so
+// treating each byte independently is sufficient here.
+func endsCommand(b byte) bool {
+	switch b {
+	case ';', '&', '|', '\n', '(', ')':
+		return true
+	}
+	return false
+}
+
+// endsWord reports whether b terminates a word, so a needle followed by b was
+// matched whole rather than as the prefix of a longer token.
+func endsWord(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', ';', '&', '|', ')', '<', '>':
+		return true
+	}
+	return false
+}
+
+// assignmentPrefix returns the length of a leading `NAME=value` word, or 0.
+// A command may be preceded by any number of these, and the command word is
+// still the one after them.
+func assignmentPrefix(s string) int {
+	i := 0
+	for i < len(s) && (s[i] == '_' ||
+		(s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') ||
+		(i > 0 && s[i] >= '0' && s[i] <= '9')) {
+		i++
+	}
+	if i == 0 || i >= len(s) || s[i] != '=' {
+		return 0
+	}
+	for i < len(s) && s[i] != ' ' && s[i] != '\t' && s[i] != '\n' {
+		if s[i] == '\'' || s[i] == '"' {
+			return 0 // quoted value: too subtle to skip safely, so decline
+		}
+		i++
+	}
+	return i
+}
+
+// runsCommand reports whether script EXECUTES needle, rather than merely
+// mentioning it.
+//
+// strings.Contains cannot answer that question. It matches a path named in an
+// `echo`, sitting in a shell comment, or handed to a different tool as an
+// argument — `shellcheck .github/scripts/setup-ksail.sh` is a live example in
+// this repository's own ci.yaml. A guard built on it therefore reports a gate
+// as covered when nothing runs it, which is exactly the failure this file's
+// header comment says the YAML parse exists to prevent: the parse stops a
+// workflow's YAML comments from satisfying the guard, but not a shell comment
+// or an echo inside the `run:` block it hands back.
+//
+// The test is positional rather than a deny-list of inert commands: needle must
+// begin at a COMMAND WORD. That admits every executable spelling without
+// enumerating the text-emitting builtins (`echo`, `printf`, `:`, a heredoc),
+// and it stays correct when a new one is invented. It is deliberately strict —
+// an unrecognised wrapper makes a covered gate read as UNCOVERED, failing the
+// build loudly, rather than passing an absent gate silently.
+func runsCommand(script, needle string) bool {
+	if needle == "" {
+		return false
+	}
+	atCommandStart := true
+	for i := 0; i < len(script); {
+		switch c := script[i]; {
+		case c == '\\':
+			// An escape consumes the next byte, a line continuation
+			// included, and never begins a command word.
+			atCommandStart = false
+			i += 2
+			continue
+		case c == '<' && i+1 < len(script) && script[i+1] == '<':
+			i = skipHeredoc(script, i)
+			atCommandStart = false
+			continue
+		case c == '\'', c == '"':
+			i = skipQuoted(script, i)
+			atCommandStart = false
+			continue
+		case c == ' ', c == '\t':
+			// Leading blanks do not end the pending command position.
+			i++
+			continue
+		case endsCommand(c):
+			atCommandStart = true
+			i++
+			continue
+		case atCommandStart && c == '#':
+			// A comment runs to the newline, which then re-arms the
+			// command position on the next iteration.
+			for i < len(script) && script[i] != '\n' {
+				i++
+			}
+			continue
+		case atCommandStart:
+			if strings.HasPrefix(script[i:], needle) {
+				rest := script[i+len(needle):]
+				if rest == "" || endsWord(rest[0]) {
+					return true
+				}
+			}
+			if n := assignmentPrefix(script[i:]); n > 0 {
+				i += n // still at a command position
+				continue
+			}
+		}
+		atCommandStart = false
+		i++
+	}
+	return false
+}
+
+// skipQuoted returns the index just past the quoted run starting at i. An
+// unterminated quote consumes the remainder, which keeps the scan total.
+func skipQuoted(script string, i int) int {
+	quote := script[i]
+	for i++; i < len(script); i++ {
+		if quote == '"' && script[i] == '\\' {
+			i++
+			continue
+		}
+		if script[i] == quote {
+			return i + 1
+		}
+	}
+	return len(script)
+}
+
+// skipHeredoc returns the index just past a heredoc introduced at i, where
+// script[i:i+2] is "<<". A heredoc body is inert text, but every line of it
+// starts where a command word would, so without this the body of a
+// `cat <<'EOF' ... EOF` block reads as a sequence of commands. A here-string
+// ("<<<") introduces no body and is left to the ordinary scan. When the
+// terminator is missing the remainder is consumed, which keeps the scan total.
+func skipHeredoc(script string, i int) int {
+	j := i + 2
+	if j < len(script) && script[j] == '<' {
+		return i + 2 // here-string, not a heredoc
+	}
+	stripTabs := false
+	if j < len(script) && script[j] == '-' {
+		stripTabs = true
+		j++
+	}
+	for j < len(script) && (script[j] == ' ' || script[j] == '\t') {
+		j++
+	}
+	var delim strings.Builder
+	for j < len(script) {
+		c := script[j]
+		if c == '\'' || c == '"' {
+			j++ // quoting only disables expansion; the word is the same
+			continue
+		}
+		if c == ' ' || c == '\t' || c == '\n' || endsCommand(c) {
+			break
+		}
+		delim.WriteByte(c)
+		j++
+	}
+	if delim.Len() == 0 {
+		return i + 2
+	}
+	// The body starts on the line after the one introducing the heredoc.
+	for j < len(script) && script[j] != '\n' {
+		j++
+	}
+	for j < len(script) {
+		j++ // step past the newline onto the next line
+		start := j
+		for j < len(script) && script[j] != '\n' {
+			j++
+		}
+		line := script[start:j]
+		if stripTabs {
+			line = strings.TrimLeft(line, "\t")
+		}
+		if line == delim.String() {
+			return j
+		}
+		if j >= len(script) {
+			break
+		}
+	}
+	return len(script)
+}
+
 // runsValidator reports whether any job in the workflow actually executes the
 // gate.
 func (w workflow) runsValidator() bool {
 	for _, job := range w.Jobs {
 		for _, step := range job.Steps {
-			if strings.Contains(step.Run, validatorInvocation) {
+			if runsCommand(step.Run, validatorInvocation) {
 				return true
 			}
 		}
@@ -125,10 +315,10 @@ func (w workflow) runsIsolatedChartNamespaceValidator() bool {
 	for _, job := range w.Jobs {
 		ksailReady := false
 		for _, step := range job.Steps {
-			if strings.Contains(step.Run, ".github/scripts/setup-ksail.sh") {
+			if runsCommand(step.Run, ".github/scripts/setup-ksail.sh") {
 				ksailReady = true
 			}
-			if ksailReady && step.TimeoutMinutes == 10 && strings.Contains(step.Run, isolatedChartNamespaceValidatorInvocation) {
+			if ksailReady && step.TimeoutMinutes == 10 && runsCommand(step.Run, isolatedChartNamespaceValidatorInvocation) {
 				return true
 			}
 		}
@@ -330,4 +520,80 @@ func TestIsolatedChartNamespaceGateCoverageIsNotVacuous(t *testing.T) {
 			t.Fatal("an unbounded chart render must not satisfy the namespace gate")
 		}
 	})
+}
+
+// TestRunsCommandRejectsInertMentions is the non-vacuity proof for the
+// coverage guards above. Every case here names the gate exactly as an
+// executable invocation would, and none of them runs it — so a guard built on
+// strings.Contains passes all of them while the gate is absent. The
+// `shellcheck` case is not hypothetical: ci.yaml really does pass this script
+// to shellcheck as an argument in a step that never executes it.
+func TestRunsCommandRejectsInertMentions(t *testing.T) {
+	const needle = ".github/scripts/setup-ksail.sh"
+	for name, script := range map[string]string{
+		"echoed":              "echo .github/scripts/setup-ksail.sh",
+		"echoed quoted":       "echo \".github/scripts/setup-ksail.sh\"",
+		"echoed single quote": "echo '.github/scripts/setup-ksail.sh'",
+		"printed":             "printf '%s\\n' .github/scripts/setup-ksail.sh",
+		"whole-line comment":  "# .github/scripts/setup-ksail.sh\ntrue",
+		"indented comment":    "  \t# .github/scripts/setup-ksail.sh",
+		"comment after cmd":   "true # .github/scripts/setup-ksail.sh",
+		"comment after &&":    "true && # .github/scripts/setup-ksail.sh",
+		"argument to a tool":  "shellcheck .github/scripts/setup-ksail.sh scripts/tests/test-setup-ksail.sh",
+		"inside a longer arg": "cat prefix.github/scripts/setup-ksail.sh",
+		"prefix of a token":   ".github/scripts/setup-ksail.sh.bak",
+		"heredoc body":        "cat <<'EOF'\n.github/scripts/setup-ksail.sh\nEOF",
+	} {
+		if runsCommand(script, needle) {
+			t.Errorf("%s: reported as executed, but %q only MENTIONS the gate", name, script)
+		}
+	}
+}
+
+// TestRunsCommandAcceptsExecutableForms is the other half: the guard must stay
+// true for every spelling a workflow legitimately uses, or tightening it would
+// simply move the failure from silent-pass to false-alarm.
+func TestRunsCommandAcceptsExecutableForms(t *testing.T) {
+	const needle = ".github/scripts/setup-ksail.sh"
+	for name, script := range map[string]string{
+		"bare":             ".github/scripts/setup-ksail.sh",
+		"trailing newline": ".github/scripts/setup-ksail.sh\n",
+		"with arguments":   ".github/scripts/setup-ksail.sh --verbose",
+		"indented":         "  .github/scripts/setup-ksail.sh",
+		"after a newline":  "set -euo pipefail\n.github/scripts/setup-ksail.sh",
+		"after &&":         "true && .github/scripts/setup-ksail.sh",
+		"after ||":         "false || .github/scripts/setup-ksail.sh",
+		"after ;":          "true; .github/scripts/setup-ksail.sh",
+		"after a pipe":     "true | .github/scripts/setup-ksail.sh",
+		"after a comment":  "# install ksail\n.github/scripts/setup-ksail.sh",
+		"env prefix":       "KSAIL_VERSION=1.2.3 .github/scripts/setup-ksail.sh",
+		"two env prefixes": "A=1 B=2 .github/scripts/setup-ksail.sh",
+		"redirected":       ".github/scripts/setup-ksail.sh >/dev/null",
+		"after a subshell": "(true) && .github/scripts/setup-ksail.sh",
+		"after an echo":    "echo installing\n.github/scripts/setup-ksail.sh",
+	} {
+		if !runsCommand(script, needle) {
+			t.Errorf("%s: reported as absent, but %q EXECUTES the gate", name, script)
+		}
+	}
+}
+
+// TestRunsCommandMatchesTheOtherGateInvocations keeps the two multi-word
+// needles honest: they contain spaces, so a whole-word check has to compare the
+// needle as a phrase rather than a single token.
+func TestRunsCommandMatchesTheOtherGateInvocations(t *testing.T) {
+	if !runsCommand("go run ./scripts/validate-eks-ci-role-policy .", validatorInvocation) {
+		t.Error("the real validator invocation was not recognised as executed")
+	}
+	if runsCommand("echo go run ./scripts/validate-eks-ci-role-policy", validatorInvocation) {
+		t.Error("an echoed validator invocation was reported as executed")
+	}
+	if !runsCommand("bash scripts/tests/test-isolated-chart-namespace-rules.sh",
+		isolatedChartNamespaceValidatorInvocation) {
+		t.Error("the real isolated-chart invocation was not recognised as executed")
+	}
+	if runsCommand("# bash scripts/tests/test-isolated-chart-namespace-rules.sh",
+		isolatedChartNamespaceValidatorInvocation) {
+		t.Error("a commented-out isolated-chart invocation was reported as executed")
+	}
 }

@@ -6,13 +6,36 @@ rules:
     # the final object alone. Namespace, ClusterRole, and ClusterRoleBinding are
     # the only reviewed cluster-scoped shapes in the exact pinned render; every
     # namespaced child must declare the release namespace explicitly.
+    #
+    # The two cluster-scoped RBAC shapes are pinned by name rather than by kind
+    # alone. A bare `kind in ['ClusterRole', 'ClusterRoleBinding']` branch
+    # accepts EVERY cluster-scoped role and binding the chart can render, so a
+    # chart revision granting cluster-admin to a subject in another namespace
+    # would satisfy it — which is the whole property this rule exists to deny.
+    # A binding must additionally reference the reviewed ClusterRole and carry
+    # only subjects in the release namespace; one with no subjects at all fails
+    # closed, because `all` over an absent field cannot be evaluated.
     expression: >-
       has(object.metadata) &&
       ((has(object.metadata.namespace) &&
         object.metadata.namespace == 'data-product-controller') ||
        (!has(object.metadata.namespace) &&
         ((has(object.kind) &&
-          object.kind in ['ClusterRole', 'ClusterRoleBinding']) ||
+          object.kind == 'ClusterRole' &&
+          has(object.metadata.name) &&
+          object.metadata.name == 'data-product-controller') ||
+         (has(object.kind) &&
+          object.kind == 'ClusterRoleBinding' &&
+          has(object.metadata.name) &&
+          object.metadata.name == 'data-product-controller' &&
+          has(object.roleRef) &&
+          has(object.roleRef.kind) &&
+          object.roleRef.kind == 'ClusterRole' &&
+          has(object.roleRef.name) &&
+          object.roleRef.name == 'data-product-controller' &&
+          has(object.subjects) &&
+          object.subjects.all(s,
+            has(s.namespace) && s.namespace == 'data-product-controller')) ||
          (has(object.kind) &&
           object.kind == 'Namespace' &&
           has(object.metadata.name) &&
