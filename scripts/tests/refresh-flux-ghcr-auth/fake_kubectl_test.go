@@ -16,6 +16,8 @@ type jsonPatchOperation struct {
 	Value     any    `json:"value"`
 }
 
+// fakeKubectlImplementation dispatches the kubectl operations exercised by the
+// production-auth bridge tests against their filesystem-backed fake cluster.
 func fakeKubectlImplementation(args []string) int {
 	if flagValue(args, "--context") != "admin@prod" {
 		return commandFailure(91, "kubectl must use the production context")

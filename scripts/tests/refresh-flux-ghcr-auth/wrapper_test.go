@@ -573,12 +573,9 @@ func TestPrepublishStagingStillFailsClosedForAnEstablishedConsumer(t *testing.T)
 	requireWrapperPathExists(t, f.patchCapture, false)
 }
 
-// A failed candidate that got as far as creating its workload leaves a Pod
-// object behind that never reached Running, because the ghcr-auth
-// ExternalSecret it needed is exactly what is missing. Keying the exemption on
-// Pod existence would let that leftover deny every retry, deadlocking the very
-// change that introduces the consumer - the same deadlock namespace-presence
-// keying caused, one level down.
+// TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftANonRunningPod verifies
+// that a failed candidate's non-running Pod cannot deny every retry when the
+// missing ghcr-auth ExternalSecret is what prevented that Pod from starting.
 func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftANonRunningPod(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(
@@ -597,8 +594,8 @@ func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftANonRunningPod(t *tes
 	requireNotContains(t, fanout, "externalsecret/ascoachingogvaner/ghcr-auth")
 }
 
-// Kubernetes leaves a terminating Pod's phase at Running until the object is
-// reaped. That leftover is no longer an active consumer and must not recreate
+// TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftATerminatingRunningPod
+// verifies that a terminating Pod whose phase remains Running cannot recreate
 // the retry deadlock while its deletion grace period elapses.
 func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftATerminatingRunningPod(t *testing.T) {
 	f := newFixture(t)
