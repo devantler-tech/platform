@@ -70,6 +70,19 @@ readonly split_commands_awk='
           if (c == "\047" && dq == 0) { sq = 1 - sq; out = out c; esc = 0; i++; continue }
           if (c == "\"" && sq == 0) { dq = 1 - dq; out = out c; esc = 0; i++; continue }
           if (sq == 0 && dq == 0) {
+            if (c == "$" && substr(line, i + 1, 1) == "(" && substr(line, i + 2, 1) == "(") {
+              arith = 0
+              while (i <= n) {
+                ac = substr(line, i, 1)
+                if (ac == "(") { arith++ }
+                if (ac == ")") { arith-- }
+                out = out ac
+                i++
+                if (arith == 0 && ac == ")") { break }
+              }
+              esc = 0
+              continue
+            }
             if (c == "<" && substr(line, i + 1, 1) == "<" && substr(line, i + 2, 1) == "<") {
               out = out "<<<"
               esc = 0
@@ -107,6 +120,7 @@ readonly split_commands_awk='
             }
             if (c == "|" && substr(line, i + 1, 1) == "|") { out = out "\n"; esc = 0; i += 2; continue }
             if (c == "|") { out = out "\n"; esc = 0; i++; continue }
+            if (c == ")") { out = out "\n"; esc = 0; i++; continue }
           }
           out = out c
           esc = 0
@@ -228,6 +242,8 @@ readonly normaliser_cases=(
   "1:A=\"x y\" B=\"p q\" chmod 0600 \"\$SNAP\""
   "1:LABEL=nightly\\\\ snapshot chmod 0600 \"\$SNAP\""
   "0:LABEL=\"unterminated chmod 0600 \$SNAP"
+  "2:x=\$((1 << 2))\nchmod 0640 \"\$SNAP\"\nchmod 0600 \"\$SNAP\""
+  "1:private) chmod 0600 \"\$SNAP\" ;;"
 )
 
 for normaliser_case in "${normaliser_cases[@]}"; do
@@ -486,8 +502,21 @@ dr_normalized="$(awk -v skip_hd=0 "${split_commands_awk}" "${dr_path}")" ||
   fail "${dr_workflow}: the command splitter failed; refusing to scan a truncated command list"
 dr_normalized="$(printf '%s\n' "${dr_normalized}" | awk "${strip_prefixes_awk}")" ||
   fail "${dr_workflow}: the command-prefix normaliser failed; refusing to scan a truncated command list"
-dr_chmod="$(printf '%s\n' "${dr_normalized}" |
-  grep -E '^[[:space:]]*chmod[[:space:]]+[0-7]+[[:space:]]+"?/snapshots/' || true)"
+# ONE definition of the DR chmod filter, self-checked immediately below. The mode position is
+# deliberately unconstrained: a symbolic or variable mode MUST reach the validation loop, whose
+# invalid-mode branch is what rejects it. Constraining it to `[0-7]+` made that branch unreachable
+# — `chmod u=rw,go= "/snapshots/$NEWEST"` was dropped by the filter, so an earlier widening chmod
+# carried the guard green while the later command re-closed the snapshot.
+readonly dr_chmod_filter='^[[:space:]]*chmod[[:space:]]+[^[:space:]]+[[:space:]]+"?/snapshots/'
+
+printf '%s\n' 'chmod u=rw,go= "/snapshots/x"' | grep -qE "${dr_chmod_filter}" ||
+  fail 'DR chmod filter must accept a non-octal mode so the invalid-mode check can reject it'
+if printf '%s\n' 'chmod 0640 /other/x' | grep -qE "${dr_chmod_filter}"; then
+  fail 'DR chmod filter must not match a chmod outside /snapshots/'
+fi
+printf 'ok: DR chmod filter — non-octal modes reach the validation loop; other paths do not\n'
+
+dr_chmod="$(printf '%s\n' "${dr_normalized}" | grep -E "${dr_chmod_filter}" || true)"
 [ -n "${dr_chmod}" ] ||
   fail "${dr_workflow}: the fetch never chmods the snapshot; the restore depends on mc's umask"
 
