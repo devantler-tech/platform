@@ -257,7 +257,7 @@ var statusSettingBuiltins = []string{"trap", "exit", "exec"}
 
 // statusOpaqueBuiltins can run any of the above without naming them in the
 // script text, so a prefix containing one cannot be cleared by reading it.
-var statusOpaqueBuiltins = []string{"eval", "source", "."}
+var statusOpaqueBuiltins = []string{"eval", "source", ".", "alias", "shopt", "function"}
 
 // prefixPreservesStatus reports whether everything before the gate leaves the
 // block's exit status to be decided by its last command.
@@ -525,6 +525,14 @@ func scanCommandRuns(script, needle string, accept func(end int) bool) bool {
 			continue
 		case c == ' ', c == '\t':
 			// Leading blanks do not end the pending command position.
+			i++
+			continue
+		case c == '{', c == '}':
+			// A group opens a new command position, so `f() { trap ... ; }`
+			// puts `trap` at a command word exactly as a newline would. Without
+			// this the body of a one-line function definition is invisible to
+			// every scan built on this walker.
+			atCommandStart = true
 			i++
 			continue
 		case endsCommand(c):
@@ -1202,7 +1210,6 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		"set +o errexit\n" + gate,
 		"builtin set +e\n" + gate,
 		"command set +e\n" + gate,
-		"shopt -s expand_aliases\nalias d=\"set +e\"\nd\n" + gate,
 		"set -e\n" + gate,
 		"command -v ksail\n" + gate,
 		"./scripts/setup.sh\n" + gate,
@@ -1261,6 +1268,18 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		"exec 2>/dev/null\n" + gate,
 		"builtin trap 'exit 0' ERR\n" + gate,
 		"eval \"trap 'exit 0' ERR\"\n" + gate,
+		// Also conservatively refused. `alias d="set +e"; d` with the gate last
+		// does exit 1, but an alias body is quoted text this walker skips, and
+		// the same shape carries `trap 'exit 0' ERR` — which does NOT exit 1.
+		// The name binding is what makes it unreadable, not the body that
+		// happens to be behind it here.
+		"shopt -s expand_aliases\nalias d=\"set +e\"\nd\n" + gate,
+		// The reported bypass: an alias installing the trap.
+		"shopt -s expand_aliases\nalias t=\"trap 'exit 0' ERR\"\nt\n" + gate,
+		// A one-line function body binds a name the same way. The `{` re-arm in
+		// scanCommandRuns is what puts `trap` at a command word here; without it
+		// this body is invisible to every scan built on that walker.
+		"f() { trap 'exit 0' ERR; }\nf\n" + gate,
 		// Conservatively refused rather than measured. `eval "set +e"` with the
 		// gate last really does exit 1, but the model cannot read an `eval`
 		// body, and the same construct can just as easily carry `trap 'exit 0'
