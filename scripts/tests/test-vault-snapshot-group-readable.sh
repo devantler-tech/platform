@@ -56,11 +56,33 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required to read the snapshot co
 # prefix pass as one segment; `x=$(chmod` reads as an assignment word and is stripped, leaving a
 # segment starting `0600`, so the anchored match never sees the chmod. A narrowing chmod hidden in
 # any of the three forms then passes this guard while still running — the same fail-open one level
-# down. `$((` is arithmetic, not a command, and is consumed as a balanced region by the branch
-# above before this one is reached, so `x=$((1 << 2))` is untouched.
+# down.
+#
+# Which of those openers fire INSIDE double quotes follows the shell, not a blanket rule, because
+# the two halves differ and guessing either way is wrong. `$(` and a backtick DO expand inside `"`,
+# so `x="$(chmod 0600 "$SNAP")"` runs the chmod and must split — this is the commonest real spelling
+# of a captured command, and gating the boundary on `dq == 0` missed every one of them. `<(` / `>(`
+# do NOT expand inside `"`: `echo "<(date)"` prints the text, so splitting there would invent a
+# chmod that never runs and fail a clean manifest. Those two stay unquoted-only.
+#
+# Entering `$(` / `` ` `` therefore SAVES the surrounding quote state and restores it at the matching
+# close, because quoting restarts inside a substitution: the inner `"` of `"$(… "$SNAP")"` opens a
+# fresh quoted word rather than closing the outer one. Without the save/restore the quote state
+# inverts at the substitution and every later separator on the line reads as quoted.
+#
+# `$((` is arithmetic, not a command, and is consumed as a balanced region by the branch above
+# before any of this is reached, so `x=$((1 << 2))` is untouched. A BARE `((` is the arithmetic
+# COMMAND form, and its `<<` is a left shift rather than a heredoc opener: `(( shift = 1 << 2 ))`
+# was read as opening a heredoc with delimiter `2`, after which every following line was swallowed
+# as heredoc body — including a real `chmod` on the next line. Arithmetic depth is tracked so the
+# heredoc branch is skipped inside it. The depth only SUPPRESSES heredoc detection; it deliberately
+# does not CONSUME the region, because consuming `((` … `))` would also swallow the nested-subshell
+# spelling `( (chmod 0600 "$SNAP") )`, turning one fail-open into another. Over-detecting arithmetic
+# therefore costs at most a heredoc body scanned as commands, which can only ADD chmod matches —
+# fail-closed, the safe direction for a guard that requires every chmod to widen.
 # shellcheck disable=SC2016  # an awk program is data, not shell: $0/$SNAP must reach awk unexpanded.
 readonly split_commands_awk='
-      BEGIN { sq = 0; dq = 0; hd = ""; hd_strip = 0 }
+      BEGIN { sq = 0; dq = 0; hd = ""; hd_strip = 0; sub_depth = 0; bt = 0; arith_cmd = 0 }
       {
         line = $0
         if (skip_hd && hd != "") {
@@ -78,7 +100,7 @@ readonly split_commands_awk='
           if (c == "\\" && sq == 0) { out = out c substr(line, i + 1, 1); esc = 1; i += 2; continue }
           if (c == "\047" && dq == 0) { sq = 1 - sq; out = out c; esc = 0; i++; continue }
           if (c == "\"" && sq == 0) { dq = 1 - dq; out = out c; esc = 0; i++; continue }
-          if (sq == 0 && dq == 0) {
+          if (sq == 0) {
             if (c == "$" && substr(line, i + 1, 1) == "(" && substr(line, i + 2, 1) == "(") {
               arith = 0
               while (i <= n) {
@@ -92,13 +114,53 @@ readonly split_commands_awk='
               esc = 0
               continue
             }
+            if (c == "$" && substr(line, i + 1, 1) == "(") {
+              sub_depth++
+              sub_dq[sub_depth] = dq
+              dq = 0
+              out = out "\n"
+              esc = 0
+              i += 2
+              continue
+            }
+            if (c == "`") {
+              if (bt == 0) { bt = 1; bt_dq = dq; dq = 0 } else { bt = 0; dq = bt_dq }
+              out = out "\n"
+              esc = 0
+              i++
+              continue
+            }
+            if (c == ")" && sub_depth > 0) {
+              dq = sub_dq[sub_depth]
+              sub_depth--
+              out = out "\n"
+              esc = 0
+              i++
+              continue
+            }
+          }
+          if (sq == 0 && dq == 0) {
+            if (c == "(" && substr(line, i + 1, 1) == "(") {
+              arith_cmd++
+              out = out "(("
+              esc = 0
+              i += 2
+              continue
+            }
+            if (c == ")" && substr(line, i + 1, 1) == ")" && arith_cmd > 0) {
+              arith_cmd--
+              out = out "))"
+              esc = 0
+              i += 2
+              continue
+            }
             if (c == "<" && substr(line, i + 1, 1) == "<" && substr(line, i + 2, 1) == "<") {
               out = out "<<<"
               esc = 0
               i += 3
               continue
             }
-            if (skip_hd && c == "<" && substr(line, i + 1, 1) == "<" && substr(line, i + 2, 1) != "<") {
+            if (skip_hd && arith_cmd == 0 && c == "<" && substr(line, i + 1, 1) == "<" && substr(line, i + 2, 1) != "<") {
               j = i + 2
               hd_strip = 0
               if (substr(line, j, 1) == "-") { hd_strip = 1; j++ }
@@ -119,13 +181,6 @@ readonly split_commands_awk='
               last = (out == "") ? "" : substr(out, length(out), 1)
               if (out == "" || last == " " || last == "\t" || last == "\n") break
             }
-            if (c == "$" && substr(line, i + 1, 1) == "(") {
-              out = out "\n"
-              esc = 0
-              i += 2
-              continue
-            }
-            if (c == "`") { out = out "\n"; esc = 0; i++; continue }
             if ((c == "<" || c == ">") && substr(line, i + 1, 1) == "(") {
               out = out "\n"
               esc = 0
@@ -269,6 +324,14 @@ readonly normaliser_cases=(
   "1:x=\$(chmod 0600 \"\$SNAP\")"
   "1:x=\`chmod 0600 \"\$SNAP\"\`"
   "1:diff <(chmod 0600 \"\$SNAP\") /dev/null"
+  "2:(( shift = 1 << 2 ))\nchmod 0640 \"\$SNAP\"\nchmod 0600 \"\$SNAP\""
+  "1:( (chmod 0600 \"\$SNAP\") )"
+  "1:x=\"\$(chmod 0600 \"\$SNAP\")\""
+  "1:echo \"pre \$(chmod 0600 \"\$SNAP\") post\""
+  "1:x=\"\`chmod 0600 \"\$SNAP\"\`\""
+  "0:diff \"<(chmod 0600 \"\$SNAP\")\" /dev/null"
+  "1:if (( n > 1 )); then chmod 0600 \"\$SNAP\"; fi"
+  "1:x=\"\$(printf %s \"\$(chmod 0600 \"\$SNAP\")\")\""
 )
 
 for normaliser_case in "${normaliser_cases[@]}"; do
