@@ -258,14 +258,24 @@ func runsGate(script, needle string) bool {
 // read as UNCOVERED and fails the build loudly, which is recoverable; the
 // other direction passes a defused gate in silence.
 func failurePropagates(script string, i int) bool {
+	// pending is true while an AND-OR list is waiting for its next command.
+	// `&&` at the end of a line continues the list, so the newline after it is
+	// NOT a terminator — and bash strips a trailing comment before evaluating
+	// the list, so `gate && # note` continues too. Treating either newline as a
+	// terminator accepted `gate &&\n echo ok || true`, whose `|| true` still
+	// discards the gate's verdict.
+	pending := false
 	for i < len(script) {
 		switch c := script[i]; {
 		case c == '\\':
 			i += 2
+			pending = false
 		case c == '<' && i+1 < len(script) && script[i+1] == '<':
 			i = skipHeredoc(script, i)
+			pending = false
 		case c == '\'', c == '"':
 			i = skipQuoted(script, i)
+			pending = false
 		case c == '|':
 			// `||` swallows the failure; a lone `|` hides it behind the
 			// last stage of the pipeline.
@@ -281,7 +291,24 @@ func failurePropagates(script string, i int) bool {
 			// `gate && echo ok || true` exits 0. Keep scanning the remainder
 			// rather than accepting the gate here.
 			i += 2
-		case c == ';', c == '\n':
+			pending = true
+		case c == '#' && startsShellComment(script, i):
+			// Bash removes the comment before evaluating the list, so it
+			// settles nothing on its own. Skip its bytes and let the newline
+			// that ends it be judged by `pending`, exactly as if the comment
+			// were not there.
+			for i < len(script) && script[i] != '\n' {
+				i++
+			}
+		case c == ';':
+			return true
+		case c == '\n':
+			if pending {
+				// The list continues on the next line; this newline ends no
+				// command. Stay pending until a command word appears.
+				i++
+				continue
+			}
 			return true
 		case c == ')':
 			// A subshell hands its status to whatever follows the ')', which this
@@ -289,11 +316,30 @@ func failurePropagates(script string, i int) bool {
 			// Refusing keeps the strict direction — a genuinely enforcing subshell
 			// reads as UNCOVERED and fails loudly.
 			return false
+		case c == ' ', c == '\t':
+			// Blanks separate words without starting one, so they neither end
+			// a pending continuation nor begin a new command.
+			i++
 		default:
 			i++
+			pending = false
 		}
 	}
 	return true
+}
+
+// startsShellComment reports whether the '#' at i begins a comment rather than
+// sitting inside a word. Bash only treats '#' as a comment at the start of a
+// word, so `curl host/path#frag` and `echo a#b` carry no comment at all.
+func startsShellComment(script string, i int) bool {
+	if i == 0 {
+		return true
+	}
+	switch script[i-1] {
+	case ' ', '\t', '\n', ';', '&', '|', '(':
+		return true
+	}
+	return false
 }
 
 // scanCommandRuns walks script for needle at a command word. accept, when
@@ -985,6 +1031,13 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		gate + " && echo ok",
 		gate + " && echo a && echo b",
 		gate + "\necho after",
+		// An AND-OR list that continues across a newline, with no `||` anywhere
+		// in it, still lets the gate fail the step. Without these the fix below
+		// could read every post-newline continuation as defused.
+		gate + " &&\n  echo ok",
+		gate + " && # note\n  echo ok",
+		// A comment after a COMPLETE command: the newline still terminates it.
+		gate + " # done\necho after",
 	}
 	for _, script := range enforcing {
 		if !runsGate(script, gate) {
@@ -1000,6 +1053,13 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		gate + " &",
 		"( " + gate + " ) || true",
 		gate + " && echo ok || true",
+		// `&&` at end of line continues the AND-OR list, so the `||` on the
+		// next line still discards the gate's verdict. Treating that newline as
+		// a terminator read a defused gate as enforcing.
+		gate + " &&\n  echo ok || true",
+		// Bash strips the comment BEFORE evaluating the list, so this is exactly
+		// the line above with a comment in the middle.
+		gate + " && # report success\n  echo ok || true",
 	}
 	for _, script := range defused {
 		if !runsCommand(script, gate) {
