@@ -234,8 +234,108 @@ func runsCommand(script, needle string) bool {
 // assertion about a GATE needs failure propagation, so only those opt in.
 func runsGate(script, needle string) bool {
 	return scanCommandRuns(script, needle, func(end int) bool {
-		return failurePropagates(script, end) && isFinalCommand(script, end)
+		return failurePropagates(script, end) &&
+			isFinalCommand(script, end) &&
+			prefixPreservesStatus(script[:end])
 	})
+}
+
+// statusSettingBuiltins are the ONLY constructs that make a block's exit status
+// differ from the status of its last command. `exit` sets it outright, a `trap`
+// on ERR or EXIT can run `exit` after the last command has already failed, and
+// `exec` replaces the shell so nothing after it is this block at all.
+//
+// Measured under `bash -e`, each with the gate LAST and failing:
+// `trap 'exit 0' ERR` exits 0, `trap 'exit 0' EXIT` exits 0, and a preceding
+// `exit 0` exits 0 — against a control with no prefix, which exits 1.
+//
+// Unlike the errexit question this set is closed rather than open-ended: it is
+// not a list of ways to spell one trick, it is the complete set of shell
+// features that assign an exit status. A block whose prefix contains none of
+// them exits with its last command's status by construction.
+var statusSettingBuiltins = []string{"trap", "exit", "exec"}
+
+// statusOpaqueBuiltins can run any of the above without naming them in the
+// script text, so a prefix containing one cannot be cleared by reading it.
+var statusOpaqueBuiltins = []string{"eval", "source", "."}
+
+// prefixPreservesStatus reports whether everything before the gate leaves the
+// block's exit status to be decided by its last command.
+//
+// isFinalCommand alone is not sufficient: it proves the gate is last, but a
+// `trap 'exit 0' ERR` set earlier still replaces that command's failure. The
+// two conditions are complementary — one fixes WHICH command decides the
+// status, this one ensures nothing else overrides it.
+func prefixPreservesStatus(prefix string) bool {
+	safe := true
+	for _, name := range statusSettingBuiltins {
+		if scanCommandRuns(prefix, name, func(int) bool { return true }) {
+			safe = false
+		}
+	}
+	for _, name := range statusOpaqueBuiltins {
+		if scanCommandRuns(prefix, name, func(int) bool { return true }) {
+			safe = false
+		}
+	}
+	// `builtin` and `command` run a builtin in this shell, so resolve through
+	// them rather than refusing outright — `command -v ksail` is an ordinary
+	// lookup that cannot set a status, and refusing it would call sound gate
+	// steps UNCOVERED.
+	for _, wrapper := range []string{"builtin", "command"} {
+		if scanCommandRuns(prefix, wrapper, func(end int) bool {
+			return wrapperReachesStatusSetter(prefix[end:])
+		}) {
+			safe = false
+		}
+	}
+	return safe
+}
+
+// wrapperReachesStatusSetter reports whether the operands of a `builtin` or
+// `command` word, beginning at args, invoke something that can set an exit
+// status. An operand that cannot be read without a shell counts as unsafe, on
+// the same rule applied everywhere else here.
+func wrapperReachesStatusSetter(args string) bool {
+	i := 0
+	for i < len(args) {
+		for i < len(args) && (args[i] == ' ' || args[i] == '\t') {
+			i++
+		}
+		if i >= len(args) || endsCommand(args[i]) {
+			return false
+		}
+		start := i
+		for i < len(args) && !endsWord(args[i]) {
+			i++
+		}
+		word := args[start:i]
+		if strings.ContainsAny(word, "'\"$`\\") {
+			return true
+		}
+		switch {
+		case word == "-v", word == "-V":
+			// A lookup, not an invocation.
+			return false
+		case strings.HasPrefix(word, "-"):
+			continue
+		case word == "builtin", word == "command":
+			return wrapperReachesStatusSetter(args[i:])
+		default:
+			for _, name := range statusSettingBuiltins {
+				if word == name {
+					return true
+				}
+			}
+			for _, name := range statusOpaqueBuiltins {
+				if word == name {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return false
 }
 
 // isFinalCommand reports whether the command whose word ends at i is the LAST
@@ -1102,7 +1202,6 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		"set +o errexit\n" + gate,
 		"builtin set +e\n" + gate,
 		"command set +e\n" + gate,
-		"eval 'set +e'\n" + gate,
 		"shopt -s expand_aliases\nalias d=\"set +e\"\nd\n" + gate,
 		"set -e\n" + gate,
 		"command -v ksail\n" + gate,
@@ -1150,6 +1249,24 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		"command set +e\n" + gate + "\necho continued",
 		"eval 'set +e'\n" + gate + "\necho continued",
 		"shopt -s expand_aliases\nalias d=\"set +e\"\nd\n" + gate + "\necho continued",
+		// A `trap` can run `exit` AFTER the last command has already failed, and
+		// an `exit` or `exec` before the gate settles the status without it.
+		// isFinalCommand alone does not see these: the gate really is last, and
+		// its failure is still discarded. Verified under `bash -e` with the gate
+		// failing and LAST — each exits 0, against a control with no prefix that
+		// exits 1.
+		"trap 'exit 0' ERR\n" + gate,
+		"trap 'exit 0' EXIT\n" + gate,
+		"exit 0\n" + gate,
+		"exec 2>/dev/null\n" + gate,
+		"builtin trap 'exit 0' ERR\n" + gate,
+		"eval \"trap 'exit 0' ERR\"\n" + gate,
+		// Conservatively refused rather than measured. `eval "set +e"` with the
+		// gate last really does exit 1, but the model cannot read an `eval`
+		// body, and the same construct can just as easily carry `trap 'exit 0'
+		// ERR`. Unreadable means unsafe, so this loses a little precision in the
+		// direction that fails loudly.
+		"eval 'set +e'\n" + gate,
 	}
 	for _, script := range defused {
 		if !runsCommand(script, gate) {
