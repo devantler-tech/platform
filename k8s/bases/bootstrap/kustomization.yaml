@@ -8,3 +8,10 @@ resources:
   # bootstrap layer so they exist before infrastructure-controllers reconciles —
   # e.g. Coroot's node-agent references platform-critical.
   - priority-classes/
+  # kube-system's CPU LimitRange lives here for the SAME reason: a LimitRange is
+  # applied at pod-admission time and never mutates running pods, so it has to
+  # exist before infrastructure-controllers admits cilium/coredns/metrics-server/
+  # tetragon. `infrastructure-controllers` dependsOn bootstrap with `wait: true`,
+  # which makes that ordering structural rather than incidental. See #3271 and
+  # limit-ranges/kustomization.yaml for the full writeup.
+  - limit-ranges/

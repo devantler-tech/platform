@@ -81,9 +81,56 @@ canonicalize() { # <dir> <entry>
 }
 
 # Every filesystem path a provider's kustomize graph reaches, one per line.
+# Which provider overlay does a CLUSTER-scoped layer root deploy into?
+#
+# Not every layer root is provider-scoped. `bootstrap` targets
+# `clusters/__CLUSTER__/bootstrap`, yet that tree reaches a provider overlay one
+# hop in (clusters/local/bootstrap -> providers/docker/bootstrap -> bases/bootstrap).
+# Skipping cluster-scoped layers therefore made this guard blind to everything the
+# bootstrap layer ships. That was harmless only while no LimitRange lived there; it
+# became a FALSE premise violation the moment one did (#3271) -- the guard reported
+# a namespace as unshielded that the provider does in fact shield.
+#
+# ATTRIBUTION IS THE WHOLE DIFFICULTY, and it must fail closed. Seeding every
+# cluster root into every provider's walk would let one provider's LimitRange
+# satisfy another provider's suppression -- fail-OPEN, the exact direction the
+# `find`-seeding comment above rejects. So a cluster root seeds exactly the
+# provider its own graph reaches, and seeds nothing when that is unresolvable.
+graph_provider() { # <kustomization-file> -> provider name on stdout ("" if none)
+  local queue="$1"$'\n' seen="" k dir entry target rel
+  while [ -n "$queue" ]; do
+    k=${queue%%$'\n'*}
+    if [ "$k" = "$queue" ]; then queue=""; else queue=${queue#*$'\n'}; fi
+    [ -n "$k" ] || continue
+    case $'\n'"$seen"$'\n' in *$'\n'"$k"$'\n'*) continue ;; esac
+    seen="$seen$k"$'\n'
+    dir=$(dirname "$k")
+    entry=$(yq -r '(.resources // []) + (.components // []) | .[]' "$k" 2>/dev/null) ||
+      die "could not parse $k"
+    while IFS= read -r e; do
+      [ -n "$e" ] || continue
+      case $e in *"://"* | "git@"*) continue ;; esac
+      target=$(canonicalize "$dir" "$e")
+      rel=${target#"$root"/}
+      case $rel in
+        providers/*/*)
+          printf '%s' "$rel" | cut -d/ -f2
+          return 0
+          ;;
+      esac
+      if [ -d "$target" ] && [ -f "$target/kustomization.yaml" ]; then
+        queue="$queue$target/kustomization.yaml"$'\n'
+      fi
+    done <<EOF
+$entry
+EOF
+  done
+  return 0
+}
+
 reachable_files() { # <provider-dir>
   local provider=$1 queue="" seen_k="" files="" k dir entry target
-  local lroot lpath lfile seeded=0 layer_defs=0
+  local lroot lpath lfile cdir cname seeded=0 layer_defs=0
   # SEED FROM THE FLUX LAYER ROOTS, NEVER FROM `find`.
   #
   # Flux does not apply "every kustomization under the provider" — each layer
@@ -103,17 +150,32 @@ reachable_files() { # <provider-dir>
     lpath=$(yq -r '.spec.path // ""' "$lfile" 2>/dev/null) ||
       die "could not parse layer definition $lfile"
     [ -n "$lpath" ] || continue
-    # Only provider-scoped layers seed a provider walk. `bootstrap` targets
-    # clusters/__CLUSTER__/bootstrap — a different tree that ships no provider
-    # overlay — so substituting a provider name into it would name nothing.
+    # A provider-scoped layer names its overlay directly. A CLUSTER-scoped layer
+    # (bootstrap) does not, but still reaches one provider overlay -- see
+    # graph_provider above, which resolves which, and fails closed when it cannot.
     case $lpath in
-      providers/__PROVIDER__ | providers/__PROVIDER__/*) ;;
+      providers/__PROVIDER__ | providers/__PROVIDER__/*)
+        lroot="$root/${lpath//__PROVIDER__/$(basename "$provider")}"
+        [ -f "$lroot/kustomization.yaml" ] || continue
+        queue="${queue}$lroot/kustomization.yaml"$'\n'
+        seeded=$((seeded + 1))
+        ;;
+      clusters/__CLUSTER__ | clusters/__CLUSTER__/*)
+        for cdir in "$root"/clusters/*/; do
+          [ -d "$cdir" ] || continue
+          cname=$(basename "$cdir")
+          # `base` holds the layer TEMPLATES (with the placeholders still in them),
+          # not a deployed cluster, so it names no overlay and must not be walked.
+          [ "$cname" = "base" ] && continue
+          lroot="$root/${lpath//__CLUSTER__/$cname}"
+          [ -f "$lroot/kustomization.yaml" ] || continue
+          [ "$(graph_provider "$lroot/kustomization.yaml")" = "$(basename "$provider")" ] || continue
+          queue="${queue}$lroot/kustomization.yaml"$'\n'
+          seeded=$((seeded + 1))
+        done
+        ;;
       *) continue ;;
     esac
-    lroot="$root/${lpath//__PROVIDER__/$(basename "$provider")}"
-    [ -f "$lroot/kustomization.yaml" ] || continue
-    queue="${queue}$lroot/kustomization.yaml"$'\n'
-    seeded=$((seeded + 1))
   done
   # A guard that cannot find the layer definitions cannot know what is deployed,
   # and must not report a clean tree. Distinguish the two causes: no definitions

@@ -13,7 +13,7 @@ resources:
   - ../../../bases/infrastructure/cluster-secret-stores/ # ESO ↔ OpenBao
   - ../../../bases/infrastructure/external-secrets/ # ExternalSecrets (velero one is pruned below)
   - ../../../bases/infrastructure/gateway/ # central Gateway + HTTP→HTTPS redirect
-  - ../../../bases/infrastructure/limit-ranges/ # CPU LimitRanges for the namespaces Kyverno cannot reach
+  - ../../../bases/infrastructure/limit-ranges/ # CPU LimitRange for kyverno (kube-system's lives in the bootstrap layer)
   - ../../../bases/infrastructure/vault-config/ # OpenBao configuration Job
   - ../../../bases/infrastructure/vault-seed/ # OpenBao secret seeding
   - cluster-issuers/

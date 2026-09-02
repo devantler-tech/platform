@@ -1,0 +1,40 @@
+---
+# Static CPU LimitRanges that must exist BEFORE the workloads they cover are admitted.
+#
+# WHY THE BOOTSTRAP LAYER AND NOT `infrastructure`. A LimitRange is applied by the
+# built-in LimitRanger admission plugin at POD-ADMISSION time. It does not mutate
+# pods that are already running, so a LimitRange that lands after its workloads
+# states something untrue of them until an unrelated event recreates them.
+#
+# The layer graph is strictly ordered and every edge carries `wait: true`
+# (k8s/clusters/base/flux-kustomization-*.yaml):
+#
+#     bootstrap  ->  infrastructure-controllers  ->  infrastructure  ->  apps
+#
+# kube-system's covered workloads (cilium, coredns, metrics-server, tetragon,
+# hubble, spire-agent, the hcloud ccm/csi, cluster-autoscaler) are all
+# `infrastructure-controllers` resources. Holding this LimitRange in the
+# `infrastructure` layer therefore placed it TWO layers after the pods it covers:
+# they were admitted uncapped, and stayed uncapped until the next rollout.
+#
+# Placing it in `bootstrap` closes that window STRUCTURALLY rather than by
+# timing: `infrastructure-controllers` declares `dependsOn: [bootstrap]` with
+# `wait: true`, so it cannot begin reconciling until this layer is Ready. The
+# guarantee comes from the dependency graph, not from the order in which
+# kustomize-controller happens to apply kinds inside one Kustomization.
+#
+# WHY THIS IS SAFE FOR kube-system SPECIFICALLY. A namespaced object cannot be
+# applied into a namespace that does not exist yet, and `bootstrap` runs before
+# any namespace this repo creates. `kube-system` is exempt from that problem
+# because Kubernetes itself creates it at cluster init, so it is guaranteed to
+# exist here. The `kyverno` LimitRange is NOT movable on the same reasoning —
+# its namespace is created by the `infrastructure-controllers` layer — and so it
+# deliberately stays in `k8s/bases/infrastructure/limit-ranges/`. See #3271.
+#
+# This mirrors the reasoning already applied to `../priority-classes/`, which
+# lives in this layer for exactly the same "must exist before the controllers
+# reference it" reason.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - kube-system.yaml
