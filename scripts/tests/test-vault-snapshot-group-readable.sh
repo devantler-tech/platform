@@ -33,6 +33,47 @@ fail() {
   exit 1
 }
 
+# ONE definition of "a chmod WORD", shared by the manifest scan and the DR leg. Leaving the two
+# on different matchers is the drift the single splitter definition already exists to prevent.
+#
+# `/` is deliberately NOT in the leading exclusion class, so a path-qualified `/bin/chmod` COUNTS.
+# It is a command word the normaliser does not recognise, so excluding it here would hide the same
+# invocation from the parser AND from the backstop that exists to cover the parser — a double
+# blind spot in which `/bin/chmod 0600 "$SNAP"` executes with both counts reading zero and the
+# guard green. `.` and `-` stay excluded so `foo.chmod` and `x-chmod` are not words.
+readonly chmod_word_re='(^|[^[:alnum:]_.-])chmod([^[:alnum:]_-]|$)'
+
+# Count chmod words on stdin, failing CLOSED on a grep ERROR rather than on "no match".
+#
+# grep exits 1 for no-selection and >=2 for a real error. A trailing `|| true` collapses the two,
+# so a grep that dies partway returns a TRUNCATED count that still satisfies the `-le` comparison
+# below — the guard then reads green in exactly the case it understood the input least, which is
+# the fail-open this whole backstop exists to prevent.
+count_chmod_words() { # <label>; text on stdin
+  local label="$1" out rc
+  out="$(grep -oE "${chmod_word_re}" | grep -c .)" || {
+    rc=$?
+    [ "${rc}" -eq 1 ] ||
+      fail "${label}: counting chmod words failed (grep exit ${rc}); refusing to vouch for a truncated count"
+    out=0
+  }
+  printf '%s\n' "${out}"
+}
+
+# The same fail-closed accounting for the normaliser's own output: lines whose COMMAND WORD is
+# chmod. Deliberately not the scan's narrower path-scoped filter — comparing against that would
+# make a chmod outside the target path look like a parser loss.
+count_chmod_commands() { # <label>; normalised text on stdin
+  local label="$1" out rc
+  out="$(grep -cE '^[[:space:]]*chmod[[:space:]]')" || {
+    rc=$?
+    [ "${rc}" -eq 1 ] ||
+      fail "${label}: counting chmod commands failed (grep exit ${rc}); refusing to vouch for a truncated count"
+    out=0
+  }
+  printf '%s\n' "${out}"
+}
+
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required to read the snapshot container script'
 
 # The command splitter, kept as ONE definition so the regression table below and the real-manifest
@@ -489,10 +530,8 @@ for target in "${targets[@]}"; do
   # raw count from a parser would make it depend on the thing it is checking. Counting words is
   # independent by construction. Neither target contains such a chmod today, a trip is a visible
   # test failure rather than a silent pass, and the fix is to look — which is the point.
-  raw_chmod_words="$(printf '%s\n' "${commands}" |
-    grep -oE '(^|[^[:alnum:]_./-])chmod([^[:alnum:]_-]|$)' |
-    grep -c . || true)"
-  seen_chmod_cmds="$(printf '%s\n' "${chmod_lines}" | grep -c . || true)"
+  raw_chmod_words="$(printf '%s\n' "${commands}" | count_chmod_words "${manifest}")"
+  seen_chmod_cmds="$(printf '%s\n' "${normalized}" | count_chmod_commands "${manifest}")"
   [ "${raw_chmod_words}" -le "${seen_chmod_cmds}" ] ||
     fail "${manifest}: the normaliser accounted for ${seen_chmod_cmds} chmod command(s) but the script contains ${raw_chmod_words} chmod word(s) — a chmod was lost by the parser, so this guard cannot vouch for it"
 
@@ -661,6 +700,28 @@ printf 'ok: DR chmod filter — non-octal modes reach the validation loop; other
 dr_chmod="$(printf '%s\n' "${dr_normalized}" | grep -E "${dr_chmod_filter}" || true)"
 [ -n "${dr_chmod}" ] ||
   fail "${dr_workflow}: the fetch never chmods the snapshot; the restore depends on mc's umask"
+
+# CONSERVATION BACKSTOP for the DR leg — the same one the manifest scan carries, for the same
+# reason. Without it this leg trusts the normaliser to be complete, and a chmod launched by a
+# COMMAND EXECUTOR is exactly what the normaliser does not see: `find /snapshots -type f -exec
+# chmod 0600 {} +` normalises to a line beginning with `find`, so the path-scoped filter above
+# drops it while the existing widening 0640 keeps `dr_bound` set and this leg green — a narrowing
+# chmod re-closing the fetched snapshot with the guard reporting success.
+#
+# Compared against command-position chmods in the normalised output, NOT against `dr_chmod`: that
+# filter is scoped to /snapshots, and this workflow legitimately chmods the age key elsewhere, so
+# comparing to the scoped set would report a real chmod as a parser loss on every run.
+#
+# Full-line comments are stripped first, mirroring the manifest scan. This file carries a comment
+# that mentions chmod in prose, and counting it would fire this backstop on a correct tree —
+# a false positive that trains the reader to ignore a security guard.
+dr_source_commands="$(grep -vE '^[[:space:]]*#' "${dr_path}")" ||
+  fail "${dr_workflow}: could not read the workflow to count chmod words; refusing to vouch for a truncated count"
+dr_raw_chmod_words="$(printf '%s\n' "${dr_source_commands}" | count_chmod_words "${dr_workflow}")"
+dr_seen_chmod_cmds="$(printf '%s\n' "${dr_normalized}" | count_chmod_commands "${dr_workflow}")"
+[ "${dr_raw_chmod_words}" -le "${dr_seen_chmod_cmds}" ] ||
+  fail "${dr_workflow}: the normaliser accounted for ${dr_seen_chmod_cmds} chmod command(s) but the workflow contains ${dr_raw_chmod_words} chmod word(s) — a chmod was lost by the parser, so this guard cannot vouch for it"
+printf 'ok: %s — conservation backstop, %s chmod word(s) all accounted for by the normaliser\n' "${dr_workflow}" "${dr_raw_chmod_words}"
 
 dr_bound=0
 while IFS= read -r line; do
