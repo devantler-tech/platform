@@ -24,12 +24,6 @@
 # EVERY FAILURE MODE HERE IS "REPORTS CLEAN WHILE HAVING CHECKED NOTHING"
 # That is the only way this script can do harm, so each guard below exists against one
 # measured instance of it. They are noted where they sit rather than listed here.
-#
-# This report reads current GHCR package metadata as well as repository and Actions data.
-# The `gh` credential must therefore be allowed to list package versions for the
-# devantler-tech organization (`read:packages` on a classic PAT). Without that scope the
-# report fails closed: historical git tags and successful runs do not prove that an OCI
-# version still exists for Flux to resolve.
 
 set -euo pipefail
 
@@ -133,36 +127,6 @@ gh_retry() {
     [ "$attempt" -eq 3 ] || sleep $((attempt * 3))
   done
   return 1
-}
-
-# The GHCR package belonging to one source repository. `.github` is the one deliberate
-# translation: a leading dot is not a valid OCI path component, so it publishes as
-# github-config. All current consumers publish their manifests under the same suffix.
-ghcr_package_for_repo() {
-  case "$1" in
-    .github) printf '%s\n' 'github-config/manifests' ;;
-    *) printf '%s/manifests\n' "$1" ;;
-  esac
-}
-
-# Current registry tags for one consumer. GitHub's package API names a nested GHCR
-# package with an encoded slash. Its response is authoritative for CURRENT existence;
-# git tags and workflow runs below are deliberately historical evidence.
-current_registry_tags() {
-  local package encoded
-  package="$(ghcr_package_for_repo "$1")"
-  encoded="${package//\//%2F}"
-  gh_retry api --paginate \
-    "orgs/devantler-tech/packages/container/${encoded}/versions?per_page=100" \
-    --jq '.[].metadata.container.tags[]?'
-}
-
-# Translate the source Git ref to the OCI tag emitted by the shared publish workflows:
-# they strip the conventional v prefix, and OCI tags encode SemVer's `+` build-metadata
-# delimiter as `_` because `+` is not valid in an OCI tag.
-registry_tag_for_git_tag() {
-  local tag="${1#v}"
-  printf '%s\n' "${tag//+/_}"
 }
 
 # Print "<repo>\t<workflow>\t<pinned-version-or-empty>" per consumer.
@@ -503,18 +467,12 @@ tag_was_published() {
 # that actually signed the running artifact. Closing that needs an applied Flux revision,
 # which means reading a cluster; this script reads manifests, git tags and Actions runs only.
 deployed_tag() {
-  local repo="$1" version="$2" tags registry_tags registry_package registry_version candidate bare
+  local repo="$1" version="$2" tags candidate bare
   # --paginate: the endpoint caps at 100 per page and these repos already carry 50+ tags.
   # Past the cap an un-paginated read returns an arbitrary subset, which either misses a
   # real tag (false UNRESOLVED) or picks the newest of a truncated page (silently wrong).
   tags="$(gh_retry api --paginate "repos/devantler-tech/${repo}/tags?per_page=100" --jq '.[].name')" || return 1
   [ -n "$tags" ] || return 1
-  registry_package="$(ghcr_package_for_repo "$repo")"
-  if ! registry_tags="$(current_registry_tags "$repo")"; then
-    printf 'could not list current GHCR versions for %s; the gh credential needs package metadata access (read:packages on a classic PAT), and historical tags alone are not deployment evidence\n' \
-      "$registry_package" >&2
-    return 1
-  fi
   if [ -n "$version" ]; then
     # 🔴 BOTH SPELLINGS OF ONE VERSION ARE TWO DISTINCT GIT REFS HERE TOO. The semver walk
     # below refuses that ambiguity by name, but this branch RETURNED ON THE FIRST MATCH, so
@@ -563,15 +521,6 @@ deployed_tag() {
       return 1
     fi
     [ "$exact_pub" -eq 0 ] || return 1
-    # An exact OCIRepository tag is not normalized by Flux. The source workflow may have
-    # published Git tag v2.0.0 as OCI tag 2.0.0, but a manifest that literally pins
-    # v2.0.0 still asks the registry for v2.0.0 and must not be cleared by the other spelling.
-    registry_version="$version"
-    if ! printf '%s\n' "$registry_tags" | grep -qxF -- "$registry_version"; then
-      printf 'tag %s has a successful publish run but exact registry tag %s from the manifest no longer exists in GHCR package %s; it may have been deleted or published under a different spelling, and neither accepting it nor walking backward is deployment evidence\n' \
-        "$candidate" "$registry_version" "$registry_package" >&2
-      return 1
-    fi
     # The VERIFIED commit travels with the tag. `pin_at_ref` used to be handed the tag NAME,
     # which is mutable: if the tag moves after the publication check above and before that
     # read, publication is verified for this commit while cd.yaml is read from a different
@@ -754,53 +703,6 @@ deployed_tag() {
         return 1
       fi
       if [ "$walk_pub" -eq 0 ]; then
-        registry_version="$(registry_tag_for_git_tag "$candidate")"
-        if ! printf '%s\n' "$registry_tags" | grep -qxF -- "$registry_version"; then
-          printf 'tag %s has a successful publish run but registry tag %s no longer exists in GHCR package %s; it may have been deleted, and walking backward would attribute an older release to what Flux resolves today\n' \
-            "$candidate" "$registry_version" "$registry_package" >&2
-          return 1
-        fi
-        # Flux chooses a semver candidate from CURRENT REGISTRY TAGS, not from Git refs.
-        # A deleted Git tag can leave its GHCR version behind, and a still-present Git
-        # tag can have no successful publication evidence. Either way, if the registry
-        # version ranks ABOVE the candidate this Git-and-Actions walk selected, silently
-        # returning the lower release would attribute the wrong signing revision. A
-        # distinct registry tag at the SAME precedence is ambiguous for the same reason.
-        local registry_seen registry_semver registry_core selected_core registry_high
-        selected_core="${variants%%+*}"
-        while IFS= read -r registry_seen; do
-          [ -n "$registry_seen" ] || continue
-          [ "$registry_seen" = 'latest' ] && continue
-          registry_semver="${registry_seen/_/+}"
-          if [[ "$registry_semver" =~ $strict_re ]] || [[ "$registry_semver" =~ $loose_re ]]; then
-            registry_core="$(printf '%s' "$registry_semver" | sed -e 's/^v//' -e 's/+.*$//')"
-            # Masterminds SemVer (and therefore Flux) coerces partial versions before
-            # ordering: 2 == 2.0 == 2.0.0. Keep the registry tag's original spelling
-            # for identity and diagnostics, but compare its normalized three-component
-            # core so a distinct partial tag cannot hide a same-precedence ambiguity.
-            case "$registry_core" in
-              *.*.*) ;;
-              *.*) registry_core="${registry_core}.0" ;;
-              *) registry_core="${registry_core}.0.0" ;;
-            esac
-          else
-            continue
-          fi
-          registry_high="$(printf '%s\n%s\n' "$registry_core" "$selected_core" | sort -V -r | head -1)"
-          if [ "$registry_core" = "$selected_core" ]; then
-            if [ "$registry_seen" != "$registry_version" ]; then
-              printf 'registry tag %s has the same SemVer precedence as selected registry tag %s; Flux can select either, and choosing needs Flux-compatible ordering plus publication evidence for both\n' \
-                "$registry_seen" "$registry_version" >&2
-              return 1
-            fi
-            continue
-          fi
-          if [ "$registry_high" = "$registry_core" ]; then
-            printf 'registry tag %s ranks above selected release %s but this resolver cannot map the higher selection to one Git tag and successful publication run; refusing instead of attributing an older release to what Flux resolves\n' \
-              "$registry_seen" "$registry_version" >&2
-            return 1
-          fi
-        done <<<"$registry_tags"
         # The early refusal above compares against the highest STRICT tag, which is not
         # necessarily the one being reported: when that tag never published, the walk steps
         # past it to an older release, and a loose tag sitting between the two was cleared
@@ -976,9 +878,14 @@ main() {
     fi
     local mark=''
     # 🔴 NEITHER ORIGIN IS A MEASUREMENT OF WHAT FLUX HAS APPLIED, and both say so. This
-    # script reads manifests, git tags, Actions runs and current GHCR package metadata;
-    # nothing here reads a cluster. Saying so is the difference between an allow-list built
-    # on evidence and one built on a guess that reads identically.
+    # script reads manifests, git tags and Actions runs; nothing here reads a cluster, and
+    # nothing here reads the REGISTRY either. Saying so is the difference between an
+    # allow-list built on evidence and one built on a guess that reads identically.
+    #
+    # The registry gap is its own limitation, tracked separately: candidates come only from
+    # git tags, so a GHCR version deleted after a successful run still reads as publishable
+    # while Flux's selector can no longer resolve it. Closing that needs a package read,
+    # which is outside the scope #3048 set for this script.
     #
     # `pinned` was called `exact`, which overclaimed in a way that is reachable rather than
     # theoretical: a version bump landing by DIRECT PUSH to main runs validate-main.yaml
