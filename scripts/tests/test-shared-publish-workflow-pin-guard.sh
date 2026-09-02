@@ -22,11 +22,25 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly guard="${root_dir}/scripts/guard-shared-publish-workflow-pin.sh"
 
-# These subjects are cosign identity REGEXES, so the accepted ref is the pattern
-# `[0-9a-f]{40}` as literal text — not a concrete commit. A hand-written literal
-# SHA is a different thing (an approved-revision allow-list, #2818's option 2) and
-# the guard does not recognise it today.
+# These subjects are cosign identity REGEXES, so TWO ref forms pin a revision and the
+# guard accepts both (#3308): the pattern text `[0-9a-f]{40}`, which admits any 40-hex
+# commit, and a CONCRETE 40-hex commit naming exactly one. The second is what a
+# generated approved-revision allow-list emits, and it is strictly narrower.
+#
+# The two forms are DISJOINT — neither string can match the other's check — so the
+# cases below can attribute an acceptance to one form or the other rather than to
+# "something matched".
 readonly SHA_PATTERN='[0-9a-f]{40}'
+
+# A real 40-hex commit: the revision that signed the deployed github-config artifact,
+# as reported by report-publish-workflow-signing-revisions.sh. Using a revision the
+# report actually names keeps this test anchored to the shape the generator emits
+# rather than to an invented string.
+readonly CONCRETE_SHA='b3783a5148b844b3f1f4011cdc84871ad66348c1'
+# A second, different real revision — the one every consumer pins today. A diverged
+# consumer's generated set is the alternation of these two, which is the shape that
+# must be accepted for a currently deployed artifact to keep verifying.
+readonly CONCRETE_SHA_2='3ee6cb9bbd616c2a38779be41a5e41f3e77282d0'
 
 pass_count=0
 
@@ -82,6 +96,34 @@ else
   fail "eight SHA-only subjects should pass, guard rejected them"
 fi
 
+# --- GREEN: the generated approved-revision shapes are accepted (#3308) ------
+#
+# A concrete commit is what an approved-revision allow-list emits, and it is strictly
+# NARROWER than the pattern form: one revision instead of the whole 40-hex space. It
+# was rejected before #3308, so correct generated output read as a guard failure.
+# These cases are what stop that widening being reverted silently.
+
+tree="${work_dir}/green-concrete"
+build_tree "${tree}" "${CONCRETE_SHA}"
+if run_tree "${tree}"; then
+  ok "a concrete 40-hex commit passes"
+else
+  printf '%s\n' "$(cat "${tree}/stderr")" >&2
+  fail "a concrete 40-hex commit should pass, guard rejected it"
+fi
+
+# The shape a DIVERGED consumer needs: the revision that signed the artifact currently
+# deployed AND the revision pinned today. The #3048 report names both, and a set
+# carrying only one of them stops verifying an artifact that is running right now.
+tree="${work_dir}/green-concrete-pair"
+build_tree "${tree}" "(${CONCRETE_SHA}|${CONCRETE_SHA_2})"
+if run_tree "${tree}"; then
+  ok "an alternation of two concrete commits passes"
+else
+  printf '%s\n' "$(cat "${tree}/stderr")" >&2
+  fail "a two-revision approved set should pass, guard rejected it"
+fi
+
 # --- RED: every widening must fire -------------------------------------------
 #
 # `([0-9a-f]{40}|refs/tags/v.+)` is the shape this change removed (#3022). It is
@@ -108,6 +150,18 @@ assert_rejected "a branch ref" 'refs/heads/main' branchref
 assert_rejected "a bare moving ref" 'main' bareref
 assert_rejected "a short commit" '0123456' shortsha
 assert_rejected "a partially grouped alternation" '([0-9a-f]{40})?refs/heads/.+' partialgroup
+
+# --- RED: the #3308 widening must not have opened a hole ---------------------
+#
+# The concrete form is accepted only as a WHOLE 40-hex alternative. Each case below is
+# one character, one case-fold or one alternative away from that, so any of them
+# passing would mean the new check matches by prefix, ignores case, or is applied
+# per-substring rather than per-alternative.
+assert_rejected "a 39-hex near-commit" "${CONCRETE_SHA%?}" sha39
+assert_rejected "a 41-hex near-commit" "${CONCRETE_SHA}a" sha41
+assert_rejected "an uppercase commit" "$(printf '%s' "${CONCRETE_SHA}" | tr 'a-f' 'A-F')" shaupper
+assert_rejected "a concrete commit with a wildcard appended" "${CONCRETE_SHA}.+" shasuffix
+assert_rejected "an approved set widened back with a branch" "(${CONCRETE_SHA}|refs/heads/main)" shabranch
 
 # --- RED: the floor fails closed on a shrunken match set ---------------------
 #
