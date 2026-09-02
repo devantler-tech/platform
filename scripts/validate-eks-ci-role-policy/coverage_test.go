@@ -234,8 +234,88 @@ func runsCommand(script, needle string) bool {
 // assertion about a GATE needs failure propagation, so only those opt in.
 func runsGate(script, needle string) bool {
 	return scanCommandRuns(script, needle, func(end int) bool {
-		return failurePropagates(script, end)
+		return !errexitDisabledAt(script, end) && failurePropagates(script, end)
 	})
+}
+
+// errexitDisabledAt reports whether a `set` builtin earlier in this same script
+// has switched errexit OFF and not switched it back on before the command whose
+// word ends at upto.
+//
+// The shell a step runs under is only half of the question shellKeepsErrexit
+// answers. `shell: bash` still invokes the block with `-e`, but the block can
+// turn that off for itself: under `set +e; <gate>; echo done` the gate runs, its
+// failure no longer aborts the block, and the step's status becomes `echo`'s
+// zero. Every operator around the gate is innocent — the terminator really is a
+// newline — so failurePropagates is satisfied while the gate is defused. That is
+// the same hole as `|| true`, reached through shell state instead of an operator.
+//
+// The LAST toggle before the gate wins, because a block may legitimately drop
+// errexit for one fallible probe and restore it before the gate.
+//
+// Deliberately blind to subshell and function scope: `( set +e; ... )` restores
+// errexit at the closing paren, and this reads it as still disabled. That errs
+// toward calling a sound gate UNCOVERED, which fails the build loudly and is
+// recoverable — the same strict direction failurePropagates takes with pipelines.
+func errexitDisabledAt(script string, upto int) bool {
+	if upto > len(script) {
+		upto = len(script)
+	}
+	prefix := script[:upto]
+	disabled := false
+	scanCommandRuns(prefix, "set", func(end int) bool {
+		if off, toggles := setTogglesErrexit(prefix[end:]); toggles {
+			disabled = off
+		}
+		// Never accept: scanning must reach every `set` before the gate so the
+		// last one decides. Returning true here would stop at the first.
+		return false
+	})
+	return disabled
+}
+
+// setTogglesErrexit reads the argument words of a `set` builtin, whose operands
+// begin at args, and reports whether it changes errexit and to what.
+//
+// Both spellings count, and a cluster carries its flags together: `-e`, `+ex`
+// and `-euo pipefail` all name errexit, while `+o pipefail` and `+x` do not. An
+// `o` in a cluster consumes the following word as its option name, so
+// `+eo pipefail` is read as errexit off rather than as an option named `e`.
+func setTogglesErrexit(args string) (off bool, toggles bool) {
+	i := 0
+	for i < len(args) {
+		for i < len(args) && (args[i] == ' ' || args[i] == '\t') {
+			i++
+		}
+		if i >= len(args) || endsCommand(args[i]) {
+			break
+		}
+		start := i
+		for i < len(args) && !endsWord(args[i]) {
+			i++
+		}
+		word := args[start:i]
+		if len(word) < 2 || (word[0] != '-' && word[0] != '+') {
+			continue
+		}
+		flags := word[1:]
+		if strings.ContainsRune(flags, 'e') {
+			off, toggles = word[0] == '+', true
+		}
+		if strings.ContainsRune(flags, 'o') {
+			for i < len(args) && (args[i] == ' ' || args[i] == '\t') {
+				i++
+			}
+			ns := i
+			for i < len(args) && !endsWord(args[i]) {
+				i++
+			}
+			if args[ns:i] == "errexit" {
+				off, toggles = word[0] == '+', true
+			}
+		}
+	}
+	return off, toggles
 }
 
 // failurePropagates reports whether the command whose word ends at i can still
@@ -1038,6 +1118,16 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		gate + " && # note\n  echo ok",
 		// A comment after a COMPLETE command: the newline still terminates it.
 		gate + " # done\necho after",
+		// The step's shell keeps errexit and the block does not take it away,
+		// so the gate still aborts on failure. `set +x` and `+o pipefail` name
+		// other options entirely, and a `set +e` that is restored before the
+		// gate leaves errexit on — without these controls the clause below
+		// could read any `set` at all as a defused gate.
+		"set -e\n" + gate,
+		"set -euo pipefail\n" + gate,
+		"set +x\n" + gate,
+		"set +o pipefail\n" + gate,
+		"set +e\ncurl -f probe || true\nset -e\n" + gate,
 	}
 	for _, script := range enforcing {
 		if !runsGate(script, gate) {
@@ -1060,6 +1150,17 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		// Bash strips the comment BEFORE evaluating the list, so this is exactly
 		// the line above with a comment in the middle.
 		gate + " && # report success\n  echo ok || true",
+		// Errexit switched off inside the block. Every operator around the gate
+		// is innocent here — the terminator really is a newline — so this is
+		// defused by shell STATE rather than by punctuation, and the step's
+		// status becomes that of the last command instead of the gate's.
+		"set +e\n" + gate + "\necho continued",
+		"set +e\n" + gate,
+		"set +o errexit\n" + gate,
+		"set +ex\n" + gate,
+		"set +eo pipefail\n" + gate,
+		// The LAST toggle before the gate is the one in force.
+		"set -e\nset +e\n" + gate,
 	}
 	for _, script := range defused {
 		if !runsCommand(script, gate) {
