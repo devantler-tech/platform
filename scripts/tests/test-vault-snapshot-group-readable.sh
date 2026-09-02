@@ -82,7 +82,7 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required to read the snapshot co
 # fail-closed, the safe direction for a guard that requires every chmod to widen.
 # shellcheck disable=SC2016  # an awk program is data, not shell: $0/$SNAP must reach awk unexpanded.
 readonly split_commands_awk='
-      BEGIN { sq = 0; dq = 0; hd = ""; hd_strip = 0; sub_depth = 0; bt = 0; arith_cmd = 0 }
+      BEGIN { sq = 0; dq = 0; hd = ""; hd_strip = 0; sub_depth = 0; bt = 0; arith = 0 }
       {
         line = $0
         if (skip_hd && hd != "") {
@@ -102,21 +102,16 @@ readonly split_commands_awk='
           if (c == "\"" && sq == 0) { dq = 1 - dq; out = out c; esc = 0; i++; continue }
           if (sq == 0) {
             if (c == "$" && substr(line, i + 1, 1) == "(" && substr(line, i + 2, 1) == "(") {
-              arith = 0
-              while (i <= n) {
-                ac = substr(line, i, 1)
-                if (ac == "(") { arith++ }
-                if (ac == ")") { arith-- }
-                out = out ac
-                i++
-                if (arith == 0 && ac == ")") { break }
-              }
+              arith++
+              out = out "$(("
               esc = 0
+              i += 3
               continue
             }
             if (c == "$" && substr(line, i + 1, 1) == "(") {
               sub_depth++
               sub_dq[sub_depth] = dq
+              sub_paren[sub_depth] = 0
               dq = 0
               out = out "\n"
               esc = 0
@@ -130,28 +125,37 @@ readonly split_commands_awk='
               i++
               continue
             }
-            if (c == ")" && sub_depth > 0) {
-              dq = sub_dq[sub_depth]
-              sub_depth--
-              out = out "\n"
-              esc = 0
-              i++
-              continue
-            }
           }
           if (sq == 0 && dq == 0) {
             if (c == "(" && substr(line, i + 1, 1) == "(") {
-              arith_cmd++
+              arith++
               out = out "(("
               esc = 0
               i += 2
               continue
             }
-            if (c == ")" && substr(line, i + 1, 1) == ")" && arith_cmd > 0) {
-              arith_cmd--
+            if (c == ")" && substr(line, i + 1, 1) == ")" && arith > 0) {
+              arith--
               out = out "))"
               esc = 0
               i += 2
+              continue
+            }
+            if ((c == "<" || c == ">") && substr(line, i + 1, 1) == "(") {
+              sub_depth++
+              sub_dq[sub_depth] = dq
+              sub_paren[sub_depth] = 0
+              dq = 0
+              out = out "\n"
+              esc = 0
+              i += 2
+              continue
+            }
+            if (c == "(" && sub_depth > 0) {
+              sub_paren[sub_depth]++
+              out = out c
+              esc = 0
+              i++
               continue
             }
             if (c == "<" && substr(line, i + 1, 1) == "<" && substr(line, i + 2, 1) == "<") {
@@ -160,7 +164,7 @@ readonly split_commands_awk='
               i += 3
               continue
             }
-            if (skip_hd && arith_cmd == 0 && c == "<" && substr(line, i + 1, 1) == "<" && substr(line, i + 2, 1) != "<") {
+            if (skip_hd && arith == 0 && c == "<" && substr(line, i + 1, 1) == "<" && substr(line, i + 2, 1) != "<") {
               j = i + 2
               hd_strip = 0
               if (substr(line, j, 1) == "-") { hd_strip = 1; j++ }
@@ -181,12 +185,6 @@ readonly split_commands_awk='
               last = (out == "") ? "" : substr(out, length(out), 1)
               if (out == "" || last == " " || last == "\t" || last == "\n") break
             }
-            if ((c == "<" || c == ">") && substr(line, i + 1, 1) == "(") {
-              out = out "\n"
-              esc = 0
-              i += 2
-              continue
-            }
             if (c == ";") { out = out "\n"; esc = 0; i++; continue }
             if (c == "&" && substr(line, i + 1, 1) == "&") { out = out "\n"; esc = 0; i += 2; continue }
             if (c == "&") {
@@ -197,7 +195,24 @@ readonly split_commands_awk='
             }
             if (c == "|" && substr(line, i + 1, 1) == "|") { out = out "\n"; esc = 0; i += 2; continue }
             if (c == "|") { out = out "\n"; esc = 0; i++; continue }
-            if (c == ")") { out = out "\n"; esc = 0; i++; continue }
+          }
+          if (sq == 0 && c == ")") {
+            if (sub_depth > 0 && sub_paren[sub_depth] > 0) {
+              sub_paren[sub_depth]--
+              out = out "\n"
+              esc = 0
+              i++
+              continue
+            }
+            if (sub_depth > 0) {
+              dq = sub_dq[sub_depth]
+              sub_depth--
+              out = out "\n"
+              esc = 0
+              i++
+              continue
+            }
+            if (dq == 0) { out = out "\n"; esc = 0; i++; continue }
           }
           out = out c
           esc = 0
@@ -332,6 +347,8 @@ readonly normaliser_cases=(
   "0:diff \"<(chmod 0600 \"\$SNAP\")\" /dev/null"
   "1:if (( n > 1 )); then chmod 0600 \"\$SNAP\"; fi"
   "1:x=\"\$(printf %s \"\$(chmod 0600 \"\$SNAP\")\")\""
+  "1:x=\$(( \$(chmod 0600 \"\$SNAP\"; printf 0) + 1 ))"
+  "1:x=\"\$( (true); chmod 0600 \"\$SNAP\" )\""
 )
 
 for normaliser_case in "${normaliser_cases[@]}"; do
@@ -441,6 +458,43 @@ for target in "${targets[@]}"; do
   chmod_lines="$(printf '%s\n' "${normalized}" | grep -E '^[[:space:]]*chmod[[:space:]]' || true)"
   [ -n "${chmod_lines}" ] ||
     fail "${manifest}: the snapshot script never chmods the snapshot; the mirror still depends on owning it (#3202)"
+
+  # CONSERVATION BACKSTOP — the parser may not silently LOSE a chmod.
+  #
+  # Everything above this line is a PARSER, and a parser for shell command position is an open
+  # set: seven distinct spellings have now been found hiding an executing chmod from it (line
+  # start, `if`, `&&`/`||`, a case pattern `)`, an async `&`, a command-substitution opener, the
+  # same opener inside double quotes, a bare `((` arithmetic command whose `<<` read as a heredoc,
+  # a substitution nested in an arithmetic expansion, and a subshell `)` mistaken for the
+  # substitution's close). Each was fixed, and the next round found another. The failure mode they
+  # share is what makes them dangerous: an unparsed chmod produces NO output, so the guard reads
+  # green precisely when it has understood the script least.
+  #
+  # So stop relying on the parser being complete. Count the `chmod` WORDS in the comment-stripped
+  # source, and require the normaliser to have accounted for at least that many. A future parser
+  # gap then fails LOUDLY here instead of passing silently above — the error direction flips from
+  # fail-open to fail-closed, which is the only direction a security guard may be wrong in.
+  #
+  # `-le`, not `-eq`: the normaliser is allowed to emit MORE segments than there are chmod words
+  # (a split inside a quoted region can do this), and over-counting only makes the mode assertions
+  # below stricter. Fewer is the failure.
+  #
+  # Known false positives, accepted deliberately and measured: a `chmod` word that is INERT is
+  # still counted, so it trips this. Three contexts do that — a heredoc BODY (verified: the
+  # splitter correctly drops it, so raw=1 seen=0 and this fires), a single-quoted string, and a
+  # trailing `# ...` comment. Only full-line comments are excluded above.
+  #
+  # That is the right trade for this guard. Distinguishing an inert chmod from an executing one is
+  # the very parsing problem whose incompleteness this backstop exists to cover, so deriving the
+  # raw count from a parser would make it depend on the thing it is checking. Counting words is
+  # independent by construction. Neither target contains such a chmod today, a trip is a visible
+  # test failure rather than a silent pass, and the fix is to look — which is the point.
+  raw_chmod_words="$(printf '%s\n' "${commands}" |
+    grep -oE '(^|[^[:alnum:]_./-])chmod([^[:alnum:]_-]|$)' |
+    grep -c . || true)"
+  seen_chmod_cmds="$(printf '%s\n' "${chmod_lines}" | grep -c . || true)"
+  [ "${raw_chmod_words}" -le "${seen_chmod_cmds}" ] ||
+    fail "${manifest}: the normaliser accounted for ${seen_chmod_cmds} chmod command(s) but the script contains ${raw_chmod_words} chmod word(s) — a chmod was lost by the parser, so this guard cannot vouch for it"
 
   # EVERY chmod must WIDEN, never narrow — asserted directly rather than by count.
   #
