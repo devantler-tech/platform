@@ -340,6 +340,38 @@ roleRef:
   kind: Role
   name: data-product-controller-leader-election'
 
+# A Kustomization that OMITS targetNamespace is not thereby namespace-local.
+# Flux preserves whatever namespaces the remote artifact declares, so this
+# reconciles grandchildren into `aws`, `flux-system` or cluster scope — and
+# none of those objects is ever presented to this rule. Sharing the reviewed
+# name is what previously carried it past the emitter exception.
+assert_rejected 'same-name-kustomization-without-target-namespace' 'apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+spec:
+  interval: 10m
+  prune: false
+  sourceRef:
+    kind: OCIRepository
+    name: data-product-controller'
+
+# The negative control: an explicit, correct targetNamespace is what the
+# emitter exception is actually for, and must keep passing.
+assert_accepted 'same-name-kustomization-with-target-namespace' 'apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+spec:
+  interval: 10m
+  prune: false
+  sourceRef:
+    kind: OCIRepository
+    name: data-product-controller
+  targetNamespace: data-product-controller'
+
 assert_rejected 'namespaced-flux-kustomization' 'apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:

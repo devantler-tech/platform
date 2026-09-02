@@ -58,7 +58,11 @@ rules:
     # is installed; a blanket refusal of emitter kinds rejects the real render.
     # A reviewed emitter must additionally not redirect: `spec.targetNamespace`
     # is what sends reconciled grandchildren somewhere else, and those never
-    # reach this rule.
+    # reach this rule. For a Kustomization that field must be present and
+    # correct rather than merely not-wrong: Flux preserves the namespaces the
+    # remote artifact declares when it is omitted, so an absent targetNamespace
+    # reconciles grandchildren anywhere the artifact likes. A HelmRelease is
+    # left alone here because it defaults to its own namespace instead.
     #
     # The ClusterRole branch refuses more than wildcards. `bind` and `escalate`
     # on rbac.authorization.k8s.io are privilege-escalation primitives in their
@@ -112,6 +116,9 @@ rules:
              object.metadata.name == 'data-product-controller' &&
              (!has(object.spec) || !has(object.spec.targetNamespace) ||
               object.spec.targetNamespace == 'data-product-controller'))) &&
+           (object.kind != 'Kustomization' ||
+            (has(object.spec) && has(object.spec.targetNamespace) &&
+             object.spec.targetNamespace == 'data-product-controller')) &&
            (object.kind != 'RoleBinding' ||
             (has(object.subjects) &&
              object.subjects.all(s,
