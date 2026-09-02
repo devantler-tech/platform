@@ -51,10 +51,16 @@ readonly artifact="${subject_name}@${digest}"
 # rather than a copy of it that can drift — and it reuses ci.yaml's extractor
 # rather than re-reading the YAML, so the two gates cannot disagree about what
 # the matcher IS.
+#
+# 🔴 CAPTURE STDOUT ONLY. This read used to merge stderr into the payload with
+# `2>&1`, so anything the toolchain wrote — module downloads on a cold build
+# cache, toolchain notices — arrived in FRONT of the JSON and jq parsed build
+# noise instead of the matcher, failing every prod deploy. Letting stderr flow
+# to the job log keeps the operator's diagnostic AND keeps the payload clean,
+# which is exactly how ci.yaml's caller of this same command already reads it.
 if ! matcher_json="$(go run ./scripts/validate-matcher-efficacy --print-matcher \
-  "${config_manifest}" "${flux_instance_manifest}" 2>&1)"; then
+  "${config_manifest}" "${flux_instance_manifest}")"; then
   echo "::error::could not read the matcher out of the manifests" >&2
-  echo "${matcher_json}" >&2
   exit 1
 fi
 

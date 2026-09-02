@@ -62,7 +62,7 @@ refused() {
 # Every invocation appends its argv, so what the gate actually asked is
 # observable rather than inferred from an exit code.
 stub_dir() {
-  local positive_codes="$1" negative_code="$2" go_json="$3"
+  local positive_codes="$1" negative_code="$2" go_json="$3" go_stderr="${4-}"
   local dir
   dir="$(mktemp -d)"
 
@@ -72,6 +72,7 @@ stub_dir() {
   cat >"${dir}/go" <<EOF
 #!/usr/bin/env bash
 echo "go \$*" >>"${dir}/argv"
+printf '%s' '${go_stderr}' >&2
 printf '%s' '${go_json}'
 EOF
 
@@ -103,9 +104,9 @@ EOF
 # digest is one of the inputs under test; :- would substitute the good one and
 # silently turn that case into a duplicate of the happy path.
 run_gate() {
-  local positive_codes="$1" negative_code="$2" go_json="$3" digest="${4-${good_digest}}"
+  local positive_codes="$1" negative_code="$2" go_json="$3" digest="${4-${good_digest}}" go_stderr="${5-}"
   local dir
-  dir="$(stub_dir "${positive_codes}" "${negative_code}" "${go_json}")"
+  dir="$(stub_dir "${positive_codes}" "${negative_code}" "${go_json}" "${go_stderr}")"
 
   set +e
   gate_output="$(cd "${root_dir}" && PATH="${dir}:${PATH}" bash "${gate}" "${digest}" 2>&1)"
@@ -153,6 +154,38 @@ if printf '%s' "${gate_argv}" | grep -q -- '--print-matcher'; then
   ok "the identity patterns are read from the manifests"
 else
   bad "the identity patterns are read from the manifests" "argv: ${gate_argv}"
+fi
+
+# --- The extractor's stderr must not contaminate the payload -------------------
+# 🔴 REGRESSION GUARD (merge-queue eviction, 2026-09-02). The gate captured the
+# extractor with `2>&1`, so anything `go run` wrote to stderr — module downloads
+# on a cold build cache, toolchain notices — landed in FRONT of the JSON and jq
+# parsed build noise instead of the matcher:
+#
+#   jq: parse error: Invalid numeric literal at line 1, column 3
+#   ::error::the matcher payload is missing an issuer or subject, or is not JSON
+#
+# It survived 22 green cases and a full green PR because the `go` stub here wrote
+# only stdout, and because ci.yaml's own caller — the same command, same args —
+# correctly captures stdout alone. The gate runs solely inside the prod deploy,
+# so nothing before the merge queue ever exercised it against a real toolchain.
+#
+# This case models what a real `go run` does: noise on stderr, payload on stdout.
+run_gate "0 0" 1 "${good_json}" "${good_digest}" 'go: downloading github.com/example/mod v1.2.3'
+if [[ "${gate_rc}" == "0" ]]; then
+  ok "extractor stderr does not contaminate the matcher payload"
+else
+  bad "extractor stderr does not contaminate the matcher payload" "exit ${gate_rc}: ${gate_output}"
+fi
+
+# Non-vacuity for the case above: a genuinely unparseable payload on STDOUT must
+# still refuse, or the fix would have been "stop parsing" rather than "stop
+# merging the streams".
+run_gate "0 0" 1 'not json at all' "${good_digest}" 'go: downloading github.com/example/mod v1.2.3'
+if refused; then
+  ok "an unparseable payload still refuses even when stderr is clean-looking"
+else
+  bad "an unparseable payload still refuses even when stderr is clean-looking" "exit 0: ${gate_output}"
 fi
 
 # --- The defect this gate catches ---------------------------------------------
