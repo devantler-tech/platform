@@ -33,7 +33,390 @@ fail() {
   exit 1
 }
 
+# ONE definition of "a chmod WORD", shared by the manifest scan and the DR leg. Leaving the two
+# on different matchers is the drift the single splitter definition already exists to prevent.
+#
+# `/` is deliberately NOT in the leading exclusion class, so a path-qualified `/bin/chmod` COUNTS.
+# It is a command word the normaliser does not recognise, so excluding it here would hide the same
+# invocation from the parser AND from the backstop that exists to cover the parser — a double
+# blind spot in which `/bin/chmod 0600 "$SNAP"` executes with both counts reading zero and the
+# guard green. `.` and `-` stay excluded so `foo.chmod` and `x-chmod` are not words.
+readonly chmod_word_re='(^|[^[:alnum:]_.-])chmod([^[:alnum:]_-]|$)'
+
+# Count chmod words on stdin, failing CLOSED on a grep ERROR rather than on "no match".
+#
+# grep exits 1 for no-selection and >=2 for a real error. A trailing `|| true` collapses the two,
+# so a grep that dies partway returns a TRUNCATED count that still satisfies the `-le` comparison
+# below — the guard then reads green in exactly the case it understood the input least, which is
+# the fail-open this whole backstop exists to prevent.
+#
+# The EXTRACTION therefore runs alone, never piped into a counter. `grep -c` exits 1 on empty
+# input, which is byte-identical to the extractor's own no-match 1 — and `pipefail` does not
+# separate them either, because it reports the RIGHTMOST non-zero status, which is the counter's.
+# So a piped form reports 1 for an extractor that died with 2, and this function would then set
+# out=0 and vouch for a count it never made: the same fail-open one level down.
+count_chmod_words() { # <label>; text on stdin
+  local label="$1" matches rc
+  matches="$(grep -oE "${chmod_word_re}")" || {
+    rc=$?
+    [ "${rc}" -eq 1 ] ||
+      fail "${label}: counting chmod words failed (grep exit ${rc}); refusing to vouch for a truncated count"
+    matches=''
+  }
+  # Every match contains the literal `chmod`, so no match line is ever empty and counting lines is
+  # exactly what the old `grep -c .` counted — without a second command whose 1 is ambiguous.
+  [ -n "${matches}" ] || {
+    printf '%s\n' 0
+    return 0
+  }
+  printf '%s\n' "${matches}" | awk 'END { print NR }'
+}
+
+# The same fail-closed accounting for the normaliser's own output: lines whose COMMAND WORD is
+# chmod. Deliberately not the scan's narrower path-scoped filter — comparing against that would
+# make a chmod outside the target path look like a parser loss.
+count_chmod_commands() { # <label>; normalised text on stdin
+  local label="$1" out rc
+  out="$(grep -cE '^[[:space:]]*chmod[[:space:]]')" || {
+    rc=$?
+    [ "${rc}" -eq 1 ] ||
+      fail "${label}: counting chmod commands failed (grep exit ${rc}); refusing to vouch for a truncated count"
+    out=0
+  }
+  printf '%s\n' "${out}"
+}
+
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required to read the snapshot container script'
+
+# The command splitter, kept as ONE definition so the regression table below and the real-manifest
+# scan below cannot drift apart. `esc` records whether the character most recently appended to
+# `out` arrived via a backslash escape: an escaped `\>` or `\<` is a LITERAL character, not a
+# redirection operator, so an `&` following it IS an asynchronous-list separator and must split.
+# Without that distinction `... \>& chmod 0600 "$SNAP"` hides the chmod behind a separator the
+# scan refuses to break on — the same fail-open this guard exists to close.
+#
+# Quote state and heredoc state are carried ACROSS records, not reset per line, because a shell
+# command is not a line. A quoted word can span physical lines, and resetting `sq`/`dq` per record
+# reads the CLOSING quote of such a word as an OPENING one — after which a real separator looks
+# quoted and the command following it is never split out. A heredoc body is worse: every body line
+# starts exactly where a command word would, so a data line reading `chmod 0640 "$SNAP"` would
+# satisfy this guard's binding on its own. Body lines are skipped up to the delimiter; `<<<` is a
+# here-string and introduces no body, so it is left to the ordinary scan.
+#
+# A command-substitution OPENER is a command boundary, exactly like `;` or `&&`. `$(`, a backtick,
+# and the process-substitution forms `<(` / `>(` all start a fresh command whose first word can be
+# `chmod`, and that chmod EXECUTES. Without splitting there, `x=$(chmod 0600 "$SNAP")` reaches the
+# prefix pass as one segment; `x=$(chmod` reads as an assignment word and is stripped, leaving a
+# segment starting `0600`, so the anchored match never sees the chmod. A narrowing chmod hidden in
+# any of the three forms then passes this guard while still running — the same fail-open one level
+# down.
+#
+# Which of those openers fire INSIDE double quotes follows the shell, not a blanket rule, because
+# the two halves differ and guessing either way is wrong. `$(` and a backtick DO expand inside `"`,
+# so `x="$(chmod 0600 "$SNAP")"` runs the chmod and must split — this is the commonest real spelling
+# of a captured command, and gating the boundary on `dq == 0` missed every one of them. `<(` / `>(`
+# do NOT expand inside `"`: `echo "<(date)"` prints the text, so splitting there would invent a
+# chmod that never runs and fail a clean manifest. Those two stay unquoted-only.
+#
+# Entering `$(` / `` ` `` therefore SAVES the surrounding quote state and restores it at the matching
+# close, because quoting restarts inside a substitution: the inner `"` of `"$(… "$SNAP")"` opens a
+# fresh quoted word rather than closing the outer one. Without the save/restore the quote state
+# inverts at the substitution and every later separator on the line reads as quoted.
+#
+# `$((` is arithmetic, not a command, and is consumed as a balanced region by the branch above
+# before any of this is reached, so `x=$((1 << 2))` is untouched. A BARE `((` is the arithmetic
+# COMMAND form, and its `<<` is a left shift rather than a heredoc opener: `(( shift = 1 << 2 ))`
+# was read as opening a heredoc with delimiter `2`, after which every following line was swallowed
+# as heredoc body — including a real `chmod` on the next line. Arithmetic depth is tracked so the
+# heredoc branch is skipped inside it. The depth only SUPPRESSES heredoc detection; it deliberately
+# does not CONSUME the region, because consuming `((` … `))` would also swallow the nested-subshell
+# spelling `( (chmod 0600 "$SNAP") )`, turning one fail-open into another. Over-detecting arithmetic
+# therefore costs at most a heredoc body scanned as commands, which can only ADD chmod matches —
+# fail-closed, the safe direction for a guard that requires every chmod to widen.
+# shellcheck disable=SC2016  # an awk program is data, not shell: $0/$SNAP must reach awk unexpanded.
+readonly split_commands_awk='
+      BEGIN { sq = 0; dq = 0; hd = ""; hd_strip = 0; sub_depth = 0; bt = 0; arith = 0 }
+      {
+        line = $0
+        if (skip_hd && hd != "") {
+          probe = line
+          if (hd_strip) { sub(/^\t+/, "", probe) }
+          if (probe == hd) { hd = "" }
+          next
+        }
+        out = ""
+        esc = 0
+        n = length(line)
+        i = 1
+        while (i <= n) {
+          c = substr(line, i, 1)
+          if (c == "\\" && sq == 0) { out = out c substr(line, i + 1, 1); esc = 1; i += 2; continue }
+          if (c == "\047" && dq == 0) { sq = 1 - sq; out = out c; esc = 0; i++; continue }
+          if (c == "\"" && sq == 0) { dq = 1 - dq; out = out c; esc = 0; i++; continue }
+          if (sq == 0) {
+            if (c == "$" && substr(line, i + 1, 1) == "(" && substr(line, i + 2, 1) == "(") {
+              arith++
+              out = out "$(("
+              esc = 0
+              i += 3
+              continue
+            }
+            if (c == "$" && substr(line, i + 1, 1) == "(") {
+              sub_depth++
+              sub_dq[sub_depth] = dq
+              sub_paren[sub_depth] = 0
+              dq = 0
+              out = out "\n"
+              esc = 0
+              i += 2
+              continue
+            }
+            if (c == "`") {
+              if (bt == 0) { bt = 1; bt_dq = dq; dq = 0 } else { bt = 0; dq = bt_dq }
+              out = out "\n"
+              esc = 0
+              i++
+              continue
+            }
+          }
+          if (sq == 0 && dq == 0) {
+            if (c == "(" && substr(line, i + 1, 1) == "(") {
+              arith++
+              out = out "(("
+              esc = 0
+              i += 2
+              continue
+            }
+            if (c == ")" && substr(line, i + 1, 1) == ")" && arith > 0) {
+              arith--
+              out = out "))"
+              esc = 0
+              i += 2
+              continue
+            }
+            if ((c == "<" || c == ">") && substr(line, i + 1, 1) == "(") {
+              sub_depth++
+              sub_dq[sub_depth] = dq
+              sub_paren[sub_depth] = 0
+              dq = 0
+              out = out "\n"
+              esc = 0
+              i += 2
+              continue
+            }
+            if (c == "(" && sub_depth > 0) {
+              sub_paren[sub_depth]++
+              out = out c
+              esc = 0
+              i++
+              continue
+            }
+            if (c == "<" && substr(line, i + 1, 1) == "<" && substr(line, i + 2, 1) == "<") {
+              out = out "<<<"
+              esc = 0
+              i += 3
+              continue
+            }
+            if (skip_hd && arith == 0 && c == "<" && substr(line, i + 1, 1) == "<" && substr(line, i + 2, 1) != "<") {
+              j = i + 2
+              hd_strip = 0
+              if (substr(line, j, 1) == "-") { hd_strip = 1; j++ }
+              while (substr(line, j, 1) == " " || substr(line, j, 1) == "\t") { j++ }
+              hd = ""
+              while (j <= n) {
+                d = substr(line, j, 1)
+                if (d == "\047" || d == "\"" || d == "\\") { j++; continue }
+                if (d == " " || d == "\t" || d == ";" || d == "&" || d == "|" || d == ")") { break }
+                hd = hd d
+                j++
+              }
+              i = j
+              esc = 0
+              continue
+            }
+            if (c == "#") {
+              last = (out == "") ? "" : substr(out, length(out), 1)
+              if (out == "" || last == " " || last == "\t" || last == "\n") break
+            }
+            if (c == ";") { out = out "\n"; esc = 0; i++; continue }
+            if (c == "&" && substr(line, i + 1, 1) == "&") { out = out "\n"; esc = 0; i += 2; continue }
+            if (c == "&") {
+              nxt = substr(line, i + 1, 1)
+              prv = (out == "") ? "" : substr(out, length(out), 1)
+              redir = (esc == 0 && (prv == ">" || prv == "<"))
+              if (nxt != ">" && !redir) { out = out "\n"; esc = 0; i++; continue }
+            }
+            if (c == "|" && substr(line, i + 1, 1) == "|") { out = out "\n"; esc = 0; i += 2; continue }
+            if (c == "|") { out = out "\n"; esc = 0; i++; continue }
+          }
+          if (sq == 0 && c == ")") {
+            if (sub_depth > 0 && sub_paren[sub_depth] > 0) {
+              sub_paren[sub_depth]--
+              out = out "\n"
+              esc = 0
+              i++
+              continue
+            }
+            if (sub_depth > 0) {
+              dq = sub_dq[sub_depth]
+              sub_depth--
+              out = out "\n"
+              esc = 0
+              i++
+              continue
+            }
+            if (dq == 0) { out = out "\n"; esc = 0; i++; continue }
+          }
+          out = out c
+          esc = 0
+          i++
+        }
+        print out
+      }'
+
+# PASS 2, kept as ONE definition for the same reason as the splitter above: it is applied to the
+# manifest scripts AND to the DR workflow, and two copies would drift. It strips what can still
+# precede a command once the separators are gone — leading shell keywords, `VAR=value` assignment
+# prefixes, and the `(` / `{` grouping tokens — repeatedly, so `if ( LC_ALL=C chmod ... )` reduces
+# all the way. An assignment prefix is stripped because `LC_ALL=C chmod 0600 "$SNAP"` EXECUTES a
+# chmod; leaving the assignment in front of it hides the command from the anchored match that
+# follows, which is this guard's fail-open one level down. Grouping is stripped only at the START
+# of a segment, never mid-line, so an operand carrying arithmetic like `$((widened + 1))` survives.
+#
+# The assignment VALUE is consumed by a quote-aware walk rather than by `[^ \t]*`, because that
+# expression stops at the first space — including one INSIDE quotes. On
+# `LABEL="nightly snapshot" chmod 0600 "$SNAP"` it consumed only `LABEL="nightly`, leaving
+# `snapshot" chmod ...`, which the anchored match below then failed to read as a chmod. Since this
+# guard requires EVERY chmod to widen, a chmod it cannot see is a narrowing one it cannot reject:
+# the fail-open this pass exists to close, reachable through any assignment value with a space.
+#
+# An UNTERMINATED quote returns 0 (do not strip), which is correct rather than merely cautious: the
+# shell would treat the rest of the input as string data, so there is no command hiding behind it.
+# shellcheck disable=SC2016  # an awk program is data, not shell.
+readonly strip_prefixes_awk='
+      function assignment_word_end(s,   i, n, c, q) {
+        if (!match(s, /^[A-Za-z_][A-Za-z0-9_]*=/)) { return 0 }
+        n = length(s)
+        i = RLENGTH + 1
+        q = ""
+        while (i <= n) {
+          c = substr(s, i, 1)
+          if (q == "") {
+            if (c == " " || c == "\t") { return i - 1 }
+            if (c == "\\") { i += 2; continue }
+            if (c == "\047" || c == "\"") { q = c; i++; continue }
+            i++
+            continue
+          }
+          if (q == "\"" && c == "\\") { i += 2; continue }
+          if (c == q) { q = ""; i++; continue }
+          i++
+        }
+        if (q != "") { return 0 }
+        return n
+      }
+      {
+        line = $0
+        sub(/^[ \t]+/, "", line)
+        moved = 1
+        while (moved) {
+          moved = 0
+          if (match(line, /^((if|then|else|elif|do|while|until|!|time|exec|command|eval)[ \t]+|[({][ \t]*)/)) {
+            line = substr(line, RLENGTH + 1)
+            sub(/^[ \t]+/, "", line)
+            moved = 1
+            continue
+          }
+          e = assignment_word_end(line)
+          if (e > 0 && e < length(line) && substr(line, e + 1, 1) ~ /^[ \t]$/) {
+            line = substr(line, e + 1)
+            sub(/^[ \t]+/, "", line)
+            moved = 1
+            continue
+          }
+        }
+        print line
+      }'
+
+# Regression table for the splitter. Each case is `segments:input` where `segments` is how many
+# commands the input must break into. The escaped-redirection cases are the ones that matter:
+# a literal `\>` must NOT suppress the split, while a real `>&`/`&>`/`<&` still must.
+readonly splitter_cases=(
+  "1:vault operator raft snapshot save \$SNAP >&2"
+  "1:vault operator raft snapshot save \$SNAP &> /tmp/log"
+  "1:vault operator raft snapshot save \$SNAP <&0"
+  "2:printf x \\>& chmod 0600 \$SNAP"
+  "2:printf x \\<& chmod 0600 \$SNAP"
+  "1:printf x \\\\>& chmod 0600 \$SNAP"
+  "1:printf x \\\\<& chmod 0600 \$SNAP"
+  "2:vault operator raft snapshot save \$SNAP & chmod 0600 \$SNAP"
+  "2:vault operator raft snapshot save \$SNAP && chmod 0640 \$SNAP"
+  "1:echo 'a & b'"
+)
+
+for splitter_case in "${splitter_cases[@]}"; do
+  want="${splitter_case%%:*}"
+  input="${splitter_case#*:}"
+  got="$(printf '%s\n' "${input}" | awk -v skip_hd=1 "${split_commands_awk}" | grep -c . || true)"
+  [ "${got}" = "${want}" ] ||
+    fail "command splitter: '${input}' split into ${got} command(s), expected ${want}"
+done
+
+printf 'ok: command splitter — %d case(s), escaped \\> and \\< do not suppress an & separator\n' \
+  "${#splitter_cases[@]}"
+
+# Regression table for the normalisation a single physical line cannot express: heredoc bodies,
+# quote state spanning lines, and assignment-prefixed commands. Each case is `chmods:input`, where
+# `chmods` is how many chmod COMMANDS the input must yield once both passes have run, and `\n` /
+# `\t` in the input are expanded. Every case here counted WRONGLY before the fix, so this is a
+# non-vacuity proof and not a restatement of current behaviour.
+readonly normaliser_cases=(
+  "0:cat <<EOF\nchmod 0600 \"\$SNAP\"\nEOF"
+  "0:cat <<'EOF'\nchmod 0600 \"\$SNAP\"\nEOF"
+  "0:cat <<-EOF\n\tchmod 0600 \"\$SNAP\"\n\tEOF"
+  "1:cat <<EOF\ndata\nEOF\nchmod 0600 \"\$SNAP\""
+  "1:cat <<<note\nchmod 0600 \"\$SNAP\""
+  "1:LC_ALL=C chmod 0600 \"\$SNAP\""
+  "1:A=1 B=2 chmod 0600 \"\$SNAP\""
+  "1:if ( LC_ALL=C chmod 0600 \"\$SNAP\" ); then"
+  "1:true && LC_ALL=C chmod 0600 \"\$SNAP\""
+  "1:printf '%s' \"note\ncontinued\" && chmod 0600 \"\$SNAP\""
+  "0:printf '%s' \"note\ncontinued && chmod 0600 \$SNAP\""
+  "1:LABEL=\"nightly snapshot\" chmod 0600 \"\$SNAP\""
+  "1:LABEL='nightly snapshot' chmod 0600 \"\$SNAP\""
+  "1:A=\"x y\" B=\"p q\" chmod 0600 \"\$SNAP\""
+  "1:LABEL=nightly\\\\ snapshot chmod 0600 \"\$SNAP\""
+  "0:LABEL=\"unterminated chmod 0600 \$SNAP"
+  "2:x=\$((1 << 2))\nchmod 0640 \"\$SNAP\"\nchmod 0600 \"\$SNAP\""
+  "1:private) chmod 0600 \"\$SNAP\" ;;"
+  "1:x=\$(chmod 0600 \"\$SNAP\")"
+  "1:x=\`chmod 0600 \"\$SNAP\"\`"
+  "1:diff <(chmod 0600 \"\$SNAP\") /dev/null"
+  "2:(( shift = 1 << 2 ))\nchmod 0640 \"\$SNAP\"\nchmod 0600 \"\$SNAP\""
+  "1:( (chmod 0600 \"\$SNAP\") )"
+  "1:x=\"\$(chmod 0600 \"\$SNAP\")\""
+  "1:echo \"pre \$(chmod 0600 \"\$SNAP\") post\""
+  "1:x=\"\`chmod 0600 \"\$SNAP\"\`\""
+  "0:diff \"<(chmod 0600 \"\$SNAP\")\" /dev/null"
+  "1:if (( n > 1 )); then chmod 0600 \"\$SNAP\"; fi"
+  "1:x=\"\$(printf %s \"\$(chmod 0600 \"\$SNAP\")\")\""
+  "1:x=\$(( \$(chmod 0600 \"\$SNAP\"; printf 0) + 1 ))"
+  "1:x=\"\$( (true); chmod 0600 \"\$SNAP\" )\""
+)
+
+for normaliser_case in "${normaliser_cases[@]}"; do
+  want="${normaliser_case%%:*}"
+  input="${normaliser_case#*:}"
+  got="$(printf '%b\n' "${input}" |
+    awk -v skip_hd=1 "${split_commands_awk}" |
+    awk "${strip_prefixes_awk}" |
+    grep -cE '^chmod[[:space:]]' || true)"
+  [ "${got}" = "${want}" ] ||
+    fail "normaliser: '${input}' yielded ${got} chmod command(s), expected ${want}"
+done
+
+printf 'ok: command normaliser — %d case(s): heredoc bodies are data, quote state spans lines, assignment prefixes do not hide a command\n' \
+  "${#normaliser_cases[@]}"
 
 # manifest:yq-path-to-the-snapshot-container-script
 readonly targets=(
@@ -71,9 +454,98 @@ for target in "${targets[@]}"; do
   [ -n "${save_operand}" ] || fail "${manifest}: could not extract the snapshot save operand"
 
   # Now require a chmod naming that SAME operand.
-  chmod_lines="$(printf '%s\n' "${commands}" | grep -E '^[[:space:]]*chmod[[:space:]]' || true)"
+  #
+  # `chmod` is a COMMAND, and a command is not the only thing that can start a line. An anchored
+  # `^[[:space:]]*chmod[[:space:]]` match therefore checks a chmod only where it happens to be
+  # written first — so `if chmod 0600 "$SNAP"; then`, `... && chmod 0600 "$B"`,
+  # `... || chmod 0600 "$SNAP"`, `if ( chmod 0600 "$SNAP" ); then` and
+  # `if { chmod 0600 "$SNAP"; }; then` are all INVISIBLE to it. That is the fail-open this guard
+  # exists to prevent, one level down (#3268): a narrowing chmod hiding behind an `if` would
+  # re-couple the mirror to file ownership with the guard still green. Found while working #3265,
+  # where rewriting a widen as `if chmod 0640 "$EXISTING"; then` silently dropped the reported
+  # modes from two to one.
+  #
+  # So the command text is normalised into one command per line BEFORE matching, in two passes.
+  #
+  # PASS 1 walks each line ONCE, carrying shell quote state, and is deliberately a single scan
+  # rather than a comment-strip followed by a `gsub` split. Those are not equivalent: a `gsub`
+  # cannot see quote state, so it splits a separator inside `echo 'note; chmod 0600 x'` and
+  # invents a chmod out of a string literal; and a comment test that only accepts `#` after
+  # whitespace misses `true;# note; chmod 0600 "$SNAP"`, where the comment opens straight after a
+  # separator. Both are FALSE POSITIVES, and a guard that cries wolf on correct code is how a
+  # guard gets ignored and then deleted. Walking once fixes both, because the same scan knows
+  # whether it is inside quotes AND whether it is at a command boundary:
+  #
+  #   * a backslash escapes the next character outside single quotes (so `"a\"# b"` does not end
+  #     the string early, which would truncate away a real chmod after it);
+  #   * `'` and `"` toggle their quote state, and nothing inside a quote is a separator;
+  #   * an UNQUOTED `;`, `&&`, `||`, `|` or a standalone `&` becomes a newline, so a command that
+  #     FOLLOWS one starts its own line. A standalone `&` is the async-list separator, so
+  #     `true & chmod 0600 "$SNAP"` is two commands and the narrowing one must still be seen. The
+  #     redirection forms `>&`, `&>` and `<&` are NOT separators and are left intact, so a
+  #     `cmd >&2` stays a single command;
+  #   * an UNQUOTED `#` ends the line, but only at a command boundary — nothing emitted yet, or
+  #     the last thing emitted was whitespace or a separator. `a#b` is one word to the shell, and
+  #     it is one word here too.
+  #
+  # PASS 2 strips what can still precede a command once the separators are gone: leading shell
+  # keywords, and the `(` / `{` grouping tokens, repeatedly so `if ( chmod ... )` reduces all the
+  # way. Grouping is stripped only at the START of a segment, never mid-line, so an operand
+  # carrying a bracket and arithmetic like `$((widened + 1))` is left intact.
+  #
+  # Only then is the anchor applied. Because each surviving line now STARTS with `chmod`, the
+  # positional `$2`/`$3` mode and operand extraction below stays correct and unchanged — the fix
+  # is in what counts as a chmod, not in how one is read. Splitting also means a line carrying TWO
+  # of them (`chmod 0640 "$A" && chmod 0600 "$B"`) contributes both, where the old matcher saw one.
+  # Each stage is run and CHECKED separately rather than as one `... || true` pipeline. With
+  # `pipefail` set, a stage that dies partway — killed, or hitting a read error — makes the whole
+  # pipeline non-zero, and a trailing `|| true` converts that to success while KEEPING the partial
+  # output. A truncated `chmod_lines` can still be non-empty and still bind to the snapshot, so a
+  # narrowing chmod that was never read is silently skipped and this guard stays green. Only the
+  # final `grep` may fail benignly, because exit 1 there means "no chmod", which the next check
+  # reports itself.
+  normalized="$(printf '%s\n' "${commands}" | awk -v skip_hd=1 "${split_commands_awk}")" ||
+    fail "${manifest}: the command splitter failed; refusing to scan a truncated command list"
+  normalized="$(printf '%s\n' "${normalized}" | awk "${strip_prefixes_awk}")" ||
+    fail "${manifest}: the command-prefix normaliser failed; refusing to scan a truncated command list"
+  chmod_lines="$(printf '%s\n' "${normalized}" | grep -E '^[[:space:]]*chmod[[:space:]]' || true)"
   [ -n "${chmod_lines}" ] ||
     fail "${manifest}: the snapshot script never chmods the snapshot; the mirror still depends on owning it (#3202)"
+
+  # CONSERVATION BACKSTOP — the parser may not silently LOSE a chmod.
+  #
+  # Everything above this line is a PARSER, and a parser for shell command position is an open
+  # set: seven distinct spellings have now been found hiding an executing chmod from it (line
+  # start, `if`, `&&`/`||`, a case pattern `)`, an async `&`, a command-substitution opener, the
+  # same opener inside double quotes, a bare `((` arithmetic command whose `<<` read as a heredoc,
+  # a substitution nested in an arithmetic expansion, and a subshell `)` mistaken for the
+  # substitution's close). Each was fixed, and the next round found another. The failure mode they
+  # share is what makes them dangerous: an unparsed chmod produces NO output, so the guard reads
+  # green precisely when it has understood the script least.
+  #
+  # So stop relying on the parser being complete. Count the `chmod` WORDS in the comment-stripped
+  # source, and require the normaliser to have accounted for at least that many. A future parser
+  # gap then fails LOUDLY here instead of passing silently above — the error direction flips from
+  # fail-open to fail-closed, which is the only direction a security guard may be wrong in.
+  #
+  # `-le`, not `-eq`: the normaliser is allowed to emit MORE segments than there are chmod words
+  # (a split inside a quoted region can do this), and over-counting only makes the mode assertions
+  # below stricter. Fewer is the failure.
+  #
+  # Known false positives, accepted deliberately and measured: a `chmod` word that is INERT is
+  # still counted, so it trips this. Three contexts do that — a heredoc BODY (verified: the
+  # splitter correctly drops it, so raw=1 seen=0 and this fires), a single-quoted string, and a
+  # trailing `# ...` comment. Only full-line comments are excluded above.
+  #
+  # That is the right trade for this guard. Distinguishing an inert chmod from an executing one is
+  # the very parsing problem whose incompleteness this backstop exists to cover, so deriving the
+  # raw count from a parser would make it depend on the thing it is checking. Counting words is
+  # independent by construction. Neither target contains such a chmod today, a trip is a visible
+  # test failure rather than a silent pass, and the fix is to look — which is the point.
+  raw_chmod_words="$(printf '%s\n' "${commands}" | count_chmod_words "${manifest}")"
+  seen_chmod_cmds="$(printf '%s\n' "${normalized}" | count_chmod_commands "${manifest}")"
+  [ "${raw_chmod_words}" -le "${seen_chmod_cmds}" ] ||
+    fail "${manifest}: the normaliser accounted for ${seen_chmod_cmds} chmod command(s) but the script contains ${raw_chmod_words} chmod word(s) — a chmod was lost by the parser, so this guard cannot vouch for it"
 
   # EVERY chmod must WIDEN, never narrow — asserted directly rather than by count.
   #
@@ -209,9 +681,59 @@ dr_cp="$(grep -E '^[[:space:]]*mc cp .*/snapshots/' "${dr_path}" || true)"
 dr_operand="$(printf '%s\n' "${dr_cp}" | awk '{print $NF}' | tr -d '"')"
 [ -n "${dr_operand}" ] || fail "${dr_workflow}: could not extract the fetch destination"
 
-dr_chmod="$(grep -E '^[[:space:]]*chmod[[:space:]]+[0-7]+[[:space:]]+"?/snapshots/' "${dr_path}" || true)"
+# The DR leg gets the SAME normalisation as the manifest scan above, not a line-start-anchored
+# grep. `chmod` is a command here too, so `true && chmod 0600 /snapshots/restored.snap` was
+# invisible to an anchored match while the existing widening 0640 satisfied the binding — a
+# narrowing chmod could re-close the fetched snapshot with this guard still green. Same fail-open,
+# same fix; leaving the two scans on different matchers is exactly the drift the single splitter
+# definition exists to prevent.
+# skip_hd=0 here, unlike the manifest scan: the DR pod spec is written INSIDE a heredoc in a
+# `run:` block, so the commands this leg must see are heredoc BODY lines. Skipping them, which is
+# exactly right when scanning a shell script whose heredocs carry data, would hide the very chmod
+# this check binds to.
+dr_normalized="$(awk -v skip_hd=0 "${split_commands_awk}" "${dr_path}")" ||
+  fail "${dr_workflow}: the command splitter failed; refusing to scan a truncated command list"
+dr_normalized="$(printf '%s\n' "${dr_normalized}" | awk "${strip_prefixes_awk}")" ||
+  fail "${dr_workflow}: the command-prefix normaliser failed; refusing to scan a truncated command list"
+# ONE definition of the DR chmod filter, self-checked immediately below. The mode position is
+# deliberately unconstrained: a symbolic or variable mode MUST reach the validation loop, whose
+# invalid-mode branch is what rejects it. Constraining it to `[0-7]+` made that branch unreachable
+# — `chmod u=rw,go= "/snapshots/$NEWEST"` was dropped by the filter, so an earlier widening chmod
+# carried the guard green while the later command re-closed the snapshot.
+readonly dr_chmod_filter='^[[:space:]]*chmod[[:space:]]+[^[:space:]]+[[:space:]]+"?/snapshots/'
+
+printf '%s\n' 'chmod u=rw,go= "/snapshots/x"' | grep -qE "${dr_chmod_filter}" ||
+  fail 'DR chmod filter must accept a non-octal mode so the invalid-mode check can reject it'
+if printf '%s\n' 'chmod 0640 /other/x' | grep -qE "${dr_chmod_filter}"; then
+  fail 'DR chmod filter must not match a chmod outside /snapshots/'
+fi
+printf 'ok: DR chmod filter — non-octal modes reach the validation loop; other paths do not\n'
+
+dr_chmod="$(printf '%s\n' "${dr_normalized}" | grep -E "${dr_chmod_filter}" || true)"
 [ -n "${dr_chmod}" ] ||
   fail "${dr_workflow}: the fetch never chmods the snapshot; the restore depends on mc's umask"
+
+# CONSERVATION BACKSTOP for the DR leg — the same one the manifest scan carries, for the same
+# reason. Without it this leg trusts the normaliser to be complete, and a chmod launched by a
+# COMMAND EXECUTOR is exactly what the normaliser does not see: `find /snapshots -type f -exec
+# chmod 0600 {} +` normalises to a line beginning with `find`, so the path-scoped filter above
+# drops it while the existing widening 0640 keeps `dr_bound` set and this leg green — a narrowing
+# chmod re-closing the fetched snapshot with the guard reporting success.
+#
+# Compared against command-position chmods in the normalised output, NOT against `dr_chmod`: that
+# filter is scoped to /snapshots, and this workflow legitimately chmods the age key elsewhere, so
+# comparing to the scoped set would report a real chmod as a parser loss on every run.
+#
+# Full-line comments are stripped first, mirroring the manifest scan. This file carries a comment
+# that mentions chmod in prose, and counting it would fire this backstop on a correct tree —
+# a false positive that trains the reader to ignore a security guard.
+dr_source_commands="$(grep -vE '^[[:space:]]*#' "${dr_path}")" ||
+  fail "${dr_workflow}: could not read the workflow to count chmod words; refusing to vouch for a truncated count"
+dr_raw_chmod_words="$(printf '%s\n' "${dr_source_commands}" | count_chmod_words "${dr_workflow}")"
+dr_seen_chmod_cmds="$(printf '%s\n' "${dr_normalized}" | count_chmod_commands "${dr_workflow}")"
+[ "${dr_raw_chmod_words}" -le "${dr_seen_chmod_cmds}" ] ||
+  fail "${dr_workflow}: the normaliser accounted for ${dr_seen_chmod_cmds} chmod command(s) but the workflow contains ${dr_raw_chmod_words} chmod word(s) — a chmod was lost by the parser, so this guard cannot vouch for it"
+printf 'ok: %s — conservation backstop, %s chmod word(s) all accounted for by the normaliser\n' "${dr_workflow}" "${dr_raw_chmod_words}"
 
 dr_bound=0
 while IFS= read -r line; do
