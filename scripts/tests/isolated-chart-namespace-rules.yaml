@@ -59,6 +59,15 @@ rules:
     # A reviewed emitter must additionally not redirect: `spec.targetNamespace`
     # is what sends reconciled grandchildren somewhere else, and those never
     # reach this rule.
+    #
+    # The ClusterRole branch refuses more than wildcards. `bind` and `escalate`
+    # on rbac.authorization.k8s.io are privilege-escalation primitives in their
+    # own right, and `create` on clusterrolebindings lets the controller mint a
+    # binding at runtime — an object that reaches the cluster without passing
+    # through either chart validation. None of those shapes needs a `*`, so a
+    # wildcard-only check accepts every one of them. RBAC access is therefore
+    # narrowed to read verbs, and the escalation verbs are refused outright
+    # whatever resource they name.
     expression: >-
       has(object.metadata) &&
       has(object.kind) &&
@@ -72,7 +81,13 @@ rules:
              object.rules.all(r,
                (!has(r.apiGroups) || !('*' in r.apiGroups)) &&
                (!has(r.resources) || !('*' in r.resources)) &&
-               (!has(r.verbs) || !('*' in r.verbs)))) ||
+               (!has(r.verbs) || !('*' in r.verbs)) &&
+               (!has(r.verbs) ||
+                !r.verbs.exists(v, v in ['escalate', 'bind', 'impersonate'])) &&
+               (!has(r.apiGroups) ||
+                !('rbac.authorization.k8s.io' in r.apiGroups) ||
+                (has(r.verbs) &&
+                 r.verbs.all(v, v in ['get', 'list', 'watch']))))) ||
             (object.kind == 'ClusterRoleBinding' &&
              has(object.metadata.name) &&
              object.metadata.name == 'data-product-controller' &&

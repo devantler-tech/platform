@@ -152,6 +152,50 @@ rules:
     resources: ["*"]
     verbs: ["*"]'
 
+# A wildcard is not the only way to reach cluster-admin. `bind` and `escalate`
+# on rbac.authorization.k8s.io are privilege-escalation primitives in their own
+# right, and `create` on clusterrolebindings lets the controller mint a binding
+# at runtime — an object that never passes through either chart validation.
+# These fixtures carry no `*` at all, so they pass every wildcard check.
+
+assert_rejected 'rbac-write-cluster-role' 'apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: data-product-controller
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["create"]'
+
+assert_rejected 'rbac-bind-cluster-role' 'apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: data-product-controller
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["bind"]'
+
+assert_rejected 'escalate-verb-cluster-role' 'apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: data-product-controller
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["escalate"]'
+
+# The negative control for the three above: a read-only RBAC grant carries none
+# of that power, so tightening the rule must not sweep it up.
+assert_accepted 'rbac-read-cluster-role' 'apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: data-product-controller
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["get", "list", "watch"]'
+
 assert_rejected 'privileged-role-ref-binding' 'apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
