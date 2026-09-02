@@ -420,6 +420,82 @@ spec:
     kind: OCIRepository
     name: data-product-controller'
 
+# A reviewed emitter must not take VALUE INPUTS THIS RENDER CANNOT SEE. The
+# proof below is a filesystem render of the pinned artifact: it resolves chart
+# defaults plus the inline `spec.values` carried in this manifest, and every
+# child it produces is evaluated by the rule above. `spec.valuesFrom` points at
+# a Secret or ConfigMap materialized only in the cluster, so Flux renders a
+# DIFFERENT value set from the one proved here — and this component ships an
+# ExternalSecret, so such a Secret genuinely exists. Values decide which
+# templates render at all, so a runtime value can enable RBAC or a
+# foreign-namespace child that neither this render nor the rule ever inspected.
+# The component is staged off every deploy overlay, so cluster admission never
+# re-checks it: this render is the ONLY control standing over these manifests,
+# and it must therefore be proof about what is actually installed.
+#
+assert_rejected 'reviewed-emitter-runtime-values-from' 'apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+spec:
+  interval: 10m
+  chartRef:
+    kind: OCIRepository
+    name: data-product-controller
+  valuesFrom:
+    - kind: Secret
+      name: data-product-controller-runtime-values'
+
+# Negative control: the reviewed chart REALLY USES postRenderers, to add
+# imagePullSecrets and topology constraints to its own Deployments. Refusing
+# runtime value sources must not take this shape with it — an earlier draft of
+# the clause above refused `postRenderers` too and rejected the live component,
+# which only the pinned render at the end of this file caught. Whether a
+# post-render patch can move a child across namespaces after the rule has
+# accepted it is a real question, but it needs its own proof, not a blanket
+# refusal of the mechanism the component depends on.
+assert_accepted 'reviewed-emitter-post-renderer-local' 'apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+spec:
+  interval: 10m
+  chartRef:
+    kind: OCIRepository
+    name: data-product-controller
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: data-product-controller
+            patch: |
+              - op: add
+                path: /spec/template/spec/imagePullSecrets
+                value:
+                  - name: ghcr-auth'
+
+
+# Negative control: INLINE values are the mechanism the reviewed chart actually
+# uses, and this render can see them, so the clause above must not refuse them.
+# Without this control a blanket refusal of value configuration would satisfy
+# every other assertion in this file while breaking the real component.
+assert_accepted 'reviewed-emitter-inline-values' 'apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+spec:
+  interval: 10m
+  chartRef:
+    kind: OCIRepository
+    name: data-product-controller
+  values:
+    controller:
+      replicas: 2'
+
 # This is the enabled control: KSail resolves the immutable OCI digest from the
 # staged-off component, Helm-renders that exact artifact, and evaluates every
 # child under the same rule without adding the component to the deploy overlay.

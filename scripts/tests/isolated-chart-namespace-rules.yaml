@@ -72,6 +72,24 @@ rules:
     # wildcard-only check accepts every one of them. RBAC access is therefore
     # narrowed to read verbs, and the escalation verbs are refused outright
     # whatever resource they name.
+    #
+    # THE REVIEWED HelmRelease MUST NOT TAKE VALUE INPUTS THIS RENDER CANNOT
+    # SEE. Containment here rests on a filesystem render of the pinned artifact:
+    # every child it produces is evaluated by this rule, and the component is
+    # staged off every deploy overlay, so cluster admission never re-checks it.
+    # That makes the render the ONLY control, and it is sound only while what it
+    # renders is what Flux installs. `spec.valuesFrom` breaks exactly that: it
+    # resolves a Secret or ConfigMap in-cluster, so the render sees chart
+    # defaults while Flux sees another value set — and values decide which
+    # templates render at all, so a runtime value can enable RBAC or a
+    # foreign-namespace child that neither the render nor this rule inspected.
+    # Inline `spec.values` stays permitted: it travels in this manifest, so the
+    # render resolves the same values Flux will.
+    # `spec.postRenderers` is deliberately NOT refused here. The reviewed chart
+    # uses it to add imagePullSecrets and topology constraints to its own
+    # Deployments, so a blanket refusal rejects the real component; whether a
+    # post-render patch can move a child across namespaces after this rule has
+    # accepted it is a separate question needing its own proof.
     expression: >-
       has(object.metadata) &&
       has(object.kind) &&
@@ -119,6 +137,9 @@ rules:
            (object.kind != 'Kustomization' ||
             (has(object.spec) && has(object.spec.targetNamespace) &&
              object.spec.targetNamespace == 'data-product-controller')) &&
+           (object.kind != 'HelmRelease' ||
+            !has(object.spec) ||
+            !has(object.spec.valuesFrom)) &&
            (object.kind != 'RoleBinding' ||
             (has(object.subjects) &&
              object.subjects.all(s,
