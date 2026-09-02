@@ -25,7 +25,7 @@
 #     volume, so it is right-sized only at its next natural restart, never evicted.
 #
 # GENEROUS MEMORY RATIO (no OOM): the base LimitRanges
-# (k8s/bases/infrastructure/limit-ranges/) are CPU-only; the parent hetzner
+# (k8s/bases/{bootstrap,infrastructure}/limit-ranges/) are CPU-only; the parent hetzner
 # kustomization patches a generous memory `default` onto them (kube-system 4Gi,
 # kyverno 2Gi) so VPA scales the memory limit RATIO-PRESERVING — the request is
 # right-sized down to real usage (cilium ~250Mi vs its 512Mi request) while the

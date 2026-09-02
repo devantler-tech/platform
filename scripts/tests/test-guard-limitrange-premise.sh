@@ -418,5 +418,89 @@ make_provider "$nolayer" nolayerlike blind-dns kube-system \
 rm -rf "$nolayer/clusters"
 expect 'missing-layer-definitions-is-exit-2' 2 "$nolayer" 'flux-kustomization'
 
+
+# --- 19. A CLUSTER-SCOPED layer (bootstrap) also shields ---------------------
+# The bootstrap layer root is `clusters/__CLUSTER__/bootstrap`, not
+# `providers/__PROVIDER__/...`, yet it reaches a provider overlay one hop in. The
+# guard skipped every cluster-scoped layer, so a LimitRange shipped there was
+# invisible and its premised suppression was reported as unshielded — a FALSE
+# violation that fails the build on correct work (#3271).
+boot="$scratch/boot"
+make_provider "$boot" bootlike boot-dns kube-system \
+  "CKV_K8S_11=the kube-system default-limitrange supplies the CPU limit at admission" ""
+mkdir -p "$boot/clusters/one/bootstrap" "$boot/providers/bootlike/bootstrap/limit-ranges"
+cat >"$boot/clusters/one/bootstrap/kustomization.yaml" <<'YAML'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../providers/bootlike/bootstrap
+YAML
+cat >"$boot/providers/bootlike/bootstrap/kustomization.yaml" <<'YAML'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - limit-ranges/
+YAML
+cat >"$boot/providers/bootlike/bootstrap/limit-ranges/kustomization.yaml" <<'YAML'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - range.yaml
+YAML
+cat >"$boot/providers/bootlike/bootstrap/limit-ranges/range.yaml" <<'YAML'
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-limitrange
+  namespace: kube-system
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "2"
+YAML
+expect 'bootstrap-layer-limitrange-does-shield' 0 "$boot" 'boot-dns'
+
+# --- 20. THE PAIRED FAIL-OPEN CONTROL: another provider's bootstrap does NOT --
+# Widening to cluster-scoped layers is only safe if a cluster root seeds the ONE
+# provider its own graph reaches. Seeding every cluster into every provider would
+# let one provider's LimitRange satisfy another's suppression — fail-OPEN, the
+# direction this guard exists to avoid. Differs from case 19 in exactly one line:
+# the cluster tree points at `otherlike`, while the suppression is `bootlike`'s.
+xprov="$scratch/xprov"
+make_provider "$xprov" bootlike lonely-dns kube-system \
+  "CKV_K8S_11=the kube-system default-limitrange supplies the CPU limit at admission" ""
+mkdir -p "$xprov/clusters/one/bootstrap" "$xprov/providers/otherlike/bootstrap/limit-ranges"
+cat >"$xprov/clusters/one/bootstrap/kustomization.yaml" <<'YAML'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../providers/otherlike/bootstrap
+YAML
+cat >"$xprov/providers/otherlike/bootstrap/kustomization.yaml" <<'YAML'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - limit-ranges/
+YAML
+cat >"$xprov/providers/otherlike/bootstrap/limit-ranges/kustomization.yaml" <<'YAML'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - range.yaml
+YAML
+cat >"$xprov/providers/otherlike/bootstrap/limit-ranges/range.yaml" <<'YAML'
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-limitrange
+  namespace: kube-system
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "2"
+YAML
+expect 'other-providers-bootstrap-limitrange-does-not-shield' 1 "$xprov" 'lonely-dns'
 printf '\n%d assertion(s), %d failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ] || exit 1

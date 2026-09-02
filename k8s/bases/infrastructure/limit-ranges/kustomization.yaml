@@ -21,6 +21,22 @@
 # the resourceFilters: the built-in LimitRanger admission plugin applies it to
 # every pod regardless. These files restore a CPU limit to those pods.
 #
+# WHY ONLY kyverno IS LEFT HERE (#3271). A LimitRange binds at pod-admission time
+# and does not mutate pods that are already running, so it must land BEFORE the
+# workloads it covers. `kube-system`'s copy therefore moved to the bootstrap
+# layer (k8s/bases/bootstrap/limit-ranges/), which `infrastructure-controllers`
+# dependsOn with `wait: true` — a structural guarantee that it exists before
+# cilium/coredns/metrics-server/tetragon are admitted.
+#
+# The `kyverno` LimitRange CANNOT follow it. Its namespace is created by the
+# `infrastructure-controllers` layer itself (controllers/kyverno/namespace.yaml),
+# so a bootstrap-layer manifest would target a namespace that does not exist yet.
+# That apply fails, and because the bootstrap Kustomization carries `wait: true`
+# the failure stalls every layer that depends on it — materially worse than the
+# uncapped-until-next-rollout window this is trying to close. Kyverno's residual
+# window is tracked separately rather than closed by hoisting its namespace out
+# of the controller that owns it.
+#
 # longhorn-system's equivalent lives in the hetzner provider overlay
 # (k8s/providers/hetzner/infrastructure/controllers/longhorn/limit-range.yaml)
 # because Longhorn is prod-only — its namespace does not exist in the local
@@ -28,5 +44,4 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - kube-system.yaml
   - kyverno.yaml
