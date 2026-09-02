@@ -262,16 +262,101 @@ func errexitDisabledAt(script string, upto int) bool {
 		upto = len(script)
 	}
 	prefix := script[:upto]
-	disabled := false
+
+	// Every toggle is recorded with its position, because more than one scan
+	// contributes and only the LAST one before the gate is in force.
+	type toggle struct {
+		at  int
+		off bool
+	}
+	var seen []toggle
+
 	scanCommandRuns(prefix, "set", func(end int) bool {
 		if off, toggles := setTogglesErrexit(prefix[end:]); toggles {
-			disabled = off
+			seen = append(seen, toggle{at: end, off: off})
 		}
-		// Never accept: scanning must reach every `set` before the gate so the
-		// last one decides. Returning true here would stop at the first.
+		// Never accept: scanning must reach every candidate before the gate so
+		// the last one decides. Returning true here would stop at the first.
 		return false
 	})
+	// A transparent wrapper runs its operand as a builtin in THIS shell, so
+	// resolve through it to whatever it actually invokes.
+	for _, wrapper := range []string{"builtin", "command"} {
+		scanCommandRuns(prefix, wrapper, func(end int) bool {
+			if off, toggles := wrappedTogglesErrexit(prefix[end:]); toggles {
+				seen = append(seen, toggle{at: end, off: off})
+			}
+			return false
+		})
+	}
+	// An opaque construct can also run `set` in this shell, but what it runs
+	// cannot be read from the script text.
+	for _, opaque := range []string{"eval", "source", ".", "exec", "trap"} {
+		scanCommandRuns(prefix, opaque, func(end int) bool {
+			seen = append(seen, toggle{at: end, off: true})
+			return false
+		})
+	}
+
+	last, disabled := -1, false
+	for _, t := range seen {
+		if t.at > last {
+			last, disabled = t.at, t.off
+		}
+	}
 	return disabled
+}
+
+// wrappedTogglesErrexit reads the operands of a `builtin` or `command` word,
+// which begin at args, and reports the effect on errexit of whatever that
+// wrapper actually invokes.
+//
+// Both wrappers execute a builtin in the CURRENT shell, so `builtin set +e` and
+// `command set +e` disable errexit exactly as a bare `set +e` does — verified
+// under `bash -e`, where each prints `continued` and exits 0 with the gate
+// failing. They are resolved through rather than refused outright, because
+// `command -v ksail` is an ordinary lookup that cannot touch shell options and
+// refusing it would call sound gate steps UNCOVERED for no reason.
+//
+// A `-v` or `-V` option makes the word a query rather than an invocation. Any
+// other non-literal or unrecognised operand is treated as disabling, on the
+// same unreadable-means-unsafe rule applied to `set` itself.
+func wrappedTogglesErrexit(args string) (off bool, toggles bool) {
+	i := 0
+	for i < len(args) {
+		for i < len(args) && (args[i] == ' ' || args[i] == '\t') {
+			i++
+		}
+		if i >= len(args) || endsCommand(args[i]) {
+			return false, false
+		}
+		start := i
+		for i < len(args) && !endsWord(args[i]) {
+			i++
+		}
+		word := args[start:i]
+		if strings.ContainsAny(word, "'\"$`\\") {
+			// The invoked word cannot be read without a shell.
+			return true, true
+		}
+		switch {
+		case word == "-v", word == "-V":
+			// A lookup, not an invocation: it cannot change shell options.
+			return false, false
+		case strings.HasPrefix(word, "-"):
+			// Another wrapper option (`-p`); keep looking for the command word.
+			continue
+		case word == "set":
+			return setTogglesErrexit(args[i:])
+		case word == "builtin", word == "command":
+			// Wrappers nest: `builtin command set +e` reaches `set` too.
+			return wrappedTogglesErrexit(args[i:])
+		default:
+			// Any other builtin cannot disable errexit for the block.
+			return false, false
+		}
+	}
+	return false, false
 }
 
 // setTogglesErrexit reads the argument words of a `set` builtin, whose operands
@@ -1139,6 +1224,15 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		"set +x\n" + gate,
 		"set +o pipefail\n" + gate,
 		"set +e\ncurl -f probe || true\nset -e\n" + gate,
+		// The inversion must not swallow ordinary steps. `command -v` is a
+		// lookup rather than an invocation, `builtin echo` is a builtin that
+		// cannot touch shell options, and `./script.sh` is not the `.` builtin —
+		// without these controls the clause above would call sound gates
+		// UNCOVERED and this table would not notice.
+		"command -v ksail\n" + gate,
+		"builtin echo hello\n" + gate,
+		"./scripts/setup.sh\n" + gate,
+		"command ksail version\n" + gate,
 	}
 	for _, script := range enforcing {
 		if !runsGate(script, gate) {
@@ -1178,6 +1272,14 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		// Verified with `bash -e`: each prints `continued` and exits 0.
 		"set \"+e\"\n" + gate + "\necho continued",
 		"option=e\nset +${option}\n" + gate + "\necho continued",
+		// `builtin` and `command` run `set` in THIS shell, and `eval` can run
+		// anything at all. Verified under `bash -e`: each prints `continued` and
+		// exits 0 with the gate failing.
+		"builtin set +e\n" + gate + "\necho continued",
+		"command set +e\n" + gate + "\necho continued",
+		"eval 'set +e'\n" + gate + "\necho continued",
+		"builtin command set +e\n" + gate + "\necho continued",
+		". ./lib.sh\n" + gate + "\necho continued",
 	}
 	for _, script := range defused {
 		if !runsCommand(script, gate) {
