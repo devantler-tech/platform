@@ -295,6 +295,17 @@ func setTogglesErrexit(args string) (off bool, toggles bool) {
 			i++
 		}
 		word := args[start:i]
+		if strings.ContainsAny(word, "'\"$`\\") {
+			// A `set` operand is not its literal text: quote removal and
+			// parameter expansion both happen before `set` sees the word, so
+			// `set "+e"` and `set +${option}` switch errexit off while carrying
+			// no literal `+e` for this scanner to find. Both were verified to
+			// exit 0 under `bash -e` with the gate failing. The word cannot be
+			// resolved here without a shell, so it is read as disabling —
+			// unreadable means unsafe, the same strict direction taken above.
+			off, toggles = true, true
+			continue
+		}
 		if len(word) < 2 || (word[0] != '-' && word[0] != '+') {
 			continue
 		}
@@ -1161,6 +1172,12 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		"set +eo pipefail\n" + gate,
 		// The LAST toggle before the gate is the one in force.
 		"set -e\nset +e\n" + gate,
+		// A `set` operand is not its literal text. Bash performs quote removal
+		// and parameter expansion BEFORE `set` sees the word, so both of these
+		// disable errexit while carrying no literal `+e` for a scanner to find.
+		// Verified with `bash -e`: each prints `continued` and exits 0.
+		"set \"+e\"\n" + gate + "\necho continued",
+		"option=e\nset +${option}\n" + gate + "\necho continued",
 	}
 	for _, script := range defused {
 		if !runsCommand(script, gate) {
