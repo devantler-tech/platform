@@ -13,3 +13,9 @@ namespaceSelector:
       pod-security.devantler.tech/baseline-context: enabled
   - name: chaos-mesh
     labels: {}
+  # observability, opted in alongside velero. Declared here so the ON-state
+  # assertions for the coroot-node-agent fixture are evaluated rather than
+  # reported "Excluded" — an omission here would make that case pass vacuously.
+  - name: observability
+    labels:
+      pod-security.devantler.tech/baseline-context: enabled

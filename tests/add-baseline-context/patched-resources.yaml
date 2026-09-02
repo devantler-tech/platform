@@ -93,3 +93,29 @@ spec:
     seLinuxOptions:
       level: s0
       user: system_u
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: coroot-node-agent
+  namespace: observability
+spec:
+  hostPID: true
+  volumes:
+    - name: host-sys
+      hostPath:
+        path: /sys
+  initContainers:
+    - name: init
+      image: ghcr.io/coroot/coroot-node-agent:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s0
+  containers:
+    - name: node-agent
+      image: ghcr.io/coroot/coroot-node-agent:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s0
+  securityContext:
+    fsGroupChangePolicy: OnRootMismatch
