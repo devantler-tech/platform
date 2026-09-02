@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,6 +24,11 @@ const validatorInvocation = "go run ./scripts/validate-eks-ci-role-policy"
 // chart and checks every child namespace. It is a separate command because the
 // static Go validator runs before KSail is installed in each workflow.
 const isolatedChartNamespaceValidatorInvocation = "bash scripts/tests/test-isolated-chart-namespace-rules.sh"
+
+// prodDeployComposite is the shared publish-sign-attest-reconcile action.
+// Every route that reaches production goes through it or one of its nested
+// sub-actions, which is what makes it a sound proxy for "this job deploys".
+const prodDeployComposite = "./.github/actions/deploy-prod"
 
 // workflow is the narrow slice of Actions schema this contract needs.
 //
@@ -91,6 +97,11 @@ func (t templatableInt) is(want int) bool { return t.IsLiteral && t.Value == wan
 // Actions inputs are heterogenous, so unknown keys are simply ignored.
 type stepInputs struct {
 	Category string `yaml:"category"`
+	// Ref is the revision an `actions/checkout` step re-points to. Its
+	// ABSENCE is the meaningful state: a checkout without it takes the
+	// workflow's own triggering revision, which a sibling gate job in the
+	// same workflow has already validated.
+	Ref string `yaml:"ref"`
 }
 
 // triggerSet is the `on:` block. GitHub accepts three spellings — a mapping
@@ -453,21 +464,58 @@ func (w workflow) runsValidator() bool {
 	return false
 }
 
-// runsIsolatedChartNamespaceValidator reports whether one job installs KSail
+// runsIsolatedChartNamespaceValidator reports whether THIS job installs KSail
 // before executing the rendered-child namespace gate. Keeping both steps in
 // the same job matters: setup in another job does not share the runner.
+func (j job) runsIsolatedChartNamespaceValidator() bool {
+	ksailReady := false
+	for _, step := range j.Steps {
+		if runsCommand(step.Run, ".github/scripts/setup-ksail.sh") {
+			ksailReady = true
+		}
+		if ksailReady && step.If == "" && step.TimeoutMinutes.is(10) &&
+			shellKeepsErrexit(step.Shell) &&
+			runsGate(step.Run, isolatedChartNamespaceValidatorInvocation) {
+			return true
+		}
+	}
+	return false
+}
+
+// deploysProd reports whether THIS job publishes to production through the
+// shared deploy composite, in any of its forms. Matching the composite rather
+// than a job name is what keeps the guard attached to the deployment ROUTE: a
+// renamed or newly added job that reaches production still has to satisfy it.
+func (j job) deploysProd() bool {
+	for _, step := range j.Steps {
+		if step.Uses == prodDeployComposite ||
+			strings.HasPrefix(step.Uses, prodDeployComposite+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// checksOutExplicitRef reports whether THIS job re-points its checkout at a
+// revision other than the one that triggered the workflow. That is the
+// property deciding whether a sibling gate job can vouch for what this job
+// deploys: with no explicit ref they share a revision, and with one they do
+// not.
+func (j job) checksOutExplicitRef() bool {
+	for _, step := range j.Steps {
+		if strings.HasPrefix(step.Uses, "actions/checkout@") && step.With.Ref != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// runsIsolatedChartNamespaceValidator reports whether ONE job installs KSail
+// before executing the rendered-child namespace gate.
 func (w workflow) runsIsolatedChartNamespaceValidator() bool {
 	for _, job := range w.Jobs {
-		ksailReady := false
-		for _, step := range job.Steps {
-			if runsCommand(step.Run, ".github/scripts/setup-ksail.sh") {
-				ksailReady = true
-			}
-			if ksailReady && step.If == "" && step.TimeoutMinutes.is(10) &&
-				shellKeepsErrexit(step.Shell) &&
-				runsGate(step.Run, isolatedChartNamespaceValidatorInvocation) {
-				return true
-			}
+		if job.runsIsolatedChartNamespaceValidator() {
+			return true
 		}
 	}
 	return false
@@ -637,6 +685,122 @@ func TestIsolatedChartNamespaceGateCoversEveryDeploymentRoute(t *testing.T) {
 			t.Errorf("%s must install KSail and then run %q in the same job", name, isolatedChartNamespaceValidatorInvocation)
 		}
 	}
+}
+
+// sortedKeys yields map keys in a stable order so a failure names the same
+// job every run rather than whichever one Go happened to visit first.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// TestIsolatedChartNamespaceGateCoversARepointedProdDeploy binds the gate to
+// the exact checkout it certifies, which the per-workflow guard above cannot
+// do.
+//
+// That guard is satisfied when SOME job in a workflow runs the validator, so a
+// workflow holding two deployment routes on two DIFFERENT revisions passes on
+// the strength of the first. `ci.yaml` is exactly that shape: the merge-group
+// deploy runs on the speculative merge ref, while `heal-prod-on-failure`
+// checks out `ref: main` — a revision that may have advanced since — and
+// republishes it through the same composite. A chart reaching `main` by a
+// route the speculative scan never saw could therefore be published by the
+// heal path with its rendered children unchecked, while the per-workflow guard
+// still read as covered.
+//
+// The discriminator is the CHECKOUT, not the job. A deploy job that takes the
+// workflow's own revision is already vouched for by the sibling gate job on
+// that same revision; requiring every deploy job to re-render the chart would
+// duplicate an expensive render and say nothing new. A job that re-points to
+// another ref has no such sibling, so it must render on its own checkout. The
+// heal job already applies exactly this reasoning to the RGD scan, so this
+// extends an established rule to the gate that was missing it.
+func TestIsolatedChartNamespaceGateCoversARepointedProdDeploy(t *testing.T) {
+	workflows := loadWorkflows(t)
+	repointed := 0
+	for _, name := range sortedKeys(workflows) {
+		for _, jobName := range sortedKeys(workflows[name].Jobs) {
+			parsedJob := workflows[name].Jobs[jobName]
+			if !parsedJob.deploysProd() || !parsedJob.checksOutExplicitRef() {
+				continue
+			}
+			repointed++
+			if !parsedJob.runsIsolatedChartNamespaceValidator() {
+				t.Errorf("%s job %q deploys a re-pointed checkout but does not run %q on it",
+					name, jobName, isolatedChartNamespaceValidatorInvocation)
+			}
+		}
+	}
+	// Fail closed: a renamed composite, or a heal path that stopped pinning its
+	// ref, would otherwise leave every assertion above vacuous while the test
+	// still passed.
+	if repointed == 0 {
+		t.Fatalf("found no job combining %q with an explicit checkout ref — this guard is now inert", prodDeployComposite)
+	}
+}
+
+// TestRepointedProdDeployGuardIsNotVacuous ablates each conjunct of the guard
+// above independently, so it cannot pass for the wrong reason — and pins the
+// case it must NOT flag.
+func TestRepointedProdDeployGuardIsNotVacuous(t *testing.T) {
+	gateSteps := []step{
+		{Run: ".github/scripts/setup-ksail.sh"},
+		{Run: isolatedChartNamespaceValidatorInvocation, TimeoutMinutes: templatableInt{Value: 10, IsLiteral: true}},
+	}
+	checkoutMain := step{Uses: "actions/checkout@v7.0.1", With: stepInputs{Ref: "main"}}
+	checkoutDefault := step{Uses: "actions/checkout@v7.0.1"}
+	deployStep := step{Uses: prodDeployComposite}
+
+	covered := job{Steps: append([]step{checkoutMain, deployStep}, gateSteps...)}
+	if !(covered.deploysProd() && covered.checksOutExplicitRef() && covered.runsIsolatedChartNamespaceValidator()) {
+		t.Fatal("positive control failed: a re-pointed deploy job carrying the gate must satisfy all three conjuncts")
+	}
+
+	t.Run("a re-pointed deploy without the gate is caught", func(t *testing.T) {
+		ablated := job{Steps: []step{checkoutMain, deployStep}}
+		if ablated.runsIsolatedChartNamespaceValidator() {
+			t.Fatal("a job with no gate step must not report the gate as run")
+		}
+		if !ablated.deploysProd() || !ablated.checksOutExplicitRef() {
+			t.Fatal("the guard must still select this job — otherwise the gap goes unreported")
+		}
+	})
+
+	// This is the over-strictness control. An earlier draft of the guard keyed
+	// on deploysProd alone and flagged ci.yaml/cd.yaml `deploy-prod`, demanding
+	// a duplicate render of the very revision a sibling gate job had already
+	// validated. Selecting this shape is a bug, not extra safety.
+	t.Run("a deploy on the workflow's own revision is not selected", func(t *testing.T) {
+		sameRevision := job{Steps: []step{checkoutDefault, deployStep}}
+		if sameRevision.checksOutExplicitRef() {
+			t.Fatal("a checkout with no ref takes the workflow's revision and must not count as re-pointed")
+		}
+	})
+
+	t.Run("a re-pointed job that does not deploy is not selected", func(t *testing.T) {
+		nonDeploy := job{Steps: []step{checkoutMain, {Run: "echo hello"}}}
+		if nonDeploy.deploysProd() {
+			t.Fatal("a job that never uses the deploy composite must not be selected")
+		}
+	})
+
+	t.Run("a nested sub-action of the composite still counts as deploying", func(t *testing.T) {
+		nested := job{Steps: []step{checkoutMain, {Uses: prodDeployComposite + "/publish-platform-manifests"}}}
+		if !nested.deploysProd() {
+			t.Fatal("a nested sub-action reaches production too and must be selected")
+		}
+	})
+
+	t.Run("a lookalike composite path does not count", func(t *testing.T) {
+		lookalike := job{Steps: []step{checkoutMain, {Uses: prodDeployComposite + "-staging"}}}
+		if lookalike.deploysProd() {
+			t.Fatal("prefix matching must respect the path boundary, or an unrelated action would be selected")
+		}
+	})
 }
 
 // TestIsolatedChartNamespaceGateCoverageIsNotVacuous ablates the ordering and

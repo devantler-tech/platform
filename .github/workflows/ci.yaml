@@ -1768,6 +1768,27 @@ jobs:
           shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
           bash scripts/tests/test-rgd-template-static-scan.sh
 
+      - name: ⚙️ Setup KSail for effective authorization validation
+        shell: bash
+        env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.180.1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/setup-ksail.sh
+
+      - name: 🔐 Validate isolated chart child namespaces on main
+        # Same reason as the RGD scan above, for the other gate this job's
+        # publish depends on. `validate-eks-authorization` rendered the chart on
+        # the SPECULATIVE merge ref; this job publishes `ref: main`, which may
+        # have advanced since. Without this step the isolated-chart exemption
+        # would be relied on for a revision no render ever inspected — and the
+        # per-workflow coverage guard would still read ci.yaml as gated, because
+        # a sibling job ran the validator on a different commit.
+        timeout-minutes: 10
+        run: |
+          shellcheck scripts/tests/test-isolated-chart-namespace-rules.sh
+          bash scripts/tests/test-isolated-chart-namespace-rules.sh
+
       - name: 🩹 Re-deploy main to Production
         # Reuse the shared deploy composite (push → sign → attest → reconcile →
         # cluster update) against main's checkout, so the restored artifact is
