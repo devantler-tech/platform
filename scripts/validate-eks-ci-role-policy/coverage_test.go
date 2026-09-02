@@ -527,6 +527,19 @@ func scanCommandRuns(script, needle string, accept func(end int) bool) bool {
 			// Leading blanks do not end the pending command position.
 			i++
 			continue
+		case atCommandStart && redirectionPrefix(script, i) > 0:
+			// A redirection may PRECEDE the command name — `> /dev/null trap …`
+			// and `2>/dev/null trap …` are both ordinary bash — so the command
+			// position survives it. Clearing it here hid a status-setting
+			// builtin behind a leading redirect from every scan on this walker.
+			i += redirectionPrefix(script, i)
+			for i < len(script) && (script[i] == ' ' || script[i] == '\t') {
+				i++
+			}
+			for i < len(script) && !endsWord(script[i]) {
+				i++
+			}
+			continue
 		case c == '{', c == '}':
 			// A group opens a new command position, so `f() { trap ... ; }`
 			// puts `trap` at a command word exactly as a newline would. Without
@@ -1280,6 +1293,11 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		// scanCommandRuns is what puts `trap` at a command word here; without it
 		// this body is invisible to every scan built on that walker.
 		"f() { trap 'exit 0' ERR; }\nf\n" + gate,
+		// A redirection may precede the command name, so the command position
+		// survives it. Both forms verified under `bash -e` with the gate last
+		// and failing: each exits 0.
+		"> /dev/null trap 'exit 0' ERR\n" + gate,
+		"2>/dev/null trap 'exit 0' ERR\n" + gate,
 		// Conservatively refused rather than measured. `eval "set +e"` with the
 		// gate last really does exit 1, but the model cannot read an `eval`
 		// body, and the same construct can just as easily carry `trap 'exit 0'
@@ -1296,4 +1314,25 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 			t.Errorf("a gate that cannot fail the step must not count: %q", script)
 		}
 	}
+}
+
+// redirectionPrefix returns the length of a redirection operator starting at i,
+// including any leading file-descriptor digits, or 0 when there is none.
+//
+// The digits matter: `2>/dev/null trap …` puts `trap` at a command word exactly
+// as `> /dev/null trap …` does, but consuming `2` as an ordinary word first
+// clears the command position and hides it.
+func redirectionPrefix(script string, i int) int {
+	j := i
+	for j < len(script) && script[j] >= '0' && script[j] <= '9' {
+		j++
+	}
+	if j >= len(script) || (script[j] != '<' && script[j] != '>') {
+		return 0
+	}
+	j++
+	for j < len(script) && (script[j] == '<' || script[j] == '>' || script[j] == '&') {
+		j++
+	}
+	return j - i
 }
