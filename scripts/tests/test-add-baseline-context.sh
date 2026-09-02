@@ -158,7 +158,7 @@ check coroot-node-agent-mutated.yaml '.spec.securityContext.seLinuxOptions' \
 #
 # Each namespace is opted in only after its live workloads are measured to still
 # start; see the rationale recorded on the namespace manifest itself.
-expected_optin="kubescape,observability,velero"
+expected_optin="kubescape,longhorn-system,observability,velero"
 
 # grep only prefilters candidate files; yq decides, so a mention in a comment or
 # in the policy that DEFINES the label cannot be counted as an opted-in namespace.
