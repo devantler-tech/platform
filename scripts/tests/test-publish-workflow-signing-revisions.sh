@@ -1371,6 +1371,29 @@ else
   fail "the registry-present control failed outright: $(cat "$rg2_out")"
 fi
 
+# A partial registry tag is a distinct OCI artifact selector even when Flux coerces it
+# to the same SemVer precedence as the selected strict tag. The Git-side tie guard above
+# cannot see this shape when the partial source ref was deleted after publication, so the
+# current registry set must be normalized independently before comparing precedence.
+rg3_root="$WORK/registry-partial-tie-root"
+cp -R "$bm_root" "$rg3_root"
+rg3_out="$WORK/registry-partial-tie.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_WEDDING_REGISTRY_TAGS='2.0.0\n2.0\n1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$rg3_root" "$SCRIPT" >"$rg3_out" 2>&1; then
+  fail 'a partial registry tag tied with the selected strict tag was silently ignored'
+else
+  grep -q 'registry tag 2.0 has the same SemVer precedence' "$rg3_out" ||
+    fail 'the registry partial-tie refusal does not name the distinct current tag and shared precedence'
+  rg3_unresolved="$(grep -c '^UNRESOLVED' "$rg3_out" || true)"
+  rg3_insync="$(grep -c '^IN-SYNC' "$rg3_out" || true)"
+  [ "$rg3_unresolved" -eq 1 ] ||
+    fail "expected exactly ONE unresolved consumer (the registry partial tie), got $rg3_unresolved"
+  [ "$rg3_insync" -eq "$expected_insync" ] ||
+    fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $rg3_insync"
+  pass 'a partial registry tag tied with the selected strict tag refuses instead of guessing'
+fi
+
 # ---------------------------------------------------------------------------
 # 24. THE LIVE MAIN-BRANCH REPORT MUST RECEIVE PACKAGE-READ AUTHORITY. (#3331)
 #     The hermetic PR test stubs GHCR, but validate-main runs the real resolver with
@@ -1452,4 +1475,4 @@ if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (27 cases)\n'
+printf '\nPASS: publish-workflow signing-revision report (28 cases)\n'

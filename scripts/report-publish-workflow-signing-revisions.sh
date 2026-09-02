@@ -774,6 +774,15 @@ deployed_tag() {
           registry_semver="${registry_seen/_/+}"
           if [[ "$registry_semver" =~ $strict_re ]] || [[ "$registry_semver" =~ $loose_re ]]; then
             registry_core="$(printf '%s' "$registry_semver" | sed -e 's/^v//' -e 's/+.*$//')"
+            # Masterminds SemVer (and therefore Flux) coerces partial versions before
+            # ordering: 2 == 2.0 == 2.0.0. Keep the registry tag's original spelling
+            # for identity and diagnostics, but compare its normalized three-component
+            # core so a distinct partial tag cannot hide a same-precedence ambiguity.
+            case "$registry_core" in
+              *.*.*) ;;
+              *.*) registry_core="${registry_core}.0" ;;
+              *) registry_core="${registry_core}.0.0" ;;
+            esac
           else
             continue
           fi
