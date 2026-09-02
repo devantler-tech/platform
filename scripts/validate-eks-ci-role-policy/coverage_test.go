@@ -235,8 +235,11 @@ func runsGate(script, needle string) bool {
 // the LAST pipeline stage instead — GitHub Actions runs a `run:` block under
 // `bash -e`, without `pipefail` — so an earlier stage's failure is lost. A
 // trailing `&` backgrounds the command, and its status is never waited for.
-// `;`, `&&`, a newline, and end-of-script all leave the
-// failure intact; a closing paren does not, because the subshell continues outside it.
+// `&&` settles nothing on its own — the AND-OR list continues, and a `||`
+// reached later at the same level still discards the failure, so
+// `gate && echo ok || true` exits 0 — hence the scan walks past it rather than
+// accepting there. `;`, a newline, and end-of-script all leave the failure
+// intact; a closing paren does not, because the subshell continues outside it.
 //
 // Strict in the same direction as the scanner above: a pipeline is refused
 // even where the script does set pipefail, because deciding that reliably
@@ -257,9 +260,16 @@ func failurePropagates(script string, i int) bool {
 			// last stage of the pipeline.
 			return false
 		case c == '&':
-			// `&&` runs on SUCCESS, so a failure still stops the chain and
-			// reaches the step. A lone `&` backgrounds the command.
-			return i+1 < len(script) && script[i+1] == '&'
+			if i+1 >= len(script) || script[i+1] != '&' {
+				// A lone `&` backgrounds the command, so the step never
+				// waits for its status.
+				return false
+			}
+			// `&&` does not settle the question. The AND-OR list continues,
+			// and a `||` later at this level still discards the failure:
+			// `gate && echo ok || true` exits 0. Keep scanning the remainder
+			// rather than accepting the gate here.
+			i += 2
 		case c == ';', c == '\n':
 			return true
 		case c == ')':
@@ -809,6 +819,7 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		"shellcheck x.sh\n" + gate,
 		gate + " ; echo done",
 		gate + " && echo ok",
+		gate + " && echo a && echo b",
 		gate + "\necho after",
 	}
 	for _, script := range enforcing {
@@ -824,6 +835,7 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		gate + " | tee gate.log",
 		gate + " &",
 		"( " + gate + " ) || true",
+		gate + " && echo ok || true",
 	}
 	for _, script := range defused {
 		if !runsCommand(script, gate) {
