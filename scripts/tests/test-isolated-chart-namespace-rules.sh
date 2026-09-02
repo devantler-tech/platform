@@ -357,9 +357,13 @@ spec:
     kind: OCIRepository
     name: data-product-controller'
 
-# The negative control: an explicit, correct targetNamespace is what the
-# emitter exception is actually for, and must keep passing.
-assert_accepted 'same-name-kustomization-with-target-namespace' 'apiVersion: kustomize.toolkit.fluxcd.io/v1
+# A correct targetNamespace is NOT sufficient, and this fixture is why the kind
+# is refused outright rather than conditioned. targetNamespace relocates the
+# NAMESPACED grandchildren a source renders; a ClusterRoleBinding in that same
+# source still reconciles cluster-wide, and no grandchild is ever presented to
+# this rule. The reviewed render contains no Kustomization at all, so refusing
+# the kind costs nothing real and is the only bound this rule can enforce.
+assert_rejected 'same-name-kustomization-with-target-namespace' 'apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
   name: data-product-controller
@@ -495,6 +499,77 @@ spec:
   values:
     controller:
       replicas: 2'
+
+# A CLUSTER-SCOPED KIND OUTSIDE THE REVIEWED SET CANNOT BE CONTAINED BY A
+# NAMESPACE FIELD. The API server accepts and then ignores `metadata.namespace`
+# on every cluster-scoped object, so before the kind allowlist these two
+# satisfied the namespaced branch on a field that does not survive apply and
+# landed cluster-wide. Enumerating cluster-scoped kinds to refuse cannot close
+# this — the next unlisted kind passes exactly as these did — so the branch
+# names the kinds the pinned render actually produces and refuses the rest.
+assert_rejected 'unreviewed-cluster-scoped-crd' 'apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: evilthings.example.invalid
+  namespace: data-product-controller
+spec:
+  group: example.invalid
+  names:
+    kind: EvilThing
+    plural: evilthings
+  scope: Cluster
+  versions: []'
+
+assert_rejected 'unreviewed-mutating-webhook' 'apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: hijack-everything
+  namespace: data-product-controller
+webhooks: []'
+
+# A namespaced kind the reviewed render does not produce is refused by the same
+# allowlist. This is the control proving the clause above is a KIND test and not
+# a cluster-scope test: nothing about a ConfigMap escapes the namespace, and it
+# is refused anyway, because an unreviewed kind in a digest bump is exactly what
+# the containment bound requires someone to read before it ships.
+assert_rejected 'unreviewed-namespaced-kind' 'apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+data:
+  key: value'
+
+# THE RENDERED Namespace OVERWRITES THE REVIEWED ONE ON APPLY, so accepting it
+# by name alone let a future digest ship a weaker enforcement label — and every
+# workload in the isolated namespace would then run unrestricted while this rule
+# stayed green. The component is staged off every deploy overlay, so no cluster
+# admission control re-checks it afterwards.
+assert_rejected 'privileged-rendered-namespace' 'apiVersion: v1
+kind: Namespace
+metadata:
+  name: data-product-controller
+  labels:
+    pod-security.kubernetes.io/enforce: privileged'
+
+# Omitting the label is the same admission outcome by another route, so it fails
+# closed rather than being read as "unchanged".
+assert_rejected 'unlabelled-rendered-namespace' 'apiVersion: v1
+kind: Namespace
+metadata:
+  name: data-product-controller'
+
+# The negative control for both: the reviewed namespace, exactly as the base
+# declares it, must keep passing. Without this a blanket refusal of rendered
+# Namespaces would satisfy the two assertions above while rejecting the real
+# component.
+assert_accepted 'reviewed-restricted-namespace' 'apiVersion: v1
+kind: Namespace
+metadata:
+  name: data-product-controller
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest'
 
 # This is the enabled control: KSail resolves the immutable OCI digest from the
 # staged-off component, Helm-renders that exact artifact, and evaluates every

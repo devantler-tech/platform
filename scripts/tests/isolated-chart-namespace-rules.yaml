@@ -47,9 +47,11 @@ rules:
     #     but its controller reconciles grandchildren that are not part of this
     #     render at all and can carry `spec.targetNamespace` anywhere. Those
     #     grandchildren never reach this rule, so the emitter itself must be
-    #     refused. The kind list mirrors `isAuthorizationKind` in
-    #     scripts/validate-eks-ci-role-policy/main.go, which already classifies
-    #     exactly these as able to redirect, emit, or grant authorization.
+    #     refused. `isAuthorizationKind` in
+    #     scripts/validate-eks-ci-role-policy/main.go classifies exactly these
+    #     as able to redirect, emit, or grant authorization; here the allowlist
+    #     below reaches the same verdict by admitting only the two reconciler
+    #     kinds the reviewed render contains.
     #
     # The reviewed emitters are PINNED BY NAME, exactly as the cluster-scoped
     # RBAC shapes are, rather than refused wholesale. The component's own
@@ -58,11 +60,11 @@ rules:
     # is installed; a blanket refusal of emitter kinds rejects the real render.
     # A reviewed emitter must additionally not redirect: `spec.targetNamespace`
     # is what sends reconciled grandchildren somewhere else, and those never
-    # reach this rule. For a Kustomization that field must be present and
-    # correct rather than merely not-wrong: Flux preserves the namespaces the
-    # remote artifact declares when it is omitted, so an absent targetNamespace
-    # reconciles grandchildren anywhere the artifact likes. A HelmRelease is
-    # left alone here because it defaults to its own namespace instead.
+    # reach this rule. A HelmRelease is held to it only as a redirect check,
+    # because it defaults to its own namespace when the field is absent. The
+    # only two emitter kinds the allowlist admits are the component's own
+    # OCIRepository and HelmRelease; every other reconciler kind, Kustomization
+    # included, is refused by the kind set rather than conditioned here.
     #
     # The ClusterRole branch refuses more than wildcards. `bind` and `escalate`
     # on rbac.authorization.k8s.io are privilege-escalation primitives in their
@@ -90,6 +92,36 @@ rules:
     # Deployments, so a blanket refusal rejects the real component; whether a
     # post-render patch can move a child across namespaces after this rule has
     # accepted it is a separate question needing its own proof.
+    #
+    # THE KIND SET IS AN ALLOWLIST, NOT A LIST OF REFUSALS. Scope is not
+    # recoverable from a rendered object: `metadata.namespace` is accepted and
+    # then ignored by the API server on every cluster-scoped kind, so a
+    # CustomResourceDefinition or MutatingWebhookConfiguration carrying the
+    # release namespace satisfies a containment test while landing cluster-wide.
+    # Enumerating the cluster-scoped kinds to refuse cannot close that — the next
+    # unlisted kind passes exactly as the last one did. The render is pinned by
+    # digest and its kinds are therefore known, so the branch instead names the
+    # kinds the reviewed artifact actually produces and refuses everything else.
+    # A digest bump that introduces a new kind fails this rule until the kind is
+    # read and added, which is the review this containment bound depends on.
+    #
+    # Kustomization is deliberately absent from that set. The reviewed render
+    # contains none, and a Kustomization cannot be contained by this rule even
+    # when its own object is local and its `spec.targetNamespace` is correct:
+    # targetNamespace relocates namespaced grandchildren only, so a source
+    # carrying a ClusterRoleBinding still reconciles it cluster-wide, and no
+    # grandchild is ever presented here. Refusing the kind is the only bound
+    # this rule can actually enforce.
+    #
+    # THE RENDERED Namespace IS PINNED BY ITS ENFORCEMENT LABEL, not by name
+    # alone. The reviewed base declares `pod-security.kubernetes.io/enforce:
+    # restricted`, and a chart that renders the same-named Namespace overwrites
+    # that object on apply. Accepting it on name would let a future digest ship
+    # `enforce: privileged` — or drop the label, which is the same admission
+    # outcome by omission — and every workload in the isolated namespace would
+    # run unrestricted while this rule stayed green. An absent or non-restricted
+    # label is refused; the component is staged off every deploy overlay, so no
+    # cluster admission control re-checks it afterwards.
     expression: >-
       has(object.metadata) &&
       has(object.kind) &&
@@ -123,20 +155,23 @@ rules:
                has(s.namespace) && s.namespace == 'data-product-controller')) ||
             (object.kind == 'Namespace' &&
              has(object.metadata.name) &&
-             object.metadata.name == 'data-product-controller')))
-        : (has(object.metadata.namespace) &&
+             object.metadata.name == 'data-product-controller' &&
+             has(object.metadata.labels) &&
+             'pod-security.kubernetes.io/enforce' in object.metadata.labels &&
+             object.metadata.labels['pod-security.kubernetes.io/enforce'] ==
+               'restricted')))
+        : (object.kind in ['CiliumNetworkPolicy', 'DataProduct', 'Deployment',
+                           'ExternalSecret', 'HTTPRoute', 'HelmRelease',
+                           'NetworkPolicy', 'OCIRepository',
+                           'PodDisruptionBudget', 'Role', 'RoleBinding',
+                           'Service', 'ServiceAccount'] &&
+           has(object.metadata.namespace) &&
            object.metadata.namespace == 'data-product-controller' &&
-           (!(object.kind in ['Kustomization', 'HelmRelease', 'OCIRepository',
-                              'GitRepository', 'Bucket', 'HelmRepository',
-                              'ExternalArtifact', 'Provider', 'Function',
-                              'Configuration', 'DeploymentRuntimeConfig']) ||
+           (!(object.kind in ['HelmRelease', 'OCIRepository']) ||
             (has(object.metadata.name) &&
              object.metadata.name == 'data-product-controller' &&
              (!has(object.spec) || !has(object.spec.targetNamespace) ||
               object.spec.targetNamespace == 'data-product-controller'))) &&
-           (object.kind != 'Kustomization' ||
-            (has(object.spec) && has(object.spec.targetNamespace) &&
-             object.spec.targetNamespace == 'data-product-controller')) &&
            (object.kind != 'HelmRelease' ||
             !has(object.spec) ||
             !has(object.spec.valuesFrom)) &&
