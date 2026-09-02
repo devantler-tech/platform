@@ -1374,8 +1374,22 @@ else
   fail "the registry-present control failed outright: $(cat "$rg2_out")"
 fi
 
+# ---------------------------------------------------------------------------
+# 24. THE LIVE MAIN-BRANCH REPORT MUST RECEIVE PACKAGE-READ AUTHORITY. (#3331)
+#     The hermetic PR test stubs GHCR, but validate-main runs the real resolver with
+#     GITHUB_TOKEN. Without this job-level permission every package request returns 403,
+#     every consumer becomes UNRESOLVED, and the report makes main red by construction.
+# ---------------------------------------------------------------------------
+registry_permission="$(yq eval -r '.jobs.validate-shared-publish-pin.permissions.packages // ""' \
+  "$REPO_ROOT/.github/workflows/validate-main.yaml")"
+if [ "$registry_permission" = 'read' ]; then
+  pass 'the live main-branch report receives packages: read for current GHCR metadata'
+else
+  fail "validate-main gives the live report packages: ${registry_permission:-none}; GHCR metadata will return 403"
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (23 cases)\n'
+printf '\nPASS: publish-workflow signing-revision report (24 cases)\n'
