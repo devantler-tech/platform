@@ -22,16 +22,33 @@
 # setting a uid on a controller that is on its way out. #3223 tracks the narrowing
 # itself and is blocked on #3480.
 #
-# 🔴 DO NOT RE-VERIFY THIS ON workloadconfigurationscans ALONE — IT NOW FAILS OPEN.
-# That surface was pre-exception when this gate was written, but today every one of
-# the six carries appliedIgnoreRules: [pod-security-mutations-unscoped/C-0013] and
-# reports status: passed with subStatus: "w/exceptions" — including tofu-controller,
-# which is genuinely broken. Reading .spec.controls["C-0013"].status.status
-# therefore says this gate is clearable when it is not. The discriminator is
-# subStatus plus a populated appliedIgnoreRules, never status. `fixPath` is NOT a
-# discriminator either: it is a static hint from the rule definition and is
-# populated identically on all six, including the five that pass. Verify against the
-# live Deployment spec, which is independent of the scanner and of this exception.
+# fail-open-warning:BEGIN — every spec.posture controlID must be named below.
+# 🔴 DO NOT RE-VERIFY ANY CONTROL IN THIS FILE ON workloadconfigurationscans ALONE —
+# THAT SURFACE FAILS OPEN FOR EVERY CONTROL THIS EXCEPTION SUPPRESSES. The hazard is a
+# property of the exception rather than of one control, so anything added under
+# spec.posture below inherits it. Kubescape writes status: passed together with
+# subStatus: "w/exceptions" and a populated appliedIgnoreRules on each suppressed
+# control, so reading .spec.controls[<id>].status.status reports a gate as clearable
+# when nothing behind it has been fixed. Measured 2026-09-02 on both listed controls:
+#
+#   * C-0013 — five of the six flux-system workloads now pass genuinely, carrying an
+#     EMPTY subStatus; only tofu-controller, the single workload that is actually
+#     broken, reads passed with subStatus "w/exceptions". Status alone cannot tell the
+#     five apart from the one; subStatus isolates it exactly.
+#   * C-0211 — 35 of 35 scanned workloads read passed with subStatus "w/exceptions",
+#     each carrying appliedIgnoreRules: [pod-security-mutations-unscoped/C-0211],
+#     while all 35 are still missing both universal fields. Nothing here passes
+#     genuinely, so reading status alone yields exactly the "0 of 35 fail" that #3239
+#     states as its success signal, with no fix behind it.
+#
+# The discriminator is subStatus plus a populated appliedIgnoreRules, never status,
+# and it does discriminate: on one such workload the same scan carries 53 controls
+# passed with an EMPTY subStatus and 3 failed with appliedIgnoreRules null, so
+# "w/exceptions" is a real signal and not a constant. `fixPath` is NOT a discriminator
+# either: it is a static hint from the rule definition and is populated identically on
+# workloads that genuinely pass. Verify against the live stored workload spec, which is
+# independent of both the scanner and this exception.
+# fail-open-warning:END
 #
 # C-0211 — CIS-5.7.3, and it is a twelve-rule control rather than the three-field
 # check its name suggests. The rules this exception suppresses include
@@ -41,20 +58,29 @@
 # nor the name-scoped kubescape-privileged lists C-0211.
 #
 # Its residual population is every workload in the four excluded namespaces that are
-# actually scanned — flux-system, longhorn-system, observability and velero — all 33
-# of them: 17 Deployments, 7 DaemonSets, 6 CronJobs and 3 StatefulSets. (CronJobs are
+# actually scanned — flux-system, longhorn-system, observability and velero — all 35
+# of them: 17 Deployments, 8 DaemonSets, 7 CronJobs and 3 StatefulSets. (CronJobs are
 # scanned and carry a verdict; Jobs are not, so the ephemeral backup and heartbeat
-# Jobs in these namespaces are out of scope.) Measured 2026-08-19 against the live
-# PROD stored specs, which is the surface Kubescape reads. "Scanned" here means in the
-# scanner's configured scope: the config scan itself is not currently producing (#2933,
-# #3024), so this population is real but presently invisible to the posture score —
-# which is exactly the silent-suppression failure mode #2447 exists to prevent.
+# Jobs in these namespaces are out of scope.) Measured 2026-09-02 against the live
+# PROD stored specs, which is the surface Kubescape reads, and corroborated
+# independently by the count of Kubescape's own workload-kind scan objects in those
+# namespaces (flux-system 6, longhorn-system 12, observability 15, velero 2).
 #
-# Not one of the 33 passes, and two gaps are universal: the pod-level
-# `securityContext.fsGroupChangePolicy` is absent on 33 of 33 (read under
-# `jobTemplate` for the CronJobs), and `securityContext.seLinuxOptions` is absent on
-# every container of all 33. Pod-level `fsGroup` is absent on 20, `runAsGroup` on 18
-# and `runAsNonRoot` on 12 — each a strict subset of the two universal gaps.
+# "Scanned" here means in the scanner's configured scope. The population's absence
+# from the posture score is NOT reducible to the config scan's own producing gaps
+# (#2933, #3024): this exception suppresses C-0211 whatever the scanner's health, so
+# the score reads clean either way — which is exactly the silent-suppression failure
+# mode #2447 exists to prevent.
+#
+# Not one of the 35 passes, and two gaps are universal: the pod-level
+# `securityContext.fsGroupChangePolicy` is absent on 35 of 35 (read under
+# `jobTemplate` for the CronJobs), and no effective seLinux `level` reaches every
+# container on 35 of 35 — "effective" meaning the container's own seLinuxOptions where
+# it sets them and the pod-level object otherwise. That test is deliberately generous,
+# since a container-level object actually replaces the pod struct wholesale, so 35 of
+# 35 is a floor rather than an artifact of a strict rule. Pod-level `fsGroup` is absent
+# on 20, `runAsGroup` on 26 and `runAsNonRoot` on 19 — each a strict subset of the two
+# universal gaps. All re-measured 2026-09-02 against the live PROD stored specs.
 # Narrowing C-0211 today would surface the whole population with no fix behind it —
 # lowering the score to absorb a gap rather than closing it — so it stays
 # cluster-wide. The per-workload table and the remediation split are on #3217. These
@@ -78,7 +104,7 @@ metadata:
     # Cluster-wide, and knowingly wider than its own rationale: in the twelve
     # namespaces "add-security-context" excludes, nothing injects these fields.
     # Both controls are retained rather than narrowed on an unmeasured guess —
-    # C-0013 pending #3480 (via #3223); C-0211 sized 2026-08-19 and pending #3217.
+    # C-0013 pending #3480 (via #3223); C-0211 sized 2026-09-02 and pending #3217.
     platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
@@ -89,7 +115,7 @@ spec:
     rather than on expressiveness: C-0013 has a measured one-workload gap in
     flux-system (tofu-controller, pending its removal in #3480), and C-0211's
     residual population is every scanned workload the mutation does not reach,
-    sized at 33 (#3217).
+    sized at 35 (#3217).
   posture:
     - controlID: C-0013
       action: ignore

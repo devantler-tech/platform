@@ -322,6 +322,10 @@ jobs:
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-pod-security-exception-scope.sh'
               - 'scripts/tests/test-guard-pod-security-exception-scope.sh'
+              # Both halves, for the same reason as the guards above. The guard also
+              # reads the exception manifest itself, covered by 'k8s/**'.
+              - 'scripts/guard-pod-security-exception-documented.sh'
+              - 'scripts/tests/test-guard-pod-security-exception-documented.sh'
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-crossplane-provider-name-parity.sh'
               - 'scripts/tests/test-guard-crossplane-provider-name-parity.sh'
@@ -1043,6 +1047,19 @@ jobs:
         run: |
           bash scripts/guard-pod-security-exception-scope.sh
           bash scripts/tests/test-guard-pod-security-exception-scope.sh
+
+      - name: 🔎 Validate every suppressed control is documented as failing open
+        if: needs.changes.outputs.k8s == 'true'
+        # A control added under spec.posture that the file's fail-open warning does
+        # not name. The exception makes each suppressed control report `passed` with
+        # subStatus "w/exceptions", so reading status alone yields a clean result over
+        # an unfixed population — 35 of 35 workloads when C-0211 was added (#3516).
+        # The check is scoped to the marked warning block, not the whole header: when
+        # C-0211 was added it WAS mentioned elsewhere in that header, so a file-wide
+        # match passes on the very tree that motivated the guard.
+        run: |
+          bash scripts/guard-pod-security-exception-documented.sh
+          bash scripts/tests/test-guard-pod-security-exception-documented.sh
 
       - name: 🧬 Validate Crossplane provider names match their derived names
         if: needs.changes.outputs.k8s == 'true'
