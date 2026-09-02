@@ -38,18 +38,18 @@
 # says nothing about first-party platform workflows.
 #
 # WHAT IT DOES NOT CLAIM
-# Pinning a fixed revision is not the same as pinning an APPROVED one: a superseded
-# actions SHA still matches `[0-9a-f]{40}`. Restricting to approved revisions needs a
-# generated allow-list and is tracked separately on #2818. This guard keeps the
-# property #2816 established from silently regressing.
+# Pinning a fixed revision is not the same as pinning an APPROVED one. This guard
+# accepts either recognisable form — the pattern text `[0-9a-f]{40}`, which admits any
+# 40-hex commit, or a concrete 40-hex commit naming exactly one — so it proves the ref
+# SHAPE pins a revision. It does not decide WHICH revisions are approved, and it keeps
+# the property #2816 established from silently regressing.
 #
-# Note for whoever implements that allow-list: the check below matches the literal
-# PATTERN text `[0-9a-f]{40}`, because these subjects are regexes. A subject naming one
-# concrete commit — which is what a generated approved-revision list would emit — is
-# therefore REJECTED here today, despite being strictly narrower than what is accepted.
-# That is a limit of this check, not a judgement about the shape; extend the allow-list
-# deliberately when the generator lands, rather than reading the failure as a defect in
-# the generated output.
+# Which revisions must stay trusted is computed per consumer by
+# scripts/report-publish-workflow-signing-revisions.sh (#3048): it names both the
+# revision that signed the artifact currently deployed and the revision that consumer
+# pins today, and those routinely differ. A consumer narrowed to a set omitting its
+# signing revision would stop verifying an artifact that is running right now, so any
+# narrowing is derived from that report rather than from this guard or by hand (#3308).
 
 set -euo pipefail
 
@@ -367,7 +367,30 @@ EOF
       # prefix hazard of its own, but the whole-line anchor is what guarantees that —
       # `[0-9a-f]{40}` must be the entire alternative, so nothing can be appended to
       # it.
+      # TWO recognisable forms, both of which pin (#3308).
+      #
+      # 1. The literal PATTERN text `[0-9a-f]{40}`. These subjects are cosign identity
+      #    regexes, so this fragment accepts any 40-hex commit: a FIXED revision, but
+      #    not an APPROVED one.
+      # 2. A CONCRETE 40-hex commit, which is what a generated approved-revision
+      #    allow-list emits. It is strictly NARROWER than form 1 — it names one
+      #    revision rather than the whole 40-hex space.
+      #
+      # Form 2 was rejected until #3308, and the header of this file documented that as
+      # a known limit rather than a defect: "a subject naming one concrete commit is
+      # therefore REJECTED here today, despite being strictly narrower than what is
+      # accepted". This is the deliberate widening that note asked for.
+      #
+      # It is a WIDENING OF THE ALLOW-LIST, not a loosening of the property. Both forms
+      # keep the whole-line anchor (`-x`), so nothing may be appended to either: a short
+      # SHA, a tag, a branch, a bare ref and a partial group are all still rejected, and
+      # each keeps its own RED case in the test. Uppercase hex is deliberately NOT
+      # accepted — git emits lowercase, so an uppercase subject is an unreviewed shape
+      # rather than a spelling variant.
       if printf '%s' "$alternative" | grep -qxE '\[0-9a-f\]\{40\}'; then
+        continue
+      fi
+      if printf '%s' "$alternative" | grep -qxE '[0-9a-f]{40}'; then
         continue
       fi
       printf '%s: ref alternative %s does not pin a fixed revision (subject: %s)\n' \
