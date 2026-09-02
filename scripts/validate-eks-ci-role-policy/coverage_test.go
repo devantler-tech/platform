@@ -232,166 +232,97 @@ func runsCommand(script, needle string) bool {
 // plain question "does this script invoke X" — a setup step, for instance,
 // where the answer is about presence rather than enforcement. Only a coverage
 // assertion about a GATE needs failure propagation, so only those opt in.
+// runsGate reports whether script runs needle AS A GATE: the step's exit status
+// is that of needle, so a failure there fails the step.
+//
+// This is a POSITIVE grammar over the run block rather than a search for ways to
+// defuse a gate. Seven review rounds established that the search cannot be won:
+// `set +e`, then a quoted or expanded operand, then `builtin`/`command`/`eval`,
+// then an alias, then `trap`/`exit`/`exec`, then a one-line function body, then
+// a leading redirection, then a compound command hiding a `trap` after `then`.
+// Each was real and each fix was correct, but shell offers unbounded ways to
+// bind a name to a command or to hide one from a lexical scan, so every answer
+// bought exactly one spelling.
+//
+// The grammar inverts that. A block qualifies only when EVERY line is a simple
+// command written in a restricted character set, and the LAST such line is the
+// gate. Anything else — an operator, a quote, an expansion, a redirection, a
+// compound command, an assignment, a reserved word, or a builtin that can bind a
+// name or set an exit status — falls outside the grammar and the gate reads as
+// UNCOVERED. A shell feature nobody has thought of yet fails the same way, which
+// is the property the previous seven rounds could not have.
+//
+// Soundness rests on one fact: a block's exit status is the status of its last
+// command. Within this grammar nothing can reassign it, so a failing gate on the
+// last line fails the step.
+//
+// Both gate steps in this repository already satisfy it — each is two plain
+// command lines — so the grammar costs nothing real. See platform#3526.
 func runsGate(script, needle string) bool {
-	return scanCommandRuns(script, needle, func(end int) bool {
-		return failurePropagates(script, end) &&
-			isFinalCommand(script, end) &&
-			prefixPreservesStatus(script[:end])
-	})
-}
-
-// statusSettingBuiltins are the ONLY constructs that make a block's exit status
-// differ from the status of its last command. `exit` sets it outright, a `trap`
-// on ERR or EXIT can run `exit` after the last command has already failed, and
-// `exec` replaces the shell so nothing after it is this block at all.
-//
-// Measured under `bash -e`, each with the gate LAST and failing:
-// `trap 'exit 0' ERR` exits 0, `trap 'exit 0' EXIT` exits 0, and a preceding
-// `exit 0` exits 0 — against a control with no prefix, which exits 1.
-//
-// Unlike the errexit question this set is closed rather than open-ended: it is
-// not a list of ways to spell one trick, it is the complete set of shell
-// features that assign an exit status. A block whose prefix contains none of
-// them exits with its last command's status by construction.
-var statusSettingBuiltins = []string{"trap", "exit", "exec"}
-
-// statusOpaqueBuiltins can run any of the above without naming them in the
-// script text, so a prefix containing one cannot be cleared by reading it.
-var statusOpaqueBuiltins = []string{"eval", "source", ".", "alias", "shopt", "function"}
-
-// prefixPreservesStatus reports whether everything before the gate leaves the
-// block's exit status to be decided by its last command.
-//
-// isFinalCommand alone is not sufficient: it proves the gate is last, but a
-// `trap 'exit 0' ERR` set earlier still replaces that command's failure. The
-// two conditions are complementary — one fixes WHICH command decides the
-// status, this one ensures nothing else overrides it.
-func prefixPreservesStatus(prefix string) bool {
-	safe := true
-	for _, name := range statusSettingBuiltins {
-		if scanCommandRuns(prefix, name, func(int) bool { return true }) {
-			safe = false
-		}
-	}
-	for _, name := range statusOpaqueBuiltins {
-		if scanCommandRuns(prefix, name, func(int) bool { return true }) {
-			safe = false
-		}
-	}
-	// `builtin` and `command` run a builtin in this shell, so resolve through
-	// them rather than refusing outright — `command -v ksail` is an ordinary
-	// lookup that cannot set a status, and refusing it would call sound gate
-	// steps UNCOVERED.
-	for _, wrapper := range []string{"builtin", "command"} {
-		if scanCommandRuns(prefix, wrapper, func(end int) bool {
-			return wrapperReachesStatusSetter(prefix[end:])
-		}) {
-			safe = false
-		}
-	}
-	return safe
-}
-
-// wrapperReachesStatusSetter reports whether the operands of a `builtin` or
-// `command` word, beginning at args, invoke something that can set an exit
-// status. An operand that cannot be read without a shell counts as unsafe, on
-// the same rule applied everywhere else here.
-func wrapperReachesStatusSetter(args string) bool {
-	i := 0
-	for i < len(args) {
-		for i < len(args) && (args[i] == ' ' || args[i] == '\t') {
-			i++
-		}
-		if i >= len(args) || endsCommand(args[i]) {
-			return false
-		}
-		start := i
-		for i < len(args) && !endsWord(args[i]) {
-			i++
-		}
-		word := args[start:i]
-		if strings.ContainsAny(word, "'\"$`\\") {
-			return true
-		}
-		switch {
-		case word == "-v", word == "-V":
-			// A lookup, not an invocation.
-			return false
-		case strings.HasPrefix(word, "-"):
+	last := ""
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
-		case word == "builtin", word == "command":
-			return wrapperReachesStatusSetter(args[i:])
-		default:
-			for _, name := range statusSettingBuiltins {
-				if word == name {
-					return true
-				}
-			}
-			for _, name := range statusOpaqueBuiltins {
-				if word == name {
-					return true
-				}
-			}
+		}
+		if !isSimpleCommandLine(trimmed) {
 			return false
 		}
+		last = trimmed
 	}
-	return false
+	if last == "" {
+		return false
+	}
+	return last == needle || strings.HasPrefix(last, needle+" ")
 }
 
-// isFinalCommand reports whether the command whose word ends at i is the LAST
-// command the block runs, so that the step's exit status IS that command's.
+// gateGrammarRefusedWords are the leading words a simple command may not have.
 //
-// This is what makes a gate enforcing WITHOUT reasoning about errexit at all.
-// A block's status is the status of its last command, so when the gate is last
-// no shell-option manipulation anywhere before it can hide a failure. Measured
-// under `bash -e`: `set +e; false` exits 1, and so do the `eval "set +e"` and
-// `builtin set +e` variants — every one of them, because `false` is last. Add
-// one `echo` after it and all of them exit 0.
+// The reserved words introduce compound commands, whose bodies this line-based
+// grammar does not read — `if true; then trap 'exit 0' ERR; fi` is refused here
+// rather than parsed. The rest either assign an exit status (`exit`, `exec`,
+// `trap`), or bind a name to a command that could (`eval`, `source`, `.`,
+// `alias`, `shopt`, `function`, `builtin`, `command`).
 //
-// The earlier model asked the opposite question — whether anything before the
-// gate had switched errexit off — and that is not decidable from the script
-// text. Four review rounds each found another spelling: a literal `set +e`, a
-// quoted or expanded operand, `builtin`/`command`/`eval` wrappers, and an alias
-// under `shopt -s expand_aliases`. Shell functions and indirect expansion were
-// still open. Requiring the gate to be last replaces that whole search with a
-// property the shell guarantees, and every gate step in this repository already
-// satisfies it.
-//
-// Trailing blanks, comments and empty statements do not make a later command,
-// so they are skipped; anything else does.
-func isFinalCommand(script string, i int) bool {
-	// Walk to the end of this command's own words first.
-	for i < len(script) {
-		switch c := script[i]; {
-		case c == '\\':
-			i += 2
-		case c == '<' && i+1 < len(script) && script[i+1] == '<':
-			i = skipHeredoc(script, i)
-		case c == '\'', c == '"':
-			i = skipQuoted(script, i)
-		case endsCommand(c):
-			goto tail
-		default:
-			i++
-		}
-	}
-	return true
+// `command -v ksail` is refused with them, which is a real loss of precision: it
+// is an ordinary lookup that cannot affect the status. Resolving through the
+// wrapper is exactly the kind of special case this grammar exists to stop
+// accumulating, so it is refused and the step can be written without it.
+var gateGrammarRefusedWords = map[string]bool{
+	"if": true, "then": true, "else": true, "elif": true, "fi": true,
+	"case": true, "esac": true, "for": true, "select": true, "while": true,
+	"until": true, "do": true, "done": true, "in": true, "time": true,
+	"coproc": true, "function": true,
+	"exit": true, "exec": true, "trap": true,
+	"eval": true, "source": true, ".": true,
+	"alias": true, "shopt": true, "builtin": true, "command": true, "set": true,
+}
 
-tail:
-	// Only separators, blanks and comments may follow.
-	for i < len(script) {
-		switch c := script[i]; {
-		case c == ' ', c == '\t', c == '\n', c == ';', c == '\r':
-			i++
-		case c == '#' && startsShellComment(script, i):
-			for i < len(script) && script[i] != '\n' {
-				i++
-			}
+// isSimpleCommandLine reports whether one line is a simple command this grammar
+// admits: words drawn from a restricted character set, with a leading word that
+// is not refused above.
+//
+// The character set is the whole defence against shell syntax. It admits what
+// real invocations need — letters, digits, and `_ . / : @ + , -` — and nothing
+// that can quote, expand, redirect, group, background, or chain. A metacharacter
+// anywhere on the line refuses it, so no part of shell grammar has to be
+// modelled.
+func isSimpleCommandLine(line string) bool {
+	for _, r := range line {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == ' ', r == '\t':
+		case r == '_', r == '.', r == '/', r == ':', r == '@', r == '+',
+			r == ',', r == '-':
 		default:
 			return false
 		}
 	}
-	return true
+	first := line
+	if i := strings.IndexAny(line, " \t"); i >= 0 {
+		first = line[:i]
+	}
+	return !gateGrammarRefusedWords[first]
 }
 
 // failurePropagates reports whether the command whose word ends at i can still
@@ -1193,39 +1124,29 @@ func TestRunsCommandMatchesTheOtherGateInvocations(t *testing.T) {
 	}
 }
 
-// TestRunsGateRequiresFailurePropagation pins the two things runsGate adds over
-// runsCommand: the gate must not only run, but its failure must reach the step.
+// TestRunsGateRequiresFailurePropagation pins the grammar runsGate admits.
 //
-// Every script below RUNS the gate — runsCommand accepts all of them — so this
-// table is what separates "invoked" from "enforcing".
+// runsCommand answers "does this block invoke the gate". This answers the
+// stronger question "does the block's exit status BECOME the gate's" — and it
+// answers it by admitting only a restricted shape rather than by hunting for
+// ways to defuse a gate, which seven review rounds showed cannot be won.
 //
-// The second condition is structural rather than a search for defusing tricks: a
-// block's exit status is the status of its LAST command, so a gate that is last
-// cannot be defused by anything before it. `set +e; false` exits 1; so do the
-// `eval "set +e"`, `builtin set +e` and aliased variants, all measured under
-// `bash -e`. Add one `echo` after and every one of them exits 0.
+// Every script in both tables RUNS the gate, so the tables separate "invoked"
+// from "enforcing" and never merely "matched".
 func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 	const gate = isolatedChartNamespaceValidatorInvocation
 
 	enforcing := []string{
 		gate,
 		gate + " .",
-		gate + " ;",
 		gate + "\n",
-		gate + " # done",
-		"shellcheck x.sh\n" + gate,
-		// The gate is last, so errexit is IRRELEVANT to whether its failure
-		// reaches the step — these all exit non-zero on a failing gate. An
-		// earlier model refused them, which was over-strict: it was answering
-		// "was errexit disturbed" when the structural answer makes the question
-		// moot. These are the controls for that, and they must keep passing.
-		"set +e\n" + gate,
-		"set +o errexit\n" + gate,
-		"builtin set +e\n" + gate,
-		"command set +e\n" + gate,
-		"set -e\n" + gate,
-		"command -v ksail\n" + gate,
+		"\n" + gate + "\n",
+		"# lint first\nshellcheck x.sh\n" + gate,
+		// The shape both real gate steps use.
+		"shellcheck scripts/tests/test-isolated-chart-namespace-rules.sh\n" + gate,
+		"go test ./scripts/validate-eks-ci-role-policy\n" + gate,
 		"./scripts/setup.sh\n" + gate,
+		"ksail version\n" + gate,
 	}
 	for _, script := range enforcing {
 		if !runsGate(script, gate) {
@@ -1234,7 +1155,7 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 	}
 
 	defused := []string{
-		// Operators that discard the gate's status outright.
+		// Operators that discard or replace the gate's status.
 		gate + " || true",
 		gate + " || :",
 		gate + " || echo ignored",
@@ -1242,68 +1163,41 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		gate + " &",
 		"( " + gate + " ) || true",
 		gate + " && echo ok || true",
-		gate + " &&\n  echo ok || true",
-		gate + " && # report success\n  echo ok || true",
-		// A later command REPLACES the step's status with its own, so the gate
-		// is only enforcing while errexit holds — and whether it holds is not
-		// decidable from the script text. Four review rounds each found another
-		// way to switch it off (a literal `set +e`, a quoted or expanded
-		// operand, `builtin`/`command`/`eval`, an alias under
-		// `shopt -s expand_aliases`), with shell functions and indirect
-		// expansion still open. All of these are therefore refused, which makes
-		// a genuine gate read UNCOVERED and fail loudly — recoverable, unlike
-		// passing a defused one in silence.
+		// A later command supplies the step's status instead of the gate.
 		gate + " ; echo done",
 		gate + " && echo ok",
-		gate + " && echo a && echo b",
 		gate + "\necho after",
-		gate + " &&\n  echo ok",
-		gate + " && # note\n  echo ok",
-		gate + " # done\necho after",
-		// The measured bypasses, each verified under `bash -e` to print
-		// `continued` and exit 0 with the gate failing.
+		// Every bypass the seven review rounds produced. None is matched by a
+		// rule naming it: each fails the grammar because it needs a
+		// metacharacter or a refused leading word.
 		"set +e\n" + gate + "\necho continued",
 		"set \"+e\"\n" + gate + "\necho continued",
 		"option=e\nset +${option}\n" + gate + "\necho continued",
 		"builtin set +e\n" + gate + "\necho continued",
 		"command set +e\n" + gate + "\necho continued",
 		"eval 'set +e'\n" + gate + "\necho continued",
-		"shopt -s expand_aliases\nalias d=\"set +e\"\nd\n" + gate + "\necho continued",
-		// A `trap` can run `exit` AFTER the last command has already failed, and
-		// an `exit` or `exec` before the gate settles the status without it.
-		// isFinalCommand alone does not see these: the gate really is last, and
-		// its failure is still discarded. Verified under `bash -e` with the gate
-		// failing and LAST — each exits 0, against a control with no prefix that
-		// exits 1.
+		"shopt -s expand_aliases\nalias d=\"set +e\"\nd\n" + gate,
+		"shopt -s expand_aliases\nalias t=\"trap 'exit 0' ERR\"\nt\n" + gate,
+		"f() { trap 'exit 0' ERR; }\nf\n" + gate,
 		"trap 'exit 0' ERR\n" + gate,
 		"trap 'exit 0' EXIT\n" + gate,
 		"exit 0\n" + gate,
 		"exec 2>/dev/null\n" + gate,
-		"builtin trap 'exit 0' ERR\n" + gate,
-		"eval \"trap 'exit 0' ERR\"\n" + gate,
-		// Also conservatively refused. `alias d="set +e"; d` with the gate last
-		// does exit 1, but an alias body is quoted text this walker skips, and
-		// the same shape carries `trap 'exit 0' ERR` — which does NOT exit 1.
-		// The name binding is what makes it unreadable, not the body that
-		// happens to be behind it here.
-		"shopt -s expand_aliases\nalias d=\"set +e\"\nd\n" + gate,
-		// The reported bypass: an alias installing the trap.
-		"shopt -s expand_aliases\nalias t=\"trap 'exit 0' ERR\"\nt\n" + gate,
-		// A one-line function body binds a name the same way. The `{` re-arm in
-		// scanCommandRuns is what puts `trap` at a command word here; without it
-		// this body is invisible to every scan built on that walker.
-		"f() { trap 'exit 0' ERR; }\nf\n" + gate,
-		// A redirection may precede the command name, so the command position
-		// survives it. Both forms verified under `bash -e` with the gate last
-		// and failing: each exits 0.
 		"> /dev/null trap 'exit 0' ERR\n" + gate,
 		"2>/dev/null trap 'exit 0' ERR\n" + gate,
-		// Conservatively refused rather than measured. `eval "set +e"` with the
-		// gate last really does exit 1, but the model cannot read an `eval`
-		// body, and the same construct can just as easily carry `trap 'exit 0'
-		// ERR`. Unreadable means unsafe, so this loses a little precision in the
-		// direction that fails loudly.
-		"eval 'set +e'\n" + gate,
+		"if true; then trap 'exit 0' ERR; fi\n" + gate,
+		// CONSERVATIVE REFUSALS — each of these is genuinely enforcing when run,
+		// and the grammar refuses it anyway. That cost is the point: admitting
+		// them means resolving `set` operands, wrappers and lookups, which is
+		// the special-casing the previous seven rounds accumulated and never
+		// finished. A step written without them is accepted, and both real gate
+		// steps already are.
+		"set -e\n" + gate,
+		"set +e\n" + gate,
+		"command -v ksail\n" + gate,
+		"builtin echo hello\n" + gate,
+		gate + " ;",
+		gate + " # done",
 	}
 	for _, script := range defused {
 		if !runsCommand(script, gate) {
