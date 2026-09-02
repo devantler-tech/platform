@@ -223,6 +223,32 @@ else
   bad "the publication action calls the gate" "no reference in ${action}"
 fi
 
+# The action invokes the gate DIRECTLY (`./scripts/...`) rather than through an
+# interpreter, so the tracked mode decides whether the step can run at all. CI
+# clones from git, so the mode that matters is the one in the INDEX — a local
+# `chmod` that was never committed leaves the runner with a 100644 file and the
+# step dies `permission denied` before the gate has verified anything.
+#
+# That failure is invisible to every other check in this suite: shellcheck,
+# `bash <file>` and all the assertions above pass on a non-executable file,
+# because none of them exec it. This assertion is the only one that would fire.
+#
+# The requirement is derived from the invocation rather than hard-coded, so
+# switching the action to `bash scripts/...` correctly relaxes it instead of
+# leaving a stale rule behind.
+gate_rel="scripts/verify-matcher-accepts-digest.sh"
+gate_mode="$(git -C "${root_dir}" ls-files -s -- "${gate_rel}" | awk '{print $1}')"
+if grep -qE '(^|[^[:alnum:]_/])\./scripts/verify-matcher-accepts-digest\.sh' "${action}"; then
+  if [[ "${gate_mode}" == "100755" ]]; then
+    ok "the gate is tracked executable, as its direct invocation requires"
+  else
+    bad "the gate is tracked executable, as its direct invocation requires" \
+      "the action runs ./${gate_rel} but git tracks it as ${gate_mode:-<untracked>}"
+  fi
+else
+  ok "the gate is not invoked directly, so no executable bit is required"
+fi
+
 gate_line="$(grep -n "scripts/verify-matcher-accepts-digest.sh" "${action}" | head -1 | cut -d: -f1 || true)"
 promote_line="$(grep -n "id: promote_latest" "${action}" | head -1 | cut -d: -f1 || true)"
 sign_line="$(grep -n "id: cosign_sign" "${action}" | head -1 | cut -d: -f1 || true)"
