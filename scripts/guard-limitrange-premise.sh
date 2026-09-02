@@ -130,7 +130,7 @@ EOF
 
 reachable_files() { # <provider-dir>
   local provider=$1 queue="" seen_k="" files="" k dir entry target
-  local lroot lpath lfile seeded=0 layer_defs=0
+  local lroot lpath lfile cdir cname seeded=0 layer_defs=0
   # SEED FROM THE FLUX LAYER ROOTS, NEVER FROM `find`.
   #
   # Flux does not apply "every kustomization under the provider" — each layer
