@@ -1,0 +1,62 @@
+---
+# The kyverno namespace lives in the BOOTSTRAP layer, one layer earlier than the
+# controller that owns everything else about Kyverno, so that the CPU LimitRange
+# covering Kyverno's four controllers can exist before those controllers are
+# admitted.
+#
+# WHY IT CANNOT STAY WITH ITS COMPONENT. A LimitRange binds at pod-admission time
+# and never mutates a running pod, so it must land before the workloads it covers
+# (#3271). Kyverno's controllers ship in `infrastructure-controllers`; its
+# LimitRange was pulled by the `infrastructure` layer, one hop later behind
+# `wait: true`. That is not a race the LimitRange sometimes lost — the layer graph
+#
+#     bootstrap -> infrastructure-controllers -> infrastructure -> apps
+#
+# guarantees it lost EVERY time, on every fresh cluster, so the controllers ran
+# uncapped until an unrelated event recreated them (#3525).
+#
+# Co-locating the LimitRange with the component was the cheaper option and is not
+# available: Flux publishes no intra-Kustomization apply-ordering contract. Its
+# only documented ordering primitives are the staged apply (CRDs and Namespaces
+# first, then everything else) and `dependsOn` BETWEEN Kustomizations, so a
+# LimitRange and a Deployment in one Kustomization are both second-stage with
+# nothing ordering them. kustomize's legacy reorder may well sort LimitRange first
+# in practice, but an undocumented implementation detail is not the guarantee this
+# repo asks for.
+#
+# So the namespace moves here and the LimitRange follows it (see
+# limit-ranges/kyverno.yaml). `infrastructure-controllers` declares
+# `dependsOn: [bootstrap]` with `wait: true`, which makes the ordering structural
+# rather than incidental — exactly the reasoning that put kube-system's LimitRange
+# in this layer.
+#
+# THE COST, STATED. This splits an ownership boundary: the namespace no longer
+# sits with the component that owns the rest of Kyverno. That is a real
+# readability cost, accepted because the alternative is a permanent, guaranteed
+# uncapped window for the cluster's admission engine while the identical defect
+# is fixed for kube-system.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kyverno
+  annotations:
+    # Deleting a namespace cascades to everything inside it, so a prune here would
+    # not remove one object — it would remove the cluster's entire admission
+    # policy engine, unrecoverably (a namespace that has begun terminating cannot
+    # be restored by re-declaring it).
+    #
+    # On the hetzner (prod) provider every Namespace already carries this
+    # annotation, stamped by the `annotations-transformers` component. The docker
+    # provider does not include that component, so without this line the local
+    # cluster would be the one place where this namespace is prunable — and this
+    # commit is precisely when that matters, because moving a manifest between
+    # Flux Kustomizations hands ownership from one inventory to another and Flux's
+    # own guidance is to disable garbage collection across such a move.
+    #
+    # Declaring it here rather than relying on the transformer also keeps the
+    # protection with the object it protects, so it survives any future change to
+    # which components a provider composes.
+    kustomize.toolkit.fluxcd.io/prune: disabled
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
