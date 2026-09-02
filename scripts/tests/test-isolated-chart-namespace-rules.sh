@@ -239,6 +239,111 @@ roleRef:
   kind: ClusterRole
   name: data-product-controller'
 
+assert_rejected 'wildcard-verb-cluster-role' 'apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: data-product-controller
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["*"]'
+
+assert_rejected 'aggregated-cluster-role' 'apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: data-product-controller
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.authorization.k8s.io/aggregate-to-admin: "true"
+rules: []'
+
+assert_accepted 'local-subject-role-binding' 'apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: data-product-controller-leader-election
+  namespace: data-product-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: data-product-controller-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: data-product-controller
+    namespace: data-product-controller'
+
+assert_rejected 'foreign-subject-role-binding' 'apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: data-product-controller-edit
+  namespace: data-product-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: edit
+subjects:
+  - kind: ServiceAccount
+    name: kustomize-controller
+    namespace: flux-system'
+
+assert_rejected 'subjectless-role-binding' 'apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: data-product-controller-edit
+  namespace: data-product-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: data-product-controller-leader-election'
+
+assert_rejected 'namespaced-flux-kustomization' 'apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: nested
+  namespace: data-product-controller
+spec:
+  interval: 10m
+  prune: false
+  sourceRef:
+    kind: OCIRepository
+    name: nested
+  targetNamespace: aws'
+
+assert_rejected 'namespaced-helm-release' 'apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nested
+  namespace: data-product-controller
+spec:
+  interval: 10m
+  targetNamespace: flux-system
+  chartRef:
+    kind: OCIRepository
+    name: nested'
+
+assert_accepted 'reviewed-name-emitter-local' 'apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+spec:
+  interval: 10m
+  chartRef:
+    kind: OCIRepository
+    name: data-product-controller'
+
+assert_rejected 'reviewed-name-emitter-redirecting' 'apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: data-product-controller
+  namespace: data-product-controller
+spec:
+  interval: 10m
+  targetNamespace: flux-system
+  chartRef:
+    kind: OCIRepository
+    name: data-product-controller'
+
 # This is the enabled control: KSail resolves the immutable OCI digest from the
 # staged-off component, Helm-renders that exact artifact, and evaluates every
 # child under the same rule without adding the component to the deploy overlay.

@@ -25,6 +25,40 @@ rules:
     # Dispatching on kind first makes that shape unreachable, and a
     # cluster-scoped object carrying a namespace field is rejected outright
     # rather than silently accepted on a field that does not survive apply.
+    #
+    # NAME IS NOT ENOUGH FOR THE ClusterRole EITHER. Pinning only the name lets
+    # a chart revision keep `data-product-controller` while widening its rules
+    # to `*`, and the reviewed ClusterRoleBinding then grants that cluster-wide
+    # power to the controller — containment defeated without a single foreign
+    # name appearing. An `aggregationRule` is the same escape by another route:
+    # the rules are absent at render time and filled in later by the controller
+    # from cluster-wide labels, so what was reviewed is not what is granted.
+    # Both are rejected. This is a containment bound, not a full fingerprint of
+    # the reviewed permissions; a digest bump still needs its rules read.
+    #
+    # A NAMESPACED CHILD IS NOT AUTOMATICALLY CONTAINED. Two shapes escape the
+    # namespace while carrying it:
+    #   * a RoleBinding whose SUBJECT lives elsewhere pulls a foreign identity
+    #     INTO the isolated namespace, so the subject check the reviewed
+    #     ClusterRoleBinding already carries applies to it too, fail-closed on
+    #     an absent `subjects` for the same reason;
+    #   * a Flux or Crossplane reconciler — Kustomization, HelmRelease, source
+    #     and package kinds — is an INDIRECT emitter: its own object is local,
+    #     but its controller reconciles grandchildren that are not part of this
+    #     render at all and can carry `spec.targetNamespace` anywhere. Those
+    #     grandchildren never reach this rule, so the emitter itself must be
+    #     refused. The kind list mirrors `isAuthorizationKind` in
+    #     scripts/validate-eks-ci-role-policy/main.go, which already classifies
+    #     exactly these as able to redirect, emit, or grant authorization.
+    #
+    # The reviewed emitters are PINNED BY NAME, exactly as the cluster-scoped
+    # RBAC shapes are, rather than refused wholesale. The component's own
+    # `OCIRepository/data-product-controller` and `HelmRelease/data-product-
+    # controller` ARE the reviewed, digest-pinned mechanism by which this chart
+    # is installed; a blanket refusal of emitter kinds rejects the real render.
+    # A reviewed emitter must additionally not redirect: `spec.targetNamespace`
+    # is what sends reconciled grandchildren somewhere else, and those never
+    # reach this rule.
     expression: >-
       has(object.metadata) &&
       has(object.kind) &&
@@ -32,7 +66,13 @@ rules:
         ? (!has(object.metadata.namespace) &&
            ((object.kind == 'ClusterRole' &&
              has(object.metadata.name) &&
-             object.metadata.name == 'data-product-controller') ||
+             object.metadata.name == 'data-product-controller' &&
+             !has(object.aggregationRule) &&
+             has(object.rules) &&
+             object.rules.all(r,
+               (!has(r.apiGroups) || !('*' in r.apiGroups)) &&
+               (!has(r.resources) || !('*' in r.resources)) &&
+               (!has(r.verbs) || !('*' in r.verbs)))) ||
             (object.kind == 'ClusterRoleBinding' &&
              has(object.metadata.name) &&
              object.metadata.name == 'data-product-controller' &&
@@ -48,7 +88,19 @@ rules:
              has(object.metadata.name) &&
              object.metadata.name == 'data-product-controller')))
         : (has(object.metadata.namespace) &&
-           object.metadata.namespace == 'data-product-controller'))
+           object.metadata.namespace == 'data-product-controller' &&
+           (!(object.kind in ['Kustomization', 'HelmRelease', 'OCIRepository',
+                              'GitRepository', 'Bucket', 'HelmRepository',
+                              'ExternalArtifact', 'Provider', 'Function',
+                              'Configuration', 'DeploymentRuntimeConfig']) ||
+            (has(object.metadata.name) &&
+             object.metadata.name == 'data-product-controller' &&
+             (!has(object.spec) || !has(object.spec.targetNamespace) ||
+              object.spec.targetNamespace == 'data-product-controller'))) &&
+           (object.kind != 'RoleBinding' ||
+            (has(object.subjects) &&
+             object.subjects.all(s,
+               has(s.namespace) && s.namespace == 'data-product-controller')))))
     message: >-
       data-product-controller chart children must remain in the reviewed
       data-product-controller namespace
