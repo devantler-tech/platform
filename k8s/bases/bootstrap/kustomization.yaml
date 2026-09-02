@@ -8,6 +8,11 @@ resources:
   # bootstrap layer so they exist before infrastructure-controllers reconciles —
   # e.g. Coroot's node-agent references platform-critical.
   - priority-classes/
+  # The kyverno namespace lives here so the bootstrap-layer LimitRange below
+  # can target it: a namespaced object cannot be applied into a namespace that
+  # does not exist yet. Listed BEFORE limit-ranges/ for readability; the
+  # guarantee comes from the staged apply (Namespaces first), not from order.
+  - namespace-kyverno.yaml
   # kube-system's CPU LimitRange lives here for the SAME reason: a LimitRange is
   # applied at pod-admission time and never mutates running pods, so it has to
   # exist before infrastructure-controllers admits cilium/coredns/metrics-server/

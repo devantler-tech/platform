@@ -11,30 +11,35 @@
 #
 #     bootstrap  ->  infrastructure-controllers  ->  infrastructure  ->  apps
 #
-# kube-system's covered workloads (cilium, coredns, metrics-server, tetragon,
-# hubble, spire-agent, the hcloud ccm/csi, cluster-autoscaler) are all
-# `infrastructure-controllers` resources. Holding this LimitRange in the
-# `infrastructure` layer therefore placed it TWO layers after the pods it covers:
-# they were admitted uncapped, and stayed uncapped until the next rollout.
+# Both covered populations are `infrastructure-controllers` resources — kube-system's
+# cilium, coredns, metrics-server, tetragon, hubble, spire-agent, the hcloud ccm/csi
+# and cluster-autoscaler; and kyverno's four controllers (admission, background,
+# cleanup, reports). Holding either LimitRange in the `infrastructure` layer placed
+# it a layer AFTER the pods it covers, so they were admitted uncapped and stayed
+# uncapped until the next rollout. That is not a race those LimitRanges sometimes
+# lost: the graph guarantees they lost every time, on every fresh cluster.
 #
-# Placing it in `bootstrap` closes that window STRUCTURALLY rather than by
-# timing: `infrastructure-controllers` declares `dependsOn: [bootstrap]` with
-# `wait: true`, so it cannot begin reconciling until this layer is Ready. The
-# guarantee comes from the dependency graph, not from the order in which
-# kustomize-controller happens to apply kinds inside one Kustomization.
+# Placing them here closes the window STRUCTURALLY rather than by timing:
+# `infrastructure-controllers` declares `dependsOn: [bootstrap]` with `wait: true`,
+# so it cannot begin reconciling until this layer is Ready. The guarantee comes from
+# the dependency graph, not from the order in which kustomize-controller happens to
+# apply kinds inside one Kustomization — Flux publishes no such intra-Kustomization
+# ordering contract, so co-locating a LimitRange with its component would have been
+# an assumption rather than a guarantee (#3525).
 #
-# WHY THIS IS SAFE FOR kube-system SPECIFICALLY. A namespaced object cannot be
-# applied into a namespace that does not exist yet, and `bootstrap` runs before
-# any namespace this repo creates. `kube-system` is exempt from that problem
-# because Kubernetes itself creates it at cluster init, so it is guaranteed to
-# exist here. The `kyverno` LimitRange is NOT movable on the same reasoning —
-# its namespace is created by the `infrastructure-controllers` layer — and so it
-# deliberately stays in `k8s/bases/infrastructure/limit-ranges/`. See #3271.
+# WHY EACH NAMESPACE IS REACHABLE FROM HERE. A namespaced object cannot be applied
+# into a namespace that does not exist yet, and this layer runs before most of them.
+# - kube-system is created by Kubernetes itself at cluster init, so it is always
+#   present.
+# - kyverno's namespace is declared alongside this directory, in ../namespace-kyverno.yaml, precisely
+#   so this LimitRange has a namespace to bind to. See that file for why the
+#   namespace was moved out of its component and what that costs.
 #
-# This mirrors the reasoning already applied to `../priority-classes/`, which
-# lives in this layer for exactly the same "must exist before the controllers
-# reference it" reason.
+# This mirrors the reasoning already applied to `../priority-classes/`, which lives
+# in this layer for exactly the same "must exist before the controllers reference it"
+# reason.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - kube-system.yaml
+  - kyverno.yaml
