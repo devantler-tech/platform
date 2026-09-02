@@ -157,6 +157,14 @@ current_registry_tags() {
     --jq '.[].metadata.container.tags[]?'
 }
 
+# Translate the source Git ref to the OCI tag emitted by the shared publish workflows:
+# they strip the conventional v prefix, and OCI tags encode SemVer's `+` build-metadata
+# delimiter as `_` because `+` is not valid in an OCI tag.
+registry_tag_for_git_tag() {
+  local tag="${1#v}"
+  printf '%s\n' "${tag//+/_}"
+}
+
 # Print "<repo>\t<workflow>\t<pinned-version-or-empty>" per consumer.
 #
 # 🔴 ITERATES DOCUMENTS, NOT FILES. Reading one value per FILE drops every consumer after
@@ -555,12 +563,12 @@ deployed_tag() {
       return 1
     fi
     [ "$exact_pub" -eq 0 ] || return 1
-    # The shared publish workflows require a v-prefixed git tag but deliberately strip
-    # that prefix for the OCI version (`VERSION=${REF_NAME#v}`). Compare the name Flux sees,
-    # not the source ref spelling.
-    registry_version="${candidate#v}"
+    # An exact OCIRepository tag is not normalized by Flux. The source workflow may have
+    # published Git tag v2.0.0 as OCI tag 2.0.0, but a manifest that literally pins
+    # v2.0.0 still asks the registry for v2.0.0 and must not be cleared by the other spelling.
+    registry_version="$version"
     if ! printf '%s\n' "$registry_tags" | grep -qxF -- "$registry_version"; then
-      printf 'tag %s has a successful publish run but registry tag %s no longer exists in GHCR package %s; it may have been deleted, and neither accepting it nor walking backward is deployment evidence\n' \
+      printf 'tag %s has a successful publish run but exact registry tag %s from the manifest no longer exists in GHCR package %s; it may have been deleted or published under a different spelling, and neither accepting it nor walking backward is deployment evidence\n' \
         "$candidate" "$registry_version" "$registry_package" >&2
       return 1
     fi
@@ -746,12 +754,44 @@ deployed_tag() {
         return 1
       fi
       if [ "$walk_pub" -eq 0 ]; then
-        registry_version="${candidate#v}"
+        registry_version="$(registry_tag_for_git_tag "$candidate")"
         if ! printf '%s\n' "$registry_tags" | grep -qxF -- "$registry_version"; then
           printf 'tag %s has a successful publish run but registry tag %s no longer exists in GHCR package %s; it may have been deleted, and walking backward would attribute an older release to what Flux resolves today\n' \
             "$candidate" "$registry_version" "$registry_package" >&2
           return 1
         fi
+        # Flux chooses a semver candidate from CURRENT REGISTRY TAGS, not from Git refs.
+        # A deleted Git tag can leave its GHCR version behind, and a still-present Git
+        # tag can have no successful publication evidence. Either way, if the registry
+        # version ranks ABOVE the candidate this Git-and-Actions walk selected, silently
+        # returning the lower release would attribute the wrong signing revision. A
+        # distinct registry tag at the SAME precedence is ambiguous for the same reason.
+        local registry_seen registry_semver registry_core selected_core registry_high
+        selected_core="${variants%%+*}"
+        while IFS= read -r registry_seen; do
+          [ -n "$registry_seen" ] || continue
+          [ "$registry_seen" = 'latest' ] && continue
+          registry_semver="${registry_seen/_/+}"
+          if [[ "$registry_semver" =~ $strict_re ]] || [[ "$registry_semver" =~ $loose_re ]]; then
+            registry_core="$(printf '%s' "$registry_semver" | sed -e 's/^v//' -e 's/+.*$//')"
+          else
+            continue
+          fi
+          registry_high="$(printf '%s\n%s\n' "$registry_core" "$selected_core" | sort -V -r | head -1)"
+          if [ "$registry_core" = "$selected_core" ]; then
+            if [ "$registry_seen" != "$registry_version" ]; then
+              printf 'registry tag %s has the same SemVer precedence as selected registry tag %s; Flux can select either, and choosing needs Flux-compatible ordering plus publication evidence for both\n' \
+                "$registry_seen" "$registry_version" >&2
+              return 1
+            fi
+            continue
+          fi
+          if [ "$registry_high" = "$registry_core" ]; then
+            printf 'registry tag %s ranks above selected release %s but this resolver cannot map the higher selection to one Git tag and successful publication run; refusing instead of attributing an older release to what Flux resolves\n' \
+              "$registry_seen" "$registry_version" >&2
+            return 1
+          fi
+        done <<<"$registry_tags"
         # The early refusal above compares against the highest STRICT tag, which is not
         # necessarily the one being reported: when that tag never published, the walk steps
         # past it to an older release, and a loose tag sitting between the two was cleared

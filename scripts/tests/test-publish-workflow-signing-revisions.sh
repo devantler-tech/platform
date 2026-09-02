@@ -591,8 +591,8 @@ case "$args" in
     # runs. A deleted package version leaves both of those historical facts behind. The
     # real publish workflows strip the source tag's v prefix for the OCI version.
     case "$args" in
-      *wedding-app*) printf "${BM_WEDDING_REGISTRY_TAGS:-${BM_WEDDING_TAGS:-v1.9.0\n}}" | sed 's/^v//' ;;
-      *aws*)         printf "${BM_AWS_REGISTRY_TAGS:-${BM_AWS_TAGS:-v1.9.0\n}}" | sed 's/^v//' ;;
+      *wedding-app*) printf "${BM_WEDDING_REGISTRY_TAGS:-${BM_WEDDING_TAGS:-v1.9.0\n}}" | sed -e 's/^v//' -e 's/+/_/' ;;
+      *aws*)         printf "${BM_AWS_REGISTRY_TAGS:-${BM_AWS_TAGS:-v1.9.0\n}}" | sed -e 's/^v//' -e 's/+/_/' ;;
       *)             printf '1.9.0\n' ;;
     esac
     ;;
@@ -838,10 +838,7 @@ if BM_AWS_TAGS='v2.0.0+build.1\nv1.9.0\n' BM_OWNCOMMIT_TAG='v2.0.0+build.1' \
     fail 'the newest release exists only as a build-metadata tag, and the report resolved an older one instead — it walked silently past it'
   pass 'a version published only with build metadata is resolved as itself, not walked past'
 else
-  # Refusing by name is acceptable; succeeding while naming an older tag is not.
-  grep -qF '2.0.0+build.1' "$bm2_out" ||
-    fail 'the run neither resolved the metadata-only release nor refused by name'
-  pass 'a version published only with build metadata is never silently walked past'
+  fail "the metadata-only release exists in GHCR as 2.0.0_build.1 but did not resolve: $(grep -E '^(UNRESOLVED|could not|tag )' "$bm2_out" | tr '\n' ' ')"
 fi
 
 # The run lookup must pass the tag as a PARAMETER. Checked explicitly because the failure
@@ -1255,7 +1252,7 @@ fi
 nw_root="$WORK/never-published-walk-root"
 cp -R "$bm_root" "$nw_root"
 nw_out="$WORK/never-published-walk.out"
-if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_UNPUBLISHED_TAG='v2.0.0' \
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_WEDDING_REGISTRY_TAGS='1.9.0\n' BM_UNPUBLISHED_TAG='v2.0.0' \
   BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
   PUBLISH_CONSUMER_ROOT="$nw_root" "$SCRIPT" >"$nw_out" 2>&1; then
   nw_insync="$(grep -c '^IN-SYNC' "$nw_out" || true)"
@@ -1388,8 +1385,71 @@ else
   fail "validate-main gives the live report packages: ${registry_permission:-none}; GHCR metadata will return 403"
 fi
 
+# ---------------------------------------------------------------------------
+# 25. REGISTRY-ONLY HIGHER VERSIONS MUST NOT BE SILENTLY OUTRANKED. (#3331 review)
+#     Flux selects from registry tags. If the highest current version survives in GHCR
+#     after its Git ref is deleted, a git-only walk must not fall back to an older version
+#     and attribute that older release's signer to what Flux resolves.
+# ---------------------------------------------------------------------------
+ro_root="$WORK/registry-only-root"
+cp -R "$bm_root" "$ro_root"
+ro_out="$WORK/registry-only.out"
+if BM_WEDDING_TAGS='v1.9.0\n' BM_WEDDING_REGISTRY_TAGS='2.0.0\n1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$ro_root" "$SCRIPT" >"$ro_out" 2>&1; then
+  fail 'a higher registry-only version was silently outranked by an older Git tag'
+else
+  grep -q 'registry tag 2.0.0' "$ro_out" ||
+    fail 'the registry-only refusal does not name the higher current version'
+  grep -q 'Git tag' "$ro_out" ||
+    fail 'the registry-only refusal does not explain that publication evidence cannot be mapped'
+  ro_unresolved="$(grep -c '^UNRESOLVED' "$ro_out" || true)"
+  [ "$ro_unresolved" -eq 1 ] ||
+    fail "expected exactly ONE unresolved consumer (the registry-only higher version), got $ro_unresolved"
+  pass 'a higher registry-only version refuses instead of attributing an older release signer'
+fi
+
+# A higher registry version with a surviving Git tag is still not safe when this
+# resolver cannot establish a successful publication at that tag. Registry selection
+# wins; falling through to the lower candidate would remain a confident wrong answer.
+rp_root="$WORK/registry-publication-gap-root"
+cp -R "$bm_root" "$rp_root"
+rp_out="$WORK/registry-publication-gap.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_WEDDING_REGISTRY_TAGS='2.0.0\n1.9.0\n' BM_UNPUBLISHED_TAG='v2.0.0' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$rp_root" "$SCRIPT" >"$rp_out" 2>&1; then
+  fail 'a higher current registry version without established publication evidence was silently walked past'
+else
+  grep -q 'registry tag 2.0.0' "$rp_out" ||
+    fail 'the publication-gap refusal does not name the higher registry version'
+  grep -q 'publication' "$rp_out" ||
+    fail 'the publication-gap refusal does not explain why the higher version cannot be attributed'
+  pass 'a higher registry version without established publication evidence refuses instead of walking backward'
+fi
+
+# ---------------------------------------------------------------------------
+# 26. AN EXACT MANIFEST TAG IS LOOKED UP EXACTLY IN THE REGISTRY. (#3331 review)
+#     The publisher strips v from its source Git tag, but Flux does not rewrite an exact
+#     spec.ref.tag. A manifest pinning v2.0.0 therefore cannot be cleared by GHCR tag 2.0.0.
+# ---------------------------------------------------------------------------
+et_root="$WORK/exact-registry-spelling-root"
+make_exact_root "$et_root" 'v2.0.0'
+et_out="$WORK/exact-registry-spelling.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_WEDDING_REGISTRY_TAGS='2.0.0\n1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$et_root" "$SCRIPT" >"$et_out" 2>&1; then
+  fail 'an exact manifest pin was cleared by a differently-spelled GHCR tag'
+else
+  grep -q 'exact registry tag v2.0.0' "$et_out" ||
+    fail 'the exact-tag refusal does not name the manifest spelling Flux requests'
+  et_unresolved="$(grep -c '^UNRESOLVED' "$et_out" || true)"
+  [ "$et_unresolved" -eq 1 ] ||
+    fail "expected exactly ONE unresolved consumer (the exact missing tag), got $et_unresolved"
+  pass 'an exact manifest tag must exist under the exact spelling Flux requests'
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (24 cases)\n'
+printf '\nPASS: publish-workflow signing-revision report (27 cases)\n'
