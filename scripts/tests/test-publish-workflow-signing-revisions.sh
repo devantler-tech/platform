@@ -558,7 +558,7 @@ mkdir -p "$bm_bin"
 # executed fragments of those comments. Values it needs come through the environment.
 cat >"$bm_bin/gh" <<'GHSTUB'
 #!/usr/bin/env bash
-# Minimal forge stub. Only the four call shapes the default resolver makes are answered;
+# Minimal forge stub. Only the five call shapes the default resolver makes are answered;
 # anything else exits non-zero, so an unstubbed call surfaces as a failure rather than as
 # an empty string the script might read as data.
 args="$*"
@@ -586,6 +586,16 @@ case "$args" in
     ;;
 esac
 case "$args" in
+  *"/packages/container/"*"/versions"*)
+    # Current GHCR metadata, deliberately separate from git tags and successful workflow
+    # runs. A deleted package version leaves both of those historical facts behind. The
+    # real publish workflows strip the source tag's v prefix for the OCI version.
+    case "$args" in
+      *wedding-app*) printf "${BM_WEDDING_REGISTRY_TAGS:-${BM_WEDDING_TAGS:-v1.9.0\n}}" | sed 's/^v//' ;;
+      *aws*)         printf "${BM_AWS_REGISTRY_TAGS:-${BM_AWS_TAGS:-v1.9.0\n}}" | sed 's/^v//' ;;
+      *)             printf '1.9.0\n' ;;
+    esac
+    ;;
   *"/tags?per_page=100"*)
     # Per-repo tag lists, so each case can put the interesting shape on exactly ONE
     # consumer and leave the rest clean: a refusal or divergence can then only have come
@@ -1321,8 +1331,51 @@ else
   fail "the divergence control failed outright: $(cat "$tc2_out")"
 fi
 
+# ---------------------------------------------------------------------------
+# 23. A SUCCESSFUL HISTORICAL RUN IS NOT A CURRENT REGISTRY VERSION. (#3331)
+#     Deleting a GHCR version leaves both its git tag and its successful cd.yaml run.
+#     Walking past the missing version would be equally wrong: Flux resolves against
+#     the registry, so the report must refuse by name instead of attributing either the
+#     deleted version or an older fallback to what is deployed.
+# ---------------------------------------------------------------------------
+rg_root="$WORK/registry-deleted-root"
+cp -R "$bm_root" "$rg_root"
+rg_out="$WORK/registry-deleted.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_WEDDING_REGISTRY_TAGS='1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$rg_root" "$SCRIPT" >"$rg_out" 2>&1; then
+  fail 'a tag with a successful publish run but no current GHCR version was accepted or silently walked past'
+else
+  grep -q 'no longer exists in GHCR' "$rg_out" ||
+    fail 'the run failed but did not name the missing current registry version'
+  grep -qF 'v2.0.0' "$rg_out" ||
+    fail 'the registry refusal does not name the deleted tag'
+  rg_unresolved="$(grep -c '^UNRESOLVED' "$rg_out" || true)"
+  rg_insync="$(grep -c '^IN-SYNC' "$rg_out" || true)"
+  [ "$rg_unresolved" -eq 1 ] ||
+    fail "expected exactly ONE unresolved consumer (the deleted registry version), got $rg_unresolved"
+  [ "$rg_insync" -eq "$expected_insync" ] ||
+    fail "expected the other FOUR consumers to resolve IN-SYNC through the same stub, got $rg_insync"
+  pass 'a successfully published tag deleted from GHCR refuses by name instead of walking backward'
+fi
+
+# CONTROL: when the same candidate still exists in GHCR it must resolve normally.
+rg2_root="$WORK/registry-present-root"
+cp -R "$bm_root" "$rg2_root"
+rg2_out="$WORK/registry-present.out"
+if BM_WEDDING_TAGS='v2.0.0\nv1.9.0\n' BM_WEDDING_REGISTRY_TAGS='2.0.0\n1.9.0\n' \
+  BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+  PUBLISH_CONSUMER_ROOT="$rg2_root" "$SCRIPT" >"$rg2_out" 2>&1; then
+  rg2_insync="$(grep -c '^IN-SYNC' "$rg2_out" || true)"
+  [ "$rg2_insync" -eq "$consumer_count" ] ||
+    fail "the registry-present control resolved only $rg2_insync of $consumer_count consumers — the registry check rejects valid versions"
+  pass 'a successfully published tag still present in GHCR resolves normally'
+else
+  fail "the registry-present control failed outright: $(cat "$rg2_out")"
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (22 cases)\n'
+printf '\nPASS: publish-workflow signing-revision report (23 cases)\n'
