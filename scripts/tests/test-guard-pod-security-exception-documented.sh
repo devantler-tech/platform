@@ -158,6 +158,27 @@ f="${tmp}/bad-id.yaml"
 yq '.spec.posture[0].controlID = "not-a-control"' "${REAL}" >"${f}"
 expect 'a malformed control id is exit 2' 2 "${f}"
 
+# --- the id form is checked WHOLE, not just at its start ------------------------
+# `C-[0-9]*` as a case glob anchors only the head: the trailing `*` accepts any
+# suffix, so it admits every id below while the die message claims to require
+# C-<digits>. One fixture per shape, so a pass cannot be carried by a sibling.
+f="${tmp}/id-trailing-alpha.yaml"
+yq '.spec.posture[0].controlID = "C-0211x"' "${REAL}" >"${f}"
+expect 'a control id with a trailing non-digit is exit 2' 2 "${f}"
+
+f="${tmp}/id-trailing-space.yaml"
+yq '.spec.posture[0].controlID = "C-0211 "' "${REAL}" >"${f}"
+expect 'a control id with a trailing space is exit 2' 2 "${f}"
+
+f="${tmp}/id-embedded-punct.yaml"
+yq '.spec.posture[0].controlID = "C-0211-extra"' "${REAL}" >"${f}"
+expect 'a control id with a trailing segment is exit 2' 2 "${f}"
+
+# The negative control: the fix must not start rejecting well-formed ids.
+f="${tmp}/id-well-formed.yaml"
+yq '.spec.posture[0].controlID = "C-0013"' "${REAL}" >"${f}"
+expect 'a well-formed control id is still accepted' 0 "${f}"
+
 if [ "${failures}" -gt 0 ]; then
   printf 'FAILED: %s case(s)\n' "${failures}" >&2
   exit 1

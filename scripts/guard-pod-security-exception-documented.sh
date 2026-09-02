@@ -90,10 +90,13 @@ block="$(awk -v a="${begin_line}" -v b="${end_line}" 'NR>a && NR<b' "${file}")" 
 missing=0
 while IFS= read -r control; do
   [ -n "${control}" ] || continue
-  case "${control}" in
-    C-[0-9]*) ;;
-    *) die "${file}: '${control}' is not a control id of the form C-<digits>" ;;
-  esac
+  # Anchored at BOTH ends. A `case` glob `C-[0-9]*` anchors only the head, so its
+  # trailing `*` admits any suffix — `C-0211x`, `C-0211-extra`, and `C-0211 ` all pass
+  # a check whose own message promises C-<digits>. The trailing-space shape is the
+  # one that fails OPEN: `grep -wF` then matches the id inside the block's prose and
+  # the guard exits 0 over a control it never really verified.
+  [[ "${control}" =~ ^C-[0-9]+$ ]] ||
+    die "${file}: '${control}' is not a control id of the form C-<digits>"
   # -w so C-0021 never satisfies a requirement to document C-0021x, and a bare
   # substring of a longer id never counts.
   # Capture grep's OWN status. `if cmd; then ...; fi` reports 0 when the condition is
