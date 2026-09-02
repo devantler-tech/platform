@@ -49,6 +49,15 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required to read the snapshot co
 # starts exactly where a command word would, so a data line reading `chmod 0640 "$SNAP"` would
 # satisfy this guard's binding on its own. Body lines are skipped up to the delimiter; `<<<` is a
 # here-string and introduces no body, so it is left to the ordinary scan.
+#
+# A command-substitution OPENER is a command boundary, exactly like `;` or `&&`. `$(`, a backtick,
+# and the process-substitution forms `<(` / `>(` all start a fresh command whose first word can be
+# `chmod`, and that chmod EXECUTES. Without splitting there, `x=$(chmod 0600 "$SNAP")` reaches the
+# prefix pass as one segment; `x=$(chmod` reads as an assignment word and is stripped, leaving a
+# segment starting `0600`, so the anchored match never sees the chmod. A narrowing chmod hidden in
+# any of the three forms then passes this guard while still running — the same fail-open one level
+# down. `$((` is arithmetic, not a command, and is consumed as a balanced region by the branch
+# above before this one is reached, so `x=$((1 << 2))` is untouched.
 # shellcheck disable=SC2016  # an awk program is data, not shell: $0/$SNAP must reach awk unexpanded.
 readonly split_commands_awk='
       BEGIN { sq = 0; dq = 0; hd = ""; hd_strip = 0 }
@@ -109,6 +118,19 @@ readonly split_commands_awk='
             if (c == "#") {
               last = (out == "") ? "" : substr(out, length(out), 1)
               if (out == "" || last == " " || last == "\t" || last == "\n") break
+            }
+            if (c == "$" && substr(line, i + 1, 1) == "(") {
+              out = out "\n"
+              esc = 0
+              i += 2
+              continue
+            }
+            if (c == "`") { out = out "\n"; esc = 0; i++; continue }
+            if ((c == "<" || c == ">") && substr(line, i + 1, 1) == "(") {
+              out = out "\n"
+              esc = 0
+              i += 2
+              continue
             }
             if (c == ";") { out = out "\n"; esc = 0; i++; continue }
             if (c == "&" && substr(line, i + 1, 1) == "&") { out = out "\n"; esc = 0; i += 2; continue }
@@ -244,6 +266,9 @@ readonly normaliser_cases=(
   "0:LABEL=\"unterminated chmod 0600 \$SNAP"
   "2:x=\$((1 << 2))\nchmod 0640 \"\$SNAP\"\nchmod 0600 \"\$SNAP\""
   "1:private) chmod 0600 \"\$SNAP\" ;;"
+  "1:x=\$(chmod 0600 \"\$SNAP\")"
+  "1:x=\`chmod 0600 \"\$SNAP\"\`"
+  "1:diff <(chmod 0600 \"\$SNAP\") /dev/null"
 )
 
 for normaliser_case in "${normaliser_cases[@]}"; do
