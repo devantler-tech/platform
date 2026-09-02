@@ -376,10 +376,9 @@ EOF
       #    allow-list emits. It is strictly NARROWER than form 1 — it names one
       #    revision rather than the whole 40-hex space.
       #
-      # Form 2 was rejected until #3308, and the header of this file documented that as
-      # a known limit rather than a defect: "a subject naming one concrete commit is
-      # therefore REJECTED here today, despite being strictly narrower than what is
-      # accepted". This is the deliberate widening that note asked for.
+      # Only form 1 is a regex fragment; form 2 is a literal identity. Both are judged
+      # by the same allow-list below, so adding a third recognisable shape is likewise a
+      # deliberate edit here rather than a silent widening (#3308).
       #
       # It is a WIDENING OF THE ALLOW-LIST, not a loosening of the property. Both forms
       # keep the whole-line anchor (`-x`), so nothing may be appended to either: a short
