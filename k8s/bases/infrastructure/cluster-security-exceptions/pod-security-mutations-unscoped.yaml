@@ -22,6 +22,7 @@
 # setting a uid on a controller that is on its way out. #3223 tracks the narrowing
 # itself and is blocked on #3480.
 #
+# fail-open-warning:BEGIN — every spec.posture controlID must be named below.
 # 🔴 DO NOT RE-VERIFY ANY CONTROL IN THIS FILE ON workloadconfigurationscans ALONE —
 # THAT SURFACE FAILS OPEN FOR EVERY CONTROL THIS EXCEPTION SUPPRESSES. The hazard is a
 # property of the exception rather than of one control, so anything added under
@@ -47,6 +48,7 @@
 # either: it is a static hint from the rule definition and is populated identically on
 # workloads that genuinely pass. Verify against the live stored workload spec, which is
 # independent of both the scanner and this exception.
+# fail-open-warning:END
 #
 # C-0211 — CIS-5.7.3, and it is a twelve-rule control rather than the three-field
 # check its name suggests. The rules this exception suppresses include
