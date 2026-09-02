@@ -173,6 +173,20 @@ jobs:
         run: |
           .github/scripts/setup-ksail.sh
 
+      - name: 🔐 Validate isolated chart child namespaces
+        # Recovery is a deployment route like any other: it publishes a mutable
+        # tag and reconciles the selected revision, so it must prove the same
+        # rendered-child property the pull-request, push and manual-deploy
+        # routes prove. Placed before cluster creation so a foreign-namespace
+        # render is refused while nothing has been provisioned yet, and directly
+        # after the KSail install this needs. This workflow already gates
+        # recovery on registry reachability (the RGD template scan above and the
+        # Flux GHCR preflight below), so the check adds no new dependency class.
+        timeout-minutes: 10
+        run: |
+          shellcheck scripts/tests/test-isolated-chart-namespace-rules.sh
+          bash scripts/tests/test-isolated-chart-namespace-rules.sh
+
       - name: ⚙️ Setup talosctl
         # The GHCR bridge verifies RegistryAuthConfig on each stale node.
         run: |

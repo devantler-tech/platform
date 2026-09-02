@@ -1,0 +1,185 @@
+rules:
+  - name: restrict-data-product-controller-rendered-child-namespaces
+    # This rule is deliberately path-scoped by its caller to the reviewed
+    # data-product-controller component. That gives every rendered child the
+    # chart provenance which a cluster-wide admission rule cannot recover from
+    # the final object alone. Namespace, ClusterRole, and ClusterRoleBinding are
+    # the only reviewed cluster-scoped shapes in the exact pinned render; every
+    # namespaced child must declare the release namespace explicitly.
+    #
+    # The two cluster-scoped RBAC shapes are pinned by name rather than by kind
+    # alone. A bare `kind in ['ClusterRole', 'ClusterRoleBinding']` branch
+    # accepts EVERY cluster-scoped role and binding the chart can render, so a
+    # chart revision granting cluster-admin to a subject in another namespace
+    # would satisfy it — which is the whole property this rule exists to deny.
+    # A binding must additionally reference the reviewed ClusterRole and carry
+    # only subjects in the release namespace; one with no subjects at all fails
+    # closed, because `all` over an absent field cannot be evaluated.
+    #
+    # The branch is chosen by KIND, never by whether a namespace field is
+    # present. `metadata.namespace` is silently ignored by the API server on a
+    # cluster-scoped object, so a namespace-presence test lets a rendered
+    # ClusterRoleBinding declare the release namespace and satisfy the
+    # namespaced branch without ever reaching the pinned name, roleRef, and
+    # subject checks — a cluster-admin grant to a foreign subject would pass.
+    # Dispatching on kind first makes that shape unreachable, and a
+    # cluster-scoped object carrying a namespace field is rejected outright
+    # rather than silently accepted on a field that does not survive apply.
+    #
+    # NAME IS NOT ENOUGH FOR THE ClusterRole EITHER. Pinning only the name lets
+    # a chart revision keep `data-product-controller` while widening its rules
+    # to `*`, and the reviewed ClusterRoleBinding then grants that cluster-wide
+    # power to the controller — containment defeated without a single foreign
+    # name appearing. An `aggregationRule` is the same escape by another route:
+    # the rules are absent at render time and filled in later by the controller
+    # from cluster-wide labels, so what was reviewed is not what is granted.
+    # Both are rejected. This is a containment bound, not a full fingerprint of
+    # the reviewed permissions; a digest bump still needs its rules read.
+    #
+    # A NAMESPACED CHILD IS NOT AUTOMATICALLY CONTAINED. Two shapes escape the
+    # namespace while carrying it:
+    #   * a RoleBinding whose SUBJECT lives elsewhere pulls a foreign identity
+    #     INTO the isolated namespace, so the subject check the reviewed
+    #     ClusterRoleBinding already carries applies to it too, fail-closed on
+    #     an absent `subjects` for the same reason;
+    #   * a Flux or Crossplane reconciler — Kustomization, HelmRelease, source
+    #     and package kinds — is an INDIRECT emitter: its own object is local,
+    #     but its controller reconciles grandchildren that are not part of this
+    #     render at all and can carry `spec.targetNamespace` anywhere. Those
+    #     grandchildren never reach this rule, so the emitter itself must be
+    #     refused. `isAuthorizationKind` in
+    #     scripts/validate-eks-ci-role-policy/main.go classifies exactly these
+    #     as able to redirect, emit, or grant authorization; here the allowlist
+    #     below reaches the same verdict by admitting only the two reconciler
+    #     kinds the reviewed render contains.
+    #
+    # The reviewed emitters are PINNED BY NAME, exactly as the cluster-scoped
+    # RBAC shapes are, rather than refused wholesale. The component's own
+    # `OCIRepository/data-product-controller` and `HelmRelease/data-product-
+    # controller` ARE the reviewed, digest-pinned mechanism by which this chart
+    # is installed; a blanket refusal of emitter kinds rejects the real render.
+    # A reviewed emitter must additionally not redirect: `spec.targetNamespace`
+    # is what sends reconciled grandchildren somewhere else, and those never
+    # reach this rule. A HelmRelease is held to it only as a redirect check,
+    # because it defaults to its own namespace when the field is absent. The
+    # only two emitter kinds the allowlist admits are the component's own
+    # OCIRepository and HelmRelease; every other reconciler kind, Kustomization
+    # included, is refused by the kind set rather than conditioned here.
+    #
+    # The ClusterRole branch refuses more than wildcards. `bind` and `escalate`
+    # on rbac.authorization.k8s.io are privilege-escalation primitives in their
+    # own right, and `create` on clusterrolebindings lets the controller mint a
+    # binding at runtime — an object that reaches the cluster without passing
+    # through either chart validation. None of those shapes needs a `*`, so a
+    # wildcard-only check accepts every one of them. RBAC access is therefore
+    # narrowed to read verbs, and the escalation verbs are refused outright
+    # whatever resource they name.
+    #
+    # THE REVIEWED HelmRelease MUST NOT TAKE VALUE INPUTS THIS RENDER CANNOT
+    # SEE. Containment here rests on a filesystem render of the pinned artifact:
+    # every child it produces is evaluated by this rule, and the component is
+    # staged off every deploy overlay, so cluster admission never re-checks it.
+    # That makes the render the ONLY control, and it is sound only while what it
+    # renders is what Flux installs. `spec.valuesFrom` breaks exactly that: it
+    # resolves a Secret or ConfigMap in-cluster, so the render sees chart
+    # defaults while Flux sees another value set — and values decide which
+    # templates render at all, so a runtime value can enable RBAC or a
+    # foreign-namespace child that neither the render nor this rule inspected.
+    # Inline `spec.values` stays permitted: it travels in this manifest, so the
+    # render resolves the same values Flux will.
+    # `spec.postRenderers` is deliberately NOT refused here. The reviewed chart
+    # uses it to add imagePullSecrets and topology constraints to its own
+    # Deployments, so a blanket refusal rejects the real component; whether a
+    # post-render patch can move a child across namespaces after this rule has
+    # accepted it is a separate question needing its own proof.
+    #
+    # THE KIND SET IS AN ALLOWLIST, NOT A LIST OF REFUSALS. Scope is not
+    # recoverable from a rendered object: `metadata.namespace` is accepted and
+    # then ignored by the API server on every cluster-scoped kind, so a
+    # CustomResourceDefinition or MutatingWebhookConfiguration carrying the
+    # release namespace satisfies a containment test while landing cluster-wide.
+    # Enumerating the cluster-scoped kinds to refuse cannot close that — the next
+    # unlisted kind passes exactly as the last one did. The render is pinned by
+    # digest and its kinds are therefore known, so the branch instead names the
+    # kinds the reviewed artifact actually produces and refuses everything else.
+    # A digest bump that introduces a new kind fails this rule until the kind is
+    # read and added, which is the review this containment bound depends on.
+    #
+    # Kustomization is deliberately absent from that set. The reviewed render
+    # contains none, and a Kustomization cannot be contained by this rule even
+    # when its own object is local and its `spec.targetNamespace` is correct:
+    # targetNamespace relocates namespaced grandchildren only, so a source
+    # carrying a ClusterRoleBinding still reconciles it cluster-wide, and no
+    # grandchild is ever presented here. Refusing the kind is the only bound
+    # this rule can actually enforce.
+    #
+    # THE RENDERED Namespace IS PINNED BY ITS ENFORCEMENT LABEL, not by name
+    # alone. The reviewed base declares `pod-security.kubernetes.io/enforce:
+    # restricted`, and a chart that renders the same-named Namespace overwrites
+    # that object on apply. Accepting it on name would let a future digest ship
+    # `enforce: privileged` — or drop the label, which is the same admission
+    # outcome by omission — and every workload in the isolated namespace would
+    # run unrestricted while this rule stayed green. An absent or non-restricted
+    # label is refused; the component is staged off every deploy overlay, so no
+    # cluster admission control re-checks it afterwards.
+    expression: >-
+      has(object.metadata) &&
+      has(object.kind) &&
+      (object.kind in ['ClusterRole', 'ClusterRoleBinding', 'Namespace']
+        ? (!has(object.metadata.namespace) &&
+           ((object.kind == 'ClusterRole' &&
+             has(object.metadata.name) &&
+             object.metadata.name == 'data-product-controller' &&
+             !has(object.aggregationRule) &&
+             has(object.rules) &&
+             object.rules.all(r,
+               (!has(r.apiGroups) || !('*' in r.apiGroups)) &&
+               (!has(r.resources) || !('*' in r.resources)) &&
+               (!has(r.verbs) || !('*' in r.verbs)) &&
+               (!has(r.verbs) ||
+                !r.verbs.exists(v, v in ['escalate', 'bind', 'impersonate'])) &&
+               (!has(r.apiGroups) ||
+                !('rbac.authorization.k8s.io' in r.apiGroups) ||
+                (has(r.verbs) &&
+                 r.verbs.all(v, v in ['get', 'list', 'watch']))))) ||
+            (object.kind == 'ClusterRoleBinding' &&
+             has(object.metadata.name) &&
+             object.metadata.name == 'data-product-controller' &&
+             has(object.roleRef) &&
+             has(object.roleRef.kind) &&
+             object.roleRef.kind == 'ClusterRole' &&
+             has(object.roleRef.name) &&
+             object.roleRef.name == 'data-product-controller' &&
+             has(object.subjects) &&
+             object.subjects.all(s,
+               has(s.namespace) && s.namespace == 'data-product-controller')) ||
+            (object.kind == 'Namespace' &&
+             has(object.metadata.name) &&
+             object.metadata.name == 'data-product-controller' &&
+             has(object.metadata.labels) &&
+             'pod-security.kubernetes.io/enforce' in object.metadata.labels &&
+             object.metadata.labels['pod-security.kubernetes.io/enforce'] ==
+               'restricted')))
+        : (object.kind in ['CiliumNetworkPolicy', 'DataProduct', 'Deployment',
+                           'ExternalSecret', 'HTTPRoute', 'HelmRelease',
+                           'NetworkPolicy', 'OCIRepository',
+                           'PodDisruptionBudget', 'Role', 'RoleBinding',
+                           'Service', 'ServiceAccount'] &&
+           has(object.metadata.namespace) &&
+           object.metadata.namespace == 'data-product-controller' &&
+           (!(object.kind in ['HelmRelease', 'OCIRepository']) ||
+            (has(object.metadata.name) &&
+             object.metadata.name == 'data-product-controller' &&
+             (!has(object.spec) || !has(object.spec.targetNamespace) ||
+              object.spec.targetNamespace == 'data-product-controller'))) &&
+           (object.kind != 'HelmRelease' ||
+            !has(object.spec) ||
+            !has(object.spec.valuesFrom)) &&
+           (object.kind != 'RoleBinding' ||
+            (has(object.subjects) &&
+             object.subjects.all(s,
+               has(s.namespace) && s.namespace == 'data-product-controller')))))
+    message: >-
+      data-product-controller chart children must remain in the reviewed
+      data-product-controller namespace
+    severity: error

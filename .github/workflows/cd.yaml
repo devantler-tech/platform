@@ -138,6 +138,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
+      - name: 🔐 Validate isolated chart child namespaces
+        # Manual recovery deploys may not bypass the rendered namespace proof
+        # simply because the staged component is absent from the deploy overlay.
+        timeout-minutes: 10
+        run: |
+          shellcheck scripts/tests/test-isolated-chart-namespace-rules.sh
+          bash scripts/tests/test-isolated-chart-namespace-rules.sh
+
       - name: 🔐 Validate Helm-rendered production authorization controls
         # Same reasoning as the identical step in ci.yaml: this reaches every
         # upstream chart registry, so an unreachable registry would otherwise
