@@ -49,15 +49,27 @@ readonly chmod_word_re='(^|[^[:alnum:]_.-])chmod([^[:alnum:]_-]|$)'
 # so a grep that dies partway returns a TRUNCATED count that still satisfies the `-le` comparison
 # below — the guard then reads green in exactly the case it understood the input least, which is
 # the fail-open this whole backstop exists to prevent.
+#
+# The EXTRACTION therefore runs alone, never piped into a counter. `grep -c` exits 1 on empty
+# input, which is byte-identical to the extractor's own no-match 1 — and `pipefail` does not
+# separate them either, because it reports the RIGHTMOST non-zero status, which is the counter's.
+# So a piped form reports 1 for an extractor that died with 2, and this function would then set
+# out=0 and vouch for a count it never made: the same fail-open one level down.
 count_chmod_words() { # <label>; text on stdin
-  local label="$1" out rc
-  out="$(grep -oE "${chmod_word_re}" | grep -c .)" || {
+  local label="$1" matches rc
+  matches="$(grep -oE "${chmod_word_re}")" || {
     rc=$?
     [ "${rc}" -eq 1 ] ||
       fail "${label}: counting chmod words failed (grep exit ${rc}); refusing to vouch for a truncated count"
-    out=0
+    matches=''
   }
-  printf '%s\n' "${out}"
+  # Every match contains the literal `chmod`, so no match line is ever empty and counting lines is
+  # exactly what the old `grep -c .` counted — without a second command whose 1 is ambiguous.
+  [ -n "${matches}" ] || {
+    printf '%s\n' 0
+    return 0
+  }
+  printf '%s\n' "${matches}" | awk 'END { print NR }'
 }
 
 # The same fail-closed accounting for the normaliser's own output: lines whose COMMAND WORD is
