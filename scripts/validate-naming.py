@@ -54,6 +54,7 @@ CR_DIR_PATHS = [
     "k8s/bases/infrastructure/cluster-security-exceptions",
     "k8s/bases/infrastructure/tracing-policies",
     "k8s/bases/infrastructure/external-secrets",
+    "k8s/bases/bootstrap/limit-ranges",
     "k8s/bases/bootstrap/priority-classes",
     "k8s/providers/docker/infrastructure/cluster-issuers",
     "k8s/providers/hetzner/infrastructure/cluster-issuers",
