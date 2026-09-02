@@ -234,184 +234,64 @@ func runsCommand(script, needle string) bool {
 // assertion about a GATE needs failure propagation, so only those opt in.
 func runsGate(script, needle string) bool {
 	return scanCommandRuns(script, needle, func(end int) bool {
-		return !errexitDisabledAt(script, end) && failurePropagates(script, end)
+		return failurePropagates(script, end) && isFinalCommand(script, end)
 	})
 }
 
-// errexitDisabledAt reports whether a `set` builtin earlier in this same script
-// has switched errexit OFF and not switched it back on before the command whose
-// word ends at upto.
+// isFinalCommand reports whether the command whose word ends at i is the LAST
+// command the block runs, so that the step's exit status IS that command's.
 //
-// The shell a step runs under is only half of the question shellKeepsErrexit
-// answers. `shell: bash` still invokes the block with `-e`, but the block can
-// turn that off for itself: under `set +e; <gate>; echo done` the gate runs, its
-// failure no longer aborts the block, and the step's status becomes `echo`'s
-// zero. Every operator around the gate is innocent — the terminator really is a
-// newline — so failurePropagates is satisfied while the gate is defused. That is
-// the same hole as `|| true`, reached through shell state instead of an operator.
+// This is what makes a gate enforcing WITHOUT reasoning about errexit at all.
+// A block's status is the status of its last command, so when the gate is last
+// no shell-option manipulation anywhere before it can hide a failure. Measured
+// under `bash -e`: `set +e; false` exits 1, and so do the `eval "set +e"` and
+// `builtin set +e` variants — every one of them, because `false` is last. Add
+// one `echo` after it and all of them exit 0.
 //
-// The LAST toggle before the gate wins, because a block may legitimately drop
-// errexit for one fallible probe and restore it before the gate.
+// The earlier model asked the opposite question — whether anything before the
+// gate had switched errexit off — and that is not decidable from the script
+// text. Four review rounds each found another spelling: a literal `set +e`, a
+// quoted or expanded operand, `builtin`/`command`/`eval` wrappers, and an alias
+// under `shopt -s expand_aliases`. Shell functions and indirect expansion were
+// still open. Requiring the gate to be last replaces that whole search with a
+// property the shell guarantees, and every gate step in this repository already
+// satisfies it.
 //
-// Deliberately blind to subshell and function scope: `( set +e; ... )` restores
-// errexit at the closing paren, and this reads it as still disabled. That errs
-// toward calling a sound gate UNCOVERED, which fails the build loudly and is
-// recoverable — the same strict direction failurePropagates takes with pipelines.
-func errexitDisabledAt(script string, upto int) bool {
-	if upto > len(script) {
-		upto = len(script)
-	}
-	prefix := script[:upto]
-
-	// Every toggle is recorded with its position, because more than one scan
-	// contributes and only the LAST one before the gate is in force.
-	type toggle struct {
-		at  int
-		off bool
-	}
-	var seen []toggle
-
-	scanCommandRuns(prefix, "set", func(end int) bool {
-		if off, toggles := setTogglesErrexit(prefix[end:]); toggles {
-			seen = append(seen, toggle{at: end, off: off})
-		}
-		// Never accept: scanning must reach every candidate before the gate so
-		// the last one decides. Returning true here would stop at the first.
-		return false
-	})
-	// A transparent wrapper runs its operand as a builtin in THIS shell, so
-	// resolve through it to whatever it actually invokes.
-	for _, wrapper := range []string{"builtin", "command"} {
-		scanCommandRuns(prefix, wrapper, func(end int) bool {
-			if off, toggles := wrappedTogglesErrexit(prefix[end:]); toggles {
-				seen = append(seen, toggle{at: end, off: off})
-			}
-			return false
-		})
-	}
-	// An opaque construct can also run `set` in this shell, but what it runs
-	// cannot be read from the script text.
-	for _, opaque := range []string{"eval", "source", ".", "exec", "trap"} {
-		scanCommandRuns(prefix, opaque, func(end int) bool {
-			seen = append(seen, toggle{at: end, off: true})
-			return false
-		})
-	}
-
-	last, disabled := -1, false
-	for _, t := range seen {
-		if t.at > last {
-			last, disabled = t.at, t.off
-		}
-	}
-	return disabled
-}
-
-// wrappedTogglesErrexit reads the operands of a `builtin` or `command` word,
-// which begin at args, and reports the effect on errexit of whatever that
-// wrapper actually invokes.
-//
-// Both wrappers execute a builtin in the CURRENT shell, so `builtin set +e` and
-// `command set +e` disable errexit exactly as a bare `set +e` does — verified
-// under `bash -e`, where each prints `continued` and exits 0 with the gate
-// failing. They are resolved through rather than refused outright, because
-// `command -v ksail` is an ordinary lookup that cannot touch shell options and
-// refusing it would call sound gate steps UNCOVERED for no reason.
-//
-// A `-v` or `-V` option makes the word a query rather than an invocation. Any
-// other non-literal or unrecognised operand is treated as disabling, on the
-// same unreadable-means-unsafe rule applied to `set` itself.
-func wrappedTogglesErrexit(args string) (off bool, toggles bool) {
-	i := 0
-	for i < len(args) {
-		for i < len(args) && (args[i] == ' ' || args[i] == '\t') {
-			i++
-		}
-		if i >= len(args) || endsCommand(args[i]) {
-			return false, false
-		}
-		start := i
-		for i < len(args) && !endsWord(args[i]) {
-			i++
-		}
-		word := args[start:i]
-		if strings.ContainsAny(word, "'\"$`\\") {
-			// The invoked word cannot be read without a shell.
-			return true, true
-		}
-		switch {
-		case word == "-v", word == "-V":
-			// A lookup, not an invocation: it cannot change shell options.
-			return false, false
-		case strings.HasPrefix(word, "-"):
-			// Another wrapper option (`-p`); keep looking for the command word.
-			continue
-		case word == "set":
-			return setTogglesErrexit(args[i:])
-		case word == "builtin", word == "command":
-			// Wrappers nest: `builtin command set +e` reaches `set` too.
-			return wrappedTogglesErrexit(args[i:])
+// Trailing blanks, comments and empty statements do not make a later command,
+// so they are skipped; anything else does.
+func isFinalCommand(script string, i int) bool {
+	// Walk to the end of this command's own words first.
+	for i < len(script) {
+		switch c := script[i]; {
+		case c == '\\':
+			i += 2
+		case c == '<' && i+1 < len(script) && script[i+1] == '<':
+			i = skipHeredoc(script, i)
+		case c == '\'', c == '"':
+			i = skipQuoted(script, i)
+		case endsCommand(c):
+			goto tail
 		default:
-			// Any other builtin cannot disable errexit for the block.
-			return false, false
+			i++
 		}
 	}
-	return false, false
-}
+	return true
 
-// setTogglesErrexit reads the argument words of a `set` builtin, whose operands
-// begin at args, and reports whether it changes errexit and to what.
-//
-// Both spellings count, and a cluster carries its flags together: `-e`, `+ex`
-// and `-euo pipefail` all name errexit, while `+o pipefail` and `+x` do not. An
-// `o` in a cluster consumes the following word as its option name, so
-// `+eo pipefail` is read as errexit off rather than as an option named `e`.
-func setTogglesErrexit(args string) (off bool, toggles bool) {
-	i := 0
-	for i < len(args) {
-		for i < len(args) && (args[i] == ' ' || args[i] == '\t') {
+tail:
+	// Only separators, blanks and comments may follow.
+	for i < len(script) {
+		switch c := script[i]; {
+		case c == ' ', c == '\t', c == '\n', c == ';', c == '\r':
 			i++
-		}
-		if i >= len(args) || endsCommand(args[i]) {
-			break
-		}
-		start := i
-		for i < len(args) && !endsWord(args[i]) {
-			i++
-		}
-		word := args[start:i]
-		if strings.ContainsAny(word, "'\"$`\\") {
-			// A `set` operand is not its literal text: quote removal and
-			// parameter expansion both happen before `set` sees the word, so
-			// `set "+e"` and `set +${option}` switch errexit off while carrying
-			// no literal `+e` for this scanner to find. Both were verified to
-			// exit 0 under `bash -e` with the gate failing. The word cannot be
-			// resolved here without a shell, so it is read as disabling —
-			// unreadable means unsafe, the same strict direction taken above.
-			off, toggles = true, true
-			continue
-		}
-		if len(word) < 2 || (word[0] != '-' && word[0] != '+') {
-			continue
-		}
-		flags := word[1:]
-		if strings.ContainsRune(flags, 'e') {
-			off, toggles = word[0] == '+', true
-		}
-		if strings.ContainsRune(flags, 'o') {
-			for i < len(args) && (args[i] == ' ' || args[i] == '\t') {
+		case c == '#' && startsShellComment(script, i):
+			for i < len(script) && script[i] != '\n' {
 				i++
 			}
-			ns := i
-			for i < len(args) && !endsWord(args[i]) {
-				i++
-			}
-			if args[ns:i] == "errexit" {
-				off, toggles = word[0] == '+', true
-			}
+		default:
+			return false
 		}
 	}
-	return off, toggles
+	return true
 }
 
 // failurePropagates reports whether the command whose word ends at i can still
@@ -1192,47 +1072,41 @@ func TestRunsCommandMatchesTheOtherGateInvocations(t *testing.T) {
 	}
 }
 
-// TestRunsGateRequiresFailurePropagation pins the distinction runsGate adds
-// over runsCommand: the gate must not only run, but be able to fail the step.
-// Each defused form below RUNS the gate — runsCommand accepts every one of
-// them — so this table is what separates "invoked" from "enforcing".
+// TestRunsGateRequiresFailurePropagation pins the two things runsGate adds over
+// runsCommand: the gate must not only run, but its failure must reach the step.
+//
+// Every script below RUNS the gate — runsCommand accepts all of them — so this
+// table is what separates "invoked" from "enforcing".
+//
+// The second condition is structural rather than a search for defusing tricks: a
+// block's exit status is the status of its LAST command, so a gate that is last
+// cannot be defused by anything before it. `set +e; false` exits 1; so do the
+// `eval "set +e"`, `builtin set +e` and aliased variants, all measured under
+// `bash -e`. Add one `echo` after and every one of them exits 0.
 func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 	const gate = isolatedChartNamespaceValidatorInvocation
 
 	enforcing := []string{
 		gate,
 		gate + " .",
+		gate + " ;",
+		gate + "\n",
+		gate + " # done",
 		"shellcheck x.sh\n" + gate,
-		gate + " ; echo done",
-		gate + " && echo ok",
-		gate + " && echo a && echo b",
-		gate + "\necho after",
-		// An AND-OR list that continues across a newline, with no `||` anywhere
-		// in it, still lets the gate fail the step. Without these the fix below
-		// could read every post-newline continuation as defused.
-		gate + " &&\n  echo ok",
-		gate + " && # note\n  echo ok",
-		// A comment after a COMPLETE command: the newline still terminates it.
-		gate + " # done\necho after",
-		// The step's shell keeps errexit and the block does not take it away,
-		// so the gate still aborts on failure. `set +x` and `+o pipefail` name
-		// other options entirely, and a `set +e` that is restored before the
-		// gate leaves errexit on — without these controls the clause below
-		// could read any `set` at all as a defused gate.
+		// The gate is last, so errexit is IRRELEVANT to whether its failure
+		// reaches the step — these all exit non-zero on a failing gate. An
+		// earlier model refused them, which was over-strict: it was answering
+		// "was errexit disturbed" when the structural answer makes the question
+		// moot. These are the controls for that, and they must keep passing.
+		"set +e\n" + gate,
+		"set +o errexit\n" + gate,
+		"builtin set +e\n" + gate,
+		"command set +e\n" + gate,
+		"eval 'set +e'\n" + gate,
+		"shopt -s expand_aliases\nalias d=\"set +e\"\nd\n" + gate,
 		"set -e\n" + gate,
-		"set -euo pipefail\n" + gate,
-		"set +x\n" + gate,
-		"set +o pipefail\n" + gate,
-		"set +e\ncurl -f probe || true\nset -e\n" + gate,
-		// The inversion must not swallow ordinary steps. `command -v` is a
-		// lookup rather than an invocation, `builtin echo` is a builtin that
-		// cannot touch shell options, and `./script.sh` is not the `.` builtin —
-		// without these controls the clause above would call sound gates
-		// UNCOVERED and this table would not notice.
 		"command -v ksail\n" + gate,
-		"builtin echo hello\n" + gate,
 		"./scripts/setup.sh\n" + gate,
-		"command ksail version\n" + gate,
 	}
 	for _, script := range enforcing {
 		if !runsGate(script, gate) {
@@ -1241,6 +1115,7 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 	}
 
 	defused := []string{
+		// Operators that discard the gate's status outright.
 		gate + " || true",
 		gate + " || :",
 		gate + " || echo ignored",
@@ -1248,38 +1123,33 @@ func TestRunsGateRequiresFailurePropagation(t *testing.T) {
 		gate + " &",
 		"( " + gate + " ) || true",
 		gate + " && echo ok || true",
-		// `&&` at end of line continues the AND-OR list, so the `||` on the
-		// next line still discards the gate's verdict. Treating that newline as
-		// a terminator read a defused gate as enforcing.
 		gate + " &&\n  echo ok || true",
-		// Bash strips the comment BEFORE evaluating the list, so this is exactly
-		// the line above with a comment in the middle.
 		gate + " && # report success\n  echo ok || true",
-		// Errexit switched off inside the block. Every operator around the gate
-		// is innocent here — the terminator really is a newline — so this is
-		// defused by shell STATE rather than by punctuation, and the step's
-		// status becomes that of the last command instead of the gate's.
+		// A later command REPLACES the step's status with its own, so the gate
+		// is only enforcing while errexit holds — and whether it holds is not
+		// decidable from the script text. Four review rounds each found another
+		// way to switch it off (a literal `set +e`, a quoted or expanded
+		// operand, `builtin`/`command`/`eval`, an alias under
+		// `shopt -s expand_aliases`), with shell functions and indirect
+		// expansion still open. All of these are therefore refused, which makes
+		// a genuine gate read UNCOVERED and fail loudly — recoverable, unlike
+		// passing a defused one in silence.
+		gate + " ; echo done",
+		gate + " && echo ok",
+		gate + " && echo a && echo b",
+		gate + "\necho after",
+		gate + " &&\n  echo ok",
+		gate + " && # note\n  echo ok",
+		gate + " # done\necho after",
+		// The measured bypasses, each verified under `bash -e` to print
+		// `continued` and exit 0 with the gate failing.
 		"set +e\n" + gate + "\necho continued",
-		"set +e\n" + gate,
-		"set +o errexit\n" + gate,
-		"set +ex\n" + gate,
-		"set +eo pipefail\n" + gate,
-		// The LAST toggle before the gate is the one in force.
-		"set -e\nset +e\n" + gate,
-		// A `set` operand is not its literal text. Bash performs quote removal
-		// and parameter expansion BEFORE `set` sees the word, so both of these
-		// disable errexit while carrying no literal `+e` for a scanner to find.
-		// Verified with `bash -e`: each prints `continued` and exits 0.
 		"set \"+e\"\n" + gate + "\necho continued",
 		"option=e\nset +${option}\n" + gate + "\necho continued",
-		// `builtin` and `command` run `set` in THIS shell, and `eval` can run
-		// anything at all. Verified under `bash -e`: each prints `continued` and
-		// exits 0 with the gate failing.
 		"builtin set +e\n" + gate + "\necho continued",
 		"command set +e\n" + gate + "\necho continued",
 		"eval 'set +e'\n" + gate + "\necho continued",
-		"builtin command set +e\n" + gate + "\necho continued",
-		". ./lib.sh\n" + gate + "\necho continued",
+		"shopt -s expand_aliases\nalias d=\"set +e\"\nd\n" + gate + "\necho continued",
 	}
 	for _, script := range defused {
 		if !runsCommand(script, gate) {
