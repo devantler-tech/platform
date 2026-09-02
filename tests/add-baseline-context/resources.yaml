@@ -134,3 +134,37 @@ spec:
   containers:
     - name: app
       image: velero/velero:v1.0.0
+---
+# The shape the observability namespace actually presents, measured against live
+# prod on 2026-09-02 before opting it in: 31 running pods, ALL 31 with no
+# pod-level securityContext.fsGroupChangePolicy, and all 44 containers and
+# initContainers carrying no seLinuxOptions at all — no pod-level SELinux object
+# anywhere in the namespace.
+#
+# That is the plain shape, so the two straightforward rules do all the work and
+# add-baseline-context-optin-pod-selinux-level cannot fire (it requires a
+# pre-existing pod-level object). Pinned as its own case rather than leaning on
+# velero/plain because the issue's guardrail is explicit that a rollout proves
+# each namespace rather than assuming the previous one generalises — and because
+# this fixture records WHICH shape was onboarded, so a future namespace
+# presenting a different one is not silently assumed covered.
+#
+# hostPID and the hostPath volume are coroot's node-agent (eBPF collection); no
+# rule reads them, they are here so the fixture is recognisably the real workload.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: coroot-node-agent
+  namespace: observability
+spec:
+  hostPID: true
+  volumes:
+    - name: host-sys
+      hostPath:
+        path: /sys
+  initContainers:
+    - name: init
+      image: ghcr.io/coroot/coroot-node-agent:v1.0.0
+  containers:
+    - name: node-agent
+      image: ghcr.io/coroot/coroot-node-agent:v1.0.0

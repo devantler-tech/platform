@@ -23,6 +23,7 @@ results:
       - velero/partial
       - velero/podlevel
       - velero/podlevel-partial
+      - observability/coroot-node-agent
     kind: Pod
     result: pass
     patchedResources: patched-resources.yaml
@@ -32,6 +33,7 @@ results:
       - velero/plain
       - velero/no-init
       - velero/partial
+      - observability/coroot-node-agent
     kind: Pod
     result: pass
     patchedResources: patched-resources.yaml
@@ -77,5 +79,8 @@ results:
       - velero/partial
       - velero/preset
       - velero/podlevel
+      # The observability fixture sets no pod-level SELinux object, so this rule
+      # must not fire there either — that shape belongs to the container rule.
+      - observability/coroot-node-agent
     kind: Pod
     result: skip

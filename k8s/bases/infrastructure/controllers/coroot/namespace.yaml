@@ -8,3 +8,26 @@ metadata:
     # privileged PSS, exactly like the prometheus node-exporter it replaces.
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/enforce-version: latest
+    # observability is excluded from add-pod-security-context /
+    # add-container-security-context because its workloads need elevated privilege
+    # by design. fsGroupChangePolicy and seLinuxOptions are not privilege fields —
+    # the first governs volume ownership relabelling, the second is a documented
+    # no-op on this AppArmor cluster kept for CIS-5.7.3 — so the blanket exclusion
+    # suppressed two C-0211 controls it never needed to. This label opts the
+    # namespace into add-baseline-context-optin-*, which supplies only those two
+    # through conditional anchors and touches no user, group or privilege field.
+    #
+    # Third namespace opted in, after velero and kubescape. Measured against live
+    # prod 2026-09-02: 31 running pods, ALL 31 missing pod-level
+    # fsGroupChangePolicy, and all 44 containers/initContainers carrying no
+    # seLinuxOptions at all. That last shape matters — with no pod-level SELinux
+    # object anywhere, only the two straightforward rules apply
+    # (add-baseline-context-optin-namespaces supplies fsGroupChangePolicy,
+    # add-baseline-context-optin-containers supplies level: s0 per container).
+    # add-baseline-context-optin-pod-selinux-level requires a pre-existing
+    # pod-level object, so it cannot fire here; none of the wholesale-replace
+    # hazards that rule exists for are reachable in this namespace.
+    #
+    # The rules are CREATE-only, so running pods are unaffected until they are
+    # next recreated.
+    pod-security.devantler.tech/baseline-context: enabled

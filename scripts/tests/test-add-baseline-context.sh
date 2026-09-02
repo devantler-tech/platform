@@ -130,6 +130,25 @@ check podlevel-partial-mutated.yaml '.spec.initContainers[0].securityContext.seL
   null "initContainer-level injection replaced the partial pod-level SELinux object"
 check podlevel-partial-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' \
   OnRootMismatch "pod-level rule did not fire on the podlevel-partial fixture"
+
+# The shape the observability namespace actually presents, measured against live
+# prod 2026-09-02 before it was opted in: no pod-level securityContext SELinux
+# object anywhere, and no container carrying seLinuxOptions of its own. That is
+# the plain shape, so both straightforward rules must fire and the pod-scope fill
+# must NOT — it requires a pre-existing pod-level object, and creating one here
+# would move ownership between rules and change what the `plain` case proves.
+#
+# Asserted on its own fixture rather than inherited from velero/plain because the
+# rollout guardrail is explicit that each namespace is proven, not assumed.
+check coroot-node-agent-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "observability pod did not receive fsGroupChangePolicy"
+check coroot-node-agent-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "observability container did not receive seLinuxOptions"
+check coroot-node-agent-mutated.yaml '.spec.initContainers[0].securityContext.seLinuxOptions.level' \
+  s0 "observability initContainer did not receive seLinuxOptions"
+check coroot-node-agent-mutated.yaml '.spec.securityContext.seLinuxOptions' \
+  null "pod-scope SELinux fill created an object where the author set none"
+
 # ROLLOUT INVENTORY. The rules above ship default-off, so what they actually do
 # in the cluster is decided entirely by which namespaces carry the opt-in label —
 # a fact no mutation fixture can see. Without this gate, widening the rollout from
@@ -139,7 +158,7 @@ check podlevel-partial-mutated.yaml '.spec.securityContext.fsGroupChangePolicy' 
 #
 # Each namespace is opted in only after its live workloads are measured to still
 # start; see the rationale recorded on the namespace manifest itself.
-expected_optin="kubescape,velero"
+expected_optin="kubescape,observability,velero"
 
 # grep only prefilters candidate files; yq decides, so a mention in a comment or
 # in the policy that DEFINES the label cannot be counted as an opted-in namespace.
