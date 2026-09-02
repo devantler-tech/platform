@@ -294,6 +294,11 @@ jobs:
               # Both halves, for the same reason as the guard above.
               - 'scripts/verify-published-evidence.sh'
               - 'scripts/tests/test-verify-published-evidence.sh'
+              # Both halves, for the same reason. This gate runs on the deploy path
+              # itself, so a PR that edits it without running its test would ship a
+              # change to the last check standing between a bad matcher and prod.
+              - 'scripts/verify-matcher-accepts-digest.sh'
+              - 'scripts/tests/test-verify-matcher-accepts-digest.sh'
               # The pin guard itself runs unconditionally in the validate job, so
               # only its TEST is selected here. Both halves are listed anyway: a PR
               # that edits the guard must also run the test that pins its ablations,
@@ -979,6 +984,16 @@ jobs:
         # verdict in both rollout states and the wiring that reaches it — a gate
         # that runs after latest already moved has verified nothing that matters.
         run: bash scripts/tests/test-verify-published-evidence.sh
+
+      - name: 🔏 Validate the matcher-accepts-staged-digest gate
+        if: needs.changes.outputs.k8s == 'true'
+        # The matcher-efficacy job asks the same question of the MUTABLE tag, which
+        # at promotion time still names the PREVIOUSLY published artifact — so it
+        # cannot see a change to the publishing identity itself (#3289). This pins
+        # the gate that asks it of the staged digest instead, including its negative
+        # control and the liveness sandwich that stops an outage being counted as a
+        # refusal, plus the wiring that puts it before the promotion.
+        run: bash scripts/tests/test-verify-matcher-accepts-digest.sh
 
       - name: 🔐 Validate the shared-publish-workflow pin guard
         if: needs.changes.outputs.k8s == 'true'

@@ -157,6 +157,33 @@ runs:
       # from the fact that the steps ran.
       run: ./scripts/verify-published-evidence.sh "${STAGING_DIGEST}"
 
+    - name: ⚙️ Setup Go
+      # The matcher is read out of the manifests by ci.yaml's extractor rather
+      # than restated here, and that extractor is a Go program — but this
+      # publication path had no toolchain. Setting one up here keeps the gate
+      # self-contained with the promotion it guards, so both callers (the
+      # normal deploy and dr-rebuild.yaml's recovery deploy) inherit it without
+      # either workflow having to remember to add it.
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+        cache: false
+
+    - name: 🔏 Verify the deployed matcher accepts the staged digest
+      id: verify_matcher_accepts_staged
+      shell: bash
+      env:
+        STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}
+        SUBJECT_NAME: ghcr.io/devantler-tech/platform/manifests
+      # The step above proves the registry HOLDS the evidence. This one proves
+      # the evidence is ACCEPTABLE to the matcher production actually enforces —
+      # a different question, and the one #3005 turned on. ci.yaml asks it of
+      # the mutable `:latest` tag, which at this moment still names the
+      # PREVIOUSLY published artifact, so it cannot see a change to the
+      # publishing identity itself. Asking here, against the staged digest,
+      # catches that before latest moves.
+      run: ./scripts/verify-matcher-accepts-digest.sh "${STAGING_DIGEST}"
+
     - name: 🚀 Promote the evidenced digest to latest
       id: promote_latest
       shell: bash
