@@ -8,3 +8,37 @@ metadata:
     # and CSI driver components.
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/enforce-version: latest
+    # longhorn-system is excluded from add-pod-security-context /
+    # add-container-security-context because its workloads need elevated privilege
+    # by design. fsGroupChangePolicy and seLinuxOptions are not privilege fields —
+    # the first governs volume ownership relabelling, the second is a documented
+    # no-op on this AppArmor cluster kept for CIS-5.7.3 — so the blanket exclusion
+    # suppressed two C-0211 controls it never needed to. This label opts the
+    # namespace into add-baseline-context-optin-*, which supplies only those two
+    # through conditional anchors and touches no user, group or privilege field.
+    #
+    # Fourth namespace opted in, after velero, kubescape and observability.
+    # Measured against live prod 2026-09-02: 34 running pods, ALL 34 missing
+    # pod-level fsGroupChangePolicy, and all 47 containers/initContainers carrying
+    # no seLinuxOptions at all. As in observability, no pod carries a pod-level
+    # SELinux object, so add-baseline-context-optin-pod-selinux-level cannot fire
+    # here and none of the wholesale-replace hazards that rule exists for are
+    # reachable; only the two straightforward rules apply.
+    #
+    # fsGroupChangePolicy is inert in this namespace today, which is the point
+    # rather than a caveat: 0 of the 34 pods set fsGroup, and the kubelet runs its
+    # volume ownership pass only when one is set, so the field changes a declared
+    # posture without changing how anything runs. No pod mounts a
+    # PersistentVolumeClaim; the 137 volumes are hostPath (91), projected (34),
+    # secret (8) and emptyDir (4).
+    #
+    # Worth re-checking if that ever changes: hostPath dominates here and persists
+    # on the node, so a future workload in this namespace that DID set fsGroup
+    # would relabel only on a root mismatch instead of always. For host paths that
+    # is the safer direction — it avoids recursively chowning a host directory —
+    # but it is a real behavioural difference from the default, not a no-op, and
+    # this is the cluster storage system.
+    #
+    # The rules are CREATE-only, so running pods are unaffected until they are
+    # next recreated.
+    pod-security.devantler.tech/baseline-context: enabled
