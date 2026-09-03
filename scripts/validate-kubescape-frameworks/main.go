@@ -785,6 +785,24 @@ func continuesLine(line string) bool {
 	return n%2 == 1
 }
 
+// prefixedScan reports whether `ksail workload scan` appears as three consecutive
+// tokens somewhere OTHER than command position — the shape a leading environment
+// assignment or wrapper command produces (`env ksail ...`, `env FOO=1 ksail ...`,
+// `sudo ksail ...`).
+//
+// Keyed on the three scan tokens rather than on a list of wrapper words. A blacklist
+// of prefixes would have to enumerate every spelling, and the one it missed would be
+// the one that mattered; keying on the scan itself has no such gap. A segment that
+// does NOT carry those tokens is ordinary shell and is left alone.
+func prefixedScan(fields []string) bool {
+	for i := 1; i+2 < len(fields); i++ {
+		if fields[i] == "ksail" && fields[i+1] == "workload" && fields[i+2] == "scan" {
+			return true
+		}
+	}
+	return false
+}
+
 func scanInvocations(scalar string) ([]string, error) {
 	var out []string
 	var compound string
@@ -921,6 +939,22 @@ func scanInvocations(scalar string) ([]string, error) {
 			}
 			fields := strings.Fields(segment.text)
 			if len(fields) < 3 || fields[0] != "ksail" || fields[1] != "workload" || fields[2] != "scan" {
+				// A PREFIXED INVOCATION STILL RUNS. The shape test above requires the scan to be
+				// in command position, so `env ksail workload scan ...` — and any wrapper such as
+				// `sudo`, `nice` or `time` — falls through it. Alone that fails closed, because the
+				// scalar then has no countable invocation at all. PAIRED with a counted invocation
+				// it does not: the guard validates the counted one and ignores the one that also
+				// executes, so the framework set that runs need not be the set that was checked.
+				//
+				// Refused rather than read, like every other unreadable form here. A prefix can
+				// change the environment the scan runs in, so what it executes is not decidable
+				// from the text. Keyed on the three scan tokens, never on the prefix word, so an
+				// unrelated `env`/`time` command is still ordinary shell. See #3338.
+				if prefixedScan(fields) && strings.Contains(segment.text, "--framework") {
+					return nil, fmt.Errorf(
+						"a `ksail workload scan --framework` invocation is preceded by another command or an environment assignment, so it executes without being validated: %q. Paired with a countable invocation this lets the validated framework set differ from the one that actually runs. Invoke the scan with no prefix. See #3338",
+						segment.text)
+				}
 				continue
 			}
 			if !strings.Contains(segment.text, "--framework") {

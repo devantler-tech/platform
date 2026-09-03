@@ -1406,3 +1406,56 @@ func TestScanFollowedByAndAndIsStillRead(t *testing.T) {
 		t.Fatalf("framework set = %q, want both frameworks", set)
 	}
 }
+
+// --- The COMMAND-PREFIX class ------------------------------------------------
+//
+// The shape test requires the segment's FIRST three tokens to be
+// `ksail workload scan`, so a prefixed invocation — `env ksail ...`, and by the
+// same token filter any wrapper such as `sudo`, `nice` or `time` — is not counted.
+//
+// ALONE that fails closed: the scalar has no countable invocation and the guard
+// refuses. The defect is in COMBINATION. When a counted invocation and a prefixed
+// one coexist, the guard validates the counted one and silently ignores the one
+// that ALSO runs, so the executed framework set need not be the validated set.
+// That is what makes the decoy bypass in #3312 work.
+//
+// Refused rather than read, matching every other unreadable form in this guard:
+// the prefix may set the environment the scan runs in, so its meaning is not
+// decidable from the text alone. See #3338.
+func TestRejectsPrefixedScanInvocation(t *testing.T) {
+	cases := map[string]string{
+		"counted invocation paired with an env-prefixed executing scan": goodScan + " -o kubescape.sarif\n" +
+			"env ksail workload scan --framework nsa -o kubescape.sarif\n",
+		"counted invocation paired with an env-assignment-prefixed executing scan": goodScan + " -o kubescape.sarif\n" +
+			"env FOO=1 ksail workload scan --framework nsa -o kubescape.sarif\n",
+		"env-prefixed scan alone":            "env ksail workload scan --framework nsa -o kubescape.sarif\n",
+		"env-assignment-prefixed scan alone": "env FOO=1 ksail workload scan --framework nsa -o kubescape.sarif\n",
+	}
+	for name, body := range cases {
+		if _, err := setOf(t, body); err == nil {
+			t.Fatalf("%s: expected FAIL CLOSED — a prefixed scan invocation executes but is not "+
+				"validated, so the executed framework set need not be the validated one", name)
+		}
+	}
+}
+
+// The control for the rejection above, and the reason it keys on the three scan
+// tokens rather than on the prefix word. An `env` step that is not a scan is
+// ordinary shell and must still be ignored, or "reject any line containing `env`"
+// would pass the test above while breaking legitimate workflows.
+func TestUnrelatedPrefixedCommandIsStillIgnored(t *testing.T) {
+	cases := map[string]string{
+		"env-assignment step beside a scan": goodScan + "\nenv FOO=1 echo hello\n",
+		"env step beside a scan":            goodScan + "\nenv printenv HOME\n",
+		"wrapper on an unrelated command":   goodScan + "\ntime ls -la\n",
+	}
+	for name, body := range cases {
+		got, err := setOf(t, body)
+		if err != nil {
+			t.Fatalf("%s: expected ACCEPT — an unrelated prefixed command is not a scan, got: %v", name, err)
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Fatalf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}
