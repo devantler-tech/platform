@@ -1576,7 +1576,51 @@ const (
 // The previous approved aggregate digest was:
 //
 //	005c333f114ad4a2a5706ef9b0d4989623203eadc67657ffd15d2b4d9bb369dc
-const expectedRenderedSurfaceSHA = "7a033c38847bf0ea7b052e783cbf1e68f317d8524c701243acb2d8b3c9972116"
+//
+// Re-approved for #2754 (#3560): the stranded-volume-attach alert — a read-only
+// CronJob in observability that reads FailedAttachVolume/FailedMount events and
+// posts to the shared Slack webhook when a pod has been failing to attach its
+// volume for longer than an attach takes (the 2026-07-01 nine-hour delivery
+// wedge, #2363).
+//
+// Measured against main 806e385f before approving THIS value, rendering all
+// five roots on BOTH sides with one toolchain (kubectl v1.36.1 / kustomize
+// v5.8.1 locally — the pinned renderer refuses to fingerprint on that version,
+// which is why the digest below is the value the required job reported at the
+// PR head, run 33807229837, and only the membership and content comparison is
+// local): the rendered surface moves from 547 -> 552 documents, purely additive.
+// Membership was proven by set difference in BOTH directions over
+// apiVersion|kind|namespace|name (not by count, which cannot see a rename):
+// zero removed, zero renamed, and the five additions are exactly the alert —
+//
+//	v1                          ServiceAccount      observability/stranded-volume-attach-alert
+//	v1                          Secret              observability/stranded-volume-attach-alert-webhook
+//	rbac.authorization.k8s.io/v1 ClusterRole        stranded-volume-attach-alert
+//	rbac.authorization.k8s.io/v1 ClusterRoleBinding stranded-volume-attach-alert
+//	batch/v1                    CronJob             observability/stranded-volume-attach-alert
+//
+// Grant-bearing objects moved additively: 78 -> 81 Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount documents, being the three
+// above — the same shape as the cnpg-degraded-alert and OpenCost usage-scraper
+// approvals: one dedicated ServiceAccount, one narrow ClusterRole, one binding
+// between exactly those two identities. The ClusterRole is get/list only, on
+// events, pods, persistentvolumes and persistentvolumeclaims in the core group;
+// it is cluster-scoped because a strand can happen in any namespace that mounts
+// a volume, and it holds no write verb.
+//
+// No existing entry's content moved: a per-document comparison of every common
+// identity across the five roots is byte-identical on both sides. The same run
+// reported no per-identity "unapproved rendered ... fingerprint", no "missing
+// rendered authorization resource" and no "duplicate rendered authorization
+// resource", so every identity-keyed authorization resource is unchanged. The
+// gitops-managed-cronjobs ClusterSecurityException gained the new CronJob in its
+// enumeration; the reported aggregate is identical with and without that edit,
+// so that resource is outside the selected surface.
+//
+// The previous approved aggregate digest was:
+//
+//	7a033c38847bf0ea7b052e783cbf1e68f317d8524c701243acb2d8b3c9972116
+const expectedRenderedSurfaceSHA = "686bf5ade0d7869f3a20d50a05a7ac083744f0e88ede4fc02298ab9f67dfdf19"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
