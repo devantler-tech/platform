@@ -9,7 +9,9 @@
 # revision the consumer pins on its default branch TODAY: the first keeps the deployed
 # artifact verifying, the second keeps the next artifact verifying. Hand-writing that set is
 # what #3308 rules out, so this script derives it from two observed inputs and writes one row
-# per consumer. It changes no matcher â the guard (#3551) and the switch come later.
+# per consumer. It changes no matcher: guard-publish-workflow-approved-revisions.sh (#3551)
+# holds each per-consumer matcher to the pair written here, and the switch that refuses the
+# pattern form (APPROVED_REVISIONS_ENFORCE) flips with the narrowing itself.
 #
 # THE TWO INPUTS
 #   applied  â the artifact revision Flux has verified and applied, read from the consumer's

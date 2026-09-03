@@ -111,6 +111,20 @@ jobs:
           shellcheck -x scripts/tests/test-publish-workflow-approved-revisions.sh
           bash scripts/tests/test-publish-workflow-approved-revisions.sh
 
+      # The pin guard above proves each matcher pins a FIXED revision; this one proves each
+      # per-consumer matcher pins the revision PAIR the committed approved set names for that
+      # consumer, and refuses any revision outside it (#3551, AC4 of #3308). Unconditional for
+      # the same reason as the pin guard: the subjects live in four different trees. The switch
+      # (APPROVED_REVISIONS_ENFORCE) stays off here until the narrowing itself lands — with it
+      # off the pattern form is still accepted, so this checks the committed set against the
+      # live matchers without forcing the change.
+      - name: 🔐 Validate the approved-revisions guard
+        run: |
+          shellcheck -x scripts/guard-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
+          bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
+          ./scripts/guard-publish-workflow-approved-revisions.sh
+
       # Dropping a framework from the Kubescape gate REMOVES findings, so the
       # compliance score RISES and every check stays green — a coverage
       # regression that looks like an improvement. That is what un-gated 59
@@ -316,6 +330,12 @@ jobs:
               # or a widened allow-list would ship with every check still green.
               - 'scripts/guard-shared-publish-workflow-pin.sh'
               - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
+              # Both halves, plus the generated set the guard reads and the manifests it judges
+              # are already under k8s/**: a set regenerated without its guard's test would land
+              # with every check green.
+              - 'scripts/guard-publish-workflow-approved-revisions.sh'
+              - 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh'
+              - 'scripts/publish-workflow-approved-revisions.tsv'
               # Both halves, for the same reason as the guard above.
               - 'scripts/validate-kubescape-frameworks/main.go'
               - 'scripts/validate-kubescape-frameworks/main_test.go'
