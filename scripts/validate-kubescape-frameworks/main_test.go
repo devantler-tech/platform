@@ -1470,3 +1470,40 @@ func TestUnrelatedPrefixedCommandIsStillIgnored(t *testing.T) {
 		}
 	}
 }
+
+// UNQUOTED TEXT THAT MERELY CONTAINS THE SCAN TOKENS IS REFUSED, AND THAT IS THE
+// DECISION RATHER THAN AN OVERSIGHT. `env ksail workload scan` (executes) and
+// `echo ksail workload scan` (prints) are TOKEN-IDENTICAL in shape; only knowing
+// which commands execute their arguments separates them, so no lexical test can
+// tell them apart. Accepting the echo form therefore means enumerating the
+// commands that DO execute — `env`, `sudo`, `nice`, `time`, `xargs`, `command`,
+// `exec`, `nohup`, `timeout`, `setsid`, `stdbuf`, `chroot`, `doas`, … — which is
+// exactly the prefix blacklist this guard was built to avoid, and the spelling it
+// missed would be the bypass. Refused rather than read, like every other
+// undecidable form here.
+//
+// The author's opt-out is one character per side: QUOTE the text, which makes it
+// unambiguously an argument rather than an invocation. That form is accepted and
+// pinned as the control in TestUnrelatedPrefixedCommandIsStillIgnored, so the
+// error message MUST name it — advising "invoke the scan with no prefix" to
+// someone who was never invoking a scan sends them to fix the wrong thing.
+func TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy(t *testing.T) {
+	body := goodScan + "\necho ksail workload scan --framework nsa\n"
+
+	_, err := setOf(t, body)
+	if err == nil {
+		t.Fatalf("expected FAIL CLOSED — an unquoted token sequence is indistinguishable " +
+			"from a wrapper-prefixed invocation, so it cannot be accepted without " +
+			"enumerating the commands that execute their arguments")
+	}
+	// ASSERT A SPACED PHRASE, NEVER A BARE WORD. `setOf` writes its fixture under
+	// `t.TempDir()`, whose path embeds the TEST NAME, and the error is prefixed with
+	// that path — so a bare `Contains(err, "quote")` is satisfied by the "Unquoted"
+	// in this test's own name and passes no matter what the message says. Measured:
+	// it passed against the un-fixed message. A phrase containing a space cannot
+	// occur in that path.
+	if !strings.Contains(err.Error(), "quote the text") {
+		t.Fatalf("the error must name the quoting opt-out, or text that never invoked a "+
+			"scan is sent to fix a prefix it does not have; got: %v", err)
+	}
+}

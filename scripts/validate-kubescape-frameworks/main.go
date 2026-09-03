@@ -974,9 +974,17 @@ func scanInvocations(scalar string) ([]string, error) {
 				// change the environment the scan runs in, so what it executes is not decidable
 				// from the text. Keyed on the three scan tokens, never on the prefix word, so an
 				// unrelated `env`/`time` command is still ordinary shell. See #3338.
+				//
+				// THIS ALSO REFUSES UNQUOTED TEXT THAT ONLY CONTAINS THE TOKENS, such as
+				// `echo ksail workload scan --framework nsa`, and that is the decision rather
+				// than an oversight: it is token-identical to `env ksail workload scan ...`, so
+				// separating them means enumerating the commands that execute their arguments —
+				// the prefix blacklist this guard exists to avoid, whose missed spelling would
+				// be the bypass. The opt-out is to QUOTE the text, which the message names and
+				// TestUnrelatedPrefixedCommandIsStillIgnored pins as the accepted control.
 				if prefixedScan(fields) && strings.Contains(segment.text, "--framework") {
 					return nil, fmt.Errorf(
-						"a `ksail workload scan --framework` invocation is preceded by another command or an environment assignment, so it executes without being validated: %q. Paired with a countable invocation this lets the validated framework set differ from the one that actually runs. Invoke the scan with no prefix. See #3338",
+						"a `ksail workload scan --framework` invocation is preceded by another command or an environment assignment, so it executes without being validated: %q. Paired with a countable invocation this lets the validated framework set differ from the one that actually runs. Invoke the scan with no prefix, or quote the text if it is not an invocation. See #3338",
 						segment.text)
 				}
 				continue
