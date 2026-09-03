@@ -84,7 +84,9 @@ esac
 # cannot run where the matchers are edited is one that gets skipped there.
 # lookup <records> <key> → the record for <key> (fields after the key), or nothing.
 lookup() {
-  printf '%s\n' "$1" | awk -F'\t' -v k="$2" '$1 == k { sub(/^[^\t]*\t/, ""); print; exit }'
+  # `$1 "" == k ""` forces a STRING compare: awk compares two numeric-looking strings as
+  # numbers, so `100` would match a key of `1e2`.
+  printf '%s\n' "$1" | awk -F'\t' -v k="$2" '$1 "" == k "" { sub(/^[^\t]*\t/, ""); print; exit }'
 }
 
 # consumer → "workflow<TAB>signer<TAB>pin"
@@ -128,7 +130,11 @@ for generic in "${GENERIC_SUBJECT_FILES[@]}"; do
   [ -f "$SCAN_ROOT/$generic" ] || refuse "generic subject file $generic is missing from the scan root; the scope boundary has moved — redraw GENERIC_SUBJECT_FILES deliberately"
 done
 
-subject_files="$(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' "$SCAN_ROOT" 2>/dev/null | sort -u || true)"
+# `.claude/` holds nested per-session worktrees on the maintainer's checkout — whole copies of
+# this tree — so descending into it reports every generic subject a second time from a path the
+# exclusion list does not name, and the guard refuses a correct repository. `.git` for the same
+# reason a packed ref or a stray object file must never be read as a manifest.
+subject_files="$(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' --exclude-dir=.git --exclude-dir=.claude "$SCAN_ROOT" 2>/dev/null | sort -u || true)"
 [ -n "$subject_files" ] || refuse "no shared-publish-workflow subject found under $SCAN_ROOT; the scan, not the tree, is the likely cause"
 
 # consumer → "file<TAB>workflow<TAB>ref"
@@ -145,23 +151,36 @@ while IFS= read -r file; do
   done
   [ "$is_generic" -eq 0 ] || continue
 
-  # One OCIRepository document per file, with exactly one subject naming a shared workflow —
-  # the same attribution the report makes, read the way Flux reads it. Fields: url, the number
-  # of shared-workflow subjects on the document, and the first of them.
-  # shellcheck disable=SC2016  # `$shared` is a yq variable, not a shell one
+  # One OCIRepository document per file, with exactly one identity entry, and that entry names a
+  # shared workflow — the same attribution the report makes, read the way Flux reads it. Fields:
+  # url, the total number of identity entries, the number naming a shared workflow, and the
+  # first of those.
+  #
+  # The TOTAL matters as much as the shared count: `matchOIDCIdentity` is an OR-list, so a second
+  # entry beside a correct pair (`subject: '.*'`, or a first-party branch identity) admits any
+  # signer while the pair reads as narrowed. Counting only the shared-workflow entries would
+  # report `form=set` over exactly that widening.
+  # shellcheck disable=SC2016  # `$ids`/`$shared` are yq variables, not shell ones
   docs="$(yq eval -r '
     select(.kind == "OCIRepository") |
-    ((.spec.verify.matchOIDCIdentity // []) | map(.subject // "") | map(select(test("devantler-tech/actions/.{1,2}github/workflows/publish-(app|manifests)")))) as $shared |
-    [(.spec.url // "-"), ($shared | length), ($shared[0] // "-")] | @tsv
+    (.spec.verify.matchOIDCIdentity // []) as $ids |
+    ($ids | map(.subject // "") | map(select(test("devantler-tech/actions/.{1,2}github/workflows/publish-(app|manifests)")))) as $shared |
+    [(.spec.url // "-"), ($ids | length), ($shared | length), ($shared[0] // "-")] | @tsv
   ' "$file" 2>/dev/null)" || refuse "$rel could not be read as YAML"
   [ -n "$docs" ] || refuse "$rel carries a shared-publish-workflow subject but no OCIRepository document owns it; attribute it to a consumer or add it to GENERIC_SUBJECT_FILES"
   [ "$(printf '%s\n' "$docs" | grep -c .)" -eq 1 ] || refuse "$rel carries more than one OCIRepository document; the attribution is ambiguous"
-  IFS=$'\t' read -r url subject_count subject <<<"$docs"
+  IFS=$'\t' read -r url identity_count subject_count subject <<<"$docs"
   case "$url" in
     oci://ghcr.io/devantler-tech/*) ;;
     *) refuse "$rel: OCIRepository url '$url' is not a devantler-tech GHCR artifact" ;;
   esac
   [ "$subject_count" = "1" ] || refuse "$rel: expected exactly one shared-publish-workflow subject on the OCIRepository, found $subject_count"
+  [ "$identity_count" = "1" ] || refuse "$rel: the OCIRepository carries $identity_count matchOIDCIdentity entries; a second entry beside the pair admits any signer it names, so exactly one is allowed"
+  # The line scan that discovered this file and the document read above must agree: a shared-
+  # workflow subject in a SECOND document (a policy appended after `---`) is invisible to the
+  # OCIRepository selection, and would otherwise pass unjudged.
+  line_count="$(grep -cE "$SUBJECT_PATTERN" "$file" || true)"
+  [ "$line_count" = "1" ] || refuse "$rel: $line_count shared-publish-workflow subject lines found but exactly one OCIRepository entry was read; a subject outside the OCIRepository document is unjudged"
   repo="${url#oci://ghcr.io/devantler-tech/}"; repo="${repo%%/*}"
   repo="$(oci_name_to_repo "$repo")"
   plausible_repo "$repo" || refuse "$rel: consumer name '$repo' derived from $url is implausible"

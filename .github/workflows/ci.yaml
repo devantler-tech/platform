@@ -330,12 +330,11 @@ jobs:
               # or a widened allow-list would ship with every check still green.
               - 'scripts/guard-shared-publish-workflow-pin.sh'
               - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
-              # Both halves, plus the generated set the guard reads and the manifests it judges
-              # are already under k8s/**: a set regenerated without its guard's test would land
-              # with every check green.
+              # Both halves, for the same reason as the pin guard above: the guard step itself
+              # runs unconditionally, and listing the pair here is what keeps a guard edit
+              # inside the k8s-gated validation matrix alongside the manifests it judges.
               - 'scripts/guard-publish-workflow-approved-revisions.sh'
               - 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh'
-              - 'scripts/publish-workflow-approved-revisions.tsv'
               # Both halves, for the same reason as the guard above.
               - 'scripts/validate-kubescape-frameworks/main.go'
               - 'scripts/validate-kubescape-frameworks/main_test.go'

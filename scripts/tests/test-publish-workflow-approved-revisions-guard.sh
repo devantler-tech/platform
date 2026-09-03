@@ -98,6 +98,35 @@ spec:
 EOF
 }
 
+# append_identity <root> <repo> <subject-regex> — a SECOND matchOIDCIdentity entry on the
+# consumer's OCIRepository. Flux ORs the entries, so this is the shape that widens a matcher
+# while its shared-workflow entry still reads as narrowed.
+append_identity() {
+  local root="$1" repo="$2" subject="$3"
+  printf "      - issuer: '.*'\n        subject: '%s'\n" "$subject" \
+    >>"$root/k8s/bases/apps/$(package_for "$repo")/oci-repository.yaml"
+}
+
+# append_document <root> <repo> <ref> — a second YAML document after the consumer's
+# OCIRepository, carrying a shared-workflow subject the OCIRepository selection cannot see.
+append_document() {
+  local root="$1" repo="$2" ref="$3"
+  cat >>"$root/k8s/bases/apps/$(package_for "$repo")/oci-repository.yaml" <<EOF
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: stray
+spec:
+  rules:
+    - verifyImages:
+        - attestors:
+            - entries:
+                - keyless:
+                    subjectRegExp: ^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@$ref\$
+EOF
+}
+
 # write_generics <root> <ref> — the three generic subject files, on the given ref form.
 write_generics() {
   local root="$1" ref="$2"
@@ -249,6 +278,49 @@ root="$(build_tree off-tag pair)"
 write_consumer "$root" "$first_consumer" "$first_workflow" 'refs/tags/v.+'
 expect_refusal 'switch off: a tag ref is refused' "$root" 0 "$first_consumer" 'refs/tags/v.+'
 
+# `matchOIDCIdentity` is an OR-list: a wildcard sibling beside a correct pair admits any signer.
+root="$(build_tree off-wildcard-sibling pair)"
+append_identity "$root" "$first_consumer" '.*'
+expect_refusal 'a second matchOIDCIdentity entry beside the pair is refused (an OR-list widens the matcher)' \
+  "$root" 0 "$(first_path "$first_consumer")" 'matchOIDCIdentity entries'
+root="$(build_tree on-branch-sibling pair)"
+append_identity "$root" "$first_consumer" '^https://github\.com/devantler-tech/platform/\.github/workflows/cd\.yaml@refs/heads/.+$'
+expect_refusal 'switch on: a first-party branch identity beside the pair is refused' \
+  "$root" 1 "$(first_path "$first_consumer")" 'matchOIDCIdentity entries'
+root="$(build_tree off-two-shared pair)"
+append_identity "$root" "$first_consumer" "^https://github\\.com/devantler-tech/actions/\\.github/workflows/$first_workflow\\.yaml@$SHA_D\$"
+expect_refusal 'two shared-workflow subjects on one OCIRepository are refused' \
+  "$root" 0 "$(first_path "$first_consumer")" 'found 2'
+
+# A subject in a second document of the consumer's file is invisible to the OCIRepository read.
+root="$(build_tree off-second-document pair)"
+append_document "$root" "$first_consumer" "$SHA_D"
+expect_refusal 'a shared-workflow subject in a second document of a consumer file is refused as unjudged' \
+  "$root" 0 "$(first_path "$first_consumer")" 'unjudged'
+
+# signer == pin: the steady state after a consumer re-releases on the revision it pins.
+same_set() { # <root> — rewrite the first consumer's row with signer == pin == SHA_B
+  local root="$1"
+  { head -n1 "$root/scripts/approved.tsv"
+    tail -n +2 "$root/scripts/approved.tsv" | awk -F'\t' -v c="$first_consumer" -v s="$SHA_B" 'BEGIN{OFS="\t"} $1 "" == c "" {$5=s} {print}'
+  } >"$root/scripts/approved.tmp"
+  mv "$root/scripts/approved.tmp" "$root/scripts/approved.tsv"
+}
+root="$(build_tree same-single pair)"; same_set "$root"
+write_consumer "$root" "$first_consumer" "$first_workflow" "$SHA_B"
+expect_pass 'signer == pin: the single concrete revision is the set and passes' "$root" 1
+root="$(build_tree same-group pair)"; same_set "$root"
+write_consumer "$root" "$first_consumer" "$first_workflow" "($SHA_B)"
+expect_pass 'signer == pin: the single revision in a group passes' "$root" 1
+root="$(build_tree same-doubled pair)"; same_set "$root"
+write_consumer "$root" "$first_consumer" "$first_workflow" "($SHA_B|$SHA_B)"
+expect_refusal 'signer == pin: a doubled alternation is not the canonical set and is refused' \
+  "$root" 0 "$first_consumer" 'not the generated pair'
+root="$(build_tree same-foreign pair)"; same_set "$root"
+write_consumer "$root" "$first_consumer" "$first_workflow" "($SHA_B|$SHA_D)"
+expect_refusal 'signer == pin: an alternation adding a foreign revision is refused' \
+  "$root" 1 "$first_consumer" "$SHA_D"
+
 # ── switch ON: the pattern form is refused for a per-consumer subject ────────────────────────
 root="$(build_tree on-pair pair)"
 expect_pass 'switch on: every consumer on its generated pair passes' "$root" 1
@@ -278,7 +350,15 @@ expect_pass 'switch on: the three generic subjects stay on the pattern form and 
 root="$(build_tree generics-missing pattern)"
 rm -f "$root/$GENERIC_TALOS"
 expect_refusal 'a generic subject file missing from the tree is refused: the scope boundary moved' \
-  "$root" 0 "$GENERIC_TALOS"
+  "$root" 0 "$GENERIC_TALOS" 'missing from the scan root'
+
+# The maintainer's checkout carries nested per-session worktrees under .claude/ — whole copies
+# of the tree. Those must not be read as a second, unlisted set of generic subjects.
+root="$(build_tree nested-worktree pattern)"
+mkdir -p "$root/.claude/worktrees/session/$(dirname "$GENERIC_TALOS")" "$root/.git/objects"
+cp "$root/$GENERIC_TALOS" "$root/.claude/worktrees/session/$GENERIC_TALOS"
+cp "$root/$GENERIC_TALOS" "$root/.git/objects/stray.yaml"
+expect_pass 'copies under .claude/ (nested worktrees) and .git/ are not scanned' "$root" 0
 
 # A fourth kind of file naming the shared workflow that is neither a consumer nor listed.
 root="$(build_tree unattributed pattern)"
@@ -325,6 +405,21 @@ write_set "$root/scripts/approved.tsv" "$first_consumer" "$(printf '%s\t%s\t1.0.
 expect_refusal 'an approved set with a malformed signer sha is refused' \
   "$root" 0 "$first_consumer" 'not a 40-hex commit'
 
+root="$(build_tree set-bad-pin pattern)"
+write_set "$root/scripts/approved.tsv" "$first_consumer" "$(printf '%s\t%s\t1.0.0\t%s\t%s\tdeadbeef\t2026-09-03' "$first_consumer" "$first_workflow" "$DIGEST" "$SHA_A")"
+expect_refusal 'an approved set with a malformed main_pin_sha is refused' \
+  "$root" 0 "$first_consumer" 'main_pin_sha'
+
+root="$(build_tree set-duplicate pattern)"
+write_set "$root/scripts/approved.tsv" '' "$(printf '%s\t%s\t1.0.0\t%s\t%s\t%s\t2026-09-03' "$first_consumer" "$first_workflow" "$DIGEST" "$SHA_A" "$SHA_B")"
+expect_refusal 'an approved set naming a consumer twice is refused' \
+  "$root" 0 "$first_consumer" 'twice'
+
+root="$(build_tree set-extra-field pattern)"
+write_set "$root/scripts/approved.tsv" "$first_consumer" "$(printf '%s\t%s\t1.0.0\t%s\t%s\t%s\t2026-09-03\textra' "$first_consumer" "$first_workflow" "$DIGEST" "$SHA_A" "$SHA_B")"
+expect_refusal 'an approved set row with an eighth field is refused' \
+  "$root" 0 'more than seven fields'
+
 root="$(build_tree set-bad-header pattern)"
 { printf 'consumer\tworkflow\n'; tail -n +2 "$root/scripts/approved.tsv"; } >"$root/scripts/approved.tmp"
 mv "$root/scripts/approved.tmp" "$root/scripts/approved.tsv"
@@ -340,7 +435,7 @@ expect_refusal 'a consumer whose manifest names a different workflow than its ro
 root="$(build_tree consumer-missing pattern)"
 rm -f "$root/$(first_path "$first_consumer")"
 expect_refusal 'a registered consumer with no OCIRepository in the tree is refused' \
-  "$root" 0 "$first_consumer"
+  "$root" 0 "$first_consumer" 'no OCIRepository under'
 
 # ── wiring: CI reaches the guard and this test ──────────────────────────────────────────────
 ci="$REPO_ROOT/.github/workflows/ci.yaml"
@@ -349,7 +444,7 @@ grep -Fq 'scripts/guard-publish-workflow-approved-revisions.sh' "$ci" ||
 grep -Fq 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh' "$ci" ||
   fail 'ci.yaml does not run test-publish-workflow-approved-revisions-guard.sh'
 # The switch must stay OFF in CI until the narrowing lands in the same change (#3308).
-if grep -Eq 'APPROVED_REVISIONS_ENFORCE:[[:space:]]*["'"'"']?1' "$ci"; then
+if grep -Eq 'APPROVED_REVISIONS_ENFORCE(:[[:space:]]*|=)["'"'"']?1' "$ci"; then
   fail 'ci.yaml turns APPROVED_REVISIONS_ENFORCE on; the switch flips only with the matcher narrowing'
 fi
 [ "$failures" -eq 0 ] && pass 'wiring: ci.yaml runs the guard and its test with the switch off'
