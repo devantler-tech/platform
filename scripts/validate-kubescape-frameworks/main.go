@@ -402,6 +402,30 @@ func runScalars(data []byte) ([]string, error) {
 func scanCandidate(scalar string) bool {
 	framed := strings.Contains(scalar, "--framework")
 	lines := strings.Split(scalar, "\n")
+	// SCALAR-WIDE evidence, over the non-comment lines, kept from the raw check this
+	// replaced: when the command words are assigned on one line and expanded on the
+	// next (`KSAIL=ksail …` then `${KSAIL} ${WORKLOAD} ${SCAN} --framework nsa`) no
+	// single line spells the scan, so the per-line rules below see nothing. If the
+	// executable text of the block spells all four tokens AND some line expands, the
+	// block can invoke the scan and is refused on this deliberately loose path.
+	var code strings.Builder
+	codeExpands := false
+	for _, physical := range lines {
+		if strings.HasPrefix(strings.TrimSpace(physical), "#") {
+			continue
+		}
+		code.WriteString(physical)
+		code.WriteByte('\n')
+		for _, f := range shellFields(physical) {
+			if carriesExpansion(f) {
+				codeExpands = true
+			}
+		}
+	}
+	if text := code.String(); codeExpands && strings.Contains(text, "--framework") &&
+		strings.Contains(text, "ksail") && strings.Contains(text, "workload") && strings.Contains(text, "scan") {
+		return true
+	}
 	for i := 0; i < len(lines); i++ {
 		// A comment cannot execute anything, and the real workflows annotate their
 		// conditional steps with prose that names the scan. Decided on the PHYSICAL

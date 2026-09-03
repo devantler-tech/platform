@@ -998,6 +998,24 @@ func TestRejectsScanAfterABackslashEndedCommentInAConditionalStep(t *testing.T) 
 	}
 }
 
+// The command words assigned on one line and expanded on the next: no single line
+// spells the scan, so only scalar-wide evidence over the executable lines can see it.
+func TestRejectsScanAssembledAcrossLinesInAConditionalStep(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+		"          KSAIL=ksail WORKLOAD=workload SCAN=scan\n" +
+		"          ${KSAIL} ${WORKLOAD} ${SCAN} --framework nsa\n"
+	path := writeTemp(t, workflow)
+	set, err := frameworkSet(path)
+	if err == nil {
+		t.Fatalf("expected FAIL CLOSED — the assembled scan executes in the conditional step; got %q", set)
+	}
+	if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+		t.Fatalf("the refusal must name the conditional step; got: %v", err)
+	}
+}
+
 // The control: quoted prose in a conditional step is still prose, exactly as on the
 // unconditional path.
 func TestQuotedProseInAConditionalStepIsStillIgnored(t *testing.T) {
