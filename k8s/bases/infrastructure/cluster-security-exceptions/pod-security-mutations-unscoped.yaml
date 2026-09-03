@@ -29,17 +29,18 @@
 # spec.posture below inherits it. Kubescape writes status: passed together with
 # subStatus: "w/exceptions" and a populated appliedIgnoreRules on each suppressed
 # control, so reading .spec.controls[<id>].status.status reports a gate as clearable
-# when nothing behind it has been fixed. Measured 2026-09-02 on both listed controls:
+# when nothing behind it has been fixed. Scan status measured 2026-09-02 on both listed
+# controls:
 #
 #   * C-0013 — five of the six flux-system workloads now pass genuinely, carrying an
 #     EMPTY subStatus; only tofu-controller, the single workload that is actually
 #     broken, reads passed with subStatus "w/exceptions". Status alone cannot tell the
 #     five apart from the one; subStatus isolates it exactly.
 #   * C-0211 — 35 of 35 scanned workloads read passed with subStatus "w/exceptions",
-#     each carrying appliedIgnoreRules: [pod-security-mutations-unscoped/C-0211],
-#     while all 35 are still missing both universal fields. Nothing here passes
-#     genuinely, so reading status alone yields exactly the "0 of 35 fail" that #3239
-#     states as its success signal, with no fix behind it.
+#     each carrying appliedIgnoreRules: [pod-security-mutations-unscoped/C-0211]. Against
+#     the stored specs (re-measured 2026-09-03, below) six of the 35 pass both universal
+#     gaps and 29 do not, and status alone cannot tell the six from the 29: it yields
+#     exactly the "0 of 35 fail" that #3239 states as its success signal either way.
 #
 # The discriminator is subStatus plus a populated appliedIgnoreRules, never status,
 # and it does discriminate: on one such workload the same scan carries 53 controls
@@ -72,20 +73,41 @@
 # the score reads clean either way — which is exactly the silent-suppression failure
 # mode #2447 exists to prevent.
 #
-# Not one of the 35 passes, and two gaps are universal: the pod-level
-# `securityContext.fsGroupChangePolicy` is absent on 35 of 35 (read under
+# Six of the 35 pass both universal gaps and 29 do not. The pod-level
+# `securityContext.fsGroupChangePolicy` is absent on 29 of 35 (read under
 # `jobTemplate` for the CronJobs), and no effective seLinux `level` reaches every
-# container on 35 of 35 — "effective" meaning the container's own seLinuxOptions where
-# it sets them and the pod-level object otherwise. That test is deliberately generous,
-# since a container-level object actually replaces the pod struct wholesale, so 35 of
-# 35 is a floor rather than an artifact of a strict rule. Pod-level `fsGroup` is absent
-# on 20, `runAsGroup` on 26 and `runAsNonRoot` on 19 — each a strict subset of the two
-# universal gaps. All re-measured 2026-09-02 against the live PROD stored specs.
-# Narrowing C-0211 today would surface the whole population with no fix behind it —
-# lowering the score to absorb a gap rather than closing it — so it stays
-# cluster-wide. The per-workload table and the remediation split are on #3217. These
-# counts are prod-only and the local overlay opts in to a different namespace set, so
-# re-measure rather than inheriting them.
+# container on the same 29 — "effective" meaning the container's own seLinuxOptions
+# where it sets them and the pod-level object otherwise. That test is deliberately
+# generous, since a container-level object actually replaces the pod struct wholesale,
+# so 29 of 35 is a floor rather than an artifact of a strict rule. The six that pass
+# are velero's two (#3541) and four of flux-system's six (#3544), both TEMPLATE-level
+# changes. Pod-level `fsGroup` is absent on 20, `runAsGroup` on 26 and `runAsNonRoot`
+# on 19 — all three unchanged, which is the evidence those two changes supplied
+# exactly the two non-privilege fields and touched nothing else. Universal-gap counts
+# re-measured 2026-09-03 against the live PROD stored specs; the three subset counts
+# re-measured the same day and unchanged from 2026-09-02.
+#
+# Those three are NO LONGER strict subsets of the two universal gaps, and that is a
+# behavioural change rather than bookkeeping: five workloads — flux-system's four
+# controllers and velero/node-agent — now pass both universal gaps while still missing
+# `runAsGroup` and `runAsNonRoot`, and node-agent also misses `fsGroup`. So closing the
+# two universal gaps NO LONGER implies passing C-0211; it removes the reason every
+# workload failed and leaves the privilege-adjacent fields as the remaining cause on
+# the ones already fixed. Narrowing C-0211 today would still surface a population with
+# no fix behind it — lowering the score to absorb a gap rather than closing it — so it
+# stays cluster-wide.
+#
+# The remaining 29 split observability 15, longhorn-system 12, flux-system 2.
+# observability and longhorn-system are already labelled into
+# add-baseline-context-optin-*, but all three of those rules match `kinds: Pod`, so
+# they mutate at admission and leave the stored spec Kubescape reads untouched — which
+# is why the opt-in alone moves none of those 27. Template-level changes are what moved
+# velero and flux-system. flux-system's remaining two are flux-operator and
+# tofu-controller, the latter retired and pending removal in #3480.
+#
+# The per-workload table and the remediation split are on #3217. These counts are
+# prod-only and the local overlay opts in to a different namespace set, so re-measure
+# rather than inheriting them.
 #
 # node-agent and storage are NOT in that population. Both live in `kubescape`, whose
 # workloads the operator's own excludeNamespaces drops from scanning: neither has a
