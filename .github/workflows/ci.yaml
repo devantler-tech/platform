@@ -106,8 +106,9 @@ jobs:
       # shape — an unresolved consumer writes nothing — not any particular revision.
       - name: 🔐 Validate the approved-revisions generator
         run: |
-          shellcheck scripts/generate-publish-workflow-approved-revisions.sh
-          shellcheck scripts/tests/test-publish-workflow-approved-revisions.sh
+          # -x: the generator SOURCES the report, and without it SC1091 is reported and the run exits 1.
+          shellcheck -x scripts/generate-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions.sh
           bash scripts/tests/test-publish-workflow-approved-revisions.sh
 
       # Dropping a framework from the Kubescape gate REMOVES findings, so the

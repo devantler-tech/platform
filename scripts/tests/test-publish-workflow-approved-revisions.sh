@@ -155,10 +155,10 @@ out4="$WORK/out4.tsv"
 if run_gen "$observer_omit" "$pin_ok" "$out4" 2026-01-01 "$WORK/log4"; then
   fail 'an unresolvable consumer did not fail the run'
 else
-  if [ ! -e "$out4" ] && grep -q -- "$first_consumer" "$WORK/log4"; then
+  if [ ! -e "$out4" ] && grep -qF -- "$first_consumer" "$WORK/log4"; then
     pass 'an unresolvable consumer fails the run, is named, and no file is written'
   else
-    fail "unresolvable consumer: file exists=$([ -e "$out4" ] && echo yes || echo no), named=$(grep -c -- "$first_consumer" "$WORK/log4" || true)"
+    fail "unresolvable consumer: file exists=$([ -e "$out4" ] && echo yes || echo no), named=$(grep -cF -- "$first_consumer" "$WORK/log4" || true)"
     cat "$WORK/log4"
   fi
 fi
@@ -178,7 +178,7 @@ out5="$WORK/out5.tsv"
 if run_gen "$observer_one" "$pin_ok" "$out5" 2026-01-01 "$WORK/log5"; then
   fail 'an empty signer (set of one) was accepted'
 else
-  if grep -q -- "$first_consumer" "$WORK/log5" && [ ! -e "$out5" ]; then
+  if grep -qF -- "$first_consumer" "$WORK/log5" && [ ! -e "$out5" ]; then
     pass 'an empty signer is refused naming the consumer, no file written'
   else
     fail 'empty-signer refusal did not name the consumer or wrote a file'; cat "$WORK/log5"
@@ -189,7 +189,7 @@ out6="$WORK/out6.tsv"
 if run_gen "$observer_full" "$pin_fail" "$out6" 2026-01-01 "$WORK/log6"; then
   fail 'a missing pin (set of one) was accepted'
 else
-  if grep -q -- "$first_consumer" "$WORK/log6" && [ ! -e "$out6" ]; then
+  if grep -qF -- "$first_consumer" "$WORK/log6" && [ ! -e "$out6" ]; then
     pass 'a missing pin is refused naming the consumer, no file written'
   else
     fail 'missing-pin refusal did not name the consumer or wrote a file'; cat "$WORK/log6"

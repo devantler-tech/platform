@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# generate-publish-workflow-approved-revisions.sh — derive, per consumer of the shared
+# generate-publish-workflow-approved-revisions.sh â derive, per consumer of the shared
 # publish workflows, the two revisions its OCIRepository cosign matcher must accept, and
 # commit them as a reviewable data file (#3550, first child of #3308).
 #
@@ -9,16 +9,16 @@
 # revision the consumer pins on its default branch TODAY: the first keeps the deployed
 # artifact verifying, the second keeps the next artifact verifying. Hand-writing that set is
 # what #3308 rules out, so this script derives it from two observed inputs and writes one row
-# per consumer. It changes no matcher — the guard (#3551) and the switch come later.
+# per consumer. It changes no matcher â the guard (#3551) and the switch come later.
 #
 # THE TWO INPUTS
-#   applied  — the artifact revision Flux has verified and applied, read from the consumer's
+#   applied  â the artifact revision Flux has verified and applied, read from the consumer's
 #              OCIRepository `status.artifact.revision` (`<tag>@sha256:<digest>`) on the
 #              cluster named by PUBLISH_KUBE_CONTEXT; the revision that SIGNED it is the shared
-#              workflow revision recorded on the `🚀 CD` run that published exactly that tag
+#              workflow revision recorded on the `ð CD` run that published exactly that tag
 #              (`referenced_workflows[].sha`), which is the same fact the OIDC
 #              `job_workflow_ref` claim is minted from and needs no package read.
-#   pin      — `.jobs[].uses` of the consumer's cd.yaml at its default branch, via the report's
+#   pin      â `.jobs[].uses` of the consumer's cd.yaml at its default branch, via the report's
 #              `pin_at_ref`.
 #
 # FAIL CLOSED, WRITE NOTHING. A consumer that cannot be resolved on either half is named on
@@ -31,8 +31,8 @@
 # guard can diff the committed file against a fresh run.
 #
 # SEAMS (tests substitute these; production leaves them unset)
-#   APPROVED_REVISION_OBSERVER      <repo> <workflow> → "<applied-tag>\t<sha256:digest>\t<signer-sha>"
-#   APPROVED_REVISION_PIN_RESOLVER  <repo> <workflow> → "<pin-sha>"
+#   APPROVED_REVISION_OBSERVER      <repo> <workflow> â "<applied-tag>\t<sha256:digest>\t<signer-sha>"
+#   APPROVED_REVISION_PIN_RESOLVER  <repo> <workflow> â "<pin-sha>"
 #   APPROVED_REVISIONS_FILE         output path (default scripts/publish-workflow-approved-revisions.tsv)
 #   APPROVED_REVISIONS_OBSERVED_ON  YYYY-MM-DD stamped on rows whose tuple changed (default: today, UTC)
 #   PUBLISH_KUBE_CONTEXT            kube context the default observer reads OCIRepositories through
@@ -77,15 +77,25 @@ applied_revision() {
     refuse "$repo: could not list OCIRepositories through context $context"
     return 1
   }
-  revision="$(printf '%s' "$json" | jq -r --arg u "$url" \
-    '[.items[] | select(.spec.url == $u) | .status.artifact.revision // ""] | join("\n")' 2>/dev/null)" || {
+  # COUNT the objects before reading a revision: joining revisions and testing the join for a
+  # newline is order-dependent, because a second object with NO artifact yet contributes an
+  # empty string that `$(...)` strips when it is last - the same cluster state is refused in
+  # one listing order and silently accepted in the other.
+  local count
+  count="$(printf '%s' "$json" | jq -r --arg u "$url" '[.items[] | select(.spec.url == $u)] | length' 2>/dev/null)" || {
     refuse "$repo: OCIRepository listing was not parseable"
     return 1
   }
-  case "$revision" in
-    '') refuse "$repo: no OCIRepository on $context has url $url"; return 1 ;;
-    *$'\n'*) refuse "$repo: more than one OCIRepository on $context has url $url; the applied revision is ambiguous"; return 1 ;;
+  case "$count" in
+    1) ;;
+    0) refuse "$repo: no OCIRepository on $context has url $url"; return 1 ;;
+    *) refuse "$repo: $count OCIRepositories on $context have url $url; the applied revision is ambiguous"; return 1 ;;
   esac
+  revision="$(printf '%s' "$json" | jq -r --arg u "$url" \
+    'first(.items[] | select(.spec.url == $u)) | .status.artifact.revision // ""' 2>/dev/null)" || {
+    refuse "$repo: OCIRepository listing was not parseable"
+    return 1
+  }
   local tag="${revision%%@*}" digest="${revision#*@}"
   if [ "$tag" = "$revision" ] || ! plausible_tag "$tag" || ! is_digest "$digest"; then
     refuse "$repo: applied revision '$revision' is not <tag>@sha256:<digest>; the OCIRepository has not applied an artifact"
@@ -97,14 +107,14 @@ applied_revision() {
 # The git tag whose publish produced one registry tag. The shared workflows strip a leading
 # `v` and spell `+` as `_`, so the translation is not invertible: BOTH `v1.2.3` and `1.2.3`
 # would publish as `1.2.3`. Exactly one existing git tag may translate to the applied tag,
-# or the signer cannot be attributed to one commit — the same refusal the report makes.
+# or the signer cannot be attributed to one commit â the same refusal the report makes.
 git_tag_for_registry_tag() {
   local repo="$1" registry_tag="$2" tags matches count
   tags="$(gh_retry api --paginate "repos/devantler-tech/${repo}/tags?per_page=100" --jq '.[].name')" || return 1
   matches="$(printf '%s\n' "$tags" | while IFS= read -r t; do
     [ -n "$t" ] || continue
     [ "$(registry_tag_for_git_tag "$t")" = "$registry_tag" ] && printf '%s\n' "$t"
-  done)"
+  done || true)"  # the loop's status is the LAST tag's comparison, never a verdict
   count="$(printf '%s' "$matches" | grep -c . || true)"
   [ "$count" -eq 1 ] || return 1
   plausible_ref "$matches" || return 1
@@ -191,8 +201,8 @@ main() {
     awk -F'\t' -v c="$1" -v w="$2" '$1 == c && $2 == w { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7; exit }' "$OUTPUT"
   }
 
-  local repo workflow version answer pin rows='' unresolved=0 examined=0 changed=0
-  while IFS=$'\t' read -r repo workflow version; do
+  local repo workflow _version answer pin rows='' unresolved=0 examined=0 changed=0
+  while IFS=$'\t' read -r repo workflow _version; do
     [ -n "$repo" ] || continue
     examined=$((examined + 1))
     if [ -n "$observer" ]; then
@@ -237,11 +247,15 @@ main() {
 
   local tmp
   tmp="$(mktemp "${OUTPUT}.XXXXXX")"
+  trap 'rm -f "$tmp"' EXIT
   {
     printf '%s\n' "$HEADER"
     printf '%s' "$rows" | LC_ALL=C sort
   } >"$tmp"
+  # mktemp creates 0600; the committed data file is an ordinary 0644 file and must stay one.
+  chmod 0644 "$tmp"
   mv "$tmp" "$OUTPUT"
+  trap - EXIT
   printf '%d consumer(s) examined, %d row(s) re-stamped, written to %s\n' "$examined" "$changed" "$OUTPUT"
 }
 

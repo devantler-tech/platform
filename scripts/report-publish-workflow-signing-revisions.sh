@@ -1030,6 +1030,6 @@ main() {
 # Run only as a command. `generate-publish-workflow-approved-revisions.sh` (#3550) sources
 # this file for discovery, `pin_at_ref`, `tag_commit` and the shape checks, so the same
 # resolution rules serve both the report and the generated approved set.
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+if [ "${BASH_SOURCE[0]:-}" = "$0" ]; then
   main "$@"
 fi
