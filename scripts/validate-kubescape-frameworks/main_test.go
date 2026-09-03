@@ -980,6 +980,24 @@ func TestRejectsContinuedScanInAConditionalStep(t *testing.T) {
 	}
 }
 
+// A backslash at the end of a COMMENT does not continue it: the next physical line
+// executes. Joining continuations before deciding what is a comment folded that line
+// into the comment and skipped the scan it carried.
+func TestRejectsScanAfterABackslashEndedCommentInAConditionalStep(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+		"          # this comment does not continue \\\n          ksail workload scan --framework nsa\n"
+	path := writeTemp(t, workflow)
+	set, err := frameworkSet(path)
+	if err == nil {
+		t.Fatalf("expected FAIL CLOSED — the line after a backslash-ended comment still executes; got %q", set)
+	}
+	if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+		t.Fatalf("the refusal must name the conditional step; got: %v", err)
+	}
+}
+
 // The control: quoted prose in a conditional step is still prose, exactly as on the
 // unconditional path.
 func TestQuotedProseInAConditionalStepIsStillIgnored(t *testing.T) {

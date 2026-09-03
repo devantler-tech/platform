@@ -401,14 +401,26 @@ func runScalars(data []byte) ([]string, error) {
 // reason it does there.
 func scanCandidate(scalar string) bool {
 	framed := strings.Contains(scalar, "--framework")
-	// A backslash-newline continues the command on the next physical line, so the
-	// three scan words can be split across lines; join them before reading.
-	joined := strings.ReplaceAll(scalar, "\\\n", " ")
-	for _, line := range strings.Split(joined, "\n") {
-		fields := shellFields(line)
+	lines := strings.Split(scalar, "\n")
+	for i := 0; i < len(lines); i++ {
 		// A comment cannot execute anything, and the real workflows annotate their
-		// conditional steps with prose that names the scan.
-		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
+		// conditional steps with prose that names the scan. Decided on the PHYSICAL
+		// line, before any continuation is joined: a backslash at the end of a
+		// comment does not continue it, so the next physical line still executes —
+		// joining first would fold that line into the comment and skip it.
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "#") {
+			continue
+		}
+		// A backslash-newline continues the command on the next physical line, so
+		// the three scan words can be split across lines; join them before reading.
+		logical := lines[i]
+		for strings.HasSuffix(logical, "\\") && i+1 < len(lines) {
+			i++
+			logical = strings.TrimSuffix(logical, "\\") + " " + lines[i]
+		}
+		line := logical
+		fields := shellFields(line)
+		if len(fields) == 0 {
 			continue
 		}
 		words := map[string]bool{}
