@@ -1568,6 +1568,26 @@ func TestExpansionInScanArgumentsIsStillRead(t *testing.T) {
 	}
 }
 
+// The second control: `--framework` alone is too weak a trigger. An unrelated
+// command whose quoted text happens to carry `$` and `--framework` invokes no scan,
+// so refusing it would tax every tool that takes a `--framework` flag. The
+// whitelist therefore fires only when a scan word stands before `--framework`.
+func TestUnrelatedTextWithExpansionAndFrameworkIsStillIgnored(t *testing.T) {
+	cases := map[string]string{
+		"quoted expansion before --framework in an echo": goodScan + "\necho '$HOME --framework'\n",
+		"other tool taking --framework after a variable": goodScan + "\nsome-tool --config $CFG --framework x\n",
+	}
+	for name, body := range cases {
+		got, err := setOf(t, body)
+		if err != nil {
+			t.Fatalf("%s: expected ACCEPT — no scan word precedes --framework, so nothing here can invoke the scan; got: %v", name, err)
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Fatalf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}
+
 // The control for the rejection above, and the reason it keys on the three scan
 // tokens rather than on the prefix word. An `env` step that is not a scan is
 // ordinary shell and must still be ignored, or "reject any line containing `env`"

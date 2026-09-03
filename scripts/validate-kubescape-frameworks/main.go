@@ -926,9 +926,23 @@ func undecidableCommandWord(fields []string) string {
 	if fw < 0 {
 		return ""
 	}
+	// `--framework` alone is too weak a trigger: an unrelated tool that takes the flag,
+	// or quoted text that merely contains it, invokes no scan and must stay readable.
+	// The expansion test therefore fires only when a scan WORD stands before the flag.
+	// The residual is a line that expands all three words at once, which no lexical
+	// test can see; one plain word is enough for this one to fire.
+	scanWord := false
 	for _, f := range fields[:fw] {
-		if strings.ContainsAny(f, "$`") {
-			return fmt.Sprintf("%q carries a shell expansion", f)
+		switch bareToken(f) {
+		case "ksail", "workload", "scan":
+			scanWord = true
+		}
+	}
+	if scanWord {
+		for _, f := range fields[:fw] {
+			if strings.ContainsAny(f, "$`") {
+				return fmt.Sprintf("%q carries a shell expansion", f)
+			}
 		}
 	}
 	for j := 1; j+1 < fw; j++ {
