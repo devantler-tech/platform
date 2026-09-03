@@ -185,6 +185,53 @@ spec:
           - op: add
             path: /spec/template/spec/containers/0/securityContext/runAsGroup
             value: 65534
+      # Supply the two NON-PRIVILEGE C-0211 fields that the cluster-wide
+      # add-security-context mutation cannot reach here. That policy excludes
+      # flux-system, and correctly so — the exclusion protects privilege, user
+      # and group fields on a namespace whose controllers need elevated access.
+      # fsGroupChangePolicy and seLinuxOptions are neither: the first only
+      # governs ownership-relabel behaviour on volume mount, and the second is a
+      # documented no-op on this AppArmor cluster (runc ignores SELinux labels
+      # when SELinux is not the active LSM), retained as CIS-5.7.3
+      # defence-in-depth. The values are kept identical to
+      # add-security-context.yaml so a workload does not read differently
+      # depending on which surface supplied the field.
+      #
+      # 🔴 PATCHED HERE RATHER THAN BY NAMESPACE OPT-IN, and that is the whole
+      # point. The mutation runs on Pod CREATE, so it only ever reaches the
+      # running pod; Kubescape scores the STORED WORKLOAD SPEC, which no pod
+      # mutation ever touches. Measured on velero (#3239): it is opted in, all
+      # 56 of its pods carry both fields, and its Deployment template carries
+      # neither. A kustomize patch writes the template itself, so it moves both
+      # surfaces at once — the only route here that does.
+      #
+      # Same app.kubernetes.io/part-of=flux selector as the three patches above,
+      # which resolves to exactly the four installed controllers (measured live
+      # 2026-09-03: helm-, kustomize-, notification- and source-controller, each
+      # with one container and zero initContainers). flux-operator and
+      # tofu-controller do NOT carry that label and are deliberately untouched —
+      # the first is patched at its own HelmRelease, and the second is the
+      # documented tf-runner exemption in add-security-context.yaml.
+      #
+      # Pod-level securityContext already exists on all four (fsGroup: 1337,
+      # read live 2026-09-03), so `add` writes into an existing object rather
+      # than failing on a missing parent. The `op: test` guard matches the
+      # runAsUser/runAsGroup patch above: if a future chart reorders containers,
+      # this fails loudly instead of writing onto the wrong one.
+      - target:
+          kind: Deployment
+          labelSelector: app.kubernetes.io/part-of=flux
+        patch: |
+          - op: test
+            path: /spec/template/spec/containers/0/name
+            value: manager
+          - op: add
+            path: /spec/template/spec/securityContext/fsGroupChangePolicy
+            value: OnRootMismatch
+          - op: add
+            path: /spec/template/spec/containers/0/securityContext/seLinuxOptions
+            value:
+              level: s0
       # Enforce cosign signature verification on the ROOT source — the
       # flux-system OCIRepository every controller, tenant binding and policy
       # arrives through. Without this the root artifact is pulled from a mutable
