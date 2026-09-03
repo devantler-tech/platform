@@ -1024,7 +1024,12 @@ func scanInvocations(scalar string) ([]string, error) {
 				compound = compoundToken(segment.text)
 			}
 			fields := strings.Fields(segment.text)
-			if len(fields) < 3 || fields[0] != "ksail" || fields[1] != "workload" || fields[2] != "scan" {
+			// NORMALISED HERE TOO, not only in prefixedScan below. That sweep starts at field
+			// index 1, so a quoted or escaped spelling in COMMAND position (`k"s"ail workload
+			// scan`) met a raw comparison and fell through as ordinary shell — neither counted
+			// nor refused, while executing all the same. To the shell it is the word `ksail`,
+			// so it is the gate and is counted like any other invocation.
+			if len(fields) < 3 || bareToken(fields[0]) != "ksail" || bareToken(fields[1]) != "workload" || bareToken(fields[2]) != "scan" {
 				// A PREFIXED INVOCATION STILL RUNS. The shape test above requires the scan to be
 				// in command position, so `env ksail workload scan ...` — and any wrapper such as
 				// `sudo`, `nice` or `time` — falls through it. Alone that fails closed, because the

@@ -1457,6 +1457,58 @@ func TestRejectsPrefixedScanInvocation(t *testing.T) {
 	}
 }
 
+// A QUOTED SPELLING IN COMMAND POSITION EXECUTES TOO. `bareToken` collapses
+// `k"s"ail`, `k's'ail`, `k\sail` and `'ksail'` to the word `ksail` for the
+// prefixed-scan sweep, but that sweep starts at field index 1, so the same
+// spelling at field index 0 met a RAW comparison: neither counted as an
+// invocation nor refused as a prefixed one, it fell through as ordinary shell.
+// Paired with a counted invocation the guard validated the counted one and
+// ignored the one that also runs — the exact bypass #3338 closes, at the one
+// position the fix did not cover. Measured: every case below PASSED against the
+// unnormalised comparison.
+//
+// The honest reading is that these ARE invocations, so the shape assertions are
+// two-sided: paired with a counted scan they are a second counted invocation
+// (refused, because the guard cannot tell which produces the uploaded SARIF), and
+// ALONE with the full set they are the gate itself and must be read.
+func TestQuotedScanSpellingInCommandPositionIsCounted(t *testing.T) {
+	spellings := map[string]string{
+		"concatenated double-quoted": "k\"s\"ail",
+		"concatenated single-quoted": "k's'ail",
+		"backslash-escaped":          "k\\sail",
+		"single-quoted":              "'ksail'",
+		"double-quoted":              "\"ksail\"",
+	}
+	for name, word := range spellings {
+		paired := goodScan + " -o kubescape.sarif\n" +
+			word + " workload scan --framework nsa -o kubescape.sarif\n"
+		_, err := setOf(t, paired)
+		if err == nil {
+			t.Fatalf("%s ksail paired with a counted scan: expected FAIL CLOSED — the spelling "+
+				"executes a second scan, so the validated framework set need not be the one "+
+				"that runs", name)
+		}
+		// ASSERT A SPACED PHRASE, NEVER A BARE WORD (see the note in
+		// TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy): the fixture
+		// path embeds this test's name, so a bare token could match the path.
+		if !strings.Contains(err.Error(), "scan invocations") {
+			t.Fatalf("%s ksail paired with a counted scan: the refusal must be the two-invocation "+
+				"one, proving the spelling was COUNTED rather than refused as prefixed text; got: %v",
+				name, err)
+		}
+
+		alone := word + " workload scan --framework nsa,mitre --compliance-threshold 95"
+		got, err := setOf(t, alone)
+		if err != nil {
+			t.Fatalf("%s ksail alone: expected ACCEPT — it is the gate, spelled differently; got: %v",
+				name, err)
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Fatalf("%s ksail alone: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}
+
 // The control for the rejection above, and the reason it keys on the three scan
 // tokens rather than on the prefix word. An `env` step that is not a scan is
 // ordinary shell and must still be ignored, or "reject any line containing `env`"
