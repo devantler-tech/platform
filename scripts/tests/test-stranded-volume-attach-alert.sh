@@ -302,6 +302,15 @@ run_scenario "${dir}" || fail "placeholder: the script exited non-zero: $(cat "$
 grep -q 'not delivered' "${dir}/stdout.log" || fail "placeholder: the skip was not logged"
 pass "the local/CI placeholder webhook skips delivery and exits 0"
 
+# 9. A non-HTTPS webhook is refused before any delivery: the token travels in the
+#    URL path, and the network policy allows the port, not the scheme.
+dir="$(setup_scenario plain-http 'http://hooks.test.invalid:443/delivery-target')"
+event_json FailedAttachVolume 1800 60 26632 openbao openbao-0 | events_body >"${dir}/api/events-FailedAttachVolume.body"
+if run_scenario "${dir}"; then fail "plain-http: an http:// webhook was accepted"; fi
+grep -q 'must use https://' "${dir}/stderr.log" || fail "plain-http: the refusal does not name the https requirement"
+! delivered "${dir}" || fail "plain-http: an alert was delivered over http"
+pass "a non-HTTPS webhook is refused before delivery"
+
 for d in "${work_root}"/*/; do
   [ -f "${d}/stub-errors.log" ] && fail "unstubbed API read in $(basename "${d}"): $(cat "${d}/stub-errors.log")"
 done
