@@ -1736,12 +1736,16 @@ func TestQuotedOptionValueExpansionIsStillRead(t *testing.T) {
 // expansion beside it is refused whatever the rest spells.
 func TestRejectsConstructedScanWordBesideAConstructedOptionWord(t *testing.T) {
 	cases := map[string]string{
-		"constructed workload and option word":                           "ksail work${LOAD} scan --frame${SUFFIX} nsa\n",
-		"constructed scan and option word":                               "ksail workload sc${AN} --frame${SUFFIX} nsa\n",
-		"constructed ksail and scan with a constructed option":           "$KSAIL workload sc${AN} --frame${SUFFIX} nsa\n",
-		"constructed ksail and workload with a constructed option":       "$KSAIL work${LOAD} scan --frame${SUFFIX} nsa\n",
-		"ANSI-C fragment in workload beside a constructed option":        "ksail w$'o'rkload scan --frame${SUFFIX} nsa\n",
-		"glob in the scan word beside a constructed option":              "ksail workload sca? --frame${SUFFIX} nsa\n",
+		"constructed workload and option word":                     "ksail work${LOAD} scan --frame${SUFFIX} nsa\n",
+		"constructed scan and option word":                         "ksail workload sc${AN} --frame${SUFFIX} nsa\n",
+		"constructed ksail and scan with a constructed option":     "$KSAIL workload sc${AN} --frame${SUFFIX} nsa\n",
+		"constructed ksail and workload with a constructed option": "$KSAIL work${LOAD} scan --frame${SUFFIX} nsa\n",
+		"ANSI-C fragment in workload beside a constructed option":  "ksail w$'o'rkload scan --frame${SUFFIX} nsa\n",
+		"glob in the scan word beside a constructed option":        "ksail workload sca? --frame${SUFFIX} nsa\n",
+		// Quoting that does NOT neutralise the expansion: `$` inside double quotes and
+		// a bare `$` after a quoted scan word both still expand at run time.
+		"double-quoted expansion beside a quoted scan word":              "'ksail' \"work${LOAD}\" scan --frame${SUFFIX} nsa\n",
+		"unquoted expansion beside a single-quoted scan word":            "'ksail' work${LOAD} scan --framework nsa\n",
 		"prefixed, with workload and the option word constructed":        "env ksail work${LOAD} scan --frame${SUFFIX} nsa\n",
 		"assignment-prefixed, with scan and the option word constructed": "LOAD=load ksail workload sc${AN} --frame${SUFFIX} nsa\n",
 	}
@@ -1777,6 +1781,13 @@ func TestPlainScanWordWithoutAnExpansionIsStillIgnored(t *testing.T) {
 		"quoted prose naming the scan beside a variable": goodScan + "\necho \"ksail workload scan finished: $STATUS\"\n",
 		"scan word in unrelated plain text":              goodScan + "\necho scan finished\n",
 		"expansion with no scan word":                    goodScan + "\nsome-tool --config $CFG --output x\n",
+		// Single quotes make the characters literal, so none of these is an expansion:
+		// the quoted scan word beside them is a plain word, and the line is still prose.
+		"single-quoted dollar beside a quoted scan word":   goodScan + "\necho 'scan' '$HOME'\n",
+		"single-quoted glob beside a quoted scan word":     goodScan + "\necho 'ksail' '*.yaml'\n",
+		"single-quoted wildcard beside a quoted scan word": goodScan + "\necho 'workload' 'ksail?'\n",
+		"single-quoted bracket beside a quoted scan word":  goodScan + "\necho 'scan' '[abc]'\n",
+		"escaped dollar beside a plain scan word":          goodScan + "\necho scan \\$HOME\n",
 	}
 	for name, body := range cases {
 		got, err := setOf(t, body)

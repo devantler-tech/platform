@@ -1030,12 +1030,60 @@ func undecidableScanCandidate(fields []string) string {
 		if inQuote {
 			continue
 		}
-		// `$` and backticks expand; unquoted `*`, `?` and `[` are pathname expansion.
-		if strings.ContainsAny(f, "$`*?[") {
+		if carriesExpansion(f) {
 			return fmt.Sprintf("%q is a plain scan word and %q carries a shell expansion", scanWord, f)
 		}
 	}
 	return ""
+}
+
+// carriesExpansion reports whether a single token can expand at run time: a `$` or a
+// backtick outside single quotes, or an unquoted `*`, `?` or `[` (pathname expansion).
+// Quote state matters, not merely the characters — `'$HOME'` is the four literal
+// characters and `'*.yaml'` is a literal glob, so a line like `echo 'scan' '$HOME'`
+// carries no expansion at all; a bare `ContainsAny` refused it beside the quoted scan
+// word. Inside double quotes `$` and backticks still expand while `*?[` do not, and a
+// backslash escapes the character after it in either the plain or the double-quoted
+// state, exactly as resolveToken reads them. A token whose quotes never close is a
+// fragment of a longer string; its expansion state is decided by the tokens around it,
+// so it reports false here.
+func carriesExpansion(tok string) bool {
+	const (
+		plain = iota
+		single
+		double
+	)
+	state := plain
+	for i := 0; i < len(tok); i++ {
+		c := tok[i]
+		switch state {
+		case plain:
+			switch c {
+			case '\'':
+				state = single
+			case '"':
+				state = double
+			case '\\':
+				i++
+			case '$', '`', '*', '?', '[':
+				return true
+			}
+		case single:
+			if c == '\'' {
+				state = plain
+			}
+		case double:
+			switch c {
+			case '"':
+				state = plain
+			case '\\':
+				i++
+			case '$', '`':
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func undecidableOptionWord(args []string) string {
