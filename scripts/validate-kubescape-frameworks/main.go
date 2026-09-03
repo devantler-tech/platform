@@ -794,9 +794,33 @@ func continuesLine(line string) bool {
 // of prefixes would have to enumerate every spelling, and the one it missed would be
 // the one that mattered; keying on the scan itself has no such gap. A segment that
 // does NOT carry those tokens is ordinary shell and is left alone.
+// bareToken strips shell quoting that WRAPS a whole token, so `'ksail'` and
+// `"ksail"` compare equal to `ksail`. Quoting the command name still runs it, so an
+// exact match would miss the same bypass one spelling further out.
+//
+// ONLY a fully wrapped token is unquoted, and that restriction is what keeps the
+// check honest rather than being a shortfall: `shellSplit` preserves quote
+// characters, so a multi-word quoted string arrives as tokens whose quotes are
+// UNBALANCED (`'ksail` … `nsa'`). Leaving those alone is what stops
+// `echo 'ksail workload scan --framework nsa'` — echoed text rather than an
+// execution — being refused as a prefixed scan.
+//
+// One level only, which is also correct: to the shell `"'ksail'"` is the literal
+// word `'ksail'`, which names a different command than ksail.
+func bareToken(tok string) string {
+	if len(tok) >= 2 {
+		if q := tok[0]; (q == '\'' || q == '"') && tok[len(tok)-1] == q {
+			return tok[1 : len(tok)-1]
+		}
+	}
+	return tok
+}
+
 func prefixedScan(fields []string) bool {
 	for i := 1; i+2 < len(fields); i++ {
-		if fields[i] == "ksail" && fields[i+1] == "workload" && fields[i+2] == "scan" {
+		if bareToken(fields[i]) == "ksail" &&
+			bareToken(fields[i+1]) == "workload" &&
+			bareToken(fields[i+2]) == "scan" {
 			return true
 		}
 	}

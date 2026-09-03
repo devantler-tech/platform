@@ -1430,6 +1430,13 @@ func TestRejectsPrefixedScanInvocation(t *testing.T) {
 			"env FOO=1 ksail workload scan --framework nsa -o kubescape.sarif\n",
 		"env-prefixed scan alone":            "env ksail workload scan --framework nsa -o kubescape.sarif\n",
 		"env-assignment-prefixed scan alone": "env FOO=1 ksail workload scan --framework nsa -o kubescape.sarif\n",
+		// QUOTING THE COMMAND NAME STILL RUNS IT. `shellSplit` preserves quote
+		// characters, so `'ksail'` is one token that an exact match on `ksail` misses
+		// — the same bypass this guard exists to close, one spelling further out.
+		"single-quoted ksail token in an env-prefixed scan": goodScan + " -o kubescape.sarif\n" +
+			"env 'ksail' workload scan --framework nsa -o kubescape.sarif\n",
+		"double-quoted ksail token in an env-prefixed scan": goodScan + " -o kubescape.sarif\n" +
+			"env \"ksail\" workload scan --framework nsa -o kubescape.sarif\n",
 	}
 	for name, body := range cases {
 		if _, err := setOf(t, body); err == nil {
@@ -1448,6 +1455,10 @@ func TestUnrelatedPrefixedCommandIsStillIgnored(t *testing.T) {
 		"env-assignment step beside a scan": goodScan + "\nenv FOO=1 echo hello\n",
 		"env step beside a scan":            goodScan + "\nenv printenv HOME\n",
 		"wrapper on an unrelated command":   goodScan + "\ntime ls -la\n",
+		// A multi-word quoted string arrives as tokens whose quotes are UNBALANCED
+		// (`'ksail` … `nsa'`), so it is echoed text rather than an execution and must
+		// stay accepted. This is the control for unquoting only fully wrapped tokens.
+		"echoed scan text in a quoted string": goodScan + "\necho 'ksail workload scan --framework nsa'\n",
 	}
 	for name, body := range cases {
 		got, err := setOf(t, body)
