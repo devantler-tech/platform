@@ -1168,10 +1168,17 @@ func scanInvocations(scalar string) ([]string, error) {
 							reason, segment.text)
 					}
 				}
-				if prefixedScan(fields) {
-					if reason := undecidableOptionWord(fields[scanArgsStart(fields):]); reason != "" {
+				// KEYED ON THE BARE `workload scan` PAIR, NOT ON A LITERAL `--framework`. The
+				// command-word check below fires only when the flag is spelled out, so a line
+				// whose command word AND option word are both constructed — `k$'s'ail workload
+				// scan --frame${SUFFIX} nsa` — used to fall between the two branches: not counted,
+				// not refused, executing a scan the guard never read. Any `workload scan` pair
+				// followed by an undecidable option word is refused, whatever stands in front
+				// of it; the opt-out for quoted prose is unchanged.
+				if j, ok := workloadScanArgs(fields); ok {
+					if reason := undecidableOptionWord(fields[j:]); reason != "" {
 						return nil, fmt.Errorf(
-							"an argument of a prefixed `ksail workload scan` invocation is not decidable from the text — %s: %q. A shell expansion or a quoted spelling in an option word can execute `--framework` while reading as something else, so the executed framework set need not be the validated one. Spell every option word plainly, or quote the text if it is not an invocation. See #3338",
+							"an argument of a `workload scan` candidate is not decidable from the text — %s: %q. A shell expansion or a quoted spelling in an option word can execute `--framework` while reading as something else, so the executed framework set need not be the validated one. Spell every option word plainly, or quote the text if it is not an invocation. See #3338",
 							reason, segment.text)
 					}
 				}
@@ -1592,14 +1599,15 @@ func normaliseNumber(s string) string {
 	return strings.TrimSuffix(s, ".")
 }
 
-// scanArgsStart returns the index of the first token after the `ksail workload scan`
-// triple in a prefixed invocation, so its arguments can be held to the same whitelist as
-// a primary one's. prefixedScan has already established that the triple is present.
-func scanArgsStart(fields []string) int {
-	for i := 1; i+2 < len(fields); i++ {
-		if bareToken(fields[i]) == "ksail" && bareToken(fields[i+1]) == "workload" && bareToken(fields[i+2]) == "scan" {
-			return i + 3
+// workloadScanArgs returns the index of the first token after a bare `workload scan` pair
+// and whether one is present. The pair is the weakest evidence this guard acts on: it
+// needs no readable command word in front of it, because that word is exactly what an
+// expansion hides.
+func workloadScanArgs(fields []string) (int, bool) {
+	for i := 0; i+1 < len(fields); i++ {
+		if bareToken(fields[i]) == "workload" && bareToken(fields[i+1]) == "scan" {
+			return i + 2, true
 		}
 	}
-	return len(fields)
+	return 0, false
 }

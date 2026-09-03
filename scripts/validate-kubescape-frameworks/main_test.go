@@ -1659,17 +1659,20 @@ func TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy(t *testing.T) {
 // expand to a second `--framework` that overrides the one the guard read.
 func TestRejectsUndecidableScanOptionWord(t *testing.T) {
 	cases := map[string]string{
-		"variable suffix builds the option word":       "ksail workload scan --frame${SUFFIX} nsa\n",
-		"ANSI-C fragment builds the option word":       "ksail workload scan --frame$'work' nsa\n",
-		"quoted fragment builds the option word":       "ksail workload scan --frame\"work\" nsa\n",
-		"backslash escape builds the option word":      "ksail workload scan --frame\\work nsa\n",
-		"bare expansion after the flag":                "ksail workload scan --framework nsa $EXTRA\n",
-		"quoted expansion in option position":          "ksail workload scan --framework nsa \"$FLAG\" mitre\n",
-		"expansion inside an --framework= value":       "ksail workload scan --framework=$FW\n",
-		"expansion in an option word after the flag":   "ksail workload scan --framework nsa --$OPT sarif\n",
-		"prefixed scan with a constructed option word": "env ksail workload scan --frame${SUFFIX} nsa\n",
-		"prefixed scan with a bare expansion":          "env KUBECONFIG=x ksail workload scan $EXTRA\n",
-		"unframed primary scan with a bare expansion":  "ksail workload scan $ARGS\n",
+		"variable suffix builds the option word":                      "ksail workload scan --frame${SUFFIX} nsa\n",
+		"ANSI-C fragment builds the option word":                      "ksail workload scan --frame$'work' nsa\n",
+		"quoted fragment builds the option word":                      "ksail workload scan --frame\"work\" nsa\n",
+		"backslash escape builds the option word":                     "ksail workload scan --frame\\work nsa\n",
+		"bare expansion after the flag":                               "ksail workload scan --framework nsa $EXTRA\n",
+		"quoted expansion in option position":                         "ksail workload scan --framework nsa \"$FLAG\" mitre\n",
+		"expansion inside an --framework= value":                      "ksail workload scan --framework=$FW\n",
+		"expansion in an option word after the flag":                  "ksail workload scan --framework nsa --$OPT sarif\n",
+		"prefixed scan with a constructed option word":                "env ksail workload scan --frame${SUFFIX} nsa\n",
+		"prefixed scan with a bare expansion":                         "env KUBECONFIG=x ksail workload scan $EXTRA\n",
+		"unframed primary scan with a bare expansion":                 "ksail workload scan $ARGS\n",
+		"undecidable command word with a constructed option word":     "k$'s'ail workload scan --frame${SUFFIX} nsa\n",
+		"prefixed undecidable command word with a constructed option": "env k$'s'ail workload scan --frame${SUFFIX} nsa\n",
+		"variable command word with a bare expansion":                 "$KSAIL workload scan $ARGS\n",
 	}
 	for name, line := range cases {
 		for _, shape := range []struct {
