@@ -949,8 +949,9 @@ func undecidableCommandWord(fields []string) string {
 	if scanWord {
 		for _, f := range fields[:fw] {
 			// Unquoted `*`, `?` and `[` are pathname expansion: `k?ail` is whatever file
-			// matches at run time, so they are as undecidable as `$`.
-			if strings.ContainsAny(f, "$`*?[") {
+			// matches at run time, so they are as undecidable as `$`. Quote-aware, so a
+			// single-quoted or escaped character stays the literal it is.
+			if carriesExpansion(f) {
 				return fmt.Sprintf("%q carries a shell expansion", f)
 			}
 		}
@@ -1096,7 +1097,9 @@ func undecidableOptionWord(args []string) string {
 	for i, tok := range args {
 		// `$` and backticks expand; unquoted `*`, `?` and `[` are pathname expansion, and a
 		// file named `--framework` beside `--framewor?` is all it takes to build the flag.
-		expansion := strings.ContainsAny(tok, "$`*?[")
+		// Quote-aware: `-o '*.sarif'` and `-o out\*.sarif` are literal file names, not
+		// patterns, and refusing them was a false positive.
+		expansion := carriesExpansion(tok)
 		spelled := bareToken(tok) != tok
 		switch {
 		case !expansion && !spelled:

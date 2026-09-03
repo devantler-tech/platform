@@ -1712,6 +1712,12 @@ func TestQuotedOptionValueExpansionIsStillRead(t *testing.T) {
 		"double-quoted value of -o":       goodScan + " -o \"${RUNNER_TEMP}/kubescape.sarif\"\n",
 		"double-quoted value of --output": goodScan + " --format sarif --output \"$OUT\"\n",
 		"double-quoted glob value of -o":  goodScan + " -o \"out*.sarif\"\n",
+		// Single quotes and backslashes make these literal file names, not expansions:
+		// the shell passes `*.sarif` and `out*.sarif` through unchanged.
+		"single-quoted glob value of -o":          goodScan + " -o '*.sarif'\n",
+		"backslash-escaped glob value of -o":      goodScan + " -o out\\*.sarif\n",
+		"single-quoted dollar value of -o":        goodScan + " -o '$OUT'\n",
+		"single-quoted bracket value of --output": goodScan + " --format sarif --output '[a].sarif'\n",
 	} {
 		got, err := setOf(t, body)
 		if err != nil {
