@@ -1552,7 +1552,31 @@ const (
 // The previous approved aggregate digest was:
 //
 //	5b298b96eba875cb5c05ba09c82eaf2833676930d1f76a3b7c4a954d104ceebd
-const expectedRenderedSurfaceSHA = "005c333f114ad4a2a5706ef9b0d4989623203eadc67657ffd15d2b4d9bb369dc"
+//
+// Re-approved for #3522: velero's Deployment and its node-agent DaemonSet now
+// carry fsGroupChangePolicy and seLinuxOptions.level in their own STORED
+// templates, instead of only receiving them from the admission-time mutation.
+// Kubescape scores the stored spec, so the scanned verdict never moved while the
+// fields existed only on the running pods. The only change since the value above
+// is 32 added lines in one file,
+// k8s/bases/infrastructure/controllers/velero/helm-release.yaml, so nothing else
+// moved the surface.
+//
+// The aggregate is the ONLY thing that moved, and the validator itself proves it:
+// the same run reported no per-identity "unapproved rendered ... fingerprint", no
+// "missing rendered authorization resource" and no "duplicate rendered
+// authorization resource", so every identity-keyed authorization resource is
+// unchanged. No grant-bearing field moved either -- node-agent keeps runAsUser: 0
+// (restated explicitly in the values so a later edit cannot silently drop the root
+// it needs for host path access) and the server keeps 65532, with fsGroup,
+// runAsGroup and runAsNonRoot untouched. Both added fields are non-privilege: one
+// governs ownership relabelling on volume mount, the other is an SELinux level
+// that is inert on this AppArmor cluster.
+//
+// The previous approved aggregate digest was:
+//
+//	005c333f114ad4a2a5706ef9b0d4989623203eadc67657ffd15d2b4d9bb369dc
+const expectedRenderedSurfaceSHA = "7a033c38847bf0ea7b052e783cbf1e68f317d8524c701243acb2d8b3c9972116"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

@@ -55,6 +55,12 @@ spec:
         # readOnlyRootFilesystem is safe here (unlike the main server below).
         # UID 65532 matches this image's baked nonroot user.
         securityContext:
+          # SELinux level for the plugin-copy initContainer's stored template
+          # (#3522). The pod declares no seLinuxOptions, so this container-level
+          # object replaces no inherited struct -- the wholesale-replace hazard
+          # in #3469 is unreachable here.
+          seLinuxOptions:
+            level: s0
           runAsNonRoot: true
           runAsUser: 65532
           allowPrivilegeEscalation: false
@@ -84,6 +90,12 @@ spec:
     # pod-security-mutations ClusterSecurityException. (The plugin-copy
     # initContainer above CAN use readOnlyRootFilesystem:true.)
     podSecurityContext:
+      # C-0211 set-fsgroupchangepolicy-value. Kyverno's
+      # add-baseline-context-optin-* rules supply this at admission, but
+      # Kubescape scores the STORED spec, so the template must carry it
+      # itself (#3522). Inert at runtime here: it only governs ownership
+      # relabelling on volume mount, and fsGroup is already set above.
+      fsGroupChangePolicy: OnRootMismatch
       runAsNonRoot: true
       runAsUser: 65532
       runAsGroup: 65532
@@ -91,6 +103,10 @@ spec:
       seccompProfile:
         type: RuntimeDefault
     containerSecurityContext:
+      # SELinux level for the server container's stored template (#3522).
+      # The pod sets no seLinuxOptions, so this replaces no inherited struct.
+      seLinuxOptions:
+        level: s0
       runAsNonRoot: true
       runAsUser: 65532
       allowPrivilegeEscalation: false
@@ -210,6 +226,22 @@ spec:
     # PVCs. Defaults are sane; just confirm rolling update.
     deployNodeAgent: true
     nodeAgent:
+      # C-0211 non-privilege fields for the node-agent DaemonSet's STORED
+      # template (#3522). Kyverno's add-baseline-context-optin-* rules supply
+      # these at admission, but Kubescape scores the stored spec, so the
+      # template has to carry them itself.
+      #
+      # runAsUser: 0 is the chart default and is restated explicitly so this
+      # block cannot silently drop the root the node-agent needs for host
+      # path access. Nothing here touches user, group or privilege.
+      podSecurityContext:
+        runAsUser: 0
+        fsGroupChangePolicy: OnRootMismatch
+      # The DaemonSet declares no pod-level seLinuxOptions, so this
+      # container-level object replaces no inherited struct (#3469).
+      containerSecurityContext:
+        seLinuxOptions:
+          level: s0
       updateStrategy:
         type: RollingUpdate
         rollingUpdate:
