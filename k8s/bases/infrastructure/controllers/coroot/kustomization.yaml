@@ -31,3 +31,10 @@ resources:
   - cluster-role-posture-staleness-alert.yaml
   - cluster-role-binding-posture-staleness-alert.yaml
   - cron-job-posture-staleness-alert.yaml
+  # Stranded-volume-attach alert (#2754): the direct symptom of the 2026-07-01
+  # nine-hour delivery wedge, read from FailedAttachVolume/FailedMount events.
+  - service-account-stranded-volume-attach-alert.yaml
+  - secret-stranded-volume-attach-alert.yaml
+  - cluster-role-stranded-volume-attach-alert.yaml
+  - cluster-role-binding-stranded-volume-attach-alert.yaml
+  - cron-job-stranded-volume-attach-alert.yaml

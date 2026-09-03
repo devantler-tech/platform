@@ -1,0 +1,13 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: stranded-volume-attach-alert
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: stranded-volume-attach-alert
+subjects:
+  - kind: ServiceAccount
+    name: stranded-volume-attach-alert
+    namespace: observability

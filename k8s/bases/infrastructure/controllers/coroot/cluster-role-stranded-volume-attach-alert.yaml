@@ -1,0 +1,19 @@
+# Read-only by construction (#2754 AC4/AC5): the detector may look at attach
+# failure events, the pods they name and the volumes behind them, and nothing
+# else. No verb here can detach, delete or taint.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: stranded-volume-attach-alert
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - events
+      - pods
+      - persistentvolumes
+      - persistentvolumeclaims
+    verbs:
+      - get
+      - list
