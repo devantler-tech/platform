@@ -1509,6 +1509,65 @@ func TestQuotedScanSpellingInCommandPositionIsCounted(t *testing.T) {
 	}
 }
 
+// THE COMMAND WORD IS DECIDABLE ONLY WHEN IT IS PLAIN TEXT. `bareToken` resolves
+// quotes and backslashes, and that is the whole decidable set: an ANSI-C quote
+// (`k$'s'ail`), a locale quote (`k$"s"ail`), a variable (`$KSAIL`), a substitution
+// or a backtick all produce their command word only when the shell runs, so no
+// lexical test can tell `k$'s'ail workload scan` — which executes ksail — from an
+// unrelated word. Enumerating expansion syntaxes is the blacklist this guard
+// exists to avoid, so the rule is inverted into a WHITELIST: on a line that
+// carries `--framework`, every token before it must be free of `$` and backticks,
+// and the word in front of `workload scan` must resolve to exactly `ksail` or be a
+// quoted-string fragment. Anything else is refused as undecidable. Measured: every
+// paired case below PASSED against the quote-only normaliser.
+func TestRejectsUndecidableScanCommandWord(t *testing.T) {
+	cases := map[string]string{
+		"ANSI-C quoted ksail in command position":          "k$'s'ail workload scan --framework nsa -o kubescape.sarif\n",
+		"ANSI-C quoted ksail in a prefixed scan":           "env k$'s'ail workload scan --framework nsa -o kubescape.sarif\n",
+		"locale quoted ksail in command position":          "k$\"s\"ail workload scan --framework nsa -o kubescape.sarif\n",
+		"variable in command position":                     "$KSAIL workload scan --framework nsa -o kubescape.sarif\n",
+		"ANSI-C quote inside the workload token":           "ksail w$'o'rkload scan --framework nsa -o kubescape.sarif\n",
+		"closed backtick substitution in command position": "`printf ksail` workload scan --framework nsa -o kubescape.sarif\n",
+		"path-qualified ksail in command position":         "/usr/local/bin/ksail workload scan --framework nsa -o kubescape.sarif\n",
+		"relative-path ksail in command position":          "./ksail workload scan --framework nsa -o kubescape.sarif\n",
+	}
+	for name, line := range cases {
+		for _, shape := range []struct {
+			label string
+			body  string
+		}{
+			{"paired with a counted scan", goodScan + " -o kubescape.sarif\n" + line},
+			{"alone", line},
+		} {
+			_, err := setOf(t, shape.body)
+			if err == nil {
+				t.Fatalf("%s, %s: expected FAIL CLOSED — the command word is not decidable from "+
+					"the text, so the line may execute a scan the guard never validated", name, shape.label)
+			}
+			// ASSERT A SPACED PHRASE, NEVER A BARE WORD (see
+			// TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy).
+			if !strings.Contains(err.Error(), "not decidable from the text") {
+				t.Fatalf("%s, %s: the refusal must name undecidability, proving this rule fired "+
+					"rather than a coincidental one; got: %v", name, shape.label, err)
+			}
+		}
+	}
+}
+
+// The control for the whitelist above: an expansion AFTER `--framework` is an
+// ordinary argument, and the real workflow has one. Refusing it would fail the
+// known-good configuration on the rule's first run, which is how a control gets
+// switched off.
+func TestExpansionInScanArgumentsIsStillRead(t *testing.T) {
+	got, err := setOf(t, goodScan+" --format sarif -o \"${RUNNER_TEMP}/kubescape.sarif\"\n")
+	if err != nil {
+		t.Fatalf("expected ACCEPT — an expansion in an argument does not change the command word; got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("normalised set = %q, want %q", strings.Join(got, ","), "mitre,nsa")
+	}
+}
+
 // The control for the rejection above, and the reason it keys on the three scan
 // tokens rather than on the prefix word. An `env` step that is not a scan is
 // ordinary shell and must still be ignored, or "reject any line containing `env`"

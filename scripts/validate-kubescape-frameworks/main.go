@@ -814,6 +814,14 @@ func continuesLine(line string) bool {
 // double quotes a single quote is literal, so `"'ksail'"` resolves to the word
 // `'ksail'`, which names a different command than ksail.
 func bareToken(tok string) string {
+	word, _ := resolveToken(tok)
+	return word
+}
+
+// resolveToken is bareToken with its one refusal made visible: fragment is true when
+// the token was returned UNCHANGED because its quotes never closed, which is what
+// marks it as a piece of a longer quoted string rather than a command name.
+func resolveToken(tok string) (word string, fragment bool) {
 	const (
 		plain = iota
 		single
@@ -873,9 +881,9 @@ func bareToken(tok string) string {
 	// Quotes that never closed mean this token is a fragment of a longer quoted
 	// string, not a command name — see the doc comment above.
 	if state != plain {
-		return tok
+		return tok, true
 	}
-	return b.String()
+	return b.String(), false
 }
 
 func prefixedScan(fields []string) bool {
@@ -887,6 +895,52 @@ func prefixedScan(fields []string) bool {
 		}
 	}
 	return false
+}
+
+// undecidableCommandWord names why a `--framework` line's command word cannot be
+// read from the text, or returns "" when it can.
+//
+// A WHITELIST, not a list of expansion syntaxes. `bareToken` resolves quotes and
+// backslashes, and that is the whole decidable set; an ANSI-C quote (`k$'s'ail`),
+// a locale quote (`k$"s"ail`), a variable, a `$(...)` or a backtick substitution all
+// produce their command word only when the shell runs. Refusing each spelling by
+// name is the blacklist this guard exists to avoid, and the one it missed would be
+// the bypass. So the rule is what a decidable line LOOKS like: every token before
+// `--framework` is free of `$` and backticks, and the word in front of `workload
+// scan` resolves to exactly `ksail` — or is a quoted-string fragment, which is
+// echoed text rather than an invocation and the accepted opt-out. A path-qualified
+// `/usr/local/bin/ksail` is refused by the same test: it executes the scan while
+// matching nothing the guard counts.
+//
+// Only tokens BEFORE `--framework` are held to this. The real invocation carries
+// `-o "${RUNNER_TEMP}/kubescape.sarif"` after it, and an expansion in an argument
+// does not change which command runs.
+func undecidableCommandWord(fields []string) string {
+	fw := -1
+	for i, f := range fields {
+		if strings.Contains(f, "--framework") {
+			fw = i
+			break
+		}
+	}
+	if fw < 0 {
+		return ""
+	}
+	for _, f := range fields[:fw] {
+		if strings.ContainsAny(f, "$`") {
+			return fmt.Sprintf("%q carries a shell expansion", f)
+		}
+	}
+	for j := 1; j+1 < fw; j++ {
+		if bareToken(fields[j]) != "workload" || bareToken(fields[j+1]) != "scan" {
+			continue
+		}
+		word, fragment := resolveToken(fields[j-1])
+		if word != "ksail" && !fragment {
+			return fmt.Sprintf("%q in front of `workload scan` is not the bare word ksail", fields[j-1])
+		}
+	}
+	return ""
 }
 
 func scanInvocations(scalar string) ([]string, error) {
@@ -1049,6 +1103,13 @@ func scanInvocations(scalar string) ([]string, error) {
 				// the prefix blacklist this guard exists to avoid, whose missed spelling would
 				// be the bypass. The opt-out is to QUOTE the text, which the message names and
 				// TestUnrelatedPrefixedCommandIsStillIgnored pins as the accepted control.
+				if strings.Contains(segment.text, "--framework") {
+					if reason := undecidableCommandWord(fields); reason != "" {
+						return nil, fmt.Errorf(
+							"the command word of a `--framework` line is not decidable from the text — %s: %q. A shell expansion or an unrecognised spelling in command position can execute `ksail workload scan` while reading as something else, so the executed framework set need not be the validated one. Invoke the scan as the bare word `ksail` with no expansion before `--framework`, or quote the text if it is not an invocation. See #3338",
+							reason, segment.text)
+					}
+				}
 				if prefixedScan(fields) && strings.Contains(segment.text, "--framework") {
 					return nil, fmt.Errorf(
 						"a `ksail workload scan --framework` invocation is preceded by another command or an environment assignment, so it executes without being validated: %q. Paired with a countable invocation this lets the validated framework set differ from the one that actually runs. Invoke the scan with no prefix, or quote the text if it is not an invocation. See #3338",
