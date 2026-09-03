@@ -1726,3 +1726,65 @@ func TestQuotedOptionValueExpansionIsStillRead(t *testing.T) {
 		t.Fatalf("a quoted framework VALUE is decidable (it cannot construct an option word) and must be refused by the value check instead; got: %v", err)
 	}
 }
+
+// Both anchors constructed away at once. The command-word rule fires only behind a
+// literal `--framework`, and the option-word rule only behind a resolvable `workload
+// scan` pair — so a line that constructs one scan word AND the option word (`ksail
+// work${LOAD} scan --frame${SUFFIX} nsa`) carried neither anchor and fell between the two
+// branches: not counted, not refused, executing a scan the guard never read. The
+// whitelist is now keyed on the one plain scan word such a line still needs, so any
+// expansion beside it is refused whatever the rest spells.
+func TestRejectsConstructedScanWordBesideAConstructedOptionWord(t *testing.T) {
+	cases := map[string]string{
+		"constructed workload and option word":                           "ksail work${LOAD} scan --frame${SUFFIX} nsa\n",
+		"constructed scan and option word":                               "ksail workload sc${AN} --frame${SUFFIX} nsa\n",
+		"constructed ksail and scan with a constructed option":           "$KSAIL workload sc${AN} --frame${SUFFIX} nsa\n",
+		"constructed ksail and workload with a constructed option":       "$KSAIL work${LOAD} scan --frame${SUFFIX} nsa\n",
+		"ANSI-C fragment in workload beside a constructed option":        "ksail w$'o'rkload scan --frame${SUFFIX} nsa\n",
+		"glob in the scan word beside a constructed option":              "ksail workload sca? --frame${SUFFIX} nsa\n",
+		"prefixed, with workload and the option word constructed":        "env ksail work${LOAD} scan --frame${SUFFIX} nsa\n",
+		"assignment-prefixed, with scan and the option word constructed": "LOAD=load ksail workload sc${AN} --frame${SUFFIX} nsa\n",
+	}
+	for name, line := range cases {
+		for _, shape := range []struct {
+			label string
+			body  string
+		}{
+			{"paired with a counted scan", goodScan + " -o kubescape.sarif\n" + line},
+			{"alone", line},
+		} {
+			_, err := setOf(t, shape.body)
+			if err == nil {
+				t.Errorf("%s, %s: expected FAIL CLOSED — a plain scan word stands beside a shell "+
+					"expansion, so the line may execute a scan the guard never validated", name, shape.label)
+				continue
+			}
+			// ASSERT A SPACED PHRASE, NEVER A BARE WORD (see
+			// TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy).
+			if !strings.Contains(err.Error(), "not decidable from the text") {
+				t.Errorf("%s, %s: the refusal must name undecidability, proving this rule fired "+
+					"rather than a coincidental one; got: %v", name, shape.label, err)
+			}
+		}
+	}
+}
+
+// The control: a plain scan word beside NO expansion, and an expansion beside NO plain
+// scan word, are both still ordinary shell. Quoted prose that merely contains the words
+// arrives as unbalanced fragments, which are not plain words.
+func TestPlainScanWordWithoutAnExpansionIsStillIgnored(t *testing.T) {
+	cases := map[string]string{
+		"quoted prose naming the scan beside a variable": goodScan + "\necho \"ksail workload scan finished: $STATUS\"\n",
+		"scan word in unrelated plain text":              goodScan + "\necho scan finished\n",
+		"expansion with no scan word":                    goodScan + "\nsome-tool --config $CFG --output x\n",
+	}
+	for name, body := range cases {
+		got, err := setOf(t, body)
+		if err != nil {
+			t.Fatalf("%s: expected ACCEPT — nothing here pairs a plain scan word with an expansion; got: %v", name, err)
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Fatalf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}

@@ -985,6 +985,59 @@ func undecidableCommandWord(fields []string) string {
 // never split into extra words — because the real workflow writes its output path as
 // `-o "${RUNNER_TEMP}/kubescape.sarif"`, and refusing that would fail the known-good
 // configuration on the rule's first run. Everything else is refused.
+// undecidableScanCandidate reports why a line that is not a plainly spelled primary
+// invocation still cannot be read as ordinary shell: it names at least one scan word
+// (`ksail`, `workload` or `scan`) as a plain, fully resolved token AND carries a shell
+// expansion or pathname pattern in some token. Keyed on the plain word rather than on a
+// literal `--framework` or a resolvable `workload scan` pair, because each of those
+// anchors can be constructed away (`work${LOAD}`, `--frame${SUFFIX}`) while the line
+// still executes a scan. A quoted fragment (`"ksail`) is not a plain word, so quoted
+// prose stays readable; an empty reason means the line is decidable.
+func undecidableScanCandidate(fields []string) string {
+	// TOKENS INSIDE A MULTI-WORD QUOTED STRING ARE NOT PLAIN WORDS. resolveToken flags only
+	// the token that opens or closes the string; the words between them resolve as plain
+	// (`echo "ksail workload scan finished: $STATUS"` puts `workload` and `scan` there), so
+	// the quote state is tracked across the line and everything inside it is skipped —
+	// the quoting opt-out the messages name must keep working when the prose carries a
+	// variable. A balanced token (`"$X"`, `--frame"work"`) is outside any such string.
+	inQuote := false
+	scanWord := ""
+	for _, f := range fields {
+		word, fragment := resolveToken(f)
+		if fragment {
+			inQuote = !inQuote
+			continue
+		}
+		if inQuote {
+			continue
+		}
+		switch word {
+		case "ksail", "workload", "scan":
+			if scanWord == "" {
+				scanWord = f
+			}
+		}
+	}
+	if scanWord == "" {
+		return ""
+	}
+	inQuote = false
+	for _, f := range fields {
+		if _, fragment := resolveToken(f); fragment {
+			inQuote = !inQuote
+			continue
+		}
+		if inQuote {
+			continue
+		}
+		// `$` and backticks expand; unquoted `*`, `?` and `[` are pathname expansion.
+		if strings.ContainsAny(f, "$`*?[") {
+			return fmt.Sprintf("%q is a plain scan word and %q carries a shell expansion", scanWord, f)
+		}
+	}
+	return ""
+}
+
 func undecidableOptionWord(args []string) string {
 	// The only option words whose NEXT word is necessarily their value. `--verbose "$X"` or
 	// `--framework=nsa "$X"` leave the expansion free to become an option of its own, so
@@ -1177,6 +1230,21 @@ func scanInvocations(scalar string) ([]string, error) {
 				// the prefix blacklist this guard exists to avoid, whose missed spelling would
 				// be the bypass. The opt-out is to QUOTE the text, which the message names and
 				// TestUnrelatedPrefixedCommandIsStillIgnored pins as the accepted control.
+				// ANY PLAIN SCAN WORD BESIDE ANY EXPANSION IS REFUSED, before either anchor below
+				// is consulted. Both anchors can be constructed away at once: `ksail work${LOAD}
+				// scan --frame${SUFFIX} nsa` carries no literal `--framework` and no resolvable
+				// `workload scan` pair, so it fell between the two branches while executing a
+				// scan the guard never read. The whitelist is therefore keyed on the one thing
+				// a constructed invocation cannot hide — the plain scan word it still needs —
+				// and refuses the line whenever any other token expands, whatever the rest
+				// spells. The residual is a line that expands all three words, which no lexical
+				// test can see. Unquoted prose that names a scan word beside a variable is
+				// refused too, and the message names the quoting opt-out.
+				if reason := undecidableScanCandidate(fields); reason != "" {
+					return nil, fmt.Errorf(
+						"a line names `ksail`, `workload` or `scan` plainly beside a shell expansion, so whether it invokes `ksail workload scan --framework` is not decidable from the text — %s: %q. A constructed command or option word can execute a scan while reading as something else, so the executed framework set need not be the validated one. Spell the whole invocation plainly, or quote the text if it is not an invocation. See #3338",
+						reason, segment.text)
+				}
 				if strings.Contains(segment.text, "--framework") {
 					if reason := undecidableCommandWord(fields); reason != "" {
 						return nil, fmt.Errorf(
@@ -1620,8 +1688,26 @@ func normaliseNumber(s string) string {
 // needs no readable command word in front of it, because that word is exactly what an
 // expansion hides.
 func workloadScanArgs(fields []string) (int, bool) {
+	// A `workload scan` PAIR INSIDE A MULTI-WORD QUOTED STRING IS PROSE, NOT A CANDIDATE.
+	// resolveToken flags only the opening and closing tokens as fragments; the words
+	// between them resolve plain, so `echo "ksail workload scan finished: $STATUS"` used to
+	// yield a pair and then refuse the variable after it — while every message here names
+	// quoting as the opt-out. The quote state is tracked across the line instead.
+	inQuote := false
+	plain := make([]string, len(fields))
+	for i, f := range fields {
+		word, fragment := resolveToken(f)
+		if fragment {
+			inQuote = !inQuote
+			continue
+		}
+		if inQuote {
+			continue
+		}
+		plain[i] = word
+	}
 	for i := 0; i+1 < len(fields); i++ {
-		if bareToken(fields[i]) == "workload" && bareToken(fields[i+1]) == "scan" {
+		if plain[i] == "workload" && plain[i+1] == "scan" {
 			return i + 2, true
 		}
 	}
