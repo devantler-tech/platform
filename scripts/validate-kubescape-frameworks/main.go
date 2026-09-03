@@ -408,19 +408,22 @@ func scanCandidate(scalar string) bool {
 	// single line spells the scan, so the per-line rules below see nothing. If the
 	// executable text of the block spells all four tokens AND some line expands, the
 	// block can invoke the scan and is refused on this deliberately loose path.
+	// Built from the QUOTE-AWARE tokens, not the raw text: a fully quoted word is
+	// prose and contributes nothing, so `echo "ksail workload scan --framework
+	// $STATUS"` is not evidence of a scan, while `${KSAIL}` and `k"s"ail` (resolved to
+	// `ksail`) still are.
 	var code strings.Builder
 	codeExpands := false
 	for _, physical := range lines {
 		if strings.HasPrefix(strings.TrimSpace(physical), "#") {
 			continue
 		}
-		code.WriteString(physical)
-		code.WriteByte('\n')
-		for _, f := range shellFields(physical) {
-			if carriesExpansion(f) {
-				codeExpands = true
-			}
+		text, expands := evidenceText(shellFields(physical))
+		if expands {
+			codeExpands = true
 		}
+		code.WriteString(text)
+		code.WriteByte('\n')
 	}
 	if text := code.String(); codeExpands && strings.Contains(text, "--framework") &&
 		strings.Contains(text, "ksail") && strings.Contains(text, "workload") && strings.Contains(text, "scan") {
@@ -448,13 +451,9 @@ func scanCandidate(scalar string) bool {
 			continue
 		}
 		words := map[string]bool{}
-		expands := false
 		for _, f := range fields {
 			if word, fragment := resolveToken(f); !fragment {
 				words[word] = true
-			}
-			if carriesExpansion(f) {
-				expands = true
 			}
 		}
 		if framed && words["ksail"] && words["workload"] && words["scan"] {
@@ -465,14 +464,47 @@ func scanCandidate(scalar string) bool {
 		}
 		// Every command word expanded at once (`${ksail} ${workload} ${scan}`): no
 		// token resolves to a plain scan word, so neither rule above sees it. The
-		// raw text still spells the scan inside the expansions, and the line expands,
-		// which is enough to refuse on the loose path this function serves.
-		if expands && strings.Contains(line, "ksail") && strings.Contains(line, "workload") &&
-			strings.Contains(line, "scan") {
+		// unquoted text still spells the scan inside the expansions, and the line
+		// expands, which is enough to refuse on the loose path this function serves.
+		if text, expands := evidenceText(fields); expands && strings.Contains(text, "ksail") &&
+			strings.Contains(text, "workload") && strings.Contains(text, "scan") {
 			return true
 		}
 	}
 	return false
+}
+
+// evidenceText renders the words of one line that could take part in an invocation —
+// every token that is not a fully quoted string, resolved through resolveToken — and
+// reports whether any token on the line expands. A fully quoted word is an argument,
+// never a command, so prose such as `echo "ksail workload scan --framework $STATUS"`
+// contributes only `echo`.
+func evidenceText(fields []string) (string, bool) {
+	var text strings.Builder
+	expands := false
+	for _, f := range fields {
+		if carriesExpansion(f) {
+			expands = true
+		}
+		if fullyQuoted(f) {
+			continue
+		}
+		word, _ := resolveToken(f)
+		text.WriteString(word)
+		text.WriteByte(' ')
+	}
+	return text.String(), expands
+}
+
+// fullyQuoted reports whether a whole word is wrapped in one pair of matching quotes —
+// the shape a multi-word string takes once shellFields keeps it together. Such a word is
+// an argument, never a command, so it is prose to the loose conditional screen.
+func fullyQuoted(tok string) bool {
+	if len(tok) < 2 {
+		return false
+	}
+	first, last := tok[0], tok[len(tok)-1]
+	return (first == '\'' || first == '"') && last == first
 }
 
 // shellFields splits one command line into words the way the shell does: on

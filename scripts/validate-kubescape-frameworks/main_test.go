@@ -1017,18 +1017,27 @@ func TestRejectsScanAssembledAcrossLinesInAConditionalStep(t *testing.T) {
 }
 
 // The control: quoted prose in a conditional step is still prose, exactly as on the
-// unconditional path.
+// unconditional path — including prose that carries an expansion, which the
+// scalar-wide evidence must not read as a scan assembled across lines.
 func TestQuotedProseInAConditionalStepIsStillIgnored(t *testing.T) {
-	workflow := "jobs:\n  validate:\n    steps:\n" +
-		"      - run: " + goodScan + "\n" +
-		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: echo 'ksail workload scan --framework nsa'\n"
-	path := writeTemp(t, workflow)
-	got, err := frameworkSet(path)
-	if err != nil {
-		t.Fatalf("expected ACCEPT — quoted prose invokes nothing; got: %v", err)
+	cases := map[string]string{
+		"single-quoted prose":                   "echo 'ksail workload scan --framework nsa'",
+		"double-quoted prose with an expansion": "echo \"ksail workload scan --framework $STATUS\"",
+		"double-quoted prose with a backtick":   "echo \"ksail workload scan --framework `date`\"",
 	}
-	if strings.Join(got, ",") != "mitre,nsa" {
-		t.Fatalf("normalised set = %q, want %q", strings.Join(got, ","), "mitre,nsa")
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		got, err := frameworkSet(path)
+		if err != nil {
+			t.Errorf("%s: expected ACCEPT — quoted prose invokes nothing; got: %v", name, err)
+			continue
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Errorf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
 	}
 }
 
