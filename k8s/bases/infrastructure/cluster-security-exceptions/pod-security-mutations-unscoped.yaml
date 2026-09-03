@@ -29,17 +29,18 @@
 # spec.posture below inherits it. Kubescape writes status: passed together with
 # subStatus: "w/exceptions" and a populated appliedIgnoreRules on each suppressed
 # control, so reading .spec.controls[<id>].status.status reports a gate as clearable
-# when nothing behind it has been fixed. Measured 2026-09-02 on both listed controls:
+# when nothing behind it has been fixed. Scan status measured 2026-09-02 on both listed
+# controls:
 #
 #   * C-0013 — five of the six flux-system workloads now pass genuinely, carrying an
 #     EMPTY subStatus; only tofu-controller, the single workload that is actually
 #     broken, reads passed with subStatus "w/exceptions". Status alone cannot tell the
 #     five apart from the one; subStatus isolates it exactly.
 #   * C-0211 — 35 of 35 scanned workloads read passed with subStatus "w/exceptions",
-#     each carrying appliedIgnoreRules: [pod-security-mutations-unscoped/C-0211],
-#     while all 35 are still missing both universal fields. Nothing here passes
-#     genuinely, so reading status alone yields exactly the "0 of 35 fail" that #3239
-#     states as its success signal, with no fix behind it.
+#     each carrying appliedIgnoreRules: [pod-security-mutations-unscoped/C-0211]. Against
+#     the stored specs (re-measured 2026-09-03, below) six of the 35 pass both universal
+#     gaps and 29 do not, and status alone cannot tell the six from the 29: it yields
+#     exactly the "0 of 35 fail" that #3239 states as its success signal either way.
 #
 # The discriminator is subStatus plus a populated appliedIgnoreRules, never status,
 # and it does discriminate: on one such workload the same scan carries 53 controls
