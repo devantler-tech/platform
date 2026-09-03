@@ -100,6 +100,17 @@ jobs:
           shellcheck scripts/tests/test-publish-workflow-signing-revisions.sh
           bash scripts/tests/test-publish-workflow-signing-revisions.sh
 
+      # The report names the two revisions per consumer; the generator (#3550) turns them
+      # into the committed approved set the matcher narrowing (#3308) is derived from. Its
+      # cluster read and its pin read are both stubbed here, so this proves the fail-closed
+      # shape — an unresolved consumer writes nothing — not any particular revision.
+      - name: 🔐 Validate the approved-revisions generator
+        run: |
+          # -x: the generator SOURCES the report, and without it SC1091 is reported and the run exits 1.
+          shellcheck -x scripts/generate-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions.sh
+          bash scripts/tests/test-publish-workflow-approved-revisions.sh
+
       # Dropping a framework from the Kubescape gate REMOVES findings, so the
       # compliance score RISES and every check stays green — a coverage
       # regression that looks like an improvement. That is what un-gated 59
