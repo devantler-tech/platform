@@ -794,26 +794,88 @@ func continuesLine(line string) bool {
 // of prefixes would have to enumerate every spelling, and the one it missed would be
 // the one that mattered; keying on the scan itself has no such gap. A segment that
 // does NOT carry those tokens is ordinary shell and is left alone.
-// bareToken strips shell quoting that WRAPS a whole token, so `'ksail'` and
-// `"ksail"` compare equal to `ksail`. Quoting the command name still runs it, so an
-// exact match would miss the same bypass one spelling further out.
+// bareToken resolves a shell token to the literal WORD the shell would execute,
+// so every spelling of one command name collapses to a single value before
+// matching. `'ksail'`, `k"s"ail`, `k's'ail` and `k\sail` are all the word `ksail`.
 //
-// ONLY a fully wrapped token is unquoted, and that restriction is what keeps the
-// check honest rather than being a shortfall: `shellSplit` preserves quote
-// characters, so a multi-word quoted string arrives as tokens whose quotes are
-// UNBALANCED (`'ksail` … `nsa'`). Leaving those alone is what stops
+// Quotes and backslashes are the only constructs resolved, and that is the whole
+// DECIDABLE set: `$(…)`, backticks and `${…}` need the shell's own evaluation to
+// know what word they produce, and scanInvocations refuses those separately
+// rather than guessing at them here.
+//
+// UNBALANCED quoting returns the token UNCHANGED, and that restriction is what
+// keeps the check honest rather than being a shortfall: `shellSplit` preserves
+// quote characters, so a multi-word quoted string arrives as tokens whose quotes
+// never close (`'ksail` … `nsa'`). Leaving those alone is what stops
 // `echo 'ksail workload scan --framework nsa'` — echoed text rather than an
 // execution — being refused as a prefixed scan.
 //
-// One level only, which is also correct: to the shell `"'ksail'"` is the literal
-// word `'ksail'`, which names a different command than ksail.
+// Quote CONTEXT is honoured, which is what preserves the one-level rule: inside
+// double quotes a single quote is literal, so `"'ksail'"` resolves to the word
+// `'ksail'`, which names a different command than ksail.
 func bareToken(tok string) string {
-	if len(tok) >= 2 {
-		if q := tok[0]; (q == '\'' || q == '"') && tok[len(tok)-1] == q {
-			return tok[1 : len(tok)-1]
+	const (
+		plain = iota
+		single
+		double
+	)
+
+	var b strings.Builder
+	b.Grow(len(tok))
+
+	state := plain
+	for i := 0; i < len(tok); i++ {
+		c := tok[i]
+		switch state {
+		case plain:
+			switch c {
+			case '\'':
+				state = single
+			case '"':
+				state = double
+			case '\\':
+				// Escapes the next byte literally. A TRAILING backslash is a line
+				// continuation, which contributes no character at all.
+				if i+1 < len(tok) {
+					i++
+					b.WriteByte(tok[i])
+				}
+			default:
+				b.WriteByte(c)
+			}
+		case single:
+			// Nothing is special inside single quotes, a backslash least of all.
+			if c == '\'' {
+				state = plain
+				continue
+			}
+			b.WriteByte(c)
+		case double:
+			switch c {
+			case '"':
+				state = plain
+			case '\\':
+				// Inside double quotes a backslash escapes only these four; before
+				// anything else it stays a literal backslash.
+				if i+1 < len(tok) && (tok[i+1] == '"' || tok[i+1] == '\\' ||
+					tok[i+1] == '$' || tok[i+1] == '`') {
+					i++
+					b.WriteByte(tok[i])
+					continue
+				}
+				b.WriteByte(c)
+			default:
+				b.WriteByte(c)
+			}
 		}
 	}
-	return tok
+
+	// Quotes that never closed mean this token is a fragment of a longer quoted
+	// string, not a command name — see the doc comment above.
+	if state != plain {
+		return tok
+	}
+	return b.String()
 }
 
 func prefixedScan(fields []string) bool {

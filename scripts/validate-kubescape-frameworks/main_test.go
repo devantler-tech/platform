@@ -1437,6 +1437,17 @@ func TestRejectsPrefixedScanInvocation(t *testing.T) {
 			"env 'ksail' workload scan --framework nsa -o kubescape.sarif\n",
 		"double-quoted ksail token in an env-prefixed scan": goodScan + " -o kubescape.sarif\n" +
 			"env \"ksail\" workload scan --framework nsa -o kubescape.sarif\n",
+		// CONCATENATION AND ESCAPES RESOLVE TO `ksail` TOO, and a token-equality test
+		// that only strips a WRAPPING quote pair misses every one of them. To the shell
+		// `k"s"ail`, `k's'ail` and `k\sail` are all the word `ksail`, so each executes
+		// the scan while reading as an unrelated token — the same bypass as the quoted
+		// spellings above, one concatenation further out.
+		"concatenated double-quoted ksail token in an env-prefixed scan": goodScan + " -o kubescape.sarif\n" +
+			"env k\"s\"ail workload scan --framework nsa -o kubescape.sarif\n",
+		"concatenated single-quoted ksail token in an env-prefixed scan": goodScan + " -o kubescape.sarif\n" +
+			"env k's'ail workload scan --framework nsa -o kubescape.sarif\n",
+		"backslash-escaped ksail token in an env-prefixed scan": goodScan + " -o kubescape.sarif\n" +
+			"env k\\sail workload scan --framework nsa -o kubescape.sarif\n",
 	}
 	for name, body := range cases {
 		if _, err := setOf(t, body); err == nil {
