@@ -932,6 +932,52 @@ func TestRejectsScanInAConditionalStep(t *testing.T) {
 	}
 }
 
+// The conditional path used to detect the scan by raw substring, so a quoted, escaped or
+// expanded spelling of the command word in a conditional step read as ordinary shell and
+// the step was skipped rather than refused — executing a reduced scan beside the counted
+// full one. It now reads the scalar token by token like the primary path, so every
+// spelling that path counts or refuses is refused here too.
+func TestRejectsNormalisedScanSpellingInAConditionalStep(t *testing.T) {
+	cases := map[string]string{
+		"double-quoted fragment in the command word": "k\"s\"ail workload scan --framework nsa",
+		"backslash escape in the command word":       "k\\sail workload scan --framework nsa",
+		"ANSI-C fragment in the command word":        "k$'s'ail workload scan --framework nsa",
+		"fully quoted command word behind a prefix":  "env 'ksail' workload scan --framework nsa",
+		"constructed option word":                    "ksail workload scan --frame${SUFFIX} nsa",
+		"constructed workload and option word":       "ksail work${LOAD} scan --frame${SUFFIX} nsa",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — the conditional step can execute a scan the guard never validated; got %q", name, set)
+			continue
+		}
+		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+			t.Errorf("%s: the refusal must name the conditional step, proving this rule fired; got: %v", name, err)
+		}
+	}
+}
+
+// The control: quoted prose in a conditional step is still prose, exactly as on the
+// unconditional path.
+func TestQuotedProseInAConditionalStepIsStillIgnored(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: echo 'ksail workload scan --framework nsa'\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("expected ACCEPT — quoted prose invokes nothing; got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("normalised set = %q, want %q", strings.Join(got, ","), "mitre,nsa")
+	}
+}
+
 func TestRejectsScanInAConstantFalseJob(t *testing.T) {
 	workflow := "jobs:\n  validate:\n    if: ${{ false }}\n    steps:\n" +
 		"      - run: " + goodScan + "\n"

@@ -385,12 +385,43 @@ func runScalars(data []byte) ([]string, error) {
 	return out, nil
 }
 
-// scanCandidate reports whether a `run:` scalar mentions the scan at all. Deliberately
+// scanCandidate reports whether a `run:` scalar can invoke the scan at all. Deliberately
 // LOOSE: it decides only whether a conditional step is worth refusing, and a false
 // positive there costs a diagnosable refusal while a false negative reopens the hole.
+//
+// It reads the scalar the way the unconditional path does — token by token through
+// resolveToken — rather than by raw substring, because a raw `ksail` substring test
+// is exactly what a quoted, escaped or expanded spelling walks past: `k"s"ail workload
+// scan --framework nsa` in a conditional step used to be skipped as ordinary shell while
+// executing a reduced scan the guard never validated. A line whose resolved words
+// contain all three of `ksail`, `workload` and `scan` is a candidate, and so is any
+// line the undecidable-candidate rule refuses (a plain scan word beside an expansion,
+// which covers `k$'s'ail`), so the conditional path fails closed on the same spellings
+// the primary path counts or refuses. Quoted prose stays ignored here for the same
+// reason it does there.
 func scanCandidate(scalar string) bool {
-	return strings.Contains(scalar, "ksail") && strings.Contains(scalar, "workload") &&
-		strings.Contains(scalar, "scan") && strings.Contains(scalar, "--framework")
+	framed := strings.Contains(scalar, "--framework")
+	for _, line := range strings.Split(scalar, "\n") {
+		fields := strings.Fields(line)
+		// A comment cannot execute anything, and the real workflows annotate their
+		// conditional steps with prose that names the scan.
+		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
+			continue
+		}
+		words := map[string]bool{}
+		for _, f := range fields {
+			if word, fragment := resolveToken(f); !fragment {
+				words[word] = true
+			}
+		}
+		if framed && words["ksail"] && words["workload"] && words["scan"] {
+			return true
+		}
+		if undecidableScanCandidate(fields) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // firstScanLine returns the line naming the scan, for a diagnosable refusal.
