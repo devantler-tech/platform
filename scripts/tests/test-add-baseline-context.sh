@@ -149,6 +149,84 @@ check coroot-node-agent-mutated.yaml '.spec.initContainers[0].securityContext.se
 check coroot-node-agent-mutated.yaml '.spec.securityContext.seLinuxOptions' \
   null "pod-scope SELinux fill created an object where the author set none"
 
+# CONTROLLER KINDS. Kubescape scores the STORED controller spec, and the pod
+# rules never reach it (this policy has no autogen rules; measured 2026-09-03
+# against live prod: 0 of 15 observability and 0 of 12 longhorn-system stored
+# specs carried either field after the namespaces were opted in). The
+# controller-kind rules close that at the object Kubescape reads. Every state
+# the pod fixtures pin is asserted again here, on the kinds the residual
+# population consists of. Pod-level assertions on the templates use a different
+# path per kind: `spec.template.spec` and, for CronJobs, `spec.jobTemplate`.
+
+# ON state — the plain operator-written shape receives both fields, on the
+# template and on every container and initContainer.
+check operator-deploy-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "opted-in Deployment template did not receive fsGroupChangePolicy"
+check operator-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "opted-in Deployment container did not receive seLinuxOptions"
+check operator-deploy-mutated.yaml '.spec.template.spec.initContainers[0].securityContext.seLinuxOptions.level' \
+  s0 "opted-in Deployment initContainer did not receive seLinuxOptions"
+check operator-deploy-mutated.yaml '.spec.template.spec.securityContext.seLinuxOptions' \
+  null "controller pod-scope SELinux fill created an object where the author set none"
+
+# A StatefulSet without initContainers: the foreach must tolerate the absent
+# field rather than dropping the container mutation with it.
+check server-sts-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "opted-in StatefulSet template did not receive fsGroupChangePolicy"
+check server-sts-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "opted-in StatefulSet container did not receive seLinuxOptions"
+
+# A privileged DaemonSet, the shape Longhorn actually runs: privilege is
+# untouched and the two fields are supplied beside it.
+check manager-ds-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "opted-in DaemonSet template did not receive fsGroupChangePolicy"
+check manager-ds-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "opted-in DaemonSet container did not receive seLinuxOptions"
+check manager-ds-mutated.yaml '.spec.template.spec.containers[0].securityContext.privileged' \
+  true "controller rule changed a privilege field it must not touch"
+
+# The jobTemplate path.
+check nightly-cronjob-mutated.yaml '.spec.jobTemplate.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "opted-in CronJob template did not receive fsGroupChangePolicy"
+check nightly-cronjob-mutated.yaml '.spec.jobTemplate.spec.template.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "opted-in CronJob container did not receive seLinuxOptions"
+check nightly-cronjob-mutated.yaml '.spec.jobTemplate.spec.template.spec.initContainers[0].securityContext.seLinuxOptions.level' \
+  s0 "opted-in CronJob initContainer did not receive seLinuxOptions"
+
+# OFF state — an unlabelled namespace's controllers are untouched.
+check unlabelled-deploy-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  null "unlabelled namespace Deployment was mutated at the template level"
+check unlabelled-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
+  null "unlabelled namespace Deployment had seLinuxOptions injected"
+
+# Conditional anchors — a controller that sets its own values keeps them.
+check preset-deploy-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  Always "preset Deployment fsGroupChangePolicy was overwritten"
+check preset-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s9 "preset Deployment container seLinuxOptions was overwritten"
+check preset-deploy-mutated.yaml '.spec.template.spec.initContainers[0].securityContext.seLinuxOptions.level' \
+  s9 "preset Deployment initContainer seLinuxOptions was overwritten"
+
+# The wholesale-replace guard at controller scope: a complete pod-level SELinux
+# object stays the only one, and fsGroupChangePolicy still lands.
+check podlevel-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
+  null "Deployment pod-level SELinux options were overridden by a container-level injection"
+check podlevel-deploy-mutated.yaml '.spec.template.spec.initContainers[0].securityContext.seLinuxOptions' \
+  null "Deployment pod-level SELinux options were overridden by an initContainer-level injection"
+check podlevel-deploy-mutated.yaml '.spec.template.spec.securityContext.seLinuxOptions.level' \
+  s9 "Deployment pod-level seLinuxOptions.level was not preserved"
+check podlevel-deploy-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "controller rule did not fire on the podlevel-deploy fixture"
+
+# The pod-level-object-without-level shape at controller scope: only the
+# pod-scope fill may supply the level, preserving the sibling user.
+check podlevel-partial-deploy-mutated.yaml '.spec.template.spec.securityContext.seLinuxOptions.level' \
+  s0 "partial Deployment pod-level seLinuxOptions did not receive the missing level"
+check podlevel-partial-deploy-mutated.yaml '.spec.template.spec.securityContext.seLinuxOptions.user' \
+  system_u "partial Deployment pod-level seLinuxOptions lost its pre-existing user"
+check podlevel-partial-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
+  null "container-level injection replaced the partial Deployment pod-level SELinux object"
+
 # ROLLOUT INVENTORY. The rules above ship default-off, so what they actually do
 # in the cluster is decided entirely by which namespaces carry the opt-in label —
 # a fact no mutation fixture can see. Without this gate, widening the rollout from

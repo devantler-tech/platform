@@ -19,3 +19,9 @@ namespaceSelector:
   - name: observability
     labels:
       pod-security.devantler.tech/baseline-context: enabled
+  # longhorn-system, opted in via #3540. Declared so the controller-kind
+  # DaemonSet fixture (a privileged manager, the shape Longhorn actually runs)
+  # is evaluated rather than reported "Excluded".
+  - name: longhorn-system
+    labels:
+      pod-security.devantler.tech/baseline-context: enabled

@@ -1,4 +1,6 @@
-# Mutates pods to apply security best-practices that kubescape checks:
+# Mutates pods — and, in namespaces opted in to the baseline-context rules, the
+# stored specs of their controllers — to apply security best-practices that
+# kubescape checks:
 # - seccompProfile: RuntimeDefault (C-0055 Linux hardening) — pod + container
 # - allowPrivilegeEscalation: false (C-0016)
 # - readOnlyRootFilesystem: true (C-0017)
@@ -405,3 +407,239 @@ spec:
                     securityContext:
                       seLinuxOptions:
                         +(level): s0
+    # CONTROLLER-KIND COUNTERPARTS of the three opt-in rules above. Those rules
+    # match `Pod` and this policy generates no autogen rules (its live
+    # `status.autogen` is empty), so they mutate only at pod admission and the
+    # STORED controller spec — the one Kubescape scores for C-0211 — is never
+    # touched. Measured 2026-09-03 against live prod after observability and
+    # longhorn-system were opted in: 0 of 15 and 0 of 12 stored specs carried
+    # either field, while the running pods created since the label did. The
+    # seven Coroot-operator workloads and Longhorn's CSI and manager workloads
+    # cannot take the template route the plain manifests took, because their
+    # specs are written by an operator whose CRD exposes no securityContext
+    # field (verified against the coroot-operator v1.9.5 CRD). These rules reach
+    # them where the pod rules cannot: at the controller object.
+    #
+    # CREATE and UPDATE, unlike the pod rules. A controller's pod template is
+    # mutable, so the 422 hazard that forced the pod rules to CREATE-only does
+    # not exist here — and UPDATE is the only way an already-stored spec that an
+    # operator rewrites on reconcile ever receives the fields. Both fields are
+    # written through conditional anchors, so a chart- or operator-set value is
+    # preserved and a second admission of the same object is a no-op.
+    #
+    # Same opt-in label, same two fields, same leaf-level SELinux anchors and the
+    # same wholesale-replace guards as the pod rules; only the path differs
+    # (`spec.template.spec`, and `spec.jobTemplate.spec.template.spec` for
+    # CronJobs). `tests/add-baseline-context` pins every state for the
+    # controller kinds too.
+    - name: add-baseline-context-optin-controllers
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+                - Job
+              operations:
+                - CREATE
+                - UPDATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context: enabled
+      mutate:
+        patchStrategicMerge:
+          spec:
+            template:
+              spec:
+                securityContext:
+                  +(fsGroupChangePolicy): OnRootMismatch
+    - name: add-baseline-context-optin-controllers-pod-selinux-level
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+                - Job
+              operations:
+                - CREATE
+                - UPDATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context: enabled
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.template.spec.securityContext.seLinuxOptions || '' }}"
+            operator: NotEquals
+            value: ''
+          - key: "{{ request.object.spec.template.spec.securityContext.seLinuxOptions.level || '' }}"
+            operator: Equals
+            value: ''
+      mutate:
+        patchStrategicMerge:
+          spec:
+            template:
+              spec:
+                securityContext:
+                  seLinuxOptions:
+                    +(level): s0
+    - name: add-baseline-context-optin-controllers-containers
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+                - Job
+              operations:
+                - CREATE
+                - UPDATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context: enabled
+      mutate:
+        foreach:
+          - list: "request.object.spec.template.spec.containers"
+            preconditions:
+              any:
+                - key: "{{ request.object.spec.template.spec.securityContext.seLinuxOptions || '' }}"
+                  operator: Equals
+                  value: ''
+                - key: "{{ element.securityContext.seLinuxOptions || '' }}"
+                  operator: NotEquals
+                  value: ''
+            patchStrategicMerge:
+              spec:
+                template:
+                  spec:
+                    containers:
+                      - (name): "{{element.name}}"
+                        securityContext:
+                          seLinuxOptions:
+                            +(level): s0
+          - list: "request.object.spec.template.spec.initContainers[]"
+            preconditions:
+              any:
+                - key: "{{ request.object.spec.template.spec.securityContext.seLinuxOptions || '' }}"
+                  operator: Equals
+                  value: ''
+                - key: "{{ element.securityContext.seLinuxOptions || '' }}"
+                  operator: NotEquals
+                  value: ''
+            patchStrategicMerge:
+              spec:
+                template:
+                  spec:
+                    initContainers:
+                      - (name): "{{element.name}}"
+                        securityContext:
+                          seLinuxOptions:
+                            +(level): s0
+    - name: add-baseline-context-optin-cronjobs
+      match:
+        any:
+          - resources:
+              kinds:
+                - CronJob
+              operations:
+                - CREATE
+                - UPDATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context: enabled
+      mutate:
+        patchStrategicMerge:
+          spec:
+            jobTemplate:
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      +(fsGroupChangePolicy): OnRootMismatch
+    - name: add-baseline-context-optin-cronjobs-pod-selinux-level
+      match:
+        any:
+          - resources:
+              kinds:
+                - CronJob
+              operations:
+                - CREATE
+                - UPDATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context: enabled
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.jobTemplate.spec.template.spec.securityContext.seLinuxOptions || '' }}"
+            operator: NotEquals
+            value: ''
+          - key: "{{ request.object.spec.jobTemplate.spec.template.spec.securityContext.seLinuxOptions.level || '' }}"
+            operator: Equals
+            value: ''
+      mutate:
+        patchStrategicMerge:
+          spec:
+            jobTemplate:
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      seLinuxOptions:
+                        +(level): s0
+    - name: add-baseline-context-optin-cronjobs-containers
+      match:
+        any:
+          - resources:
+              kinds:
+                - CronJob
+              operations:
+                - CREATE
+                - UPDATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context: enabled
+      mutate:
+        foreach:
+          - list: "request.object.spec.jobTemplate.spec.template.spec.containers"
+            preconditions:
+              any:
+                - key: "{{ request.object.spec.jobTemplate.spec.template.spec.securityContext.seLinuxOptions || '' }}"
+                  operator: Equals
+                  value: ''
+                - key: "{{ element.securityContext.seLinuxOptions || '' }}"
+                  operator: NotEquals
+                  value: ''
+            patchStrategicMerge:
+              spec:
+                jobTemplate:
+                  spec:
+                    template:
+                      spec:
+                        containers:
+                          - (name): "{{element.name}}"
+                            securityContext:
+                              seLinuxOptions:
+                                +(level): s0
+          - list: "request.object.spec.jobTemplate.spec.template.spec.initContainers[]"
+            preconditions:
+              any:
+                - key: "{{ request.object.spec.jobTemplate.spec.template.spec.securityContext.seLinuxOptions || '' }}"
+                  operator: Equals
+                  value: ''
+                - key: "{{ element.securityContext.seLinuxOptions || '' }}"
+                  operator: NotEquals
+                  value: ''
+            patchStrategicMerge:
+              spec:
+                jobTemplate:
+                  spec:
+                    template:
+                      spec:
+                        initContainers:
+                          - (name): "{{element.name}}"
+                            securityContext:
+                              seLinuxOptions:
+                                +(level): s0

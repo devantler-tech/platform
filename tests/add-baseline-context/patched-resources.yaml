@@ -119,3 +119,159 @@ spec:
           level: s0
   securityContext:
     fsGroupChangePolicy: OnRootMismatch
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operator-deploy
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: operator-deploy
+  template:
+    metadata:
+      labels:
+        app: operator-deploy
+    spec:
+      initContainers:
+        - name: init
+          image: ghcr.io/coroot/coroot-operator:1.9.5
+          securityContext:
+            seLinuxOptions:
+              level: s0
+      containers:
+        - name: operator
+          image: ghcr.io/coroot/coroot-operator:1.9.5
+          securityContext:
+            seLinuxOptions:
+              level: s0
+      securityContext:
+        fsGroupChangePolicy: OnRootMismatch
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: server-sts
+  namespace: observability
+spec:
+  serviceName: server-sts
+  selector:
+    matchLabels:
+      app: server-sts
+  template:
+    metadata:
+      labels:
+        app: server-sts
+    spec:
+      containers:
+        - name: server
+          image: ghcr.io/coroot/coroot:1.22.2
+          securityContext:
+            seLinuxOptions:
+              level: s0
+      securityContext:
+        fsGroupChangePolicy: OnRootMismatch
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: manager-ds
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: manager-ds
+  template:
+    metadata:
+      labels:
+        app: manager-ds
+    spec:
+      containers:
+        - name: manager
+          image: longhornio/longhorn-manager:v1.9.0
+          securityContext:
+            privileged: true
+            seLinuxOptions:
+              level: s0
+      securityContext:
+        fsGroupChangePolicy: OnRootMismatch
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-cronjob
+  namespace: observability
+spec:
+  schedule: "0 3 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          initContainers:
+            - name: init
+              image: ghcr.io/coroot/coroot:1.22.2
+              securityContext:
+                seLinuxOptions:
+                  level: s0
+          containers:
+            - name: job
+              image: ghcr.io/coroot/coroot:1.22.2
+              securityContext:
+                seLinuxOptions:
+                  level: s0
+          securityContext:
+            fsGroupChangePolicy: OnRootMismatch
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podlevel-deploy
+  namespace: velero
+spec:
+  selector:
+    matchLabels:
+      app: podlevel-deploy
+  template:
+    metadata:
+      labels:
+        app: podlevel-deploy
+    spec:
+      securityContext:
+        seLinuxOptions:
+          user: system_u
+          level: s9
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        - name: init
+          image: velero/velero:v1.16.0
+      containers:
+        - name: velero
+          image: velero/velero:v1.16.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podlevel-partial-deploy
+  namespace: velero
+spec:
+  selector:
+    matchLabels:
+      app: podlevel-partial-deploy
+  template:
+    metadata:
+      labels:
+        app: podlevel-partial-deploy
+    spec:
+      securityContext:
+        seLinuxOptions:
+          user: system_u
+          level: s0
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        - name: init
+          image: velero/velero:v1.16.0
+      containers:
+        - name: velero
+          image: velero/velero:v1.16.0

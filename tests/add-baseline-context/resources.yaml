@@ -168,3 +168,200 @@ spec:
   containers:
     - name: node-agent
       image: ghcr.io/coroot/coroot-node-agent:v1.0.0
+# --- Controller kinds ---------------------------------------------------------
+# The stored controller spec is what Kubescape scores, and the pod rules above
+# never reach it (this policy has no autogen rules). Each shape the pod fixtures
+# pin is pinned again at the controller object, on the kinds the residual
+# population actually consists of: operator-written Deployments, StatefulSets
+# and DaemonSets, plus a CronJob for the jobTemplate path.
+---
+# The plain shape an operator writes: no securityContext anywhere. Both fields
+# must land in the pod template.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operator-deploy
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: operator-deploy
+  template:
+    metadata:
+      labels:
+        app: operator-deploy
+    spec:
+      initContainers:
+        - name: init
+          image: ghcr.io/coroot/coroot-operator:1.9.5
+      containers:
+        - name: operator
+          image: ghcr.io/coroot/coroot-operator:1.9.5
+---
+# A StatefulSet with no initContainers — the foreach over
+# `spec.template.spec.initContainers[]` must tolerate the absent field.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: server-sts
+  namespace: observability
+spec:
+  serviceName: server-sts
+  selector:
+    matchLabels:
+      app: server-sts
+  template:
+    metadata:
+      labels:
+        app: server-sts
+    spec:
+      containers:
+        - name: server
+          image: ghcr.io/coroot/coroot:1.22.2
+---
+# A privileged DaemonSet, the shape Longhorn's manager and CSI plugin run.
+# Privilege is untouched; only the two fields are supplied.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: manager-ds
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: manager-ds
+  template:
+    metadata:
+      labels:
+        app: manager-ds
+    spec:
+      containers:
+        - name: manager
+          image: longhornio/longhorn-manager:v1.9.0
+          securityContext:
+            privileged: true
+---
+# The jobTemplate path.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-cronjob
+  namespace: observability
+spec:
+  schedule: "0 3 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          initContainers:
+            - name: init
+              image: ghcr.io/coroot/coroot:1.22.2
+          containers:
+            - name: job
+              image: ghcr.io/coroot/coroot:1.22.2
+---
+# OFF state: no opt-in label, so no controller rule may touch it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unlabelled-deploy
+  namespace: chaos-mesh
+spec:
+  selector:
+    matchLabels:
+      app: unlabelled-deploy
+  template:
+    metadata:
+      labels:
+        app: unlabelled-deploy
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/chaos-mesh/chaos-mesh:v2.7.0
+---
+# Anchor preservation: a controller that already sets both fields to
+# non-default values keeps them.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: preset-deploy
+  namespace: velero
+spec:
+  selector:
+    matchLabels:
+      app: preset-deploy
+  template:
+    metadata:
+      labels:
+        app: preset-deploy
+    spec:
+      securityContext:
+        fsGroupChangePolicy: Always
+      initContainers:
+        - name: init
+          image: velero/velero:v1.16.0
+          securityContext:
+            seLinuxOptions:
+              level: s9
+      containers:
+        - name: velero
+          image: velero/velero:v1.16.0
+          securityContext:
+            seLinuxOptions:
+              level: s9
+---
+# A complete pod-level SELinux object with containers carrying none: the
+# container foreach must stay out (a container-level object would replace the
+# pod struct wholesale), the pod-scope fill must not fire (level present), and
+# fsGroupChangePolicy still lands.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podlevel-deploy
+  namespace: velero
+spec:
+  selector:
+    matchLabels:
+      app: podlevel-deploy
+  template:
+    metadata:
+      labels:
+        app: podlevel-deploy
+    spec:
+      securityContext:
+        seLinuxOptions:
+          user: system_u
+          level: s9
+      initContainers:
+        - name: init
+          image: velero/velero:v1.16.0
+      containers:
+        - name: velero
+          image: velero/velero:v1.16.0
+---
+# A pod-level SELinux object that EXISTS but has no `level`: only the pod-scope
+# fill may supply it, preserving the sibling `user`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podlevel-partial-deploy
+  namespace: velero
+spec:
+  selector:
+    matchLabels:
+      app: podlevel-partial-deploy
+  template:
+    metadata:
+      labels:
+        app: podlevel-partial-deploy
+    spec:
+      securityContext:
+        seLinuxOptions:
+          user: system_u
+      initContainers:
+        - name: init
+          image: velero/velero:v1.16.0
+      containers:
+        - name: velero
+          image: velero/velero:v1.16.0
