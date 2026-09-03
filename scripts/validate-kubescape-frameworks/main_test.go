@@ -1024,6 +1024,9 @@ func TestQuotedProseInAConditionalStepIsStillIgnored(t *testing.T) {
 		"single-quoted prose":                   "echo 'ksail workload scan --framework nsa'",
 		"double-quoted prose with an expansion": "echo \"ksail workload scan --framework $STATUS\"",
 		"double-quoted prose with a backtick":   "echo \"ksail workload scan --framework `date`\"",
+		// The string spans two physical lines; the screen folds the quoted newline first.
+		"multi-line single-quoted prose": "|\n          echo 'ksail workload\n          scan --framework nsa'",
+		"multi-line double-quoted prose": "|\n          echo \"ksail workload\n          scan --framework $STATUS\"",
 	}
 	for name, line := range cases {
 		workflow := "jobs:\n  validate:\n    steps:\n" +

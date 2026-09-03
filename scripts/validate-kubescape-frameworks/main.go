@@ -401,7 +401,11 @@ func runScalars(data []byte) ([]string, error) {
 // reason it does there.
 func scanCandidate(scalar string) bool {
 	framed := strings.Contains(scalar, "--framework")
-	lines := strings.Split(scalar, "\n")
+	// A quoted string may span physical lines, and every reading below is per line —
+	// so a newline INSIDE quotes is folded to a space first, making the multi-line
+	// string one word that fullyQuoted then drops as prose. Comment detection runs on
+	// the result, so a line that begins inside a quote is never mistaken for a comment.
+	lines := strings.Split(collapseQuotedNewlines(scalar), "\n")
 	// SCALAR-WIDE evidence, over the non-comment lines, kept from the raw check this
 	// replaced: when the command words are assigned on one line and expanded on the
 	// next (`KSAIL=ksail …` then `${KSAIL} ${WORKLOAD} ${SCAN} --framework nsa`) no
@@ -494,6 +498,38 @@ func evidenceText(fields []string) (string, bool) {
 		text.WriteByte(' ')
 	}
 	return text.String(), expands
+}
+
+// collapseQuotedNewlines replaces every newline that falls inside a single- or
+// double-quoted string with a space, tracking quote state and backslash escapes the way
+// shellFields does, so a quoted string that spans physical lines reads as one word on
+// one line. Newlines outside quotes are kept, so line structure survives.
+func collapseQuotedNewlines(text string) string {
+	var out strings.Builder
+	out.Grow(len(text))
+	inSingle, inDouble := false, false
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		switch {
+		case c == '\\' && !inSingle:
+			out.WriteByte(c)
+			if i+1 < len(text) {
+				i++
+				out.WriteByte(text[i])
+			}
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+			out.WriteByte(c)
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+			out.WriteByte(c)
+		case c == '\n' && (inSingle || inDouble):
+			out.WriteByte(' ')
+		default:
+			out.WriteByte(c)
+		}
+	}
+	return out.String()
 }
 
 // fullyQuoted reports whether a whole word is wrapped in one pair of matching quotes —
