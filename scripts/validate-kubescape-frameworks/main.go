@@ -916,9 +916,17 @@ func prefixedScan(fields []string) bool {
 // `-o "${RUNNER_TEMP}/kubescape.sarif"` after it, and an expansion in an argument
 // does not change which command runs.
 func undecidableCommandWord(fields []string) string {
+	// THE FLAG IS LOCATED AFTER THE `workload scan` PAIR when one is present. Searching the
+	// whole line let a prefix argument mask it: in `env NOTE=--framework k$'s'ail workload
+	// scan --framework nsa` the first match is the assignment, every check below then
+	// stops short of the command word, and the ANSI-C-expanded `ksail` executes unread.
+	start := 0
+	if j, ok := workloadScanArgs(fields); ok {
+		start = j
+	}
 	fw := -1
-	for i, f := range fields {
-		if strings.Contains(f, "--framework") {
+	for i := start; i < len(fields); i++ {
+		if strings.Contains(fields[i], "--framework") {
 			fw = i
 			break
 		}
@@ -940,7 +948,9 @@ func undecidableCommandWord(fields []string) string {
 	}
 	if scanWord {
 		for _, f := range fields[:fw] {
-			if strings.ContainsAny(f, "$`") {
+			// Unquoted `*`, `?` and `[` are pathname expansion: `k?ail` is whatever file
+			// matches at run time, so they are as undecidable as `$`.
+			if strings.ContainsAny(f, "$`*?[") {
 				return fmt.Sprintf("%q carries a shell expansion", f)
 			}
 		}
@@ -976,22 +986,28 @@ func undecidableCommandWord(fields []string) string {
 // `-o "${RUNNER_TEMP}/kubescape.sarif"`, and refusing that would fail the known-good
 // configuration on the rule's first run. Everything else is refused.
 func undecidableOptionWord(args []string) string {
-	plainOption := func(tok string) bool {
-		return strings.HasPrefix(tok, "-") && bareToken(tok) == tok && !strings.ContainsAny(tok, "$`")
+	// The only option words whose NEXT word is necessarily their value. `--verbose "$X"` or
+	// `--framework=nsa "$X"` leave the expansion free to become an option of its own, so
+	// the exception is a whitelist of value-taking spellings, not any token beginning `-`.
+	outputOption := func(tok string) bool {
+		return tok == "-o" || tok == "--output"
 	}
 	for i, tok := range args {
-		expansion := strings.ContainsAny(tok, "$`")
+		// `$` and backticks expand; unquoted `*`, `?` and `[` are pathname expansion, and a
+		// file named `--framework` beside `--framewor?` is all it takes to build the flag.
+		expansion := strings.ContainsAny(tok, "$`*?[")
 		spelled := bareToken(tok) != tok
 		switch {
 		case !expansion && !spelled:
 			continue
 		case strings.HasPrefix(bareToken(tok), "-") || strings.HasPrefix(tok, "-"):
 			return fmt.Sprintf("option word %q is not a plain token", tok)
-		case expansion && len(tok) >= 2 && tok[0] == '"' && tok[len(tok)-1] == '"' && i > 0 && plainOption(args[i-1]):
-			// The one accepted expansion: a double-quoted value of a plain option word.
+		case expansion && len(tok) >= 2 && tok[0] == '"' && tok[len(tok)-1] == '"' && i > 0 && outputOption(args[i-1]):
+			// The one accepted expansion: a double-quoted value of `-o`/`--output`, which cannot
+			// split into further words and is consumed by the option before it.
 			continue
 		case expansion:
-			return fmt.Sprintf("argument %q carries a shell expansion outside a quoted option value", tok)
+			return fmt.Sprintf("argument %q carries a shell expansion or pattern outside a double-quoted -o/--output value", tok)
 		default:
 			// A quoted or escaped non-option argument (`'nsa,mitre'`) cannot construct an
 			// option word, so it is decidable; frameworkTokens still refuses it as a value.

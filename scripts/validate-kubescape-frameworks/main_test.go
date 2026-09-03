@@ -1673,6 +1673,12 @@ func TestRejectsUndecidableScanOptionWord(t *testing.T) {
 		"undecidable command word with a constructed option word":     "k$'s'ail workload scan --frame${SUFFIX} nsa\n",
 		"prefixed undecidable command word with a constructed option": "env k$'s'ail workload scan --frame${SUFFIX} nsa\n",
 		"variable command word with a bare expansion":                 "$KSAIL workload scan $ARGS\n",
+		"prefix argument masks the flag search":                       "env NOTE=--framework k$'s'ail workload scan --framework nsa\n",
+		"quoted expansion after a value-carrying option":              "ksail workload scan --framework=nsa,mitre \"$EXTRA\"\n",
+		"quoted expansion after a boolean-looking option":             "ksail workload scan --framework nsa --verbose \"$X\"\n",
+		"glob in an option word":                                      "ksail workload scan --framewor? nsa -o kubescape.sarif\n",
+		"bracket pattern in an option word":                           "ksail workload scan --framewor[k] nsa\n",
+		"glob in an unquoted argument":                                "ksail workload scan --framework nsa -o out*.sarif\n",
 	}
 	for name, line := range cases {
 		for _, shape := range []struct {
@@ -1705,6 +1711,7 @@ func TestQuotedOptionValueExpansionIsStillRead(t *testing.T) {
 	for name, body := range map[string]string{
 		"double-quoted value of -o":       goodScan + " -o \"${RUNNER_TEMP}/kubescape.sarif\"\n",
 		"double-quoted value of --output": goodScan + " --format sarif --output \"$OUT\"\n",
+		"double-quoted glob value of -o":  goodScan + " -o \"out*.sarif\"\n",
 	} {
 		got, err := setOf(t, body)
 		if err != nil {
