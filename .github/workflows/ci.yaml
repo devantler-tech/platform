@@ -308,6 +308,7 @@ jobs:
               - 'scripts/tests/test-crossplane-egress-policy.sh'
               - 'scripts/tests/crossplane-egress-policy-rules.yaml'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
+              - 'scripts/tests/test-stranded-volume-attach-alert.sh'
               # The Job manifest, the Secret it imports and this test are one
               # contract: the credential is only out of the environment while all
               # three agree.
@@ -988,6 +989,15 @@ jobs:
         # delivery so both silent-zero guards and the credential's handling are
         # pinned by behaviour rather than by schema.
         run: bash scripts/tests/test-cnpg-degraded-alert.sh
+
+      - name: 🩺 Validate the stranded-volume-attach alert
+        if: needs.changes.outputs.k8s == 'true'
+        # The only direct signal for the 2026-07-01 shape — a volume stranded on
+        # a departed node, logged by the rescheduled pod for nine hours while
+        # nothing alerted (#2363, #2754). Replays that shape and every ordinary
+        # shape against a stubbed API and delivery, so the fire, each quiet
+        # verdict and both silent-zero guards are pinned by behaviour.
+        run: bash scripts/tests/test-stranded-volume-attach-alert.sh
 
       - name: 🔑 Validate the MinIO bucket Job's credential handling
         if: needs.changes.outputs.k8s == 'true'

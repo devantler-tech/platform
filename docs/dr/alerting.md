@@ -99,6 +99,20 @@ stays quiet by design, exactly as the old Alertmanager did.
   webhook when one has been degraded past a 15-minute grace. It is deliberately
   independent of any Flux health gate, so relaxing that gate cannot silently
   remove this coverage.
+- **A stranded volume attach alerts within about fifteen minutes.** On
+  2026-07-01 one hcloud volume that stayed attached to a departed node took all
+  prod delivery down for nine hours: the rescheduled `openbao-0` logged
+  `FailedAttachVolume … volume is attached` 26,632 times, OpenBao stayed down,
+  the `vault-config` Job timed out, `infrastructure` and `apps` went NotReady and
+  every merge-group deploy was evicted — and nothing reported the strand itself
+  (#2363). `bases/infrastructure/controllers/coroot/cron-job-stranded-volume-attach-alert.yaml`
+  now reads the `FailedAttachVolume` / `FailedMount` events every 5 minutes and
+  posts to the same Slack webhook when a pod has been failing to attach for more
+  than 10 minutes, is still failing, and is still not Ready — naming the pod,
+  node, PVC, PV and the CSI message. It reads the symptom rather than the
+  `VolumeAttachment`, because the strand lives in the cloud provider while the
+  Kubernetes objects can look consistent; it is read-only, and force-detach
+  stays a manual step (#2754).
 - **kube-apiserver audit logs are searchable in Coroot again.** Coroot's
   node-agent ingests container logs/traces, not host audit-log files, so the
   previous alloy-audit → Loki pipeline was removed with the migration. The
