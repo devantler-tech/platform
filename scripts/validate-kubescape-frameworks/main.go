@@ -401,17 +401,24 @@ func runScalars(data []byte) ([]string, error) {
 // reason it does there.
 func scanCandidate(scalar string) bool {
 	framed := strings.Contains(scalar, "--framework")
-	for _, line := range strings.Split(scalar, "\n") {
-		fields := strings.Fields(line)
+	// A backslash-newline continues the command on the next physical line, so the
+	// three scan words can be split across lines; join them before reading.
+	joined := strings.ReplaceAll(scalar, "\\\n", " ")
+	for _, line := range strings.Split(joined, "\n") {
+		fields := shellFields(line)
 		// A comment cannot execute anything, and the real workflows annotate their
 		// conditional steps with prose that names the scan.
 		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
 			continue
 		}
 		words := map[string]bool{}
+		expands := false
 		for _, f := range fields {
 			if word, fragment := resolveToken(f); !fragment {
 				words[word] = true
+			}
+			if carriesExpansion(f) {
+				expands = true
 			}
 		}
 		if framed && words["ksail"] && words["workload"] && words["scan"] {
@@ -420,8 +427,60 @@ func scanCandidate(scalar string) bool {
 		if undecidableScanCandidate(fields) != "" {
 			return true
 		}
+		// Every command word expanded at once (`${ksail} ${workload} ${scan}`): no
+		// token resolves to a plain scan word, so neither rule above sees it. The
+		// raw text still spells the scan inside the expansions, and the line expands,
+		// which is enough to refuse on the loose path this function serves.
+		if expands && strings.Contains(line, "ksail") && strings.Contains(line, "workload") &&
+			strings.Contains(line, "scan") {
+			return true
+		}
 	}
 	return false
+}
+
+// shellFields splits one command line into words the way the shell does: on
+// unquoted whitespace only, keeping quote characters and backslash escapes in the
+// word so resolveToken reads them exactly as before. `strings.Fields` split a quoted
+// argument at every space, so `echo "about ksail workload scan --framework nsa"`
+// arrived as separate `ksail`, `workload` and `scan` words and read as a prefixed
+// invocation, and `-o "${RUNNER_TEMP}/kubescape report.sarif"` lost the one accepted
+// expansion shape because neither half was a whole double-quoted word. An unclosed
+// quote runs to the end of the line as one word, which resolveToken then reports as a
+// fragment.
+func shellFields(text string) []string {
+	var out []string
+	var cur strings.Builder
+	inSingle, inDouble := false, false
+	flush := func() {
+		if cur.Len() > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
+		}
+	}
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		switch {
+		case c == '\\' && !inSingle:
+			cur.WriteByte(c)
+			if i+1 < len(text) {
+				i++
+				cur.WriteByte(text[i])
+			}
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+			cur.WriteByte(c)
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+			cur.WriteByte(c)
+		case (c == ' ' || c == '\t' || c == '\n' || c == '\r') && !inSingle && !inDouble:
+			flush()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return out
 }
 
 // firstScanLine returns the line naming the scan, for a diagnosable refusal.
@@ -1286,7 +1345,10 @@ func scanInvocations(scalar string) ([]string, error) {
 			if compound == "" {
 				compound = compoundToken(segment.text)
 			}
-			fields := strings.Fields(segment.text)
+			// Split on UNQUOTED whitespace only (shellFields): a quoted argument is one
+			// word, so quoted prose cannot read as a prefixed invocation and a quoted
+			// -o value containing a space keeps its accepted shape.
+			fields := shellFields(segment.text)
 			// NORMALISED HERE TOO, not only in prefixedScan below. That sweep starts at field
 			// index 1, so a quoted or escaped spelling in COMMAND position (`k"s"ail workload
 			// scan`) met a raw comparison and fell through as ordinary shell — neither counted

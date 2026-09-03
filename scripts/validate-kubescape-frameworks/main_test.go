@@ -945,6 +945,7 @@ func TestRejectsNormalisedScanSpellingInAConditionalStep(t *testing.T) {
 		"fully quoted command word behind a prefix":  "env 'ksail' workload scan --framework nsa",
 		"constructed option word":                    "ksail workload scan --frame${SUFFIX} nsa",
 		"constructed workload and option word":       "ksail work${LOAD} scan --frame${SUFFIX} nsa",
+		"every command word expanded":                "${ksail} ${workload} ${scan} --framework nsa",
 	}
 	for name, line := range cases {
 		workflow := "jobs:\n  validate:\n    steps:\n" +
@@ -959,6 +960,23 @@ func TestRejectsNormalisedScanSpellingInAConditionalStep(t *testing.T) {
 		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
 			t.Errorf("%s: the refusal must name the conditional step, proving this rule fired; got: %v", name, err)
 		}
+	}
+}
+
+// A backslash continuation splits the command words across physical lines; the
+// conditional check joins them before reading, so the split scan is still refused.
+func TestRejectsContinuedScanInAConditionalStep(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+		"          ksail workload \\\n            scan --framework nsa\n"
+	path := writeTemp(t, workflow)
+	set, err := frameworkSet(path)
+	if err == nil {
+		t.Fatalf("expected FAIL CLOSED — a continued scan in a conditional step still executes; got %q", set)
+	}
+	if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+		t.Fatalf("the refusal must name the conditional step; got: %v", err)
 	}
 }
 
@@ -1647,6 +1665,9 @@ func TestUnrelatedPrefixedCommandIsStillIgnored(t *testing.T) {
 		// (`'ksail` … `nsa'`), so it is echoed text rather than an execution and must
 		// stay accepted. This is the control for unquoting only fully wrapped tokens.
 		"echoed scan text in a quoted string": goodScan + "\necho 'ksail workload scan --framework nsa'\n",
+		// A leading word inside the quotes used to make the interior `ksail workload
+		// scan` read as a PREFIXED invocation once the string was split at spaces.
+		"echoed scan text behind a leading word": goodScan + "\necho \"about ksail workload scan --framework nsa\"\n",
 	}
 	for name, body := range cases {
 		got, err := setOf(t, body)
@@ -1764,6 +1785,9 @@ func TestQuotedOptionValueExpansionIsStillRead(t *testing.T) {
 		"backslash-escaped glob value of -o":      goodScan + " -o out\\*.sarif\n",
 		"single-quoted dollar value of -o":        goodScan + " -o '$OUT'\n",
 		"single-quoted bracket value of --output": goodScan + " --format sarif --output '[a].sarif'\n",
+		// A quoted value containing a space is still ONE shell argument; splitting it at
+		// the space used to leave neither half a whole double-quoted word.
+		"double-quoted value of -o with a space": goodScan + " -o \"${RUNNER_TEMP}/kubescape report.sarif\"\n",
 	} {
 		got, err := setOf(t, body)
 		if err != nil {
