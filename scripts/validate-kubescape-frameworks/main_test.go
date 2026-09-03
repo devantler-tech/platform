@@ -1649,3 +1649,70 @@ func TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy(t *testing.T) {
 			"scan is sent to fix a prefix it does not have; got: %v", err)
 	}
 }
+
+// The option-word half of the whitelist. The command-word rule stops at `--framework`,
+// and the option word itself can be constructed by the shell: `--frame${SUFFIX}` carries
+// no literal `--framework`, so the primary-scan path used to skip it as an unframed scan
+// — neither counted nor refused — while it executed exactly the option the guard never
+// read. Paired with a counted invocation, the validated set need not be the executed one.
+// A bare expansion AFTER the flag is the same hole from the other side: `$EXTRA` can
+// expand to a second `--framework` that overrides the one the guard read.
+func TestRejectsUndecidableScanOptionWord(t *testing.T) {
+	cases := map[string]string{
+		"variable suffix builds the option word":       "ksail workload scan --frame${SUFFIX} nsa\n",
+		"ANSI-C fragment builds the option word":       "ksail workload scan --frame$'work' nsa\n",
+		"quoted fragment builds the option word":       "ksail workload scan --frame\"work\" nsa\n",
+		"backslash escape builds the option word":      "ksail workload scan --frame\\work nsa\n",
+		"bare expansion after the flag":                "ksail workload scan --framework nsa $EXTRA\n",
+		"quoted expansion in option position":          "ksail workload scan --framework nsa \"$FLAG\" mitre\n",
+		"expansion inside an --framework= value":       "ksail workload scan --framework=$FW\n",
+		"expansion in an option word after the flag":   "ksail workload scan --framework nsa --$OPT sarif\n",
+		"prefixed scan with a constructed option word": "env ksail workload scan --frame${SUFFIX} nsa\n",
+		"prefixed scan with a bare expansion":          "env KUBECONFIG=x ksail workload scan $EXTRA\n",
+		"unframed primary scan with a bare expansion":  "ksail workload scan $ARGS\n",
+	}
+	for name, line := range cases {
+		for _, shape := range []struct {
+			label string
+			body  string
+		}{
+			{"paired with a counted scan", goodScan + " -o kubescape.sarif\n" + line},
+			{"alone", line},
+		} {
+			_, err := setOf(t, shape.body)
+			if err == nil {
+				t.Fatalf("%s, %s: expected FAIL CLOSED — an option word or argument is not decidable "+
+					"from the text, so the line may execute a framework set the guard never validated", name, shape.label)
+			}
+			// ASSERT A SPACED PHRASE, NEVER A BARE WORD (see
+			// TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy).
+			if !strings.Contains(err.Error(), "not decidable from the text") {
+				t.Fatalf("%s, %s: the refusal must name undecidability, proving this rule fired "+
+					"rather than a coincidental one; got: %v", name, shape.label, err)
+			}
+		}
+	}
+}
+
+// The control for the option-word rule: the ONE accepted expansion shape is a
+// double-quoted value of a plain option word, which is how the real workflow writes its
+// output path. A plain quoted argument (`'nsa'`) is decidable too — it cannot construct
+// an option word — and is still refused by frameworkTokens as a value, for its own reason.
+func TestQuotedOptionValueExpansionIsStillRead(t *testing.T) {
+	for name, body := range map[string]string{
+		"double-quoted value of -o":       goodScan + " -o \"${RUNNER_TEMP}/kubescape.sarif\"\n",
+		"double-quoted value of --output": goodScan + " --format sarif --output \"$OUT\"\n",
+	} {
+		got, err := setOf(t, body)
+		if err != nil {
+			t.Fatalf("%s: expected ACCEPT — a double-quoted value of a plain option word cannot construct an option; got: %v", name, err)
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Fatalf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+	_, err := setOf(t, "ksail workload scan --framework 'nsa,mitre'\n")
+	if err == nil || strings.Contains(err.Error(), "not decidable from the text") {
+		t.Fatalf("a quoted framework VALUE is decidable (it cannot construct an option word) and must be refused by the value check instead; got: %v", err)
+	}
+}

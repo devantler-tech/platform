@@ -957,6 +957,50 @@ func undecidableCommandWord(fields []string) string {
 	return ""
 }
 
+// undecidableOptionWord names why the ARGUMENTS of a scan invocation cannot be read from
+// the text, or returns "" when they can.
+//
+// The command-word whitelist above stops at `--framework`, and that was the hole: the
+// option word itself can be built by the shell. `--frame${SUFFIX} nsa`, `--frame$'work'`
+// and `--frame"work"` all execute as `--framework` while the raw text carries no such
+// token, so the primary-scan path skipped the line as an unframed scan and, paired with a
+// counted invocation, credited the wrong set. A bare `$EXTRA` after the flag is the same
+// hole from the other side: it can expand to a second `--framework` that overrides the
+// one the guard read.
+//
+// Again a WHITELIST of what a decidable argument list LOOKS like, not a list of
+// expansion syntaxes. Every option word is a plain token: no quotes, no backslashes, no
+// `$`, no backtick. A token carrying an expansion is accepted in exactly one shape — the
+// VALUE of the plain option word before it, wrapped whole in double quotes so it can
+// never split into extra words — because the real workflow writes its output path as
+// `-o "${RUNNER_TEMP}/kubescape.sarif"`, and refusing that would fail the known-good
+// configuration on the rule's first run. Everything else is refused.
+func undecidableOptionWord(args []string) string {
+	plainOption := func(tok string) bool {
+		return strings.HasPrefix(tok, "-") && bareToken(tok) == tok && !strings.ContainsAny(tok, "$`")
+	}
+	for i, tok := range args {
+		expansion := strings.ContainsAny(tok, "$`")
+		spelled := bareToken(tok) != tok
+		switch {
+		case !expansion && !spelled:
+			continue
+		case strings.HasPrefix(bareToken(tok), "-") || strings.HasPrefix(tok, "-"):
+			return fmt.Sprintf("option word %q is not a plain token", tok)
+		case expansion && len(tok) >= 2 && tok[0] == '"' && tok[len(tok)-1] == '"' && i > 0 && plainOption(args[i-1]):
+			// The one accepted expansion: a double-quoted value of a plain option word.
+			continue
+		case expansion:
+			return fmt.Sprintf("argument %q carries a shell expansion outside a quoted option value", tok)
+		default:
+			// A quoted or escaped non-option argument (`'nsa,mitre'`) cannot construct an
+			// option word, so it is decidable; frameworkTokens still refuses it as a value.
+			continue
+		}
+	}
+	return ""
+}
+
 func scanInvocations(scalar string) ([]string, error) {
 	var out []string
 	var compound string
@@ -1124,12 +1168,28 @@ func scanInvocations(scalar string) ([]string, error) {
 							reason, segment.text)
 					}
 				}
+				if prefixedScan(fields) {
+					if reason := undecidableOptionWord(fields[scanArgsStart(fields):]); reason != "" {
+						return nil, fmt.Errorf(
+							"an argument of a prefixed `ksail workload scan` invocation is not decidable from the text — %s: %q. A shell expansion or a quoted spelling in an option word can execute `--framework` while reading as something else, so the executed framework set need not be the validated one. Spell every option word plainly, or quote the text if it is not an invocation. See #3338",
+							reason, segment.text)
+					}
+				}
 				if prefixedScan(fields) && strings.Contains(segment.text, "--framework") {
 					return nil, fmt.Errorf(
 						"a `ksail workload scan --framework` invocation is preceded by another command or an environment assignment, so it executes without being validated: %q. Paired with a countable invocation this lets the validated framework set differ from the one that actually runs. Invoke the scan with no prefix, or quote the text if it is not an invocation. See #3338",
 						segment.text)
 				}
 				continue
+			}
+			// THE OPTION WORDS ARE HELD TO THE SAME WHITELIST AS THE COMMAND WORD, and BEFORE the
+			// `--framework` test below: `ksail workload scan --frame${SUFFIX} nsa` carries no literal
+			// `--framework`, so it used to fall through that test as an unframed scan while executing
+			// exactly the option the guard never read. Refused whether or not the flag is spelled out.
+			if reason := undecidableOptionWord(fields[3:]); reason != "" {
+				return nil, fmt.Errorf(
+					"an argument of a `ksail workload scan` invocation is not decidable from the text — %s: %q. A shell expansion or a quoted spelling in an option word can execute `--framework` while reading as something else, so the executed framework set need not be the validated one. Spell every option word plainly, with any expansion confined to a double-quoted option value. See #3338",
+					reason, segment.text)
 			}
 			if !strings.Contains(segment.text, "--framework") {
 				continue
@@ -1530,4 +1590,16 @@ func normaliseNumber(s string) string {
 	}
 	s = strings.TrimRight(s, "0")
 	return strings.TrimSuffix(s, ".")
+}
+
+// scanArgsStart returns the index of the first token after the `ksail workload scan`
+// triple in a prefixed invocation, so its arguments can be held to the same whitelist as
+// a primary one's. prefixedScan has already established that the triple is present.
+func scanArgsStart(fields []string) int {
+	for i := 1; i+2 < len(fields); i++ {
+		if bareToken(fields[i]) == "ksail" && bareToken(fields[i+1]) == "workload" && bareToken(fields[i+2]) == "scan" {
+			return i + 3
+		}
+	}
+	return len(fields)
 }
