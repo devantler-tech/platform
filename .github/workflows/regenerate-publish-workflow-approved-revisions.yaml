@@ -83,35 +83,48 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: 🔑 Generate GitHub App token
+      # TWO TOKENS, NOT ONE. A single installation token carries ONE permission set
+      # across EVERY repository it is scoped to, so putting the consumers and this
+      # repository in one token would grant `contents: write` and
+      # `pull-requests: write` over `.github`, `ascoachingogvaner`, `aws` and
+      # `wedding-app` — two of them private — when the generator only ever READS
+      # them. Splitting keeps each half at what it actually needs, so a compromised
+      # generator cannot push a branch or open a pull request in a consumer.
+      - name: 🔑 Generate the consumer-read token
+        id: consumer-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          # Without `owner`/`repositories` the token is limited to the repository the
+          # job runs in, so every consumer read would 404 and the generator would
+          # refuse on the pin half — a permanently red daily run. The list is exactly
+          # the consumers named in scripts/publish-workflow-approved-revisions.tsv;
+          # the contract test reads that file and fails if one is added there and not
+          # here. READ ONLY: contents for each consumer's cd.yaml, actions for the
+          # `📦 CD` run that signed the applied tag. Nothing else.
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            .github
+            ascoachingogvaner
+            aws
+            wedding-app
+          permission-contents: read
+          permission-actions: read
+
+      - name: 🔑 Generate the platform write token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          # SCOPED TO THE CONSUMERS, NOT JUST THIS REPOSITORY. With neither `owner`
-          # nor `repositories` given, create-github-app-token mints a token limited
-          # to the repository the job runs in — here `platform`. The generator then
-          # reads each consumer's cd.yaml and its `📦 CD` runs on the consumer's own
-          # repository, so every one of those reads would 404 as unresolved and the
-          # generator refuses on the pin half: a permanently red daily run that never
-          # opens a regeneration pull request. The list is this repository (the branch
-          # push and the pull request) plus exactly the consumers named in
-          # scripts/publish-workflow-approved-revisions.tsv — the contract test reads
-          # that file and fails if a consumer is added to the set but not to this list.
+          # THIS repository only: the checkout, the branch push and the pull request
+          # all happen here. Scoping the write token to one repository is what keeps
+          # the consumer half above read-only.
           owner: ${{ github.repository_owner }}
           repositories: |
             platform
-            .github
-            ascoachingogvaner
-            aws
-            wedding-app
-          # Least privilege for exactly this job: contents to read the consumers'
-          # cd.yaml (two are private) and push the branch, actions to read the
-          # `📦 CD` run that signed each applied tag, pull-requests to open the
-          # draft. Nothing else — the installation's blanket grant is not inherited.
           permission-contents: write
-          permission-actions: read
           permission-pull-requests: write
 
       - name: 📑 Checkout
@@ -119,6 +132,13 @@ jobs:
         with:
           persist-credentials: false
           token: ${{ steps.app-token.outputs.token }}
+          # PINNED to the default branch. A manual dispatch checks out the ref it was
+          # dispatched from, and the pull request's `base` only chooses the target —
+          # it does not remove that ref's commits from the fixed regeneration branch,
+          # so the automation's pull request would carry them alongside the generated
+          # data change. Pinning here keeps that pull request one concern whatever ref
+          # the dispatch came from.
+          ref: main
 
       - name: 🔑 Restore kubeconfig
         shell: bash
@@ -146,7 +166,7 @@ jobs:
       - name: 🔐 Regenerate the approved-revision set
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.consumer-token.outputs.token }}
           # Pinned for the same reason the deploy composite pins it: the restored
           # kubeconfig's current-context is not guaranteed to be prod, and a set
           # derived from another cluster's applied artifacts would narrow the
@@ -186,7 +206,17 @@ jobs:
         run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
       - name: 📦 Open or update the regeneration pull request
-        if: steps.moved.outputs.moved == 'true'
+      # DELIBERATELY NOT gated on `moved`. When a consumer's rollout is reverted the
+      # set returns to what is committed, `moved` is false, and a gated step would
+      # skip — leaving the pull request opened by the earlier run standing with the
+      # superseded set, still mergeable, after this workflow has established it is no
+      # longer current. Running unconditionally lets the action reconcile that: with
+      # nothing staged there is nothing to propose, and `delete-branch` retires the
+      # fixed branch. This is how devantler-tech/actions' own sync-cluster-policies
+      # workflow drives the same action at this same pinned revision — ungated.
+      #
+      # A failure still stops it: there is no `if: always()`, so a red generator or a
+      # red guard means this step never runs, which the contract test pins.
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           # Exactly the generator's output. `add-paths` is the second fence behind
