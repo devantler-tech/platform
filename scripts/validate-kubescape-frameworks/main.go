@@ -59,6 +59,10 @@ var requiredFrameworks = []string{"nsa", "mitre"}
 // happens to match.
 var frameworkToken = regexp.MustCompile(`^[a-z0-9._-]+$`)
 
+// Only this literal subset can be split on whitespace without evaluating shell
+// syntax. Complex command strings keep the existing conservative substring rule.
+var literalShellWords = regexp.MustCompile(`^[a-zA-Z0-9_./[:space:]-]+$`)
+
 // What `<<` opened, as far as this can tell.
 //
 // A DELIMITER IS A SHELL WORD, NOT AN IDENTIFIER. Matching an identifier read two
@@ -1502,6 +1506,21 @@ func undecidableShellString(fields []string) string {
 			code = fields[operand : operand+1]
 		}
 		for _, arg := range code {
+			if literal := bareToken(arg); literalShellWords.MatchString(literal) {
+				// A filename or identifier containing "scan" is not the word scan.
+				// Narrow only literal text: quotes, expansions, operators and other
+				// shell syntax inside the command operand still take the rule below.
+				found := false
+				for _, token := range strings.Fields(literal) {
+					switch filepath.Base(token) {
+					case "ksail", "workload", "scan":
+						found = true
+					}
+				}
+				if !found {
+					continue
+				}
+			}
 			if strings.Contains(arg, "ksail") || strings.Contains(arg, "workload") || strings.Contains(arg, "scan") {
 				return fmt.Sprintf("%q executes its argument as shell code and that argument names a scan word", word)
 			}

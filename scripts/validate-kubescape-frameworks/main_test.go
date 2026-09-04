@@ -8,6 +8,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -878,10 +879,12 @@ func TestRejectsScanInsideAMultilineQuotedArgument(t *testing.T) {
 // a variable assigned earlier in the block. Each is refused as undecidable.
 func TestRejectsReducedScanHiddenFromTheUnconditionalPath(t *testing.T) {
 	cases := map[string]string{
-		"brace-expanded option": goodScan + "\nksail workload scan --{framework=nsa,output=kubescape.sarif}",
-		"bash -c single-quoted": goodScan + "\nbash -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
-		"sh -c double-quoted":   goodScan + "\nsh -c \"ksail workload scan --framework nsa -o kubescape.sarif\"",
-		"eval":                  goodScan + "\neval 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"brace-expanded option":         goodScan + "\nksail workload scan --{framework=nsa,output=kubescape.sarif}",
+		"bash -c single-quoted":         goodScan + "\nbash -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"sh -c double-quoted":           goodScan + "\nsh -c \"ksail workload scan --framework nsa -o kubescape.sarif\"",
+		"eval":                          goodScan + "\neval 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"expanded shell-string command": goodScan + "\nbash -c '\"${scanner}\"'",
+		"absolute shell-string command": goodScan + "\nbash -c '/usr/bin/ksail workload scan --framework nsa'",
 		// The command-string option after OTHER interpreter options executes the
 		// string exactly as a bare -c does.
 		"bash -e -c":                         goodScan + "\nbash -e -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
@@ -2142,6 +2145,8 @@ func TestRejectsShellStringScanInAConditionalStep(t *testing.T) {
 		"option cluster containing c":           "bash -ec 'ksail workload scan --framework nsa'",
 		"leading option before the command one": "bash --noprofile -c 'ksail workload scan --framework nsa'",
 		"eval of the scan":                      "eval 'ksail workload scan --framework nsa'",
+		"expanded command stays undecidable":    "bash -c '\"${scanner}\"'",
+		"absolute scan command":                 "bash -c '/usr/bin/ksail workload scan --framework nsa'",
 	}
 	for name, line := range cases {
 		workflow := "jobs:\n  validate:\n    steps:\n" +
@@ -2173,6 +2178,37 @@ func TestAcceptsConditionalShellStringWithoutAScanWord(t *testing.T) {
 	}
 	if got := strings.Join(set, ","); got != "mitre,nsa" {
 		t.Fatalf("expected the unconditional scan to supply the framework set; got %q", got)
+	}
+}
+
+// Substrings in ordinary command words must not turn a harmless shell string into
+// a scan. Exercise the workflow result, on both paths that use the string screen.
+func TestAcceptsShellStringsContainingOnlyScanWordSubstrings(t *testing.T) {
+	for name, line := range map[string]string{
+		"bash status text":      "bash -c 'echo scanner-ready'",
+		"eval status text":      "eval 'echo rescanned'",
+		"workload filename":     "bash -c 'echo workload.yaml'",
+		"ksail helper name":     "bash -c 'echo ksail-check'",
+		"underscore identifier": "bash -c 'echo scan_status'",
+		"env split status text": "env -S 'echo scanner-ready'",
+	} {
+		for _, conditional := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/conditional=%t", name, conditional), func(t *testing.T) {
+				step := "      - run: " + line + "\n"
+				if conditional {
+					step = "      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+				}
+				workflow := "jobs:\n  validate:\n    steps:\n      - run: " + goodScan + "\n" + step
+				set, err := frameworkSet(writeTemp(t, workflow))
+				if err != nil {
+					t.Errorf("harmless command string rejected: %v", err)
+					return
+				}
+				if got := strings.Join(set, ","); got != "mitre,nsa" {
+					t.Errorf("framework set = %q, want mitre,nsa", got)
+				}
+			})
+		}
 	}
 }
 
