@@ -104,12 +104,12 @@
 # untouched — which is why the opt-in alone moves none of those 27. The
 # controller-scope rules that DO reach the stored spec are
 # add-baseline-context-optin-controllers* (Deployment/StatefulSet/DaemonSet on
-# CREATE and UPDATE), and they gate on a SECOND label,
-# `baseline-context-controllers`, which was applied in no namespace at all until
-# longhorn-system opted in — re-measure this split once that has reconciled.
-# Template-level changes are what moved
-# velero and flux-system. flux-system's remaining two are flux-operator and
-# tofu-controller, the latter retired and pending removal in #3480.
+# CREATE and UPDATE), gated on a SECOND label, `baseline-context-controllers`,
+# which is deliberately applied in NO namespace — tests/add-baseline-context pins
+# that empty inventory, and a namespace joins only together with the measured
+# post-rollout read-back its documented flip procedure produces. So the 27 are
+# waiting on that per-namespace rollout, not on a mechanism that cannot reach
+# them. Template-level changes are what moved
 #
 # The per-workload table and the remediation split are on #3217. These counts are
 # prod-only and the local overlay opts in to a different namespace set, so re-measure
