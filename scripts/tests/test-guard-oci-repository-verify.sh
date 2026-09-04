@@ -104,11 +104,15 @@ expect_accepted() {
 # Confirms the fixture really renders an in-scope OCIRepository at the attack URL —
 # otherwise a "refused" could be a broken fixture rather than a caught bypass.
 assert_renders() {
-  local root="$1" url="$2"
-  if ! kubectl kustomize "$root" 2>/dev/null | grep -qF -- "url: $url"; then
-    fail "fixture $root does not render an OCIRepository at $url — the case would be vacuous"
-    return 1
-  fi
+  local root="$1" url="$2" render
+  # Capture the whole render first: under pipefail a `grep -q` that closes the
+  # pipe early would hand kubectl a SIGPIPE and reject a perfectly valid render.
+  render="$(kubectl kustomize "$root" 2>/dev/null)" || render=""
+  case "$render" in
+    *"url: $url"*) return 0 ;;
+  esac
+  fail "fixture $root does not render an OCIRepository at $url — the case would be vacuous"
+  return 1
 }
 
 # --- GREEN: the baseline root is accepted, so every RED below is attributable ---
@@ -211,6 +215,20 @@ repo_doc pa 'oci://ghcr.io/devantler-tech/pa/manifests' "$(good_verify)" >"$root
 printf 'patches:\n  - target:\n      kind: OCIRepository\n      name: pa\n    patch: |\n      - op: add\n        path: /spec/verify/matchOIDCIdentity/-\n        value:\n          issuer: ".*"\n          subject: ".*"\n' >>"$root/kustomization.yaml"
 expect_refused 'a patch that appends an identity is judged on the render' "$root" 'OCIRepository pa (oci://ghcr.io/devantler-tech/pa/manifests) has 2 matchOIDCIdentity entries'
 
+# --- RED: the one identity must be OURS — a foreign issuer or subject passes every
+# shape check and is invisible to both subject guards ---
+root="$(fresh_root foreignissuer)"
+repo_doc fiss 'oci://ghcr.io/devantler-tech/fiss/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "'^https://accounts\\.google\\.com\$'" "$SUBJECT")" >"$root/fiss.yaml"; add_resource "$root" fiss.yaml
+expect_refused 'a foreign issuer is refused' "$root" "OCIRepository fiss (oci://ghcr.io/devantler-tech/fiss/manifests) trusts issuer '^https://accounts\\.google\\.com\$'"
+
+root="$(fresh_root wildcard)"
+repo_doc wc 'oci://ghcr.io/devantler-tech/wc/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "'.*'")" >"$root/wc.yaml"; add_resource "$root" wc.yaml
+expect_refused 'a wildcard subject is refused' "$root" "OCIRepository wc (oci://ghcr.io/devantler-tech/wc/manifests) trusts subject '.*'"
+
+root="$(fresh_root foreignorg)"
+repo_doc fo 'oci://ghcr.io/devantler-tech/fo/manifests' "$(printf '  verify:\n    provider: cosign\n    matchOIDCIdentity:\n      - issuer: %s\n        subject: %s' "$ISSUER" "'^https://github\\.com/evil-org/actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}\$'")" >"$root/fo.yaml"; add_resource "$root" fo.yaml
+expect_refused 'a subject anchored on another organisation is refused' "$root" 'does not anchor on'
+
 # --- RED: host case and substituted hosts ---
 root="$(fresh_root upper)"
 repo_doc up 'oci://GHCR.IO/devantler-tech/up/manifests' '' >"$root/up.yaml"; add_resource "$root" up.yaml
@@ -241,6 +259,11 @@ printf 'oci://ghcr.io/devantler-tech/charts/unsigned\n' >"$WORK/exempt-noreason.
 expect_refused 'an exemption row without a reason is refused, once' "$root" 'carries no reason' "$WORK/exempt-noreason.tsv"
 case "$out" in *"has NO spec.verify"*|*"STALE"*) fail 'a reason-less row produced cascading wrong-reason messages';; esac
 
+printf 'oci://ghcr.io/devantler-tech/charts/unsigned\t \n' >"$WORK/exempt-emptyreason.tsv"
+expect_refused 'an exemption row with an empty reason is refused' "$root" 'carries an empty reason' "$WORK/exempt-emptyreason.tsv"
+printf '\tsome reason\n' >"$WORK/exempt-emptyurl.tsv"
+expect_refused 'an exemption row with an empty URL is refused' "$root" 'names no URL' "$WORK/exempt-emptyurl.tsv"
+
 root="$(fresh_root stale)"
 printf 'oci://ghcr.io/devantler-tech/charts/gone\tretired long ago\n' >"$WORK/stale.tsv"
 expect_refused 'an exemption naming no rendered OCIRepository is STALE' "$root" 'exemption for oci://ghcr.io/devantler-tech/charts/gone is STALE' "$WORK/stale.tsv"
@@ -264,6 +287,41 @@ expect_refused 'zero in-scope OCIRepositories fails the floor' "$root" 'found 0 
 root="$(fresh_root broken)"
 add_resource "$root" missing.yaml
 expect_refused 'a root kustomize cannot build is refused as unknown' "$root" 'kubectl kustomize failed, so its OCIRepositories are UNKNOWN'
+
+# --- DISCOVERY: the default root discovery reads every cluster overlay, including one
+# whose descriptor is `kustomization.yml`, and judges the Flux roots it names ---
+k8s="$WORK/k8s"; rm -rf "$k8s"
+mkdir -p "$k8s/clusters/alpha" "$k8s/providers/alpha/apps"
+cat >"$k8s/clusters/alpha/kustomization.yml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - flux-kustomization-apps.yaml
+EOF
+cat >"$k8s/clusters/alpha/flux-kustomization-apps.yaml" <<'EOF'
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./providers/alpha/apps
+  prune: true
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
+EOF
+printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - bare.yaml\n' >"$k8s/providers/alpha/apps/kustomization.yaml"
+repo_doc disc 'oci://ghcr.io/devantler-tech/disc/manifests' '' >"$k8s/providers/alpha/apps/bare.yaml"
+if out="$(OCI_VERIFY_K8S_DIR="$k8s" OCI_VERIFY_EXEMPTIONS_FILE="$WORK/no-exemptions.tsv" OCI_VERIFY_EXPECTED_MIN=1 "$GUARD" 2>&1)"; then
+  fail "discovery: an overlay with kustomization.yml was not judged (guard passed): $out"
+else
+  case "$out" in
+    *'OCIRepository disc (oci://ghcr.io/devantler-tech/disc/manifests) has NO spec.verify'*) pass 'a kustomization.yml cluster overlay is discovered and its Flux root judged' ;;
+    *) fail "discovery: refused, but not for the right reason: $out" ;;
+  esac
+fi
 
 # --- WIRING: the real tree passes with the built-in exemptions and floor ---
 if out="$("$GUARD" 2>&1)"; then

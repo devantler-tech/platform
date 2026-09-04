@@ -77,6 +77,14 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
 readonly REQUIRED_URL_PREFIX='oci://ghcr.io/devantler-tech/'
+# The identity every devantler-tech artifact is signed under: GitHub Actions keyless
+# signing, with a subject regex anchored on a devantler-tech GitHub path. Compared as
+# the literal regex text the manifests carry (the `.` escaped), not evaluated.
+readonly REQUIRED_ISSUER='^https://token\.actions\.githubusercontent\.com$'
+readonly REQUIRED_SUBJECT_PREFIX='^https://github\.com/devantler-tech/'
+# Where the cluster overlays and the Flux roots they name live (seam for the test's
+# discovery fixture; the roots are resolved relative to this directory).
+readonly K8S_DIR="${OCI_VERIFY_K8S_DIR:-$REPO_ROOT/k8s}"
 
 # 5 on 2026-09-04, counted per rendered root: providers/hetzner/apps carries the aws,
 # github-config, wedding-app and ascoachingogvaner manifests consumers (4) and
@@ -128,6 +136,13 @@ while IFS= read -r row; do
     *"	"*) ;;
     *) refuse "exemption row '$row' carries no reason; every exemption names what retires it" ;;
   esac
+  # Both halves must be non-empty: `<url><TAB>` would waive verification with no
+  # recorded reason, and `<TAB><reason>` would key an exemption on the empty URL.
+  row_url="${row%%	*}"
+  row_reason="${row#*	}"
+  row_reason="${row_reason#"${row_reason%%[![:space:]]*}"}"
+  [ -n "$row_url" ] || refuse "exemption row '$row' names no URL"
+  [ -n "$row_reason" ] || refuse "exemption row '$row' carries an empty reason; every exemption names what retires it"
 done <<EOF
 $exemptions
 EOF
@@ -170,20 +185,25 @@ roots=""
 if [ -n "${OCI_VERIFY_ROOTS:-}" ]; then
   roots="$OCI_VERIFY_ROOTS"
 else
-  [ -d "$REPO_ROOT/k8s/clusters" ] || refuse "no k8s/clusters directory under $REPO_ROOT"
-  for overlay in "$REPO_ROOT"/k8s/clusters/*/; do
-    [ -f "$overlay/kustomization.yaml" ] || continue
+  [ -d "$K8S_DIR/clusters" ] || refuse "no clusters directory under $K8S_DIR"
+  for overlay in "$K8S_DIR"/clusters/*/; do
     # k8s/clusters/base is the wiring TEMPLATE the real overlays consume: its Flux paths
     # are `__PROVIDER__`/`__CLUSTER__` placeholders that each cluster overlay replaces.
     # No cluster applies it as-is, so it is not a root.
     case "${overlay%/}" in */base) continue ;; esac
+    # kustomize recognises all three descriptor names; an overlay using `.yml` or the
+    # bare name is a root exactly like one using `.yaml`, and skipping it would leave
+    # a whole cluster unjudged while the floor still passed on the others.
+    if [ ! -f "$overlay/kustomization.yaml" ] && [ ! -f "$overlay/kustomization.yml" ] && [ ! -f "$overlay/kustomization" ]; then
+      refuse "cluster overlay $overlay carries no kustomization descriptor; cannot discover its Flux roots"
+    fi
     if ! paths="$(kubectl kustomize "$overlay" 2>/dev/null |
       yq -N -r 'select(.kind == "Kustomization" and (.apiVersion | test("^kustomize\\.toolkit\\.fluxcd\\.io/"))) | .spec.path // ""')"; then
       refuse "could not render the cluster overlay $overlay to discover its Flux roots"
     fi
     while IFS= read -r p; do
       [ -n "$p" ] || continue
-      roots="$roots$REPO_ROOT/k8s/${p#./}
+      roots="$roots$K8S_DIR/${p#./}
 "
     done <<EOF
 $paths
@@ -207,7 +227,9 @@ readonly YQ_ROWS='[.. | select(type == "!!map" and .kind == "OCIRepository")]
       (.spec.verify.matchOIDCIdentity | type),
       (((.spec.verify.matchOIDCIdentity | select(type == "!!seq") | length) // 0) | tostring),
       (([.spec.verify.matchOIDCIdentity | select(type == "!!seq") | .[]
-          | select(((.issuer // "") == "") or ((.subject // "") == ""))] | length) | tostring)
+          | select(((.issuer // "") == "") or ((.subject // "") == ""))] | length) | tostring),
+      ((.spec.verify.matchOIDCIdentity | select(type == "!!seq") | .[0].issuer) // ""),
+      ((.spec.verify.matchOIDCIdentity | select(type == "!!seq") | .[0].subject) // "")
     ]
   | map(sub("^$", "-"))
   | join("	")'
@@ -237,10 +259,10 @@ while IFS= read -r root; do
     fail "$label: yq could not read the render, so its OCIRepositories are UNKNOWN: $(tr '\n' ' ' <"$work/rows.err")"
     continue
   fi
-  while IFS=$'\t' read -r url name has_verify provider ids_type ids_count incomplete; do
+  while IFS=$'\t' read -r url name has_verify provider ids_type ids_count incomplete issuer subject; do
     [ -n "$url" ] || continue
     url="$(decode "$url")"; name="$(decode "$name")"; provider="$(decode "$provider")"
-    ids_type="$(decode "$ids_type")"
+    ids_type="$(decode "$ids_type")"; issuer="$(decode "$issuer")"; subject="$(decode "$subject")"
     [ -n "$url$name" ] || continue
     url="$(normalise_url "$url")"
     # The second pattern is the literal characters `${` — a Flux substitution marker,
@@ -290,6 +312,24 @@ while IFS= read -r root; do
       fail "$label: OCIRepository $name ($url) has a matchOIDCIdentity entry missing a non-empty issuer or subject"
       continue
     fi
+    # The one identity must be OURS. A single `issuer: '.*'` / `subject: '.*'` entry
+    # satisfies every shape check above and is invisible to both subject guards
+    # (they examine only subjects naming the shared publish workflows), so without
+    # this an OCIRepository could accept any signer with every check green. The
+    # issuer is exactly GitHub Actions' token issuer and the subject regex must
+    # anchor on a devantler-tech GitHub path; WHICH revision it pins is the
+    # subject guards' question, not this one's.
+    if [ "$issuer" != "$REQUIRED_ISSUER" ]; then
+      fail "$label: OCIRepository $name ($url) trusts issuer '$issuer'; the only accepted issuer is '$REQUIRED_ISSUER' (GitHub Actions keyless signing)"
+      continue
+    fi
+    case "$subject" in
+      "$REQUIRED_SUBJECT_PREFIX"*) ;;
+      *)
+        fail "$label: OCIRepository $name ($url) trusts subject '$subject', which does not anchor on '$REQUIRED_SUBJECT_PREFIX' — a signer outside devantler-tech would verify"
+        continue
+        ;;
+    esac
   done <"$work/rows"
 done <<EOF
 $roots
