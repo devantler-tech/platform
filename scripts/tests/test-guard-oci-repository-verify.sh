@@ -288,38 +288,47 @@ root="$(fresh_root broken)"
 add_resource "$root" missing.yaml
 expect_refused 'a root kustomize cannot build is refused as unknown' "$root" 'kubectl kustomize failed, so its OCIRepositories are UNKNOWN'
 
-# --- DISCOVERY: the default root discovery reads every cluster overlay, including one
-# whose descriptor is `kustomization.yml`, and judges the Flux roots it names ---
-k8s="$WORK/k8s"; rm -rf "$k8s"
-mkdir -p "$k8s/clusters/alpha" "$k8s/providers/alpha/apps"
-cat >"$k8s/clusters/alpha/kustomization.yml" <<'EOF'
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - flux-kustomization-apps.yaml
-EOF
-cat >"$k8s/clusters/alpha/flux-kustomization-apps.yaml" <<'EOF'
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  interval: 10m
-  path: ./providers/alpha/apps
-  prune: true
-  sourceRef:
-    kind: OCIRepository
-    name: flux-system
-EOF
-printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - bare.yaml\n' >"$k8s/providers/alpha/apps/kustomization.yaml"
-repo_doc disc 'oci://ghcr.io/devantler-tech/disc/manifests' '' >"$k8s/providers/alpha/apps/bare.yaml"
+# --- DISCOVERY: every descriptor kustomize accepts makes an overlay discoverable, and
+# an overlay carrying none of them is UNKNOWN rather than silently skipped. ---
+write_discovery_overlay() {
+  local k8s="$1" cluster="$2" descriptor="$3" repo_name="$4" verify="$5"
+  local overlay="$k8s/clusters/$cluster" root="$k8s/providers/$cluster/apps"
+  mkdir -p "$overlay" "$root"
+  printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - flux-kustomization-apps.yaml\n' >"$overlay/$descriptor"
+  printf 'apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: apps\n  namespace: flux-system\nspec:\n  interval: 10m\n  path: ./providers/%s/apps\n  prune: true\n  sourceRef:\n    kind: OCIRepository\n    name: flux-system\n' "$cluster" >"$overlay/flux-kustomization-apps.yaml"
+  printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - repo.yaml\n' >"$root/kustomization.yaml"
+  repo_doc "$repo_name" "oci://ghcr.io/devantler-tech/$repo_name/manifests" "$verify" >"$root/repo.yaml"
+}
+
+expect_descriptor_discovered() {
+  local descriptor="$1" k8s="$WORK/k8s-$1"
+  rm -rf "$k8s"
+  write_discovery_overlay "$k8s" alpha "$descriptor" disc ''
+  if out="$(OCI_VERIFY_K8S_DIR="$k8s" OCI_VERIFY_EXEMPTIONS_FILE="$WORK/no-exemptions.tsv" OCI_VERIFY_EXPECTED_MIN=1 "$GUARD" 2>&1)"; then
+    fail "discovery: an overlay with $descriptor was not judged (guard passed): $out"
+    return
+  fi
+  case "$out" in
+    *'OCIRepository disc (oci://ghcr.io/devantler-tech/disc/manifests) has NO spec.verify'*) pass "a $descriptor cluster overlay is discovered and its Flux root judged" ;;
+    *) fail "discovery: $descriptor refused, but not for the right reason: $out" ;;
+  esac
+}
+
+expect_descriptor_discovered kustomization.yaml
+expect_descriptor_discovered kustomization.yml
+expect_descriptor_discovered kustomization
+
+# Keep one valid overlay in the fixture: if the guard regresses to `continue` for the
+# descriptor-less one, the good root satisfies the floor and the guard would pass.
+k8s="$WORK/k8s-missing-descriptor"; rm -rf "$k8s"
+write_discovery_overlay "$k8s" alpha kustomization.yml good "$(good_verify)"
+mkdir -p "$k8s/clusters/bravo"
 if out="$(OCI_VERIFY_K8S_DIR="$k8s" OCI_VERIFY_EXEMPTIONS_FILE="$WORK/no-exemptions.tsv" OCI_VERIFY_EXPECTED_MIN=1 "$GUARD" 2>&1)"; then
-  fail "discovery: an overlay with kustomization.yml was not judged (guard passed): $out"
+  fail "discovery: a descriptor-less overlay was skipped (guard passed): $out"
 else
   case "$out" in
-    *'OCIRepository disc (oci://ghcr.io/devantler-tech/disc/manifests) has NO spec.verify'*) pass 'a kustomization.yml cluster overlay is discovered and its Flux root judged' ;;
-    *) fail "discovery: refused, but not for the right reason: $out" ;;
+    *'clusters/bravo/ carries no kustomization descriptor; cannot discover its Flux roots'*) pass 'a cluster overlay with no supported descriptor is refused' ;;
+    *) fail "discovery: a descriptor-less overlay was refused, but not for the right reason: $out" ;;
   esac
 fi
 
