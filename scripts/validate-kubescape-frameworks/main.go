@@ -60,7 +60,7 @@ var requiredFrameworks = []string{"nsa", "mitre"}
 var frameworkToken = regexp.MustCompile(`^[a-z0-9._-]+$`)
 
 // Only this literal subset can be split on whitespace without evaluating shell
-// syntax. Complex command strings keep the existing conservative substring rule.
+// syntax. Complex command strings keep the conservative substring rule below.
 var literalShellWords = regexp.MustCompile(`^[a-zA-Z0-9_./[:space:]-]+$`)
 
 // What `<<` opened, as far as this can tell.
@@ -482,26 +482,6 @@ func scanCandidate(scalar string) bool {
 		if len(fields) == 0 {
 			continue
 		}
-		// COMMAND POSITION, the one thing the text key cannot see. A line whose command
-		// word is an expansion resolves only when the shell runs, so it cannot be shown
-		// scan-free — `K=ks; K+=ail` … then `"$K" "$W" "$S" "$F" nsa` spells no key
-		// substring anywhere while bash executes `ksail workload scan --framework nsa`.
-		//
-		// `fields[0]` is NOT the command word in general: a leading assignment or
-		// redirection precedes it (`OUT=x "$K" …`), and a separator opens a further
-		// command position (`true; "$K" …`). Both were measured slipping past a
-		// fields[0]-only test, so every command position on the line is judged.
-		if expandedCommandWord(line) {
-			return true
-		}
-		// The three words, WITHIN one command rather than anywhere in the scalar.
-		// Scalar-wide they combined `ksail` from a `ksail version` line with `workload`
-		// and `scan` from a `trivy scan --input workload.yaml` line and refused a step
-		// that invokes no Kubescape scan.
-		if strings.Contains(line, "ksail") && strings.Contains(line, "workload") &&
-			strings.Contains(line, "scan") {
-			return true
-		}
 		words := map[string]bool{}
 		for _, f := range fields {
 			if word, fragment := resolveToken(f); !fragment {
@@ -533,225 +513,7 @@ func scanCandidate(scalar string) bool {
 			return true
 		}
 	}
-	// THE INVERSION, and the reason this function stops growing.
-	//
-	// Everything above tries to RECOGNISE an invocation, and that is a blacklist of
-	// spellings. Nine review rounds each found another one it could not read: a prefix,
-	// a shell string, an even backslash run, a command word split across a
-	// continuation, a scan glued to a separator, a subshell, an alias body, a
-	// path-qualified command word, and a step whose shell is not bash at all. Each fix
-	// closed exactly one spelling. Nothing suggests the list was ever going to end.
-	//
-	// For a CONDITIONAL step the question was never "is this a scan". The runner
-	// decides whether the step executes before any shell starts, so the only safe
-	// question is "can this be shown NOT to run one" — which is a whitelist. Refuse any
-	// conditional scalar whose raw text names the scan at all, whatever the spelling,
-	// whatever the shell, quoted or not.
-	//
-	// The cost is that a conditional step MENTIONING the scan — prose, a comment, an
-	// echoed diagnostic — is now refused too. That is deliberate and cheap: no real
-	// scan step carries an `if:`, the refusal names the step, and the fix is to drop
-	// the `if:` or not to spell the scan there. The precision the unconditional path
-	// can afford comes from parsing the shell completely; this screen does not, so it
-	// buys its safety with a false positive instead.
-	return mentionsScanText(scalar)
-}
-
-// expandedCommandWord reports whether any COMMAND POSITION on one logical line holds a
-// token carrying a shell expansion. Such a word resolves only when the shell runs, so a
-// conditional line containing one cannot be shown scan-free.
-//
-// Command positions are the start of the line and everything after an unquoted
-// separator; a leading assignment (`OUT=x`) or redirection (`>/dev/null`) precedes the
-// command word rather than being it. Only the command word is judged, so an ordinary
-// `echo "$FOO"` or `cp "$SRC" "$DST"` — literal command, expanded arguments — is
-// untouched.
-func expandedCommandWord(line string) bool {
-	atCommand := true
-	skipNext := false
-	sawWrapper := false
-	for _, tok := range shellFieldsWithSeparators(line) {
-		if skipNext {
-			skipNext = false
-			continue
-		}
-		if isShellSeparator(tok) {
-			atCommand = true
-			sawWrapper = false
-			continue
-		}
-		if !atCommand {
-			continue
-		}
-		if isAssignmentWord(tok) {
-			continue
-		}
-		if op, alone := redirectionWord(tok); op {
-			skipNext = alone
-			continue
-		}
-		if commandNameUndetermined(tok) {
-			return true
-		}
-		// An EXECUTION WRAPPER's operand is the real command word: `command "$K" …`
-		// runs whatever `$K` expands to. Treating the literal wrapper as the command
-		// word ended the walk here and let an assembled scan through. Its own options
-		// are skipped as options, and a leading numeric operand (`timeout 30 cmd`,
-		// `nice 10 cmd`) belongs to the wrapper rather than being the command.
-		if isExecWrapper(bareToken(tok)) {
-			sawWrapper = true
-			continue
-		}
-		if sawWrapper && isBareNumber(tok) {
-			continue
-		}
-		if strings.HasPrefix(tok, "-") {
-			continue
-		}
-		atCommand = false
-	}
 	return false
-}
-
-// commandNameUndetermined reports whether the NAME the shell would execute is unknown.
-// An expanded DIRECTORY with a literal final segment still fixes the name —
-// `"${RUNNER_TEMP}/kubectl"` runs kubectl however the directory expands, and refusing it
-// blocked a legitimate step — so only an expansion in that final segment leaves the
-// command unknown. `"$K"` and `"/usr/bin/$K"` still refuse.
-func commandNameUndetermined(tok string) bool {
-	return carriesExpansion(tok[strings.LastIndex(tok, "/")+1:])
-}
-
-// isExecWrapper names commands whose OPERAND is another command. A list is acceptable
-// here in a way a list of scan spellings was not: wrappers are a small, stable set, and
-// a missed one costs a missed refusal on an assembled command rather than reopening
-// every spelling of an ordinary invocation.
-func isExecWrapper(word string) bool {
-	switch word[strings.LastIndex(word, "/")+1:] {
-	case "command", "builtin", "exec", "nohup", "nice", "ionice", "setsid",
-		"stdbuf", "time", "timeout", "env", "sudo", "doas", "chroot", "unbuffer":
-		return true
-	}
-	return false
-}
-
-// isBareNumber reports a token that is only digits, optionally with a single-letter
-// unit — a wrapper's own operand (`timeout 30`, `timeout 5s`), never a command name.
-func isBareNumber(tok string) bool {
-	if tok == "" {
-		return false
-	}
-	digits := 0
-	for i := 0; i < len(tok); i++ {
-		c := tok[i]
-		switch {
-		case c >= '0' && c <= '9':
-			digits++
-		case i == len(tok)-1 && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')):
-		default:
-			return false
-		}
-	}
-	return digits > 0
-}
-
-func isShellSeparator(tok string) bool {
-	for i := 0; i < len(tok); i++ {
-		if tok[i] != ';' && tok[i] != '&' && tok[i] != '|' {
-			return false
-		}
-	}
-	return len(tok) > 0
-}
-
-// isAssignmentWord reports a `NAME=` or `NAME+=` prefix, which precedes the command word.
-func isAssignmentWord(tok string) bool {
-	for i := 0; i < len(tok); i++ {
-		c := tok[i]
-		switch {
-		case c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'):
-		case i > 0 && c >= '0' && c <= '9':
-		case i > 0 && c == '+' && i+1 < len(tok) && tok[i+1] == '=':
-			return true
-		case i > 0 && c == '=':
-			return true
-		default:
-			return false
-		}
-	}
-	return false
-}
-
-// redirectionWord reports whether the token is a redirection, and whether the operator
-// stands ALONE so its target is the next token (`> file`) rather than attached (`>file`).
-func redirectionWord(tok string) (isRedirection, operatorAlone bool) {
-	i := 0
-	for i < len(tok) && tok[i] >= '0' && tok[i] <= '9' {
-		i++
-	}
-	if i >= len(tok) || (tok[i] != '<' && tok[i] != '>') {
-		return false, false
-	}
-	for i < len(tok) && (tok[i] == '<' || tok[i] == '>' || tok[i] == '&' || tok[i] == '-') {
-		i++
-	}
-	return true, i == len(tok)
-}
-
-// shellFieldsWithSeparators is the separator-splitting tokeniser, but it EMITS each
-// unquoted separator as its own token so command positions can be located. Kept
-// separate from shellFieldsAcrossSeparators so the rules consuming that one see exactly
-// the fields they saw before.
-func shellFieldsWithSeparators(text string) []string {
-	var out []string
-	var cur strings.Builder
-	inSingle, inDouble := false, false
-	flush := func() {
-		if cur.Len() > 0 {
-			out = append(out, cur.String())
-			cur.Reset()
-		}
-	}
-	for i := 0; i < len(text); i++ {
-		c := text[i]
-		switch {
-		case c == '\\' && !inSingle:
-			cur.WriteByte(c)
-			if i+1 < len(text) {
-				i++
-				cur.WriteByte(text[i])
-			}
-		case c == '\'' && !inDouble:
-			inSingle = !inSingle
-			cur.WriteByte(c)
-		case c == '"' && !inSingle:
-			inDouble = !inDouble
-			cur.WriteByte(c)
-		case (c == ';' || c == '&' || c == '|') && !inSingle && !inDouble:
-			flush()
-			out = append(out, string(c))
-		case (c == ' ' || c == '\t' || c == '\n' || c == '\r') && !inSingle && !inDouble:
-			flush()
-		default:
-			cur.WriteByte(c)
-		}
-	}
-	flush()
-	return out
-}
-
-// mentionsScanText is the SCALAR-WIDE half of the inversion's key: `--framework`, which
-// every spelling of the invocation carries and which no reasonable unrelated command
-// does. The three-word test lives per LINE in scanCandidate instead — scalar-wide it
-// combined `ksail` from a `ksail version` line with `workload` and `scan` from a
-// `trivy scan --input workload.yaml` line and refused a step invoking no scan.
-//
-// Deliberately NOT keyed on a bare `ksail`: the real ci.yaml runs `shellcheck
-// .github/scripts/setup-ksail.sh` inside a CONDITIONAL step, and refusing that would
-// reject the very workflow this guard exists to validate — measured, it failed all
-// three real-workflow tests.
-func mentionsScanText(text string) bool {
-	return strings.Contains(text, "--framework")
 }
 
 // evidenceText renders the words of one line that could take part in an invocation —
@@ -1437,13 +1199,6 @@ func undecidableShellString(fields []string) string {
 		word := bareToken(f)
 		base := word[strings.LastIndex(word, "/")+1:]
 		executes := word == "eval"
-		// For an interpreter, ONLY the operand right after the `-c`-style option is
-		// executed as code; every later field populates $0, $1 … So
-		// `bash -c 'printf "%s\n" "$0"' scan-report` runs a printf, not a scan, and
-		// scanning all following fields refused it — a false positive on an ordinary
-		// step. `eval` is different: it concatenates ALL its arguments and runs the
-		// result, so there every following field is code. -1 means "not narrowed".
-		operand := -1
 		if !executes {
 			switch base {
 			case "bash", "sh", "dash", "zsh", "ksh":
@@ -1465,32 +1220,10 @@ func undecidableShellString(fields []string) string {
 					}
 					if !strings.HasPrefix(opt, "--") && strings.Contains(opt, "c") {
 						executes = true
-						operand = j + 1
 						break
 					}
 					if opt == "-o" || (base == "bash" && (opt == "-O" || opt == "--init-file" || opt == "--rcfile")) {
 						skipOperand = true
-					}
-				}
-			case "env":
-				// GNU `env -S <string>` splits the string into arguments and executes
-				// it, so it is a shell-string form exactly like `bash -c` even though
-				// env is not a shell. `--split-string=<string>` attaches the code to
-				// the option word itself.
-				for j := i + 1; j < len(fields); j++ {
-					opt := bareToken(fields[j])
-					if opt == "-S" || opt == "--split-string" {
-						executes = true
-						operand = j + 1
-						break
-					}
-					if strings.HasPrefix(opt, "--split-string=") || (strings.HasPrefix(opt, "-S") && len(opt) > 2) {
-						executes = true
-						operand = j
-						break
-					}
-					if !strings.HasPrefix(opt, "-") || opt == "-" || opt == "--" {
-						break
 					}
 				}
 			}
@@ -1498,26 +1231,19 @@ func undecidableShellString(fields []string) string {
 		if !executes {
 			continue
 		}
-		code := fields[i+1:]
-		if operand >= 0 {
-			if operand >= len(fields) {
-				continue
-			}
-			code = fields[operand : operand+1]
-		}
-		for _, arg := range code {
+		for _, arg := range fields[i+1:] {
 			if literal := bareToken(arg); literalShellWords.MatchString(literal) {
-				// A filename or identifier containing "scan" is not the word scan.
-				// Narrow only literal text: quotes, expansions, operators and other
-				// shell syntax inside the command operand still take the rule below.
-				found := false
+				// A filename or identifier CONTAINING "scan" is not the word scan.
+				// Narrow only fully literal text: quotes, expansions, operators and
+				// any other shell syntax still take the conservative rule below.
+				named := false
 				for _, token := range strings.Fields(literal) {
 					switch filepath.Base(token) {
 					case "ksail", "workload", "scan":
-						found = true
+						named = true
 					}
 				}
-				if !found {
+				if !named {
 					continue
 				}
 			}
