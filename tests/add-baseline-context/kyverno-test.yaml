@@ -84,3 +84,196 @@ results:
       - observability/coroot-node-agent
     kind: Pod
     result: skip
+  # --- Controller kinds ---------------------------------------------------
+  # The stored controller spec is what Kubescape scores and the pod rules never
+  # reach it, so every state above is pinned again at the controller object.
+  # ON state, template path.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers
+    resources:
+      - observability/operator-deploy
+    kind: Deployment
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers
+    resources:
+      - observability/server-sts
+    kind: StatefulSet
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers
+    resources:
+      - longhorn-system/manager-ds
+    kind: DaemonSet
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers-containers
+    resources:
+      - observability/operator-deploy
+    kind: Deployment
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers-containers
+    resources:
+      - observability/server-sts
+    kind: StatefulSet
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers-containers
+    resources:
+      - longhorn-system/manager-ds
+    kind: DaemonSet
+    result: pass
+    patchedResources: patched-resources.yaml
+  # ON state, jobTemplate path.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-cronjobs
+    resources:
+      - observability/nightly-cronjob
+    kind: CronJob
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-cronjobs-containers
+    resources:
+      - observability/nightly-cronjob
+    kind: CronJob
+    result: pass
+    patchedResources: patched-resources.yaml
+  # The pod-scope SELinux fill at controller scope: fires only on the
+  # pod-level-object-without-level shape.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers-pod-selinux-level
+    resources:
+      - velero/podlevel-partial-deploy
+    kind: Deployment
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers
+    resources:
+      - velero/podlevel-deploy
+      - velero/podlevel-partial-deploy
+    kind: Deployment
+    result: pass
+    patchedResources: patched-resources.yaml
+  # OFF state and anchor preservation at controller scope.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers
+    resources:
+      - chaos-mesh/unlabelled-deploy
+      - velero/preset-deploy
+    kind: Deployment
+    result: skip
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers-containers
+    resources:
+      - chaos-mesh/unlabelled-deploy
+      - velero/preset-deploy
+      - velero/podlevel-deploy
+      - velero/podlevel-partial-deploy
+    kind: Deployment
+    result: skip
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers-pod-selinux-level
+    resources:
+      - chaos-mesh/unlabelled-deploy
+      - velero/preset-deploy
+      - velero/podlevel-deploy
+      - observability/operator-deploy
+    kind: Deployment
+    result: skip
+  - policy: add-security-context
+    rule: add-baseline-context-optin-cronjobs-pod-selinux-level
+    resources:
+      - observability/nightly-cronjob
+    kind: CronJob
+    result: skip
+  # A standalone Job (CREATE-only kind) takes the template path.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers
+    resources:
+      - observability/oneshot-job
+    kind: Job
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers-containers
+    resources:
+      - observability/oneshot-job
+    kind: Job
+    result: pass
+    patchedResources: patched-resources.yaml
+  # The jobTemplate pod-scope fill fires on exactly the partial pod-level shape
+  # and nowhere else; the CronJob rules still land fsGroupChangePolicy on the
+  # pod-level fixtures and keep the container foreach out.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-cronjobs-pod-selinux-level
+    resources:
+      - velero/podlevel-partial-cronjob
+    kind: CronJob
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-cronjobs
+    resources:
+      - velero/podlevel-partial-cronjob
+      - velero/podlevel-cronjob
+    kind: CronJob
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-cronjobs-pod-selinux-level
+    resources:
+      - velero/podlevel-cronjob
+    kind: CronJob
+    result: skip
+  - policy: add-security-context
+    rule: add-baseline-context-optin-cronjobs-containers
+    resources:
+      - velero/podlevel-partial-cronjob
+      - velero/podlevel-cronjob
+    kind: CronJob
+    result: skip
+  # The pod-rule label alone reaches no controller.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers
+    resources:
+      - kubescape/podlabel-only-deploy
+    kind: Deployment
+    result: skip
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers-containers
+    resources:
+      - kubescape/podlabel-only-deploy
+    kind: Deployment
+    result: skip
+  # An explicitly EMPTY container-level SELinux object under a complete pod-level
+  # object is an override Kubernetes honours, so the container rule must fill its
+  # level (and leave the sibling container that sets nothing alone).
+  - policy: add-security-context
+    rule: add-baseline-context-optin-containers
+    resources:
+      - velero/empty-override
+    kind: Pod
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers-containers
+    resources:
+      - velero/empty-override-deploy
+    kind: Deployment
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers
+    resources:
+      - velero/empty-override-deploy
+    kind: Deployment
+    result: pass
+    patchedResources: patched-resources.yaml

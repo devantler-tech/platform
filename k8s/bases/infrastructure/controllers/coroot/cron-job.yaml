@@ -70,6 +70,13 @@ spec:
             # which the group-readable mode then opens to this container and nothing
             # else.
             fsGroup: 65532
+            # fsGroupChangePolicy and seLinuxOptions are the two non-privilege C-0211
+            # fields the cluster-wide add-security-context mutation cannot supply
+            # here: observability is excluded from it, and the namespace opt-in
+            # mutates the running POD, while Kubescape scores the STORED workload
+            # spec (#3239). Writing them into the template is the only route that
+            # moves both surfaces. Values match add-security-context.yaml.
+            fsGroupChangePolicy: OnRootMismatch
             seccompProfile:
               type: RuntimeDefault
           containers:
@@ -119,6 +126,9 @@ spec:
                 runAsNonRoot: true
                 runAsUser: 65532
                 runAsGroup: 65532
+                # CIS-5.7.3 (C-0211); a documented no-op on this AppArmor cluster.
+                seLinuxOptions:
+                  level: s0
                 capabilities:
                   drop:
                     - ALL

@@ -1576,7 +1576,86 @@ const (
 // The previous approved aggregate digest was:
 //
 //	005c333f114ad4a2a5706ef9b0d4989623203eadc67657ffd15d2b4d9bb369dc
-const expectedRenderedSurfaceSHA = "7a033c38847bf0ea7b052e783cbf1e68f317d8524c701243acb2d8b3c9972116"
+//
+// Re-approved for #2754 (#3560): the stranded-volume-attach alert — a read-only
+// CronJob in observability that reads FailedAttachVolume/FailedMount events and
+// posts to the shared Slack webhook when a pod has been failing to attach its
+// volume for longer than an attach takes (the 2026-07-01 nine-hour delivery
+// wedge, #2363).
+//
+// Measured against main 806e385f before approving THIS value, rendering all
+// five roots on BOTH sides with one toolchain (kubectl v1.36.1 / kustomize
+// v5.8.1 locally — the pinned renderer refuses to fingerprint on that version,
+// which is why the digest below is the value the required job reported at the
+// PR head, run 33807229837, and only the membership and content comparison is
+// local): the rendered surface moves from 547 -> 552 documents, purely additive.
+// Membership was proven by set difference in BOTH directions over
+// apiVersion|kind|namespace|name (not by count, which cannot see a rename):
+// zero removed, zero renamed, and the five additions are exactly the alert —
+//
+//	v1                          ServiceAccount      observability/stranded-volume-attach-alert
+//	v1                          Secret              observability/stranded-volume-attach-alert-webhook
+//	rbac.authorization.k8s.io/v1 ClusterRole        stranded-volume-attach-alert
+//	rbac.authorization.k8s.io/v1 ClusterRoleBinding stranded-volume-attach-alert
+//	batch/v1                    CronJob             observability/stranded-volume-attach-alert
+//
+// Grant-bearing objects moved additively: 78 -> 81 Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount documents, being the three
+// above — the same shape as the cnpg-degraded-alert and OpenCost usage-scraper
+// approvals: one dedicated ServiceAccount, one narrow ClusterRole, one binding
+// between exactly those two identities. The ClusterRole is get/list only, on
+// events, pods, persistentvolumes and persistentvolumeclaims in the core group;
+// it is cluster-scoped because a strand can happen in any namespace that mounts
+// a volume, and it holds no write verb.
+//
+// No existing entry's content moved: a per-document comparison of every common
+// identity across the five roots is byte-identical on both sides. The same run
+// reported no per-identity "unapproved rendered ... fingerprint", no "missing
+// rendered authorization resource" and no "duplicate rendered authorization
+// resource", so every identity-keyed authorization resource is unchanged. The
+// gitops-managed-cronjobs ClusterSecurityException gained the new CronJob in its
+// enumeration; the reported aggregate is identical with and without that edit,
+// so that resource is outside the selected surface.
+//
+// The previous approved aggregate digest was:
+//
+//	7a033c38847bf0ea7b052e783cbf1e68f317d8524c701243acb2d8b3c9972116
+//
+// Re-approved for #3396 (#3566): the tenant identity loses its WRITE verbs on
+// standard networking.k8s.io/networkpolicies. Cilium unions a standard
+// NetworkPolicy's allow rules with CiliumNetworkPolicy rules, and
+// restrict-tenant-network-policies constrains only the latter, so the write
+// grant was a bypass of the whole tenant boundary. Read verbs stay.
+//
+// Measured against main 88c5122e before approving THIS value, rendering all
+// five roots on BOTH sides with one toolchain (kubectl v1.36.1 / kustomize
+// v5.8.1 locally — the pinned renderer refuses to fingerprint on that version,
+// which is why the digest below is the value the required job reported at the
+// PR head, run 33823039777, and only the membership and content comparison is
+// local): the rendered surface stays at 552 -> 552 documents. Membership was
+// proven by set difference in BOTH directions over
+// apiVersion|kind|namespace|name: zero removed, zero added, zero renamed.
+// Grant-bearing objects stay at 81 -> 81 Role / ClusterRole / RoleBinding /
+// ClusterRoleBinding / ServiceAccount documents.
+//
+// Exactly ONE identity's content moved, and it moved NARROWER: ClusterRole
+// tenant-base-edit's single networking.k8s.io rule
+//
+//	resources: [ingresses, ingresses/status, networkpolicies]
+//	verbs: [create, delete, deletecollection, patch, update, get, list, watch]
+//
+// became two rules — the same eight verbs on [ingresses, ingresses/status]
+// only, and [get, list, watch] on [networkpolicies]. No verb, resource or
+// group was added anywhere; every other identity across the five roots is
+// byte-identical on both sides. The same run reported no "missing rendered
+// authorization resource" and no "duplicate rendered authorization resource".
+// scripts/tests/test-tenant-edit-networkpolicy-write.sh renders both
+// providers' infrastructure layers and refuses the write grant if it returns.
+//
+// The previous approved aggregate digest was:
+//
+//	686bf5ade0d7869f3a20d50a05a7ac083744f0e88ede4fc02298ab9f67dfdf19
+const expectedRenderedSurfaceSHA = "a16fbd577f8155e64aacc02cb624f26d9628d75658ce804215d9d69a3884bf92"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -1779,8 +1858,8 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}:                  "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                           "4447f41c03e8297fafdabcadf4fdd8ca3260f2c84264c531b2179cb7df2c1556",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "opencost-usage-scraper"}:                                   "3cb22a5a2d178e9cc93ebc3995d936d124800c441785dc23d780281746569937",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "crossview-cluster-reader"}:                        "bc6c370f5bff72c541428274f9ef7ab13e3bb5a2b804ec5f4c81087171311c0d",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "crossview-view"}:                                  "536a4baa1970100ea117d1655f80e06ed874e2248b75f33f161e8b44ca3df50c",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "crossview-cluster-reader"}:                          "bc6c370f5bff72c541428274f9ef7ab13e3bb5a2b804ec5f4c81087171311c0d",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "crossview-view"}:                                    "536a4baa1970100ea117d1655f80e06ed874e2248b75f33f161e8b44ca3df50c",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "opencost-usage-scraper"}:                            "4b28e1da280a7940a1cb4d538bc31ede1b5d272c17189a81afeae48acbb8b7a0",

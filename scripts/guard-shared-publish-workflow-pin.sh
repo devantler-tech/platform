@@ -50,6 +50,8 @@
 # pins today, and those routinely differ. A consumer narrowed to a set omitting its
 # signing revision would stop verifying an artifact that is running right now, so any
 # narrowing is derived from that report rather than from this guard or by hand (#3308).
+# Set MEMBERSHIP — that each per-consumer matcher names exactly the generated pair and no
+# revision outside it — is guard-publish-workflow-approved-revisions.sh's question (#3551).
 
 set -euo pipefail
 

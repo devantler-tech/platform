@@ -1,0 +1,317 @@
+# Alerts on a pod that has been unable to attach or mount its volume for longer
+# than an attach normally takes.
+#
+# WHY THIS EXISTS AS A SEPARATE CHECK
+#
+# On 2026-07-01 a single stranded hcloud volume wedged ALL prod delivery for ~9
+# hours: openbao-0 was rescheduled, its PVC stayed attached to the departed node
+# in the Hetzner API, the pod logged `FailedAttachVolume ... volume is attached`
+# 26,632 times, OpenBao stayed down, the Flux vault-config Job timed out, the
+# `infrastructure` and `apps` Kustomizations went NotReady and every merge_group
+# deploy was evicted. Nothing reported the strand itself; it surfaced only when
+# the merge queue jammed (#2363, #2754).
+#
+# WHY THE SYMPTOM, NOT THE VolumeAttachment
+#
+# The strand lives in the cloud provider: the Kubernetes-side VolumeAttachment
+# and Node objects can look entirely consistent while the CSI driver keeps
+# reporting that the volume is attached elsewhere. A scan for attachments whose
+# node is missing therefore passes clean through exactly this outage. The error
+# the rescheduled pod logs IS the condition, so this reads the `FailedAttachVolume`
+# and `FailedMount` events directly: the event's own `firstTimestamp` and
+# `lastTimestamp` carry the duration, so no cross-run state is needed.
+#
+# THREE GUARDS AGAINST A FALSE POSITIVE, in order:
+#   1. the failure has persisted for STALL_SECONDS since the event's first
+#      occurrence — a fresh attach that is merely slow stays quiet;
+#   2. the failure is still being reported (last occurrence within
+#      RECENT_SECONDS) — a pod that attached long ago and stopped logging does
+#      not alert on its historical events;
+#   3. the pod still exists and is still not Ready, read from the pod itself —
+#      the slow-but-successful attach during an autoscaler scale-up has already
+#      gone Ready by the time it is old enough to qualify, and a pod that was
+#      deleted has nothing left to strand.
+#
+# READ-ONLY BY CONSTRUCTION. The ClusterRole grants get/list on events, pods,
+# persistentvolumes and persistentvolumeclaims and nothing else; this never
+# detaches, deletes or taints. Automated force-detach is deliberately a separate
+# slice (#2363), because tainting a node that is merely unhealthy rather than
+# gone can corrupt data.
+#
+# REPEATS ARE DELIBERATE, as for cnpg-degraded-alert: a plain webhook has no
+# dedupe, so a strand still present on the next tick alerts again — a stranded
+# production volume should keep paging until someone force-detaches it.
+#
+# Lives in the observability namespace to reuse the allow-coroot
+# CiliumNetworkPolicy (endpointSelector: {}), which already permits
+# kube-apiserver, hooks.slack.com:443 and DNS egress. It does not depend on
+# Coroot itself. Delivery, secret handling and the silent-zero guards follow
+# cron-job-cnpg-degraded-alert.yaml line for line; see its comments for why each
+# is shaped the way it is.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: stranded-volume-attach-alert
+  namespace: observability
+  annotations:
+    checkov.io/skip1: "CKV_K8S_38=the check container reads its SA token to list events and pods through the API server"
+    # `${STALL_SECONDS}` and `${RECENT_SECONDS}` below are the container's own
+    # env vars, NOT Flux post-build variables. The infrastructure-controllers
+    # Kustomization runs substituteFrom, which expanded cnpg-degraded-alert's
+    # `${GRACE_SECONDS}` to the empty string and left that check dead for weeks.
+    # This resource needs no Flux substitution, so opt it out.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  # Every 5 minutes with a 10-minute stall threshold: a strand is reported within
+  # 15 minutes of its first failure, against the ~9 hours it took last time.
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # Headroom for pod scheduling + a handful of API reads + the L7 DNS proxy
+      # resolving hooks.slack.com + curl's retry budget, well below the */5 schedule.
+      activeDeadlineSeconds: 180
+      template:
+        metadata:
+          labels:
+            app: stranded-volume-attach-alert
+        spec:
+          restartPolicy: Never
+          serviceAccountName: stranded-volume-attach-alert
+          # This check calls the Kubernetes API, so it needs its token. C-0034 is
+          # already excepted for the observability namespace
+          # (cluster-security-exceptions/service-account-tokens.yaml).
+          automountServiceAccountToken: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            # fsGroup is what makes the mounted webhook readable at all: secret
+            # volume files are owned root:fsGroup, never uid:fsGroup, so an
+            # owner-only mode is unreadable by this container's non-root user and
+            # the CronJob would fail before its first API call.
+            fsGroup: 65532
+            # The two non-privilege C-0211 fields the cluster-wide
+            # add-security-context mutation cannot supply here (observability is
+            # excluded from it, and the namespace opt-in mutates the running pod
+            # while Kubescape scores the stored spec — #3239). Values match
+            # add-security-context.yaml.
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: check
+              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              env:
+                - name: STALL_SECONDS
+                  value: "600"
+                - name: RECENT_SECONDS
+                  value: "900"
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  API=https://kubernetes.default.svc
+                  SA=/var/run/secrets/kubernetes.io/serviceaccount
+
+                  # Read from the mounted Secret rather than an env var
+                  # (checkov CKV_K8S_35); see cnpg-degraded-alert for why.
+                  WEBHOOK_URL=$(cat /etc/stranded-volume-attach-alert/url)
+                  if [ "$(printf '%s' "$WEBHOOK_URL" | tr -d '[:cntrl:]')" != "$WEBHOOK_URL" ]; then
+                    echo "ERROR: webhook URL contains control characters" >&2
+                    exit 1
+                  fi
+                  # The payload carries the webhook token in its path, and the
+                  # network policy allows TCP/443 by port, not by scheme — an
+                  # `http://…:443` value would send it in the clear. Only an
+                  # https:// destination is delivered to; the placeholder below
+                  # is https too, so local/CI stays inert by the same rule.
+                  case "$WEBHOOK_URL" in
+                    https://*) ;;
+                    *)
+                      echo "ERROR: webhook URL must use https://" >&2
+                      exit 1
+                      ;;
+                  esac
+
+                  now=$(date -u +%s)
+                  # A literal newline for joining alert lines: command
+                  # substitution strips trailing newlines, hence the sentinel.
+                  nl=$(printf '\nx'); nl=${nl%x}
+
+                  # One read helper for every API call. A non-2xx or unparseable
+                  # response must NOT be reported as "no stranded volumes" — that
+                  # is the silent-zero failure mode where a broken check and a
+                  # healthy cluster look identical. Fail loudly to the Job log
+                  # instead; 404 is returned to the caller, which decides whether
+                  # absence is an answer (a pod that no longer exists) or not.
+                  api_get() {
+                    curl -sS -o "$2" -w '%{http_code}' \
+                      --cacert "$SA/ca.crt" \
+                      -H "Authorization: Bearer $(cat "$SA/token")" \
+                      "$API$1"
+                  }
+                  require_array() {
+                    # `has("items")` is satisfied by {"items":{}}; require the
+                    # ARRAY, not merely the key.
+                    if ! jq -e '(.items | type) == "array"' "$1" >/dev/null; then
+                      echo "ERROR: unexpected response shape from kube API for $2" >&2
+                      exit 1
+                    fi
+                  }
+
+                  # The two reasons the CSI attach path reports, cluster-wide,
+                  # filtered server-side so a busy cluster's event volume never
+                  # reaches this pod.
+                  for reason in FailedAttachVolume FailedMount; do
+                    code=$(api_get "/api/v1/events?fieldSelector=reason%3D${reason}" "/tmp/events-${reason}.json")
+                    if [ "$code" != "200" ]; then
+                      echo "ERROR: kube API returned HTTP $code listing ${reason} events" >&2
+                      exit 1
+                    fi
+                    require_array "/tmp/events-${reason}.json" "${reason} events"
+                  done
+                  jq -s '{items: (map(.items) | add)}' \
+                    /tmp/events-FailedAttachVolume.json /tmp/events-FailedMount.json > /tmp/events.json
+                  total=$(jq -r '.items | length' /tmp/events.json)
+
+                  # Guards 1 and 2, on the event alone. Timestamps come as
+                  # RFC 3339; eventTime is a MicroTime with a fractional second
+                  # that `fromdate` rejects, so the fraction is stripped first.
+                  # One candidate per pod: the newest qualifying event wins.
+                  jq -c --argjson stall "${STALL_SECONDS}" \
+                        --argjson recent "${RECENT_SECONDS}" \
+                        --argjson now "$now" '
+                    def ts: if . == null then null else sub("\\.[0-9]+Z$"; "Z") | fromdate end;
+                    [ .items[]
+                      | select(.involvedObject.kind == "Pod")
+                      | ((.firstTimestamp // .eventTime // .metadata.creationTimestamp) | ts) as $first
+                      | ((.lastTimestamp // .series.lastObservedTime // .eventTime // .metadata.creationTimestamp) | ts) as $last
+                      | select($first != null and $last != null)
+                      | select(($now - $first) >= $stall)
+                      | select(($now - $last) <= $recent)
+                      | { ns: .involvedObject.namespace, pod: .involvedObject.name,
+                          reason: .reason, count: (.count // 1),
+                          node: (.source.host // .reportingInstance // ""),
+                          first: (.firstTimestamp // .eventTime // .metadata.creationTimestamp),
+                          message: (.message // "") } ]
+                    | group_by(.ns + "/" + .pod) | map(max_by(.first)) | .[]
+                  ' /tmp/events.json > /tmp/candidates.jsonl
+
+                  stranded=""
+                  while IFS= read -r c; do
+                    [ -n "$c" ] || continue
+                    ns=$(printf '%s' "$c" | jq -r .ns)
+                    pod=$(printf '%s' "$c" | jq -r .pod)
+
+                    # Guard 3: the pod itself. Gone (404) means nothing is left
+                    # to strand; Ready means the attach eventually succeeded.
+                    code=$(api_get "/api/v1/namespaces/${ns}/pods/${pod}" /tmp/pod.json)
+                    if [ "$code" = "404" ]; then
+                      continue
+                    fi
+                    if [ "$code" != "200" ]; then
+                      echo "ERROR: kube API returned HTTP $code reading pod ${ns}/${pod}" >&2
+                      exit 1
+                    fi
+                    if jq -e '[.status.conditions[]? | select(.type == "Ready" and .status == "True")] | length > 0' /tmp/pod.json >/dev/null; then
+                      continue
+                    fi
+
+                    node=$(jq -r '.spec.nodeName // ""' /tmp/pod.json)
+                    [ -n "$node" ] || node=$(printf '%s' "$c" | jq -r '.node')
+                    [ -n "$node" ] || node="unknown"
+
+                    # The PV is named in the CSI message; its claimRef names the
+                    # PVC. Fall back to the pod's own claim list when the message
+                    # carries no volume name, so the alert is never nameless.
+                    pv=$(printf '%s' "$c" | jq -r '.message | capture("volume \"(?<v>[^\"]+)\"") | .v // empty' 2>/dev/null || true)
+                    pvc=""
+                    if [ -n "$pv" ]; then
+                      code=$(api_get "/api/v1/persistentvolumes/${pv}" /tmp/pv.json)
+                      if [ "$code" = "200" ]; then
+                        pvc=$(jq -r '(.spec.claimRef // {}) | if .name then "\(.namespace)/\(.name)" else "" end' /tmp/pv.json)
+                      elif [ "$code" != "404" ]; then
+                        echo "ERROR: kube API returned HTTP $code reading PersistentVolume ${pv}" >&2
+                        exit 1
+                      fi
+                    fi
+                    [ -n "$pvc" ] || pvc=$(jq -r '[.spec.volumes[]? | .persistentVolumeClaim.claimName // empty] | map("'"$ns"'/" + .) | join(", ")' /tmp/pod.json)
+                    [ -n "$pvc" ] || pvc="(no PVC on the pod)"
+                    [ -n "$pv" ] || pv="(not named in the event)"
+
+                    line=$(printf '%s' "$c" | jq -r --arg node "$node" --arg pv "$pv" --arg pvc "$pvc" '
+                      "• `\(.ns)/\(.pod)` on `\($node)` — \(.reason) ×\(.count) since \(.first); PVC `\($pvc)`, PV `\($pv)`\n  `\(.message | .[0:300])`"')
+                    stranded="${stranded}${stranded:+$nl}${line}"
+                  done < /tmp/candidates.jsonl
+
+                  if [ -z "$stranded" ]; then
+                    echo "Checked $total attach/mount failure event(s); none stranded beyond ${STALL_SECONDS}s on a pod that is still not Ready."
+                    exit 0
+                  fi
+
+                  echo "Stranded volume attach(es) detected:"
+                  echo "$stranded"
+
+                  text=$(printf '*Stranded volume attach*\n\n%s\n\n_A pod has been unable to attach or mount its volume for more than %ss and is still not Ready. On hcloud this usually means the volume is still attached to a departed node in the Hetzner API: check `hcloud volume list` and detach it there. Left alone, this is the 2026-07-01 shape that wedged every merge-group deploy for nine hours (#2363)._' \
+                    "$stranded" "${STALL_SECONDS}")
+                  jq -n --arg t "$text" '{text: $t}' > /tmp/payload.json
+
+                  # Only the known placeholder host may skip delivery; every
+                  # other failure fails the Job (no `|| true`), and the URL
+                  # reaches curl on stdin, never in argv — as in cnpg-degraded-alert.
+                  case "$WEBHOOK_URL" in
+                    https://example.invalid/*)
+                      echo "No Slack webhook configured; alert not delivered."
+                      exit 0
+                      ;;
+                  esac
+                  printf 'url = %s\n' "$WEBHOOK_URL" |
+                    curl -sf --max-time 15 \
+                      --retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused \
+                      -H 'Content-Type: application/json' \
+                      --data @/tmp/payload.json \
+                      --config -
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                # CIS-5.7.3 (C-0211); a documented no-op on this AppArmor cluster.
+                seLinuxOptions:
+                  level: s0
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                # readOnlyRootFilesystem: true, so give the script a writable
+                # scratch dir for the API responses and the webhook payload.
+                - name: tmp
+                  mountPath: /tmp
+                - name: webhook
+                  mountPath: /etc/stranded-volume-attach-alert
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 32Mi
+                limits:
+                  # CPU limit set for kubescape C-0270; generous so the
+                  # short-lived curl+jq never throttles.
+                  cpu: 100m
+                  memory: 64Mi
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            # 288 is 0440 (decimal on purpose — see cnpg-degraded-alert): readable
+            # by root and by the pod's fsGroup, never by anything else in the pod.
+            - name: webhook
+              secret:
+                secretName: stranded-volume-attach-alert-webhook
+                defaultMode: 288

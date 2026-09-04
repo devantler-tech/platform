@@ -100,6 +100,31 @@ jobs:
           shellcheck scripts/tests/test-publish-workflow-signing-revisions.sh
           bash scripts/tests/test-publish-workflow-signing-revisions.sh
 
+      # The report names the two revisions per consumer; the generator (#3550) turns them
+      # into the committed approved set the matcher narrowing (#3308) is derived from. Its
+      # cluster read and its pin read are both stubbed here, so this proves the fail-closed
+      # shape — an unresolved consumer writes nothing — not any particular revision.
+      - name: 🔐 Validate the approved-revisions generator
+        run: |
+          # -x: the generator SOURCES the report, and without it SC1091 is reported and the run exits 1.
+          shellcheck -x scripts/generate-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions.sh
+          bash scripts/tests/test-publish-workflow-approved-revisions.sh
+
+      # The pin guard above proves each matcher pins a FIXED revision; this one proves each
+      # per-consumer matcher pins the revision PAIR the committed approved set names for that
+      # consumer, and refuses any revision outside it (#3551, AC4 of #3308). Unconditional for
+      # the same reason as the pin guard: the subjects live in four different trees. The switch
+      # (APPROVED_REVISIONS_ENFORCE) stays off here until the narrowing itself lands — with it
+      # off the pattern form is still accepted, so this checks the committed set against the
+      # live matchers without forcing the change.
+      - name: 🔐 Validate the approved-revisions guard
+        run: |
+          shellcheck -x scripts/guard-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
+          bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
+          ./scripts/guard-publish-workflow-approved-revisions.sh
+
       # Dropping a framework from the Kubescape gate REMOVES findings, so the
       # compliance score RISES and every check stays green — a coverage
       # regression that looks like an improvement. That is what un-gated 59
@@ -235,6 +260,9 @@ jobs:
               # scoped the way it was reviewed. The roles themselves are already covered
               # by the k8s/** entry above.
               - 'scripts/tests/test-trivyignore-first-party-rbac-boundary.sh'
+              # The tenant role and the test that keeps its networkpolicies grant read-only
+              # are one contract; the role is covered by k8s/**, the test is listed here.
+              - 'scripts/tests/test-tenant-edit-networkpolicy-write.sh'
               # The KSV-01010 ConfigMap dispositions are path-scoped, so the entry and its
               # paired control move together — a widened glob would suppress the same check
               # on application ConfigMaps that genuinely carry credentials.
@@ -283,6 +311,7 @@ jobs:
               - 'scripts/tests/test-crossplane-egress-policy.sh'
               - 'scripts/tests/crossplane-egress-policy-rules.yaml'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
+              - 'scripts/tests/test-stranded-volume-attach-alert.sh'
               # The Job manifest, the Secret it imports and this test are one
               # contract: the credential is only out of the environment while all
               # three agree.
@@ -305,6 +334,11 @@ jobs:
               # or a widened allow-list would ship with every check still green.
               - 'scripts/guard-shared-publish-workflow-pin.sh'
               - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
+              # Both halves, for the same reason as the pin guard above: the guard step itself
+              # runs unconditionally, and listing the pair here is what keeps a guard edit
+              # inside the k8s-gated validation matrix alongside the manifests it judges.
+              - 'scripts/guard-publish-workflow-approved-revisions.sh'
+              - 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh'
               # Both halves, for the same reason as the guard above.
               - 'scripts/validate-kubescape-frameworks/main.go'
               - 'scripts/validate-kubescape-frameworks/main_test.go'
@@ -577,7 +611,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.180.3"
+          KSAIL_VERSION: "7.180.7"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -749,6 +783,17 @@ jobs:
         run: |
           shellcheck scripts/tests/test-trivyignore-first-party-rbac-boundary.sh
           bash scripts/tests/test-trivyignore-first-party-rbac-boundary.sh
+
+      - name: 🧱 Validate the tenant identity cannot write standard NetworkPolicies
+        if: needs.changes.outputs.k8s == 'true'
+        # Cilium unions standard NetworkPolicy allow rules with CiliumNetworkPolicy rules,
+        # and restrict-tenant-network-policies constrains only the latter — so a write
+        # grant on networkpolicies is a bypass of the whole tenant boundary. This renders
+        # both providers' infrastructure layers and refuses any tenant-aggregated
+        # ClusterRole granting a write verb on it (#3396).
+        run: |
+          shellcheck scripts/tests/test-tenant-edit-networkpolicy-write.sh
+          bash scripts/tests/test-tenant-edit-networkpolicy-write.sh
 
       - name: 🧱 Validate ConfigMap sensitive-content disposition boundary
         if: needs.changes.outputs.k8s == 'true'
@@ -958,6 +1003,15 @@ jobs:
         # delivery so both silent-zero guards and the credential's handling are
         # pinned by behaviour rather than by schema.
         run: bash scripts/tests/test-cnpg-degraded-alert.sh
+
+      - name: 🩺 Validate the stranded-volume-attach alert
+        if: needs.changes.outputs.k8s == 'true'
+        # The only direct signal for the 2026-07-01 shape — a volume stranded on
+        # a departed node, logged by the rescheduled pod for nine hours while
+        # nothing alerted (#2363, #2754). Replays that shape and every ordinary
+        # shape against a stubbed API and delivery, so the fire, each quiet
+        # verdict and both silent-zero guards are pinned by behaviour.
+        run: bash scripts/tests/test-stranded-volume-attach-alert.sh
 
       - name: 🔑 Validate the MinIO bucket Job's credential handling
         if: needs.changes.outputs.k8s == 'true'
@@ -1197,7 +1251,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.180.3"
+          KSAIL_VERSION: "7.180.7"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -1804,7 +1858,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.180.3"
+          KSAIL_VERSION: "7.180.7"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
