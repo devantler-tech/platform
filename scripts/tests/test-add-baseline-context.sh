@@ -319,7 +319,11 @@ fi
 # The controller-kind rules carry their OWN opt-in label, because writing the
 # fields into a stored pod template rolls the workload. Nothing is opted in yet:
 # this pins the default-off state, and each namespace is added here only with the
-# post-rollout read-back of its workloads recorded on the namespace manifest.
+# post-rollout read-back of its workloads recorded on the namespace manifest. The
+# label alone updates nothing already stored (helm-controller does not reapply an
+# unchanged template), so a flip also restarts each existing controller to backfill
+# the fields and watches its owner for a reconcile loop — the procedure is spelled
+# out beside the rules in add-security-context.yaml.
 expected_controllers_optin=""
 
 # `grep -rl` exits 1 when nothing matches; under pipefail that would abort the assignment

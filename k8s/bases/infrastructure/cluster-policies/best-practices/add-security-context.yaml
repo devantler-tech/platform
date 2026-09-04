@@ -442,9 +442,37 @@ spec:
     #
     # CREATE and UPDATE for Deployment, StatefulSet and DaemonSet, whose pod
     # template is mutable — UPDATE is the only way an already-stored spec that an
-    # operator rewrites on reconcile ever receives the fields, and the `+()`
-    # anchors make every later admission a no-op, so an operator that rewrites
-    # its template wholesale pays one no-op write per reconcile, never a loop.
+    # operator rewrites on reconcile ever receives the fields. The `+()` anchors
+    # inspect the INCOMING request, not the stored object, so they make an
+    # admission a no-op only when the writer already carries the fields: an
+    # owner that reads the stored object back and preserves unknown fields
+    # (controller-runtime CreateOrUpdate on the fetched object) converges after
+    # one write, but an owner that REBUILDS its template from its own desired
+    # state omits the fields on every write, Kyverno re-adds them before
+    # persistence, and the live object never equals what that owner wanted —
+    # each write still advances resourceVersion, which can requeue the owner
+    # into a continuous reconcile loop. Coroot is a known candidate: it already
+    # fights external ownership of its generated Deployment
+    # (docs/progressive-delivery.md). The label therefore makes NO claim that a
+    # namespace's owners converge; that is what the per-namespace flip proves.
+    #
+    # Labelling a namespace also does not by itself touch anything already
+    # stored: helm-controller reapplies a rendered resource only on a chart or
+    # values change and excludes `/spec/template` from drift correction, so a
+    # Helm-rendered controller (Longhorn's manager, CSI and UI) keeps its old
+    # template indefinitely until some writer issues an UPDATE. The flip is
+    # therefore a procedure, not a label edit. For each namespace it:
+    #   1. adds the label and, per existing controller, issues a
+    #      `kubectl rollout restart`-style template-annotation UPDATE — the
+    #      admission of that write is what backfills the fields (and it is the
+    #      one rollout per workload the paragraph above warns about);
+    #   2. reads the stored specs back and confirms both fields landed;
+    #   3. watches every owner's write rate on those objects for the loop above
+    #      (resourceVersion advancing with no spec change) and, on a loop,
+    #      reverts the label or excludes that owner's objects by ownerReference
+    #      before the label is kept;
+    #   4. records the read-back on the namespace manifest, which is what the
+    #      inventory gate in tests/add-baseline-context expects.
     # Job is CREATE-only: a Job's template is immutable once created, so an
     # UPDATE-time mutation would turn any later edit (a label, `suspend`) into a
     # rejected template change — the same 422 hazard that keeps the pod rules
