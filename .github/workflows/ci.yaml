@@ -361,6 +361,11 @@ jobs:
               # a continue-on-error) still runs the ablated test that refuses each of those.
               - '.github/workflows/regenerate-publish-workflow-approved-revisions.yaml'
               - 'scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh'
+              # The generated set itself. The contract test reads it to derive which
+              # consumer repositories the workflow's App token must be scoped to, so a
+              # PR that only adds a consumer here — the exact change that would leave
+              # the token unable to read that consumer — must still run that check.
+              - 'scripts/publish-workflow-approved-revisions.tsv'
               # Both halves, for the same reason as the guard above.
               - 'scripts/validate-kubescape-frameworks/main.go'
               - 'scripts/validate-kubescape-frameworks/main_test.go'
