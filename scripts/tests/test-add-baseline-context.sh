@@ -149,6 +149,143 @@ check coroot-node-agent-mutated.yaml '.spec.initContainers[0].securityContext.se
 check coroot-node-agent-mutated.yaml '.spec.securityContext.seLinuxOptions' \
   null "pod-scope SELinux fill created an object where the author set none"
 
+# CONTROLLER KINDS. Kubescape scores the STORED controller spec, and the pod
+# rules never reach it (this policy has no autogen rules; measured 2026-09-03
+# against live prod: 0 of 15 observability and 0 of 12 longhorn-system stored
+# specs carried either field after the namespaces were opted in). The
+# controller-kind rules close that at the object Kubescape reads. Every state
+# the pod fixtures pin is asserted again here, on the kinds the residual
+# population consists of. Pod-level assertions on the templates use a different
+# path per kind: `spec.template.spec` and, for CronJobs, `spec.jobTemplate`.
+
+# ON state — the plain operator-written shape receives both fields, on the
+# template and on every container and initContainer.
+check operator-deploy-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "opted-in Deployment template did not receive fsGroupChangePolicy"
+check operator-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "opted-in Deployment container did not receive seLinuxOptions"
+check operator-deploy-mutated.yaml '.spec.template.spec.initContainers[0].securityContext.seLinuxOptions.level' \
+  s0 "opted-in Deployment initContainer did not receive seLinuxOptions"
+check operator-deploy-mutated.yaml '.spec.template.spec.securityContext.seLinuxOptions' \
+  null "controller pod-scope SELinux fill created an object where the author set none"
+
+# A StatefulSet without initContainers: the foreach must tolerate the absent
+# field rather than dropping the container mutation with it.
+check server-sts-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "opted-in StatefulSet template did not receive fsGroupChangePolicy"
+check server-sts-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "opted-in StatefulSet container did not receive seLinuxOptions"
+
+# A privileged DaemonSet, the shape Longhorn actually runs: privilege is
+# untouched and the two fields are supplied beside it.
+check manager-ds-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "opted-in DaemonSet template did not receive fsGroupChangePolicy"
+check manager-ds-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "opted-in DaemonSet container did not receive seLinuxOptions"
+check manager-ds-mutated.yaml '.spec.template.spec.containers[0].securityContext.privileged' \
+  true "controller rule changed a privilege field it must not touch"
+
+# The jobTemplate path.
+check nightly-cronjob-mutated.yaml '.spec.jobTemplate.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "opted-in CronJob template did not receive fsGroupChangePolicy"
+check nightly-cronjob-mutated.yaml '.spec.jobTemplate.spec.template.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "opted-in CronJob container did not receive seLinuxOptions"
+check nightly-cronjob-mutated.yaml '.spec.jobTemplate.spec.template.spec.initContainers[0].securityContext.seLinuxOptions.level' \
+  s0 "opted-in CronJob initContainer did not receive seLinuxOptions"
+
+# OFF state — an unlabelled namespace's controllers are untouched.
+check unlabelled-deploy-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  null "unlabelled namespace Deployment was mutated at the template level"
+check unlabelled-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
+  null "unlabelled namespace Deployment had seLinuxOptions injected"
+
+# Conditional anchors — a controller that sets its own values keeps them.
+check preset-deploy-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  Always "preset Deployment fsGroupChangePolicy was overwritten"
+check preset-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s9 "preset Deployment container seLinuxOptions was overwritten"
+check preset-deploy-mutated.yaml '.spec.template.spec.initContainers[0].securityContext.seLinuxOptions.level' \
+  s9 "preset Deployment initContainer seLinuxOptions was overwritten"
+
+# The wholesale-replace guard at controller scope: a complete pod-level SELinux
+# object stays the only one, and fsGroupChangePolicy still lands.
+check podlevel-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
+  null "Deployment pod-level SELinux options were overridden by a container-level injection"
+check podlevel-deploy-mutated.yaml '.spec.template.spec.initContainers[0].securityContext.seLinuxOptions' \
+  null "Deployment pod-level SELinux options were overridden by an initContainer-level injection"
+check podlevel-deploy-mutated.yaml '.spec.template.spec.securityContext.seLinuxOptions.level' \
+  s9 "Deployment pod-level seLinuxOptions.level was not preserved"
+check podlevel-deploy-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "controller rule did not fire on the podlevel-deploy fixture"
+
+# The pod-level-object-without-level shape at controller scope: only the
+# pod-scope fill may supply the level, preserving the sibling user.
+check podlevel-partial-deploy-mutated.yaml '.spec.template.spec.securityContext.seLinuxOptions.level' \
+  s0 "partial Deployment pod-level seLinuxOptions did not receive the missing level"
+check podlevel-partial-deploy-mutated.yaml '.spec.template.spec.securityContext.seLinuxOptions.user' \
+  system_u "partial Deployment pod-level seLinuxOptions lost its pre-existing user"
+check podlevel-partial-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
+  null "container-level injection replaced the partial Deployment pod-level SELinux object"
+
+# A standalone Job (CREATE-only kind) takes the template path like the others.
+check oneshot-job-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "opted-in Job template did not receive fsGroupChangePolicy"
+check oneshot-job-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "opted-in Job container did not receive seLinuxOptions"
+
+# The jobTemplate pod-scope fill: a CronJob whose pod-level SELinux object has no
+# `level` receives it there, keeps its `user`, and its containers stay untouched.
+# Measured on this fixture with the rule deleted: the fixture reads Excluded and
+# `kyverno test` still passes, so this is the only gate that sees the rule.
+check podlevel-partial-cronjob-mutated.yaml '.spec.jobTemplate.spec.template.spec.securityContext.seLinuxOptions.level' \
+  s0 "partial CronJob pod-level seLinuxOptions did not receive the missing level"
+check podlevel-partial-cronjob-mutated.yaml '.spec.jobTemplate.spec.template.spec.securityContext.seLinuxOptions.user' \
+  system_u "partial CronJob pod-level seLinuxOptions lost its pre-existing user"
+check podlevel-partial-cronjob-mutated.yaml '.spec.jobTemplate.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
+  null "container-level injection replaced the partial CronJob pod-level SELinux object"
+check podlevel-partial-cronjob-mutated.yaml '.spec.jobTemplate.spec.template.spec.initContainers[0].securityContext.seLinuxOptions' \
+  null "initContainer-level injection replaced the partial CronJob pod-level SELinux object"
+check podlevel-partial-cronjob-mutated.yaml '.spec.jobTemplate.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "CronJob rule did not fire on the podlevel-partial-cronjob fixture"
+
+# A complete pod-level object on a CronJob: preserved, containers untouched.
+check podlevel-cronjob-mutated.yaml '.spec.jobTemplate.spec.template.spec.securityContext.seLinuxOptions.level' \
+  s9 "CronJob pod-level seLinuxOptions.level was not preserved"
+check podlevel-cronjob-mutated.yaml '.spec.jobTemplate.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
+  null "CronJob pod-level SELinux options were overridden by a container-level injection"
+
+# The controller rules are gated by their OWN label. A namespace carrying only
+# the pod-rule label (kubescape in values.yaml) must see no controller mutation,
+# or the separate rollout gate is not a gate.
+check podlabel-only-deploy-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  null "pod-rule label alone mutated a controller template"
+check podlabel-only-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
+  null "pod-rule label alone injected seLinuxOptions into a controller"
+
+# An EXPLICITLY EMPTY container-level SELinux object under a complete pod-level object.
+# Kubernetes treats the non-null empty object as an override (DetermineEffectiveSecurityContext),
+# so the effective container context has NO level — and to JMESPath the empty mapping is
+# falsy, so an `|| ''` presence test read it as absent and left it that way. Measured on
+# the previous head: `{}` came back unchanged at pod and controller scope. The key-presence
+# test fills the level; the sibling container that sets nothing stays untouched because the
+# pod-level object still governs it.
+check empty-override-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "empty container-level SELinux override did not receive the missing level (pod)"
+check empty-override-mutated.yaml '.spec.initContainers[0].securityContext.seLinuxOptions.level' \
+  s0 "empty initContainer-level SELinux override did not receive the missing level (pod)"
+check empty-override-mutated.yaml '.spec.containers[1].securityContext.seLinuxOptions' \
+  null "a container with no override was injected beside an empty-override sibling (pod)"
+check empty-override-mutated.yaml '.spec.securityContext.seLinuxOptions.level' \
+  s9 "pod-level level was not preserved beside an empty container override (pod)"
+check empty-override-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "empty container-level SELinux override did not receive the missing level (Deployment)"
+check empty-override-deploy-mutated.yaml '.spec.template.spec.initContainers[0].securityContext.seLinuxOptions.level' \
+  s0 "empty initContainer-level SELinux override did not receive the missing level (Deployment)"
+check empty-override-deploy-mutated.yaml '.spec.template.spec.containers[1].securityContext.seLinuxOptions' \
+  null "a container with no override was injected beside an empty-override sibling (Deployment)"
+check empty-override-deploy-mutated.yaml '.spec.template.spec.securityContext.seLinuxOptions.level' \
+  s9 "pod-level level was not preserved beside an empty container override (Deployment)"
+
 # ROLLOUT INVENTORY. The rules above ship default-off, so what they actually do
 # in the cluster is decided entirely by which namespaces carry the opt-in label —
 # a fact no mutation fixture can see. Without this gate, widening the rollout from
@@ -163,7 +300,7 @@ expected_optin="kubescape,longhorn-system,observability,velero"
 # grep only prefilters candidate files; yq decides, so a mention in a comment or
 # in the policy that DEFINES the label cannot be counted as an opted-in namespace.
 actual_optin="$(
-  grep -rl 'pod-security.devantler.tech/baseline-context' --include='*.yaml' "${repo_root}/k8s" 2>/dev/null |
+  { grep -rl 'pod-security.devantler.tech/baseline-context' --include='*.yaml' "${repo_root}/k8s" 2>/dev/null || true; } |
     while IFS= read -r f; do
       yq -N '
         select(.kind == "Namespace" and
@@ -179,8 +316,38 @@ if [ "${actual_optin}" != "${expected_optin}" ]; then
   fail=1
 fi
 
+# The controller-kind rules carry their OWN opt-in label, because writing the
+# fields into a stored pod template rolls the workload. Nothing is opted in yet:
+# this pins the default-off state, and each namespace is added here only with the
+# post-rollout read-back of its workloads recorded on the namespace manifest. The
+# label alone updates nothing already stored (helm-controller does not reapply an
+# unchanged template), so a flip also restarts each existing controller to backfill
+# the fields and watches its owner for a reconcile loop — the procedure is spelled
+# out beside the rules in add-security-context.yaml.
+expected_controllers_optin=""
+
+# `grep -rl` exits 1 when nothing matches; under pipefail that would abort the assignment
+# and the gate would die before comparing against the (legitimately empty) inventory,
+# so the no-match case is folded into an empty list rather than an errexit.
+actual_controllers_optin="$(
+  { grep -rl 'pod-security.devantler.tech/baseline-context-controllers' --include='*.yaml' "${repo_root}/k8s" 2>/dev/null || true; } |
+    while IFS= read -r f; do
+      yq -N '
+        select(.kind == "Namespace" and
+               .metadata.labels."pod-security.devantler.tech/baseline-context-controllers" == "enabled") |
+        .metadata.name
+      ' "${f}" 2>/dev/null
+    done | awk 'NF' | LC_ALL=C sort -u | paste -sd, -
+)"
+
+if [ "${actual_controllers_optin}" != "${expected_controllers_optin}" ]; then
+  echo "::error::baseline-context-controllers opt-in inventory changed: expected '${expected_controllers_optin}', got '${actual_controllers_optin}'"
+  echo "::error::a namespace joins the controller rollout only together with its measured post-rollout read-back"
+  fail=1
+fi
+
 if [ "${fail}" -ne 0 ]; then
   exit 1
 fi
 
-echo "Baseline-context opt-in mutation: injected when labelled, preserved when preset, inert when not."
+echo "Baseline-context opt-in mutation: injected when labelled, preserved when preset, inert when not — at the pod and, behind its own label, at the controller."

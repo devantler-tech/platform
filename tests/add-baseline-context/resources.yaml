@@ -168,3 +168,341 @@ spec:
   containers:
     - name: node-agent
       image: ghcr.io/coroot/coroot-node-agent:v1.0.0
+# --- Controller kinds ---------------------------------------------------------
+# The stored controller spec is what Kubescape scores, and the pod rules above
+# never reach it (this policy has no autogen rules). Each shape the pod fixtures
+# pin is pinned again at the controller object, on the kinds the residual
+# population actually consists of: operator-written Deployments, StatefulSets
+# and DaemonSets, plus a CronJob for the jobTemplate path.
+---
+# The plain shape an operator writes: no securityContext anywhere. Both fields
+# must land in the pod template.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operator-deploy
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: operator-deploy
+  template:
+    metadata:
+      labels:
+        app: operator-deploy
+    spec:
+      initContainers:
+        - name: init
+          image: ghcr.io/coroot/coroot-operator:1.9.5
+      containers:
+        - name: operator
+          image: ghcr.io/coroot/coroot-operator:1.9.5
+---
+# A StatefulSet with no initContainers — the foreach over
+# `spec.template.spec.initContainers[]` must tolerate the absent field.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: server-sts
+  namespace: observability
+spec:
+  serviceName: server-sts
+  selector:
+    matchLabels:
+      app: server-sts
+  template:
+    metadata:
+      labels:
+        app: server-sts
+    spec:
+      containers:
+        - name: server
+          image: ghcr.io/coroot/coroot:1.22.2
+---
+# A privileged DaemonSet, the shape Longhorn's manager and CSI plugin run.
+# Privilege is untouched; only the two fields are supplied.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: manager-ds
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: manager-ds
+  template:
+    metadata:
+      labels:
+        app: manager-ds
+    spec:
+      containers:
+        - name: manager
+          image: longhornio/longhorn-manager:v1.9.0
+          securityContext:
+            privileged: true
+---
+# The jobTemplate path.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-cronjob
+  namespace: observability
+spec:
+  schedule: "0 3 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          initContainers:
+            - name: init
+              image: ghcr.io/coroot/coroot:1.22.2
+          containers:
+            - name: job
+              image: ghcr.io/coroot/coroot:1.22.2
+---
+# OFF state: no opt-in label, so no controller rule may touch it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unlabelled-deploy
+  namespace: chaos-mesh
+spec:
+  selector:
+    matchLabels:
+      app: unlabelled-deploy
+  template:
+    metadata:
+      labels:
+        app: unlabelled-deploy
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/chaos-mesh/chaos-mesh:v2.7.0
+---
+# Anchor preservation: a controller that already sets both fields to
+# non-default values keeps them.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: preset-deploy
+  namespace: velero
+spec:
+  selector:
+    matchLabels:
+      app: preset-deploy
+  template:
+    metadata:
+      labels:
+        app: preset-deploy
+    spec:
+      securityContext:
+        fsGroupChangePolicy: Always
+      initContainers:
+        - name: init
+          image: velero/velero:v1.16.0
+          securityContext:
+            seLinuxOptions:
+              level: s9
+      containers:
+        - name: velero
+          image: velero/velero:v1.16.0
+          securityContext:
+            seLinuxOptions:
+              level: s9
+---
+# A complete pod-level SELinux object with containers carrying none: the
+# container foreach must stay out (a container-level object would replace the
+# pod struct wholesale), the pod-scope fill must not fire (level present), and
+# fsGroupChangePolicy still lands.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podlevel-deploy
+  namespace: velero
+spec:
+  selector:
+    matchLabels:
+      app: podlevel-deploy
+  template:
+    metadata:
+      labels:
+        app: podlevel-deploy
+    spec:
+      securityContext:
+        seLinuxOptions:
+          user: system_u
+          level: s9
+      initContainers:
+        - name: init
+          image: velero/velero:v1.16.0
+      containers:
+        - name: velero
+          image: velero/velero:v1.16.0
+---
+# A pod-level SELinux object that EXISTS but has no `level`: only the pod-scope
+# fill may supply it, preserving the sibling `user`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podlevel-partial-deploy
+  namespace: velero
+spec:
+  selector:
+    matchLabels:
+      app: podlevel-partial-deploy
+  template:
+    metadata:
+      labels:
+        app: podlevel-partial-deploy
+    spec:
+      securityContext:
+        seLinuxOptions:
+          user: system_u
+      initContainers:
+        - name: init
+          image: velero/velero:v1.16.0
+      containers:
+        - name: velero
+          image: velero/velero:v1.16.0
+---
+# A standalone Job without initContainers (CREATE-only kind).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: oneshot-job
+  namespace: observability
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: job
+          image: ghcr.io/coroot/coroot:1.22.2
+---
+# A CronJob whose pod-level SELinux object exists but has no `level`: only the
+# jobTemplate pod-scope fill may supply it, preserving the sibling `user`.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: podlevel-partial-cronjob
+  namespace: velero
+spec:
+  schedule: "0 4 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            seLinuxOptions:
+              user: system_u
+          initContainers:
+            - name: init
+              image: velero/velero:v1.16.0
+          containers:
+            - name: velero
+              image: velero/velero:v1.16.0
+---
+# A CronJob with a complete pod-level SELinux object: the container foreach and
+# the pod-scope fill both stay out; fsGroupChangePolicy still lands.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: podlevel-cronjob
+  namespace: velero
+spec:
+  schedule: "0 5 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            seLinuxOptions:
+              user: system_u
+              level: s9
+          containers:
+            - name: velero
+              image: velero/velero:v1.16.0
+---
+# The pod-rule label ALONE (kubescape carries `baseline-context` but not
+# `baseline-context-controllers`): no controller rule may touch this, or the
+# separate rollout gate is not a gate.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podlabel-only-deploy
+  namespace: kubescape
+spec:
+  selector:
+    matchLabels:
+      app: podlabel-only-deploy
+  template:
+    metadata:
+      labels:
+        app: podlabel-only-deploy
+    spec:
+      containers:
+        - name: app
+          image: quay.io/kubescape/operator:v0.2.0
+---
+# A container that EXPLICITLY sets `seLinuxOptions: {}` under a complete pod-level
+# object. Kubernetes treats that non-null empty object as an override, so the
+# effective container context has no level unless the rule fills it — but the
+# empty mapping is falsy to JMESPath, so an `|| ''` presence test reads it as
+# absent and the container is left without a level. The key-presence test
+# distinguishes the two shapes. Pinned at pod scope (this) and controller scope.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: empty-override
+  namespace: velero
+spec:
+  securityContext:
+    seLinuxOptions:
+      user: system_u
+      level: s9
+  initContainers:
+    - name: init
+      image: velero/velero-plugin:v1.0.0
+      securityContext:
+        seLinuxOptions: {}
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+      securityContext:
+        seLinuxOptions: {}
+    - name: plain
+      image: velero/velero:v1.0.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: empty-override-deploy
+  namespace: velero
+spec:
+  selector:
+    matchLabels:
+      app: empty-override-deploy
+  template:
+    metadata:
+      labels:
+        app: empty-override-deploy
+    spec:
+      securityContext:
+        seLinuxOptions:
+          user: system_u
+          level: s9
+      initContainers:
+        - name: init
+          image: velero/velero:v1.16.0
+          securityContext:
+            seLinuxOptions: {}
+      containers:
+        - name: velero
+          image: velero/velero:v1.16.0
+          securityContext:
+            seLinuxOptions: {}
+        - name: plain
+          image: velero/velero:v1.16.0
