@@ -288,6 +288,7 @@ cordon_recovery_patch_file="${work_dir}/cordon-recovery-patch.json"
 talos_nodes_file="${work_dir}/talos-nodes.json"
 talos_node_targets="${work_dir}/talos-node-targets.tsv"
 talos_pending_targets="${work_dir}/talos-pending-targets.tsv"
+talos_preflight_targets="${work_dir}/talos-preflight-targets.tsv"
 talos_processed_targets="${work_dir}/talos-processed-targets.tsv"
 talos_stage_result_file="${work_dir}/talos-stage-result.txt"
 runtime_probe_nodes_file="${work_dir}/runtime-probe-nodes.json"
@@ -3622,6 +3623,37 @@ sync_talos_registry_auth() {
         "${node_mode}" "${node_uid}" \
         >>"${talos_pending_targets}"
     done <"${talos_node_targets}"
+
+    # A reboot target can disappear after selection but before overlap chooses
+    # a peer or prepares a bootstrap seed. Deselect only an untouched target
+    # whose absence is confirmed against a fresh, unambiguous inventory;
+    # process_talos_node_target revalidates again at the mutation boundary.
+    : >"${talos_preflight_targets}"
+    while IFS=$'\t' read -r \
+      node_role node_name node_ip node_mode node_uid; do
+      [[ -n "${node_name}" ]] || continue
+      if [[ "${node_mode}" == "reboot" ]]; then
+        target_result=0
+        revalidate_selected_node_identity_before_mutation \
+          "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+          1 || target_result=$?
+        if ((target_result == 2)); then
+          deselected_any_node=1
+          consecutive_clean_inventories=0
+          continue
+        elif ((target_result != 0)); then
+          return 1
+        fi
+      fi
+      printf '%s\t%s\t%s\t%s\t%s\n' \
+        "${node_role}" "${node_name}" "${node_ip}" \
+        "${node_mode}" "${node_uid}" \
+        >>"${talos_preflight_targets}"
+    done <"${talos_pending_targets}"
+    if ! mv "${talos_preflight_targets}" "${talos_pending_targets}"; then
+      echo "::error::Could not persist the revalidated Talos target batch."
+      return 1
+    fi
 
     if [[ ! -s "${talos_pending_targets}" ]]; then
       if [[ ! -s "${talos_node_targets}" ]]; then

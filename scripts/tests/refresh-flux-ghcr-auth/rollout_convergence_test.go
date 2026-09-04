@@ -235,6 +235,33 @@ func TestRemovedImageTargetIsDeselectedBeforeMutation(t *testing.T) {
 	requireNotContains(t, mustRead(runtimeProof), "prod-control-plane-1-uid")
 }
 
+// A reboot target can disappear after selection but before the overlap path
+// chooses a bootstrap seed. It must be removed from the pending batch before
+// bootstrap preparation inspects or quarantines the remaining live targets.
+func TestRemovedRebootTargetIsDeselectedBeforeBootstrapSelection(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_REVOKE_CURRENT_ROOT_TOKEN":   "true",
+		"FAKE_ALL_TALOS_NODES_STALE":       "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":       "prod-worker-2",
+		"FAKE_RUNTIME_PULL_FAIL_NODES":     "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_EMPTY_WORKLOAD_NODES":        "prod-worker-2",
+		"FAKE_NODE_REMOVED_BEFORE_PROCESS": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "deselected")
+	operations := readLines(f.operationLog)
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-worker-1", "node-drain:prod-worker-1",
+		"talos-reboot:10.0.0.2", "talos-revision:10.0.0.2",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+	requireLine(t, operations, "node-claim-cordon:prod-worker-2")
+	requireLine(t, operations, "root-patch")
+}
+
 func TestRemovedTargetRequiresAuthoritativeUnambiguousInventory(t *testing.T) {
 	for _, mode := range []string{"forbidden", "not-found-error", "list-fails", "malformed", "empty", "same-name", "same-address", "same-uid", "still-present"} {
 		t.Run(mode, func(t *testing.T) {
