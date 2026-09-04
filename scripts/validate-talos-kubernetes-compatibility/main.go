@@ -14,6 +14,9 @@ import (
 
 var versionPin = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$`)
 
+// main validates the Kubernetes and Talos version pins in the ksail config
+// named by the single optional argument, defaulting to ksail.prod.yaml. It exits
+// 2 on usage error, 1 when the pins are rejected, and 0 when they are compatible.
 func main() {
 	path := "ksail.prod.yaml"
 	if len(os.Args) > 2 {
@@ -30,6 +33,10 @@ func main() {
 	fmt.Printf("%s: pinned Kubernetes/Talos versions are compatible\n", path)
 }
 
+// validate reports whether the ksail config at path pins a Kubernetes version that
+// Talos verifies as compatible with its pinned Talos version. It fails closed on
+// unreadable, malformed, multi-document, or unpinned input rather than treating an
+// unvalidated pin as acceptable.
 func validate(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
