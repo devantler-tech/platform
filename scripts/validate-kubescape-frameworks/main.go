@@ -563,7 +563,11 @@ func collapseQuotedNewlines(text string) string {
 			out.WriteByte(' ')
 		default:
 			out.WriteByte(c)
+			// Whitespace ends a word everywhere; the shell metacharacters end one
+			// outside quotes, so `true;# x` and `a|# x` open a comment with no space.
 			if c == ' ' || c == '\t' || c == '\n' {
+				wordStart = true
+			} else if !inSingle && !inDouble && strings.IndexByte(";|&()<>", c) >= 0 {
 				wordStart = true
 			}
 		}

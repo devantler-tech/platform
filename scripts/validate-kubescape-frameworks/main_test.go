@@ -1013,6 +1013,11 @@ func TestRejectsScanAfterACommentWithAnUnmatchedQuoteInAConditionalStep(t *testi
 		// so `echo \` followed by `# …` is `echo # …`: the `#` starts a comment.
 		"comment after an unquoted continuation, double quote": "          echo \\\n          # unmatched quote: \"\n",
 		"comment after an unquoted continuation, single quote": "          echo \\\n          # it's unmatched\n",
+		// A shell metacharacter ends a word, so `#` right after `;`, `|` or `&`
+		// opens a comment with no space in between.
+		"comment right after a semicolon, double quote": "          true;# unmatched quote: \"\n",
+		"comment right after a pipe, single quote":      "          true|# it's unmatched\n",
+		"comment right after an ampersand":              "          true&# unmatched quote: \"\n",
 	}
 	for name, comment := range cases {
 		workflow := "jobs:\n  validate:\n    steps:\n" +
@@ -1107,6 +1112,11 @@ func TestCollapseQuotedNewlinesFoldsABackslashNewlineInsideDoubleQuotes(t *testi
 		// so that quote is live and folds the newline after it.
 		"comment after an unquoted continuation":       {"echo \\\n# say \"\nksail", "echo \\\n# say \"\nksail"},
 		"hash continuing a word across a continuation": {"echo foo\\\n#\"\nb\"", "echo foo\\\n#\" b\""},
+		// A metacharacter ends the word, so the `#` after it is a comment; inside a
+		// word (`foo#bar`) or inside quotes it is not.
+		"comment right after a semicolon":            {"true;# say \"\nksail", "true;# say \"\nksail"},
+		"hash inside a word after a pipe":            {"a|foo#\"\nb\"", "a|foo#\" b\""},
+		"semicolon inside quotes is not a separator": {"echo \"a;#\nb\"", "echo \"a;# b\""},
 	}
 	for name, c := range cases {
 		if got := collapseQuotedNewlines(c[0]); got != c[1] {
