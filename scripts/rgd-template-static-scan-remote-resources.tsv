@@ -1,3 +1,3 @@
-https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/v0.11.0/deploy/ha-install.yaml	60b0f27269792f72ecdc2e617d3fe908ebd2f152280edce96c1b006f5723baa3
+https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/v0.12.0/deploy/ha-install.yaml	44d74b38379d96572c434290732092f577ee4835392b36922a72c406ee406139
 https://raw.githubusercontent.com/cloudflare/origin-ca-issuer/trunk/deploy/crds/cert-manager.k8s.cloudflare.com_clusteroriginissuers.yaml	cf6af6f155cd087a1ab2a4bec68cd014f05be3cf3d0240ad331ee1fe1bec574e
 https://raw.githubusercontent.com/cloudflare/origin-ca-issuer/trunk/deploy/crds/cert-manager.k8s.cloudflare.com_originissuers.yaml	d085e763718cf34e675b62f8394e20854237b3997f825d86556659585940b170
