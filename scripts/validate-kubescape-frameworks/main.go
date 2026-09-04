@@ -1163,9 +1163,15 @@ func undecidableShellString(fields []string) string {
 				// Every leading option is read, not only the first: `bash -e -c '…'`
 				// and `bash --noprofile -c '…'` execute their string exactly as
 				// `bash -c` does. A short cluster containing `c` (`-c`, `-ec`, `-lc`)
-				// is the command-string option; the scan stops at the first
-				// non-option, which is the string itself or a script path.
+				// is the command-string option. Options such as `-o` consume the next
+				// word, so skip that operand before looking for more options; otherwise
+				// it would be mistaken for the script path that ends the scan.
+				skipOperand := false
 				for j := i + 1; j < len(fields); j++ {
+					if skipOperand {
+						skipOperand = false
+						continue
+					}
 					opt := bareToken(fields[j])
 					if !strings.HasPrefix(opt, "-") || opt == "-" || opt == "--" {
 						break
@@ -1173,6 +1179,9 @@ func undecidableShellString(fields []string) string {
 					if !strings.HasPrefix(opt, "--") && strings.Contains(opt, "c") {
 						executes = true
 						break
+					}
+					if opt == "-o" || (base == "bash" && (opt == "-O" || opt == "--init-file" || opt == "--rcfile")) {
+						skipOperand = true
 					}
 				}
 			}

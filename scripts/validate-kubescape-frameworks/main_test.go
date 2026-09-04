@@ -886,6 +886,9 @@ func TestRejectsReducedScanHiddenFromTheUnconditionalPath(t *testing.T) {
 		// string exactly as a bare -c does.
 		"bash -e -c":                         goodScan + "\nbash -e -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
 		"sh -e -c":                           goodScan + "\nsh -e -c \"ksail workload scan --framework nsa -o kubescape.sarif\"",
+		"bash -o operand before -c":          goodScan + "\nbash -o errexit -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"sh -o operand before -c":            goodScan + "\nsh -o errexit -c \"ksail workload scan --framework nsa -o kubescape.sarif\"",
+		"bash --rcfile operand before -c":    goodScan + "\nbash --rcfile ./bashrc -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
 		"bash --noprofile -c":                goodScan + "\nbash --noprofile -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
 		"bash -ec cluster":                   goodScan + "\nbash -ec 'ksail workload scan --framework nsa -o kubescape.sarif'",
 		"all words from variables":           "KSAIL=ksail WORKLOAD=workload SCAN=scan\n" + goodScan + "\n\"$KSAIL\" \"$WORKLOAD\" \"$SCAN\" --framework nsa -o kubescape.sarif",
@@ -905,8 +908,10 @@ func TestExecutingShellWithoutAScanWordIsStillIgnored(t *testing.T) {
 		"bash -c without a scan word": goodScan + "\nbash -c 'echo hello'",
 		"eval without a scan word":    goodScan + "\neval 'true'",
 		// A script path is not a command string: the options end at the first
-		// non-option, so a scan word in a later argument is not this rule's business.
-		"bash -e running a script": goodScan + "\nbash -e ./scripts/report.sh scan",
+		// non-option that is not an option operand, so a scan word in a later
+		// argument is not this rule's business.
+		"bash -e running a script":         goodScan + "\nbash -e ./scripts/report.sh scan",
+		"bash -o operand running a script": goodScan + "\nbash -o errexit ./scripts/report.sh scan",
 	}
 	for name, body := range cases {
 		got, err := setOf(t, body)
