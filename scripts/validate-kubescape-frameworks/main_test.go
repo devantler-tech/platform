@@ -878,10 +878,16 @@ func TestRejectsScanInsideAMultilineQuotedArgument(t *testing.T) {
 // a variable assigned earlier in the block. Each is refused as undecidable.
 func TestRejectsReducedScanHiddenFromTheUnconditionalPath(t *testing.T) {
 	cases := map[string]string{
-		"brace-expanded option":              goodScan + "\nksail workload scan --{framework=nsa,output=kubescape.sarif}",
-		"bash -c single-quoted":              goodScan + "\nbash -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
-		"sh -c double-quoted":                goodScan + "\nsh -c \"ksail workload scan --framework nsa -o kubescape.sarif\"",
-		"eval":                               goodScan + "\neval 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"brace-expanded option": goodScan + "\nksail workload scan --{framework=nsa,output=kubescape.sarif}",
+		"bash -c single-quoted": goodScan + "\nbash -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"sh -c double-quoted":   goodScan + "\nsh -c \"ksail workload scan --framework nsa -o kubescape.sarif\"",
+		"eval":                  goodScan + "\neval 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		// The command-string option after OTHER interpreter options executes the
+		// string exactly as a bare -c does.
+		"bash -e -c":                         goodScan + "\nbash -e -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"sh -e -c":                           goodScan + "\nsh -e -c \"ksail workload scan --framework nsa -o kubescape.sarif\"",
+		"bash --noprofile -c":                goodScan + "\nbash --noprofile -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"bash -ec cluster":                   goodScan + "\nbash -ec 'ksail workload scan --framework nsa -o kubescape.sarif'",
 		"all words from variables":           "KSAIL=ksail WORKLOAD=workload SCAN=scan\n" + goodScan + "\n\"$KSAIL\" \"$WORKLOAD\" \"$SCAN\" --framework nsa -o kubescape.sarif",
 		"all words from variables, unquoted": "KSAIL=ksail WORKLOAD=workload SCAN=scan\n" + goodScan + "\n$KSAIL $WORKLOAD $SCAN --framework nsa -o kubescape.sarif",
 	}
@@ -898,6 +904,9 @@ func TestExecutingShellWithoutAScanWordIsStillIgnored(t *testing.T) {
 	cases := map[string]string{
 		"bash -c without a scan word": goodScan + "\nbash -c 'echo hello'",
 		"eval without a scan word":    goodScan + "\neval 'true'",
+		// A script path is not a command string: the options end at the first
+		// non-option, so a scan word in a later argument is not this rule's business.
+		"bash -e running a script": goodScan + "\nbash -e ./scripts/report.sh scan",
 	}
 	for name, body := range cases {
 		got, err := setOf(t, body)

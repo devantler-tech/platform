@@ -1157,11 +1157,24 @@ func undecidableShellString(fields []string) string {
 		word := bareToken(f)
 		base := word[strings.LastIndex(word, "/")+1:]
 		executes := word == "eval"
-		if !executes && i+1 < len(fields) {
+		if !executes {
 			switch base {
 			case "bash", "sh", "dash", "zsh", "ksh":
-				opt := bareToken(fields[i+1])
-				executes = strings.HasPrefix(opt, "-") && strings.Contains(opt, "c")
+				// Every leading option is read, not only the first: `bash -e -c '…'`
+				// and `bash --noprofile -c '…'` execute their string exactly as
+				// `bash -c` does. A short cluster containing `c` (`-c`, `-ec`, `-lc`)
+				// is the command-string option; the scan stops at the first
+				// non-option, which is the string itself or a script path.
+				for j := i + 1; j < len(fields); j++ {
+					opt := bareToken(fields[j])
+					if !strings.HasPrefix(opt, "-") || opt == "-" || opt == "--" {
+						break
+					}
+					if !strings.HasPrefix(opt, "--") && strings.Contains(opt, "c") {
+						executes = true
+						break
+					}
+				}
 			}
 		}
 		if !executes {
