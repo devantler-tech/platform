@@ -372,14 +372,18 @@ spec:
             # `{user: system_u, level: s9}` came back with the container on `{level: s0}`,
             # losing both the operator's level and its user. Inject only when the pod sets
             # no SELinux options at all, or when the container already overrides them.
+            # "Overrides" is tested by KEY PRESENCE, not truthiness: a container that sets
+            # `seLinuxOptions: {}` is an override Kubernetes honours (the pod-level object no
+            # longer applies to it), yet the empty mapping is falsy to JMESPath, so an
+            # `|| ''` test read it as absent and left that container with no level at all.
             preconditions:
               any:
                 - key: "{{ request.object.spec.securityContext.seLinuxOptions || '' }}"
                   operator: Equals
                   value: ''
-                - key: "{{ element.securityContext.seLinuxOptions || '' }}"
-                  operator: NotEquals
-                  value: ''
+                - key: "{{ to_string(contains(keys(element.securityContext || `{}`), 'seLinuxOptions')) }}"
+                  operator: Equals
+                  value: "true"
             patchStrategicMerge:
               spec:
                 containers:
@@ -395,14 +399,18 @@ spec:
             # `{user: system_u, level: s9}` came back with the container on `{level: s0}`,
             # losing both the operator's level and its user. Inject only when the pod sets
             # no SELinux options at all, or when the container already overrides them.
+            # "Overrides" is tested by KEY PRESENCE, not truthiness: a container that sets
+            # `seLinuxOptions: {}` is an override Kubernetes honours (the pod-level object no
+            # longer applies to it), yet the empty mapping is falsy to JMESPath, so an
+            # `|| ''` test read it as absent and left that container with no level at all.
             preconditions:
               any:
                 - key: "{{ request.object.spec.securityContext.seLinuxOptions || '' }}"
                   operator: Equals
                   value: ''
-                - key: "{{ element.securityContext.seLinuxOptions || '' }}"
-                  operator: NotEquals
-                  value: ''
+                - key: "{{ to_string(contains(keys(element.securityContext || `{}`), 'seLinuxOptions')) }}"
+                  operator: Equals
+                  value: "true"
             patchStrategicMerge:
               spec:
                 initContainers:
@@ -545,9 +553,9 @@ spec:
                 - key: "{{ request.object.spec.template.spec.securityContext.seLinuxOptions || '' }}"
                   operator: Equals
                   value: ''
-                - key: "{{ element.securityContext.seLinuxOptions || '' }}"
-                  operator: NotEquals
-                  value: ''
+                - key: "{{ to_string(contains(keys(element.securityContext || `{}`), 'seLinuxOptions')) }}"
+                  operator: Equals
+                  value: "true"
             patchStrategicMerge:
               spec:
                 template:
@@ -563,9 +571,9 @@ spec:
                 - key: "{{ request.object.spec.template.spec.securityContext.seLinuxOptions || '' }}"
                   operator: Equals
                   value: ''
-                - key: "{{ element.securityContext.seLinuxOptions || '' }}"
-                  operator: NotEquals
-                  value: ''
+                - key: "{{ to_string(contains(keys(element.securityContext || `{}`), 'seLinuxOptions')) }}"
+                  operator: Equals
+                  value: "true"
             patchStrategicMerge:
               spec:
                 template:
@@ -646,9 +654,9 @@ spec:
                 - key: "{{ request.object.spec.jobTemplate.spec.template.spec.securityContext.seLinuxOptions || '' }}"
                   operator: Equals
                   value: ''
-                - key: "{{ element.securityContext.seLinuxOptions || '' }}"
-                  operator: NotEquals
-                  value: ''
+                - key: "{{ to_string(contains(keys(element.securityContext || `{}`), 'seLinuxOptions')) }}"
+                  operator: Equals
+                  value: "true"
             patchStrategicMerge:
               spec:
                 jobTemplate:
@@ -666,9 +674,9 @@ spec:
                 - key: "{{ request.object.spec.jobTemplate.spec.template.spec.securityContext.seLinuxOptions || '' }}"
                   operator: Equals
                   value: ''
-                - key: "{{ element.securityContext.seLinuxOptions || '' }}"
-                  operator: NotEquals
-                  value: ''
+                - key: "{{ to_string(contains(keys(element.securityContext || `{}`), 'seLinuxOptions')) }}"
+                  operator: Equals
+                  value: "true"
             patchStrategicMerge:
               spec:
                 jobTemplate:

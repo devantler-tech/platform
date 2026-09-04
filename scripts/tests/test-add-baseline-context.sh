@@ -262,6 +262,30 @@ check podlabel-only-deploy-mutated.yaml '.spec.template.spec.securityContext.fsG
 check podlabel-only-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
   null "pod-rule label alone injected seLinuxOptions into a controller"
 
+# An EXPLICITLY EMPTY container-level SELinux object under a complete pod-level object.
+# Kubernetes treats the non-null empty object as an override (DetermineEffectiveSecurityContext),
+# so the effective container context has NO level — and to JMESPath the empty mapping is
+# falsy, so an `|| ''` presence test read it as absent and left it that way. Measured on
+# the previous head: `{}` came back unchanged at pod and controller scope. The key-presence
+# test fills the level; the sibling container that sets nothing stays untouched because the
+# pod-level object still governs it.
+check empty-override-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "empty container-level SELinux override did not receive the missing level (pod)"
+check empty-override-mutated.yaml '.spec.initContainers[0].securityContext.seLinuxOptions.level' \
+  s0 "empty initContainer-level SELinux override did not receive the missing level (pod)"
+check empty-override-mutated.yaml '.spec.containers[1].securityContext.seLinuxOptions' \
+  null "a container with no override was injected beside an empty-override sibling (pod)"
+check empty-override-mutated.yaml '.spec.securityContext.seLinuxOptions.level' \
+  s9 "pod-level level was not preserved beside an empty container override (pod)"
+check empty-override-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions.level' \
+  s0 "empty container-level SELinux override did not receive the missing level (Deployment)"
+check empty-override-deploy-mutated.yaml '.spec.template.spec.initContainers[0].securityContext.seLinuxOptions.level' \
+  s0 "empty initContainer-level SELinux override did not receive the missing level (Deployment)"
+check empty-override-deploy-mutated.yaml '.spec.template.spec.containers[1].securityContext.seLinuxOptions' \
+  null "a container with no override was injected beside an empty-override sibling (Deployment)"
+check empty-override-deploy-mutated.yaml '.spec.template.spec.securityContext.seLinuxOptions.level' \
+  s9 "pod-level level was not preserved beside an empty container override (Deployment)"
+
 # ROLLOUT INVENTORY. The rules above ship default-off, so what they actually do
 # in the cluster is decided entirely by which namespaces carry the opt-in label —
 # a fact no mutation fixture can see. Without this gate, widening the rollout from

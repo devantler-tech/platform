@@ -253,3 +253,27 @@ results:
       - kubescape/podlabel-only-deploy
     kind: Deployment
     result: skip
+  # An explicitly EMPTY container-level SELinux object under a complete pod-level
+  # object is an override Kubernetes honours, so the container rule must fill its
+  # level (and leave the sibling container that sets nothing alone).
+  - policy: add-security-context
+    rule: add-baseline-context-optin-containers
+    resources:
+      - velero/empty-override
+    kind: Pod
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers-containers
+    resources:
+      - velero/empty-override-deploy
+    kind: Deployment
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers
+    resources:
+      - velero/empty-override-deploy
+    kind: Deployment
+    result: pass
+    patchedResources: patched-resources.yaml

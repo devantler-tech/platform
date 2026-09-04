@@ -338,3 +338,63 @@ spec:
           containers:
             - name: velero
               image: velero/velero:v1.16.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: empty-override
+  namespace: velero
+spec:
+  securityContext:
+    seLinuxOptions:
+      user: system_u
+      level: s9
+    fsGroupChangePolicy: OnRootMismatch
+  initContainers:
+    - name: init
+      image: velero/velero-plugin:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s0
+  containers:
+    - name: app
+      image: velero/velero:v1.0.0
+      securityContext:
+        seLinuxOptions:
+          level: s0
+    - name: plain
+      image: velero/velero:v1.0.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: empty-override-deploy
+  namespace: velero
+spec:
+  selector:
+    matchLabels:
+      app: empty-override-deploy
+  template:
+    metadata:
+      labels:
+        app: empty-override-deploy
+    spec:
+      securityContext:
+        seLinuxOptions:
+          user: system_u
+          level: s9
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        - name: init
+          image: velero/velero:v1.16.0
+          securityContext:
+            seLinuxOptions:
+              level: s0
+      containers:
+        - name: velero
+          image: velero/velero:v1.16.0
+          securityContext:
+            seLinuxOptions:
+              level: s0
+        - name: plain
+          image: velero/velero:v1.16.0
