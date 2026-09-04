@@ -99,11 +99,23 @@
 #
 # The remaining 29 split observability 15, longhorn-system 12, flux-system 2.
 # observability and longhorn-system are already labelled into
-# add-baseline-context-optin-*, but all three of those rules match `kinds: Pod`, so
-# they mutate at admission and leave the stored spec Kubescape reads untouched — which
-# is why the opt-in alone moves none of those 27. Template-level changes are what moved
-# velero and flux-system. flux-system's remaining two are flux-operator and
-# tofu-controller, the latter retired and pending removal in #3480.
+# add-baseline-context-optin-*, but that label gates only the three `kinds: Pod`
+# rules, so they mutate at admission and leave the stored spec Kubescape reads
+# untouched — which is why the opt-in alone moves none of those 27. The rules that
+# DO reach the stored spec are TWO families, both gated on a SECOND label,
+# `baseline-context-controllers`: add-baseline-context-optin-controllers*
+# (Deployment/StatefulSet/DaemonSet on CREATE and UPDATE, Job on CREATE) and
+# add-baseline-context-optin-cronjobs* (CronJob on CREATE and UPDATE). Both are
+# load-bearing for this rollout — seven of the residual workloads are CronJobs, so
+# planning only the controller family would silently leave those out along with
+# their read-back checks. That label is deliberately applied in NO namespace —
+# tests/add-baseline-context pins
+# that empty inventory, and a namespace joins only together with the measured
+# post-rollout read-back its documented flip procedure produces. So the 27 are
+# waiting on that per-namespace rollout, not on a mechanism that cannot reach
+# them. Template-level changes are what moved velero and flux-system. flux-system's
+# remaining two are flux-operator and tofu-controller, the latter retired and pending
+# removal in #3480.
 #
 # The per-workload table and the remediation split are on #3217. These counts are
 # prod-only and the local overlay opts in to a different namespace set, so re-measure
