@@ -99,9 +99,15 @@
 #
 # The remaining 29 split observability 15, longhorn-system 12, flux-system 2.
 # observability and longhorn-system are already labelled into
-# add-baseline-context-optin-*, but all three of those rules match `kinds: Pod`, so
-# they mutate at admission and leave the stored spec Kubescape reads untouched — which
-# is why the opt-in alone moves none of those 27. Template-level changes are what moved
+# add-baseline-context-optin-*, but that label gates only the three `kinds: Pod`
+# rules, so they mutate at admission and leave the stored spec Kubescape reads
+# untouched — which is why the opt-in alone moves none of those 27. The
+# controller-scope rules that DO reach the stored spec are
+# add-baseline-context-optin-controllers* (Deployment/StatefulSet/DaemonSet on
+# CREATE and UPDATE), and they gate on a SECOND label,
+# `baseline-context-controllers`, which was applied in no namespace at all until
+# longhorn-system opted in — re-measure this split once that has reconciled.
+# Template-level changes are what moved
 # velero and flux-system. flux-system's remaining two are flux-operator and
 # tofu-controller, the latter retired and pending removal in #3480.
 #
