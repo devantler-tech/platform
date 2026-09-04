@@ -57,6 +57,9 @@ metadata:
     policies.kyverno.io/description: >-
       Mutates all pods to set security best-practice defaults using
       conditional anchors so explicit chart values are never overwritten.
+      In namespaces labelled baseline-context-controllers it also writes the
+      two inert C-0211 fields into the stored pod templates of Deployments,
+      StatefulSets, DaemonSets, Jobs and CronJobs.
 spec:
   rules:
     # User namespaces are default-off and enabled per namespace only after the

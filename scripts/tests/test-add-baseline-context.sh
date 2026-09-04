@@ -276,7 +276,7 @@ expected_optin="kubescape,longhorn-system,observability,velero"
 # grep only prefilters candidate files; yq decides, so a mention in a comment or
 # in the policy that DEFINES the label cannot be counted as an opted-in namespace.
 actual_optin="$(
-  grep -rl 'pod-security.devantler.tech/baseline-context' --include='*.yaml' "${repo_root}/k8s" 2>/dev/null |
+  { grep -rl 'pod-security.devantler.tech/baseline-context' --include='*.yaml' "${repo_root}/k8s" 2>/dev/null || true; } |
     while IFS= read -r f; do
       yq -N '
         select(.kind == "Namespace" and
@@ -298,8 +298,11 @@ fi
 # post-rollout read-back of its workloads recorded on the namespace manifest.
 expected_controllers_optin=""
 
+# `grep -rl` exits 1 when nothing matches; under pipefail that would abort the assignment
+# and the gate would die before comparing against the (legitimately empty) inventory,
+# so the no-match case is folded into an empty list rather than an errexit.
 actual_controllers_optin="$(
-  grep -rl 'pod-security.devantler.tech/baseline-context-controllers' --include='*.yaml' "${repo_root}/k8s" 2>/dev/null |
+  { grep -rl 'pod-security.devantler.tech/baseline-context-controllers' --include='*.yaml' "${repo_root}/k8s" 2>/dev/null || true; } |
     while IFS= read -r f; do
       yq -N '
         select(.kind == "Namespace" and
