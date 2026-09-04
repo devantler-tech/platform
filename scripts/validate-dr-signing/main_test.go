@@ -189,8 +189,9 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 				w,
 				"    needs:\n      [\n        validate-eks-authorization,\n"+
 					"        validate-publication-contract,\n"+
+					"        validate-talos-kubernetes-compatibility,\n"+
 					"        validate-ghcr-fanout-component-gate,\n      ]",
-				"    needs: [validate-eks-authorization, validate-ghcr-fanout-component-gate]\n"+
+				"    needs: [validate-eks-authorization, validate-talos-kubernetes-compatibility, validate-ghcr-fanout-component-gate]\n"+
 					"    env:\n      NOTE: \"needs: [validate-publication-contract]\"",
 				1,
 			), a
@@ -1555,6 +1556,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
         changes,
         validate-eks-authorization,
         validate-publication-contract,
+        validate-talos,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
       ]`
@@ -1562,6 +1564,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
       [
         changes,
         validate-eks-authorization,
+        validate-talos,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
       ]`

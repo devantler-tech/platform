@@ -137,6 +137,36 @@ jobs:
           set -o pipefail
           ./scripts/report-publish-workflow-signing-revisions.sh | tee -a "$GITHUB_STEP_SUMMARY"
 
+
+  # ci.yaml's validate-talos job runs the Kubernetes/Talos compatibility predicate on
+  # `pull_request` and `merge_group`, but neither event fires for a direct push to main.
+  # Such a push could otherwise reach the manually dispatched CD route unchecked.
+  # `ksail workload validate` does not cover this: it
+  # accepts the pins offline, the same way `talosctl validate --strict` does. Same gate on
+  # the push itself, for this workflow's header reason.
+  #
+  # Its own job rather than a step in another, matching validate-shared-publish-pin: a
+  # validator sharing a job with other command steps can be subverted by one of them.
+  validate-talos-kubernetes-compatibility:
+    name: 🧪 Validate Kubernetes/Talos Pin Compatibility
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go for version compatibility validation
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: ✅ Validate Kubernetes against the pinned Talos release
+        run: |
+          go test ./scripts/validate-talos-kubernetes-compatibility
+          go run ./scripts/validate-talos-kubernetes-compatibility ksail.prod.yaml
   # The pull-request gate extracts Kubernetes workloads nested in KRO RGDs because ordinary
   # manifest scanners see only the outer custom resource. A direct push bypasses that job and can
   # still reach the manual CD path, so main must exercise the identical behavioral contract.
