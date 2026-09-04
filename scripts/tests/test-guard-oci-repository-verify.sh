@@ -316,7 +316,7 @@ expect_descriptor_discovered() {
 
 expect_descriptor_discovered kustomization.yaml
 expect_descriptor_discovered kustomization.yml
-expect_descriptor_discovered kustomization
+expect_descriptor_discovered Kustomization
 
 # Keep one valid overlay in the fixture: if the guard regresses to `continue` for the
 # descriptor-less one, the good root satisfies the floor and the guard would pass.

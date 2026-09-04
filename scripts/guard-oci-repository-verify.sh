@@ -192,9 +192,10 @@ else
     # No cluster applies it as-is, so it is not a root.
     case "${overlay%/}" in */base) continue ;; esac
     # kustomize recognises all three descriptor names; an overlay using `.yml` or the
-    # bare name is a root exactly like one using `.yaml`, and skipping it would leave
-    # a whole cluster unjudged while the floor still passed on the others.
-    if [ ! -f "$overlay/kustomization.yaml" ] && [ ! -f "$overlay/kustomization.yml" ] && [ ! -f "$overlay/kustomization" ]; then
+    # extensionless, case-sensitive `Kustomization` name is a root exactly like one
+    # using `.yaml`, and skipping it would leave a whole cluster unjudged while the
+    # floor still passed on the others.
+    if [ ! -f "$overlay/kustomization.yaml" ] && [ ! -f "$overlay/kustomization.yml" ] && [ ! -f "$overlay/Kustomization" ]; then
       refuse "cluster overlay $overlay carries no kustomization descriptor; cannot discover its Flux roots"
     fi
     if ! paths="$(kubectl kustomize "$overlay" 2>/dev/null |
