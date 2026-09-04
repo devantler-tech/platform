@@ -168,18 +168,28 @@ check() {
   # here fails this check rather than failing in production.
   [ -n "$(q "$f" ".jobs.regenerate.steps[${token_idx}].with.owner")" ] ||
     { printf 'VIOLATION A10: the App token names no owner, so it cannot be scoped past this repository\n'; return 1; }
-  local scoped consumer
+  local scoped consumers consumer missing
   scoped=" $(q "$f" ".jobs.regenerate.steps[${token_idx}].with.repositories" | tr '\n' ' ') "
   case "${scoped}" in
     *' platform '*) ;;
     *) printf 'VIOLATION A10: the App token repositories list omits platform, so it cannot push the branch or open the pull request\n'; return 1 ;;
   esac
-  for consumer in $(awk 'NR > 1 { print $1 }' "${root_dir}/${data_file}" | sort -u); do
+  # Read the consumers one per LINE, and keep the loop in THIS shell. `for c in
+  # $(…)` splits on whitespace rather than lines, and a pipeline would put the
+  # loop in a subshell where the accumulated result is lost. A `case` inside a
+  # command substitution is not an option either: the pattern's own `)` closes
+  # the substitution early — measured, it captured the loop's source as data.
+  consumers="$(awk 'NR > 1 { print $1 }' "${root_dir}/${data_file}" | sort -u)"
+  missing=''
+  while IFS= read -r consumer; do
+    [ -n "${consumer}" ] || continue
     case "${scoped}" in
       *" ${consumer} "*) ;;
-      *) printf 'VIOLATION A10: consumer %s is in the approved set but not in the App token repositories list\n' "${consumer}"; return 1 ;;
+      *) missing="${missing}${consumer} " ;;
     esac
-  done
+  done <<< "${consumers}"
+  [ -z "${missing}" ] ||
+    { printf 'VIOLATION A10: consumer(s) %sare in the approved set but not in the App token repositories list\n' "${missing}"; return 1; }
 
   # A11 — ONE pull request even across refs. The pushed branch is fixed, so a
   # dispatch from another ref and the scheduled run on the default branch contend
