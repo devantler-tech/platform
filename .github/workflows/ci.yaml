@@ -1633,7 +1633,7 @@ jobs:
     # in the merge group's deploy and evicting the queued PR. Placeholder key
     # material stands in for the env-expanded secrets, so this needs no real
     # secrets and runs on fork PRs too (issue #2477).
-    if: github.event_name == 'pull_request' && needs.changes.outputs.talos == 'true'
+    if: (github.event_name == 'pull_request' && needs.changes.outputs.talos == 'true') || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
@@ -1801,6 +1801,7 @@ jobs:
         changes,
         validate-eks-authorization,
         validate-publication-contract,
+        validate-talos,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
       ]

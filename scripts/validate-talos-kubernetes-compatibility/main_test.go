@@ -109,3 +109,69 @@ func TestProductionPinChangesSelectTalosValidation(t *testing.T) {
 		}
 	}
 }
+
+type workflowJob struct {
+	If    string   `yaml:"if"`
+	Needs []string `yaml:"needs"`
+	Steps []struct {
+		Run string `yaml:"run"`
+	} `yaml:"steps"`
+}
+
+func repositoryWorkflow(t *testing.T, name string) map[string]workflowJob {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]workflowJob `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	return workflow.Jobs
+}
+
+func jobRunsCompatibilityValidator(job workflowJob) bool {
+	for _, step := range job.Steps {
+		if strings.Contains(step.Run, "go run ./scripts/validate-talos-kubernetes-compatibility ksail.prod.yaml") {
+			return true
+		}
+	}
+	return false
+}
+
+func jobNeeds(job workflowJob, dependency string) bool {
+	for _, need := range job.Needs {
+		if need == dependency {
+			return true
+		}
+	}
+	return false
+}
+
+func TestMergeGroupDeployRequiresCompatibilityValidation(t *testing.T) {
+	jobs := repositoryWorkflow(t, "ci.yaml")
+	validator, ok := jobs["validate-talos"]
+	if !ok || !jobRunsCompatibilityValidator(validator) {
+		t.Fatal("merge-queue workflow does not run the production Kubernetes/Talos compatibility validator")
+	}
+	if !strings.Contains(validator.If, "github.event_name == 'merge_group'") {
+		t.Errorf("compatibility validator does not run on merge_group: if=%q", validator.If)
+	}
+	if !jobNeeds(jobs["deploy-prod"], "validate-talos") {
+		t.Error("merge-group production deploy does not require compatibility validation")
+	}
+}
+
+func TestManualDeployRequiresCompatibilityValidation(t *testing.T) {
+	jobs := repositoryWorkflow(t, "cd.yaml")
+	validator, ok := jobs["validate-talos-kubernetes-compatibility"]
+	if !ok || !jobRunsCompatibilityValidator(validator) {
+		t.Fatal("manual deployment workflow does not run the production Kubernetes/Talos compatibility validator")
+	}
+	if !jobNeeds(jobs["deploy-prod"], "validate-talos-kubernetes-compatibility") {
+		t.Error("manual production deploy does not require compatibility validation")
+	}
+}

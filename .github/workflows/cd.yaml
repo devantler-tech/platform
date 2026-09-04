@@ -60,6 +60,31 @@ jobs:
           shellcheck scripts/tests/test-rgd-template-static-scan-wiring.sh
           bash scripts/tests/test-rgd-template-static-scan-wiring.sh
 
+  # A manual dispatch can deploy a direct main push that never produced a merge-group revision.
+  # Run the same production-pin validator here and make it a hard prerequisite of deploy-prod so
+  # neither production route can reconcile an unsupported Kubernetes/Talos pairing.
+  validate-talos-kubernetes-compatibility:
+    name: 🧪 Validate Kubernetes/Talos Compatibility
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: ✅ Validate Kubernetes against the pinned Talos release
+        run: |
+          go test ./scripts/validate-talos-kubernetes-compatibility
+          go run ./scripts/validate-talos-kubernetes-compatibility ksail.prod.yaml
+
   # A workflow dispatch can deploy a direct push that never had a merge-group revision. Run the
   # same nested-RGD behavioral contract before authorization; validate-eks-authorization depends
   # on this job, and deploy-prod already depends on authorization, preserving the signing
@@ -257,6 +282,7 @@ jobs:
       [
         validate-eks-authorization,
         validate-publication-contract,
+        validate-talos-kubernetes-compatibility,
         validate-ghcr-fanout-component-gate,
       ]
     runs-on: ubuntu-latest
