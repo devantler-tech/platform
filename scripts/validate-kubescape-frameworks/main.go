@@ -504,6 +504,13 @@ func evidenceText(fields []string) (string, bool) {
 // double-quoted string with a space, tracking quote state and backslash escapes the way
 // shellFields does, so a quoted string that spans physical lines reads as one word on
 // one line. Newlines outside quotes are kept, so line structure survives.
+//
+// A backslash-newline pair inside double quotes is REMOVED, as bash removes it before it
+// builds the quoted argument: `echo "ksail workload \` continued by `scan --framework $X"`
+// is one printed string, and leaving the newline in place would split it into two physical
+// lines that together spell the scan. Outside quotes the pair is kept, because
+// scanCandidate joins unquoted continuations itself on the PHYSICAL line — after deciding
+// whether that line is a comment, which a backslash does not continue.
 func collapseQuotedNewlines(text string) string {
 	var out strings.Builder
 	out.Grow(len(text))
@@ -511,6 +518,8 @@ func collapseQuotedNewlines(text string) string {
 	for i := 0; i < len(text); i++ {
 		c := text[i]
 		switch {
+		case c == '\\' && inDouble && i+1 < len(text) && text[i+1] == '\n':
+			i++
 		case c == '\\' && !inSingle:
 			out.WriteByte(c)
 			if i+1 < len(text) {

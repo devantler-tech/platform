@@ -1027,6 +1027,11 @@ func TestQuotedProseInAConditionalStepIsStillIgnored(t *testing.T) {
 		// The string spans two physical lines; the screen folds the quoted newline first.
 		"multi-line single-quoted prose": "|\n          echo 'ksail workload\n          scan --framework nsa'",
 		"multi-line double-quoted prose": "|\n          echo \"ksail workload\n          scan --framework $STATUS\"",
+		// A backslash-newline INSIDE double quotes is removed by bash before the quoted
+		// argument is built, so this is still one printed string — not a command whose
+		// first line contributes `ksail workload` and whose second contributes the rest.
+		"double-quoted prose continued with a backslash-newline":                "|\n          echo \"ksail workload \\\n          scan --framework $STATUS\"",
+		"double-quoted prose continued with a backslash-newline and a backtick": "|\n          echo \"ksail workload \\\n          scan --framework `date`\"",
 	}
 	for name, line := range cases {
 		workflow := "jobs:\n  validate:\n    steps:\n" +
@@ -1040,6 +1045,25 @@ func TestQuotedProseInAConditionalStepIsStillIgnored(t *testing.T) {
 		}
 		if strings.Join(got, ",") != "mitre,nsa" {
 			t.Errorf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}
+
+// collapseQuotedNewlines follows bash's line-continuation rule: a backslash-newline pair
+// is removed inside double quotes and outside quotes alike, and kept literal only inside
+// single quotes. Outside quotes the pair is left for the per-line continuation join in
+// scanCandidate, which must see it on the physical line so a backslash that ends a
+// COMMENT is not read as continuing that comment.
+func TestCollapseQuotedNewlinesFoldsABackslashNewlineInsideDoubleQuotes(t *testing.T) {
+	cases := map[string][2]string{
+		"double-quoted":     {"echo \"ksail workload \\\nscan\"", "echo \"ksail workload scan\""},
+		"single-quoted":     {"echo 'ksail workload \\\nscan'", "echo 'ksail workload \\ scan'"},
+		"unquoted":          {"ksail workload \\\nscan", "ksail workload \\\nscan"},
+		"escaped backslash": {"echo \"a\\\\\nb\"", "echo \"a\\\\ b\""},
+	}
+	for name, c := range cases {
+		if got := collapseQuotedNewlines(c[0]); got != c[1] {
+			t.Errorf("%s: collapseQuotedNewlines(%q) = %q, want %q", name, c[0], got, c[1])
 		}
 	}
 }
