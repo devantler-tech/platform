@@ -2533,3 +2533,49 @@ func TestConditionalWrapperWithLiteralCommandIsAccepted(t *testing.T) {
 		}
 	}
 }
+
+// An expanded PATH with a literal final segment still fixes the command NAME:
+// `"${RUNNER_TEMP}/kubectl"` runs kubectl whatever the directory expands to, so it can
+// be shown scan-free and must not be refused. Only an undetermined final segment leaves
+// the command name unknown.
+func TestConditionalExpandedPathWithLiteralCommandNameIsAccepted(t *testing.T) {
+	cases := map[string]string{
+		"expanded directory, literal command": "|\n          \"${RUNNER_TEMP}/kubectl\" version --client\n",
+		"expanded home, literal command":      "|\n          \"$HOME/bin/make\" build\n",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		got, err := frameworkSet(path)
+		if err != nil {
+			t.Errorf("%s: expected ACCEPT — the final path segment is literal, so the command name is known; got: %v", name, err)
+			continue
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Errorf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}
+
+// The control for it: an UNDETERMINED final segment still refuses, so narrowing to the
+// command name did not disable the rule.
+func TestConditionalExpandedCommandNameStillRefused(t *testing.T) {
+	assemble := "          K=ks; K+=ail\n          W=work; W+=load\n          S=sc; S+=an\n          F=--frame; F+=work\n"
+	cases := map[string]string{
+		"bare expansion":                   "\"$K\" \"$W\" \"$S\" \"$F\" nsa",
+		"expanded final segment on a path": "\"/usr/bin/$K\" \"$W\" \"$S\" \"$F\" nsa",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" + assemble +
+			"          " + line + "\n"
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — the command name is undetermined; got %q", name, set)
+		}
+	}
+}

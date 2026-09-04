@@ -586,7 +586,7 @@ func expandedCommandWord(line string) bool {
 			skipNext = alone
 			continue
 		}
-		if carriesExpansion(tok) {
+		if commandNameUndetermined(tok) {
 			return true
 		}
 		// An EXECUTION WRAPPER's operand is the real command word: `command "$K" …`
@@ -607,6 +607,15 @@ func expandedCommandWord(line string) bool {
 		atCommand = false
 	}
 	return false
+}
+
+// commandNameUndetermined reports whether the NAME the shell would execute is unknown.
+// An expanded DIRECTORY with a literal final segment still fixes the name —
+// `"${RUNNER_TEMP}/kubectl"` runs kubectl however the directory expands, and refusing it
+// blocked a legitimate step — so only an expansion in that final segment leaves the
+// command unknown. `"$K"` and `"/usr/bin/$K"` still refuse.
+func commandNameUndetermined(tok string) bool {
+	return carriesExpansion(tok[strings.LastIndex(tok, "/")+1:])
 }
 
 // isExecWrapper names commands whose OPERAND is another command. A list is acceptable
