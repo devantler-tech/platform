@@ -42,30 +42,3 @@ metadata:
     # The rules are CREATE-only, so running pods are unaffected until they are
     # next recreated.
     pod-security.devantler.tech/baseline-context: enabled
-    #
-    # 🔴 The label above is NOT sufficient to move C-0211, and that is why this
-    # second one exists. add-baseline-context-optin-namespaces / -pod-selinux-level /
-    # -containers all match `kinds: Pod`, so they mutate pods at ADMISSION while
-    # Kubescape scans the STORED SPEC of the controller. Measured on prod 2026-09-04:
-    # kubescape's pods pick both fields up as they are recreated — 7 of 15, then 8 of 16
-    # eleven minutes later, the same pods carrying both — while 0 of its 6 Deployments
-    # and DaemonSets ever do. Here all 11 workloads still carry neither, despite this
-    # namespace having been opted in since 2026-09-02. The pod figures are volatile by
-    # construction and only their direction is the evidence; the controller figures are
-    # the stable ones, and they are the surface the scanner reads. velero reads 2/2 only
-    # because its HelmRelease supplies the fields at the source, not because a mutation
-    # reached it — so velero could not have revealed this gap.
-    #
-    # add-baseline-context-optin-controllers* match Deployment/StatefulSet/DaemonSet on
-    # CREATE *and* UPDATE, so Flux's next reconcile rewrites the stored spec without
-    # anything needing to be deleted. They inject the same two fields through the same
-    # +(key) anchors and touch no user, group or privilege field.
-    #
-    # First namespace opted in at controller scope. longhorn-system is the right place
-    # to start: its 11 workloads are genuinely scanned (the namespace holds Deployment:6
-    # and DaemonSet:5 workloadconfigurationscan objects), all 11 miss both fields, and
-    # none sets fsGroup — so the change is inert at runtime here, exactly as the pod
-    # rules already are. kubescape is deliberately NOT next: the operator's own
-    # excludeNamespaces drops its workloads, which hold no workload-kind scan objects at
-    # all, so mutating them cannot move the control.
-    pod-security.devantler.tech/baseline-context-controllers: enabled
