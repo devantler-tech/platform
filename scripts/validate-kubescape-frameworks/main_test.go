@@ -1018,6 +1018,11 @@ func TestRejectsScanAfterACommentWithAnUnmatchedQuoteInAConditionalStep(t *testi
 		"comment right after a semicolon, double quote": "          true;# unmatched quote: \"\n",
 		"comment right after a pipe, single quote":      "          true|# it's unmatched\n",
 		"comment right after an ampersand":              "          true&# unmatched quote: \"\n",
+		// A continuation that lands on a `#` opens a comment; the backslash INSIDE
+		// that comment continues nothing, so the scan on the third line executes.
+		"backslash-ended comment after a continuation":                   "          echo \\\n          # this comment does not continue \\\n",
+		"backslash-ended comment after a continuation, unmatched double": "          echo \\\n          # unmatched quote: \" \\\n",
+		"backslash-ended comment after a continuation, unmatched single": "          echo \\\n          # it's unmatched \\\n",
 	}
 	for name, comment := range cases {
 		workflow := "jobs:\n  validate:\n    steps:\n" +
@@ -1034,6 +1039,24 @@ func TestRejectsScanAfterACommentWithAnUnmatchedQuoteInAConditionalStep(t *testi
 		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
 			t.Errorf("%s: the refusal must name the conditional step; got: %v", name, err)
 		}
+	}
+}
+
+// The control for the join: a continuation whose next line continues the WORD
+// (`foo\` then `#bar`) is not a comment, so the join still happens and the step is
+// ordinary prose — accepted, exactly as before.
+func TestContinuedWordWithAHashIsStillJoinedInAConditionalStep(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+		"          echo foo\\\n          #bar \\\n          true\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("expected ACCEPT — `echo foo#bar true` invokes no scan; got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("normalised set = %q, want %q", strings.Join(got, ","), "mitre,nsa")
 	}
 }
 

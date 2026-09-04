@@ -446,8 +446,20 @@ func scanCandidate(scalar string) bool {
 		// the three scan words can be split across lines; join them before reading.
 		logical := lines[i]
 		for strings.HasSuffix(logical, "\\") && i+1 < len(lines) {
+			head := strings.TrimSuffix(logical, "\\")
+			// bash removes the backslash-newline and reads on: when the continued
+			// text begins a word and the next physical line starts with `#`, that
+			// `#` opens a comment — `echo \` then `# x \` is `echo # x \`, and the
+			// backslash inside the comment continues nothing. The logical line
+			// ends here, the comment line is consumed, and the line after it is
+			// read on its own. `foo\` then `#bar` is `foo#bar`, not a comment.
+			if strings.HasPrefix(strings.TrimSpace(lines[i+1]), "#") && endsAtWordStart(head) {
+				logical = head
+				i++
+				break
+			}
 			i++
-			logical = strings.TrimSuffix(logical, "\\") + " " + lines[i]
+			logical = head + " " + lines[i]
 		}
 		line := logical
 		fields := shellFields(line)
@@ -498,6 +510,17 @@ func evidenceText(fields []string) (string, bool) {
 		text.WriteByte(' ')
 	}
 	return text.String(), expands
+}
+
+// endsAtWordStart reports whether text ending here leaves the shell at the start of
+// a word: empty, or ending in whitespace or an unquoted metacharacter — the position
+// in which a following `#` opens a comment.
+func endsAtWordStart(head string) bool {
+	if head == "" {
+		return true
+	}
+	last := head[len(head)-1]
+	return last == ' ' || last == '\t' || strings.IndexByte(";|&()<>", last) >= 0
 }
 
 // collapseQuotedNewlines replaces every newline that falls inside a single- or
