@@ -73,12 +73,23 @@ spec:
   # Neither carries the runAsGroup-without-runAsUser coupling documented above, so
   # neither can stop the sandbox building.
   #
-  # 🔴 The pod-level op adds a LEAF into the chart's pod securityContext, which renders
-  # as `{}` (read from the live Deployment 2026-09-04). A leaf add is deliberate: adding
-  # the whole object would REPLACE it and silently discard any field the chart starts
-  # setting later, which is exactly what the +(key) anchors elsewhere exist to prevent.
-  # The cost is that a chart that stopped rendering the object would fail this patch —
-  # loudly, on a Renovate chart bump with CI in front of it, never silently.
+  # 🔴 The two fields need DIFFERENT patch kinds, because the chart renders their
+  # parents differently. Verified by rendering flux-operator 0.50.0 with this
+  # HelmRelease's own values 2026-09-04:
+  # - containers[0].securityContext IS rendered, so a JSON-6902 leaf `add` applies.
+  # - spec.template.spec.securityContext is NOT rendered AT ALL, so a JSON-6902 leaf
+  #   `add` under it fails `doc is missing path` — and because a JSON patch is
+  #   all-or-nothing, that one op takes the container ops down with it.
+  #
+  # Do NOT read this off the live Deployment: the API server serialises the absent
+  # pod-level object as `{}`, so the cluster shows a parent that the rendered chart
+  # does not have. The rendered manifest is the surface a post-renderer patches.
+  #
+  # The pod-level field is therefore a strategic-merge patch, which creates the
+  # missing parent AND merges into a chart-set one — so if a future chart starts
+  # rendering spec.template.spec.securityContext, its fields survive. A JSON-6902
+  # `add` of the whole object would have replaced them silently; that is why this is
+  # a merge rather than an object add.
   postRenderers:
     - kustomize:
         patches:
@@ -99,6 +110,16 @@ spec:
                 path: /spec/template/spec/containers/0/securityContext/seLinuxOptions
                 value:
                   level: s0
-              - op: add
-                path: /spec/template/spec/securityContext/fsGroupChangePolicy
-                value: OnRootMismatch
+          - target:
+              kind: Deployment
+              name: flux-operator
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: flux-operator
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      fsGroupChangePolicy: OnRootMismatch
