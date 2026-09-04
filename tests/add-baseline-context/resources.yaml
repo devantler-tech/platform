@@ -365,3 +365,84 @@ spec:
       containers:
         - name: velero
           image: velero/velero:v1.16.0
+---
+# A standalone Job without initContainers (CREATE-only kind).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: oneshot-job
+  namespace: observability
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: job
+          image: ghcr.io/coroot/coroot:1.22.2
+---
+# A CronJob whose pod-level SELinux object exists but has no `level`: only the
+# jobTemplate pod-scope fill may supply it, preserving the sibling `user`.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: podlevel-partial-cronjob
+  namespace: velero
+spec:
+  schedule: "0 4 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            seLinuxOptions:
+              user: system_u
+          initContainers:
+            - name: init
+              image: velero/velero:v1.16.0
+          containers:
+            - name: velero
+              image: velero/velero:v1.16.0
+---
+# A CronJob with a complete pod-level SELinux object: the container foreach and
+# the pod-scope fill both stay out; fsGroupChangePolicy still lands.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: podlevel-cronjob
+  namespace: velero
+spec:
+  schedule: "0 5 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            seLinuxOptions:
+              user: system_u
+              level: s9
+          containers:
+            - name: velero
+              image: velero/velero:v1.16.0
+---
+# The pod-rule label ALONE (kubescape carries `baseline-context` but not
+# `baseline-context-controllers`): no controller rule may touch this, or the
+# separate rollout gate is not a gate.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podlabel-only-deploy
+  namespace: kubescape
+spec:
+  selector:
+    matchLabels:
+      app: podlabel-only-deploy
+  template:
+    metadata:
+      labels:
+        app: podlabel-only-deploy
+    spec:
+      containers:
+        - name: app
+          image: quay.io/kubescape/operator:v0.2.0

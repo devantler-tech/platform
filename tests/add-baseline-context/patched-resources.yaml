@@ -275,3 +275,66 @@ spec:
       containers:
         - name: velero
           image: velero/velero:v1.16.0
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: oneshot-job
+  namespace: observability
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: job
+          image: ghcr.io/coroot/coroot:1.22.2
+          securityContext:
+            seLinuxOptions:
+              level: s0
+      securityContext:
+        fsGroupChangePolicy: OnRootMismatch
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: podlevel-partial-cronjob
+  namespace: velero
+spec:
+  schedule: "0 4 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            seLinuxOptions:
+              user: system_u
+              level: s0
+            fsGroupChangePolicy: OnRootMismatch
+          initContainers:
+            - name: init
+              image: velero/velero:v1.16.0
+          containers:
+            - name: velero
+              image: velero/velero:v1.16.0
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: podlevel-cronjob
+  namespace: velero
+spec:
+  schedule: "0 5 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            seLinuxOptions:
+              user: system_u
+              level: s9
+            fsGroupChangePolicy: OnRootMismatch
+          containers:
+            - name: velero
+              image: velero/velero:v1.16.0

@@ -52,7 +52,7 @@ metadata:
   annotations:
     policies.kyverno.io/title: Security Context Defaults
     policies.kyverno.io/category: Pod Security, Best Practices
-    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/subject: Pod, Deployment, StatefulSet, DaemonSet, Job, CronJob
     policies.kyverno.io/minversion: 1.6.0
     policies.kyverno.io/description: >-
       Mutates all pods to set security best-practice defaults using
@@ -420,15 +420,28 @@ spec:
     # field (verified against the coroot-operator v1.9.5 CRD). These rules reach
     # them where the pod rules cannot: at the controller object.
     #
-    # CREATE and UPDATE, unlike the pod rules. A controller's pod template is
-    # mutable, so the 422 hazard that forced the pod rules to CREATE-only does
-    # not exist here — and UPDATE is the only way an already-stored spec that an
-    # operator rewrites on reconcile ever receives the fields. Both fields are
-    # written through conditional anchors, so a chart- or operator-set value is
-    # preserved and a second admission of the same object is a no-op.
+    # DEFAULT-OFF behind ITS OWN label, `baseline-context-controllers`, distinct
+    # from the pod rules' `baseline-context`. The two fields are inert, but
+    # writing them into a stored pod template changes the template hash, so the
+    # first admission of a pre-existing workload ROLLS it — a Longhorn manager
+    # DaemonSet or a Coroot ClickHouse StatefulSet restarts at whatever moment
+    # its owner next writes it. That is a rollout, not a posture edit, and it is
+    # opted into one namespace at a time with the live workloads read back
+    # afterwards; a namespace carrying only the pod-rule label is untouched.
     #
-    # Same opt-in label, same two fields, same leaf-level SELinux anchors and the
-    # same wholesale-replace guards as the pod rules; only the path differs
+    # CREATE and UPDATE for Deployment, StatefulSet and DaemonSet, whose pod
+    # template is mutable — UPDATE is the only way an already-stored spec that an
+    # operator rewrites on reconcile ever receives the fields, and the `+()`
+    # anchors make every later admission a no-op, so an operator that rewrites
+    # its template wholesale pays one no-op write per reconcile, never a loop.
+    # Job is CREATE-only: a Job's template is immutable once created, so an
+    # UPDATE-time mutation would turn any later edit (a label, `suspend`) into a
+    # rejected template change — the same 422 hazard that keeps the pod rules
+    # CREATE-only. A Job spawned from a mutated CronJob already carries the
+    # fields; a standalone Job gets them at creation.
+    #
+    # Same two fields, same leaf-level SELinux anchors and the same
+    # wholesale-replace guards as the pod rules; only the path differs
     # (`spec.template.spec`, and `spec.jobTemplate.spec.template.spec` for
     # CronJobs). `tests/add-baseline-context` pins every state for the
     # controller kinds too.
@@ -440,13 +453,20 @@ spec:
                 - Deployment
                 - StatefulSet
                 - DaemonSet
-                - Job
               operations:
                 - CREATE
                 - UPDATE
               namespaceSelector:
                 matchLabels:
-                  pod-security.devantler.tech/baseline-context: enabled
+                  pod-security.devantler.tech/baseline-context-controllers: enabled
+          - resources:
+              kinds:
+                - Job
+              operations:
+                - CREATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context-controllers: enabled
       mutate:
         patchStrategicMerge:
           spec:
@@ -462,13 +482,20 @@ spec:
                 - Deployment
                 - StatefulSet
                 - DaemonSet
-                - Job
               operations:
                 - CREATE
                 - UPDATE
               namespaceSelector:
                 matchLabels:
-                  pod-security.devantler.tech/baseline-context: enabled
+                  pod-security.devantler.tech/baseline-context-controllers: enabled
+          - resources:
+              kinds:
+                - Job
+              operations:
+                - CREATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context-controllers: enabled
       preconditions:
         all:
           - key: "{{ request.object.spec.template.spec.securityContext.seLinuxOptions || '' }}"
@@ -493,13 +520,20 @@ spec:
                 - Deployment
                 - StatefulSet
                 - DaemonSet
-                - Job
               operations:
                 - CREATE
                 - UPDATE
               namespaceSelector:
                 matchLabels:
-                  pod-security.devantler.tech/baseline-context: enabled
+                  pod-security.devantler.tech/baseline-context-controllers: enabled
+          - resources:
+              kinds:
+                - Job
+              operations:
+                - CREATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context-controllers: enabled
       mutate:
         foreach:
           - list: "request.object.spec.template.spec.containers"
@@ -549,7 +583,7 @@ spec:
                 - UPDATE
               namespaceSelector:
                 matchLabels:
-                  pod-security.devantler.tech/baseline-context: enabled
+                  pod-security.devantler.tech/baseline-context-controllers: enabled
       mutate:
         patchStrategicMerge:
           spec:
@@ -570,7 +604,7 @@ spec:
                 - UPDATE
               namespaceSelector:
                 matchLabels:
-                  pod-security.devantler.tech/baseline-context: enabled
+                  pod-security.devantler.tech/baseline-context-controllers: enabled
       preconditions:
         all:
           - key: "{{ request.object.spec.jobTemplate.spec.template.spec.securityContext.seLinuxOptions || '' }}"
@@ -600,7 +634,7 @@ spec:
                 - UPDATE
               namespaceSelector:
                 matchLabels:
-                  pod-security.devantler.tech/baseline-context: enabled
+                  pod-security.devantler.tech/baseline-context-controllers: enabled
       mutate:
         foreach:
           - list: "request.object.spec.jobTemplate.spec.template.spec.containers"

@@ -3,6 +3,13 @@
 # resources.yaml — a rule matched by namespaceSelector is reported "Excluded"
 # for every resource unless the labels are declared here, and the whole fixture
 # then passes vacuously including the default-off control.
+#
+# Two labels are declared per namespace because the pod rules and the
+# controller-kind rules are gated separately: `baseline-context` opts a
+# namespace into the Pod rules, `baseline-context-controllers` into the rules
+# that write the stored controller spec (a rollout). kubescape carries only the
+# first, so its controller fixture proves the pod-rule label alone reaches no
+# controller.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Values
 metadata:
@@ -11,6 +18,7 @@ namespaceSelector:
   - name: velero
     labels:
       pod-security.devantler.tech/baseline-context: enabled
+      pod-security.devantler.tech/baseline-context-controllers: enabled
   - name: chaos-mesh
     labels: {}
   # observability, opted in alongside velero. Declared here so the ON-state
@@ -19,9 +27,15 @@ namespaceSelector:
   - name: observability
     labels:
       pod-security.devantler.tech/baseline-context: enabled
+      pod-security.devantler.tech/baseline-context-controllers: enabled
   # longhorn-system, opted in via #3540. Declared so the controller-kind
   # DaemonSet fixture (a privileged manager, the shape Longhorn actually runs)
   # is evaluated rather than reported "Excluded".
   - name: longhorn-system
+    labels:
+      pod-security.devantler.tech/baseline-context: enabled
+      pod-security.devantler.tech/baseline-context-controllers: enabled
+  # Pod-rule label only: the controller fixture here must stay untouched.
+  - name: kubescape
     labels:
       pod-security.devantler.tech/baseline-context: enabled

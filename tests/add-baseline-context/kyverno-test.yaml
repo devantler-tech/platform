@@ -194,3 +194,62 @@ results:
       - observability/nightly-cronjob
     kind: CronJob
     result: skip
+  # A standalone Job (CREATE-only kind) takes the template path.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers
+    resources:
+      - observability/oneshot-job
+    kind: Job
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers-containers
+    resources:
+      - observability/oneshot-job
+    kind: Job
+    result: pass
+    patchedResources: patched-resources.yaml
+  # The jobTemplate pod-scope fill fires on exactly the partial pod-level shape
+  # and nowhere else; the CronJob rules still land fsGroupChangePolicy on the
+  # pod-level fixtures and keep the container foreach out.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-cronjobs-pod-selinux-level
+    resources:
+      - velero/podlevel-partial-cronjob
+    kind: CronJob
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-cronjobs
+    resources:
+      - velero/podlevel-partial-cronjob
+      - velero/podlevel-cronjob
+    kind: CronJob
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: add-security-context
+    rule: add-baseline-context-optin-cronjobs-pod-selinux-level
+    resources:
+      - velero/podlevel-cronjob
+    kind: CronJob
+    result: skip
+  - policy: add-security-context
+    rule: add-baseline-context-optin-cronjobs-containers
+    resources:
+      - velero/podlevel-partial-cronjob
+      - velero/podlevel-cronjob
+    kind: CronJob
+    result: skip
+  # The pod-rule label alone reaches no controller.
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers
+    resources:
+      - kubescape/podlabel-only-deploy
+    kind: Deployment
+    result: skip
+  - policy: add-security-context
+    rule: add-baseline-context-optin-controllers-containers
+    resources:
+      - kubescape/podlabel-only-deploy
+    kind: Deployment
+    result: skip
