@@ -1146,6 +1146,53 @@ func resolveToken(tok string) (word string, fragment bool) {
 	return b.String(), false
 }
 
+// undecidableShellString names an `eval`, or a shell interpreter given a `-c`-style
+// option, whose following arguments name a scan word — text the interpreter will run
+// as code, which no per-token rule can read — or returns "" when there is none.
+// The interpreter is recognised by its base name so `/bin/sh -c` counts; the option
+// test is any dash-option containing `c` (`-c`, `-ec`, `-lc`). Text with no scan word
+// is ordinary shell: `bash -c 'echo hello'` is not this guard's business.
+func undecidableShellString(fields []string) string {
+	for i, f := range fields {
+		word := bareToken(f)
+		base := word[strings.LastIndex(word, "/")+1:]
+		executes := word == "eval"
+		if !executes && i+1 < len(fields) {
+			switch base {
+			case "bash", "sh", "dash", "zsh", "ksh":
+				opt := bareToken(fields[i+1])
+				executes = strings.HasPrefix(opt, "-") && strings.Contains(opt, "c")
+			}
+		}
+		if !executes {
+			continue
+		}
+		for _, arg := range fields[i+1:] {
+			if strings.Contains(arg, "ksail") || strings.Contains(arg, "workload") || strings.Contains(arg, "scan") {
+				return fmt.Sprintf("%q executes its argument as shell code and that argument names a scan word", word)
+			}
+		}
+	}
+	return ""
+}
+
+// allExpandedBeforeFramework reports whether every token in front of the first
+// `--framework` word carries a shell expansion — a command spelled entirely from
+// variables, which resolves to a plain scan word only when the shell runs.
+func allExpandedBeforeFramework(fields []string) bool {
+	seen := 0
+	for _, f := range fields {
+		if strings.HasPrefix(bareToken(f), "--framework") {
+			break
+		}
+		if !carriesExpansion(f) {
+			return false
+		}
+		seen++
+	}
+	return seen > 0
+}
+
 func prefixedScan(fields []string) bool {
 	for i := 1; i+2 < len(fields); i++ {
 		if bareToken(fields[i]) == "ksail" &&
@@ -1307,7 +1354,9 @@ func undecidableScanCandidate(fields []string) string {
 // backslash escapes the character after it in either the plain or the double-quoted
 // state, exactly as resolveToken reads them. A token whose quotes never close is a
 // fragment of a longer string; its expansion state is decided by the tokens around it,
-// so it reports false here.
+// so it reports false here. An unquoted `{` is brace expansion — `--{framework=nsa,output=x}`
+// becomes two options only when the shell runs — and counts as an expansion too;
+// inside double quotes braces are literal.
 func carriesExpansion(tok string) bool {
 	const (
 		plain = iota
@@ -1326,7 +1375,7 @@ func carriesExpansion(tok string) bool {
 				state = double
 			case '\\':
 				i++
-			case '$', '`', '*', '?', '[':
+			case '$', '`', '*', '?', '[', '{':
 				return true
 			}
 		case single:
@@ -1554,6 +1603,26 @@ func scanInvocations(scalar string) ([]string, error) {
 				// spells. The residual is a line that expands all three words, which no lexical
 				// test can see. Unquoted prose that names a scan word beside a variable is
 				// refused too, and the message names the quoting opt-out.
+				// A COMMAND STRING HANDED TO AN EXECUTING SHELL IS ONE QUOTED ARGUMENT, so the
+				// consecutive-token rules below never see the invocation inside it, while
+				// `bash -c '…'`, `sh -c "…"` and `eval '…'` execute it all the same. The quoted-
+				// prose opt-out does not apply to text an interpreter is about to run: refused
+				// whenever that argument names a scan word.
+				if reason := undecidableShellString(fields); reason != "" {
+					return nil, fmt.Errorf(
+						"a command string handed to an executing shell names a scan word, so whether it invokes `ksail workload scan --framework` is not decidable from the text — %s: %q. The interpreter runs that string as code, so a reduced scan inside it executes while the guard reads it as an argument. Invoke the scan as a plain command, never through `eval` or `<shell> -c`. See #3338",
+						reason, segment.text)
+				}
+				// EVERY COMMAND WORD EXPANDED AT ONCE on a `--framework` line: `"$KSAIL"
+				// "$WORKLOAD" "$SCAN" --framework nsa` names no plain scan word, so the
+				// whitelist below has nothing to key on, and the command-word test only reads
+				// the word in front of a resolvable `workload scan` pair. Nothing before the
+				// flag is decidable, which is exactly the undecidable case.
+				if strings.Contains(segment.text, "--framework") && allExpandedBeforeFramework(fields) {
+					return nil, fmt.Errorf(
+						"every word before `--framework` is a shell expansion, so the command this line runs is not decidable from the text: %q. Variables assigned earlier in the block can spell `ksail workload scan` here, executing a reduced scan the guard never read. Invoke the scan as the bare words `ksail workload scan`, or quote the text if it is not an invocation. See #3338",
+						segment.text)
+				}
 				if reason := undecidableScanCandidate(fields); reason != "" {
 					return nil, fmt.Errorf(
 						"a line names `ksail`, `workload` or `scan` plainly beside a shell expansion, so whether it invokes `ksail workload scan --framework` is not decidable from the text — %s: %q. A constructed command or option word can execute a scan while reading as something else, so the executed framework set need not be the validated one. Spell the whole invocation plainly, or quote the text if it is not an invocation. See #3338",

@@ -870,6 +870,47 @@ func TestRejectsScanInsideAMultilineQuotedArgument(t *testing.T) {
 	}
 }
 
+// Three ways a reduced scan executes beside the counted one while reading as
+// something else on the unconditional path: a brace-expanded option (`--{framework=…}`
+// carries no literal flag until the shell expands it), a command string handed to an
+// executing shell (`bash -c '…'`, `sh -c "…"`, `eval '…'` — one quoted argument, so the
+// consecutive-token rules never see the invocation), and a command whose every word is
+// a variable assigned earlier in the block. Each is refused as undecidable.
+func TestRejectsReducedScanHiddenFromTheUnconditionalPath(t *testing.T) {
+	cases := map[string]string{
+		"brace-expanded option":              goodScan + "\nksail workload scan --{framework=nsa,output=kubescape.sarif}",
+		"bash -c single-quoted":              goodScan + "\nbash -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"sh -c double-quoted":                goodScan + "\nsh -c \"ksail workload scan --framework nsa -o kubescape.sarif\"",
+		"eval":                               goodScan + "\neval 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"all words from variables":           "KSAIL=ksail WORKLOAD=workload SCAN=scan\n" + goodScan + "\n\"$KSAIL\" \"$WORKLOAD\" \"$SCAN\" --framework nsa -o kubescape.sarif",
+		"all words from variables, unquoted": "KSAIL=ksail WORKLOAD=workload SCAN=scan\n" + goodScan + "\n$KSAIL $WORKLOAD $SCAN --framework nsa -o kubescape.sarif",
+	}
+	for name, body := range cases {
+		if set, err := setOf(t, body); err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — a reduced scan executes beside the counted one; got %q", name, set)
+		}
+	}
+}
+
+// The controls: an executing shell handed text with no scan word, and a variable that
+// is merely an ARGUMENT of a plainly spelled scan, are ordinary shell.
+func TestExecutingShellWithoutAScanWordIsStillIgnored(t *testing.T) {
+	cases := map[string]string{
+		"bash -c without a scan word": goodScan + "\nbash -c 'echo hello'",
+		"eval without a scan word":    goodScan + "\neval 'true'",
+	}
+	for name, body := range cases {
+		got, err := setOf(t, body)
+		if err != nil {
+			t.Errorf("%s: expected ACCEPT; got: %v", name, err)
+			continue
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Errorf("%s: set = %q", name, got)
+		}
+	}
+}
+
 // A real command written AFTER the closing quote is still executed, so it must still be
 // read. Without this the fix could pass by discarding the remainder of every line that
 // closes a quote.
