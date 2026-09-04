@@ -2136,3 +2136,33 @@ func TestAcceptsConditionalShellStringWithoutAScanWord(t *testing.T) {
 		t.Fatalf("expected the unconditional scan to supply the framework set; got %q", got)
 	}
 }
+
+// Bash joins a physical line to the next one only on an ODD run of trailing
+// backslashes; an even run is escaped backslashes and ENDS the line. The
+// unconditional path knows this — it joins with continuesLine — but the conditional
+// screening in scanCandidate tested strings.HasSuffix(logical, "\\"), which is true
+// for either parity. So a step whose first line ends in `\\` had the following lines
+// folded into it, and an unmatched quote carried in from a comment line then made the
+// scan text one quoted fragment: no scan word was seen, the step was skipped as
+// ordinary shell, and the reduced scan it really runs was never validated.
+func TestRejectsScanAfterAnEvenBackslashRunInAConditionalStep(t *testing.T) {
+	cases := map[string]string{
+		"unmatched double quote in the comment": "          echo \\\\\n          # unmatched quote: \" \\\n          ksail workload scan --framework nsa\n",
+		"unmatched single quote in the comment": "          echo \\\\\n          # unmatched quote: ' \\\n          ksail workload scan --framework nsa\n",
+		"no quote, plain even run":              "          echo \\\\\n          ksail workload scan --framework nsa\n",
+	}
+	for name, body := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" + body
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — the line before the scan does not continue, so the conditional step runs a reduced scan; got %q", name, set)
+			continue
+		}
+		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+			t.Errorf("%s: the refusal must name the conditional step, proving this rule fired; got: %v", name, err)
+		}
+	}
+}

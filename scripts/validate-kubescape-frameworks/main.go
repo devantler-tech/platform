@@ -444,8 +444,14 @@ func scanCandidate(scalar string) bool {
 		}
 		// A backslash-newline continues the command on the next physical line, so
 		// the three scan words can be split across lines; join them before reading.
+		// PARITY, via continuesLine, exactly as the unconditional path joins: only an
+		// ODD run of trailing backslashes continues the line. `strings.HasSuffix` is
+		// true for either parity, so a line ending in an EVEN run folded the lines
+		// after it into itself, and an unmatched quote carried in from a comment then
+		// made the scan one quoted fragment — no scan word seen, the conditional step
+		// skipped as ordinary shell, and the reduced scan it really runs unvalidated.
 		logical := lines[i]
-		for strings.HasSuffix(logical, "\\") && i+1 < len(lines) {
+		for continuesLine(logical) && i+1 < len(lines) {
 			head := strings.TrimSuffix(logical, "\\")
 			// bash removes the backslash-newline and reads on: when the continued
 			// text begins a word and the next physical line starts with `#`, that
