@@ -2166,3 +2166,62 @@ func TestRejectsScanAfterAnEvenBackslashRunInAConditionalStep(t *testing.T) {
 		}
 	}
 }
+
+// Bash removes a backslash-newline and inserts NOTHING, so `k\` on one line and
+// `sail workload scan …` on the next executes `ksail`. The conditional screen joined
+// its physical lines with a SPACE, reconstructing `k sail` — no scan word, step
+// skipped, reduced scan unvalidated. Joining directly is also the faithful reading in
+// the other direction: `k\` followed by an INDENTED `sail` really is `k   sail` to
+// bash, which runs `k`, so leaving that undetected is correct rather than a gap.
+func TestRejectsWordSplitAcrossAContinuationInAConditionalStep(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+		"          k\\\n          sail workload scan --framework nsa\n"
+	path := writeTemp(t, workflow)
+	set, err := frameworkSet(path)
+	if err == nil {
+		t.Fatalf("expected FAIL CLOSED — bash joins `k\\` to `sail` with no separator and runs the reduced scan; got %q", set)
+	}
+	if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+		t.Fatalf("the refusal must name the conditional step, proving this rule fired; got: %v", err)
+	}
+}
+
+// A scan written immediately after a shell separator with no surrounding whitespace
+// (`true;ksail workload scan …`) is executed by bash, but shellFields keeps
+// `true;ksail` as ONE word, so no token resolves to `ksail` and the conditional step
+// was skipped. The unconditional path splits on separators; this screen must too.
+func TestRejectsScanAfterATightSeparatorInAConditionalStep(t *testing.T) {
+	cases := map[string]string{
+		"semicolon":                  "true;ksail workload scan --framework nsa",
+		"and-and":                    "true&&ksail workload scan --framework nsa",
+		"or-or":                      "false||ksail workload scan --framework nsa",
+		"pipe":                       "echo x|ksail workload scan --framework nsa",
+		"background":                 "true&ksail workload scan --framework nsa",
+		"quoted prose stays ignored": "echo 'a;ksail workload scan --framework nsa'",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if name == "quoted prose stays ignored" {
+			// The control: a separator INSIDE a quoted word is not a command boundary,
+			// so this is prose and must stay accepted. Without it, "split on ;&|" could
+			// pass by refusing every step that mentions a scan in a string.
+			if err != nil {
+				t.Errorf("%s: expected ACCEPT — a separator inside a quoted word is not a command boundary; got: %v", name, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — bash runs the reduced scan after the separator; got %q", name, set)
+			continue
+		}
+		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+			t.Errorf("%s: the refusal must name the conditional step, proving this rule fired; got: %v", name, err)
+		}
+	}
+}

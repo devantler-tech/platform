@@ -465,10 +465,16 @@ func scanCandidate(scalar string) bool {
 				break
 			}
 			i++
-			logical = head + " " + lines[i]
+			// DIRECT concatenation, no inserted separator: bash removes the
+			// backslash-newline pair and inserts NOTHING, so `k\` + `sail …` is the
+			// word `ksail`. Joining with a space reconstructed `k sail`, which carries
+			// no scan word, so the step was skipped. It is faithful the other way too:
+			// `k\` before an INDENTED `sail` really is `k   sail` to bash, which runs
+			// `k` — so that one correctly stays undetected rather than being a gap.
+			logical = head + lines[i]
 		}
 		line := logical
-		fields := shellFields(line)
+		fields := shellFieldsAcrossSeparators(line)
 		if len(fields) == 0 {
 			continue
 		}
@@ -634,7 +640,21 @@ func fullyQuoted(tok string) bool {
 // expansion shape because neither half was a whole double-quoted word. An unclosed
 // quote runs to the end of the line as one word, which resolveToken then reports as a
 // fragment.
-func shellFields(text string) []string {
+func shellFields(text string) []string { return shellFieldsSplit(text, false) }
+
+// shellFieldsAcrossSeparators is shellFields plus a break at an UNQUOTED shell
+// separator, so `true;ksail workload scan …` yields `ksail` as its own word. Bash runs
+// that scan, but the plain splitter keeps `true;ksail` as one token, so no token
+// resolves to a scan word and the conditional screen skipped the step. Only the LOOSE
+// conditional screen uses this: it may over-split an exotic line, and a false positive
+// there costs a diagnosable refusal while a false negative reopens the hole.
+//
+// A separator inside quotes is not a command boundary, so `echo 'a;ksail workload
+// scan'` stays one quoted word and remains prose — the same treatment the plain
+// splitter gives it. An escaped `\;` likewise stays in the word.
+func shellFieldsAcrossSeparators(text string) []string { return shellFieldsSplit(text, true) }
+
+func shellFieldsSplit(text string, breakSeparators bool) []string {
 	var out []string
 	var cur strings.Builder
 	inSingle, inDouble := false, false
@@ -659,6 +679,8 @@ func shellFields(text string) []string {
 		case c == '"' && !inSingle:
 			inDouble = !inDouble
 			cur.WriteByte(c)
+		case breakSeparators && (c == ';' || c == '&' || c == '|') && !inSingle && !inDouble:
+			flush()
 		case (c == ' ' || c == '\t' || c == '\n' || c == '\r') && !inSingle && !inDouble:
 			flush()
 		default:
