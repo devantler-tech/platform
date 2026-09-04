@@ -1755,27 +1755,30 @@ func TestQuotedScanSpellingInCommandPositionIsCounted(t *testing.T) {
 			word + " workload scan --framework nsa -o kubescape.sarif\n"
 		_, err := setOf(t, paired)
 		if err == nil {
-			t.Fatalf("%s ksail paired with a counted scan: expected FAIL CLOSED — the spelling "+
+			t.Errorf("%s ksail paired with a counted scan: expected FAIL CLOSED — the spelling "+
 				"executes a second scan, so the validated framework set need not be the one "+
 				"that runs", name)
+			continue
 		}
 		// ASSERT A SPACED PHRASE, NEVER A BARE WORD (see the note in
 		// TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy): the fixture
 		// path embeds this test's name, so a bare token could match the path.
 		if !strings.Contains(err.Error(), "scan invocations") {
-			t.Fatalf("%s ksail paired with a counted scan: the refusal must be the two-invocation "+
+			t.Errorf("%s ksail paired with a counted scan: the refusal must be the two-invocation "+
 				"one, proving the spelling was COUNTED rather than refused as prefixed text; got: %v",
 				name, err)
+			continue
 		}
 
 		alone := word + " workload scan --framework nsa,mitre --compliance-threshold 95"
 		got, err := setOf(t, alone)
 		if err != nil {
-			t.Fatalf("%s ksail alone: expected ACCEPT — it is the gate, spelled differently; got: %v",
+			t.Errorf("%s ksail alone: expected ACCEPT — it is the gate, spelled differently; got: %v",
 				name, err)
+			continue
 		}
 		if strings.Join(got, ",") != "mitre,nsa" {
-			t.Fatalf("%s ksail alone: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+			t.Errorf("%s ksail alone: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
 		}
 	}
 }
@@ -1812,13 +1815,14 @@ func TestRejectsUndecidableScanCommandWord(t *testing.T) {
 		} {
 			_, err := setOf(t, shape.body)
 			if err == nil {
-				t.Fatalf("%s, %s: expected FAIL CLOSED — the command word is not decidable from "+
+				t.Errorf("%s, %s: expected FAIL CLOSED — the command word is not decidable from "+
 					"the text, so the line may execute a scan the guard never validated", name, shape.label)
+				continue
 			}
 			// ASSERT A SPACED PHRASE, NEVER A BARE WORD (see
 			// TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy).
 			if !strings.Contains(err.Error(), "not decidable from the text") {
-				t.Fatalf("%s, %s: the refusal must name undecidability, proving this rule fired "+
+				t.Errorf("%s, %s: the refusal must name undecidability, proving this rule fired "+
 					"rather than a coincidental one; got: %v", name, shape.label, err)
 			}
 		}
@@ -1964,13 +1968,14 @@ func TestRejectsUndecidableScanOptionWord(t *testing.T) {
 		} {
 			_, err := setOf(t, shape.body)
 			if err == nil {
-				t.Fatalf("%s, %s: expected FAIL CLOSED — an option word or argument is not decidable "+
+				t.Errorf("%s, %s: expected FAIL CLOSED — an option word or argument is not decidable "+
 					"from the text, so the line may execute a framework set the guard never validated", name, shape.label)
+				continue
 			}
 			// ASSERT A SPACED PHRASE, NEVER A BARE WORD (see
 			// TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy).
 			if !strings.Contains(err.Error(), "not decidable from the text") {
-				t.Fatalf("%s, %s: the refusal must name undecidability, proving this rule fired "+
+				t.Errorf("%s, %s: the refusal must name undecidability, proving this rule fired "+
 					"rather than a coincidental one; got: %v", name, shape.label, err)
 			}
 		}
