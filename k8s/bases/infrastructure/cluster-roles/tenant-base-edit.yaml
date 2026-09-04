@@ -106,10 +106,22 @@ rules:
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets", "poddisruptionbudgets/status"]
     verbs: ["create", "delete", "deletecollection", "patch", "update", "get", "list", "watch"]
-  # Networking.
+  # Networking. Standard `networkpolicies` are deliberately READ-ONLY here (#3396):
+  # Cilium unions a standard NetworkPolicy's allow rules with CiliumNetworkPolicy
+  # rules additively, and restrict-tenant-network-policies constrains only the
+  # latter — so a tenant able to create a NetworkPolicy with `podSelector: {}`,
+  # `ingress: [{}]`, `egress: [{}]` would reopen every path that boundary closes
+  # without the CiliumNetworkPolicy webhook ever seeing it. Every tenant expresses
+  # its allow-list as a CiliumNetworkPolicy (the scaffold and both adopted tenants),
+  # so nothing legitimate needs the write verbs. Reading stays so a tenant can
+  # inspect the generated `default-deny` in its own namespace. Enforced by
+  # scripts/tests/test-tenant-edit-networkpolicy-write.sh over the rendered tree.
   - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses", "ingresses/status", "networkpolicies"]
+    resources: ["ingresses", "ingresses/status"]
     verbs: ["create", "delete", "deletecollection", "patch", "update", "get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]

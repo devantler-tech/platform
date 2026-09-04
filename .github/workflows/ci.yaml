@@ -260,6 +260,9 @@ jobs:
               # scoped the way it was reviewed. The roles themselves are already covered
               # by the k8s/** entry above.
               - 'scripts/tests/test-trivyignore-first-party-rbac-boundary.sh'
+              # The tenant role and the test that keeps its networkpolicies grant read-only
+              # are one contract; the role is covered by k8s/**, the test is listed here.
+              - 'scripts/tests/test-tenant-edit-networkpolicy-write.sh'
               # The KSV-01010 ConfigMap dispositions are path-scoped, so the entry and its
               # paired control move together — a widened glob would suppress the same check
               # on application ConfigMaps that genuinely carry credentials.
@@ -780,6 +783,17 @@ jobs:
         run: |
           shellcheck scripts/tests/test-trivyignore-first-party-rbac-boundary.sh
           bash scripts/tests/test-trivyignore-first-party-rbac-boundary.sh
+
+      - name: 🧱 Validate the tenant identity cannot write standard NetworkPolicies
+        if: needs.changes.outputs.k8s == 'true'
+        # Cilium unions standard NetworkPolicy allow rules with CiliumNetworkPolicy rules,
+        # and restrict-tenant-network-policies constrains only the latter — so a write
+        # grant on networkpolicies is a bypass of the whole tenant boundary. This renders
+        # both providers' infrastructure layers and refuses any tenant-aggregated
+        # ClusterRole granting a write verb on it (#3396).
+        run: |
+          shellcheck scripts/tests/test-tenant-edit-networkpolicy-write.sh
+          bash scripts/tests/test-tenant-edit-networkpolicy-write.sh
 
       - name: 🧱 Validate ConfigMap sensitive-content disposition boundary
         if: needs.changes.outputs.k8s == 'true'
