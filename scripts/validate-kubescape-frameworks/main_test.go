@@ -1009,6 +1009,10 @@ func TestRejectsScanAfterACommentWithAnUnmatchedQuoteInAConditionalStep(t *testi
 		"unmatched single quote":         "          # it's unmatched\n",
 		"trailing comment after a word":  "          true # unmatched quote: \"\n",
 		"quote in a comment then a word": "          # \" a\n          echo ok\n",
+		// bash removes an unquoted backslash-newline before it reads the next line,
+		// so `echo \` followed by `# …` is `echo # …`: the `#` starts a comment.
+		"comment after an unquoted continuation, double quote": "          echo \\\n          # unmatched quote: \"\n",
+		"comment after an unquoted continuation, single quote": "          echo \\\n          # it's unmatched\n",
 	}
 	for name, comment := range cases {
 		workflow := "jobs:\n  validate:\n    steps:\n" +
@@ -1098,6 +1102,11 @@ func TestCollapseQuotedNewlinesFoldsABackslashNewlineInsideDoubleQuotes(t *testi
 		// `#` in the middle of a word is not a comment, so the quote after it is live
 		// and the newline inside it folds.
 		"hash not starting a word": {"echo a#\"\nb\"", "echo a#\" b\""},
+		// After an unquoted continuation the next line continues the word the
+		// backslash ended: `echo \` + `# "` is a comment; `foo\` + `#"` is `foo#"`,
+		// so that quote is live and folds the newline after it.
+		"comment after an unquoted continuation":       {"echo \\\n# say \"\nksail", "echo \\\n# say \"\nksail"},
+		"hash continuing a word across a continuation": {"echo foo\\\n#\"\nb\"", "echo foo\\\n#\" b\""},
 	}
 	for name, c := range cases {
 		if got := collapseQuotedNewlines(c[0]); got != c[1] {

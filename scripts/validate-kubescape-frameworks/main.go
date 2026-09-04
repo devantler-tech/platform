@@ -544,6 +544,14 @@ func collapseQuotedNewlines(text string) string {
 			if i+1 < len(text) {
 				i++
 				out.WriteByte(text[i])
+				// An unquoted backslash-newline is removed by bash before the next
+				// line is read, so the next byte continues the word the backslash
+				// ended: `echo \` then `# x` is `echo # x` (a comment), while
+				// `foo\` then `#bar` is `foo#bar` (not one). The pair itself is kept
+				// here for scanCandidate's join; only the word-start state carries.
+				if text[i] == '\n' && !inDouble {
+					wordStart = atWordStart
+				}
 			}
 		case c == '\'' && !inDouble:
 			inSingle = !inSingle
