@@ -462,11 +462,18 @@ spec:
     # Helm-rendered controller (Longhorn's manager, CSI and UI) keeps its old
     # template indefinitely until some writer issues an UPDATE. The flip is
     # therefore a procedure, not a label edit. For each namespace it:
-    #   1. adds the label and, per existing controller, issues a
-    #      `kubectl rollout restart`-style template-annotation UPDATE — the
-    #      admission of that write is what backfills the fields (and it is the
-    #      one rollout per workload the paragraph above warns about);
-    #   2. reads the stored specs back and confirms both fields landed;
+    #   1. adds the label and, per existing Deployment, StatefulSet, DaemonSet
+    #      and CronJob, issues a `kubectl rollout restart`-style
+    #      template-annotation UPDATE — the admission of that write is what
+    #      backfills the fields (and it is the one rollout per workload the
+    #      paragraph above warns about). A pre-existing Job is OUT of that
+    #      backfill: its template is immutable, so no UPDATE can carry the
+    #      fields into it. A CronJob-spawned Job is replaced with the fields at
+    #      its next schedule (a fresh CREATE); a standalone Job keeps its stored
+    #      template until it is deleted and recreated, and the read-back lists
+    #      it as such rather than counting it as backfilled;
+    #   2. reads the stored specs back and confirms both fields landed on every
+    #      restarted kind, and names any pre-existing Job left as-is;
     #   3. watches every owner's write rate on those objects for the loop above
     #      (resourceVersion advancing with no spec change) and, on a loop,
     #      reverts the label or excludes that owner's objects by ownerReference
