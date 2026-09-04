@@ -125,6 +125,19 @@ jobs:
           bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           ./scripts/guard-publish-workflow-approved-revisions.sh
 
+      # Both subject guards above examine a file only when it already carries a
+      # shared-publish-workflow subject, so an OCIRepository pointed at a devantler-tech
+      # artifact with NO spec.verify at all is invisible to them — and refused by nothing
+      # else. This one discovers OCIRepositories by KIND and URL, at any nesting depth,
+      # and requires cosign with exactly one identity on every devantler-tech GHCR
+      # artifact (#3558). Unconditional, like the guards above.
+      - name: 🔐 Validate every devantler-tech OCIRepository verifies
+        run: |
+          shellcheck scripts/guard-oci-repository-verify.sh
+          shellcheck scripts/tests/test-guard-oci-repository-verify.sh
+          bash scripts/tests/test-guard-oci-repository-verify.sh
+          ./scripts/guard-oci-repository-verify.sh
+
       # Dropping a framework from the Kubescape gate REMOVES findings, so the
       # compliance score RISES and every check stays green — a coverage
       # regression that looks like an improvement. That is what un-gated 59
@@ -336,6 +349,9 @@ jobs:
               # inside the k8s-gated validation matrix alongside the manifests it judges.
               - 'scripts/guard-publish-workflow-approved-revisions.sh'
               - 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh'
+              # Both halves, for the same reason as the guards above.
+              - 'scripts/guard-oci-repository-verify.sh'
+              - 'scripts/tests/test-guard-oci-repository-verify.sh'
               # Both halves, for the same reason as the guard above.
               - 'scripts/validate-kubescape-frameworks/main.go'
               - 'scripts/validate-kubescape-frameworks/main_test.go'
