@@ -127,7 +127,7 @@ The value lives SOPS-encrypted as `ghcr_dockerconfigjson` in the shared
 ClusterSecretStore.
 
 - The release and template-sync workflows mint a **GitHub App token** from the
-  org-level `APP_ID` variable and `APP_PRIVATE_KEY` secret — already available to
+  org-level `APP_CLIENT_ID` variable and `APP_PRIVATE_KEY` secret — already available to
   every repo in the org, so no per-repo setup is needed.
 
 ## 4. How publishing & trust fit together
