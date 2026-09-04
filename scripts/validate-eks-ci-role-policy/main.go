@@ -1684,10 +1684,40 @@ const (
 // rendered with the SAME local renderer; the digest is not, so it comes from the
 // pinned one.
 //
+// Re-approved 2026-09-04 for #3580, which repairs the change the paragraph above
+// approved. That change could not apply at all: the pod-level op targets
+// /spec/template/spec/securityContext/fsGroupChangePolicy, but the flux-operator
+// chart renders no pod-level securityContext, so helm-controller failed the whole
+// post-render with `doc is missing path` and neither field reached the cluster.
+// #3580 moves that one field to a strategic-merge patch, which creates the missing
+// parent; the container ops are unchanged.
+//
+// Conservation re-proven the same way, with ONE renderer on both sides: all five
+// overlays rendered from main d7613b03 and from this branch, compared over the full
+// apiVersion|kind|namespace|name identity in BOTH directions. 552 documents each
+// side — ZERO added, ZERO removed. Per-root counts (126/226/188/8/4) were
+// corroborated against raw document-separator counts, because `yq eval-all`
+// evaluates once across a whole stream and silently reports 1. A negative control
+// that drops a single document reports removed=1 and names it, so the comparison is
+// not vacuous.
+//
+// Four of the five roots render byte-identical. The ENTIRE delta is confined to the
+// flux-operator HelmRelease in the controllers root: 3 lines removed, 13 added, all
+// inside its postRenderers block. No rule, verb, resource, group, subject,
+// ServiceAccount, role reference or policy moved. The digest moves for the same
+// reason as last time — that HelmRelease is itself a selected authorization-capable
+// document — not because privilege changed.
+//
+// The value below is again CI's own computed digest (run 33866934697, head
+// 8c9d1d11), for the same reason: this validator pins kubectl v1.36.2 and refuses
+// any other, and the preparing host has v1.36.1. That run reported exactly one
+// error class — this fingerprint — so nothing else in the authorization surface
+// objected.
+//
 // The previous approved aggregate digest was:
 //
-//	a16fbd577f8155e64aacc02cb624f26d9628d75658ce804215d9d69a3884bf92
-const expectedRenderedSurfaceSHA = "ab05bc2c95924e372c038f878872aa94e3bd81380daa96a283bd7f74e2132a69"
+//	ab05bc2c95924e372c038f878872aa94e3bd81380daa96a283bd7f74e2132a69
+const expectedRenderedSurfaceSHA = "a5dac56d1ee989648670e2bd265b56e574512b37e2e19b8caf0fe4738816d1a4"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
