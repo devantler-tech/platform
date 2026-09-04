@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# Pin the shape of .github/workflows/regenerate-publish-workflow-approved-revisions.yaml
+# (#3552, third child of #3308).
+#
+# WHY THIS EXISTS. The workflow's job is to turn a moved approved-revision set into ONE
+# draft pull request and to turn anything it cannot resolve into a RED run. Both halves
+# are properties of the workflow's SHAPE, not of any script it calls, and every one of
+# them regresses silently: an interpolated branch name opens a second pull request per
+# run instead of updating the first; `continue-on-error` on the generator, or an
+# `if: always()` on the pull-request step, turns an unresolved consumer into a pull
+# request that dropped it; a widened App-token grant or a lost `persist-credentials:
+# false` hands the job more than it needs; a missing `environment: prod` resolves
+# KUBE_CONFIG to the empty string so the generator refuses every consumer on the cluster
+# half — a red run that looks like a broken cluster. None of those fails CI by itself.
+#
+# Every assertion is ABLATED: a copy of the workflow is mutated in exactly one place and
+# the check must fail naming that assertion. A check that cannot fail is not a check.
+#
+# yq (mikefarah v4) reads the YAML; no network, no secrets. Bash 3.2 compatible.
+# The yq mutations below carry literal `${{ … }}` GitHub expressions on purpose — the
+# ablations are ABOUT interpolation reaching the workflow — so they must not expand here.
+# shellcheck disable=SC2016
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly root_dir
+readonly workflow="${root_dir}/.github/workflows/regenerate-publish-workflow-approved-revisions.yaml"
+readonly generator='scripts/generate-publish-workflow-approved-revisions.sh'
+readonly guard='scripts/guard-publish-workflow-approved-revisions.sh'
+readonly data_file='scripts/publish-workflow-approved-revisions.tsv'
+
+work_dir="$(mktemp -d)"
+readonly work_dir
+cleanup() { rm -rf "${work_dir}"; }
+trap cleanup EXIT
+
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
+
+command -v yq >/dev/null 2>&1 || fail 'yq is required'
+[ -f "${workflow}" ] || fail "workflow not found: ${workflow}"
+
+# q <file> <expr> → the expression's value, or the empty string when it is absent.
+# Deliberately NOT `expr // ""`: yq's alternative operator treats a real `false` as
+# absent, so `cancel-in-progress: false` would read as missing and A3 could never pass.
+q() {
+  yq -r "$2" "$1" | sed 's/^null$//'
+}
+
+# ── The check ─────────────────────────────────────────────────────────────────────────────
+# check <file>: prints "ok" and exits 0, or prints "VIOLATION <id>: <why>" and exits 1.
+# The id is what the ablations key on, so a mutation that trips a DIFFERENT assertion
+# than the one it targets is caught as a wrongly-attributed proof.
+check() {
+  local f="$1"
+
+  # A1 — runs on a daily cadence AND on demand.
+  local cron
+  cron="$(q "$f" '.on.schedule[0].cron')"
+  case "${cron}" in
+    *' '*' '*' '*' '*) ;;
+    *) printf 'VIOLATION A1: no five-field schedule cron (got "%s")\n' "${cron}"; return 1 ;;
+  esac
+  [ "$(yq -r '.on | has("workflow_dispatch")' "$f")" = 'true' ] ||
+    { printf 'VIOLATION A1: no workflow_dispatch trigger\n'; return 1; }
+
+  # A2 — no ambient grant: the App token carries every write.
+  [ "$(yq -r '.permissions | tag' "$f")" = '!!map' ] && [ "$(yq -r '.permissions | length' "$f")" = '0' ] ||
+    { printf 'VIOLATION A2: top-level permissions is not the empty map\n'; return 1; }
+  [ "$(q "$f" '.jobs.regenerate.permissions.contents')" = 'read' ] &&
+    [ "$(yq -r '.jobs.regenerate.permissions | length' "$f")" = '1' ] ||
+    { printf 'VIOLATION A2: the job grants more than contents: read to GITHUB_TOKEN\n'; return 1; }
+
+  # A3 — one run at a time, never cut off mid pull request.
+  [ "$(q "$f" '.concurrency.queue')" = 'single' ] ||
+    { printf 'VIOLATION A3: concurrency.queue is not single\n'; return 1; }
+  [ "$(q "$f" '.concurrency.cancel-in-progress')" = 'false' ] ||
+    { printf 'VIOLATION A3: concurrency.cancel-in-progress is not false\n'; return 1; }
+
+  # A4 — the cluster half needs the prod environment's KUBE_CONFIG.
+  [ "$(q "$f" '.jobs.regenerate.environment')" = 'prod' ] ||
+    { printf 'VIOLATION A4: the job does not run in environment prod\n'; return 1; }
+
+  # Step indices, by what each step DOES rather than by name.
+  local steps gen_idx guard_idx pr_idx token_idx checkout_idx
+  steps="$(yq -r '.jobs.regenerate.steps | length' "$f")"
+  gen_idx="$(yq -r ".jobs.regenerate.steps | to_entries | map(select(.value.run // \"\" | contains(\"${generator}\"))) | .[0].key // \"\"" "$f")"
+  guard_idx="$(yq -r ".jobs.regenerate.steps | to_entries | map(select(.value.run // \"\" | contains(\"${guard}\"))) | .[0].key // \"\"" "$f")"
+  pr_idx="$(yq -r '.jobs.regenerate.steps | to_entries | map(select(.value.uses // "" | contains("peter-evans/create-pull-request@"))) | .[0].key // ""' "$f")"
+  token_idx="$(yq -r '.jobs.regenerate.steps | to_entries | map(select(.value.uses // "" | contains("actions/create-github-app-token@"))) | .[0].key // ""' "$f")"
+  checkout_idx="$(yq -r '.jobs.regenerate.steps | to_entries | map(select(.value.uses // "" | contains("actions/checkout@"))) | .[0].key // ""' "$f")"
+
+  # A5 — the generator runs, against prod, with the App token.
+  [ -n "${gen_idx}" ] || { printf 'VIOLATION A5: no step runs %s\n' "${generator}"; return 1; }
+  [ "$(q "$f" ".jobs.regenerate.steps[${gen_idx}].env.PUBLISH_KUBE_CONTEXT")" = 'admin@prod' ] ||
+    { printf 'VIOLATION A5: the generator step does not pin PUBLISH_KUBE_CONTEXT to admin@prod\n'; return 1; }
+  case "$(q "$f" ".jobs.regenerate.steps[${gen_idx}].env.GH_TOKEN")" in
+    *'steps.app-token.outputs.token'*) ;;
+    *) printf 'VIOLATION A5: the generator step does not read GH_TOKEN from the App token\n'; return 1 ;;
+  esac
+
+  # A6 — the App token is minted for exactly this job's needs.
+  [ -n "${token_idx}" ] || { printf 'VIOLATION A6: no App-token step\n'; return 1; }
+  local grants
+  grants="$(yq -r ".jobs.regenerate.steps[${token_idx}].with | to_entries | map(select(.key | test(\"^permission-\"))) | map(.key + \"=\" + .value) | sort | join(\",\")" "$f")"
+  [ "${grants}" = 'permission-actions=read,permission-contents=write,permission-pull-requests=write' ] ||
+    { printf 'VIOLATION A6: App token grants are "%s", not exactly actions=read,contents=write,pull-requests=write\n' "${grants}"; return 1; }
+
+  # A7 — the checkout keeps no credential in the tree.
+  [ -n "${checkout_idx}" ] || { printf 'VIOLATION A7: no checkout step\n'; return 1; }
+  [ "$(q "$f" ".jobs.regenerate.steps[${checkout_idx}].with.persist-credentials")" = 'false' ] ||
+    { printf 'VIOLATION A7: checkout does not set persist-credentials: false\n'; return 1; }
+
+  # A8 — one open pull request at a time: a FIXED branch, a draft, signed, only the data file.
+  [ -n "${pr_idx}" ] || { printf 'VIOLATION A8: no create-pull-request step\n'; return 1; }
+  local branch
+  branch="$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.branch")"
+  [ -n "${branch}" ] || { printf 'VIOLATION A8: the pull-request step names no branch\n'; return 1; }
+  case "${branch}" in
+    *'${{'*) printf 'VIOLATION A8: the pull-request branch is interpolated ("%s"), so each run would open a new pull request\n' "${branch}"; return 1 ;;
+  esac
+  [ "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.draft")" = 'true' ] ||
+    { printf 'VIOLATION A8: the pull request is not opened as a draft\n'; return 1; }
+  [ "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.sign-commits")" = 'true' ] ||
+    { printf 'VIOLATION A8: the pull-request commit is not API-signed\n'; return 1; }
+  [ "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.add-paths")" = "${data_file}" ] ||
+    { printf 'VIOLATION A8: add-paths is not exactly %s\n' "${data_file}"; return 1; }
+  case "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.token")" in
+    *'steps.app-token.outputs.token'*) ;;
+    *) printf 'VIOLATION A8: the pull request is not opened with the App token\n'; return 1 ;;
+  esac
+
+  # A9 — a failed resolution is a red run, never a pull request that dropped a consumer:
+  # nothing swallows a failure, and the guard re-reads the moved set before the push.
+  local i
+  i=0
+  while [ "${i}" -lt "${steps}" ]; do
+    [ "$(q "$f" ".jobs.regenerate.steps[${i}].continue-on-error")" = '' ] ||
+      { printf 'VIOLATION A9: step %s carries continue-on-error\n' "${i}"; return 1; }
+    i=$((i + 1))
+  done
+  case "$(q "$f" ".jobs.regenerate.steps[${pr_idx}].if")" in
+    *'always()'* | *'failure()'* | *'!cancelled()'*)
+      printf 'VIOLATION A9: the pull-request step runs after a failure\n'; return 1 ;;
+  esac
+  [ -n "${guard_idx}" ] || { printf 'VIOLATION A9: no step runs %s on the moved set\n' "${guard}"; return 1; }
+  [ "${gen_idx}" -lt "${guard_idx}" ] && [ "${guard_idx}" -lt "${pr_idx}" ] ||
+    { printf 'VIOLATION A9: steps are not ordered generator (%s) < guard (%s) < pull request (%s)\n' "${gen_idx}" "${guard_idx}" "${pr_idx}"; return 1; }
+
+  printf 'ok\n'
+}
+
+# ── Control: the committed workflow passes ────────────────────────────────────────────────
+out="$(check "${workflow}")" || fail "the committed workflow violates its own contract: ${out}"
+[ "${out}" = 'ok' ] || fail "unexpected check output on the committed workflow: ${out}"
+
+# ── Ablations: each mutation must trip EXACTLY the assertion it targets ───────────────────
+# ablate <id> <description> <yq mutation>
+ablate() {
+  local id="$1" description="$2" mutation="$3" copy out
+  copy="${work_dir}/${id}-$$.yaml"
+  cp "${workflow}" "${copy}"
+  yq -i "${mutation}" "${copy}"
+  # The mutation must have changed the file, or the ablation proved nothing.
+  if cmp -s "${workflow}" "${copy}"; then
+    fail "ablation ${id} (${description}) did not change the workflow — vacuous"
+  fi
+  if out="$(check "${copy}")"; then
+    fail "ablation ${id} (${description}) was NOT caught (check printed: ${out})"
+  fi
+  case "${out}" in
+    "VIOLATION ${id}:"*) ;;
+    *) fail "ablation ${id} (${description}) tripped the wrong assertion: ${out}" ;;
+  esac
+}
+
+ablate A1 'schedule removed'                 'del(.on.schedule)'
+ablate A1 'workflow_dispatch removed'        'del(.on.workflow_dispatch)'
+ablate A2 'ambient contents: write'          '.permissions.contents = "write"'
+ablate A2 'job granted pull-requests: write' '.jobs.regenerate.permissions.pull-requests = "write"'
+ablate A3 'cancel-in-progress true'          '.concurrency.cancel-in-progress = true'
+ablate A3 'queue max'                        '.concurrency.queue = "max"'
+ablate A4 'environment removed'              'del(.jobs.regenerate.environment)'
+ablate A5 'kube context unpinned'            '(.jobs.regenerate.steps[] | select(.run // "" | contains("generate-publish-workflow-approved-revisions.sh")) | .env.PUBLISH_KUBE_CONTEXT) = "admin@local"'
+ablate A5 'generator on GITHUB_TOKEN'        '(.jobs.regenerate.steps[] | select(.run // "" | contains("generate-publish-workflow-approved-revisions.sh")) | .env.GH_TOKEN) = "${{ github.token }}"'
+ablate A6 'token widened to workflows'       '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with.permission-workflows) = "write"'
+ablate A6 'token actions grant dropped'      '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-github-app-token")) | .with) |= del(.permission-actions)'
+ablate A7 'credentials persisted'            '(.jobs.regenerate.steps[] | select(.uses // "" | contains("actions/checkout")) | .with.persist-credentials) = true'
+ablate A8 'branch interpolated'              '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.branch) = "regenerate-${{ github.run_id }}"'
+ablate A8 'not a draft'                      '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.draft) = false'
+ablate A8 'unsigned commit'                  '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with) |= del(.sign-commits)'
+ablate A8 'add-paths widened'                '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.add-paths) = "."'
+ablate A9 'generator continue-on-error'      '(.jobs.regenerate.steps[] | select(.run // "" | contains("generate-publish-workflow-approved-revisions.sh")) | .continue-on-error) = true'
+ablate A9 'pull request on always()'         '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .if) = "always()"'
+ablate A9 'guard step removed'               'del(.jobs.regenerate.steps[] | select(.run // "" | contains("guard-publish-workflow-approved-revisions.sh")))'
+ablate A9 'guard moved after the pull request' '.jobs.regenerate.steps = ([.jobs.regenerate.steps[] | select((.run // "" | contains("guard-publish-workflow-approved-revisions.sh")) | not)] + [.jobs.regenerate.steps[] | select(.run // "" | contains("guard-publish-workflow-approved-revisions.sh"))])'
+
+printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 20 ablations passed\n'

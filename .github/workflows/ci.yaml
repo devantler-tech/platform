@@ -125,6 +125,18 @@ jobs:
           bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           ./scripts/guard-publish-workflow-approved-revisions.sh
 
+      # The scheduled regeneration (#3552, third child of #3308) runs the generator and
+      # the guard above against prod and turns a moved set into ONE draft pull request.
+      # Its safety is the WORKFLOW's shape — a fixed branch, a draft, an App-signed
+      # commit, least-privilege token grants, and generator → guard → pull request with
+      # no continue-on-error — none of which any script it calls can enforce, so the
+      # test below pins each with an ablation. Unconditional for the same reason as
+      # the two steps above: the workflow lives outside the k8s paths.
+      - name: 🔐 Validate the approved-revisions regeneration workflow
+        run: |
+          shellcheck scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
+          bash scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
+
       # Dropping a framework from the Kubescape gate REMOVES findings, so the
       # compliance score RISES and every check stays green — a coverage
       # regression that looks like an improvement. That is what un-gated 59
@@ -339,6 +351,16 @@ jobs:
               # inside the k8s-gated validation matrix alongside the manifests it judges.
               - 'scripts/guard-publish-workflow-approved-revisions.sh'
               - 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh'
+              # The generator that writes the set the guard above reads, and its test — both
+              # halves, so editing either alone still runs the fail-closed proof (an unresolved
+              # consumer writes nothing) that step 🔐 Validate the approved-revisions generator pins.
+              - 'scripts/generate-publish-workflow-approved-revisions.sh'
+              - 'scripts/tests/test-publish-workflow-approved-revisions.sh'
+              # The scheduled regeneration workflow and its contract test — both halves, so a
+              # PR that edits only the workflow (a widened token grant, an interpolated branch,
+              # a continue-on-error) still runs the ablated test that refuses each of those.
+              - '.github/workflows/regenerate-publish-workflow-approved-revisions.yaml'
+              - 'scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh'
               # Both halves, for the same reason as the guard above.
               - 'scripts/validate-kubescape-frameworks/main.go'
               - 'scripts/validate-kubescape-frameworks/main_test.go'
