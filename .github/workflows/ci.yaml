@@ -1900,6 +1900,18 @@ jobs:
           ref: main
           persist-credentials: false
 
+      - name: ⚙️ Setup Go for version compatibility validation
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: ✅ Validate main Kubernetes against the pinned Talos release
+        # The heal deploys the current main checkout, which may have advanced
+        # since validate-talos inspected the speculative merge-group revision.
+        run: |
+          go test ./scripts/validate-talos-kubernetes-compatibility
+          go run ./scripts/validate-talos-kubernetes-compatibility ksail.prod.yaml
+
       - name: ⚙️ Setup Trivy for nested RGD templates
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:

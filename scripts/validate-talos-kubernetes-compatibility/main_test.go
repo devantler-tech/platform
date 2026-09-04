@@ -114,7 +114,9 @@ type workflowJob struct {
 	If    string   `yaml:"if"`
 	Needs []string `yaml:"needs"`
 	Steps []struct {
-		Run string `yaml:"run"`
+		Uses string            `yaml:"uses"`
+		With map[string]string `yaml:"with"`
+		Run  string            `yaml:"run"`
 	} `yaml:"steps"`
 }
 
@@ -173,5 +175,33 @@ func TestManualDeployRequiresCompatibilityValidation(t *testing.T) {
 	}
 	if !jobNeeds(jobs["deploy-prod"], "validate-talos-kubernetes-compatibility") {
 		t.Error("manual production deploy does not require compatibility validation")
+	}
+}
+
+func TestHealDeployValidatesCheckedOutMain(t *testing.T) {
+	steps := repositoryWorkflow(t, "ci.yaml")["heal-prod-on-failure"].Steps
+	checkoutMain, validator, deploy := -1, -1, -1
+	for i, step := range steps {
+		if strings.HasPrefix(step.Uses, "actions/checkout@") && step.With["ref"] == "main" {
+			checkoutMain = i
+		}
+		if strings.Contains(step.Run, "go run ./scripts/validate-talos-kubernetes-compatibility ksail.prod.yaml") {
+			validator = i
+		}
+		if step.Uses == "./.github/actions/deploy-prod" {
+			deploy = i
+		}
+	}
+	if checkoutMain < 0 {
+		t.Fatal("heal route does not check out current main")
+	}
+	if validator < 0 {
+		t.Fatal("heal route does not validate the checked-out main Kubernetes/Talos pairing")
+	}
+	if deploy < 0 {
+		t.Fatal("heal route does not deploy production")
+	}
+	if !(checkoutMain < validator && validator < deploy) {
+		t.Errorf("heal route must validate after checkout and before deploy: checkout=%d validator=%d deploy=%d", checkoutMain, validator, deploy)
 	}
 }

@@ -139,9 +139,9 @@ jobs:
 
 
   # ci.yaml's validate-talos job runs the Kubernetes/Talos compatibility predicate on
-  # `pull_request` only — not even on `merge_group` — so a pairing committed straight to
-  # main reaches the manually dispatched CD route unchecked, which is the one route used
-  # when no merge-group event fires. `ksail workload validate` does not cover this: it
+  # `pull_request` and `merge_group`, but neither event fires for a direct push to main.
+  # Such a push could otherwise reach the manually dispatched CD route unchecked.
+  # `ksail workload validate` does not cover this: it
   # accepts the pins offline, the same way `talosctl validate --strict` does. Same gate on
   # the push itself, for this workflow's header reason.
   #
