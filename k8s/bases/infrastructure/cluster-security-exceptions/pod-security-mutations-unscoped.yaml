@@ -104,7 +104,7 @@
 # untouched — which is why the opt-in alone moves none of those 27. The rules that
 # DO reach the stored spec are TWO families, both gated on a SECOND label,
 # `baseline-context-controllers`: add-baseline-context-optin-controllers*
-# (Deployment/StatefulSet/DaemonSet on CREATE and UPDATE) and
+# (Deployment/StatefulSet/DaemonSet on CREATE and UPDATE, Job on CREATE) and
 # add-baseline-context-optin-cronjobs* (CronJob on CREATE and UPDATE). Both are
 # load-bearing for this rollout — seven of the residual workloads are CronJobs, so
 # planning only the controller family would silently leave those out along with
