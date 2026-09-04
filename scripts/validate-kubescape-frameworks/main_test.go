@@ -2367,3 +2367,110 @@ func TestConditionalUnrelatedWorkloadAndScanTextIsAccepted(t *testing.T) {
 		}
 	}
 }
+
+// `fields[0]` is not the command word when a line carries a leading assignment, and it
+// is not the only command position when the line carries a separator. Both put an
+// expanded command word somewhere the previous check did not look.
+func TestRejectsExpandedCommandWordAwayFromFieldZero(t *testing.T) {
+	assemble := "          K=ks; K+=ail\n" +
+		"          W=work; W+=load\n" +
+		"          S=sc; S+=an\n" +
+		"          F=--frame; F+=work\n"
+	cases := map[string]string{
+		"behind a leading assignment": assemble + "          OUT=x \"$K\" \"$W\" \"$S\" \"$F\" nsa\n",
+		"after a separator":           assemble + "          true; \"$K\" \"$W\" \"$S\" \"$F\" nsa\n",
+		"after a pipe":                assemble + "          echo x | \"$K\" \"$W\" \"$S\" \"$F\" nsa\n",
+		"behind a redirection":        assemble + "          >/dev/null \"$K\" \"$W\" \"$S\" \"$F\" nsa\n",
+	}
+	for name, body := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" + body
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — the command word expands, so this cannot be shown scan-free; got %q", name, set)
+			continue
+		}
+		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+			t.Errorf("%s: the refusal must name the conditional step; got: %v", name, err)
+		}
+	}
+}
+
+// The three-word clause must hold WITHIN one command. Tested across the whole scalar it
+// combined `ksail` from one line with `workload` and `scan` from another and refused a
+// step that invokes no Kubescape scan at all.
+func TestConditionalThreeWordsSplitAcrossCommandsIsAccepted(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+		"          ksail version\n" +
+		"          trivy scan --input workload.yaml\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("expected ACCEPT — no single command names all three; got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("normalised set = %q, want %q", strings.Join(got, ","), "mitre,nsa")
+	}
+}
+
+// GNU `env -S` splits and executes its string argument, so it is a shell-string form
+// exactly like `bash -c` — and it was not in the interpreter list.
+func TestRejectsEnvSplitStringScanInAConditionalStep(t *testing.T) {
+	cases := map[string]string{
+		"env -S":             "env -S 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"env --split-string": "env --split-string='ksail workload scan --framework nsa'",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — env splits and executes the string; got %q", name, set)
+		}
+	}
+}
+
+// The `env -S` rule must be proven where it actually decides: on the UNCONDITIONAL
+// path. In a conditional step the inversion already refuses this text, so a conditional
+// case would pass with or without the rule and prove nothing about it.
+func TestUnconditionalEnvSplitStringScanIsUndecidable(t *testing.T) {
+	cases := map[string]string{
+		"env -S":                    "env -S 'ksail workload scan --framework nsa,mitre'",
+		"env --split-string":        "env --split-string 'ksail workload scan --framework nsa,mitre'",
+		"env --split-string=<code>": "env --split-string='ksail workload scan --framework nsa,mitre'",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n        - run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — env splits and executes the string, which no per-token rule can read; got %q", name, set)
+		}
+	}
+}
+
+// The control for it: `env` NOT executing a string is an ordinary prefix, and the
+// The control: `env` NOT executing a string is an ordinary command, so it must not have
+// become undecidable. Without this, "treat env -S as string-executing" could pass by
+// refusing every `env`. A prefixed scan through env stays refused for its own separate
+// reason — that is the first bypass this PR closed — so the control uses a step with no
+// scan in it at all, which isolates the new rule.
+func TestUnconditionalPlainEnvIsNotStringExecuting(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"        - run: env FOO=1 echo hello\n" +
+		"        - run: " + goodScan + "\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("expected ACCEPT — a plain env prefix executes no string; got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("normalised set = %q, want %q", strings.Join(got, ","), "mitre,nsa")
+	}
+}

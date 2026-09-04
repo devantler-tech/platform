@@ -478,13 +478,24 @@ func scanCandidate(scalar string) bool {
 		if len(fields) == 0 {
 			continue
 		}
-		// COMMAND POSITION, the one thing the text key cannot see. A conditional line
-		// whose command word is an expansion resolves only when the shell runs, so it
-		// cannot be shown scan-free — `K=ks; K+=ail` … then `"$K" "$W" "$S" "$F" nsa`
-		// spells no key substring anywhere in the scalar while bash executes
-		// `ksail workload scan --framework nsa`. Only the COMMAND word is judged, so an
-		// ordinary `echo "$FOO"` or `cp "$SRC" "$DST"` is untouched.
-		if carriesExpansion(fields[0]) {
+		// COMMAND POSITION, the one thing the text key cannot see. A line whose command
+		// word is an expansion resolves only when the shell runs, so it cannot be shown
+		// scan-free — `K=ks; K+=ail` … then `"$K" "$W" "$S" "$F" nsa` spells no key
+		// substring anywhere while bash executes `ksail workload scan --framework nsa`.
+		//
+		// `fields[0]` is NOT the command word in general: a leading assignment or
+		// redirection precedes it (`OUT=x "$K" …`), and a separator opens a further
+		// command position (`true; "$K" …`). Both were measured slipping past a
+		// fields[0]-only test, so every command position on the line is judged.
+		if expandedCommandWord(line) {
+			return true
+		}
+		// The three words, WITHIN one command rather than anywhere in the scalar.
+		// Scalar-wide they combined `ksail` from a `ksail version` line with `workload`
+		// and `scan` from a `trivy scan --input workload.yaml` line and refused a step
+		// that invokes no Kubescape scan.
+		if strings.Contains(line, "ksail") && strings.Contains(line, "workload") &&
+			strings.Contains(line, "scan") {
 			return true
 		}
 		words := map[string]bool{}
@@ -542,27 +553,142 @@ func scanCandidate(scalar string) bool {
 	return mentionsScanText(scalar)
 }
 
-// mentionsScanText reports whether raw text names the Kubescape scan at all.
+// expandedCommandWord reports whether any COMMAND POSITION on one logical line holds a
+// token carrying a shell expansion. Such a word resolves only when the shell runs, so a
+// conditional line containing one cannot be shown scan-free.
+//
+// Command positions are the start of the line and everything after an unquoted
+// separator; a leading assignment (`OUT=x`) or redirection (`>/dev/null`) precedes the
+// command word rather than being it. Only the command word is judged, so an ordinary
+// `echo "$FOO"` or `cp "$SRC" "$DST"` — literal command, expanded arguments — is
+// untouched.
+func expandedCommandWord(line string) bool {
+	atCommand := true
+	skipNext := false
+	for _, tok := range shellFieldsWithSeparators(line) {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if isShellSeparator(tok) {
+			atCommand = true
+			continue
+		}
+		if !atCommand {
+			continue
+		}
+		if isAssignmentWord(tok) {
+			continue
+		}
+		if op, alone := redirectionWord(tok); op {
+			skipNext = alone
+			continue
+		}
+		if carriesExpansion(tok) {
+			return true
+		}
+		atCommand = false
+	}
+	return false
+}
+
+func isShellSeparator(tok string) bool {
+	for i := 0; i < len(tok); i++ {
+		if tok[i] != ';' && tok[i] != '&' && tok[i] != '|' {
+			return false
+		}
+	}
+	return len(tok) > 0
+}
+
+// isAssignmentWord reports a `NAME=` or `NAME+=` prefix, which precedes the command word.
+func isAssignmentWord(tok string) bool {
+	for i := 0; i < len(tok); i++ {
+		c := tok[i]
+		switch {
+		case c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'):
+		case i > 0 && c >= '0' && c <= '9':
+		case i > 0 && c == '+' && i+1 < len(tok) && tok[i+1] == '=':
+			return true
+		case i > 0 && c == '=':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// redirectionWord reports whether the token is a redirection, and whether the operator
+// stands ALONE so its target is the next token (`> file`) rather than attached (`>file`).
+func redirectionWord(tok string) (isRedirection, operatorAlone bool) {
+	i := 0
+	for i < len(tok) && tok[i] >= '0' && tok[i] <= '9' {
+		i++
+	}
+	if i >= len(tok) || (tok[i] != '<' && tok[i] != '>') {
+		return false, false
+	}
+	for i < len(tok) && (tok[i] == '<' || tok[i] == '>' || tok[i] == '&' || tok[i] == '-') {
+		i++
+	}
+	return true, i == len(tok)
+}
+
+// shellFieldsWithSeparators is the separator-splitting tokeniser, but it EMITS each
+// unquoted separator as its own token so command positions can be located. Kept
+// separate from shellFieldsAcrossSeparators so the rules consuming that one see exactly
+// the fields they saw before.
+func shellFieldsWithSeparators(text string) []string {
+	var out []string
+	var cur strings.Builder
+	inSingle, inDouble := false, false
+	flush := func() {
+		if cur.Len() > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
+		}
+	}
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		switch {
+		case c == '\\' && !inSingle:
+			cur.WriteByte(c)
+			if i+1 < len(text) {
+				i++
+				cur.WriteByte(text[i])
+			}
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+			cur.WriteByte(c)
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+			cur.WriteByte(c)
+		case (c == ';' || c == '&' || c == '|') && !inSingle && !inDouble:
+			flush()
+			out = append(out, string(c))
+		case (c == ' ' || c == '\t' || c == '\n' || c == '\r') && !inSingle && !inDouble:
+			flush()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return out
+}
+
+// mentionsScanText is the SCALAR-WIDE half of the inversion's key: `--framework`, which
+// every spelling of the invocation carries and which no reasonable unrelated command
+// does. The three-word test lives per LINE in scanCandidate instead — scalar-wide it
+// combined `ksail` from a `ksail version` line with `workload` and `scan` from a
+// `trivy scan --input workload.yaml` line and refused a step invoking no scan.
 //
 // Deliberately NOT keyed on a bare `ksail`: the real ci.yaml runs `shellcheck
 // .github/scripts/setup-ksail.sh` inside a CONDITIONAL step, and refusing that would
 // reject the very workflow this guard exists to validate — measured, it failed all
-// three real-workflow tests. `--framework`, or the pair `workload`+`scan`, names the
-// invocation rather than the tool, so a filename or a comment mentioning ksail is
-// untouched while every spelling of the scan itself is caught.
+// three real-workflow tests.
 func mentionsScanText(text string) bool {
-	if strings.Contains(text, "--framework") {
-		return true
-	}
-	// The second clause requires ALL THREE words, not just the pair. `workload` and
-	// `scan` tested independently across the whole scalar refused
-	// `trivy scan --input workload.yaml` — an unrelated scanner reading a file that
-	// happens to be named workload, a false positive that blocks CI on a legitimate
-	// step. Every spelling this guard must catch names `--framework` anyway, so this
-	// clause is defence in depth and can afford to be strict.
-	return strings.Contains(text, "ksail") &&
-		strings.Contains(text, "workload") &&
-		strings.Contains(text, "scan")
+	return strings.Contains(text, "--framework")
 }
 
 // evidenceText renders the words of one line that could take part in an invocation —
@@ -1281,6 +1407,27 @@ func undecidableShellString(fields []string) string {
 					}
 					if opt == "-o" || (base == "bash" && (opt == "-O" || opt == "--init-file" || opt == "--rcfile")) {
 						skipOperand = true
+					}
+				}
+			case "env":
+				// GNU `env -S <string>` splits the string into arguments and executes
+				// it, so it is a shell-string form exactly like `bash -c` even though
+				// env is not a shell. `--split-string=<string>` attaches the code to
+				// the option word itself.
+				for j := i + 1; j < len(fields); j++ {
+					opt := bareToken(fields[j])
+					if opt == "-S" || opt == "--split-string" {
+						executes = true
+						operand = j + 1
+						break
+					}
+					if strings.HasPrefix(opt, "--split-string=") || (strings.HasPrefix(opt, "-S") && len(opt) > 2) {
+						executes = true
+						operand = j
+						break
+					}
+					if !strings.HasPrefix(opt, "-") || opt == "-" || opt == "--" {
+						break
 					}
 				}
 			}
