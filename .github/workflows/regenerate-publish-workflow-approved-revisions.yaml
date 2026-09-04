@@ -1,0 +1,252 @@
+name: Regenerate Approved Publish Revisions
+
+# Keep scripts/publish-workflow-approved-revisions.tsv current without a hand-run
+# (#3552, third child of #3308).
+#
+# WHY A SCHEDULE. Every consumer's `uses:` pin on a shared devantler-tech/actions
+# publish workflow moves with each actions bump — several times a month, by
+# dependency automation. The approved set the per-consumer cosign matchers are
+# narrowed from (#3550, #3551) is stale the moment such a bump merges: the next
+# artifact is signed by a revision the platform no longer accepts and that
+# consumer's OCIRepository stops reconciling while every check in CI stays
+# green. Regenerating by hand turns every dependency bump into a two-repository
+# ordered rollout, which is the DevEx tax the hardening rule forbids. So the
+# generator runs here daily and on demand, and a moved set becomes a draft pull
+# request on the ordinary review path.
+#
+# FAIL RED, NEVER A PR THAT DROPPED A CONSUMER. The generator refuses to write
+# when any consumer cannot be resolved on either half (cluster or pin), so a
+# failed resolution is a red run with nothing to commit. The approved-revisions
+# guard then re-reads the moved set against the live matchers BEFORE the pull
+# request step, so a narrowed matcher the new set no longer names is also a red
+# run rather than a pull request whose own CI fails later. Neither step carries
+# `continue-on-error`, and the pull-request step is not `if: always()` — the
+# contract test (scripts/tests/test-regenerate-publish-workflow-approved-
+# revisions.sh) pins both.
+#
+# ONE OPEN PULL REQUEST AT A TIME. The pull request is opened from a FIXED
+# branch, so a later run with a further-moved set updates the same pull request
+# instead of opening a second one; `queue: single` keeps two runs from racing
+# each other for it.
+#
+# WHAT THIS DOES NOT DO. It regenerates the DATA file only. Rewriting the four
+# per-consumer matchers to the generated pair is the narrowing switch
+# (APPROVED_REVISIONS_ENFORCE), which #3308's remaining child flips only after
+# this workflow has run green at least once — feature-flag-first: generated
+# file first, switch second.
+#
+# WHY `environment: prod`. The applied half of every row is a cluster
+# observation (the OCIRepository's `status.artifact.revision`), and KUBE_CONFIG
+# is a `prod` ENVIRONMENT secret — every other consumer (ci.yaml's deploy jobs,
+# cd.yaml, dr-rebuild, validate-image-verifier-liveness) declares this for the
+# same reason. Without it the secret resolves to the empty string and the
+# generator refuses every consumer on the cluster half.
+#
+# WHY AN APP TOKEN. Two of the consumers are private repositories, and the pin
+# half reads each consumer's cd.yaml and its `📦 CD` runs on its own repository;
+# GITHUB_TOKEN reaches neither. The token is minted for exactly what this job
+# does — read the consumers' contents and runs, push the branch, open the pull
+# request — never the installation's blanket grant. A pull request opened with
+# GITHUB_TOKEN would also never trigger this repository's required CI.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "20 6 * * *" # Daily at 06:20 UTC, after the 06:00 agent-skills update
+
+permissions: {}
+
+# queue: single is the deliberate choice, exactly as in update-skills.yaml: this
+# job converges the committed set to what the cluster and the consumers' default
+# branches hold TODAY, so the newest run always produces the correct end state
+# and a dropped pending run loses nothing. cancel-in-progress stays false so a
+# run that is mid-way through opening the pull request is never cut off.
+concurrency:
+  # The group is deliberately REF-INDEPENDENT. The branch this job pushes is fixed,
+  # so a manual dispatch from another ref and the scheduled run on `main` contend
+  # for the same pull request; keying the group on `github.ref` would put them in
+  # different groups and let them race for it.
+  group: "${{ github.workflow }}"
+  cancel-in-progress: false
+  queue: single
+
+jobs:
+  regenerate:
+    name: 🔐 Regenerate approved revisions
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      contents: read # checkout repository; the App token carries every write
+    steps:
+      - name: 🛡️ Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      # TWO TOKENS, NOT ONE. A single installation token carries ONE permission set
+      # across EVERY repository it is scoped to, so putting the consumers and this
+      # repository in one token would grant `contents: write` and
+      # `pull-requests: write` over `.github`, `ascoachingogvaner`, `aws` and
+      # `wedding-app` — two of them private — when the generator only ever READS
+      # them. Splitting keeps each half at what it actually needs, so a compromised
+      # generator cannot push a branch or open a pull request in a consumer.
+      - name: 🔑 Generate the consumer-read token
+        id: consumer-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          # Without `owner`/`repositories` the token is limited to the repository the
+          # job runs in, so every consumer read would 404 and the generator would
+          # refuse on the pin half — a permanently red daily run. The list is exactly
+          # the consumers named in scripts/publish-workflow-approved-revisions.tsv;
+          # the contract test reads that file and fails if one is added there and not
+          # here. READ ONLY: contents for each consumer's cd.yaml, actions for the
+          # `📦 CD` run that signed the applied tag. Nothing else.
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            .github
+            ascoachingogvaner
+            aws
+            wedding-app
+          permission-contents: read
+          permission-actions: read
+
+      - name: 🔑 Generate the platform write token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          # THIS repository only: the checkout, the branch push and the pull request
+          # all happen here. Scoping the write token to one repository is what keeps
+          # the consumer half above read-only.
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            platform
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          token: ${{ steps.app-token.outputs.token }}
+          # PINNED to the default branch. A manual dispatch checks out the ref it was
+          # dispatched from, and the pull request's `base` only chooses the target —
+          # it does not remove that ref's commits from the fixed regeneration branch,
+          # so the automation's pull request would carry them alongside the generated
+          # data change. Pinning here keeps that pull request one concern whatever ref
+          # the dispatch came from.
+          ref: main
+
+      - name: 🔑 Restore kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          umask 077
+          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🔗 Select stable prod API endpoint
+        # KUBE_CONFIG can outlive the control-plane node whose public IP was the
+        # endpoint when the secret was minted, and `cluster update` deliberately
+        # rolls those nodes. Reading OCIRepositories through that stale address
+        # would fail against an otherwise healthy cluster, so this daily job would
+        # go red and open no pull request. Same reason and same ordering as the
+        # deploy-prod composite: resolve the KSail-owned floating IP and switch
+        # admin@prod BEFORE any Kubernetes API call.
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh
+
+      - name: 🔐 Regenerate the approved-revision set
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.consumer-token.outputs.token }}
+          # Pinned for the same reason the deploy composite pins it: the restored
+          # kubeconfig's current-context is not guaranteed to be prod, and a set
+          # derived from another cluster's applied artifacts would narrow the
+          # matchers to revisions prod never applied.
+          PUBLISH_KUBE_CONTEXT: admin@prod
+        run: ./scripts/generate-publish-workflow-approved-revisions.sh
+
+      # The generator writes ONE file. Anything else in the tree is not this
+      # workflow's to commit — it would ride into the pull request under a title
+      # that does not describe it — so refuse rather than narrow the commit.
+      - name: 🔍 Detect a moved set
+        id: moved
+        shell: bash
+        run: |
+          set -euo pipefail
+          other="$(git status --porcelain | grep -v ' scripts/publish-workflow-approved-revisions.tsv$' || true)"
+          if [ -n "${other}" ]; then
+            printf 'refusing: the generator left changes outside its data file:\n%s\n' "${other}" >&2
+            exit 1
+          fi
+          if git diff --quiet -- scripts/publish-workflow-approved-revisions.tsv; then
+            echo "moved=false" >> "${GITHUB_OUTPUT}"
+            echo 'approved set unchanged; nothing to open'
+          else
+            echo "moved=true" >> "${GITHUB_OUTPUT}"
+            git --no-pager diff -- scripts/publish-workflow-approved-revisions.tsv
+          fi
+
+      # Re-read the MOVED set against the live matchers before anything is
+      # pushed. With the switch off this passes while every per-consumer matcher
+      # still carries the pattern form; once a matcher is narrowed, a set that no
+      # longer names its pair is refused HERE — a red run that names the matcher,
+      # never a pull request whose own CI discovers it later.
+      - name: 🔐 Guard the moved set against the live matchers
+        if: steps.moved.outputs.moved == 'true'
+        shell: bash
+        run: ./scripts/guard-publish-workflow-approved-revisions.sh
+
+      - name: 📦 Open or update the regeneration pull request
+      # DELIBERATELY NOT gated on `moved`. When a consumer's rollout is reverted the
+      # set returns to what is committed, `moved` is false, and a gated step would
+      # skip — leaving the pull request opened by the earlier run standing with the
+      # superseded set, still mergeable, after this workflow has established it is no
+      # longer current. Running unconditionally lets the action reconcile that: with
+      # nothing staged there is nothing to propose, and `delete-branch` retires the
+      # fixed branch. This is how devantler-tech/actions' own sync-cluster-policies
+      # workflow drives the same action at this same pinned revision — ungated.
+      #
+      # A failure still stops it: there is no `if: always()`, so a red generator or a
+      # red guard means this step never runs, which the contract test pins.
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          # Exactly the generator's output. `add-paths` is the second fence behind
+          # the refusal above: even a change that slipped past it cannot be committed.
+          add-paths: scripts/publish-workflow-approved-revisions.tsv
+          commit-message: "chore(security): regenerate the approved publish-workflow revisions"
+          title: "chore(security): regenerate the approved publish-workflow revisions"
+          body: |
+            > 🤖 Generated by the Agentic Engineer
+
+            The per-consumer approved-revision set moved: a consumer's default-branch pin
+            on a shared publish workflow, or the artifact revision Flux has applied,
+            differs from what `scripts/publish-workflow-approved-revisions.tsv` recorded.
+            Regenerated by `scripts/generate-publish-workflow-approved-revisions.sh`
+            against the prod cluster; every consumer resolved on both halves, or this
+            run would have failed instead of opening this.
+
+            Part of #3308 (the regeneration path of #3552).
+          # PINNED base. A manual dispatch checks out the ref it was dispatched
+          # from, and without this the pull request would target THAT ref rather
+          # than the default branch — so a regeneration run from a topic branch
+          # would open a pull request against it instead of `main`.
+          base: main
+          # FIXED branch: a further move updates this pull request instead of opening another.
+          branch: regenerate-publish-workflow-approved-revisions
+          draft: true
+          labels: automation
+          delete-branch: true
+          # Commit through the GitHub API so the App's commit is signed
+          # (`verified: true`), as every other automation PR here is.
+          sign-commits: true
+          token: ${{ steps.app-token.outputs.token }}
+          branch-token: ${{ steps.app-token.outputs.token }}
