@@ -1620,7 +1620,42 @@ const (
 // The previous approved aggregate digest was:
 //
 //	7a033c38847bf0ea7b052e783cbf1e68f317d8524c701243acb2d8b3c9972116
-const expectedRenderedSurfaceSHA = "686bf5ade0d7869f3a20d50a05a7ac083744f0e88ede4fc02298ab9f67dfdf19"
+//
+// Re-approved for #3396 (#3566): the tenant identity loses its WRITE verbs on
+// standard networking.k8s.io/networkpolicies. Cilium unions a standard
+// NetworkPolicy's allow rules with CiliumNetworkPolicy rules, and
+// restrict-tenant-network-policies constrains only the latter, so the write
+// grant was a bypass of the whole tenant boundary. Read verbs stay.
+//
+// Measured against main 88c5122e before approving THIS value, rendering all
+// five roots on BOTH sides with one toolchain (kubectl v1.36.1 / kustomize
+// v5.8.1 locally — the pinned renderer refuses to fingerprint on that version,
+// which is why the digest below is the value the required job reported at the
+// PR head, run 33823039777, and only the membership and content comparison is
+// local): the rendered surface stays at 552 -> 552 documents. Membership was
+// proven by set difference in BOTH directions over
+// apiVersion|kind|namespace|name: zero removed, zero added, zero renamed.
+// Grant-bearing objects stay at 81 -> 81 Role / ClusterRole / RoleBinding /
+// ClusterRoleBinding / ServiceAccount documents.
+//
+// Exactly ONE identity's content moved, and it moved NARROWER: ClusterRole
+// tenant-base-edit's single networking.k8s.io rule
+//
+//	resources: [ingresses, ingresses/status, networkpolicies]
+//	verbs: [create, delete, deletecollection, patch, update, get, list, watch]
+//
+// became two rules — the same eight verbs on [ingresses, ingresses/status]
+// only, and [get, list, watch] on [networkpolicies]. No verb, resource or
+// group was added anywhere; every other identity across the five roots is
+// byte-identical on both sides. The same run reported no "missing rendered
+// authorization resource" and no "duplicate rendered authorization resource".
+// scripts/tests/test-tenant-edit-networkpolicy-write.sh renders both
+// providers' infrastructure layers and refuses the write grant if it returns.
+//
+// The previous approved aggregate digest was:
+//
+//	686bf5ade0d7869f3a20d50a05a7ac083744f0e88ede4fc02298ab9f67dfdf19
+const expectedRenderedSurfaceSHA = "a16fbd577f8155e64aacc02cb624f26d9628d75658ce804215d9d69a3884bf92"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
