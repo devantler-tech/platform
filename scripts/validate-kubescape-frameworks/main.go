@@ -511,13 +511,32 @@ func evidenceText(fields []string) (string, bool) {
 // lines that together spell the scan. Outside quotes the pair is kept, because
 // scanCandidate joins unquoted continuations itself on the PHYSICAL line — after deciding
 // whether that line is a comment, which a backslash does not continue.
+//
+// A shell COMMENT — a `#` that begins a word outside quotes — runs to its physical
+// newline and opens no quote, whatever it contains. It is copied through untouched
+// and its newline is kept, so an unmatched quote inside a comment cannot swallow the
+// command on the next line into the comment (the fail-open a quote-state-only fold
+// has). A `#` inside a quoted string, or in the middle of a word, is not a comment.
 func collapseQuotedNewlines(text string) string {
 	var out strings.Builder
 	out.Grow(len(text))
 	inSingle, inDouble := false, false
+	// True when the next byte would begin a shell word: at the start of the text and
+	// after unescaped whitespace. Only a `#` in that position opens a comment.
+	wordStart := true
 	for i := 0; i < len(text); i++ {
 		c := text[i]
+		atWordStart := wordStart
+		wordStart = false
 		switch {
+		case c == '#' && atWordStart && !inSingle && !inDouble:
+			for i < len(text) && text[i] != '\n' {
+				out.WriteByte(text[i])
+				i++
+			}
+			// Leave the newline to the next iteration: outside quotes it is kept.
+			i--
+			wordStart = true
 		case c == '\\' && inDouble && i+1 < len(text) && text[i+1] == '\n':
 			i++
 		case c == '\\' && !inSingle:
@@ -536,6 +555,9 @@ func collapseQuotedNewlines(text string) string {
 			out.WriteByte(' ')
 		default:
 			out.WriteByte(c)
+			if c == ' ' || c == '\t' || c == '\n' {
+				wordStart = true
+			}
 		}
 	}
 	return out.String()

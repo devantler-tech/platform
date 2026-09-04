@@ -998,6 +998,36 @@ func TestRejectsScanAfterABackslashEndedCommentInAConditionalStep(t *testing.T) 
 	}
 }
 
+// A quote inside a shell COMMENT is not a quote: the comment ends at its physical
+// newline and bash never opens a string there. If the fold carried that quote state
+// into the next line, the newline after the comment would become a space, the scan
+// on the following line would be swallowed into the comment, and the conditional
+// step would be skipped as prose — executing an unvalidated reduced scan.
+func TestRejectsScanAfterACommentWithAnUnmatchedQuoteInAConditionalStep(t *testing.T) {
+	cases := map[string]string{
+		"unmatched double quote":         "          # unmatched quote: \"\n",
+		"unmatched single quote":         "          # it's unmatched\n",
+		"trailing comment after a word":  "          true # unmatched quote: \"\n",
+		"quote in a comment then a word": "          # \" a\n          echo ok\n",
+	}
+	for name, comment := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+			comment +
+			"          ksail workload scan --framework nsa\n"
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — the scan after a comment carrying a quote still executes; got %q", name, set)
+			continue
+		}
+		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+			t.Errorf("%s: the refusal must name the conditional step; got: %v", name, err)
+		}
+	}
+}
+
 // The command words assigned on one line and expanded on the next: no single line
 // spells the scan, so only scalar-wide evidence over the executable lines can see it.
 func TestRejectsScanAssembledAcrossLinesInAConditionalStep(t *testing.T) {
@@ -1060,6 +1090,14 @@ func TestCollapseQuotedNewlinesFoldsABackslashNewlineInsideDoubleQuotes(t *testi
 		"single-quoted":     {"echo 'ksail workload \\\nscan'", "echo 'ksail workload \\ scan'"},
 		"unquoted":          {"ksail workload \\\nscan", "ksail workload \\\nscan"},
 		"escaped backslash": {"echo \"a\\\\\nb\"", "echo \"a\\\\ b\""},
+		// A comment ends at its newline whatever quotes it carries, so the next line
+		// keeps its own structure; a `#` inside a quoted string is not a comment.
+		"quote inside a comment":        {"# say \"\nksail", "# say \"\nksail"},
+		"trailing comment with a quote": {"true # it's\nksail", "true # it's\nksail"},
+		"hash inside a quoted string":   {"echo \"a # b\nc\"", "echo \"a # b c\""},
+		// `#` in the middle of a word is not a comment, so the quote after it is live
+		// and the newline inside it folds.
+		"hash not starting a word": {"echo a#\"\nb\"", "echo a#\" b\""},
 	}
 	for name, c := range cases {
 		if got := collapseQuotedNewlines(c[0]); got != c[1] {
