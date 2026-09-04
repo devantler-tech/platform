@@ -478,6 +478,15 @@ func scanCandidate(scalar string) bool {
 		if len(fields) == 0 {
 			continue
 		}
+		// COMMAND POSITION, the one thing the text key cannot see. A conditional line
+		// whose command word is an expansion resolves only when the shell runs, so it
+		// cannot be shown scan-free — `K=ks; K+=ail` … then `"$K" "$W" "$S" "$F" nsa`
+		// spells no key substring anywhere in the scalar while bash executes
+		// `ksail workload scan --framework nsa`. Only the COMMAND word is judged, so an
+		// ordinary `echo "$FOO"` or `cp "$SRC" "$DST"` is untouched.
+		if carriesExpansion(fields[0]) {
+			return true
+		}
 		words := map[string]bool{}
 		for _, f := range fields {
 			if word, fragment := resolveToken(f); !fragment {
@@ -545,7 +554,15 @@ func mentionsScanText(text string) bool {
 	if strings.Contains(text, "--framework") {
 		return true
 	}
-	return strings.Contains(text, "workload") && strings.Contains(text, "scan")
+	// The second clause requires ALL THREE words, not just the pair. `workload` and
+	// `scan` tested independently across the whole scalar refused
+	// `trivy scan --input workload.yaml` — an unrelated scanner reading a file that
+	// happens to be named workload, a false positive that blocks CI on a legitimate
+	// step. Every spelling this guard must catch names `--framework` anyway, so this
+	// clause is defence in depth and can afford to be strict.
+	return strings.Contains(text, "ksail") &&
+		strings.Contains(text, "workload") &&
+		strings.Contains(text, "scan")
 }
 
 // evidenceText renders the words of one line that could take part in an invocation —
@@ -1231,6 +1248,13 @@ func undecidableShellString(fields []string) string {
 		word := bareToken(f)
 		base := word[strings.LastIndex(word, "/")+1:]
 		executes := word == "eval"
+		// For an interpreter, ONLY the operand right after the `-c`-style option is
+		// executed as code; every later field populates $0, $1 … So
+		// `bash -c 'printf "%s\n" "$0"' scan-report` runs a printf, not a scan, and
+		// scanning all following fields refused it — a false positive on an ordinary
+		// step. `eval` is different: it concatenates ALL its arguments and runs the
+		// result, so there every following field is code. -1 means "not narrowed".
+		operand := -1
 		if !executes {
 			switch base {
 			case "bash", "sh", "dash", "zsh", "ksh":
@@ -1252,6 +1276,7 @@ func undecidableShellString(fields []string) string {
 					}
 					if !strings.HasPrefix(opt, "--") && strings.Contains(opt, "c") {
 						executes = true
+						operand = j + 1
 						break
 					}
 					if opt == "-o" || (base == "bash" && (opt == "-O" || opt == "--init-file" || opt == "--rcfile")) {
@@ -1263,7 +1288,14 @@ func undecidableShellString(fields []string) string {
 		if !executes {
 			continue
 		}
-		for _, arg := range fields[i+1:] {
+		code := fields[i+1:]
+		if operand >= 0 {
+			if operand >= len(fields) {
+				continue
+			}
+			code = fields[operand : operand+1]
+		}
+		for _, arg := range code {
 			if strings.Contains(arg, "ksail") || strings.Contains(arg, "workload") || strings.Contains(arg, "scan") {
 				return fmt.Sprintf("%q executes its argument as shell code and that argument names a scan word", word)
 			}

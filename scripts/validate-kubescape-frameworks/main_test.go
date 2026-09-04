@@ -2315,3 +2315,55 @@ func TestRejectsScanInAConditionalNonBashStep(t *testing.T) {
 		t.Fatalf("expected FAIL CLOSED — python executes the reduced scan; got %q", set)
 	}
 }
+
+// The residual the inversion's TEXT key cannot see: a conditional step that assembles
+// the command words so no key substring appears anywhere in the scalar. Text cannot
+// decide this — but the COMMAND POSITION can. A line whose command word is an
+// expansion cannot be shown scan-free, whatever its text says.
+func TestRejectsConditionalScanAssembledFromFragments(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+		"          K=ks; K+=ail\n" +
+		"          W=work; W+=load\n" +
+		"          S=sc; S+=an\n" +
+		"          F=--frame; F+=work\n" +
+		"          \"$K\" \"$W\" \"$S\" \"$F\" nsa\n"
+	path := writeTemp(t, workflow)
+	set, err := frameworkSet(path)
+	if err == nil {
+		t.Fatalf("expected FAIL CLOSED — bash runs `ksail workload scan --framework nsa` here; got %q", set)
+	}
+	if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+		t.Fatalf("the refusal must name the conditional step; got: %v", err)
+	}
+}
+
+// The inversion's key must not CONFLATE unrelated words. `workload` and `scan` were
+// tested independently across the whole scalar, so an unrelated scanner reading a file
+// called workload.yaml was refused — a false positive that blocks CI on a legitimate
+// step, and one the earlier control missed by testing the two words separately rather
+// than together.
+func TestConditionalUnrelatedWorkloadAndScanTextIsAccepted(t *testing.T) {
+	cases := map[string]string{
+		"unrelated scanner reading a workload file": "trivy scan --input workload.yaml",
+		"a workload file in a scan report path":     "cp scan.json artifacts/workload-report.json",
+		// The `-c` operand is the only thing bash executes; later operands populate
+		// $0, $1 … so a scan-shaped positional label is not an invocation.
+		"scan-shaped positional after a -c operand": "|\n          bash -c 'printf \"%s\\n\" \"$0\"' scan-report\n",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		got, err := frameworkSet(path)
+		if err != nil {
+			t.Errorf("%s: expected ACCEPT — this conditional step invokes no Kubescape scan; got: %v", name, err)
+			continue
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Errorf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}
