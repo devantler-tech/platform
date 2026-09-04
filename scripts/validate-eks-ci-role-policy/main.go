@@ -1655,7 +1655,39 @@ const (
 // The previous approved aggregate digest was:
 //
 //	686bf5ade0d7869f3a20d50a05a7ac083744f0e88ede4fc02298ab9f67dfdf19
-const expectedRenderedSurfaceSHA = "a16fbd577f8155e64aacc02cb624f26d9628d75658ce804215d9d69a3884bf92"
+//
+// Re-approved 2026-09-04 for the flux-operator C-0211 template fix (#3239), which
+// adds two securityContext ops to that HelmRelease's existing postRenderer patch.
+//
+// Conservation proven by rendering ALL FIVE overlays from both trees with the same
+// renderer and taking the set difference in BOTH directions over the complete
+// apiVersion|kind|namespace|name identity: 548 documents on main e37660b2 and 548 on
+// this branch — ZERO added, ZERO removed, ZERO renamed. Neither side carries a
+// duplicate identity, so that pairing is one-to-one.
+//
+// The ENTIRE content delta across all five roots is seven added lines inside one
+// document — the flux-operator HelmRelease — and nothing is removed anywhere:
+//
+//   - op: add   /spec/template/spec/containers/0/securityContext/seLinuxOptions  {level: s0}
+//   - op: add   /spec/template/spec/securityContext/fsGroupChangePolicy          OnRootMismatch
+//
+// Neither op is grant-bearing: no rule, verb, resource, group, subject,
+// ServiceAccount, role reference or policy moved on either side. The surface digest
+// moved only because that HelmRelease is itself a selected authorization-capable
+// document, so its text is covered by the aggregate — which is the tripwire working
+// as designed, not a privilege change.
+//
+// The value below is CI's own computed digest at head 5dc2d805, taken from the
+// failing run rather than recomputed locally: this validator pins the renderer to
+// kubectl v1.36.2 and refuses any other, and the host that prepared this change has
+// v1.36.1. The conservation proof above is renderer-robust because both sides were
+// rendered with the SAME local renderer; the digest is not, so it comes from the
+// pinned one.
+//
+// The previous approved aggregate digest was:
+//
+//	a16fbd577f8155e64aacc02cb624f26d9628d75658ce804215d9d69a3884bf92
+const expectedRenderedSurfaceSHA = "ab05bc2c95924e372c038f878872aa94e3bd81380daa96a283bd7f74e2132a69"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
