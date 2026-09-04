@@ -454,6 +454,11 @@ jobs:
             talos:
               - 'talos/**'
               - 'talos-local/**'
+              - 'ksail.prod.yaml'
+              - '.github/scripts/setup-talosctl.sh'
+              - 'scripts/validate-talos-kubernetes-compatibility/**'
+              - 'go.mod'
+              - 'go.sum'
               - '.github/workflows/ci.yaml'
 
   validate-publication-contract:
@@ -1622,13 +1627,13 @@ jobs:
     name: 🧪 Validate Talos Machine Config
     needs: [changes]
     # Renders the Talos machine config with every talos/ (prod) and talos-local/
-    # patch applied and runs `talosctl validate` on the result — on the PR
-    # event, so a broken patch (or an env expansion that would render empty,
-    # like #2462's ${WG_SERVER_PRIVATE_KEY}) fails the PR instead of surfacing
-    # in the merge group's deploy and evicting the queued PR. Placeholder key
-    # material stands in for the env-expanded secrets, so this needs no real
-    # secrets and runs on fork PRs too (issue #2477).
-    if: github.event_name == 'pull_request' && needs.changes.outputs.talos == 'true'
+    # patch applied and runs `talosctl validate` on the result — on the PR for
+    # fast feedback and on the merge-group revision that production deploys.
+    # A broken patch (or an env expansion that would render empty, like #2462's
+    # ${WG_SERVER_PRIVATE_KEY}) is therefore caught before deploy. Placeholder
+    # key material stands in for the env-expanded secrets, so this needs no
+    # real secrets and runs on fork PRs too (issue #2477).
+    if: (github.event_name == 'pull_request' && needs.changes.outputs.talos == 'true') || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
@@ -1641,6 +1646,16 @@ jobs:
       - name: ⚙️ Setup talosctl
         run: |
           .github/scripts/setup-talosctl.sh
+
+      - name: ⚙️ Setup Go for version compatibility validation
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: ✅ Validate Kubernetes against the pinned Talos release
+        run: |
+          go test ./scripts/validate-talos-kubernetes-compatibility
+          go run ./scripts/validate-talos-kubernetes-compatibility ksail.prod.yaml
 
       - name: ✅ Render + validate patched machine configs
         run: |
@@ -1786,6 +1801,7 @@ jobs:
         changes,
         validate-eks-authorization,
         validate-publication-contract,
+        validate-talos,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
       ]
@@ -1883,6 +1899,18 @@ jobs:
         with:
           ref: main
           persist-credentials: false
+
+      - name: ⚙️ Setup Go for version compatibility validation
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: ✅ Validate main Kubernetes against the pinned Talos release
+        # The heal deploys the current main checkout, which may have advanced
+        # since validate-talos inspected the speculative merge-group revision.
+        run: |
+          go test ./scripts/validate-talos-kubernetes-compatibility
+          go run ./scripts/validate-talos-kubernetes-compatibility ksail.prod.yaml
 
       - name: ⚙️ Setup Trivy for nested RGD templates
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
