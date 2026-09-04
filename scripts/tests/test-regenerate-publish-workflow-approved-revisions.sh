@@ -67,11 +67,16 @@ check() {
     { printf 'VIOLATION A1: no workflow_dispatch trigger\n'; return 1; }
 
   # A2 — no ambient grant: the App token carries every write.
-  [ "$(yq -r '.permissions | tag' "$f")" = '!!map' ] && [ "$(yq -r '.permissions | length' "$f")" = '0' ] ||
-    { printf 'VIOLATION A2: top-level permissions is not the empty map\n'; return 1; }
-  [ "$(q "$f" '.jobs.regenerate.permissions.contents')" = 'read' ] &&
-    [ "$(yq -r '.jobs.regenerate.permissions | length' "$f")" = '1' ] ||
-    { printf 'VIOLATION A2: the job grants more than contents: read to GITHUB_TOKEN\n'; return 1; }
+  if ! { [ "$(yq -r '.permissions | tag' "$f")" = '!!map' ] &&
+    [ "$(yq -r '.permissions | length' "$f")" = '0' ]; }; then
+    printf 'VIOLATION A2: top-level permissions is not the empty map\n'
+    return 1
+  fi
+  if ! { [ "$(q "$f" '.jobs.regenerate.permissions.contents')" = 'read' ] &&
+    [ "$(yq -r '.jobs.regenerate.permissions | length' "$f")" = '1' ]; }; then
+    printf 'VIOLATION A2: the job grants more than contents: read to GITHUB_TOKEN\n'
+    return 1
+  fi
 
   # A3 — one run at a time, never cut off mid pull request.
   [ "$(q "$f" '.concurrency.queue')" = 'single' ] ||
@@ -146,8 +151,10 @@ check() {
       printf 'VIOLATION A9: the pull-request step runs after a failure\n'; return 1 ;;
   esac
   [ -n "${guard_idx}" ] || { printf 'VIOLATION A9: no step runs %s on the moved set\n' "${guard}"; return 1; }
-  [ "${gen_idx}" -lt "${guard_idx}" ] && [ "${guard_idx}" -lt "${pr_idx}" ] ||
-    { printf 'VIOLATION A9: steps are not ordered generator (%s) < guard (%s) < pull request (%s)\n' "${gen_idx}" "${guard_idx}" "${pr_idx}"; return 1; }
+  if ! { [ "${gen_idx}" -lt "${guard_idx}" ] && [ "${guard_idx}" -lt "${pr_idx}" ]; }; then
+    printf 'VIOLATION A9: steps are not ordered generator (%s) < guard (%s) < pull request (%s)\n' "${gen_idx}" "${guard_idx}" "${pr_idx}"
+    return 1
+  fi
 
   printf 'ok\n'
 }
