@@ -2087,3 +2087,52 @@ func TestPlainScanWordWithoutAnExpansionIsStillIgnored(t *testing.T) {
 		}
 	}
 }
+
+// A conditional step can hand the scan to a shell interpreter as a STRING
+// (`bash -c '…'`, `eval '…'`). The unconditional path already refuses that shape via
+// undecidableShellString, but a conditional step never reaches it: the screening in
+// scanCandidate drops the scalar first. Every reading scanCandidate does is per token,
+// and the quoted program is a single fully quoted word — prose to resolveToken — so no
+// scan word is ever seen and the step is skipped as ordinary shell. The reduced scan
+// then runs and overwrites the SARIF while a separate `nsa,mitre` invocation satisfies
+// the validator, which is the hole this guard exists to close.
+func TestRejectsShellStringScanInAConditionalStep(t *testing.T) {
+	cases := map[string]string{
+		"bash -c with the scan as a string":     "bash -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"absolute interpreter path":             "/bin/sh -c 'ksail workload scan --framework nsa'",
+		"option cluster containing c":           "bash -ec 'ksail workload scan --framework nsa'",
+		"leading option before the command one": "bash --noprofile -c 'ksail workload scan --framework nsa'",
+		"eval of the scan":                      "eval 'ksail workload scan --framework nsa'",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — the conditional step hands a reduced scan to a shell interpreter the guard never reads; got %q", name, set)
+			continue
+		}
+		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+			t.Errorf("%s: the refusal must name the conditional step, proving this rule fired; got: %v", name, err)
+		}
+	}
+}
+
+// The control for the rule above: a shell string naming NO scan word is ordinary shell,
+// exactly as it is on the unconditional path, so a conditional step carrying one must
+// still be accepted. Without this, the new rule could pass by refusing every `bash -c`.
+func TestAcceptsConditionalShellStringWithoutAScanWord(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: bash -c 'echo hello && make build'\n"
+	path := writeTemp(t, workflow)
+	set, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("expected ACCEPT — a conditional shell string with no scan word is ordinary shell; got: %v", err)
+	}
+	if got := strings.Join(set, ","); got != "mitre,nsa" {
+		t.Fatalf("expected the unconditional scan to supply the framework set; got %q", got)
+	}
+}

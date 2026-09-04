@@ -478,6 +478,16 @@ func scanCandidate(scalar string) bool {
 		if undecidableScanCandidate(fields) != "" {
 			return true
 		}
+		// A shell interpreter handed the scan as a STRING (`bash -c '…'`, `eval '…'`)
+		// runs text no per-token rule can read, and every reading above is per token:
+		// the program is one fully quoted word, so resolveToken takes it for prose and
+		// no scan word is ever seen. The unconditional path refuses this shape, but a
+		// conditional step never reaches that path — it is screened here and dropped —
+		// so without the same test a conditional `bash -c 'ksail workload scan …'` is
+		// skipped as ordinary shell while the reduced scan it runs overwrites the SARIF.
+		if undecidableShellString(fields) != "" {
+			return true
+		}
 		// Every command word expanded at once (`${ksail} ${workload} ${scan}`): no
 		// token resolves to a plain scan word, so neither rule above sees it. The
 		// unquoted text still spells the scan inside the expansions, and the line
