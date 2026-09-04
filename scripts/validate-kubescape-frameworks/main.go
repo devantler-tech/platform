@@ -565,6 +565,7 @@ func scanCandidate(scalar string) bool {
 func expandedCommandWord(line string) bool {
 	atCommand := true
 	skipNext := false
+	sawWrapper := false
 	for _, tok := range shellFieldsWithSeparators(line) {
 		if skipNext {
 			skipNext = false
@@ -572,6 +573,7 @@ func expandedCommandWord(line string) bool {
 		}
 		if isShellSeparator(tok) {
 			atCommand = true
+			sawWrapper = false
 			continue
 		}
 		if !atCommand {
@@ -587,9 +589,57 @@ func expandedCommandWord(line string) bool {
 		if carriesExpansion(tok) {
 			return true
 		}
+		// An EXECUTION WRAPPER's operand is the real command word: `command "$K" …`
+		// runs whatever `$K` expands to. Treating the literal wrapper as the command
+		// word ended the walk here and let an assembled scan through. Its own options
+		// are skipped as options, and a leading numeric operand (`timeout 30 cmd`,
+		// `nice 10 cmd`) belongs to the wrapper rather than being the command.
+		if isExecWrapper(bareToken(tok)) {
+			sawWrapper = true
+			continue
+		}
+		if sawWrapper && isBareNumber(tok) {
+			continue
+		}
+		if strings.HasPrefix(tok, "-") {
+			continue
+		}
 		atCommand = false
 	}
 	return false
+}
+
+// isExecWrapper names commands whose OPERAND is another command. A list is acceptable
+// here in a way a list of scan spellings was not: wrappers are a small, stable set, and
+// a missed one costs a missed refusal on an assembled command rather than reopening
+// every spelling of an ordinary invocation.
+func isExecWrapper(word string) bool {
+	switch word[strings.LastIndex(word, "/")+1:] {
+	case "command", "builtin", "exec", "nohup", "nice", "ionice", "setsid",
+		"stdbuf", "time", "timeout", "env", "sudo", "doas", "chroot", "unbuffer":
+		return true
+	}
+	return false
+}
+
+// isBareNumber reports a token that is only digits, optionally with a single-letter
+// unit — a wrapper's own operand (`timeout 30`, `timeout 5s`), never a command name.
+func isBareNumber(tok string) bool {
+	if tok == "" {
+		return false
+	}
+	digits := 0
+	for i := 0; i < len(tok); i++ {
+		c := tok[i]
+		switch {
+		case c >= '0' && c <= '9':
+			digits++
+		case i == len(tok)-1 && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')):
+		default:
+			return false
+		}
+	}
+	return digits > 0
 }
 
 func isShellSeparator(tok string) bool {

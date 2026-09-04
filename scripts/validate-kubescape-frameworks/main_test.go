@@ -2474,3 +2474,62 @@ func TestUnconditionalPlainEnvIsNotStringExecuting(t *testing.T) {
 		t.Fatalf("normalised set = %q, want %q", strings.Join(got, ","), "mitre,nsa")
 	}
 }
+
+// An execution wrapper's OPERAND is another command position: `command "$K" …` runs
+// what `$K` expands to. Treating the literal wrapper as the command word ended the walk
+// and let an assembled scan through — exploitable at head, so it is fixed rather than
+// deferred.
+func TestRejectsExpandedCommandWordBehindAWrapper(t *testing.T) {
+	assemble := "          K=ks; K+=ail\n" +
+		"          W=work; W+=load\n" +
+		"          S=sc; S+=an\n" +
+		"          F=--frame; F+=work\n"
+	cases := map[string]string{
+		"command builtin":                "command \"$K\" \"$W\" \"$S\" \"$F\" nsa -o kubescape.sarif",
+		"exec":                           "exec \"$K\" \"$W\" \"$S\" \"$F\" nsa",
+		"nohup":                          "nohup \"$K\" \"$W\" \"$S\" \"$F\" nsa",
+		"env prefix":                     "env FOO=1 \"$K\" \"$W\" \"$S\" \"$F\" nsa",
+		"timeout with an option operand": "timeout 30 \"$K\" \"$W\" \"$S\" \"$F\" nsa",
+		"sudo":                           "sudo \"$K\" \"$W\" \"$S\" \"$F\" nsa",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" + assemble +
+			"          " + line + "\n"
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — the wrapper's operand is the command word and it expands; got %q", name, set)
+			continue
+		}
+		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+			t.Errorf("%s: the refusal must name the conditional step; got: %v", name, err)
+		}
+	}
+}
+
+// The control: a wrapper running a LITERAL command is ordinary, and an expanded
+// ARGUMENT is not a command word — so neither may be refused.
+func TestConditionalWrapperWithLiteralCommandIsAccepted(t *testing.T) {
+	cases := map[string]string{
+		"wrapper with a literal command": "command echo hello",
+		"wrapper with expanded argument": "command echo \"$FOO\"",
+		"timeout with a literal command": "timeout 30 make build",
+		"env with a literal command":     "env FOO=1 make build",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		got, err := frameworkSet(path)
+		if err != nil {
+			t.Errorf("%s: expected ACCEPT — the command word is literal; got: %v", name, err)
+			continue
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Errorf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}
