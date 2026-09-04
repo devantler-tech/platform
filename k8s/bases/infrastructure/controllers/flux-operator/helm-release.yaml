@@ -45,6 +45,40 @@ spec:
   #
   # Applied here rather than in the FluxInstance because the operator is
   # installed by Helm, so the FluxInstance's kustomize patches never reach it.
+
+  # C-0211 (CIS-5.7.3) — the two non-privilege fields, supplied at TEMPLATE level.
+  #
+  # flux-system is excluded from add-pod-security-context / add-container-security-context
+  # because its workloads need elevated privilege by design, and the namespace-scoped
+  # add-baseline-context-optin-* rules cannot close the gap here: all three match
+  # `kinds: Pod`, so they mutate at ADMISSION and leave the stored workload spec
+  # Kubescape reads untouched. Only a template-level change moves the measurement —
+  # the same reason #3541 (velero) and #3544 (the four FluxInstance controllers) were
+  # done this way rather than by labelling the namespace.
+  #
+  # Measured against the live PROD stored specs 2026-09-04: of flux-system's six
+  # workloads, four controllers already carry both fields from #3544, leaving
+  # flux-operator and tofu-controller. tofu-controller is retired and pending removal
+  # in #3480, so flux-operator is the namespace's last workload needing this.
+  #
+  # Both fields are inert here, which is the point rather than a caveat — this changes
+  # a declared posture without changing how the operator runs:
+  # - fsGroupChangePolicy governs the kubelet's volume ownership pass, which runs only
+  #   when a pod sets fsGroup. This pod sets none, and its only volumes are an emptyDir
+  #   and the projected service-account token — no PVC, no hostPath.
+  # - seLinuxOptions {level: s0} is the default non-privileged MCS level and a no-op on
+  #   this AppArmor cluster (runc ignores SELinux labels when SELinux is not the active
+  #   LSM), retained as CIS-5.7.3 defense-in-depth on any SELinux node.
+  #
+  # Neither carries the runAsGroup-without-runAsUser coupling documented above, so
+  # neither can stop the sandbox building.
+  #
+  # 🔴 The pod-level op adds a LEAF into the chart's pod securityContext, which renders
+  # as `{}` (read from the live Deployment 2026-09-04). A leaf add is deliberate: adding
+  # the whole object would REPLACE it and silently discard any field the chart starts
+  # setting later, which is exactly what the +(key) anchors elsewhere exist to prevent.
+  # The cost is that a chart that stopped rendering the object would fail this patch —
+  # loudly, on a Renovate chart bump with CI in front of it, never silently.
   postRenderers:
     - kustomize:
         patches:
@@ -61,3 +95,10 @@ spec:
               - op: add
                 path: /spec/template/spec/containers/0/securityContext/runAsGroup
                 value: 65532
+              - op: add
+                path: /spec/template/spec/containers/0/securityContext/seLinuxOptions
+                value:
+                  level: s0
+              - op: add
+                path: /spec/template/spec/securityContext/fsGroupChangePolicy
+                value: OnRootMismatch
