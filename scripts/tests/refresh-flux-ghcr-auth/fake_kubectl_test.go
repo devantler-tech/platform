@@ -1268,7 +1268,34 @@ func fakeKubectlGetNodes() int {
 		))
 	}
 
-	fmt.Println(encodeJSON(map[string]any{"items": nodes}))
+	remaining := nodes[:0]
+	for _, node := range nodes {
+		name := node.(map[string]any)["metadata"].(map[string]any)["name"].(string)
+		if markerExists("removed-before-process-" + name) {
+			switch os.Getenv("FAKE_REMOVAL_CONFIRMATION") {
+			case "list-fails":
+				return commandFailure(46, "node discovery failed")
+			case "malformed":
+				fmt.Println(`{"items":[{"metadata":{"name":"incomplete"}}]}`)
+				return 0
+			case "empty":
+				fmt.Println(`{"items":[]}`)
+				return 0
+			case "same-name":
+				node = fakeInventoryNode(name, "replacement-uid", "10.0.0.99", "198.51.100.99", false, revision, revision, image, false)
+			case "same-address":
+				address, _ := fakeNodeAddress(name)
+				node = fakeInventoryNode("replacement", "replacement-uid", address, "198.51.100.99", false, revision, revision, image, false)
+			case "same-uid":
+				node = fakeInventoryNode("replacement", fakeExpectedNodeUID(name), "10.0.0.99", "198.51.100.99", false, revision, revision, image, false)
+			case "still-present":
+			default:
+				continue
+			}
+		}
+		remaining = append(remaining, node)
+	}
+	fmt.Println(encodeJSON(map[string]any{"items": remaining}))
 	return 0
 }
 
@@ -1395,6 +1422,22 @@ func fakeKubectlGetNode(args []string) int {
 	nodeName := argumentAfter(args, "node")
 	if nodeName == "" {
 		return commandFailure(91, "node target missing")
+	}
+	removedAfterQuarantine := nodeName == os.Getenv("FAKE_NODE_REMOVED_AFTER_QUARANTINE") &&
+		(markerExists("cordon-owner-prod-control-plane-3") || markerExists("removed-before-process-"+nodeName))
+	if wordListContains(os.Getenv("FAKE_NODE_REMOVED_BEFORE_PROCESS"), nodeName) || removedAfterQuarantine ||
+		(nodeName == os.Getenv("FAKE_NODE_REMOVED_AFTER_UNCORDON") && markerExists("uncordoned-"+nodeName)) {
+		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "forbidden" {
+			return commandFailure(1, "Error from server (Forbidden): nodes is forbidden")
+		}
+		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "not-found-error" {
+			return commandFailure(1, "Error from server (NotFound): nodes not found")
+		}
+		touchMarker("removed-before-process-" + nodeName)
+		if containsArg(args, "--ignore-not-found") {
+			return 0
+		}
+		return commandFailure(1, "Error from server (NotFound): nodes not found")
 	}
 	if !containsSequence(args, "--output", "json") && !containsArg(args, "--output=json") {
 		if wordListContains(os.Getenv("FAKE_CORDONED_NODES"), nodeName) {

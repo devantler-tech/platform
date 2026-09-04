@@ -208,6 +208,115 @@ func TestFailedImageOnlyPullKeepsNodeCordoned(t *testing.T) {
 	}
 }
 
+// The last image-stale target can disappear while earlier nodes are being
+// verified. Its absence must not abort the remaining-node convergence, invoke
+// Talos at a stale address, or manufacture a proof for the removed UID.
+func TestRemovedImageTargetIsDeselectedBeforeMutation(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	runtimeProof := filepath.Join(f.workspace, "runtime-proof.json")
+	result := f.runHelper(validConfig(), []string{"--record-runtime-proof", runtimeProof}, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":         "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":        "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_NODE_REMOVED_BEFORE_PROCESS": "prod-control-plane-1",
+	})
+	requireSuccessResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "deselected")
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "talos-revision:10.0.0.2")
+	requireLine(t, operations, "root-patch")
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-control-plane-1", "node-drain:prod-control-plane-1",
+		"talos-reboot:10.0.0.1", "talos-revision:10.0.0.1",
+		"talos-remove:10.0.0.1:" + ksailTargetImage, "talos-pull:10.0.0.1:" + ksailTargetImage,
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+	requireNotContains(t, mustRead(runtimeProof), "prod-control-plane-1-uid")
+}
+
+func TestRemovedTargetRequiresAuthoritativeUnambiguousInventory(t *testing.T) {
+	for _, mode := range []string{"forbidden", "not-found-error", "list-fails", "malformed", "empty", "same-name", "same-address", "same-uid", "still-present"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, map[string]string{
+				"FAKE_TALOS_NODES_CURRENT":         "true",
+				"FAKE_TALOS_VERIFIED_IMAGE":        "ghcr.io/devantler-tech/ksail:v7.166.0",
+				"FAKE_NODE_REMOVED_BEFORE_PROCESS": "prod-worker-1",
+				"FAKE_REMOVAL_CONFIRMATION":        mode,
+			})
+			requireFailureResult(t, result)
+			operations := readLines(f.operationLog)
+			for _, unexpected := range []string{"node-claim-cordon:prod-worker-1", "talos-revision:10.0.0.2", "root-patch"} {
+				requireNoLine(t, operations, unexpected)
+			}
+		})
+	}
+}
+
+func TestDeselectionCannotEmptyTheRequiredTargetSet(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":         "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":        "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_NODE_REMOVED_BEFORE_PROCESS": "prod-worker-1 prod-control-plane-1",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "empty successful rollout")
+	operations := readLines(f.operationLog)
+	requireNoLine(t, operations, "root-patch")
+	requireNotContains(t, strings.Join(operations, "\n"), "talos-revision:")
+}
+
+func TestRemovedNodeAfterMutationStillFailsClosed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":         "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":        "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_NODE_REMOVED_AFTER_UNCORDON": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "talos-revision:10.0.0.2")
+	requireNoLine(t, operations, "root-patch")
+}
+
+func TestRemovedBootstrapOwnedNodeStillFailsClosed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_REVOKE_CURRENT_ROOT_TOKEN":     "true",
+		"FAKE_ALL_TALOS_NODES_STALE":         "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":         "prod-worker-2",
+		"FAKE_RUNTIME_PULL_FAIL_NODES":       "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_EMPTY_WORKLOAD_NODES":          "prod-worker-2",
+		"FAKE_NODE_REMOVED_AFTER_QUARANTINE": "prod-worker-2",
+	})
+	requireFailureResult(t, result)
+	requireNotContains(t, result.stdout+result.stderr, "deselected")
+	requireContains(t, result.stdout+result.stderr, "durable recovery journal was left intact")
+	operations := readLines(f.operationLog)
+	for _, name := range []string{"prod-worker-1", "prod-worker-2", "prod-control-plane-1", "prod-control-plane-2", "prod-control-plane-3"} {
+		requireLine(t, operations, "node-claim-cordon:"+name)
+	}
+	for _, unexpected := range []string{
+		"talos-auth:10.0.0.5", "talos-reboot:10.0.0.5", "talos-revision:10.0.0.5",
+		"node-uncordon:prod-worker-2", "node-release-cordon-owner:prod-worker-2", "root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+	var recovery map[string]any
+	if err := json.Unmarshal([]byte(mustRead(filepath.Join(f.syncStateDir, "cordon-recovery-prod-worker-2"))), &recovery); err != nil {
+		t.Fatal(err)
+	}
+	if recovery["phase"] != "active" {
+		t.Fatalf("owned recovery advanced despite missing node: %v", recovery["phase"])
+	}
+}
+
 func TestNodeAddedMidRollIsProcessedBeforeRootCutover(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
