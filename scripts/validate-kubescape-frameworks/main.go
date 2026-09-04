@@ -509,7 +509,43 @@ func scanCandidate(scalar string) bool {
 			return true
 		}
 	}
-	return false
+	// THE INVERSION, and the reason this function stops growing.
+	//
+	// Everything above tries to RECOGNISE an invocation, and that is a blacklist of
+	// spellings. Nine review rounds each found another one it could not read: a prefix,
+	// a shell string, an even backslash run, a command word split across a
+	// continuation, a scan glued to a separator, a subshell, an alias body, a
+	// path-qualified command word, and a step whose shell is not bash at all. Each fix
+	// closed exactly one spelling. Nothing suggests the list was ever going to end.
+	//
+	// For a CONDITIONAL step the question was never "is this a scan". The runner
+	// decides whether the step executes before any shell starts, so the only safe
+	// question is "can this be shown NOT to run one" — which is a whitelist. Refuse any
+	// conditional scalar whose raw text names the scan at all, whatever the spelling,
+	// whatever the shell, quoted or not.
+	//
+	// The cost is that a conditional step MENTIONING the scan — prose, a comment, an
+	// echoed diagnostic — is now refused too. That is deliberate and cheap: no real
+	// scan step carries an `if:`, the refusal names the step, and the fix is to drop
+	// the `if:` or not to spell the scan there. The precision the unconditional path
+	// can afford comes from parsing the shell completely; this screen does not, so it
+	// buys its safety with a false positive instead.
+	return mentionsScanText(scalar)
+}
+
+// mentionsScanText reports whether raw text names the Kubescape scan at all.
+//
+// Deliberately NOT keyed on a bare `ksail`: the real ci.yaml runs `shellcheck
+// .github/scripts/setup-ksail.sh` inside a CONDITIONAL step, and refusing that would
+// reject the very workflow this guard exists to validate — measured, it failed all
+// three real-workflow tests. `--framework`, or the pair `workload`+`scan`, names the
+// invocation rather than the tool, so a filename or a comment mentioning ksail is
+// untouched while every spelling of the scan itself is caught.
+func mentionsScanText(text string) bool {
+	if strings.Contains(text, "--framework") {
+		return true
+	}
+	return strings.Contains(text, "workload") && strings.Contains(text, "scan")
 }
 
 // evidenceText renders the words of one line that could take part in an invocation —
