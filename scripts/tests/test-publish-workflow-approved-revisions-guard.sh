@@ -445,7 +445,9 @@ grep -Fq 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh' "$ci"
   fail 'ci.yaml does not run test-publish-workflow-approved-revisions-guard.sh'
 # CI must apply enforcement to the step that executes the guard, not an unrelated job.
 enforce="$(yq -r '.jobs[].steps[] | select(.run // "" | contains("./scripts/guard-publish-workflow-approved-revisions.sh")) | .env.APPROVED_REVISIONS_ENFORCE' "$ci")"
-[ "$enforce" = '1' ] || fail 'ci.yaml must enforce the approved set in the guard step'
+if [ -z "$enforce" ] || printf '%s\n' "$enforce" | grep -qv '^1$'; then
+  fail 'ci.yaml must enforce the approved set in every guard step'
+fi
 [ "$failures" -eq 0 ] && pass 'wiring: ci.yaml enforces the approved set'
 
 # ── the real tree: every committed consumer uses exactly its approved pair ────────────────

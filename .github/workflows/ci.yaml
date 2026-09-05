@@ -127,7 +127,11 @@ jobs:
           shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
           bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           bash scripts/tests/test-write-publish-workflow-matchers.sh
-          ./scripts/guard-publish-workflow-approved-revisions.sh
+
+      - name: 🔐 Enforce approved publication signers
+        env:
+          APPROVED_REVISIONS_ENFORCE: '1'
+        run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
       # The scheduled regeneration (#3552, third child of #3308) runs the generator and
       # writer and guard above against prod and turns a moved set into ONE draft pull request.
@@ -1906,6 +1910,11 @@ jobs:
         with:
           ref: main
           persist-credentials: false
+
+      - name: 🔐 Enforce approved publication signers
+        env:
+          APPROVED_REVISIONS_ENFORCE: '1'
+        run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
       - name: ⚙️ Setup Go for version compatibility validation
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
