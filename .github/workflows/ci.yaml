@@ -227,6 +227,7 @@ jobs:
               - 'docs/oidc-kubectl.md'
               - 'docs/talos-access.md'
               - 'scripts/tests/test-actual-budget-auth-route.sh'
+              - 'scripts/tests/test-actual-budget-user-namespaces.sh'
               # The provider DeploymentRuntimeConfigs, this gate and its kyverno
               # fixture are one contract: a container-only seccompProfile is
               # denied by the fail-closed webhook and takes the whole provider
@@ -691,6 +692,14 @@ jobs:
         run: |
           shellcheck scripts/tests/test-production-authorization-rules.sh
           bash scripts/tests/test-production-authorization-rules.sh
+
+      - name: 🚦 Validate Actual Budget user-namespace pilot
+        # Exercise the dormant component on both the PR and the speculative
+        # merge-group revision before deploy-prod can publish that revision.
+        timeout-minutes: 5
+        run: |
+          shellcheck scripts/tests/test-actual-budget-user-namespaces.sh
+          bash scripts/tests/test-actual-budget-user-namespaces.sh
 
       - name: 🔐 Validate Helm-rendered production authorization controls
         # KSail renders chart children before evaluating the CEL rules, closing
