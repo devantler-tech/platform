@@ -27,8 +27,9 @@ for consumer in "${EXPECTED_CONSUMERS[@]}"; do
   [ "$workflow" = "$set_workflow" ] || refuse "$consumer: $file names $workflow but the approved set names $set_workflow"
   [ "$ref" = "$PATTERN_REF" ] || [[ "$ref" =~ $FIXED_REF_RE ]] ||
     refuse "$consumer: unrecognised existing revision '$ref'; review the source identity before rewriting"
-  [ ! -L "$SCAN_ROOT/$file" ] && [ -w "$SCAN_ROOT/$file" ] ||
+  if [ -L "$SCAN_ROOT/$file" ] || [ ! -f "$SCAN_ROOT/$file" ] || [ ! -w "$SCAN_ROOT/$file" ]; then
     refuse "$consumer: source manifest must be a writable regular file, not a symlink"
+  fi
 
   pair="$signer"
   [ "$signer" = "$pin" ] || pair="($signer|$pin)"
