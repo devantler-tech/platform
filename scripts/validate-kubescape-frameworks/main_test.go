@@ -870,6 +870,61 @@ func TestRejectsScanInsideAMultilineQuotedArgument(t *testing.T) {
 	}
 }
 
+// Three ways a reduced scan executes beside the counted one while reading as
+// something else on the unconditional path: a brace-expanded option (`--{framework=…}`
+// carries no literal flag until the shell expands it), a command string handed to an
+// executing shell (`bash -c '…'`, `sh -c "…"`, `eval '…'` — one quoted argument, so the
+// consecutive-token rules never see the invocation), and a command whose every word is
+// a variable assigned earlier in the block. Each is refused as undecidable.
+func TestRejectsReducedScanHiddenFromTheUnconditionalPath(t *testing.T) {
+	cases := map[string]string{
+		"brace-expanded option": goodScan + "\nksail workload scan --{framework=nsa,output=kubescape.sarif}",
+		"bash -c single-quoted": goodScan + "\nbash -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"sh -c double-quoted":   goodScan + "\nsh -c \"ksail workload scan --framework nsa -o kubescape.sarif\"",
+		"eval":                  goodScan + "\neval 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		// The command-string option after OTHER interpreter options executes the
+		// string exactly as a bare -c does.
+		"bash -e -c":                         goodScan + "\nbash -e -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"sh -e -c":                           goodScan + "\nsh -e -c \"ksail workload scan --framework nsa -o kubescape.sarif\"",
+		"bash -o operand before -c":          goodScan + "\nbash -o errexit -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"sh -o operand before -c":            goodScan + "\nsh -o errexit -c \"ksail workload scan --framework nsa -o kubescape.sarif\"",
+		"bash --rcfile operand before -c":    goodScan + "\nbash --rcfile ./bashrc -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"bash --noprofile -c":                goodScan + "\nbash --noprofile -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"bash -ec cluster":                   goodScan + "\nbash -ec 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"all words from variables":           "KSAIL=ksail WORKLOAD=workload SCAN=scan\n" + goodScan + "\n\"$KSAIL\" \"$WORKLOAD\" \"$SCAN\" --framework nsa -o kubescape.sarif",
+		"all words from variables, unquoted": "KSAIL=ksail WORKLOAD=workload SCAN=scan\n" + goodScan + "\n$KSAIL $WORKLOAD $SCAN --framework nsa -o kubescape.sarif",
+	}
+	for name, body := range cases {
+		if set, err := setOf(t, body); err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — a reduced scan executes beside the counted one; got %q", name, set)
+		}
+	}
+}
+
+// The controls: an executing shell handed text with no scan word, and a variable that
+// is merely an ARGUMENT of a plainly spelled scan, are ordinary shell.
+func TestExecutingShellWithoutAScanWordIsStillIgnored(t *testing.T) {
+	cases := map[string]string{
+		"bash -c without a scan word": goodScan + "\nbash -c 'echo hello'",
+		"eval without a scan word":    goodScan + "\neval 'true'",
+		// A script path is not a command string: the options end at the first
+		// non-option that is not an option operand, so a scan word in a later
+		// argument is not this rule's business.
+		"bash -e running a script":         goodScan + "\nbash -e ./scripts/report.sh scan",
+		"bash -o operand running a script": goodScan + "\nbash -o errexit ./scripts/report.sh scan",
+	}
+	for name, body := range cases {
+		got, err := setOf(t, body)
+		if err != nil {
+			t.Errorf("%s: expected ACCEPT; got: %v", name, err)
+			continue
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Errorf("%s: set = %q", name, got)
+		}
+	}
+}
+
 // A real command written AFTER the closing quote is still executed, so it must still be
 // read. Without this the fix could pass by discarding the remainder of every line that
 // closes a quote.
@@ -929,6 +984,222 @@ func TestRejectsScanInAConditionalStep(t *testing.T) {
 	path := writeTemp(t, workflow)
 	if set, err := frameworkSet(path); err == nil {
 		t.Fatalf("expected FAIL CLOSED — a step the runner skips cannot supply the framework set; got %q", set)
+	}
+}
+
+// The conditional path used to detect the scan by raw substring, so a quoted, escaped or
+// expanded spelling of the command word in a conditional step read as ordinary shell and
+// the step was skipped rather than refused — executing a reduced scan beside the counted
+// full one. It now reads the scalar token by token like the primary path, so every
+// spelling that path counts or refuses is refused here too.
+func TestRejectsNormalisedScanSpellingInAConditionalStep(t *testing.T) {
+	cases := map[string]string{
+		"double-quoted fragment in the command word": "k\"s\"ail workload scan --framework nsa",
+		"backslash escape in the command word":       "k\\sail workload scan --framework nsa",
+		"ANSI-C fragment in the command word":        "k$'s'ail workload scan --framework nsa",
+		"fully quoted command word behind a prefix":  "env 'ksail' workload scan --framework nsa",
+		"constructed option word":                    "ksail workload scan --frame${SUFFIX} nsa",
+		"constructed workload and option word":       "ksail work${LOAD} scan --frame${SUFFIX} nsa",
+		"every command word expanded":                "${ksail} ${workload} ${scan} --framework nsa",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — the conditional step can execute a scan the guard never validated; got %q", name, set)
+			continue
+		}
+		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+			t.Errorf("%s: the refusal must name the conditional step, proving this rule fired; got: %v", name, err)
+		}
+	}
+}
+
+// A backslash continuation splits the command words across physical lines; the
+// conditional check joins them before reading, so the split scan is still refused.
+func TestRejectsContinuedScanInAConditionalStep(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+		"          ksail workload \\\n            scan --framework nsa\n"
+	path := writeTemp(t, workflow)
+	set, err := frameworkSet(path)
+	if err == nil {
+		t.Fatalf("expected FAIL CLOSED — a continued scan in a conditional step still executes; got %q", set)
+	}
+	if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+		t.Fatalf("the refusal must name the conditional step; got: %v", err)
+	}
+}
+
+// A backslash at the end of a COMMENT does not continue it: the next physical line
+// executes. Joining continuations before deciding what is a comment folded that line
+// into the comment and skipped the scan it carried.
+func TestRejectsScanAfterABackslashEndedCommentInAConditionalStep(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+		"          # this comment does not continue \\\n          ksail workload scan --framework nsa\n"
+	path := writeTemp(t, workflow)
+	set, err := frameworkSet(path)
+	if err == nil {
+		t.Fatalf("expected FAIL CLOSED — the line after a backslash-ended comment still executes; got %q", set)
+	}
+	if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+		t.Fatalf("the refusal must name the conditional step; got: %v", err)
+	}
+}
+
+// A quote inside a shell COMMENT is not a quote: the comment ends at its physical
+// newline and bash never opens a string there. If the fold carried that quote state
+// into the next line, the newline after the comment would become a space, the scan
+// on the following line would be swallowed into the comment, and the conditional
+// step would be skipped as prose — executing an unvalidated reduced scan.
+func TestRejectsScanAfterACommentWithAnUnmatchedQuoteInAConditionalStep(t *testing.T) {
+	cases := map[string]string{
+		"unmatched double quote":         "          # unmatched quote: \"\n",
+		"unmatched single quote":         "          # it's unmatched\n",
+		"trailing comment after a word":  "          true # unmatched quote: \"\n",
+		"quote in a comment then a word": "          # \" a\n          echo ok\n",
+		// bash removes an unquoted backslash-newline before it reads the next line,
+		// so `echo \` followed by `# …` is `echo # …`: the `#` starts a comment.
+		"comment after an unquoted continuation, double quote": "          echo \\\n          # unmatched quote: \"\n",
+		"comment after an unquoted continuation, single quote": "          echo \\\n          # it's unmatched\n",
+		// A shell metacharacter ends a word, so `#` right after `;`, `|` or `&`
+		// opens a comment with no space in between.
+		"comment right after a semicolon, double quote": "          true;# unmatched quote: \"\n",
+		"comment right after a pipe, single quote":      "          true|# it's unmatched\n",
+		"comment right after an ampersand":              "          true&# unmatched quote: \"\n",
+		// A continuation that lands on a `#` opens a comment; the backslash INSIDE
+		// that comment continues nothing, so the scan on the third line executes.
+		"backslash-ended comment after a continuation":                   "          echo \\\n          # this comment does not continue \\\n",
+		"backslash-ended comment after a continuation, unmatched double": "          echo \\\n          # unmatched quote: \" \\\n",
+		"backslash-ended comment after a continuation, unmatched single": "          echo \\\n          # it's unmatched \\\n",
+	}
+	for name, comment := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+			comment +
+			"          ksail workload scan --framework nsa\n"
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — the scan after a comment carrying a quote still executes; got %q", name, set)
+			continue
+		}
+		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+			t.Errorf("%s: the refusal must name the conditional step; got: %v", name, err)
+		}
+	}
+}
+
+// The control for the join: a continuation whose next line continues the WORD
+// (`foo\` then `#bar`) is not a comment, so the join still happens and the step is
+// ordinary prose — accepted, exactly as before.
+func TestContinuedWordWithAHashIsStillJoinedInAConditionalStep(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+		"          echo foo\\\n          #bar \\\n          true\n"
+	path := writeTemp(t, workflow)
+	got, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("expected ACCEPT — `echo foo#bar true` invokes no scan; got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("normalised set = %q, want %q", strings.Join(got, ","), "mitre,nsa")
+	}
+}
+
+// The command words assigned on one line and expanded on the next: no single line
+// spells the scan, so only scalar-wide evidence over the executable lines can see it.
+func TestRejectsScanAssembledAcrossLinesInAConditionalStep(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+		"          KSAIL=ksail WORKLOAD=workload SCAN=scan\n" +
+		"          ${KSAIL} ${WORKLOAD} ${SCAN} --framework nsa\n"
+	path := writeTemp(t, workflow)
+	set, err := frameworkSet(path)
+	if err == nil {
+		t.Fatalf("expected FAIL CLOSED — the assembled scan executes in the conditional step; got %q", set)
+	}
+	if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+		t.Fatalf("the refusal must name the conditional step; got: %v", err)
+	}
+}
+
+// The control: quoted prose in a conditional step is still prose, exactly as on the
+// unconditional path — including prose that carries an expansion, which the
+// scalar-wide evidence must not read as a scan assembled across lines.
+func TestQuotedProseInAConditionalStepIsStillIgnored(t *testing.T) {
+	cases := map[string]string{
+		"single-quoted prose":                   "echo 'ksail workload scan --framework nsa'",
+		"double-quoted prose with an expansion": "echo \"ksail workload scan --framework $STATUS\"",
+		"double-quoted prose with a backtick":   "echo \"ksail workload scan --framework `date`\"",
+		// The string spans two physical lines; the screen folds the quoted newline first.
+		"multi-line single-quoted prose": "|\n          echo 'ksail workload\n          scan --framework nsa'",
+		"multi-line double-quoted prose": "|\n          echo \"ksail workload\n          scan --framework $STATUS\"",
+		// A backslash-newline INSIDE double quotes is removed by bash before the quoted
+		// argument is built, so this is still one printed string — not a command whose
+		// first line contributes `ksail workload` and whose second contributes the rest.
+		"double-quoted prose continued with a backslash-newline":                "|\n          echo \"ksail workload \\\n          scan --framework $STATUS\"",
+		"double-quoted prose continued with a backslash-newline and a backtick": "|\n          echo \"ksail workload \\\n          scan --framework `date`\"",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		got, err := frameworkSet(path)
+		if err != nil {
+			t.Errorf("%s: expected ACCEPT — quoted prose invokes nothing; got: %v", name, err)
+			continue
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Errorf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}
+
+// collapseQuotedNewlines follows bash's line-continuation rule: a backslash-newline pair
+// is removed inside double quotes and outside quotes alike, and kept literal only inside
+// single quotes. Outside quotes the pair is left for the per-line continuation join in
+// scanCandidate, which must see it on the physical line so a backslash that ends a
+// COMMENT is not read as continuing that comment.
+func TestCollapseQuotedNewlinesFoldsABackslashNewlineInsideDoubleQuotes(t *testing.T) {
+	cases := map[string][2]string{
+		"double-quoted":     {"echo \"ksail workload \\\nscan\"", "echo \"ksail workload scan\""},
+		"single-quoted":     {"echo 'ksail workload \\\nscan'", "echo 'ksail workload \\ scan'"},
+		"unquoted":          {"ksail workload \\\nscan", "ksail workload \\\nscan"},
+		"escaped backslash": {"echo \"a\\\\\nb\"", "echo \"a\\\\ b\""},
+		// A comment ends at its newline whatever quotes it carries, so the next line
+		// keeps its own structure; a `#` inside a quoted string is not a comment.
+		"quote inside a comment":        {"# say \"\nksail", "# say \"\nksail"},
+		"trailing comment with a quote": {"true # it's\nksail", "true # it's\nksail"},
+		"hash inside a quoted string":   {"echo \"a # b\nc\"", "echo \"a # b c\""},
+		// `#` in the middle of a word is not a comment, so the quote after it is live
+		// and the newline inside it folds.
+		"hash not starting a word": {"echo a#\"\nb\"", "echo a#\" b\""},
+		// After an unquoted continuation the next line continues the word the
+		// backslash ended: `echo \` + `# "` is a comment; `foo\` + `#"` is `foo#"`,
+		// so that quote is live and folds the newline after it.
+		"comment after an unquoted continuation":       {"echo \\\n# say \"\nksail", "echo \\\n# say \"\nksail"},
+		"hash continuing a word across a continuation": {"echo foo\\\n#\"\nb\"", "echo foo\\\n#\" b\""},
+		// A metacharacter ends the word, so the `#` after it is a comment; inside a
+		// word (`foo#bar`) or inside quotes it is not.
+		"comment right after a semicolon":            {"true;# say \"\nksail", "true;# say \"\nksail"},
+		"hash inside a word after a pipe":            {"a|foo#\"\nb\"", "a|foo#\" b\""},
+		"semicolon inside quotes is not a separator": {"echo \"a;#\nb\"", "echo \"a;# b\""},
+	}
+	for name, c := range cases {
+		if got := collapseQuotedNewlines(c[0]); got != c[1] {
+			t.Errorf("%s: collapseQuotedNewlines(%q) = %q, want %q", name, c[0], got, c[1])
+		}
 	}
 }
 
@@ -1404,5 +1675,625 @@ func TestScanFollowedByAndAndIsStillRead(t *testing.T) {
 	}
 	if len(set) != 2 {
 		t.Fatalf("framework set = %q, want both frameworks", set)
+	}
+}
+
+// --- The COMMAND-PREFIX class ------------------------------------------------
+//
+// The shape test requires the segment's FIRST three tokens to be
+// `ksail workload scan`, so a prefixed invocation — `env ksail ...`, and by the
+// same token filter any wrapper such as `sudo`, `nice` or `time` — is not counted.
+//
+// ALONE that fails closed: the scalar has no countable invocation and the guard
+// refuses. The defect is in COMBINATION. When a counted invocation and a prefixed
+// one coexist, the guard validates the counted one and silently ignores the one
+// that ALSO runs, so the executed framework set need not be the validated set.
+// That is what makes the decoy bypass in #3312 work.
+//
+// Refused rather than read, matching every other unreadable form in this guard:
+// the prefix may set the environment the scan runs in, so its meaning is not
+// decidable from the text alone. See #3338.
+func TestRejectsPrefixedScanInvocation(t *testing.T) {
+	cases := map[string]string{
+		"counted invocation paired with an env-prefixed executing scan": goodScan + " -o kubescape.sarif\n" +
+			"env ksail workload scan --framework nsa -o kubescape.sarif\n",
+		"counted invocation paired with an env-assignment-prefixed executing scan": goodScan + " -o kubescape.sarif\n" +
+			"env FOO=1 ksail workload scan --framework nsa -o kubescape.sarif\n",
+		"env-prefixed scan alone":            "env ksail workload scan --framework nsa -o kubescape.sarif\n",
+		"env-assignment-prefixed scan alone": "env FOO=1 ksail workload scan --framework nsa -o kubescape.sarif\n",
+		// QUOTING THE COMMAND NAME STILL RUNS IT. `shellSplit` preserves quote
+		// characters, so `'ksail'` is one token that an exact match on `ksail` misses
+		// — the same bypass this guard exists to close, one spelling further out.
+		"single-quoted ksail token in an env-prefixed scan": goodScan + " -o kubescape.sarif\n" +
+			"env 'ksail' workload scan --framework nsa -o kubescape.sarif\n",
+		"double-quoted ksail token in an env-prefixed scan": goodScan + " -o kubescape.sarif\n" +
+			"env \"ksail\" workload scan --framework nsa -o kubescape.sarif\n",
+		// CONCATENATION AND ESCAPES RESOLVE TO `ksail` TOO, and a token-equality test
+		// that only strips a WRAPPING quote pair misses every one of them. To the shell
+		// `k"s"ail`, `k's'ail` and `k\sail` are all the word `ksail`, so each executes
+		// the scan while reading as an unrelated token — the same bypass as the quoted
+		// spellings above, one concatenation further out.
+		"concatenated double-quoted ksail token in an env-prefixed scan": goodScan + " -o kubescape.sarif\n" +
+			"env k\"s\"ail workload scan --framework nsa -o kubescape.sarif\n",
+		"concatenated single-quoted ksail token in an env-prefixed scan": goodScan + " -o kubescape.sarif\n" +
+			"env k's'ail workload scan --framework nsa -o kubescape.sarif\n",
+		"backslash-escaped ksail token in an env-prefixed scan": goodScan + " -o kubescape.sarif\n" +
+			"env k\\sail workload scan --framework nsa -o kubescape.sarif\n",
+	}
+	for name, body := range cases {
+		if _, err := setOf(t, body); err == nil {
+			t.Fatalf("%s: expected FAIL CLOSED — a prefixed scan invocation executes but is not "+
+				"validated, so the executed framework set need not be the validated one", name)
+		}
+	}
+}
+
+// A QUOTED SPELLING IN COMMAND POSITION EXECUTES TOO. `bareToken` collapses
+// `k"s"ail`, `k's'ail`, `k\sail` and `'ksail'` to the word `ksail` for the
+// prefixed-scan sweep, but that sweep starts at field index 1, so the same
+// spelling at field index 0 met a RAW comparison: neither counted as an
+// invocation nor refused as a prefixed one, it fell through as ordinary shell.
+// Paired with a counted invocation the guard validated the counted one and
+// ignored the one that also runs — the exact bypass #3338 closes, at the one
+// position the fix did not cover. Measured: every case below PASSED against the
+// unnormalised comparison.
+//
+// The honest reading is that these ARE invocations, so the shape assertions are
+// two-sided: paired with a counted scan they are a second counted invocation
+// (refused, because the guard cannot tell which produces the uploaded SARIF), and
+// ALONE with the full set they are the gate itself and must be read.
+func TestQuotedScanSpellingInCommandPositionIsCounted(t *testing.T) {
+	spellings := map[string]string{
+		"concatenated double-quoted": "k\"s\"ail",
+		"concatenated single-quoted": "k's'ail",
+		"backslash-escaped":          "k\\sail",
+		"single-quoted":              "'ksail'",
+		"double-quoted":              "\"ksail\"",
+	}
+	for name, word := range spellings {
+		paired := goodScan + " -o kubescape.sarif\n" +
+			word + " workload scan --framework nsa -o kubescape.sarif\n"
+		_, err := setOf(t, paired)
+		if err == nil {
+			t.Errorf("%s ksail paired with a counted scan: expected FAIL CLOSED — the spelling "+
+				"executes a second scan, so the validated framework set need not be the one "+
+				"that runs", name)
+			continue
+		}
+		// ASSERT A SPACED PHRASE, NEVER A BARE WORD (see the note in
+		// TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy): the fixture
+		// path embeds this test's name, so a bare token could match the path.
+		if !strings.Contains(err.Error(), "scan invocations") {
+			t.Errorf("%s ksail paired with a counted scan: the refusal must be the two-invocation "+
+				"one, proving the spelling was COUNTED rather than refused as prefixed text; got: %v",
+				name, err)
+			continue
+		}
+
+		alone := word + " workload scan --framework nsa,mitre --compliance-threshold 95"
+		got, err := setOf(t, alone)
+		if err != nil {
+			t.Errorf("%s ksail alone: expected ACCEPT — it is the gate, spelled differently; got: %v",
+				name, err)
+			continue
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Errorf("%s ksail alone: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}
+
+// THE COMMAND WORD IS DECIDABLE ONLY WHEN IT IS PLAIN TEXT. `bareToken` resolves
+// quotes and backslashes, and that is the whole decidable set: an ANSI-C quote
+// (`k$'s'ail`), a locale quote (`k$"s"ail`), a variable (`$KSAIL`), a substitution
+// or a backtick all produce their command word only when the shell runs, so no
+// lexical test can tell `k$'s'ail workload scan` — which executes ksail — from an
+// unrelated word. Enumerating expansion syntaxes is the blacklist this guard
+// exists to avoid, so the rule is inverted into a WHITELIST: on a line that
+// carries `--framework`, every token before it must be free of `$` and backticks,
+// and the word in front of `workload scan` must resolve to exactly `ksail` or be a
+// quoted-string fragment. Anything else is refused as undecidable. Measured: every
+// paired case below PASSED against the quote-only normaliser.
+func TestRejectsUndecidableScanCommandWord(t *testing.T) {
+	cases := map[string]string{
+		"ANSI-C quoted ksail in command position":          "k$'s'ail workload scan --framework nsa -o kubescape.sarif\n",
+		"ANSI-C quoted ksail in a prefixed scan":           "env k$'s'ail workload scan --framework nsa -o kubescape.sarif\n",
+		"locale quoted ksail in command position":          "k$\"s\"ail workload scan --framework nsa -o kubescape.sarif\n",
+		"variable in command position":                     "$KSAIL workload scan --framework nsa -o kubescape.sarif\n",
+		"ANSI-C quote inside the workload token":           "ksail w$'o'rkload scan --framework nsa -o kubescape.sarif\n",
+		"closed backtick substitution in command position": "`printf ksail` workload scan --framework nsa -o kubescape.sarif\n",
+		"path-qualified ksail in command position":         "/usr/local/bin/ksail workload scan --framework nsa -o kubescape.sarif\n",
+		"relative-path ksail in command position":          "./ksail workload scan --framework nsa -o kubescape.sarif\n",
+	}
+	for name, line := range cases {
+		for _, shape := range []struct {
+			label string
+			body  string
+		}{
+			{"paired with a counted scan", goodScan + " -o kubescape.sarif\n" + line},
+			{"alone", line},
+		} {
+			_, err := setOf(t, shape.body)
+			if err == nil {
+				t.Errorf("%s, %s: expected FAIL CLOSED — the command word is not decidable from "+
+					"the text, so the line may execute a scan the guard never validated", name, shape.label)
+				continue
+			}
+			// ASSERT A SPACED PHRASE, NEVER A BARE WORD (see
+			// TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy).
+			if !strings.Contains(err.Error(), "not decidable from the text") {
+				t.Errorf("%s, %s: the refusal must name undecidability, proving this rule fired "+
+					"rather than a coincidental one; got: %v", name, shape.label, err)
+			}
+		}
+	}
+}
+
+// The control for the whitelist above: an expansion AFTER `--framework` is an
+// ordinary argument, and the real workflow has one. Refusing it would fail the
+// known-good configuration on the rule's first run, which is how a control gets
+// switched off.
+func TestExpansionInScanArgumentsIsStillRead(t *testing.T) {
+	got, err := setOf(t, goodScan+" --format sarif -o \"${RUNNER_TEMP}/kubescape.sarif\"\n")
+	if err != nil {
+		t.Fatalf("expected ACCEPT — an expansion in an argument does not change the command word; got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("normalised set = %q, want %q", strings.Join(got, ","), "mitre,nsa")
+	}
+}
+
+// The second control: `--framework` alone is too weak a trigger. An unrelated
+// command whose quoted text happens to carry `$` and `--framework` invokes no scan,
+// so refusing it would tax every tool that takes a `--framework` flag. The
+// whitelist therefore fires only when a scan word stands before `--framework`.
+func TestUnrelatedTextWithExpansionAndFrameworkIsStillIgnored(t *testing.T) {
+	cases := map[string]string{
+		"quoted expansion before --framework in an echo": goodScan + "\necho '$HOME --framework'\n",
+		"other tool taking --framework after a variable": goodScan + "\nsome-tool --config $CFG --framework x\n",
+	}
+	for name, body := range cases {
+		got, err := setOf(t, body)
+		if err != nil {
+			t.Fatalf("%s: expected ACCEPT — no scan word precedes --framework, so nothing here can invoke the scan; got: %v", name, err)
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Fatalf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}
+
+// The control for the rejection above, and the reason it keys on the three scan
+// tokens rather than on the prefix word. An `env` step that is not a scan is
+// ordinary shell and must still be ignored, or "reject any line containing `env`"
+// would pass the test above while breaking legitimate workflows.
+func TestUnrelatedPrefixedCommandIsStillIgnored(t *testing.T) {
+	cases := map[string]string{
+		"env-assignment step beside a scan": goodScan + "\nenv FOO=1 echo hello\n",
+		"env step beside a scan":            goodScan + "\nenv printenv HOME\n",
+		"wrapper on an unrelated command":   goodScan + "\ntime ls -la\n",
+		// A multi-word quoted string arrives as tokens whose quotes are UNBALANCED
+		// (`'ksail` … `nsa'`), so it is echoed text rather than an execution and must
+		// stay accepted. This is the control for unquoting only fully wrapped tokens.
+		"echoed scan text in a quoted string": goodScan + "\necho 'ksail workload scan --framework nsa'\n",
+		// A leading word inside the quotes used to make the interior `ksail workload
+		// scan` read as a PREFIXED invocation once the string was split at spaces.
+		"echoed scan text behind a leading word": goodScan + "\necho \"about ksail workload scan --framework nsa\"\n",
+	}
+	for name, body := range cases {
+		got, err := setOf(t, body)
+		if err != nil {
+			t.Fatalf("%s: expected ACCEPT — an unrelated prefixed command is not a scan, got: %v", name, err)
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Fatalf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}
+
+// UNQUOTED TEXT THAT MERELY CONTAINS THE SCAN TOKENS IS REFUSED, AND THAT IS THE
+// DECISION RATHER THAN AN OVERSIGHT. `env ksail workload scan` (executes) and
+// `echo ksail workload scan` (prints) are TOKEN-IDENTICAL in shape; only knowing
+// which commands execute their arguments separates them, so no lexical test can
+// tell them apart. Accepting the echo form therefore means enumerating the
+// commands that DO execute — `env`, `sudo`, `nice`, `time`, `xargs`, `command`,
+// `exec`, `nohup`, `timeout`, `setsid`, `stdbuf`, `chroot`, `doas`, … — which is
+// exactly the prefix blacklist this guard was built to avoid, and the spelling it
+// missed would be the bypass. Refused rather than read, like every other
+// undecidable form here.
+//
+// The author's opt-out is one character per side: QUOTE the text, which makes it
+// unambiguously an argument rather than an invocation. That form is accepted and
+// pinned as the control in TestUnrelatedPrefixedCommandIsStillIgnored, so the
+// error message MUST name it — advising "invoke the scan with no prefix" to
+// someone who was never invoking a scan sends them to fix the wrong thing.
+func TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy(t *testing.T) {
+	body := goodScan + "\necho ksail workload scan --framework nsa\n"
+
+	_, err := setOf(t, body)
+	if err == nil {
+		t.Fatalf("expected FAIL CLOSED — an unquoted token sequence is indistinguishable " +
+			"from a wrapper-prefixed invocation, so it cannot be accepted without " +
+			"enumerating the commands that execute their arguments")
+	}
+	// ASSERT A SPACED PHRASE, NEVER A BARE WORD. `setOf` writes its fixture under
+	// `t.TempDir()`, whose path embeds the TEST NAME, and the error is prefixed with
+	// that path — so a bare `Contains(err, "quote")` is satisfied by the "Unquoted"
+	// in this test's own name and passes no matter what the message says. Measured:
+	// it passed against the un-fixed message. A phrase containing a space cannot
+	// occur in that path.
+	if !strings.Contains(err.Error(), "quote the text") {
+		t.Fatalf("the error must name the quoting opt-out, or text that never invoked a "+
+			"scan is sent to fix a prefix it does not have; got: %v", err)
+	}
+}
+
+// The option-word half of the whitelist. The command-word rule stops at `--framework`,
+// and the option word itself can be constructed by the shell: `--frame${SUFFIX}` carries
+// no literal `--framework`, so the primary-scan path used to skip it as an unframed scan
+// — neither counted nor refused — while it executed exactly the option the guard never
+// read. Paired with a counted invocation, the validated set need not be the executed one.
+// A bare expansion AFTER the flag is the same hole from the other side: `$EXTRA` can
+// expand to a second `--framework` that overrides the one the guard read.
+func TestRejectsUndecidableScanOptionWord(t *testing.T) {
+	cases := map[string]string{
+		"variable suffix builds the option word":                      "ksail workload scan --frame${SUFFIX} nsa\n",
+		"ANSI-C fragment builds the option word":                      "ksail workload scan --frame$'work' nsa\n",
+		"quoted fragment builds the option word":                      "ksail workload scan --frame\"work\" nsa\n",
+		"backslash escape builds the option word":                     "ksail workload scan --frame\\work nsa\n",
+		"bare expansion after the flag":                               "ksail workload scan --framework nsa $EXTRA\n",
+		"quoted expansion in option position":                         "ksail workload scan --framework nsa \"$FLAG\" mitre\n",
+		"expansion inside an --framework= value":                      "ksail workload scan --framework=$FW\n",
+		"expansion in an option word after the flag":                  "ksail workload scan --framework nsa --$OPT sarif\n",
+		"prefixed scan with a constructed option word":                "env ksail workload scan --frame${SUFFIX} nsa\n",
+		"prefixed scan with a bare expansion":                         "env KUBECONFIG=x ksail workload scan $EXTRA\n",
+		"unframed primary scan with a bare expansion":                 "ksail workload scan $ARGS\n",
+		"undecidable command word with a constructed option word":     "k$'s'ail workload scan --frame${SUFFIX} nsa\n",
+		"prefixed undecidable command word with a constructed option": "env k$'s'ail workload scan --frame${SUFFIX} nsa\n",
+		"variable command word with a bare expansion":                 "$KSAIL workload scan $ARGS\n",
+		"prefix argument masks the flag search":                       "env NOTE=--framework k$'s'ail workload scan --framework nsa\n",
+		"quoted expansion after a value-carrying option":              "ksail workload scan --framework=nsa,mitre \"$EXTRA\"\n",
+		"quoted expansion after a boolean-looking option":             "ksail workload scan --framework nsa --verbose \"$X\"\n",
+		"glob in an option word":                                      "ksail workload scan --framewor? nsa -o kubescape.sarif\n",
+		"bracket pattern in an option word":                           "ksail workload scan --framewor[k] nsa\n",
+		"glob in an unquoted argument":                                "ksail workload scan --framework nsa -o out*.sarif\n",
+	}
+	for name, line := range cases {
+		for _, shape := range []struct {
+			label string
+			body  string
+		}{
+			{"paired with a counted scan", goodScan + " -o kubescape.sarif\n" + line},
+			{"alone", line},
+		} {
+			_, err := setOf(t, shape.body)
+			if err == nil {
+				t.Errorf("%s, %s: expected FAIL CLOSED — an option word or argument is not decidable "+
+					"from the text, so the line may execute a framework set the guard never validated", name, shape.label)
+				continue
+			}
+			// ASSERT A SPACED PHRASE, NEVER A BARE WORD (see
+			// TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy).
+			if !strings.Contains(err.Error(), "not decidable from the text") {
+				t.Errorf("%s, %s: the refusal must name undecidability, proving this rule fired "+
+					"rather than a coincidental one; got: %v", name, shape.label, err)
+			}
+		}
+	}
+}
+
+// The control for the option-word rule: the ONE accepted expansion shape is a
+// double-quoted value of a plain option word, which is how the real workflow writes its
+// output path. A plain quoted argument (`'nsa'`) is decidable too — it cannot construct
+// an option word — and is still refused by frameworkTokens as a value, for its own reason.
+func TestQuotedOptionValueExpansionIsStillRead(t *testing.T) {
+	for name, body := range map[string]string{
+		"double-quoted value of -o":       goodScan + " -o \"${RUNNER_TEMP}/kubescape.sarif\"\n",
+		"double-quoted value of --output": goodScan + " --format sarif --output \"$OUT\"\n",
+		"double-quoted glob value of -o":  goodScan + " -o \"out*.sarif\"\n",
+		// Single quotes and backslashes make these literal file names, not expansions:
+		// the shell passes `*.sarif` and `out*.sarif` through unchanged.
+		"single-quoted glob value of -o":          goodScan + " -o '*.sarif'\n",
+		"backslash-escaped glob value of -o":      goodScan + " -o out\\*.sarif\n",
+		"single-quoted dollar value of -o":        goodScan + " -o '$OUT'\n",
+		"single-quoted bracket value of --output": goodScan + " --format sarif --output '[a].sarif'\n",
+		// A quoted value containing a space is still ONE shell argument; splitting it at
+		// the space used to leave neither half a whole double-quoted word.
+		"double-quoted value of -o with a space": goodScan + " -o \"${RUNNER_TEMP}/kubescape report.sarif\"\n",
+	} {
+		got, err := setOf(t, body)
+		if err != nil {
+			t.Fatalf("%s: expected ACCEPT — a double-quoted value of a plain option word cannot construct an option; got: %v", name, err)
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Fatalf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+	_, err := setOf(t, "ksail workload scan --framework 'nsa,mitre'\n")
+	if err == nil || strings.Contains(err.Error(), "not decidable from the text") {
+		t.Fatalf("a quoted framework VALUE is decidable (it cannot construct an option word) and must be refused by the value check instead; got: %v", err)
+	}
+}
+
+// Both anchors constructed away at once. The command-word rule fires only behind a
+// literal `--framework`, and the option-word rule only behind a resolvable `workload
+// scan` pair — so a line that constructs one scan word AND the option word (`ksail
+// work${LOAD} scan --frame${SUFFIX} nsa`) carried neither anchor and fell between the two
+// branches: not counted, not refused, executing a scan the guard never read. The
+// whitelist is now keyed on the one plain scan word such a line still needs, so any
+// expansion beside it is refused whatever the rest spells.
+func TestRejectsConstructedScanWordBesideAConstructedOptionWord(t *testing.T) {
+	cases := map[string]string{
+		"constructed workload and option word":                     "ksail work${LOAD} scan --frame${SUFFIX} nsa\n",
+		"constructed scan and option word":                         "ksail workload sc${AN} --frame${SUFFIX} nsa\n",
+		"constructed ksail and scan with a constructed option":     "$KSAIL workload sc${AN} --frame${SUFFIX} nsa\n",
+		"constructed ksail and workload with a constructed option": "$KSAIL work${LOAD} scan --frame${SUFFIX} nsa\n",
+		"ANSI-C fragment in workload beside a constructed option":  "ksail w$'o'rkload scan --frame${SUFFIX} nsa\n",
+		"glob in the scan word beside a constructed option":        "ksail workload sca? --frame${SUFFIX} nsa\n",
+		// Quoting that does NOT neutralise the expansion: `$` inside double quotes and
+		// a bare `$` after a quoted scan word both still expand at run time.
+		"double-quoted expansion beside a quoted scan word":              "'ksail' \"work${LOAD}\" scan --frame${SUFFIX} nsa\n",
+		"unquoted expansion beside a single-quoted scan word":            "'ksail' work${LOAD} scan --framework nsa\n",
+		"prefixed, with workload and the option word constructed":        "env ksail work${LOAD} scan --frame${SUFFIX} nsa\n",
+		"assignment-prefixed, with scan and the option word constructed": "LOAD=load ksail workload sc${AN} --frame${SUFFIX} nsa\n",
+	}
+	for name, line := range cases {
+		for _, shape := range []struct {
+			label string
+			body  string
+		}{
+			{"paired with a counted scan", goodScan + " -o kubescape.sarif\n" + line},
+			{"alone", line},
+		} {
+			_, err := setOf(t, shape.body)
+			if err == nil {
+				t.Errorf("%s, %s: expected FAIL CLOSED — a plain scan word stands beside a shell "+
+					"expansion, so the line may execute a scan the guard never validated", name, shape.label)
+				continue
+			}
+			// ASSERT A SPACED PHRASE, NEVER A BARE WORD (see
+			// TestUnquotedEchoedScanTextIsRefusedAndNamesTheQuotingRemedy).
+			if !strings.Contains(err.Error(), "not decidable from the text") {
+				t.Errorf("%s, %s: the refusal must name undecidability, proving this rule fired "+
+					"rather than a coincidental one; got: %v", name, shape.label, err)
+			}
+		}
+	}
+}
+
+// The control: a plain scan word beside NO expansion, and an expansion beside NO plain
+// scan word, are both still ordinary shell. Quoted prose that merely contains the words
+// arrives as unbalanced fragments, which are not plain words.
+func TestPlainScanWordWithoutAnExpansionIsStillIgnored(t *testing.T) {
+	cases := map[string]string{
+		"quoted prose naming the scan beside a variable": goodScan + "\necho \"ksail workload scan finished: $STATUS\"\n",
+		"scan word in unrelated plain text":              goodScan + "\necho scan finished\n",
+		"expansion with no scan word":                    goodScan + "\nsome-tool --config $CFG --output x\n",
+		// Single quotes make the characters literal, so none of these is an expansion:
+		// the quoted scan word beside them is a plain word, and the line is still prose.
+		"single-quoted dollar beside a quoted scan word":   goodScan + "\necho 'scan' '$HOME'\n",
+		"single-quoted glob beside a quoted scan word":     goodScan + "\necho 'ksail' '*.yaml'\n",
+		"single-quoted wildcard beside a quoted scan word": goodScan + "\necho 'workload' 'ksail?'\n",
+		"single-quoted bracket beside a quoted scan word":  goodScan + "\necho 'scan' '[abc]'\n",
+		"escaped dollar beside a plain scan word":          goodScan + "\necho scan \\$HOME\n",
+	}
+	for name, body := range cases {
+		got, err := setOf(t, body)
+		if err != nil {
+			t.Fatalf("%s: expected ACCEPT — nothing here pairs a plain scan word with an expansion; got: %v", name, err)
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Fatalf("%s: normalised set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+}
+
+// A conditional step can hand the scan to a shell interpreter as a STRING
+// (`bash -c '…'`, `eval '…'`). The unconditional path already refuses that shape via
+// undecidableShellString, but a conditional step never reaches it: the screening in
+// scanCandidate drops the scalar first. Every reading scanCandidate does is per token,
+// and the quoted program is a single fully quoted word — prose to resolveToken — so no
+// scan word is ever seen and the step is skipped as ordinary shell. The reduced scan
+// then runs and overwrites the SARIF while a separate `nsa,mitre` invocation satisfies
+// the validator, which is the hole this guard exists to close.
+func TestRejectsShellStringScanInAConditionalStep(t *testing.T) {
+	cases := map[string]string{
+		"bash -c with the scan as a string":     "bash -c 'ksail workload scan --framework nsa -o kubescape.sarif'",
+		"absolute interpreter path":             "/bin/sh -c 'ksail workload scan --framework nsa'",
+		"option cluster containing c":           "bash -ec 'ksail workload scan --framework nsa'",
+		"leading option before the command one": "bash --noprofile -c 'ksail workload scan --framework nsa'",
+		"eval of the scan":                      "eval 'ksail workload scan --framework nsa'",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — the conditional step hands a reduced scan to a shell interpreter the guard never reads; got %q", name, set)
+			continue
+		}
+		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+			t.Errorf("%s: the refusal must name the conditional step, proving this rule fired; got: %v", name, err)
+		}
+	}
+}
+
+// The control for the rule above: a shell string naming NO scan word is ordinary shell,
+// exactly as it is on the unconditional path, so a conditional step carrying one must
+// still be accepted. Without this, the new rule could pass by refusing every `bash -c`.
+func TestAcceptsConditionalShellStringWithoutAScanWord(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: bash -c 'echo hello && make build'\n"
+	path := writeTemp(t, workflow)
+	set, err := frameworkSet(path)
+	if err != nil {
+		t.Fatalf("expected ACCEPT — a conditional shell string with no scan word is ordinary shell; got: %v", err)
+	}
+	if got := strings.Join(set, ","); got != "mitre,nsa" {
+		t.Fatalf("expected the unconditional scan to supply the framework set; got %q", got)
+	}
+}
+
+// Bash joins a physical line to the next one only on an ODD run of trailing
+// backslashes; an even run is escaped backslashes and ENDS the line. The
+// unconditional path knows this — it joins with continuesLine — but the conditional
+// screening in scanCandidate tested strings.HasSuffix(logical, "\\"), which is true
+// for either parity. So a step whose first line ends in `\\` had the following lines
+// folded into it, and an unmatched quote carried in from a comment line then made the
+// scan text one quoted fragment: no scan word was seen, the step was skipped as
+// ordinary shell, and the reduced scan it really runs was never validated.
+func TestRejectsScanAfterAnEvenBackslashRunInAConditionalStep(t *testing.T) {
+	cases := map[string]string{
+		"unmatched double quote in the comment": "          echo \\\\\n          # unmatched quote: \" \\\n          ksail workload scan --framework nsa\n",
+		"unmatched single quote in the comment": "          echo \\\\\n          # unmatched quote: ' \\\n          ksail workload scan --framework nsa\n",
+		"no quote, plain even run":              "          echo \\\\\n          ksail workload scan --framework nsa\n",
+	}
+	for name, body := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" + body
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — the line before the scan does not continue, so the conditional step runs a reduced scan; got %q", name, set)
+			continue
+		}
+		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+			t.Errorf("%s: the refusal must name the conditional step, proving this rule fired; got: %v", name, err)
+		}
+	}
+}
+
+// Bash removes a backslash-newline and inserts NOTHING, so `k\` on one line and
+// `sail workload scan …` on the next executes `ksail`. The conditional screen joined
+// its physical lines with a SPACE, reconstructing `k sail` — no scan word, step
+// skipped, reduced scan unvalidated. Joining directly is also the faithful reading in
+// the other direction: `k\` followed by an INDENTED `sail` really is `k   sail` to
+// bash, which runs `k`, so leaving that undetected is correct rather than a gap.
+func TestRejectsWordSplitAcrossAContinuationInAConditionalStep(t *testing.T) {
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n" +
+		"          k\\\n          sail workload scan --framework nsa\n"
+	path := writeTemp(t, workflow)
+	set, err := frameworkSet(path)
+	if err == nil {
+		t.Fatalf("expected FAIL CLOSED — bash joins `k\\` to `sail` with no separator and runs the reduced scan; got %q", set)
+	}
+	if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+		t.Fatalf("the refusal must name the conditional step, proving this rule fired; got: %v", err)
+	}
+}
+
+// A scan written immediately after a shell separator with no surrounding whitespace
+// (`true;ksail workload scan …`) is executed by bash, but shellFields keeps
+// `true;ksail` as ONE word, so no token resolves to `ksail` and the conditional step
+// was skipped. The unconditional path splits on separators; this screen must too.
+func TestRejectsScanAfterATightSeparatorInAConditionalStep(t *testing.T) {
+	cases := map[string]string{
+		"semicolon":                  "true;ksail workload scan --framework nsa",
+		"and-and":                    "true&&ksail workload scan --framework nsa",
+		"or-or":                      "false||ksail workload scan --framework nsa",
+		"pipe":                       "echo x|ksail workload scan --framework nsa",
+		"background":                 "true&ksail workload scan --framework nsa",
+		"quoted prose stays ignored": "echo 'a;ksail workload scan --framework nsa'",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		set, err := frameworkSet(path)
+		if name == "quoted prose stays ignored" {
+			// The control: a separator INSIDE a quoted word is not a command boundary,
+			// so this is prose and must stay accepted. Without it, "split on ;&|" could
+			// pass by refusing every step that mentions a scan in a string.
+			if err != nil {
+				t.Errorf("%s: expected ACCEPT — a separator inside a quoted word is not a command boundary; got: %v", name, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — bash runs the reduced scan after the separator; got %q", name, set)
+			continue
+		}
+		if !strings.Contains(err.Error(), "guarded by a workflow-level `if:`") {
+			t.Errorf("%s: the refusal must name the conditional step, proving this rule fired; got: %v", name, err)
+		}
+	}
+}
+
+// --- The CONDITIONAL FALSE-POSITIVE class (#3586) ----------------------------
+//
+// The inversion this branch carried refused any conditional scalar it could not
+// prove scan-free. That whitelist closed nine bypass spellings and, in exchange,
+// refused ordinary shell: an inline comment, a heredoc body, a brace group, a
+// multi-line array assignment, and a second framework-aware tool. #3586 records
+// the decision to ship the surgical group here and take the inversion separately.
+// These two tests pin that boundary: the shapes are accepted, and narrowing the
+// shell-string rule to whole words has not opened a way to hide a real scan.
+
+// RED PROOF for platform#3586: the six legitimate conditional-step shapes the
+// inversion refuses. Each is scan-free and must be ACCEPTED.
+func TestIssue3586SixShapesAreAccepted(t *testing.T) {
+	block := map[string]string{
+		"2 heredoc body": "cat <<'DATA'\n\"$STATUS\"\nDATA\n",
+		"3 brace group":  "{\n  echo hello\n}\n",
+		"4 array assign": "ARGS=(\n  \"$VALUE\"\n)\necho \"${ARGS[@]}\"\n",
+	}
+	inline := map[string]string{
+		"1 inline comment":      "echo ok # ; \"$STATUS\"",
+		"5 checkov --framework": "checkov --file manifest.yaml --framework kubernetes",
+		"6 scanner substring":   "bash -c 'echo scanner starting'",
+	}
+
+	run := func(name, stepYAML string) {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" + stepYAML
+		path := writeTemp(t, workflow)
+		got, err := frameworkSet(path)
+		if err != nil {
+			t.Errorf("%s: expected ACCEPT (scan-free); got: %v", name, err)
+			return
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Errorf("%s: set = %q, want %q", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+
+	for name, line := range inline {
+		run(name, "      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: "+line+"\n")
+	}
+	for name, body := range block {
+		indented := ""
+		for _, l := range strings.Split(strings.TrimRight(body, "\n"), "\n") {
+			indented += "          " + l + "\n"
+		}
+		run(name, "      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: |\n"+indented)
+	}
+}
+
+// NEGATIVE CONTROL for the literal-word narrowing: narrowing the shell-string rule
+// from substring to whole-word must not let a real scan through a `-c` operand.
+func TestLiteralNarrowingStillRefusesARealShellStringScan(t *testing.T) {
+	cases := map[string]string{
+		"literal scan in a shell string":    "bash -c 'ksail workload scan --framework nsa'",
+		"path-qualified scan":               "bash -c '/usr/local/bin/ksail workload scan --framework nsa'",
+		"sh -c literal scan":                "sh -c 'ksail workload scan --framework nsa'",
+		"expansion still conservative":      "bash -c \"$CMD workload scan\"",
+		"scan word alone in a shell string": "bash -c 'scan'",
+	}
+	for name, line := range cases {
+		workflow := "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n" +
+			"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+		path := writeTemp(t, workflow)
+		if _, err := frameworkSet(path); err == nil {
+			t.Errorf("%s: expected REFUSE — a conditional step whose shell string names the scan "+
+				"must still fail closed", name)
+		}
 	}
 }

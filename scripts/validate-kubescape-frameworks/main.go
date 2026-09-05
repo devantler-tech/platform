@@ -59,6 +59,10 @@ var requiredFrameworks = []string{"nsa", "mitre"}
 // happens to match.
 var frameworkToken = regexp.MustCompile(`^[a-z0-9._-]+$`)
 
+// Only this literal subset can be split on whitespace without evaluating shell
+// syntax. Complex command strings keep the conservative substring rule below.
+var literalShellWords = regexp.MustCompile(`^[a-zA-Z0-9_./[:space:]-]+$`)
+
 // What `<<` opened, as far as this can tell.
 //
 // A DELIMITER IS A SHELL WORD, NOT AN IDENTIFIER. Matching an identifier read two
@@ -385,12 +389,310 @@ func runScalars(data []byte) ([]string, error) {
 	return out, nil
 }
 
-// scanCandidate reports whether a `run:` scalar mentions the scan at all. Deliberately
+// scanCandidate reports whether a `run:` scalar can invoke the scan at all. Deliberately
 // LOOSE: it decides only whether a conditional step is worth refusing, and a false
 // positive there costs a diagnosable refusal while a false negative reopens the hole.
+//
+// It reads the scalar the way the unconditional path does — token by token through
+// resolveToken — rather than by raw substring, because a raw `ksail` substring test
+// is exactly what a quoted, escaped or expanded spelling walks past: `k"s"ail workload
+// scan --framework nsa` in a conditional step used to be skipped as ordinary shell while
+// executing a reduced scan the guard never validated. A line whose resolved words
+// contain all three of `ksail`, `workload` and `scan` is a candidate, and so is any
+// line the undecidable-candidate rule refuses (a plain scan word beside an expansion,
+// which covers `k$'s'ail`), so the conditional path fails closed on the same spellings
+// the primary path counts or refuses. Quoted prose stays ignored here for the same
+// reason it does there.
 func scanCandidate(scalar string) bool {
-	return strings.Contains(scalar, "ksail") && strings.Contains(scalar, "workload") &&
-		strings.Contains(scalar, "scan") && strings.Contains(scalar, "--framework")
+	framed := strings.Contains(scalar, "--framework")
+	// A quoted string may span physical lines, and every reading below is per line —
+	// so a newline INSIDE quotes is folded to a space first, making the multi-line
+	// string one word that fullyQuoted then drops as prose. Comment detection runs on
+	// the result, so a line that begins inside a quote is never mistaken for a comment.
+	lines := strings.Split(collapseQuotedNewlines(scalar), "\n")
+	// SCALAR-WIDE evidence, over the non-comment lines, kept from the raw check this
+	// replaced: when the command words are assigned on one line and expanded on the
+	// next (`KSAIL=ksail …` then `${KSAIL} ${WORKLOAD} ${SCAN} --framework nsa`) no
+	// single line spells the scan, so the per-line rules below see nothing. If the
+	// executable text of the block spells all four tokens AND some line expands, the
+	// block can invoke the scan and is refused on this deliberately loose path.
+	// Built from the QUOTE-AWARE tokens, not the raw text: a fully quoted word is
+	// prose and contributes nothing, so `echo "ksail workload scan --framework
+	// $STATUS"` is not evidence of a scan, while `${KSAIL}` and `k"s"ail` (resolved to
+	// `ksail`) still are.
+	var code strings.Builder
+	codeExpands := false
+	for _, physical := range lines {
+		if strings.HasPrefix(strings.TrimSpace(physical), "#") {
+			continue
+		}
+		text, expands := evidenceText(shellFields(physical))
+		if expands {
+			codeExpands = true
+		}
+		code.WriteString(text)
+		code.WriteByte('\n')
+	}
+	if text := code.String(); codeExpands && strings.Contains(text, "--framework") &&
+		strings.Contains(text, "ksail") && strings.Contains(text, "workload") && strings.Contains(text, "scan") {
+		return true
+	}
+	for i := 0; i < len(lines); i++ {
+		// A comment cannot execute anything, and the real workflows annotate their
+		// conditional steps with prose that names the scan. Decided on the PHYSICAL
+		// line, before any continuation is joined: a backslash at the end of a
+		// comment does not continue it, so the next physical line still executes —
+		// joining first would fold that line into the comment and skip it.
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "#") {
+			continue
+		}
+		// A backslash-newline continues the command on the next physical line, so
+		// the three scan words can be split across lines; join them before reading.
+		// PARITY, via continuesLine, exactly as the unconditional path joins: only an
+		// ODD run of trailing backslashes continues the line. `strings.HasSuffix` is
+		// true for either parity, so a line ending in an EVEN run folded the lines
+		// after it into itself, and an unmatched quote carried in from a comment then
+		// made the scan one quoted fragment — no scan word seen, the conditional step
+		// skipped as ordinary shell, and the reduced scan it really runs unvalidated.
+		logical := lines[i]
+		for continuesLine(logical) && i+1 < len(lines) {
+			head := strings.TrimSuffix(logical, "\\")
+			// bash removes the backslash-newline and reads on: when the continued
+			// text begins a word and the next physical line starts with `#`, that
+			// `#` opens a comment — `echo \` then `# x \` is `echo # x \`, and the
+			// backslash inside the comment continues nothing. The logical line
+			// ends here, the comment line is consumed, and the line after it is
+			// read on its own. `foo\` then `#bar` is `foo#bar`, not a comment.
+			if strings.HasPrefix(strings.TrimSpace(lines[i+1]), "#") && endsAtWordStart(head) {
+				logical = head
+				i++
+				break
+			}
+			i++
+			// DIRECT concatenation, no inserted separator: bash removes the
+			// backslash-newline pair and inserts NOTHING, so `k\` + `sail …` is the
+			// word `ksail`. Joining with a space reconstructed `k sail`, which carries
+			// no scan word, so the step was skipped. It is faithful the other way too:
+			// `k\` before an INDENTED `sail` really is `k   sail` to bash, which runs
+			// `k` — so that one correctly stays undetected rather than being a gap.
+			logical = head + lines[i]
+		}
+		line := logical
+		fields := shellFieldsAcrossSeparators(line)
+		if len(fields) == 0 {
+			continue
+		}
+		words := map[string]bool{}
+		for _, f := range fields {
+			if word, fragment := resolveToken(f); !fragment {
+				words[word] = true
+			}
+		}
+		if framed && words["ksail"] && words["workload"] && words["scan"] {
+			return true
+		}
+		if undecidableScanCandidate(fields) != "" {
+			return true
+		}
+		// A shell interpreter handed the scan as a STRING (`bash -c '…'`, `eval '…'`)
+		// runs text no per-token rule can read, and every reading above is per token:
+		// the program is one fully quoted word, so resolveToken takes it for prose and
+		// no scan word is ever seen. The unconditional path refuses this shape, but a
+		// conditional step never reaches that path — it is screened here and dropped —
+		// so without the same test a conditional `bash -c 'ksail workload scan …'` is
+		// skipped as ordinary shell while the reduced scan it runs overwrites the SARIF.
+		if undecidableShellString(fields) != "" {
+			return true
+		}
+		// Every command word expanded at once (`${ksail} ${workload} ${scan}`): no
+		// token resolves to a plain scan word, so neither rule above sees it. The
+		// unquoted text still spells the scan inside the expansions, and the line
+		// expands, which is enough to refuse on the loose path this function serves.
+		if text, expands := evidenceText(fields); expands && strings.Contains(text, "ksail") &&
+			strings.Contains(text, "workload") && strings.Contains(text, "scan") {
+			return true
+		}
+	}
+	return false
+}
+
+// evidenceText renders the words of one line that could take part in an invocation —
+// every token that is not a fully quoted string, resolved through resolveToken — and
+// reports whether any token on the line expands. A fully quoted word is an argument,
+// never a command, so prose such as `echo "ksail workload scan --framework $STATUS"`
+// contributes only `echo`.
+func evidenceText(fields []string) (string, bool) {
+	var text strings.Builder
+	expands := false
+	for _, f := range fields {
+		if carriesExpansion(f) {
+			expands = true
+		}
+		if fullyQuoted(f) {
+			continue
+		}
+		word, _ := resolveToken(f)
+		text.WriteString(word)
+		text.WriteByte(' ')
+	}
+	return text.String(), expands
+}
+
+// endsAtWordStart reports whether text ending here leaves the shell at the start of
+// a word: empty, or ending in whitespace or an unquoted metacharacter — the position
+// in which a following `#` opens a comment.
+func endsAtWordStart(head string) bool {
+	if head == "" {
+		return true
+	}
+	last := head[len(head)-1]
+	return last == ' ' || last == '\t' || strings.IndexByte(";|&()<>", last) >= 0
+}
+
+// collapseQuotedNewlines replaces every newline that falls inside a single- or
+// double-quoted string with a space, tracking quote state and backslash escapes the way
+// shellFields does, so a quoted string that spans physical lines reads as one word on
+// one line. Newlines outside quotes are kept, so line structure survives.
+//
+// A backslash-newline pair inside double quotes is REMOVED, as bash removes it before it
+// builds the quoted argument: `echo "ksail workload \` continued by `scan --framework $X"`
+// is one printed string, and leaving the newline in place would split it into two physical
+// lines that together spell the scan. Outside quotes the pair is kept, because
+// scanCandidate joins unquoted continuations itself on the PHYSICAL line — after deciding
+// whether that line is a comment, which a backslash does not continue.
+//
+// A shell COMMENT — a `#` that begins a word outside quotes — runs to its physical
+// newline and opens no quote, whatever it contains. It is copied through untouched
+// and its newline is kept, so an unmatched quote inside a comment cannot swallow the
+// command on the next line into the comment (the fail-open a quote-state-only fold
+// has). A `#` inside a quoted string, or in the middle of a word, is not a comment.
+func collapseQuotedNewlines(text string) string {
+	var out strings.Builder
+	out.Grow(len(text))
+	inSingle, inDouble := false, false
+	// True when the next byte would begin a shell word: at the start of the text and
+	// after unescaped whitespace. Only a `#` in that position opens a comment.
+	wordStart := true
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		atWordStart := wordStart
+		wordStart = false
+		switch {
+		case c == '#' && atWordStart && !inSingle && !inDouble:
+			for i < len(text) && text[i] != '\n' {
+				out.WriteByte(text[i])
+				i++
+			}
+			// Leave the newline to the next iteration: outside quotes it is kept.
+			i--
+			wordStart = true
+		case c == '\\' && inDouble && i+1 < len(text) && text[i+1] == '\n':
+			i++
+		case c == '\\' && !inSingle:
+			out.WriteByte(c)
+			if i+1 < len(text) {
+				i++
+				out.WriteByte(text[i])
+				// An unquoted backslash-newline is removed by bash before the next
+				// line is read, so the next byte continues the word the backslash
+				// ended: `echo \` then `# x` is `echo # x` (a comment), while
+				// `foo\` then `#bar` is `foo#bar` (not one). The pair itself is kept
+				// here for scanCandidate's join; only the word-start state carries.
+				if text[i] == '\n' && !inDouble {
+					wordStart = atWordStart
+				}
+			}
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+			out.WriteByte(c)
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+			out.WriteByte(c)
+		case c == '\n' && (inSingle || inDouble):
+			out.WriteByte(' ')
+		default:
+			out.WriteByte(c)
+			// Whitespace ends a word everywhere; the shell metacharacters end one
+			// outside quotes, so `true;# x` and `a|# x` open a comment with no space.
+			if c == ' ' || c == '\t' || c == '\n' {
+				wordStart = true
+			} else if !inSingle && !inDouble && strings.IndexByte(";|&()<>", c) >= 0 {
+				wordStart = true
+			}
+		}
+	}
+	return out.String()
+}
+
+// fullyQuoted reports whether a whole word is wrapped in one pair of matching quotes —
+// the shape a multi-word string takes once shellFields keeps it together. Such a word is
+// an argument, never a command, so it is prose to the loose conditional screen.
+func fullyQuoted(tok string) bool {
+	if len(tok) < 2 {
+		return false
+	}
+	first, last := tok[0], tok[len(tok)-1]
+	return (first == '\'' || first == '"') && last == first
+}
+
+// shellFields splits one command line into words the way the shell does: on
+// unquoted whitespace only, keeping quote characters and backslash escapes in the
+// word so resolveToken reads them exactly as before. `strings.Fields` split a quoted
+// argument at every space, so `echo "about ksail workload scan --framework nsa"`
+// arrived as separate `ksail`, `workload` and `scan` words and read as a prefixed
+// invocation, and `-o "${RUNNER_TEMP}/kubescape report.sarif"` lost the one accepted
+// expansion shape because neither half was a whole double-quoted word. An unclosed
+// quote runs to the end of the line as one word, which resolveToken then reports as a
+// fragment.
+func shellFields(text string) []string { return shellFieldsSplit(text, false) }
+
+// shellFieldsAcrossSeparators is shellFields plus a break at an UNQUOTED shell
+// separator, so `true;ksail workload scan …` yields `ksail` as its own word. Bash runs
+// that scan, but the plain splitter keeps `true;ksail` as one token, so no token
+// resolves to a scan word and the conditional screen skipped the step. Only the LOOSE
+// conditional screen uses this: it may over-split an exotic line, and a false positive
+// there costs a diagnosable refusal while a false negative reopens the hole.
+//
+// A separator inside quotes is not a command boundary, so `echo 'a;ksail workload
+// scan'` stays one quoted word and remains prose — the same treatment the plain
+// splitter gives it. An escaped `\;` likewise stays in the word.
+func shellFieldsAcrossSeparators(text string) []string { return shellFieldsSplit(text, true) }
+
+func shellFieldsSplit(text string, breakSeparators bool) []string {
+	var out []string
+	var cur strings.Builder
+	inSingle, inDouble := false, false
+	flush := func() {
+		if cur.Len() > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
+		}
+	}
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		switch {
+		case c == '\\' && !inSingle:
+			cur.WriteByte(c)
+			if i+1 < len(text) {
+				i++
+				cur.WriteByte(text[i])
+			}
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+			cur.WriteByte(c)
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+			cur.WriteByte(c)
+		case breakSeparators && (c == ';' || c == '&' || c == '|') && !inSingle && !inDouble:
+			flush()
+		case (c == ' ' || c == '\t' || c == '\n' || c == '\r') && !inSingle && !inDouble:
+			flush()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return out
 }
 
 // firstScanLine returns the line naming the scan, for a diagnosable refusal.
@@ -785,6 +1087,428 @@ func continuesLine(line string) bool {
 	return n%2 == 1
 }
 
+// prefixedScan reports whether `ksail workload scan` appears as three consecutive
+// tokens somewhere OTHER than command position — the shape a leading environment
+// assignment or wrapper command produces (`env ksail ...`, `env FOO=1 ksail ...`,
+// `sudo ksail ...`).
+//
+// Keyed on the three scan tokens rather than on a list of wrapper words. A blacklist
+// of prefixes would have to enumerate every spelling, and the one it missed would be
+// the one that mattered; keying on the scan itself has no such gap. A segment that
+// does NOT carry those tokens is ordinary shell and is left alone.
+// bareToken resolves a shell token to the literal WORD the shell would execute,
+// so every spelling of one command name collapses to a single value before
+// matching. `'ksail'`, `k"s"ail`, `k's'ail` and `k\sail` are all the word `ksail`.
+//
+// Quotes and backslashes are the only constructs resolved, and that is the whole
+// DECIDABLE set: `$(…)`, backticks and `${…}` need the shell's own evaluation to
+// know what word they produce, and scanInvocations refuses those separately
+// rather than guessing at them here.
+//
+// UNBALANCED quoting returns the token UNCHANGED, and that restriction is what
+// keeps the check honest rather than being a shortfall: `shellSplit` preserves
+// quote characters, so a multi-word quoted string arrives as tokens whose quotes
+// never close (`'ksail` … `nsa'`). Leaving those alone is what stops
+// `echo 'ksail workload scan --framework nsa'` — echoed text rather than an
+// execution — being refused as a prefixed scan.
+//
+// Quote CONTEXT is honoured, which is what preserves the one-level rule: inside
+// double quotes a single quote is literal, so `"'ksail'"` resolves to the word
+// `'ksail'`, which names a different command than ksail.
+func bareToken(tok string) string {
+	word, _ := resolveToken(tok)
+	return word
+}
+
+// resolveToken is bareToken with its one refusal made visible: fragment is true when
+// the token was returned UNCHANGED because its quotes never closed, which is what
+// marks it as a piece of a longer quoted string rather than a command name.
+func resolveToken(tok string) (word string, fragment bool) {
+	const (
+		plain = iota
+		single
+		double
+	)
+
+	var b strings.Builder
+	b.Grow(len(tok))
+
+	state := plain
+	for i := 0; i < len(tok); i++ {
+		c := tok[i]
+		switch state {
+		case plain:
+			switch c {
+			case '\'':
+				state = single
+			case '"':
+				state = double
+			case '\\':
+				// Escapes the next byte literally. A TRAILING backslash is a line
+				// continuation, which contributes no character at all.
+				if i+1 < len(tok) {
+					i++
+					b.WriteByte(tok[i])
+				}
+			default:
+				b.WriteByte(c)
+			}
+		case single:
+			// Nothing is special inside single quotes, a backslash least of all.
+			if c == '\'' {
+				state = plain
+				continue
+			}
+			b.WriteByte(c)
+		case double:
+			switch c {
+			case '"':
+				state = plain
+			case '\\':
+				// Inside double quotes a backslash escapes only these four; before
+				// anything else it stays a literal backslash.
+				if i+1 < len(tok) && (tok[i+1] == '"' || tok[i+1] == '\\' ||
+					tok[i+1] == '$' || tok[i+1] == '`') {
+					i++
+					b.WriteByte(tok[i])
+					continue
+				}
+				b.WriteByte(c)
+			default:
+				b.WriteByte(c)
+			}
+		}
+	}
+
+	// Quotes that never closed mean this token is a fragment of a longer quoted
+	// string, not a command name — see the doc comment above.
+	if state != plain {
+		return tok, true
+	}
+	return b.String(), false
+}
+
+// undecidableShellString names an `eval`, or a shell interpreter given a `-c`-style
+// option, whose following arguments name a scan word — text the interpreter will run
+// as code, which no per-token rule can read — or returns "" when there is none.
+// The interpreter is recognised by its base name so `/bin/sh -c` counts; the option
+// test is any dash-option containing `c` (`-c`, `-ec`, `-lc`). Text with no scan word
+// is ordinary shell: `bash -c 'echo hello'` is not this guard's business.
+func undecidableShellString(fields []string) string {
+	for i, f := range fields {
+		word := bareToken(f)
+		base := word[strings.LastIndex(word, "/")+1:]
+		executes := word == "eval"
+		if !executes {
+			switch base {
+			case "bash", "sh", "dash", "zsh", "ksh":
+				// Every leading option is read, not only the first: `bash -e -c '…'`
+				// and `bash --noprofile -c '…'` execute their string exactly as
+				// `bash -c` does. A short cluster containing `c` (`-c`, `-ec`, `-lc`)
+				// is the command-string option. Options such as `-o` consume the next
+				// word, so skip that operand before looking for more options; otherwise
+				// it would be mistaken for the script path that ends the scan.
+				skipOperand := false
+				for j := i + 1; j < len(fields); j++ {
+					if skipOperand {
+						skipOperand = false
+						continue
+					}
+					opt := bareToken(fields[j])
+					if !strings.HasPrefix(opt, "-") || opt == "-" || opt == "--" {
+						break
+					}
+					if !strings.HasPrefix(opt, "--") && strings.Contains(opt, "c") {
+						executes = true
+						break
+					}
+					if opt == "-o" || (base == "bash" && (opt == "-O" || opt == "--init-file" || opt == "--rcfile")) {
+						skipOperand = true
+					}
+				}
+			}
+		}
+		if !executes {
+			continue
+		}
+		for _, arg := range fields[i+1:] {
+			if literal := bareToken(arg); literalShellWords.MatchString(literal) {
+				// A filename or identifier CONTAINING "scan" is not the word scan.
+				// Narrow only fully literal text: quotes, expansions, operators and
+				// any other shell syntax still take the conservative rule below.
+				named := false
+				for _, token := range strings.Fields(literal) {
+					switch filepath.Base(token) {
+					case "ksail", "workload", "scan":
+						named = true
+					}
+				}
+				if !named {
+					continue
+				}
+			}
+			if strings.Contains(arg, "ksail") || strings.Contains(arg, "workload") || strings.Contains(arg, "scan") {
+				return fmt.Sprintf("%q executes its argument as shell code and that argument names a scan word", word)
+			}
+		}
+	}
+	return ""
+}
+
+// allExpandedBeforeFramework reports whether every token in front of the first
+// `--framework` word carries a shell expansion — a command spelled entirely from
+// variables, which resolves to a plain scan word only when the shell runs.
+func allExpandedBeforeFramework(fields []string) bool {
+	seen := 0
+	for _, f := range fields {
+		if strings.HasPrefix(bareToken(f), "--framework") {
+			break
+		}
+		if !carriesExpansion(f) {
+			return false
+		}
+		seen++
+	}
+	return seen > 0
+}
+
+func prefixedScan(fields []string) bool {
+	for i := 1; i+2 < len(fields); i++ {
+		if bareToken(fields[i]) == "ksail" &&
+			bareToken(fields[i+1]) == "workload" &&
+			bareToken(fields[i+2]) == "scan" {
+			return true
+		}
+	}
+	return false
+}
+
+// undecidableCommandWord names why a `--framework` line's command word cannot be
+// read from the text, or returns "" when it can.
+//
+// A WHITELIST, not a list of expansion syntaxes. `bareToken` resolves quotes and
+// backslashes, and that is the whole decidable set; an ANSI-C quote (`k$'s'ail`),
+// a locale quote (`k$"s"ail`), a variable, a `$(...)` or a backtick substitution all
+// produce their command word only when the shell runs. Refusing each spelling by
+// name is the blacklist this guard exists to avoid, and the one it missed would be
+// the bypass. So the rule is what a decidable line LOOKS like: every token before
+// `--framework` is free of `$` and backticks, and the word in front of `workload
+// scan` resolves to exactly `ksail` — or is a quoted-string fragment, which is
+// echoed text rather than an invocation and the accepted opt-out. A path-qualified
+// `/usr/local/bin/ksail` is refused by the same test: it executes the scan while
+// matching nothing the guard counts.
+//
+// Only tokens BEFORE `--framework` are held to this. The real invocation carries
+// `-o "${RUNNER_TEMP}/kubescape.sarif"` after it, and an expansion in an argument
+// does not change which command runs.
+func undecidableCommandWord(fields []string) string {
+	// THE FLAG IS LOCATED AFTER THE `workload scan` PAIR when one is present. Searching the
+	// whole line let a prefix argument mask it: in `env NOTE=--framework k$'s'ail workload
+	// scan --framework nsa` the first match is the assignment, every check below then
+	// stops short of the command word, and the ANSI-C-expanded `ksail` executes unread.
+	start := 0
+	if j, ok := workloadScanArgs(fields); ok {
+		start = j
+	}
+	fw := -1
+	for i := start; i < len(fields); i++ {
+		if strings.Contains(fields[i], "--framework") {
+			fw = i
+			break
+		}
+	}
+	if fw < 0 {
+		return ""
+	}
+	// `--framework` alone is too weak a trigger: an unrelated tool that takes the flag,
+	// or quoted text that merely contains it, invokes no scan and must stay readable.
+	// The expansion test therefore fires only when a scan WORD stands before the flag.
+	// The residual is a line that expands all three words at once, which no lexical
+	// test can see; one plain word is enough for this one to fire.
+	scanWord := false
+	for _, f := range fields[:fw] {
+		switch bareToken(f) {
+		case "ksail", "workload", "scan":
+			scanWord = true
+		}
+	}
+	if scanWord {
+		for _, f := range fields[:fw] {
+			// Unquoted `*`, `?` and `[` are pathname expansion: `k?ail` is whatever file
+			// matches at run time, so they are as undecidable as `$`. Quote-aware, so a
+			// single-quoted or escaped character stays the literal it is.
+			if carriesExpansion(f) {
+				return fmt.Sprintf("%q carries a shell expansion", f)
+			}
+		}
+	}
+	for j := 1; j+1 < fw; j++ {
+		if bareToken(fields[j]) != "workload" || bareToken(fields[j+1]) != "scan" {
+			continue
+		}
+		word, fragment := resolveToken(fields[j-1])
+		if word != "ksail" && !fragment {
+			return fmt.Sprintf("%q in front of `workload scan` is not the bare word ksail", fields[j-1])
+		}
+	}
+	return ""
+}
+
+// undecidableOptionWord names why the ARGUMENTS of a scan invocation cannot be read from
+// the text, or returns "" when they can.
+//
+// The command-word whitelist above stops at `--framework`, and that was the hole: the
+// option word itself can be built by the shell. `--frame${SUFFIX} nsa`, `--frame$'work'`
+// and `--frame"work"` all execute as `--framework` while the raw text carries no such
+// token, so the primary-scan path skipped the line as an unframed scan and, paired with a
+// counted invocation, credited the wrong set. A bare `$EXTRA` after the flag is the same
+// hole from the other side: it can expand to a second `--framework` that overrides the
+// one the guard read.
+//
+// Again a WHITELIST of what a decidable argument list LOOKS like, not a list of
+// expansion syntaxes. Every option word is a plain token: no quotes, no backslashes, no
+// `$`, no backtick. A token carrying an expansion is accepted in exactly one shape — the
+// VALUE of the plain option word before it, wrapped whole in double quotes so it can
+// never split into extra words — because the real workflow writes its output path as
+// `-o "${RUNNER_TEMP}/kubescape.sarif"`, and refusing that would fail the known-good
+// configuration on the rule's first run. Everything else is refused.
+// undecidableScanCandidate reports why a line that is not a plainly spelled primary
+// invocation still cannot be read as ordinary shell: it names at least one scan word
+// (`ksail`, `workload` or `scan`) as a plain, fully resolved token AND carries a shell
+// expansion or pathname pattern in some token. Keyed on the plain word rather than on a
+// literal `--framework` or a resolvable `workload scan` pair, because each of those
+// anchors can be constructed away (`work${LOAD}`, `--frame${SUFFIX}`) while the line
+// still executes a scan. A quoted fragment (`"ksail`) is not a plain word, so quoted
+// prose stays readable; an empty reason means the line is decidable.
+func undecidableScanCandidate(fields []string) string {
+	// TOKENS INSIDE A MULTI-WORD QUOTED STRING ARE NOT PLAIN WORDS. resolveToken flags only
+	// the token that opens or closes the string; the words between them resolve as plain
+	// (`echo "ksail workload scan finished: $STATUS"` puts `workload` and `scan` there), so
+	// the quote state is tracked across the line and everything inside it is skipped —
+	// the quoting opt-out the messages name must keep working when the prose carries a
+	// variable. A balanced token (`"$X"`, `--frame"work"`) is outside any such string.
+	inQuote := false
+	scanWord := ""
+	for _, f := range fields {
+		word, fragment := resolveToken(f)
+		if fragment {
+			inQuote = !inQuote
+			continue
+		}
+		if inQuote {
+			continue
+		}
+		switch word {
+		case "ksail", "workload", "scan":
+			if scanWord == "" {
+				scanWord = f
+			}
+		}
+	}
+	if scanWord == "" {
+		return ""
+	}
+	inQuote = false
+	for _, f := range fields {
+		if _, fragment := resolveToken(f); fragment {
+			inQuote = !inQuote
+			continue
+		}
+		if inQuote {
+			continue
+		}
+		if carriesExpansion(f) {
+			return fmt.Sprintf("%q is a plain scan word and %q carries a shell expansion", scanWord, f)
+		}
+	}
+	return ""
+}
+
+// carriesExpansion reports whether a single token can expand at run time: a `$` or a
+// backtick outside single quotes, or an unquoted `*`, `?` or `[` (pathname expansion).
+// Quote state matters, not merely the characters — `'$HOME'` is the four literal
+// characters and `'*.yaml'` is a literal glob, so a line like `echo 'scan' '$HOME'`
+// carries no expansion at all; a bare `ContainsAny` refused it beside the quoted scan
+// word. Inside double quotes `$` and backticks still expand while `*?[` do not, and a
+// backslash escapes the character after it in either the plain or the double-quoted
+// state, exactly as resolveToken reads them. A token whose quotes never close is a
+// fragment of a longer string; its expansion state is decided by the tokens around it,
+// so it reports false here. An unquoted `{` is brace expansion — `--{framework=nsa,output=x}`
+// becomes two options only when the shell runs — and counts as an expansion too;
+// inside double quotes braces are literal.
+func carriesExpansion(tok string) bool {
+	const (
+		plain = iota
+		single
+		double
+	)
+	state := plain
+	for i := 0; i < len(tok); i++ {
+		c := tok[i]
+		switch state {
+		case plain:
+			switch c {
+			case '\'':
+				state = single
+			case '"':
+				state = double
+			case '\\':
+				i++
+			case '$', '`', '*', '?', '[', '{':
+				return true
+			}
+		case single:
+			if c == '\'' {
+				state = plain
+			}
+		case double:
+			switch c {
+			case '"':
+				state = plain
+			case '\\':
+				i++
+			case '$', '`':
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func undecidableOptionWord(args []string) string {
+	// The only option words whose NEXT word is necessarily their value. `--verbose "$X"` or
+	// `--framework=nsa "$X"` leave the expansion free to become an option of its own, so
+	// the exception is a whitelist of value-taking spellings, not any token beginning `-`.
+	outputOption := func(tok string) bool {
+		return tok == "-o" || tok == "--output"
+	}
+	for i, tok := range args {
+		// `$` and backticks expand; unquoted `*`, `?` and `[` are pathname expansion, and a
+		// file named `--framework` beside `--framewor?` is all it takes to build the flag.
+		// Quote-aware: `-o '*.sarif'` and `-o out\*.sarif` are literal file names, not
+		// patterns, and refusing them was a false positive.
+		expansion := carriesExpansion(tok)
+		spelled := bareToken(tok) != tok
+		switch {
+		case !expansion && !spelled:
+			continue
+		case strings.HasPrefix(bareToken(tok), "-") || strings.HasPrefix(tok, "-"):
+			return fmt.Sprintf("option word %q is not a plain token", tok)
+		case expansion && len(tok) >= 2 && tok[0] == '"' && tok[len(tok)-1] == '"' && i > 0 && outputOption(args[i-1]):
+			// The one accepted expansion: a double-quoted value of `-o`/`--output`, which cannot
+			// split into further words and is consumed by the option before it.
+			continue
+		case expansion:
+			return fmt.Sprintf("argument %q carries a shell expansion or pattern outside a double-quoted -o/--output value", tok)
+		default:
+			// A quoted or escaped non-option argument (`'nsa,mitre'`) cannot construct an
+			// option word, so it is decidable; frameworkTokens still refuses it as a value.
+			continue
+		}
+	}
+	return ""
+}
+
 func scanInvocations(scalar string) ([]string, error) {
 	var out []string
 	var compound string
@@ -919,9 +1643,106 @@ func scanInvocations(scalar string) ([]string, error) {
 			if compound == "" {
 				compound = compoundToken(segment.text)
 			}
-			fields := strings.Fields(segment.text)
-			if len(fields) < 3 || fields[0] != "ksail" || fields[1] != "workload" || fields[2] != "scan" {
+			// Split on UNQUOTED whitespace only (shellFields): a quoted argument is one
+			// word, so quoted prose cannot read as a prefixed invocation and a quoted
+			// -o value containing a space keeps its accepted shape.
+			fields := shellFields(segment.text)
+			// NORMALISED HERE TOO, not only in prefixedScan below. That sweep starts at field
+			// index 1, so a quoted or escaped spelling in COMMAND position (`k"s"ail workload
+			// scan`) met a raw comparison and fell through as ordinary shell — neither counted
+			// nor refused, while executing all the same. To the shell it is the word `ksail`,
+			// so it is the gate and is counted like any other invocation.
+			if len(fields) < 3 || bareToken(fields[0]) != "ksail" || bareToken(fields[1]) != "workload" || bareToken(fields[2]) != "scan" {
+				// A PREFIXED INVOCATION STILL RUNS. The shape test above requires the scan to be
+				// in command position, so `env ksail workload scan ...` — and any wrapper such as
+				// `sudo`, `nice` or `time` — falls through it. Alone that fails closed, because the
+				// scalar then has no countable invocation at all. PAIRED with a counted invocation
+				// it does not: the guard validates the counted one and ignores the one that also
+				// executes, so the framework set that runs need not be the set that was checked.
+				//
+				// Refused rather than read, like every other unreadable form here. A prefix can
+				// change the environment the scan runs in, so what it executes is not decidable
+				// from the text. Keyed on the three scan tokens, never on the prefix word, so an
+				// unrelated `env`/`time` command is still ordinary shell. See #3338.
+				//
+				// THIS ALSO REFUSES UNQUOTED TEXT THAT ONLY CONTAINS THE TOKENS, such as
+				// `echo ksail workload scan --framework nsa`, and that is the decision rather
+				// than an oversight: it is token-identical to `env ksail workload scan ...`, so
+				// separating them means enumerating the commands that execute their arguments —
+				// the prefix blacklist this guard exists to avoid, whose missed spelling would
+				// be the bypass. The opt-out is to QUOTE the text, which the message names and
+				// TestUnrelatedPrefixedCommandIsStillIgnored pins as the accepted control.
+				// ANY PLAIN SCAN WORD BESIDE ANY EXPANSION IS REFUSED, before either anchor below
+				// is consulted. Both anchors can be constructed away at once: `ksail work${LOAD}
+				// scan --frame${SUFFIX} nsa` carries no literal `--framework` and no resolvable
+				// `workload scan` pair, so it fell between the two branches while executing a
+				// scan the guard never read. The whitelist is therefore keyed on the one thing
+				// a constructed invocation cannot hide — the plain scan word it still needs —
+				// and refuses the line whenever any other token expands, whatever the rest
+				// spells. The residual is a line that expands all three words, which no lexical
+				// test can see. Unquoted prose that names a scan word beside a variable is
+				// refused too, and the message names the quoting opt-out.
+				// A COMMAND STRING HANDED TO AN EXECUTING SHELL IS ONE QUOTED ARGUMENT, so the
+				// consecutive-token rules below never see the invocation inside it, while
+				// `bash -c '…'`, `sh -c "…"` and `eval '…'` execute it all the same. The quoted-
+				// prose opt-out does not apply to text an interpreter is about to run: refused
+				// whenever that argument names a scan word.
+				if reason := undecidableShellString(fields); reason != "" {
+					return nil, fmt.Errorf(
+						"a command string handed to an executing shell names a scan word, so whether it invokes `ksail workload scan --framework` is not decidable from the text — %s: %q. The interpreter runs that string as code, so a reduced scan inside it executes while the guard reads it as an argument. Invoke the scan as a plain command, never through `eval` or `<shell> -c`. See #3338",
+						reason, segment.text)
+				}
+				// EVERY COMMAND WORD EXPANDED AT ONCE on a `--framework` line: `"$KSAIL"
+				// "$WORKLOAD" "$SCAN" --framework nsa` names no plain scan word, so the
+				// whitelist below has nothing to key on, and the command-word test only reads
+				// the word in front of a resolvable `workload scan` pair. Nothing before the
+				// flag is decidable, which is exactly the undecidable case.
+				if strings.Contains(segment.text, "--framework") && allExpandedBeforeFramework(fields) {
+					return nil, fmt.Errorf(
+						"every word before `--framework` is a shell expansion, so the command this line runs is not decidable from the text: %q. Variables assigned earlier in the block can spell `ksail workload scan` here, executing a reduced scan the guard never read. Invoke the scan as the bare words `ksail workload scan`, or quote the text if it is not an invocation. See #3338",
+						segment.text)
+				}
+				if reason := undecidableScanCandidate(fields); reason != "" {
+					return nil, fmt.Errorf(
+						"a line names `ksail`, `workload` or `scan` plainly beside a shell expansion, so whether it invokes `ksail workload scan --framework` is not decidable from the text — %s: %q. A constructed command or option word can execute a scan while reading as something else, so the executed framework set need not be the validated one. Spell the whole invocation plainly, or quote the text if it is not an invocation. See #3338",
+						reason, segment.text)
+				}
+				if strings.Contains(segment.text, "--framework") {
+					if reason := undecidableCommandWord(fields); reason != "" {
+						return nil, fmt.Errorf(
+							"the command word of a `--framework` line is not decidable from the text — %s: %q. A shell expansion or an unrecognised spelling in command position can execute `ksail workload scan` while reading as something else, so the executed framework set need not be the validated one. Invoke the scan as the bare word `ksail` with no expansion before `--framework`, or quote the text if it is not an invocation. See #3338",
+							reason, segment.text)
+					}
+				}
+				// KEYED ON THE BARE `workload scan` PAIR, NOT ON A LITERAL `--framework`. The
+				// command-word check below fires only when the flag is spelled out, so a line
+				// whose command word AND option word are both constructed — `k$'s'ail workload
+				// scan --frame${SUFFIX} nsa` — used to fall between the two branches: not counted,
+				// not refused, executing a scan the guard never read. Any `workload scan` pair
+				// followed by an undecidable option word is refused, whatever stands in front
+				// of it; the opt-out for quoted prose is unchanged.
+				if j, ok := workloadScanArgs(fields); ok {
+					if reason := undecidableOptionWord(fields[j:]); reason != "" {
+						return nil, fmt.Errorf(
+							"an argument of a `workload scan` candidate is not decidable from the text — %s: %q. A shell expansion or a quoted spelling in an option word can execute `--framework` while reading as something else, so the executed framework set need not be the validated one. Spell every option word plainly, or quote the text if it is not an invocation. See #3338",
+							reason, segment.text)
+					}
+				}
+				if prefixedScan(fields) && strings.Contains(segment.text, "--framework") {
+					return nil, fmt.Errorf(
+						"a `ksail workload scan --framework` invocation is preceded by another command or an environment assignment, so it executes without being validated: %q. Paired with a countable invocation this lets the validated framework set differ from the one that actually runs. Invoke the scan with no prefix, or quote the text if it is not an invocation. See #3338",
+						segment.text)
+				}
 				continue
+			}
+			// THE OPTION WORDS ARE HELD TO THE SAME WHITELIST AS THE COMMAND WORD, and BEFORE the
+			// `--framework` test below: `ksail workload scan --frame${SUFFIX} nsa` carries no literal
+			// `--framework`, so it used to fall through that test as an unframed scan while executing
+			// exactly the option the guard never read. Refused whether or not the flag is spelled out.
+			if reason := undecidableOptionWord(fields[3:]); reason != "" {
+				return nil, fmt.Errorf(
+					"an argument of a `ksail workload scan` invocation is not decidable from the text — %s: %q. A shell expansion or a quoted spelling in an option word can execute `--framework` while reading as something else, so the executed framework set need not be the validated one. Spell every option word plainly, with any expansion confined to a double-quoted option value. See #3338",
+					reason, segment.text)
 			}
 			if !strings.Contains(segment.text, "--framework") {
 				continue
@@ -1322,4 +2143,35 @@ func normaliseNumber(s string) string {
 	}
 	s = strings.TrimRight(s, "0")
 	return strings.TrimSuffix(s, ".")
+}
+
+// workloadScanArgs returns the index of the first token after a bare `workload scan` pair
+// and whether one is present. The pair is the weakest evidence this guard acts on: it
+// needs no readable command word in front of it, because that word is exactly what an
+// expansion hides.
+func workloadScanArgs(fields []string) (int, bool) {
+	// A `workload scan` PAIR INSIDE A MULTI-WORD QUOTED STRING IS PROSE, NOT A CANDIDATE.
+	// resolveToken flags only the opening and closing tokens as fragments; the words
+	// between them resolve plain, so `echo "ksail workload scan finished: $STATUS"` used to
+	// yield a pair and then refuse the variable after it — while every message here names
+	// quoting as the opt-out. The quote state is tracked across the line instead.
+	inQuote := false
+	plain := make([]string, len(fields))
+	for i, f := range fields {
+		word, fragment := resolveToken(f)
+		if fragment {
+			inQuote = !inQuote
+			continue
+		}
+		if inQuote {
+			continue
+		}
+		plain[i] = word
+	}
+	for i := 0; i+1 < len(fields); i++ {
+		if plain[i] == "workload" && plain[i+1] == "scan" {
+			return i + 2, true
+		}
+	}
+	return 0, false
 }

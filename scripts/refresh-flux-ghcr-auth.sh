@@ -288,6 +288,7 @@ cordon_recovery_patch_file="${work_dir}/cordon-recovery-patch.json"
 talos_nodes_file="${work_dir}/talos-nodes.json"
 talos_node_targets="${work_dir}/talos-node-targets.tsv"
 talos_pending_targets="${work_dir}/talos-pending-targets.tsv"
+talos_preflight_targets="${work_dir}/talos-preflight-targets.tsv"
 talos_processed_targets="${work_dir}/talos-processed-targets.tsv"
 talos_stage_result_file="${work_dir}/talos-stage-result.txt"
 runtime_probe_nodes_file="${work_dir}/runtime-probe-nodes.json"
@@ -2923,15 +2924,38 @@ kubernetes_api_transport_interrupted() {
 
 revalidate_selected_node_identity_before_mutation() {
   local node_name="$1" node_uid="$2" node_ip="$3" node_role="$4"
+  local allow_removed="${5:-0}"
 
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     get node "${node_name}" \
+    --ignore-not-found \
     --output json \
     >"${cordon_state_file}" 2>"${talos_result_file}"; then
     echo "::error::Could not re-read Talos node ${node_name} before mutation; refusing to target a stale address."
     emit_safe_operation_output "node-identity" "${talos_result_file}"
     return 1
+  fi
+  if [[ ! -s "${cordon_state_file}" && "${allow_removed}" == 1 ]]; then
+    # Empty output from a successful --ignore-not-found GET is authoritative
+    # absence, unlike stderr text or a failed request. Rebind the whole live
+    # inventory too: a replacement reusing this identity/address is not removal.
+    if ! kubectl --context "${KUBE_CONTEXT}" get nodes -o json \
+      >"${cordon_state_file}" 2>"${talos_result_file}" ||
+      ! validate_talos_node_inventory "${cordon_state_file}" ||
+      ! jq -e --arg name "${node_name}" --arg uid "${node_uid}" \
+        --arg address "${node_ip}" '
+          all(.items[];
+            .metadata.name != $name and .metadata.uid != $uid
+            and all(.status.addresses[]?;
+              .type != "InternalIP" or .address != $address))
+        ' "${cordon_state_file}" >/dev/null; then
+      echo "::error::Could not prove selected Talos node ${node_name} was removed without replacement; refusing to continue."
+      return 1
+    fi
+    assert_sync_lease_held || return 1
+    echo "::notice::Talos node ${node_name} was removed before mutation; deselected without recording verification."
+    return 2
   fi
   if ! selected_node_identity_is_current \
     "${cordon_state_file}" \
@@ -2967,6 +2991,7 @@ process_talos_node_target() {
   local drain_attempt=1 api_attempt api_ready
   local ready_attempt
   local reusable_proof_uid=""
+  local identity_result=0 allow_removed=1
 
   assert_sync_lease_held || return 1
 
@@ -2976,8 +3001,17 @@ process_talos_node_target() {
     echo "::error::Unknown Talos GHCR synchronization mode '${node_mode}' for ${node_name}."
     return 1
   fi
+  # Bootstrap preparation can already own a durable fence on this target.
+  # Its recovery remains fail-closed; only an untouched target may be skipped.
+  if [[ -f "${bootstrap_state_file}" ]]; then
+    allow_removed=0
+  fi
   revalidate_selected_node_identity_before_mutation \
-    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" || return 1
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${allow_removed}" || identity_result=$?
+  if ((identity_result != 0)); then
+    return "${identity_result}"
+  fi
 
   if [[ "${node_mode}" == "reboot" ]]; then
     # Writing the credential is NOT enough to make a RUNNING node use it, and
@@ -3491,6 +3525,7 @@ sync_talos_registry_auth() {
   local convergence_attempt=0
   local consecutive_clean_inventories=0
   local processed_any_node=0
+  local deselected_any_node=0 target_result=0
   local node_role node_name node_ip node_mode node_uid
   local batch_targets_file first_reboot_name bootstrap_mode
 
@@ -3589,10 +3624,45 @@ sync_talos_registry_auth() {
         >>"${talos_pending_targets}"
     done <"${talos_node_targets}"
 
+    # A reboot target can disappear after selection but before overlap chooses
+    # a peer or prepares a bootstrap seed. Deselect only an untouched target
+    # whose absence is confirmed against a fresh, unambiguous inventory;
+    # process_talos_node_target revalidates again at the mutation boundary.
+    : >"${talos_preflight_targets}"
+    while IFS=$'\t' read -r \
+      node_role node_name node_ip node_mode node_uid; do
+      [[ -n "${node_name}" ]] || continue
+      if [[ "${node_mode}" == "reboot" ]]; then
+        target_result=0
+        revalidate_selected_node_identity_before_mutation \
+          "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+          1 || target_result=$?
+        if ((target_result == 2)); then
+          deselected_any_node=1
+          consecutive_clean_inventories=0
+          continue
+        elif ((target_result != 0)); then
+          return 1
+        fi
+      fi
+      printf '%s\t%s\t%s\t%s\t%s\n' \
+        "${node_role}" "${node_name}" "${node_ip}" \
+        "${node_mode}" "${node_uid}" \
+        >>"${talos_preflight_targets}"
+    done <"${talos_pending_targets}"
+    if ! mv "${talos_preflight_targets}" "${talos_pending_targets}"; then
+      echo "::error::Could not persist the revalidated Talos target batch."
+      return 1
+    fi
+
     if [[ ! -s "${talos_pending_targets}" ]]; then
       if [[ ! -s "${talos_node_targets}" ]]; then
         consecutive_clean_inventories=$((consecutive_clean_inventories + 1))
         if ((consecutive_clean_inventories >= 2)); then
+          if ((deselected_any_node == 1 && processed_any_node == 0)); then
+            echo "::error::Every selected Talos target was removed before verification; refusing an empty successful rollout."
+            return 1
+          fi
           if ((processed_any_node == 1)); then
             printf '%s\n' processed >"${sync_result_file}"
           else
@@ -3662,6 +3732,7 @@ sync_talos_registry_auth() {
               "${node_name}" || return 1
           fi
         fi
+        target_result=0
         process_talos_node_target \
           "${desired_revision}" \
           "${operator_image}" \
@@ -3669,7 +3740,14 @@ sync_talos_registry_auth() {
           "${node_name}" \
           "${node_ip}" \
           "${node_mode}" \
-          "${node_uid}" || return 1
+          "${node_uid}" || target_result=$?
+        if ((target_result == 2)); then
+          deselected_any_node=1
+          consecutive_clean_inventories=0
+          continue
+        elif ((target_result != 0)); then
+          return 1
+        fi
         if ((bootstrap_mode == 1)) &&
           [[ "${node_uid}" == "${bootstrap_seed_uid}" ]]; then
           wait_for_bootstrap_seed_release \
