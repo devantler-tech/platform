@@ -1911,11 +1911,8 @@ jobs:
           ref: main
           persist-credentials: false
 
-      - name: 🔐 Enforce approved publication signers
-        env:
-          APPROVED_REVISIONS_ENFORCE: '1'
-        run: ./scripts/guard-publish-workflow-approved-revisions.sh
-
+      # Signer approval is enforced first by the deploy action from this main
+      # checkout, so recovery uses the policy version of the revision it restores.
       - name: ⚙️ Setup Go for version compatibility validation
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:

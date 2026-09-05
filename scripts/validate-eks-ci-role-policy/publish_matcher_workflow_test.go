@@ -2,8 +2,11 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const approvedSignerGuard = "./scripts/guard-publish-workflow-approved-revisions.sh"
@@ -17,7 +20,6 @@ func TestApprovedSignerMembershipCoversPublicationRoutes(t *testing.T) {
 		file, gate, publisher, ref string
 	}{
 		{"ci.yaml", "changes", "deploy-prod", ""},
-		{"ci.yaml", "heal-prod-on-failure", "heal-prod-on-failure", "main"},
 		{"cd.yaml", "validate-eks-authorization", "deploy-prod", ""},
 		{"validate-main.yaml", "validate-eks-authorization", "", ""},
 		{"dr-rebuild.yaml", "supersession-gate", "rebuild", ""},
@@ -32,6 +34,82 @@ func TestApprovedSignerMembershipCoversPublicationRoutes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Recovery must use the policy shipped WITH the main checkout. During the
+// first narrowing rollout, main still legitimately has broad matchers. An
+// enforcing step in the speculative workflow would prevent restoring that
+// last deployed revision. Putting the guard first in the checked-out action
+// keeps new main strict without imposing future policy on an older revision.
+func TestApprovedSignerRecoveryUsesCheckedOutPolicy(t *testing.T) {
+	wf := loadWorkflows(t)["ci.yaml"]
+	if !restoresMainWithCheckedOutAction(wf.Jobs["heal-prod-on-failure"]) {
+		t.Error("recovery must use main's deploy action without a speculative signer-policy command")
+	}
+	body, err := os.ReadFile("../../.github/actions/deploy-prod/action.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var action struct {
+		Runs job `yaml:"runs"`
+	}
+	if err := yaml.Unmarshal(body, &action); err != nil {
+		t.Fatal(err)
+	}
+	if len(action.Runs.Steps) == 0 || !enforcesSignerMembership(action.Runs.Steps[0]) {
+		t.Error("the checked-out deploy action must enforce membership before tooling, credentials or publication")
+	}
+
+	valid := job{Steps: []step{
+		{Uses: "actions/checkout@pin", With: stepInputs{Ref: "main"}},
+		{Uses: prodDeployComposite},
+	}}
+	if !restoresMainWithCheckedOutAction(valid) {
+		t.Fatal("rejected recovery through main's versioned action")
+	}
+	for name, mutate := range map[string]func(*job){
+		"speculative policy": func(j *job) {
+			j.Steps = append(j.Steps[:1], step{Run: approvedSignerGuard}, j.Steps[1])
+		},
+		"no checkout":         func(j *job) { j.Steps = j.Steps[1:] },
+		"wrong ref":           func(j *job) { j.Steps[0].With.Ref = "" },
+		"skipped checkout":    func(j *job) { j.Steps[0].If = "false" },
+		"tolerated checkout":  func(j *job) { j.Steps[0].ContinueOnError = true },
+		"different publisher": func(j *job) { j.Steps[1].Uses = prodDeployComposite + "/publish-platform-manifests" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := job{Steps: append([]step(nil), valid.Steps...)}
+			mutate(&candidate)
+			if restoresMainWithCheckedOutAction(candidate) {
+				t.Fatal("accepted a recovery route detached from main's signer policy")
+			}
+		})
+	}
+}
+
+func restoresMainWithCheckedOutAction(j job) bool {
+	checkedOut := false
+	for _, s := range j.Steps {
+		if strings.Contains(s.Run, approvedSignerGuard) {
+			return false
+		}
+		if strings.HasPrefix(s.Uses, "actions/checkout@") {
+			if s.With.Ref != "main" || s.If != "" || errorIsTolerated(s.ContinueOnError) {
+				return false
+			}
+			checkedOut = true
+		}
+		if s.Uses == prodDeployComposite {
+			return checkedOut && s.If == "" && !errorIsTolerated(s.ContinueOnError)
+		}
+	}
+	return false
+}
+
+func enforcesSignerMembership(s step) bool {
+	return strings.TrimSpace(s.Run) == approvedSignerGuard &&
+		s.Env["APPROVED_REVISIONS_ENFORCE"] == "1" && s.If == "" &&
+		!errorIsTolerated(s.ContinueOnError) && (s.Shell == "" || s.Shell == "bash")
 }
 
 func approvedSignerRoute(wf workflow, gate, publisher, ref string) error {
@@ -81,9 +159,7 @@ func hasEnforcingSignerGuard(j job, ref string) bool {
 			}
 			checkedOut = true
 		}
-		if strings.TrimSpace(s.Run) == approvedSignerGuard && checkedOut &&
-			s.Env["APPROVED_REVISIONS_ENFORCE"] == "1" && s.If == "" &&
-			!errorIsTolerated(s.ContinueOnError) && (s.Shell == "" || s.Shell == "bash") {
+		if checkedOut && enforcesSignerMembership(s) {
 			guarded = true
 		}
 		if (s.Uses == prodDeployComposite || strings.HasPrefix(s.Uses, prodDeployComposite+"/")) && !guarded {
