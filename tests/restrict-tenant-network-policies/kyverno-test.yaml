@@ -154,3 +154,105 @@ results:
       - tenant-ns/allow-web-egress-selected-service
     kind: CiliumNetworkPolicy
     result: pass
+  # ── Selector KEYS that name an identity, a namespace or a cluster ──────────
+  # Every one of these is non-empty and uses only whitelisted operators, so the
+  # presence and operator checks read it as constrained. Cilium exposes reserved
+  # identities, the pod namespace and the cluster name as selectable labels, so
+  # each reaches a destination the entity whitelist or the namespace scoping
+  # refuses. All were measured ADMITTED before the key check landed.
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/attack-selector-reserved-world-egress
+      - tenant-ns/attack-selector-bare-world-egress
+      - tenant-ns/attack-selector-any-host-egress
+      - tenant-ns/attack-selector-reserved-expression-egress
+      - tenant-ns/attack-selector-cross-namespace-egress
+      - tenant-ns/attack-selector-cross-namespace-expression-egress
+      - tenant-ns/attack-selector-namespace-labels-egress
+      - tenant-ns/attack-selector-cluster-name-egress
+      - tenant-ns/attack-selector-reserved-beside-constrained-egress
+    kind: CiliumNetworkPolicy
+    result: fail
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - tenant-ns/attack-selector-reserved-host-ingress
+      - tenant-ns/attack-selector-cross-namespace-ingress
+      - tenant-ns/attack-selector-bare-namespace-ingress
+    kind: CiliumNetworkPolicy
+    result: fail
+  # CONTROL: the ingress-side `reserved:ingress` carve-out, and source-prefixed
+  # ordinary keys (including a k8s label named like a reserved identity), stay
+  # admitted by BOTH rules — a key check that refused these would refuse the
+  # spelling its own message recommends.
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - tenant-ns/allow-web-ingress-from-ingress-selector
+      - tenant-ns/allow-web-egress-k8s-prefixed-labels
+      - tenant-ns/allow-web-egress-to-kube-apiserver-selector
+    kind: CiliumNetworkPolicy
+    result: pass
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/allow-web-ingress-from-ingress-selector
+      - tenant-ns/allow-web-egress-k8s-prefixed-labels
+      - tenant-ns/allow-web-egress-to-kube-apiserver-selector
+    kind: CiliumNetworkPolicy
+    result: pass
+  # ── CIDR entries inside NON-GLOBAL address space, and group references ─────
+  # Each clears the /16 prefix floor and was measured ADMITTED before the
+  # deny-list landed. The boundary is the cluster's own address space, the
+  # host, the metadata endpoint, and the link-local/loopback/multicast blocks;
+  # any set covering an address family contains one of them.
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/attack-cidr-pod-network-egress
+      - tenant-ns/attack-cidr-private-172-cidrset-egress
+      - tenant-ns/attack-cidr-link-local-metadata-egress
+      - tenant-ns/attack-cidr-loopback-egress
+      - tenant-ns/attack-cidr-cgnat-egress
+      - tenant-ns/attack-cidr-multicast-egress
+      - tenant-ns/attack-cidr-ipv4-mapped-v6-egress
+      - tenant-ns/attack-cidr-ula-v6-egress
+      - tenant-ns/attack-cidr-ula-v6-uppercase-egress
+      - tenant-ns/attack-cidr-six-to-four-egress
+      - tenant-ns/attack-cidr-every-slash16-v4-egress
+      - tenant-ns/attack-cidr-every-slash16-v6-egress
+      - tenant-ns/attack-cidr-reserved-beside-legitimate-egress
+      - tenant-ns/attack-cidrset-group-ref-egress
+      - tenant-ns/attack-cidrset-group-selector-egress
+    kind: CiliumNetworkPolicy
+    result: fail
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - tenant-ns/attack-cidr-node-private-network-ingress
+      - tenant-ns/attack-cidr-link-local-v6-ingress
+      - tenant-ns/attack-cidrset-group-ref-ingress
+    kind: CiliumNetworkPolicy
+    result: fail
+  # CONTROL: public CIDRs stay admitted by BOTH rules — including the /16s
+  # that sit immediately outside each refused block, so the boundaries are
+  # proven exact, and a CIDRSet entry with a literal cidr plus `except`.
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/allow-web-egress-public-v6
+      - tenant-ns/allow-web-egress-public-cidrset-except
+      - tenant-ns/allow-web-ingress-from-public-cidr
+      - tenant-ns/allow-web-egress-public-adjacent-to-reserved
+    kind: CiliumNetworkPolicy
+    result: pass
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - tenant-ns/allow-web-egress-public-v6
+      - tenant-ns/allow-web-egress-public-cidrset-except
+      - tenant-ns/allow-web-ingress-from-public-cidr
+      - tenant-ns/allow-web-egress-public-adjacent-to-reserved
+    kind: CiliumNetworkPolicy
+    result: pass
