@@ -12,7 +12,7 @@ fail() {
   exit 1
 }
 
-# Inspect the rules selected by each controller's aggregation label, rather
+# Inspect the rules selected by the reports controller's aggregation label, rather
 # than a source filename: an unreferenced or wrongly labelled grant gives the
 # controller no access even when the grant's own rules look correct.
 assert_team_reads() {
@@ -27,6 +27,11 @@ assert_team_reads() {
     | ($roles | length) > 0
       and all($roles[];
         .aggregationRule == null
+        and all(.metadata.labels | to_entries[];
+          if (.key | startswith("rbac.kyverno.io/aggregate-to-")
+                     or startswith("rbac.authorization.k8s.io/aggregate-to-"))
+          then .key == $label or .value != "true"
+          else true end)
         and all(.rules[];
           .apiGroups == ["team.github.m.upbound.io"]
           and ((.resources // []) - ["teams", "teammemberships", "teamrepositories"] | length) == 0
@@ -55,9 +60,7 @@ for scope in base prod; do
   kubectl kustomize "${root_dir}/${render_path}" >"${rendered_dir}/${scope}.yaml" ||
     fail "${scope}: the controller manifests must render"
   yq -o=json '.' "${rendered_dir}/${scope}.yaml" | jq -s '.' >"${rendered_dir}/${scope}.json"
-  for controller in background reports; do
-    assert_team_reads "${rendered_dir}/${scope}.json" "${controller}" "${scope}"
-  done
+  assert_team_reads "${rendered_dir}/${scope}.json" reports "${scope}"
 done
 
-echo 'Both Kyverno controllers can read GitHub team resources without receiving write or wildcard access.'
+echo 'The Kyverno reports controller can read GitHub team resources without write, wildcard, or unrelated-controller access.'
