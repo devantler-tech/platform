@@ -10,6 +10,7 @@ scratch_dir="$(mktemp -d)"
 readonly scratch_dir
 trap 'rm -rf "${scratch_dir}"' EXIT
 
+# Print the supplied failure message to stderr and stop the regression.
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
 for tool in kubectl yq jq helm; do
@@ -20,10 +21,13 @@ cp -R "${root_dir}/k8s" "${scratch_dir}/k8s"
 readonly apps_dir="${scratch_dir}/k8s/providers/hetzner/apps"
 readonly component='actual-budget/components/user-namespaces'
 
+# Render the overlay directory in $1 to a sorted JSON resource array at $2.
 render_overlay() {
   kubectl kustomize "$1" | yq ea -o=json '[.]' | jq -S . >"$2"
 }
 
+# Write the Actual Budget HelmRelease from resource array $1 to file $2.
+# Fail when the overlay does not contain the expected release.
 extract_release() {
   jq -e '.[] | select(.kind == "HelmRelease" and
     .metadata.namespace == "actual-budget" and .metadata.name == "actual-budget")' "$1" >"$2"
@@ -71,6 +75,8 @@ helm pull "${chart_name}" --repo "${chart_repo}" --version "${chart_version}" \
   --destination "${scratch_dir}"
 readonly chart_archive="${scratch_dir}/${chart_name}-${chart_version}.tgz"
 
+# Render the off/on release named by $1 with its production replica count and
+# ordered Flux post-renderers, saving the resulting workload as sorted JSON.
 render_workload() {
   local mode="$1" renderer_count index replicas configured_replicas
   local release="${scratch_dir}/${mode}-release.json"

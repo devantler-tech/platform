@@ -40,10 +40,11 @@ It uses a temporary copy of the manifests and needs no cluster or secrets.
 
 Activation is tracked by [#3604](https://github.com/devantler-tech/platform/issues/3604).
 Before enabling it, confirm the app, nodes, storage and backups are healthy.
-Keep the current Deployment revision, pod UID, PVC UID, PV name and storage
-volume identity in a private operational record so the post-rollout comparison
-checks the same objects. A different healthy volume is not evidence that the
-original data was preserved.
+Record the current Deployment revision and pod UID privately as pre-rollout
+baselines; both are expected to change during the rollout. Also record the PVC
+UID, PV name and storage volume identity so post-rollout verification confirms
+that the same storage objects remain bound. A different healthy volume is not
+evidence that the original data was preserved.
 
 Uncomment only this component entry in
 [`apps/kustomization.yaml`](../../../kustomization.yaml):
@@ -59,10 +60,11 @@ the activation PR to test the new committed state and a temporary disabled
 state. Submit through the normal review and deployment path. Enabling the
 component replaces the one pod; the `Recreate` strategy entails a brief outage.
 
-The runtime verdict requires all of the following:
+The runtime verdict requires all the following:
 
-- The deployed revision is the reviewed one. The Deployment is Available 1/1,
-  its pod is Ready 2/2, and the pod spec contains `hostUsers: false`.
+- The new deployed revision is the reviewed one. The Deployment is Available
+  1/1, its replacement pod is Ready 2/2, and the pod spec contains
+  `hostUsers: false`.
 - Both actual containers show non-zero subordinate host IDs in
   `/proc/self/uid_map` and `/proc/self/gid_map`. A disposable smoke pod proves
   its own mapping only; it does not replace this check.
