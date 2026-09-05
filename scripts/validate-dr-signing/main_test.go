@@ -1126,6 +1126,24 @@ func TestPublicationActionRejectsEachAblation(t *testing.T) {
 			wantErr: "resolved staging digest",
 		},
 		{
+			name:    "without SBOM generation the attestation has no inventory",
+			old:     "syft scan ",
+			new:     "echo skip-sbom ",
+			wantErr: "missing SBOM generation",
+		},
+		{
+			name:    "SBOM generation must inspect the same immutable digest",
+			old:     `registry:ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}`,
+			new:     `registry:ghcr.io/devantler-tech/platform/manifests:latest`,
+			wantErr: "resolved staging digest",
+		},
+		{
+			name:    "the SBOM output must match the attestation input",
+			old:     "--output cyclonedx-json=sbom.cdx.json",
+			new:     "--output spdx-json=other.json",
+			wantErr: "CycloneDX SBOM",
+		},
+		{
 			name:    "without an SBOM attestation latest lacks required evidence",
 			old:     "uses: actions/attest@",
 			new:     "uses: actions/skip-attest@",
@@ -1166,6 +1184,20 @@ func TestPublicationActionRejectsEachAblation(t *testing.T) {
 	}
 }
 
+func TestPublicationActionRequiresVerifiedToolInstaller(t *testing.T) {
+	t.Parallel()
+
+	publisher := repoFile(t, ".github/actions/deploy-prod/publish-platform-manifests/action.yml")
+	// The absent installer is also the baseline defect: the publisher delegates
+	// downloads to actions that do not enforce a repository-local binary digest.
+	withoutInstaller := strings.ReplaceAll(publisher,
+		"run: .github/scripts/setup-supply-chain-tools.sh", "run: echo no-verified-tools")
+	err := validatePublicationAction(withoutInstaller)
+	if err == nil || !strings.Contains(err.Error(), "verified supply-chain tools") {
+		t.Fatalf("publisher without verified supply-chain tools was accepted: %v", err)
+	}
+}
+
 // TestPublicationActionRejectsSuppressedPublicationSteps pins the half of the
 // contract that ordering cannot see.
 //
@@ -1178,6 +1210,7 @@ func TestPublicationActionRejectsEachAblation(t *testing.T) {
 // `promote_latest` moves the mutable tag onto bytes carrying no usable
 // evidence. Position proves a step is reached; it says nothing about whether
 // its failure stops the run.
+
 func TestPublicationActionRejectsSuppressedPublicationSteps(t *testing.T) {
 	t.Parallel()
 

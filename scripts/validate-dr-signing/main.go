@@ -346,6 +346,14 @@ func drRequiredPermissionNames() string {
 }
 
 func validatePublicationAction(action string) error {
+	installIdx, ok := lineIndexContaining(action, "run: .github/scripts/setup-supply-chain-tools.sh")
+	if !ok {
+		return errors.New("publication action must install verified supply-chain tools before publishing")
+	}
+	if strings.Contains(action, "uses: sigstore/cosign-installer@") ||
+		strings.Contains(action, "uses: anchore/sbom-action@") {
+		return errors.New("publication action must use verified supply-chain tools instead of unpinned binary installers")
+	}
 	if !containsLine(action, `STAGING_TAG="staging-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"`) {
 		return errors.New("publication action must build a unique staging reference from the SHA, run, and attempt")
 	}
@@ -355,6 +363,9 @@ func validatePublicationAction(action string) error {
 	pushIdx, ok := lineIndexContaining(action, `workload push "${STAGING_OCI_REF}"`)
 	if !ok {
 		return errors.New("publication action must push only the allowlisted staging reference")
+	}
+	if installIdx >= pushIdx {
+		return errors.New("publication action must install verified supply-chain tools before publishing")
 	}
 	resolveIdx, ok := lineIndexContaining(action, `docker buildx imagetools inspect "${STAGING_REF}"`)
 	if !ok {
@@ -369,9 +380,12 @@ func validatePublicationAction(action string) error {
 			"publication action must sign the resolved staging digest rather than a mutable tag",
 		)
 	}
-	sbomIdx, ok := lineIndexContaining(action, "uses: anchore/sbom-action@")
+	sbomIdx, ok := lineIndexContaining(action, "syft scan ")
 	if !ok {
 		return errors.New("publication action is missing SBOM generation")
+	}
+	if !containsLine(action, `syft scan "registry:ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json`) {
+		return errors.New("publication action must generate the CycloneDX SBOM from the resolved staging digest")
 	}
 	attestSBOMIdx, ok := lineIndexContaining(action, "uses: actions/attest@")
 	if !ok {
