@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,12 +24,12 @@ func collect(input io.Reader) ([]string, error) {
 		if object["apiVersion"] == "v1" && object["kind"] == "List" {
 			items, ok := object["items"].([]any)
 			if !ok {
-				return fmt.Errorf("List has no valid items")
+				return fmt.Errorf("list has no valid items")
 			}
 			for _, item := range items {
 				child, ok := item.(map[string]any)
 				if !ok {
-					return fmt.Errorf("List contains a non-object item")
+					return fmt.Errorf("list contains a non-object item")
 				}
 				if err := visit(child); err != nil {
 					return err
@@ -58,7 +59,7 @@ func collect(input io.Reader) ([]string, error) {
 	decoder := yaml.NewDecoder(input)
 	for {
 		var object map[string]any
-		if err := decoder.Decode(&object); err == io.EOF {
+		if err := decoder.Decode(&object); errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
 			return nil, fmt.Errorf("read rendered manifests: %w", err)
