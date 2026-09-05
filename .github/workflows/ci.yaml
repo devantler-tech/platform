@@ -114,21 +114,25 @@ jobs:
       # The pin guard above proves each matcher pins a FIXED revision; this one proves each
       # per-consumer matcher pins the revision PAIR the committed approved set names for that
       # consumer, and refuses any revision outside it (#3551, AC4 of #3308). Unconditional for
-      # the same reason as the pin guard: the subjects live in four different trees. The switch
-      # (APPROVED_REVISIONS_ENFORCE) stays off here until the narrowing itself lands — with it
-      # off the pattern form is still accepted, so this checks the committed set against the
-      # live matchers without forcing the change.
+      # the same reason as the pin guard: the subjects live in four different trees.
+      # Enforcement rejects broad SHA patterns and revisions outside each approved pair.
       - name: 🔐 Validate the approved-revisions guard
+        env:
+          APPROVED_REVISIONS_ENFORCE: '1'
         run: |
+          shellcheck -x scripts/publish-workflow-approved-revisions.lib.sh
           shellcheck -x scripts/guard-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/write-publish-workflow-matchers.sh
           shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
+          shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
           bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
+          bash scripts/tests/test-write-publish-workflow-matchers.sh
           ./scripts/guard-publish-workflow-approved-revisions.sh
 
       # The scheduled regeneration (#3552, third child of #3308) runs the generator and
-      # the guard above against prod and turns a moved set into ONE draft pull request.
+      # writer and guard above against prod and turns a moved set into ONE draft pull request.
       # Its safety is the WORKFLOW's shape — a fixed branch, a draft, an App-signed
-      # commit, least-privilege token grants, and generator → guard → pull request with
+      # commit, least-privilege token grants, and generator → writer → guard → pull request with
       # no continue-on-error — none of which any script it calls can enforce, so the
       # test below pins each with an ablation. Unconditional for the same reason as
       # the two steps above: the workflow lives outside the k8s paths.
@@ -363,6 +367,9 @@ jobs:
               # runs unconditionally, and listing the pair here is what keeps a guard edit
               # inside the k8s-gated validation matrix alongside the manifests it judges.
               - 'scripts/guard-publish-workflow-approved-revisions.sh'
+              - 'scripts/publish-workflow-approved-revisions.lib.sh'
+              - 'scripts/write-publish-workflow-matchers.sh'
+              - 'scripts/tests/test-write-publish-workflow-matchers.sh'
               - 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh'
               # The generator that writes the set the guard above reads, and its test — both
               # halves, so editing either alone still runs the fail-closed proof (an unresolved
