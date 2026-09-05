@@ -1,0 +1,23 @@
+---
+# Background scans of restrict-github-team-management need read access to the
+# managed team resources. Both controllers aggregate this read-only grant; it
+# does not authorize either controller to change GitHub configuration.
+# The controllers layer applies the grant before the policy layer reconciles.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:read-github-teams
+  labels:
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+    rbac.kyverno.io/aggregate-to-reports-controller: "true"
+rules:
+  - apiGroups:
+      - team.github.m.upbound.io
+    resources:
+      - teams
+      - teammemberships
+      - teamrepositories
+    verbs:
+      - get
+      - list
+      - watch
