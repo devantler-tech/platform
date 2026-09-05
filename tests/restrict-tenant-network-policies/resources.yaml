@@ -956,3 +956,371 @@ spec:
         - ports:
             - port: "6443"
               protocol: TCP
+---
+# ── DENY cases: CIDR entries inside NON-GLOBAL address space ─────────────────
+# Every entry below clears the /16 prefix floor, so the floor admits it; what
+# it reaches is the problem. The boundary this policy holds is the cluster's own
+# address space — the node network, the pod network and the Service CIDR all
+# live in 10/8 — the host, the cloud metadata endpoint, and the link-local,
+# loopback and multicast blocks. Each was measured ADMITTED before the deny-list
+# landed.
+# ATTACK: the pod network, as a conforming /16.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-pod-network-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 10.244.0.0/16
+---
+# ATTACK, ingress side: the node private network as a source.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-node-private-network-ingress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromCIDR:
+        - 10.0.0.0/16
+---
+# ATTACK: RFC 1918 space through the CIDRSet spelling.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-private-172-cidrset-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDRSet:
+        - cidr: 172.16.0.0/16
+---
+# ATTACK: the cloud metadata endpoint, as a single host.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-link-local-metadata-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 169.254.169.254/32
+---
+# ATTACK: loopback.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-loopback-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 127.0.0.0/16
+---
+# ATTACK: carrier-grade NAT space (100.64/10).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-cgnat-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 100.64.0.0/16
+---
+# ATTACK: multicast.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-multicast-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 224.0.0.0/16
+---
+# ATTACK: the pod network again, embedded in an IPv4-mapped IPv6 address so
+# the IPv4 text never appears at the start of the entry.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-ipv4-mapped-v6-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - "::ffff:10.0.0.0/112"
+---
+# ATTACK: IPv6 unique-local space.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-ula-v6-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - "fd00::/16"
+---
+# ATTACK: the same block in upper-case hex — the deny-list must be
+# case-insensitive or this spelling walks past it.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-ula-v6-uppercase-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - "FD00::/16"
+---
+# ATTACK, ingress side: IPv6 link-local through the CIDRSet spelling.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-link-local-v6-ingress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromCIDRSet:
+        - cidr: "fe80::/16"
+---
+# ATTACK: 6to4, which embeds an IPv4 destination (here 10.0.0.0/8) inside the
+# IPv6 prefix.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-six-to-four-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - "2002:a00::/24"
+---
+# ATTACK: the aggregate the per-entry floor cannot see — every /16 in turn.
+# Each entry conforms; together they march across the family. Any such sweep
+# contains a reserved block (here 0/8 and 10/8), which is what refuses it.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-every-slash16-v4-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 0.0.0.0/16
+        - 1.0.0.0/16
+        - 2.0.0.0/16
+        - 3.0.0.0/16
+        - 4.0.0.0/16
+        - 5.0.0.0/16
+        - 6.0.0.0/16
+        - 7.0.0.0/16
+        - 8.0.0.0/16
+        - 9.0.0.0/16
+        - 10.0.0.0/16
+---
+# ATTACK: the IPv6 aggregate — the same march, which necessarily crosses ::/8,
+# the ULA, link-local and multicast blocks.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-every-slash16-v6-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - "::/16"
+        - "1::/16"
+        - "2::/16"
+        - "2001::/16"
+        - "fc00::/16"
+        - "fd00::/16"
+        - "fe80::/16"
+        - "ff00::/16"
+        - "ffff::/16"
+---
+# ATTACK: a reserved entry sitting BESIDE a legitimate public one. Cilium
+# unions allow rules, so the reserved entry decides — the check is per entry.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidr-reserved-beside-legitimate-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 203.0.113.0/24
+        - 10.244.0.0/16
+---
+# ── DENY cases: a CIDRSet entry that names a GROUP instead of a cidr ─────────
+# `cidrGroupRef` and `cidrGroupSelector` reference a cluster-scoped
+# CiliumCIDRGroup. The presence check saw the entry; the floor and the
+# deny-list read `.cidr` and saw nothing. A tenant cannot create groups but can
+# name a platform one, and an empty selector names every group the platform
+# ever adds. Each was measured ADMITTED before the whitelist landed.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidrset-group-ref-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDRSet:
+        - cidrGroupRef: platform-egress-targets
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidrset-group-selector-egress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDRSet:
+        - cidrGroupSelector: {}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: attack-cidrset-group-ref-ingress
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromCIDRSet:
+        - cidrGroupRef: platform-ingress-sources
+---
+# ── ADMIT cases: public CIDRs, including the deny-list's exact neighbours ────
+# OK: a public IPv6 destination.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-egress-public-v6
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - "2606:4700:4700::/48"
+---
+# OK: a CIDRSet entry with a literal cidr and an `except` — the whitelist asks
+# only that `cidr` be present, so the narrowing spelling stays admitted.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-egress-public-cidrset-except
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDRSet:
+        - cidr: 203.0.113.0/24
+          except:
+            - 203.0.113.7/32
+---
+# OK, ingress side: a public source.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-ingress-from-public-cidr
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - fromCIDR:
+        - 198.51.100.0/24
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+---
+# OK: the public /16s that sit IMMEDIATELY OUTSIDE each refused block — the
+# control that the deny-list's boundaries are exact rather than generous.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-egress-public-adjacent-to-reserved
+  namespace: tenant-ns
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  egress:
+    - toCIDR:
+        - 11.0.0.0/16
+        - 100.63.0.0/16
+        - 100.128.0.0/16
+        - 126.0.0.0/16
+        - 128.0.0.0/16
+        - 172.15.0.0/16
+        - 172.32.0.0/16
+        - 192.167.0.0/16
+        - 192.169.0.0/16
+        - 198.17.0.0/16
+        - 198.20.0.0/16
+        - 223.255.0.0/16
+        - "2001:db8::/32"
+        - "fbff::/16"
+        - "fe00::/16"
+        - "fe7f::/16"
