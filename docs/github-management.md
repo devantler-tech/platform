@@ -119,9 +119,20 @@ reconcile, then batch the rest.
 
 ## Safety rails
 
-- **Never `Delete`** — managed resources omit `Delete` from
-  `managementPolicies`, so neither CR deletion nor a Flux prune can ever delete
-  a real GitHub repository.
+- **Never `Delete`** — every managed resource omits `Delete` from
+  `managementPolicies`, so pruning a CR, or deleting it outright, detaches the
+  object from Crossplane and leaves the real GitHub repository, team or ruleset
+  in place.
+- **Removals are acknowledged in the open** — `deploy/` lives in
+  [`devantler-tech/.github`](https://github.com/devantler-tech/.github). Its CI
+  renders that tree before and after a pull request and compares the two. A
+  resource that leaves the render fails the check unless the pull-request body
+  names it in a `Deletion-Acknowledged: <Kind>.<group>/<name>` line, so a
+  removal cannot ride along unnoticed inside a larger diff. The comparison is
+  by resource identity rather than file path, so cutting one document out of a
+  multi-document file counts the same as deleting the file, and a line naming
+  a resource the diff does not remove fails too — the body stays an accurate
+  record.
 - **Observe-first adoption** — a new managed resource for an existing object
   always starts `managementPolicies: ["Observe"]` (read-only).
 - **Least privilege (RBAC)** — the app SA's authority is a namespaced `Role`
