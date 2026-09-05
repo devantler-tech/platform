@@ -742,8 +742,8 @@ jobs:
       - name: 🔐 Exercise verified supply-chain tools
         run: |
           .github/scripts/setup-supply-chain-tools.sh
-          /usr/local/bin/syft scan dir:. --output "cyclonedx-json=${RUNNER_TEMP}/tool-integrity.cdx.json"
-          jq -e '.bomFormat == "CycloneDX" and (.components | length > 0)' "${RUNNER_TEMP}/tool-integrity.cdx.json"
+          /usr/local/bin/syft scan dir:. --output cyclonedx-json=tool-integrity.cdx.json
+          jq -e '.bomFormat == "CycloneDX" and (.components | length > 0)' tool-integrity.cdx.json
 
       - name: 🔐 Validate Flux GHCR credential bridge
         # Pure local tests with fake ksail/docker/kubectl commands: no SOPS key,
