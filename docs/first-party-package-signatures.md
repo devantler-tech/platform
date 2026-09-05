@@ -15,7 +15,11 @@ bash scripts/check-first-party-package-signatures.sh
 The script only renders files and reads the registry. It does not contact the
 cluster. For private packages, authenticate to GHCR through a Docker config that
 the credential can read; CI uses its package-read token and removes its temporary
-Docker config after the check.
+Docker config after the check. Kyverno 1.18.2's CLI has no Kubernetes Secret
+lister, so an ephemeral policy copy replaces its cluster pull-secret references
+with the default Docker credential provider. Image selection, signing identities,
+and validation expressions are preserved. This does not prove the live cluster's
+pull Secret has equivalent registry access.
 
 Each reference must pass both checks:
 

@@ -44,6 +44,12 @@ jq -er '.images[]' "$scratch/packages.json" > "$scratch/images.txt"
 jq -r '.pods[] | "---\n" + tojson' "$scratch/packages.json" > "$scratch/pods.yaml"
 count="$(jq -er '.images | length' "$scratch/packages.json")"
 policy_name="$(yq -er '.metadata.name' "$policy")"
+# The pinned Kyverno CLI has no Kubernetes Secret lister. Replace only its
+# registry-credential transport with the default Docker provider; leave image
+# selection, identities and validation expressions exactly as deployed.
+yq 'del(.spec.credentials.secrets) | .spec.credentials.providers = ["default"]' \
+  "$policy" > "$scratch/offline-policy.yaml"
+policy="$scratch/offline-policy.yaml"
 
 inventory() {
   local rule_file="$1" verdict="$2" status=0
@@ -82,7 +88,12 @@ admission() {
       ([.results[].resources[] | .namespace + "/" + .name] | sort) ==
       ([$packages[0].pods[].metadata | .namespace + "/" + .name] | sort)
     ' "$scratch/report.json" > /dev/null; then
-    echo "UNKNOWN: Kyverno did not produce $count explicit $verdict verdicts" >&2
+    echo "UNKNOWN: Kyverno did not produce $count explicit $verdict verdicts (exit $status)" >&2
+    # Preserve the engine's reason on failure; otherwise a registry/CLI error
+    # is indistinguishable from a report format change on another runner.
+    jq '{summary, results: [.results[] | {source, policy, result, message}]}' \
+      "$scratch/report.json" >&2 || true
+    head -n 40 "$scratch/kyverno.log" >&2
     return 1
   fi
   if [[ "$verdict" == pass ]]; then

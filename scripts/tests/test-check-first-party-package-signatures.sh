@@ -32,6 +32,9 @@ cat > "$scratch/bin/kyverno" <<'SH'
 set -euo pipefail
 # The real CLI requires individual documents, and panics on a Kubernetes List.
 yq -o=json -I=0 '.' "$4" | jq -se 'all(.[]; .kind == "Pod")' > /dev/null
+# Kyverno 1.18.2 cannot resolve Kubernetes pull Secrets in its CLI; the
+# standalone check must use the Docker credential provider for registry reads.
+yq -o=json '.' "$2" | jq -e '(.spec.credentials.secrets // [] | length) == 0 and .spec.credentials.providers == ["default"]' > /dev/null
 verdict=pass
 status=0
 if [[ ${KYVERNO_MODE:-normal} != inert ]] &&
@@ -52,7 +55,13 @@ export PATH="$scratch/bin:$PATH"
 rules=talos/cluster/verify-first-party-images.yaml
 policy=k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml
 check() {
-  bash scripts/check-first-party-package-signatures.sh --rendered "$scratch/packages.yaml" --rules "${1:-$rules}" --policy "$policy"
+  bash scripts/check-first-party-package-signatures.sh --rendered "$scratch/packages.yaml" --rules "$1" --policy "$policy"
+}
+accept() {
+  if ! check "$rules" > "$scratch/output" 2>&1; then
+    cat "$scratch/output" >&2
+    exit 1
+  fi
 }
 reject() {
   local name="$1" expected="$2"
@@ -70,11 +79,11 @@ reject() {
 # #3422's bump alone: tag-signed package plus the old main-only verifier.
 yq '.rules[] |= (.keyless.subjectRegex = "^https://github\\.com/devantler-tech/provider-upjet-unifi/\\.github/workflows/publish-provider-package\\.yml@refs/heads/main$")' "$rules" > "$scratch/main-only.yaml"
 reject 'tag bump with old verifier' 'FAIL' check "$scratch/main-only.yaml"
-check > "$scratch/output" 2>&1
+accept
 grep -qF 'package signatures and both negative controls passed' "$scratch/output"
-SIGNATURE_UNREADABLE=true reject 'unauthenticated registry' 'UNKNOWN' check
-KYVERNO_MODE=empty reject 'skipped admission check' 'UNKNOWN' check
-KYVERNO_MODE=inert reject 'inert admission verifier' 'negative control' check
+SIGNATURE_UNREADABLE=true reject 'unauthenticated registry' 'UNKNOWN' check "$rules"
+KYVERNO_MODE=empty reject 'skipped admission check' 'UNKNOWN' check "$rules"
+KYVERNO_MODE=inert reject 'inert admission verifier' 'negative control' check "$rules"
 cat >> "$scratch/packages.yaml" <<'YAML'
 ---
 apiVersion: pkg.crossplane.io/v1
@@ -82,7 +91,7 @@ kind: Provider
 spec:
   package: ghcr.io/devantler-tech/provider-upjet-extra:v1.0.0
 YAML
-check > "$scratch/output" 2>&1
+accept
 grep -qF '2 package signatures and both negative controls passed' "$scratch/output"
 yq '.rules = [.rules[1]] | .rules[0].image = "ghcr.io/devantler-tech/provider-upjet-unifi"' "$rules" > "$scratch/unmatched.yaml"
 reject 'one package silently unmatched by Talos' 'UNKNOWN' check "$scratch/unmatched.yaml"
