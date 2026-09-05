@@ -14,6 +14,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// collect returns sorted, distinct first-party Crossplane package references from
+// rendered YAML, including Lists. It rejects malformed or empty inventories.
 func collect(input io.Reader) ([]string, error) {
 	images := map[string]bool{}
 	var visit func(map[string]any) error
@@ -76,6 +78,8 @@ func collect(input io.Reader) ([]string, error) {
 	return refs, nil
 }
 
+// main reads rendered YAML from stdin and writes package references and synthetic
+// verification Pods as JSON. Invalid input or output failures exit unsuccessfully.
 func main() {
 	if len(os.Args) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: collect-first-party-packages < rendered.yaml")

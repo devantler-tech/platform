@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+// TestCollectProposedPackagesIncludingListsAndAllPackageKinds checks supported
+// package kinds, nested Lists, deduplication, ordering, and unrelated-object exclusion.
 func TestCollectProposedPackagesIncludingListsAndAllPackageKinds(t *testing.T) {
 	input := `apiVersion: pkg.crossplane.io/v1
 kind: Provider
@@ -52,6 +54,8 @@ spec:
 	}
 }
 
+// TestCollectRefusesUnmeasurablePackageInventory rejects missing, malformed, or
+// unresolved references and inputs that cannot prove a first-party inventory.
 func TestCollectRefusesUnmeasurablePackageInventory(t *testing.T) {
 	for name, input := range map[string]string{
 		"empty render":            "",
