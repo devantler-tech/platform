@@ -6,9 +6,11 @@ name: Diagnose Cilium ExternalAuth ipcache
 # ExternalAuth black-hole on Cilium 1.20.0-pre.3; production runs a later build, and the read
 # decides whether re-attempting the cutover (#1881) behind a default-off flag is worth measuring.
 #
-# READ-ONLY. The script issues `kubectl get` for pods and nodes, and exactly one
+# READ-ONLY. The script issues `kubectl get` for pods, nodes (before and after the read), the
+# Cilium DaemonSet and its ControllerRevisions, and exactly one
 # `kubectl exec … -- cilium-dbg bpf ipcache list` in one Cilium agent — a BPF map dump that
-# changes nothing. The endpoint-selection helper only rewrites the server address in the
+# changes nothing. It refuses a partially rolled agent set and a node set that changed mid-read;
+# the prod-deploy lock cannot prevent either (a failed deploy, the Cluster Autoscaler). The endpoint-selection helper only rewrites the server address in the
 # runner's own kubeconfig copy. scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh pins both
 # the script's kubectl surface and the shape of this workflow.
 #

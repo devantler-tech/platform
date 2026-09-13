@@ -3,13 +3,14 @@
 #
 # WHY THIS EXISTS. The diagnostic decides whether #2284's precondition is still present on the
 # deployed Cilium, and every one of its mistakes is silent: a FAULT-PERSISTS read off a CiliumInternalIP
-# entry, a PLAUSIBLY-FIXED read off a pod IP that merely shares a prefix, or a verdict taken while a
-# replica was mid-rollout would all look like a clean answer. So the conclusive verdicts each have a
-# control that differs in exactly one fixture, and every INCONCLUSIVE path is exercised on purpose.
+# entry, a PLAUSIBLY-FIXED read off a pod IP that merely shares a prefix, a verdict taken while a
+# replica was mid-rollout, from an agent on an old revision, or across a node set that changed during
+# the read would all look like a clean answer. So the conclusive verdicts each have a control that
+# differs in exactly one fixture, and every INCONCLUSIVE path is exercised on purpose.
 #
 # It also pins the two properties that make the workflow safe to dispatch: the script issues only
-# `get` and one exact `exec cilium-dbg bpf ipcache list`, and it prints no address, node name or pod
-# name into a public log.
+# `get` and one exact `exec cilium-dbg bpf ipcache list`, and it prints no address, node name, UID,
+# revision hash or pod name into a public log.
 #
 # kubectl is faked from a fixture directory; no cluster, no secrets, no network. Bash 3.2 compatible.
 set -euo pipefail
@@ -52,6 +53,10 @@ require_rc() {
 # Fake kubectl. Records every invocation, serves fixtures, and fails loudly on anything the
 # diagnostic must never do. A failed call writes an address to stderr, the way a real
 # connection error does, so the leak assertions below also cover the error paths.
+#
+# The node list is served per call: the first `get nodes` returns nodes.json, and a later one
+# returns nodes-after.json when a case provides it (or fails when nodes-after-fails exists), so a
+# topology change during the read can be simulated.
 # ---------------------------------------------------------------------------
 cat >"${fake_bin}/kubectl" <<'FAKE'
 #!/usr/bin/env bash
@@ -80,7 +85,23 @@ case "${args}" in
     ;;
   *" -n oauth2-proxy get pods -l app.kubernetes.io/name=oauth2-proxy,app.kubernetes.io/instance=oauth2-proxy -o json ") serve oauth2-pods.json ;;
   *" -n kube-system get pods -l k8s-app=cilium -o json ") serve cilium-pods.json ;;
-  *" get nodes -o json ") serve nodes.json ;;
+  *" -n kube-system get daemonset cilium -o json ") serve daemonset.json ;;
+  *" -n kube-system get controllerrevisions -o json ") serve controllerrevisions.json ;;
+  *" get nodes -o json ")
+    calls=0
+    [[ -f "${FIXTURES}/nodes-calls" ]] && calls="$(cat "${FIXTURES}/nodes-calls")"
+    calls=$((calls + 1))
+    printf '%s' "${calls}" >"${FIXTURES}/nodes-calls"
+    if [[ "${calls}" -ge 2 && -f "${FIXTURES}/nodes-after-fails" ]]; then
+      printf 'error: dial tcp 198.51.100.9:6443: connect: connection refused\n' >&2
+      exit 1
+    fi
+    if [[ "${calls}" -ge 2 && -f "${FIXTURES}/nodes-after.json" ]]; then
+      serve nodes-after.json
+    else
+      serve nodes.json
+    fi
+    ;;
   *)
     touch "${FIXTURES}/UNEXPECTED_CALL"
     exit 1
@@ -89,10 +110,13 @@ esac
 FAKE
 chmod +x "${fake_bin}/kubectl"
 
+readonly current_hash='7c9b8d6f5e'
+readonly old_hash='5d8f7c6b9a'
+
 # ---------------------------------------------------------------------------
 # Base fixtures: the #2284 topology. Two oauth2-proxy replicas on prod-worker-1 and prod-worker-2;
-# Cilium agents on every node; the agent that must be chosen is the one on prod-control-plane-1
-# (first node, sorted, hosting neither replica).
+# Cilium agents on every node, all on the DaemonSet's current revision; the agent that must be
+# chosen is the one on prod-control-plane-1 (first node, sorted, hosting neither replica).
 # ---------------------------------------------------------------------------
 reset_fixtures() {
   rm -rf "${fixtures}"
@@ -112,19 +136,38 @@ JSON
 
   cat >"${fixtures}/nodes.json" <<'JSON'
 {"items":[
- {"metadata":{"name":"prod-control-plane-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.2"},{"type":"ExternalIP","address":"203.0.113.2"},{"type":"Hostname","address":"prod-control-plane-1"}]}},
- {"metadata":{"name":"prod-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.3"},{"type":"ExternalIP","address":"203.0.113.3"}]}},
- {"metadata":{"name":"prod-worker-2"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.4"},{"type":"ExternalIP","address":"203.0.113.4"}]}},
- {"metadata":{"name":"prod-worker-3"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.5"},{"type":"ExternalIP","address":"203.0.113.5"}]}}
+ {"metadata":{"name":"prod-control-plane-1","uid":"uid-node-cp1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.2"},{"type":"ExternalIP","address":"203.0.113.2"},{"type":"Hostname","address":"prod-control-plane-1"}]}},
+ {"metadata":{"name":"prod-worker-1","uid":"uid-node-w1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.3"},{"type":"ExternalIP","address":"203.0.113.3"}]}},
+ {"metadata":{"name":"prod-worker-2","uid":"uid-node-w2"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.4"},{"type":"ExternalIP","address":"203.0.113.4"}]}},
+ {"metadata":{"name":"prod-worker-3","uid":"uid-node-w3"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.5"},{"type":"ExternalIP","address":"203.0.113.5"}]}}
 ]}
 JSON
 
-  cat >"${fixtures}/cilium-pods.json" <<'JSON'
+  cat >"${fixtures}/cilium-pods.json" <<JSON
 {"items":[
- {"metadata":{"name":"cilium-wrk1a"},"spec":{"nodeName":"prod-worker-1"},"status":{"phase":"Running","containerStatuses":[{"name":"cilium-agent","ready":true}]}},
- {"metadata":{"name":"cilium-wrk2b"},"spec":{"nodeName":"prod-worker-2"},"status":{"phase":"Running","containerStatuses":[{"name":"cilium-agent","ready":true}]}},
- {"metadata":{"name":"cilium-wrk3c"},"spec":{"nodeName":"prod-worker-3"},"status":{"phase":"Running","containerStatuses":[{"name":"cilium-agent","ready":true}]}},
- {"metadata":{"name":"cilium-cpl1d"},"spec":{"nodeName":"prod-control-plane-1"},"status":{"phase":"Running","containerStatuses":[{"name":"cilium-agent","ready":true}]}}
+ {"metadata":{"name":"cilium-wrk1a","labels":{"k8s-app":"cilium","controller-revision-hash":"${current_hash}"}},"spec":{"nodeName":"prod-worker-1"},"status":{"phase":"Running","containerStatuses":[{"name":"cilium-agent","ready":true}]}},
+ {"metadata":{"name":"cilium-wrk2b","labels":{"k8s-app":"cilium","controller-revision-hash":"${current_hash}"}},"spec":{"nodeName":"prod-worker-2"},"status":{"phase":"Running","containerStatuses":[{"name":"cilium-agent","ready":true}]}},
+ {"metadata":{"name":"cilium-wrk3c","labels":{"k8s-app":"cilium","controller-revision-hash":"${current_hash}"}},"spec":{"nodeName":"prod-worker-3"},"status":{"phase":"Running","containerStatuses":[{"name":"cilium-agent","ready":true}]}},
+ {"metadata":{"name":"cilium-cpl1d","labels":{"k8s-app":"cilium","controller-revision-hash":"${current_hash}"}},"spec":{"nodeName":"prod-control-plane-1"},"status":{"phase":"Running","containerStatuses":[{"name":"cilium-agent","ready":true}]}}
+]}
+JSON
+
+  cat >"${fixtures}/daemonset.json" <<'JSON'
+{"metadata":{"name":"cilium","uid":"uid-ds-cilium","generation":7},
+ "status":{"observedGeneration":7,"desiredNumberScheduled":4,"currentNumberScheduled":4,
+  "updatedNumberScheduled":4,"numberAvailable":4,"numberReady":4}}
+JSON
+
+  # The old revision is listed FIRST so "current" must come from the highest revision number, not
+  # list order. The foreign revision has a higher number but another owner, so it must be ignored.
+  cat >"${fixtures}/controllerrevisions.json" <<JSON
+{"items":[
+ {"metadata":{"name":"cilium-${old_hash}","labels":{"k8s-app":"cilium","controller-revision-hash":"${old_hash}"},
+   "ownerReferences":[{"kind":"DaemonSet","name":"cilium","uid":"uid-ds-cilium","controller":true}]},"revision":5},
+ {"metadata":{"name":"cilium-${current_hash}","labels":{"k8s-app":"cilium","controller-revision-hash":"${current_hash}"},
+   "ownerReferences":[{"kind":"DaemonSet","name":"cilium","uid":"uid-ds-cilium","controller":true}]},"revision":6},
+ {"metadata":{"name":"cilium-envoy-0a1b2c3d4e","labels":{"controller-revision-hash":"0a1b2c3d4e"},
+   "ownerReferences":[{"kind":"DaemonSet","name":"cilium-envoy","uid":"uid-ds-envoy","controller":true}]},"revision":9}
 ]}
 JSON
 
@@ -175,6 +218,11 @@ edit_json() {
   mv "${fixtures}/${file}.tmp" "${fixtures}/${file}"
 }
 
+# Write nodes-after.json as nodes.json transformed by a jq filter: the topology seen after the exec.
+nodes_after() {
+  jq "$1" "${fixtures}/nodes.json" >"${fixtures}/nodes-after.json"
+}
+
 run_script() {
   set +e
   output="$(PATH="${fake_bin}:${PATH}" FIXTURES="${fixtures}" GITHUB_STEP_SUMMARY='' \
@@ -183,7 +231,13 @@ run_script() {
   set -e
 }
 
-# Every case: nothing but the four read-only calls, at most one exec, and no identifying data.
+require_no_exec() {
+  if grep -q ' exec ' "${fixtures}/calls.log"; then
+    fail "$1"
+  fi
+}
+
+# Every case: nothing but the read-only calls, at most one exec, and no identifying data.
 assert_safe() {
   local marker
   for marker in UNEXPECTED_CONTEXT UNEXPECTED_EXEC UNEXPECTED_CALL; do
@@ -193,7 +247,8 @@ assert_safe() {
   execs="$(grep -c ' exec ' "${fixtures}/calls.log" || true)"
   [[ "${execs}" -le 1 ]] || fail "the script exec'd more than once (${execs})"
   local needle
-  for needle in 10.244. 10.0.0. 203.0.113. 198.51.100. prod-worker prod-control-plane cilium-wrk cilium-cpl oauth2-proxy-7c9d; do
+  for needle in 10.244. 10.0.0. 203.0.113. 198.51.100. prod-worker prod-control-plane cilium-wrk cilium-cpl \
+    oauth2-proxy-7c9d uid-node uid-ds "${current_hash}" "${old_hash}" 0a1b2c3d4e; do
     refute_text "${needle}" "output leaked identifying data (${needle})"
   done
 }
@@ -212,9 +267,15 @@ require_rc 0 'fault shape must be conclusive'
 require_text 'VERDICT: FAULT-PERSISTS' 'fault shape must report FAULT-PERSISTS'
 require_text 'identity=6 node-address entries (decide): encryptkey=0: 3, encryptkey!=0: 0' 'node-address counts'
 require_text 'identity=6 other entries (informational): encryptkey=0: 0, other: 1' 'CiliumInternalIP entry must be counted separately'
+require_text 'Cilium DaemonSet: fully rolled out; selected agent is on the current revision' 'rollout must be verified'
+require_text 'node topology: unchanged across the read' 'topology must be re-verified'
 grep -q -- ' exec cilium-cpl1d -c cilium-agent ' "${fixtures}/calls.log" || fail 'must exec in the agent on the first node hosting neither replica'
+[[ "$(grep -c ' get nodes -o json' "${fixtures}/calls.log")" -eq 2 ]] || fail 'the nodes must be listed exactly twice'
+exec_at="$(grep -n ' exec ' "${fixtures}/calls.log" | cut -d: -f1)"
+last_nodes_at="$(grep -n ' get nodes -o json' "${fixtures}/calls.log" | tail -n 1 | cut -d: -f1)"
+[[ "${last_nodes_at}" -gt "${exec_at}" ]] || fail 'the second node list must come after the exec'
 assert_safe
-pass 'fault shape reports FAULT-PERSISTS from the agent on a replica-free node'
+pass 'fault shape reports FAULT-PERSISTS from a current-revision agent, with the topology re-read after the exec'
 
 reset_fixtures
 set_ipcache_key 255 10.0.0.3 10.0.0.4 10.0.0.5
@@ -287,9 +348,7 @@ edit_json cilium-pods.json '.items |= map(select(.spec.nodeName == "prod-worker-
 run_script --context admin@prod
 require_rc 3 'no eligible agent'
 require_text 'no Ready Cilium agent runs on a node hosting neither' 'no eligible agent reason'
-if grep -q ' exec ' "${fixtures}/calls.log"; then
-  fail 'must not exec in an agent on a replica node'
-fi
+require_no_exec 'must not exec in an agent on a replica node'
 assert_safe
 pass 'agents only on replica nodes: INCONCLUSIVE with no exec'
 
@@ -309,9 +368,7 @@ edit_json oauth2-pods.json '.items[1].status.phase = "Pending"'
 run_script --context admin@prod
 require_rc 3 'rollout in flight'
 require_text 'rollout in flight' 'unsettled reason'
-if grep -q ' exec ' "${fixtures}/calls.log"; then
-  fail 'must not exec while a replica is unsettled'
-fi
+require_no_exec 'must not exec while a replica is unsettled'
 assert_safe
 pass 'an unsettled oauth2-proxy replica is INCONCLUSIVE before any exec'
 
@@ -379,7 +436,7 @@ pass 'a remote node with no entry is INCONCLUSIVE under the fault shape too'
 # The autoscaler case from review: a node in the list whose ipcache entry has not propagated.
 reset_fixtures
 set_ipcache_key 255 10.0.0.3 10.0.0.4 10.0.0.5
-edit_json nodes.json '.items += [{"metadata":{"name":"prod-worker-4"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.6"}]}}]'
+edit_json nodes.json '.items += [{"metadata":{"name":"prod-worker-4","uid":"uid-node-w4"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.6"}]}}]'
 run_script --context admin@prod
 require_rc 3 'freshly added node'
 require_text 'remote nodes covered: 3 of 4' 'coverage count must include the new node'
@@ -408,6 +465,155 @@ require_rc 3 'node with no host address'
 require_text 'reported no InternalIP or ExternalIP address' 'addressless node reason'
 assert_safe
 pass 'a node with no InternalIP or ExternalIP is INCONCLUSIVE'
+
+# --- Topology stability: the node set must not change during the read --------------------------
+
+reset_fixtures
+set_ipcache_key 255 10.0.0.3 10.0.0.4 10.0.0.5
+nodes_after '.items += [{"metadata":{"name":"prod-worker-4","uid":"uid-node-w4"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.6"}]}}]'
+run_script --context admin@prod
+require_rc 3 'node added mid-read'
+require_text 'the node set or a node address changed during the read' 'node added reason'
+refute_text 'PLAUSIBLY-FIXED' 'a node added mid-read must block the fixed verdict'
+[[ "$(grep -c ' exec ' "${fixtures}/calls.log")" -eq 1 ]] || fail 'the read itself must still have happened exactly once'
+assert_safe
+pass 'a node added between the node list and the exec is INCONCLUSIVE'
+
+reset_fixtures
+nodes_after '.items |= map(select(.metadata.name != "prod-worker-3"))'
+run_script --context admin@prod
+require_rc 3 'node removed mid-read'
+require_text 'the node set or a node address changed during the read' 'node removed reason'
+assert_safe
+pass 'a node removed during the read is INCONCLUSIVE'
+
+reset_fixtures
+nodes_after '.items |= map(if .metadata.name == "prod-worker-2" then .status.addresses[0].address = "10.0.0.9" else . end)'
+run_script --context admin@prod
+require_rc 3 'address changed mid-read'
+require_text 'the node set or a node address changed during the read' 'address changed reason'
+assert_safe
+pass 'a node address changed during the read is INCONCLUSIVE'
+
+reset_fixtures
+nodes_after '.items |= map(if .metadata.name == "prod-worker-3" then .metadata.uid = "uid-node-w3-replacement" else . end)'
+run_script --context admin@prod
+require_rc 3 'node replaced mid-read'
+require_text 'the node set or a node address changed during the read' 'node replaced reason'
+assert_safe
+pass 'a node replaced under the same name (new UID) is INCONCLUSIVE'
+
+# Negative control: the same topology returned in a different order is unchanged, and non-host
+# address types (Hostname) do not count.
+reset_fixtures
+nodes_after '.items |= (reverse | map(.status.addresses |= (reverse + [{"type":"Hostname","address":"renamed-host"}])))'
+run_script --context admin@prod
+require_rc 0 'reordered topology control'
+require_text 'VERDICT: FAULT-PERSISTS' 'an unchanged topology in another order must still yield its verdict'
+require_text 'node topology: unchanged across the read' 'reordered topology must read as unchanged'
+assert_safe
+pass 'negative control: an unchanged node set in another order still yields its verdict'
+
+reset_fixtures
+touch "${fixtures}/nodes-after-fails"
+run_script --context admin@prod
+require_rc 3 'node re-list failure'
+require_text 'could not re-list the nodes after the read' 'node re-list failure reason'
+assert_safe
+pass 'a failed node re-list is INCONCLUSIVE'
+
+reset_fixtures
+edit_json nodes.json '.items[2].metadata.uid = ""'
+run_script --context admin@prod
+require_rc 3 'node without UID'
+require_text 'a node reported no name or UID' 'missing UID reason'
+require_no_exec 'must not exec when node identity is unknown'
+assert_safe
+pass 'a node with no UID is INCONCLUSIVE before any exec'
+
+# --- Rollout: the agent set must be fully rolled and the selected agent current -----------------
+
+reset_fixtures
+edit_json daemonset.json '.status.updatedNumberScheduled = 3'
+run_script --context admin@prod
+require_rc 3 'partially updated DaemonSet'
+require_text 'partially rolled out (not every node runs the updated agent)' 'partial update reason'
+require_no_exec 'must not exec while the DaemonSet is partially updated'
+assert_safe
+pass 'a partially updated Cilium DaemonSet is INCONCLUSIVE before any exec'
+
+reset_fixtures
+edit_json daemonset.json '.status.numberAvailable = 3'
+run_script --context admin@prod
+require_rc 3 'unavailable agent'
+require_text 'partially rolled out (not every agent is available)' 'unavailable reason'
+require_no_exec 'must not exec while an agent is unavailable'
+assert_safe
+pass 'a Cilium DaemonSet with an unavailable agent is INCONCLUSIVE before any exec'
+
+reset_fixtures
+edit_json daemonset.json '.status.observedGeneration = 6'
+run_script --context admin@prod
+require_rc 3 'generation not observed'
+require_text 'has not observed its current generation' 'generation reason'
+require_no_exec 'must not exec before the DaemonSet observes its generation'
+assert_safe
+pass 'a Cilium DaemonSet that has not observed its generation is INCONCLUSIVE before any exec'
+
+reset_fixtures
+# Only the SELECTED agent is left behind; the DaemonSet counters still read fully rolled, so this
+# isolates the per-pod revision check from the counter checks above.
+jq --arg old "${old_hash}" \
+  '.items |= map(if .spec.nodeName == "prod-control-plane-1" then .metadata.labels["controller-revision-hash"] = $old else . end)' \
+  "${fixtures}/cilium-pods.json" >"${fixtures}/cilium-pods.tmp"
+mv "${fixtures}/cilium-pods.tmp" "${fixtures}/cilium-pods.json"
+[[ "$(jq -r '.items[] | select(.spec.nodeName == "prod-control-plane-1") | .metadata.labels["controller-revision-hash"]' "${fixtures}/cilium-pods.json")" == "${old_hash}" ]] ||
+  fail 'fixture: the selected pod must carry the old revision'
+run_script --context admin@prod
+require_rc 3 'selected pod on an old revision'
+require_text 'the selected Cilium agent is not on the DaemonSet current revision' 'old revision reason'
+require_no_exec 'must not exec in an agent on an old revision'
+assert_safe
+pass 'a selected agent on an old revision is INCONCLUSIVE before any exec'
+
+reset_fixtures
+edit_json cilium-pods.json '.items |= map(del(.metadata.labels["controller-revision-hash"]))'
+run_script --context admin@prod
+require_rc 3 'selected pod without revision'
+require_text 'the selected Cilium agent is not on the DaemonSet current revision' 'missing pod revision reason'
+require_no_exec 'must not exec in an agent whose revision is unknown'
+assert_safe
+pass 'a selected agent with no revision label is INCONCLUSIVE before any exec'
+
+reset_fixtures
+edit_json controllerrevisions.json '.items |= map(select(.metadata.ownerReferences[0].uid != "uid-ds-cilium"))'
+run_script --context admin@prod
+require_rc 3 'no owned revision'
+require_text 'current revision could not be resolved' 'unresolved revision reason'
+require_no_exec 'must not exec when the current revision is unknown'
+assert_safe
+pass 'no ControllerRevision owned by the DaemonSet is INCONCLUSIVE before any exec'
+
+reset_fixtures
+rm "${fixtures}/daemonset.json"
+run_script --context admin@prod
+require_rc 3 'DaemonSet read failure'
+require_text 'could not read the Cilium DaemonSet' 'DaemonSet read failure reason'
+require_no_exec 'must not exec when the DaemonSet cannot be read'
+assert_safe
+pass 'a failed DaemonSet read is INCONCLUSIVE before any exec'
+
+# Negative control: a fully rolled DaemonSet whose current revision is NOT the last listed, next to a
+# foreign DaemonSet's higher revision, still yields its verdict.
+reset_fixtures
+edit_json controllerrevisions.json '.items |= reverse'
+set_ipcache_key 255 10.0.0.3 10.0.0.4 10.0.0.5
+run_script --context admin@prod
+require_rc 0 'fully rolled control'
+require_text 'VERDICT: PLAUSIBLY-FIXED' 'a fully rolled DaemonSet must still yield its verdict'
+require_text 'Cilium DaemonSet: fully rolled out; selected agent is on the current revision' 'rollout control text'
+assert_safe
+pass 'negative control: a fully rolled DaemonSet passes regardless of revision order and foreign revisions'
 
 # --- Workflow contract ---------------------------------------------------------------------------
 # The script's safety depends on how it is dispatched, so the workflow's shape is pinned here too:

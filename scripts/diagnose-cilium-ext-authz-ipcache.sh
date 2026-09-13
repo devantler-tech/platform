@@ -9,12 +9,16 @@
 # plaintext subrequest could not enter the encrypted pod path cross-node. Production now runs
 # a later Cilium; this script repeats that one read against the deployed build.
 #
-# WHAT IT DOES — read-only, four kubectl calls and nothing else:
-#   1. `get pods` in oauth2-proxy  — the replicas' pod IPs and nodes, resolved at run time.
-#   2. `get nodes`                 — every node and its addresses, to tell host-sourced
-#                                    identity=6 entries apart from other remote-node entries.
-#   3. `get pods` in kube-system   — a READY Cilium agent on a node hosting NEITHER replica.
-#   4. `exec … cilium-dbg bpf ipcache list` in that agent — a BPF map dump; it changes nothing.
+# WHAT IT DOES — read-only: `get` calls and exactly one exec, nothing else:
+#   1. `get pods` in oauth2-proxy          — the replicas' pod IPs and nodes, resolved at run time.
+#   2. `get nodes`                         — every node (name, UID) and its addresses, to tell
+#                                            host-sourced identity=6 entries apart from others.
+#   3. `get pods` in kube-system           — a READY Cilium agent on a node hosting NEITHER replica.
+#   4. `get daemonset cilium`              — the agent set must be fully rolled out.
+#   5. `get controllerrevisions`           — the DaemonSet's current revision, which the selected
+#                                            agent must be running.
+#   6. `exec … cilium-dbg bpf ipcache list` in that agent — a BPF map dump; it changes nothing.
+#   7. `get nodes` again                   — the topology must not have changed during the read.
 #
 # THE VERDICT
 #   FAULT-PERSISTS   every oauth2-proxy pod entry is behind WireGuard (encryptkey != 0), EVERY
@@ -22,10 +26,22 @@
 #                    encryptkey=0 — the precondition the issue blamed is unchanged.
 #   PLAUSIBLY-FIXED  pods behind WireGuard, every remote node covered, and every identity=6
 #                    node-address entry non-zero.
-#   INCONCLUSIVE     anything else: a failed read, an unsettled rollout, no eligible agent, a pod
-#                    IP missing from the ipcache, a pod entry NOT behind WireGuard, a remote node
-#                    with no identity=6 entry for any of its addresses, a mixed population, or an
-#                    entry that would not parse.
+#   INCONCLUSIVE     anything else: a failed read, an unsettled rollout, no eligible agent, a
+#                    partially rolled Cilium DaemonSet or an agent on an old revision, a node set
+#                    that changed during the read, a pod IP missing from the ipcache, a pod entry
+#                    NOT behind WireGuard, a remote node with no identity=6 entry for any of its
+#                    addresses, a mixed population, or an entry that would not parse.
+#
+# ROLLOUT. The prod-deploy lock stops a deploy overlapping the read, but a FAILED deploy can
+# release it with old and new Ready agents side by side. A verdict read from an old agent would
+# describe a build that is no longer deployed, so before the exec the DaemonSet must have observed
+# its current generation, scheduled and made available the updated pod on every node, and the
+# selected agent must carry the DaemonSet's current `controller-revision-hash`.
+#
+# TOPOLOGY. The Cluster Autoscaler runs independently of the lock, so nodes are listed again after
+# the exec. Any difference in node names, UIDs or InternalIP/ExternalIP addresses makes the read
+# INCONCLUSIVE: a node added mid-read would otherwise be missing from the address map, its entry
+# would be filed as informational, and the verdict would come from a stale topology.
 #
 # COVERAGE. A "remote node" is every node except the one whose agent is read. Each must have at
 # least one identity=6 entry for one of its own addresses before any conclusive verdict: a node
@@ -42,9 +58,9 @@
 # present on the deployed build.
 #
 # WHAT IT PRINTS. The workflow log of a public repository is public, so no address is printed:
-# not pod IPs, node addresses, tunnel endpoints, node names or pod names. Only counts, identities
-# and encryption keys — the fields the verdict is made of. kubectl's stderr is discarded for the
-# same reason (a connection error names the API server address).
+# not pod IPs, node addresses, tunnel endpoints, node names, UIDs, revision hashes or pod names.
+# Only counts, identities and encryption keys — the fields the verdict is made of. kubectl's
+# stderr is discarded for the same reason (a connection error names the API server address).
 #
 # EXIT CODES
 #   0  a conclusive verdict (FAULT-PERSISTS or PLAUSIBLY-FIXED)
@@ -59,6 +75,16 @@ readonly oauth2_selector='app.kubernetes.io/name=oauth2-proxy,app.kubernetes.io/
 readonly cilium_namespace='kube-system'
 readonly cilium_selector='k8s-app=cilium'
 readonly cilium_container='cilium-agent'
+readonly cilium_daemonset='cilium'
+
+# One canonical, order-insensitive description of the node topology: name, UID and the sorted
+# InternalIP/ExternalIP set of every node. Compared before and after the exec.
+readonly node_fingerprint_filter='
+  [.items[]?
+    | (.metadata.name // "") + "|" + (.metadata.uid // "") + "|"
+      + ([.status.addresses[]? | select(.type == "InternalIP" or .type == "ExternalIP")
+          | .type + "=" + .address] | sort | join(","))]
+  | sort | join(";")'
 
 usage() {
   printf 'Usage: %s --context <kube-context>\n' "$(basename "$0")" >&2
@@ -131,6 +157,10 @@ is_k8s_name() {
   [[ "$1" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]
 }
 
+is_revision_hash() {
+  [[ "$1" =~ ^[a-z0-9]+$ ]]
+}
+
 # ---------------------------------------------------------------------------
 # 1. oauth2-proxy replicas. A replica that is Pending, terminating or not Ready means a rollout
 #    is in flight: its IP may or may not be in the ipcache yet, and a replica may be about to land
@@ -198,10 +228,12 @@ fi
 if ! node_address_lines="$(jq -r '
     [.items[]? | {
       name: (.metadata.name // ""),
+      uid: (.metadata.uid // ""),
       addrs: ([.status.addresses[]? | select(.type == "InternalIP" or .type == "ExternalIP") | .address] | unique)
     }]
     | if length == 0 then "ERR none"
-      elif any(.[]; .name == "" or (.addrs | length) == 0) then "ERR incomplete"
+      elif any(.[]; .name == "" or .uid == "") then "ERR identity"
+      elif any(.[]; (.addrs | length) == 0) then "ERR incomplete"
       else sort_by(.name) | .[] | .name as $n | .addrs[] | $n + " " + .
       end
   ' <<<"${nodes_json}")"; then
@@ -210,8 +242,13 @@ fi
 
 case "${node_address_lines}" in
   'ERR none') inconclusive 'no nodes were found' ;;
+  'ERR identity') inconclusive 'a node reported no name or UID' ;;
   'ERR incomplete') inconclusive 'a node reported no InternalIP or ExternalIP address' ;;
 esac
+
+if ! node_fingerprint_before="$(jq -r "${node_fingerprint_filter}" <<<"${nodes_json}")"; then
+  inconclusive 'the node list did not parse'
+fi
 
 node_names=''
 node_count=0
@@ -246,16 +283,18 @@ if ! agent_lines="$(jq -r --arg container "${cilium_container}" '
     [.items[]?
       | select(.status.phase == "Running" and .metadata.deletionTimestamp == null)
       | select(any(.status.containerStatuses[]?; .name == $container and .ready == true))
-      | {name: .metadata.name, node: (.spec.nodeName // "")}
+      | {name: .metadata.name, node: (.spec.nodeName // ""),
+         hash: (.metadata.labels["controller-revision-hash"] // "")}
       | select(.node != "")]
-    | sort_by(.node, .name) | .[] | .node + " " + .name
+    | sort_by(.node, .name) | .[] | .node + " " + .name + " " + .hash
   ' <<<"${cilium_json}")"; then
   inconclusive 'the Cilium agent pod list did not parse'
 fi
 
 agent_pod=''
 agent_node=''
-while IFS=' ' read -r node name; do
+agent_hash=''
+while IFS=' ' read -r node name hash; do
   [[ -z "${node}" ]] && continue
   if printf '%s' "${replica_nodes}" | grep -qxF -- "${node}"; then
     continue
@@ -263,6 +302,7 @@ while IFS=' ' read -r node name; do
   if is_k8s_name "${node}" && is_k8s_name "${name}"; then
     agent_pod="${name}"
     agent_node="${node}"
+    agent_hash="${hash}"
     break
   fi
 done <<<"${agent_lines}"
@@ -285,7 +325,69 @@ printf 'Cilium agent: selected a Ready agent on a node hosting neither replica\n
 printf 'remote nodes expected in the ipcache: %s\n' "${remote_node_count}"
 
 # ---------------------------------------------------------------------------
-# 4. The one exec. `cilium-dbg bpf ipcache list` dumps a BPF map; it writes nothing.
+# 4. The agent set must be fully rolled out, and the selected agent on the current revision.
+#    Checked BEFORE the exec, so a partial rollout reads nothing at all.
+# ---------------------------------------------------------------------------
+if ! daemonset_json="$(kc -n "${cilium_namespace}" get daemonset "${cilium_daemonset}" -o json)"; then
+  inconclusive 'could not read the Cilium DaemonSet'
+fi
+if ! daemonset_state="$(jq -r '
+    (.metadata.generation // null) as $generation
+    | (.status.desiredNumberScheduled // null) as $desired
+    | if (.metadata.uid // "") == "" then "ERR uid"
+      elif $generation == null or .status.observedGeneration != $generation then "ERR generation"
+      elif ($desired | type) != "number" or $desired < 1 then "ERR desired"
+      elif .status.updatedNumberScheduled != $desired then "ERR updated"
+      elif .status.numberAvailable != $desired then "ERR available"
+      else "OK " + .metadata.uid
+      end
+  ' <<<"${daemonset_json}")"; then
+  inconclusive 'the Cilium DaemonSet did not parse'
+fi
+
+case "${daemonset_state}" in
+  'ERR uid') inconclusive 'the Cilium DaemonSet reported no UID' ;;
+  'ERR generation') inconclusive 'the Cilium DaemonSet has not observed its current generation' ;;
+  'ERR desired') inconclusive 'the Cilium DaemonSet schedules no pods' ;;
+  'ERR updated') inconclusive 'the Cilium DaemonSet is partially rolled out (not every node runs the updated agent)' ;;
+  'ERR available') inconclusive 'the Cilium DaemonSet is partially rolled out (not every agent is available)' ;;
+  'OK '*) ;;
+  *) inconclusive 'the Cilium DaemonSet produced an unexpected state' ;;
+esac
+daemonset_uid="${daemonset_state#OK }"
+
+# The current update revision is the ControllerRevision owned (as controller) by THIS DaemonSet
+# with the highest revision number. Revisions of other DaemonSets in the namespace are ignored.
+if ! revisions_json="$(kc -n "${cilium_namespace}" get controllerrevisions -o json)"; then
+  inconclusive 'could not list the ControllerRevisions'
+fi
+if ! current_hash="$(jq -r --arg uid "${daemonset_uid}" '
+    [.items[]?
+      | select(any(.metadata.ownerReferences[]?;
+          .uid == $uid and .kind == "DaemonSet" and .controller == true))]
+    | if length == 0 then "ERR none"
+      elif any(.[]; (.revision | type) != "number") then "ERR revision"
+      else (map(.revision) | max) as $top
+        | [.[] | select(.revision == $top)]
+        | if length != 1 then "ERR ambiguous"
+          else (.[0].metadata.labels["controller-revision-hash"] // "")
+            | if . == "" then "ERR hash" else . end
+          end
+      end
+  ' <<<"${revisions_json}")"; then
+  inconclusive 'the ControllerRevisions did not parse'
+fi
+
+if ! is_revision_hash "${current_hash}"; then
+  inconclusive 'the Cilium DaemonSet current revision could not be resolved'
+fi
+if [[ "${agent_hash}" != "${current_hash}" ]]; then
+  inconclusive 'the selected Cilium agent is not on the DaemonSet current revision'
+fi
+printf 'Cilium DaemonSet: fully rolled out; selected agent is on the current revision\n'
+
+# ---------------------------------------------------------------------------
+# 5. The one exec. `cilium-dbg bpf ipcache list` dumps a BPF map; it writes nothing.
 # ---------------------------------------------------------------------------
 if ! ipcache="$(kc -n "${cilium_namespace}" exec "${agent_pod}" -c "${cilium_container}" -- \
   cilium-dbg bpf ipcache list)"; then
@@ -294,6 +396,20 @@ fi
 if [[ -z "${ipcache//[[:space:]]/}" ]]; then
   inconclusive 'the ipcache read returned nothing'
 fi
+
+# ---------------------------------------------------------------------------
+# 6. The topology must be unchanged across the read: same node names, UIDs and addresses.
+# ---------------------------------------------------------------------------
+if ! nodes_after_json="$(kc get nodes -o json)"; then
+  inconclusive 'could not re-list the nodes after the read'
+fi
+if ! node_fingerprint_after="$(jq -r "${node_fingerprint_filter}" <<<"${nodes_after_json}")"; then
+  inconclusive 'the node re-list did not parse'
+fi
+if [[ "${node_fingerprint_after}" != "${node_fingerprint_before}" ]]; then
+  inconclusive 'the node set or a node address changed during the read'
+fi
+printf 'node topology: unchanged across the read\n'
 
 # Parse. Addresses are matched EXACTLY after the prefix length is stripped, never as substrings:
 # a pod at 10.244.22.23 must not be satisfied by an entry for 10.244.22.235. Values reach awk
