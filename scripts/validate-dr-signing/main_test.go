@@ -1598,6 +1598,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		deployNeeds   = `    needs:
       [
         changes,
+        validate-floating-image-tags,
         validate-eks-authorization,
         validate-publication-contract,
         validate-talos,
@@ -1607,6 +1608,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		deployNeedsWithoutGate = `    needs:
       [
         changes,
+        validate-floating-image-tags,
         validate-eks-authorization,
         validate-talos,
         validate-rgd-templates-merge-group,
