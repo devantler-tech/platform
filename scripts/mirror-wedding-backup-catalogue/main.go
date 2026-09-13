@@ -10,21 +10,25 @@
 //
 //   - the plan reads with the shared credential and writes with the dedicated
 //     one, to exactly the reviewed destination;
-//   - every object present when the run started is unchanged when it ends; and
+//   - the listing taken when the run started is complete, and every object in
+//     it is unchanged when the run ends; and
 //   - every one of those objects exists in the destination with a matching size
 //     and content checksum.
 //
-// Objects archived during the run are expected and left to the next pass.
+// Objects archived after the run started are expected and left to the next
+// pass. An object that is missing from the starting listing but was written
+// before the run started proves that listing was incomplete, so it is refused.
 //
 // Usage:
 //
 //	mirror-wedding-backup-catalogue validate-plan <source-bucket>
-//	mirror-wedding-backup-catalogue evaluate <source-before> <source-after> <destination>
+//	mirror-wedding-backup-catalogue evaluate <run-start> <source-before> <source-after> <destination>
 //
-// Each listing is the `mc ls --json --recursive` output for the catalogue
-// prefix, optionally carrying a "sha256" field per object. The result is a
-// single non-secret JSON line: counts, the newest base backup, and the newest
-// WAL segment on each side.
+// <run-start> is an RFC 3339 timestamp taken before the starting listing. Each
+// listing is the `mc ls --json --recursive` output for the catalogue prefix,
+// with keys starting at the server directory, optionally carrying a "sha256"
+// field per object. The result is a single non-secret JSON line: counts, the
+// newest base backup, and the newest WAL segment on each side.
 package main
 
 import (
@@ -37,6 +41,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const (
@@ -48,16 +53,17 @@ const (
 )
 
 var (
-	ErrCredentialReuse  = errors.New("credential reuse")
-	ErrWrongDestination = errors.New("wrong destination")
-	ErrWrongSource      = errors.New("wrong source")
-	ErrPartialCopy      = errors.New("partial copy")
-	ErrChecksumMismatch = errors.New("checksum mismatch")
-	ErrUnverifiable     = errors.New("unverifiable object")
-	ErrSourceChanged    = errors.New("source changed during the run")
-	ErrEmptySource      = errors.New("empty source")
-	ErrNoBaseBackup     = errors.New("no base backup")
-	ErrMalformedListing = errors.New("malformed listing")
+	ErrCredentialReuse   = errors.New("credential reuse")
+	ErrWrongDestination  = errors.New("wrong destination")
+	ErrWrongSource       = errors.New("wrong source")
+	ErrPartialCopy       = errors.New("partial copy")
+	ErrChecksumMismatch  = errors.New("checksum mismatch")
+	ErrUnverifiable      = errors.New("unverifiable object")
+	ErrSourceChanged     = errors.New("source changed during the run")
+	ErrIncompleteListing = errors.New("incomplete starting listing")
+	ErrEmptySource       = errors.New("empty source")
+	ErrNoBaseBackup      = errors.New("no base backup")
+	ErrMalformedListing  = errors.New("malformed listing")
 )
 
 // Location is one side of the mirror: a bucket, the catalogue prefix inside it,
@@ -76,10 +82,11 @@ type Plan struct {
 
 // Object is one listed catalogue object, keyed relative to the catalogue prefix.
 type Object struct {
-	Key    string
-	Size   int64
-	ETag   string
-	SHA256 string
+	Key          string
+	Size         int64
+	ETag         string
+	SHA256       string
+	LastModified time.Time
 }
 
 // Summary is the non-secret evidence a successful evaluation reports.
@@ -120,9 +127,12 @@ var (
 	backupID   = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}$`)
 )
 
-// EvaluateParity proves that every object present when the run started is
-// unchanged at the end and was copied intact.
-func EvaluateParity(before, after, destination []Object) (Summary, error) {
+// EvaluateParity proves that the starting listing was complete, that every
+// object in it is unchanged at the end, and that each was copied intact.
+func EvaluateParity(runStart time.Time, before, after, destination []Object) (Summary, error) {
+	if runStart.IsZero() {
+		return Summary{}, fmt.Errorf("%w: no run start", ErrMalformedListing)
+	}
 	beforeIndex, err := index(before)
 	if err != nil {
 		return Summary{}, err
@@ -142,8 +152,13 @@ func EvaluateParity(before, after, destination []Object) (Summary, error) {
 	for key, source := range beforeIndex {
 		current, ok := afterIndex[key]
 		if !ok || current.Size != source.Size || current.ETag != source.ETag ||
-			current.SHA256 != source.SHA256 {
+			(current.SHA256 != "" && source.SHA256 != "" && current.SHA256 != source.SHA256) {
 			return Summary{}, fmt.Errorf("%w: %s", ErrSourceChanged, key)
+		}
+	}
+	for key, current := range afterIndex {
+		if _, ok := beforeIndex[key]; !ok && !current.LastModified.After(runStart) {
+			return Summary{}, fmt.Errorf("%w: %s predates the run", ErrIncompleteListing, key)
 		}
 	}
 
@@ -245,17 +260,20 @@ func newestWAL(objects map[string]Object) string {
 }
 
 type listingEntry struct {
-	Status string `json:"status"`
-	Type   string `json:"type"`
-	Size   *int64 `json:"size"`
-	Key    string `json:"key"`
-	ETag   string `json:"etag"`
-	SHA256 string `json:"sha256"`
+	Status       string `json:"status"`
+	Type         string `json:"type"`
+	Size         *int64 `json:"size"`
+	Key          string `json:"key"`
+	ETag         string `json:"etag"`
+	SHA256       string `json:"sha256"`
+	LastModified string `json:"lastModified"`
 }
 
 // ParseListing reads `mc ls --json --recursive` output. Any entry that is not a
 // clean success is refused, because a silently skipped object would make a
-// partial listing look like a complete one.
+// partial listing look like a complete one. Keys must start at the Barman
+// server directory, so a listing rooted one level too high or too low is
+// reported as malformed rather than as a catalogue with no backups.
 func ParseListing(r io.Reader) ([]Object, error) {
 	var objects []Object
 	scanner := bufio.NewScanner(r)
@@ -275,11 +293,18 @@ func ParseListing(r io.Reader) ([]Object, error) {
 		if entry.Type == "folder" {
 			continue
 		}
+		modified, err := time.Parse(time.RFC3339Nano, entry.LastModified)
 		if entry.Type != "file" || entry.Size == nil || *entry.Size < 0 || entry.ETag == "" ||
-			!cleanKey(entry.Key) {
+			err != nil || !catalogueKey(entry.Key) {
 			return nil, fmt.Errorf("%w: entry %q", ErrMalformedListing, entry.Key)
 		}
-		objects = append(objects, Object{Key: entry.Key, Size: *entry.Size, ETag: entry.ETag, SHA256: entry.SHA256})
+		objects = append(objects, Object{
+			Key:          entry.Key,
+			Size:         *entry.Size,
+			ETag:         entry.ETag,
+			SHA256:       entry.SHA256,
+			LastModified: modified,
+		})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrMalformedListing, err)
@@ -287,8 +312,14 @@ func ParseListing(r io.Reader) ([]Object, error) {
 	return objects, nil
 }
 
-func cleanKey(key string) bool {
-	return key != "" && !strings.HasPrefix(key, "/") && path.Clean(key) == key
+// catalogueKey accepts a clean relative key of the form
+// <server>/base/... or <server>/wals/..., the only trees Barman Cloud writes.
+func catalogueKey(key string) bool {
+	if key == "" || strings.HasPrefix(key, "/") || path.Clean(key) != key {
+		return false
+	}
+	parts := strings.Split(key, "/")
+	return len(parts) >= 3 && parts[0] != "" && (parts[1] == "base" || parts[1] == "wals")
 }
 
 func readListing(name string) ([]Object, error) {
@@ -307,22 +338,26 @@ func run(args []string, stdout io.Writer) error {
 			Destination: Location{Bucket: destinationBucket, Prefix: destinationPrefix, Secret: destinationSecret},
 		})
 	}
-	if len(args) == 4 && args[0] == "evaluate" {
+	if len(args) == 5 && args[0] == "evaluate" {
+		runStart, err := time.Parse(time.RFC3339Nano, args[1])
+		if err != nil {
+			return fmt.Errorf("%w: run start: %v", ErrMalformedListing, err)
+		}
 		listings := make([][]Object, 0, 3)
-		for _, name := range args[1:] {
+		for _, name := range args[2:] {
 			objects, err := readListing(name)
 			if err != nil {
 				return err
 			}
 			listings = append(listings, objects)
 		}
-		summary, err := EvaluateParity(listings[0], listings[1], listings[2])
+		summary, err := EvaluateParity(runStart, listings[0], listings[1], listings[2])
 		if err != nil {
 			return err
 		}
 		return json.NewEncoder(stdout).Encode(summary)
 	}
-	return errors.New("usage: mirror-wedding-backup-catalogue validate-plan <source-bucket> | evaluate <source-before> <source-after> <destination>")
+	return errors.New("usage: mirror-wedding-backup-catalogue validate-plan <source-bucket> | evaluate <run-start> <source-before> <source-after> <destination>")
 }
 
 func main() {

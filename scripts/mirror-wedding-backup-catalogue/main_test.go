@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func validPlan() Plan {
@@ -59,14 +60,21 @@ const (
 	baseData = "wedding-db-20260909/base/20260908T030000/data.tar.gz"
 	olderWAL = "wedding-db-20260909/wals/0000000200000001/000000020000000100000003.gz"
 	newerWAL = "wedding-db-20260909/wals/0000000300000001/000000030000000100000001.gz"
+	lateWAL  = "wedding-db-20260909/wals/0000000300000001/000000030000000100000002.gz"
+)
+
+var (
+	runStart     = time.Date(2026, 9, 13, 10, 0, 0, 0, time.UTC)
+	beforeRun    = runStart.Add(-24 * time.Hour)
+	duringTheRun = runStart.Add(5 * time.Minute)
 )
 
 func sourceListing() []Object {
 	return []Object{
-		{Key: baseInfo, Size: 1200, ETag: "a1"},
-		{Key: baseData, Size: 90_000_000, ETag: "b2-6", SHA256: "sha-data"},
-		{Key: olderWAL, Size: 4000, ETag: "c3"},
-		{Key: newerWAL, Size: 4100, ETag: "d4"},
+		{Key: baseInfo, Size: 1200, ETag: "a1", LastModified: beforeRun},
+		{Key: baseData, Size: 90_000_000, ETag: "b2-6", SHA256: "sha-data", LastModified: beforeRun},
+		{Key: olderWAL, Size: 4000, ETag: "c3", LastModified: beforeRun},
+		{Key: newerWAL, Size: 4100, ETag: "d4", LastModified: beforeRun},
 	}
 }
 
@@ -74,15 +82,15 @@ func sourceListing() []Object {
 // destination carries a different multipart ETag for identical bytes.
 func destinationListing() []Object {
 	return []Object{
-		{Key: baseInfo, Size: 1200, ETag: "a1"},
-		{Key: baseData, Size: 90_000_000, ETag: "ff-4", SHA256: "sha-data"},
-		{Key: olderWAL, Size: 4000, ETag: "c3"},
-		{Key: newerWAL, Size: 4100, ETag: "d4"},
+		{Key: baseInfo, Size: 1200, ETag: "a1", LastModified: duringTheRun},
+		{Key: baseData, Size: 90_000_000, ETag: "ff-4", SHA256: "sha-data", LastModified: duringTheRun},
+		{Key: olderWAL, Size: 4000, ETag: "c3", LastModified: duringTheRun},
+		{Key: newerWAL, Size: 4100, ETag: "d4", LastModified: duringTheRun},
 	}
 }
 
 func TestEvaluateParityProvesAFullCopy(t *testing.T) {
-	summary, err := EvaluateParity(sourceListing(), sourceListing(), destinationListing())
+	summary, err := EvaluateParity(runStart, sourceListing(), sourceListing(), destinationListing())
 	if err != nil {
 		t.Fatalf("EvaluateParity() = %v, want nil", err)
 	}
@@ -103,8 +111,8 @@ func TestEvaluateParityProvesAFullCopy(t *testing.T) {
 // WAL keeps archiving to the shared store until the cutover, so objects that
 // appear during the run are expected and only need to be copied by a later pass.
 func TestEvaluateParityAllowsObjectsArchivedDuringTheRun(t *testing.T) {
-	after := append(sourceListing(), Object{Key: "wedding-db-20260909/wals/0000000300000001/000000030000000100000002.gz", Size: 4200, ETag: "e5"})
-	summary, err := EvaluateParity(sourceListing(), after, destinationListing())
+	after := append(sourceListing(), Object{Key: lateWAL, Size: 4200, ETag: "e5", LastModified: duringTheRun})
+	summary, err := EvaluateParity(runStart, sourceListing(), after, destinationListing())
 	if err != nil {
 		t.Fatalf("EvaluateParity() = %v, want nil", err)
 	}
@@ -113,9 +121,20 @@ func TestEvaluateParityAllowsObjectsArchivedDuringTheRun(t *testing.T) {
 	}
 }
 
+// A digest computed on only one of the two source listings says nothing about
+// whether the object changed; size and ETag still do.
+func TestEvaluateParityIgnoresADigestPresentOnOneSourceListing(t *testing.T) {
+	after := sourceListing()
+	after[0].SHA256 = "sha-info"
+	if _, err := EvaluateParity(runStart, sourceListing(), after, destinationListing()); err != nil {
+		t.Fatalf("EvaluateParity() = %v, want nil", err)
+	}
+}
+
 func TestEvaluateParityRefusals(t *testing.T) {
 	tests := []struct {
 		name        string
+		start       time.Time
 		before      func() []Object
 		after       func() []Object
 		destination func() []Object
@@ -191,6 +210,34 @@ func TestEvaluateParityRefusals(t *testing.T) {
 			want:        ErrSourceChanged,
 		},
 		{
+			name:   "source digests disagree",
+			before: sourceListing,
+			after: func() []Object {
+				s := sourceListing()
+				s[1].SHA256 = "sha-rewritten"
+				return s
+			},
+			destination: destinationListing,
+			want:        ErrSourceChanged,
+		},
+		{
+			// The starting listing stopped part-way: the base backup existed
+			// before the run but was never listed, so it was never checked.
+			name:        "truncated starting listing",
+			before:      func() []Object { return sourceListing()[2:] },
+			after:       sourceListing,
+			destination: func() []Object { return destinationListing()[2:] },
+			want:        ErrIncompleteListing,
+		},
+		{
+			name:        "missing run start",
+			start:       time.Time{},
+			before:      sourceListing,
+			after:       sourceListing,
+			destination: destinationListing,
+			want:        ErrMalformedListing,
+		},
+		{
 			name:        "empty source",
 			before:      func() []Object { return nil },
 			after:       func() []Object { return nil },
@@ -198,13 +245,11 @@ func TestEvaluateParityRefusals(t *testing.T) {
 			want:        ErrEmptySource,
 		},
 		{
-			name:   "source without a base backup",
-			before: func() []Object { return sourceListing()[2:] },
-			after:  func() []Object { return sourceListing()[2:] },
-			destination: func() []Object {
-				return destinationListing()[2:]
-			},
-			want: ErrNoBaseBackup,
+			name:        "source without a base backup",
+			before:      func() []Object { return sourceListing()[2:] },
+			after:       func() []Object { return sourceListing()[2:] },
+			destination: func() []Object { return destinationListing()[2:] },
+			want:        ErrNoBaseBackup,
 		},
 		{
 			name: "duplicate key in a listing",
@@ -218,7 +263,11 @@ func TestEvaluateParityRefusals(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := EvaluateParity(tt.before(), tt.after(), tt.destination())
+			start := runStart
+			if tt.name == "missing run start" {
+				start = tt.start
+			}
+			_, err := EvaluateParity(start, tt.before(), tt.after(), tt.destination())
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("EvaluateParity() = %v, want %v", err, tt.want)
 			}
@@ -228,9 +277,9 @@ func TestEvaluateParityRefusals(t *testing.T) {
 
 func TestParseListingReadsMcJSONLines(t *testing.T) {
 	input := strings.Join([]string{
-		`{"status":"success","type":"file","size":1200,"key":"` + baseInfo + `","etag":"a1"}`,
+		`{"status":"success","type":"file","lastModified":"2026-09-12T10:00:00.123Z","size":1200,"key":"` + baseInfo + `","etag":"a1"}`,
 		`{"status":"success","type":"folder","size":0,"key":"wedding-db-20260909/base/"}`,
-		`{"status":"success","type":"file","size":4000,"key":"` + olderWAL + `","etag":"c3","sha256":"abc"}`,
+		`{"status":"success","type":"file","lastModified":"2026-09-12T10:00:00Z","size":4000,"key":"` + olderWAL + `","etag":"c3","sha256":"abc"}`,
 		``,
 	}, "\n")
 	objects, err := ParseListing(strings.NewReader(input))
@@ -240,19 +289,24 @@ func TestParseListingReadsMcJSONLines(t *testing.T) {
 	if len(objects) != 2 {
 		t.Fatalf("len(objects) = %d, want 2 files and no folders", len(objects))
 	}
-	if objects[1] != (Object{Key: olderWAL, Size: 4000, ETag: "c3", SHA256: "abc"}) {
-		t.Fatalf("objects[1] = %+v", objects[1])
+	want := Object{Key: olderWAL, Size: 4000, ETag: "c3", SHA256: "abc", LastModified: time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)}
+	if objects[1] != want {
+		t.Fatalf("objects[1] = %+v, want %+v", objects[1], want)
 	}
 }
 
 func TestParseListingRefusesFailedEntries(t *testing.T) {
+	const modified = `"lastModified":"2026-09-12T10:00:00Z",`
 	tests := map[string]string{
-		"error status":  `{"status":"error","type":"file","size":1,"key":"x","etag":"a"}`,
-		"not json":      `not json`,
-		"absolute key":  `{"status":"success","type":"file","size":1,"key":"/x","etag":"a"}`,
-		"parent key":    `{"status":"success","type":"file","size":1,"key":"a/../x","etag":"a"}`,
-		"negative size": `{"status":"success","type":"file","size":-1,"key":"x","etag":"a"}`,
-		"missing etag":  `{"status":"success","type":"file","size":1,"key":"x"}`,
+		"error status":            `{"status":"error","type":"file",` + modified + `"size":1,"key":"` + baseInfo + `","etag":"a"}`,
+		"not json":                `not json`,
+		"absolute key":            `{"status":"success","type":"file",` + modified + `"size":1,"key":"/` + baseInfo + `","etag":"a"}`,
+		"parent key":              `{"status":"success","type":"file",` + modified + `"size":1,"key":"wedding-db-20260909/base/../x","etag":"a"}`,
+		"negative size":           `{"status":"success","type":"file",` + modified + `"size":-1,"key":"` + baseInfo + `","etag":"a"}`,
+		"missing etag":            `{"status":"success","type":"file",` + modified + `"size":1,"key":"` + baseInfo + `"}`,
+		"missing last modified":   `{"status":"success","type":"file","size":1,"key":"` + baseInfo + `","etag":"a"}`,
+		"listing rooted too high": `{"status":"success","type":"file",` + modified + `"size":1,"key":"wedding-db/` + baseInfo + `","etag":"a"}`,
+		"listing rooted too low":  `{"status":"success","type":"file",` + modified + `"size":1,"key":"base/20260908T030000/backup.info","etag":"a"}`,
 	}
 	for name, input := range tests {
 		t.Run(name, func(t *testing.T) {
