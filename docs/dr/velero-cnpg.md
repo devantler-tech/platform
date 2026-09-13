@@ -37,8 +37,10 @@ the shared `wedding-db` ObjectStore until the existing catalog has been mirrored
 and a reviewed cutover changes it to `wedding-db-dedicated`. The dispatch-only
 `Mirror Wedding Backup Catalogue` workflow does the copy from inside the
 `wedding-app` namespace and reports the evaluator's parity verdict: it can be
-re-run safely, and only a `CONVERGED` run is proof the cutover may start, so run
-it once more immediately before the switch. Until then, a
+re-run safely, and only a `CONVERGED` run means the switch may start. Run it once
+more immediately before the switch. `CONVERGED` does not cover WAL archived between
+that run and the reference change, so the cutover must end with a verified
+catch-up of that gap. Until then, a
 shared-token rotation must verify Wedding together with Umami, Coroot, and
 Velero before the previous shared token is revoked.
 

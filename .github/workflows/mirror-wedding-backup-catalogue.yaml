@@ -14,7 +14,10 @@ name: Mirror Wedding Backup Catalogue
 #
 # RE-RUNNABLE. The copy never deletes and overwrites only differing objects, so a
 # NOT CONVERGED result (exit 3, shown as a failed run) is resolved by dispatching
-# again, and the final pass belongs immediately before the cutover.
+# again. CONVERGED means the switch can start NOW; it is not the last word, because
+# the shared archive keeps receiving WAL until the Cluster's reference changes.
+# The cutover must therefore be followed by a verified catch-up of anything
+# archived in between (#3778).
 
 on:
   workflow_dispatch:

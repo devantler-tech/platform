@@ -20,7 +20,9 @@
 #
 # Exit status: 0 converged (the destination is ready for the cutover), 3 copied
 # and verified but not converged (objects archived during the run are still
-# pending, so run it again), 1 refused or failed. Only 0 is cutover proof.
+# pending, so run it again), 1 refused or failed. Only 0 means the switch may
+# start, and even 0 covers nothing archived after the run: the cutover must end
+# with a verified catch-up (#3778).
 #
 # Needs --confirm. The pod writes to a production bucket, so a bare invocation
 # does nothing.
@@ -208,6 +210,12 @@ spec:
     - name: work
       emptyDir:
         sizeLimit: 64Gi
+    # `mc alias set` writes both credentials into its config directory. Keep that
+    # in memory so the keys never land on node storage.
+    - name: mc-config
+      emptyDir:
+        medium: Memory
+        sizeLimit: 1Mi
   containers:
     - name: mirror
       image: __IMAGE__
@@ -231,6 +239,8 @@ spec:
           value: "__DESTINATION_PREFIX__"
         - name: WORK_DIR
           value: /work
+        - name: MC_CONFIG_DIR
+          value: /mc-config
       resources:
         requests:
           cpu: 50m
@@ -249,6 +259,8 @@ spec:
           readOnly: true
         - name: work
           mountPath: /work
+        - name: mc-config
+          mountPath: /mc-config
 MANIFEST
 )"
 manifest="${manifest//__NAME__/${name}}"
@@ -302,7 +314,8 @@ fi
 report_verdict() {
   cat "$1"
   if grep -q '"converged":true' "$1"; then
-    printf 'CONVERGED: the dedicated bucket holds the full catalogue.\n'
+    printf 'CONVERGED: the dedicated bucket holds the full catalogue as of this run, so the switch may start.\n'
+    printf 'WAL archived after this run is not covered: the cutover must end with a verified catch-up (#3778).\n'
     exit 0
   fi
   if grep -q '"converged":false' "$1"; then
