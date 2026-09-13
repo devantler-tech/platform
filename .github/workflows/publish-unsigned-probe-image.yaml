@@ -30,7 +30,12 @@ name: Publish Unsigned Probe Image
 #     publishing cannot start anything else here;
 #   * `packages` is the only permission granted, and the last step still reads
 #     the digest's signature tags and referrers, authenticated, and cannot
-#     continue past a failure.
+#     continue past a failure;
+#   * the first step refuses to run unless dispatched from refs/heads/main, so
+#     a dispatch aimed at another branch or tag builds and pushes nothing. A
+#     dispatch runs the workflow file of the ref it targets, so this stops any
+#     ref that still carries this reviewed file, not one whose copy deletes the
+#     check; restricting who can dispatch is what covers that case.
 # Nothing in this repository can stop someone signing the image by hand from
 # outside it. That last step checks the published digest really is unsigned,
 # so that case is caught on every run rather than assumed away. The package can
@@ -68,6 +73,18 @@ jobs:
       IMAGE: ghcr.io/devantler-tech/unsigned-probe-throwaway
       TAG: run-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      # First, before anything is built, logged in to or pushed: a dispatch can
+      # target any branch or tag, and only main is reviewed. The guard requires
+      # this to stay the first step.
+      - name: 🛑 Refuse unless dispatched from main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != 'refs/heads/main' ]]; then
+            printf '::error::this workflow publishes only from refs/heads/main, not %s. Dispatch it from main.\n' "${GITHUB_REF}"
+            exit 1
+          fi
+
       - name: 🛡️ Harden runner
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:

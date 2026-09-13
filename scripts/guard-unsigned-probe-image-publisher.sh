@@ -32,6 +32,10 @@
 #      ref and the published ref cannot drift apart.
 #   9. No workflow in the repository runs on a package-publish event, so
 #      publishing the image cannot start anything that might sign it.
+#  10. A step after the push reads the digest's signature tags and referrers,
+#      authenticates with GITHUB_TOKEN, and never continues on error.
+#  11. The first step refuses to run unless dispatched from refs/heads/main,
+#      before any build, login or push, and nothing can skip or run past it.
 #
 # Nothing here can stop someone signing the image by hand from outside this
 # repository. The publisher checks the published digest is unsigned for that
@@ -184,22 +188,65 @@ done <<<"$workflows"
 # and referrers is what catches a signature added from outside this
 # repository, so it must exist, run after the push, authenticate, and fail the
 # job rather than continue past a failure.
-verify_filter='select(((.run // "") | test("/referrers/")) and ((.run // "") | test("manifests/sha256-")))'
-verify_index="$(yq -r ".jobs[].steps | [to_entries[] | select(.value | $verify_filter) | .key] | .[0] // \"none\"" "$publisher")"
-push_index="$(yq -r '.jobs[].steps | [to_entries[] | select(.value.id == "push") | .key] | .[0] // "none"' "$publisher")"
-if [[ "$verify_index" == 'none' ]]; then
+#
+# Same rule as check 11: yq reads one fact per call and bash decides. A single
+# `select((.run | test(a)) and (.run | test(b)))` over the steps matched EVERY
+# step, including one with no `run`, so the check could not tell whether the
+# verification existed at all.
+step_count="$(yq -r '.jobs[].steps | length' "$publisher")"
+[[ "$step_count" =~ ^[0-9]+$ ]] || cannot_check "could not count the steps of $publisher (got '$step_count')"
+push_index=''
+verify_index=''
+for ((i = 0; i < step_count; i++)); do
+  step_id="$(yq -r ".jobs[].steps[$i].id // \"\"" "$publisher")"
+  step_run="$(yq -r ".jobs[].steps[$i].run // \"\"" "$publisher")"
+  if [[ -z "$push_index" && "$step_id" == 'push' ]]; then
+    push_index="$i"
+  fi
+  if [[ -z "$verify_index" && "$step_run" == *'/referrers/'* && "$step_run" == *'manifests/sha256-'* ]]; then
+    verify_index="$i"
+  fi
+done
+if [[ -z "$verify_index" ]]; then
   violation "$publisher" 'must verify the pushed digest is unsigned: no step reads its signature tags and referrers'
 else
-  if [[ "$push_index" == 'none' ]] || ((verify_index < push_index)); then
-    violation "$publisher" 'must verify the pushed digest is unsigned after the step with id push'
+  if [[ -z "$push_index" ]] || ((verify_index <= push_index)); then
+    violation "$publisher" 'the unsigned verification step must run after the step with id push'
   fi
-  if [[ "$(yq -r "[.jobs[].steps[] | $verify_filter | select(has(\"continue-on-error\"))] | length" "$publisher")" != '0' ]]; then
+  verify_coe="$(yq -r ".jobs[].steps[$verify_index] | has(\"continue-on-error\")" "$publisher")"
+  [[ "$verify_coe" == 'true' || "$verify_coe" == 'false' ]] || cannot_check "could not read the verification step of $publisher (got '$verify_coe')"
+  if [[ "$verify_coe" != 'false' ]]; then
     violation "$publisher" 'the unsigned verification step must not continue on error'
   fi
-  authenticated="$(yq -r "[.jobs[].steps[] | $verify_filter | select(((.env // {}) | to_entries | map(select(.key == \"GHCR_TOKEN\" and (.value | test(\"secrets\\\\.GITHUB_TOKEN\")))) | length) > 0) | select(.run | test(\"GHCR_TOKEN\"))] | length" "$publisher")"
-  if [[ "$authenticated" == '0' ]]; then
+  verify_token="$(yq -r ".jobs[].steps[$verify_index].env.GHCR_TOKEN // \"\"" "$publisher")"
+  verify_run="$(yq -r ".jobs[].steps[$verify_index].run // \"\"" "$publisher")"
+  if [[ "$verify_token" != *'secrets.GITHUB_TOKEN'* || "$verify_run" != *'GHCR_TOKEN'* ]]; then
     violation "$publisher" 'the unsigned verification step must authenticate with GITHUB_TOKEN (env GHCR_TOKEN used by its script)'
   fi
+fi
+
+# 11. Reviewed ref only. A dispatch can target any branch or tag, so the very
+# first step must refuse anything but main before any build, login or push. It
+# must be a plain script step that nothing can skip (`if`) or run past
+# (`continue-on-error`), and it must hold the exact comparison, so flipping it
+# to `==` is caught too.
+#
+# Each fact is read from yq on its own and the decision is made here in bash.
+# Combining these conditions inside one yq expression (`has(a) and (has(b) |
+# not)`) evaluated true for a first step that had no `run` at all, so the check
+# passed with the pin removed. One yq read per fact cannot be misparsed that way.
+ref_check="[[ \"\${GITHUB_REF}\" != 'refs/heads/main' ]]"
+first_has_run="$(yq -r '.jobs[].steps[0] | has("run")' "$publisher")"
+first_has_uses="$(yq -r '.jobs[].steps[0] | has("uses")' "$publisher")"
+first_has_if="$(yq -r '.jobs[].steps[0] | has("if")' "$publisher")"
+first_has_coe="$(yq -r '.jobs[].steps[0] | has("continue-on-error")' "$publisher")"
+first_run="$(yq -r '.jobs[].steps[0].run // ""' "$publisher")"
+for fact in "$first_has_run" "$first_has_uses" "$first_has_if" "$first_has_coe"; do
+  [[ "$fact" == 'true' || "$fact" == 'false' ]] || cannot_check "could not read the first step of $publisher (got '$fact')"
+done
+if [[ "$first_has_run" != 'true' || "$first_has_uses" != 'false' || "$first_has_if" != 'false' || "$first_has_coe" != 'false' ]] ||
+  [[ "$first_run" != *"$ref_check"* || "$first_run" != *'exit 1'* ]]; then
+  violation "$publisher" "must refuse to run from any ref other than refs/heads/main as its first step, before any build, login or push (a plain run step, with no uses, if or continue-on-error, containing: $ref_check ... exit 1)"
 fi
 
 if ((status == 0)); then

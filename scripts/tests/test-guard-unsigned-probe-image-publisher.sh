@@ -143,7 +143,11 @@ expect 'a permission other than packages is refused' 1 "grants 'contents: write'
 
 new_fixture
 yq_edit '.jobs[].steps |= map(select(.name != "🔎 Confirm the published digest is unsigned"))'
-expect 'removing the unsigned verification step is refused' 1 'must verify the pushed digest is unsigned'
+expect 'removing the unsigned verification step is refused' 1 'no step reads its signature tags and referrers'
+
+new_fixture
+yq_edit '.jobs[].steps |= ([.[] | select(.name == "🔎 Confirm the published digest is unsigned")] + [.[] | select(.name != "🔎 Confirm the published digest is unsigned")])'
+expect 'a verification step before the push is refused' 1 'must run after the step with id push'
 
 new_fixture
 yq_edit '(.jobs[].steps[] | select(.name == "🔎 Confirm the published digest is unsigned"))["continue-on-error"] = true'
@@ -156,6 +160,22 @@ expect 'an unauthenticated verification step is refused' 1 'must authenticate wi
 new_fixture
 yq_edit '(.jobs[].steps[] | select(.name == "🔎 Confirm the published digest is unsigned")).run |= sub("/referrers/"; "/")'
 expect 'a verification step that no longer checks referrers is refused' 1 'must verify the pushed digest is unsigned'
+
+new_fixture
+yq_edit '.jobs[].steps |= map(select(.name != "🛑 Refuse unless dispatched from main"))'
+expect 'removing the main-only ref pin is refused' 1 'must refuse to run from any ref other than refs/heads/main'
+
+new_fixture
+yq_edit '.jobs[].steps |= (.[1:] + [.[0]])'
+expect 'moving the ref pin after the push is refused' 1 'must refuse to run from any ref other than refs/heads/main'
+
+new_fixture
+yq_edit '(.jobs[].steps[] | select(.name == "🛑 Refuse unless dispatched from main")).run |= sub("!="; "==")'
+expect 'an inverted ref comparison is refused' 1 'must refuse to run from any ref other than refs/heads/main'
+
+new_fixture
+yq_edit '(.jobs[].steps[] | select(.name == "🛑 Refuse unless dispatched from main"))["continue-on-error"] = true'
+expect 'a ref pin that may be run past is refused' 1 'must refuse to run from any ref other than refs/heads/main'
 
 new_fixture
 yq_edit '.on.schedule = [{"cron": "0 0 * * *"}]'
