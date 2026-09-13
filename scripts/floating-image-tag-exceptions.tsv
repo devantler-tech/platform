@@ -1,0 +1,8 @@
+# Reviewed exceptions for scripts/guard-floating-image-tags.sh (#3755).
+#
+# One tab-separated row per deliberate floating image:
+#   <Kind>/<namespace>/<name>	<image exactly as rendered>	#<tracking issue>	<reason>
+#
+# A row is a tracked disposition, never an approval. A row that no longer matches a
+# floating image in any rendered workload fails the guard, so remove it when the image
+# is pinned. An empty list is the goal state.
