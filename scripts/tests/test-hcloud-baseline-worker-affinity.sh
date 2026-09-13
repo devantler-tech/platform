@@ -10,13 +10,12 @@ set -euo pipefail
 # `platform.devantler.tech/baseline-worker In ["true"]`. Terms are ORed, so a
 # single term without it would fail open.
 #
-# Scope is the `infrastructure` layer only, because the label-baseline-workers
-# policies that stamp the label are applied in that same layer. OpenBao is NOT
-# covered: it deploys in `infrastructure-controllers`, which must converge
-# before `infrastructure` applies, so requiring the label there would deadlock
-# a rebuilt cluster whose nodes are not labelled yet. It keeps its
-# `ksail.io/autoscaled DoesNotExist` rule until a label source that exists
-# before Flux is in place (tracked on #3287).
+# The label rule covers the `infrastructure` layer, because the
+# label-baseline-workers policies that stamp the label are applied in that same
+# layer. OpenBao deploys earlier, in `infrastructure-controllers`, so requiring
+# the label there would deadlock a rebuilt cluster whose nodes are not labelled
+# yet. OpenBao is checked separately below: it must require the static workers
+# by hostname.
 #
 # Coroot is checked generically: every object in the Coroot CR spec whose
 # `storage.className` is hcloud must carry the rule in its sibling `affinity`,
@@ -116,6 +115,43 @@ for c in clickhouse clickhouse.keeper; do
   anti="$(yq ".${c}.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution // [] | length" "${work}/coroot.yaml")"
   [ "${anti}" -ge 1 ] || { echo "::error::coroot ${c} lost the base's required podAntiAffinity"; fail=1; }
 done
+
+# OpenBao: requires the static workers BY HOSTNAME, not by the label. It deploys
+# in `infrastructure-controllers`, before the label policies apply, so a label
+# requirement would deadlock a rebuilt cluster. The kubelet sets
+# kubernetes.io/hostname at registration, so this rule holds from the first
+# reconcile. The single required term must name exactly prod-worker-1..N, where
+# N is the static worker count in ksail.prod.yaml.
+controllers="${repo_root}/k8s/providers/hetzner/infrastructure/controllers"
+kubectl kustomize "${controllers}" >"${work}/controllers.yaml"
+[ -s "${work}/controllers.yaml" ] || { echo "::error::infrastructure-controllers overlay rendered nothing"; exit 1; }
+workers="$(yq '.spec.cluster.workers' "${repo_root}/ksail.prod.yaml")"
+case "${workers}" in
+  '' | 0 | *[!0-9]*)
+    echo "::error::unreadable static worker count '${workers}' in ksail.prod.yaml"
+    exit 1
+    ;;
+esac
+# The chart's server.affinity is a templated string; replace each Helm
+# expression with a placeholder so the rest parses as YAML.
+yq ea 'select(.kind == "HelmRelease" and .metadata.name == "openbao" and .metadata.namespace == "openbao") | .spec.values.server.affinity' \
+  "${work}/controllers.yaml" | sed -E 's/\{\{[^}]*\}\}/helm-template/g' >"${work}/openbao-affinity.yaml"
+if ! openbao_terms="$(yq -o=json -I=0 '.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms // []' "${work}/openbao-affinity.yaml")"; then
+  echo "::error::OpenBao server.affinity did not parse"
+  fail=1
+else
+  want="$(jq -cn --argjson n "${workers}" \
+    '[{"matchExpressions": [{"key": "kubernetes.io/hostname", "operator": "In", "values": [range(1; $n + 1) | "prod-worker-\(.)"]}]}]')"
+  got="$(jq -c . <<<"${openbao_terms}")"
+  if [ "${got}" != "${want}" ]; then
+    echo "::error::OpenBao must require exactly one nodeSelectorTerm ${want}, got ${got}"
+    fail=1
+  else
+    checked=$((checked + 1))
+  fi
+  anti="$(yq '[.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution // [] | .[] | select(.topologyKey == "kubernetes.io/hostname")] | length' "${work}/openbao-affinity.yaml")"
+  [ "${anti}" -ge 1 ] || { echo "::error::OpenBao lost the chart's required hostname podAntiAffinity"; fail=1; }
+fi
 
 if [ "${fail}" -ne 0 ]; then
   exit 1
