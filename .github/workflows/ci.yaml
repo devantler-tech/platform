@@ -39,6 +39,13 @@ jobs:
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
+      # The Wedding backup catalogue must be proven complete before the database
+      # switches to its dedicated bucket. The evaluator's refusals (credential
+      # reuse, wrong destination, partial copy, source changed mid-run) are the
+      # only thing standing between a bad mirror and a cutover with no history.
+      - name: 💒 Validate Wedding backup mirror evaluator
+        run: go test ./scripts/mirror-wedding-backup-catalogue
+
       - name: 💾 Validate two-stage PVC retirement
         # A merge-group artifact is speculative, but a PVC deletion is not: its
         # deletionTimestamp survives queue eviction and main cannot undo it.
