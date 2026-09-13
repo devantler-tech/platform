@@ -1,0 +1,96 @@
+name: Diagnose Cilium ExternalAuth ipcache
+
+# Obtain the ONE read #2284 needs: on a node running no oauth2-proxy replica, is the host-sourced
+# proxy source (`identity=6`, remote-node) still plaintext (`encryptkey=0`) toward oauth2-proxy
+# pods that sit behind WireGuard? That was the recorded precondition for the Gateway API
+# ExternalAuth black-hole on Cilium 1.20.0-pre.3; production runs a later build, and the read
+# decides whether re-attempting the cutover (#1881) behind a default-off flag is worth measuring.
+#
+# READ-ONLY. The script issues `kubectl get` for pods and nodes, and exactly one
+# `kubectl exec … -- cilium-dbg bpf ipcache list` in one Cilium agent — a BPF map dump that
+# changes nothing. scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh pins that it issues
+# nothing else.
+#
+# ACCESS USED — stated plainly because it is broader than the read. The repository holds no
+# read-only production credential, so this reuses the established prod kubeconfig: the `prod`
+# ENVIRONMENT secret KUBE_CONFIG, context `admin@prod`, restored exactly as
+# validate-image-verifier-liveness.yaml restores it. That identity is cluster-admin. What bounds
+# the job is the reviewed script, the pinned context, the confirmation phrase and `contents: read`
+# on the GitHub token — not the Kubernetes credential. No Talos, Hetzner or SOPS secret is read.
+#
+# DORMANT, TWICE OVER — the same shape as probe-image-signature-enforcement.yaml. There is no
+# `schedule:` and no `pull_request:` trigger, and the operator must type an exact confirmation
+# phrase, so an accidental dispatch from the UI reads nothing.
+#
+# PUBLIC LOG. This repository's workflow logs are public, so the script prints no address, node
+# name or pod name — only counts, identities, encryption keys and the verdict.
+#
+# The script's own test needs no cluster and no secrets, so it runs in ci.yaml's required
+# `validate` job rather than here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: read-production-cilium-ipcache"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  # Read-only against prod, so it does not take the `prod-deploy` lock and never delays a deploy.
+  # A deploy rolling the Cilium agents mid-read makes the exec fail, which the script reports as
+  # INCONCLUSIVE rather than a verdict. Two copies racing each other buy nothing.
+  group: diagnose-cilium-ext-authz-ipcache
+  cancel-in-progress: false
+
+jobs:
+  diagnose-cilium-ext-authz-ipcache:
+    name: 🔎 Diagnose Cilium ExternalAuth ipcache
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # KUBE_CONFIG is a `prod` ENVIRONMENT secret, not a repository secret; without this it resolves
+    # to the empty string and the read fails as INCONCLUSIVE instead of reaching the cluster.
+    environment: prod
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Checked BEFORE the kubeconfig is restored, so a mistyped dispatch cannot reach the cluster.
+      # The input is read through `env:` rather than interpolated into the script, which would be a
+      # shell-injection vector.
+      - name: 🛑 Require explicit confirmation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [[ "${CONFIRM}" != 'read-production-cilium-ipcache' ]]; then
+            printf 'Refusing to run: the confirm input must be exactly "read-production-cilium-ipcache".\n' >&2
+            printf 'Nothing has been read.\n' >&2
+            exit 1
+          fi
+          printf 'Confirmation accepted.\n'
+
+      - name: 🔑 Restore kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          umask 077
+          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🔎 Read the ipcache on a node hosting no oauth2-proxy replica
+        shell: bash
+        # Exit 3 is INCONCLUSIVE and fails the job on purpose: a read that proved nothing must not
+        # show green. FAULT-PERSISTS and PLAUSIBLY-FIXED both exit 0; the verdict is in the log and
+        # the step summary. The context is pinned because the restored kubeconfig's current-context
+        # is not guaranteed to be prod.
+        run: ./scripts/diagnose-cilium-ext-authz-ipcache.sh --context admin@prod

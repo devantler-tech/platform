@@ -333,6 +333,12 @@ jobs:
               - 'scripts/probe-image-signature-enforcement.sh'
               - 'scripts/tests/test-probe-image-signature-enforcement.sh'
               - '.github/workflows/probe-image-signature-enforcement.yaml'
+              # The #2284 ipcache diagnostic, its test and its workflow are one
+              # contract: the test pins that the script stays read-only and prints
+              # no address into a public log, so a change to any of them re-runs it.
+              - 'scripts/diagnose-cilium-ext-authz-ipcache.sh'
+              - 'scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh'
+              - '.github/workflows/diagnose-cilium-ext-authz-ipcache.yaml'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
@@ -1168,6 +1174,16 @@ jobs:
         run: |
           shellcheck scripts/probe-image-signature-enforcement.sh scripts/tests/test-probe-image-signature-enforcement.sh
           bash scripts/tests/test-probe-image-signature-enforcement.sh
+
+      - name: 🔎 Validate Cilium ExternalAuth ipcache diagnostic
+        if: needs.changes.outputs.k8s == 'true'
+        # The diagnostic needs prod and runs only on dispatch. Its test fakes
+        # kubectl from fixtures, and pins what makes dispatching it safe: only
+        # `get` plus one exact `exec cilium-dbg bpf ipcache list`, and no address
+        # in the public log. Both conclusive verdicts carry a one-fixture control.
+        run: |
+          shellcheck scripts/diagnose-cilium-ext-authz-ipcache.sh scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh
+          bash scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh
 
       - name: 🔐 Validate Cilium mutual-auth policy scope
         if: needs.changes.outputs.k8s == 'true'
