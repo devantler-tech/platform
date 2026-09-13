@@ -27,10 +27,15 @@ name: Publish Unsigned Probe Image
 #     workflow's header, and the guard with its test, so no manifest or
 #     workload can come to depend on it;
 #   * no workflow in this repository runs on a package-publish event, so
-#     publishing cannot start anything else here.
+#     publishing cannot start anything else here;
+#   * `packages` is the only permission granted, and the last step still reads
+#     the digest's signature tags and referrers, authenticated, and cannot
+#     continue past a failure.
 # Nothing in this repository can stop someone signing the image by hand from
-# outside it. The last step below checks the published digest really is
-# unsigned, so that case is caught on every run rather than assumed away.
+# outside it. That last step checks the published digest really is unsigned,
+# so that case is caught on every run rather than assumed away. The package can
+# stay private: the check reads it with this job's GITHUB_TOKEN, and nodes pull
+# it with their registry credential.
 #
 # WHY FROM SCRATCH AND NOT A RETAGGED PUBLIC IMAGE. A retagged upstream image
 # brings its own signatures and attestations with it. A single-file image built
@@ -106,49 +111,94 @@ jobs:
           docker logout ghcr.io
           printf 'digest=%s\n' "${ref#*@}" >> "${GITHUB_OUTPUT}"
 
-      # Checked anonymously on purpose. The probe must fail for ONE reason only:
-      # a missing signature. If the package could not be read without
-      # credentials, a refused pull could just as well be an access failure, so
-      # that is reported here instead of being left for the probe to misread.
-      - name: 🔎 Confirm the published digest is readable and unsigned
+      # Read with this job's own GITHUB_TOKEN. The package does not need to be
+      # public: production nodes pull private first-party images with their
+      # registry credential, so the probe reads it the same way.
+      #
+      # Every check fails closed. A missing digest, a token that cannot read the
+      # image, a signature tag, a referrer, or any registry answer that is not a
+      # clear "absent" stops the run. The digest's own manifest is read first
+      # with the same token: once that returns 200, a 404 for a signature tag
+      # means "no signature", not "no access".
+      - name: 🔎 Confirm the published digest is unsigned
         shell: bash
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          repo="${IMAGE#ghcr.io/}"
-          token="$(curl -fsS "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull" | jq -r '.token // empty')"
-          if [[ -z "${token}" ]]; then
-            printf '::error::could not get an anonymous pull token for %s\n' "${repo}"
+          if [[ ! "${DIGEST:-}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            printf '::error::the push step did not report a digest (got %q); nothing can be checked\n' "${DIGEST:-}"
             exit 1
           fi
+          repo="${IMAGE#ghcr.io/}"
 
-          accept='application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json'
-          code="$(curl -sS -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer ${token}" -H "Accept: ${accept}" \
-            "https://ghcr.io/v2/${repo}/manifests/${DIGEST}")"
+          # The credential reaches curl on stdin, never on its command line.
+          if ! token="$(printf 'user = "%s:%s"\n' "${GITHUB_ACTOR}" "${GHCR_TOKEN}" \
+              | curl -fsS --config - "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull" \
+              | jq -er '.token')"; then
+            printf '::error::could not get a pull token for %s with GITHUB_TOKEN\n' "${repo}"
+            exit 1
+          fi
+          printf '::add-mask::%s\n' "${token}"
+
+          # status <path> [accept] — prints the HTTP status of a GET, "000" on a transport failure.
+          status() {
+            curl -sS -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer ${token}" \
+              -H "Accept: ${2:-application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json}" \
+              "https://ghcr.io/v2/${repo}/$1" || printf '000'
+          }
+
+          code="$(status "manifests/${DIGEST}")"
           if [[ "${code}" != '200' ]]; then
-            printf '::error::%s@%s is not readable without credentials (HTTP %s). Make the package public before probing, or a refused pull cannot be told apart from an access failure.\n' \
+            printf '::error::%s@%s is not readable with GITHUB_TOKEN (HTTP %s), so an absent signature could not be told apart from no access\n' \
               "${IMAGE}" "${DIGEST}" "${code}"
             exit 1
           fi
 
-          # A cosign signature is stored either under a tag derived from the
-          # digest or as an OCI referrer. Neither may exist.
-          tags="$(curl -fsS -H "Authorization: Bearer ${token}" "https://ghcr.io/v2/${repo}/tags/list?n=1000" | jq -r '.tags[]?')"
-          if grep -qE "^sha256-${DIGEST#sha256:}([.].*)?$" <<<"${tags}"; then
-            printf '::error::%s@%s has a signature artifact. This image must stay unsigned; publish a new tag and delete the signed one.\n' \
-              "${IMAGE}" "${DIGEST}"
-            exit 1
-          fi
+          # cosign stores a signature, attestation or SBOM under a tag derived
+          # from the digest. Each must be definitely absent (404).
+          hex="${DIGEST#sha256:}"
+          for suffix in '' '.sig' '.att' '.sbom'; do
+            code="$(status "manifests/sha256-${hex}${suffix}")"
+            case "${code}" in
+              404) ;;
+              200)
+                printf '::error::%s@%s has a sha256-%s%s artifact. This image must stay unsigned; publish a new tag and delete the signed one.\n' \
+                  "${IMAGE}" "${DIGEST}" "${hex}" "${suffix}"
+                exit 1
+                ;;
+              *)
+                printf '::error::could not establish whether sha256-%s%s exists (HTTP %s); refusing to report the image as unsigned\n' \
+                  "${hex}" "${suffix}" "${code}"
+                exit 1
+                ;;
+            esac
+          done
+
+          # A signature can also be attached as an OCI referrer. A registry
+          # without the referrers API answers 404, and the tag checks above
+          # cover that case; any other answer than 200 or 404 fails closed.
           body="$(mktemp)"
           code="$(curl -sS -o "${body}" -w '%{http_code}' \
             -H "Authorization: Bearer ${token}" -H 'Accept: application/vnd.oci.image.index.v1+json' \
-            "https://ghcr.io/v2/${repo}/referrers/${DIGEST}")"
-          if [[ "${code}" == '200' ]] && [[ "$(jq '.manifests | length' "${body}")" != '0' ]]; then
-            printf '::error::%s@%s has OCI referrers attached. This image must stay unsigned.\n' "${IMAGE}" "${DIGEST}"
-            exit 1
-          fi
+            "https://ghcr.io/v2/${repo}/referrers/${DIGEST}" || printf '000')"
+          case "${code}" in
+            200)
+              referrers="$(jq -er '.manifests | length' "${body}")"
+              if [[ "${referrers}" != '0' ]]; then
+                printf '::error::%s@%s has %s OCI referrer(s) attached. This image must stay unsigned.\n' "${IMAGE}" "${DIGEST}" "${referrers}"
+                exit 1
+              fi
+              ;;
+            404) ;;
+            *)
+              printf '::error::could not read referrers for %s@%s (HTTP %s); refusing to report the image as unsigned\n' \
+                "${IMAGE}" "${DIGEST}" "${code}"
+              exit 1
+              ;;
+          esac
 
           {
             printf '### Unsigned probe image published\n\n'

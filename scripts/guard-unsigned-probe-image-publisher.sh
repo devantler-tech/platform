@@ -14,8 +14,9 @@
 # list of forbidden signing tools misses the next one; a list of allowed
 # actions, secrets and triggers does not.
 #   1. The publisher's only trigger is `workflow_dispatch`.
-#   2. No job or workflow-level permission grants `id-token`, and permissions
-#      are always written as a map. Keyless signing needs the OIDC token, so
+#   2. No job or workflow-level permission grants `id-token`, permissions are
+#      always written as a map, and the only permission granted anywhere is
+#      `packages` (read or write). Keyless signing needs the OIDC token, so
 #      without it no step can sign, whatever it runs.
 #   3. The only action used is the runner hardening step. Any signing,
 #      attestation or build action has to arrive through `uses:`.
@@ -97,6 +98,12 @@ scalar_permissions="$(yq -r '[.. | select(tag == "!!map" and has("permissions"))
 if [[ "$scalar_permissions" != '0' ]]; then
   violation "$publisher" 'sets permissions as a scalar (such as write-all), which grants id-token implicitly; write permissions as a map'
 fi
+# The only permission any scope may grant is packages (read or write). write
+# already includes read, which is all the post-push verification needs.
+while IFS= read -r grant; do
+  [[ -n "$grant" ]] || continue
+  violation "$publisher" "grants '$grant'; the only allowed permission is packages: read or write"
+done < <(yq -r '.. | select(tag == "!!map" and has("permissions")) | .permissions | select(tag == "!!map") | to_entries | .[] | select(.key != "packages" or (.value != "write" and .value != "read")) | .key + ": " + (.value | tostring)' "$publisher")
 
 # 3. Actions.
 while IFS= read -r uses; do
@@ -127,7 +134,9 @@ signing="$(printf '%s\n' "$code" | grep -inE 'cosign|sigstore|notation|notary|at
 if [[ -n "$signing" ]]; then
   violation "$publisher" "names a signing or attestation tool: $(printf '%s' "$signing" | head -n 1)"
 fi
-metadata="$(printf '%s\n' "$code" | sed -E 's/--(provenance|sbom)=false//g' | grep -inE 'provenance|sbom' || true)"
+# Match the build flag or action input, not the bare word: the verification step
+# legitimately names the `.sbom` tag suffix it checks is absent.
+metadata="$(printf '%s\n' "$code" | sed -E 's/--(provenance|sbom)=false//g' | grep -inE -- '--(provenance|sbom)|(^|[[:space:]])(provenance|sbom):' || true)"
 if [[ -n "$metadata" ]]; then
   violation "$publisher" "enables provenance or SBOM output: $(printf '%s' "$metadata" | head -n 1)"
 fi
@@ -170,6 +179,28 @@ while IFS= read -r workflow; do
     violation "$workflow" 'runs on a package-publish event, so publishing the unsigned probe image would start it'
   fi
 done <<<"$workflows"
+
+# 10. Post-push verification. The step that reads the digest's signature tags
+# and referrers is what catches a signature added from outside this
+# repository, so it must exist, run after the push, authenticate, and fail the
+# job rather than continue past a failure.
+verify_filter='select(((.run // "") | test("/referrers/")) and ((.run // "") | test("manifests/sha256-")))'
+verify_index="$(yq -r ".jobs[].steps | [to_entries[] | select(.value | $verify_filter) | .key] | .[0] // \"none\"" "$publisher")"
+push_index="$(yq -r '.jobs[].steps | [to_entries[] | select(.value.id == "push") | .key] | .[0] // "none"' "$publisher")"
+if [[ "$verify_index" == 'none' ]]; then
+  violation "$publisher" 'must verify the pushed digest is unsigned: no step reads its signature tags and referrers'
+else
+  if [[ "$push_index" == 'none' ]] || ((verify_index < push_index)); then
+    violation "$publisher" 'must verify the pushed digest is unsigned after the step with id push'
+  fi
+  if [[ "$(yq -r "[.jobs[].steps[] | $verify_filter | select(has(\"continue-on-error\"))] | length" "$publisher")" != '0' ]]; then
+    violation "$publisher" 'the unsigned verification step must not continue on error'
+  fi
+  authenticated="$(yq -r "[.jobs[].steps[] | $verify_filter | select(((.env // {}) | to_entries | map(select(.key == \"GHCR_TOKEN\" and (.value | test(\"secrets\\\\.GITHUB_TOKEN\")))) | length) > 0) | select(.run | test(\"GHCR_TOKEN\"))] | length" "$publisher")"
+  if [[ "$authenticated" == '0' ]]; then
+    violation "$publisher" 'the unsigned verification step must authenticate with GITHUB_TOKEN (env GHCR_TOKEN used by its script)'
+  fi
+fi
 
 if ((status == 0)); then
   printf 'unsigned probe image guard OK: %s stays unsigned and unreferenced\n' "$image"

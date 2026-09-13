@@ -138,6 +138,26 @@ yq_edit '.jobs[].permissions = "write-all"'
 expect 'scalar write-all permissions are refused' 1 'sets permissions as a scalar'
 
 new_fixture
+yq_edit '.jobs[].permissions.contents = "write"'
+expect 'a permission other than packages is refused' 1 "grants 'contents: write'"
+
+new_fixture
+yq_edit '.jobs[].steps |= map(select(.name != "🔎 Confirm the published digest is unsigned"))'
+expect 'removing the unsigned verification step is refused' 1 'must verify the pushed digest is unsigned'
+
+new_fixture
+yq_edit '(.jobs[].steps[] | select(.name == "🔎 Confirm the published digest is unsigned"))["continue-on-error"] = true'
+expect 'a verification step that may fail open is refused' 1 'must not continue on error'
+
+new_fixture
+yq_edit '(.jobs[].steps[] | select(.name == "🔎 Confirm the published digest is unsigned")) |= del(.env.GHCR_TOKEN)'
+expect 'an unauthenticated verification step is refused' 1 'must authenticate with GITHUB_TOKEN'
+
+new_fixture
+yq_edit '(.jobs[].steps[] | select(.name == "🔎 Confirm the published digest is unsigned")).run |= sub("/referrers/"; "/")'
+expect 'a verification step that no longer checks referrers is refused' 1 'must verify the pushed digest is unsigned'
+
+new_fixture
 yq_edit '.on.schedule = [{"cron": "0 0 * * *"}]'
 expect 'a schedule trigger is refused' 1 'the only allowed trigger is workflow_dispatch'
 
