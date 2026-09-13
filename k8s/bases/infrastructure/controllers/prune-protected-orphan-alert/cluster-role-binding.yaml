@@ -1,0 +1,13 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prune-protected-orphan-alert
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prune-protected-orphan-alert
+subjects:
+  - kind: ServiceAccount
+    name: prune-protected-orphan-alert
+    namespace: observability

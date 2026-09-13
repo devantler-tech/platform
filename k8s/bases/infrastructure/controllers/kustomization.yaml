@@ -28,6 +28,9 @@ resources:
   - oauth2-proxy/
   - openbao/
   - openfeature-operator/
+  # Needs the observability namespace from coroot/ above, but must not live
+  # inside it (see its kustomization.yaml).
+  - prune-protected-orphan-alert/
   - reloader/
   - tetragon/
   - trust-manager/
