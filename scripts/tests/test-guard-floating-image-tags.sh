@@ -108,7 +108,7 @@ run_guard "$repo_root/k8s" "$repo_root/scripts/floating-image-tag-exceptions.tsv
 assert_rc "committed tree and exception list" 0
 
 echo "== accepted images =="
-for image in "nginx:main@$digest" "nginx@$digest" 'nginx:1.27.0' 'localhost:5000/team/app:1.2.3' 'ghcr.io/org/app:v2.0.0-rc.1'; do
+for image in "nginx:main@$digest" "nginx@$digest" 'nginx:1.27.0' 'localhost:5000/team/app:1.2.3' 'ghcr.io/org/app:v2.0.0-rc.1' 'postgres:17.2-alpine' 'app:v1' 'app:2026.09.13'; do
   root="$(tree)"
   deployment "$root" "$image"
   run_guard "$root"
@@ -116,7 +116,10 @@ for image in "nginx:main@$digest" "nginx@$digest" 'nginx:1.27.0' 'localhost:5000
 done
 
 echo "== floating images are refused =="
-for image in nginx:main nginx:master nginx:latest nginx:edge nginx:nightly nginx:dev nginx:develop nginx localhost:5000/team/app; do
+# The channel names below are the ones no fixed name list anticipates: only a tag
+# that looks like a version passes.
+for image in nginx:main nginx:master nginx:latest nginx:edge nginx:nightly nginx:dev nginx:develop nginx localhost:5000/team/app \
+  nginx:stable nginx:canary nginx:release nginx:prod app:feature-branch app:v app:1.2.x; do
   root="$(tree)"
   deployment "$root" "$image"
   run_guard "$root"
@@ -204,6 +207,130 @@ printf '%s\n' \
 run_guard "$root"
 assert_rc "vendored bundle with a floating image" 1
 assert_contains "names the vendored workload" "Deployment/demo/approver"
+
+echo "== a floating ReplicationController container is refused =="
+root="$(tree)"
+printf '%s\n' \
+  'apiVersion: v1' \
+  'kind: ReplicationController' \
+  'metadata:' \
+  '  name: legacy' \
+  '  namespace: demo' \
+  'spec:' \
+  '  replicas: 1' \
+  '  selector: {app: legacy}' \
+  '  template:' \
+  '    metadata:' \
+  '      labels: {app: legacy}' \
+  '    spec:' \
+  '      containers:' \
+  '        - name: legacy' \
+  '          image: nginx:latest' >"$root/apps/test/workload.yaml"
+run_guard "$root"
+assert_rc "floating ReplicationController container" 1
+assert_contains "names the ReplicationController" "ReplicationController/demo/legacy runs floating image nginx:latest"
+
+# The Flux Kustomization, not the bare directory, decides what production receives.
+flux_spec() { # <root> <line>... — appends lines under the Flux Kustomization's spec
+  local root="$1"
+  shift
+  printf '%s\n' "$@" >>"$root/clusters/test/flux-kustomization.yaml"
+}
+
+echo "== Flux Kustomization images are applied =="
+root="$(tree)"
+deployment "$root" 'nginx:1.27.0'
+flux_spec "$root" '  images:' '    - name: nginx' '      newTag: latest'
+run_guard "$root"
+assert_rc "a Flux images entry retagging a pinned image to latest" 1
+assert_contains "names the retagged image" "floating image nginx:latest"
+
+root="$(tree)"
+deployment "$root" nginx:main
+flux_spec "$root" '  images:' '    - name: nginx' "      digest: $digest"
+run_guard "$root"
+assert_rc "a Flux images entry pinning a floating image by digest" 0
+
+echo "== Flux Kustomization patches are applied =="
+root="$(tree)"
+deployment "$root" 'nginx:1.27.0'
+flux_spec "$root" \
+  '  patches:' \
+  '    - target: {kind: Deployment, name: web}' \
+  '      patch: |' \
+  '        - op: replace' \
+  '          path: /spec/template/spec/containers/0/image' \
+  '          value: nginx:canary'
+run_guard "$root"
+assert_rc "a Flux patch swapping in a floating image" 1
+assert_contains "names the patched image" "Deployment/demo/web runs floating image nginx:canary"
+
+root="$(tree)"
+deployment "$root" 'nginx:1.27.0'
+flux_spec "$root" \
+  '  patchesStrategicMerge:' \
+  '    - apiVersion: apps/v1' \
+  '      kind: Deployment' \
+  '      metadata: {name: web, namespace: demo}'
+run_guard "$root"
+assert_rc "a deprecated Flux patch field this guard does not apply" 2
+
+echo "== Flux Kustomization components are applied =="
+root="$(tree)"
+deployment "$root" 'nginx:1.27.0'
+mkdir -p "$root/components/sidecar"
+printf '%s\n' \
+  'apiVersion: kustomize.config.k8s.io/v1alpha1' \
+  'kind: Component' \
+  'resources:' \
+  '  - pod.yaml' >"$root/components/sidecar/kustomization.yaml"
+printf '%s\n' \
+  'apiVersion: v1' \
+  'kind: Pod' \
+  'metadata:' \
+  '  name: side' \
+  '  namespace: demo' \
+  'spec:' \
+  '  containers:' \
+  '    - name: side' \
+  '      image: busybox:stable' >"$root/components/sidecar/pod.yaml"
+flux_spec "$root" '  components:' '    - ../../components/sidecar'
+run_guard "$root"
+assert_rc "a Flux component adding a floating image" 1
+assert_contains "names the component workload" "Pod/demo/side runs floating image busybox:stable"
+
+root="$(tree)"
+deployment "$root" 'nginx:1.27.0'
+# The escaping component exists and renders a clean workload, so only the
+# containment check can refuse it.
+mkdir -p "$root/../outside-component"
+printf '%s\n' \
+  'apiVersion: kustomize.config.k8s.io/v1alpha1' \
+  'kind: Component' \
+  'resources:' \
+  '  - pod.yaml' >"$root/../outside-component/kustomization.yaml"
+printf '%s\n' \
+  'apiVersion: v1' \
+  'kind: Pod' \
+  'metadata:' \
+  '  name: outside' \
+  '  namespace: demo' \
+  'spec:' \
+  '  containers:' \
+  '    - name: outside' \
+  "      image: 'busybox:1.37.0'" >"$root/../outside-component/pod.yaml"
+flux_spec "$root" '  components:' '    - ../../../outside-component'
+run_guard "$root"
+assert_rc "a Flux component that leaves the root" 2
+
+echo "== Flux Kustomization targetNamespace is applied =="
+root="$(tree)"
+deployment "$root" nginx:main
+flux_spec "$root" '  targetNamespace: other'
+printf 'Deployment/demo/web\tnginx:main\t#3755\tfixture exception for the untransformed name\n' >"$scratch/pre-namespace.tsv"
+run_guard "$root" "$scratch/pre-namespace.tsv"
+assert_rc "an exception keyed to the namespace Flux replaces" 1
+assert_contains "names the workload in its target namespace" "Deployment/other/web runs floating image nginx:main"
 
 echo "== the clusters/base template is not a cluster =="
 root="$(tree)"

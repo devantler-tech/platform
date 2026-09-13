@@ -1381,21 +1381,6 @@ jobs:
           bash scripts/guard-render-remote-resources.sh k8s
           bash scripts/tests/test-guard-render-remote-resources.sh
 
-      - name: 🏷️ Validate no rendered workload runs a floating image tag
-        if: needs.changes.outputs.k8s == 'true'
-        # A moving tag such as `main` lets an upstream push change what production
-        # runs with no PR, no review and no digest. Upstream kubelet-serving-cert-approver
-        # did exactly that (#3515), and the Kyverno latest-tag policy only matches
-        # `latest`, runs in Audit, and skips most system namespaces. This renders every
-        # cluster overlay, follows its Flux Kustomization paths, and fails on any
-        # container image that is neither digest-pinned nor version-tagged (#3755).
-        # A deliberate exception is a reviewed row naming the workload and an issue,
-        # and a row that no longer matches is itself a violation.
-        run: |
-          shellcheck scripts/guard-floating-image-tags.sh scripts/tests/test-guard-floating-image-tags.sh
-          bash scripts/guard-floating-image-tags.sh k8s
-          bash scripts/tests/test-guard-floating-image-tags.sh
-
       - name: 🔗 Validate the pod-security exception still matches its mutation's scope
         if: needs.changes.outputs.k8s == 'true'
         # The exception suppresses C-0016/C-0055 everywhere EXCEPT the twelve
@@ -2054,11 +2039,41 @@ jobs:
           bash scripts/guard-ghcr-fanout-component-gate.sh
           bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
 
+  validate-floating-image-tags:
+    name: 🏷️ Validate Floating Image Tags
+    needs: [changes]
+    # A moving tag such as `main` lets an upstream push change what production
+    # runs with no PR, no review and no digest. Upstream kubelet-serving-cert-approver
+    # did exactly that (#3515), and the Kyverno latest-tag policy only matches
+    # `latest`, runs in Audit, and skips most system namespaces. This renders every
+    # cluster overlay the way Flux applies it and fails on any container image that
+    # is neither digest-pinned nor version-tagged (#3755). It runs on the merge-group
+    # revision too, and deploy-prod needs it: two individually clean PRs can combine
+    # into a floating image, and that combined revision is what production receives.
+    # A deliberate exception is a reviewed row naming the workload and an issue, and
+    # a row that no longer matches is itself a violation.
+    if: (github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true') || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🏷️ Validate no rendered workload runs a floating image tag
+        run: |
+          shellcheck scripts/guard-floating-image-tags.sh scripts/tests/test-guard-floating-image-tags.sh
+          bash scripts/guard-floating-image-tags.sh k8s
+          bash scripts/tests/test-guard-floating-image-tags.sh
+
   deploy-prod:
     name: 🚀 Deploy to Prod
     needs:
       [
         changes,
+        validate-floating-image-tags,
         validate-eks-authorization,
         validate-publication-contract,
         validate-talos,
@@ -2238,6 +2253,7 @@ jobs:
         validate-matcher-efficacy,
         validate-eks-authorization,
         validate,
+        validate-floating-image-tags,
         naming,
         validate-talos,
         validate-rgd-templates-merge-group,
@@ -2256,6 +2272,7 @@ jobs:
             ${{ needs.validate-matcher-efficacy.result }}
             ${{ needs.validate-eks-authorization.result }}
             ${{ needs.validate.result }}
+            ${{ needs.validate-floating-image-tags.result }}
             ${{ needs.naming.result }}
             ${{ needs.validate-talos.result }}
             ${{ needs.validate-rgd-templates-merge-group.result }}
