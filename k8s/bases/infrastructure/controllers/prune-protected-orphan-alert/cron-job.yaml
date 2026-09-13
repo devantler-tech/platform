@@ -32,7 +32,9 @@
 #     advice to delete a live object.
 #   - An object whose Kustomization is not Ready. Flux records the inventory only
 #     after a whole apply succeeds, so an object added by a failing apply is
-#     absent without having been retired; it is logged, never escalated.
+#     absent without having been retired; it is logged, never escalated. A
+#     finding recorded before the owner failed keeps its first sighting, so a
+#     Kustomization that fails now and then cannot keep restarting the window.
 #   - An object already being deleted, and an unprotected one Flux prunes itself.
 #
 # WARN FIRST, ESCALATE LATER
@@ -41,7 +43,7 @@
 # logged. Once one has been seen for BOUND_SECONDS it is posted to Slack, and
 # posted again on every daily run until it is deleted, restored or marked
 # adopted. The age is measured from the first run that saw it, kept in this
-# CronJob's own ConfigMap (config-map-prune-protected-orphan-alert.yaml), so it
+# CronJob's own ConfigMap (config-map.yaml), so it
 # lags the deploy that dropped the object by at most one schedule interval.
 #
 # NEVER A SILENT ZERO. A failed or malformed read, an empty Kustomization list,
@@ -54,10 +56,11 @@
 # The only write is a merge patch of the state ConfigMap, which the Role limits
 # to that one object. It never deletes or prunes anything.
 #
-# Lives in the observability namespace to reuse the allow-coroot
-# CiliumNetworkPolicy (kube-apiserver, hooks.slack.com:443 and DNS egress).
+# Lives in its own controller folder with its own CiliumNetworkPolicy, not inside
+# controllers/coroot/, so retiring Coroot cannot prune or isolate the check that
+# would report what that retirement leaves behind (see kustomization.yaml).
 # Delivery, secret handling and the silent-zero guards follow
-# cron-job-stranded-volume-attach-alert.yaml.
+# controllers/coroot/cron-job-stranded-volume-attach-alert.yaml.
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -243,9 +246,14 @@ spec:
                   jq -S '((.data // {})["first-seen.json"] // "{}") | fromjson' /tmp/state.json >/tmp/prior.json
 
                   # Keep each current finding's first sighting; forget resolved ones.
+                  # A recorded finding whose owner is now not Ready cannot be
+                  # judged, but is not resolved either: keep its sighting without
+                  # starting one for anything new under that owner.
                   jq -S -n --slurpfile f /tmp/findings.json --slurpfile p /tmp/prior.json --argjson now "$now" '
-                    [ $f[0][] | select(.status == "orphan" or .status == "owner-gone")
-                      | { key: .id, value: ($p[0][.id] // $now) } ] | from_entries
+                    ( [ $f[0][] | select(.status == "orphan" or .status == "owner-gone")
+                        | { key: .id, value: ($p[0][.id] // $now) } ]
+                    + [ $f[0][] | select(.status == "owner-not-ready" and $p[0][.id] != null)
+                        | { key: .id, value: $p[0][.id] } ] ) | from_entries
                   ' >/tmp/next.json
                   # Persist BEFORE delivering, so a failed delivery never resets
                   # the grace window.

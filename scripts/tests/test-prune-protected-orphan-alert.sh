@@ -35,12 +35,14 @@
 set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
-readonly coroot="${root_dir}/k8s/bases/infrastructure/controllers/coroot"
-readonly manifest="${coroot}/cron-job-prune-protected-orphan-alert.yaml"
-readonly cluster_role="${coroot}/cluster-role-prune-protected-orphan-alert.yaml"
-readonly role="${coroot}/role-prune-protected-orphan-alert.yaml"
-readonly config_map="${coroot}/config-map-prune-protected-orphan-alert.yaml"
-readonly kustomization="${coroot}/kustomization.yaml"
+readonly controllers="${root_dir}/k8s/bases/infrastructure/controllers"
+readonly component="${controllers}/prune-protected-orphan-alert"
+readonly manifest="${component}/cron-job.yaml"
+readonly cluster_role="${component}/cluster-role.yaml"
+readonly role="${component}/role.yaml"
+readonly config_map="${component}/config-map.yaml"
+readonly network_policy="${component}/cilium-network-policy.yaml"
+readonly kustomization="${component}/kustomization.yaml"
 readonly STATE_NAME='prune-protected-orphan-alert-state'
 readonly META_ACCEPT='application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1'
 # Not a hooks.slack.com-shaped literal: GitHub push protection matches that
@@ -64,7 +66,7 @@ for tool in yq jq; do
     exit 64
   }
 done
-for file in "${manifest}" "${cluster_role}" "${role}" "${config_map}" "${kustomization}"; do
+for file in "${manifest}" "${cluster_role}" "${role}" "${config_map}" "${network_policy}" "${kustomization}"; do
   [ -f "${file}" ] || fail "not found: ${file}"
 done
 # The container's /bin/sh is busybox; dash is the closest POSIX shell a runner
@@ -111,11 +113,28 @@ grep -Fq "STATE_PATH=/api/v1/namespaces/observability/configmaps/${STATE_NAME}" 
   fail "the patched path is not the state ConfigMap"
 pass "the script's only write is a PATCH of its own state"
 
-for file in service-account role-binding cluster-role-binding secret cluster-role role config-map cron-job; do
-  grep -qxF -- "  - ${file}-prune-protected-orphan-alert.yaml" "${kustomization}" ||
-    fail "kustomization.yaml does not list ${file}-prune-protected-orphan-alert.yaml"
+for file in service-account role-binding cluster-role-binding secret cluster-role role config-map cilium-network-policy cron-job; do
+  grep -qxF -- "  - ${file}.yaml" "${kustomization}" ||
+    fail "kustomization.yaml does not list ${file}.yaml"
 done
-pass "kustomization.yaml lists all eight resources"
+pass "kustomization.yaml lists all nine resources"
+
+# The check must survive the retirement of the stack that hosts it: it is its
+# own entry in the controller aggregate, never a file inside coroot/, and it
+# carries its own egress rather than relying on allow-coroot.
+grep -qxF -- '  - prune-protected-orphan-alert/' "${controllers}/kustomization.yaml" ||
+  fail "the controller aggregate does not reference prune-protected-orphan-alert/ directly"
+if grep -q 'prune-protected-orphan-alert' <<<"$(yq eval '.resources[]' "${controllers}/coroot/kustomization.yaml")"; then
+  fail "coroot/kustomization.yaml lists an orphan-check resource, so retiring Coroot would prune the check"
+fi
+pod_label="$(yq eval '.spec.jobTemplate.spec.template.metadata.labels.app' "${manifest}")"
+[ "$(yq eval '.spec.endpointSelector.matchLabels.app' "${network_policy}")" = "${pod_label}" ] ||
+  fail "the CiliumNetworkPolicy does not select the CronJob's pods (app: ${pod_label})"
+yq eval '.spec.egress[].toEntities[]' "${network_policy}" | grep -qx 'kube-apiserver' ||
+  fail "the CiliumNetworkPolicy does not allow egress to the kube API"
+yq eval '.spec.egress[].toFQDNs[].matchName' "${network_policy}" | grep -qx 'hooks.slack.com' ||
+  fail "the CiliumNetworkPolicy does not allow egress to the Slack webhook host"
+pass "the check is its own aggregate entry with its own egress, so retiring Coroot cannot prune or isolate it"
 
 if grep -q 'secretKeyRef' <<<"$(yq eval "${container_path}.env" "${manifest}")"; then
   fail "CKV_K8S_35: container env carries a secretKeyRef; the webhook must arrive as a mounted file"
@@ -411,6 +430,20 @@ if ! grep -q 'not judged until their Kustomization is Ready' "${dir}/stdout.log"
   fail "owner-not-ready: the unjudged object was not logged"
 fi
 pass "an object of a Kustomization that is not Ready is logged, never recorded"
+
+# 8b. A finding already recorded keeps its first sighting while its owner is
+#     temporarily not Ready. Dropping it would restart the grace window when the
+#     owner recovers, so a Kustomization that fails now and then could hold off
+#     the page forever.
+dir="$(setup_scenario owner-not-ready-recorded "${REAL_WEBHOOK}")"
+ks_body False "${NS_ID}" "${PVC_ID}" "${CLUSTER_ID}" >"${dir}/api/kustomizations.body"
+state_body "{\"${HR_ID}\":$((now_epoch - eight_days_one_hour))}" >"${dir}/api/state.body"
+run_scenario "${dir}" || fail "owner-not-ready-recorded: the script exited non-zero: $(cat "${dir}/stderr.log")"
+if [ -f "${dir}/patched.json" ]; then
+  fail "owner-not-ready-recorded: the recorded first sighting was rewritten while its owner was not Ready: $(patched_state "${dir}")"
+fi
+! delivered "${dir}" || fail "owner-not-ready-recorded: a finding whose owner is not Ready paged"
+pass "a recorded finding keeps its first sighting while its owner is not Ready"
 
 # 9. A Kustomization with no inventory cannot be judged, and an empty
 #    Kustomization list means there is nothing to compare against: fail both.
