@@ -16,23 +16,35 @@ name: Validate Image Verifier Liveness
 #
 # Two read-only questions about the same control live here, and they are
 # different questions. The fleet check asks whether verification CAN enforce at
-# all. The signature inventory asks what enforcement WOULD refuse — the blast
-# radius that decides whether activation is safe to turn on (#3334).
+# all. The signature inventory checks that every running first-party image is
+# signed, and fails when one is not, because that image is refused on its next pull.
 #
-# Both are DORMANT: they run only on demand (`workflow_dispatch`). Turning on a
-# daily cadence belongs to #3336, which first establishes that a matched rule
-# actually refuses an unsigned pull — running rules and trust material are
-# necessary for enforcement, not proof of it, because a cached image is never
-# re-pulled.
+# Both run DAILY and on demand. Running rules and trust material are necessary
+# for enforcement, not proof of it, so the daily verdict rests on #3336's
+# observation: a matched unsigned image is refused at the node pull layer while
+# a signed control pulls (probe run 34777101451, 2026-09-13). A red run here
+# therefore means enforcement has regressed on the fleet as it is today.
+#
+# WHEN: 04:43 UTC. That is the quietest hour for merge-queue deploys — none of
+# the 400 `merge_group` runs between 2026-09-07 and 2026-09-13 started between
+# 04:00 and 05:00 UTC — and a deploy's `cluster update` can roll nodes that this
+# read-only check would otherwise meet mid-transition. It also stays clear of
+# the other scheduled workflows (00:00, 06:00 and 06:20 UTC) and off the top of
+# the hour, when GitHub delays scheduled runs the most.
 #
 # Both checkers' OWN tests need no cluster and no secrets, so they gate every PR
 # that touches them. They live in ci.yaml's `validate` job, which
 # `CI - Required Checks` depends on, so they actually block a merge — a test
 # that only reports is advisory, and a regression in a checker whose job is
-# noticing a silent condition would itself be silent. This workflow therefore
-# carries only the on-demand checks that need the fleet.
+# noticing a silent condition would itself be silent. The same step runs
+# scripts/tests/test-validate-image-verifier-liveness-workflow.sh, which pins
+# this trigger set: dropping the schedule, adding a job condition that skips
+# the scheduled run, or losing `environment: prod` fails the PR. This workflow
+# therefore carries only the checks that need the fleet.
 
 on:
+  schedule:
+    - cron: "43 4 * * *" # Daily at 04:43 UTC — see WHEN above
   workflow_dispatch:
 
 permissions: {}
@@ -44,9 +56,10 @@ concurrency:
 jobs:
   validate-image-verifier-liveness:
     name: 🔏 Validate Image Verifier Liveness
-    # Dormancy is now the TRIGGER SET, not a job condition: `workflow_dispatch`
-    # is the only event, so there is no PR or schedule path to guard against.
-    # Adding the daily `schedule:` is what activation means (#3336).
+    # No job-level `if:`. A condition such as
+    # `github.event_name == 'workflow_dispatch'` skips the scheduled run while the
+    # run itself still reports success, so `main` would read green with nothing
+    # checked. The trigger test refuses one on either job.
     runs-on: ubuntu-latest
     # KUBE_CONFIG and TALOS_CONFIG are `prod` ENVIRONMENT secrets, not repository
     # secrets — every other consumer (ci.yaml's deploy jobs, cd.yaml, dr-rebuild)
@@ -105,10 +118,9 @@ jobs:
         run: ./scripts/validate-image-verifier-liveness.sh
 
   # The job above answers "can the fleet enforce at all". This one answers the other half of
-  # #3101 — "what would it REFUSE if it did" — which is the blast radius that decides whether
-  # activation is safe. Both are read-only against prod and both are dormant for the same
-  # reason: they belong to an epic that is not finished, and a permanently-red `main` spends
-  # the "something broke" signal on a state that is already tracked (#3336 activates them).
+  # #3101 — "what does it REFUSE" — which, with enforcement on, is every running first-party
+  # image that is unsigned and would enter ImagePullBackOff the next time a node pulls it.
+  # Both are read-only against prod and both run on the daily schedule above.
   inventory-first-party-image-signatures:
     name: 🔏 Inventory First-Party Image Signatures
     runs-on: ubuntu-latest

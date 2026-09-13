@@ -345,6 +345,9 @@ jobs:
               # change to either must re-run both.
               - 'scripts/validate-image-verifier-liveness.sh'
               - 'scripts/tests/test-validate-image-verifier-liveness.sh'
+              # The trigger-set test for the liveness WORKFLOW (listed above), so a
+              # PR that edits only the test still runs it.
+              - 'scripts/tests/test-validate-image-verifier-liveness-workflow.sh'
               # The enforcement probe and its test are one contract for the
               # same reason as the pair above: the probe reports on a security
               # control, and BOTH of its possible mistakes are silent — a PASS
@@ -1177,10 +1180,14 @@ jobs:
         # ALL (#2856). It runs here, inside the required job, rather than in its
         # own workflow: a check that gates nothing is advisory, and this one
         # guards a control whose failure mode is silence. Fakes talosctl and
-        # kubectl from fixtures — no cluster, no secrets.
+        # kubectl from fixtures — no cluster, no secrets. The second test pins
+        # the liveness workflow's daily schedule, so it cannot be switched off
+        # silently (#3336); it reads the workflow with yq and needs neither.
         run: |
           shellcheck scripts/validate-image-verifier-liveness.sh scripts/tests/test-validate-image-verifier-liveness.sh
+          shellcheck scripts/tests/test-validate-image-verifier-liveness-workflow.sh
           bash scripts/tests/test-validate-image-verifier-liveness.sh
+          bash scripts/tests/test-validate-image-verifier-liveness-workflow.sh
 
       - name: 🔏 Validate image-signature enforcement probe
         if: needs.changes.outputs.k8s == 'true'
