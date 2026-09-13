@@ -2101,7 +2101,8 @@ const expectedRenderedSurfaceSHA = "59f51f1775bcded62ab018a6389ef11420b696a3b003
 // merge-group commit, so an approval derived on a base that another re-approval
 // has since moved fails with the value to re-derive against, instead of reaching
 // review as a plausible-looking constant. A change that does not move the
-// surface leaves both constants untouched.
+// surface leaves both constants untouched. Reverting a re-approval is itself a
+// re-approval: restore the older aggregate and record the current one here.
 const previousRenderedSurfaceSHA = "e36a3db7047b2b45855f6e3f2b25087dd4e56f74775bd08a5ba94efd3b86d300"
 
 // authorizationOverlayPaths lists every independently reconciled production

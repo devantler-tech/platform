@@ -9,7 +9,6 @@ import (
 )
 
 var (
-	digestZ = strings.Repeat("0", 64)
 	digestX = strings.Repeat("1", 64)
 	digestA = strings.Repeat("a", 64)
 	digestB = strings.Repeat("b", 64)
@@ -133,6 +132,17 @@ func TestValidateApprovalBaseRejectsMalformedRecords(t *testing.T) {
 			head: valid,
 			base: []byte("package main\n"),
 			want: "base validator source: expectedRenderedSurfaceSHA is missing",
+		},
+		"malformed base aggregate": {
+			head: approvalSource(digestB, digestA),
+			base: approvalSource(digestA[:63], digestX),
+			want: "base validator source: expectedRenderedSurfaceSHA is not a lowercase SHA-256 digest",
+		},
+		"implicit iota value": {
+			head: []byte("package main\n\nconst (\n\tfirst = iota\n\texpectedRenderedSurfaceSHA\n)\n" +
+				"const previousRenderedSurfaceSHA = \"" + digestA + "\"\n"),
+			base: valid,
+			want: "expectedRenderedSurfaceSHA must be a string literal",
 		},
 		"non-literal aggregate": {
 			head: []byte("package main\n\nconst expectedRenderedSurfaceSHA = other\n" +

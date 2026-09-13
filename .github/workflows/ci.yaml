@@ -752,6 +752,10 @@ jobs:
         # tree without the other's delta, and a resolved conflict in that constant
         # looks correct (#3740). Compare the record with the approval on the base
         # so a stale one fails naming the aggregate to re-derive against.
+        # HEAD^1 is that base because the PR merge ref's first parent is main and
+        # the merge queue SQUASHes each entry onto a single parent. Switching the
+        # queue to REBASE would make HEAD^1 the PR's own previous commit; revisit
+        # this step if the queue's merge method changes.
         run: |
           set -euo pipefail
           base_source="$RUNNER_TEMP/approval-base-main.go"
