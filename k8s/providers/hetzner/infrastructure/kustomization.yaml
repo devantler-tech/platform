@@ -197,9 +197,22 @@ patches:
   - path: patches/store-vault-snapshots-on-hcloud.yaml
   - path: patches/recover-vault-snapshot.yaml
   # Prod-only: the vault-snapshot CronJob and Job mount that hcloud volume, so
-  # both require a static baseline worker (#3287). Each self-identifies.
+  # both require a static baseline worker (#3287). JSON patches don't
+  # self-identify, so each names its target.
   - path: patches/keep-vault-snapshot-on-baseline-workers.yaml
+    target:
+      group: batch
+      version: v1
+      kind: CronJob
+      name: vault-snapshot
+      namespace: openbao
   - path: patches/keep-vault-snapshot-init-on-baseline-workers.yaml
+    target:
+      group: batch
+      version: v1
+      kind: Job
+      name: vault-snapshot-init
+      namespace: openbao
   # Prod-only: add a generous memory `default` to the kube-system / kyverno
   # LimitRanges (which are CPU-only in the base). This seeds the memory limit the
   # vertical-pod-autoscalers/ VPAs scale ratio-preserving, so VPA right-sizes the memory

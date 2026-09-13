@@ -4,28 +4,23 @@
 # The Job mounts the same hcloud-backed `vault-snapshots` PVC as the daily
 # CronJob, so it carries the same required node affinity (see
 # keep-vault-snapshot-on-baseline-workers.yaml for the stranded-volume
-# rationale). The positive `platform.devantler.tech/baseline-worker=true` label
-# fails closed on a node the label-baseline-workers policies did not stamp.
+# rationale, the layer ordering, and why this is a JSON patch). The positive
+# `platform.devantler.tech/baseline-worker=true` label fails closed on a node
+# the label-baseline-workers policies did not stamp.
 #
 # The Job is immutable and force-enabled, so adding this affinity makes Flux
 # replace it once. The re-run skips the snapshot when one from the same day
 # already exists, which is the Job's normal behaviour on a spec change; the
 # completed Job is still retained afterwards, so it does not re-run on later
 # reconciles.
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: vault-snapshot-init
-  namespace: openbao
-spec:
-  template:
-    spec:
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: platform.devantler.tech/baseline-worker
-                    operator: In
-                    values:
-                      - "true"
+- op: add
+  path: /spec/template/spec/affinity
+  value:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: platform.devantler.tech/baseline-worker
+                operator: In
+                values:
+                  - "true"
