@@ -84,8 +84,9 @@ printf 'running the extracted script under %s\n' "${script_shell}"
 container_path='.spec.jobTemplate.spec.template.spec.containers[0]'
 pod_path='.spec.jobTemplate.spec.template.spec'
 script_body="$(yq eval "${container_path}.command[2]" "${manifest}")"
-[ -n "${script_body}" ] && [ "${script_body}" != "null" ] ||
+if [ -z "${script_body}" ] || [ "${script_body}" = "null" ]; then
   fail "could not extract the container script from ${manifest}"
+fi
 
 cluster_rules="$(yq eval -o=json '.rules' "${cluster_role}" |
   jq -cS 'map({g: .apiGroups, r: (.resources | sort), v: (.verbs | sort), n: .resourceNames}) | sort_by(.g)')"
@@ -323,8 +324,9 @@ grep -qF 'flux-system/infrastructure-controllers' "${dir}/stdout.log" || fail "f
 [ "$(patched_state "${dir}" | jq -r 'keys | join(",")')" = "${HR_ID}" ] ||
   fail "fresh: the state must record exactly the left-behind HelmRelease; got $(patched_state "${dir}")"
 seen="$(patched_state "${dir}" | jq -r --arg id "${HR_ID}" '.[$id]')"
-[ "${seen}" -ge "${now_epoch}" ] && [ "${seen}" -le $((now_epoch + 120)) ] ||
+if [ "${seen}" -lt "${now_epoch}" ] || [ "${seen}" -gt $((now_epoch + 120)) ]; then
   fail "fresh: the first sighting ${seen} is not the time of this run (${now_epoch})"
+fi
 grep -qF 'patch PATCH | Authorization: Bearer fake-token | Content-Type: application/merge-patch+json' "${dir}/api-calls.log" ||
   fail "fresh: the state write is not an authenticated merge patch: $(grep '^patch ' "${dir}/api-calls.log")"
 pass "a freshly left-behind HelmRelease is logged and its first sighting recorded by merge patch"
