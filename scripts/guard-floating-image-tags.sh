@@ -87,8 +87,9 @@ while IFS= read -r row || [ -n "$row" ]; do
   image="$(field "$row" 2)"
   issue="$(field "$row" 3)"
   reason="$(field "$row" 4)"
-  [ -n "$workload" ] && [ -n "$image" ] ||
+  if [ -z "$workload" ] || [ -z "$image" ]; then
     die "$exceptions_file:$lineno: a row must name a workload (column 1) and an image (column 2)"
+  fi
   printf '%s' "$issue" | grep -Eq '^#[0-9]+$' ||
     die "$exceptions_file:$lineno: '$workload' names no tracking issue (column 3 must be #<number>, got '$issue')"
   [ -n "$reason" ] ||
