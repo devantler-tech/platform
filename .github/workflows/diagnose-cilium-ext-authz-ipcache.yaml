@@ -8,22 +8,33 @@ name: Diagnose Cilium ExternalAuth ipcache
 #
 # READ-ONLY. The script issues `kubectl get` for pods and nodes, and exactly one
 # `kubectl exec … -- cilium-dbg bpf ipcache list` in one Cilium agent — a BPF map dump that
-# changes nothing. scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh pins that it issues
-# nothing else.
+# changes nothing. The endpoint-selection helper only rewrites the server address in the
+# runner's own kubeconfig copy. scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh pins both
+# the script's kubectl surface and the shape of this workflow.
 #
 # ACCESS USED — stated plainly because it is broader than the read. The repository holds no
-# read-only production credential, so this reuses the established prod kubeconfig: the `prod`
-# ENVIRONMENT secret KUBE_CONFIG, context `admin@prod`, restored exactly as
-# validate-image-verifier-liveness.yaml restores it. That identity is cluster-admin. What bounds
-# the job is the reviewed script, the pinned context, the confirmation phrase and `contents: read`
-# on the GitHub token — not the Kubernetes credential. No Talos, Hetzner or SOPS secret is read.
+# read-only production credential, so this reuses the established production mechanism, exactly
+# as .github/actions/deploy-prod/action.yml does:
+#   * KUBE_CONFIG (the `prod` environment secret), context `admin@prod`. That identity is
+#     cluster-admin.
+#   * HCLOUD_TOKEN, exposed ONLY to the endpoint-selection step, which uses it for one read of the
+#     KSail-owned floating IP. The repository holds no narrower Hetzner credential.
+# What bounds the job is the reviewed script, the main-branch guard, the pinned context, the
+# confirmation phrase and `contents: read` on the GitHub token — not the credentials. No Talos or
+# SOPS secret is read. The `prod` environment also admits only protected branches.
+#
+# REVIEWED CODE ONLY. The first step refuses any ref but `refs/heads/main`, before anything is
+# checked out or restored, and checkout is pinned to that dispatch commit, so a run can only
+# execute the script CI tested on main — never one from a stale or modified branch.
 #
 # DORMANT, TWICE OVER — the same shape as probe-image-signature-enforcement.yaml. There is no
 # `schedule:` and no `pull_request:` trigger, and the operator must type an exact confirmation
 # phrase, so an accidental dispatch from the UI reads nothing.
 #
 # PUBLIC LOG. This repository's workflow logs are public, so the script prints no address, node
-# name or pod name — only counts, identities, encryption keys and the verdict.
+# name or pod name — only counts, identities, encryption keys and the verdict. The endpoint
+# helper's success line names the API endpoint, so it is discarded; a failure annotation from it
+# can still name the endpoint, as the deploy path's does.
 #
 # The script's own test needs no cluster and no secrets, so it runs in ci.yaml's required
 # `validate` job rather than here.
@@ -39,11 +50,15 @@ on:
 permissions: {}
 
 concurrency:
-  # Read-only against prod, so it does not take the `prod-deploy` lock and never delays a deploy.
-  # A deploy rolling the Cilium agents mid-read makes the exec fail, which the script reports as
-  # INCONCLUSIVE rather than a verdict. Two copies racing each other buy nothing.
-  group: diagnose-cilium-ext-authz-ipcache
+  # Serialised with every production deploy path — the merge-queue deploy, manual CD, heal, DR and
+  # the image-signature probe all take `prod-deploy`. Read-only is not enough to stand apart: a
+  # deploy rolls Cilium and oauth2-proxy, and during that rollout an old Ready agent still accepts
+  # the exec and a replica can move after it was listed, so an overlapping read could report a
+  # conclusive verdict about a transient or previous revision. Waiting for the lock costs a few
+  # minutes; a misleading verdict costs the #1881 decision.
+  group: prod-deploy
   cancel-in-progress: false
+  queue: max
 
 jobs:
   diagnose-cilium-ext-authz-ipcache:
@@ -56,9 +71,27 @@ jobs:
     permissions:
       contents: read # checkout repository
     steps:
+      # Fails closed BEFORE checkout, so nothing from another ref is fetched, let alone run with a
+      # production credential. `github.ref` reaches bash through `env:`, never interpolated.
+      - name: 🛑 Require the reviewed main branch
+        shell: bash
+        env:
+          RUN_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "${RUN_REF}" != 'refs/heads/main' ]]; then
+            printf 'Refusing to run: dispatch this workflow from main (got %s).\n' "${RUN_REF}" >&2
+            printf 'Only the script CI tested on main may run with production credentials.\n' >&2
+            exit 1
+          fi
+          printf 'Running from main.\n'
+
       - name: 📑 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The dispatch commit on main (guaranteed by the step above). An immutable sha rather
+          # than the branch name, so the script run is the one from the same commit as this file.
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       # Checked BEFORE the kubeconfig is restored, so a mistyped dispatch cannot reach the cluster.
@@ -86,6 +119,17 @@ jobs:
           umask 077
           printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
           chmod 600 ~/.kube/config
+
+      - name: 🔗 Select stable prod API endpoint
+        # KUBE_CONFIG can outlive the control-plane node whose address it was minted with, and a
+        # routine control-plane rollout would then leave every read INCONCLUSIVE. Same helper and
+        # same position as the deploy composite: resolve the KSail-owned floating IP, fail closed on
+        # missing or foreign ownership, and switch admin@prod before any API call. Its success line
+        # names the endpoint, so stdout is discarded to keep the public log address-free.
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
 
       - name: 🔎 Read the ipcache on a node hosting no oauth2-proxy replica
         shell: bash

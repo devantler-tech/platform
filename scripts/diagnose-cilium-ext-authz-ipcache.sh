@@ -11,19 +11,26 @@
 #
 # WHAT IT DOES — read-only, four kubectl calls and nothing else:
 #   1. `get pods` in oauth2-proxy  — the replicas' pod IPs and nodes, resolved at run time.
-#   2. `get nodes`                 — node addresses, to tell host-sourced identity=6 entries
-#                                    apart from other remote-node entries.
+#   2. `get nodes`                 — every node and its addresses, to tell host-sourced
+#                                    identity=6 entries apart from other remote-node entries.
 #   3. `get pods` in kube-system   — a READY Cilium agent on a node hosting NEITHER replica.
 #   4. `exec … cilium-dbg bpf ipcache list` in that agent — a BPF map dump; it changes nothing.
 #
 # THE VERDICT
-#   FAULT-PERSISTS   every oauth2-proxy pod entry is behind WireGuard (encryptkey != 0) AND every
-#                    identity=6 entry for a node address carries encryptkey=0 — the precondition
-#                    the issue blamed is unchanged.
-#   PLAUSIBLY-FIXED  pods behind WireGuard AND every identity=6 node-address entry is non-zero.
+#   FAULT-PERSISTS   every oauth2-proxy pod entry is behind WireGuard (encryptkey != 0), EVERY
+#                    remote node is covered, and every identity=6 node-address entry carries
+#                    encryptkey=0 — the precondition the issue blamed is unchanged.
+#   PLAUSIBLY-FIXED  pods behind WireGuard, every remote node covered, and every identity=6
+#                    node-address entry non-zero.
 #   INCONCLUSIVE     anything else: a failed read, an unsettled rollout, no eligible agent, a pod
-#                    IP missing from the ipcache, a pod entry NOT behind WireGuard, no identity=6
-#                    node-address entry, a mixed population, or an entry that would not parse.
+#                    IP missing from the ipcache, a pod entry NOT behind WireGuard, a remote node
+#                    with no identity=6 entry for any of its addresses, a mixed population, or an
+#                    entry that would not parse.
+#
+# COVERAGE. A "remote node" is every node except the one whose agent is read. Each must have at
+# least one identity=6 entry for one of its own addresses before any conclusive verdict: a node
+# the autoscaler has just added can be in the node list before its ipcache entry propagates, and
+# a verdict that silently ignored it would describe a source it never observed.
 #
 # Only node-address entries decide the source side. A remote node's CiliumInternalIP also carries
 # identity=6 and is ordinarily behind WireGuard, so counting it would turn every healthy reading
@@ -181,26 +188,50 @@ distinct_replica_nodes="$(printf '%s' "${replica_nodes}" | sort -u | grep -c . |
 printf 'oauth2-proxy replicas: %s (on %s node(s))\n' "${replica_count}" "${distinct_replica_nodes}"
 
 # ---------------------------------------------------------------------------
-# 2. Node addresses. Both address types are host addresses; which one a node uses as its
-#    Cilium node IP depends on the provider, so both count.
+# 2. Nodes and their addresses. Both address types are host addresses; which one a node uses as
+#    its Cilium node IP depends on the provider, so both count. Every node is kept, indexed by
+#    its position in name order, so coverage can be checked per node without printing a name.
 # ---------------------------------------------------------------------------
 if ! nodes_json="$(kc get nodes -o json)"; then
   inconclusive 'could not list the nodes'
 fi
 if ! node_address_lines="$(jq -r '
-    [.items[]?.status.addresses[]? | select(.type == "InternalIP" or .type == "ExternalIP") | .address]
-    | unique | .[]
+    [.items[]? | {
+      name: (.metadata.name // ""),
+      addrs: ([.status.addresses[]? | select(.type == "InternalIP" or .type == "ExternalIP") | .address] | unique)
+    }]
+    | if length == 0 then "ERR none"
+      elif any(.[]; .name == "" or (.addrs | length) == 0) then "ERR incomplete"
+      else sort_by(.name) | .[] | .name as $n | .addrs[] | $n + " " + .
+      end
   ' <<<"${nodes_json}")"; then
   inconclusive 'the node list did not parse'
 fi
 
-node_addresses=''
-while IFS= read -r address; do
-  [[ -z "${address}" ]] && continue
+case "${node_address_lines}" in
+  'ERR none') inconclusive 'no nodes were found' ;;
+  'ERR incomplete') inconclusive 'a node reported no InternalIP or ExternalIP address' ;;
+esac
+
+node_names=''
+node_count=0
+node_map=''
+last_node=''
+while IFS=' ' read -r node address; do
+  [[ -z "${node}" ]] && continue
+  is_k8s_name "${node}" || inconclusive 'a node reported a malformed name'
   is_address "${address}" || inconclusive 'a node reported a malformed address'
-  node_addresses="${node_addresses}${address} "
+  if [[ "${node}" != "${last_node}" ]]; then
+    node_count=$((node_count + 1))
+    node_names="${node_names}${node}"$'\n'
+    last_node="${node}"
+  fi
+  case " ${node_map}" in
+    *" ${address}="*) inconclusive 'two nodes reported the same address' ;;
+  esac
+  node_map="${node_map}${address}=${node_count} "
 done <<<"${node_address_lines}"
-if [[ -z "${node_addresses}" ]]; then
+if [[ "${node_count}" -eq 0 || -z "${node_map}" ]]; then
   inconclusive 'no node addresses were resolved'
 fi
 
@@ -223,6 +254,7 @@ if ! agent_lines="$(jq -r --arg container "${cilium_container}" '
 fi
 
 agent_pod=''
+agent_node=''
 while IFS=' ' read -r node name; do
   [[ -z "${node}" ]] && continue
   if printf '%s' "${replica_nodes}" | grep -qxF -- "${node}"; then
@@ -230,6 +262,7 @@ while IFS=' ' read -r node name; do
   fi
   if is_k8s_name "${node}" && is_k8s_name "${name}"; then
     agent_pod="${name}"
+    agent_node="${node}"
     break
   fi
 done <<<"${agent_lines}"
@@ -237,7 +270,19 @@ done <<<"${agent_lines}"
 if [[ -z "${agent_pod}" ]]; then
   inconclusive 'no Ready Cilium agent runs on a node hosting neither oauth2-proxy replica'
 fi
+
+# The probed node's own addresses are `host` in its ipcache, not remote-node, so it is the one
+# node not expected to be covered. It must itself be a listed node, or coverage cannot be judged.
+agent_node_index="$(printf '%s' "${node_names}" | grep -nxF -- "${agent_node}" | cut -d: -f1 || true)"
+if [[ -z "${agent_node_index}" ]]; then
+  inconclusive 'the selected Cilium agent runs on a node missing from the node list'
+fi
+remote_node_count=$((node_count - 1))
+if [[ "${remote_node_count}" -lt 1 ]]; then
+  inconclusive 'there is no remote node whose proxy source could be observed'
+fi
 printf 'Cilium agent: selected a Ready agent on a node hosting neither replica\n'
+printf 'remote nodes expected in the ipcache: %s\n' "${remote_node_count}"
 
 # ---------------------------------------------------------------------------
 # 4. The one exec. `cilium-dbg bpf ipcache list` dumps a BPF map; it writes nothing.
@@ -253,12 +298,15 @@ fi
 # Parse. Addresses are matched EXACTLY after the prefix length is stripped, never as substrings:
 # a pod at 10.244.22.23 must not be satisfied by an entry for 10.244.22.235. Values reach awk
 # through ENVIRON rather than -v, which would interpret backslash escapes.
-records="$(POD_IPS="${pod_ips}" NODE_ADDRESSES="${node_addresses}" awk '
+records="$(POD_IPS="${pod_ips}" NODE_MAP="${node_map}" awk '
   BEGIN {
     n = split(ENVIRON["POD_IPS"], pods, " ")
     for (i = 1; i <= n; i++) pod_index[pods[i]] = i
-    m = split(ENVIRON["NODE_ADDRESSES"], nodes, " ")
-    for (i = 1; i <= m; i++) node_set[nodes[i]] = 1
+    m = split(ENVIRON["NODE_MAP"], pairs, " ")
+    for (i = 1; i <= m; i++) {
+      eq = index(pairs[i], "=")
+      node_of[substr(pairs[i], 1, eq - 1)] = substr(pairs[i], eq + 1)
+    }
   }
   {
     identity = ""; key = "?"
@@ -272,7 +320,7 @@ records="$(POD_IPS="${pod_ips}" NODE_ADDRESSES="${node_addresses}" awk '
     parsed++
     if (address in pod_index) print "POD", pod_index[address], identity, key
     if (identity == "6") {
-      if (address in node_set) print "NODE", key
+      if (address in node_of) print "NODE", node_of[address], key
       else print "OTHER6", key
     }
   }
@@ -305,11 +353,13 @@ while [[ "${i}" -le "${pod_total}" ]]; do
   i=$((i + 1))
 done
 
-# Source side: identity=6 entries for node addresses decide; other identity=6 entries are counted.
+# Source side: identity=6 entries for REMOTE node addresses decide; the probed node's own
+# addresses never vote, and other identity=6 entries are only counted.
 node_zero=0
 node_nonzero=0
-while IFS=' ' read -r kind key; do
+while IFS=' ' read -r kind index key; do
   [[ "${kind}" == 'NODE' ]] || continue
+  [[ "${index}" == "${agent_node_index}" ]] && continue
   if ! [[ "${key}" =~ ^[0-9]+$ ]]; then
     inconclusive 'an identity=6 node-address entry has no parseable encryptkey'
   fi
@@ -319,6 +369,22 @@ while IFS=' ' read -r kind key; do
     node_nonzero=$((node_nonzero + 1))
   fi
 done <<<"${records}"
+
+# Coverage: every remote node needs at least one identity=6 entry for one of its own addresses.
+covered=0
+first_uncovered=''
+k=1
+while [[ "${k}" -le "${node_count}" ]]; do
+  if [[ "${k}" != "${agent_node_index}" ]]; then
+    if awk -v idx="${k}" '$1 == "NODE" && $2 == idx { found = 1 } END { exit !found }' <<<"${records}"; then
+      covered=$((covered + 1))
+    elif [[ -z "${first_uncovered}" ]]; then
+      first_uncovered="${k}"
+    fi
+  fi
+  k=$((k + 1))
+done
+printf 'remote nodes covered: %s of %s\n' "${covered}" "${remote_node_count}"
 
 other_zero=0
 other_nonzero=0
@@ -336,6 +402,9 @@ printf 'identity=6 node-address entries (decide): encryptkey=0: %s, encryptkey!=
 printf 'identity=6 other entries (informational): encryptkey=0: %s, other: %s\n' \
   "${other_zero}" "${other_nonzero}"
 
+if [[ -n "${first_uncovered}" ]]; then
+  inconclusive "remote node #${first_uncovered} has no identity=6 entry for any of its addresses ($((remote_node_count - covered)) of ${remote_node_count} uncovered)"
+fi
 if [[ $((node_zero + node_nonzero)) -eq 0 ]]; then
   inconclusive 'no identity=6 entry for a node address was found, so the proxy source is unobserved'
 fi

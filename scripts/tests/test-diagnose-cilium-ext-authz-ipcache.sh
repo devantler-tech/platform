@@ -156,6 +156,14 @@ set_ipcache_key() {
   done
 }
 
+set_ipcache_identity() {
+  local identity="$1" address="$2"
+  awk -v addr="${address}/32" -v identity="${identity}" '
+    $1 == addr { sub(/identity=[^ ]*/, "identity=" identity) } { print }
+  ' "${fixtures}/ipcache.txt" >"${fixtures}/ipcache.tmp"
+  mv "${fixtures}/ipcache.tmp" "${fixtures}/ipcache.txt"
+}
+
 drop_ipcache_entry() {
   awk -v addr="$1/32" '$1 != addr' "${fixtures}/ipcache.txt" >"${fixtures}/ipcache.tmp"
   mv "${fixtures}/ipcache.tmp" "${fixtures}/ipcache.txt"
@@ -226,7 +234,7 @@ set_ipcache_key 0 10.244.22.1
 run_script --context admin@prod
 require_rc 3 'no node-address entry must be inconclusive'
 require_text 'VERDICT: INCONCLUSIVE' 'a plaintext non-node identity=6 entry alone must not conclude'
-require_text 'proxy source is unobserved' 'reason must name the missing source'
+require_text 'has no identity=6 entry for any of its addresses' 'reason must name the uncovered source'
 assert_safe
 pass 'negative control: a plaintext CiliumInternalIP entry cannot produce FAULT-PERSISTS'
 
@@ -287,6 +295,9 @@ pass 'agents only on replica nodes: INCONCLUSIVE with no exec'
 
 reset_fixtures
 edit_json cilium-pods.json '.items |= map(if .spec.nodeName == "prod-control-plane-1" then .status.containerStatuses[0].ready = false else . end)'
+# Seen from prod-worker-3, its own address is `host` and the control plane is a remote node.
+set_ipcache_identity 1 10.0.0.5
+set_ipcache_identity 6 10.0.0.2
 run_script --context admin@prod
 require_rc 0 'next eligible agent'
 grep -q -- ' exec cilium-wrk3c -c cilium-agent ' "${fixtures}/calls.log" || fail 'a not-Ready agent must be skipped for the next replica-free node'
@@ -343,6 +354,117 @@ require_rc 3 'malformed pod list'
 require_text 'did not parse' 'malformed pod list reason'
 assert_safe
 pass 'a malformed pod list is INCONCLUSIVE'
+
+# --- Coverage: every remote node must be observed before any verdict ----------------------------
+
+reset_fixtures
+set_ipcache_key 255 10.0.0.3 10.0.0.4 10.0.0.5
+drop_ipcache_entry 10.0.0.5
+run_script --context admin@prod
+require_rc 3 'uncovered remote node under the fixed shape'
+require_text 'has no identity=6 entry for any of its addresses' 'uncovered reason'
+refute_text 'PLAUSIBLY-FIXED' 'an unobserved source must not be reported as fixed'
+assert_safe
+pass 'a remote node with no entry is INCONCLUSIVE even when every observed entry is non-zero'
+
+reset_fixtures
+drop_ipcache_entry 10.0.0.4
+run_script --context admin@prod
+require_rc 3 'uncovered remote node under the fault shape'
+require_text 'has no identity=6 entry for any of its addresses' 'uncovered reason (fault shape)'
+refute_text 'FAULT-PERSISTS' 'an unobserved source must not be reported as the fault either'
+assert_safe
+pass 'a remote node with no entry is INCONCLUSIVE under the fault shape too'
+
+# The autoscaler case from review: a node in the list whose ipcache entry has not propagated.
+reset_fixtures
+set_ipcache_key 255 10.0.0.3 10.0.0.4 10.0.0.5
+edit_json nodes.json '.items += [{"metadata":{"name":"prod-worker-4"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.6"}]}}]'
+run_script --context admin@prod
+require_rc 3 'freshly added node'
+require_text 'remote nodes covered: 3 of 4' 'coverage count must include the new node'
+refute_text 'PLAUSIBLY-FIXED' 'a freshly added node must block the fixed verdict'
+assert_safe
+pass 'a freshly added node with no propagated entry is INCONCLUSIVE'
+
+# Negative control for coverage: a node observed only through its ExternalIP IS covered, and the
+# probed node (whose own address is `host`, identity=1) is never expected.
+reset_fixtures
+set_ipcache_key 255 10.0.0.3 10.0.0.4
+awk '$1 == "10.0.0.5/32" { print "203.0.113.5/32      identity=6 encryptkey=255 tunnelendpoint=0.0.0.0 flags=<none>"; next } { print }' \
+  "${fixtures}/ipcache.txt" >"${fixtures}/ipcache.tmp"
+mv "${fixtures}/ipcache.tmp" "${fixtures}/ipcache.txt"
+run_script --context admin@prod
+require_rc 0 'ExternalIP coverage control'
+require_text 'VERDICT: PLAUSIBLY-FIXED' 'ExternalIP coverage must count'
+require_text 'remote nodes covered: 3 of 3' 'the probed node must not be expected'
+assert_safe
+pass 'negative control: ExternalIP-only coverage counts and the probed node is never expected'
+
+reset_fixtures
+edit_json nodes.json '.items[3].status.addresses = [{"type":"Hostname","address":"prod-worker-3"}]'
+run_script --context admin@prod
+require_rc 3 'node with no host address'
+require_text 'reported no InternalIP or ExternalIP address' 'addressless node reason'
+assert_safe
+pass 'a node with no InternalIP or ExternalIP is INCONCLUSIVE'
+
+# --- Workflow contract ---------------------------------------------------------------------------
+# The script's safety depends on how it is dispatched, so the workflow's shape is pinned here too:
+# a dropped guard would otherwise be silent until a misleading or unreviewed run happened.
+
+readonly workflow="${root_dir}/.github/workflows/diagnose-cilium-ext-authz-ipcache.yaml"
+wf_fail() {
+  printf 'FAIL: workflow contract: %s\n' "$1" >&2
+  exit 1
+}
+wf_line() {
+  # A missing line must reach the NAMED assertion, not abort the test silently: under pipefail a
+  # grep with no match would fail the assignment and exit before any message is printed.
+  { grep -n -F -- "$1" "${workflow}" || true; } | head -n 1 | cut -d: -f1
+}
+require_before() {
+  local first="$1" second="$2" description="$3"
+  [[ -n "${first}" && -n "${second}" && "${first}" -lt "${second}" ]] || wf_fail "${description}"
+}
+
+grep -Eq '^  group: prod-deploy$' "${workflow}" || wf_fail 'concurrency must serialise on prod-deploy'
+grep -Eq '^  cancel-in-progress: false$' "${workflow}" || wf_fail 'cancel-in-progress must be false'
+[[ "$(grep -Ec '^[[:space:]]*group:' "${workflow}")" -eq 1 ]] || wf_fail 'exactly one concurrency group'
+pass 'workflow serialises on the prod-deploy lock'
+
+guard_line="$(wf_line "if [[ \"\${RUN_REF}\" != 'refs/heads/main' ]]; then")"
+# The `${{ … }}` strings below are GitHub expressions matched literally; nothing should expand.
+# shellcheck disable=SC2016
+ref_env_line="$(wf_line 'RUN_REF: ${{ github.ref }}')"
+checkout_line="$(wf_line 'uses: actions/checkout@')"
+restore_line="$(wf_line '🔑 Restore kubeconfig')"
+[[ -n "${ref_env_line}" ]] || wf_fail 'the main-branch guard must read github.ref through env'
+require_before "${guard_line}" "${checkout_line}" 'the main-branch guard must run before checkout'
+require_before "${checkout_line}" "${restore_line}" 'checkout must precede the kubeconfig restore'
+# shellcheck disable=SC2016
+awk -v start="${checkout_line}" '
+  NR > start && NR <= start + 6 && /^ +ref: \$\{\{ github\.sha \}\}$/ { found = 1 }
+  END { exit !found }
+' "${workflow}" || wf_fail 'checkout must be pinned to the dispatch commit (ref: ${{ github.sha }})'
+pass 'workflow refuses any ref but main before checkout, and pins checkout'
+
+endpoint_line="$(wf_line 'run: ./scripts/use-prod-stable-api-endpoint.sh')"
+diagnose_line="$(wf_line 'run: ./scripts/diagnose-cilium-ext-authz-ipcache.sh --context admin@prod')"
+# shellcheck disable=SC2016
+hcloud_line="$(wf_line 'HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}')"
+require_before "${restore_line}" "${endpoint_line}" 'endpoint selection must follow the kubeconfig restore'
+require_before "${endpoint_line}" "${diagnose_line}" 'endpoint selection must precede the diagnostic'
+require_before "${restore_line}" "${hcloud_line}" 'HCLOUD_TOKEN must be scoped to the endpoint step'
+require_before "${hcloud_line}" "${endpoint_line}" 'HCLOUD_TOKEN must be scoped to the endpoint step'
+# Count the secret REFERENCE, not the name: the header comments legitimately mention the name.
+[[ "$(grep -c 'secrets\.HCLOUD_TOKEN' "${workflow}")" -eq 1 ]] || wf_fail 'HCLOUD_TOKEN may be referenced only in the endpoint step'
+pass 'workflow selects the stable API endpoint before the read, with HCLOUD_TOKEN scoped to that step'
+
+if grep -Eq '^[[:space:]]+(schedule|push|pull_request|pull_request_target|merge_group):' "${workflow}"; then
+  wf_fail 'the diagnostic must stay dispatch-only'
+fi
+pass 'workflow stays dispatch-only'
 
 # --- Usage ---------------------------------------------------------------------------------------
 
