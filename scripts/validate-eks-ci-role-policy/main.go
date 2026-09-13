@@ -2224,7 +2224,34 @@ const (
 // host's renderer is unapproved, so no local digest is claimed.
 //
 // Previous aggregate: 0270e54ebb9999746f0879689b2fb345c351ec883bee5fc9bb0c8890a2ecba5e.
-const expectedRenderedSurfaceSHA = "6bd9fb1f77c6aa59b2e2dae27ac0a45dd4637920b9bc2d36a451ac64e3abd952"
+//
+// That change established aggregate:
+//
+//	6bd9fb1f77c6aa59b2e2dae27ac0a45dd4637920b9bc2d36a451ac64e3abd952
+//
+// Re-approved for #3287 (2026-09-13), derived on main 35ed2215, whose approved
+// aggregate is 6bd9fb1f above. OpenBao's required node affinity, which lives in
+// the openbao HelmRelease's templated server.affinity value, now names the
+// static workers by kubernetes.io/hostname (${cluster_name}-worker-1..3) instead
+// of ksail.io/autoscaled DoesNotExist. A HelmRelease is a controller-RBAC
+// emitter, so a pure VALUES change moves this aggregate even though nothing is
+// granted.
+//
+// CONSERVATION: against main 35ed2215 this branch changes exactly two files:
+// the openbao HelmRelease patch (which targets only the openbao/openbao
+// HelmRelease) and its shell test. No ClusterRole, Role, ClusterRoleBinding,
+// RoleBinding or ServiceAccount source changes, and no identity, binding, verb,
+// wildcard, AWS identity or permission changes; only the openbao HelmRelease's
+// unresolved-substitution fingerprint moves.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 103792536466 for head 4b930256 (the merge of main 35ed2215 into this branch),
+// which renders under the approved SHA256-verified kubectl v1.36.2 after its
+// approval-base check passed; the job's single error was this unapproved
+// aggregate. This host's renderer is unapproved, so no local digest is claimed.
+//
+// Previous aggregate: 6bd9fb1f77c6aa59b2e2dae27ac0a45dd4637920b9bc2d36a451ac64e3abd952.
+const expectedRenderedSurfaceSHA = "52a79b87b9658ab6854980401565f66734d41ff87e90081f1a8c05fcdb7aa789"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2237,7 +2264,7 @@ const expectedRenderedSurfaceSHA = "6bd9fb1f77c6aa59b2e2dae27ac0a45dd4637920b9bc
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "0270e54ebb9999746f0879689b2fb345c351ec883bee5fc9bb0c8890a2ecba5e"
+const previousRenderedSurfaceSHA = "6bd9fb1f77c6aa59b2e2dae27ac0a45dd4637920b9bc2d36a451ac64e3abd952"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
