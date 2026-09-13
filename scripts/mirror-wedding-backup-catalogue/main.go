@@ -10,8 +10,9 @@
 //
 //   - the plan reads with the shared credential and writes with the dedicated
 //     one, to exactly the reviewed destination;
-//   - the listing taken when the run started is complete, and every object in
-//     it is unchanged when the run ends; and
+//   - every listing is proven complete, the listing taken when the run started
+//     misses nothing that already existed, and every object in it is unchanged
+//     when the run ends; and
 //   - every one of those objects exists in the destination with a matching size
 //     and content checksum.
 //
@@ -27,8 +28,18 @@
 // <run-start> is an RFC 3339 timestamp taken before the starting listing. Each
 // listing is the `mc ls --json --recursive` output for the catalogue prefix,
 // with keys starting at the server directory, optionally carrying a "sha256"
-// field per object. The result is a single non-secret JSON line: counts, the
-// newest base backup, and the newest WAL segment on each side.
+// field (64 lowercase hex characters) per object.
+//
+// Raw `mc ls` output has no terminal record, so a listing cut short is
+// indistinguishable from a complete one. The caller must therefore append one
+// completion record as the last line, and only after `mc ls` exits successfully:
+//
+//	{"status":"success","type":"listing-complete","files":<number of file entries>}
+//
+// A listing without that record, or whose count does not match, is refused.
+//
+// The result is a single non-secret JSON line: counts, the newest base backup,
+// and the newest WAL segment on each side.
 package main
 
 import (
@@ -44,6 +55,8 @@ import (
 	"time"
 )
 
+// These name the reviewed locations. The Secret values are Kubernetes Secret
+// names, not credentials.
 const (
 	sourcePrefix      = "cnpg/wedding-db"
 	sourceSecret      = "wedding-db-backup-r2"
@@ -60,7 +73,7 @@ var (
 	ErrChecksumMismatch  = errors.New("checksum mismatch")
 	ErrUnverifiable      = errors.New("unverifiable object")
 	ErrSourceChanged     = errors.New("source changed during the run")
-	ErrIncompleteListing = errors.New("incomplete starting listing")
+	ErrIncompleteListing = errors.New("incomplete listing")
 	ErrEmptySource       = errors.New("empty source")
 	ErrNoBaseBackup      = errors.New("no base backup")
 	ErrMalformedListing  = errors.New("malformed listing")
@@ -125,6 +138,7 @@ func ValidatePlan(plan Plan) error {
 var (
 	walSegment = regexp.MustCompile(`^[0-9A-F]{24}$`)
 	backupID   = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}$`)
+	sha256Hex  = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 // EvaluateParity proves that the starting listing was complete, that every
@@ -210,10 +224,12 @@ func sameContent(source, copied Object) error {
 	return nil
 }
 
+// isMultipart reports whether an ETag has the "<hash>-<parts>" multipart form.
 func isMultipart(etag string) bool {
 	return strings.Contains(etag, "-")
 }
 
+// index keys objects by name and refuses a listing that names an object twice.
 func index(objects []Object) (map[string]Object, error) {
 	result := make(map[string]Object, len(objects))
 	for _, object := range objects {
@@ -259,6 +275,8 @@ func newestWAL(objects map[string]Object) string {
 	return newest
 }
 
+// listingEntry is one line of a listing: an mc object or folder record, or the
+// caller's completion record.
 type listingEntry struct {
 	Status       string `json:"status"`
 	Type         string `json:"type"`
@@ -267,15 +285,18 @@ type listingEntry struct {
 	ETag         string `json:"etag"`
 	SHA256       string `json:"sha256"`
 	LastModified string `json:"lastModified"`
+	Files        *int   `json:"files"`
 }
 
-// ParseListing reads `mc ls --json --recursive` output. Any entry that is not a
-// clean success is refused, because a silently skipped object would make a
-// partial listing look like a complete one. Keys must start at the Barman
-// server directory, so a listing rooted one level too high or too low is
-// reported as malformed rather than as a catalogue with no backups.
+// ParseListing reads `mc ls --json --recursive` output ending in a completion
+// record. Any entry that is not a clean success is refused, because a silently
+// skipped object would make a partial listing look like a complete one. Keys
+// must start at the Barman server directory, so a listing rooted one level too
+// high or too low is reported as malformed rather than as a catalogue with no
+// backups.
 func ParseListing(r io.Reader) ([]Object, error) {
 	var objects []Object
+	complete := false
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -283,19 +304,37 @@ func ParseListing(r io.Reader) ([]Object, error) {
 		if line == "" {
 			continue
 		}
+		if complete {
+			return nil, fmt.Errorf("%w: record after the completion record", ErrMalformedListing)
+		}
 		var entry listingEntry
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrMalformedListing, err)
+			return nil, fmt.Errorf("%w: %w", ErrMalformedListing, err)
 		}
 		if entry.Status != "success" {
 			return nil, fmt.Errorf("%w: status %q", ErrMalformedListing, entry.Status)
 		}
-		if entry.Type == "folder" {
+		switch entry.Type {
+		case "folder":
+			continue
+		case "listing-complete":
+			if entry.Files == nil {
+				return nil, fmt.Errorf("%w: completion record without a file count", ErrIncompleteListing)
+			}
+			if *entry.Files < 0 {
+				return nil, fmt.Errorf("%w: negative completion count", ErrMalformedListing)
+			}
+			if *entry.Files != len(objects) {
+				return nil, fmt.Errorf("%w: completion record counts %d files, listing has %d",
+					ErrIncompleteListing, *entry.Files, len(objects))
+			}
+			complete = true
 			continue
 		}
 		modified, err := time.Parse(time.RFC3339Nano, entry.LastModified)
 		if entry.Type != "file" || entry.Size == nil || *entry.Size < 0 || entry.ETag == "" ||
-			err != nil || !catalogueKey(entry.Key) {
+			err != nil || !catalogueKey(entry.Key) ||
+			(entry.SHA256 != "" && !sha256Hex.MatchString(entry.SHA256)) {
 			return nil, fmt.Errorf("%w: entry %q", ErrMalformedListing, entry.Key)
 		}
 		objects = append(objects, Object{
@@ -307,7 +346,10 @@ func ParseListing(r io.Reader) ([]Object, error) {
 		})
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrMalformedListing, err)
+		return nil, fmt.Errorf("%w: %w", ErrMalformedListing, err)
+	}
+	if !complete {
+		return nil, fmt.Errorf("%w: no completion record", ErrIncompleteListing)
 	}
 	return objects, nil
 }
@@ -322,15 +364,20 @@ func catalogueKey(key string) bool {
 	return len(parts) >= 3 && parts[0] != "" && (parts[1] == "base" || parts[1] == "wals")
 }
 
+// readListing parses one listing file named on the command line.
 func readListing(name string) ([]Object, error) {
 	file, err := os.Open(name)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-	return ParseListing(file)
+	objects, parseErr := ParseListing(file)
+	if closeErr := file.Close(); closeErr != nil && parseErr == nil {
+		return nil, closeErr
+	}
+	return objects, parseErr
 }
 
+// run dispatches the command line and writes the summary for a passing evaluation.
 func run(args []string, stdout io.Writer) error {
 	if len(args) == 2 && args[0] == "validate-plan" {
 		return ValidatePlan(Plan{
@@ -341,13 +388,13 @@ func run(args []string, stdout io.Writer) error {
 	if len(args) == 5 && args[0] == "evaluate" {
 		runStart, err := time.Parse(time.RFC3339Nano, args[1])
 		if err != nil {
-			return fmt.Errorf("%w: run start: %v", ErrMalformedListing, err)
+			return fmt.Errorf("%w: run start: %w", ErrMalformedListing, err)
 		}
 		listings := make([][]Object, 0, 3)
 		for _, name := range args[2:] {
 			objects, err := readListing(name)
 			if err != nil {
-				return err
+				return fmt.Errorf("%s: %w", name, err)
 			}
 			listings = append(listings, objects)
 		}
@@ -360,6 +407,7 @@ func run(args []string, stdout io.Writer) error {
 	return errors.New("usage: mirror-wedding-backup-catalogue validate-plan <source-bucket> | evaluate <run-start> <source-before> <source-after> <destination>")
 }
 
+// main exits non-zero with the refusal reason when a plan or mirror is not trusted.
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "mirror-wedding-backup-catalogue:", err)

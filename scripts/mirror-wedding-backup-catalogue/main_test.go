@@ -67,12 +67,16 @@ var (
 	runStart     = time.Date(2026, 9, 13, 10, 0, 0, 0, time.UTC)
 	beforeRun    = runStart.Add(-24 * time.Hour)
 	duringTheRun = runStart.Add(5 * time.Minute)
+
+	dataDigest  = strings.Repeat("a", 64)
+	infoDigest  = strings.Repeat("b", 64)
+	otherDigest = strings.Repeat("c", 64)
 )
 
 func sourceListing() []Object {
 	return []Object{
 		{Key: baseInfo, Size: 1200, ETag: "a1", LastModified: beforeRun},
-		{Key: baseData, Size: 90_000_000, ETag: "b2-6", SHA256: "sha-data", LastModified: beforeRun},
+		{Key: baseData, Size: 90_000_000, ETag: "b2-6", SHA256: dataDigest, LastModified: beforeRun},
 		{Key: olderWAL, Size: 4000, ETag: "c3", LastModified: beforeRun},
 		{Key: newerWAL, Size: 4100, ETag: "d4", LastModified: beforeRun},
 	}
@@ -83,7 +87,7 @@ func sourceListing() []Object {
 func destinationListing() []Object {
 	return []Object{
 		{Key: baseInfo, Size: 1200, ETag: "a1", LastModified: duringTheRun},
-		{Key: baseData, Size: 90_000_000, ETag: "ff-4", SHA256: "sha-data", LastModified: duringTheRun},
+		{Key: baseData, Size: 90_000_000, ETag: "ff-4", SHA256: dataDigest, LastModified: duringTheRun},
 		{Key: olderWAL, Size: 4000, ETag: "c3", LastModified: duringTheRun},
 		{Key: newerWAL, Size: 4100, ETag: "d4", LastModified: duringTheRun},
 	}
@@ -125,7 +129,7 @@ func TestEvaluateParityAllowsObjectsArchivedDuringTheRun(t *testing.T) {
 // whether the object changed; size and ETag still do.
 func TestEvaluateParityIgnoresADigestPresentOnOneSourceListing(t *testing.T) {
 	after := sourceListing()
-	after[0].SHA256 = "sha-info"
+	after[0].SHA256 = infoDigest
 	if _, err := EvaluateParity(runStart, sourceListing(), after, destinationListing()); err != nil {
 		t.Fatalf("EvaluateParity() = %v, want nil", err)
 	}
@@ -164,7 +168,7 @@ func TestEvaluateParityRefusals(t *testing.T) {
 			after:  sourceListing,
 			destination: func() []Object {
 				d := destinationListing()
-				d[1].SHA256 = "sha-other"
+				d[1].SHA256 = otherDigest
 				return d
 			},
 			want: ErrChecksumMismatch,
@@ -214,7 +218,7 @@ func TestEvaluateParityRefusals(t *testing.T) {
 			before: sourceListing,
 			after: func() []Object {
 				s := sourceListing()
-				s[1].SHA256 = "sha-rewritten"
+				s[1].SHA256 = otherDigest
 				return s
 			},
 			destination: destinationListing,
@@ -275,11 +279,33 @@ func TestEvaluateParityRefusals(t *testing.T) {
 	}
 }
 
+const modified = `"lastModified":"2026-09-12T10:00:00Z",`
+
+func fileLine(key, extra string) string {
+	return `{"status":"success","type":"file",` + modified + `"size":1,"key":"` + key + `","etag":"a"` + extra + `}`
+}
+
+func completeLine(files int) string {
+	return `{"status":"success","type":"listing-complete","files":` + itoa(files) + `}`
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var digits []byte
+	for ; n > 0; n /= 10 {
+		digits = append([]byte{byte('0' + n%10)}, digits...)
+	}
+	return string(digits)
+}
+
 func TestParseListingReadsMcJSONLines(t *testing.T) {
 	input := strings.Join([]string{
 		`{"status":"success","type":"file","lastModified":"2026-09-12T10:00:00.123Z","size":1200,"key":"` + baseInfo + `","etag":"a1"}`,
 		`{"status":"success","type":"folder","size":0,"key":"wedding-db-20260909/base/"}`,
-		`{"status":"success","type":"file","lastModified":"2026-09-12T10:00:00Z","size":4000,"key":"` + olderWAL + `","etag":"c3","sha256":"abc"}`,
+		`{"status":"success","type":"file","lastModified":"2026-09-12T10:00:00Z","size":4000,"key":"` + olderWAL + `","etag":"c3","sha256":"` + dataDigest + `"}`,
+		completeLine(2),
 		``,
 	}, "\n")
 	objects, err := ParseListing(strings.NewReader(input))
@@ -289,29 +315,65 @@ func TestParseListingReadsMcJSONLines(t *testing.T) {
 	if len(objects) != 2 {
 		t.Fatalf("len(objects) = %d, want 2 files and no folders", len(objects))
 	}
-	want := Object{Key: olderWAL, Size: 4000, ETag: "c3", SHA256: "abc", LastModified: time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)}
+	want := Object{Key: olderWAL, Size: 4000, ETag: "c3", SHA256: dataDigest, LastModified: time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)}
 	if objects[1] != want {
 		t.Fatalf("objects[1] = %+v, want %+v", objects[1], want)
 	}
 }
 
+// An empty catalogue still needs the completion record, and then parses as
+// empty rather than as malformed; EvaluateParity refuses an empty source.
+func TestParseListingAcceptsACompletedEmptyListing(t *testing.T) {
+	objects, err := ParseListing(strings.NewReader(completeLine(0) + "\n"))
+	if err != nil || len(objects) != 0 {
+		t.Fatalf("ParseListing() = %v, %v, want no objects and nil", objects, err)
+	}
+}
+
 func TestParseListingRefusesFailedEntries(t *testing.T) {
-	const modified = `"lastModified":"2026-09-12T10:00:00Z",`
 	tests := map[string]string{
 		"error status":            `{"status":"error","type":"file",` + modified + `"size":1,"key":"` + baseInfo + `","etag":"a"}`,
 		"not json":                `not json`,
-		"absolute key":            `{"status":"success","type":"file",` + modified + `"size":1,"key":"/` + baseInfo + `","etag":"a"}`,
-		"parent key":              `{"status":"success","type":"file",` + modified + `"size":1,"key":"wedding-db-20260909/base/../x","etag":"a"}`,
+		"absolute key":            fileLine("/"+baseInfo, ""),
+		"parent key":              fileLine("wedding-db-20260909/base/../x", ""),
 		"negative size":           `{"status":"success","type":"file",` + modified + `"size":-1,"key":"` + baseInfo + `","etag":"a"}`,
 		"missing etag":            `{"status":"success","type":"file",` + modified + `"size":1,"key":"` + baseInfo + `"}`,
 		"missing last modified":   `{"status":"success","type":"file","size":1,"key":"` + baseInfo + `","etag":"a"}`,
-		"listing rooted too high": `{"status":"success","type":"file",` + modified + `"size":1,"key":"wedding-db/` + baseInfo + `","etag":"a"}`,
-		"listing rooted too low":  `{"status":"success","type":"file",` + modified + `"size":1,"key":"base/20260908T030000/backup.info","etag":"a"}`,
+		"listing rooted too high": fileLine("wedding-db/"+baseInfo, ""),
+		"listing rooted too low":  fileLine("base/20260908T030000/backup.info", ""),
+		"placeholder sha256":      fileLine(baseInfo, `,"sha256":"sha-data"`),
+		"short sha256":            fileLine(baseInfo, `,"sha256":"`+strings.Repeat("a", 63)+`"`),
+		"uppercase sha256":        fileLine(baseInfo, `,"sha256":"`+strings.Repeat("A", 64)+`"`),
+		"record after completion": completeLine(0) + "\n" + fileLine(baseInfo, ""),
+		"negative completion":     `{"status":"success","type":"listing-complete","files":-1}`,
 	}
 	for name, input := range tests {
 		t.Run(name, func(t *testing.T) {
+			if name != "record after completion" && name != "negative completion" && !strings.HasPrefix(input, "not json") {
+				input += "\n" + completeLine(1)
+			}
 			if _, err := ParseListing(strings.NewReader(input)); !errors.Is(err, ErrMalformedListing) {
 				t.Fatalf("ParseListing() = %v, want %v", err, ErrMalformedListing)
+			}
+		})
+	}
+}
+
+// Raw `mc ls` output has no terminal record, so a listing cut short looks like
+// a complete one. Only the wrapper's completion record, written after mc exits
+// successfully, proves the listing ran to the end.
+func TestParseListingRequiresCompletionProof(t *testing.T) {
+	tests := map[string]string{
+		"no completion record":          fileLine(baseInfo, "") + "\n" + fileLine(olderWAL, ""),
+		"completion count too high":     fileLine(baseInfo, "") + "\n" + completeLine(2),
+		"completion count too low":      fileLine(baseInfo, "") + "\n" + fileLine(olderWAL, "") + "\n" + completeLine(1),
+		"empty input":                   "",
+		"completion without file count": fileLine(baseInfo, "") + "\n" + `{"status":"success","type":"listing-complete"}`,
+	}
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseListing(strings.NewReader(input)); !errors.Is(err, ErrIncompleteListing) {
+				t.Fatalf("ParseListing() = %v, want %v", err, ErrIncompleteListing)
 			}
 		})
 	}
