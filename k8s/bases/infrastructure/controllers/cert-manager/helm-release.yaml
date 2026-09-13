@@ -40,6 +40,16 @@ spec:
     # authoritative CA-side validation, and is fully reversible.
     dns01RecursiveNameservers: "1.1.1.1:53,8.8.8.8:53,9.9.9.9:53"
     dns01RecursiveNameserversOnly: true
+    # C-0211 baseline context, supplied through the chart's own values because
+    # cert-manager is excluded from the add-security-context mutation (#3239).
+    # Helm merges these maps into the chart defaults, so runAsNonRoot and the
+    # RuntimeDefault seccomp profile are kept. Both fields are inert here: none
+    # of the three Deployments sets fsGroup or mounts a volume that ownership
+    # policy governs, and the empty seLinuxOptions object leaves SELinux type and
+    # MCS category selection to the runtime. The webhook and cainjector blocks
+    # below carry the same two fields.
+    securityContext:
+      fsGroupChangePolicy: OnRootMismatch
     # Restricted PSS baseline: add runAsNonRoot to container SCs (chart leaves it unset, which fails validate-container-security).
     containerSecurityContext:
       allowPrivilegeEscalation: false
@@ -48,6 +58,7 @@ spec:
           - ALL
       readOnlyRootFilesystem: true
       runAsNonRoot: true
+      seLinuxOptions: {}
     replicaCount: ${cert_manager_replicas:=2}
     podDisruptionBudget:
       enabled: true
@@ -73,6 +84,8 @@ spec:
             app.kubernetes.io/instance: cert-manager
     webhook:
       replicaCount: ${cert_manager_replicas:=2}
+      securityContext:
+        fsGroupChangePolicy: OnRootMismatch
       containerSecurityContext:
         allowPrivilegeEscalation: false
         capabilities:
@@ -80,6 +93,7 @@ spec:
             - ALL
         readOnlyRootFilesystem: true
         runAsNonRoot: true
+        seLinuxOptions: {}
       podDisruptionBudget:
         enabled: true
         # Stays minAvailable: 1 -- ksail bootstrap-installs cert-manager before
@@ -101,6 +115,8 @@ spec:
               app.kubernetes.io/instance: cert-manager
     cainjector:
       replicaCount: ${cert_manager_replicas:=2}
+      securityContext:
+        fsGroupChangePolicy: OnRootMismatch
       containerSecurityContext:
         allowPrivilegeEscalation: false
         capabilities:
@@ -108,6 +124,7 @@ spec:
             - ALL
         readOnlyRootFilesystem: true
         runAsNonRoot: true
+        seLinuxOptions: {}
       podDisruptionBudget:
         enabled: true
         # Stays minAvailable: 1 -- ksail bootstrap-installs cert-manager before
