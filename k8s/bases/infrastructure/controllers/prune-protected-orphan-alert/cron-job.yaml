@@ -211,6 +211,7 @@ spec:
                             status: (if ($m.annotations // {})["platform.devantler.tech/prune-orphan"] == "adopted"
                                         or (($m.ownerReferences // []) | length) > 0 then "handed-over"
                                      elif ($inv | has($owner) | not) then "owner-gone"
+                                     elif $inv[$owner].ids == null and ($inv[$owner].ready | not) then "owner-not-ready"
                                      elif $inv[$owner].ids == null then "owner-no-inventory"
                                      elif any($inv[$owner].ids[]; . == $id) then "managed"
                                      elif $inv[$owner].ready | not then "owner-not-ready"

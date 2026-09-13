@@ -429,6 +429,11 @@ if ! grep -q 'not judged until their Kustomization is Ready' "${dir}/stdout.log"
   ! grep -qF 'HelmRelease tofu-system/tofu-controller' "${dir}/stdout.log"; then
   fail "owner-not-ready: the unjudged object was not logged"
 fi
+# Objects still in the failing Kustomization's inventory are managed, not
+# unjudged: listing them would log every object of a failing apply every day.
+if grep -qF 'Namespace tofu-system' "${dir}/stdout.log" || grep -qF 'Cluster umami/umami-db' "${dir}/stdout.log"; then
+  fail "owner-not-ready: objects still in the inventory were logged as unjudged: $(cat "${dir}/stdout.log")"
+fi
 pass "an object of a Kustomization that is not Ready is logged, never recorded"
 
 # 8b. A finding already recorded keeps its first sighting while its owner is
@@ -448,10 +453,23 @@ pass "a recorded finding keeps its first sighting while its owner is not Ready"
 # 9. A Kustomization with no inventory cannot be judged, and an empty
 #    Kustomization list means there is nothing to compare against: fail both.
 dir="$(setup_scenario no-inventory "${REAL_WEBHOOK}")"
-printf '%s' '{"items":[{"metadata":{"name":"infrastructure-controllers","namespace":"flux-system"},"status":{}}]}' >"${dir}/api/kustomizations.body"
-if run_scenario "${dir}"; then fail "no-inventory: a Kustomization without an inventory exited 0 (silent zero)"; fi
+printf '%s' '{"items":[{"metadata":{"name":"infrastructure-controllers","namespace":"flux-system"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}' >"${dir}/api/kustomizations.body"
+if run_scenario "${dir}"; then fail "no-inventory: a Ready Kustomization without an inventory exited 0 (silent zero)"; fi
 grep -q 'records no inventory' "${dir}/stderr.log" || fail "no-inventory: the failure does not say why"
-! delivered "${dir}" && [ ! -f "${dir}/patched.json" ] || fail "no-inventory: it paged or wrote state before failing"
+if delivered "${dir}" || [ -f "${dir}/patched.json" ]; then
+  fail "no-inventory: it paged or wrote state before failing"
+fi
+# 9b. A Kustomization whose first apply is failing is not Ready AND has recorded
+#     no inventory yet. That is the not-Ready case, not a broken read: log its
+#     objects and finish, never fail the whole daily run.
+dir="$(setup_scenario not-ready-no-inventory "${REAL_WEBHOOK}")"
+printf '%s' '{"items":[{"metadata":{"name":"infrastructure-controllers","namespace":"flux-system"},"status":{"conditions":[{"type":"Ready","status":"False"}]}}]}' >"${dir}/api/kustomizations.body"
+run_scenario "${dir}" || fail "not-ready-no-inventory: a failing first apply failed the whole run: $(cat "${dir}/stderr.log")"
+grep -q 'not judged until their Kustomization is Ready' "${dir}/stdout.log" ||
+  fail "not-ready-no-inventory: the unjudged objects were not logged"
+if delivered "${dir}" || [ -f "${dir}/patched.json" ]; then
+  fail "not-ready-no-inventory: an object of a never-applied Kustomization was recorded or paged"
+fi
 dir="$(setup_scenario no-kustomizations "${REAL_WEBHOOK}")"
 printf '%s' '{"items":[]}' >"${dir}/api/kustomizations.body"
 if run_scenario "${dir}"; then fail "no-kustomizations: an empty Kustomization list exited 0 (silent zero)"; fi
