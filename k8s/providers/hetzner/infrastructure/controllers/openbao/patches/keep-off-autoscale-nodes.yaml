@@ -53,9 +53,15 @@
 # would never converge. The kubelet sets `kubernetes.io/hostname` at
 # registration, so this rule holds from the first reconcile.
 #
-# The list must be exactly prod-worker-1..N, where N is `spec.cluster.workers`
-# in ksail.prod.yaml; scripts/tests/test-hcloud-baseline-worker-affinity.sh
-# fails when the two disagree.
+# The names come from the cluster's own name, not a literal: KSail names static
+# workers `<metadata.name>-worker-N`, and this patch is shared by every Hetzner
+# cluster, so `${cluster_name}` (Flux postBuild substitution from the
+# per-cluster `variables-cluster` ConfigMap) keeps a cluster copied per
+# docs/TEMPLATING.md schedulable. The list must be exactly
+# `${cluster_name}-worker-1..N`, where N is `spec.cluster.workers` in
+# ksail.prod.yaml, and prod's `cluster_name` must equal that file's
+# `metadata.name`; scripts/tests/test-hcloud-baseline-worker-affinity.sh fails
+# when either disagrees.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -80,6 +86,6 @@ spec:
                   - key: kubernetes.io/hostname
                     operator: In
                     values:
-                      - prod-worker-1
-                      - prod-worker-2
-                      - prod-worker-3
+                      - ${cluster_name}-worker-1
+                      - ${cluster_name}-worker-2
+                      - ${cluster_name}-worker-3

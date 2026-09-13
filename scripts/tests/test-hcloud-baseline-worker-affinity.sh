@@ -120,8 +120,11 @@ done
 # in `infrastructure-controllers`, before the label policies apply, so a label
 # requirement would deadlock a rebuilt cluster. The kubelet sets
 # kubernetes.io/hostname at registration, so this rule holds from the first
-# reconcile. The single required term must name exactly prod-worker-1..N, where
-# N is the static worker count in ksail.prod.yaml.
+# reconcile. The single required term must name exactly
+# ${cluster_name}-worker-1..N, where N is the static worker count in
+# ksail.prod.yaml. The patch is shared by every Hetzner cluster, so the name
+# prefix is the Flux substitution variable, never a literal; prod's value of it
+# must equal ksail.prod.yaml's metadata.name, which is what KSail names nodes by.
 controllers="${repo_root}/k8s/providers/hetzner/infrastructure/controllers"
 kubectl kustomize "${controllers}" >"${work}/controllers.yaml"
 [ -s "${work}/controllers.yaml" ] || { echo "::error::infrastructure-controllers overlay rendered nothing"; exit 1; }
@@ -132,6 +135,13 @@ case "${workers}" in
     exit 1
     ;;
 esac
+prod_name="$(yq '.metadata.name' "${repo_root}/ksail.prod.yaml")"
+prod_cluster_name="$(yq 'select(.kind == "ConfigMap" and .metadata.name == "variables-cluster") | .data.cluster_name' \
+  "${repo_root}/k8s/clusters/prod/bootstrap/config-map.yaml")"
+if [ -z "${prod_name}" ] || [ "${prod_name}" = "null" ] || [ "${prod_cluster_name}" != "${prod_name}" ]; then
+  echo "::error::prod variables-cluster cluster_name '${prod_cluster_name}' must equal ksail.prod.yaml metadata.name '${prod_name}'"
+  fail=1
+fi
 # The chart's server.affinity is a templated string; replace each Helm
 # expression with a placeholder so the rest parses as YAML.
 yq ea 'select(.kind == "HelmRelease" and .metadata.name == "openbao" and .metadata.namespace == "openbao") | .spec.values.server.affinity' \
@@ -141,7 +151,7 @@ if ! openbao_terms="$(yq -o=json -I=0 '.nodeAffinity.requiredDuringSchedulingIgn
   fail=1
 else
   want="$(jq -cn --argjson n "${workers}" \
-    '[{"matchExpressions": [{"key": "kubernetes.io/hostname", "operator": "In", "values": [range(1; $n + 1) | "prod-worker-\(.)"]}]}]')"
+    '[{"matchExpressions": [{"key": "kubernetes.io/hostname", "operator": "In", "values": [range(1; $n + 1) | "${cluster_name}-worker-\(.)"]}]}]')"
   got="$(jq -c . <<<"${openbao_terms}")"
   if [ "${got}" != "${want}" ]; then
     echo "::error::OpenBao must require exactly one nodeSelectorTerm ${want}, got ${got}"
