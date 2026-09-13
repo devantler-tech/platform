@@ -6,13 +6,22 @@ name: Diagnose Cilium ExternalAuth ipcache
 # ExternalAuth black-hole on Cilium 1.20.0-pre.3; production runs a later build, and the read
 # decides whether re-attempting the cutover (#1881) behind a default-off flag is worth measuring.
 #
-# READ-ONLY. The script issues `kubectl get` for pods, nodes (before and after the read), the
-# Cilium DaemonSet and its ControllerRevisions, and exactly one
-# `kubectl exec … -- cilium-dbg bpf ipcache list` in one Cilium agent — a BPF map dump that
-# changes nothing. It refuses a partially rolled agent set and a node set that changed mid-read;
-# the prod-deploy lock cannot prevent either (a failed deploy, the Cluster Autoscaler). The endpoint-selection helper only rewrites the server address in the
-# runner's own kubeconfig copy. scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh pins both
-# the script's kubectl surface and the shape of this workflow.
+# VERDICT SEMANTICS. FAULT-PERSISTS is reported only when Cilium node encryption is confirmed ON
+# (`encrypt-node: "true"` in the cilium-config ConfigMap). This platform runs with
+# `encryption.nodeEncryption: false`, where plaintext node-address entries are the EXPECTED state
+# and cannot show the fault, so with node encryption off or undetermined an all-zero reading ends
+# INCONCLUSIVE and points to the flagged ExternalAuth datapath test (#2284, option 2).
+# PLAUSIBLY-FIXED is unchanged.
+#
+# READ-ONLY. The script issues `kubectl get` for the oauth2-proxy pods and the nodes (each before
+# and after the read), the Cilium agent pods, DaemonSet, ControllerRevisions and cilium-config
+# ConfigMap, and exactly one `kubectl exec … -- cilium-dbg bpf ipcache list` in one Cilium agent —
+# a BPF map dump that changes nothing. It refuses a partially rolled agent set and replicas or a
+# node set that changed mid-read; the prod-deploy lock cannot prevent those (a failed deploy, the
+# Cluster Autoscaler, a rescheduled replica). The endpoint-selection helper only rewrites the
+# server address in the runner's own kubeconfig copy.
+# scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh pins both the script's kubectl surface
+# and the shape of this workflow.
 #
 # ACCESS USED — stated plainly because it is broader than the read. The repository holds no
 # read-only production credential, so this reuses the established production mechanism, exactly

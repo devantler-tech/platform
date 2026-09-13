@@ -3,10 +3,11 @@
 #
 # WHY THIS EXISTS. The diagnostic decides whether #2284's precondition is still present on the
 # deployed Cilium, and every one of its mistakes is silent: a FAULT-PERSISTS read off a CiliumInternalIP
-# entry, a PLAUSIBLY-FIXED read off a pod IP that merely shares a prefix, a verdict taken while a
-# replica was mid-rollout, from an agent on an old revision, or across a node set that changed during
-# the read would all look like a clean answer. So the conclusive verdicts each have a control that
-# differs in exactly one fixture, and every INCONCLUSIVE path is exercised on purpose.
+# entry, off node-address keys that are plaintext by configuration, or off a pod IP that merely
+# shares a prefix; or a verdict taken while a replica was mid-rollout, from an agent on an old
+# revision, or across replicas or a node set that changed during the read — all would look like a
+# clean answer. So the conclusive verdicts each have a control that differs in exactly one fixture,
+# and every INCONCLUSIVE path is exercised on purpose.
 #
 # It also pins the two properties that make the workflow safe to dispatch: the script issues only
 # `get` and one exact `exec cilium-dbg bpf ipcache list`, and it prints no address, node name, UID,
@@ -54,9 +55,9 @@ require_rc() {
 # diagnostic must never do. A failed call writes an address to stderr, the way a real
 # connection error does, so the leak assertions below also cover the error paths.
 #
-# The node list is served per call: the first `get nodes` returns nodes.json, and a later one
-# returns nodes-after.json when a case provides it (or fails when nodes-after-fails exists), so a
-# topology change during the read can be simulated.
+# The node list and the oauth2-proxy pod list are served per call: the first read returns the base
+# fixture, and a later one returns the matching *-after.json when a case provides it (or fails when
+# the matching *-after-fails marker exists), so a change during the read can be simulated.
 # ---------------------------------------------------------------------------
 cat >"${fake_bin}/kubectl" <<'FAKE'
 #!/usr/bin/env bash
@@ -75,6 +76,22 @@ serve() {
     exit 1
   fi
 }
+# serve_per_call <base-name>: <base>.json first, then <base>-after.json / <base>-after-fails.
+serve_per_call() {
+  local base="$1" calls=0
+  [[ -f "${FIXTURES}/${base}-calls" ]] && calls="$(cat "${FIXTURES}/${base}-calls")"
+  calls=$((calls + 1))
+  printf '%s' "${calls}" >"${FIXTURES}/${base}-calls"
+  if [[ "${calls}" -ge 2 && -f "${FIXTURES}/${base}-after-fails" ]]; then
+    printf 'error: dial tcp 198.51.100.9:6443: connect: connection refused\n' >&2
+    exit 1
+  fi
+  if [[ "${calls}" -ge 2 && -f "${FIXTURES}/${base}-after.json" ]]; then
+    serve "${base}-after.json"
+  else
+    serve "${base}.json"
+  fi
+}
 case "${args}" in
   *" -n kube-system exec "*)
     if [[ "${args}" != *" -c cilium-agent -- cilium-dbg bpf ipcache list " ]]; then
@@ -83,25 +100,12 @@ case "${args}" in
     fi
     serve ipcache.txt
     ;;
-  *" -n oauth2-proxy get pods -l app.kubernetes.io/name=oauth2-proxy,app.kubernetes.io/instance=oauth2-proxy -o json ") serve oauth2-pods.json ;;
+  *" -n oauth2-proxy get pods -l app.kubernetes.io/name=oauth2-proxy,app.kubernetes.io/instance=oauth2-proxy -o json ") serve_per_call oauth2-pods ;;
   *" -n kube-system get pods -l k8s-app=cilium -o json ") serve cilium-pods.json ;;
   *" -n kube-system get daemonset cilium -o json ") serve daemonset.json ;;
   *" -n kube-system get controllerrevisions -o json ") serve controllerrevisions.json ;;
-  *" get nodes -o json ")
-    calls=0
-    [[ -f "${FIXTURES}/nodes-calls" ]] && calls="$(cat "${FIXTURES}/nodes-calls")"
-    calls=$((calls + 1))
-    printf '%s' "${calls}" >"${FIXTURES}/nodes-calls"
-    if [[ "${calls}" -ge 2 && -f "${FIXTURES}/nodes-after-fails" ]]; then
-      printf 'error: dial tcp 198.51.100.9:6443: connect: connection refused\n' >&2
-      exit 1
-    fi
-    if [[ "${calls}" -ge 2 && -f "${FIXTURES}/nodes-after.json" ]]; then
-      serve nodes-after.json
-    else
-      serve nodes.json
-    fi
-    ;;
+  *" -n kube-system get configmap cilium-config -o json ") serve cilium-config.json ;;
+  *" get nodes -o json ") serve_per_call nodes ;;
   *)
     touch "${FIXTURES}/UNEXPECTED_CALL"
     exit 1
@@ -117,6 +121,9 @@ readonly old_hash='5d8f7c6b9a'
 # Base fixtures: the #2284 topology. Two oauth2-proxy replicas on prod-worker-1 and prod-worker-2;
 # Cilium agents on every node, all on the DaemonSet's current revision; the agent that must be
 # chosen is the one on prod-control-plane-1 (first node, sorted, hosting neither replica).
+#
+# NOTE: the base cilium-config has node encryption ON, the only configuration in which all-zero
+# node-address keys can show the fault. Production runs with it OFF; those cases set it explicitly.
 # ---------------------------------------------------------------------------
 reset_fixtures() {
   rm -rf "${fixtures}"
@@ -125,10 +132,10 @@ reset_fixtures() {
 
   cat >"${fixtures}/oauth2-pods.json" <<'JSON'
 {"items":[
- {"metadata":{"name":"oauth2-proxy-7c9d-aaaaa"},"spec":{"nodeName":"prod-worker-1"},
+ {"metadata":{"name":"oauth2-proxy-7c9d-aaaaa","uid":"uid-pod-a"},"spec":{"nodeName":"prod-worker-1"},
   "status":{"phase":"Running","podIP":"10.244.22.235","podIPs":[{"ip":"10.244.22.235"}],
    "conditions":[{"type":"Ready","status":"True"}]}},
- {"metadata":{"name":"oauth2-proxy-7c9d-bbbbb"},"spec":{"nodeName":"prod-worker-2"},
+ {"metadata":{"name":"oauth2-proxy-7c9d-bbbbb","uid":"uid-pod-b"},"spec":{"nodeName":"prod-worker-2"},
   "status":{"phase":"Running","podIP":"10.244.23.28","podIPs":[{"ip":"10.244.23.28"}],
    "conditions":[{"type":"Ready","status":"True"}]}}
 ]}
@@ -169,6 +176,12 @@ JSON
  {"metadata":{"name":"cilium-envoy-0a1b2c3d4e","labels":{"controller-revision-hash":"0a1b2c3d4e"},
    "ownerReferences":[{"kind":"DaemonSet","name":"cilium-envoy","uid":"uid-ds-envoy","controller":true}]},"revision":9}
 ]}
+JSON
+
+  # As the 1.20.1 chart renders it with encryption.nodeEncryption: true.
+  cat >"${fixtures}/cilium-config.json" <<'JSON'
+{"metadata":{"name":"cilium-config","namespace":"kube-system"},
+ "data":{"enable-wireguard":"true","encrypt-node":"true","routing-mode":"tunnel"}}
 JSON
 
   # The fault shape recorded on 1.20.0-pre.3: pods behind WireGuard, node addresses plaintext.
@@ -218,9 +231,13 @@ edit_json() {
   mv "${fixtures}/${file}.tmp" "${fixtures}/${file}"
 }
 
-# Write nodes-after.json as nodes.json transformed by a jq filter: the topology seen after the exec.
+# Write <base>-after.json as <base>.json transformed by a jq filter: the state seen after the exec.
 nodes_after() {
   jq "$1" "${fixtures}/nodes.json" >"${fixtures}/nodes-after.json"
+}
+
+replicas_after() {
+  jq "$1" "${fixtures}/oauth2-pods.json" >"${fixtures}/oauth2-pods-after.json"
 }
 
 run_script() {
@@ -248,7 +265,7 @@ assert_safe() {
   [[ "${execs}" -le 1 ]] || fail "the script exec'd more than once (${execs})"
   local needle
   for needle in 10.244. 10.0.0. 203.0.113. 198.51.100. prod-worker prod-control-plane cilium-wrk cilium-cpl \
-    oauth2-proxy-7c9d uid-node uid-ds "${current_hash}" "${old_hash}" 0a1b2c3d4e; do
+    oauth2-proxy-7c9d uid-node uid-pod uid-ds "${current_hash}" "${old_hash}" 0a1b2c3d4e; do
     refute_text "${needle}" "output leaked identifying data (${needle})"
   done
 }
@@ -264,27 +281,33 @@ pass() {
 reset_fixtures
 run_script --context admin@prod
 require_rc 0 'fault shape must be conclusive'
-require_text 'VERDICT: FAULT-PERSISTS' 'fault shape must report FAULT-PERSISTS'
+require_text 'VERDICT: FAULT-PERSISTS' 'fault shape with node encryption on must report FAULT-PERSISTS'
+require_text 'Cilium node encryption: on' 'node encryption must be reported'
 require_text 'identity=6 node-address entries (decide): encryptkey=0: 3, encryptkey!=0: 0' 'node-address counts'
 require_text 'identity=6 other entries (informational): encryptkey=0: 0, other: 1' 'CiliumInternalIP entry must be counted separately'
 require_text 'Cilium DaemonSet: fully rolled out; selected agent is on the current revision' 'rollout must be verified'
+require_text 'oauth2-proxy replicas: unchanged across the read' 'replicas must be re-verified'
 require_text 'node topology: unchanged across the read' 'topology must be re-verified'
 grep -q -- ' exec cilium-cpl1d -c cilium-agent ' "${fixtures}/calls.log" || fail 'must exec in the agent on the first node hosting neither replica'
 [[ "$(grep -c ' get nodes -o json' "${fixtures}/calls.log")" -eq 2 ]] || fail 'the nodes must be listed exactly twice'
+[[ "$(grep -c ' -n oauth2-proxy get pods ' "${fixtures}/calls.log")" -eq 2 ]] || fail 'the oauth2-proxy pods must be listed exactly twice'
 exec_at="$(grep -n ' exec ' "${fixtures}/calls.log" | cut -d: -f1)"
 last_nodes_at="$(grep -n ' get nodes -o json' "${fixtures}/calls.log" | tail -n 1 | cut -d: -f1)"
+last_replicas_at="$(grep -n ' -n oauth2-proxy get pods ' "${fixtures}/calls.log" | tail -n 1 | cut -d: -f1)"
 [[ "${last_nodes_at}" -gt "${exec_at}" ]] || fail 'the second node list must come after the exec'
+[[ "${last_replicas_at}" -gt "${exec_at}" ]] || fail 'the second oauth2-proxy pod list must come after the exec'
 assert_safe
-pass 'fault shape reports FAULT-PERSISTS from a current-revision agent, with the topology re-read after the exec'
+pass 'node encryption on + all zero reports FAULT-PERSISTS, with replicas and topology re-read after the exec'
 
 reset_fixtures
 set_ipcache_key 255 10.0.0.3 10.0.0.4 10.0.0.5
 run_script --context admin@prod
 require_rc 0 'fixed shape must be conclusive'
 require_text 'VERDICT: PLAUSIBLY-FIXED' 'node addresses behind WireGuard must report PLAUSIBLY-FIXED'
+require_text 'Cilium node encryption: on' 'node encryption on in the fixed control'
 refute_text 'FAULT-PERSISTS' 'fixed shape must not also report the fault'
 assert_safe
-pass 'control: the same fixture with encrypted node addresses reports PLAUSIBLY-FIXED'
+pass 'control: node encryption on + non-zero node-address keys reports PLAUSIBLY-FIXED'
 
 # Negative control for the vote: identity=6 entries that are NOT node addresses never decide.
 reset_fixtures
@@ -307,6 +330,58 @@ require_rc 3 'prefix-only match must be inconclusive'
 require_text 'oauth2-proxy pod IP #1 has no ipcache entry' 'addresses must match exactly, not by prefix'
 assert_safe
 pass 'negative control: 10.244.22.23 is not satisfied by an entry for 10.244.22.235'
+
+# --- Node encryption: all-zero keys conclude the fault only when node encryption is ON -----------
+
+# The production shape: the chart omits encrypt-node when nodeEncryption is false.
+reset_fixtures
+edit_json cilium-config.json 'del(.data["encrypt-node"])'
+run_script --context admin@prod
+require_rc 3 'node encryption off (absent key) + all zero'
+require_text 'Cilium node encryption: off' 'an absent encrypt-node key must read as off'
+require_text 'Cilium node encryption is off, so that is the expected state and cannot show the fault' 'off reason'
+require_text 'run the flagged ExternalAuth datapath test (#2284, option 2)' 'the operator must be pointed at the datapath test'
+refute_text 'FAULT-PERSISTS' 'plaintext node keys with node encryption off must never report the fault'
+assert_safe
+pass 'node encryption off (key absent, the production shape) + all zero is INCONCLUSIVE and points to the datapath test'
+
+reset_fixtures
+edit_json cilium-config.json '.data["encrypt-node"] = "false"'
+run_script --context admin@prod
+require_rc 3 'node encryption off (explicit false) + all zero'
+require_text 'Cilium node encryption: off' 'an explicit false must read as off'
+refute_text 'FAULT-PERSISTS' 'explicit false must never report the fault'
+assert_safe
+pass 'node encryption off (explicit "false") + all zero is INCONCLUSIVE'
+
+reset_fixtures
+rm "${fixtures}/cilium-config.json"
+run_script --context admin@prod
+require_rc 3 'node encryption unreadable + all zero'
+require_text 'Cilium node encryption: undetermined' 'an unreadable ConfigMap must read as undetermined'
+require_text 'Cilium node encryption could not be determined' 'undetermined reason'
+require_text 'run the flagged ExternalAuth datapath test (#2284, option 2)' 'undetermined must point to the datapath test'
+refute_text 'FAULT-PERSISTS' 'an unreadable setting must never report the fault'
+assert_safe
+pass 'node encryption unreadable + all zero is INCONCLUSIVE'
+
+reset_fixtures
+edit_json cilium-config.json '.data["encrypt-node"] = "maybe"'
+run_script --context admin@prod
+require_rc 3 'node encryption unrecognised value + all zero'
+require_text 'Cilium node encryption: undetermined' 'an unrecognised value must read as undetermined'
+refute_text 'FAULT-PERSISTS' 'an unrecognised value must never report the fault'
+assert_safe
+pass 'node encryption with an unrecognised value + all zero is INCONCLUSIVE'
+
+reset_fixtures
+edit_json cilium-config.json 'del(.data["encrypt-node"])'
+set_ipcache_key 255 10.0.0.3 10.0.0.4 10.0.0.5
+run_script --context admin@prod
+require_rc 0 'node encryption off + non-zero'
+require_text 'VERDICT: PLAUSIBLY-FIXED' 'non-zero node keys keep PLAUSIBLY-FIXED whatever the setting'
+assert_safe
+pass 'node encryption off + non-zero node-address keys still reports PLAUSIBLY-FIXED'
 
 # --- INCONCLUSIVE paths -------------------------------------------------------------------------
 
@@ -465,6 +540,70 @@ require_rc 3 'node with no host address'
 require_text 'reported no InternalIP or ExternalIP address' 'addressless node reason'
 assert_safe
 pass 'a node with no InternalIP or ExternalIP is INCONCLUSIVE'
+
+# --- Replica stability: the Ready oauth2-proxy replicas must not change during the read ----------
+
+reset_fixtures
+replicas_after '.items[0].metadata.uid = "uid-pod-a-replacement"'
+run_script --context admin@prod
+require_rc 3 'replica replaced mid-read'
+require_text 'the oauth2-proxy replicas changed during the read' 'replaced replica reason'
+refute_text 'FAULT-PERSISTS' 'a replaced replica must block the verdict'
+[[ "$(grep -c ' exec ' "${fixtures}/calls.log")" -eq 1 ]] || fail 'the read itself must still have happened exactly once'
+assert_safe
+pass 'a replica replaced with a new UID during the read is INCONCLUSIVE'
+
+reset_fixtures
+replicas_after '.items[1].spec.nodeName = "prod-worker-3"'
+run_script --context admin@prod
+require_rc 3 'replica moved mid-read'
+require_text 'the oauth2-proxy replicas changed during the read' 'moved replica reason'
+assert_safe
+pass 'a replica moved to another node during the read is INCONCLUSIVE'
+
+reset_fixtures
+replicas_after '.items[0].status.podIP = "10.244.22.240" | .items[0].status.podIPs = [{"ip":"10.244.22.240"}]'
+run_script --context admin@prod
+require_rc 3 'replica pod IP changed mid-read'
+require_text 'the oauth2-proxy replicas changed during the read' 'changed pod IP reason'
+assert_safe
+pass 'a replica whose pod IP changed during the read is INCONCLUSIVE'
+
+reset_fixtures
+replicas_after '.items[1].status.conditions[0].status = "False"'
+run_script --context admin@prod
+require_rc 3 'replica lost readiness mid-read'
+require_text 'the oauth2-proxy replicas changed during the read' 'unready replica reason'
+assert_safe
+pass 'a replica that stopped being Ready during the read is INCONCLUSIVE'
+
+reset_fixtures
+touch "${fixtures}/oauth2-pods-after-fails"
+run_script --context admin@prod
+require_rc 3 'replica re-read failure'
+require_text 'could not re-list the oauth2-proxy pods after the read' 'replica re-read failure reason'
+assert_safe
+pass 'a failed oauth2-proxy re-read is INCONCLUSIVE'
+
+reset_fixtures
+edit_json oauth2-pods.json '.items[1].metadata.uid = ""'
+run_script --context admin@prod
+require_rc 3 'replica without UID'
+require_text 'an oauth2-proxy replica has no UID, node or pod IP yet' 'missing replica UID reason'
+require_no_exec 'must not exec when a replica identity is unknown'
+assert_safe
+pass 'a replica with no UID is INCONCLUSIVE before any exec'
+
+# Negative control: identical replicas listed in another order, with the pod IP given only through
+# podIPs, are unchanged and still yield the verdict.
+reset_fixtures
+replicas_after '.items |= (reverse | map(del(.status.podIP)))'
+run_script --context admin@prod
+require_rc 0 'reordered replicas control'
+require_text 'VERDICT: FAULT-PERSISTS' 'identical replicas in another order must still yield the verdict'
+require_text 'oauth2-proxy replicas: unchanged across the read' 'reordered replicas must read as unchanged'
+assert_safe
+pass 'negative control: identical replicas listed in another order still yield their verdict'
 
 # --- Topology stability: the node set must not change during the read --------------------------
 
