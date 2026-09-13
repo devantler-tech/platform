@@ -10,12 +10,13 @@
 #
 #   * reporting CONVERGED when the copy is incomplete, stale, or went to the wrong
 #     place, so the cutover starts with no recoverable history;
+#   * refusing forever on a correct copy, so the cutover can never be proven;
 #   * running at all after the Cluster has already switched, or while it switches;
 #   * copying with one credential, deleting from the destination, or leaking the
-#     account-specific endpoint into logs.
+#     account-specific endpoint.
 #
-# The happy path runs the REAL evaluator on listings produced by the REAL pod
-# script against a fake mc, so the three pieces are proven to agree on the listing
+# The converging cases run the REAL evaluator on listings produced by the REAL pod
+# script against a fake mc, so the pieces are proven to agree on the listing
 # format rather than each against its own idea of it. Needs Go, no cluster and no
 # credentials.
 
@@ -28,6 +29,7 @@ readonly pod_script="${root_dir}/scripts/mirror-wedding-backup-catalogue-pod.sh"
 
 work_dir="$(mktemp -d)"
 readonly work_dir
+# shellcheck disable=SC2317,SC2329 # Invoked indirectly by the EXIT trap.
 cleanup() {
   rm -rf "${work_dir}"
 }
@@ -64,11 +66,15 @@ refute_text() {
 # Fake mc: `alias set`, `ls --json --recursive`, `cat`, `mirror`. Listings are
 # served per alias and per call (ls-<alias>-<n>, falling back to ls-<alias>), so
 # a case can make the source change between the starting and ending listings.
+# Every failure writes the endpoint host to stderr, so redaction is exercised.
 # ---------------------------------------------------------------------------
 cat >"${bin}/mc" <<'FAKE'
 #!/usr/bin/env bash
 set -uo pipefail
 f="${FAKE_MC}"
+leak() {
+  printf 'mc: <ERROR> request to https://abc123.r2.cloudflarestorage.com/x failed\n' >&2
+}
 case "$1" in
   alias)
     printf '%s %s\n' "$3" "$5" >>"${f}/aliases"
@@ -79,21 +85,19 @@ case "$1" in
     count_file="${f}/ls-count-${target}"
     n=$(( $(cat "${count_file}" 2>/dev/null || echo 0) + 1 ))
     printf '%s' "${n}" >"${count_file}"
-    [[ -e "${f}/ls-${target}-rc" ]] && exit "$(cat "${f}/ls-${target}-rc")"
+    if [[ -e "${f}/ls-${target}-rc" ]]; then leak; exit "$(cat "${f}/ls-${target}-rc")"; fi
     if [[ -e "${f}/ls-${target}-${n}" ]]; then cat "${f}/ls-${target}-${n}"; else cat "${f}/ls-${target}"; fi
     exit 0
     ;;
   cat)
-    [[ -e "${f}/cat-rc" ]] && exit "$(cat "${f}/cat-rc")"
+    printf '%s\n' "$2" >>"${f}/catted"
+    if [[ -e "${f}/cat-rc" ]]; then leak; exit "$(cat "${f}/cat-rc")"; fi
     printf 'bytes of %s' "${2##*/}"
     exit 0
     ;;
   mirror)
     printf '%s\n' "$*" >>"${f}/mirror.args"
-    if [[ -e "${f}/mirror-rc" ]]; then
-      printf 'mc: <ERROR> Failed to copy https://abc123.r2.cloudflarestorage.com/x\n' >&2
-      exit "$(cat "${f}/mirror-rc")"
-    fi
+    if [[ -e "${f}/mirror-rc" ]]; then leak; exit "$(cat "${f}/mirror-rc")"; fi
     exit 0
     ;;
 esac
@@ -105,6 +109,7 @@ readonly old='2026-09-01T00:00:00Z'
 readonly base_id='20260908T000000'
 readonly wal='000000010000000000000042'
 readonly multipart_etag='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3'
+readonly single_etag='dddddddddddddddddddddddddddddddd'
 
 # record <key> <size> <etag>
 record() {
@@ -112,10 +117,11 @@ record() {
     "${old}" "$2" "$1" "$3"
 }
 
+# catalogue [data-etag]
 catalogue() {
   printf '{"status":"success","type":"folder","lastModified":"%s","size":0,"key":"wedding-db/","etag":"","url":"https://abc123.r2.cloudflarestorage.com"}\n' "${old}"
   record "wedding-db/base/${base_id}/backup.info" 120 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-  record "wedding-db/base/${base_id}/data.tar" 4096 "${multipart_etag}"
+  record "wedding-db/base/${base_id}/data.tar" 4096 "${1:-${multipart_etag}}"
   record "wedding-db/wals/0000000100000000/${wal}.gz" 512 'cccccccccccccccccccccccccccccccc'
 }
 
@@ -132,43 +138,76 @@ new_pod_case() {
   printf '%s' "${dir}"
 }
 
-# run_pod <dir>: runs the pod script; sets pod_rc, pod_out, pod_err.
+# run_pod <dir>: runs the pod script; sets pod_rc, pod_out, pod_err, pod_files.
 run_pod() {
   local dir="$1"
   pod_rc=0
   PATH="${bin}:${PATH}" FAKE_MC="${dir}/mc" CREDENTIALS_DIR="${dir}/credentials" \
-    WORK_DIR="${dir}/work" ENDPOINT="${ENDPOINT_OVERRIDE:-https://abc123.r2.cloudflarestorage.com}" \
+    WORK_DIR="${dir}/work" COLLECT_TIMEOUT=0 \
+    ENDPOINT="${ENDPOINT_OVERRIDE:-https://abc123.r2.cloudflarestorage.com}" \
     SOURCE_BUCKET=platform-backups SOURCE_PREFIX=cnpg/wedding-db \
     DESTINATION_BUCKET=wedding-db-backups DESTINATION_PREFIX=cnpg/wedding-db \
     sh "${pod_script}" >"${dir}/out" 2>"${dir}/err" || pod_rc=$?
   pod_out="$(cat "${dir}/out")"
   pod_err="$(cat "${dir}/err")"
+  pod_files="$(cat "${dir}/work/source-before" "${dir}/work/source-after" "${dir}/work/destination" 2>/dev/null || true)"
 }
+
+expected_sha="$(printf 'bytes of data.tar' | shasum -a 256 | cut -d ' ' -f 1)"
+readonly expected_sha
 
 # --- pod script -------------------------------------------------------------
 
 dir="$(new_pod_case happy)"
 run_pod "${dir}"
 [[ "${pod_rc}" == 0 ]] || fail "pod happy path exited ${pod_rc}: ${pod_err}"
-expected_sha="$(printf 'bytes of data.tar' | shasum -a 256 | cut -d ' ' -f 1)"
-require_text "${pod_out}" "{\"sha256\":\"${expected_sha}\"," 'multipart object carries the checksum of its bytes'
-refute_text "${pod_out}" 'abc123.r2.cloudflarestorage.com' 'account-specific endpoint never reaches stdout'
-require_text "${pod_out}" '"location":"platform-backups/cnpg/wedding-db"' 'source completion record names the source'
-require_text "${pod_out}" '"location":"wedding-db-backups/cnpg/wedding-db"' 'destination completion record names the destination'
-require_text "${pod_out}" '"files":3}' 'completion record counts files, not folders'
-[[ "$(grep -c '"sha256"' "${dir}/out")" == 3 ]] || fail 'exactly the multipart object is checksummed on each of the three listings'
+require_text "${pod_out}" '==== LISTINGS READY ====' 'the pod announces its listings'
+require_text "${pod_files}" "{\"sha256\":\"${expected_sha}\"," 'the multipart object carries the checksum of its bytes'
+refute_text "${pod_files}${pod_out}" 'abc123.r2.cloudflarestorage.com' 'the account-specific endpoint never reaches the listings or stdout'
+require_text "${pod_files}" '"location":"platform-backups/cnpg/wedding-db"' 'source completion records name the source'
+require_text "${pod_files}" '"location":"wedding-db-backups/cnpg/wedding-db"' 'the destination completion record names the destination'
+[[ "$(grep -c '"files":3}' <<<"${pod_files}")" == 3 ]] || fail 'every completion record counts files, not folders'
+[[ "$(grep -c '"sha256"' <<<"${pod_files}")" == 3 ]] || fail 'exactly the multipart object is checksummed on each of the three listings'
+[[ "$(grep -c "source/platform-backups/cnpg/wedding-db/wedding-db/base/${base_id}/data.tar" "${dir}/mc/catted")" == 1 ]] ||
+  fail 'the source copy of a multipart object is read once, not once per listing'
+[[ "$(head -c 20 "${dir}/work/run-start")" == "$(sed -n '$s/.*"started":"\([^"]*\)".*/\1/p' "${dir}/work/source-before")" ]] ||
+  fail 'the run start is the starting listing start'
 refute_text "$(cat "${dir}/mc/mirror.args")" '--remove' 'the copy never deletes from the destination'
-require_text "$(cat "${dir}/mc/mirror.args")" 'source/platform-backups/cnpg/wedding-db/ destination/wedding-db-backups/cnpg/wedding-db/' 'copy reads source and writes destination'
-require_text "$(cat "${dir}/mc/aliases")" 'source source-id' 'source alias uses the source credential'
-require_text "$(cat "${dir}/mc/aliases")" 'destination destination-id' 'destination alias uses the destination credential'
-readonly happy_pod_log="${dir}/out"
+require_text "$(cat "${dir}/mc/mirror.args")" 'source/platform-backups/cnpg/wedding-db/ destination/wedding-db-backups/cnpg/wedding-db/' 'the copy reads the source and writes the destination'
+require_text "$(cat "${dir}/mc/aliases")" 'source source-id' 'the source alias uses the source credential'
+require_text "$(cat "${dir}/mc/aliases")" 'destination destination-id' 'the destination alias uses the destination credential'
+readonly happy_work="${dir}/work"
+cases_run=$((cases_run + 1))
+
+# The copy is uploaded single-part although the original was multipart. Both
+# sides must still carry a checksum, or the evaluator can never verify the object.
+dir="$(new_pod_case one-sided-multipart)"
+catalogue "${single_etag}" >"${dir}/mc/ls-destination"
+run_pod "${dir}"
+[[ "${pod_rc}" == 0 ]] || fail "pod one-sided multipart exited ${pod_rc}: ${pod_err}"
+destination_record="$(grep 'data.tar' "${dir}/work/destination" || true)"
+require_text "${destination_record}" "{\"sha256\":\"${expected_sha}\"," 'a single-part copy of a multipart original is checksummed too'
+readonly one_sided_work="${dir}/work"
+cases_run=$((cases_run + 1))
+
+# No multipart object anywhere: nothing is checksummed, and the listings must
+# come through whole rather than be consumed while no checksums exist.
+dir="$(new_pod_case no-multipart)"
+catalogue "${single_etag}" >"${dir}/mc/ls-source"
+catalogue "${single_etag}" >"${dir}/mc/ls-destination"
+run_pod "${dir}"
+[[ "${pod_rc}" == 0 ]] || fail "pod without multipart objects exited ${pod_rc}: ${pod_err}"
+refute_text "${pod_files}" '"sha256"' 'nothing is checksummed when no object is multipart'
+[[ "$(grep -c 'data.tar' <<<"${pod_files}")" == 3 ]] || fail 'every listing keeps its objects when no checksum is added'
+[[ ! -e "${dir}/mc/catted" ]] || fail 'no object is downloaded when nothing needs a checksum'
+readonly no_multipart_work="${dir}/work"
 cases_run=$((cases_run + 1))
 
 dir="$(new_pod_case reuse)"
 printf 'source-id' >"${dir}/credentials/destination/ACCESS_KEY_ID"
 run_pod "${dir}"
 [[ "${pod_rc}" != 0 ]] || fail 'pod must refuse one access key on both sides'
-require_text "${pod_err}" 'credential reuse' 'reuse refusal names the reason'
+require_text "${pod_err}" 'credential reuse' 'the reuse refusal names the reason'
 [[ ! -e "${dir}/mc/mirror.args" ]] || fail 'no copy after a credential-reuse refusal'
 cases_run=$((cases_run + 1))
 
@@ -183,14 +222,17 @@ dir="$(new_pod_case listing-fails)"
 printf '1' >"${dir}/mc/ls-destination-rc"
 run_pod "${dir}"
 [[ "${pod_rc}" != 0 ]] || fail 'pod must fail when a listing command fails'
-refute_text "${pod_out}" 'listing-complete' 'no completion record is printed for a run that failed'
+refute_text "${pod_out}" 'LISTINGS READY' 'a failed run never announces its listings'
+refute_text "${pod_err}" 'abc123' 'listing errors are redacted before they reach the log'
 cases_run=$((cases_run + 1))
 
 dir="$(new_pod_case checksum-read-fails)"
 printf '1' >"${dir}/mc/cat-rc"
 run_pod "${dir}"
 [[ "${pod_rc}" != 0 ]] || fail 'pod must fail when a multipart object cannot be read for its checksum'
-require_text "${pod_err}" 'to checksum it' 'checksum read refusal names the reason'
+require_text "${pod_err}" 'to checksum it' 'the checksum read refusal names the reason'
+refute_text "${pod_err}" 'abc123' 'checksum read errors are redacted'
+refute_text "${pod_out}" 'LISTINGS READY' 'a failed checksum never announces the listings'
 cases_run=$((cases_run + 1))
 
 dir="$(new_pod_case copy-fails)"
@@ -224,16 +266,22 @@ case "$1 $2" in
     case "$5" in
       *destinationPath*) field=path ;;
       *endpointURL*) field=endpoint ;;
-      *accessKeyId*) field=access ;;
-      *secretAccessKey*) field=secret ;;
+      *accessKeyId.name*) field=access ;;
+      *secretAccessKey.name*) field=secret ;;
+      *accessKeyId.key*) field=access-key; default=ACCESS_KEY_ID ;;
+      *secretAccessKey.key*) field=secret-key; default=SECRET_ACCESS_KEY ;;
       *) exit 64 ;;
     esac
-    cat "${f}/store-$3-${field}"
+    if [[ -e "${f}/store-$3-${field}" ]]; then cat "${f}/store-$3-${field}"; else printf '%s' "${default:?}"; fi
     ;;
   'create configmap') ;;
   'apply -f') cat >"${f}/applied.yaml" ;;
   'get pod') cat "${f}/phase" ;;
   'logs pod/'*) cat "${f}/pod.log" ;;
+  'exec '*)
+    # exec <name> -c mirror -- cat /work/<listing>
+    cat "${f}/work/${7##*/}"
+    ;;
   'delete pod' | 'delete configmap') printf '%s %s\n' "$2" "$3" >>"${f}/deleted" ;;
   *) exit 64 ;;
 esac
@@ -251,10 +299,10 @@ exit 0
 FAKE
 chmod +x "${bin}/fake-evaluator"
 
-# new_wrapper_case <name>: a live state that matches the reviewed plan.
+# new_wrapper_case <name> [pod-work-dir]: a live state that matches the reviewed plan.
 new_wrapper_case() {
   local dir="${work_dir}/wrapper-$1"
-  mkdir -p "${dir}"
+  mkdir -p "${dir}/work"
   printf 'wedding-db' >"${dir}/archive"
   printf 's3://platform-backups/cnpg/wedding-db' >"${dir}/store-wedding-db-path"
   printf 's3://wedding-db-backups/cnpg/wedding-db' >"${dir}/store-wedding-db-dedicated-path"
@@ -266,12 +314,14 @@ new_wrapper_case() {
   printf 'wedding-db-backup-r2' >"${dir}/store-wedding-db-secret"
   printf 'wedding-db-backup-r2-dedicated' >"${dir}/store-wedding-db-dedicated-access"
   printf 'wedding-db-backup-r2-dedicated' >"${dir}/store-wedding-db-dedicated-secret"
-  printf 'Succeeded' >"${dir}/phase"
-  cp "${happy_pod_log}" "${dir}/pod.log"
+  printf 'Running' >"${dir}/phase"
+  printf '==== LISTINGS READY ====\n' >"${dir}/pod.log"
+  cp "${2:-${happy_work}}"/run-start "${2:-${happy_work}}"/source-before \
+    "${2:-${happy_work}}"/source-after "${2:-${happy_work}}"/destination "${dir}/work/"
   printf '%s' "${dir}"
 }
 
-# run_wrapper <dir> [evaluator] [args...]: sets wrapper_rc, wrapper_out, wrapper_err.
+# run_wrapper <dir> <evaluator> [args...]: sets wrapper_rc, wrapper_out, wrapper_err.
 run_wrapper() {
   local dir="$1" chosen="$2"
   shift 2
@@ -283,6 +333,12 @@ run_wrapper() {
   wrapper_err="$(cat "${dir}/err")"
 }
 
+# refuse_before_pod <dir> <what>: the run exits 1 without creating anything.
+refuse_before_pod() {
+  [[ "${wrapper_rc}" == 1 ]] || fail "$2 must exit 1, got ${wrapper_rc}: ${wrapper_err}"
+  [[ ! -e "$1/applied.yaml" ]] || fail "$2 must not start a pod"
+}
+
 dir="$(new_wrapper_case unconfirmed)"
 run_wrapper "${dir}" "${evaluator}"
 [[ "${wrapper_rc}" == 1 ]] || fail "an unconfirmed run must exit 1, got ${wrapper_rc}"
@@ -291,7 +347,7 @@ cases_run=$((cases_run + 1))
 
 dir="$(new_wrapper_case converged)"
 run_wrapper "${dir}" "${evaluator}" --confirm
-[[ "${wrapper_rc}" == 0 ]] || fail "the real pod output must converge under the real evaluator, got ${wrapper_rc}: ${wrapper_err}"
+[[ "${wrapper_rc}" == 0 ]] || fail "the real pod listings must converge under the real evaluator, got ${wrapper_rc}: ${wrapper_err}"
 require_text "${wrapper_out}" '"converged":true' 'the evaluator summary is printed'
 require_text "${wrapper_out}" "\"sourceNewestBaseBackup\":\"wedding-db/${base_id}\"" 'the summary names the newest base backup'
 require_text "${wrapper_out}" 'CONVERGED' 'the verdict is stated'
@@ -299,6 +355,7 @@ manifest="$(cat "${dir}/applied.yaml")"
 require_text "${manifest}" 'secretName: wedding-db-backup-r2' 'the pod mounts the source credential'
 require_text "${manifest}" 'secretName: wedding-db-backup-r2-dedicated' 'the pod mounts the destination credential'
 require_text "${manifest}" '@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952' 'the mc image is digest-pinned'
+require_text "${manifest}" 'value: "https://abc123.r2.cloudflarestorage.com"' 'the endpoint is substituted literally'
 require_text "${manifest}" 'automountServiceAccountToken: false' 'the pod gets no Kubernetes API token'
 require_text "${manifest}" 'readOnlyRootFilesystem: true' 'the pod root filesystem is read-only'
 refute_text "${manifest}" '__' 'every manifest placeholder is substituted'
@@ -307,27 +364,47 @@ require_text "$(cat "${dir}/deleted")" 'configmap wedding-backup-mirror-42-1' 't
 [[ "$(cat "${dir}/archive-count")" == 2 ]] || fail 'the archive reference is checked before and after the copy'
 cases_run=$((cases_run + 1))
 
+dir="$(new_wrapper_case one-sided-multipart "${one_sided_work}")"
+run_wrapper "${dir}" "${evaluator}" --confirm
+[[ "${wrapper_rc}" == 0 ]] || fail "a single-part copy of a multipart original must still converge, got ${wrapper_rc}: ${wrapper_err}"
+cases_run=$((cases_run + 1))
+
+dir="$(new_wrapper_case no-multipart "${no_multipart_work}")"
+run_wrapper "${dir}" "${evaluator}" --confirm
+[[ "${wrapper_rc}" == 0 ]] || fail "a catalogue without multipart objects must converge, got ${wrapper_rc}: ${wrapper_err}"
+cases_run=$((cases_run + 1))
+
 dir="$(new_wrapper_case already-switched)"
 printf 'wedding-db-dedicated' >"${dir}/archive"
 run_wrapper "${dir}" "${evaluator}" --confirm
-[[ "${wrapper_rc}" == 1 ]] || fail "a switched Cluster must be refused, got ${wrapper_rc}"
-[[ ! -e "${dir}/applied.yaml" ]] || fail 'no pod starts after the Cluster has switched'
+refuse_before_pod "${dir}" 'a switched Cluster'
 cases_run=$((cases_run + 1))
 
 dir="$(new_wrapper_case wrong-destination)"
 printf 's3://platform-backups/cnpg/wedding-db-copy' >"${dir}/store-wedding-db-dedicated-path"
 run_wrapper "${dir}" "${evaluator}" --confirm
-[[ "${wrapper_rc}" == 1 ]] || fail "a drifted destination must be refused, got ${wrapper_rc}"
+refuse_before_pod "${dir}" 'a drifted destination'
 require_text "${wrapper_err}" 'wrong destination' 'the evaluator names the refusal'
-[[ ! -e "${dir}/applied.yaml" ]] || fail 'no pod starts for a drifted destination'
 cases_run=$((cases_run + 1))
 
 dir="$(new_wrapper_case shared-secret)"
 printf 'wedding-db-backup-r2' >"${dir}/store-wedding-db-dedicated-access"
 printf 'wedding-db-backup-r2' >"${dir}/store-wedding-db-dedicated-secret"
 run_wrapper "${dir}" "${evaluator}" --confirm
-[[ "${wrapper_rc}" == 1 ]] || fail "one Secret on both sides must be refused, got ${wrapper_rc}"
-[[ ! -e "${dir}/applied.yaml" ]] || fail 'no pod starts when both stores share a Secret'
+refuse_before_pod "${dir}" 'one Secret on both sides'
+cases_run=$((cases_run + 1))
+
+dir="$(new_wrapper_case renamed-key)"
+printf 'AWS_ACCESS_KEY_ID' >"${dir}/store-wedding-db-dedicated-access-key"
+run_wrapper "${dir}" "${evaluator}" --confirm
+refuse_before_pod "${dir}" 'a credential key the pod does not mount'
+cases_run=$((cases_run + 1))
+
+dir="$(new_wrapper_case injected-endpoint)"
+printf 'https://abc123.r2.cloudflarestorage.com"\n        - name: X' >"${dir}/store-wedding-db-endpoint"
+printf 'https://abc123.r2.cloudflarestorage.com"\n        - name: X' >"${dir}/store-wedding-db-dedicated-endpoint"
+run_wrapper "${dir}" "${evaluator}" --confirm
+refuse_before_pod "${dir}" 'an endpoint that could inject manifest fields'
 cases_run=$((cases_run + 1))
 
 dir="$(new_wrapper_case switched-mid-run)"
@@ -346,33 +423,28 @@ require_text "${wrapper_err}" 'the copy did not complete' 'the pod refusal reaso
 require_text "$(cat "${dir}/deleted")" 'pod wedding-backup-mirror-42-1' 'a failed pod is still removed'
 cases_run=$((cases_run + 1))
 
-dir="$(new_wrapper_case pod-never-finishes)"
-printf 'Running' >"${dir}/phase"
+dir="$(new_wrapper_case pod-never-ready)"
+: >"${dir}/pod.log"
 run_wrapper "${dir}" "${evaluator}" --confirm
-[[ "${wrapper_rc}" == 1 ]] || fail "a pod that outlives the bound must exit 1, got ${wrapper_rc}"
+[[ "${wrapper_rc}" == 1 ]] || fail "a pod that never reports ready within the bound must exit 1, got ${wrapper_rc}"
 refute_text "${wrapper_out}" 'CONVERGED' 'an unfinished pod yields no verdict'
+grep -q '^exec ' "${dir}/calls" && fail 'nothing is collected from a pod that never reported ready'
 cases_run=$((cases_run + 1))
 
-dir="$(new_wrapper_case truncated-log)"
-sed '/==== BEGIN destination ====/,$d' "${happy_pod_log}" >"${dir}/pod.log"
+dir="$(new_wrapper_case listing-not-collectable)"
+rm "${dir}/work/destination"
 run_wrapper "${dir}" "${evaluator}" --confirm
-[[ "${wrapper_rc}" == 1 ]] || fail "a log missing the destination listing must be refused, got ${wrapper_rc}"
-require_text "${wrapper_err}" 'destination listing' 'the missing section is named'
+[[ "${wrapper_rc}" == 1 ]] || fail "a listing that cannot be collected must be refused, got ${wrapper_rc}"
+require_text "${wrapper_err}" 'destination listing' 'the missing listing is named'
 cases_run=$((cases_run + 1))
 
 dir="$(new_wrapper_case partial-copy)"
-grep -v "${wal}" "${happy_pod_log}" | sed 's/"files":3}/"files":2}/' >"${dir}/partial.log"
-# Only the destination listing loses the WAL segment.
-awk -v wal="${wal}" '
-  /==== BEGIN destination ====/ { dest = 1 }
-  /==== END destination ====/ { dest = 0 }
-  dest && index($0, wal) { next }
-  dest && /"type":"listing-complete"/ { sub(/"files":3}/, "\"files\":2}") }
-  { print }
-' "${happy_pod_log}" >"${dir}/pod.log"
+# The destination listing loses the WAL segment and is otherwise complete.
+grep -v "${wal}" "${happy_work}/destination" | sed 's/"files":3}/"files":2}/' >"${dir}/work/destination"
+grep -q '"files":2}' "${dir}/work/destination" || fail 'the partial-copy fixture was not built'
 run_wrapper "${dir}" "${evaluator}" --confirm
 [[ "${wrapper_rc}" == 1 ]] || fail "a destination missing an object must be refused, got ${wrapper_rc}"
-require_text "${wrapper_err}" 'refused' 'the refusal is reported'
+require_text "${wrapper_err}" 'partial copy' 'the evaluator refuses it as a partial copy'
 cases_run=$((cases_run + 1))
 
 dir="$(new_wrapper_case not-converged)"

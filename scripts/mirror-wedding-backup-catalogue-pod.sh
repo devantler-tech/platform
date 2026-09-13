@@ -1,6 +1,6 @@
 #!/bin/sh
 # Copy the shared Wedding backup catalogue into its dedicated bucket, from inside
-# the wedding-app namespace, and emit the three listings the evaluator judges.
+# the wedding-app namespace, and write the three listings the evaluator judges.
 #
 # Runs in the pod that scripts/mirror-wedding-backup-catalogue.sh creates. It is
 # delivered as a ConfigMap and executed by the digest-pinned mc image, so it is
@@ -15,14 +15,20 @@
 # the destination (no `mc mirror --remove`), and never prints a credential or
 # the account-specific endpoint host.
 #
-# Output on stdout, in this order, and nothing else:
-#   ==== RUN-START <RFC 3339> ====
-#   ==== BEGIN source-before ==== ... ==== END source-before ====
-#   ==== BEGIN source-after ==== ... ==== END source-after ====
-#   ==== BEGIN destination ==== ... ==== END destination ====
-# Each listing is `mc ls --json --recursive` output with the url field removed, a
-# sha256 field added to every multipart object (whose ETag is not a content
-# checksum), and one completion record appended only after the listing succeeded.
+# OUTPUT. Files in WORK_DIR, collected by the runner with `kubectl exec`:
+#   run-start       the RFC 3339 start of the starting listing
+#   source-before   \
+#   source-after     > `mc ls --json --recursive` output with the url field removed
+#   destination     /  and one completion record appended after a successful listing
+# Container logs are not used for the listings because the kubelet rotates them,
+# which could silently drop the first listing of a large catalogue. Once the files
+# are complete the script prints `==== LISTINGS READY ====` and stays alive for
+# COLLECT_TIMEOUT seconds so the runner can read them.
+#
+# CHECKSUMS. A multipart ETag is not a content checksum, and the copy is free to
+# upload an object differently from the original, so an object can be multipart on
+# one side and single-part on the other. Every key that is multipart on ANY side
+# therefore gets a sha256 of its bytes on EVERY side it exists on.
 
 set -eu
 
@@ -31,7 +37,7 @@ fail() {
   exit 1
 }
 
-for tool in mc sed grep sha256sum cut date cat; do
+for tool in mc sed grep awk sort tail sha256sum cut date cat sleep; do
   command -v "${tool}" >/dev/null 2>&1 || fail "required tool missing from the image: ${tool}"
 done
 
@@ -50,6 +56,12 @@ credentials="${CREDENTIALS_DIR:-/credentials}"
 work="${WORK_DIR:-/tmp/mirror}"
 mkdir -p "${work}"
 export MC_CONFIG_DIR="${MC_CONFIG_DIR:-${work}/.mc}"
+mc_err="${work}/mc.err"
+
+# redact_errors prints the last lines of an mc error log without the endpoint host.
+redact_errors() {
+  sed -e 's#https://[^/ ]*#<endpoint>#g' "${mc_err}" | tail -n 5 >&2
+}
 
 source_id="$(cat "${credentials}/source/ACCESS_KEY_ID")"
 destination_id="$(cat "${credentials}/destination/ACCESS_KEY_ID")"
@@ -61,12 +73,16 @@ fi
 [ "${source_id}" != "${destination_id}" ] ||
   fail "credential reuse: source and destination use the same access key"
 
-mc alias set source "${ENDPOINT}" "${source_id}" \
-  "$(cat "${credentials}/source/SECRET_ACCESS_KEY")" --api S3v4 >/dev/null ||
+if ! mc alias set source "${ENDPOINT}" "${source_id}" \
+  "$(cat "${credentials}/source/SECRET_ACCESS_KEY")" --api S3v4 >/dev/null 2>"${mc_err}"; then
+  redact_errors
   fail "could not configure the source credential"
-mc alias set destination "${ENDPOINT}" "${destination_id}" \
-  "$(cat "${credentials}/destination/SECRET_ACCESS_KEY")" --api S3v4 >/dev/null ||
+fi
+if ! mc alias set destination "${ENDPOINT}" "${destination_id}" \
+  "$(cat "${credentials}/destination/SECRET_ACCESS_KEY")" --api S3v4 >/dev/null 2>"${mc_err}"; then
+  redact_errors
   fail "could not configure the destination credential"
+fi
 unset source_id destination_id
 
 utc_now() {
@@ -84,8 +100,10 @@ list() {
   # an object written in that second as archived during the run — the side the
   # evaluator verifies rather than the side it trusts.
   started="$(utc_now)"
-  mc ls --json --recursive "${alias_name}/${bucket}/${prefix}/" >"${output}.raw" </dev/null ||
+  if ! mc ls --json --recursive "${alias_name}/${bucket}/${prefix}/" >"${output}.raw" 2>"${mc_err}" </dev/null; then
+    redact_errors
     fail "listing ${alias_name} failed"
+  fi
 
   : >"${output}"
   files=0
@@ -103,19 +121,7 @@ list() {
 
     line="$(printf '%s' "${line}" | sed -e 's/"url":"[^"]*",//' -e 's/,"url":"[^"]*"//')"
     key="$(printf '%s' "${line}" | sed -n 's/.*"key":"\([^"\\]*\)".*/\1/p')"
-    etag="$(printf '%s' "${line}" | sed -n 's/.*"etag":"\([^"\\]*\)".*/\1/p')"
     [ -n "${key}" ] || fail "listing ${alias_name} returned an object without a plain key"
-
-    case "${etag}" in
-      *-*)
-        rm -f "${work}/cat-failed"
-        sha="$({ mc cat "${alias_name}/${bucket}/${prefix}/${key}" </dev/null ||
-          : >"${work}/cat-failed"; } | sha256sum | cut -d ' ' -f 1)"
-        [ ! -e "${work}/cat-failed" ] || fail "could not read ${key} from ${alias_name} to checksum it"
-        printf '%s' "${sha}" | grep -Eq '^[0-9a-f]{64}$' || fail "malformed checksum for ${key}"
-        line="$(printf '%s' "${line}" | sed "s/^{/{\"sha256\":\"${sha}\",/")"
-        ;;
-    esac
 
     printf '%s\n' "${line}" >>"${output}"
     files=$((files + 1))
@@ -125,15 +131,64 @@ list() {
     "${bucket}" "${prefix}" "${started}" "${files}" >>"${output}"
 }
 
+# checksum <alias> <bucket> <prefix> <key> prints the sha256 of the object bytes.
+checksum() {
+  rm -f "${work}/cat-failed"
+  sum="$({ mc cat "$1/$2/$3/$4" </dev/null 2>"${mc_err}" ||
+    : >"${work}/cat-failed"; } | sha256sum | cut -d ' ' -f 1)"
+  if [ -e "${work}/cat-failed" ]; then
+    redact_errors
+    fail "could not read $4 from $1 to checksum it"
+  fi
+  printf '%s' "${sum}" | grep -Eq '^[0-9a-f]{64}$' || fail "malformed checksum for $4"
+  printf '%s' "${sum}"
+}
+
+# hash_side <alias> <bucket> <prefix> <map> <listing>... writes "<key>\t<sha256>"
+# for every multipart key that appears in any of the listings.
+hash_side() {
+  alias_name="$1"
+  bucket="$2"
+  prefix="$3"
+  map="$4"
+  shift 4
+  : >"${map}"
+  while IFS= read -r key; do
+    if cat "$@" | grep -qF "\"key\":\"${key}\""; then
+      sum="$(checksum "${alias_name}" "${bucket}" "${prefix}" "${key}")" || exit 1
+      printf '%s\t%s\n' "${key}" "${sum}" >>"${map}"
+    fi
+  done <"${work}/multipart-keys"
+}
+
+# add_checksums <map> <listing> injects the sha256 field into matching object records.
+# The map is recognised by file name, not by `NR == FNR`: an empty map (a side
+# with no multipart objects) would otherwise swallow the whole listing as map
+# entries and leave it empty.
+add_checksums() {
+  awk -F '\t' '
+    FILENAME == ARGV[1] { sum[$1] = $2; next }
+    /"type":"file"/ && match($0, /"key":"[^"]*"/) {
+      key = substr($0, RSTART + 7, RLENGTH - 8)
+      if (key in sum) sub(/^\{/, "{\"sha256\":\"" sum[key] "\",")
+    }
+    { print }
+  ' "$1" "$2" >"$2.sums" || fail "could not add checksums to $2"
+  cat "$2.sums" >"$2"
+}
+
 list source "${SOURCE_BUCKET}" "${SOURCE_PREFIX}" "${work}/source-before"
 run_start="$(sed -n '$s/.*"started":"\([^"]*\)".*/\1/p' "${work}/source-before")"
 [ -n "${run_start}" ] || fail "the starting listing has no start time"
 
-# --overwrite replaces a destination object that differs from the source, so a
-# re-run repairs a damaged copy. There is deliberately no --remove.
+# --overwrite copies a destination object again when its size or modification
+# time differs from the source. It cannot see a same-size corruption: that is
+# reported by the evaluator as a checksum mismatch, and the damaged destination
+# object has to be removed by hand before the next run. There is deliberately no
+# --remove.
 if ! mc mirror --overwrite "source/${SOURCE_BUCKET}/${SOURCE_PREFIX}/" \
-  "destination/${DESTINATION_BUCKET}/${DESTINATION_PREFIX}/" >/dev/null 2>"${work}/mirror.err" </dev/null; then
-  sed -e 's#https://[^/ ]*#<endpoint>#g' "${work}/mirror.err" | tail -n 5 >&2
+  "destination/${DESTINATION_BUCKET}/${DESTINATION_PREFIX}/" >/dev/null 2>"${mc_err}" </dev/null; then
+  redact_errors
   fail "the copy did not complete"
 fi
 
@@ -142,13 +197,24 @@ fi
 list source "${SOURCE_BUCKET}" "${SOURCE_PREFIX}" "${work}/source-after"
 list destination "${DESTINATION_BUCKET}" "${DESTINATION_PREFIX}" "${work}/destination"
 
-emit() {
-  printf '==== BEGIN %s ====\n' "$1"
-  cat "$2"
-  printf '==== END %s ====\n' "$1"
-}
+grep -h '"type":"file"' "${work}/source-before" "${work}/source-after" "${work}/destination" |
+  grep '"etag":"[^"]*-[^"]*"' |
+  sed -n 's/.*"key":"\([^"\\]*\)".*/\1/p' |
+  sort -u >"${work}/multipart-keys"
 
-printf '==== RUN-START %s ====\n' "${run_start}"
-emit source-before "${work}/source-before"
-emit source-after "${work}/source-after"
-emit destination "${work}/destination"
+hash_side source "${SOURCE_BUCKET}" "${SOURCE_PREFIX}" "${work}/sums-source" \
+  "${work}/source-before" "${work}/source-after"
+hash_side destination "${DESTINATION_BUCKET}" "${DESTINATION_PREFIX}" "${work}/sums-destination" \
+  "${work}/destination"
+add_checksums "${work}/sums-source" "${work}/source-before"
+add_checksums "${work}/sums-source" "${work}/source-after"
+add_checksums "${work}/sums-destination" "${work}/destination"
+
+printf '%s\n' "${run_start}" >"${work}/run-start"
+printf '==== LISTINGS READY ====\n'
+
+waited=0
+while [ "${waited}" -lt "${COLLECT_TIMEOUT:-1800}" ]; do
+  sleep 5
+  waited=$((waited + 5))
+done

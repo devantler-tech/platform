@@ -13,9 +13,10 @@
 #      Secret names to `validate-plan`, so a drifted store is refused rather than
 #      replaced with the reviewed value.
 #   3. Runs scripts/mirror-wedding-backup-catalogue-pod.sh in a short-lived pod in
-#      wedding-app, where both credentials and R2 egress already exist.
+#      wedding-app, where both credentials and R2 egress already exist, and
+#      collects its listings with `kubectl exec` once it reports them ready.
 #   4. Confirms the Cluster STILL archives through `wedding-db`.
-#   5. Runs `evaluate` on the three listings the pod emitted.
+#   5. Runs `evaluate` on the three listings.
 #
 # Exit status: 0 converged (the destination is ready for the cutover), 3 copied
 # and verified but not converged (objects archived during the run are still
@@ -32,6 +33,7 @@ readonly cluster='wedding-db'
 readonly source_store='wedding-db'
 readonly destination_store='wedding-db-dedicated'
 readonly plugin='barman-cloud.cloudnative-pg.io'
+readonly ready_marker='==== LISTINGS READY ===='
 # Same digest-pinned client the DR rebuild uses to read R2.
 readonly mc_image='quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952'
 
@@ -106,7 +108,7 @@ store_field() {
 
 # read_store <store> sets store_bucket, store_prefix, store_secret, store_endpoint.
 read_store() {
-  local store="$1" path access secret
+  local store="$1" path access secret access_key secret_key
   path="$(store_field "${store}" '.spec.configuration.destinationPath')" ||
     fail "could not read the ${store} ObjectStore"
   store_endpoint="$(store_field "${store}" '.spec.configuration.endpointURL')" ||
@@ -115,6 +117,10 @@ read_store() {
     fail "could not read the ${store} access key reference"
   secret="$(store_field "${store}" '.spec.configuration.s3Credentials.secretAccessKey.name')" ||
     fail "could not read the ${store} secret key reference"
+  access_key="$(store_field "${store}" '.spec.configuration.s3Credentials.accessKeyId.key')" ||
+    fail "could not read the ${store} access key field"
+  secret_key="$(store_field "${store}" '.spec.configuration.s3Credentials.secretAccessKey.key')" ||
+    fail "could not read the ${store} secret key field"
 
   [[ "${path}" =~ ^s3://([a-z0-9][a-z0-9.-]*)/([A-Za-z0-9._/-]+)$ ]] ||
     fail "the ${store} ObjectStore destination is not an s3://<bucket>/<prefix> path"
@@ -122,8 +128,16 @@ read_store() {
   store_prefix="${BASH_REMATCH[2]}"
   [[ -n "${access}" && "${access}" == "${secret}" ]] ||
     fail "the ${store} ObjectStore splits its credential across Secrets"
+  [[ "${access}" =~ ^[a-z0-9][a-z0-9.-]*$ ]] ||
+    fail "the ${store} ObjectStore names an invalid Secret"
   store_secret="${access}"
-  [[ "${store_endpoint}" == https://* ]] || fail "the ${store} ObjectStore endpoint is not https"
+  # The pod mounts exactly these two keys, so any other field name would leave it
+  # waiting on a mount that can never succeed while it holds the deploy lock.
+  [[ "${access_key}" == ACCESS_KEY_ID && "${secret_key}" == SECRET_ACCESS_KEY ]] ||
+    fail "the ${store} ObjectStore reads its credential from keys the mirror does not mount"
+  # The endpoint is written into the pod manifest, so it must be a bare host.
+  [[ "${store_endpoint}" =~ ^https://[a-z0-9][a-z0-9.-]*$ ]] ||
+    fail "the ${store} ObjectStore endpoint is not an https URL with a bare host"
 }
 
 require_shared_archive
@@ -146,8 +160,11 @@ created=true
 kube create configmap "${name}" --from-file="mirror.sh=${pod_script}" >/dev/null ||
   fail 'could not stage the mirror script'
 
-# Values are data in the manifest, never shell: the heredoc is quoted, so nothing
-# in it expands, and each placeholder is replaced by a literal string below.
+# The heredoc is quoted, so nothing in it expands, and each placeholder is
+# replaced by a value validated above. Every one of those values is restricted to
+# characters that cannot end a YAML string or act as a replacement pattern (no
+# quote, newline, backslash or `&`), which is what keeps the unquoted
+# replacements below portable across bash 3.2 and 5.2.
 manifest="$(
   cat <<'MANIFEST'
 apiVersion: v1
@@ -219,7 +236,7 @@ spec:
           cpu: 50m
           memory: 64Mi
         limits:
-          memory: 512Mi
+          memory: 1Gi
       volumeMounts:
         - name: script
           mountPath: /mirror
@@ -247,45 +264,37 @@ manifest="${manifest//__DESTINATION_PREFIX__/${destination_prefix}}"
 printf '%s\n' "${manifest}" | kube apply -f - >/dev/null || fail 'could not start the mirror pod'
 
 phase=''
+ready=false
 for ((attempt = 0; attempt < poll_limit; attempt++)); do
   phase="$(kube get pod "${name}" -o 'jsonpath={.status.phase}')" || phase=''
   [[ "${phase}" == Succeeded || "${phase}" == Failed ]] && break
+  if [[ "${phase}" == Running ]] &&
+    kube logs "pod/${name}" 2>/dev/null | grep -qxF "${ready_marker}"; then
+    ready=true
+    break
+  fi
   sleep "${poll_interval}"
 done
 
-kube logs "pod/${name}" >"${work_dir}/pod.log" 2>/dev/null || : >"${work_dir}/pod.log"
-if [[ "${phase}" != Succeeded ]]; then
-  grep '^mirror-pod: ' "${work_dir}/pod.log" >&2 || true
-  fail "the mirror pod ended in phase '${phase:-unknown}'"
+if [[ "${ready}" != true ]]; then
+  kube logs "pod/${name}" 2>/dev/null | grep '^mirror-pod: ' >&2 || true
+  fail "the mirror pod never reported its listings ready (phase '${phase:-unknown}')"
 fi
 
-# extract <section> writes exactly one BEGIN..END block, or refuses.
-extract() {
-  local section="$1" begins ends
-  begins="$(grep -cxF "==== BEGIN ${section} ====" "${work_dir}/pod.log" || true)"
-  ends="$(grep -cxF "==== END ${section} ====" "${work_dir}/pod.log" || true)"
-  [[ "${begins}" == 1 && "${ends}" == 1 ]] ||
-    fail "the mirror pod output does not carry exactly one ${section} listing"
-  awk -v begin="==== BEGIN ${section} ====" -v end="==== END ${section} ====" '
-    $0 == end { inside = 0 }
-    inside { print }
-    $0 == begin { inside = 1 }
-  ' "${work_dir}/pod.log" >"${work_dir}/${section}.jsonl"
-}
+for listing in run-start source-before source-after destination; do
+  kube exec "${name}" -c mirror -- cat "/work/${listing}" >"${work_dir}/${listing}" ||
+    fail "could not collect the ${listing} listing from the mirror pod"
+done
 
-extract source-before
-extract source-after
-extract destination
-
-run_start_lines="$(grep -c '^==== RUN-START .* ====$' "${work_dir}/pod.log" || true)"
-[[ "${run_start_lines}" == 1 ]] || fail 'the mirror pod output does not carry exactly one run start'
-run_start="$(sed -n 's/^==== RUN-START \(.*\) ====$/\1/p' "${work_dir}/pod.log")"
+run_start="$(cat "${work_dir}/run-start")"
+[[ "${run_start}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] ||
+  fail 'the mirror pod reported a malformed run start'
 
 require_shared_archive
 
 if ! "${evaluator}" evaluate "${run_start}" "${source_bucket}" \
-  "${work_dir}/source-before.jsonl" "${work_dir}/source-after.jsonl" \
-  "${work_dir}/destination.jsonl" >"${work_dir}/summary.json"; then
+  "${work_dir}/source-before" "${work_dir}/source-after" \
+  "${work_dir}/destination" >"${work_dir}/summary.json"; then
   fail 'the evaluator refused the mirror'
 fi
 
