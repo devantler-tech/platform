@@ -1,5 +1,5 @@
 # Read-only by construction (#3503): the detector may list the Flux
-# Kustomizations whose inventories it compares against, and the three
+# Kustomizations whose inventories it compares against, and the four
 # prune-protected kinds, and nothing else. No verb here can delete, patch or
 # prune — removing a left-behind resource stays a deliberate human step.
 ---
@@ -27,6 +27,13 @@ rules:
       - helm.toolkit.fluxcd.io
     resources:
       - helmreleases
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - postgresql.cnpg.io
+    resources:
+      - clusters
     verbs:
       - get
       - list

@@ -4,13 +4,14 @@
 #
 # The production persistence-safety component sets
 # `kustomize.toolkit.fluxcd.io/prune: disabled` on every PVC, HelmRelease and
-# Namespace, so retiring one is three steps: deploy the protection, remove the
-# manifest in a later PR, then delete the leftover object by hand (AGENTS.md,
-# "Persistence retirement is always two-stage"). When step 3 is missed, Flux
-# drops the object from its Kustomization's inventory and never touches it again:
-# the workload keeps running, can never be updated, and keeps its RBAC. That is
-# what happened to tofu-controller, unnoticed for 74 days (#3480). This makes a
-# missed step 3 visible.
+# Namespace, and CloudNativePG Clusters carry it too, so retiring one is three
+# steps: deploy the protection, remove the manifest in a later PR, then delete
+# the leftover object by hand (AGENTS.md, "Persistence retirement is always
+# two-stage"). When step 3 is missed, Flux drops the object from its
+# Kustomization's inventory and never touches it again: the workload keeps
+# running, can never be updated, and keeps its RBAC. That is what happened to
+# tofu-controller, unnoticed for 74 days (#3480). This makes a missed step 3
+# visible.
 #
 # HOW A LEFT-BEHIND RESOURCE IS RECOGNISED
 #
@@ -22,18 +23,33 @@
 # no longer exists — is left behind. This needs no render and no Git access: the
 # cluster already records both halves.
 #
+# WHAT IS DELIBERATELY NOT REPORTED
+#
+#   - An object handed to another controller on purpose (a tenant skeleton kro
+#     adopts in place keeps Flux's labels): annotate it
+#     `platform.devantler.tech/prune-orphan: adopted` in the PR that protects it,
+#     or it carries ownerReferences. Otherwise it would page daily, forever, with
+#     advice to delete a live object.
+#   - An object whose Kustomization is not Ready. Flux records the inventory only
+#     after a whole apply succeeds, so an object added by a failing apply is
+#     absent without having been retired; it is logged, never escalated.
+#   - An object already being deleted, and an unprotected one Flux prunes itself.
+#
 # WARN FIRST, ESCALATE LATER
 #
 # Between steps 2 and 3 a left-behind object is expected, so a young one is only
 # logged. Once one has been seen for BOUND_SECONDS it is posted to Slack, and
-# posted again on every daily run until it is deleted or restored. The age is
-# measured from the first run that saw it, kept in this CronJob's own ConfigMap
-# (config-map-prune-protected-orphan-alert.yaml), so it lags the deploy that
-# dropped the object by at most one schedule interval.
+# posted again on every daily run until it is deleted, restored or marked
+# adopted. The age is measured from the first run that saw it, kept in this
+# CronJob's own ConfigMap (config-map-prune-protected-orphan-alert.yaml), so it
+# lags the deploy that dropped the object by at most one schedule interval.
 #
-# NEVER A SILENT ZERO. A failed or malformed read, an unreadable state record,
-# or a Kustomization with no inventory to compare against fails the run instead
-# of reporting "nothing left behind".
+# NEVER A SILENT ZERO. A failed or malformed read, an empty Kustomization list,
+# an unreadable state record, or a Kustomization with no inventory to compare
+# against fails the run instead of reporting "nothing left behind". Finding no
+# protected resources at all is logged as a warning: on a cluster without the
+# persistence-safety component that is correct, on production it means the check
+# has gone blind.
 #
 # The only write is a merge patch of the state ConfigMap, which the Role limits
 # to that one object. It never deletes or prunes anything.
@@ -50,8 +66,9 @@ metadata:
   namespace: observability
   annotations:
     checkov.io/skip1: "CKV_K8S_38=the check container reads its SA token to list Flux resources through the API server"
-    # `${BOUND_SECONDS}` below is the container's own env var, NOT a Flux
-    # post-build variable; opt out so substituteFrom cannot expand it to empty.
+    # `${BOUND_SECONDS}` and `${selector}` below are the script's own variables,
+    # NOT Flux post-build variables; opt out so substituteFrom cannot expand them
+    # to empty.
     kustomize.toolkit.fluxcd.io/substitute: disabled
 spec:
   # Daily: a missed retirement step is a slow leak, not an outage, so one
@@ -101,6 +118,9 @@ spec:
                   API=https://kubernetes.default.svc
                   SA=/var/run/secrets/kubernetes.io/serviceaccount
                   STATE_PATH=/api/v1/namespaces/observability/configmaps/prune-protected-orphan-alert-state
+                  # The four protected lists need labels and annotations only,
+                  # so ask for metadata: no chart values or status history.
+                  META='application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1'
 
                   WEBHOOK_URL=$(cat /etc/prune-protected-orphan-alert/url)
                   if [ "$(printf '%s' "$WEBHOOK_URL" | tr -d '[:cntrl:]')" != "$WEBHOOK_URL" ]; then
@@ -123,6 +143,7 @@ spec:
                     curl -sS -o "$2" -w '%{http_code}' \
                       --cacert "$SA/ca.crt" \
                       -H "Authorization: Bearer $(cat "$SA/token")" \
+                      -H "Accept: $3" \
                       "$API$1"
                   }
                   # The only write: a merge patch of this CronJob's own state.
@@ -137,7 +158,7 @@ spec:
                   # A non-2xx or unparseable list must NOT read as "nothing left
                   # behind" — a broken check and a clean cluster would look alike.
                   list() {
-                    code=$(api_get "$1" "$2")
+                    code=$(api_get "$1" "$2" "$4")
                     if [ "$code" != "200" ]; then
                       echo "ERROR: kube API returned HTTP $code listing $3" >&2
                       exit 1
@@ -149,10 +170,15 @@ spec:
                   }
 
                   selector='labelSelector=kustomize.toolkit.fluxcd.io%2Fname'
-                  list "/apis/kustomize.toolkit.fluxcd.io/v1/kustomizations" /tmp/kustomizations.json "Flux Kustomizations"
-                  list "/api/v1/persistentvolumeclaims?${selector}" /tmp/pvcs.json "Flux-applied PersistentVolumeClaims"
-                  list "/api/v1/namespaces?${selector}" /tmp/namespaces.json "Flux-applied Namespaces"
-                  list "/apis/helm.toolkit.fluxcd.io/v2/helmreleases?${selector}" /tmp/helmreleases.json "Flux-applied HelmReleases"
+                  list "/apis/kustomize.toolkit.fluxcd.io/v1/kustomizations" /tmp/kustomizations.json "Flux Kustomizations" application/json
+                  if jq -e '.items | length == 0' /tmp/kustomizations.json >/dev/null; then
+                    echo "ERROR: no Flux Kustomizations listed; there is no inventory to compare against" >&2
+                    exit 1
+                  fi
+                  list "/api/v1/persistentvolumeclaims?${selector}" /tmp/pvcs.json "Flux-applied PersistentVolumeClaims" "$META"
+                  list "/api/v1/namespaces?${selector}" /tmp/namespaces.json "Flux-applied Namespaces" "$META"
+                  list "/apis/helm.toolkit.fluxcd.io/v2/helmreleases?${selector}" /tmp/helmreleases.json "Flux-applied HelmReleases" "$META"
+                  list "/apis/postgresql.cnpg.io/v1/clusters?${selector}" /tmp/clusters.json "Flux-applied CloudNativePG Clusters" "$META"
 
                   # List items carry no kind or apiVersion, so each list names
                   # its own group and kind for the inventory id.
@@ -160,25 +186,31 @@ spec:
                     --slurpfile ks /tmp/kustomizations.json \
                     --slurpfile pvcs /tmp/pvcs.json \
                     --slurpfile nss /tmp/namespaces.json \
-                    --slurpfile hrs /tmp/helmreleases.json '
+                    --slurpfile hrs /tmp/helmreleases.json \
+                    --slurpfile cls /tmp/clusters.json '
                     ($ks[0].items
                       | map({ key: "\(.metadata.namespace)/\(.metadata.name)",
-                              value: (if (.status.inventory.entries | type) == "array"
-                                      then [.status.inventory.entries[].id] else null end) })
+                              value: { ready: any(.status.conditions[]?; .type == "Ready" and .status == "True"),
+                                       ids: (if (.status.inventory.entries | type) == "array"
+                                             then [.status.inventory.entries[].id] else null end) } })
                       | from_entries) as $inv
-                    | [ ($pvcs[0].items[] | {group: "", kind: "PersistentVolumeClaim", o: .}),
-                        ($nss[0].items[] | {group: "", kind: "Namespace", o: .}),
-                        ($hrs[0].items[] | {group: "helm.toolkit.fluxcd.io", kind: "HelmRelease", o: .}) ]
-                    | map(select((.o.metadata.annotations // {})["kustomize.toolkit.fluxcd.io/prune"] == "disabled"
-                                 and .o.metadata.deletionTimestamp == null))
-                    | map(.o.metadata as $m
+                    | [ ($pvcs[0].items[] | {group: "", kind: "PersistentVolumeClaim", m: .metadata}),
+                        ($nss[0].items[] | {group: "", kind: "Namespace", m: .metadata}),
+                        ($hrs[0].items[] | {group: "helm.toolkit.fluxcd.io", kind: "HelmRelease", m: .metadata}),
+                        ($cls[0].items[] | {group: "postgresql.cnpg.io", kind: "Cluster", m: .metadata}) ]
+                    | map(select((.m.annotations // {})["kustomize.toolkit.fluxcd.io/prune"] == "disabled"
+                                 and .m.deletionTimestamp == null))
+                    | map(.m as $m
                         | "\($m.labels["kustomize.toolkit.fluxcd.io/namespace"] // "")/\($m.labels["kustomize.toolkit.fluxcd.io/name"])" as $owner
                         | "\($m.namespace // "")_\($m.name)_\(.group)_\(.kind)" as $id
                         | { id: $id, kind: .kind, owner: $owner,
                             ref: (if $m.namespace then "\($m.namespace)/\($m.name)" else $m.name end),
-                            status: (if ($inv | has($owner) | not) then "owner-gone"
-                                     elif $inv[$owner] == null then "owner-no-inventory"
-                                     elif any($inv[$owner][]; . == $id) then "managed"
+                            status: (if ($m.annotations // {})["platform.devantler.tech/prune-orphan"] == "adopted"
+                                        or (($m.ownerReferences // []) | length) > 0 then "handed-over"
+                                     elif ($inv | has($owner) | not) then "owner-gone"
+                                     elif $inv[$owner].ids == null then "owner-no-inventory"
+                                     elif any($inv[$owner].ids[]; . == $id) then "managed"
+                                     elif $inv[$owner].ready | not then "owner-not-ready"
                                      else "orphan" end) })
                   ' >/tmp/findings.json
 
@@ -189,8 +221,16 @@ spec:
                     exit 1
                   fi
                   total=$(jq 'length' /tmp/findings.json)
+                  if [ "$total" -eq 0 ]; then
+                    echo "WARNING: no prune-protected Flux resources found. Where the persistence-safety component is deployed, this means the list selector or Flux's labels changed and this check is blind."
+                  fi
+                  not_ready=$(jq -r '.[] | select(.status == "owner-not-ready") | "\(.kind) \(.ref) (Kustomization \(.owner))"' /tmp/findings.json)
+                  if [ -n "$not_ready" ]; then
+                    echo "WARNING: not judged until their Kustomization is Ready again:"
+                    echo "$not_ready"
+                  fi
 
-                  code=$(api_get "$STATE_PATH" /tmp/state.json)
+                  code=$(api_get "$STATE_PATH" /tmp/state.json application/json)
                   if [ "$code" != "200" ]; then
                     echo "ERROR: kube API returned HTTP $code reading the state ConfigMap" >&2
                     exit 1
@@ -244,7 +284,7 @@ spec:
                   echo "Prune-protected resource(s) left behind for ${BOUND_SECONDS}s or longer:"
                   echo "$stale"
 
-                  text=$(printf '*A retirement left resources running*\n\n%s\n\n_These carry `kustomize.toolkit.fluxcd.io/prune: disabled` and Flux no longer manages them, so they will never be updated or removed. If nothing depends on them, delete them by hand (step 3 of "Persistence retirement is always two-stage" in the platform AGENTS.md); if the manifest was removed by mistake, restore it. See #3503._' \
+                  text=$(printf '*A retirement left resources running*\n\n%s\n\n_These carry `kustomize.toolkit.fluxcd.io/prune: disabled` and Flux no longer manages them, so they will never be updated or removed. If nothing depends on them, delete them by hand (step 3 of "Persistence retirement is always two-stage" in the platform AGENTS.md); if the manifest was removed by mistake, restore it; if another controller adopted them on purpose, annotate them `platform.devantler.tech/prune-orphan: adopted`. See #3503._' \
                     "$stale")
                   jq -n --arg t "$text" '{text: $t}' >/tmp/payload.json
 

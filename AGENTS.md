@@ -863,11 +863,14 @@ protection prevents cascading deletion from bypassing a claim's own annotation. 
 these objects, first merge and deploy that protection in its own revision; only a later PR may
 remove the manifest. After the second PR lands and no workload depends on the orphan, delete it
 explicitly. The `observability/prune-protected-orphan-alert` CronJob is the proof that this last
-step is done: it lists every prune-protected object that is missing from its Kustomization's
-inventory, logs it while it is younger than seven days and posts it to Slack after that. Run it on
-demand with `kubectl -n observability create job --from=cronjob/prune-protected-orphan-alert
-prune-protected-orphan-check` and read the Job log; step 3 is complete when it no longer names the
-object. `scripts/tests/test-pvc-prune-safety.sh` checks every production reconciliation root,
+step is done: it lists every prune-protected PVC, HelmRelease, Namespace and CloudNativePG Cluster
+that is missing from its Kustomization's inventory, logs it while it is younger than seven days and
+posts it to Slack after that. Run it on demand with `kubectl -n observability create job
+--from=cronjob/prune-protected-orphan-alert "prune-protected-orphan-check-$(date +%s)"`; step 3 is
+complete when that Job **Succeeded** and its log does not name the object (a failed Job judged
+nothing, and an object still Terminating is not listed). When a protected object is instead handed
+to another controller on purpose, annotate it `platform.devantler.tech/prune-orphan: adopted` in
+the PR that protects it, so the check does not report it. `scripts/tests/test-pvc-prune-safety.sh` checks every production reconciliation root,
 rejects an unprotected current or base resource, and compares a deploy candidate with the actual
 live Flux-owned objects before the mutable production artifact moves. Do not collapse the two
 revisions or use Flux force replacement for a PVC migration.
