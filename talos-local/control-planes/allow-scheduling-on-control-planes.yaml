@@ -1,0 +1,5 @@
+# Remove Talos's generated control-plane node document before replacing it
+# with the same registration labels and no NoSchedule taint.
+apiVersion: v1alpha1
+kind: KubeNodeConfig
+$patch: delete

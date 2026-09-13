@@ -20,8 +20,8 @@ func fixture(t *testing.T, body string) string {
 
 func TestVersionPairings(t *testing.T) {
 	for _, tc := range []struct{ name, talos, kubernetes, diagnostic string }{
-		{"current production", "v1.13.9", "v1.36.4", ""},
-		{"in-range patch bump", "v1.13.9", "v1.36.5", ""},
+		{"current production", "v1.14.0", "v1.36.4", ""},
+		{"in-range patch bump", "v1.14.0", "v1.36.5", ""},
 		{"rejected PR 3534", "v1.13.9", "v1.37.0", "too new"},
 		{"too old", "v1.13.9", "v1.30.0", "too old"},
 		{"unknown Talos release", "v99.0.0", "v1.36.4", "not supported"},
@@ -66,6 +66,47 @@ func TestMalformedConfigurationFailsClosed(t *testing.T) {
 	}
 	if err := validate(filepath.Join(t.TempDir(), "missing.yaml")); err == nil {
 		t.Fatal("accepted unreadable config")
+	}
+}
+
+// Talos 1.14's structured KubeletConfig cannot represent extraMounts, so the
+// production overlay keeps the legacy kubelet representation for Longhorn.
+// Deleting the generated document would otherwise make the legacy provider
+// fall back to Talos's default Kubernetes version instead of the production pin.
+func TestLegacyKubeletImageMatchesProductionPin(t *testing.T) {
+	configData, err := os.ReadFile("../../ksail.prod.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Spec struct {
+			Cluster struct {
+				Kubernetes string `yaml:"kubernetesVersion"`
+			} `yaml:"cluster"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal(configData, &config); err != nil {
+		t.Fatal(err)
+	}
+
+	patchData, err := os.ReadFile("../../talos/cluster/rotate-server-certificates.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var patch struct {
+		Machine struct {
+			Kubelet struct {
+				Image string `yaml:"image"`
+			} `yaml:"kubelet"`
+		} `yaml:"machine"`
+	}
+	if err := yaml.Unmarshal(patchData, &patch); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "ghcr.io/siderolabs/kubelet:" + config.Spec.Cluster.Kubernetes
+	if patch.Machine.Kubelet.Image != want {
+		t.Fatalf("legacy kubelet image %q does not match production Kubernetes pin %q", patch.Machine.Kubelet.Image, want)
 	}
 }
 

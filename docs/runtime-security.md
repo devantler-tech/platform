@@ -30,7 +30,7 @@ they sit inside a wider set of controls:
 | Network | **Cilium + Hubble** | L3–L7 flow visibility and default-deny [CiliumNetworkPolicy](../k8s/bases/infrastructure/cluster-policies/best-practices/add-default-deny.yaml) per namespace |
 | Runtime detection | **Kubescape node-agent** | Learned-behaviour anomaly detection, correlated with config/CVE/compliance posture |
 | Runtime enforcement | **Tetragon** | Declarative kernel-hook policies that **terminate the offending process** (SIGKILL) on a policy match |
-| Forensics | **API audit log** ([`talos/cluster/enable-audit-logging.yaml`](../talos/cluster/enable-audit-logging.yaml)) | Who-did-what record of control-plane mutations |
+| Forensics | **API audit log** ([`talos/control-planes/enable-audit-logging.yaml`](../talos/control-planes/enable-audit-logging.yaml)) | Who-did-what record of control-plane mutations |
 
 This document focuses on the two middle-to-bottom rows — the eBPF sensors.
 

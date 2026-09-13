@@ -1,0 +1,8 @@
+# Retain Talos's control-plane labels while omitting the default NoSchedule
+# taint, matching the local cluster's single-node scheduling contract.
+apiVersion: v1alpha1
+kind: KubeNodeConfig
+nodeIP: {}
+labels:
+  node-role.kubernetes.io/control-plane: ""
+  node.kubernetes.io/exclude-from-external-load-balancers: ""

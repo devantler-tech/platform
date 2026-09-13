@@ -9,6 +9,7 @@
 # newly created/autoscaled node must not claim a successful pull before it has
 # rebooted containerd and proved an exact private KSail image pull. The helper
 # records that second marker only after both steps succeed.
-machine:
-  nodeAnnotations:
-    platform.devantler.tech/ghcr-pull-desired-revision: ${GHCR_PULL_REVISION}
+apiVersion: v1alpha1
+kind: KubeNodeConfig
+annotations:
+  platform.devantler.tech/ghcr-pull-desired-revision: ${GHCR_PULL_REVISION}

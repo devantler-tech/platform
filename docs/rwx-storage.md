@@ -1,15 +1,17 @@
 # RWX Storage with Longhorn
 
-Longhorn provides ReadWriteMany (RWX) storage on Hetzner clusters (prod) using dedicated Hetzner Cloud Volumes attached to each worker node. It replaces the `hcloud` StorageClass as the cluster default.
+Longhorn provides ReadWriteMany (RWX) storage on Hetzner clusters (prod) using
+replicated data on the worker nodes' EPHEMERAL filesystems. It replaces the
+`hcloud` StorageClass as the cluster default.
 
 > **Local Docker clusters do not support Longhorn** — the iSCSI kernel modules required by Longhorn are not available in Docker-based Talos containers.
 
 ## Architecture
 
 ```
-Hetzner Cloud Volume (per worker)
-  └── mounted at /var/lib/longhorn (Talos machine config)
-        └── Longhorn engine
+Worker EPHEMERAL filesystem
+  └── /var/lib/longhorn (shared into kubelet)
+        └── Longhorn engine and replicas
               ├── longhorn StorageClass (default — RWO + RWX)
               └── hcloud StorageClass (non-default — Hetzner block only)
 ```
@@ -51,36 +53,28 @@ IMAGE=$(talosctl --nodes <healthy-IP> get machineconfig -o jsonpath='{.spec.mach
 talosctl upgrade --nodes <IP> --image "$IMAGE" --preserve
 ```
 
-### 2. Hetzner Cloud Volumes for workers
+### 2. Worker EPHEMERAL storage
 
-Each worker node needs a dedicated Hetzner Cloud Volume mounted at `/var/lib/longhorn`.
+Longhorn stores replicas at `/var/lib/longhorn` on each worker's EPHEMERAL
+filesystem. The `talos/workers/mount-longhorn-data.yaml` patch exposes that
+host path to kubelet with the recursive shared propagation Longhorn's CSI node
+plugin requires. It does not provision or mount a separate block device.
 
-**Create and attach volumes** (repeat for each worker):
+Talos 1.14 makes new EPHEMERAL volumes `noexec` by default, while Longhorn v1
+executes its engine binaries below `/var/lib/longhorn`. The worker-only
+`talos/workers/allow-longhorn-execution.yaml` patch disables the secure mount
+bundle for EPHEMERAL on storage workers so fresh and rebuilt nodes can start
+Longhorn. Control planes retain Talos's secure mount defaults.
 
-```bash
-# List servers to find worker names
-hcloud server list
-
-# Create a volume and attach it to a worker
-# Do NOT use --format — Talos expects to partition/format the disk itself
-# The volume appears as /dev/sdb on the worker
-hcloud volume create \
-  --name <cluster>-worker-<n>-longhorn \
-  --size 50 \
-  --server <worker-server-name>
-```
-
-The Talos machine config patch (`talos/workers/mount-longhorn-data.yaml`) handles mounting `/dev/sdb` at `/var/lib/longhorn`.
-
-> **Verify the device path** after attaching: on Hetzner Cloud, the first attached volume
-> consistently appears as `/dev/sdb`. Confirm with `talosctl disks --nodes <worker-ip>`.
-> If the volume shows a different path, update `talos/workers/mount-longhorn-data.yaml` accordingly.
+Do not partition `/dev/sdb` for Longhorn: Hetzner's CSI driver dynamically
+attaches Cloud Volumes at `/dev/sdb`, `/dev/sdc`, and later device names for
+PVCs using the separate `hcloud` StorageClass.
 
 ## StorageClasses
 
 | StorageClass | Default | Access Modes | Backing |
 | --- | --- | --- | --- |
-| `longhorn` | ✅ Yes | RWO, RWX | Longhorn on Hetzner volumes |
+| `longhorn` | ✅ Yes | RWO, RWX | Replicated worker EPHEMERAL storage |
 | `hcloud` | ❌ No | RWO only | Hetzner Cloud Block Storage |
 
 ### Using RWX volumes
@@ -140,20 +134,8 @@ See [Longhorn Talos Linux Support](https://longhorn.io/docs/advanced-resources/o
 
 ## Scaling
 
-To change the Hetzner volume size:
-
-```bash
-# Volumes can only be resized up, not down
-hcloud volume resize --size 50 <volume-id>
-```
-
-After resizing, the Hetzner block device grows immediately but the XFS partition and filesystem must be expanded:
-
-```bash
-# From a privileged pod on the worker (or via talosctl debug container):
-sgdisk -e /dev/sdb          # Fix GPT to use all space
-growpart /dev/sdb 1          # Grow partition 1 to fill disk
-xfs_growfs /var/lib/longhorn # Expand XFS filesystem online
-```
-
-Longhorn detects the additional space automatically once the filesystem is grown.
+Longhorn capacity scales with the EPHEMERAL storage available across the
+labelled baseline workers. Add or replace a storage worker with sufficient root
+disk capacity, wait for replicas to become healthy, and only then drain the old
+worker. Hetzner Cloud Volumes are independent PVC backends for the `hcloud`
+StorageClass; resizing one does not add capacity to Longhorn.

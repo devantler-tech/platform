@@ -19,7 +19,7 @@ spec:
   #
   # Control-plane-only DaemonSet tailing the kube-apiserver audit log
   # (/var/log/audit/kube/audit.log, written per
-  # talos/cluster/enable-audit-logging.yaml) and shipping it to Coroot's OTLP
+  # talos/control-planes/enable-audit-logging.yaml) and shipping it to Coroot's OTLP
   # logs endpoint, so audit events are searchable in the Coroot UI. The on-node
   # file (30-day rotation) stays the resilient primary; this forwarder only
   # copies. Runs as root because the apiserver writes the file 0600 root-owned;

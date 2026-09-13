@@ -1,4 +1,9 @@
 machine:
   kubelet:
+    # Keep this image in lockstep with spec.cluster.kubernetesVersion in
+    # ksail.prod.yaml while the legacy kubelet representation is required.
+    image: ghcr.io/siderolabs/kubelet:v1.36.4
+    defaultRuntimeSeccompProfileEnabled: true
+    disableManifestsDirectory: true
     extraArgs:
       rotate-server-certificates: "true"

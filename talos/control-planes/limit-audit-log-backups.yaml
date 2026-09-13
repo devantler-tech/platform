@@ -1,0 +1,6 @@
+# Retain the platform's three-file audit-log backup bound. Talos 1.14 supplies
+# the policy path, log path, 30-day age, and 100-MB file-size arguments.
+apiVersion: v1alpha1
+kind: KubeAPIServerConfig
+extraArgs:
+  audit-log-maxbackup: "3"

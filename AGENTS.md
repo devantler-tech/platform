@@ -375,7 +375,9 @@ The platform uses a hierarchical kustomization structure: **base** configuration
 - **Workaround:** fork the repository and use your own Age keys; re-encrypt every `*.enc.yaml` with your key.
 
 ### CNI Configuration
-- The Talos cluster starts with its default CNI disabled (via `talos-local/cluster/disable-default-cni-and-kube-proxy.yaml`).
+- The Talos cluster starts with its default CNI and kube-proxy disabled (via
+  `talos-local/cluster/disable-default-cni.yaml` and
+  `talos-local/cluster/disable-kube-proxy.yaml`).
 - Nodes stay `NotReady` until Cilium is installed by KSail.
 - This is expected — KSail handles CNI installation automatically.
 

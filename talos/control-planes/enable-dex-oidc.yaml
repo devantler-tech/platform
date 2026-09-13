@@ -1,0 +1,25 @@
+# Configure production Dex through Talos 1.14's structured Kubernetes
+# authentication document. The issuer uses a publicly trusted certificate.
+apiVersion: v1alpha1
+kind: KubeAuthenticationConfig
+configuration:
+  apiVersion: apiserver.config.k8s.io/v1beta1
+  kind: AuthenticationConfiguration
+  anonymous:
+    enabled: true
+    conditions:
+      - path: /livez
+      - path: /readyz
+      - path: /healthz
+  jwt:
+    - issuer:
+        url: "https://dex.platform.devantler.tech"
+        audiences:
+          - "public-client"
+      claimMappings:
+        username:
+          claim: "email"
+          prefix: "oidc:"
+        groups:
+          claim: "groups"
+          prefix: "oidc:"

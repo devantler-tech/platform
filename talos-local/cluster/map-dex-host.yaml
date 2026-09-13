@@ -1,0 +1,6 @@
+# Resolve the local Dex issuer to the host-network Envoy listener.
+apiVersion: v1alpha1
+kind: StaticHostConfig
+name: 127.0.0.1
+hostnames:
+  - dex.platform.lan
