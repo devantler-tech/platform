@@ -2097,8 +2097,9 @@ const (
 //
 // Moved again by the cert-manager C-0211 baseline context (#3239), derived on
 // main 1576b21c, whose approved aggregate is 59f51f17 above. cert-manager is
-// excluded from the add-security-context mutation, so the two inert fields are
-// supplied through the chart's own values. A HelmRelease is a controller-RBAC
+// excluded from add-security-context's pod and container rules, and the scan
+// reads the stored Deployment template rather than the mutated pod, so the two
+// inert fields are supplied through the chart's own values. A HelmRelease is a controller-RBAC
 // emitter, so a pure VALUES change moves this aggregate even though nothing is
 // granted.
 //

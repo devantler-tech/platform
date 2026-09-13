@@ -41,13 +41,17 @@ spec:
     dns01RecursiveNameservers: "1.1.1.1:53,8.8.8.8:53,9.9.9.9:53"
     dns01RecursiveNameserversOnly: true
     # C-0211 baseline context, supplied through the chart's own values because
-    # cert-manager is excluded from the add-security-context mutation (#3239).
-    # Helm merges these maps into the chart defaults, so runAsNonRoot and the
-    # RuntimeDefault seccomp profile are kept. Both fields are inert here: none
-    # of the three Deployments sets fsGroup or mounts a volume that ownership
-    # policy governs, and the empty seLinuxOptions object leaves SELinux type and
-    # MCS category selection to the runtime. The webhook and cainjector blocks
-    # below carry the same two fields.
+    # cert-manager is excluded from add-security-context's pod and container
+    # rules, and the scan reads the stored Deployment template rather than the
+    # mutated pod (#3239). Helm merges these maps into the chart defaults, so
+    # runAsNonRoot and the RuntimeDefault seccomp profile are kept. Both fields
+    # are inert here: the Deployment templates set no fsGroup, and although
+    # Kyverno's add-imageuid-pod-security-context rule adds fsGroup 1000 with
+    # this same OnRootMismatch policy when each pod is created, none of the
+    # three pods mounts a volume whose ownership that governs. The empty
+    # seLinuxOptions object leaves SELinux type and MCS category selection to
+    # the runtime. The webhook and cainjector blocks below carry the same two
+    # fields.
     securityContext:
       fsGroupChangePolicy: OnRootMismatch
     # Restricted PSS baseline: add runAsNonRoot to container SCs (chart leaves it unset, which fails validate-container-security).
