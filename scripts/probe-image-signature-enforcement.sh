@@ -361,9 +361,15 @@ image_list="$("${talosctl_bin}" -n "${node}" image list --namespace "${ns}" 2>/d
   fail_inconclusive "could not list images on node ${node} — cannot establish that the probe refs are absent"
 
 # Substring match on purpose: `image list` renders a ref plus its digest and
-# size, so an exact line match would miss it. The list is fed through a
-# here-string, not a pipe: `grep -q` stops reading at its first match, and on a
-# runner that ignores SIGPIPE a piped writer then logs "write error: Broken pipe".
+# size, so an exact line match would miss it.
+#
+# The text goes in through a here-string, NEVER a pipe. `grep -q` stops reading
+# at its first match. GitHub Actions ignores SIGPIPE, so a piped `printf` still
+# writing a large list then fails with "write error: Broken pipe", and under
+# `pipefail` that failure becomes the pipeline's status: a MATCH is reported as
+# NO match. On the cache guard that let a ref the node already held through as
+# absent. Measured in scripts/tests: restoring the pipe turns the cached-ref
+# INCONCLUSIVE into a FAIL.
 list_contains() {
   grep -qF -- "$2" <<<"$1"
 }
