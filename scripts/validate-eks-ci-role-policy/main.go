@@ -17,12 +17,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1953,6 +1957,7 @@ const (
 // The previous aggregate remains recorded here:
 //
 //	bc95f7ee1b1d9a29819844f5dfac84f256aa4caadac8eb39b43fed59992b85ea
+//
 // Moved again by the trusted tenant semantic-version rollout (#3677). Exactly
 // two existing source objects change: the ascoachingogvaner and wedding-app
 // OCIRepositories replace one fixed ref.tag with ref.semver >=1.0.0. Their
@@ -2086,6 +2091,19 @@ const (
 //
 // Previous aggregate: e36a3db7047b2b45855f6e3f2b25087dd4e56f74775bd08a5ba94efd3b86d300.
 const expectedRenderedSurfaceSHA = "59f51f1775bcded62ab018a6389ef11420b696a3b00357fc4424c4ab83935dba"
+
+// previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
+// machine-readable form. It is the base the approval was computed against.
+//
+// Every change that re-approves expectedRenderedSurfaceSHA must set this to the
+// expectedRenderedSurfaceSHA of the commit it merges onto. CI compares the two
+// ("approval-base" mode) against the first parent of the PR merge ref or the
+// merge-group commit, so an approval derived on a base that another re-approval
+// has since moved fails with the value to re-derive against, instead of reaching
+// review as a plausible-looking constant. A change that does not move the
+// surface leaves both constants untouched. Reverting a re-approval is itself a
+// re-approval: restore the older aggregate and record the current one here.
+const previousRenderedSurfaceSHA = "e36a3db7047b2b45855f6e3f2b25087dd4e56f74775bd08a5ba94efd3b86d300"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -3561,12 +3579,167 @@ func run(repoRoot string, stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
+// approvalBaseCommand selects the mode that compares this tree's approval record
+// with the approval on the commit it merges onto.
+const approvalBaseCommand = "approval-base"
+
+var exactSurfaceDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// surfaceApproval is the rendered-surface approval record declared in a
+// validator source file. previous is empty when the source predates the record.
+type surfaceApproval struct {
+	expected string
+	previous string
+}
+
+// validateApprovalRecord checks one tree's record: both aggregates are exact
+// digests and the approval does not claim to supersede itself.
+func validateApprovalRecord(expected string, previous string) error {
+	if !exactSurfaceDigest.MatchString(expected) {
+		return fmt.Errorf("expectedRenderedSurfaceSHA is not a lowercase SHA-256 digest: %q", expected)
+	}
+	if !exactSurfaceDigest.MatchString(previous) {
+		return fmt.Errorf("previousRenderedSurfaceSHA is not a lowercase SHA-256 digest: %q", previous)
+	}
+	if expected == previous {
+		return errors.New(
+			"previousRenderedSurfaceSHA equals expectedRenderedSurfaceSHA: " +
+				"record the aggregate this approval supersedes, not the one it asserts",
+		)
+	}
+	return nil
+}
+
+// parseSurfaceApproval reads the approval constants from Go source without
+// compiling it, so CI can read the base commit's validator from Git.
+func parseSurfaceApproval(source []byte, description string) (surfaceApproval, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), description, source, parser.SkipObjectResolution)
+	if err != nil {
+		return surfaceApproval{}, fmt.Errorf("parse %s: %w", description, err)
+	}
+	values := map[string]string{}
+	for _, declaration := range file.Decls {
+		general, ok := declaration.(*ast.GenDecl)
+		if !ok || general.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range general.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for index, name := range valueSpec.Names {
+				if name.Name != "expectedRenderedSurfaceSHA" && name.Name != "previousRenderedSurfaceSHA" {
+					continue
+				}
+				if _, duplicate := values[name.Name]; duplicate {
+					return surfaceApproval{}, fmt.Errorf("%s: %s is declared more than once", description, name.Name)
+				}
+				if index >= len(valueSpec.Values) {
+					return surfaceApproval{}, fmt.Errorf("%s: %s must be a string literal", description, name.Name)
+				}
+				literal, ok := valueSpec.Values[index].(*ast.BasicLit)
+				if !ok || literal.Kind != token.STRING {
+					return surfaceApproval{}, fmt.Errorf("%s: %s must be a string literal", description, name.Name)
+				}
+				value, unquoteErr := strconv.Unquote(literal.Value)
+				if unquoteErr != nil {
+					return surfaceApproval{}, fmt.Errorf("%s: unquote %s: %w", description, name.Name, unquoteErr)
+				}
+				values[name.Name] = value
+			}
+		}
+	}
+	expected, ok := values["expectedRenderedSurfaceSHA"]
+	if !ok {
+		return surfaceApproval{}, fmt.Errorf("%s: expectedRenderedSurfaceSHA is missing", description)
+	}
+	return surfaceApproval{expected: expected, previous: values["previousRenderedSurfaceSHA"]}, nil
+}
+
+// validateApprovalBase fails when this tree re-approves the rendered surface
+// against a base other than the commit it merges onto. Concurrent re-approvals
+// from one base otherwise each describe a tree missing the other's delta (#3740).
+func validateApprovalBase(headSource []byte, baseSource []byte) error {
+	head, err := parseSurfaceApproval(headSource, "head validator source")
+	if err != nil {
+		return err
+	}
+	if head.previous == "" {
+		return errors.New(
+			"head validator source: previousRenderedSurfaceSHA is missing: " +
+				"record the aggregate each approval supersedes next to expectedRenderedSurfaceSHA",
+		)
+	}
+	if recordErr := validateApprovalRecord(head.expected, head.previous); recordErr != nil {
+		return fmt.Errorf("head validator source: %w", recordErr)
+	}
+	base, err := parseSurfaceApproval(baseSource, "base validator source")
+	if err != nil {
+		return err
+	}
+	if !exactSurfaceDigest.MatchString(base.expected) {
+		return fmt.Errorf("base validator source: expectedRenderedSurfaceSHA is not a lowercase SHA-256 digest: %q", base.expected)
+	}
+	if head.expected == base.expected {
+		if base.previous != "" && head.previous != base.previous {
+			return fmt.Errorf(
+				"previousRenderedSurfaceSHA changed without moving expectedRenderedSurfaceSHA: "+
+					"restore it to %s, or re-approve the aggregate against the current base",
+				base.previous,
+			)
+		}
+		return nil
+	}
+	if head.previous != base.expected {
+		return fmt.Errorf(
+			"stale rendered authorization surface approval: it supersedes %s, but the base it merges onto approves %s; "+
+				"re-derive the aggregate against the current base and set previousRenderedSurfaceSHA to %s",
+			head.previous,
+			base.expected,
+			base.expected,
+		)
+	}
+	return nil
+}
+
+// runApprovalBase compares a head validator source with its base commit's copy.
+func runApprovalBase(basePath string, headPath string, stdout io.Writer, stderr io.Writer) int {
+	baseSource, err := os.ReadFile(basePath) //nolint:gosec // CI-supplied path to the base commit's validator.
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "EKS CI role policy: read base validator source: %v\n", err)
+		return 1
+	}
+	headSource, err := os.ReadFile(headPath) //nolint:gosec // CI-supplied path to this tree's validator.
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "EKS CI role policy: read head validator source: %v\n", err)
+		return 1
+	}
+	if err := validateApprovalBase(headSource, baseSource); err != nil {
+		_, _ = fmt.Fprintf(stderr, "EKS CI role policy: %v\n", err)
+		return 1
+	}
+	_, _ = fmt.Fprintln(stdout, "EKS CI role authorization approval base passed.")
+	return 0
+}
+
 // runCLI enforces the single explicit repository-root argument before invoking
 // validation, preventing ambient working-directory assumptions.
 func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == approvalBaseCommand {
+		if len(args) != 3 {
+			_, _ = fmt.Fprintln(stderr, "usage: validate-eks-ci-role-policy approval-base <base-validator-source> <head-validator-source>")
+			return 2
+		}
+		return runApprovalBase(args[1], args[2], stdout, stderr)
+	}
 	if len(args) != 1 {
 		_, _ = fmt.Fprintln(stderr, "usage: validate-eks-ci-role-policy <repository-root>")
 		return 2
+	}
+	if err := validateApprovalRecord(expectedRenderedSurfaceSHA, previousRenderedSurfaceSHA); err != nil {
+		_, _ = fmt.Fprintf(stderr, "EKS CI role policy: %v\n", err)
+		return 1
 	}
 	return run(args[0], stdout, stderr)
 }

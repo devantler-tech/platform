@@ -740,12 +740,32 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The approval-base step reads the validator on the first parent, which
+          # is the commit this PR merge ref or merge-group commit merges onto.
+          fetch-depth: 2
 
       - name: ⚙️ Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
+
+      - name: 🔐 Validate authorization approval base
+        # A re-approval of the rendered-surface fingerprint records the aggregate
+        # it supersedes. Two concurrent re-approvals from one base each describe a
+        # tree without the other's delta, and a resolved conflict in that constant
+        # looks correct (#3740). Compare the record with the approval on the base
+        # so a stale one fails naming the aggregate to re-derive against.
+        # HEAD^1 is that base because the PR merge ref's first parent is main and
+        # the merge queue SQUASHes each entry onto a single parent. Switching the
+        # queue to REBASE would make HEAD^1 the PR's own previous commit; revisit
+        # this step if the queue's merge method changes.
+        run: |
+          set -euo pipefail
+          base_source="$RUNNER_TEMP/approval-base-main.go"
+          git show HEAD^1:scripts/validate-eks-ci-role-policy/main.go > "$base_source"
+          go run ./scripts/validate-eks-ci-role-policy approval-base \
+            "$base_source" scripts/validate-eks-ci-role-policy/main.go
 
       - name: ⚙️ Install pinned kubectl renderer
         shell: bash
