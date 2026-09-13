@@ -137,8 +137,9 @@ func TestEvaluateParityProvesAFullCopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvaluateParity() = %v, want nil", err)
 	}
-	if summary.SourceObjects != 4 || summary.MatchedObjects != 4 || summary.ExtraDestinationObjects != 0 {
-		t.Fatalf("summary counts = %+v, want 4 source, 4 matched, 0 extra", summary)
+	if summary.SourceObjects != 4 || summary.MatchedObjects != 4 || summary.VerifiedLateObjects != 0 ||
+		summary.PendingObjects != 0 || !summary.Converged {
+		t.Fatalf("summary = %+v, want 4 source, 4 matched, 0 late, 0 pending, converged", summary)
 	}
 	if summary.SourceNewestBaseBackup != "wedding-db-20260909/20260908T030000" {
 		t.Fatalf("SourceNewestBaseBackup = %q", summary.SourceNewestBaseBackup)
@@ -162,6 +163,51 @@ func TestEvaluateParityAllowsObjectsArchivedDuringTheRun(t *testing.T) {
 	if summary.SourceObjects != 4 {
 		t.Fatalf("SourceObjects = %d, want the 4 objects present when the run started", summary.SourceObjects)
 	}
+	// The late WAL is still only in the shared bucket, so this pass must not
+	// read as cutover proof.
+	if summary.PendingObjects != 1 || summary.Converged {
+		t.Fatalf("summary = %+v, want 1 pending and not converged", summary)
+	}
+}
+
+// An object archived during the run that the pass already copied is checked
+// like any other copy, and once nothing is pending the mirror has converged.
+func TestEvaluateParityVerifiesCopiesOfObjectsArchivedDuringTheRun(t *testing.T) {
+	late := Object{Key: lateWAL, Size: 4200, ETag: "e5", LastModified: duringTheRun}
+	after := append(sourceListing(), late)
+	destination := append(destinationListing(), late)
+	summary, err := EvaluateParity(runStart, sourceListing(), after, destination)
+	if err != nil {
+		t.Fatalf("EvaluateParity() = %v, want nil", err)
+	}
+	if summary.VerifiedLateObjects != 1 || summary.PendingObjects != 0 || !summary.Converged {
+		t.Fatalf("summary = %+v, want 1 verified late object, 0 pending, converged", summary)
+	}
+}
+
+// backup.info describes a base backup but holds none of the database. A newer
+// directory that lost its data archive must not hide an older complete one.
+func TestEvaluateParitySelectsTheNewestCompleteBaseBackup(t *testing.T) {
+	newerInfo := Object{Key: "wedding-db-20260909/base/20260910T030000/backup.info", Size: 1200, ETag: "f6", LastModified: beforeRun}
+	before := append(sourceListing(), newerInfo)
+	destination := append(destinationListing(), newerInfo)
+	summary, err := EvaluateParity(runStart, before, before, destination)
+	if err != nil {
+		t.Fatalf("EvaluateParity() = %v, want nil", err)
+	}
+	if summary.SourceNewestBaseBackup != "wedding-db-20260909/20260908T030000" {
+		t.Fatalf("SourceNewestBaseBackup = %q, want the older complete backup", summary.SourceNewestBaseBackup)
+	}
+}
+
+func without(objects []Object, key string) []Object {
+	kept := make([]Object, 0, len(objects))
+	for _, object := range objects {
+		if object.Key != key {
+			kept = append(kept, object)
+		}
+	}
+	return kept
 }
 
 // A digest computed on only one of the two source listings says nothing about
@@ -305,6 +351,67 @@ func TestEvaluateParityRefusals(t *testing.T) {
 			want:        ErrNoArchivedWAL,
 		},
 		{
+			// backup.info survived but the data archive did not, so there is no
+			// database payload to restore even though WAL is present.
+			name:        "base backup without its data archive",
+			before:      func() []Object { return without(sourceListing(), baseData) },
+			after:       func() []Object { return without(sourceListing(), baseData) },
+			destination: func() []Object { return without(destinationListing(), baseData) },
+			want:        ErrNoBaseBackup,
+		},
+		{
+			name: "base backup with an empty data archive",
+			before: func() []Object {
+				s := sourceListing()
+				s[1].Size = 0
+				return s
+			},
+			after: func() []Object {
+				s := sourceListing()
+				s[1].Size = 0
+				return s
+			},
+			destination: func() []Object {
+				d := destinationListing()
+				d[1].Size = 0
+				return d
+			},
+			want: ErrNoBaseBackup,
+		},
+		{
+			// Residue from a failed earlier copy is in neither source listing, so
+			// nothing proves it belongs in the dedicated catalogue.
+			name:   "destination object absent from both source listings",
+			before: sourceListing,
+			after:  sourceListing,
+			destination: func() []Object {
+				return append(destinationListing(), Object{Key: lateWAL, Size: 4200, ETag: "e5", LastModified: duringTheRun})
+			},
+			want: ErrUnexpectedDestinationObject,
+		},
+		{
+			name:   "truncated copy of an object archived during the run",
+			before: sourceListing,
+			after: func() []Object {
+				return append(sourceListing(), Object{Key: lateWAL, Size: 4200, ETag: "e5", LastModified: duringTheRun})
+			},
+			destination: func() []Object {
+				return append(destinationListing(), Object{Key: lateWAL, Size: 10, ETag: "e5", LastModified: duringTheRun})
+			},
+			want: ErrPartialCopy,
+		},
+		{
+			name:   "altered copy of an object archived during the run",
+			before: sourceListing,
+			after: func() []Object {
+				return append(sourceListing(), Object{Key: lateWAL, Size: 4200, ETag: "e5", LastModified: duringTheRun})
+			},
+			destination: func() []Object {
+				return append(destinationListing(), Object{Key: lateWAL, Size: 4200, ETag: "zz", LastModified: duringTheRun})
+			},
+			want: ErrChecksumMismatch,
+		},
+		{
 			name: "duplicate key in a listing",
 			before: func() []Object {
 				return append(sourceListing(), sourceListing()[0])
@@ -361,25 +468,43 @@ func TestParseListingReadsMcJSONLines(t *testing.T) {
 		completeLine(2),
 		``,
 	}, "\n")
-	objects, err := ParseListing(strings.NewReader(input), sourceLocation)
+	listing, err := ParseListing(strings.NewReader(input), sourceLocation)
 	if err != nil {
 		t.Fatalf("ParseListing() = %v, want nil", err)
 	}
-	if len(objects) != 2 {
-		t.Fatalf("len(objects) = %d, want 2 files and no folders", len(objects))
+	if len(listing.Objects) != 2 {
+		t.Fatalf("len(objects) = %d, want 2 files and no folders", len(listing.Objects))
 	}
 	want := Object{Key: olderWAL, Size: 4000, ETag: "c3", SHA256: dataDigest, LastModified: time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)}
-	if objects[1] != want {
-		t.Fatalf("objects[1] = %+v, want %+v", objects[1], want)
+	if listing.Objects[1] != want {
+		t.Fatalf("objects[1] = %+v, want %+v", listing.Objects[1], want)
+	}
+	if !listing.Started.IsZero() {
+		t.Fatalf("Started = %v, want zero for a completion record without a start", listing.Started)
+	}
+}
+
+func TestParseListingReadsTheStartTime(t *testing.T) {
+	input := fileLine(baseInfo, "") + "\n" + completeLineStarted(sourceLocation, 1, "2026-09-13T10:00:00Z")
+	listing, err := ParseListing(strings.NewReader(input), sourceLocation)
+	if err != nil {
+		t.Fatalf("ParseListing() = %v, want nil", err)
+	}
+	if !listing.Started.Equal(runStart) {
+		t.Fatalf("Started = %v, want %v", listing.Started, runStart)
+	}
+	bad := fileLine(baseInfo, "") + "\n" + completeLineStarted(sourceLocation, 1, "yesterday")
+	if _, err := ParseListing(strings.NewReader(bad), sourceLocation); !errors.Is(err, ErrMalformedListing) {
+		t.Fatalf("ParseListing(bad start) = %v, want %v", err, ErrMalformedListing)
 	}
 }
 
 // An empty catalogue still needs the completion record, and then parses as
 // empty rather than as malformed; EvaluateParity refuses an empty source.
 func TestParseListingAcceptsACompletedEmptyListing(t *testing.T) {
-	objects, err := ParseListing(strings.NewReader(completeLine(0)+"\n"), sourceLocation)
-	if err != nil || len(objects) != 0 {
-		t.Fatalf("ParseListing() = %v, %v, want no objects and nil", objects, err)
+	listing, err := ParseListing(strings.NewReader(completeLine(0)+"\n"), sourceLocation)
+	if err != nil || len(listing.Objects) != 0 {
+		t.Fatalf("ParseListing() = %v, %v, want no objects and nil", listing.Objects, err)
 	}
 }
 
@@ -450,13 +575,23 @@ func TestParseListingBindsTheListingToItsLocation(t *testing.T) {
 	}
 }
 
-func writeListing(t *testing.T, name, location string, keys ...string) string {
+func completeLineStarted(location string, files int, started string) string {
+	return `{"status":"success","type":"listing-complete","location":"` + location + `","started":"` + started + `","files":` + itoa(files) + `}`
+}
+
+// writeListing writes a listing whose completion record carries started, or no
+// start time when started is empty.
+func writeListing(t *testing.T, name, location, started string, keys ...string) string {
 	t.Helper()
 	lines := make([]string, 0, len(keys)+1)
 	for _, key := range keys {
 		lines = append(lines, fileLine(key, ""))
 	}
-	lines = append(lines, completeLineAt(location, len(keys)))
+	if started == "" {
+		lines = append(lines, completeLineAt(location, len(keys)))
+	} else {
+		lines = append(lines, completeLineStarted(location, len(keys), started))
+	}
 	file := filepath.Join(t.TempDir(), name)
 	if err := os.WriteFile(file, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -464,22 +599,69 @@ func writeListing(t *testing.T, name, location string, keys ...string) string {
 	return file
 }
 
+const (
+	runStartArg  = "2026-09-13T10:00:00Z"
+	afterStarted = "2026-09-13T10:30:00Z"
+)
+
 // A copy that landed in the wrong bucket produces matching listings there, so
 // the destination listing must be proven to come from the reviewed bucket.
 func TestRunEvaluateRefusesListingsFromTheWrongLocation(t *testing.T) {
-	keys := []string{baseInfo, olderWAL}
-	before := writeListing(t, "before", sourceLocation, keys...)
-	after := writeListing(t, "after", sourceLocation, keys...)
-	good := writeListing(t, "destination", destinationLocation, keys...)
-	if err := run([]string{"evaluate", "2026-09-13T10:00:00Z", "platform-backups", before, after, good}, io.Discard); err != nil {
+	keys := []string{baseInfo, baseData, olderWAL}
+	before := writeListing(t, "before", sourceLocation, runStartArg, keys...)
+	after := writeListing(t, "after", sourceLocation, afterStarted, keys...)
+	good := writeListing(t, "destination", destinationLocation, "", keys...)
+	if err := run([]string{"evaluate", runStartArg, "platform-backups", before, after, good}, io.Discard); err != nil {
 		t.Fatalf("run(evaluate) = %v, want nil", err)
 	}
-	wrongBucket := writeListing(t, "wrong", "platform-backups-copy/"+destinationPrefix, keys...)
-	if err := run([]string{"evaluate", "2026-09-13T10:00:00Z", "platform-backups", before, after, wrongBucket}, io.Discard); !errors.Is(err, ErrListingLocation) {
+	wrongBucket := writeListing(t, "wrong", "platform-backups-copy/"+destinationPrefix, "", keys...)
+	if err := run([]string{"evaluate", runStartArg, "platform-backups", before, after, wrongBucket}, io.Discard); !errors.Is(err, ErrListingLocation) {
 		t.Fatalf("run(evaluate, wrong destination) = %v, want %v", err, ErrListingLocation)
 	}
-	swapped := writeListing(t, "swapped", destinationLocation, keys...)
-	if err := run([]string{"evaluate", "2026-09-13T10:00:00Z", "platform-backups", swapped, after, good}, io.Discard); !errors.Is(err, ErrListingLocation) {
+	swapped := writeListing(t, "swapped", destinationLocation, runStartArg, keys...)
+	if err := run([]string{"evaluate", runStartArg, "platform-backups", swapped, after, good}, io.Discard); !errors.Is(err, ErrListingLocation) {
 		t.Fatalf("run(evaluate, source listed from destination) = %v, want %v", err, ErrListingLocation)
+	}
+}
+
+// The command binds the run start it is given to the starting listing, so a
+// start time left over from an earlier pass is refused end to end.
+func TestRunEvaluateRefusesARunStartFromAnotherPass(t *testing.T) {
+	keys := []string{baseInfo, baseData, olderWAL}
+	before := writeListing(t, "before", sourceLocation, runStartArg, keys...)
+	after := writeListing(t, "after", sourceLocation, afterStarted, keys...)
+	destination := writeListing(t, "destination", destinationLocation, "", keys...)
+	stale := "2026-09-12T10:00:00Z"
+	if err := run([]string{"evaluate", stale, "platform-backups", before, after, destination}, io.Discard); !errors.Is(err, ErrRunStartMismatch) {
+		t.Fatalf("run(evaluate, stale run start) = %v, want %v", err, ErrRunStartMismatch)
+	}
+}
+
+func TestBindRunStart(t *testing.T) {
+	started := func(at time.Time) Listing { return Listing{Started: at} }
+	if err := BindRunStart(runStart, started(runStart), started(duringTheRun)); err != nil {
+		t.Fatalf("BindRunStart(this pass) = %v, want nil", err)
+	}
+	tests := []struct {
+		name          string
+		start         time.Time
+		before, after Listing
+	}{
+		// Objects written between an earlier pass and this one would otherwise
+		// pass as archived during the run and never be checked.
+		{"run start from an earlier pass", beforeRun, started(runStart), started(duringTheRun)},
+		{"starting listing without a start time", runStart, Listing{}, started(duringTheRun)},
+		// A zero run start equals a zero listing start and is not after it, so
+		// only the explicit missing-start check refuses this.
+		{"no start time anywhere", time.Time{}, Listing{}, Listing{}},
+		{"ending listing without a start time", runStart, started(runStart), Listing{}},
+		{"ending listing started before the starting listing", runStart, started(runStart), started(beforeRun)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := BindRunStart(tt.start, tt.before, tt.after); !errors.Is(err, ErrRunStartMismatch) {
+				t.Fatalf("BindRunStart() = %v, want %v", err, ErrRunStartMismatch)
+			}
+		})
 	}
 }

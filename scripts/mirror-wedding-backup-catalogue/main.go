@@ -10,14 +10,19 @@
 //
 //   - the plan reads with the shared credential and writes with the dedicated
 //     one, to exactly the reviewed destination;
-//   - every listing is proven complete, the listing taken when the run started
-//     misses nothing that already existed, and every object in it is unchanged
-//     when the run ends; and
+//   - every listing is proven complete, the run start is the one recorded by
+//     this pass's starting listing, that listing misses nothing that already
+//     existed, and every object in it is unchanged when the run ends;
 //   - every one of those objects exists in the destination with a matching size
-//     and content checksum.
+//     and content checksum, and the newest base backup carries its data archive
+//     rather than only its backup.info; and
+//   - every destination object that was not in the starting listing is an
+//     object archived during the run, copied with a matching size and checksum.
 //
-// Objects archived after the run started are expected and left to the next
-// pass. An object that is missing from the starting listing but was written
+// Objects archived after the run started are expected. Those already copied are
+// verified; the rest are reported as pending, and the result says the mirror has
+// not converged, so it cannot serve as cutover proof until a later pass copies
+// them. An object that is missing from the starting listing but was written
 // before the run started proves that listing was incomplete, so it is refused.
 //
 // Usage:
@@ -28,24 +33,30 @@
 // validate-plan takes the exact values the mirror job will use, so a typo in
 // any of them is refused rather than replaced by the reviewed value.
 //
-// <run-start> is an RFC 3339 timestamp taken before the starting listing. Each
-// listing is the `mc ls --json --recursive` output for the catalogue prefix,
-// with keys starting at the server directory, optionally carrying a "sha256"
-// field (64 lowercase hex characters) per object.
+// <run-start> is the RFC 3339 timestamp the wrapper took immediately before
+// starting the source listing. Each listing is the `mc ls --json --recursive`
+// output for the catalogue prefix, with keys starting at the server directory,
+// optionally carrying a "sha256" field (64 lowercase hex characters) per object.
 //
 // Raw `mc ls` output has no terminal record and its keys carry no bucket, so a
 // listing cut short, or taken from the wrong bucket, is indistinguishable from
 // the right one. The caller must therefore append one completion record as the
 // last line, only after `mc ls` exits successfully, naming the bucket and
-// prefix it listed:
+// prefix it listed and, for the two source listings, the time it started that
+// listing:
 //
-//	{"status":"success","type":"listing-complete","location":"<bucket>/<prefix>","files":<number of file entries>}
+//	{"status":"success","type":"listing-complete","location":"<bucket>/<prefix>","started":"<RFC 3339>","files":<number of file entries>}
 //
 // A listing without that record, whose count does not match, or whose location
-// is not the one being evaluated, is refused.
+// is not the one being evaluated, is refused. <run-start> must equal the
+// starting listing's "started", and the ending listing must not have started
+// before it, so a start time left over from an earlier pass is refused rather
+// than letting objects written since then pass as archived during this run.
 //
-// The result is a single non-secret JSON line: counts, the newest base backup,
-// and the newest WAL segment on each side.
+// The result is a single non-secret JSON line: counts, the objects still
+// pending, whether the mirror has converged, the newest base backup, and the
+// newest WAL segment on each side. Only a converged result proves the
+// destination is ready for the cutover.
 package main
 
 import (
@@ -85,6 +96,9 @@ var (
 	ErrNoArchivedWAL     = errors.New("no archived WAL")
 	ErrMalformedListing  = errors.New("malformed listing")
 	ErrListingLocation   = errors.New("listing from an unexpected location")
+	ErrRunStartMismatch  = errors.New("run start does not belong to this pass")
+
+	ErrUnexpectedDestinationObject = errors.New("unexpected destination object")
 )
 
 // Location is one side of the mirror: a bucket, the catalogue prefix inside it,
@@ -110,11 +124,22 @@ type Object struct {
 	LastModified time.Time
 }
 
+// Listing is a parsed listing and the time its wrapper started it, which is
+// zero when the completion record carries no "started" field.
+type Listing struct {
+	Objects []Object
+	Started time.Time
+}
+
 // Summary is the non-secret evidence a successful evaluation reports.
+// Converged is true only when no object archived during the run is still
+// missing from the destination.
 type Summary struct {
 	SourceObjects               int    `json:"sourceObjects"`
 	MatchedObjects              int    `json:"matchedObjects"`
-	ExtraDestinationObjects     int    `json:"extraDestinationObjects"`
+	VerifiedLateObjects         int    `json:"verifiedLateObjects"`
+	PendingObjects              int    `json:"pendingObjects"`
+	Converged                   bool   `json:"converged"`
 	SourceNewestBaseBackup      string `json:"sourceNewestBaseBackup"`
 	DestinationNewestBaseBackup string `json:"destinationNewestBaseBackup"`
 	SourceNewestWAL             string `json:"sourceNewestWal"`
@@ -144,13 +169,36 @@ func ValidatePlan(plan Plan) error {
 }
 
 var (
-	walSegment = regexp.MustCompile(`^[0-9A-F]{24}$`)
-	backupID   = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}$`)
-	sha256Hex  = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	walSegment  = regexp.MustCompile(`^[0-9A-F]{24}$`)
+	backupID    = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}$`)
+	sha256Hex   = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	dataArchive = regexp.MustCompile(`^data\.tar(\.[a-z0-9]+)?$`)
 )
 
+// BindRunStart refuses a run start that is not the one the starting listing
+// recorded, and an ending listing that started before it. Without this, a
+// start time reused from an earlier pass lets an object written after that
+// time but missed by this pass's starting listing pass as archived during the
+// run, so it is never checked against the destination.
+func BindRunStart(runStart time.Time, before, after Listing) error {
+	if before.Started.IsZero() || after.Started.IsZero() {
+		return fmt.Errorf("%w: a source listing has no start time", ErrRunStartMismatch)
+	}
+	if !runStart.Equal(before.Started) {
+		return fmt.Errorf("%w: run start %s, starting listing started %s",
+			ErrRunStartMismatch, runStart.Format(time.RFC3339Nano), before.Started.Format(time.RFC3339Nano))
+	}
+	if after.Started.Before(before.Started) {
+		return fmt.Errorf("%w: ending listing started before the starting listing", ErrRunStartMismatch)
+	}
+	return nil
+}
+
 // EvaluateParity proves that the starting listing was complete, that every
-// object in it is unchanged at the end, and that each was copied intact.
+// object in it is unchanged at the end and was copied intact, and that every
+// other destination object is a verified copy of an object archived during the
+// run. Objects archived during the run but not yet copied are reported as
+// pending rather than refused.
 func EvaluateParity(runStart time.Time, before, after, destination []Object) (Summary, error) {
 	if runStart.IsZero() {
 		return Summary{}, fmt.Errorf("%w: no run start", ErrMalformedListing)
@@ -196,6 +244,35 @@ func EvaluateParity(runStart time.Time, before, after, destination []Object) (Su
 		matched++
 	}
 
+	// A destination object absent from the starting listing is only trusted as a
+	// copy of an object archived during the run; anything else, such as residue
+	// from a failed earlier copy, could change what later backup discovery finds.
+	verifiedLate := 0
+	for key, copied := range destinationIndex {
+		if _, ok := beforeIndex[key]; ok {
+			continue
+		}
+		current, ok := afterIndex[key]
+		if !ok {
+			return Summary{}, fmt.Errorf("%w: %s", ErrUnexpectedDestinationObject, key)
+		}
+		if copied.Size != current.Size {
+			return Summary{}, fmt.Errorf("%w: %s", ErrPartialCopy, key)
+		}
+		if err := sameContent(current, copied); err != nil {
+			return Summary{}, fmt.Errorf("%w: %s", err, key)
+		}
+		verifiedLate++
+	}
+	pending := 0
+	for key := range afterIndex {
+		_, listed := beforeIndex[key]
+		_, copied := destinationIndex[key]
+		if !listed && !copied {
+			pending++
+		}
+	}
+
 	sourceBackup := newestBaseBackup(beforeIndex)
 	if sourceBackup == "" {
 		return Summary{}, ErrNoBaseBackup
@@ -209,7 +286,9 @@ func EvaluateParity(runStart time.Time, before, after, destination []Object) (Su
 	return Summary{
 		SourceObjects:               len(beforeIndex),
 		MatchedObjects:              matched,
-		ExtraDestinationObjects:     len(destinationIndex) - matched,
+		VerifiedLateObjects:         verifiedLate,
+		PendingObjects:              pending,
+		Converged:                   pending == 0,
 		SourceNewestBaseBackup:      sourceBackup,
 		DestinationNewestBaseBackup: newestBaseBackup(destinationIndex),
 		SourceNewestWAL:             sourceWAL,
@@ -255,18 +334,34 @@ func index(objects []Object) (map[string]Object, error) {
 	return result, nil
 }
 
-// newestBaseBackup returns "<server>/<backup ID>" for the latest base backup,
-// identified by its backup.info file in the Barman Cloud layout.
+// newestBaseBackup returns "<server>/<backup ID>" for the latest complete base
+// backup in the Barman Cloud layout: one with both its backup.info file and a
+// non-empty data archive. backup.info alone describes a backup but holds none
+// of the database, so a directory that lost its archive is not restorable.
 func newestBaseBackup(objects map[string]Object) string {
-	newest, newestID := "", ""
-	for key := range objects {
+	hasInfo := map[string]bool{}
+	hasData := map[string]bool{}
+	for key, object := range objects {
 		parts := strings.Split(key, "/")
-		if len(parts) != 4 || parts[1] != "base" || parts[3] != "backup.info" ||
-			!backupID.MatchString(parts[2]) {
+		if len(parts) != 4 || parts[1] != "base" || !backupID.MatchString(parts[2]) {
 			continue
 		}
-		if parts[2] > newestID || (parts[2] == newestID && parts[0]+"/"+parts[2] > newest) {
-			newest, newestID = parts[0]+"/"+parts[2], parts[2]
+		backup := parts[0] + "/" + parts[2]
+		switch {
+		case parts[3] == "backup.info":
+			hasInfo[backup] = true
+		case dataArchive.MatchString(parts[3]) && object.Size > 0:
+			hasData[backup] = true
+		}
+	}
+	newest, newestID := "", ""
+	for backup := range hasInfo {
+		if !hasData[backup] {
+			continue
+		}
+		_, id, _ := strings.Cut(backup, "/")
+		if id > newestID || (id == newestID && backup > newest) {
+			newest, newestID = backup, id
 		}
 	}
 	return newest
@@ -301,6 +396,7 @@ type listingEntry struct {
 	LastModified string `json:"lastModified"`
 	Files        *int   `json:"files"`
 	Location     string `json:"location"`
+	Started      string `json:"started"`
 }
 
 // ParseListing reads `mc ls --json --recursive` output ending in a completion
@@ -309,7 +405,18 @@ type listingEntry struct {
 // must start at the Barman server directory, so a listing rooted one level too
 // high or too low is reported as malformed rather than as a catalogue with no
 // backups.
-func ParseListing(r io.Reader, location string) ([]Object, error) {
+func ParseListing(r io.Reader, location string) (Listing, error) {
+	var started time.Time
+	objects, err := parseListing(r, location, &started)
+	if err != nil {
+		return Listing{}, err
+	}
+	return Listing{Objects: objects, Started: started}, nil
+}
+
+// parseListing reads the objects and records the completion record's start
+// time, if it has one, in started.
+func parseListing(r io.Reader, location string, started *time.Time) ([]Object, error) {
 	var objects []Object
 	complete := false
 	scanner := bufio.NewScanner(r)
@@ -345,6 +452,13 @@ func ParseListing(r io.Reader, location string) ([]Object, error) {
 			if *entry.Files != len(objects) {
 				return nil, fmt.Errorf("%w: completion record counts %d files, listing has %d",
 					ErrIncompleteListing, *entry.Files, len(objects))
+			}
+			if entry.Started != "" {
+				parsed, err := time.Parse(time.RFC3339Nano, entry.Started)
+				if err != nil {
+					return nil, fmt.Errorf("%w: completion start: %w", ErrMalformedListing, err)
+				}
+				*started = parsed
 			}
 			complete = true
 			continue
@@ -383,16 +497,16 @@ func catalogueKey(key string) bool {
 }
 
 // readListing parses one listing file named on the command line.
-func readListing(name, location string) ([]Object, error) {
+func readListing(name, location string) (Listing, error) {
 	file, err := os.Open(name)
 	if err != nil {
-		return nil, err
+		return Listing{}, err
 	}
-	objects, parseErr := ParseListing(file, location)
+	listing, parseErr := ParseListing(file, location)
 	if closeErr := file.Close(); closeErr != nil && parseErr == nil {
-		return nil, closeErr
+		return Listing{}, closeErr
 	}
-	return objects, parseErr
+	return listing, parseErr
 }
 
 // run dispatches the command line and writes the summary for a passing evaluation.
@@ -416,15 +530,18 @@ func run(args []string, stdout io.Writer) error {
 			args[2] + "/" + sourcePrefix,
 			destinationBucket + "/" + destinationPrefix,
 		}
-		listings := make([][]Object, 0, 3)
+		listings := make([]Listing, 0, 3)
 		for i, name := range args[3:] {
-			objects, err := readListing(name, locations[i])
+			listing, err := readListing(name, locations[i])
 			if err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
-			listings = append(listings, objects)
+			listings = append(listings, listing)
 		}
-		summary, err := EvaluateParity(runStart, listings[0], listings[1], listings[2])
+		if err := BindRunStart(runStart, listings[0], listings[1]); err != nil {
+			return err
+		}
+		summary, err := EvaluateParity(runStart, listings[0].Objects, listings[1].Objects, listings[2].Objects)
 		if err != nil {
 			return err
 		}
