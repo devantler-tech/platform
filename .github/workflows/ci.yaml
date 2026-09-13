@@ -296,6 +296,8 @@ jobs:
               # gate that proves the rule actually fires are one contract.
               - 'tests/label-baseline-workers/**'
               - 'scripts/tests/test-label-baseline-workers.sh'
+              # The hcloud consumers that require that label (#3287).
+              - 'scripts/tests/test-hcloud-baseline-worker-affinity.sh'
               - 'tests/audit-privileged-rbac/**'
               - 'tests/auto-vpa/**'
               - 'scripts/tests/test-audit-privileged-rbac.sh'
@@ -1125,6 +1127,8 @@ jobs:
           bash scripts/tests/test-add-baseline-context.sh
           shellcheck scripts/tests/test-label-baseline-workers.sh
           bash scripts/tests/test-label-baseline-workers.sh
+          shellcheck scripts/tests/test-hcloud-baseline-worker-affinity.sh
+          bash scripts/tests/test-hcloud-baseline-worker-affinity.sh
           shellcheck scripts/guard-longhorn-ui-baseline-context.sh scripts/tests/test-guard-longhorn-ui-baseline-context.sh scripts/tests/test-longhorn-ui-baseline-context.sh
           bash scripts/tests/test-guard-longhorn-ui-baseline-context.sh
           bash scripts/tests/test-longhorn-ui-baseline-context.sh
