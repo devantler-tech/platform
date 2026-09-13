@@ -1,0 +1,37 @@
+# Prod-only: run the daily vault-snapshot CronJob's pods on static baseline
+# workers only (#3287).
+#
+# Each run mounts the `vault-snapshots` PVC, which store-vault-snapshots-on-hcloud
+# puts on an hcloud block volume. An hcloud volume attaches to one node and is
+# not force-detached when that node departs. Measured on prod 2026-09-13: the
+# last three runs all completed on an autoscaler node, so every run left the
+# volume attached to a node the autoscaler may reclaim. The next run — or the
+# vault-snapshot-init Job — then waits on a stranded attachment.
+#
+# The rule requires the positive `platform.devantler.tech/baseline-worker=true`
+# label, stamped by the label-baseline-workers policies on `prod-worker-*` only.
+# A missing label fails closed: the pod goes Pending instead of attaching the
+# volume to an unlabelled autoscaler node. The Job-level activeDeadlineSeconds
+# still bounds a run that cannot schedule.
+#
+# Hetzner overlay only: the label and the hcloud StorageClass exist only on this
+# provider, so the local Docker cluster keeps the unconstrained base.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-snapshot
+  namespace: openbao
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: platform.devantler.tech/baseline-worker
+                        operator: In
+                        values:
+                          - "true"

@@ -1,0 +1,30 @@
+# Prod-only: run the one-shot vault-snapshot-init Job on static baseline
+# workers only (#3287).
+#
+# The Job mounts the same hcloud-backed `vault-snapshots` PVC as the daily
+# CronJob, so it carries the same required node affinity (see
+# keep-vault-snapshot-on-baseline-workers.yaml for the stranded-volume
+# rationale). The positive `platform.devantler.tech/baseline-worker=true` label
+# fails closed on a node the label-baseline-workers policies did not stamp.
+#
+# The Job is immutable and force-enabled, so adding this affinity makes Flux
+# replace it once and take one fresh baseline snapshot. That is the Job's
+# intended behaviour on a spec change; the completed Job is still retained
+# afterwards, so it does not re-run on later reconciles.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-snapshot-init
+  namespace: openbao
+spec:
+  template:
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: platform.devantler.tech/baseline-worker
+                    operator: In
+                    values:
+                      - "true"

@@ -196,6 +196,10 @@ patches:
   # vault-snapshots, so no explicit target is needed.
   - path: patches/store-vault-snapshots-on-hcloud.yaml
   - path: patches/recover-vault-snapshot.yaml
+  # Prod-only: the vault-snapshot CronJob and Job mount that hcloud volume, so
+  # both require a static baseline worker (#3287). Each self-identifies.
+  - path: patches/keep-vault-snapshot-on-baseline-workers.yaml
+  - path: patches/keep-vault-snapshot-init-on-baseline-workers.yaml
   # Prod-only: add a generous memory `default` to the kube-system / kyverno
   # LimitRanges (which are CPU-only in the base). This seeds the memory limit the
   # vertical-pod-autoscalers/ VPAs scale ratio-preserving, so VPA right-sizes the memory
