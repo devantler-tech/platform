@@ -406,6 +406,7 @@ jobs:
               - 'scripts/tests/test-cilium-mutual-auth-policy.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy-regressions.sh'
               - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
+              - 'scripts/tests/test-coroot-api-key-contract.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh'
@@ -1204,6 +1205,15 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-postgres-scrape-policy.sh
           bash scripts/tests/test-coroot-postgres-scrape-policy.sh
+
+      - name: 🔑 Validate Coroot API key and registry egress
+        if: needs.changes.outputs.k8s == 'true'
+        # Schema validation accepts a Coroot resource whose agents carry no API
+        # key. Pin agents, project and audit forwarder to one Secret, and keep
+        # the operator's registry discovery egress exact.
+        run: |
+          shellcheck scripts/tests/test-coroot-api-key-contract.sh
+          bash scripts/tests/test-coroot-api-key-contract.sh
 
       - name: 🌐 Validate active Cilium device selection
         if: needs.changes.outputs.k8s == 'true' || needs.changes.outputs.bridge_validation == 'true'
