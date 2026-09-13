@@ -195,9 +195,16 @@ spec:
   # nothing to send and stays quiet by design, exactly as the old Alertmanager
   # did. Slack alerting is a prod-only concern.
   #
-  # Describing a project re-homes the bundled agents onto its API key, but the
-  # keySecret is created automatically by the operator (generated in-cluster,
-  # no seed), so telemetry keeps flowing with zero manual steps.
+  # One API key for everything that sends to Coroot. The operator generates the
+  # project key Secret below in-cluster (no seed). Describing the project does
+  # NOT wire the bundled agents to it: the operator sets their API_KEY env only
+  # from the top-level apiKey/apiKeySecret, so without this reference the
+  # node-agent and cluster-agent run with an empty API_KEY. The audit-log
+  # forwarder reads the same Secret. This stays in the hetzner overlay because
+  # the Secret only exists where a project is described; the base has none.
+  apiKeySecret:
+    name: coroot-api-key
+    key: key
   projects:
     - name: platform
       apiKeys:
