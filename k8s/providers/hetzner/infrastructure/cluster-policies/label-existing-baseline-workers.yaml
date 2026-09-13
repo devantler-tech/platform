@@ -1,0 +1,47 @@
+# Prod-only: retrofit the positive baseline-worker label onto Nodes that
+# already exist. The admission half, and why the label exists, is
+# label-baseline-workers.yaml.
+#
+# This is a separate policy because Kyverno requires mutate.targets on every
+# rule when spec.mutateExistingOnPolicyUpdate is set, which an admission rule
+# cannot carry. The same split is used by restrict-storage-to-baseline-workers
+# and drain-autoscale-node-storage.
+#
+# The background controller needs update/patch on core Nodes to apply it; that
+# grant is controllers/cluster-roles/kyverno-label-baseline-worker-nodes.yaml,
+# which ships one Flux layer earlier so it is aggregated before this policy is
+# admitted. Kyverno rejects the policy at admission without it.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: label-existing-baseline-workers
+  annotations:
+    policies.kyverno.io/title: Label Existing Baseline Workers (Retrofit)
+    policies.kyverno.io/category: Scheduling, Storage
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Node
+    policies.kyverno.io/description: >-
+      Retro-applies platform.devantler.tech/baseline-worker=true to the
+      baseline worker Nodes (prod-worker-*) that already exist when the policy
+      lands, or that were admitted while Kyverno was unavailable.
+spec:
+  failurePolicy: Ignore
+  mutateExistingOnPolicyUpdate: true
+  rules:
+    - name: label-existing-baseline-worker-nodes
+      match:
+        any:
+          - resources:
+              kinds:
+                - v1/Node
+              names:
+                - "prod-worker-*"
+      mutate:
+        targets:
+          - apiVersion: v1
+            kind: Node
+            name: "prod-worker-*"
+        patchStrategicMerge:
+          metadata:
+            labels:
+              platform.devantler.tech/baseline-worker: "true"

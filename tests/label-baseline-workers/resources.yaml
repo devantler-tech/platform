@@ -1,0 +1,34 @@
+# A baseline worker carrying the labels the shared Talos worker config stamps.
+apiVersion: v1
+kind: Node
+metadata:
+  name: prod-worker-1
+  labels:
+    kubernetes.io/hostname: prod-worker-1
+    node.longhorn.io/create-default-disk: "true"
+---
+# A baseline worker with no labels at all: the label must not depend on any
+# other label being present.
+apiVersion: v1
+kind: Node
+metadata:
+  name: prod-worker-2
+---
+# An autoscaler node with the SAME labels as a baseline worker and no
+# ksail.io/autoscaled marker — the live shape measured 2026-09-13. Only its
+# name tells it apart, so it must stay unlabelled.
+apiVersion: v1
+kind: Node
+metadata:
+  name: autoscale-cx43-59ee3c84869749a0
+  labels:
+    kubernetes.io/hostname: autoscale-cx43-59ee3c84869749a0
+    node.longhorn.io/create-default-disk: "true"
+---
+# A control-plane node is not a baseline worker.
+apiVersion: v1
+kind: Node
+metadata:
+  name: prod-control-plane-2
+  labels:
+    kubernetes.io/hostname: prod-control-plane-2

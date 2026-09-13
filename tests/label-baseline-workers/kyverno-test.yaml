@@ -1,0 +1,30 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: label-baseline-workers
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/label-baseline-workers.yaml
+resources:
+  - resources.yaml
+results:
+  # Baseline workers are labelled, with or without other labels present.
+  - policy: label-baseline-workers
+    rule: label-baseline-worker-nodes
+    resources:
+      - prod-worker-1
+      - prod-worker-2
+    kind: Node
+    result: pass
+    patchedResources: patched-resources.yaml
+  # An autoscaler node identical to a baseline worker except for its name, and a
+  # control-plane node, are never labelled. `kyverno test` also reports a rule
+  # that matches nothing as skip, so scripts/tests/test-label-baseline-workers.sh
+  # asserts the labelled and unlabelled states positively.
+  - policy: label-baseline-workers
+    rule: label-baseline-worker-nodes
+    resources:
+      - autoscale-cx43-59ee3c84869749a0
+      - prod-control-plane-2
+    kind: Node
+    result: skip

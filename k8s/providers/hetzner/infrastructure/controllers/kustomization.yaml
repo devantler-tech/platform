@@ -40,6 +40,12 @@ resources:
   - flux-instance/
   - hcloud-ccm/
   - hcloud-csi/
+  # Kyverno background-controller + reports-controller grants on core Nodes for
+  # the label-baseline-workers / label-existing-baseline-workers policies
+  # (../cluster-policies/, next Flux layer) — must be live before the policies
+  # are admitted.
+  - cluster-roles/kyverno-label-baseline-worker-nodes.yaml
+  - cluster-roles/kyverno-reports-read-nodes.yaml
   - kubelet-serving-cert-approver/
   - longhorn/
   - origin-ca-issuer/

@@ -46,6 +46,12 @@ resources:
   # the file headers.
   - cluster-policies/restrict-storage-to-baseline-workers.yaml
   - cluster-policies/drain-autoscale-node-storage.yaml
+  # Prod-only: a POSITIVE platform.devantler.tech/baseline-worker label on the
+  # static workers, so workloads that must never ride an autoscaler node can
+  # require it and fail closed (#3287). Admission half + mutate-existing
+  # retrofit half, split for the same Kyverno reason as the pair above.
+  - cluster-policies/label-baseline-workers.yaml
+  - cluster-policies/label-existing-baseline-workers.yaml
   # Prod-only: reconcile Coroot's node Custom Cloud Pricing to Hetzner rates
   # (Coroot otherwise prices non-AWS/GCP/Azure nodes at the GCP-C4 fallback,
   # ~16x the real bill). Lives in this `infrastructure` layer because it targets
