@@ -34,7 +34,11 @@ beside that active shared archive: its separate `wedding-db-backups` bucket and 
 PushSecret, and the dedicated `apps/wedding-app/backup/r2` OpenBao path. The two
 credential branches rotate independently. The live Wedding Cluster keeps using
 the shared `wedding-db` ObjectStore until the existing catalog has been mirrored
-and a reviewed cutover changes it to `wedding-db-dedicated`. Until then, a
+and a reviewed cutover changes it to `wedding-db-dedicated`. The dispatch-only
+`Mirror Wedding Backup Catalogue` workflow does the copy from inside the
+`wedding-app` namespace and reports the evaluator's parity verdict: it can be
+re-run safely, and only a `CONVERGED` run is proof the cutover may start, so run
+it once more immediately before the switch. Until then, a
 shared-token rotation must verify Wedding together with Umami, Coroot, and
 Velero before the previous shared token is revoked.
 

@@ -46,6 +46,15 @@ jobs:
       - name: 💒 Validate Wedding backup mirror evaluator
         run: go test ./scripts/mirror-wedding-backup-catalogue
 
+      # The copy that feeds the evaluator: it must refuse a switched or drifted
+      # store, never reuse one credential, and hand the evaluator listings it
+      # actually accepts. The happy path runs the real pod script into the real
+      # evaluator, so the two cannot drift apart on the listing format.
+      - name: 💒 Validate Wedding backup mirror copy
+        run: |
+          shellcheck scripts/mirror-wedding-backup-catalogue.sh scripts/mirror-wedding-backup-catalogue-pod.sh scripts/tests/test-mirror-wedding-backup-catalogue.sh
+          bash scripts/tests/test-mirror-wedding-backup-catalogue.sh
+
       - name: 💾 Validate two-stage PVC retirement
         # A merge-group artifact is speculative, but a PVC deletion is not: its
         # deletionTimestamp survives queue eviction and main cannot undo it.

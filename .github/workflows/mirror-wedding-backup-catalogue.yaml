@@ -1,0 +1,98 @@
+name: Mirror Wedding Backup Catalogue
+
+# Copy the shared Wedding backup catalogue into its dedicated bucket and record
+# the evaluator's parity verdict (#3767). The Cluster keeps archiving to the
+# shared store while this runs; switching its reference is #3252's separate,
+# later step, and needs a CONVERGED run here first.
+#
+# DORMANT. There is no schedule and no pull_request trigger, and the operator
+# must type an exact confirmation phrase, so an accidental dispatch does nothing.
+#
+# MAIN ONLY. `workflow_dispatch` accepts any branch, and this job holds the
+# production kubeconfig. The prod environment already refuses non-main refs; the
+# explicit check below fails fast and names the reason.
+#
+# RE-RUNNABLE. The copy never deletes and overwrites only differing objects, so a
+# NOT CONVERGED result (exit 3, shown as a failed run) is resolved by dispatching
+# again, and the final pass belongs immediately before the cutover.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: mirror-wedding-backup-catalogue"
+        required: true
+        type: string
+
+permissions: {}
+
+# The mirror reads production state and writes a production bucket. Serialize with
+# every other production mutation, including the Wedding recovery, so a deploy
+# cannot switch the archive reference mid-run.
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  mirror:
+    name: 💒 Mirror Wedding backup catalogue
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    environment: prod
+    permissions:
+      contents: read # checkout repository
+    steps:
+      # Inputs reach bash through env, never `${{ }}` inside run, so a crafted
+      # value cannot inject shell.
+      - name: 🛑 Require main and explicit confirmation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "${DISPATCH_REF}" != 'refs/heads/main' ]]; then
+            printf 'Refusing to run from %s: dispatch this workflow from main.\n' "${DISPATCH_REF}" >&2
+            exit 1
+          fi
+          if [[ "${CONFIRM}" != 'mirror-wedding-backup-catalogue' ]]; then
+            printf 'Refusing to run: the confirm input must be exactly "mirror-wedding-backup-catalogue".\n' >&2
+            printf 'This copies into a production bucket. Nothing has been touched.\n' >&2
+            exit 1
+          fi
+          printf 'Confirmation accepted.\n'
+
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🔑 Restore production kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "${KUBE_CONFIG}"
+          umask 077
+          mkdir -p ~/.kube
+          printf '%s' "${KUBE_CONFIG}" >~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🎯 Select stable production API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh
+
+      - name: 💒 Copy and prove the catalogue
+        shell: bash
+        run: ./scripts/mirror-wedding-backup-catalogue.sh --confirm
