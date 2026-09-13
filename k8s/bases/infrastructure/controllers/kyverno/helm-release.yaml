@@ -263,6 +263,13 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      # Changing this value rolls the reports controller pods through GitOps.
+      # A reports controller that spent a long time failing on missing RBAC can
+      # stay up but stop producing PolicyReports after the permission is fixed
+      # (#3760). Bump the value to force a clean restart; never restart it by
+      # hand, which Flux cannot see or record.
+      podAnnotations:
+        platform.devantler.tech/restart-generation: "1"
     cleanupController:
       replicas: ${kyverno_cleanup_replicas:=1}
       # Same drain-safe PDB flip as the reportsController above.
