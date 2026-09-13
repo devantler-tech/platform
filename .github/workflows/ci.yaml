@@ -376,6 +376,12 @@ jobs:
               - 'scripts/diagnose-cilium-ext-authz-ipcache.sh'
               - 'scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh'
               - '.github/workflows/diagnose-cilium-ext-authz-ipcache.yaml'
+              # The #3784 ExternalAuth datapath probe, its test and its workflow
+              # are one contract: the test pins the verdicts, that the component
+              # stays unreferenced, and that the workflow reads no secret.
+              - 'scripts/probe-cilium-externalauth-datapath.sh'
+              - 'scripts/tests/test-probe-cilium-externalauth-datapath.sh'
+              - '.github/workflows/probe-cilium-externalauth-datapath.yaml'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
@@ -1230,6 +1236,16 @@ jobs:
         run: |
           shellcheck scripts/diagnose-cilium-ext-authz-ipcache.sh scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh
           bash scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh
+
+      - name: 🔎 Validate Cilium ExternalAuth datapath probe
+        if: needs.changes.outputs.k8s == 'true'
+        # The probe runs only on dispatch, against a component that must stay
+        # unreferenced on merge. Its test fakes curl and pins every verdict with a
+        # one-code control, the HTTPS-only request shape, input validation, and
+        # that the workflow reads no secret.
+        run: |
+          shellcheck scripts/probe-cilium-externalauth-datapath.sh scripts/tests/test-probe-cilium-externalauth-datapath.sh
+          bash scripts/tests/test-probe-cilium-externalauth-datapath.sh
 
       - name: 🔐 Validate Cilium mutual-auth policy scope
         if: needs.changes.outputs.k8s == 'true'

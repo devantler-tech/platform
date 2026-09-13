@@ -1,0 +1,47 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: whoami-externalauth-probe
+  namespace: whoami
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - whoami-externalauth-probe.${domain}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        # The same filter shape the reverted cutover used (#2283), so the probe
+        # exercises the datapath #1881 would ship.
+        - type: ExternalAuth
+          externalAuth:
+            protocol: HTTP
+            backendRef:
+              name: oauth2-proxy
+              namespace: oauth2-proxy
+              port: 80
+            http:
+              allowedHeaders:
+                - cookie
+                - x-forwarded-proto
+                - x-forwarded-host
+              # Must be non-empty: with an empty list the allow path hung
+              # (gateway 504) on Cilium 1.20.0-pre.3 (#1881).
+              allowedResponseHeaders:
+                - set-cookie
+                - x-auth-request-user
+                - x-auth-request-email
+                - x-auth-request-groups
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: whoami
+          port: 80

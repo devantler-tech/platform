@@ -1,0 +1,23 @@
+# Default-off datapath probe for the Gateway API ExternalAuth black-hole
+# (platform#3784, platform#2284).
+#
+# Adds ONE test-only HTTPRoute on its own hostname that sends every request
+# through the ExternalAuth filter to oauth2-proxy and then to the whoami echo
+# backend. No user-facing route changes: real sign-ins keep using the
+# oauth2-proxy -> auth-proxy path.
+#
+# The probe needs no login. An unauthenticated request still makes the gateway
+# Envoy call oauth2-proxy, which answers at once with a redirect or 401. When the
+# ext_authz subrequest is delivered, the client gets that answer quickly; when it
+# is lost cross-node, the client sees a timeout, a 403 or a 5xx instead.
+# .github/workflows/probe-cilium-externalauth-datapath.yaml counts those outcomes.
+#
+# ACTIVATION: reference this component from ../../../kustomization.yaml in a
+# short-lived PR, dispatch the probe workflow, record the counts on #2284, then
+# remove the reference again in a follow-up PR.
+# ROLLBACK: remove the reference; the route and grant are pruned with it.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - http-route.yaml
+  - reference-grant.yaml

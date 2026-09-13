@@ -43,6 +43,10 @@ components:
   # Default-off stateful pilot. Activate and verify in a separate PR using
   # the component README; rollback removes this one reference, retaining data.
   # - actual-budget/components/user-namespaces
+  # Default-off ExternalAuth datapath probe (#3784). Uncomment only in a
+  # short-lived PR, dispatch probe-cilium-externalauth-datapath.yaml, record the
+  # counts on #2284, then comment it out again.
+  # - whoami/components/externalauth-probe
 # Strategic-merge patch files self-identify (apiVersion/kind/name/namespace), so
 # they need only a path — no redundant `target:` selector. JSON6902 patches have
 # no embedded identity and keep an explicit target.

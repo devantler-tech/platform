@@ -1,0 +1,90 @@
+name: Probe Cilium ExternalAuth datapath
+
+# Measures whether the gateway's Gateway API ExternalAuth subrequest reaches
+# oauth2-proxy across nodes (platform#3784, platform#2284). It sends unauthenticated
+# HTTPS requests to the test-only probe hostname and counts which ones oauth2-proxy
+# answered and which were lost.
+#
+# PRECONDITION: the default-off component
+# k8s/providers/hetzner/apps/whoami/components/externalauth-probe must be
+# referenced and deployed. Without it the hostname does not serve the probe, and
+# the script reports INCONCLUSIVE.
+#
+# NO CREDENTIALS. The probe is an ordinary client of a public hostname: no
+# kubeconfig, no Hetzner token, no environment. It never logs in, so no real
+# session is created, and it prints only counts.
+#
+# DORMANT. There is no schedule and no pull_request trigger, and the operator must
+# type an exact confirmation phrase. The first step refuses any ref but main, and
+# checkout is pinned to the dispatch commit, so only the script CI tested runs.
+#
+# Exit 1 (SUBREQUESTS-LOST) and exit 3 (INCONCLUSIVE) both fail the job on purpose;
+# the verdict and counts are in the log and the step summary.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: probe-production-externalauth-datapath"
+        required: true
+        type: string
+      host:
+        description: "Probe hostname served by the externalauth-probe component"
+        required: true
+        default: whoami-externalauth-probe.platform.devantler.tech
+        type: string
+      requests:
+        description: "Number of unauthenticated requests to send (1-1000)"
+        required: true
+        default: "120"
+        type: string
+
+permissions: {}
+
+jobs:
+  probe-cilium-externalauth-datapath:
+    name: 🔎 Probe Cilium ExternalAuth datapath
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 🛑 Require the reviewed main branch
+        shell: bash
+        env:
+          RUN_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "${RUN_REF}" != 'refs/heads/main' ]]; then
+            printf 'Refusing to run: dispatch this workflow from main (got %s).\n' "${RUN_REF}" >&2
+            exit 1
+          fi
+          printf 'Running from main.\n'
+
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: 🛑 Require explicit confirmation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [[ "${CONFIRM}" != 'probe-production-externalauth-datapath' ]]; then
+            printf 'Refusing to run: the confirm input must be exactly "probe-production-externalauth-datapath".\n' >&2
+            printf 'No request has been sent.\n' >&2
+            exit 1
+          fi
+          printf 'Confirmation accepted.\n'
+
+      - name: 🔎 Probe the ExternalAuth route
+        shell: bash
+        # Inputs reach the script through env, never interpolated into the shell;
+        # the script validates both before sending anything.
+        env:
+          PROBE_HOST: ${{ inputs.host }}
+          PROBE_REQUESTS: ${{ inputs.requests }}
+        run: ./scripts/probe-cilium-externalauth-datapath.sh --host "${PROBE_HOST}" --requests "${PROBE_REQUESTS}"

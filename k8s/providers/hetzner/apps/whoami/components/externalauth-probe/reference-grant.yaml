@@ -1,0 +1,17 @@
+# Lets the probe route in `whoami` reference the oauth2-proxy Service as its
+# ExternalAuth backend. Kept separate from the base allow-oauth2-proxy-backends
+# grant so removing this component leaves the production grant unchanged.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-whoami-externalauth-probe
+  namespace: oauth2-proxy
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: whoami
+  to:
+    - group: ""
+      kind: Service
+      name: oauth2-proxy
