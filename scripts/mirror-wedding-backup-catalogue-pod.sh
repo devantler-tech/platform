@@ -53,7 +53,9 @@ export MC_CONFIG_DIR="${MC_CONFIG_DIR:-${work}/.mc}"
 
 source_id="$(cat "${credentials}/source/ACCESS_KEY_ID")"
 destination_id="$(cat "${credentials}/destination/ACCESS_KEY_ID")"
-[ -n "${source_id}" ] && [ -n "${destination_id}" ] || fail "a credential is empty"
+if [ -z "${source_id}" ] || [ -z "${destination_id}" ]; then
+  fail "a credential is empty"
+fi
 # Each credential is scoped to its own bucket. One key on both sides means the
 # plan is not the reviewed two-identity copy, whatever the Secret names say.
 [ "${source_id}" != "${destination_id}" ] ||

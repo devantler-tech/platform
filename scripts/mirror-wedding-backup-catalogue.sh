@@ -49,9 +49,10 @@ work_dir="$(mktemp -d)"
 readonly work_dir
 created=false
 name=''
-# Invoked by the EXIT trap below. shellcheck 0.11 reports trap-only handlers as
-# unused in this script; the test suite asserts both deletions actually happen.
-# shellcheck disable=SC2329
+# Invoked by the EXIT trap below. shellcheck reports this trap-only handler as
+# unused (SC2329 on 0.11) or unreachable (SC2317 on the older CI runner); the
+# test suite asserts both deletions actually happen.
+# shellcheck disable=SC2317,SC2329
 cleanup() {
   if [[ "${created}" == true ]]; then
     kube delete pod "${name}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
