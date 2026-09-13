@@ -8,7 +8,7 @@
 # and drain-autoscale-node-storage.
 #
 # The background controller needs update/patch on core Nodes to apply it; that
-# grant is controllers/kyverno/cluster-role-kyverno-label-baseline-worker-nodes.yaml,
+# grant is controllers/cluster-roles/kyverno-label-baseline-worker-nodes.yaml,
 # which ships one Flux layer earlier so it is aggregated before this policy is
 # admitted. Kyverno rejects the policy at admission without it.
 apiVersion: kyverno.io/v1

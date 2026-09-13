@@ -44,8 +44,8 @@ resources:
   # the label-baseline-workers / label-existing-baseline-workers policies
   # (../cluster-policies/, next Flux layer) — must be live before the policies
   # are admitted.
-  - kyverno/cluster-role-kyverno-label-baseline-worker-nodes.yaml
-  - kyverno/cluster-role-kyverno-reports-read-nodes.yaml
+  - cluster-roles/kyverno-label-baseline-worker-nodes.yaml
+  - cluster-roles/kyverno-reports-read-nodes.yaml
   - kubelet-serving-cert-approver/
   - longhorn/
   - origin-ca-issuer/
