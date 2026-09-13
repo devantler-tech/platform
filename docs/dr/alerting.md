@@ -134,7 +134,7 @@ stays quiet by design, exactly as the old Alertmanager did.
   capability against Coroot: it tails `/var/log/audit/kube/audit.log` and ships
   it to the Coroot OTLP logs endpoint as the `kube-apiserver-audit` application.
   Retention in Coroot follows the Coroot CR's `logsTTL` (3d in the base, 7d in
-  prod); the on-node file backend (`talos/cluster/enable-audit-logging.yaml`,
+  prod); the on-node file backend (`talos/control-planes/enable-audit-logging.yaml`,
   30-day rotation) remains the resilient primary for forensics beyond that
   window.
 

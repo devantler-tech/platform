@@ -1,0 +1,8 @@
+# Talos 1.14's KubeletConfig document cannot represent extraMounts. Use the
+# same legacy kubelet representation as production so local kubelet patches do
+# not conflict with the generated structured document. The local patch below
+# preserves the generated document's security defaults; the kubelet image still
+# follows Talos's matching Kubernetes default.
+apiVersion: v1alpha1
+kind: KubeletConfig
+$patch: delete

@@ -795,7 +795,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.1"
+          KSAIL_VERSION: "7.184.1"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1512,7 +1512,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.1"
+          KSAIL_VERSION: "7.184.1"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -1935,6 +1935,14 @@ jobs:
               patches=()
               for f in "${dir}"/cluster/*.yaml "${dir}/${role}"/*.yaml; do
                 [ -f "${f}" ] || continue
+                # KSail 7.184.1 consumes the AppArmor patch before rendering:
+                # it folds install.extraKernelArgs into the Image Factory
+                # schematic, removes the deprecated field, and pins the UKI
+                # command line. Raw talosctl has no schematic stage, so applying
+                # that input patch directly would validate an intermediate state.
+                if [ "${f}" = "talos/cluster/enable-apparmor.yaml" ]; then
+                  continue
+                fi
                 expanded="${out}/$(echo "${f}" | tr '/' '_')"
                 # Allowlist-scoped substitution: only the pre-checked vars are
                 # expanded, so an unexpected placeholder shape survives for the
@@ -1956,6 +1964,39 @@ jobs:
                 cp "${base}" "${out}/${role}-patched.yaml"
               fi
               talosctl validate -c "${out}/${role}-patched.yaml" -m "${mode}" >/dev/null
+
+              # Validation proves the document set is accepted; these checks
+              # prove the migration preserved the platform-specific behavior.
+              local rendered="${out}/${role}-patched.yaml"
+              if grep -qE '^kind: (KubeFlannelCNIConfig|KubeProxyConfig)$' "${rendered}"; then
+                echo "::error::${dir}/${role}: default CNI or kube-proxy remained enabled"
+                exit 1
+              fi
+              grep -qF 'defaultRuntimeSeccompProfileEnabled: true' "${rendered}"
+              grep -qF 'disableManifestsDirectory: true' "${rendered}"
+              if [ "${dir}" = "talos" ]; then
+                grep -qF 'image: ghcr.io/siderolabs/kubelet:v1.36.4' "${rendered}"
+              fi
+              if [ "${dir}/${role}" = "talos/control-planes" ]; then
+                grep -qF 'url: https://dex.platform.devantler.tech' "${rendered}"
+                grep -qF 'audit-log-maxbackup: "3"' "${rendered}"
+              elif [ "${dir}/${role}" = "talos/workers" ]; then
+                grep -qF 'destination: /var/lib/longhorn' "${rendered}"
+                grep -qF 'node.longhorn.io/create-default-disk: "true"' "${rendered}"
+                if grep -qF 'url: https://dex.platform.devantler.tech' "${rendered}"; then
+                  echo "::error::${dir}/${role}: control-plane OIDC config leaked onto workers"
+                  exit 1
+                fi
+              elif [ "${dir}/${role}" = "talos-local/control-planes" ]; then
+                grep -qF 'url: https://dex.platform.lan' "${rendered}"
+                if grep -qF 'node-role.kubernetes.io/control-plane: NoSchedule' "${rendered}"; then
+                  echo "::error::${dir}/${role}: local control plane remained unschedulable"
+                  exit 1
+                fi
+              elif grep -qF 'url: https://dex.platform.lan' "${rendered}"; then
+                echo "::error::${dir}/${role}: control-plane OIDC config leaked onto workers"
+                exit 1
+              fi
               echo "${dir}/${role}: rendered + validated (${mode})"
             done
             echo "::endgroup::"
@@ -2160,7 +2201,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.1"
+          KSAIL_VERSION: "7.184.1"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

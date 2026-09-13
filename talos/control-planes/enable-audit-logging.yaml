@@ -1,0 +1,61 @@
+# Kubernetes API server audit policy. Talos 1.14 owns the policy file, mount,
+# log path, and the 30-day/100-MB rotation defaults for this document.
+apiVersion: v1alpha1
+kind: KubeAuditPolicyConfig
+configuration:
+  apiVersion: audit.k8s.io/v1
+  kind: Policy
+  rules:
+    # Skip noisy health/metrics endpoints.
+    - level: None
+      nonResourceURLs:
+        - /healthz*
+        - /readyz*
+        - /livez*
+        - /metrics
+        - /openapi/*
+
+    # Skip watch on high-volume resources to reduce noise.
+    - level: None
+      verbs: ["watch"]
+      resources:
+        - group: ""
+          resources: ["events", "endpoints"]
+
+    # Secret access is metadata-only so secret content is never recorded.
+    - level: Metadata
+      resources:
+        - group: ""
+          resources: ["secrets"]
+
+    # RBAC mutations retain full forensic detail.
+    - level: RequestResponse
+      resources:
+        - group: rbac.authorization.k8s.io
+      verbs: ["create", "update", "patch", "delete"]
+
+    # Workload mutations retain the request body for change tracking.
+    - level: Request
+      resources:
+        - group: ""
+          resources:
+            - pods
+            - services
+            - namespaces
+            - serviceaccounts
+            - persistentvolumeclaims
+        - group: apps
+          resources:
+            - deployments
+            - daemonsets
+            - statefulsets
+        - group: batch
+          resources:
+            - jobs
+            - cronjobs
+      verbs: ["create", "update", "patch", "delete"]
+
+    # Catch all other requests at metadata level.
+    - level: Metadata
+      omitStages:
+        - RequestReceived

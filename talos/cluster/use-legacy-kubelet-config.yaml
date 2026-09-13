@@ -1,0 +1,10 @@
+# Talos 1.14's KubeletConfig document cannot represent extraMounts. Keep the
+# legacy kubelet section as the single source for all kubelet configuration so
+# the Longhorn CSI bind mount remains available while the other kubelet tuning
+# patches migrate with it. Talos accepts either representation, but rejects a
+# generated KubeletConfig document alongside machine.kubelet. The legacy
+# replacement below preserves the generated document's security defaults and
+# pins the kubelet image to ksail.prod.yaml's Kubernetes version.
+apiVersion: v1alpha1
+kind: KubeletConfig
+$patch: delete

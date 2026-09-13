@@ -1,4 +1,6 @@
 machine:
   kubelet:
+    defaultRuntimeSeccompProfileEnabled: true
+    disableManifestsDirectory: true
     extraArgs:
       rotate-server-certificates: "true"

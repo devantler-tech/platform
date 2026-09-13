@@ -2,7 +2,7 @@
 
 A control-plane-only OpenTelemetry Collector DaemonSet that tails the
 kube-apiserver audit log (`/var/log/audit/kube/audit.log`, written by
-`talos/cluster/enable-audit-logging.yaml`) and ships it to Coroot's OTLP logs
+`talos/control-planes/enable-audit-logging.yaml`) and ships it to Coroot's OTLP logs
 endpoint, making audit events searchable in the Coroot UI alongside container
 logs and traces.
 

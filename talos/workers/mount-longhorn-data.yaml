@@ -7,10 +7,8 @@
 # /dev/sdc, etc.  Partitioning /dev/sdb with Talos would destroy those
 # volumes and break any PVC backed by hcloud-csi.
 #
-# NOTE: node-labels for Longhorn (node.longhorn.io/create-default-disk=true)
-# are set in label-nodes.yaml. Talos strategic merge overwrites map keys,
-# so all kubelet.extraArgs.node-labels values must live in a single patch
-# file — see label-nodes.yaml.
+# The Longhorn worker label (node.longhorn.io/create-default-disk=true) is set
+# through Talos 1.14's KubeNodeConfig in label-nodes.yaml.
 machine:
   kubelet:
     extraMounts:
