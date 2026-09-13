@@ -4,11 +4,19 @@ set -euo pipefail
 # Positive gate for the hcloud block-storage guards (#3287).
 #
 # An hcloud volume attaches to one node and is not force-detached when that
-# node departs, so every workload that mounts one must require a static
-# baseline worker. This renders the prod (hetzner) overlays and asserts, for
-# each such workload, that EVERY required nodeSelectorTerm carries
+# node departs, so a workload that mounts one must require a static baseline
+# worker. This renders the prod (hetzner) `infrastructure` overlay and asserts,
+# for each guarded workload, that EVERY required nodeSelectorTerm carries
 # `platform.devantler.tech/baseline-worker In ["true"]`. Terms are ORed, so a
 # single term without it would fail open.
+#
+# Scope is the `infrastructure` layer only, because the label-baseline-workers
+# policies that stamp the label are applied in that same layer. OpenBao is NOT
+# covered: it deploys in `infrastructure-controllers`, which must converge
+# before `infrastructure` applies, so requiring the label there would deadlock
+# a rebuilt cluster whose nodes are not labelled yet. It keeps its
+# `ksail.io/autoscaled DoesNotExist` rule until a label source that exists
+# before Flux is in place (tracked on #3287).
 #
 # Coroot is checked generically: every object in the Coroot CR spec whose
 # `storage.className` is hcloud must carry the rule in its sibling `affinity`,
@@ -18,15 +26,12 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 infra="${repo_root}/k8s/providers/hetzner/infrastructure"
-controllers="${infra}/controllers"
 label='platform.devantler.tech/baseline-worker'
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
 kubectl kustomize "${infra}" >"${work}/infra.yaml"
-kubectl kustomize "${controllers}" >"${work}/controllers.yaml"
 [ -s "${work}/infra.yaml" ] || { echo "::error::infrastructure overlay rendered nothing"; exit 1; }
-[ -s "${work}/controllers.yaml" ] || { echo "::error::controllers overlay rendered nothing"; exit 1; }
 
 fail=0
 checked=0
@@ -35,8 +40,23 @@ checked=0
 # Passes only when the required terms are non-empty and every term requires the
 # label with exactly the value "true".
 check_affinity() {
-  local what="$1" file="$2" terms bad
+  local what="$1" file="$2" terms bad docs
+  # Exactly one document: a selector matching two resources would make yq print
+  # one number per document, and a non-integer must never pass the checks below.
+  docs="$(yq ea '[.] | length' "${file}")"
+  if [ "${docs}" != "1" ]; then
+    echo "::error::${what}: expected exactly one rendered document, got '${docs}'"
+    fail=1
+    return
+  fi
   terms="$(yq '.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms // [] | length' "${file}")"
+  case "${terms}" in
+    '' | *[!0-9]*)
+      echo "::error::${what}: unreadable nodeSelectorTerms count '${terms}'"
+      fail=1
+      return
+      ;;
+  esac
   if [ "${terms}" -eq 0 ]; then
     echo "::error::${what}: no required nodeSelectorTerms"
     fail=1
@@ -61,24 +81,11 @@ extract() {
   yq ea "select(${doc}) | ${path} // {}" "${src}" >"${out}"
 }
 
-# OpenBao: `server.affinity` is a templated string — parse it as YAML. The
-# template expressions sit in quoted/label positions, so the YAML still parses.
-yq ea 'select(.kind == "HelmRelease" and .metadata.name == "openbao") | .spec.values.server.affinity // ""' \
-  "${work}/controllers.yaml" | sed -e 's/{{[^}]*}}/tmpl/g' >"${work}/openbao.yaml"
-if [ ! -s "${work}/openbao.yaml" ]; then
-  echo "::error::openbao HelmRelease server.affinity did not render"
-  fail=1
-else
-  check_affinity "openbao server" "${work}/openbao.yaml"
-  anti="$(yq '.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution // [] | length' "${work}/openbao.yaml")"
-  [ "${anti}" -ge 1 ] || { echo "::error::openbao server lost its required podAntiAffinity"; fail=1; }
-fi
-
 # Vault snapshot workloads: both mount the hcloud-backed vault-snapshots PVC.
-extract "${work}/infra.yaml" '.kind == "CronJob" and .metadata.name == "vault-snapshot"' \
+extract "${work}/infra.yaml" '.kind == "CronJob" and .metadata.name == "vault-snapshot" and .metadata.namespace == "openbao"' \
   '.spec.jobTemplate.spec.template.spec.affinity' "${work}/cron.yaml"
 check_affinity "vault-snapshot CronJob" "${work}/cron.yaml"
-extract "${work}/infra.yaml" '.kind == "Job" and .metadata.name == "vault-snapshot-init"' \
+extract "${work}/infra.yaml" '.kind == "Job" and .metadata.name == "vault-snapshot-init" and .metadata.namespace == "openbao"' \
   '.spec.template.spec.affinity' "${work}/init.yaml"
 check_affinity "vault-snapshot-init Job" "${work}/init.yaml"
 

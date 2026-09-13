@@ -44,16 +44,13 @@
 # podAntiAffinity verbatim rather than merging into it — dropping it would put
 # two raft peers on one host and lose the anti-affinity the HA setup depends on.
 #
-# WHY A POSITIVE LABEL (#3287): the rule REQUIRES
-# `platform.devantler.tech/baseline-worker=true`, which the
-# label-baseline-workers policies stamp on exactly the static `prod-worker-*`
-# nodes. A negative `ksail.io/autoscaled DoesNotExist` rule fails open: an
-# autoscaler node that boots without that marker (ksail#7013 — measured on every
-# autoscaler node on 2026-09-13) matches it and is treated as baseline. A missing
-# positive label fails closed instead — the pod goes Pending rather than landing
-# on a node that can be reclaimed. Node affinity supports no name wildcard, so
-# the name-based `autoscale-*` discriminator the Longhorn policies use is not
-# expressible here; the label is how that name match reaches the scheduler.
+# RESIDUAL (shared with prefer-baseline-nodes, tracked in #3178): the
+# discriminator is `DoesNotExist`, so an autoscaler node created before KSail
+# began stamping `ksail.io/autoscaled` (ksail#5113) carries no label and is
+# still treated as baseline. Node affinity matches label values and supports no
+# wildcard, so the name-based `autoscale-*` discriminator the Longhorn policies
+# use is not expressible here. Every autoscaler node currently in the pool is
+# labelled; the durable fix is to not leave stranded nodes running.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -75,7 +72,5 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
-                  - key: platform.devantler.tech/baseline-worker
-                    operator: In
-                    values:
-                      - "true"
+                  - key: ksail.io/autoscaled
+                    operator: DoesNotExist

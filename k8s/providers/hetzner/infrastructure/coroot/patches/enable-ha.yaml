@@ -50,7 +50,8 @@ spec:
   # requires the positive `platform.devantler.tech/baseline-worker=true` label
   # (stamped by the label-baseline-workers policies on `prod-worker-*` only), so
   # an unlabelled node fails closed. The same block is repeated on prometheus,
-  # clickhouse and keeper: each is a separate StatefulSet with its own affinity.
+  # clickhouse and keeper: each is a separate workload (Prometheus a Deployment,
+  # the others StatefulSets) with its own affinity.
   # This is a JSON merge patch on a custom resource, so the added `nodeAffinity`
   # key merges beside the base's clickhouse/keeper `podAntiAffinity` instead of
   # replacing it.
