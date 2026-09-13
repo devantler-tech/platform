@@ -1,0 +1,41 @@
+# Egress for the prune-protected-orphan alert's pods only. While Coroot runs,
+# the namespace-wide allow-coroot policy also selects these pods (Cilium allow
+# rules are additive); this policy is what keeps the check reachable once
+# controllers/coroot/ — and allow-coroot with it — is retired.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-prune-protected-orphan-alert
+  namespace: observability
+spec:
+  endpointSelector:
+    matchLabels:
+      app: prune-protected-orphan-alert
+  egress:
+    # Lists Flux Kustomizations and the prune-protected kinds, and patches the
+    # state ConfigMap.
+    - toEntities:
+        - kube-apiserver
+    # The Slack incoming webhook, pinned by FQDN rather than world:443.
+    - toFQDNs:
+        - matchName: "hooks.slack.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # DNS resolution; rules.dns engages Cilium's L7 DNS proxy so the toFQDNs
+    # allow-list above can be enforced.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

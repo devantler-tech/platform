@@ -43,6 +43,7 @@ resources:
   #
   # Observability:
   #   - ../../../../bases/infrastructure/controllers/coroot/      # also infrastructure/coroot/ + opencost/
+  #   - ../../../../bases/infrastructure/controllers/prune-protected-orphan-alert/ # needs coroot/'s namespace
   # Progressive delivery:
   #   - ../../../../bases/infrastructure/controllers/flagger/     # also infrastructure/flagger/
   # Autoscaling (KEDA request-rate ScaledObjects, e.g. homepage/umami):
