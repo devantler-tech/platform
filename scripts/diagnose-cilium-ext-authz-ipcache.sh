@@ -19,7 +19,8 @@
 #                                            agent must be running.
 #   6. `get configmap cilium-config`       — whether Cilium node encryption is on.
 #   7. `exec … cilium-dbg bpf ipcache list` in that agent — a BPF map dump; it changes nothing.
-#   8. `get pods` in oauth2-proxy again    — the Ready replicas must not have changed.
+#   8. `get pods` in oauth2-proxy again    — every selected pod settled, none on the probed node,
+#                                            and the same pod set as the first read.
 #   9. `get nodes` again                   — the topology must not have changed during the read.
 #
 # THE VERDICT
@@ -51,10 +52,13 @@
 # selected agent must carry the DaemonSet's current `controller-revision-hash`.
 #
 # TOPOLOGY AND REPLICAS. The Cluster Autoscaler runs independently of the lock, and a replica can be
-# replaced or rescheduled at any time, so both are read again after the exec. Any difference in node
-# names, UIDs or InternalIP/ExternalIP addresses, or in the Ready oauth2-proxy replicas' UIDs, nodes
-# or pod IPs, makes the read INCONCLUSIVE: the verdict would otherwise be computed from a stale
-# address map or stale pod IPs.
+# replaced, rescheduled or surged at any time, so both are read again after the exec. The second
+# pod read applies the same settled-state check as the first to EVERY selected oauth2-proxy pod, not
+# only the Ready ones: a Pending, unready or terminating pod, or one with no UID, node or pod IP, is
+# INCONCLUSIVE, and so is any pod — in any state — on the probed node, where it would break the
+# no-local-replica precondition. The pod set must then match the first read exactly (UIDs, nodes and
+# pod IPs), and any difference in node names, UIDs or InternalIP/ExternalIP addresses is also
+# INCONCLUSIVE: the verdict would otherwise be computed from a stale address map or stale pod IPs.
 #
 # COVERAGE. A "remote node" is every node except the one whose agent is read. Each must have at
 # least one identity=6 entry for one of its own addresses before any conclusive verdict: a node
@@ -100,15 +104,20 @@ readonly node_fingerprint_filter='
           | .type + "=" + .address] | sort | join(","))]
   | sort | join(";")'
 
-# The same for the Ready oauth2-proxy replicas: UID, node and the sorted pod IP set of each.
-# A replica that stops being Ready drops out, which also changes the fingerprint.
-readonly replica_fingerprint_filter='
+# Shared jq definitions for the oauth2-proxy pod reads, so the first and second read apply the SAME
+# settled-state test. `replicas` keeps EVERY selected pod, whatever its state; `fingerprint` is an
+# order-insensitive description of the set (UID, node and sorted pod IPs of each pod).
+readonly replica_jq_defs='
   def ready: ([.status.conditions[]? | select(.type == "Ready") | .status] == ["True"]);
-  [.items[]?
-    | select(.status.phase == "Running" and .metadata.deletionTimestamp == null and ready)
-    | (.metadata.uid // "") + "|" + (.spec.nodeName // "") + "|"
-      + (([.status.podIPs[]?.ip] + [.status.podIP // empty]) | map(select(. != "")) | unique | join(","))]
-  | sort | join(";")'
+  def replicas: [.items[]? | {
+      ok: (.status.phase == "Running" and .metadata.deletionTimestamp == null and ready),
+      uid: (.metadata.uid // ""),
+      node: (.spec.nodeName // ""),
+      ips: (([.status.podIPs[]?.ip] + [.status.podIP // empty]) | map(select(. != "")) | unique)
+    }];
+  def settled: .ok and .uid != "" and .node != "" and (.ips | length) > 0;
+  def fingerprint: map(.uid + "|" + .node + "|" + (.ips | join(","))) | sort | join(";");
+'
 
 usage() {
   printf 'Usage: %s --context <kube-context>\n' "$(basename "$0")" >&2
@@ -194,17 +203,11 @@ if ! oauth2_json="$(kc -n "${oauth2_namespace}" get pods -l "${oauth2_selector}"
   inconclusive 'could not list the oauth2-proxy pods'
 fi
 
-if ! oauth2_lines="$(jq -r '
-    def ready: ([.status.conditions[]? | select(.type == "Ready") | .status] == ["True"]);
-    [.items[]? | {
-      ok: (.status.phase == "Running" and .metadata.deletionTimestamp == null and ready),
-      uid: (.metadata.uid // ""),
-      node: (.spec.nodeName // ""),
-      ips: (([.status.podIPs[]?.ip] + [.status.podIP // empty]) | map(select(. != "")) | unique)
-    }]
+if ! oauth2_lines="$(jq -r "${replica_jq_defs}"'
+    replicas
     | if length == 0 then "ERR none"
       elif any(.[]; .ok | not) then "ERR unsettled"
-      elif any(.[]; .uid == "" or .node == "" or (.ips | length) == 0) then "ERR incomplete"
+      elif any(.[]; settled | not) then "ERR incomplete"
       else (.[] | ("NODE " + .node), (.ips[] | "IP " + .))
       end
   ' <<<"${oauth2_json}")"; then
@@ -217,7 +220,7 @@ case "${oauth2_lines}" in
   'ERR incomplete') inconclusive 'an oauth2-proxy replica has no UID, node or pod IP yet' ;;
 esac
 
-if ! replica_fingerprint_before="$(jq -r "${replica_fingerprint_filter}" <<<"${oauth2_json}")"; then
+if ! replica_fingerprint_before="$(jq -r "${replica_jq_defs} replicas | fingerprint" <<<"${oauth2_json}")"; then
   inconclusive 'the oauth2-proxy pod list did not parse'
 fi
 
@@ -446,15 +449,30 @@ if [[ -z "${ipcache//[[:space:]]/}" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 7. The Ready replicas must be unchanged across the read: same UIDs, nodes and pod IPs.
+# 7. The oauth2-proxy pods after the read. EVERY selected pod — not only the Ready ones — is held to
+#    the same settled-state test as the first read, none may sit on the probed node in any state,
+#    and the set must match the first read exactly. A surge or replacement pod that is still Pending
+#    or unready would otherwise be invisible here.
 # ---------------------------------------------------------------------------
 if ! oauth2_after_json="$(kc -n "${oauth2_namespace}" get pods -l "${oauth2_selector}" -o json)"; then
   inconclusive 'could not re-list the oauth2-proxy pods after the read'
 fi
-if ! replica_fingerprint_after="$(jq -r "${replica_fingerprint_filter}" <<<"${oauth2_after_json}")"; then
+if ! replica_state_after="$(jq -r --arg agent_node "${agent_node}" "${replica_jq_defs}"'
+    (replicas)
+    | if any(.[]; .node == $agent_node) then "LOCAL"
+      elif any(.[]; settled | not) then "UNSETTLED"
+      else "OK " + fingerprint
+      end
+  ' <<<"${oauth2_after_json}")"; then
   inconclusive 'the oauth2-proxy pod re-list did not parse'
 fi
-if [[ "${replica_fingerprint_after}" != "${replica_fingerprint_before}" ]]; then
+case "${replica_state_after}" in
+  LOCAL) inconclusive 'an oauth2-proxy pod is on the selected Cilium node after the read' ;;
+  UNSETTLED) inconclusive 'an oauth2-proxy pod is not settled after the read (Pending, unready, terminating, or missing a UID, node or pod IP)' ;;
+  'OK '*) ;;
+  *) inconclusive 'the oauth2-proxy pod re-list produced an unexpected state' ;;
+esac
+if [[ "${replica_state_after#OK }" != "${replica_fingerprint_before}" ]]; then
   inconclusive 'the oauth2-proxy replicas changed during the read'
 fi
 printf 'oauth2-proxy replicas: unchanged across the read\n'

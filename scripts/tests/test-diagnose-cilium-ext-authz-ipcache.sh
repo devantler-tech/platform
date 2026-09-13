@@ -573,9 +573,74 @@ reset_fixtures
 replicas_after '.items[1].status.conditions[0].status = "False"'
 run_script --context admin@prod
 require_rc 3 'replica lost readiness mid-read'
-require_text 'the oauth2-proxy replicas changed during the read' 'unready replica reason'
+require_text 'an oauth2-proxy pod is not settled after the read' 'unready replica reason'
 assert_safe
 pass 'a replica that stopped being Ready during the read is INCONCLUSIVE'
+
+# The review case: a surge pod created between the first list and the exec that stays Pending. The
+# old Ready set is unchanged, so only a check over EVERY selected pod can see it.
+reset_fixtures
+replicas_after '.items += [{"metadata":{"name":"oauth2-proxy-7c9d-ccccc","uid":"uid-pod-c"},"spec":{"nodeName":"prod-worker-3"},"status":{"phase":"Pending","conditions":[{"type":"Ready","status":"False"}]}}]'
+run_script --context admin@prod
+require_rc 3 'Pending surge pod mid-read'
+require_text 'an oauth2-proxy pod is not settled after the read' 'Pending surge reason'
+refute_text 'FAULT-PERSISTS' 'a Pending surge pod must block the verdict'
+[[ "$(grep -c ' exec ' "${fixtures}/calls.log")" -eq 1 ]] || fail 'the read itself must still have happened exactly once'
+assert_safe
+pass 'a Pending surge pod that appears during the read is INCONCLUSIVE'
+
+reset_fixtures
+replicas_after '.items += [{"metadata":{"name":"oauth2-proxy-7c9d-ccccc","uid":"uid-pod-c"},"spec":{},"status":{"phase":"Pending"}}]'
+run_script --context admin@prod
+require_rc 3 'unscheduled surge pod mid-read'
+require_text 'an oauth2-proxy pod is not settled after the read' 'unscheduled surge reason'
+assert_safe
+pass 'an unscheduled Pending surge pod (no node yet) is INCONCLUSIVE'
+
+reset_fixtures
+replicas_after '.items += [{"metadata":{"name":"oauth2-proxy-7c9d-ddddd","uid":"uid-pod-d"},"spec":{"nodeName":"prod-worker-3"},"status":{"phase":"Running","podIP":"10.244.25.7","podIPs":[{"ip":"10.244.25.7"}],"conditions":[{"type":"Ready","status":"False"}]}}]'
+run_script --context admin@prod
+require_rc 3 'Running-but-unready replacement mid-read'
+require_text 'an oauth2-proxy pod is not settled after the read' 'unready replacement reason'
+refute_text 'FAULT-PERSISTS' 'an unready replacement must block the verdict'
+assert_safe
+pass 'a Running-but-unready replacement that appears during the read is INCONCLUSIVE'
+
+reset_fixtures
+replicas_after '.items[0].metadata.deletionTimestamp = "2026-09-13T12:00:00Z"'
+run_script --context admin@prod
+require_rc 3 'terminating replica mid-read'
+require_text 'an oauth2-proxy pod is not settled after the read' 'terminating replica reason'
+assert_safe
+pass 'a replica that started terminating during the read is INCONCLUSIVE'
+
+# A new pod on the probed node breaks the no-local-replica precondition even when it is settled.
+reset_fixtures
+replicas_after '.items += [{"metadata":{"name":"oauth2-proxy-7c9d-eeeee","uid":"uid-pod-e"},"spec":{"nodeName":"prod-control-plane-1"},"status":{"phase":"Running","podIP":"10.244.24.9","podIPs":[{"ip":"10.244.24.9"}],"conditions":[{"type":"Ready","status":"True"}]}}]'
+run_script --context admin@prod
+require_rc 3 'new pod on the selected node'
+require_text 'an oauth2-proxy pod is on the selected Cilium node after the read' 'local pod reason'
+refute_text 'FAULT-PERSISTS' 'a pod on the selected node must block the verdict'
+assert_safe
+pass 'a new Ready pod on the selected Cilium node is INCONCLUSIVE'
+
+reset_fixtures
+replicas_after '.items += [{"metadata":{"name":"oauth2-proxy-7c9d-eeeee","uid":"uid-pod-e"},"spec":{"nodeName":"prod-control-plane-1"},"status":{"phase":"Pending"}}]'
+run_script --context admin@prod
+require_rc 3 'Pending pod on the selected node'
+require_text 'an oauth2-proxy pod is on the selected Cilium node after the read' 'local Pending pod reason'
+assert_safe
+pass 'a Pending pod on the selected Cilium node is INCONCLUSIVE, whatever its state'
+
+# Negative control: an unchanged settled set, re-read verbatim, still yields its verdict.
+reset_fixtures
+cp "${fixtures}/oauth2-pods.json" "${fixtures}/oauth2-pods-after.json"
+run_script --context admin@prod
+require_rc 0 'unchanged settled set control'
+require_text 'VERDICT: FAULT-PERSISTS' 'an unchanged settled set must still yield its verdict'
+require_text 'oauth2-proxy replicas: unchanged across the read' 'an unchanged set must read as unchanged'
+assert_safe
+pass 'negative control: an unchanged settled replica set still yields its verdict'
 
 reset_fixtures
 touch "${fixtures}/oauth2-pods-after-fails"
