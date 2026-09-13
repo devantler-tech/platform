@@ -38,3 +38,13 @@ resources:
   - cluster-role-stranded-volume-attach-alert.yaml
   - cluster-role-binding-stranded-volume-attach-alert.yaml
   - cron-job-stranded-volume-attach-alert.yaml
+  # Prune-protected-orphan alert (#3503): a retirement whose manual delete step
+  # was missed, read from Flux inventories. Its ConfigMap holds first-seen times.
+  - service-account-prune-protected-orphan-alert.yaml
+  - secret-prune-protected-orphan-alert.yaml
+  - cluster-role-prune-protected-orphan-alert.yaml
+  - cluster-role-binding-prune-protected-orphan-alert.yaml
+  - role-prune-protected-orphan-alert.yaml
+  - role-binding-prune-protected-orphan-alert.yaml
+  - config-map-prune-protected-orphan-alert.yaml
+  - cron-job-prune-protected-orphan-alert.yaml

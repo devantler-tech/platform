@@ -862,7 +862,12 @@ HelmRelease protection prevents chart uninstall from deleting chart-owned claims
 protection prevents cascading deletion from bypassing a claim's own annotation. To retire any of
 these objects, first merge and deploy that protection in its own revision; only a later PR may
 remove the manifest. After the second PR lands and no workload depends on the orphan, delete it
-explicitly. `scripts/tests/test-pvc-prune-safety.sh` checks every production reconciliation root,
+explicitly. The `observability/prune-protected-orphan-alert` CronJob is the proof that this last
+step is done: it lists every prune-protected object that is missing from its Kustomization's
+inventory, logs it while it is younger than seven days and posts it to Slack after that. Run it on
+demand with `kubectl -n observability create job --from=cronjob/prune-protected-orphan-alert
+prune-protected-orphan-check` and read the Job log; step 3 is complete when it no longer names the
+object. `scripts/tests/test-pvc-prune-safety.sh` checks every production reconciliation root,
 rejects an unprotected current or base resource, and compares a deploy candidate with the actual
 live Flux-owned objects before the mutable production artifact moves. Do not collapse the two
 revisions or use Flux force replacement for a PVC migration.

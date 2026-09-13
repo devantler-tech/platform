@@ -1,0 +1,20 @@
+# The detector's only write: its own first-seen record, and only that one
+# ConfigMap by name. `create` is deliberately absent — Flux creates the object
+# (config-map-prune-protected-orphan-alert.yaml), so a missing record fails the
+# run loudly instead of being silently recreated empty.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prune-protected-orphan-alert
+  namespace: observability
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    resourceNames:
+      - prune-protected-orphan-alert-state
+    verbs:
+      - get
+      - patch

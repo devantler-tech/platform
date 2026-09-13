@@ -419,6 +419,7 @@ jobs:
               - 'scripts/tests/crossplane-egress-policy-rules.yaml'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               - 'scripts/tests/test-stranded-volume-attach-alert.sh'
+              - 'scripts/tests/test-prune-protected-orphan-alert.sh'
               - 'scripts/tests/test-coroot-alert-autosuppressor.sh'
               - 'scripts/tests/test-velero-maintenance-oom-alert.sh'
               # That test also asserts the alerting runbook points at the alert's
@@ -1256,6 +1257,15 @@ jobs:
         # shape against a stubbed API and delivery, so the fire, each quiet
         # verdict and both silent-zero guards are pinned by behaviour.
         run: bash scripts/tests/test-stranded-volume-attach-alert.sh
+
+      - name: 🧹 Validate the prune-protected-orphan alert
+        if: needs.changes.outputs.k8s == 'true'
+        # The only signal that a retirement's manual delete step was missed —
+        # tofu-controller kept running, unpatchable, for 74 days (#3480, #3503).
+        # Replays a young and a stale left-behind resource, a vanished
+        # Kustomization, every quiet shape and every silent-zero guard against
+        # a stubbed API, state record and delivery.
+        run: bash scripts/tests/test-prune-protected-orphan-alert.sh
 
       - name: 🔕 Validate narrow Coroot alert suppressions
         if: needs.changes.outputs.k8s == 'true'

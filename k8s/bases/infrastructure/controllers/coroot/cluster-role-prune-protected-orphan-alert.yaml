@@ -1,0 +1,32 @@
+# Read-only by construction (#3503): the detector may list the Flux
+# Kustomizations whose inventories it compares against, and the three
+# prune-protected kinds, and nothing else. No verb here can delete, patch or
+# prune — removing a left-behind resource stays a deliberate human step.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prune-protected-orphan-alert
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+      - persistentvolumeclaims
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - kustomize.toolkit.fluxcd.io
+    resources:
+      - kustomizations
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - helm.toolkit.fluxcd.io
+    resources:
+      - helmreleases
+    verbs:
+      - get
+      - list

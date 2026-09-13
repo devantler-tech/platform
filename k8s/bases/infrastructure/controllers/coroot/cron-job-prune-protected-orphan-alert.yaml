@@ -1,0 +1,294 @@
+# Reports prune-protected resources that a retirement left running (#3503).
+#
+# WHY THIS EXISTS
+#
+# The production persistence-safety component sets
+# `kustomize.toolkit.fluxcd.io/prune: disabled` on every PVC, HelmRelease and
+# Namespace, so retiring one is three steps: deploy the protection, remove the
+# manifest in a later PR, then delete the leftover object by hand (AGENTS.md,
+# "Persistence retirement is always two-stage"). When step 3 is missed, Flux
+# drops the object from its Kustomization's inventory and never touches it again:
+# the workload keeps running, can never be updated, and keeps its RBAC. That is
+# what happened to tofu-controller, unnoticed for 74 days (#3480). This makes a
+# missed step 3 visible.
+#
+# HOW A LEFT-BEHIND RESOURCE IS RECOGNISED
+#
+# An object Flux applied carries the `kustomize.toolkit.fluxcd.io/name` and
+# `/namespace` labels of its Kustomization. While it is still rendered, that
+# Kustomization's `.status.inventory` lists it as
+# `<namespace>_<name>_<group>_<kind>`. A prune-protected object that still
+# carries the labels but is absent from that inventory — or whose Kustomization
+# no longer exists — is left behind. This needs no render and no Git access: the
+# cluster already records both halves.
+#
+# WARN FIRST, ESCALATE LATER
+#
+# Between steps 2 and 3 a left-behind object is expected, so a young one is only
+# logged. Once one has been seen for BOUND_SECONDS it is posted to Slack, and
+# posted again on every daily run until it is deleted or restored. The age is
+# measured from the first run that saw it, kept in this CronJob's own ConfigMap
+# (config-map-prune-protected-orphan-alert.yaml), so it lags the deploy that
+# dropped the object by at most one schedule interval.
+#
+# NEVER A SILENT ZERO. A failed or malformed read, an unreadable state record,
+# or a Kustomization with no inventory to compare against fails the run instead
+# of reporting "nothing left behind".
+#
+# The only write is a merge patch of the state ConfigMap, which the Role limits
+# to that one object. It never deletes or prunes anything.
+#
+# Lives in the observability namespace to reuse the allow-coroot
+# CiliumNetworkPolicy (kube-apiserver, hooks.slack.com:443 and DNS egress).
+# Delivery, secret handling and the silent-zero guards follow
+# cron-job-stranded-volume-attach-alert.yaml.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: prune-protected-orphan-alert
+  namespace: observability
+  annotations:
+    checkov.io/skip1: "CKV_K8S_38=the check container reads its SA token to list Flux resources through the API server"
+    # `${BOUND_SECONDS}` below is the container's own env var, NOT a Flux
+    # post-build variable; opt out so substituteFrom cannot expand it to empty.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  # Daily: a missed retirement step is a slow leak, not an outage, so one
+  # reminder a day is enough and a finding is never more than a day late.
+  schedule: "17 6 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 180
+      template:
+        metadata:
+          labels:
+            app: prune-protected-orphan-alert
+        spec:
+          restartPolicy: Never
+          serviceAccountName: prune-protected-orphan-alert
+          # This check calls the Kubernetes API, so it needs its token. C-0034 is
+          # already excepted for the observability namespace
+          # (cluster-security-exceptions/service-account-tokens.yaml).
+          automountServiceAccountToken: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            # fsGroup makes the mounted webhook readable by the non-root user;
+            # see cron-job-stranded-volume-attach-alert.yaml.
+            fsGroup: 65532
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: check
+              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              env:
+                # Seven days between removing a manifest and deleting what it
+                # left behind before this pages.
+                - name: BOUND_SECONDS
+                  value: "604800"
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  API=https://kubernetes.default.svc
+                  SA=/var/run/secrets/kubernetes.io/serviceaccount
+                  STATE_PATH=/api/v1/namespaces/observability/configmaps/prune-protected-orphan-alert-state
+
+                  WEBHOOK_URL=$(cat /etc/prune-protected-orphan-alert/url)
+                  if [ "$(printf '%s' "$WEBHOOK_URL" | tr -d '[:cntrl:]')" != "$WEBHOOK_URL" ]; then
+                    echo "ERROR: webhook URL contains control characters" >&2
+                    exit 1
+                  fi
+                  # The webhook token travels in the URL path, and the network
+                  # policy allows TCP/443 by port, not by scheme.
+                  case "$WEBHOOK_URL" in
+                    https://*) ;;
+                    *)
+                      echo "ERROR: webhook URL must use https://" >&2
+                      exit 1
+                      ;;
+                  esac
+
+                  now=$(date -u +%s)
+
+                  api_get() {
+                    curl -sS -o "$2" -w '%{http_code}' \
+                      --cacert "$SA/ca.crt" \
+                      -H "Authorization: Bearer $(cat "$SA/token")" \
+                      "$API$1"
+                  }
+                  # The only write: a merge patch of this CronJob's own state.
+                  api_patch_state() {
+                    curl -sS -o "$2" -w '%{http_code}' -X PATCH \
+                      --cacert "$SA/ca.crt" \
+                      -H "Authorization: Bearer $(cat "$SA/token")" \
+                      -H 'Content-Type: application/merge-patch+json' \
+                      --data @"$1" \
+                      "$API$STATE_PATH?fieldManager=prune-protected-orphan-alert"
+                  }
+                  # A non-2xx or unparseable list must NOT read as "nothing left
+                  # behind" — a broken check and a clean cluster would look alike.
+                  list() {
+                    code=$(api_get "$1" "$2")
+                    if [ "$code" != "200" ]; then
+                      echo "ERROR: kube API returned HTTP $code listing $3" >&2
+                      exit 1
+                    fi
+                    if ! jq -e '(.items | type) == "array"' "$2" >/dev/null; then
+                      echo "ERROR: unexpected response shape from kube API for $3" >&2
+                      exit 1
+                    fi
+                  }
+
+                  selector='labelSelector=kustomize.toolkit.fluxcd.io%2Fname'
+                  list "/apis/kustomize.toolkit.fluxcd.io/v1/kustomizations" /tmp/kustomizations.json "Flux Kustomizations"
+                  list "/api/v1/persistentvolumeclaims?${selector}" /tmp/pvcs.json "Flux-applied PersistentVolumeClaims"
+                  list "/api/v1/namespaces?${selector}" /tmp/namespaces.json "Flux-applied Namespaces"
+                  list "/apis/helm.toolkit.fluxcd.io/v2/helmreleases?${selector}" /tmp/helmreleases.json "Flux-applied HelmReleases"
+
+                  # List items carry no kind or apiVersion, so each list names
+                  # its own group and kind for the inventory id.
+                  jq -n \
+                    --slurpfile ks /tmp/kustomizations.json \
+                    --slurpfile pvcs /tmp/pvcs.json \
+                    --slurpfile nss /tmp/namespaces.json \
+                    --slurpfile hrs /tmp/helmreleases.json '
+                    ($ks[0].items
+                      | map({ key: "\(.metadata.namespace)/\(.metadata.name)",
+                              value: (if (.status.inventory.entries | type) == "array"
+                                      then [.status.inventory.entries[].id] else null end) })
+                      | from_entries) as $inv
+                    | [ ($pvcs[0].items[] | {group: "", kind: "PersistentVolumeClaim", o: .}),
+                        ($nss[0].items[] | {group: "", kind: "Namespace", o: .}),
+                        ($hrs[0].items[] | {group: "helm.toolkit.fluxcd.io", kind: "HelmRelease", o: .}) ]
+                    | map(select((.o.metadata.annotations // {})["kustomize.toolkit.fluxcd.io/prune"] == "disabled"
+                                 and .o.metadata.deletionTimestamp == null))
+                    | map(.o.metadata as $m
+                        | "\($m.labels["kustomize.toolkit.fluxcd.io/namespace"] // "")/\($m.labels["kustomize.toolkit.fluxcd.io/name"])" as $owner
+                        | "\($m.namespace // "")_\($m.name)_\(.group)_\(.kind)" as $id
+                        | { id: $id, kind: .kind, owner: $owner,
+                            ref: (if $m.namespace then "\($m.namespace)/\($m.name)" else $m.name end),
+                            status: (if ($inv | has($owner) | not) then "owner-gone"
+                                     elif $inv[$owner] == null then "owner-no-inventory"
+                                     elif any($inv[$owner][]; . == $id) then "managed"
+                                     else "orphan" end) })
+                  ' >/tmp/findings.json
+
+                  unjudgeable=$(jq -r '.[] | select(.status == "owner-no-inventory") | "\(.kind) \(.ref) (Kustomization \(.owner))"' /tmp/findings.json)
+                  if [ -n "$unjudgeable" ]; then
+                    echo "ERROR: cannot judge these resources, because their Kustomization records no inventory:" >&2
+                    echo "$unjudgeable" >&2
+                    exit 1
+                  fi
+                  total=$(jq 'length' /tmp/findings.json)
+
+                  code=$(api_get "$STATE_PATH" /tmp/state.json)
+                  if [ "$code" != "200" ]; then
+                    echo "ERROR: kube API returned HTTP $code reading the state ConfigMap" >&2
+                    exit 1
+                  fi
+                  if ! jq -e '((.data // {})["first-seen.json"] // "{}") | fromjson
+                              | type == "object" and all(.[]; type == "number")' /tmp/state.json >/dev/null 2>&1; then
+                    echo "ERROR: the state ConfigMap's first-seen.json is not an object of epoch seconds" >&2
+                    exit 1
+                  fi
+                  jq -S '((.data // {})["first-seen.json"] // "{}") | fromjson' /tmp/state.json >/tmp/prior.json
+
+                  # Keep each current finding's first sighting; forget resolved ones.
+                  jq -S -n --slurpfile f /tmp/findings.json --slurpfile p /tmp/prior.json --argjson now "$now" '
+                    [ $f[0][] | select(.status == "orphan" or .status == "owner-gone")
+                      | { key: .id, value: ($p[0][.id] // $now) } ] | from_entries
+                  ' >/tmp/next.json
+                  # Persist BEFORE delivering, so a failed delivery never resets
+                  # the grace window.
+                  if ! cmp -s /tmp/prior.json /tmp/next.json; then
+                    jq -n --arg s "$(jq -c -S . /tmp/next.json)" '{data: {"first-seen.json": $s}}' >/tmp/patch.json
+                    code=$(api_patch_state /tmp/patch.json /tmp/patch-response.json)
+                    if [ "$code" != "200" ]; then
+                      echo "ERROR: kube API returned HTTP $code updating the state ConfigMap" >&2
+                      exit 1
+                    fi
+                  fi
+
+                  report() {
+                    jq -r -n --slurpfile f /tmp/findings.json --slurpfile n /tmp/next.json \
+                          --argjson now "$now" --argjson bound "${BOUND_SECONDS}" --arg tier "$1" '
+                      $f[0][] | select(.status == "orphan" or .status == "owner-gone")
+                      | ($now - $n[0][.id]) as $age
+                      | select(if $tier == "stale" then $age >= $bound else $age < $bound end)
+                      | "• `\(.kind) \(.ref)` — "
+                        + (if .status == "owner-gone" then "its Kustomization `\(.owner)` no longer exists"
+                           else "no longer in the inventory of Kustomization `\(.owner)`" end)
+                        + ", first seen \($age / 86400 | floor)d \(($age % 86400) / 3600 | floor)h ago"'
+                  }
+                  young=$(report young)
+                  stale=$(report stale)
+
+                  if [ -n "$young" ]; then
+                    echo "WARNING: prune-protected resource(s) left behind by a retirement, inside the ${BOUND_SECONDS}s grace window:"
+                    echo "$young"
+                  fi
+                  if [ -z "$stale" ]; then
+                    echo "Checked $total prune-protected Flux resource(s); none left behind for ${BOUND_SECONDS}s or longer."
+                    exit 0
+                  fi
+
+                  echo "Prune-protected resource(s) left behind for ${BOUND_SECONDS}s or longer:"
+                  echo "$stale"
+
+                  text=$(printf '*A retirement left resources running*\n\n%s\n\n_These carry `kustomize.toolkit.fluxcd.io/prune: disabled` and Flux no longer manages them, so they will never be updated or removed. If nothing depends on them, delete them by hand (step 3 of "Persistence retirement is always two-stage" in the platform AGENTS.md); if the manifest was removed by mistake, restore it. See #3503._' \
+                    "$stale")
+                  jq -n --arg t "$text" '{text: $t}' >/tmp/payload.json
+
+                  case "$WEBHOOK_URL" in
+                    https://example.invalid/*)
+                      echo "No Slack webhook configured; alert not delivered."
+                      exit 0
+                      ;;
+                  esac
+                  printf 'url = %s\n' "$WEBHOOK_URL" |
+                    curl -sf --max-time 15 \
+                      --retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused \
+                      -H 'Content-Type: application/json' \
+                      --data @/tmp/payload.json \
+                      --config -
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                # CIS-5.7.3 (C-0211); a documented no-op on this AppArmor cluster.
+                seLinuxOptions: {}
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                - name: webhook
+                  mountPath: /etc/prune-protected-orphan-alert
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            # 288 is 0440: readable by root and the pod's fsGroup only.
+            - name: webhook
+              secret:
+                secretName: prune-protected-orphan-alert-webhook
+                defaultMode: 288
