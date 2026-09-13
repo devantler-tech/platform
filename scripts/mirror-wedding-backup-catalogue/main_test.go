@@ -2,6 +2,9 @@ package main
 
 import (
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -55,12 +58,48 @@ func TestValidatePlanRefusals(t *testing.T) {
 	}
 }
 
+// The command checks the locations and credentials the caller will actually
+// use, so a typo in the mirror job is refused instead of silently replaced by
+// the reviewed values.
+func TestRunValidatePlanChecksTheCallersActualValues(t *testing.T) {
+	valid := []string{"validate-plan",
+		"platform-backups", sourcePrefix, sourceSecret,
+		destinationBucket, destinationPrefix, destinationSecret}
+	if err := run(valid, io.Discard); err != nil {
+		t.Fatalf("run(valid plan) = %v, want nil", err)
+	}
+	tests := []struct {
+		name  string
+		index int
+		value string
+		want  error
+	}{
+		{"typo in the destination bucket", 4, "wedding-db-backup", ErrWrongDestination},
+		{"typo in the destination credential", 6, "wedding-db-backup-r2-dedicate", ErrWrongDestination},
+		{"typo in the destination prefix", 5, "cnpg/wedding", ErrWrongDestination},
+		{"wrong source credential", 3, "other-r2", ErrWrongSource},
+		{"wrong source prefix", 2, "cnpg", ErrWrongSource},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := append([]string(nil), valid...)
+			args[tt.index] = tt.value
+			if err := run(args, io.Discard); !errors.Is(err, tt.want) {
+				t.Fatalf("run() = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
+
 const (
 	baseInfo = "wedding-db-20260909/base/20260908T030000/backup.info"
 	baseData = "wedding-db-20260909/base/20260908T030000/data.tar.gz"
 	olderWAL = "wedding-db-20260909/wals/0000000200000001/000000020000000100000003.gz"
 	newerWAL = "wedding-db-20260909/wals/0000000300000001/000000030000000100000001.gz"
 	lateWAL  = "wedding-db-20260909/wals/0000000300000001/000000030000000100000002.gz"
+
+	sourceLocation      = "platform-backups/" + sourcePrefix
+	destinationLocation = destinationBucket + "/" + destinationPrefix
 )
 
 var (
@@ -256,6 +295,16 @@ func TestEvaluateParityRefusals(t *testing.T) {
 			want:        ErrNoBaseBackup,
 		},
 		{
+			// A base backup cannot be restored to a consistent state without the
+			// WAL archived alongside it, so a catalogue with none is not a
+			// recoverable history however faithfully it was copied.
+			name:        "source without archived WAL",
+			before:      func() []Object { return sourceListing()[:2] },
+			after:       func() []Object { return sourceListing()[:2] },
+			destination: func() []Object { return destinationListing()[:2] },
+			want:        ErrNoArchivedWAL,
+		},
+		{
 			name: "duplicate key in a listing",
 			before: func() []Object {
 				return append(sourceListing(), sourceListing()[0])
@@ -285,8 +334,12 @@ func fileLine(key, extra string) string {
 	return `{"status":"success","type":"file",` + modified + `"size":1,"key":"` + key + `","etag":"a"` + extra + `}`
 }
 
+func completeLineAt(location string, files int) string {
+	return `{"status":"success","type":"listing-complete","location":"` + location + `","files":` + itoa(files) + `}`
+}
+
 func completeLine(files int) string {
-	return `{"status":"success","type":"listing-complete","files":` + itoa(files) + `}`
+	return completeLineAt(sourceLocation, files)
 }
 
 func itoa(n int) string {
@@ -308,7 +361,7 @@ func TestParseListingReadsMcJSONLines(t *testing.T) {
 		completeLine(2),
 		``,
 	}, "\n")
-	objects, err := ParseListing(strings.NewReader(input))
+	objects, err := ParseListing(strings.NewReader(input), sourceLocation)
 	if err != nil {
 		t.Fatalf("ParseListing() = %v, want nil", err)
 	}
@@ -324,7 +377,7 @@ func TestParseListingReadsMcJSONLines(t *testing.T) {
 // An empty catalogue still needs the completion record, and then parses as
 // empty rather than as malformed; EvaluateParity refuses an empty source.
 func TestParseListingAcceptsACompletedEmptyListing(t *testing.T) {
-	objects, err := ParseListing(strings.NewReader(completeLine(0) + "\n"))
+	objects, err := ParseListing(strings.NewReader(completeLine(0)+"\n"), sourceLocation)
 	if err != nil || len(objects) != 0 {
 		t.Fatalf("ParseListing() = %v, %v, want no objects and nil", objects, err)
 	}
@@ -345,14 +398,14 @@ func TestParseListingRefusesFailedEntries(t *testing.T) {
 		"short sha256":            fileLine(baseInfo, `,"sha256":"`+strings.Repeat("a", 63)+`"`),
 		"uppercase sha256":        fileLine(baseInfo, `,"sha256":"`+strings.Repeat("A", 64)+`"`),
 		"record after completion": completeLine(0) + "\n" + fileLine(baseInfo, ""),
-		"negative completion":     `{"status":"success","type":"listing-complete","files":-1}`,
+		"negative completion":     `{"status":"success","type":"listing-complete","location":"` + sourceLocation + `","files":-1}`,
 	}
 	for name, input := range tests {
 		t.Run(name, func(t *testing.T) {
 			if name != "record after completion" && name != "negative completion" && !strings.HasPrefix(input, "not json") {
 				input += "\n" + completeLine(1)
 			}
-			if _, err := ParseListing(strings.NewReader(input)); !errors.Is(err, ErrMalformedListing) {
+			if _, err := ParseListing(strings.NewReader(input), sourceLocation); !errors.Is(err, ErrMalformedListing) {
 				t.Fatalf("ParseListing() = %v, want %v", err, ErrMalformedListing)
 			}
 		})
@@ -368,13 +421,65 @@ func TestParseListingRequiresCompletionProof(t *testing.T) {
 		"completion count too high":     fileLine(baseInfo, "") + "\n" + completeLine(2),
 		"completion count too low":      fileLine(baseInfo, "") + "\n" + fileLine(olderWAL, "") + "\n" + completeLine(1),
 		"empty input":                   "",
-		"completion without file count": fileLine(baseInfo, "") + "\n" + `{"status":"success","type":"listing-complete"}`,
+		"completion without file count": fileLine(baseInfo, "") + "\n" + `{"status":"success","type":"listing-complete","location":"` + sourceLocation + `"}`,
 	}
 	for name, input := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := ParseListing(strings.NewReader(input)); !errors.Is(err, ErrIncompleteListing) {
+			if _, err := ParseListing(strings.NewReader(input), sourceLocation); !errors.Is(err, ErrIncompleteListing) {
 				t.Fatalf("ParseListing() = %v, want %v", err, ErrIncompleteListing)
 			}
 		})
+	}
+}
+
+// Raw `mc ls` keys carry no bucket, so a complete listing of the wrong bucket
+// is indistinguishable from the right one. The completion record names the
+// location the wrapper listed, and it must be the one being evaluated.
+func TestParseListingBindsTheListingToItsLocation(t *testing.T) {
+	tests := map[string]string{
+		"listing of another bucket":     fileLine(baseInfo, "") + "\n" + completeLineAt("platform-backups-copy/"+sourcePrefix, 1),
+		"listing of another prefix":     fileLine(baseInfo, "") + "\n" + completeLineAt("platform-backups/cnpg", 1),
+		"completion without a location": fileLine(baseInfo, "") + "\n" + `{"status":"success","type":"listing-complete","files":1}`,
+	}
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseListing(strings.NewReader(input), sourceLocation); !errors.Is(err, ErrListingLocation) {
+				t.Fatalf("ParseListing() = %v, want %v", err, ErrListingLocation)
+			}
+		})
+	}
+}
+
+func writeListing(t *testing.T, name, location string, keys ...string) string {
+	t.Helper()
+	lines := make([]string, 0, len(keys)+1)
+	for _, key := range keys {
+		lines = append(lines, fileLine(key, ""))
+	}
+	lines = append(lines, completeLineAt(location, len(keys)))
+	file := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(file, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
+// A copy that landed in the wrong bucket produces matching listings there, so
+// the destination listing must be proven to come from the reviewed bucket.
+func TestRunEvaluateRefusesListingsFromTheWrongLocation(t *testing.T) {
+	keys := []string{baseInfo, olderWAL}
+	before := writeListing(t, "before", sourceLocation, keys...)
+	after := writeListing(t, "after", sourceLocation, keys...)
+	good := writeListing(t, "destination", destinationLocation, keys...)
+	if err := run([]string{"evaluate", "2026-09-13T10:00:00Z", "platform-backups", before, after, good}, io.Discard); err != nil {
+		t.Fatalf("run(evaluate) = %v, want nil", err)
+	}
+	wrongBucket := writeListing(t, "wrong", "platform-backups-copy/"+destinationPrefix, keys...)
+	if err := run([]string{"evaluate", "2026-09-13T10:00:00Z", "platform-backups", before, after, wrongBucket}, io.Discard); !errors.Is(err, ErrListingLocation) {
+		t.Fatalf("run(evaluate, wrong destination) = %v, want %v", err, ErrListingLocation)
+	}
+	swapped := writeListing(t, "swapped", destinationLocation, keys...)
+	if err := run([]string{"evaluate", "2026-09-13T10:00:00Z", "platform-backups", swapped, after, good}, io.Discard); !errors.Is(err, ErrListingLocation) {
+		t.Fatalf("run(evaluate, source listed from destination) = %v, want %v", err, ErrListingLocation)
 	}
 }

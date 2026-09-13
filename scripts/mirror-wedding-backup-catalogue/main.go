@@ -22,21 +22,27 @@
 //
 // Usage:
 //
-//	mirror-wedding-backup-catalogue validate-plan <source-bucket>
-//	mirror-wedding-backup-catalogue evaluate <run-start> <source-before> <source-after> <destination>
+//	mirror-wedding-backup-catalogue validate-plan <source-bucket> <source-prefix> <source-secret> <destination-bucket> <destination-prefix> <destination-secret>
+//	mirror-wedding-backup-catalogue evaluate <run-start> <source-bucket> <source-before> <source-after> <destination>
+//
+// validate-plan takes the exact values the mirror job will use, so a typo in
+// any of them is refused rather than replaced by the reviewed value.
 //
 // <run-start> is an RFC 3339 timestamp taken before the starting listing. Each
 // listing is the `mc ls --json --recursive` output for the catalogue prefix,
 // with keys starting at the server directory, optionally carrying a "sha256"
 // field (64 lowercase hex characters) per object.
 //
-// Raw `mc ls` output has no terminal record, so a listing cut short is
-// indistinguishable from a complete one. The caller must therefore append one
-// completion record as the last line, and only after `mc ls` exits successfully:
+// Raw `mc ls` output has no terminal record and its keys carry no bucket, so a
+// listing cut short, or taken from the wrong bucket, is indistinguishable from
+// the right one. The caller must therefore append one completion record as the
+// last line, only after `mc ls` exits successfully, naming the bucket and
+// prefix it listed:
 //
-//	{"status":"success","type":"listing-complete","files":<number of file entries>}
+//	{"status":"success","type":"listing-complete","location":"<bucket>/<prefix>","files":<number of file entries>}
 //
-// A listing without that record, or whose count does not match, is refused.
+// A listing without that record, whose count does not match, or whose location
+// is not the one being evaluated, is refused.
 //
 // The result is a single non-secret JSON line: counts, the newest base backup,
 // and the newest WAL segment on each side.
@@ -76,7 +82,9 @@ var (
 	ErrIncompleteListing = errors.New("incomplete listing")
 	ErrEmptySource       = errors.New("empty source")
 	ErrNoBaseBackup      = errors.New("no base backup")
+	ErrNoArchivedWAL     = errors.New("no archived WAL")
 	ErrMalformedListing  = errors.New("malformed listing")
+	ErrListingLocation   = errors.New("listing from an unexpected location")
 )
 
 // Location is one side of the mirror: a bucket, the catalogue prefix inside it,
@@ -192,13 +200,19 @@ func EvaluateParity(runStart time.Time, before, after, destination []Object) (Su
 	if sourceBackup == "" {
 		return Summary{}, ErrNoBaseBackup
 	}
+	// A base backup only restores to a consistent state by replaying the WAL
+	// archived with it, so a catalogue without any is not recoverable history.
+	sourceWAL := newestWAL(beforeIndex)
+	if sourceWAL == "" {
+		return Summary{}, ErrNoArchivedWAL
+	}
 	return Summary{
 		SourceObjects:               len(beforeIndex),
 		MatchedObjects:              matched,
 		ExtraDestinationObjects:     len(destinationIndex) - matched,
 		SourceNewestBaseBackup:      sourceBackup,
 		DestinationNewestBaseBackup: newestBaseBackup(destinationIndex),
-		SourceNewestWAL:             newestWAL(beforeIndex),
+		SourceNewestWAL:             sourceWAL,
 		DestinationNewestWAL:        newestWAL(destinationIndex),
 	}, nil
 }
@@ -286,6 +300,7 @@ type listingEntry struct {
 	SHA256       string `json:"sha256"`
 	LastModified string `json:"lastModified"`
 	Files        *int   `json:"files"`
+	Location     string `json:"location"`
 }
 
 // ParseListing reads `mc ls --json --recursive` output ending in a completion
@@ -294,7 +309,7 @@ type listingEntry struct {
 // must start at the Barman server directory, so a listing rooted one level too
 // high or too low is reported as malformed rather than as a catalogue with no
 // backups.
-func ParseListing(r io.Reader) ([]Object, error) {
+func ParseListing(r io.Reader, location string) ([]Object, error) {
 	var objects []Object
 	complete := false
 	scanner := bufio.NewScanner(r)
@@ -320,6 +335,9 @@ func ParseListing(r io.Reader) ([]Object, error) {
 		case "listing-complete":
 			if entry.Files == nil {
 				return nil, fmt.Errorf("%w: completion record without a file count", ErrIncompleteListing)
+			}
+			if location == "" || entry.Location != location {
+				return nil, fmt.Errorf("%w: listed %q, want %q", ErrListingLocation, entry.Location, location)
 			}
 			if *entry.Files < 0 {
 				return nil, fmt.Errorf("%w: negative completion count", ErrMalformedListing)
@@ -365,12 +383,12 @@ func catalogueKey(key string) bool {
 }
 
 // readListing parses one listing file named on the command line.
-func readListing(name string) ([]Object, error) {
+func readListing(name, location string) ([]Object, error) {
 	file, err := os.Open(name)
 	if err != nil {
 		return nil, err
 	}
-	objects, parseErr := ParseListing(file)
+	objects, parseErr := ParseListing(file, location)
 	if closeErr := file.Close(); closeErr != nil && parseErr == nil {
 		return nil, closeErr
 	}
@@ -379,20 +397,28 @@ func readListing(name string) ([]Object, error) {
 
 // run dispatches the command line and writes the summary for a passing evaluation.
 func run(args []string, stdout io.Writer) error {
-	if len(args) == 2 && args[0] == "validate-plan" {
+	if len(args) == 7 && args[0] == "validate-plan" {
 		return ValidatePlan(Plan{
-			Source:      Location{Bucket: args[1], Prefix: sourcePrefix, Secret: sourceSecret},
-			Destination: Location{Bucket: destinationBucket, Prefix: destinationPrefix, Secret: destinationSecret},
+			Source:      Location{Bucket: args[1], Prefix: args[2], Secret: args[3]},
+			Destination: Location{Bucket: args[4], Prefix: args[5], Secret: args[6]},
 		})
 	}
-	if len(args) == 5 && args[0] == "evaluate" {
+	if len(args) == 6 && args[0] == "evaluate" {
 		runStart, err := time.Parse(time.RFC3339Nano, args[1])
 		if err != nil {
 			return fmt.Errorf("%w: run start: %w", ErrMalformedListing, err)
 		}
+		if args[2] == "" || args[2] == destinationBucket {
+			return fmt.Errorf("%w: source bucket %q", ErrWrongSource, args[2])
+		}
+		locations := []string{
+			args[2] + "/" + sourcePrefix,
+			args[2] + "/" + sourcePrefix,
+			destinationBucket + "/" + destinationPrefix,
+		}
 		listings := make([][]Object, 0, 3)
-		for _, name := range args[2:] {
-			objects, err := readListing(name)
+		for i, name := range args[3:] {
+			objects, err := readListing(name, locations[i])
 			if err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
@@ -404,7 +430,7 @@ func run(args []string, stdout io.Writer) error {
 		}
 		return json.NewEncoder(stdout).Encode(summary)
 	}
-	return errors.New("usage: mirror-wedding-backup-catalogue validate-plan <source-bucket> | evaluate <run-start> <source-before> <source-after> <destination>")
+	return errors.New("usage: mirror-wedding-backup-catalogue validate-plan <source-bucket> <source-prefix> <source-secret> <destination-bucket> <destination-prefix> <destination-secret> | evaluate <run-start> <source-bucket> <source-before> <source-after> <destination>")
 }
 
 // main exits non-zero with the refusal reason when a plan or mirror is not trusted.
