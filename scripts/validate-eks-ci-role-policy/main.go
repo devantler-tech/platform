@@ -2090,7 +2090,39 @@ const (
 // aggregate. This host's renderer is unapproved, so no local digest is claimed.
 //
 // Previous aggregate: e36a3db7047b2b45855f6e3f2b25087dd4e56f74775bd08a5ba94efd3b86d300.
-const expectedRenderedSurfaceSHA = "59f51f1775bcded62ab018a6389ef11420b696a3b00357fc4424c4ab83935dba"
+//
+// That alert established aggregate:
+//
+//	59f51f1775bcded62ab018a6389ef11420b696a3b00357fc4424c4ab83935dba
+//
+// Moved again by the cert-manager C-0211 baseline context (#3239), derived on
+// main 1576b21c, whose approved aggregate is 59f51f17 above. cert-manager is
+// excluded from the add-security-context mutation, so the two inert fields are
+// supplied through the chart's own values. A HelmRelease is a controller-RBAC
+// emitter, so a pure VALUES change moves this aggregate even though nothing is
+// granted.
+//
+// CONSERVATION: exactly one existing document changes: the cert-manager/
+// cert-manager HelmRelease gains securityContext.fsGroupChangePolicy:
+// OnRootMismatch and containerSecurityContext.seLinuxOptions: {} for the
+// controller, webhook and cainjector. Rendering
+// k8s/providers/hetzner/infrastructure/controllers on this branch and on main
+// 1576b21c differs only in those nine value lines, and the grant-bearing
+// identity set (ClusterRole, Role, ClusterRoleBinding, RoleBinding,
+// ServiceAccount) is identical at 41 per side. Injecting one synthetic
+// ClusterRole into the branch render makes that comparison report it, so the
+// identical result is a finding rather than a blind read. No identity, binding,
+// ServiceAccount, verb, wildcard, AWS identity or permission changes; only the
+// cert-manager HelmRelease's unresolved-substitution fingerprint moves.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 103698254744 at 7e970822, which renders under the approved SHA256-verified
+// kubectl v1.36.2 and reported ZERO missing and ZERO duplicate rendered
+// resources; its single unapproved entry was this aggregate. This host's
+// renderer is unapproved, so no local digest is claimed.
+//
+// Previous aggregate: 59f51f1775bcded62ab018a6389ef11420b696a3b00357fc4424c4ab83935dba.
+const expectedRenderedSurfaceSHA = "779dc0a75257fed54f4bc75cf1e1ebb5e4d47281fc900316e000b83ecd641aa0"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2103,7 +2135,7 @@ const expectedRenderedSurfaceSHA = "59f51f1775bcded62ab018a6389ef11420b696a3b003
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "e36a3db7047b2b45855f6e3f2b25087dd4e56f74775bd08a5ba94efd3b86d300"
+const previousRenderedSurfaceSHA = "59f51f1775bcded62ab018a6389ef11420b696a3b00357fc4424c4ab83935dba"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
