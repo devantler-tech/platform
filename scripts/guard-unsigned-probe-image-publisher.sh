@@ -15,10 +15,10 @@
 # actions, secrets and triggers does not.
 #   1. The publisher's only trigger is `workflow_dispatch`.
 #   2. No job or workflow-level permission grants `id-token`, permissions are
-#      always written as a map, and the only permission granted anywhere is
-#      `packages` (read or write). Keyless signing needs the OIDC token, so
-#      without it no step can sign, whatever it runs.
-#   3. The only action used is the runner hardening step. Any signing,
+#      always written as a map, and the only permissions granted anywhere are
+#      `packages` (read or write) and `contents: read`. Keyless signing needs
+#      the OIDC token, so without it no step can sign, whatever it runs.
+#   3. The only actions used are runner hardening and checkout. Any signing,
 #      attestation or build action has to arrive through `uses:`.
 #   4. The only secret referenced is GITHUB_TOKEN. Key-based signing needs a
 #      key, and a key can only arrive as a secret.
@@ -32,14 +32,16 @@
 #      ref and the published ref cannot drift apart.
 #   9. No workflow in the repository runs on a package-publish event, so
 #      publishing the image cannot start anything that might sign it.
-#  10. A step after the push reads the digest's signature tags and referrers,
-#      authenticates with GITHUB_TOKEN, and never continues on error.
+#  10. A step after the push runs scripts/verify-image-unsigned.sh on the pushed
+#      digest as its first command, authenticated with GITHUB_TOKEN, and can be
+#      neither skipped nor run past. The script's own suite pins what it
+#      checks; this check pins that it actually runs.
 #  11. The first step refuses to run unless dispatched from refs/heads/main,
 #      before any build, login or push, and nothing can skip or run past it.
 #
 # Nothing here can stop someone signing the image by hand from outside this
 # repository. The publisher checks the published digest is unsigned for that
-# reason.
+# reason, and the probe checks it again just before its node pull.
 #
 # Exit status: 0 clean, 1 a violation, 2 cannot check (a missing file, a
 # missing tool, or a file yq cannot parse). 2 is never a pass.
@@ -53,6 +55,7 @@ readonly image='ghcr.io/devantler-tech/unsigned-probe-throwaway'
 readonly image_name='unsigned-probe-throwaway'
 readonly publisher='.github/workflows/publish-unsigned-probe-image.yaml'
 readonly probe='.github/workflows/probe-image-signature-enforcement.yaml'
+readonly verifier='scripts/verify-image-unsigned.sh'
 readonly allowed_refs=(
   "$publisher"
   "$probe"
@@ -102,19 +105,22 @@ scalar_permissions="$(yq -r '[.. | select(tag == "!!map" and has("permissions"))
 if [[ "$scalar_permissions" != '0' ]]; then
   violation "$publisher" 'sets permissions as a scalar (such as write-all), which grants id-token implicitly; write permissions as a map'
 fi
-# The only permission any scope may grant is packages (read or write). write
-# already includes read, which is all the post-push verification needs.
+# Every granted permission is read as a plain `key: value` line and judged in
+# bash, one fact at a time (see check 10 for why nothing is combined in yq).
 while IFS= read -r grant; do
   [[ -n "$grant" ]] || continue
-  violation "$publisher" "grants '$grant'; the only allowed permission is packages: read or write"
-done < <(yq -r '.. | select(tag == "!!map" and has("permissions")) | .permissions | select(tag == "!!map") | to_entries | .[] | select(.key != "packages" or (.value != "write" and .value != "read")) | .key + ": " + (.value | tostring)' "$publisher")
+  case "$grant" in
+    'packages: write' | 'packages: read' | 'contents: read') ;;
+    *) violation "$publisher" "grants '$grant'; the only allowed permissions are packages: read or write, and contents: read" ;;
+  esac
+done < <(yq -r '.. | select(tag == "!!map" and has("permissions")) | .permissions | select(tag == "!!map") | to_entries | .[] | .key + ": " + (.value | tostring)' "$publisher")
 
 # 3. Actions.
 while IFS= read -r uses; do
   [[ -n "$uses" ]] || continue
   case "$uses" in
-    step-security/harden-runner@*) ;;
-    *) violation "$publisher" "uses '$uses'; the only allowed action is step-security/harden-runner" ;;
+    step-security/harden-runner@* | actions/checkout@*) ;;
+    *) violation "$publisher" "uses '$uses'; the only allowed actions are step-security/harden-runner and actions/checkout" ;;
   esac
 done < <(yq -r '.. | select(tag == "!!map" and has("uses")) | .uses' "$publisher")
 
@@ -138,8 +144,7 @@ signing="$(printf '%s\n' "$code" | grep -inE 'cosign|sigstore|notation|notary|at
 if [[ -n "$signing" ]]; then
   violation "$publisher" "names a signing or attestation tool: $(printf '%s' "$signing" | head -n 1)"
 fi
-# Match the build flag or action input, not the bare word: the verification step
-# legitimately names the `.sbom` tag suffix it checks is absent.
+# Match the build flag or action input, not the bare word.
 metadata="$(printf '%s\n' "$code" | sed -E 's/--(provenance|sbom)=false//g' | grep -inE -- '--(provenance|sbom)|(^|[[:space:]])(provenance|sbom):' || true)"
 if [[ -n "$metadata" ]]; then
   violation "$publisher" "enables provenance or SBOM output: $(printf '%s' "$metadata" | head -n 1)"
@@ -184,15 +189,48 @@ while IFS= read -r workflow; do
   fi
 done <<<"$workflows"
 
-# 10. Post-push verification. The step that reads the digest's signature tags
-# and referrers is what catches a signature added from outside this
-# repository, so it must exist, run after the push, authenticate, and fail the
-# job rather than continue past a failure.
+# 10. Post-push verification.
 #
-# Same rule as check 11: yq reads one fact per call and bash decides. A single
-# `select((.run | test(a)) and (.run | test(b)))` over the steps matched EVERY
-# step, including one with no `run`, so the check could not tell whether the
-# verification existed at all.
+# The verification is behaviour, so it lives in a tested script rather than in
+# workflow text a grep could only look at. What this check pins is that the
+# script actually RUNS on the pushed digest. Matching fragments of the step's
+# text is not enough: a step whose checks are commented out still contains the
+# fragments. So the step must have exactly this shape, judged line by line after
+# trimming, with blank lines ignored:
+#
+#     set -euo pipefail
+#     ./scripts/verify-image-unsigned.sh --image "${IMAGE}@${DIGEST}"
+#
+# as its first two lines. A commented-out call, a call followed by `|| true`, or
+# a call wrapped in a conditional is a different line and does not count.
+#
+# yq reads one fact per call and bash decides: a single yq `select` combining
+# conditions with `and` matched steps it should not.
+readonly verify_call="./scripts/verify-image-unsigned.sh --image \"\${IMAGE}@\${DIGEST}\""
+
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+# first_lines <text> — prints the first two non-blank lines, trimmed.
+first_lines() {
+  local line trimmed count=0
+  while IFS= read -r line; do
+    trimmed="$(trim "$line")"
+    [[ -n "$trimmed" ]] || continue
+    printf '%s\n' "$trimmed"
+    count=$((count + 1))
+    ((count < 2)) || break
+  done <<<"$1"
+}
+
+if ! git ls-files --error-unmatch -- "$verifier" >/dev/null 2>&1; then
+  violation "$verifier" "$verifier is missing or untracked; the publisher's verification step calls it"
+fi
+
 step_count="$(yq -r '.jobs[].steps | length' "$publisher")"
 [[ "$step_count" =~ ^[0-9]+$ ]] || cannot_check "could not count the steps of $publisher (got '$step_count')"
 push_index=''
@@ -203,25 +241,31 @@ for ((i = 0; i < step_count; i++)); do
   if [[ -z "$push_index" && "$step_id" == 'push' ]]; then
     push_index="$i"
   fi
-  if [[ -z "$verify_index" && "$step_run" == *'/referrers/'* && "$step_run" == *'manifests/sha256-'* ]]; then
+  if [[ -z "$verify_index" ]] && [[ "$(first_lines "$step_run")" == "set -euo pipefail"$'\n'"$verify_call" ]]; then
     verify_index="$i"
   fi
 done
 if [[ -z "$verify_index" ]]; then
-  violation "$publisher" 'must verify the pushed digest is unsigned: no step reads its signature tags and referrers'
+  violation "$publisher" "must verify the pushed digest is unsigned: no step runs $verify_call as its first command after set -euo pipefail"
 else
   if [[ -z "$push_index" ]] || ((verify_index <= push_index)); then
     violation "$publisher" 'the unsigned verification step must run after the step with id push'
   fi
-  verify_coe="$(yq -r ".jobs[].steps[$verify_index] | has(\"continue-on-error\")" "$publisher")"
-  [[ "$verify_coe" == 'true' || "$verify_coe" == 'false' ]] || cannot_check "could not read the verification step of $publisher (got '$verify_coe')"
-  if [[ "$verify_coe" != 'false' ]]; then
-    violation "$publisher" 'the unsigned verification step must not continue on error'
+  for key in continue-on-error if; do
+    has_key="$(yq -r ".jobs[].steps[$verify_index] | has(\"$key\")" "$publisher")"
+    [[ "$has_key" == 'true' || "$has_key" == 'false' ]] || cannot_check "could not read the verification step of $publisher (got '$has_key')"
+    if [[ "$has_key" != 'false' ]]; then
+      violation "$publisher" "the unsigned verification step must not set $key, so it can be neither skipped nor run past"
+    fi
+  done
+  verify_password="$(yq -r ".jobs[].steps[$verify_index].env.REGISTRY_PASSWORD // \"\"" "$publisher")"
+  verify_username="$(yq -r ".jobs[].steps[$verify_index].env.REGISTRY_USERNAME // \"\"" "$publisher")"
+  verify_digest="$(yq -r ".jobs[].steps[$verify_index].env.DIGEST // \"\"" "$publisher")"
+  if [[ "$verify_password" != *'secrets.GITHUB_TOKEN'* || -z "$verify_username" ]]; then
+    violation "$publisher" 'the unsigned verification step must authenticate with GITHUB_TOKEN (env REGISTRY_USERNAME and REGISTRY_PASSWORD)'
   fi
-  verify_token="$(yq -r ".jobs[].steps[$verify_index].env.GHCR_TOKEN // \"\"" "$publisher")"
-  verify_run="$(yq -r ".jobs[].steps[$verify_index].run // \"\"" "$publisher")"
-  if [[ "$verify_token" != *'secrets.GITHUB_TOKEN'* || "$verify_run" != *'GHCR_TOKEN'* ]]; then
-    violation "$publisher" 'the unsigned verification step must authenticate with GITHUB_TOKEN (env GHCR_TOKEN used by its script)'
+  if [[ "$verify_digest" != *'steps.push.outputs.digest'* ]]; then
+    violation "$publisher" 'the unsigned verification step must check the digest the push step reported (env DIGEST from steps.push.outputs.digest)'
   fi
 fi
 
@@ -230,11 +274,6 @@ fi
 # must be a plain script step that nothing can skip (`if`) or run past
 # (`continue-on-error`), and it must hold the exact comparison, so flipping it
 # to `==` is caught too.
-#
-# Each fact is read from yq on its own and the decision is made here in bash.
-# Combining these conditions inside one yq expression (`has(a) and (has(b) |
-# not)`) evaluated true for a first step that had no `run` at all, so the check
-# passed with the pin removed. One yq read per fact cannot be misparsed that way.
 ref_check="[[ \"\${GITHUB_REF}\" != 'refs/heads/main' ]]"
 first_has_run="$(yq -r '.jobs[].steps[0] | has("run")' "$publisher")"
 first_has_uses="$(yq -r '.jobs[].steps[0] | has("uses")' "$publisher")"

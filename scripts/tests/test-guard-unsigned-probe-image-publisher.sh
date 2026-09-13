@@ -7,9 +7,9 @@
 # for some other reason would otherwise count as proof the guard works.
 #
 # Each case builds a fresh throwaway git repository holding copies of the REAL
-# publisher and probe workflows, changes exactly one thing, and runs a copy of
-# the guard against it. The unchanged fixture must pass first, so every failure
-# is attributable to the one change.
+# publisher and probe workflows and verification script, changes exactly one
+# thing, and runs a copy of the guard against it. The unchanged fixture must pass
+# first, so every failure is attributable to the one change.
 
 set -euo pipefail
 
@@ -18,7 +18,9 @@ readonly root_dir
 readonly guard_rel='scripts/guard-unsigned-probe-image-publisher.sh'
 readonly publisher_rel='.github/workflows/publish-unsigned-probe-image.yaml'
 readonly probe_rel='.github/workflows/probe-image-signature-enforcement.yaml'
+readonly verifier_rel='scripts/verify-image-unsigned.sh'
 readonly image='ghcr.io/devantler-tech/unsigned-probe-throwaway'
+readonly verify_step='🔎 Confirm the published digest is unsigned'
 
 pass_count=0
 
@@ -32,7 +34,7 @@ ok() {
   printf 'ok - %s\n' "$1"
 }
 
-for required in "$guard_rel" "$publisher_rel" "$probe_rel"; do
+for required in "$guard_rel" "$publisher_rel" "$probe_rel" "$verifier_rel"; do
   [[ -f "${root_dir}/${required}" ]] || fail "missing ${required}"
 done
 command -v yq >/dev/null 2>&1 || fail 'yq is required'
@@ -50,6 +52,7 @@ new_fixture() {
   cp "${root_dir}/${guard_rel}" "${fixture}/${guard_rel}"
   cp "${root_dir}/${publisher_rel}" "${fixture}/${publisher_rel}"
   cp "${root_dir}/${probe_rel}" "${fixture}/${probe_rel}"
+  cp "${root_dir}/${verifier_rel}" "${fixture}/${verifier_rel}"
   git -C "${fixture}" init -q
 }
 
@@ -119,11 +122,11 @@ expect 'an attestation step is refused' 1 'names a signing or attestation tool'
 
 new_fixture
 yq_edit '.jobs[].steps += [{"uses": "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6"}]'
-expect 'a signing action is refused' 1 'the only allowed action is step-security/harden-runner'
+expect 'a signing action is refused' 1 'the only allowed actions are step-security/harden-runner and actions/checkout'
 
 new_fixture
 yq_edit '.jobs[].steps += [{"uses": "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a"}]'
-expect 'any action other than harden-runner is refused' 1 'the only allowed action is step-security/harden-runner'
+expect 'any action other than harden-runner and checkout is refused' 1 'the only allowed actions are step-security/harden-runner and actions/checkout'
 
 new_fixture
 yq_edit '.jobs[].permissions["id-token"] = "write"'
@@ -139,27 +142,59 @@ expect 'scalar write-all permissions are refused' 1 'sets permissions as a scala
 
 new_fixture
 yq_edit '.jobs[].permissions.contents = "write"'
-expect 'a permission other than packages is refused' 1 "grants 'contents: write'"
+expect 'contents: write is refused' 1 "grants 'contents: write'"
 
 new_fixture
-yq_edit '.jobs[].steps |= map(select(.name != "🔎 Confirm the published digest is unsigned"))'
-expect 'removing the unsigned verification step is refused' 1 'no step reads its signature tags and referrers'
+yq_edit '.jobs[].permissions.actions = "read"'
+expect 'a permission outside packages and contents is refused' 1 "grants 'actions: read'"
+
+# --- Post-push verification must actually run ---------------------------------
 
 new_fixture
-yq_edit '.jobs[].steps |= ([.[] | select(.name == "🔎 Confirm the published digest is unsigned")] + [.[] | select(.name != "🔎 Confirm the published digest is unsigned")])'
+yq_edit ".jobs[].steps |= map(select(.name != \"${verify_step}\"))"
+expect 'removing the unsigned verification step is refused' 1 'no step runs ./scripts/verify-image-unsigned.sh'
+
+new_fixture
+substitute "${fixture}/${publisher_rel}" 's#^( *)(\./scripts/verify-image-unsigned\.sh)#\1\# \2#'
+expect 'a commented-out verification call is refused' 1 'no step runs ./scripts/verify-image-unsigned.sh'
+
+new_fixture
+substitute "${fixture}/${publisher_rel}" 's#^( *\./scripts/verify-image-unsigned\.sh .*)$#\1 || true#'
+expect 'a verification call whose failure is ignored is refused' 1 'no step runs ./scripts/verify-image-unsigned.sh'
+
+new_fixture
+substitute "${fixture}/${publisher_rel}" 's#^( *)(\./scripts/verify-image-unsigned\.sh .*)$#\1if false; then \2; fi#'
+expect 'a verification call wrapped in a conditional is refused' 1 'no step runs ./scripts/verify-image-unsigned.sh'
+
+new_fixture
+substitute "${fixture}/${publisher_rel}" 's#^( *)(\./scripts/verify-image-unsigned\.sh .*)$#\1true\n\1\2#'
+expect 'a verification call that is not the first command is refused' 1 'no step runs ./scripts/verify-image-unsigned.sh'
+
+new_fixture
+yq_edit ".jobs[].steps |= ([.[] | select(.name == \"${verify_step}\")] + [.[] | select(.name != \"${verify_step}\")])"
 expect 'a verification step before the push is refused' 1 'must run after the step with id push'
 
 new_fixture
-yq_edit '(.jobs[].steps[] | select(.name == "🔎 Confirm the published digest is unsigned"))["continue-on-error"] = true'
-expect 'a verification step that may fail open is refused' 1 'must not continue on error'
+yq_edit "(.jobs[].steps[] | select(.name == \"${verify_step}\"))[\"continue-on-error\"] = true"
+expect 'a verification step that may be run past is refused' 1 'must not set continue-on-error'
 
 new_fixture
-yq_edit '(.jobs[].steps[] | select(.name == "🔎 Confirm the published digest is unsigned")) |= del(.env.GHCR_TOKEN)'
+yq_edit "(.jobs[].steps[] | select(.name == \"${verify_step}\"))[\"if\"] = \"false\""
+expect 'a verification step that may be skipped is refused' 1 'must not set if'
+
+new_fixture
+yq_edit "(.jobs[].steps[] | select(.name == \"${verify_step}\")) |= del(.env.REGISTRY_PASSWORD)"
 expect 'an unauthenticated verification step is refused' 1 'must authenticate with GITHUB_TOKEN'
 
 new_fixture
-yq_edit '(.jobs[].steps[] | select(.name == "🔎 Confirm the published digest is unsigned")).run |= sub("/referrers/"; "/")'
-expect 'a verification step that no longer checks referrers is refused' 1 'must verify the pushed digest is unsigned'
+yq_edit "(.jobs[].steps[] | select(.name == \"${verify_step}\")).env.DIGEST = \"sha256:0\""
+expect 'a verification step checking some other digest is refused' 1 'must check the digest the push step reported'
+
+new_fixture
+rm "${fixture}/${verifier_rel}"
+expect 'a missing verification script is refused' 1 'verify-image-unsigned.sh is missing or untracked'
+
+# --- Main-only ref pin ------------------------------------------------------------
 
 new_fixture
 yq_edit '.jobs[].steps |= map(select(.name != "🛑 Refuse unless dispatched from main"))'
@@ -176,6 +211,8 @@ expect 'an inverted ref comparison is refused' 1 'must refuse to run from any re
 new_fixture
 yq_edit '(.jobs[].steps[] | select(.name == "🛑 Refuse unless dispatched from main"))["continue-on-error"] = true'
 expect 'a ref pin that may be run past is refused' 1 'must refuse to run from any ref other than refs/heads/main'
+
+# --- Triggers, secrets, image, references --------------------------------------
 
 new_fixture
 yq_edit '.on.schedule = [{"cron": "0 0 * * *"}]'
