@@ -42,8 +42,7 @@
 // listing cut short, or taken from the wrong bucket, is indistinguishable from
 // the right one. The caller must therefore append one completion record as the
 // last line, only after `mc ls` exits successfully, naming the bucket and
-// prefix it listed and, for the two source listings, the time it started that
-// listing:
+// prefix it listed and the time it started that listing:
 //
 //	{"status":"success","type":"listing-complete","location":"<bucket>/<prefix>","started":"<RFC 3339>","files":<number of file entries>}
 //
@@ -52,6 +51,9 @@
 // starting listing's "started", and the ending listing must not have started
 // before it, so a start time left over from an earlier pass is refused rather
 // than letting objects written since then pass as archived during this run.
+// The destination listing must carry a "started" no earlier than the ending
+// listing's, so a destination listing left over from an earlier pass cannot
+// prove a copy the destination may since have lost.
 //
 // The result is a single non-secret JSON line: counts, the objects still
 // pending, whether the mirror has converged, the newest base backup, and the
@@ -176,11 +178,15 @@ var (
 )
 
 // BindRunStart refuses a run start that is not the one the starting listing
-// recorded, and an ending listing that started before it. Without this, a
+// recorded, an ending listing that started before it, and a destination
+// listing that started before the ending listing. Without the first two, a
 // start time reused from an earlier pass lets an object written after that
 // time but missed by this pass's starting listing pass as archived during the
-// run, so it is never checked against the destination.
-func BindRunStart(runStart time.Time, before, after Listing) error {
+// run, so it is never checked against the destination. Without the last, a
+// destination listing left over from an earlier pass can report objects the
+// destination has since lost, so the result converges on evidence that no
+// longer holds.
+func BindRunStart(runStart time.Time, before, after, destination Listing) error {
 	if before.Started.IsZero() || after.Started.IsZero() {
 		return fmt.Errorf("%w: a source listing has no start time", ErrRunStartMismatch)
 	}
@@ -190,6 +196,11 @@ func BindRunStart(runStart time.Time, before, after Listing) error {
 	}
 	if after.Started.Before(before.Started) {
 		return fmt.Errorf("%w: ending listing started before the starting listing", ErrRunStartMismatch)
+	}
+	// The ending listing's start is non-zero here, so this also refuses a
+	// destination listing that carries no start time.
+	if destination.Started.Before(after.Started) {
+		return fmt.Errorf("%w: destination listing has no start time or started before the ending listing", ErrRunStartMismatch)
 	}
 	return nil
 }
@@ -538,7 +549,7 @@ func run(args []string, stdout io.Writer) error {
 			}
 			listings = append(listings, listing)
 		}
-		if err := BindRunStart(runStart, listings[0], listings[1]); err != nil {
+		if err := BindRunStart(runStart, listings[0], listings[1], listings[2]); err != nil {
 			return err
 		}
 		summary, err := EvaluateParity(runStart, listings[0].Objects, listings[1].Objects, listings[2].Objects)

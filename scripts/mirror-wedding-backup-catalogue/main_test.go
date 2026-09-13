@@ -106,6 +106,7 @@ var (
 	runStart     = time.Date(2026, 9, 13, 10, 0, 0, 0, time.UTC)
 	beforeRun    = runStart.Add(-24 * time.Hour)
 	duringTheRun = runStart.Add(5 * time.Minute)
+	afterTheRun  = runStart.Add(45 * time.Minute)
 
 	dataDigest  = strings.Repeat("a", 64)
 	infoDigest  = strings.Repeat("b", 64)
@@ -600,8 +601,9 @@ func writeListing(t *testing.T, name, location, started string, keys ...string) 
 }
 
 const (
-	runStartArg  = "2026-09-13T10:00:00Z"
-	afterStarted = "2026-09-13T10:30:00Z"
+	runStartArg        = "2026-09-13T10:00:00Z"
+	afterStarted       = "2026-09-13T10:30:00Z"
+	destinationStarted = "2026-09-13T10:45:00Z"
 )
 
 // A copy that landed in the wrong bucket produces matching listings there, so
@@ -610,11 +612,11 @@ func TestRunEvaluateRefusesListingsFromTheWrongLocation(t *testing.T) {
 	keys := []string{baseInfo, baseData, olderWAL}
 	before := writeListing(t, "before", sourceLocation, runStartArg, keys...)
 	after := writeListing(t, "after", sourceLocation, afterStarted, keys...)
-	good := writeListing(t, "destination", destinationLocation, "", keys...)
+	good := writeListing(t, "destination", destinationLocation, destinationStarted, keys...)
 	if err := run([]string{"evaluate", runStartArg, "platform-backups", before, after, good}, io.Discard); err != nil {
 		t.Fatalf("run(evaluate) = %v, want nil", err)
 	}
-	wrongBucket := writeListing(t, "wrong", "platform-backups-copy/"+destinationPrefix, "", keys...)
+	wrongBucket := writeListing(t, "wrong", "platform-backups-copy/"+destinationPrefix, destinationStarted, keys...)
 	if err := run([]string{"evaluate", runStartArg, "platform-backups", before, after, wrongBucket}, io.Discard); !errors.Is(err, ErrListingLocation) {
 		t.Fatalf("run(evaluate, wrong destination) = %v, want %v", err, ErrListingLocation)
 	}
@@ -630,36 +632,69 @@ func TestRunEvaluateRefusesARunStartFromAnotherPass(t *testing.T) {
 	keys := []string{baseInfo, baseData, olderWAL}
 	before := writeListing(t, "before", sourceLocation, runStartArg, keys...)
 	after := writeListing(t, "after", sourceLocation, afterStarted, keys...)
-	destination := writeListing(t, "destination", destinationLocation, "", keys...)
+	destination := writeListing(t, "destination", destinationLocation, destinationStarted, keys...)
 	stale := "2026-09-12T10:00:00Z"
 	if err := run([]string{"evaluate", stale, "platform-backups", before, after, destination}, io.Discard); !errors.Is(err, ErrRunStartMismatch) {
 		t.Fatalf("run(evaluate, stale run start) = %v, want %v", err, ErrRunStartMismatch)
 	}
 }
 
-func TestBindRunStart(t *testing.T) {
-	started := func(at time.Time) Listing { return Listing{Started: at} }
-	if err := BindRunStart(runStart, started(runStart), started(duringTheRun)); err != nil {
-		t.Fatalf("BindRunStart(this pass) = %v, want nil", err)
-	}
+// The command binds the destination listing to this pass too, so a destination
+// listing without a start time, or one taken before the ending listing, is
+// refused end to end rather than proving a copy from stale evidence.
+func TestRunEvaluateRefusesADestinationListingFromAnotherPass(t *testing.T) {
+	keys := []string{baseInfo, baseData, olderWAL}
+	before := writeListing(t, "before", sourceLocation, runStartArg, keys...)
+	after := writeListing(t, "after", sourceLocation, afterStarted, keys...)
 	tests := []struct {
-		name          string
-		start         time.Time
-		before, after Listing
+		name    string
+		started string
 	}{
-		// Objects written between an earlier pass and this one would otherwise
-		// pass as archived during the run and never be checked.
-		{"run start from an earlier pass", beforeRun, started(runStart), started(duringTheRun)},
-		{"starting listing without a start time", runStart, Listing{}, started(duringTheRun)},
-		// A zero run start equals a zero listing start and is not after it, so
-		// only the explicit missing-start check refuses this.
-		{"no start time anywhere", time.Time{}, Listing{}, Listing{}},
-		{"ending listing without a start time", runStart, started(runStart), Listing{}},
-		{"ending listing started before the starting listing", runStart, started(runStart), started(beforeRun)},
+		{"destination listing without a start time", ""},
+		{"destination listing started before the ending listing", runStartArg},
+		{"destination listing from an earlier pass", "2026-09-12T10:00:00Z"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := BindRunStart(tt.start, tt.before, tt.after); !errors.Is(err, ErrRunStartMismatch) {
+			destination := writeListing(t, "destination", destinationLocation, tt.started, keys...)
+			if err := run([]string{"evaluate", runStartArg, "platform-backups", before, after, destination}, io.Discard); !errors.Is(err, ErrRunStartMismatch) {
+				t.Fatalf("run(evaluate) = %v, want %v", err, ErrRunStartMismatch)
+			}
+		})
+	}
+}
+
+func TestBindRunStart(t *testing.T) {
+	started := func(at time.Time) Listing { return Listing{Started: at} }
+	if err := BindRunStart(runStart, started(runStart), started(duringTheRun), started(duringTheRun)); err != nil {
+		t.Fatalf("BindRunStart(this pass, destination listed with the ending listing) = %v, want nil", err)
+	}
+	if err := BindRunStart(runStart, started(runStart), started(duringTheRun), started(afterTheRun)); err != nil {
+		t.Fatalf("BindRunStart(this pass, destination listed after the ending listing) = %v, want nil", err)
+	}
+	tests := []struct {
+		name                       string
+		start                      time.Time
+		before, after, destination Listing
+	}{
+		// Objects written between an earlier pass and this one would otherwise
+		// pass as archived during the run and never be checked.
+		{"run start from an earlier pass", beforeRun, started(runStart), started(duringTheRun), started(afterTheRun)},
+		{"starting listing without a start time", runStart, Listing{}, started(duringTheRun), started(afterTheRun)},
+		// A zero run start equals a zero listing start and is not after it, so
+		// only the explicit missing-start check refuses this.
+		{"no start time anywhere", time.Time{}, Listing{}, Listing{}, Listing{}},
+		{"ending listing without a start time", runStart, started(runStart), Listing{}, started(afterTheRun)},
+		{"ending listing started before the starting listing", runStart, started(runStart), started(beforeRun), started(afterTheRun)},
+		// A destination listing from an earlier pass can show objects the
+		// destination has since lost, so parity would converge on stale evidence.
+		{"destination listing without a start time", runStart, started(runStart), started(duringTheRun), Listing{}},
+		{"destination listing started before the ending listing", runStart, started(runStart), started(duringTheRun), started(runStart)},
+		{"destination listing from an earlier pass", runStart, started(runStart), started(duringTheRun), started(beforeRun)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := BindRunStart(tt.start, tt.before, tt.after, tt.destination); !errors.Is(err, ErrRunStartMismatch) {
 				t.Fatalf("BindRunStart() = %v, want %v", err, ErrRunStartMismatch)
 			}
 		})
