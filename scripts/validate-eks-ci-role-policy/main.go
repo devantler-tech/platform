@@ -2237,9 +2237,10 @@ const (
 // emitter, so a pure VALUES change moves this aggregate even though nothing is
 // granted.
 //
-// CONSERVATION: against main 35ed2215 this branch changes exactly two files:
+// CONSERVATION: against main 35ed2215 this branch changes exactly three files:
 // the openbao HelmRelease patch (which targets only the openbao/openbao
-// HelmRelease) and its shell test. No ClusterRole, Role, ClusterRoleBinding,
+// HelmRelease), its shell test, and this approval record. No ClusterRole, Role,
+// ClusterRoleBinding,
 // RoleBinding or ServiceAccount source changes, and no identity, binding, verb,
 // wildcard, AWS identity or permission changes; only the openbao HelmRelease's
 // unresolved-substitution fingerprint moves.
