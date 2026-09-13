@@ -120,6 +120,21 @@ jobs:
           shellcheck -x scripts/tests/test-registry-auth-lib.sh
           bash scripts/tests/test-registry-auth-lib.sh
 
+      # The enforcement probe's negative control only proves anything while it stays unsigned.
+      # One added signing step would silently turn a refusal test into a no-op, so this runs
+      # unconditionally, on every PR and merge group, like the checks above (#3336). The
+      # verification script both the publisher and the probe call is tested here too: a
+      # fake curl stands in for the registry, so no credential or network is involved.
+      - name: 🔐 Validate the unsigned probe image stays unsigned
+        run: |
+          shellcheck scripts/guard-unsigned-probe-image-publisher.sh
+          shellcheck scripts/tests/test-guard-unsigned-probe-image-publisher.sh
+          shellcheck scripts/verify-image-unsigned.sh
+          shellcheck scripts/tests/test-verify-image-unsigned.sh
+          bash scripts/guard-unsigned-probe-image-publisher.sh .
+          bash scripts/tests/test-guard-unsigned-probe-image-publisher.sh
+          bash scripts/tests/test-verify-image-unsigned.sh
+
       - name: 🔐 Validate proposed Crossplane package signature checks
         run: |
           go test ./scripts/collect-first-party-packages
@@ -340,6 +355,9 @@ jobs:
               - 'scripts/probe-image-signature-enforcement.sh'
               - 'scripts/tests/test-probe-image-signature-enforcement.sh'
               - '.github/workflows/probe-image-signature-enforcement.yaml'
+              # The probe re-checks its negative control with this script just
+              # before the pull, so a change to it re-runs the probe's suite.
+              - 'scripts/verify-image-unsigned.sh'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'

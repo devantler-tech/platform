@@ -17,12 +17,24 @@ name: Probe Image Signature Enforcement
 # Adding a cadence is #3336's activation step and is deliberately NOT done here.
 #
 # WHAT RUNNING IT REQUIRES:
-#   * `unsigned_image` — a deliberately unsigned THROWAWAY ref that matches one
-#     of the rules in talos/cluster/verify-first-party-images.yaml. The
-#     catch-all `ghcr.io/devantler-tech/*` rule means any first-party name
-#     matches, so a dedicated throwaway repository is the right home for it.
-#     NEVER a production workload: the probe asserts the rule match itself, but
-#     it cannot know whether a ref is something the cluster depends on.
+#   * `unsigned_image` — a deliberately unsigned THROWAWAY ref, pinned by digest
+#     (`<repository>@sha256:<hex>`), that matches one of the rules in
+#     talos/cluster/verify-first-party-images.yaml. The catch-all
+#     `ghcr.io/devantler-tech/*` rule means any first-party name matches, so a
+#     dedicated throwaway repository is the right home for it. NEVER a
+#     production workload: the probe asserts the rule match itself, but it
+#     cannot know whether a ref is something the cluster depends on.
+#     Use `ghcr.io/devantler-tech/unsigned-probe-throwaway`, published by
+#     publish-unsigned-probe-image.yaml. Dispatch that first: every run pushes a
+#     new image, so its digest is never already cached on the node, and its
+#     summary prints the digest ref to pass here. A tag is refused because it
+#     could be moved to a different image before this runs.
+#     Publishing and probing are separate runs, so the probe re-checks the digest
+#     with scripts/verify-image-unsigned.sh immediately before the node pull. If
+#     it is no longer confirmed unsigned — a signature or referrer was added, or
+#     the registry could not answer — the verdict is INCONCLUSIVE, never FAIL.
+#     scripts/guard-unsigned-probe-image-publisher.sh keeps the publisher
+#     unsigned and the image unreferenced by anything else.
 #   * `signed_image` — a correctly signed ref that also matches a rule, used as
 #     the positive control. Without it a verifier refusing EVERYTHING is
 #     indistinguishable from one working correctly.
@@ -41,7 +53,7 @@ on:
         required: true
         type: string
       unsigned_image:
-        description: "Deliberately unsigned THROWAWAY ref matching a verification rule"
+        description: "Deliberately unsigned THROWAWAY ref matching a verification rule, pinned by digest (repository@sha256:...)"
         required: true
         type: string
       signed_image:
@@ -83,6 +95,7 @@ jobs:
     environment: prod
     permissions:
       contents: read # checkout repository
+      packages: read # re-check the unsigned negative control just before the pull
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -133,6 +146,10 @@ jobs:
           UNSIGNED_IMAGE: ${{ inputs.unsigned_image }}
           SIGNED_IMAGE: ${{ inputs.signed_image }}
           KEEP: ${{ inputs.keep }}
+          # Read by scripts/verify-image-unsigned.sh, which the probe runs on the
+          # unsigned ref just before pulling it.
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           args=(
