@@ -1,0 +1,25 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Prune-protected-orphan alert (#3503): reports a retirement whose manual delete
+# step was missed, read from Flux inventories.
+#
+# Its own component folder, deliberately NOT inside controllers/coroot/: the
+# check must survive the retirement of the observability stack that hosts it.
+# Removing coroot/ from the aggregate prunes everything in that folder, and
+# Coroot's own prune-protected Namespace and HelmRelease would then be left
+# running with no checker to report them. It still runs in the observability
+# namespace (created by coroot/, and prune-protected, so it outlives Coroot) to
+# reuse that namespace's C-0034 service-account-token exception, and carries its
+# own CiliumNetworkPolicy so it keeps its egress when allow-coroot is pruned.
+# Retiring the observability NAMESPACE itself needs this folder relocated first.
+resources:
+  - service-account.yaml
+  - secret.yaml
+  - cluster-role.yaml
+  - cluster-role-binding.yaml
+  - role.yaml
+  - role-binding.yaml
+  - config-map.yaml
+  - cilium-network-policy.yaml
+  - cron-job.yaml

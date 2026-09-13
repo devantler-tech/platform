@@ -38,3 +38,6 @@ resources:
   - cluster-role-stranded-volume-attach-alert.yaml
   - cluster-role-binding-stranded-volume-attach-alert.yaml
   - cron-job-stranded-volume-attach-alert.yaml
+  # The prune-protected-orphan alert (#3503) deliberately lives in its own
+  # folder, controllers/prune-protected-orphan-alert/, so retiring this one
+  # cannot prune the check that would report what it leaves behind.

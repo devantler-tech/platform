@@ -1,0 +1,12 @@
+# State for prune-protected-orphan-alert: the epoch second at which each
+# left-behind resource was first seen, so the grace window is measured from that
+# sighting rather than restarting on every run. Flux creates the object once
+# (ssa: IfNotPresent) and leaves `data` to the CronJob, its only writer.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prune-protected-orphan-alert-state
+  namespace: observability
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
