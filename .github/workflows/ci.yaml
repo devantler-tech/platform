@@ -1980,9 +1980,14 @@ jobs:
               if [ "${dir}/${role}" = "talos/control-planes" ]; then
                 grep -qF 'url: https://dex.platform.devantler.tech' "${rendered}"
                 grep -qF 'audit-log-maxbackup: "3"' "${rendered}"
+                if grep -qF 'secure: false' "${rendered}"; then
+                  echo "::error::${dir}/${role}: Longhorn mount exception leaked onto control planes"
+                  exit 1
+                fi
               elif [ "${dir}/${role}" = "talos/workers" ]; then
                 grep -qF 'destination: /var/lib/longhorn' "${rendered}"
                 grep -qF 'node.longhorn.io/create-default-disk: "true"' "${rendered}"
+                grep -qF 'secure: false' "${rendered}"
                 if grep -qF 'url: https://dex.platform.devantler.tech' "${rendered}"; then
                   echo "::error::${dir}/${role}: control-plane OIDC config leaked onto workers"
                   exit 1

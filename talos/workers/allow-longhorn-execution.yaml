@@ -1,0 +1,9 @@
+# Talos 1.14 mounts new EPHEMERAL volumes noexec by default. Longhorn v1
+# executes engine binaries under /var/lib/longhorn on EPHEMERAL, so fresh or
+# rebuilt storage workers need the documented compatibility exception. Keep it
+# worker-scoped: control planes retain Talos's secure mount defaults.
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: EPHEMERAL
+mount:
+  secure: false
