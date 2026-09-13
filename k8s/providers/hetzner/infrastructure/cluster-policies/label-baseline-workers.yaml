@@ -1,0 +1,68 @@
+# Prod-only: give the static baseline workers a POSITIVE node label, so a
+# workload that must never ride an autoscaler node can require it and fail
+# CLOSED.
+#
+# WHY A POSITIVE LABEL: the only autoscaler marker, `ksail.io/autoscaled`, is a
+# negative discriminator — `DoesNotExist` admits any node that lacks it. That
+# is not a theoretical gap. Measured on prod 2026-09-13, neither autoscaler
+# node (created 2026-08-26 and 2026-09-08) carries the marker, and apart from
+# the hostname their labels are identical to the baseline workers'. Every
+# `DoesNotExist` guard therefore admits every node, and hcloud block volumes
+# were attached to autoscaler nodes at the time (#3287). A required `In` match
+# on this label excludes any node that does not carry it.
+#
+# WHY THE NODE NAME: the static workers and the autoscaler nodes boot from the
+# same shared Talos worker config (talos/workers/label-nodes.yaml), so no
+# label set there can tell them apart. KSail names the static workers
+# `prod-worker-<n>` and the autoscaler nodes `autoscale-<pool>-<id>`, the same
+# name discriminator restrict-storage-to-baseline-workers relies on.
+#
+# MECHANISM: this is the ADMISSION half. It labels a baseline worker's Node as
+# the kubelet registers it, and re-applies the label on any later update that
+# drops it. The retrofit of Nodes that already exist lives in the sibling
+# label-existing-baseline-workers.yaml, because Kyverno requires every rule in
+# a mutateExistingOnPolicyUpdate policy to declare mutate.targets and an
+# admission rule has none.
+#
+# FAILURE POLICY: Ignore. With Fail, a Kyverno outage would reject Node
+# registration and updates, and Kyverno itself runs on those nodes, so the
+# cluster could not recover on its own. A Node admitted while Kyverno is down
+# is labelled by the retrofit policy once Kyverno returns.
+#
+# Nothing requires this label yet, so adding it moves no pod. The consumers
+# (the hcloud volume guards) switch to it once it is verified on the live node
+# set.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: label-baseline-workers
+  annotations:
+    policies.kyverno.io/title: Label Baseline Workers
+    policies.kyverno.io/category: Scheduling, Storage
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Node
+    policies.kyverno.io/description: >-
+      Labels the static baseline worker Nodes (prod-worker-*) with
+      platform.devantler.tech/baseline-worker=true as they register, so a
+      workload that must not run on an ephemeral autoscaler node can require
+      the label and fail closed. Admission half; the retrofit of existing Nodes
+      is label-existing-baseline-workers.
+spec:
+  failurePolicy: Ignore
+  rules:
+    - name: label-baseline-worker-nodes
+      match:
+        any:
+          - resources:
+              kinds:
+                - v1/Node
+              names:
+                - "prod-worker-*"
+              operations:
+                - CREATE
+                - UPDATE
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            labels:
+              platform.devantler.tech/baseline-worker: "true"
