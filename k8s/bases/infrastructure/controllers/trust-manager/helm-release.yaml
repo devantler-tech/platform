@@ -35,6 +35,23 @@ spec:
       # both keys are absent, so setting maxUnavailable alone suppresses it.)
       maxUnavailable: 1
     replicaCount: ${trust_manager_replicas:=2}
+    # C-0211 baseline context, supplied through the chart's own values because
+    # cert-manager is excluded from add-security-context's pod and container
+    # rules, and the scan reads the stored Deployment template rather than the
+    # mutated pod (#3239). Helm merges these maps into the chart defaults, so
+    # runAsNonRoot, the RuntimeDefault seccomp profile and the dropped
+    # capabilities are kept. OnRootMismatch only skips a recursive ownership
+    # change when a volume root already matches, and the empty seLinuxOptions
+    # object leaves SELinux type and MCS category selection to the runtime. The
+    # default-package init container carries the same container field.
+    podSecurityContext:
+      fsGroupChangePolicy: OnRootMismatch
+    app:
+      securityContext:
+        seLinuxOptions: {}
+    defaultPackage:
+      securityContext:
+        seLinuxOptions: {}
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
