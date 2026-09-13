@@ -316,6 +316,7 @@ new_wrapper_case() {
   printf 'wedding-db-backup-r2-dedicated' >"${dir}/store-wedding-db-dedicated-secret"
   printf 'Running' >"${dir}/phase"
   printf '==== LISTINGS READY ====\n' >"${dir}/pod.log"
+  printf 'apiVersion: v1\nkind: ConfigMap\ndata:\n  r2_bucket: platform-backups\n  r2_endpoint: https://abc123.r2.cloudflarestorage.com\n' >"${dir}/bootstrap.yaml"
   cp "${2:-${happy_work}}"/run-start "${2:-${happy_work}}"/source-before \
     "${2:-${happy_work}}"/source-after "${2:-${happy_work}}"/destination "${dir}/work/"
   printf '%s' "${dir}"
@@ -327,6 +328,7 @@ run_wrapper() {
   shift 2
   wrapper_rc=0
   PATH="${bin}:${PATH}" FAKE_KUBE="${dir}" KUBECTL="${bin}/kubectl" MIRROR_EVALUATOR="${chosen}" \
+    MIRROR_BOOTSTRAP_CONFIG="${dir}/bootstrap.yaml" \
     MIRROR_POLL_INTERVAL=0 MIRROR_POLL_LIMIT=3 GITHUB_RUN_ID=42 GITHUB_RUN_ATTEMPT=1 \
     bash "${wrapper}" "$@" >"${dir}/out" 2>"${dir}/err" || wrapper_rc=$?
   wrapper_out="$(cat "${dir}/out")"
@@ -408,6 +410,16 @@ printf 'https://abc123.r2.cloudflarestorage.com"\n        - name: X' >"${dir}/st
 printf 'https://abc123.r2.cloudflarestorage.com"\n        - name: X' >"${dir}/store-wedding-db-dedicated-endpoint"
 run_wrapper "${dir}" "${evaluator}" --confirm
 refuse_before_pod "${dir}" 'an endpoint that could inject manifest fields'
+cases_run=$((cases_run + 1))
+
+# Both stores agree on a well-formed host that tenant egress would even allow, but
+# it is not the committed endpoint, so neither credential may be sent to it.
+dir="$(new_wrapper_case foreign-endpoint)"
+printf 'https://attacker.r2.cloudflarestorage.com' >"${dir}/store-wedding-db-endpoint"
+printf 'https://attacker.r2.cloudflarestorage.com' >"${dir}/store-wedding-db-dedicated-endpoint"
+run_wrapper "${dir}" "${evaluator}" --confirm
+refuse_before_pod "${dir}" 'an endpoint other than the committed R2 endpoint'
+require_text "${wrapper_err}" 'committed R2 endpoint' 'the pin names the reason'
 cases_run=$((cases_run + 1))
 
 dir="$(new_wrapper_case switched-mid-run)"

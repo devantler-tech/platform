@@ -154,6 +154,20 @@ readonly destination_bucket="${store_bucket}" destination_prefix="${store_prefix
 [[ "${source_endpoint}" == "${destination_endpoint}" ]] ||
   fail 'the two ObjectStores name different endpoints'
 
+# Both credentials are about to be handed to this endpoint, so a live value is not
+# trusted on its own: two drifted stores could agree on a foreign host, including
+# another account's R2 host that the namespace egress already allows. Pin it to
+# the endpoint committed in the reviewed bootstrap ConfigMap.
+bootstrap_config="${MIRROR_BOOTSTRAP_CONFIG:-${root_dir}/k8s/bases/bootstrap/config-map.yaml}"
+trusted_endpoints="$(sed -n 's/^  r2_endpoint: *//p' "${bootstrap_config}")" ||
+  fail 'could not read the committed R2 endpoint'
+[[ -n "${trusted_endpoints}" && "${trusted_endpoints}" != *$'\n'* ]] ||
+  fail 'the bootstrap ConfigMap does not commit exactly one R2 endpoint'
+[[ "${trusted_endpoints}" =~ ^https://[a-z0-9][a-z0-9.-]*$ ]] ||
+  fail 'the committed R2 endpoint is not an https URL with a bare host'
+[[ "${source_endpoint}" == "${trusted_endpoints}" ]] ||
+  fail 'the live ObjectStores name an endpoint other than the committed R2 endpoint'
+
 "${evaluator}" validate-plan "${source_bucket}" "${source_prefix}" "${source_secret}" \
   "${destination_bucket}" "${destination_prefix}" "${destination_secret}" ||
   fail 'the live ObjectStores do not match the reviewed mirror plan'
