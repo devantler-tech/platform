@@ -39,7 +39,10 @@ mkdir -p "${fake_bin}" "${fixtures}"
 
 readonly node='10.0.0.1'
 readonly owner='security.ImageVerificationConfigController'
-readonly unsigned='ghcr.io/devantler-tech/probe-throwaway-unsigned:t1'
+# The unsigned control must be pinned by digest: a tag could be moved to another
+# image between the probe's re-check and its pull.
+readonly unsigned_hex='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+readonly unsigned="ghcr.io/devantler-tech/probe-throwaway-unsigned@sha256:${unsigned_hex}"
 # The positive control must select the SAME first-match rule as the unsigned ref,
 # so the default is a throwaway under the same catch-all rule — not a production
 # image under a different, more specific rule.
@@ -112,6 +115,16 @@ case "${verb}" in
     fi
     case "${sub}" in
       list)
+        # Once a removal has been attempted, a case can stage what the node
+        # holds afterwards, so cleanup's re-check sees a different store from
+        # the cache guard's first read.
+        if [[ -e "${fixtures}/removed.txt" ]]; then
+          [[ -e "${fixtures}/imagelist_after_remove_fails" ]] && exit 1
+          if [[ -e "${fixtures}/imagelist_after_remove.txt" ]]; then
+            cat "${fixtures}/imagelist_after_remove.txt"
+            exit 0
+          fi
+        fi
         [[ -e "${fixtures}/imagelist_fails" ]] && exit 1
         if [[ -e "${fixtures}/imagelist.txt" ]]; then
           cat "${fixtures}/imagelist.txt"
@@ -133,6 +146,7 @@ case "${verb}" in
       remove)
         ref="${1:-}"
         printf '%s\n' "${ref}" >>"${fixtures}/removed.txt"
+        [[ -e "${fixtures}/remove_fails" ]] && exit 1
         exit 0
         ;;
     esac
@@ -144,9 +158,32 @@ exit 64
 FAKE
 chmod +x "${fake_bin}/talosctl"
 
+# Fake scripts/verify-image-unsigned.sh. The probe runs it on the unsigned ref just
+# before the pull. By default it confirms the ref is unsigned; a case stages
+# `verify_rc` (1 = now signed, 3 = could not tell) to model the control changing
+# between publish and probe. Every call is logged so a case can assert the
+# verifier ran on the exact digest ref, or did not run at all.
+cat >"${fake_bin}/verify-image-unsigned" <<'FAKE'
+#!/usr/bin/env bash
+set -uo pipefail
+printf '%s\n' "$*" >>"${FAKE_FIXTURES}/verify.log"
+rc=0
+if [[ -e "${FAKE_FIXTURES}/verify_rc" ]]; then
+  rc="$(cat "${FAKE_FIXTURES}/verify_rc")"
+fi
+case "${rc}" in
+  0) printf 'UNSIGNED: fake verifier\n' ;;
+  1) printf 'SIGNED: fake verifier found a signature\n' >&2 ;;
+  *) printf 'UNKNOWN: fake verifier could not tell\n' >&2 ;;
+esac
+exit "${rc}"
+FAKE
+chmod +x "${fake_bin}/verify-image-unsigned"
+
 export FAKE_FIXTURES="${fixtures}"
 export PATH="${fake_bin}:${PATH}"
 export TALOSCTL="${fake_bin}/talosctl"
+export VERIFY_IMAGE_UNSIGNED="${fake_bin}/verify-image-unsigned"
 
 # Talos assigns rule ids 0000, 0001, ... in declaration order and evaluates the
 # first match, so each fixture rule carries an explicit id (default 0000).
@@ -331,7 +368,7 @@ check 'a rule owned by another controller is ignored (INCONCLUSIVE)'
 reset_fixtures
 set +e
 out="$("${script}" --confirm --node "${node}" \
-  --unsigned-image 'ghcr.io/other-org/thing:t1' --signed-image "${signed}" 2>&1)"
+  --unsigned-image "ghcr.io/other-org/thing@sha256:${unsigned_hex}" --signed-image "${signed}" 2>&1)"
 rc=$?
 set -e
 [[ ${rc} -eq 3 ]] || fail "unmatched ref should exit 3, got ${rc}"
@@ -386,7 +423,7 @@ check 'a rule pattern that names a tag does not govern the ref (INCONCLUSIVE, no
 # ref on the node, so the probe must treat it as matched rather than skip the test.
 # Both controls live in that one repository, so they select the same rule.
 reset_fixtures
-repo_unsigned='ghcr.io/devantler-tech/probe-throwaway:unsigned-t1'
+repo_unsigned="ghcr.io/devantler-tech/probe-throwaway@sha256:${unsigned_hex}"
 repo_signed='ghcr.io/devantler-tech/probe-throwaway:signed-t1'
 rule_obj 'ghcr.io/devantler-tech/probe-throwaway' 'running' "${owner}" '0000' >"${fixtures}/rules.json"
 stage_pull "${repo_unsigned}" 1 'image verification failed: no valid signature found'
@@ -410,7 +447,7 @@ for upper_case in signed unsigned; do
   reset_fixtures
   case "${upper_case}" in
     signed) u="${unsigned}" s='GHCR.IO/devantler-tech/probe-throwaway-signed:t1' ;;
-    unsigned) u='ghcr.io/Devantler-Tech/probe-throwaway-unsigned:t1' s="${signed}" ;;
+    unsigned) u="ghcr.io/Devantler-Tech/probe-throwaway-unsigned@sha256:${unsigned_hex}" s="${signed}" ;;
   esac
   # The exact false-PASS setup: the canonical twin of the upper-case ref is cached.
   printf '%s sha256:abc 12MB\n' 'ghcr.io/devantler-tech/probe-throwaway-signed:t1' >"${fixtures}/imagelist.txt"
@@ -455,11 +492,11 @@ reset_fixtures
   rule_obj 'ghcr.io/devantler-tech/*' 'running' "${owner}" '0001'
   rule_obj 'ghcr.io/devantler-tech/ksail*' 'running' "${owner}" '0000'
 } >"${fixtures}/rules.json"
-stage_pull 'ghcr.io/devantler-tech/ksail-probe-unsigned:t1' 1 'image verification failed: no valid signature found'
+stage_pull "ghcr.io/devantler-tech/ksail-probe-unsigned@sha256:${unsigned_hex}" 1 'image verification failed: no valid signature found'
 stage_pull "${signed}" 0 ''
 set +e
 out="$("${script}" --confirm --node "${node}" \
-  --unsigned-image 'ghcr.io/devantler-tech/ksail-probe-unsigned:t1' --signed-image "${signed}" 2>&1)"
+  --unsigned-image "ghcr.io/devantler-tech/ksail-probe-unsigned@sha256:${unsigned_hex}" --signed-image "${signed}" 2>&1)"
 rc=$?
 set -e
 [[ ${rc} -eq 3 ]] || fail "rules out of stream order should resolve by id and exit 3, got ${rc}: ${out}"
@@ -523,7 +560,7 @@ check 'a refusal that merely repeats the unsigned ref is INCONCLUSIVE, never PAS
 # The ref with its tag stripped must not count either: an authorization error
 # commonly names only the repository.
 reset_fixtures
-stage_pull "${unsigned}" 1 "denied: requested access to the resource ${unsigned%:*} is denied"
+stage_pull "${unsigned}" 1 "denied: requested access to the resource ${unsigned%@*} is denied"
 stage_pull "${signed}" 0 ''
 run_probe
 [[ ${probe_rc} -eq 3 ]] || fail "repository-echoing refusal should exit 3, got ${probe_rc}: ${probe_out}"
@@ -569,6 +606,67 @@ require_text "${probe_out}" 'PASS:' 'pass path'
 require_text "${probe_out}" 'refused matched unsigned ref' 'pass path'
 check 'unsigned refused for a verification reason + signed accepted is PASS'
 
+# --- The negative control is re-checked immediately before the pull ---------
+# Publishing the control and running the probe are separate runs, so the image can
+# be signed, or have a referrer attached, in between. A control that is now signed
+# and gets ACCEPTED must not read as broken enforcement. The node is staged to
+# accept the unsigned ref here on purpose: the control case after these two shows
+# that exactly this node behaviour is the headline FAIL when the re-check passes.
+reset_fixtures
+stage_pull "${unsigned}" 0 ''
+stage_pull "${signed}" 0 ''
+printf '1' >"${fixtures}/verify_rc"
+run_probe
+[[ ${probe_rc} -eq 3 ]] || fail "a control signed since publishing should exit 3, got ${probe_rc}: ${probe_out}"
+require_text "${probe_out}" 'no longer confirmed unsigned' 'now-signed control'
+require_text "${probe_out}" 'now carries a signature' 'now-signed control'
+refute_text "${probe_out}" 'FAIL:' 'now-signed control'
+refute_text "${probe_out}" 'PASS:' 'now-signed control'
+[[ ! -e "${fixtures}/pulled.txt" ]] || fail 'probe pulled a negative control that is no longer unsigned'
+[[ ! -e "${fixtures}/removed.txt" ]] || fail 'probe removed an image despite never pulling one'
+check 'a negative control signed since publishing is INCONCLUSIVE, never FAIL, and nothing is pulled'
+
+reset_fixtures
+stage_pull "${unsigned}" 0 ''
+stage_pull "${signed}" 0 ''
+printf '3' >"${fixtures}/verify_rc"
+run_probe
+[[ ${probe_rc} -eq 3 ]] || fail "an unverifiable control should exit 3, got ${probe_rc}: ${probe_out}"
+require_text "${probe_out}" 'could not be established' 'unverifiable control'
+refute_text "${probe_out}" 'FAIL:' 'unverifiable control'
+refute_text "${probe_out}" 'PASS:' 'unverifiable control'
+[[ ! -e "${fixtures}/pulled.txt" ]] || fail 'probe pulled a negative control whose signature state is unknown'
+check 'a negative control whose signature state cannot be established is INCONCLUSIVE and nothing is pulled'
+
+# Negative control for the two cases above: the same node behaviour with the
+# control still confirmed unsigned IS the headline FAIL, and the verifier ran on
+# the exact digest ref first. Without this, the cases above could pass because the
+# probe stopped somewhere else.
+reset_fixtures
+stage_pull "${unsigned}" 0 ''
+stage_pull "${signed}" 0 ''
+run_probe
+[[ ${probe_rc} -eq 1 ]] || fail "an accepted, still-unsigned control should exit 1, got ${probe_rc}: ${probe_out}"
+require_text "${probe_out}" 'ACCEPTED the unsigned ref' 'still-unsigned control'
+[[ -e "${fixtures}/verify.log" ]] || fail 'the probe never re-checked the negative control'
+grep -qxF -- "--image ${unsigned}" "${fixtures}/verify.log" ||
+  fail "the verifier did not run on the unsigned digest ref. It ran with: $(cat "${fixtures}/verify.log")"
+check 'with the control still unsigned, the same acceptance is FAIL, after a re-check of the exact digest'
+
+# A tag is refused before anything reaches the node or the registry: it could be
+# moved to another image between the re-check and the pull.
+reset_fixtures
+set +e
+out="$("${script}" --confirm --node "${node}" \
+  --unsigned-image 'ghcr.io/devantler-tech/probe-throwaway-unsigned:t1' --signed-image "${signed}" 2>&1)"
+rc=$?
+set -e
+[[ ${rc} -eq 2 ]] || fail "a tag-pinned unsigned ref should exit 2, got ${rc}: ${out}"
+require_text "${out}" 'not pinned by digest' 'tag-pinned unsigned ref'
+[[ ! -e "${fixtures}/pulled.txt" ]] || fail 'a tag-pinned unsigned ref reached the node'
+[[ ! -e "${fixtures}/verify.log" ]] || fail 'a tag-pinned unsigned ref reached the verifier'
+check 'a tag-pinned unsigned ref is a usage error, before the node or the registry is touched'
+
 # --- Cleanup --------------------------------------------------------------
 # The probe removes ONLY the unsigned throwaway it pulled — never an image the
 # node already had, and never the signed control. The node stays schedulable
@@ -603,5 +701,85 @@ run_probe
 [[ ${probe_rc} -eq 3 ]] || fail "pre-pull failure should exit 3, got ${probe_rc}"
 [[ ! -e "${fixtures}/removed.txt" ]] || fail 'probe removed an image despite never pulling one'
 check 'a failure before any pull removes nothing'
+
+# A refused pull stores nothing, so removing that ref fails simply because it is
+# not there. That must not tell the operator to clean a production node by hand:
+# a warning on every passing run hides the run where removal genuinely failed.
+reset_fixtures
+stage_pull "${unsigned}" 1 'image verification failed: no valid signature found'
+stage_pull "${signed}" 0 ''
+: >"${fixtures}/remove_fails"
+: >"${fixtures}/imagelist_after_remove.txt"
+run_probe
+[[ ${probe_rc} -eq 0 ]] || fail "a refused, absent ref should still PASS, got ${probe_rc}: ${probe_out}"
+refute_text "${probe_out}" 'WARNING could not remove' 'refused, absent ref'
+require_text "${probe_out}" 'not present' 'refused, absent ref'
+check 'a refused ref that was never stored is reported not present, without a manual-cleanup warning'
+
+# The control for the case above: the same failed removal while the node still
+# holds the ref IS a real cleanup failure, and still warns. The verdict is
+# unchanged either way.
+reset_fixtures
+stage_pull "${unsigned}" 1 'image verification failed: no valid signature found'
+stage_pull "${signed}" 0 ''
+: >"${fixtures}/remove_fails"
+printf '%s sha256:%s 1.0 MB\n' "${unsigned}" "${unsigned_hex}" >"${fixtures}/imagelist_after_remove.txt"
+run_probe
+[[ ${probe_rc} -eq 0 ]] || fail "a failed cleanup must not change the PASS verdict, got ${probe_rc}: ${probe_out}"
+require_text "${probe_out}" 'WARNING could not remove' 'present ref whose removal fails'
+check 'a ref still present after a failed removal warns, and the verdict is unchanged'
+
+# If the node cannot be listed after a failed removal, absence is unproven, so
+# the warning stays.
+reset_fixtures
+stage_pull "${unsigned}" 1 'image verification failed: no valid signature found'
+stage_pull "${signed}" 0 ''
+: >"${fixtures}/remove_fails"
+: >"${fixtures}/imagelist_after_remove_fails"
+run_probe
+[[ ${probe_rc} -eq 0 ]] || fail "an unlistable node must not change the PASS verdict, got ${probe_rc}: ${probe_out}"
+require_text "${probe_out}" 'WARNING could not remove' 'unlistable node after failed removal'
+refute_text "${probe_out}" 'not present' 'unlistable node after failed removal'
+check 'a failed removal on a node that cannot be re-listed still warns'
+
+# --- A large image list under the runner's signal disposition ----------------
+# GitHub Actions runs steps with SIGPIPE ignored, so a writer whose reader exits
+# early gets EPIPE instead of dying silently. A presence check that pipes a large
+# image list into `grep -q` then logs "write error: Broken pipe" as soon as grep
+# matches, and under `pipefail` the writer's failure becomes the pipeline's
+# status: the match is reported as NO match. The cache guard then passes a ref
+# the node already holds, which is exactly the false result it exists to
+# prevent. Reproduce the runner's disposition and a list larger than a pipe
+# buffer, with the ref on the first line.
+run_probe_sigpipe_ignored() {
+  local out rc=0
+  set +e
+  out="$(
+    trap '' PIPE
+    "${script}" --confirm --node "${node}" \
+      --unsigned-image "${unsigned}" --signed-image "${signed}" "$@" 2>&1
+  )"
+  rc=$?
+  set -e
+  probe_out="${out}"
+  probe_rc="${rc}"
+}
+
+large_image_list() {
+  local i
+  printf '%s sha256:%s 1.0 MB\n' "$1" "${unsigned_hex}"
+  for ((i = 0; i < 3000; i++)); do
+    printf 'ghcr.io/example/filler-%05d:v1 sha256:%s 1.0 MB\n' "${i}" "${unsigned_hex}"
+  done
+}
+
+reset_fixtures
+large_image_list "${unsigned}" >"${fixtures}/imagelist.txt"
+run_probe_sigpipe_ignored
+[[ ${probe_rc} -eq 3 ]] || fail "a cached ref in a large list should exit 3, got ${probe_rc}: ${probe_out}"
+refute_text "${probe_out}" 'both refs confirmed absent' 'large image list with an early match'
+refute_text "${probe_out}" 'Broken pipe' 'large image list with an early match'
+refute_text "${probe_out}" 'write error' 'large image list with an early match'
+check 'a large image list with an early match produces no broken-pipe write error'
 
 printf '\nAll %d case(s) passed: probe-image-signature-enforcement.sh behaviour is pinned.\n' "${cases_run}"
