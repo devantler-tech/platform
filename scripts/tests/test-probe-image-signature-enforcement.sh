@@ -115,6 +115,16 @@ case "${verb}" in
     fi
     case "${sub}" in
       list)
+        # Once a removal has been attempted, a case can stage what the node
+        # holds afterwards, so cleanup's re-check sees a different store from
+        # the cache guard's first read.
+        if [[ -e "${fixtures}/removed.txt" ]]; then
+          [[ -e "${fixtures}/imagelist_after_remove_fails" ]] && exit 1
+          if [[ -e "${fixtures}/imagelist_after_remove.txt" ]]; then
+            cat "${fixtures}/imagelist_after_remove.txt"
+            exit 0
+          fi
+        fi
         [[ -e "${fixtures}/imagelist_fails" ]] && exit 1
         if [[ -e "${fixtures}/imagelist.txt" ]]; then
           cat "${fixtures}/imagelist.txt"
@@ -136,6 +146,7 @@ case "${verb}" in
       remove)
         ref="${1:-}"
         printf '%s\n' "${ref}" >>"${fixtures}/removed.txt"
+        [[ -e "${fixtures}/remove_fails" ]] && exit 1
         exit 0
         ;;
     esac
@@ -690,5 +701,85 @@ run_probe
 [[ ${probe_rc} -eq 3 ]] || fail "pre-pull failure should exit 3, got ${probe_rc}"
 [[ ! -e "${fixtures}/removed.txt" ]] || fail 'probe removed an image despite never pulling one'
 check 'a failure before any pull removes nothing'
+
+# A refused pull stores nothing, so removing that ref fails simply because it is
+# not there. That must not tell the operator to clean a production node by hand:
+# a warning on every passing run hides the run where removal genuinely failed.
+reset_fixtures
+stage_pull "${unsigned}" 1 'image verification failed: no valid signature found'
+stage_pull "${signed}" 0 ''
+: >"${fixtures}/remove_fails"
+: >"${fixtures}/imagelist_after_remove.txt"
+run_probe
+[[ ${probe_rc} -eq 0 ]] || fail "a refused, absent ref should still PASS, got ${probe_rc}: ${probe_out}"
+refute_text "${probe_out}" 'WARNING could not remove' 'refused, absent ref'
+require_text "${probe_out}" 'not present' 'refused, absent ref'
+check 'a refused ref that was never stored is reported not present, without a manual-cleanup warning'
+
+# The control for the case above: the same failed removal while the node still
+# holds the ref IS a real cleanup failure, and still warns. The verdict is
+# unchanged either way.
+reset_fixtures
+stage_pull "${unsigned}" 1 'image verification failed: no valid signature found'
+stage_pull "${signed}" 0 ''
+: >"${fixtures}/remove_fails"
+printf '%s sha256:%s 1.0 MB\n' "${unsigned}" "${unsigned_hex}" >"${fixtures}/imagelist_after_remove.txt"
+run_probe
+[[ ${probe_rc} -eq 0 ]] || fail "a failed cleanup must not change the PASS verdict, got ${probe_rc}: ${probe_out}"
+require_text "${probe_out}" 'WARNING could not remove' 'present ref whose removal fails'
+check 'a ref still present after a failed removal warns, and the verdict is unchanged'
+
+# If the node cannot be listed after a failed removal, absence is unproven, so
+# the warning stays.
+reset_fixtures
+stage_pull "${unsigned}" 1 'image verification failed: no valid signature found'
+stage_pull "${signed}" 0 ''
+: >"${fixtures}/remove_fails"
+: >"${fixtures}/imagelist_after_remove_fails"
+run_probe
+[[ ${probe_rc} -eq 0 ]] || fail "an unlistable node must not change the PASS verdict, got ${probe_rc}: ${probe_out}"
+require_text "${probe_out}" 'WARNING could not remove' 'unlistable node after failed removal'
+refute_text "${probe_out}" 'not present' 'unlistable node after failed removal'
+check 'a failed removal on a node that cannot be re-listed still warns'
+
+# --- A large image list under the runner's signal disposition ----------------
+# GitHub Actions runs steps with SIGPIPE ignored, so a writer whose reader exits
+# early gets EPIPE instead of dying silently. A presence check that pipes a large
+# image list into `grep -q` then logs "write error: Broken pipe" as soon as grep
+# matches, and under `pipefail` the writer's failure becomes the pipeline's
+# status: the match is reported as NO match. The cache guard then passes a ref
+# the node already holds, which is exactly the false result it exists to
+# prevent. Reproduce the runner's disposition and a list larger than a pipe
+# buffer, with the ref on the first line.
+run_probe_sigpipe_ignored() {
+  local out rc=0
+  set +e
+  out="$(
+    trap '' PIPE
+    "${script}" --confirm --node "${node}" \
+      --unsigned-image "${unsigned}" --signed-image "${signed}" "$@" 2>&1
+  )"
+  rc=$?
+  set -e
+  probe_out="${out}"
+  probe_rc="${rc}"
+}
+
+large_image_list() {
+  local i
+  printf '%s sha256:%s 1.0 MB\n' "$1" "${unsigned_hex}"
+  for ((i = 0; i < 3000; i++)); do
+    printf 'ghcr.io/example/filler-%05d:v1 sha256:%s 1.0 MB\n' "${i}" "${unsigned_hex}"
+  done
+}
+
+reset_fixtures
+large_image_list "${unsigned}" >"${fixtures}/imagelist.txt"
+run_probe_sigpipe_ignored
+[[ ${probe_rc} -eq 3 ]] || fail "a cached ref in a large list should exit 3, got ${probe_rc}: ${probe_out}"
+refute_text "${probe_out}" 'both refs confirmed absent' 'large image list with an early match'
+refute_text "${probe_out}" 'Broken pipe' 'large image list with an early match'
+refute_text "${probe_out}" 'write error' 'large image list with an early match'
+check 'a large image list with an early match produces no broken-pipe write error'
 
 printf '\nAll %d case(s) passed: probe-image-signature-enforcement.sh behaviour is pinned.\n' "${cases_run}"

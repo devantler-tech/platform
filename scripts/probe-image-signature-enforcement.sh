@@ -360,11 +360,24 @@ printf 'probe: on node %s the unsigned ref matches rule %s and the signed contro
 image_list="$("${talosctl_bin}" -n "${node}" image list --namespace "${ns}" 2>/dev/null)" ||
   fail_inconclusive "could not list images on node ${node} — cannot establish that the probe refs are absent"
 
+# Substring match on purpose: `image list` renders a ref plus its digest and
+# size, so an exact line match would miss it.
+#
+# The text goes in through a here-string, NEVER a pipe. `grep -q` stops reading
+# at its first match. GitHub Actions ignores SIGPIPE, so a piped `printf` still
+# writing a large list then fails with "write error: Broken pipe", and under
+# `pipefail` that failure becomes the pipeline's status: a MATCH is reported as
+# NO match. On the cache guard that let a ref the node already held through as
+# absent. Measured in scripts/tests: restoring the pipe turns the cached-ref
+# INCONCLUSIVE into a FAIL.
+list_contains() {
+  grep -qF -- "$2" <<<"$1"
+}
+
 ref_is_cached() {
-  # Substring match on purpose: `image list` renders a ref plus its digest and
-  # size, so an exact line match would miss it. The consequence of a false
-  # positive here is a fail-closed INCONCLUSIVE, never a false PASS.
-  printf '%s' "${image_list}" | grep -qF -- "$1"
+  # The consequence of a false positive here is a fail-closed INCONCLUSIVE,
+  # never a false PASS.
+  list_contains "${image_list}" "$1"
 }
 
 for ref in "${unsigned_image}" "${signed_image}"; do
@@ -414,9 +427,18 @@ cleanup() {
     return "${rc}"
   fi
 
+  local remaining
   for ref in ${pulled_refs[@]+"${pulled_refs[@]}"}; do
     if "${talosctl_bin}" -n "${node}" image remove --namespace "${ns}" "${ref}" >/dev/null 2>&1; then
       printf 'probe: cleaned up %s\n' "${ref}" >&2
+      continue
+    fi
+    # A refused pull stores nothing, so removal fails because there is nothing
+    # to remove. Only a fresh listing that succeeds and no longer shows the ref
+    # counts as absent; anything else keeps the manual-cleanup warning.
+    if remaining="$("${talosctl_bin}" -n "${node}" image list --namespace "${ns}" 2>/dev/null)" &&
+      ! list_contains "${remaining}" "${ref}"; then
+      printf 'probe: %s not present on node %s, nothing to clean up\n' "${ref}" "${node}" >&2
     else
       printf 'probe: WARNING could not remove %s from node %s — remove it by hand\n' "${ref}" "${node}" >&2
     fi
@@ -450,10 +472,11 @@ trap cleanup EXIT
 # allowlist does not recognise yields INCONCLUSIVE — the safe direction for a
 # probe whose job is never to report an unfounded PASS.
 is_verification_refusal() {
-  if printf '%s' "$1" | grep -qiE 'x509|certificate|tls:'; then
+  # Here-strings, not pipes, for the reason given at list_contains.
+  if grep -qiE 'x509|certificate|tls:' <<<"$1"; then
     return 1
   fi
-  printf '%s' "$1" | grep -qiE 'image verification|signature verification|no valid signature|no matching signature|not signed|unsigned image|cosign|sigstore'
+  grep -qiE 'image verification|signature verification|no valid signature|no matching signature|not signed|unsigned image|cosign|sigstore' <<<"$1"
 }
 
 # Pull errors routinely REPEAT the ref, and the recommended negative-control name
