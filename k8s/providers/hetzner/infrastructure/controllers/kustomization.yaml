@@ -40,6 +40,12 @@ resources:
   - flux-instance/
   - hcloud-ccm/
   - hcloud-csi/
+  # Kyverno background-controller + reports-controller grants on core Nodes for
+  # the label-baseline-workers / label-existing-baseline-workers policies
+  # (../cluster-policies/, next Flux layer) — must be live before the policies
+  # are admitted.
+  - cluster-roles/kyverno-label-baseline-worker-nodes.yaml
+  - cluster-roles/kyverno-reports-read-nodes.yaml
   - kubelet-serving-cert-approver/
   - longhorn/
   - origin-ca-issuer/
@@ -62,6 +68,10 @@ resources:
   # - ../../../../bases/infrastructure/controllers/chaos-mesh/
 components:
   - ../../../../bases/components/annotations-transformers
+  # Cross-controller alert (#3437): Coroot delivers the alert and Velero owns
+  # the namespace-scoped pod status read. Both controllers are present in this
+  # full production composition.
+  - ../../../../bases/components/coroot-velero-maintenance-oom-alert
   # Platform-wide HelmRelease drift detection (mode: enabled). Restores
   # Helm-rendered resources deleted/mutated out-of-band — the cause of the
   # silently-broken keda external-scaler and homepage Deployments.

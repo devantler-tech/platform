@@ -41,7 +41,29 @@ spec:
   # node and a single node loss would take Coroot down despite replicas: 2.
   # Preferred (not required) so scheduling still succeeds if only one eligible
   # node is available — the platform house pattern (spread-pods).
+  #
+  # The REQUIRED node affinity is a different concern (#3287): every Coroot
+  # component with `className: hcloud` storage below must run on a static
+  # baseline worker. An hcloud volume attaches to one node and is not
+  # force-detached when that node departs, so a pod that bursts onto an
+  # autoscaler node strands its volume when the node is reclaimed. The rule
+  # requires the positive `platform.devantler.tech/baseline-worker=true` label
+  # (stamped by the label-baseline-workers policies on `prod-worker-*` only), so
+  # an unlabelled node fails closed. The same block is repeated on prometheus,
+  # clickhouse and keeper: each is a separate workload (Prometheus a Deployment,
+  # the others StatefulSets) with its own affinity.
+  # This is a JSON merge patch on a custom resource, so the added `nodeAffinity`
+  # key merges beside the base's clickhouse/keeper `podAntiAffinity` instead of
+  # replacing it.
   affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: platform.devantler.tech/baseline-worker
+                operator: In
+                values:
+                  - "true"
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
         - weight: 100
@@ -94,6 +116,17 @@ spec:
       limits:
         cpu: "2"
         memory: 2Gi
+    # hcloud storage below: required baseline-worker node affinity (see the
+    # server `affinity` above for why).
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: platform.devantler.tech/baseline-worker
+                  operator: In
+                  values:
+                    - "true"
     # 14d metrics retention (matches the old kube-prometheus-stack posture).
     retention: 14d
     storage:
@@ -120,7 +153,30 @@ spec:
     storage:
       className: hcloud
       size: 15Gi
+    # hcloud storage above: required baseline-worker node affinity (see the
+    # server `affinity` for why). Merges beside the base podAntiAffinity.
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: platform.devantler.tech/baseline-worker
+                  operator: In
+                  values:
+                    - "true"
     keeper:
+      # The three keeper replicas already require distinct hosts, so they need
+      # all three baseline workers; with one down the third goes Pending and
+      # Keeper keeps its 2-of-3 Raft quorum.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: platform.devantler.tech/baseline-worker
+                    operator: In
+                    values:
+                      - "true"
       storage:
         className: hcloud
         size: 2Gi

@@ -292,6 +292,12 @@ jobs:
               # kyverno-test.yaml would otherwise leave this filter false, so
               # neither kyverno test nor the shell gate would run on its own change.
               - 'tests/add-baseline-context/**'
+              # The baseline-worker label policies, their fixture and the shell
+              # gate that proves the rule actually fires are one contract.
+              - 'tests/label-baseline-workers/**'
+              - 'scripts/tests/test-label-baseline-workers.sh'
+              # The hcloud consumers that require that label (#3287).
+              - 'scripts/tests/test-hcloud-baseline-worker-affinity.sh'
               - 'tests/audit-privileged-rbac/**'
               - 'tests/auto-vpa/**'
               - 'scripts/tests/test-audit-privileged-rbac.sh'
@@ -317,6 +323,16 @@ jobs:
               # change to either must re-run both.
               - 'scripts/validate-image-verifier-liveness.sh'
               - 'scripts/tests/test-validate-image-verifier-liveness.sh'
+              # The enforcement probe and its test are one contract for the
+              # same reason as the pair above: the probe reports on a security
+              # control, and BOTH of its possible mistakes are silent — a PASS
+              # where nothing was verified, and a FAIL where the result was
+              # merely ambiguous. The probe's workflow belongs here too: it is a
+              # production-secret talosctl caller checked by the setup-talosctl
+              # call-site guard, so a change to it alone must re-run that guard.
+              - 'scripts/probe-image-signature-enforcement.sh'
+              - 'scripts/tests/test-probe-image-signature-enforcement.sh'
+              - '.github/workflows/probe-image-signature-enforcement.yaml'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
@@ -326,6 +342,10 @@ jobs:
               # contract for the vendored CDI/KubeVirt manifests.
               - 'scripts/annotate-vendored-checkov/**'
               - 'scripts/update-vendored-operators.sh'
+              # The cert-approver image-pin guard reads the updater's constants,
+              # so both halves re-run when either changes.
+              - 'scripts/guard-cert-approver-image-pin.sh'
+              - 'scripts/tests/test-guard-cert-approver-image-pin.sh'
               # The Trivy dispositions and the local CI-equivalent scan are one
               # contract: a path-scoped ignore is inert unless both callers load it.
               - '.mega-linter.yml'
@@ -400,6 +420,10 @@ jobs:
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               - 'scripts/tests/test-stranded-volume-attach-alert.sh'
               - 'scripts/tests/test-coroot-alert-autosuppressor.sh'
+              - 'scripts/tests/test-velero-maintenance-oom-alert.sh'
+              # That test also asserts the alerting runbook points at the alert's
+              # manifest, so a runbook-only edit must still run it.
+              - 'docs/dr/alerting.md'
               # The Job manifest, the Secret it imports and this test are one
               # contract: the credential is only out of the environment while all
               # three agree.
@@ -718,12 +742,32 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The approval-base step reads the validator on the first parent, which
+          # is the commit this PR merge ref or merge-group commit merges onto.
+          fetch-depth: 2
 
       - name: ⚙️ Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
+
+      - name: 🔐 Validate authorization approval base
+        # A re-approval of the rendered-surface fingerprint records the aggregate
+        # it supersedes. Two concurrent re-approvals from one base each describe a
+        # tree without the other's delta, and a resolved conflict in that constant
+        # looks correct (#3740). Compare the record with the approval on the base
+        # so a stale one fails naming the aggregate to re-derive against.
+        # HEAD^1 is that base because the PR merge ref's first parent is main and
+        # the merge queue SQUASHes each entry onto a single parent. Switching the
+        # queue to REBASE would make HEAD^1 the PR's own previous commit; revisit
+        # this step if the queue's merge method changes.
+        run: |
+          set -euo pipefail
+          base_source="$RUNNER_TEMP/approval-base-main.go"
+          git show HEAD^1:scripts/validate-eks-ci-role-policy/main.go > "$base_source"
+          go run ./scripts/validate-eks-ci-role-policy approval-base \
+            "$base_source" scripts/validate-eks-ci-role-policy/main.go
 
       - name: ⚙️ Install pinned kubectl renderer
         shell: bash
@@ -887,8 +931,11 @@ jobs:
         # vendor rename must fail offline.
         run: |
           bash -n scripts/update-vendored-operators.sh
-          shellcheck scripts/update-vendored-operators.sh
+          shellcheck scripts/update-vendored-operators.sh \
+            scripts/guard-cert-approver-image-pin.sh \
+            scripts/tests/test-guard-cert-approver-image-pin.sh
           go test ./scripts/annotate-vendored-checkov
+          bash scripts/tests/test-guard-cert-approver-image-pin.sh
           scripts/update-vendored-operators.sh --validate-committed
 
       - name: 🔎 Validate Trivy ignore-file wiring
@@ -1078,6 +1125,10 @@ jobs:
           bash scripts/tests/test-provider-drc-pod-seccomp.sh
           shellcheck scripts/tests/test-add-baseline-context.sh
           bash scripts/tests/test-add-baseline-context.sh
+          shellcheck scripts/tests/test-label-baseline-workers.sh
+          bash scripts/tests/test-label-baseline-workers.sh
+          shellcheck scripts/tests/test-hcloud-baseline-worker-affinity.sh
+          bash scripts/tests/test-hcloud-baseline-worker-affinity.sh
           shellcheck scripts/guard-longhorn-ui-baseline-context.sh scripts/tests/test-guard-longhorn-ui-baseline-context.sh scripts/tests/test-longhorn-ui-baseline-context.sh
           bash scripts/tests/test-guard-longhorn-ui-baseline-context.sh
           bash scripts/tests/test-longhorn-ui-baseline-context.sh
@@ -1100,6 +1151,22 @@ jobs:
         run: |
           shellcheck scripts/validate-image-verifier-liveness.sh scripts/tests/test-validate-image-verifier-liveness.sh
           bash scripts/tests/test-validate-image-verifier-liveness.sh
+
+      - name: 🔏 Validate image-signature enforcement probe
+        if: needs.changes.outputs.k8s == 'true'
+        # The probe itself needs a cluster and WRITES to a node, so it never
+        # runs here. Its own test does not: talosctl is faked from fixtures, so
+        # the 20 cases run in the required job like the liveness checker's.
+        #
+        # It gates a merge for a sharper reason than most tests. The probe
+        # reports on supply-chain enforcement and both of its possible mistakes
+        # are silent: a PASS where a cached image meant nothing was verified,
+        # and a FAIL where the refusal was merely ambiguous. A regression in
+        # either direction would be invisible, so an advisory check is not
+        # enough.
+        run: |
+          shellcheck scripts/probe-image-signature-enforcement.sh scripts/tests/test-probe-image-signature-enforcement.sh
+          bash scripts/tests/test-probe-image-signature-enforcement.sh
 
       - name: 🔐 Validate Cilium mutual-auth policy scope
         if: needs.changes.outputs.k8s == 'true'
@@ -1174,10 +1241,11 @@ jobs:
       - name: 🩺 Validate the CNPG degraded-cluster alert
         if: needs.changes.outputs.k8s == 'true'
         # This CronJob is the only signal for a database degraded without
-        # crashlooping, and a broken check prints the same "none degraded" line
-        # as a healthy fleet. Run its real script against a stubbed API and
-        # delivery so both silent-zero guards and the credential's handling are
-        # pinned by behaviour rather than by schema.
+        # crashlooping, including a Ready cluster whose continuous WAL archive
+        # is failing. A broken check prints the same "none degraded" line as a
+        # healthy fleet. Run its real script against a stubbed API and delivery
+        # so both silent-zero guards and the credential's handling are pinned by
+        # behaviour rather than by schema.
         run: bash scripts/tests/test-cnpg-degraded-alert.sh
 
       - name: 🩺 Validate the stranded-volume-attach alert
@@ -1195,6 +1263,12 @@ jobs:
         # Exercise the rendered script so the two known static-pod probe series
         # suppress, while one additional active upstream keeps the alert visible.
         run: bash scripts/tests/test-coroot-alert-autosuppressor.sh
+
+      - name: 💾 Validate the Velero maintenance OOM alert
+        if: needs.changes.outputs.k8s == 'true'
+        # Replays an OOMKilled attempt plus a later successful retry against the
+        # manifest's real script so BackupRepository readiness cannot mask it.
+        run: bash scripts/tests/test-velero-maintenance-oom-alert.sh
 
       - name: 🔑 Validate the MinIO bucket Job's credential handling
         if: needs.changes.outputs.k8s == 'true'

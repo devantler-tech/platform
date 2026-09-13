@@ -1,0 +1,39 @@
+# Read access for Kyverno's reports controller to the Gateway API and Cilium
+# kinds that background-scanned policies match.
+#
+# Kyverno aggregates any ClusterRole carrying the
+# rbac.kyverno.io/aggregate-to-reports-controller label into the reports
+# controller's ClusterRole (kyverno:reports-controller). For background scanning
+# the controller starts a watch on every resource kind a background policy
+# matches, and creating a report requires get, list and watch on that kind.
+#
+# restrict-homepage-service-groups matches HTTPRoutes and add-default-deny
+# matches CiliumNetworkPolicies. Without this grant the resource report
+# controller fails to list and watch both kinds ("httproutes.gateway.networking.k8s.io
+# is forbidden", "ciliumnetworkpolicies.cilium.io is forbidden") on every
+# resync, and no PolicyReport has been refreshed since the 3.9.0 upgrade (#3760).
+# Like the KEDA grant, it ships in infrastructure-controllers, one layer before
+# the policies that need it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:reports-controller:read-network-routes
+  labels:
+    rbac.kyverno.io/aggregate-to-reports-controller: "true"
+rules:
+  - apiGroups:
+      - gateway.networking.k8s.io
+    resources:
+      - httproutes
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - cilium.io
+    resources:
+      - ciliumnetworkpolicies
+    verbs:
+      - get
+      - list
+      - watch

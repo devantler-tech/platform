@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Node
+metadata:
+  name: prod-worker-1
+  labels:
+    kubernetes.io/hostname: prod-worker-1
+    node.longhorn.io/create-default-disk: "true"
+    platform.devantler.tech/baseline-worker: "true"
+---
+apiVersion: v1
+kind: Node
+metadata:
+  name: prod-worker-2
+  labels:
+    platform.devantler.tech/baseline-worker: "true"

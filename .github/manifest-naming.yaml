@@ -18,5 +18,6 @@ cr-directories:
   - k8s/providers/docker/infrastructure/cluster-issuers
   - k8s/providers/hetzner/infrastructure/cluster-issuers
   - k8s/providers/hetzner/infrastructure/cluster-policies
+  - k8s/providers/hetzner/infrastructure/controllers/cluster-roles
   - k8s/providers/hetzner/infrastructure/volume-snapshot-classes
   - k8s/providers/hetzner/infrastructure/vertical-pod-autoscalers

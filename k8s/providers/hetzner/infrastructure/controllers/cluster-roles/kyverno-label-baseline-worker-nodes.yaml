@@ -1,0 +1,30 @@
+# Extra permissions for Kyverno's background controller (prod/hetzner only).
+#
+# The label-existing-baseline-workers ClusterPolicy (hetzner cluster-policies/,
+# the next Flux layer) uses mutateExisting to apply
+# platform.devantler.tech/baseline-worker=true to the core Nodes named
+# prod-worker-*, including the ones that already exist when the policy lands.
+# Kyverno checks this grant at policy admission and rejects the policy without
+# it, so it ships one layer earlier (infrastructure-controllers) than the policy
+# (infrastructure), live and aggregated before the policy is admitted.
+#
+# Scope: the policy only patches labels on nodes matching prod-worker-*; the
+# name restriction lives in the policy because RBAC resourceNames cannot express
+# a prefix.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:background-controller:label-baseline-worker-nodes
+  labels:
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
+      - update
+      - patch

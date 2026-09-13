@@ -1,0 +1,24 @@
+# Extra permissions for Kyverno's reports controller (prod/hetzner only).
+#
+# The label-baseline-workers / label-existing-baseline-workers ClusterPolicies
+# (hetzner cluster-policies/, the next Flux layer) match core v1 Nodes, so the
+# reports controller needs read access to that kind to build policy reports.
+# Without it the controller hot-loops on the forbidden list/watch — the same
+# missing-RBAC pattern recorded beside the longhorn node grant in
+# controllers/longhorn/cluster-role-kyverno-reports-longhorn-nodes.yaml. It
+# ships one layer earlier (infrastructure-controllers) than the policies.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:reports-controller:read-nodes
+  labels:
+    rbac.kyverno.io/aggregate-to-reports-controller: "true"
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch

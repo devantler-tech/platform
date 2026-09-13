@@ -1,0 +1,38 @@
+# Prod-only: run the daily vault-snapshot CronJob's pods on static baseline
+# workers only (#3287).
+#
+# Each run mounts the `vault-snapshots` PVC, which store-vault-snapshots-on-hcloud
+# puts on an hcloud block volume. An hcloud volume attaches to one node and is
+# not force-detached when that node departs. Measured on prod 2026-09-13: the
+# last three runs all completed on an autoscaler node, so every run left the
+# volume attached to a node the autoscaler may reclaim. The next run — or the
+# vault-snapshot-init Job — then waits on a stranded attachment.
+#
+# The rule requires the positive `platform.devantler.tech/baseline-worker=true`
+# label, stamped by the label-baseline-workers policies on `prod-worker-*` only.
+# Those policies apply in this same `infrastructure` layer, so a rebuilt
+# cluster labels its workers before this pod can wait on them. A missing label
+# fails closed: the pod goes Pending instead of attaching the volume to an
+# unlabelled autoscaler node. The Job-level activeDeadlineSeconds still bounds a
+# run that cannot schedule.
+#
+# JSON patch (not strategic merge), with the target in kustomization.yaml: a
+# partial CronJob manifest is scanned by Kubescape as if it were a workload, and
+# its missing `automountServiceAccountToken` raises C-0034 on this file even
+# though the rendered CronJob is unchanged in that respect. An operation list is
+# not a workload manifest. The base pod spec has no `affinity`, so `add` creates
+# it.
+#
+# Hetzner overlay only: the label and the hcloud StorageClass exist only on this
+# provider, so the local Docker cluster keeps the unconstrained base.
+- op: add
+  path: /spec/jobTemplate/spec/template/spec/affinity
+  value:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: platform.devantler.tech/baseline-worker
+                operator: In
+                values:
+                  - "true"
