@@ -16,8 +16,8 @@ name: Validate Image Verifier Liveness
 #
 # Two read-only questions about the same control live here, and they are
 # different questions. The fleet check asks whether verification CAN enforce at
-# all. The signature inventory asks what enforcement WOULD refuse — the blast
-# radius that decides whether activation is safe to turn on (#3334).
+# all. The signature inventory checks that every running first-party image is
+# signed, and fails when one is not, because that image is refused on its next pull.
 #
 # Both run DAILY and on demand. Running rules and trust material are necessary
 # for enforcement, not proof of it, so the daily verdict rests on #3336's
