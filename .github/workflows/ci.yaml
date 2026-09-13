@@ -340,6 +340,10 @@ jobs:
               # contract for the vendored CDI/KubeVirt manifests.
               - 'scripts/annotate-vendored-checkov/**'
               - 'scripts/update-vendored-operators.sh'
+              # The cert-approver image-pin guard reads the updater's constants,
+              # so both halves re-run when either changes.
+              - 'scripts/guard-cert-approver-image-pin.sh'
+              - 'scripts/tests/test-guard-cert-approver-image-pin.sh'
               # The Trivy dispositions and the local CI-equivalent scan are one
               # contract: a path-scoped ignore is inert unless both callers load it.
               - '.mega-linter.yml'
@@ -414,6 +418,10 @@ jobs:
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               - 'scripts/tests/test-stranded-volume-attach-alert.sh'
               - 'scripts/tests/test-coroot-alert-autosuppressor.sh'
+              - 'scripts/tests/test-velero-maintenance-oom-alert.sh'
+              # That test also asserts the alerting runbook points at the alert's
+              # manifest, so a runbook-only edit must still run it.
+              - 'docs/dr/alerting.md'
               # The Job manifest, the Secret it imports and this test are one
               # contract: the credential is only out of the environment while all
               # three agree.
@@ -901,8 +909,11 @@ jobs:
         # vendor rename must fail offline.
         run: |
           bash -n scripts/update-vendored-operators.sh
-          shellcheck scripts/update-vendored-operators.sh
+          shellcheck scripts/update-vendored-operators.sh \
+            scripts/guard-cert-approver-image-pin.sh \
+            scripts/tests/test-guard-cert-approver-image-pin.sh
           go test ./scripts/annotate-vendored-checkov
+          bash scripts/tests/test-guard-cert-approver-image-pin.sh
           scripts/update-vendored-operators.sh --validate-committed
 
       - name: 🔎 Validate Trivy ignore-file wiring
@@ -1228,6 +1239,12 @@ jobs:
         # Exercise the rendered script so the two known static-pod probe series
         # suppress, while one additional active upstream keeps the alert visible.
         run: bash scripts/tests/test-coroot-alert-autosuppressor.sh
+
+      - name: 💾 Validate the Velero maintenance OOM alert
+        if: needs.changes.outputs.k8s == 'true'
+        # Replays an OOMKilled attempt plus a later successful retry against the
+        # manifest's real script so BackupRepository readiness cannot mask it.
+        run: bash scripts/tests/test-velero-maintenance-oom-alert.sh
 
       - name: 🔑 Validate the MinIO bucket Job's credential handling
         if: needs.changes.outputs.k8s == 'true'
