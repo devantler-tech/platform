@@ -23,6 +23,12 @@ name: Probe Image Signature Enforcement
 #     matches, so a dedicated throwaway repository is the right home for it.
 #     NEVER a production workload: the probe asserts the rule match itself, but
 #     it cannot know whether a ref is something the cluster depends on.
+#     Use `ghcr.io/devantler-tech/unsigned-probe-throwaway`, published by
+#     publish-unsigned-probe-image.yaml. Dispatch that first: every run pushes a
+#     fresh `run-<run id>-<attempt>` tag, so the ref is never already cached on
+#     the node, and its summary prints the tag and digest to pass here.
+#     scripts/guard-unsigned-probe-image-publisher.sh keeps it unsigned and
+#     unreferenced by anything else.
 #   * `signed_image` — a correctly signed ref that also matches a rule, used as
 #     the positive control. Without it a verifier refusing EVERYTHING is
 #     indistinguishable from one working correctly.

@@ -1,0 +1,159 @@
+name: Publish Unsigned Probe Image
+
+# Publish the deliberately UNSIGNED negative control that
+# probe-image-signature-enforcement.yaml needs (#3336).
+#
+# WHY THIS EXISTS. The probe has to show that a first-party image with no valid
+# signature is REFUSED when a node pulls it. No such image exists: every
+# first-party repository is signed, including the unsigned example #3101 was
+# filed from. So this workflow makes one, on purpose, under a name nothing else
+# uses:
+#
+#     ghcr.io/devantler-tech/unsigned-probe-throwaway
+#
+# It matches the `ghcr.io/devantler-tech/*` catch-all rule in
+# talos/cluster/verify-first-party-images.yaml, and none of the three specific
+# rules in front of it.
+#
+# WHAT KEEPS IT UNSIGNED. These are not conventions — each one is checked by
+# scripts/guard-unsigned-probe-image-publisher.sh on every PR and merge group:
+#   * no `id-token` permission, so keyless signing cannot get the OIDC token it
+#     needs, whatever a step tries;
+#   * no action other than the runner hardening step, and no secret other than
+#     GITHUB_TOKEN, so no signing tool or signing key can be brought in;
+#   * no signing or attestation tool named in any step;
+#   * `workflow_dispatch` is the only trigger;
+#   * the image name is referenced by nothing except this workflow, the probe
+#     workflow's header, and the guard with its test, so no manifest or
+#     workload can come to depend on it;
+#   * no workflow in this repository runs on a package-publish event, so
+#     publishing cannot start anything else here.
+# Nothing in this repository can stop someone signing the image by hand from
+# outside it. The last step below checks the published digest really is
+# unsigned, so that case is caught on every run rather than assumed away.
+#
+# WHY FROM SCRATCH AND NOT A RETAGGED PUBLIC IMAGE. A retagged upstream image
+# brings its own signatures and attestations with it. A single-file image built
+# from nothing carries nothing but what this workflow writes.
+#
+# EVERY RUN PUBLISHES A NEW TAG (`run-<run id>-<attempt>`). The probe refuses a
+# ref already cached on the node, because a cached image is never re-pulled and
+# so never re-verified. A fresh tag per run is always a fresh ref.
+#
+# Running this is not a production change: it touches no node and no cluster
+# object, and the image is used by nothing. Old tags can be deleted from the
+# package page at any time.
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  publish-unsigned-probe-image:
+    name: 🧪 Publish Unsigned Probe Image
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write # push the throwaway image to GHCR
+    env:
+      IMAGE: ghcr.io/devantler-tech/unsigned-probe-throwaway
+      TAG: run-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: 🛡️ Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: 🏗️ Build a single-file image from scratch
+        shell: bash
+        run: |
+          set -euo pipefail
+          context="$(mktemp -d)"
+          printf 'Deliberately unsigned negative control for devantler-tech/platform#3336. Never run this.\n' \
+            > "${context}/probe.txt"
+          printf 'FROM scratch\nCOPY probe.txt /probe.txt\n' > "${context}/Dockerfile"
+          # No provenance or SBOM: either would add a second manifest to the
+          # push, which is not what the probe is asking about.
+          docker buildx build \
+            --platform linux/amd64 \
+            --provenance=false \
+            --sbom=false \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.description=Deliberately unsigned negative control (platform#3336)" \
+            --tag "${IMAGE}:${TAG}" \
+            --load \
+            "${context}"
+
+      - name: 📦 Push without signing
+        id: push
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          docker push "${IMAGE}:${TAG}"
+          ref="$(docker inspect --format '{{index .RepoDigests 0}}' "${IMAGE}:${TAG}")"
+          if [[ ! "${ref}" =~ ^ghcr\.io/devantler-tech/unsigned-probe-throwaway@sha256:[0-9a-f]{64}$ ]]; then
+            printf '::error::could not read the pushed digest (got %q)\n' "${ref}"
+            exit 1
+          fi
+          docker logout ghcr.io
+          printf 'digest=%s\n' "${ref#*@}" >> "${GITHUB_OUTPUT}"
+
+      # Checked anonymously on purpose. The probe must fail for ONE reason only:
+      # a missing signature. If the package could not be read without
+      # credentials, a refused pull could just as well be an access failure, so
+      # that is reported here instead of being left for the probe to misread.
+      - name: 🔎 Confirm the published digest is readable and unsigned
+        shell: bash
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          repo="${IMAGE#ghcr.io/}"
+          token="$(curl -fsS "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull" | jq -r '.token // empty')"
+          if [[ -z "${token}" ]]; then
+            printf '::error::could not get an anonymous pull token for %s\n' "${repo}"
+            exit 1
+          fi
+
+          accept='application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json'
+          code="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${token}" -H "Accept: ${accept}" \
+            "https://ghcr.io/v2/${repo}/manifests/${DIGEST}")"
+          if [[ "${code}" != '200' ]]; then
+            printf '::error::%s@%s is not readable without credentials (HTTP %s). Make the package public before probing, or a refused pull cannot be told apart from an access failure.\n' \
+              "${IMAGE}" "${DIGEST}" "${code}"
+            exit 1
+          fi
+
+          # A cosign signature is stored either under a tag derived from the
+          # digest or as an OCI referrer. Neither may exist.
+          tags="$(curl -fsS -H "Authorization: Bearer ${token}" "https://ghcr.io/v2/${repo}/tags/list?n=1000" | jq -r '.tags[]?')"
+          if grep -qE "^sha256-${DIGEST#sha256:}([.].*)?$" <<<"${tags}"; then
+            printf '::error::%s@%s has a signature artifact. This image must stay unsigned; publish a new tag and delete the signed one.\n' \
+              "${IMAGE}" "${DIGEST}"
+            exit 1
+          fi
+          body="$(mktemp)"
+          code="$(curl -sS -o "${body}" -w '%{http_code}' \
+            -H "Authorization: Bearer ${token}" -H 'Accept: application/vnd.oci.image.index.v1+json' \
+            "https://ghcr.io/v2/${repo}/referrers/${DIGEST}")"
+          if [[ "${code}" == '200' ]] && [[ "$(jq '.manifests | length' "${body}")" != '0' ]]; then
+            printf '::error::%s@%s has OCI referrers attached. This image must stay unsigned.\n' "${IMAGE}" "${DIGEST}"
+            exit 1
+          fi
+
+          {
+            printf '### Unsigned probe image published\n\n'
+            printf 'Pass either ref as the unsigned_image input of Probe Image Signature Enforcement:\n\n'
+            printf -- '- %s:%s\n' "${IMAGE}" "${TAG}"
+            printf -- '- %s@%s\n' "${IMAGE}" "${DIGEST}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          printf 'Published unsigned image: %s:%s (%s)\n' "${IMAGE}" "${TAG}" "${DIGEST}"
