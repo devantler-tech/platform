@@ -2123,7 +2123,46 @@ const (
 // renderer is unapproved, so no local digest is claimed.
 //
 // Previous aggregate: 59f51f1775bcded62ab018a6389ef11420b696a3b00357fc4424c4ab83935dba.
-const expectedRenderedSurfaceSHA = "779dc0a75257fed54f4bc75cf1e1ebb5e4d47281fc900316e000b83ecd641aa0"
+//
+// That context established aggregate:
+//
+//	779dc0a75257fed54f4bc75cf1e1ebb5e4d47281fc900316e000b83ecd641aa0
+//
+// Moved again by the prune-protected-orphan alert (#3503), derived on main
+// 30cfbdb7, whose approved aggregate is 779dc0a7 above. A daily CronJob in the
+// observability namespace reports prune-protected objects missing from their
+// Kustomization's inventory, so it needs to read Flux state and keep one record.
+//
+// GRANTS ADDED, all to the new observability/prune-protected-orphan-alert
+// ServiceAccount and nothing else:
+//   - ClusterRole prune-protected-orphan-alert: get and list on namespaces,
+//     persistentvolumeclaims, kustomizations.kustomize.toolkit.fluxcd.io,
+//     helmreleases.helm.toolkit.fluxcd.io and clusters.postgresql.cnpg.io. No
+//     write verb, no secrets, no wildcard.
+//   - Role observability/prune-protected-orphan-alert: get and patch on the one
+//     ConfigMap prune-protected-orphan-alert-state by resourceName. No create,
+//     no delete, no other object.
+//
+// CONSERVATION: rendering k8s/providers/hetzner/infrastructure/controllers on
+// this branch and on main 30cfbdb7 differs only by eight added documents (the
+// ServiceAccount, Secret, ClusterRole, ClusterRoleBinding, Role, RoleBinding,
+// ConfigMap and CronJob above); nothing is removed, and every shared
+// ClusterRole, Role, ClusterRoleBinding, RoleBinding, ServiceAccount,
+// HelmRelease, CronJob, ConfigMap and Secret document is identical. The
+// grant-bearing identity set grows from 41 to 46, by exactly the five
+// identities named here. Injecting one synthetic ClusterRole into the branch
+// render makes that comparison report it, so the result is a finding rather
+// than a blind read. No existing identity, binding, verb, AWS identity or
+// permission changes.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 103716911081 for PR #3771 at 20ae4a67, which renders under the approved
+// SHA256-verified kubectl v1.36.2 and named this aggregate as its single
+// unapproved rendered-surface fingerprint. This host's renderer reproduced the
+// same value but is unapproved, so it is corroboration only.
+//
+// Previous aggregate: 779dc0a75257fed54f4bc75cf1e1ebb5e4d47281fc900316e000b83ecd641aa0.
+const expectedRenderedSurfaceSHA = "c69b141e14b9a2be136e57f8fb738e20207f35a378dfefdfdcaf3dfa1012e4ae"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2136,7 +2175,7 @@ const expectedRenderedSurfaceSHA = "779dc0a75257fed54f4bc75cf1e1ebb5e4d47281fc90
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "59f51f1775bcded62ab018a6389ef11420b696a3b00357fc4424c4ab83935dba"
+const previousRenderedSurfaceSHA = "779dc0a75257fed54f4bc75cf1e1ebb5e4d47281fc900316e000b83ecd641aa0"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
