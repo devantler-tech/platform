@@ -492,6 +492,10 @@ jobs:
               # The reviewed disposition list the guard reads: editing a row
               # changes what the guard permits, so it must re-run.
               - 'scripts/render-remote-resource-exceptions.tsv'
+              # Both halves and the reviewed exception list, for the same reasons.
+              - 'scripts/guard-floating-image-tags.sh'
+              - 'scripts/tests/test-guard-floating-image-tags.sh'
+              - 'scripts/floating-image-tag-exceptions.tsv'
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-pod-security-exception-scope.sh'
               - 'scripts/tests/test-guard-pod-security-exception-scope.sh'
@@ -1376,6 +1380,21 @@ jobs:
         run: |
           bash scripts/guard-render-remote-resources.sh k8s
           bash scripts/tests/test-guard-render-remote-resources.sh
+
+      - name: 🏷️ Validate no rendered workload runs a floating image tag
+        if: needs.changes.outputs.k8s == 'true'
+        # A moving tag such as `main` lets an upstream push change what production
+        # runs with no PR, no review and no digest. Upstream kubelet-serving-cert-approver
+        # did exactly that (#3515), and the Kyverno latest-tag policy only matches
+        # `latest`, runs in Audit, and skips most system namespaces. This renders every
+        # cluster overlay, follows its Flux Kustomization paths, and fails on any
+        # container image that is neither digest-pinned nor version-tagged (#3755).
+        # A deliberate exception is a reviewed row naming the workload and an issue,
+        # and a row that no longer matches is itself a violation.
+        run: |
+          shellcheck scripts/guard-floating-image-tags.sh scripts/tests/test-guard-floating-image-tags.sh
+          bash scripts/guard-floating-image-tags.sh k8s
+          bash scripts/tests/test-guard-floating-image-tags.sh
 
       - name: 🔗 Validate the pod-security exception still matches its mutation's scope
         if: needs.changes.outputs.k8s == 'true'
