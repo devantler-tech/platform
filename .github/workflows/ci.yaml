@@ -39,6 +39,22 @@ jobs:
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
+      # The Wedding backup catalogue must be proven complete before the database
+      # switches to its dedicated bucket. The evaluator's refusals (credential
+      # reuse, wrong destination, partial copy, source changed mid-run) are the
+      # only thing standing between a bad mirror and a cutover with no history.
+      - name: 💒 Validate Wedding backup mirror evaluator
+        run: go test ./scripts/mirror-wedding-backup-catalogue
+
+      # The copy that feeds the evaluator: it must refuse a switched or drifted
+      # store, never reuse one credential, and hand the evaluator listings it
+      # actually accepts. The happy path runs the real pod script into the real
+      # evaluator, so the two cannot drift apart on the listing format.
+      - name: 💒 Validate Wedding backup mirror copy
+        run: |
+          shellcheck scripts/mirror-wedding-backup-catalogue.sh scripts/mirror-wedding-backup-catalogue-pod.sh scripts/tests/test-mirror-wedding-backup-catalogue.sh
+          bash scripts/tests/test-mirror-wedding-backup-catalogue.sh
+
       - name: 💾 Validate two-stage PVC retirement
         # A merge-group artifact is speculative, but a PVC deletion is not: its
         # deletionTimestamp survives queue eviction and main cannot undo it.
@@ -112,6 +128,21 @@ jobs:
           shellcheck -x scripts/registry-auth-lib.sh
           shellcheck -x scripts/tests/test-registry-auth-lib.sh
           bash scripts/tests/test-registry-auth-lib.sh
+
+      # The enforcement probe's negative control only proves anything while it stays unsigned.
+      # One added signing step would silently turn a refusal test into a no-op, so this runs
+      # unconditionally, on every PR and merge group, like the checks above (#3336). The
+      # verification script both the publisher and the probe call is tested here too: a
+      # fake curl stands in for the registry, so no credential or network is involved.
+      - name: 🔐 Validate the unsigned probe image stays unsigned
+        run: |
+          shellcheck scripts/guard-unsigned-probe-image-publisher.sh
+          shellcheck scripts/tests/test-guard-unsigned-probe-image-publisher.sh
+          shellcheck scripts/verify-image-unsigned.sh
+          shellcheck scripts/tests/test-verify-image-unsigned.sh
+          bash scripts/guard-unsigned-probe-image-publisher.sh .
+          bash scripts/tests/test-guard-unsigned-probe-image-publisher.sh
+          bash scripts/tests/test-verify-image-unsigned.sh
 
       - name: 🔐 Validate proposed Crossplane package signature checks
         run: |
@@ -323,6 +354,9 @@ jobs:
               # change to either must re-run both.
               - 'scripts/validate-image-verifier-liveness.sh'
               - 'scripts/tests/test-validate-image-verifier-liveness.sh'
+              # The trigger-set test for the liveness WORKFLOW (listed above), so a
+              # PR that edits only the test still runs it.
+              - 'scripts/tests/test-validate-image-verifier-liveness-workflow.sh'
               # The enforcement probe and its test are one contract for the
               # same reason as the pair above: the probe reports on a security
               # control, and BOTH of its possible mistakes are silent — a PASS
@@ -333,6 +367,9 @@ jobs:
               - 'scripts/probe-image-signature-enforcement.sh'
               - 'scripts/tests/test-probe-image-signature-enforcement.sh'
               - '.github/workflows/probe-image-signature-enforcement.yaml'
+              # The probe re-checks its negative control with this script just
+              # before the pull, so a change to it re-runs the probe's suite.
+              - 'scripts/verify-image-unsigned.sh'
               # The #2284 ipcache diagnostic, its test and its workflow are one
               # contract: the test pins that the script stays read-only and prints
               # no address into a public log, so a change to any of them re-runs it.
@@ -405,6 +442,7 @@ jobs:
               - 'scripts/tests/test-cilium-mutual-auth-policy.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy-regressions.sh'
               - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
+              - 'scripts/tests/test-coroot-api-key-contract.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh'
@@ -498,6 +536,10 @@ jobs:
               # The reviewed disposition list the guard reads: editing a row
               # changes what the guard permits, so it must re-run.
               - 'scripts/render-remote-resource-exceptions.tsv'
+              # Both halves and the reviewed exception list, for the same reasons.
+              - 'scripts/guard-floating-image-tags.sh'
+              - 'scripts/tests/test-guard-floating-image-tags.sh'
+              - 'scripts/floating-image-tag-exceptions.tsv'
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-pod-security-exception-scope.sh'
               - 'scripts/tests/test-guard-pod-security-exception-scope.sh'
@@ -1154,10 +1196,14 @@ jobs:
         # ALL (#2856). It runs here, inside the required job, rather than in its
         # own workflow: a check that gates nothing is advisory, and this one
         # guards a control whose failure mode is silence. Fakes talosctl and
-        # kubectl from fixtures — no cluster, no secrets.
+        # kubectl from fixtures — no cluster, no secrets. The second test pins
+        # the liveness workflow's daily schedule, so it cannot be switched off
+        # silently (#3336); it reads the workflow with yq and needs neither.
         run: |
           shellcheck scripts/validate-image-verifier-liveness.sh scripts/tests/test-validate-image-verifier-liveness.sh
+          shellcheck scripts/tests/test-validate-image-verifier-liveness-workflow.sh
           bash scripts/tests/test-validate-image-verifier-liveness.sh
+          bash scripts/tests/test-validate-image-verifier-liveness-workflow.sh
 
       - name: 🔏 Validate image-signature enforcement probe
         if: needs.changes.outputs.k8s == 'true'
@@ -1209,6 +1255,15 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-postgres-scrape-policy.sh
           bash scripts/tests/test-coroot-postgres-scrape-policy.sh
+
+      - name: 🔑 Validate Coroot API key and registry egress
+        if: needs.changes.outputs.k8s == 'true'
+        # Schema validation accepts a Coroot resource whose agents carry no API
+        # key. Pin agents, project and audit forwarder to one Secret, and keep
+        # the operator's registry discovery egress exact.
+        run: |
+          shellcheck scripts/tests/test-coroot-api-key-contract.sh
+          bash scripts/tests/test-coroot-api-key-contract.sh
 
       - name: 🌐 Validate active Cilium device selection
         if: needs.changes.outputs.k8s == 'true' || needs.changes.outputs.bridge_validation == 'true'
@@ -2051,11 +2106,41 @@ jobs:
           bash scripts/guard-ghcr-fanout-component-gate.sh
           bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
 
+  validate-floating-image-tags:
+    name: 🏷️ Validate Floating Image Tags
+    needs: [changes]
+    # A moving tag such as `main` lets an upstream push change what production
+    # runs with no PR, no review and no digest. Upstream kubelet-serving-cert-approver
+    # did exactly that (#3515), and the Kyverno latest-tag policy only matches
+    # `latest`, runs in Audit, and skips most system namespaces. This renders every
+    # cluster overlay the way Flux applies it and fails on any container image that
+    # is neither digest-pinned nor version-tagged (#3755). It runs on the merge-group
+    # revision too, and deploy-prod needs it: two individually clean PRs can combine
+    # into a floating image, and that combined revision is what production receives.
+    # A deliberate exception is a reviewed row naming the workload and an issue, and
+    # a row that no longer matches is itself a violation.
+    if: (github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true') || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🏷️ Validate no rendered workload runs a floating image tag
+        run: |
+          shellcheck scripts/guard-floating-image-tags.sh scripts/tests/test-guard-floating-image-tags.sh
+          bash scripts/guard-floating-image-tags.sh k8s
+          bash scripts/tests/test-guard-floating-image-tags.sh
+
   deploy-prod:
     name: 🚀 Deploy to Prod
     needs:
       [
         changes,
+        validate-floating-image-tags,
         validate-eks-authorization,
         validate-publication-contract,
         validate-talos,
@@ -2235,6 +2320,7 @@ jobs:
         validate-matcher-efficacy,
         validate-eks-authorization,
         validate,
+        validate-floating-image-tags,
         naming,
         validate-talos,
         validate-rgd-templates-merge-group,
@@ -2253,6 +2339,7 @@ jobs:
             ${{ needs.validate-matcher-efficacy.result }}
             ${{ needs.validate-eks-authorization.result }}
             ${{ needs.validate.result }}
+            ${{ needs.validate-floating-image-tags.result }}
             ${{ needs.naming.result }}
             ${{ needs.validate-talos.result }}
             ${{ needs.validate-rgd-templates-merge-group.result }}

@@ -87,11 +87,18 @@ spec:
     #                      (the coroot-custom-cloud-pricing CronJob, prod) yields an
     #                      empty cost rollup with custom_pricing:false (#2148). This
     #                      is a DIFFERENT host from coroot.com above.
+    # - ghcr.io          — the operator's component image discovery. When a
+    #                      component image is left unset, the operator lists
+    #                      ghcr.io/coroot/<component> tags to pick one. Today's
+    #                      components are pinned, so this is only reached by a
+    #                      future unpinned or newly added component; without it
+    #                      that lookup is denied and the rollout stalls.
     - toFQDNs:
         - matchName: "hooks.slack.com"
         - matchName: "hc-ping.com"
         - matchName: "coroot.com"
         - matchName: "coroot.github.io"
+        - matchName: "ghcr.io"
       toPorts:
         - ports:
             - port: "443"

@@ -66,8 +66,12 @@ Required:
                           question is whether refusal happens at all, and every
                           extra node only widens the blast radius.
   --unsigned-image <ref>  A deliberately unsigned THROWAWAY ref that MATCHES a
-                          declared verification rule. Never a production
-                          workload. The probe asserts the match itself.
+                          declared verification rule, pinned by digest
+                          (<repository>@sha256:<64 hex>). Never a production
+                          workload. The probe asserts the match itself, and
+                          re-checks that the digest is still unsigned just
+                          before pulling it; if it is not, the verdict is
+                          INCONCLUSIVE.
   --signed-image <ref>    A correctly signed ref, used as the positive control,
                           that the SAME first-match rule governs as the
                           unsigned ref. Prefer a dedicated signed throwaway.
@@ -79,7 +83,10 @@ Optional:
                           signed control is always left in place: removing it
                           could race a pod that has started using it.
 
-Environment overrides: TALOSCTL
+Environment: REGISTRY_USERNAME and REGISTRY_PASSWORD, a credential that can read
+the unsigned ref, used only to re-check it is still unsigned before the pull.
+
+Environment overrides: TALOSCTL, VERIFY_IMAGE_UNSIGNED
 
 Exit status:
   0  PASS         — unsigned ref refused for a verification reason, signed ref pulled
@@ -92,6 +99,9 @@ USAGE
 }
 
 readonly talosctl_bin="${TALOSCTL:-talosctl}"
+# Re-checks the unsigned control just before the pull. Resolved next to this script
+# so the probe uses the reviewed copy from the same checkout.
+readonly verify_bin="${VERIFY_IMAGE_UNSIGNED:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-image-unsigned.sh}"
 readonly ns='cri'
 
 # Three verdict channels, kept distinct on purpose. `fail_inconclusive` is the
@@ -212,8 +222,17 @@ for ref in "${unsigned_image}" "${signed_image}"; do
   esac
 done
 
+# The unsigned control must be pinned by DIGEST. Its unsigned state is re-checked
+# just before the pull, and a tag could be moved to a different image between that
+# check and the pull, so only a digest makes the check and the pull the same image.
+[[ "${unsigned_image}" =~ ^[^@]+@sha256:[0-9a-f]{64}$ ]] ||
+  fail_usage "the unsigned ref '${unsigned_image}' is not pinned by digest — pass <repository>@sha256:<64 hex>, as the publisher's summary prints, so a tag cannot be moved to another image before the pull"
+
 command -v "${talosctl_bin}" >/dev/null 2>&1 ||
   fail_inconclusive "talosctl not found (looked for '${talosctl_bin}')"
+
+[[ -x "${verify_bin}" ]] ||
+  fail_inconclusive "the unsigned-state verifier is not executable (looked for '${verify_bin}') — without it the negative control cannot be re-checked before the pull"
 
 "${talosctl_bin}" -n "${node}" ls / >/dev/null 2>&1 ||
   fail_inconclusive "cannot reach node ${node} (talosctl ls / failed) — refusing to report a probe that did not run"
@@ -462,6 +481,27 @@ without_probe_refs() {
 pull_ref() {
   "${talosctl_bin}" -n "${node}" image pull --namespace "${ns}" "$1" 2>&1
 }
+
+# ---------------------------------------------------------------------------
+# Re-check that the negative control is STILL unsigned, immediately before the
+# pull. Publishing the control and running this probe are separate runs, so the
+# image can have been signed, or had a referrer attached, in between. A control
+# that is now signed and gets ACCEPTED would read as FAIL — broken enforcement —
+# when it is the control that changed, not the node. So anything short of
+# "confirmed unsigned" is INCONCLUSIVE, and the unsigned ref is not pulled. The
+# ref is required to be a digest (see the argument checks), so this check and
+# the pull below are about the same immutable image.
+# ---------------------------------------------------------------------------
+verify_rc=0
+verify_output="$("${verify_bin}" --image "${unsigned_image}" 2>&1)" || verify_rc=$?
+if ((verify_rc != 0)); then
+  case "${verify_rc}" in
+    1) reason='it now carries a signature, attestation, SBOM or referrer' ;;
+    *) reason="its signature state could not be established (verify-image-unsigned.sh exit ${verify_rc})" ;;
+  esac
+  fail_inconclusive "the unsigned negative control '${unsigned_image}' is no longer confirmed unsigned: ${reason}, so a pull result could not be attributed to enforcement. Publish a fresh control and probe with its digest. Verifier said: ${verify_output}"
+fi
+printf 'probe: unsigned ref re-checked immediately before the pull — %s\n' "${verify_output}"
 
 # --- Negative control: the matched, unsigned ref MUST be refused. ------------
 printf '\nprobe: NEGATIVE control — pulling matched unsigned ref %s\n' "${unsigned_image}"

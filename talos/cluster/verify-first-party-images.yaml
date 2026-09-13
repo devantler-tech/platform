@@ -16,21 +16,19 @@
 # `ghcr.io/devantler-tech/*` images carry the label, and 0 of 1299 cached
 # images with a resolvable non-first-party repository name do — no exceptions.
 #
-# What is NOT established is the REFUSAL. Every first-party image pulled here
-# has PASSED, so a FAILING decision has never been observed to block a pull.
-# Proving that refusal is #3336. The original finding is #2856.
+# The REFUSAL is observed too. On 2026-09-13 the reviewed probe
+# (.github/workflows/probe-image-signature-enforcement.yaml, #3336) pulled a
+# matched, deliberately unsigned image on a production node and the node refused
+# it, while a signed control pulled on the same node. The original finding is #2856.
 #
 # Check this, do not assume it. The repository cannot answer it — the rules read
 # as correct whether or not anything evaluates them:
 #     scripts/validate-image-verifier-liveness.sh
 # Measured 2026-08-24: 7 of 7 nodes hold running rules and a running trust root.
 #
-# BEFORE ACTIVATING (#3101): a matched image that fails verification is
-# EXPECTED to be refused, so any first-party image that is running yet unsigned
-# should enter ImagePullBackOff the moment it is next pulled. That refusal is
-# exactly what #3336 exists to prove and has not been observed here, so treat it
-# as the risk to design around rather than as a settled outcome.
-# Enumerate the running first-party digests and confirm each carries a cosign
+# A matched image that fails verification is REFUSED (#3336), so any first-party
+# image that is running yet unsigned enters ImagePullBackOff the next time a node
+# pulls it. Enumerate the running first-party digests and confirm each carries a cosign
 # signature — attestations alone do not satisfy the catch-all rule below — then
 # sign or scope the rule off any that do not.
 #
