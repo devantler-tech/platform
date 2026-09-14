@@ -2270,7 +2270,31 @@ const (
 // wildcard, AWS identity or permission is added.
 //
 // Previous aggregate: 52a79b87b9658ab6854980401565f66734d41ff87e90081f1a8c05fcdb7aa789.
-const expectedRenderedSurfaceSHA = "39e2ce5061122eb00b8e2dc800a25333eac457e76aeb9e7b2e7100444a949837"
+//
+// Re-approved for #3820 (2026-09-15), derived on exact main
+// 70e2142adb923bd90727ccae07ffd9238e0715d6, whose approved aggregate is
+// 39e2ce5061122eb00b8e2dc800a25333eac457e76aeb9e7b2e7100444a949837.
+// The maintainer explicitly approved the exact replacement aggregate in the
+// implementing session. The change fixes recurring Coroot warning sources and
+// adds one narrow, declarative suppression for a benign controller retry.
+//
+// CONSERVATION: rendering all five authorization overlays against that base
+// changes 568 identities to 569 by adding only the
+// set-observability-dns-ndots ClusterPolicy. Exactly five existing identities
+// change: the coroot-alert-autosuppressor and vault-snapshot CronJobs, the
+// observability Coroot custom resource, the kubescape HelmRelease, and the
+// add-default-deny ClusterPolicy. All 94 grant-bearing Role, ClusterRole,
+// RoleBinding, ClusterRoleBinding and ServiceAccount records are byte-identical;
+// no identity, binding, verb, wildcard, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was read from CI job 104169323408 for
+// merge commit 144aa7e5b551d33a0869c378344ade7e3afa95cb (head 34e6cbce
+// merged into exact base 70e2142a). Its approval-base check passed and the
+// SHA256-verified kubectl v1.36.2 renderer reported this aggregate as its only
+// static authorization failure. This host independently reproduced the value.
+//
+// Previous aggregate: 39e2ce5061122eb00b8e2dc800a25333eac457e76aeb9e7b2e7100444a949837.
+const expectedRenderedSurfaceSHA = "5e7a3af5b0ff2e0fbd6b354440587a99ae1300bb6d66ecf47075072382dae2ea"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2283,7 +2307,7 @@ const expectedRenderedSurfaceSHA = "39e2ce5061122eb00b8e2dc800a25333eac457e76aeb
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "52a79b87b9658ab6854980401565f66734d41ff87e90081f1a8c05fcdb7aa789"
+const previousRenderedSurfaceSHA = "39e2ce5061122eb00b8e2dc800a25333eac457e76aeb9e7b2e7100444a949837"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
