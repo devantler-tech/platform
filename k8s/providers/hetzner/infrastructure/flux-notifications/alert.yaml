@@ -158,9 +158,6 @@ spec:
       namespace: openbao
     - kind: HelmRelease
       name: "*"
-      namespace: opencost
-    - kind: HelmRelease
-      name: "*"
       namespace: policy-reporter
     - kind: HelmRelease
       name: "*"

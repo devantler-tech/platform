@@ -29,10 +29,6 @@ data:
           rule: "Host(`observability.${domain}`)"
           entryPoints: ["web"]
           service: coroot
-        opencost:
-          rule: "Host(`opencost.${domain}`)"
-          entryPoints: ["web"]
-          service: opencost
         ksail:
           rule: "Host(`ksail.${domain}`)"
           entryPoints: ["web"]
@@ -68,7 +64,7 @@ data:
         # Kyverno Policy Reporter UI. Prod-only (the app lives in the
         # `infrastructure` layer, pulled in full only by the hetzner overlay), so
         # this router is inert on local/CI -- no HTTPRoute sends
-        # policy-reporter.${domain} to oauth2-proxy there (same as coroot/opencost).
+        # policy-reporter.${domain} to oauth2-proxy there (same as Coroot).
         policy-reporter:
           rule: "Host(`policy-reporter.${domain}`)"
           entryPoints: ["web"]
@@ -107,10 +103,6 @@ data:
           loadBalancer:
             servers:
               - url: "http://coroot-coroot.observability.svc.cluster.local:8080"
-        opencost:
-          loadBalancer:
-            servers:
-              - url: "http://opencost.opencost.svc.cluster.local:9090"
         ksail-operator:
           loadBalancer:
             servers:

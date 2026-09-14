@@ -42,7 +42,7 @@ resources:
   # where noted, and re-add any patch listed in the opt-in `patches:` block below.
   #
   # Observability:
-  #   - ../../../../bases/infrastructure/controllers/coroot/      # also infrastructure/coroot/ + opencost/
+  #   - ../../../../bases/infrastructure/controllers/coroot/      # also infrastructure/coroot/
   #   - ../../../../bases/infrastructure/controllers/prune-protected-orphan-alert/ # needs coroot/'s namespace
   # Progressive delivery:
   #   - ../../../../bases/infrastructure/controllers/flagger/     # also infrastructure/flagger/

@@ -158,7 +158,7 @@ data:
           {
             "designatorType": "Attributes",
             "attributes": {
-              "namespace": "^(flux-system|kyverno|cert-manager|cnpg-system|velero|keda|observability|kubescape|vertical-pod-autoscaler|kubevirt|cdi|longhorn-system|external-dns|oauth2-proxy|headlamp|kubelet-serving-cert-approver|opencost|reloader|dex|fleetdm|homepage)$"
+              "namespace": "^(flux-system|kyverno|cert-manager|cnpg-system|velero|keda|observability|kubescape|vertical-pod-autoscaler|kubevirt|cdi|longhorn-system|external-dns|oauth2-proxy|headlamp|kubelet-serving-cert-approver|reloader|dex|fleetdm|homepage)$"
             }
           }
         ],
@@ -182,7 +182,7 @@ data:
             "controlID": "^C-0188$"
           }
         ],
-        "reason": "Infrastructure controllers and platform middleware require broad RBAC to manage their target resources cluster-wide. This includes GitOps (Flux), policy engines (Kyverno), certificate managers (cert-manager), database operators (CNPG), backup controllers (Velero), autoscalers (KEDA), observability (Coroot/opencost), virtualisation (KubeVirt, CDI), storage (Longhorn), cluster dashboards (headlamp), service discovery (homepage), device management (fleetdm), identity (dex), auth proxies (oauth2-proxy), and config watchers (reloader)."
+        "reason": "Infrastructure controllers and platform middleware require broad RBAC to manage their target resources cluster-wide. This includes GitOps (Flux), policy engines (Kyverno), certificate managers (cert-manager), database operators (CNPG), backup controllers (Velero), autoscalers (KEDA), observability (Coroot), virtualisation (KubeVirt, CDI), storage (Longhorn), cluster dashboards (headlamp), service discovery (homepage), device management (fleetdm), identity (dex), auth proxies (oauth2-proxy), and config watchers (reloader)."
       },
       {
         "name": "delete-capable-rbac-by-design",
@@ -497,7 +497,7 @@ data:
           {
             "designatorType": "Attributes",
             "attributes": {
-              "namespace": "^(flux-system|kyverno|cert-manager|cnpg-system|velero|keda|observability|kubescape|vertical-pod-autoscaler|longhorn-system|kube-system|reloader|external-dns|kubelet-serving-cert-approver|opencost|headlamp|kubevirt|cdi|dex|oauth2-proxy|homepage|external-secrets|crossplane-system)$"
+              "namespace": "^(flux-system|kyverno|cert-manager|cnpg-system|velero|keda|observability|kubescape|vertical-pod-autoscaler|longhorn-system|kube-system|reloader|external-dns|kubelet-serving-cert-approver|headlamp|kubevirt|cdi|dex|oauth2-proxy|homepage|external-secrets|crossplane-system)$"
             }
           }
         ],
@@ -713,27 +713,6 @@ data:
           }
         ],
         "reason": "Kyverno mutate policy \"add-security-context\" injects runAsNonRoot, runAsUser, runAsGroup and fsGroupChangePolicy at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. This control remains cluster-wide because narrowing it is blocked on evidence rather than on expressiveness: C-0211's residual population is every scanned workload the mutation does not reach, sized at 34 (35 in the 2026-09-02 baseline, before tofu-controller removal in #3480; #3217)."
-      },
-      {
-        "name": "readonly-rootfs-pending",
-        "policyType": "postureExceptionPolicy",
-        "actions": [
-          "disable"
-        ],
-        "resources": [
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "namespace": "^(opencost)$"
-            }
-          }
-        ],
-        "posturePolicies": [
-          {
-            "controlID": "^C-0017$"
-          }
-        ],
-        "reason": "opencost-UI (nginx) rewrites its baked /var/www assets in place at boot so it cannot run a read-only root (upstream opencost/opencost#2655). Every other non-privileged workload sets readOnlyRootFilesystem in-spec, so C-0017 genuinely passes for them."
       },
       {
         "name": "secret-reader-rbac",
@@ -1194,7 +1173,7 @@ data:
           {
             "designatorType": "Attributes",
             "attributes": {
-              "namespace": "^(kube-system|kube-public|kube-node-lease|flux-system|kyverno|cert-manager|cnpg-system|velero|keda|observability|kubescape|vertical-pod-autoscaler|kubevirt|cdi|longhorn-system|kubelet-serving-cert-approver|external-dns|reloader|opencost|dex|fleetdm|homepage|headlamp|oauth2-proxy|external-secrets|crossplane-system|ksail-operator|flagger-system|crossview)$"
+              "namespace": "^(kube-system|kube-public|kube-node-lease|flux-system|kyverno|cert-manager|cnpg-system|velero|keda|observability|kubescape|vertical-pod-autoscaler|kubevirt|cdi|longhorn-system|kubelet-serving-cert-approver|external-dns|reloader|dex|fleetdm|homepage|headlamp|oauth2-proxy|external-secrets|crossplane-system|ksail-operator|flagger-system|crossview)$"
             }
           }
         ],

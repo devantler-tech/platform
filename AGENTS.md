@@ -341,7 +341,7 @@ offline and never contacts a cluster.
 
 ### Infrastructure File Structure Convention
 
-Resources under `k8s/bases/infrastructure/` are **component-folder-first**: a component's HelmRelease/HelmRepository and its own CRs live together in a folder named after the component — `controllers/<component>/` in the controller layer, and a sibling folder in the `infrastructure` layer (e.g. `gateway/`, `coroot/`, `opencost/`, `vault-*/`). The central Cilium `Gateway`, its HTTP→HTTPS `HTTPRoute` and its TLS `Certificate` all live in `gateway/` and deploy to `kube-system` (the Cilium namespace).
+Resources under `k8s/bases/infrastructure/` are **component-folder-first**: a component's HelmRelease/HelmRepository and its own CRs live together in a folder named after the component — `controllers/<component>/` in the controller layer, and a sibling folder in the `infrastructure` layer (e.g. `gateway/`, `coroot/`, `policy-reporter/`, `vault-*/`). The central Cilium `Gateway`, its HTTP→HTTPS `HTTPRoute` and its TLS `Certificate` all live in `gateway/` and deploy to `kube-system` (the Cilium namespace).
 
 A CR is split out into its own **plural-Kind folder** only when it cannot live with its component:
 

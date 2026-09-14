@@ -7,7 +7,7 @@
 # Addresses kubescape controls: C-0013, C-0016, C-0055, C-0057
 #
 # NOTE: readOnlyRootFilesystem is NOT validated because several charts
-# intentionally set it to false (homepage, opencost UI, actual-budget)
+# intentionally set it to false (homepage and actual-budget)
 # and PSS restricted does not require it. It is enforced via HelmRelease
 # values where possible and the mutation policy adds it as a default.
 #
