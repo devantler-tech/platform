@@ -18,6 +18,7 @@ spec:
             app.kubernetes.io/managed-by: coroot-operator
             app.kubernetes.io/part-of: coroot
             app.kubernetes.io/component: coroot-cluster-agent
+            io.cilium.k8s.policy.serviceaccount: coroot-cluster-agent
       toPorts:
         - ports:
             - port: "5432"

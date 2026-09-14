@@ -166,7 +166,8 @@ printf '%s\n' "${snapshot}" |
             (."app.kubernetes.io/managed-by" == "coroot-operator") and
             (."app.kubernetes.io/part-of" == "coroot") and
             (."app.kubernetes.io/component" == "coroot-cluster-agent") and
-            ((. | length) == 4)
+            (."io.cilium.k8s.policy.serviceaccount" == "coroot-cluster-agent") and
+            ((. | length) == 5)
           )
         ] | length == 1) and
         ([
