@@ -2,8 +2,8 @@
 
 # Contract for declarative Coroot risk acceptance. The allowlist is reviewed as
 # GitOps data; the reconciler may dismiss only those exact application/risk-key
-# pairs and must reactivate a previously managed dismissal when its declaration
-# is removed. Manual dismissals and newly discovered risks remain untouched.
+# pairs, reactivate every undeclared dismissal, and correct a declared pair whose
+# reason drifted. Newly discovered active risks remain untouched.
 
 set -euo pipefail
 
@@ -131,12 +131,17 @@ setup_scenario() {
     jq -n --arg backstage_reason "${backstage_reason}" '{data:{risks:[
       {application_id:"95rsc5yp:actual-budget:Deployment:actual-budget-actualbudget",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:backstage:Deployment:backstage",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:$backstage_reason}},
-      {application_id:"95rsc5yp:retired:Deployment:old-tool",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:"platform#3812: removed declaration"}},
+      {application_id:"95rsc5yp:retired:Deployment:old-tool",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:"manual dismissal outside GitOps"}},
       {application_id:"95rsc5yp:new-service:Deployment:new-service",key:{category:"Availability",type:"single-instance-app"}}
+    ]}}' >"${dir}/risks.json"
+  elif [ "${mode}" = 'drift' ]; then
+    jq -n '{data:{risks:[
+      {application_id:"95rsc5yp:actual-budget:Deployment:actual-budget-actualbudget",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:"manual operator decision"}}
     ]}}' >"${dir}/risks.json"
   else
     jq -n '{data:{risks:[
-      {application_id:"95rsc5yp:actual-budget:Deployment:actual-budget-actualbudget",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:"manual operator decision"}},
+      {application_id:"cluster-one:actual-budget:Deployment:actual-budget-actualbudget",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"cluster-two:actual-budget:Deployment:actual-budget-actualbudget",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:retired:Deployment:old-tool",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:"platform#3812: removed declaration"}}
     ]}}' >"${dir}/risks.json"
   fi
@@ -183,13 +188,23 @@ jq -s -e '
   any(.[]; .payload.action == "mark_as_active" and
     (.url | contains("old-tool")))
 ' "${normal_dir}/posts.jsonl" >/dev/null ||
-  fail 'reconciliation must dismiss the declared active risk and reactivate the removed managed risk only'
+  fail 'reconciliation must dismiss the declared active risk and reactivate the undeclared dismissed risk only'
 
-conflict_dir="$(setup_scenario conflict conflict)"
-if run_scenario "${conflict_dir}" >/dev/null 2>&1; then
-  fail 'a conflicting manual dismissal must fail closed'
+drift_dir="$(setup_scenario drift drift)"
+run_scenario "${drift_dir}" >/dev/null
+actual_reason="$(jq -r '.[] | select(.application == "actual-budget:Deployment:actual-budget-actualbudget") | .reason' "${acceptances_file}")"
+jq -s -e --arg reason "${actual_reason}" '
+  length == 1 and
+  .[0].payload.action == "dismiss" and
+  .[0].payload.reason == $reason
+' "${drift_dir}/posts.jsonl" >/dev/null ||
+  fail 'a drifted dismissal reason must converge to the declared reason'
+
+ambiguous_dir="$(setup_scenario ambiguous ambiguous)"
+if run_scenario "${ambiguous_dir}" >/dev/null 2>&1; then
+  fail 'an ambiguous live application identity must fail closed'
 fi
-[ ! -s "${conflict_dir}/posts.jsonl" ] ||
-  fail 'the preflight conflict check must complete before any Coroot mutation'
+[ ! -s "${ambiguous_dir}/posts.jsonl" ] ||
+  fail 'the ambiguity preflight must complete before any Coroot mutation'
 
 printf 'PASS: Coroot risk dismissals are reconciled exclusively from the reviewed GitOps allowlist\n'

@@ -2,11 +2,12 @@
 #
 # Coroot persists risk dismissal only through its API. This CronJob projects the
 # reviewed ConfigMap into that API so the state survives a Coroot database
-# rebuild without a UI click. It owns only dismissals whose reason starts with
-# `platform#3812: `: removing an entry reactivates that risk, while unknown or
-# manually dismissed risks are left untouched. Application coordinates omit the
-# generated Coroot cluster id and match the remaining namespace/kind/name tuple
-# exactly, preserving the declaration across a project rebuild.
+# rebuild without a UI click. The allowlist is the complete desired dismissal
+# set: removing an entry or dismissing an undeclared risk reactivates that risk,
+# while a declared entry with a different reason is corrected. Unknown active
+# risks stay visible. Application coordinates omit the generated Coroot cluster
+# id and match the remaining namespace/kind/name tuple exactly, preserving the
+# declaration across a project rebuild.
 #
 # The in-cluster service is intentionally credentialless because the Coroot CR
 # sets authAnonymousRole=Admin; the external UI remains behind oauth2-proxy.
@@ -72,8 +73,6 @@ spec:
                   # runtime shell receives the ordinary parameter expansion.
                   BASE="$${COROOT_BASE_URL:-http://coroot-coroot.observability.svc.cluster.local:8080}"
                   ACCEPTANCES_FILE="$${ACCEPTANCES_FILE:-/config/risks.json}"
-                  MANAGED_PREFIX='platform#3812: '
-
                   api() {
                     curl -fsS --retry 5 --retry-delay 2 --retry-all-errors \
                       --retry-connrefused --max-time 30 "$@"
@@ -106,8 +105,8 @@ spec:
                   }
 
                   # Preflight the complete desired/live join before the first
-                  # write. Duplicate live identities or a manual dismissal on a
-                  # declared pair is a conflict, never authority to overwrite.
+                  # write. Duplicate live identities are ambiguous and must not
+                  # let one declaration silently affect multiple clusters.
                   printf '%s' "$RISKS" | jq -e --slurpfile desired "$ACCEPTANCES_FILE" '
                     def coordinate: .application_id | split(":") | .[1:] | join(":");
                     .data.risks as $risks |
@@ -116,18 +115,10 @@ spec:
                         coordinate == $declared.application and
                         .key.category == $declared.category and
                         .key.type == $declared.type
-                      )] | length) <= 1 and
-                      ([$risks[] | select(
-                        coordinate == $declared.application and
-                        .key.category == $declared.category and
-                        .key.type == $declared.type
-                      )] | all(.[];
-                        (.dismissal == null) or
-                        (.dismissal.reason == $declared.reason)
-                      ))
+                      )] | length) <= 1
                     )
                   ' >/dev/null || {
-                    echo "ERROR: ambiguous live identity or conflicting manual dismissal; no changes made" >&2
+                    echo "ERROR: ambiguous live application identity; no changes made" >&2
                     exit 1
                   }
 
@@ -148,15 +139,13 @@ spec:
                       "$BASE/api/project/$PID/app/$encoded_id/risks" >/dev/null
                   }
 
-                  # Reopen only stale dismissals previously owned by this
-                  # declaration. A human dismissal with another reason is not
-                  # this controller's state and is never modified.
+                  # The allowlist is authoritative for all dismissal state:
+                  # anything currently dismissed but not declared is reopened.
                   stale=$(printf '%s' "$RISKS" | jq -c \
-                    --arg prefix "$MANAGED_PREFIX" \
                     --slurpfile desired "$ACCEPTANCES_FILE" '
                       def coordinate: .application_id | split(":") | .[1:] | join(":");
                       .data.risks[]
-                      | select((.dismissal.reason? // "") | startswith($prefix))
+                      | select(.dismissal != null)
                       | . as $risk
                       | select(($desired[0] | any(.[];
                           .application == ($risk | coordinate) and
@@ -199,7 +188,8 @@ spec:
                       ')
                     if [ -z "$match" ]; then
                       absent=$((absent + 1))
-                    elif printf '%s' "$match" | jq -e '.dismissal != null' >/dev/null; then
+                    elif printf '%s' "$match" | jq -e --arg reason "$reason" \
+                      '.dismissal.reason? == $reason' >/dev/null; then
                       unchanged=$((unchanged + 1))
                     else
                       application_id=$(printf '%s' "$match" | jq -r '.application_id')
