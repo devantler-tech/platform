@@ -12,8 +12,11 @@
 #   * a client pinned to a node hosting NO oauth2-proxy endpoint forces every call to cross nodes;
 #   * a client pinned to a node hosting one is the same-node control (Envoy does not prefer local
 #     endpoints, so it is a mix — enough to prove ext_authz works at all).
-# Placement is read from the oauth2-proxy Service's EndpointSlices — what Envoy actually targets —
-# before and after the run, together with the node set; any change is INCONCLUSIVE.
+# Placement is read from the oauth2-proxy Service's EndpointSlices — what Envoy actually targets,
+# addresses included — before and after the run, together with the node set; any change is
+# INCONCLUSIVE. The Cilium and cilium-envoy DaemonSets must also be fully rolled out and unchanged
+# across the run: after a failed deploy releases the lock, old and new datapath pods can run side by
+# side, and a verdict taken across them would describe no single deployed revision.
 #
 # WHY A FAILURE IS ATTRIBUTABLE. Requests stay inside the cluster, over plain HTTP on the gateway's
 # `http` listener, to hostnames under `externalauth-probe.invalid`. Nothing in the path is
@@ -85,7 +88,9 @@ readonly client_image='docker.io/curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988
 readonly max_request_seconds=250
 readonly min_conclusive_requests=10
 readonly warmup_attempts=12
-readonly route_wait_attempts=24
+# Wall-clock bound on waiting for route acceptance, so slow API calls cannot stretch it (the test
+# shortens it; production keeps the default).
+readonly route_wait_seconds="${PROBE_ROUTE_WAIT_SECONDS:-120}"
 readonly poll_seconds="${PROBE_POLL_SECONDS:-5}"
 
 usage() {
@@ -210,11 +215,12 @@ read_endpoints() {
         ready: (.conditions.ready == true),
         terminating: (.conditions.terminating == true),
         node: (.nodeName // ""),
-        uid: (.targetRef.uid // "")
+        uid: (.targetRef.uid // ""),
+        addrs: ([.addresses[]?] | sort | join(","))
       }]
     | if length == 0 then "ERR none"
-      elif any(.[]; (.ready | not) or .terminating or .node == "" or .uid == "") then "ERR unsettled"
-      else "FP " + (map(.uid + "|" + .node) | sort | join(";")), (.[] | "NODE " + .node)
+      elif any(.[]; (.ready | not) or .terminating or .node == "" or .uid == "" or .addrs == "") then "ERR unsettled"
+      else "FP " + (map(.uid + "|" + .node + "|" + .addrs) | sort | join(";")), (.[] | "NODE " + .node)
       end
   ' <<<"${json}"
 }
@@ -238,6 +244,31 @@ read_nodes() {
   ' <<<"${json}"
 }
 
+# Both datapath DaemonSets fully rolled out: observed their current generation, and every scheduled
+# pod updated, available and ready. Emits "FP <fingerprint>" (name, generation, desired count), or
+# "ERR missing" / "ERR rolling".
+read_datapath() {
+  local json
+  json="$(kc -n kube-system get daemonsets cilium cilium-envoy -o json)" || return 1
+  jq -r '
+    [.items[]? | {
+        name: (.metadata.name // ""),
+        gen: (.metadata.generation // -1),
+        observed: (.status.observedGeneration // -2),
+        desired: (.status.desiredNumberScheduled // -1),
+        updated: (.status.updatedNumberScheduled // -2),
+        available: (.status.numberAvailable // -3),
+        ready: (.status.numberReady // -4),
+        unavailable: (.status.numberUnavailable // 0)
+      }]
+    | if ([.[].name] | sort) != ["cilium", "cilium-envoy"] then "ERR missing"
+      elif any(.[]; .observed != .gen or .desired < 1 or .updated != .desired
+                    or .available != .desired or .ready != .desired or .unavailable != 0) then "ERR rolling"
+      else "FP " + (map(.name + "|" + (.gen | tostring) + "|" + (.desired | tostring)) | sort | join(";"))
+      end
+  ' <<<"${json}"
+}
+
 # ---------------------------------------------------------------------------
 # 1. Topology before: settled oauth2-proxy endpoints, and the nodes a probe pod may run on.
 # ---------------------------------------------------------------------------
@@ -255,7 +286,13 @@ case "${node_lines}" in
   'ERR identity') inconclusive 'a node reported no name or UID' ;;
 esac
 node_fp_before="$(sed -n 's/^FP //p' <<<"${node_lines}")"
-if [[ -z "${endpoint_fp_before}" || -z "${node_fp_before}" ]]; then
+datapath_lines="$(read_datapath)" || inconclusive 'could not read the Cilium and cilium-envoy DaemonSets'
+case "${datapath_lines}" in
+  'ERR missing') inconclusive 'the Cilium or cilium-envoy DaemonSet was not found' ;;
+  'ERR rolling') inconclusive 'a Cilium or cilium-envoy rollout is incomplete, so nodes may run different datapath revisions' ;;
+esac
+datapath_fp_before="$(sed -n 's/^FP //p' <<<"${datapath_lines}")"
+if [[ -z "${endpoint_fp_before}" || -z "${node_fp_before}" || -z "${datapath_fp_before}" ]]; then
   inconclusive 'the topology reads did not parse'
 fi
 
@@ -535,9 +572,8 @@ fi
 # Both routes must be Accepted with resolved references before a client is started, so a slow
 # controller is not measured as a lost subrequest.
 routes_ready=0
-attempt=0
-while [[ "${attempt}" -lt "${route_wait_attempts}" ]]; do
-  attempt=$((attempt + 1))
+readonly route_deadline=$((SECONDS + route_wait_seconds))
+while ((SECONDS < route_deadline)); do
   if routes_json="$(kc -n "${probe_namespace}" get httproutes -l "${probe_label}=${run_id}" -o json)"; then
     ready_count="$(jq -r '
       def cond($t): [.status.parents[]?.conditions[]? | select(.type == $t) | .status];
@@ -653,6 +689,9 @@ endpoint_lines_after="$(read_endpoints)" || inconclusive 'could not re-read the 
 node_lines_after="$(read_nodes)" || inconclusive 'could not re-read the nodes'
 [[ "$(sed -n 's/^FP //p' <<<"${node_lines_after}")" == "${node_fp_before}" ]] ||
   inconclusive 'the node set changed during the run'
+datapath_lines_after="$(read_datapath)" || inconclusive 'could not re-read the Cilium and cilium-envoy DaemonSets'
+[[ "$(sed -n 's/^FP //p' <<<"${datapath_lines_after}")" == "${datapath_fp_before}" ]] ||
+  inconclusive 'the Cilium or cilium-envoy rollout changed during the run'
 
 # ---------------------------------------------------------------------------
 # 7. Verdict.

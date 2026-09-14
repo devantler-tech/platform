@@ -105,6 +105,7 @@ case "${args}" in
     exit 1
     ;;
   *" -n oauth2-proxy get endpointslices -l kubernetes.io/service-name=oauth2-proxy -o json ") serve_per_call endpoints ;;
+  *" -n kube-system get daemonsets cilium cilium-envoy -o json ") serve_per_call datapath ;;
   *" get nodes -o json ") serve_per_call nodes ;;
   *" -n whoami get httproutes,ciliumnetworkpolicies,pods -l ${label} -o name ") serve leftovers.txt ;;
   *" -n oauth2-proxy get referencegrants -l ${label} -o name ") serve leftover-grants.txt ;;
@@ -192,6 +193,13 @@ JSON
 ]}
 JSON
 
+  cat >"${fixtures}/datapath.json" <<'JSON'
+{"kind":"List","items":[
+ {"metadata":{"name":"cilium","generation":7},"status":{"observedGeneration":7,"desiredNumberScheduled":4,"updatedNumberScheduled":4,"numberAvailable":4,"numberReady":4}},
+ {"metadata":{"name":"cilium-envoy","generation":3},"status":{"observedGeneration":3,"desiredNumberScheduled":4,"updatedNumberScheduled":4,"numberAvailable":4,"numberReady":4}}
+]}
+JSON
+
   cat >"${fixtures}/routes.json" <<'JSON'
 {"items":[
  {"metadata":{"name":"externalauth-probe-control-12345"},"status":{"parents":[{"conditions":[{"type":"Accepted","status":"True"},{"type":"ResolvedRefs","status":"True"}]}]}},
@@ -208,7 +216,7 @@ JSON
 
 run_probe() {
   set +e
-  output="$(PATH="${fake_bin}:${PATH}" FIXTURES="${fixtures}" PROBE_POLL_SECONDS=0 GITHUB_STEP_SUMMARY='' \
+  output="$(PATH="${fake_bin}:${PATH}" FIXTURES="${fixtures}" PROBE_POLL_SECONDS=0 PROBE_ROUTE_WAIT_SECONDS=1 GITHUB_STEP_SUMMARY='' \
     bash "${script}" "$@" 2>&1)"
   rc=$?
   set -e
@@ -492,6 +500,35 @@ require_cleaned_up
 pass 'endpoints changing mid-run is INCONCLUSIVE (and still cleans up)'
 
 reset_fixtures
+sed 's/"10.244.23.28"/"10.244.23.99"/' "${fixtures}/endpoints.json" >"${fixtures}/endpoints-after.json"
+grep -Fq '"10.244.23.99"' "${fixtures}/endpoints-after.json" || fail 'fixture did not change the endpoint address'
+run_default
+require_inconclusive 'an endpoint address changing with the same UID and node must be INCONCLUSIVE' 'endpoints changed during the run'
+pass 'an endpoint address change mid-run is INCONCLUSIVE'
+
+reset_fixtures
+sed 's/"updatedNumberScheduled":4,"numberAvailable":4,"numberReady":4}},$/"updatedNumberScheduled":3,"numberAvailable":4,"numberReady":4}},/' "${fixtures}/datapath.json" >"${fixtures}/datapath.tmp"
+mv "${fixtures}/datapath.tmp" "${fixtures}/datapath.json"
+grep -Fq '"updatedNumberScheduled":3' "${fixtures}/datapath.json" || fail 'fixture did not produce a partial rollout'
+run_default
+require_inconclusive 'a partially rolled Cilium DaemonSet must be INCONCLUSIVE' 'rollout is incomplete'
+require_nothing_created
+reset_fixtures
+printf '%s\n' '{"kind":"List","items":[{"metadata":{"name":"cilium","generation":7},"status":{"observedGeneration":7,"desiredNumberScheduled":4,"updatedNumberScheduled":4,"numberAvailable":4,"numberReady":4}}]}' >"${fixtures}/datapath.json"
+run_default
+require_inconclusive 'a missing cilium-envoy DaemonSet must be INCONCLUSIVE' 'was not found'
+require_nothing_created
+pass 'an incomplete or missing datapath rollout is INCONCLUSIVE before creating anything'
+
+reset_fixtures
+sed 's/"generation":3},"status":{"observedGeneration":3/"generation":4},"status":{"observedGeneration":4/' "${fixtures}/datapath.json" >"${fixtures}/datapath-after.json"
+grep -Fq '"generation":4}' "${fixtures}/datapath-after.json" || fail 'fixture did not change the cilium-envoy generation'
+run_default
+require_inconclusive 'a datapath rollout during the run must be INCONCLUSIVE' 'rollout changed during the run'
+require_cleaned_up
+pass 'a Cilium or cilium-envoy rollout during the run is INCONCLUSIVE (and still cleans up)'
+
+reset_fixtures
 sed 's/uid-node-w3/uid-node-w9/' "${fixtures}/nodes.json" >"${fixtures}/nodes-after.json"
 run_default
 require_inconclusive 'a node replaced during the run must be INCONCLUSIVE' 'node set changed during the run'
@@ -514,9 +551,9 @@ pass 'a leftover ReferenceGrant also refuses the run'
 reset_fixtures
 cat >"${fixtures}/endpoints.json" <<'JSON'
 {"items":[{"endpoints":[
- {"nodeName":"prod-worker-1","targetRef":{"uid":"uid-pod-a"},"conditions":{"ready":true,"terminating":false}},
- {"nodeName":"prod-worker-2","targetRef":{"uid":"uid-pod-b"},"conditions":{"ready":true,"terminating":false}},
- {"nodeName":"prod-worker-3","targetRef":{"uid":"uid-pod-c"},"conditions":{"ready":true,"terminating":false}}
+ {"addresses":["10.244.22.235"],"nodeName":"prod-worker-1","targetRef":{"uid":"uid-pod-a"},"conditions":{"ready":true,"terminating":false}},
+ {"addresses":["10.244.23.28"],"nodeName":"prod-worker-2","targetRef":{"uid":"uid-pod-b"},"conditions":{"ready":true,"terminating":false}},
+ {"addresses":["10.244.24.40"],"nodeName":"prod-worker-3","targetRef":{"uid":"uid-pod-c"},"conditions":{"ready":true,"terminating":false}}
 ]}]}
 JSON
 run_default
@@ -682,11 +719,16 @@ require_text 'RUN_ID: ${{ github.run_id }}' 'the run id must come from github.ru
 refute_text 'run: ./scripts/probe-cilium-externalauth-crossnode.sh --context admin@prod --run-id "${{' 'inputs must not be interpolated into run:'
 job_minutes="$(sed -n 's/^    timeout-minutes: \([0-9][0-9]*\)$/\1/p' "${workflow}")"
 [[ -n "${job_minutes}" ]] || fail 'the job must set timeout-minutes'
-# Worst case the script allows (timeout 10, requests x timeout = 250, warm-up 12): route wait
-# (24 x 5s) + one shared pod wait (deadline + 180s grace) + a generous 10 minutes for kubectl latency,
-# job setup and cleanup. The deadline formula is the script's own.
+# Worst case the script allows (timeout 10, requests x timeout = 250, warm-up 12):
+#   route wait (120s wall clock) + one in-flight 30s request past its deadline
+#   + the shared pod wait (deadline + 180s grace) + one in-flight request
+#   + ~24 other bounded kubectl calls (topology, datapath, leftovers, applies, logs, cleanup) at 30s
+#   + 10 minutes of job setup and slack.
+# The deadline formula is the script's own.
 max_deadline=$(((2 * 25 + 2 * 12 + 1) * 10 + 12 + 60))
-worst_seconds=$((24 * 5 + max_deadline + 180 + 600))
+worst_seconds=$((120 + 35 + max_deadline + 180 + 35 + 24 * 30 + 600))
+grep -Fq 'readonly route_wait_seconds="${PROBE_ROUTE_WAIT_SECONDS:-120}"' "${script}" || fail 'the route wait bound the timeout was sized for changed'
+grep -Fq "readonly request_timeout='30s'" "${script}" || fail 'the request timeout the job timeout was sized for changed'
 ((job_minutes * 60 >= worst_seconds)) ||
   fail "timeout-minutes (${job_minutes}) is shorter than the script's worst case (${worst_seconds}s)"
 grep -Fq 'readonly max_request_seconds=250' "${script}" || fail 'the budget cap the timeout was sized for changed'

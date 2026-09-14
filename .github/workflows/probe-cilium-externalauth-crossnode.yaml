@@ -63,10 +63,11 @@ jobs:
   probe-cilium-externalauth-crossnode:
     name: 🧪 Probe Cilium ExternalAuth Cross-Node
     runs-on: ubuntu-latest
-    # The script's worst case — the route wait plus BOTH clients waited to their deadline and grace,
-    # plus setup — fits inside this, so the step always prints a verdict and cleans up before
-    # Actions cancels it (pinned by the test).
-    timeout-minutes: 35
+    # The script's worst case — the wall-clock route wait, the shared pod deadline and grace, every
+    # other kubectl call at its 30s request timeout, and both cleanup deletes — fits inside this with
+    # setup slack, so the step always prints a verdict and cleans up before Actions cancels it
+    # (pinned by the test).
+    timeout-minutes: 45
     # KUBE_CONFIG is a `prod` ENVIRONMENT secret; without this it resolves to the empty string.
     environment: prod
     permissions:
