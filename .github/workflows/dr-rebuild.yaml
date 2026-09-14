@@ -284,6 +284,15 @@ jobs:
           done
           echo "✅ All Flux Kustomizations Ready — fresh platform converged."
 
+      - name: 🧢 Cap the Talos-bootstrapped CoreDNS
+        # Talos applies CoreDNS before Flux creates the kube-system LimitRange, and
+        # Flux owns no CoreDNS Deployment on prod, so a fresh cluster's CoreDNS pods
+        # would keep running without a CPU limit (#3567). Restarts CoreDNS only when
+        # a running pod lacks one, and touches no other workload. A failure is a
+        # posture gap, never a reason to skip the restores below, so it only warns.
+        continue-on-error: true
+        run: ./scripts/restart-uncapped-talos-coredns.sh
+
       - name: 🧪 Verify the Longhorn UI baseline canary
         id: verify_longhorn_ui_baseline
         if: steps.longhorn_ui_baseline.outputs.rollout_required == 'true'
