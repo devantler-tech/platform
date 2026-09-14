@@ -4,20 +4,28 @@ kind: ClusterPolicy
 metadata:
   name: audit-privileged-rbac
   annotations:
-    policies.kyverno.io/title: Audit Privileged RBAC
+    policies.kyverno.io/title: Restrict Privileged RBAC
     policies.kyverno.io/category: Security
     policies.kyverno.io/severity: high
-    policies.kyverno.io/scored: "false"
     policies.kyverno.io/subject: Role, ClusterRole
     policies.kyverno.io/description: >-
-      Reports wildcard administration and effective bind, escalate, and
-      impersonate grants, including grants expressed through wildcard verbs.
+      Rejects Roles and ClusterRoles that grant wildcard administration or
+      effective bind, escalate, or impersonate permissions, including grants
+      expressed through wildcard verbs, unless the object is one of the
+      reviewed identities excluded below.
 spec:
-  # Existing controllers require some of these grants. Audit reports resources
-  # eligible under the existing Kyverno filters without blocking reconciliation
-  # or silently exempting chart names.
-  # Enforce requires separately reviewed, measured exceptions (platform#3486).
-  validationFailureAction: Audit
+  # Enforced at admission (platform#3486). The policy keeps its original name so
+  # its reports and references stay continuous.
+  #
+  # Every exclusion is a reviewed object that legitimately needs such a grant, and
+  # each is an exact identity: ClusterRoles by name, Roles by namespace AND name.
+  # A different object therefore cannot borrow an exclusion by reusing a name in
+  # another namespace or as another kind. scripts/tests/test-audit-privileged-rbac.sh
+  # pins the list, so adding an exclusion is a reviewed change to that test too.
+  #
+  # Coverage limit: Kyverno's own resource filters skip kube-system, kube-public,
+  # kyverno, and Kyverno's controller roles for every policy, so a privileged grant
+  # created there is not evaluated in any mode.
   background: true
   rules:
     - name: privileged-rules
@@ -27,7 +35,66 @@ spec:
               kinds:
                 - rbac.authorization.k8s.io/v1/Role
                 - rbac.authorization.k8s.io/v1/ClusterRole
+      exclude:
+        any:
+          # Kubernetes built-ins. The API server bootstraps them, and the
+          # clusterrole aggregation controller rewrites the aggregated rules.
+          - resources:
+              kinds:
+                - rbac.authorization.k8s.io/v1/ClusterRole
+              names:
+                - admin
+                - cluster-admin
+                - edit
+                - system:aggregate-to-edit
+                - system:controller:clusterrole-aggregation-controller
+          # Crossplane core. The RBAC manager creates and binds provider roles.
+          - resources:
+              kinds:
+                - rbac.authorization.k8s.io/v1/ClusterRole
+              names:
+                - crossplane
+                - crossplane-rbac-manager
+                - crossplane:system:aggregate-to-crossplane
+          # KRO. The controller, and the platform's tenant ResourceGraphDefinition
+          # role, which binds the ClusterRoles each tenant is provisioned with.
+          - resources:
+              kinds:
+                - rbac.authorization.k8s.io/v1/ClusterRole
+              names:
+                - kro-tenant-rgd
+                - kro:controller
+          # KSail operator. Creates and binds the RBAC of the clusters it manages.
+          # This is the broadest grant excluded here: bind and escalate on every
+          # RBAC resource.
+          - resources:
+              kinds:
+                - rbac.authorization.k8s.io/v1/ClusterRole
+              names:
+                - ksail-operator
+          # Longhorn storage controller.
+          - resources:
+              kinds:
+                - rbac.authorization.k8s.io/v1/ClusterRole
+              names:
+                - longhorn-role
+          - resources:
+              kinds:
+                - rbac.authorization.k8s.io/v1/Role
+              namespaces:
+                - longhorn-system
+              names:
+                - longhorn
+          # Velero server. Restores arbitrary namespaced objects in its namespace.
+          - resources:
+              kinds:
+                - rbac.authorization.k8s.io/v1/Role
+              namespaces:
+                - velero
+              names:
+                - velero-server
       validate:
+        failureAction: Enforce
         cel:
           expressions:
             - expression: >-
@@ -52,4 +119,5 @@ spec:
                   )))
               message: >-
                 Wildcard administration, RBAC bind/escalate, and identity
-                impersonation grants require review.
+                impersonation grants are rejected unless the object is a
+                reviewed exclusion in the audit-privileged-rbac policy.

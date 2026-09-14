@@ -26,7 +26,7 @@ results:
   - policy: audit-privileged-rbac
     rule: privileged-rules
     kind: ClusterRole
-    result: warn
+    result: fail
     resources:
       - triple-wildcard
       - wildcard-with-extra-values
@@ -46,6 +46,17 @@ results:
       - impersonate-auth-wildcard-verbs
       - impersonate-auth-wildcard-resources
       - resource-name-constrained
+      # A name that only extends an excluded name is not excluded.
+      - crossplane-rbac-manager-lookalike
+      # A Role exclusion never exempts a ClusterRole of the same name.
+      - velero-server
+  # An excluded ClusterRole is skipped by name, whatever it grants.
+  - policy: audit-privileged-rbac
+    rule: privileged-rules
+    kind: ClusterRole
+    result: skip
+    resources:
+      - crossplane-rbac-manager
   - policy: audit-privileged-rbac
     rule: privileged-rules
     kind: Role
@@ -59,8 +70,17 @@ results:
   - policy: audit-privileged-rbac
     rule: privileged-rules
     kind: Role
-    result: warn
+    result: fail
     resources:
       - sample/namespaced-wildcard
       - sample/impersonate-serviceaccounts
       - sample/namespaced-clusterrole-bind
+      # An excluded Role name in another namespace is not excluded.
+      - sample/velero-server
+  # An excluded Role is skipped only in its own namespace.
+  - policy: audit-privileged-rbac
+    rule: privileged-rules
+    kind: Role
+    result: skip
+    resources:
+      - velero/velero-server
