@@ -805,18 +805,27 @@ grep -Fq 'workflow_dispatch:' <<<"${on_block}" || fail 'the workflow must be dis
 if grep -Eq '^[[:space:]]*(schedule|pull_request|pull_request_target|push|merge_group|workflow_run):' <<<"${on_block}"; then
   fail 'the workflow must have no trigger other than workflow_dispatch'
 fi
-guard_line="$(grep -n "refs/heads/main" "${workflow}" | head -1 | cut -d: -f1)"
-checkout_line="$(grep -n 'uses: actions/checkout@' "${workflow}" | head -1 | cut -d: -f1)"
+# Every structural assertion below is anchored to EXECUTABLE workflow syntax. The workflow's header
+# comments describe these same controls in prose, so an unanchored match could pass on a comment
+# after the control itself was removed or moved.
+line_of() {
+  grep -nE -- "$1" "${workflow}" | head -1 | cut -d: -f1 || true
+}
+guard_line="$(line_of "^          if \[\[ \"\\\$\{RUN_REF\}\" != 'refs/heads/main' \]\]; then$")"
+checkout_line="$(line_of '^        uses: actions/checkout@[0-9a-f]{40}')"
 [[ -n "${guard_line}" && -n "${checkout_line}" && "${guard_line}" -lt "${checkout_line}" ]] ||
   fail 'the main-branch guard must run before checkout'
-confirm_line="$(grep -n "probe-production-externalauth'" "${workflow}" | head -1 | cut -d: -f1)"
-kubeconfig_line="$(grep -n 'KUBE_CONFIG: \${{ secrets.KUBE_CONFIG }}' "${workflow}" | head -1 | cut -d: -f1)"
+confirm_line="$(line_of "^          if \[\[ \"\\\$\{CONFIRM\}\" != 'probe-production-externalauth' \]\]; then$")"
+kubeconfig_line="$(line_of '^          KUBE_CONFIG: \$\{\{ secrets\.KUBE_CONFIG \}\}$')"
 [[ -n "${confirm_line}" && -n "${kubeconfig_line}" && "${confirm_line}" -lt "${kubeconfig_line}" ]] ||
   fail 'the confirmation phrase must be checked before the kubeconfig is restored'
-require_text 'group: prod-deploy' 'the workflow must serialise on the prod-deploy lock'
-require_text 'environment: prod' 'the workflow must use the prod environment'
-require_text 'contents: read' 'the job token must be read-only'
-require_text 'permissions: {}' 'the workflow must default to no permissions'
+grep -Eq '^  group: prod-deploy$' <<<"${wf}" || fail 'the workflow must serialise on the prod-deploy lock'
+grep -Eq '^    environment: prod$' <<<"${wf}" || fail 'the workflow must use the prod environment'
+grep -Eq '^      contents: read([[:space:]]+#.*)?$' <<<"${wf}" || fail 'the job token must be read-only'
+if grep -Eq '^      [a-z-]+: write' <<<"${wf}"; then
+  fail 'the job token must not be granted any write scope'
+fi
+grep -Eq '^permissions: \{\}$' <<<"${wf}" || fail 'the workflow must default to no permissions'
 require_text '--context admin@prod --run-id "${RUN_ID}"' 'the workflow must pin the context and pass the run id'
 require_text 'RUN_ID: ${{ github.run_id }}' 'the run id must come from github.run_id through env'
 refute_text 'run: ./scripts/probe-cilium-externalauth-crossnode.sh --context admin@prod --run-id "${{' 'inputs must not be interpolated into run:'
