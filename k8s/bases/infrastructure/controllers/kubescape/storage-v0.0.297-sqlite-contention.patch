@@ -522,3 +522,81 @@ index 9a1ba4ed0a45122c16de30876e2e9c536b16d75f..fb1e6a804bfc09570b49bbf72a0c889e
  func TestMemoryConn(t *testing.T) {
  	pod := v1.Pod{
  		ObjectMeta: metav1.ObjectMeta{
+diff --git a/pkg/registry/file/storage.go b/pkg/registry/file/storage.go
+index e472bcb1016c473d95ce2662bc86817f46821b95..3ecce4ace8ca295b5eadfbcc414cfd31afa5b7c8 100644
+--- a/pkg/registry/file/storage.go
++++ b/pkg/registry/file/storage.go
+@@ -70,6 +70,14 @@ var lockTimeout = 5 * time.Second
+ // NOTE: package-level var, not const, for the same test-overridability reason as lockTimeout.
+ var poolTimeout = 5 * time.Second
+ 
++// shouldLogGuaranteedUpdateError keeps expected Kubernetes API retry signals at
++// Debug while preserving error-level visibility for genuinely unexpected
++// failures. Resource-version conflicts are part of the optimistic-concurrency
++// contract: clients retry them against the latest object.
++func shouldLogGuaranteedUpdateError(err error) bool {
++	return !apierrors.IsNotFound(err) && !apierrors.IsInvalid(err) && !apierrors.IsConflict(err)
++}
++
+ // newContentionTimeoutError returns a ServerTimeout (HTTP 500, Reason=ServerTimeout) carrying
+ // a positive RetryAfterSeconds so the apiserver emits a Retry-After header that client-go's
+ // retry logic honors. It is used for both lock acquisition (s.locks.Lock/RLock) and
+@@ -1012,7 +1020,7 @@ func (s *StorageImpl) GuaranteedUpdateWithConn(
+ 		if err != nil {
+ 			// If our data is already up-to-date, return the error
+ 			if origStateIsCurrent {
+-				if !apierrors.IsNotFound(err) && !apierrors.IsInvalid(err) {
++				if shouldLogGuaranteedUpdateError(err) {
+ 					logger.L().Ctx(ctx).Error("GuaranteedUpdate - tryUpdate func failed", helpers.Error(err), helpers.String("key", key))
+ 				}
+ 				logger.L().Debug("GuaranteedUpdate - tryUpdate func failed", helpers.Error(err), helpers.String("key", key))
+@@ -1034,10 +1042,10 @@ func (s *StorageImpl) GuaranteedUpdateWithConn(
+ 
+ 			// it turns out our cached data was not stale, return the error
+ 			if cachedRev == origState.rev {
+-				if !apierrors.IsNotFound(err) && !apierrors.IsInvalid(err) {
+-					logger.L().Ctx(ctx).Error("GuaranteedUpdate - tryUpdate func failed", helpers.Error(err), helpers.String("key", key))
++				if shouldLogGuaranteedUpdateError(cachedUpdateErr) {
++					logger.L().Ctx(ctx).Error("GuaranteedUpdate - tryUpdate func failed", helpers.Error(cachedUpdateErr), helpers.String("key", key))
+ 				}
+-				logger.L().Debug("GuaranteedUpdate - tryUpdate func failed", helpers.Error(err), helpers.String("key", key))
++				logger.L().Debug("GuaranteedUpdate - tryUpdate func failed", helpers.Error(cachedUpdateErr), helpers.String("key", key))
+ 				return cachedUpdateErr
+ 			}
+ 
+diff --git a/pkg/registry/file/storage_test.go b/pkg/registry/file/storage_test.go
+index 69680331a628d8d35ef5e5760bd5965472543edb..2990e74dceceaa924dc1c6c64a3f38c326d31781 100644
+--- a/pkg/registry/file/storage_test.go
++++ b/pkg/registry/file/storage_test.go
+@@ -21,11 +21,31 @@ import (
+ 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+ 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+ 	"k8s.io/apimachinery/pkg/runtime"
++	"k8s.io/apimachinery/pkg/runtime/schema"
+ 	"k8s.io/apiserver/pkg/storage"
+ 	"k8s.io/utils/ptr"
+ 	"zombiezen.com/go/sqlite/sqlitemigration"
+ )
+ 
++func TestShouldLogGuaranteedUpdateError(t *testing.T) {
++	resource := schema.GroupResource{Group: "softwarecomposition.kubescape.io", Resource: "vulnerabilitymanifestsummaries"}
++	tests := []struct {
++		name string
++		err  error
++		want bool
++	}{
++		{name: "resource-version conflict is an expected retry", err: apierrors.NewConflict(resource, "example", fmt.Errorf("stale resource version")), want: false},
++		{name: "not found remains an expected control-flow result", err: apierrors.NewNotFound(resource, "example"), want: false},
++		{name: "unexpected failure remains visible", err: fmt.Errorf("persistence failed"), want: true},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			assert.Equal(t, tt.want, shouldLogGuaranteedUpdateError(tt.err))
++		})
++	}
++}
++
+ func getStoredPayloadFilepath(root, key string) string {
+ 	return root + key + GobExt
+ }
