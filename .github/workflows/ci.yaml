@@ -305,6 +305,10 @@ jobs:
               - 'docs/oidc-kubectl.md'
               - 'docs/talos-access.md'
               - 'scripts/tests/test-actual-budget-auth-route.sh'
+              - 'scripts/tests/test-umami-sso-dashboard-route.sh'
+              - 'scripts/tests/test-umami-tracking-probe.sh'
+              - 'scripts/tests/fixtures/umami-curl-stub.sh'
+              - 'scripts/verify-umami-tracking.sh'
               - 'scripts/tests/test-actual-budget-user-namespaces.sh'
               # The provider DeploymentRuntimeConfigs, this gate and its kyverno
               # fixture are one contract: a container-only seccompProfile is
@@ -1193,6 +1197,11 @@ jobs:
           bash scripts/tests/test-tenant-route-hostname-boundary.sh
           shellcheck scripts/tests/test-actual-budget-auth-route.sh
           bash scripts/tests/test-actual-budget-auth-route.sh
+          shellcheck scripts/tests/test-umami-sso-dashboard-route.sh
+          bash scripts/tests/test-umami-sso-dashboard-route.sh
+          shellcheck scripts/tests/test-umami-tracking-probe.sh
+          bash scripts/tests/test-umami-tracking-probe.sh
+          shellcheck scripts/verify-umami-tracking.sh
           shellcheck scripts/tests/test-provider-drc-pod-seccomp.sh
           bash scripts/tests/test-provider-drc-pod-seccomp.sh
           shellcheck scripts/tests/test-add-baseline-context.sh
