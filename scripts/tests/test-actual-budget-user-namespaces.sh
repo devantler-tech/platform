@@ -36,11 +36,19 @@ extract_release() {
 # The pilot is active in production (#3604): the committed overlay must
 # reference the component exactly once.
 COMPONENT="${component}" yq -e '[.components[] | select(. == strenv(COMPONENT))] | length == 1' \
-  "${apps_dir}/kustomization.yaml" >/dev/null ||
+  "${apps_dir}/kustomization.yaml" >/dev/null 2>&1 ||
   fail 'production must reference the pilot component exactly once'
 
 render_overlay "${apps_dir}" "${scratch_dir}/on.json"
 render_overlay "${scratch_dir}/k8s/providers/docker/apps" "${scratch_dir}/local-before.json"
+# The pilot is production-only: the local overlay must carry neither the
+# namespace enforcement label nor a post-renderer that sets hostUsers.
+jq -e '([.[] | select(.kind == "Namespace" and .metadata.name == "actual-budget") |
+    .metadata.labels["pod-security.devantler.tech/user-namespaces"] | select(. != null)] | length == 0) and
+  ([.[] | select(.kind == "HelmRelease" and .metadata.namespace == "actual-budget" and
+      .metadata.name == "actual-budget") | .spec.postRenderers[]? | tostring |
+    select(test("hostUsers"))] | length == 0)' \
+  "${scratch_dir}/local-before.json" >/dev/null || fail 'the pilot must not reach the local overlay'
 extract_release "${scratch_dir}/on.json" "${scratch_dir}/on-release.json"
 jq -e '[.[] | select(.kind == "Namespace" and .metadata.name == "actual-budget") |
   .metadata.labels["pod-security.devantler.tech/user-namespaces"]] == ["enabled"]' \

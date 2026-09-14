@@ -72,8 +72,9 @@ patches:
     path: umami/patches/grant-pg-monitor.yaml
   # User namespaces (hostUsers: false) — enabled for the proven prod apps. These
   # namespace-label patches opt proven-stateless workloads into the
-  # add-security-context Kyverno rule. Local/CI and stateful workloads stay
-  # out; in mixed namespaces (umami, backstage) the rule itself excludes the
+  # add-security-context Kyverno rule. Local/CI stays out, and so do stateful
+  # workloads apart from the Actual Budget pilot component above; in mixed
+  # namespaces (umami, backstage) the rule itself excludes the
   # CNPG database pods via their cnpg.io/cluster label.
   # Headlamp takes an exact-target values patch instead of a namespace label
   # (#2651). Its chart renders `hostUsers: {{ .Values.hostUsers }}` from a

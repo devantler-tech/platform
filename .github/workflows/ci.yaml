@@ -872,8 +872,8 @@ jobs:
           bash scripts/tests/test-production-authorization-rules.sh
 
       - name: 🚦 Validate Actual Budget user-namespace pilot
-        # Exercise the dormant component on both the PR and the speculative
-        # merge-group revision before deploy-prod can publish that revision.
+        # Exercise the active component and its rollback on both the PR and the
+        # speculative merge-group revision before deploy-prod can publish it.
         timeout-minutes: 5
         run: |
           shellcheck scripts/tests/test-actual-budget-user-namespaces.sh

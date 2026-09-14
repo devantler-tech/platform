@@ -1,7 +1,7 @@
 # Actual Budget user-namespace pilot
 
-This production-only component is **active** while its runtime verdict is
-recorded on [#3604](https://github.com/devantler-tech/platform/issues/3604). It
+This production-only component is **active**; its runtime verdict is recorded
+on [#3604](https://github.com/devantler-tech/platform/issues/3604). It
 sets `hostUsers: false` on the Actual Budget Deployment and labels its namespace
 for the existing Kyverno user-namespace admission policy. The sync server and
 `enablebanking-seed` sidecar keep their existing user/group IDs, mounts, and
@@ -80,4 +80,5 @@ sidecar reconciliation work again.
 Do not delete or recreate PVCs, reinstall the chart, change ownership
 recursively, or disable namespace policy independently as part of rollback.
 Those actions are not the inverse of this pilot. The regression test proves
-that removing the single reference restores the original rendered resources.
+that removing the single reference drops only the namespace label and the
+appended post-renderer.
