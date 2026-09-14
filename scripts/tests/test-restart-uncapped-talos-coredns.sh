@@ -3,7 +3,8 @@
 # Talos admits CoreDNS before the kube-system LimitRange exists, so a fresh prod
 # cluster runs it uncapped (#3567). Pin that the DR rebuild restarts CoreDNS when —
 # and only when — a running pod lacks a CPU limit, that it never restarts anything
-# else, and that every unreadable input fails closed without restarting.
+# else, that every unreadable input fails closed without restarting, and that a
+# failure here can never stop the rebuild's later restore steps.
 
 set -euo pipefail
 
@@ -33,6 +34,11 @@ printf '%s\n' "$*" >>"${CALL_LOG}"
 args="$*"
 case "${args}" in
 *"get limitrange"*)
+  # Answer only the exact filter the script must use, so a broken jsonpath fails here.
+  if [[ "${args}" != *'-o jsonpath={.spec.limits[?(@.type=="Container")].default.cpu}' ]]; then
+    printf 'unexpected limitrange query: %s\n' "${args}" >&2
+    exit 98
+  fi
   if [[ "${LR_FAIL:-0}" == "1" ]]; then
     printf 'Error from server (NotFound): limitranges "default-limitrange" not found\n' >&2
     exit 1
@@ -50,6 +56,10 @@ case "${args}" in
   : >"${STATE_DIR}/restarted"
   ;;
 *"rollout status"*)
+  if [[ "${ROLLOUT_FAIL:-0}" == "1" ]]; then
+    printf 'error: timed out waiting for the condition\n' >&2
+    exit 1
+  fi
   printf 'deployment "coredns" successfully rolled out\n'
   ;;
 *"get pods"*)
@@ -71,10 +81,32 @@ esac
 FAKE_KUBECTL
 chmod +x "${fake_kubectl}"
 
-readonly capped='{"items":[{"metadata":{"name":"coredns-a"},"spec":{"containers":[{"name":"coredns","resources":{"limits":{"cpu":"2","memory":"170Mi"}}}]}},{"metadata":{"name":"coredns-b"},"spec":{"containers":[{"name":"coredns","resources":{"limits":{"cpu":"2","memory":"170Mi"}}}]}}]}'
-readonly uncapped='{"items":[{"metadata":{"name":"coredns-a"},"spec":{"containers":[{"name":"coredns","resources":{"limits":{"memory":"170Mi"}}}]}},{"metadata":{"name":"coredns-b"},"spec":{"containers":[{"name":"coredns","resources":{"limits":{"cpu":"2","memory":"170Mi"}}}]}}]}'
-# After a restart the old uncapped pod can still be Terminating next to capped new ones.
-readonly capped_with_terminating='{"items":[{"metadata":{"name":"coredns-old","deletionTimestamp":"2026-09-14T00:00:00Z"},"spec":{"containers":[{"name":"coredns","resources":{"limits":{"memory":"170Mi"}}}]}},{"metadata":{"name":"coredns-c"},"spec":{"containers":[{"name":"coredns","resources":{"limits":{"cpu":"2","memory":"170Mi"}}}]}}]}'
+# pod <name> <phase> <cpu-limit or empty> [deletionTimestamp]
+pod() {
+  local limits='{"memory":"170Mi"}' meta
+  [[ -n "$3" ]] && limits="{\"cpu\":\"$3\",\"memory\":\"170Mi\"}"
+  meta="{\"name\":\"$1\"}"
+  [[ -n "${4:-}" ]] && meta="{\"name\":\"$1\",\"deletionTimestamp\":\"$4\"}"
+  printf '{"metadata":%s,"status":{"phase":"%s"},"spec":{"containers":[{"name":"coredns","resources":{"limits":%s}}]}}' \
+    "${meta}" "$2" "${limits}"
+}
+items() { # <pod-json>...
+  local IFS=,
+  printf '{"items":[%s]}' "$*"
+}
+
+capped="$(items "$(pod coredns-a Running 2)" "$(pod coredns-b Running 2)")"
+readonly capped
+uncapped="$(items "$(pod coredns-a Running '')" "$(pod coredns-b Running 2)")"
+readonly uncapped
+# After a restart the old uncapped pod can still be terminating next to capped new ones.
+capped_with_terminating="$(items "$(pod coredns-old Running '' 2026-09-14T00:00:00Z)" "$(pod coredns-c Running 2)")"
+readonly capped_with_terminating
+# An evicted pod from an old ReplicaSet lingers uncapped; it is not serving anything.
+capped_with_evicted="$(items "$(pod coredns-evicted Failed '')" "$(pod coredns-a Running 2)")"
+readonly capped_with_evicted
+only_pending="$(items "$(pod coredns-a Pending '')")"
+readonly only_pending
 readonly no_pods='{"items":[]}'
 
 case_dir=''
@@ -129,11 +161,21 @@ if grep -v -- '^--context admin@prod ' "${case_dir}/calls" | grep -q .; then
   fail 'every kubectl call must pass --context admin@prod'
 fi
 
-# 4. Restart did not cap it ⇒ exit 1, not success.
+# 4. An evicted uncapped pod beside a capped running one is not a reason to restart.
+run_case evicted PODS_BEFORE="${capped_with_evicted}"
+expect_status evicted 0
+expect_no_restart evicted
+
+# 5. Restart did not cap it ⇒ exit 1, not success.
 run_case still_uncapped PODS_BEFORE="${uncapped}" PODS_AFTER="${uncapped}"
 expect_status still_uncapped 1
 
-# 5–9. Every unreadable or unjudgeable input fails closed, without restarting.
+# 6. A rollout that never completes ⇒ exit 2, distinct from "restarted but uncapped".
+run_case rollout_stuck PODS_BEFORE="${uncapped}" ROLLOUT_FAIL=1
+expect_status rollout_stuck 2
+[[ "${output}" == *'did not complete'* ]] || fail "rollout_stuck: must say the rollout did not complete: ${output}"
+
+# 7–12. Every unreadable or unjudgeable input fails closed, without restarting.
 run_case no_limitrange LR_FAIL=1 PODS_BEFORE="${uncapped}"
 expect_status no_limitrange 2
 expect_no_restart no_limitrange
@@ -154,11 +196,19 @@ run_case no_pods PODS_BEFORE="${no_pods}"
 expect_status no_pods 2
 expect_no_restart no_pods
 
-# 10. Wiring: DR runs it after Flux settles, and CI runs this test when either half changes.
+run_case only_pending PODS_BEFORE="${only_pending}"
+expect_status only_pending 2
+expect_no_restart only_pending
+
+# 13. Wiring: DR runs it after Flux settles, and a failure there can never skip the
+#     restores that follow — this is a posture fix, not a reason to strand a rebuild.
 awk '/name: ⏳ Wait for Flux to settle/ { settled = 1 }
-  settled && /scripts\/restart-uncapped-talos-coredns\.sh/ { found = 1 }
-  END { exit found ? 0 : 1 }' "${dr_workflow}" ||
-  fail 'dr-rebuild.yaml must run restart-uncapped-talos-coredns.sh after Flux settles'
+  settled && /- name: 🧢 Cap the Talos-bootstrapped CoreDNS/ { in_step = 1; next }
+  in_step && /- name:/ { in_step = 0 }
+  in_step && /^[[:space:]]*continue-on-error: true[[:space:]]*$/ { tolerated = 1 }
+  in_step && /run: \.\/scripts\/restart-uncapped-talos-coredns\.sh/ { runs = 1 }
+  END { exit (tolerated && runs) ? 0 : 1 }' "${dr_workflow}" ||
+  fail 'dr-rebuild.yaml must run restart-uncapped-talos-coredns.sh after Flux settles, with continue-on-error: true'
 grep -qF -- "- 'scripts/restart-uncapped-talos-coredns.sh'" "${ci_workflow}" ||
   fail 'ci.yaml must run this test when the script changes'
 grep -qF -- "- 'scripts/tests/test-restart-uncapped-talos-coredns.sh'" "${ci_workflow}" ||

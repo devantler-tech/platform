@@ -19,8 +19,9 @@
 #
 # Exit: 0  CoreDNS already capped (nothing restarted), or capped by the restart
 #       1  restarted, but a running CoreDNS container still has no CPU limit
-#       2  could not check — unreadable LimitRange, Deployment or pods, no default
-#          CPU limit to supply, or no running CoreDNS pod to judge
+#       2  could not check or finish — unreadable LimitRange, Deployment or pods,
+#          no default CPU limit to supply, no running CoreDNS pod to judge, or a
+#          restart whose rollout did not complete
 
 set -euo pipefail
 
@@ -57,12 +58,13 @@ selector="$(jq -r '.spec.selector.matchLabels // {}
   | to_entries | map("\(.key)=\(.value)") | join(",")' <<<"${deployment_json}")"
 [[ -n "${selector}" ]] || die "Deployment ${namespace}/${deployment} has no matchLabels selector"
 
-# Prints "<running pods> <running containers without a CPU limit>". Terminating pods
-# are excluded: after a restart they linger uncapped and say nothing about the new ones.
+# Prints "<running pods> <running containers without a CPU limit>". Only Running pods
+# that are not terminating count: a lingering terminating pod after a restart, or an
+# evicted or still-Pending one, says nothing about what the Deployment is serving.
 count_uncapped() {
   local pods_json
   pods_json="$(kubectl_prod -n "${namespace}" get pods -l "${selector}" -o json)" || return 1
-  jq -r '[.items[] | select(.metadata.deletionTimestamp == null)]
+  jq -r '[.items[] | select(.metadata.deletionTimestamp == null and .status.phase == "Running")]
     | "\(length) \([.[].spec.containers[] | select((.resources.limits.cpu // "") == "")] | length)"' \
     <<<"${pods_json}"
 }
@@ -80,8 +82,12 @@ fi
 
 printf 'CoreDNS has %s container(s) without a CPU limit; restarting so admission applies the %s default.\n' \
   "${uncapped}" "${default_cpu}"
-kubectl_prod -n "${namespace}" rollout restart "deployment/${deployment}"
-kubectl_prod -n "${namespace}" rollout status "deployment/${deployment}" --timeout="${rollout_timeout}"
+if ! kubectl_prod -n "${namespace}" rollout restart "deployment/${deployment}"; then
+  die "could not restart deployment/${deployment}"
+fi
+if ! kubectl_prod -n "${namespace}" rollout status "deployment/${deployment}" --timeout="${rollout_timeout}"; then
+  die "the rollout of deployment/${deployment} did not complete within ${rollout_timeout}"
+fi
 
 if ! counts="$(count_uncapped)"; then
   die "could not re-read ${deployment} pods after the restart"
