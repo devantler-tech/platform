@@ -1,0 +1,67 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: require-baseline-workers-for-hcloud-volumes
+policies:
+  - >-
+    ../../k8s/providers/hetzner/infrastructure/cluster-policies/require-baseline-workers-for-hcloud-volumes.yaml
+resources:
+  - resources.yaml
+# Every claim in this fixture resolves to storage class hcloud. The CLI cannot
+# reach an API server, so values.yaml supplies the claim lookup for both rules.
+# The sibling longhorn-claim/ fixture proves a non-hcloud claim is not caught.
+variables: values.yaml
+results:
+  # The accepted guards: nodeSelector, the positive label in every term, and
+  # prod-worker-* hostnames.
+  - policy: require-baseline-workers-for-hcloud-volumes
+    rule: require-baseline-worker-affinity
+    resources:
+      - observability/guarded-by-label
+      - openbao/guarded-by-hostname
+      - observability/guarded-by-label-in-every-term
+      - observability/guarded-by-node-selector
+      - observability/node-name-baseline-worker
+      - observability/ephemeral-hcloud-guarded
+    kind: Pod
+    result: pass
+  # Every way the guard can be missing or fail open.
+  - policy: require-baseline-workers-for-hcloud-volumes
+    rule: require-baseline-worker-affinity
+    resources:
+      - observability/no-affinity
+      - observability/extra-unguarded-or-term
+      - observability/label-value-false
+      - observability/negative-autoscaled-guard
+      - observability/node-selector-wrong-value
+      - observability/node-name-autoscaler-overrides-selector
+      - observability/match-fields-only-term
+      - observability/empty-term
+      - openbao/hostname-includes-autoscaler
+      - openbao/hostname-operator-notin
+      - observability/ephemeral-hcloud-unguarded
+    kind: Pod
+    result: fail
+  # An ephemeral volume on the default (Longhorn) class is out of scope.
+  - policy: require-baseline-workers-for-hcloud-volumes
+    rule: require-baseline-worker-affinity
+    resources:
+      - observability/ephemeral-default-class-unguarded
+    kind: Pod
+    result: pass
+  # A Pod with no claim volumes does not match the precondition.
+  - policy: require-baseline-workers-for-hcloud-volumes
+    rule: require-baseline-worker-affinity
+    resources:
+      - observability/no-claims
+    kind: Pod
+    result: skip
+  # The lookup succeeded (mocked), so the audit companion reports nothing.
+  - policy: require-baseline-workers-for-hcloud-volumes
+    rule: report-claim-lookup-failure
+    resources:
+      - observability/no-affinity
+      - observability/guarded-by-label
+    kind: Pod
+    result: pass

@@ -7,6 +7,7 @@ metadata:
     github-ref: refs/tags/v0.3.0
     github-repo: https://github.com/fluxcd/agent-skills
     github-tree-sha: d2ac2832df36d71727c39e1740db43760180d215
+    internal: true
 name: gitops-knowledge
 ---
 # Flux CD Knowledge Base

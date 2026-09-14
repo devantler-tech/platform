@@ -1,0 +1,134 @@
+name: Probe Cilium ExternalAuth Cross-Node
+
+# Answer #2284 with a datapath test (#3784): does the gateway Envoy's Gateway API ExternalAuth
+# subrequest to oauth2-proxy arrive when it has to cross nodes? The ipcache diagnostic
+# (diagnose-cilium-ext-authz-ipcache.yaml) cannot decide that while node encryption is off.
+#
+# HOW. scripts/probe-cilium-externalauth-crossnode.sh pins one short-lived client pod to a node
+# running no oauth2-proxy replica (every ExternalAuth call crosses nodes) and one to a node running
+# a replica (same-node control). Each client alternates a plain control route and the ExternalAuth
+# route, in-cluster over plain HTTP on hostnames under `externalauth-probe.invalid`, so no Cloudflare,
+# public DNS or TLS is in the path. The script header carries the full reasoning and the verdicts.
+#
+# IT WRITES TO PRODUCTION while it runs — unlike the read-only ipcache diagnostic. It creates two
+# HTTPRoutes, one CiliumNetworkPolicy and two pods in `whoami`, and one ReferenceGrant in
+# `oauth2-proxy`, all labelled with this run's id, and deletes them on exit. No existing object is
+# modified. A run refuses to start over objects an earlier run left behind. Approval to run this
+# test on production is recorded on #3784 (2026-09-13).
+#
+# ACCESS USED — the same established production mechanism as the ipcache diagnostic and
+# .github/actions/deploy-prod/action.yml:
+#   * KUBE_CONFIG (the `prod` environment secret), context `admin@prod`. That identity is
+#     cluster-admin.
+#   * HCLOUD_TOKEN, exposed ONLY to the endpoint-selection step, for one read of the KSail-owned
+#     floating IP.
+# What bounds the job is the reviewed script, the main-branch guard, the pinned context, the
+# confirmation phrase and `contents: read` on the GitHub token — not the credentials.
+#
+# REVIEWED CODE ONLY. The first step refuses any ref but `refs/heads/main` before anything is
+# checked out, and checkout is pinned to that dispatch commit.
+#
+# DORMANT, TWICE OVER. No `schedule:` or `pull_request:` trigger, and an exact confirmation phrase.
+#
+# PUBLIC LOG. The script prints only counts and the verdict — no address, node name or URL. The
+# endpoint helper's success line names the API endpoint, so it is discarded.
+#
+# scripts/tests/test-probe-cilium-externalauth-crossnode.sh pins the script's behaviour and the
+# shape of this workflow. It needs no cluster and no secrets, so it runs in ci.yaml's required
+# `validate` job rather than here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: probe-production-externalauth"
+        required: true
+        type: string
+      requests:
+        description: "Requests per client and route (1-100; requests x 5s timeout must not exceed 250)"
+        required: false
+        type: string
+        default: "40"
+
+permissions: {}
+
+concurrency:
+  # Serialised with every production deploy path. A deploy rolls Cilium, cilium-envoy and
+  # oauth2-proxy, and a verdict taken across that rollout would describe no single revision.
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  probe-cilium-externalauth-crossnode:
+    name: 🧪 Probe Cilium ExternalAuth Cross-Node
+    runs-on: ubuntu-latest
+    # The script's worst case — the wall-clock route wait, the shared pod deadline and grace, every
+    # other kubectl call at its 30s request timeout, and both cleanup deletes — fits inside this with
+    # setup slack, so the step always prints a verdict and cleans up before Actions cancels it
+    # (pinned by the test).
+    timeout-minutes: 45
+    # KUBE_CONFIG is a `prod` ENVIRONMENT secret; without this it resolves to the empty string.
+    environment: prod
+    permissions:
+      contents: read # checkout repository
+    steps:
+      # Fails closed BEFORE checkout. `github.ref` reaches bash through `env:`, never interpolated.
+      - name: 🛑 Require the reviewed main branch
+        shell: bash
+        env:
+          RUN_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "${RUN_REF}" != 'refs/heads/main' ]]; then
+            printf 'Refusing to run: dispatch this workflow from main (got %s).\n' "${RUN_REF}" >&2
+            printf 'Only the script CI tested on main may run with production credentials.\n' >&2
+            exit 1
+          fi
+          printf 'Running from main.\n'
+
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # Checked BEFORE the kubeconfig is restored, so a mistyped dispatch cannot reach the cluster.
+      - name: 🛑 Require explicit confirmation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [[ "${CONFIRM}" != 'probe-production-externalauth' ]]; then
+            printf 'Refusing to run: the confirm input must be exactly "probe-production-externalauth".\n' >&2
+            printf 'Nothing has been read or written.\n' >&2
+            exit 1
+          fi
+          printf 'Confirmation accepted.\n'
+
+      - name: 🔑 Restore kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          umask 077
+          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🔗 Select stable prod API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
+
+      - name: 🧪 Probe ExternalAuth delivery across nodes
+        shell: bash
+        # Exit 3 is INCONCLUSIVE and exit 4 is a failed cleanup; both fail the job on purpose. FIXED
+        # and FAULT-PERSISTS both exit 0; the verdict is in the log and the step summary. The
+        # requests input reaches the script through `env:` and is validated there.
+        env:
+          RUN_ID: ${{ github.run_id }}
+          REQUESTS: ${{ inputs.requests }}
+        run: ./scripts/probe-cilium-externalauth-crossnode.sh --context admin@prod --run-id "${RUN_ID}" --requests "${REQUESTS}" --timeout 5

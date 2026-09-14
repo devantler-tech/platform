@@ -40,16 +40,19 @@ jobs:
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
       # The Wedding backup catalogue must be proven complete before the database
-      # switches to its dedicated bucket. The evaluator's refusals (credential
-      # reuse, wrong destination, partial copy, source changed mid-run) are the
-      # only thing standing between a bad mirror and a cutover with no history.
+      # switches to its dedicated bucket, and continuous after it. The evaluator's
+      # refusals (credential reuse, wrong destination, partial copy, source changed
+      # mid-run, and for the catch-up a stale destination object or a WAL gap
+      # across the switch) are the only thing standing between a bad copy and a
+      # cutover with lost history.
       - name: 💒 Validate Wedding backup mirror evaluator
         run: go test ./scripts/mirror-wedding-backup-catalogue
 
-      # The copy that feeds the evaluator: it must refuse a switched or drifted
-      # store, never reuse one credential, and hand the evaluator listings it
-      # actually accepts. The happy path runs the real pod script into the real
-      # evaluator, so the two cannot drift apart on the listing format.
+      # The copy that feeds the evaluator: each mode must refuse a Cluster that
+      # archives through the wrong store or a drifted store, never reuse one
+      # credential, and hand the evaluator listings it actually accepts. The
+      # converging paths run the real pod script into the real evaluator, so the
+      # two cannot drift apart on the listing format.
       - name: 💒 Validate Wedding backup mirror copy
         run: |
           shellcheck scripts/mirror-wedding-backup-catalogue.sh scripts/mirror-wedding-backup-catalogue-pod.sh scripts/tests/test-mirror-wedding-backup-catalogue.sh
@@ -329,9 +332,17 @@ jobs:
               - 'scripts/tests/test-label-baseline-workers.sh'
               # The hcloud consumers that require that label (#3287).
               - 'scripts/tests/test-hcloud-baseline-worker-affinity.sh'
+              # The admission guard for every hcloud consumer, and its fixtures.
+              - 'tests/require-baseline-workers-for-hcloud-volumes/**'
               - 'tests/audit-privileged-rbac/**'
               - 'tests/auto-vpa/**'
               - 'scripts/tests/test-audit-privileged-rbac.sh'
+              # Renders the charts whose roles that policy excludes and applies the
+              # policy to their RBAC, so a chart bump fails its own PR (#3792).
+              - 'scripts/tests/test-chart-rendered-rbac-policy.sh'
+              # The reviewed grants of the chart roles that policy excludes, and the
+              # reviewed contributors to the built-in admin and edit roles (#3808).
+              - 'tests/chart-rendered-rbac-policy/**'
               # The declarative fixtures are the other half of that test: a PR that
               # touches only resources.yaml or kyverno-test.yaml would otherwise leave
               # the k8s filter false, so neither kyverno test nor the shell gate runs.
@@ -376,6 +387,13 @@ jobs:
               - 'scripts/diagnose-cilium-ext-authz-ipcache.sh'
               - 'scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh'
               - '.github/workflows/diagnose-cilium-ext-authz-ipcache.yaml'
+              # The #2284 cross-node datapath probe, its test and its workflow are
+              # one contract for the same reason: the test pins what the probe may
+              # write to production, that it cleans up, and that no address reaches
+              # the public log.
+              - 'scripts/probe-cilium-externalauth-crossnode.sh'
+              - 'scripts/tests/test-probe-cilium-externalauth-crossnode.sh'
+              - '.github/workflows/probe-cilium-externalauth-crossnode.yaml'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
@@ -456,6 +474,10 @@ jobs:
               # test alone — still runs the check that covers it.
               - 'scripts/reconcile-flux-workloads.sh'
               - 'scripts/tests/test-flux-reconcile-control-plane-restart.sh'
+              # Both halves, so editing the CoreDNS restart alone — or its test
+              # alone — still runs the check that covers it.
+              - 'scripts/restart-uncapped-talos-coredns.sh'
+              - 'scripts/tests/test-restart-uncapped-talos-coredns.sh'
               - 'scripts/tests/test-opencost-usage-scraper.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
               - 'scripts/tests/test-crossplane-sync-alerter.sh'
@@ -1182,6 +1204,17 @@ jobs:
           bash scripts/tests/test-guard-longhorn-ui-baseline-context.sh
           bash scripts/tests/test-longhorn-ui-baseline-context.sh
 
+      - name: 🛡️ Validate chart-rendered RBAC
+        if: needs.changes.outputs.k8s == 'true'
+        # Pulls the charts whose roles the privileged-RBAC policy excludes and applies
+        # the policy to their rendered RBAC (#3792). It reaches five upstream chart
+        # registries, so it is bounded like the registry-facing production render: a
+        # stalled registry fails this step instead of holding the whole job.
+        timeout-minutes: 10
+        run: |
+          shellcheck scripts/tests/test-chart-rendered-rbac-policy.sh
+          bash scripts/tests/test-chart-rendered-rbac-policy.sh
+
       - name: 🚦 Validate default-off Cilium bandwidth manager
         if: needs.changes.outputs.k8s == 'true'
         # Render the committed and temporary opt-in states so the staged
@@ -1230,6 +1263,18 @@ jobs:
         run: |
           shellcheck scripts/diagnose-cilium-ext-authz-ipcache.sh scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh
           bash scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh
+
+      - name: 🧪 Validate Cilium ExternalAuth cross-node probe
+        if: needs.changes.outputs.k8s == 'true'
+        # The probe needs prod and runs only on dispatch, and unlike the ipcache
+        # diagnostic it WRITES while it runs. Its test fakes kubectl from fixtures
+        # and pins what makes dispatching it acceptable: no exec/patch and only
+        # run-scoped deletes, cleanup whenever anything was created, nothing created
+        # over leftovers, pods pinned to the right nodes, no address in the public
+        # log, and each conclusive verdict against a one-fixture control.
+        run: |
+          shellcheck scripts/probe-cilium-externalauth-crossnode.sh scripts/tests/test-probe-cilium-externalauth-crossnode.sh
+          bash scripts/tests/test-probe-cilium-externalauth-crossnode.sh
 
       - name: 🔐 Validate Cilium mutual-auth policy scope
         if: needs.changes.outputs.k8s == 'true'
@@ -1282,6 +1327,14 @@ jobs:
         # retries that self-inflicted failure exactly once — and, in the other
         # direction, that a genuine reconcile failure is still never retried.
         run: bash scripts/tests/test-flux-reconcile-control-plane-restart.sh
+
+      - name: 🧢 Validate the DR rebuild caps Talos-bootstrapped CoreDNS
+        if: needs.changes.outputs.k8s == 'true'
+        # Talos admits CoreDNS before the kube-system LimitRange exists, so a fresh
+        # prod cluster runs it without a CPU limit (#3567). Pin that the rebuild
+        # restarts CoreDNS only when a running pod is uncapped, restarts nothing
+        # else, and fails closed on any input it cannot read.
+        run: bash scripts/tests/test-restart-uncapped-talos-coredns.sh
 
       - name: 📣 Validate the rollout gate cannot suppress sync silently
         if: needs.changes.outputs.k8s == 'true'
@@ -1931,7 +1984,7 @@ jobs:
           persist-credentials: false
 
       - name: 🏷️ Validate naming conventions
-        uses: devantler-tech/actions/validate-naming@a147ead8b8bc937fbfb1974e3698c7e32f95517d # v13.5.1
+        uses: devantler-tech/actions/validate-naming@759ff9b2526cd1b142b49c5dc1616118a1ef44d9 # v13.6.0
         with:
           enabled: "true"
 
@@ -2331,7 +2384,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@a147ead8b8bc937fbfb1974e3698c7e32f95517d # v13.5.1
+        uses: devantler-tech/actions/aggregate-job-checks@759ff9b2526cd1b142b49c5dc1616118a1ef44d9 # v13.6.0
         with:
           job-results: >-
             ${{ needs.changes.result }}
