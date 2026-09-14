@@ -8,7 +8,9 @@
 #   1. the Enforce policy passes every role it evaluates;
 #   2. the policy's exclusions split exactly into chart-rendered roles and an explicit
 #      list of roles no chart renders;
-#   3. every excluded chart role still grants exactly its reviewed rules.
+#   3. every excluded chart role still grants exactly its reviewed rules, and an
+#      aggregated one still collects exactly its reviewed contributors, whether a
+#      chart renders them or this repository commits them.
 # Run with UPDATE_BASELINE=1 to record reviewed grants after checking the diff.
 set -euo pipefail
 
@@ -30,6 +32,27 @@ non_chart_exclusions='[
   "ClusterRole||kro-tenant-rgd",
   "ClusterRole||system:aggregate-to-edit",
   "ClusterRole||system:controller:clusterrole-aggregation-controller"
+]'
+
+# Flux substitutions the watched HelmReleases may carry. Each sets only a replica
+# count, backup storage or an OIDC setting, so rendering it with a default or a
+# placeholder cannot change the RBAC. Any other token fails closed, because a value
+# this test cannot resolve could change which roles render and what they grant.
+allowed_tokens='[
+  "dex_client_secret",
+  "domain",
+  "ksail_operator_replicas",
+  "longhorn_csi_attacher_replicas",
+  "longhorn_csi_provisioner_replicas",
+  "longhorn_csi_resizer_replicas",
+  "longhorn_csi_snapshotter_replicas",
+  "longhorn_replica_count",
+  "longhorn_ui_replicas",
+  "r2_bucket",
+  "r2_endpoint",
+  "r2_prefix_velero",
+  "r2_region",
+  "velero_replicas"
 ]'
 
 for tool in helm jq kubectl kyverno yq; do
@@ -58,6 +81,16 @@ substitute() {
 }
 
 kubectl kustomize "$overlay" >"${scratch}/overlay-raw.yaml"
+
+for name in "${releases[@]}"; do
+  unexpected="$(yq -o=json "select(.kind == \"HelmRelease\" and .metadata.name == \"${name}\")" \
+    "${scratch}/overlay-raw.yaml" |
+    { grep -oE '\$\{[A-Za-z0-9_]+' || true; } | sed 's/^\${//' | sort -u |
+    jq -R -s -r --argjson allowed "$allowed_tokens" 'split("\n") | map(select(length > 0)) - $allowed | .[]')"
+  [ -z "$unexpected" ] ||
+    fail "${name}: Flux substitutions this test cannot resolve safely: ${unexpected//$'\n'/, }; list them in allowed_tokens only if they cannot affect RBAC"
+done
+
 substitute "${scratch}/overlay-raw.yaml" >"${scratch}/overlay.yaml"
 
 # Renders one HelmRelease from the built overlay with its effective values into
@@ -150,16 +183,34 @@ census() {
 }
 
 # Prints each excluded chart role's grants, normalised so order does not matter.
+# An aggregated role's own rules are empty; its effective grants are the rules of
+# every ClusterRole its selectors match, so those contributors are recorded too.
 excluded_grants() {
-  local resources="$1"
-  yq ea -o=json '[select(.kind == "Role" or .kind == "ClusterRole")]' "$resources" |
-    jq -S --argjson excluded "$chart_exclusions" '
+  local resources="$1" committed="$2"
+  jq -S -n \
+    --argjson excluded "$chart_exclusions" \
+    --slurpfile rendered <(yq ea -o=json '[select(.kind == "Role" or .kind == "ClusterRole")]' "$resources") \
+    --slurpfile committed <(yq ea -o=json '[select(.kind == "ClusterRole")]' "$committed") '
       def normalise: walk(if type == "array" then sort else . end);
-      [.[] | {
-        key: "\(.kind)|\(.metadata.namespace // "")|\(.metadata.name)",
-        value: ({rules: (.rules // []), aggregationRule: (.aggregationRule // null)} | normalise)
-      }]
-      | map(select(.key as $key | $excluded | index($key)))
+      def identity: "\(.kind)|\(.metadata.namespace // "")|\(.metadata.name)";
+      def grants: {rules: (.rules // []), aggregationRule: (.aggregationRule // null)} | normalise;
+      def selects($role): ($role.metadata.labels // {}) as $labels
+        | all(.matchLabels | to_entries[]; $labels[.key] == .value);
+      $rendered[0] as $rendered_roles
+      | ($rendered_roles + $committed[0]) as $all
+      | [$rendered_roles[]
+        | select(identity as $id | $excluded | index($id))
+        | . as $role
+        | {
+          key: identity,
+          value: (grants + (if .aggregationRule == null then {} else {
+            contributors: ([$all[]
+              | select(.kind == "ClusterRole")
+              | . as $candidate
+              | select(any($role.aggregationRule.clusterRoleSelectors[]; selects($candidate)))
+              | {key: identity, value: grants}] | from_entries)
+          } end))
+        }]
       | from_entries'
 }
 
@@ -172,6 +223,20 @@ for name in "${releases[@]}"; do
     cat "${work}/rbac.yaml"
   } >>"${scratch}/rbac.yaml"
 done
+
+# Committed ClusterRoles, which can contribute to an aggregated excluded role.
+find "${repo_root}/k8s" -name '*.yaml' ! -name '*.enc.yaml' -print0 |
+  { xargs -0 grep -l '^kind: ClusterRole *$' || true; } >"${scratch}/committed-files.txt"
+: >"${scratch}/committed-raw.yaml"
+while IFS= read -r file; do
+  {
+    printf -- '---\n'
+    yq 'select(.kind == "ClusterRole")' "$file"
+  } >>"${scratch}/committed-raw.yaml"
+done <"${scratch}/committed-files.txt"
+substitute "${scratch}/committed-raw.yaml" >"${scratch}/committed.yaml"
+[ "$(yq ea '[select(.kind == "ClusterRole")] | length' "${scratch}/committed.yaml")" -gt 0 ] ||
+  fail "no committed ClusterRole was found; contributors to aggregated roles cannot be checked"
 
 # The policy's exclusion inventory, as kind|namespace|name.
 yq -o=json '.' "$policy" |
@@ -195,7 +260,19 @@ missing="$(jq -r --argjson expected "$chart_exclusions" '. as $rendered | $expec
   fail "policy exclusions no chart renders, review the exclusion or list it as non-chart: ${missing//$'\n'/, }"
 [ "$(jq length <<<"$chart_exclusions")" -gt 0 ] || fail "no chart-rendered exclusion was derived from the policy"
 
-excluded_grants "${scratch}/rbac.yaml" >"${scratch}/grants.json"
+# Contributors are resolved only through non-empty matchLabels selectors. Any other
+# selector form, or an empty one that would select every ClusterRole, fails closed.
+yq ea -o=json '[select(.kind == "ClusterRole")]' "${scratch}/rbac.yaml" |
+  jq -e --argjson excluded "$chart_exclusions" '
+    [.[] | select("ClusterRole||\(.metadata.name)" as $id | $excluded | index($id))
+      | select(.aggregationRule != null) | .aggregationRule]
+    | all(.[];
+      keys == ["clusterRoleSelectors"] and (.clusterRoleSelectors | length) > 0 and
+      all(.clusterRoleSelectors[]; keys == ["matchLabels"] and (.matchLabels | length) > 0))
+  ' >/dev/null ||
+  fail "an excluded aggregated role uses a selector form this test cannot resolve; only non-empty matchLabels selectors are supported"
+
+excluded_grants "${scratch}/rbac.yaml" "${scratch}/committed.yaml" >"${scratch}/grants.json"
 if [ "${UPDATE_BASELINE:-}" = "1" ]; then
   mkdir -p "$(dirname "$baseline")"
   cp "${scratch}/grants.json" "$baseline"
@@ -255,5 +332,5 @@ if [ "$negative_status" -ne 1 ] || [ "$negative_failed" -ne 1 ] ||
   fail "an unexcluded privileged role in the render was not refused"
 fi
 
-printf 'PASS: %s chart-rendered roles pass the privileged-RBAC policy; %s excluded chart roles match their reviewed grants; broadened and unexcluded privileged roles fail\n' \
+printf 'PASS: %s chart-rendered roles pass the privileged-RBAC policy; %s excluded chart roles match their reviewed grants and contributors; broadened and unexcluded privileged roles fail\n' \
   "$pass" "$(jq length "$baseline")"
