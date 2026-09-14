@@ -40,9 +40,10 @@ components:
   # bases/components/helmrelease-drift-detection.
   - ../../../bases/components/helmrelease-drift-detection
   - ../../../bases/components/helmrelease-flux-defaults
-  # Default-off stateful pilot. Activate and verify in a separate PR using
-  # the component README; rollback removes this one reference, retaining data.
-  # - actual-budget/components/user-namespaces
+  # Stateful user-namespace pilot, active for verification (#3604). The runtime
+  # verdict is recorded on #3604; rollback removes this one reference, retaining
+  # data. Making the setting permanent is a separate change (#3605).
+  - actual-budget/components/user-namespaces
 # Strategic-merge patch files self-identify (apiVersion/kind/name/namespace), so
 # they need only a path — no redundant `target:` selector. JSON6902 patches have
 # no embedded identity and keep an explicit target.

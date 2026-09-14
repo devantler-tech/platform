@@ -33,19 +33,28 @@ extract_release() {
     .metadata.namespace == "actual-budget" and .metadata.name == "actual-budget")' "$1" >"$2"
 }
 
-render_overlay "${apps_dir}" "${scratch_dir}/off.json"
-render_overlay "${scratch_dir}/k8s/providers/docker/apps" "${scratch_dir}/local-before.json"
-extract_release "${scratch_dir}/off.json" "${scratch_dir}/off-release.json"
-jq -e '[.[] | select(.kind == "Namespace" and .metadata.name == "actual-budget") |
-  .metadata.labels["pod-security.devantler.tech/user-namespaces"]] == [null]' \
-  "${scratch_dir}/off.json" >/dev/null || fail 'production must keep the pilot disabled'
+# The pilot is active in production (#3604): the committed overlay must
+# reference the component exactly once.
+COMPONENT="${component}" yq -e '[.components[] | select(. == strenv(COMPONENT))] | length == 1' \
+  "${apps_dir}/kustomization.yaml" >/dev/null ||
+  fail 'production must reference the pilot component exactly once'
 
-COMPONENT="${component}" yq -i '.components += [strenv(COMPONENT)]' "${apps_dir}/kustomization.yaml"
 render_overlay "${apps_dir}" "${scratch_dir}/on.json"
+render_overlay "${scratch_dir}/k8s/providers/docker/apps" "${scratch_dir}/local-before.json"
 extract_release "${scratch_dir}/on.json" "${scratch_dir}/on-release.json"
 jq -e '[.[] | select(.kind == "Namespace" and .metadata.name == "actual-budget") |
   .metadata.labels["pod-security.devantler.tech/user-namespaces"]] == ["enabled"]' \
-  "${scratch_dir}/on.json" >/dev/null || fail 'opt-in must enable the namespace enforcement policy'
+  "${scratch_dir}/on.json" >/dev/null || fail 'the active pilot must enable the namespace enforcement policy'
+
+# Build the disabled state by removing the single reference, which is exactly
+# the documented rollback.
+COMPONENT="${component}" yq -i '.components |= map(select(. != strenv(COMPONENT)))' \
+  "${apps_dir}/kustomization.yaml"
+render_overlay "${apps_dir}" "${scratch_dir}/off.json"
+extract_release "${scratch_dir}/off.json" "${scratch_dir}/off-release.json"
+jq -e '[.[] | select(.kind == "Namespace" and .metadata.name == "actual-budget") |
+  .metadata.labels["pod-security.devantler.tech/user-namespaces"]] == [null]' \
+  "${scratch_dir}/off.json" >/dev/null || fail 'rollback must remove the namespace enforcement label'
 
 # The complete overlay may differ only by this namespace label and one appended
 # post-renderer on this release. This catches collateral changes to other apps,
@@ -57,16 +66,17 @@ jq -S 'map(if .kind == "Namespace" and .metadata.name == "actual-budget" then
     .spec.postRenderers |= .[:-1]
   else . end)' "${scratch_dir}/on.json" >"${scratch_dir}/normalized.json"
 diff -u "${scratch_dir}/off.json" "${scratch_dir}/normalized.json" ||
-  fail 'opt-in changes resources beyond the pod and namespace pilot settings'
+  fail 'the pilot changes resources beyond the pod and namespace pilot settings'
 
 render_overlay "${scratch_dir}/k8s/providers/docker/apps" "${scratch_dir}/local-after.json"
 cmp "${scratch_dir}/local-before.json" "${scratch_dir}/local-after.json" ||
-  fail 'production opt-in must not affect the local overlay'
-COMPONENT="${component}" yq -i '.components |= map(select(. != strenv(COMPONENT)))' \
-  "${apps_dir}/kustomization.yaml"
-render_overlay "${apps_dir}" "${scratch_dir}/rollback.json"
-cmp "${scratch_dir}/off.json" "${scratch_dir}/rollback.json" ||
-  fail 'rollback must restore the original resources exactly'
+  fail 'the production pilot must not affect the local overlay'
+
+# Re-enabling after a rollback must reproduce the committed render exactly.
+COMPONENT="${component}" yq -i '.components += [strenv(COMPONENT)]' "${apps_dir}/kustomization.yaml"
+render_overlay "${apps_dir}" "${scratch_dir}/reenabled.json"
+cmp "${scratch_dir}/on.json" "${scratch_dir}/reenabled.json" ||
+  fail 're-enabling after rollback must restore the committed resources exactly'
 
 chart_name="$(jq -r '.spec.chart.spec.chart' "${scratch_dir}/off-release.json")"
 chart_version="$(jq -r '.spec.chart.spec.version' "${scratch_dir}/off-release.json")"
@@ -110,9 +120,9 @@ render_workload() {
 render_workload off
 render_workload on
 jq -e '[.[] | select(.kind == "Deployment") | .spec.template.spec.hostUsers] == [false]' \
-  "${scratch_dir}/on-workload.json" >/dev/null || fail 'opt-in must reach the rendered Deployment'
+  "${scratch_dir}/on-workload.json" >/dev/null || fail 'the active pilot must reach the rendered Deployment'
 jq -e '[.[] | select(.kind == "Deployment") | .spec.template.spec.hostUsers] == [null]' \
-  "${scratch_dir}/off-workload.json" >/dev/null || fail 'disabled pilot must preserve host user namespaces'
+  "${scratch_dir}/off-workload.json" >/dev/null || fail 'rollback must restore host user namespaces'
 jq -S 'map(if .kind == "Deployment" then del(.spec.template.spec.hostUsers) else . end)' \
   "${scratch_dir}/on-workload.json" >"${scratch_dir}/normalized-workload.json"
 diff -u "${scratch_dir}/off-workload.json" "${scratch_dir}/normalized-workload.json" ||
@@ -123,4 +133,4 @@ jq -e '[.[] | select(.kind == "Deployment") |
   ([.spec.template.spec.volumes[] | select(has("persistentVolumeClaim"))] | length) == 1] == [true]' \
   "${scratch_dir}/on-workload.json" >/dev/null || fail 'the pilot must retain its single-writer storage contract'
 
-printf 'PASS: Actual Budget user namespaces are default-off; opt-in changes only hostUsers and enforcement, and rollback preserves storage\n'
+printf 'PASS: Actual Budget user namespaces are active in production; the pilot changes only hostUsers and enforcement, and rollback preserves storage\n'
