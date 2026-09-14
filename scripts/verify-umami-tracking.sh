@@ -19,34 +19,34 @@ usage() {
 while (($# > 0)); do
   case "$1" in
     --website-id)
-      (($# >= 2)) && [[ -n "${2:-}" ]] || {
+      if (($# < 2)) || [[ -z "${2:-}" ]]; then
         usage
         fail '--website-id requires a value'
-      }
+      fi
       website_id="$2"
       shift 2
       ;;
     --endpoint)
-      (($# >= 2)) && [[ -n "${2:-}" ]] || {
+      if (($# < 2)) || [[ -z "${2:-}" ]]; then
         usage
         fail '--endpoint requires a value'
-      }
+      fi
       endpoint="$2"
       shift 2
       ;;
     --hostname)
-      (($# >= 2)) && [[ -n "${2:-}" ]] || {
+      if (($# < 2)) || [[ -z "${2:-}" ]]; then
         usage
         fail '--hostname requires a value'
-      }
+      fi
       hostname="$2"
       shift 2
       ;;
     --path)
-      (($# >= 2)) && [[ -n "${2:-}" ]] || {
+      if (($# < 2)) || [[ -z "${2:-}" ]]; then
         usage
         fail '--path requires a value'
-      }
+      fi
       event_path="$2"
       shift 2
       ;;
