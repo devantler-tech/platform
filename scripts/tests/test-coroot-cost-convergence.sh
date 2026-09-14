@@ -60,4 +60,7 @@ printf '%s\n' "${production_rendered}" |
   ' - >/dev/null ||
   fail 'production must keep the Coroot custom cloud-pricing reconciler active'
 
+bash "${root_dir}/scripts/tests/test-opencost-retirement.sh"
+bash "${root_dir}/scripts/tests/test-opencost-retirement-wiring.sh"
+
 printf 'PASS: Coroot is the only rendered cost-monitoring surface\n'
