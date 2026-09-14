@@ -10,12 +10,12 @@
 # The assertions that matter are not the happy path. Three of these exist because the
 # obvious implementation gets them wrong:
 #
-#   * THE IMAGEUID CARVE-OUT. add-pod-security-context excludes fifteen namespaces,
-#     and three of them (cert-manager, keda, opencost) ARE reached, by the by-name
+#   * THE IMAGEUID CARVE-OUT. add-pod-security-context excludes fourteen namespaces,
+#     and two of them (cert-manager and keda) ARE reached, by the by-name
 #     add-imageuid-pod-security-context rule. A guard that reads only the exclusion
-#     list reports three false differences on a correct tree.
+#     list reports two false differences on a correct tree.
 #   * A MISSING RULE IS NOT AN EMPTY SET. If add-imageuid-pod-security-context is
-#     renamed away, subtracting nothing leaves all fifteen "unreached" — a plausible
+#     renamed away, subtracting nothing leaves all fourteen "unreached" — a plausible
 #     number that silently changes the invariant. That must be exit 2, not exit 1.
 #   * A VACUOUS PASS. An empty NotIn compared against anything must not read as
 #     agreement, and an empty-vs-empty comparison must never be reported as OK.
@@ -86,9 +86,9 @@ run_guard "$policy_src" "$exception_src"
 assert_rc 'the committed tree agrees' 0 "$GUARD_RC"
 assert_mentions 'reports the unreached count' '12 namespace(s) unreached'
 
-# cert-manager/keda/opencost are in the exclusion list and MUST NOT be reported. This
+# cert-manager and keda are in the exclusion list and MUST NOT be reported. This
 # is the imageuid carve-out, asserted on the real files rather than a fixture.
-for ns in cert-manager keda opencost; do
+for ns in cert-manager keda; do
   assertions=$((assertions + 1))
   if printf '%s\n' "$GUARD_OUT" | grep -Fq -- "$ns"; then
     printf '  FAIL imageuid carve-out: %s was reported as a difference\n' "$ns"
@@ -136,7 +136,7 @@ yq '(.spec.rules[] | select(.name == "add-imageuid-pod-security-context") | .nam
   "$policy_src" >"$fixture"
 if assert_fixture_changed 'imageuid-rule-renamed' "$policy_src" "$fixture"; then
   run_guard "$fixture" "$exception_src"
-  assert_rc 'a renamed imageuid rule is UNCHECKABLE, not a 15-namespace difference' 2 "$GUARD_RC"
+  assert_rc 'a renamed imageuid rule is UNCHECKABLE, not a 14-namespace difference' 2 "$GUARD_RC"
   assert_mentions 'names the list it could not resolve' 'add-imageuid-pod-security-context matched namespaces'
 fi
 

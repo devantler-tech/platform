@@ -10,8 +10,7 @@
 # is installed by the Hetzner overlay only — so on the Docker provider (where
 # Coroot is opt-in) it would deploy a permanently empty sensor plus cluster-wide
 # RBAC for CRDs that do not exist. The activation lives in
-# k8s/providers/hetzner/infrastructure/kustomization.yaml, the same placement
-# the OpenCost usage-scraper component uses.
+# k8s/providers/hetzner/infrastructure/kustomization.yaml.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

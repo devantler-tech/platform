@@ -19,8 +19,8 @@ creates `<name>-primary` / `<name>-canary` Services, and drives an analysis loop
 Promotion vs rollback is gated on:
 
 - **SLO metrics** — there is no Istio/Envoy telemetry and no app instrumentation
-  here, so the `MetricTemplate`s query **Coroot's bundled Prometheus** (the same
-  endpoint OpenCost uses, `coroot-prometheus.observability.svc:9090`). Coroot's eBPF
+  here, so the `MetricTemplate`s query **Coroot's bundled Prometheus**
+  (`coroot-prometheus.observability.svc:9090`). Coroot's eBPF
   node-agent exports server-side `container_http_inbound_requests_total{status}`
   (a counter) plus the `container_http_inbound_requests_duration_seconds_total`
   histogram — a standard Prometheus histogram, so its queryable bucket series is
@@ -42,17 +42,16 @@ Promotion vs rollback is gated on:
 | Component | Layer | Path |
 | --- | --- | --- |
 | `flagger` controller + `flagger-loadtester` | infra-controllers | [`controllers/flagger/`](../k8s/bases/infrastructure/controllers/flagger) |
-| `coroot-request-success-rate` / `coroot-request-duration` `MetricTemplate`s | infrastructure | [`infrastructure/flagger/`](../k8s/bases/infrastructure/flagger) |
+| `coroot-request-success-rate` / `coroot-request-duration` `MetricTemplate`s | infrastructure | [`infrastructure/metric-templates/`](../k8s/bases/infrastructure/metric-templates) |
 | **umami** Canary (weighted) | apps | [`apps/umami/canary.yaml`](../k8s/bases/apps/umami/canary.yaml) |
 | **homepage** Canary (blue/green) | apps | [`apps/homepage/canary.yaml`](../k8s/bases/apps/homepage/canary.yaml) |
-| **opencost** Canary (blue/green) | infrastructure | [`infrastructure/flagger/canary-opencost.yaml`](../k8s/bases/infrastructure/flagger/canary-opencost.yaml) |
 
 > **CRD-vs-CR layering.** The flagger HelmRelease ships the `Canary` /
 > `MetricTemplate` CRDs (infra-controllers). A CR of those kinds in the *same*
 > Flux Kustomization fails the server-side dry-run (`no matches for kind`) and
 > deadlocks the set. So **app** Canaries live in the apps layer and the
-> **opencost** Canary + the MetricTemplates live in the `infrastructure` layer
-> (both depend on, and wait for, infra-controllers) — the same split as
+> MetricTemplates live in the `infrastructure` layer (both depend on, and wait
+> for, infra-controllers) — the same split as
 > [`infrastructure/coroot/coroot.yaml`](../k8s/bases/infrastructure/coroot/coroot.yaml).
 
 ### Onboarded apps & status
@@ -66,10 +65,6 @@ Promotion vs rollback is gated on:
 - **homepage** — blue/green (it's the root dashboard behind oauth2-proxy). High
   blast radius; replicas are owned by a KEDA `ScaledObject` via `autoscalerRef`
   (primary scales 2-3 on Coroot request rate — see "KEDA apps" below).
-- **opencost** — blue/green infra workload. ⚠️ Headlamp's cost plugin uses the
-  `opencost:http-ui` **named** port via the apiserver proxy; `portDiscovery` may
-  not preserve that name — watch the Headlamp cost panel after rollout.
-
 ### Excluded (and why)
 
 | Workload | Reason |
@@ -137,7 +132,7 @@ matches a hash but never "primary" (it has i/a).
 against live data** — before trusting auto-promotion, confirm in
 `coroot-prometheus` the `status` label format, the `container_id` format, and the
 latency bucket series, and tune
-[`infrastructure/flagger/metric-template-*.yaml`](../k8s/bases/infrastructure/flagger).
+[`infrastructure/metric-templates/metric-template-*.yaml`](../k8s/bases/infrastructure/metric-templates).
 
 ## References
 - [Flagger Gateway API tutorial](https://docs.flagger.app/tutorials/gatewayapi-progressive-delivery)

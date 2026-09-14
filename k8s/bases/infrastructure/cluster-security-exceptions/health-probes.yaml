@@ -41,7 +41,6 @@ spec:
             - reloader
             - external-dns
             - kubelet-serving-cert-approver
-            - opencost
             - headlamp
             - kubevirt
             - cdi

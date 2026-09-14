@@ -117,7 +117,6 @@ spec:
               - longhorn-ui
               - homepage
               - umami-umami
-              - opencost
               # Single-writer or ephemeral controllers with no useful second
               # replica: DNS, disabled issuer and the canary load generator.
               - external-dns

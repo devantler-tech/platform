@@ -82,8 +82,8 @@ spec:
     size: 2Gi
 
   # Bundled Prometheus = the metrics TSDB. Kept as a real Prometheus (we do
-  # NOT set storeMetricsInClickhouse) precisely so OpenCost can still query it
-  # at http://coroot-prometheus.observability.svc.cluster.local:9090.
+  # NOT set storeMetricsInClickhouse) because Flagger and KEDA query it at
+  # http://coroot-prometheus.observability.svc.cluster.local:9090.
   #
   # SINGLE-INSTANCE BY DESIGN: the Coroot CRD's `prometheus` block exposes only
   # affinity/image/nodeSelector/outOfOrderTimeWindow/podAnnotations/resources/
