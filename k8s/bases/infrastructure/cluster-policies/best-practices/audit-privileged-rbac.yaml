@@ -28,6 +28,9 @@ spec:
   # change that renames one of these roles, or adds a new privileged role, is refused
   # at admission; because Flux dry-runs through the same webhook, that fails the
   # whole Kustomization until the new role is reviewed here.
+  # scripts/tests/test-chart-rendered-rbac-policy.sh renders those charts at their
+  # pinned versions and applies this policy to their RBAC in CI, so such a change
+  # fails its own pull request first.
   #
   # Coverage limit: Kyverno's own resource filters skip kube-system, kube-public,
   # kube-node-lease, kyverno, and Kyverno's controller roles for every policy, so a
