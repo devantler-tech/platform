@@ -6,6 +6,7 @@ metadata:
     github-ref: refs/tags/v1.5.0
     github-repo: https://github.com/devantler-tech/agent-skills
     github-tree-sha: 219a45e80e25b47cc23dcfed9febd526655e624c
+    internal: true
 name: ways-of-working
 ---
 # Ways of Working
