@@ -22,11 +22,16 @@ spec:
   # auto-generated coroot-db-app Secret, which the operator consumes via
   # passwordSecret -> PG_PASSWORD + PG_CONNECTION_STRING (controller/postgres.go).
   # host is the CNPG -rw (read-write/primary) Service so writes always reach the
-  # current primary across switchovers. sslmode: require matches the platform's
+  # current primary across switchovers. Use the same-namespace short name: the
+  # fully-qualified name has only four dots and Kubernetes' default ndots:5
+  # expands it through every search suffix before the successful query. The
+  # targeted Pod resolver policy also protects the rest of the Coroot stack,
+  # while this name avoids amplification even before that admission mutation.
+  # sslmode: require matches the platform's
   # established CNPG connection posture (vault-config connects to umami-db the
   # same way) — encrypt in-cluster without pinning CNPG's self-signed CA.
   postgres:
-    host: coroot-db-rw.observability.svc.cluster.local
+    host: coroot-db-rw
     port: 5432
     user: coroot
     database: coroot

@@ -2271,32 +2271,30 @@ const (
 //
 // Previous aggregate: 52a79b87b9658ab6854980401565f66734d41ff87e90081f1a8c05fcdb7aa789.
 //
-// Re-approved for #3811 (2026-09-14), derived on exact main
-// f2afcfef0ab9b6f98080d997802c05aeea750327, whose approved aggregate is
+// Re-approved for #3820 (2026-09-15), derived on exact main
+// 70e2142adb923bd90727ccae07ffd9238e0715d6, whose approved aggregate is
 // 39e2ce5061122eb00b8e2dc800a25333eac457e76aeb9e7b2e7100444a949837.
-// The maintainer approved the exact replacement aggregate in the implementing
-// session. Crossview's bundled PostgreSQL now exposes Coroot's documented
-// integration contract with a generated monitor credential, pg_monitor role,
-// pg_stat_statements preload and a source-scoped scrape policy.
+// The maintainer explicitly approved the exact replacement aggregate in the
+// implementing session. The change fixes recurring Coroot warning sources and
+// adds one narrow, declarative suppression for a benign controller retry.
 //
 // CONSERVATION: rendering all five authorization overlays against that base
-// grows the identity set from 215 to 219 by exactly four Crossview objects:
-// crossview/allow-coroot-postgres-scrape CiliumNetworkPolicy,
-// crossview/crossview-postgres-coroot-monitor ExternalSecret and Password, and
-// crossview/crossview-postgres-coroot-monitor-init ConfigMap. Exactly one
-// existing object changes, the crossview/crossview HelmRelease. Grant-bearing
-// objects remain identical at 24; no ClusterRole, Role, ClusterRoleBinding,
-// RoleBinding, ServiceAccount, Kubernetes verb, wildcard or AWS identity is
-// added or changed.
+// changes 568 identities to 569 by adding only the
+// set-observability-dns-ndots ClusterPolicy. Exactly five existing identities
+// change: the coroot-alert-autosuppressor and vault-snapshot CronJobs, the
+// observability Coroot custom resource, the kubescape HelmRelease, and the
+// add-default-deny ClusterPolicy. All 94 grant-bearing Role, ClusterRole,
+// RoleBinding, ClusterRoleBinding and ServiceAccount records are byte-identical;
+// no identity, binding, verb, wildcard, AWS identity or permission changes.
 //
-// RENDERER PROVENANCE: the value below was read from CI job 104161953121 for
-// head f82ca35c merged onto f2afcfef. The job's approval-base check passed and
-// its SHA256-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer named this
-// aggregate as the unapproved surface fingerprint. Local rendering reproduced
-// it but is corroboration only.
+// RENDERER PROVENANCE: the value below was read from CI job 104169323408 for
+// merge commit 144aa7e5b551d33a0869c378344ade7e3afa95cb (head 34e6cbce
+// merged into exact base 70e2142a). Its approval-base check passed and the
+// SHA256-verified kubectl v1.36.2 renderer reported this aggregate as its only
+// static authorization failure. This host independently reproduced the value.
 //
 // Previous aggregate: 39e2ce5061122eb00b8e2dc800a25333eac457e76aeb9e7b2e7100444a949837.
-const expectedRenderedSurfaceSHA = "26ed2fa38021bd07e9845857625ec6ac397cf62f3abd11d59df875cb6ff1149d"
+const expectedRenderedSurfaceSHA = "5e7a3af5b0ff2e0fbd6b354440587a99ae1300bb6d66ecf47075072382dae2ea"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.

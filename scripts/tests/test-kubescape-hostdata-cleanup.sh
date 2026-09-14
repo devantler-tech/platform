@@ -3,7 +3,7 @@
 # Contract for the Kubescape host-data cleanup Job (#3686).
 #
 # Node-agent names every cluster-scoped host-data object after the Kubernetes
-# Node it sensed, but upstream v0.3.142 assigns no owner reference and performs
+# Node it sensed, but upstream node-agent assigns no owner reference and performs
 # no deletion. Autoscaler churn therefore leaves stale host inventories behind.
 # This test executes the script extracted from the manifest against a kubectl
 # stub, so the fail-closed inventory gate and exact deletion behavior cannot

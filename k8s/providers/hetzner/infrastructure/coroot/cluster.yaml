@@ -61,6 +61,10 @@ spec:
   # sslmode=require works whether CNPG's pg_hba uses `host` or `hostssl`.
   inheritedMetadata:
     annotations:
+      # set-observability-dns-ndots is admission-only. Share Coroot's rollout
+      # token so CNPG performs its normal controlled instance rollout and every
+      # existing database pod is recreated under the resolver policy.
+      platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-1
       coroot.com/postgres-scrape: "true"
       coroot.com/postgres-scrape-port: "5432"
       coroot.com/postgres-scrape-credentials-secret-name: coroot-db-coroot-monitor

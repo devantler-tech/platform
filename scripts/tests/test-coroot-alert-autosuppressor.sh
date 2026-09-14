@@ -111,3 +111,22 @@ run_scenario "${extra_dir}" >/dev/null
   fail "a kubelet alert with an additional active upstream was suppressed"
 pass "an additional active upstream keeps the kubelet alert visible"
 
+kcm_dir="$(setup_scenario kcm false)"
+cat >"${kcm_dir}/alerts.json" <<'JSON'
+{"data":{"alerts":[
+  {"id":"expected-cronjob-retry","suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","application_id":"95rsc5yp:kube-system:StaticPods:kube-controller-manager"},
+  {"id":"different-controller-error","suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","application_id":"95rsc5yp:kube-system:StaticPods:kube-controller-manager"}
+]}}
+JSON
+cat >"${kcm_dir}/detail-expected-cronjob-retry.json" <<'JSON'
+{"data":{"details":[{"name":"Sample","value":"cronjob_controllerv2.go:179 Unhandled Error: error syncing CronJobController observability/crossplane-sync-alerter, requeuing: Operation cannot be fulfilled on cronjobs.batch \"crossplane-sync-alerter\": the object has been modified; please apply your changes to the latest version and try again"}]}}
+JSON
+cat >"${kcm_dir}/detail-different-controller-error.json" <<'JSON'
+{"data":{"details":[{"name":"Sample","value":"cronjob_controllerv2.go:179 Unhandled Error: error syncing CronJobController observability/other-job: admission webhook denied the request"}]}}
+JSON
+run_scenario "${kcm_dir}" >/dev/null
+[ -f "${kcm_dir}/suppressed.json" ] ||
+  fail "the expected crossplane-sync-alerter resource-version retry was not suppressed"
+jq -e '.ids == ["expected-cronjob-retry"]' "${kcm_dir}/suppressed.json" >/dev/null ||
+  fail "the CronJob retry scenario suppressed an adjacent controller error"
+pass "only the exact crossplane-sync-alerter optimistic-concurrency retry is suppressed"
