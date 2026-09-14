@@ -2270,7 +2270,33 @@ const (
 // wildcard, AWS identity or permission is added.
 //
 // Previous aggregate: 52a79b87b9658ab6854980401565f66734d41ff87e90081f1a8c05fcdb7aa789.
-const expectedRenderedSurfaceSHA = "39e2ce5061122eb00b8e2dc800a25333eac457e76aeb9e7b2e7100444a949837"
+//
+// Re-approved for #3811 (2026-09-14), derived on exact main
+// f2afcfef0ab9b6f98080d997802c05aeea750327, whose approved aggregate is
+// 39e2ce5061122eb00b8e2dc800a25333eac457e76aeb9e7b2e7100444a949837.
+// The maintainer approved the exact replacement aggregate in the implementing
+// session. Crossview's bundled PostgreSQL now exposes Coroot's documented
+// integration contract with a generated monitor credential, pg_monitor role,
+// pg_stat_statements preload and a source-scoped scrape policy.
+//
+// CONSERVATION: rendering all five authorization overlays against that base
+// grows the identity set from 215 to 219 by exactly four Crossview objects:
+// crossview/allow-coroot-postgres-scrape CiliumNetworkPolicy,
+// crossview/crossview-postgres-coroot-monitor ExternalSecret and Password, and
+// crossview/crossview-postgres-coroot-monitor-init ConfigMap. Exactly one
+// existing object changes, the crossview/crossview HelmRelease. Grant-bearing
+// objects remain identical at 24; no ClusterRole, Role, ClusterRoleBinding,
+// RoleBinding, ServiceAccount, Kubernetes verb, wildcard or AWS identity is
+// added or changed.
+//
+// RENDERER PROVENANCE: the value below was read from CI job 104161953121 for
+// head f82ca35c merged onto f2afcfef. The job's approval-base check passed and
+// its SHA256-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer named this
+// aggregate as the unapproved surface fingerprint. Local rendering reproduced
+// it but is corroboration only.
+//
+// Previous aggregate: 39e2ce5061122eb00b8e2dc800a25333eac457e76aeb9e7b2e7100444a949837.
+const expectedRenderedSurfaceSHA = "26ed2fa38021bd07e9845857625ec6ac397cf62f3abd11d59df875cb6ff1149d"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2283,7 +2309,7 @@ const expectedRenderedSurfaceSHA = "39e2ce5061122eb00b8e2dc800a25333eac457e76aeb
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "52a79b87b9658ab6854980401565f66734d41ff87e90081f1a8c05fcdb7aa789"
+const previousRenderedSurfaceSHA = "39e2ce5061122eb00b8e2dc800a25333eac457e76aeb9e7b2e7100444a949837"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
