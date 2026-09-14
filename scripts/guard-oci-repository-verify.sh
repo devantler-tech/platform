@@ -107,12 +107,10 @@ readonly EXPECTED_MIN_IN_SCOPE=5
 readonly EXPECTED_MIN="${OCI_VERIFY_EXPECTED_MIN:-$EXPECTED_MIN_IN_SCOPE}"
 
 # <url><TAB><reason>, one per line; `#` lines are comments. The reason names what retires
-# the entry. Empty today: the one unsigned artifact in the tree — the
-# data-product-controller chart, published by a bare `helm push` with no cosign step
-# (devantler-tech/data-product-controller#27 adds the signing) — is staged off
-# (platform#3476), so no rendered root applies it and nothing needs admitting. Re-enabling
-# that app before #27 ships fails this guard by name, which is the intended order: sign
-# first, or add a reasoned row here deliberately.
+# the entry. Empty: every devantler-tech artifact in the tree is signed and verified. The
+# data-product-controller chart is staged off (platform#3476), so no rendered root applies
+# it; its OCIRepository already verifies the chart's own tag-run signing identity
+# (devantler-tech/data-product-controller#27), so re-enabling it needs no row here.
 DEFAULT_EXEMPTIONS="$(
   cat <<'EOF'
 # oci://ghcr.io/devantler-tech/<artifact>	<why it cannot verify yet, and the issue that retires this row>
