@@ -9,6 +9,7 @@ metadata:
     github-repo: https://github.com/siderolabs/docs
     github-tree-sha: 6a3493c2388541d1231684134a8fd9dcfe2e0de7
     version: "1.0"
+    internal: true
 name: siderolabs
 ---
 # SideroLabs best practices

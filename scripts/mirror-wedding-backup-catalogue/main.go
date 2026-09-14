@@ -29,9 +29,20 @@
 //
 //	mirror-wedding-backup-catalogue validate-plan <source-bucket> <source-prefix> <source-secret> <destination-bucket> <destination-prefix> <destination-secret>
 //	mirror-wedding-backup-catalogue evaluate <run-start> <source-bucket> <source-before> <source-after> <destination>
+//	mirror-wedding-backup-catalogue evaluate-catch-up <switch-time> <server-name> <source-bucket> <source-before> <source-after> <destination>
+//	mirror-wedding-backup-catalogue validate-switch-time <switch-time>
 //
 // validate-plan takes the exact values the mirror job will use, so a typo in
 // any of them is refused rather than replaced by the reviewed value.
+//
+// evaluate-catch-up runs after the Cluster switched its archive reference. The
+// shared catalogue no longer changes, so it must be copied in full, and every
+// other destination object must postdate <switch-time> and sit under the Cluster's
+// <server-name> directory. Within that directory, the first WAL segment in the
+// dedicated store newer than the shared catalogue's newest one must be its
+// successor on the same timeline. Its starting listing must start after
+// <switch-time>. validate-switch-time refuses a switch time that does not parse,
+// so the wrapper can reject it before touching the cluster.
 //
 // <run-start> is the RFC 3339 timestamp the wrapper took immediately before
 // starting the source listing. Each listing is the `mc ls --json --recursive`
@@ -99,6 +110,8 @@ var (
 	ErrMalformedListing  = errors.New("malformed listing")
 	ErrListingLocation   = errors.New("listing from an unexpected location")
 	ErrRunStartMismatch  = errors.New("run start does not belong to this pass")
+	ErrSwitchTime        = errors.New("switch time does not fit the listings")
+	ErrWALGap            = errors.New("WAL gap across the switch")
 
 	ErrUnexpectedDestinationObject = errors.New("unexpected destination object")
 )
@@ -307,6 +320,210 @@ func EvaluateParity(runStart time.Time, before, after, destination []Object) (Su
 	}, nil
 }
 
+// CatchUpSummary is the non-secret evidence a successful catch-up reports.
+// Converged is true only when the dedicated store holds a segment archived after
+// the switch that continues the shared catalogue's WAL sequence without a gap.
+type CatchUpSummary struct {
+	ServerName         string `json:"serverName"`
+	SourceObjects      int    `json:"sourceObjects"`
+	MatchedObjects     int    `json:"matchedObjects"`
+	PostSwitchObjects  int    `json:"postSwitchObjects"`
+	Converged          bool   `json:"converged"`
+	SourceNewestWAL    string `json:"sourceNewestWal"`
+	FirstPostSwitchWAL string `json:"firstPostSwitchWal"`
+}
+
+// serverNamePattern accepts a Barman server directory name: one path segment.
+var serverNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// EvaluateCatchUp proves the pass that runs after the Cluster switched its
+// archive reference to the dedicated store. Nothing archives to the shared store
+// any more, so both of its listings must match exactly and none of its objects may
+// be newer than the recorded switch. Every shared object must then be present in
+// the destination with a matching size and content, and every other destination
+// object must have been written after the switch, under the Cluster's server
+// directory.
+//
+// Continuity is judged only within that server directory, because the shared
+// catalogue can also hold an earlier server's WAL, whose segment names say nothing
+// about this Cluster's history. The first segment archived through the dedicated
+// store that is newer than the server's newest shared segment must be that
+// segment's successor on the same timeline, so point-in-time recovery has no gap
+// across the switch. Until such a segment exists there is nothing to prove that
+// against, so the result is verified but not converged.
+func EvaluateCatchUp(switchTime time.Time, serverName string, before, after, destination []Object) (CatchUpSummary, error) {
+	if switchTime.IsZero() {
+		return CatchUpSummary{}, fmt.Errorf("%w: no switch time", ErrMalformedListing)
+	}
+	if !serverNamePattern.MatchString(serverName) {
+		return CatchUpSummary{}, fmt.Errorf("%w: server name %q", ErrMalformedListing, serverName)
+	}
+	beforeIndex, err := index(before)
+	if err != nil {
+		return CatchUpSummary{}, err
+	}
+	afterIndex, err := index(after)
+	if err != nil {
+		return CatchUpSummary{}, err
+	}
+	destinationIndex, err := index(destination)
+	if err != nil {
+		return CatchUpSummary{}, err
+	}
+	if len(beforeIndex) == 0 {
+		return CatchUpSummary{}, ErrEmptySource
+	}
+
+	for key := range afterIndex {
+		if _, ok := beforeIndex[key]; !ok {
+			return CatchUpSummary{}, fmt.Errorf("%w: %s appeared in the shared catalogue during the pass", ErrSourceChanged, key)
+		}
+	}
+	// A rewrite can keep size, ETag and digest while changing the modification
+	// time, and the switch-time check below only sees the starting listing, so a
+	// changed time is a change to the shared catalogue too.
+	for key, source := range beforeIndex {
+		current, ok := afterIndex[key]
+		if !ok || current.Size != source.Size || current.ETag != source.ETag ||
+			!current.LastModified.Equal(source.LastModified) ||
+			(current.SHA256 != "" && source.SHA256 != "" && current.SHA256 != source.SHA256) {
+			return CatchUpSummary{}, fmt.Errorf("%w: %s", ErrSourceChanged, key)
+		}
+	}
+	for key, source := range beforeIndex {
+		if source.LastModified.After(switchTime) {
+			return CatchUpSummary{}, fmt.Errorf("%w: %s was archived to the shared catalogue at %s, after the recorded switch",
+				ErrSwitchTime, key, source.LastModified.Format(time.RFC3339))
+		}
+	}
+
+	matched := 0
+	for key, source := range beforeIndex {
+		copied, ok := destinationIndex[key]
+		if !ok || copied.Size != source.Size {
+			return CatchUpSummary{}, fmt.Errorf("%w: %s", ErrPartialCopy, key)
+		}
+		if err := sameContent(source, copied); err != nil {
+			return CatchUpSummary{}, fmt.Errorf("%w: %s", err, key)
+		}
+		matched++
+	}
+
+	serverPrefix := serverName + "/"
+	postSwitch := 0
+	var postSwitchWAL []string
+	for key, copied := range destinationIndex {
+		if _, ok := beforeIndex[key]; ok {
+			continue
+		}
+		if !copied.LastModified.After(switchTime) {
+			return CatchUpSummary{}, fmt.Errorf("%w: %s is not in the shared catalogue and was written before the recorded switch",
+				ErrUnexpectedDestinationObject, key)
+		}
+		// After the switch the Cluster writes only under its own server directory,
+		// and a segment elsewhere could never be restored alongside its base backup.
+		if !strings.HasPrefix(key, serverPrefix) {
+			return CatchUpSummary{}, fmt.Errorf("%w: %s was written after the switch outside the server directory %s",
+				ErrUnexpectedDestinationObject, key, serverName)
+		}
+		postSwitch++
+		if segment := walSegmentOf(key); segment != "" {
+			postSwitchWAL = append(postSwitchWAL, segment)
+		}
+	}
+
+	serverSource := make(map[string]Object, len(beforeIndex))
+	for key, object := range beforeIndex {
+		if strings.HasPrefix(key, serverPrefix) {
+			serverSource[key] = object
+		}
+	}
+	if newestBaseBackup(serverSource) == "" {
+		return CatchUpSummary{}, fmt.Errorf("%w: no complete base backup under %s", ErrNoBaseBackup, serverName)
+	}
+	sourceWAL := newestWAL(serverSource)
+	if sourceWAL == "" {
+		return CatchUpSummary{}, fmt.Errorf("%w: no WAL under %s", ErrNoArchivedWAL, serverName)
+	}
+	next, err := nextWALSegment(sourceWAL)
+	if err != nil {
+		return CatchUpSummary{}, err
+	}
+
+	// Only a segment newer than the shared catalogue's newest one can close the
+	// gap. A post-switch segment at or below it, such as a retry, is ignored, so it
+	// cannot stand in for a missing successor.
+	first := ""
+	for _, segment := range postSwitchWAL {
+		if segment[:8] != sourceWAL[:8] {
+			return CatchUpSummary{}, fmt.Errorf("%w: the shared catalogue ends on timeline %s and the dedicated store holds timeline %s",
+				ErrWALGap, sourceWAL[:8], segment[:8])
+		}
+		if segment > sourceWAL && (first == "" || segment < first) {
+			first = segment
+		}
+	}
+	summary := CatchUpSummary{
+		ServerName:         serverName,
+		SourceObjects:      len(beforeIndex),
+		MatchedObjects:     matched,
+		PostSwitchObjects:  postSwitch,
+		SourceNewestWAL:    sourceWAL,
+		FirstPostSwitchWAL: first,
+	}
+	if first == "" {
+		return summary, nil
+	}
+	if first != next {
+		return CatchUpSummary{}, fmt.Errorf("%w: the shared catalogue ends at %s, so the first newer segment in the dedicated store must be %s, not %s",
+			ErrWALGap, sourceWAL, next, first)
+	}
+	summary.Converged = true
+	return summary, nil
+}
+
+// walSegmentOf returns the WAL segment name a catalogue key holds, or "" for any
+// other key, such as a timeline history file or a base backup. Barman stores a
+// segment under the log directory named by its first 16 characters; a segment
+// filename anywhere else is not where recovery looks for it, so it is not a
+// segment of this catalogue.
+func walSegmentOf(key string) string {
+	parts := strings.Split(key, "/")
+	if len(parts) != 4 || parts[1] != "wals" {
+		return ""
+	}
+	segment := strings.TrimSuffix(parts[3], ".gz")
+	if !walSegment.MatchString(segment) || parts[2] != segment[:16] {
+		return ""
+	}
+	return segment
+}
+
+// nextWALSegment returns the segment that follows segment on the same timeline.
+// It assumes the default 16 MiB segment size, where one log file holds segments
+// 00 to FF. A larger segment number is refused rather than guessed at.
+func nextWALSegment(segment string) (string, error) {
+	if !walSegment.MatchString(segment) {
+		return "", fmt.Errorf("%w: WAL segment %q", ErrMalformedListing, segment)
+	}
+	var timeline, logID, number uint32
+	if _, err := fmt.Sscanf(segment, "%08X%08X%08X", &timeline, &logID, &number); err != nil {
+		return "", fmt.Errorf("%w: WAL segment %q: %w", ErrMalformedListing, segment, err)
+	}
+	if number > 0xFF {
+		return "", fmt.Errorf("%w: WAL segment %q is not a 16 MiB segment", ErrMalformedListing, segment)
+	}
+	number++
+	if number > 0xFF {
+		if logID == 0xFFFFFFFF {
+			return "", fmt.Errorf("%w: WAL segment %q has no successor", ErrMalformedListing, segment)
+		}
+		number = 0
+		logID++
+	}
+	return fmt.Sprintf("%08X%08X%08X", timeline, logID, number), nil
+}
+
 // sameContent compares a content digest when both sides carry one. Otherwise
 // it falls back to the ETag, which is a content MD5 only for a single-part
 // upload: a multipart ETag depends on how the object was split, so identical
@@ -379,16 +596,13 @@ func newestBaseBackup(objects map[string]Object) string {
 }
 
 // newestWAL returns the highest WAL segment name. Segment names order by
-// timeline and then position, so the lexical maximum is the newest segment.
+// timeline and then position, so the lexical maximum is the newest segment. It
+// uses walSegmentOf, so a segment filename outside its log directory is ignored
+// here exactly as it is by the catch-up continuity check.
 func newestWAL(objects map[string]Object) string {
 	newest := ""
 	for key := range objects {
-		parts := strings.Split(key, "/")
-		if len(parts) != 4 || parts[1] != "wals" {
-			continue
-		}
-		segment := strings.TrimSuffix(parts[3], ".gz")
-		if walSegment.MatchString(segment) && segment > newest {
+		if segment := walSegmentOf(key); segment != "" && segment > newest {
 			newest = segment
 		}
 	}
@@ -558,7 +772,53 @@ func run(args []string, stdout io.Writer) error {
 		}
 		return json.NewEncoder(stdout).Encode(summary)
 	}
-	return errors.New("usage: mirror-wedding-backup-catalogue validate-plan <source-bucket> <source-prefix> <source-secret> <destination-bucket> <destination-prefix> <destination-secret> | evaluate <run-start> <source-bucket> <source-before> <source-after> <destination>")
+	if len(args) == 2 && args[0] == "validate-switch-time" {
+		if _, err := time.Parse(time.RFC3339, args[1]); err != nil {
+			return fmt.Errorf("%w: switch time: %w", ErrMalformedListing, err)
+		}
+		return nil
+	}
+	if len(args) == 7 && args[0] == "evaluate-catch-up" {
+		switchTime, err := time.Parse(time.RFC3339Nano, args[1])
+		if err != nil {
+			return fmt.Errorf("%w: switch time: %w", ErrMalformedListing, err)
+		}
+		serverName := args[2]
+		if !serverNamePattern.MatchString(serverName) {
+			return fmt.Errorf("%w: server name %q", ErrMalformedListing, serverName)
+		}
+		if args[3] == "" || args[3] == destinationBucket {
+			return fmt.Errorf("%w: source bucket %q", ErrWrongSource, args[3])
+		}
+		locations := []string{
+			args[3] + "/" + sourcePrefix,
+			args[3] + "/" + sourcePrefix,
+			destinationBucket + "/" + destinationPrefix,
+		}
+		listings := make([]Listing, 0, 3)
+		for i, name := range args[4:] {
+			listing, err := readListing(name, locations[i])
+			if err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+			listings = append(listings, listing)
+		}
+		// A listing taken before the switch cannot tell a copy the Cluster archived
+		// through the dedicated store from residue, so the pass must start after it.
+		if !listings[0].Started.After(switchTime) {
+			return fmt.Errorf("%w: the starting listing started %s, not after the recorded switch %s",
+				ErrSwitchTime, listings[0].Started.Format(time.RFC3339Nano), switchTime.Format(time.RFC3339Nano))
+		}
+		if err := BindRunStart(listings[0].Started, listings[0], listings[1], listings[2]); err != nil {
+			return err
+		}
+		summary, err := EvaluateCatchUp(switchTime, serverName, listings[0].Objects, listings[1].Objects, listings[2].Objects)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(summary)
+	}
+	return errors.New("usage: mirror-wedding-backup-catalogue validate-plan <source-bucket> <source-prefix> <source-secret> <destination-bucket> <destination-prefix> <destination-secret> | evaluate <run-start> <source-bucket> <source-before> <source-after> <destination> | evaluate-catch-up <switch-time> <server-name> <source-bucket> <source-before> <source-after> <destination> | validate-switch-time <switch-time>")
 }
 
 // main exits non-zero with the refusal reason when a plan or mirror is not trusted.

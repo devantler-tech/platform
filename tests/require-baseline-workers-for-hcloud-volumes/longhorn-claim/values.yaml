@@ -1,0 +1,16 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+policies:
+  - name: require-baseline-workers-for-hcloud-volumes
+    rules:
+      - name: require-baseline-worker-affinity
+        foreachValues:
+          claimStorageClass:
+            - longhorn-wffc
+      - name: report-claim-lookup-failure
+        foreachValues:
+          claimStorageClass:
+            - longhorn-wffc

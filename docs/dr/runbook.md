@@ -433,6 +433,9 @@ gh run view "$run_id" --repo devantler-tech/platform --log |
 #    and the shared catalog while `wedding-db-dedicated` points at the new bucket.
 #    Stop here: the controlled cutover first mirrors the existing base backups
 #    and WAL history, then changes the Cluster reference in a separate review.
+#    After the reference change it MUST run `Mirror Wedding Backup Catalogue`
+#    in `catch-up` mode with the recorded switch time, and is not complete until
+#    that pass reports CAUGHT UP (see velero-cnpg.md).
 #    Do not revoke the shared credential during staging.
 
 # For a platform-backups credential rotation, Wedding remains a shared-token

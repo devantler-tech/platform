@@ -1,0 +1,176 @@
+{
+  "ClusterRole||admin": {
+    "ClusterRole||cnpg-tenant-edit": {
+      "aggregationRule": null,
+      "labels": [
+        "rbac.authorization.k8s.io/aggregate-to-edit=true"
+      ],
+      "rules": [
+        {
+          "apiGroups": [
+            "postgresql.cnpg.io"
+          ],
+          "resources": [
+            "backups",
+            "clusters",
+            "poolers",
+            "scheduledbackups"
+          ],
+          "verbs": [
+            "create",
+            "delete",
+            "get",
+            "list",
+            "patch",
+            "update",
+            "watch"
+          ]
+        }
+      ]
+    },
+    "ClusterRole||external-secrets-tenant-edit": {
+      "aggregationRule": null,
+      "labels": [
+        "rbac.authorization.k8s.io/aggregate-to-edit=true"
+      ],
+      "rules": [
+        {
+          "apiGroups": [
+            "external-secrets.io"
+          ],
+          "resources": [
+            "externalsecrets",
+            "pushsecrets",
+            "secretstores"
+          ],
+          "verbs": [
+            "create",
+            "delete",
+            "get",
+            "list",
+            "patch",
+            "update",
+            "watch"
+          ]
+        },
+        {
+          "apiGroups": [
+            "generators.external-secrets.io"
+          ],
+          "resources": [
+            "passwords"
+          ],
+          "verbs": [
+            "create",
+            "delete",
+            "get",
+            "list",
+            "patch",
+            "update",
+            "watch"
+          ]
+        }
+      ]
+    },
+    "ClusterRole||kubevirt.io:operator": {
+      "aggregationRule": null,
+      "labels": [
+        "rbac.authorization.k8s.io/aggregate-to-admin=true"
+      ],
+      "rules": [
+        {
+          "apiGroups": [
+            "kubevirt.io"
+          ],
+          "resources": [
+            "kubevirts"
+          ],
+          "verbs": [
+            "create",
+            "delete",
+            "deletecollection",
+            "get",
+            "list",
+            "patch",
+            "update",
+            "watch"
+          ]
+        }
+      ]
+    }
+  },
+  "ClusterRole||edit": {
+    "ClusterRole||cnpg-tenant-edit": {
+      "aggregationRule": null,
+      "labels": [
+        "rbac.authorization.k8s.io/aggregate-to-edit=true"
+      ],
+      "rules": [
+        {
+          "apiGroups": [
+            "postgresql.cnpg.io"
+          ],
+          "resources": [
+            "backups",
+            "clusters",
+            "poolers",
+            "scheduledbackups"
+          ],
+          "verbs": [
+            "create",
+            "delete",
+            "get",
+            "list",
+            "patch",
+            "update",
+            "watch"
+          ]
+        }
+      ]
+    },
+    "ClusterRole||external-secrets-tenant-edit": {
+      "aggregationRule": null,
+      "labels": [
+        "rbac.authorization.k8s.io/aggregate-to-edit=true"
+      ],
+      "rules": [
+        {
+          "apiGroups": [
+            "external-secrets.io"
+          ],
+          "resources": [
+            "externalsecrets",
+            "pushsecrets",
+            "secretstores"
+          ],
+          "verbs": [
+            "create",
+            "delete",
+            "get",
+            "list",
+            "patch",
+            "update",
+            "watch"
+          ]
+        },
+        {
+          "apiGroups": [
+            "generators.external-secrets.io"
+          ],
+          "resources": [
+            "passwords"
+          ],
+          "verbs": [
+            "create",
+            "delete",
+            "get",
+            "list",
+            "patch",
+            "update",
+            "watch"
+          ]
+        }
+      ]
+    }
+  }
+}

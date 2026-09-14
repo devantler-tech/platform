@@ -8,6 +8,7 @@ metadata:
     github-ref: refs/tags/v0.3.0
     github-repo: https://github.com/fluxcd/agent-skills
     github-tree-sha: 0106dccea33c174c8ca74d4a945eafa9442f4a16
+    internal: true
 name: gitops-repo-audit
 ---
 # GitOps Repository Auditor

@@ -8,6 +8,7 @@ metadata:
     github-ref: refs/tags/v0.3.0
     github-repo: https://github.com/fluxcd/agent-skills
     github-tree-sha: 724378b05c1cc319c6216c6f55d3b44ec973abfc
+    internal: true
 name: gitops-cluster-debug
 ---
 # Flux Cluster Debugger
