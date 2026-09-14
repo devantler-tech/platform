@@ -487,6 +487,7 @@ jobs:
               - 'scripts/tests/test-crossplane-sync-alerter.sh'
               - 'scripts/tests/test-crossplane-egress-policy.sh'
               - 'scripts/tests/crossplane-egress-policy-rules.yaml'
+              - 'scripts/tests/test-coroot-alert-remediation.sh'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               - 'scripts/tests/test-stranded-volume-attach-alert.sh'
               - 'scripts/tests/test-prune-protected-orphan-alert.sh'
@@ -1742,6 +1743,12 @@ jobs:
         run: |
           shellcheck scripts/tests/test-kubescape-storage-hotfix.sh
           bash scripts/tests/test-kubescape-storage-hotfix.sh
+
+      - name: 🚨 Validate Coroot alert remediations
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-coroot-alert-remediation.sh
+          bash scripts/tests/test-coroot-alert-remediation.sh
 
       - name: 📤 Save kubeconform schema cache
         # Runs even if the validate step above failed (see the restore step's
