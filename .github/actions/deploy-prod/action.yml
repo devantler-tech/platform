@@ -61,6 +61,16 @@ runs:
         APPROVED_REVISIONS_ENFORCE: '1'
       run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
+    - name: 🧭 Bind OpenCost retirement to current main
+      id: retire_opencost_preflight
+      # workflow_dispatch can target an old main SHA or be rerun after main has
+      # advanced. Refuse before publishing that stale checkout: otherwise a
+      # newer revision restoring OpenCost could be overwritten and then deleted
+      # as though it were still an approved orphan.
+      if: inputs.retire-opencost == 'true'
+      shell: bash
+      run: ./scripts/retire-opencost.sh --preflight
+
     - name: ⚙️ Setup KSail
       # Install the KSail CLI from the release tarball and verify the
       # downloaded asset against GitHub's published release checksum before

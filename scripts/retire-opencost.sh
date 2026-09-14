@@ -6,19 +6,40 @@ readonly context='admin@prod'
 readonly namespace='opencost'
 readonly helmrelease='opencost'
 readonly kubectl_bin="${KUBECTL_BIN:-kubectl}"
+readonly git_bin="${GIT_BIN:-git}"
+readonly repository_url='https://github.com/devantler-tech/platform.git'
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1
 }
 
-if [[ "$#" -ne 1 || "$1" != '--execute' ]]; then
-  fail 'OpenCost retirement requires the sole argument --execute'
+if [[ "$#" -ne 1 || ("$1" != '--preflight' && "$1" != '--execute') ]]; then
+  fail 'OpenCost retirement requires the sole argument --execute or --preflight'
 fi
 [[ "${GITHUB_EVENT_NAME:-}" == 'workflow_dispatch' ]] ||
   fail 'OpenCost retirement is allowed only from a workflow_dispatch run'
-[[ "${GITHUB_REF_NAME:-}" == 'main' ]] ||
-  fail 'OpenCost retirement is allowed only from the main branch'
+[[ "${GITHUB_REF:-}" == 'refs/heads/main' ]] ||
+  fail 'OpenCost retirement is allowed only from the full refs/heads/main ref'
+[[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] ||
+  fail 'OpenCost retirement requires a full lowercase GITHUB_SHA'
+command -v "${git_bin}" >/dev/null 2>&1 || fail "git executable not found: ${git_bin}"
+
+checkout_sha="$(${git_bin} rev-parse HEAD)"
+remote_line="$(GIT_TERMINAL_PROMPT=0 "${git_bin}" ls-remote --exit-code \
+  "${repository_url}" refs/heads/main)" ||
+  fail 'unable to resolve the current main tip from the canonical repository'
+read -r remote_sha remote_ref <<<"${remote_line}"
+[[ "${remote_ref:-}" == 'refs/heads/main' && "${remote_sha:-}" =~ ^[0-9a-f]{40}$ ]] ||
+  fail 'the canonical repository returned an invalid current main tip'
+[[ "${checkout_sha}" == "${GITHUB_SHA}" && "${remote_sha}" == "${GITHUB_SHA}" ]] ||
+  fail "refusing retirement because the workflow checkout is not the current main tip (event=${GITHUB_SHA}, checkout=${checkout_sha}, current=${remote_sha})"
+
+if [[ "$1" == '--preflight' ]]; then
+  printf 'PASS: OpenCost retirement is bound to the current main tip %s\n' "${GITHUB_SHA}"
+  exit 0
+fi
+
 command -v "${kubectl_bin}" >/dev/null 2>&1 || fail "kubectl executable not found: ${kubectl_bin}"
 command -v jq >/dev/null 2>&1 || fail 'jq is required to inspect Flux ownership'
 

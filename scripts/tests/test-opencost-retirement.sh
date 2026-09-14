@@ -101,6 +101,32 @@ esac
 FAKE
 chmod +x "${fake_kubectl}"
 
+readonly expected_head='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+readonly fake_git="${temp_dir}/git"
+cat >"${fake_git}" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${FAKE_STATE_DIR:?}"
+case "$*" in
+  'rev-parse HEAD')
+    printf '%s\n' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    ;;
+  'ls-remote --exit-code https://github.com/devantler-tech/platform.git refs/heads/main')
+    if [[ -e "${FAKE_STATE_DIR}/stale-main" ]]; then
+      printf '%s\t%s\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' 'refs/heads/main'
+    else
+      printf '%s\t%s\n' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'refs/heads/main'
+    fi
+    ;;
+  *)
+    printf 'unexpected git invocation: %s\n' "$*" >&2
+    exit 67
+    ;;
+esac
+FAKE
+chmod +x "${fake_git}"
+
 init_state() {
   local name="$1"
   local state="${temp_dir}/${name}"
@@ -110,8 +136,41 @@ init_state() {
   printf '%s\n' "${state}"
 }
 
+run_subject() {
+  local state="$1"
+  shift
+  FAKE_STATE_DIR="${state}" \
+    KUBECTL_BIN="${fake_kubectl}" \
+    GIT_BIN="${fake_git}" \
+    OPENCOST_RETIRE_JOB_SUFFIX=test \
+    GITHUB_EVENT_NAME=workflow_dispatch \
+    GITHUB_REF=refs/heads/main \
+    GITHUB_REF_NAME=main \
+    GITHUB_SHA="${expected_head}" \
+    bash "${subject}" "$@"
+}
+
+preflight_state="$(init_state preflight)"
+if ! preflight_output="$(run_subject "${preflight_state}" --preflight 2>&1)"; then
+  fail "the matching current-main preflight should succeed: ${preflight_output}"
+fi
+grep -qF 'PASS: OpenCost retirement is bound to the current main tip' <<<"${preflight_output}" ||
+  fail 'the current-main preflight did not report its exact-tip proof'
+[[ ! -s "${preflight_state}/commands.log" ]] ||
+  fail 'the current-main preflight contacted Kubernetes'
+
+stale_state="$(init_state stale)"
+touch "${stale_state}/stale-main"
+if run_subject "${stale_state}" --execute >"${temp_dir}/stale.out" 2>&1; then
+  fail 'retirement must refuse a workflow whose recorded SHA is no longer the current main tip'
+fi
+grep -qF 'current main tip' "${temp_dir}/stale.out" ||
+  fail 'the stale-main refusal did not explain the tip mismatch'
+[[ ! -s "${stale_state}/commands.log" ]] ||
+  fail 'the stale-main refusal contacted Kubernetes'
+
 happy_state="$(init_state happy)"
-if ! happy_output="$(FAKE_STATE_DIR="${happy_state}" KUBECTL_BIN="${fake_kubectl}" OPENCOST_RETIRE_JOB_SUFFIX=test GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF_NAME=main bash "${subject}" --execute 2>&1)"; then
+if ! happy_output="$(run_subject "${happy_state}" --execute 2>&1)"; then
   fail "the safe orphan retirement should succeed: ${happy_output}"
 fi
 for removed in helmrelease namespace clusterrole clusterrolebinding job; do
@@ -124,7 +183,7 @@ grep -qF 'PASS: OpenCost production retirement completed' <<<"${happy_output}" |
   fail 'successful retirement did not report its completion'
 
 unarmed_state="$(init_state unarmed)"
-if FAKE_STATE_DIR="${unarmed_state}" KUBECTL_BIN="${fake_kubectl}" OPENCOST_RETIRE_JOB_SUFFIX=test GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF_NAME=main bash "${subject}" >"${temp_dir}/unarmed.out" 2>&1; then
+if run_subject "${unarmed_state}" >"${temp_dir}/unarmed.out" 2>&1; then
   fail 'retirement must be default-off without the explicit execution flag'
 fi
 grep -qF 'requires the sole argument --execute' "${temp_dir}/unarmed.out" ||
@@ -134,7 +193,7 @@ grep -qF 'delete helmrelease' "${unarmed_state}/commands.log" &&
 
 pvc_state="$(init_state pvc)"
 touch "${pvc_state}/pvc"
-if FAKE_STATE_DIR="${pvc_state}" KUBECTL_BIN="${fake_kubectl}" OPENCOST_RETIRE_JOB_SUFFIX=test GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF_NAME=main bash "${subject}" --execute >"${temp_dir}/pvc.out" 2>&1; then
+if run_subject "${pvc_state}" --execute >"${temp_dir}/pvc.out" 2>&1; then
   fail 'retirement must refuse a namespace that contains a PersistentVolumeClaim'
 fi
 grep -qF 'refusing to retire OpenCost while PersistentVolumeClaims exist' "${temp_dir}/pvc.out" ||
@@ -144,7 +203,7 @@ grep -qF 'delete helmrelease' "${pvc_state}/commands.log" &&
 
 managed_state="$(init_state managed)"
 touch "${managed_state}/managed-helmrelease"
-if FAKE_STATE_DIR="${managed_state}" KUBECTL_BIN="${fake_kubectl}" OPENCOST_RETIRE_JOB_SUFFIX=test GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF_NAME=main bash "${subject}" --execute >"${temp_dir}/managed.out" 2>&1; then
+if run_subject "${managed_state}" --execute >"${temp_dir}/managed.out" 2>&1; then
   fail 'retirement must refuse a HelmRelease that Flux still inventories'
 fi
 grep -qF 'still inventories HelmRelease opencost/opencost' "${temp_dir}/managed.out" ||
@@ -154,7 +213,7 @@ grep -qF 'delete helmrelease' "${managed_state}/commands.log" &&
 
 finding_state="$(init_state finding)"
 touch "${finding_state}/orphan-finding"
-if FAKE_STATE_DIR="${finding_state}" KUBECTL_BIN="${fake_kubectl}" OPENCOST_RETIRE_JOB_SUFFIX=test GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF_NAME=main bash "${subject}" --execute >"${temp_dir}/finding.out" 2>&1; then
+if run_subject "${finding_state}" --execute >"${temp_dir}/finding.out" 2>&1; then
   fail 'retirement must fail when the independent orphan check still names OpenCost'
 fi
 grep -qF 'the independent orphan check still reports OpenCost' "${temp_dir}/finding.out" ||

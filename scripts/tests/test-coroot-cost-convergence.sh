@@ -28,6 +28,14 @@ grep -Fq \
   "${ci_workflow}" ||
   fail 'CI must execute the Coroot cost convergence contract'
 
+for retirement_path in \
+  scripts/retire-opencost.sh \
+  scripts/tests/test-opencost-retirement.sh \
+  scripts/tests/test-opencost-retirement-wiring.sh; do
+  grep -Fq "'${retirement_path}'" "${ci_workflow}" ||
+    fail "the k8s change filter must run retirement checks when ${retirement_path} changes"
+done
+
 production_rendered="$(kubectl kustomize "${production_infrastructure}")" ||
   fail 'the production infrastructure overlay must render'
 local_rendered="$(kubectl kustomize "${local_infrastructure}")" ||
