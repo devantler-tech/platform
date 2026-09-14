@@ -8,6 +8,7 @@ readonly policy_dir="${root_dir}/k8s/bases/infrastructure/cluster-policies"
 readonly kubescape_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
 readonly coroot="${root_dir}/k8s/bases/infrastructure/coroot/coroot.yaml"
 readonly coroot_patch="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/patches/enable-ha.yaml"
+readonly coroot_db="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/cluster.yaml"
 readonly vault_snapshot="${root_dir}/k8s/bases/infrastructure/vault-backup/cron-job.yaml"
 
 fail() {
@@ -169,5 +170,33 @@ postgres_host="$(yq -er '.spec.postgres.host' "${coroot_patch}")" ||
 readonly postgres_host
 [[ "${postgres_host}" == 'coroot-db-rw' ]] ||
   fail 'Coroot must use the same-namespace PostgreSQL service name without search-path amplification'
+
+rollout_annotation='platform.devantler.tech/dns-policy-rollout'
+readonly rollout_annotation
+rollout_token="$(yq -er ".spec.podAnnotations.\"${rollout_annotation}\"" "${coroot}")" ||
+  fail 'the Coroot server DNS-policy rollout token is missing'
+readonly rollout_token
+[[ -n "${rollout_token}" ]] ||
+  fail 'the Coroot server DNS-policy rollout token must not be empty'
+
+for component_path in \
+  nodeAgent \
+  clusterAgent \
+  prometheus \
+  clickhouse \
+  clickhouse.keeper; do
+  component_token="$(
+    yq -er ".spec.${component_path}.podAnnotations.\"${rollout_annotation}\"" "${coroot}"
+  )" || fail "the ${component_path} DNS-policy rollout token is missing"
+  [[ "${component_token}" == "${rollout_token}" ]] ||
+    fail "the ${component_path} DNS-policy rollout token must match the server token"
+done
+
+database_rollout_token="$(
+  yq -er ".spec.inheritedMetadata.annotations.\"${rollout_annotation}\"" "${coroot_db}"
+)" || fail 'the Coroot database DNS-policy rollout token is missing'
+readonly database_rollout_token
+[[ "${database_rollout_token}" == "${rollout_token}" ]] ||
+  fail 'the Coroot database DNS-policy rollout token must match every Coroot component'
 
 printf 'Coroot alert remediation contract is valid.\n'
