@@ -75,6 +75,9 @@ assert_not_in_inventory() {
   jq -e 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' \
     <<<"${kustomization_json}" >/dev/null ||
     fail 'Flux Kustomization flux-system/infrastructure is not Ready'
+  jq -e '(.status.inventory.entries | type) == "array"' \
+    <<<"${kustomization_json}" >/dev/null ||
+    fail 'Flux Kustomization flux-system/infrastructure does not expose a valid inventory entry list'
   if jq -e --arg id "${inventory_id}" \
     'any(.status.inventory.entries[]?; .id == $id)' \
     <<<"${kustomization_json}" >/dev/null; then

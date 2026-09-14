@@ -52,7 +52,9 @@ case "$*" in
     [[ ! -e "${FAKE_STATE_DIR}/pvc" ]] || printf '%s\n' 'persistentvolumeclaim/opencost-data'
     ;;
   'get kustomization.kustomize.toolkit.fluxcd.io/infrastructure --namespace flux-system -o json')
-    if [[ -e "${FAKE_STATE_DIR}/managed-helmrelease" ]]; then
+    if [[ -e "${FAKE_STATE_DIR}/missing-inventory" ]]; then
+      jq -n '{status:{conditions:[{type:"Ready",status:"True"}]}}'
+    elif [[ -e "${FAKE_STATE_DIR}/managed-helmrelease" ]]; then
       jq -n '{status:{conditions:[{type:"Ready",status:"True"}],inventory:{entries:[{id:"opencost_opencost_helm.toolkit.fluxcd.io_HelmRelease"}]}}}'
     else
       jq -n '{status:{conditions:[{type:"Ready",status:"True"}],inventory:{entries:[{id:"observability_coroot_operator_helm.toolkit.fluxcd.io_HelmRelease"}]}}}'
@@ -210,6 +212,16 @@ grep -qF 'still inventories HelmRelease opencost/opencost' "${temp_dir}/managed.
   fail 'the managed-resource refusal did not explain the ownership conflict'
 grep -qF 'delete helmrelease' "${managed_state}/commands.log" &&
   fail 'the managed-resource refusal issued a destructive command'
+
+missing_inventory_state="$(init_state missing-inventory)"
+touch "${missing_inventory_state}/missing-inventory"
+if run_subject "${missing_inventory_state}" --execute >"${temp_dir}/missing-inventory.out" 2>&1; then
+  fail 'retirement must refuse a Kustomization without a valid inventory entry list'
+fi
+grep -qF 'does not expose a valid inventory entry list' "${temp_dir}/missing-inventory.out" ||
+  fail 'the missing-inventory refusal did not explain the unjudgeable ownership state'
+grep -qF 'delete helmrelease' "${missing_inventory_state}/commands.log" &&
+  fail 'the missing-inventory refusal issued a destructive command'
 
 finding_state="$(init_state finding)"
 touch "${finding_state}/orphan-finding"
