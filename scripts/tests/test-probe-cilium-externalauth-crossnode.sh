@@ -106,6 +106,7 @@ case "${args}" in
     ;;
   *" -n oauth2-proxy get endpointslices -l kubernetes.io/service-name=oauth2-proxy -o json ") serve_per_call endpoints ;;
   *" -n kube-system get daemonsets cilium cilium-envoy -o json ") serve_per_call datapath ;;
+  *" get ciliumnodes -o json ") serve_per_call ciliumnodes ;;
   *" get nodes -o json ") serve_per_call nodes ;;
   *" -n whoami get httproutes,ciliumnetworkpolicies,pods -l ${label} -o name ") serve leftovers.txt ;;
   *" -n oauth2-proxy get referencegrants -l ${label} -o name ") serve leftover-grants.txt ;;
@@ -139,11 +140,21 @@ chmod +x "${fake_bin}/kubectl"
 readonly requests=10
 readonly dex_redirect='https://dex.platform.example.test/auth?client_id=public-client'
 readonly guard_ok='301 0 https://unrouted.externalauth-probe.invalid/'
+# Ingress IPs of the nodes the two pods are pinned to (see ciliumnodes.json).
+readonly cross_ingress_ip='10.0.10.5'
+readonly same_ingress_ip='10.0.10.3'
 
 # gen_log <file> <control-answer> <authz-answer> [<n-first-authz> <first-authz-answer> [<guard>]]
 # Writes a complete client log: warm-up ok, <requests> rounds, the guard answer, done.
 gen_log() {
   local file="$1" control="$2" authz="$3" first_n="${4:-0}" first="${5:-}" guard="${6:-${guard_ok}}" i
+  # A healthy control answer carries the ingress IP of the pod's own node, as whoami's echo would.
+  if [[ "${control}" == '200 45 ' ]]; then
+    case "${file}" in
+      *log-cross*) control="200 45 ${cross_ingress_ip}" ;;
+      *log-same*) control="200 45 ${same_ingress_ip}" ;;
+    esac
+  fi
   {
     printf 'PROBE-WARMUP ok\n'
     for ((i = 1; i <= requests; i++)); do
@@ -190,6 +201,15 @@ JSON
   "status":{"conditions":[{"type":"Ready","status":"True"}],"addresses":[{"type":"InternalIP","address":"10.0.0.3"}]}},
  {"metadata":{"name":"prod-worker-3","uid":"uid-node-w3","labels":{"kubernetes.io/hostname":"host-w3"}},"spec":{},
   "status":{"conditions":[{"type":"Ready","status":"True"}],"addresses":[{"type":"InternalIP","address":"10.0.0.5"}]}}
+]}
+JSON
+
+  cat >"${fixtures}/ciliumnodes.json" <<'JSON'
+{"items":[
+ {"metadata":{"name":"prod-control-plane-1"},"spec":{"ingress":{"ipv4":"10.0.10.2"}}},
+ {"metadata":{"name":"prod-worker-1"},"spec":{"ingress":{"ipv4":"10.0.10.3"}}},
+ {"metadata":{"name":"prod-worker-2"},"spec":{"ingress":{"ipv4":"10.0.10.4"}}},
+ {"metadata":{"name":"prod-worker-3"},"spec":{"ingress":{"ipv4":"10.0.10.5"}}}
 ]}
 JSON
 
@@ -241,6 +261,7 @@ require_safe_surface() {
   refute_text 'prod-control-plane' 'a node name reached the log'
   refute_text 'host-w' 'a hostname label reached the log'
   refute_text '10.0.0.' 'a node address reached the log'
+  refute_text '10.0.10.' 'an ingress IP reached the log'
   refute_text '10.244.' 'a pod address reached the log'
   refute_text '198.51.100.9' 'a kubectl error address reached the log'
   refute_text 'dex.platform' 'a redirect URL reached the log'
@@ -433,10 +454,10 @@ pass 'a 401 counts as delivered'
 reset_fixtures
 gen_log "${fixtures}/log-cross.txt" '200 45 ' '000 0 '
 # A complete cross-node black-hole (the FAULT-PERSISTS fixture) with exactly one control failure.
-awk '/^PROBE control 200 45 $/ && !done {print "PROBE control 000 0 "; done = 1; next} {print}' \
+awk '/^PROBE control 200 45 / && !done {print "PROBE control 000 0 -"; done = 1; next} {print}' \
   "${fixtures}/log-cross.txt" >"${fixtures}/log-cross.tmp"
 mv "${fixtures}/log-cross.tmp" "${fixtures}/log-cross.txt"
-[[ "$(grep -c '^PROBE control 000 0 $' "${fixtures}/log-cross.txt")" -eq 1 ]] || fail 'fixture did not produce exactly one control failure'
+[[ "$(grep -c '^PROBE control 000 0 -$' "${fixtures}/log-cross.txt")" -eq 1 ]] || fail 'fixture did not produce exactly one control failure'
 run_default
 require_inconclusive 'a control failure must block the FAULT-PERSISTS verdict' 'plain control route did not answer every time'
 require_cleaned_up
@@ -462,12 +483,14 @@ pass 'same-node loss without cross-node loss is INCONCLUSIVE'
 
 reset_fixtures
 # Logs that match the requested count, all delivered: only the minimum-sample rule can stop FIXED.
-{
-  printf 'PROBE-WARMUP ok\n'
-  for ((i = 1; i <= 9; i++)); do printf 'PROBE control 200 45 \nPROBE authz 302 0 %s\n' "${dex_redirect}"; done
-  printf 'PROBE guard %s\nPROBE-DONE 9\n' "${guard_ok}"
-} >"${fixtures}/log-cross.txt"
-cp "${fixtures}/log-cross.txt" "${fixtures}/log-same.txt"
+for role in cross same; do
+  if [[ "${role}" == cross ]]; then ip="${cross_ingress_ip}"; else ip="${same_ingress_ip}"; fi
+  {
+    printf 'PROBE-WARMUP ok\n'
+    for ((i = 1; i <= 9; i++)); do printf 'PROBE control 200 45 %s\nPROBE authz 302 0 %s\n' "${ip}" "${dex_redirect}"; done
+    printf 'PROBE guard %s\nPROBE-DONE 9\n' "${guard_ok}"
+  } >"${fixtures}/log-${role}.txt"
+done
 run_probe --context admin@prod --run-id "${run_id}" --requests 9 --timeout 1
 require_inconclusive 'a complete 9-request run is a smoke run' 'smoke run and never conclusive'
 pass 'fewer than 10 requests per client is never conclusive'
@@ -587,7 +610,7 @@ pass 'unsettled or missing endpoints are INCONCLUSIVE before creating anything'
 reset_fixtures
 touch "${fixtures}/apply-fails"
 run_default
-require_inconclusive 'a failed apply must be INCONCLUSIVE' 'could not create the probe routes'
+require_inconclusive 'a failed apply must be INCONCLUSIVE' 'could not create the ExternalAuth probe route'
 require_cleaned_up
 pass 'a failed apply still runs cleanup'
 
@@ -600,6 +623,66 @@ if grep -Fq 'kind: Pod' "${fixtures}/applied.yaml"; then
 fi
 require_cleaned_up
 pass 'unresolved route references stop the run before any pod is created'
+
+reset_fixtures
+run_default
+require_rc 0 'the ordering fixture run must still be conclusive'
+first_route="$(awk '/^kind: HTTPRoute$/ {r = 1; next} r && /^  name: / {print $2; exit}' "${fixtures}/applied.yaml")"
+[[ "${first_route}" == 'externalauth-probe-authz-12345' ]] ||
+  fail "the ExternalAuth route must be created before the control route (first route: ${first_route})"
+pass 'the ExternalAuth route is created before the control route'
+
+reset_fixtures
+printf '%s\n' '{"items":[{"metadata":{"name":"externalauth-probe-authz-12345"},"status":{"parents":[{"conditions":[{"type":"Accepted","status":"True"},{"type":"ResolvedRefs","status":"True"}]}]}},{"metadata":{"name":"externalauth-probe-control-12345"},"status":{"parents":[{"conditions":[{"type":"Accepted","status":"True"},{"type":"ResolvedRefs","status":"False"}]}]}}]}' >"${fixtures}/routes.json"
+run_default
+require_inconclusive 'a control route that never resolves must stop before the pods' 'control probe route was not accepted'
+if grep -Fq 'kind: Pod' "${fixtures}/applied.yaml"; then
+  fail 'pods were created although the control route was not ready'
+fi
+require_cleaned_up
+pass 'a control route that never resolves stops the run before any pod is created'
+
+reset_fixtures
+awk '/^PROBE control 200 45 / && !done {print "PROBE control 200 45 10.0.10.3"; done = 1; next} {print}' \
+  "${fixtures}/log-cross.txt" >"${fixtures}/log-cross.tmp"
+mv "${fixtures}/log-cross.tmp" "${fixtures}/log-cross.txt"
+[[ "$(grep -c '^PROBE control 200 45 10\.0\.10\.3$' "${fixtures}/log-cross.txt")" -eq 1 ]] || fail 'fixture did not move one control answer off-node'
+run_default
+require_inconclusive 'a control answer from another node'"'"'s Envoy must be INCONCLUSIVE' "answered by the Envoy on the client's own node"
+reset_fixtures
+awk '/^PROBE control 200 45 / && !done {print "PROBE control 200 45 -"; done = 1; next} {print}' \
+  "${fixtures}/log-same.txt" >"${fixtures}/log-same.tmp"
+mv "${fixtures}/log-same.tmp" "${fixtures}/log-same.txt"
+run_default
+require_inconclusive 'a control answer with no echoed source must be INCONCLUSIVE' "answered by the Envoy on the client's own node"
+pass 'a control answer from another node, or with no echoed source, is INCONCLUSIVE'
+
+reset_fixtures
+sed 's/"ipv4":"10.0.10.5"/"ipv4":""/' "${fixtures}/ciliumnodes.json" >"${fixtures}/ciliumnodes.tmp"
+mv "${fixtures}/ciliumnodes.tmp" "${fixtures}/ciliumnodes.json"
+grep -Fq '"ipv4":""' "${fixtures}/ciliumnodes.json" || fail 'fixture did not blank an ingress IP'
+run_default
+require_inconclusive 'a node without an ingress IP must be INCONCLUSIVE' 'has no Cilium ingress IP'
+require_nothing_created
+reset_fixtures
+sed 's/"ipv4":"10.0.10.4"/"ipv4":"10.0.10.9"/' "${fixtures}/ciliumnodes.json" >"${fixtures}/ciliumnodes-after.json"
+grep -Fq '"ipv4":"10.0.10.9"' "${fixtures}/ciliumnodes-after.json" || fail 'fixture did not change an ingress IP'
+run_default
+require_inconclusive 'an ingress IP change during the run must be INCONCLUSIVE' 'ingress IPs changed during the run'
+require_cleaned_up
+pass 'a missing or changing ingress IP is INCONCLUSIVE'
+
+reset_fixtures
+gen_log "${fixtures}/log-cross.txt" '200 45 ' '000 0 '
+gen_log "${fixtures}/log-same.txt" '200 45 ' "302 0 ${dex_redirect}" 8 '000 0 '
+run_default
+require_inconclusive 'node-independent loss (cross 10, same 8 of 10) is not the #2284 pattern' 'intermittent loss'
+reset_fixtures
+gen_log "${fixtures}/log-cross.txt" '200 45 ' '000 0 '
+gen_log "${fixtures}/log-same.txt" '200 45 ' "302 0 ${dex_redirect}" 6 '000 0 '
+run_default
+require_text 'VERDICT: FAULT-PERSISTS' 'same-node loss within 15 points of the remote-endpoint share (6 of 10 vs 50%) still separates'
+pass 'FAULT-PERSISTS needs same-node loss near the remote-endpoint share, well below cross-node loss'
 
 reset_fixtures
 printf '%s\n' '{"spec":{"nodeName":"prod-worker-2"},"status":{"phase":"Succeeded"}}' >"${fixtures}/pod-cross.json"
@@ -654,7 +737,7 @@ while [[ "$#" -gt 0 ]]; do
   if [[ "$1" == '-H' ]]; then host="${2#Host: }"; shift 2; else shift; fi
 done
 case "${host}" in
-  control.*) printf '200 45 ' ;;
+  control.*) printf 'Hostname: whoami\nRemoteAddr: 10.0.10.5:43210\n\nPROBE-STATUS 200 45' ;;
   unrouted.*) printf '301 0 https://%s/' "${host}" ;;
   authz.*)
     case "${CURL_MODE}" in
@@ -680,6 +763,8 @@ run_loop() {
 run_loop delivered
 require_rc 0 'the rendered loop must exit 0'
 require_text 'PROBE-WARMUP ok' 'a delivering route must warm up'
+[[ "$(grep -c '^PROBE control 200 45 10\.0\.10\.5$' <<<"${output}")" -eq 3 ]] ||
+  fail 'the loop must print each control answer with the source address whoami echoed'
 [[ "$(grep -c '^PROBE authz 302 0 https://dex\.' <<<"${output}")" -eq 3 ]] || fail 'the loop must print one delivered answer per round'
 require_text 'PROBE guard 301 0 https://unrouted.externalauth-probe.invalid/' 'the loop must print the guard answer'
 require_text 'PROBE-DONE 3' 'the loop must report its round count'
@@ -722,11 +807,12 @@ job_minutes="$(sed -n 's/^    timeout-minutes: \([0-9][0-9]*\)$/\1/p' "${workflo
 # Worst case the script allows (timeout 10, requests x timeout = 250, warm-up 12):
 #   route wait (120s wall clock) + one in-flight 30s request past its deadline
 #   + the shared pod wait (deadline + 180s grace) + one in-flight request
-#   + ~24 other bounded kubectl calls (topology, datapath, leftovers, applies, logs, cleanup) at 30s
+#   + ~26 other bounded kubectl calls (topology, datapath, ingress IPs, leftovers, applies, logs,
+#     cleanup) at 30s
 #   + 10 minutes of job setup and slack.
 # The deadline formula is the script's own.
 max_deadline=$(((2 * 25 + 2 * 12 + 1) * 10 + 12 + 60))
-worst_seconds=$((120 + 35 + max_deadline + 180 + 35 + 24 * 30 + 600))
+worst_seconds=$((120 + 35 + max_deadline + 180 + 35 + 26 * 30 + 600))
 grep -Fq 'readonly route_wait_seconds="${PROBE_ROUTE_WAIT_SECONDS:-120}"' "${script}" || fail 'the route wait bound the timeout was sized for changed'
 grep -Fq "readonly request_timeout='30s'" "${script}" || fail 'the request timeout the job timeout was sized for changed'
 ((job_minutes * 60 >= worst_seconds)) ||

@@ -18,6 +18,13 @@
 # across the run: after a failed deploy releases the lock, old and new datapath pods can run side by
 # side, and a verdict taken across them would describe no single deployed revision.
 #
+# WHICH ENVOY ANSWERED IS OBSERVED, NOT ASSUMED. The control route's backend (whoami) echoes the
+# connection's source address, and Cilium's Envoy connects to backends from its own node's ingress
+# IP (CiliumNode spec.ingress.ipv4). Every control answer must carry the ingress IP of the client's
+# own node, or the run is INCONCLUSIVE — so if that path assumption ever stops holding, the probe
+# reports nothing rather than a wrong verdict. The ExternalAuth requests alternate with the control
+# requests over the same Service from the same pod.
+#
 # WHY A FAILURE IS ATTRIBUTABLE. Requests stay inside the cluster, over plain HTTP on the gateway's
 # `http` listener, to hostnames under `externalauth-probe.invalid`. Nothing in the path is
 # Cloudflare, public DNS or TLS, and external-dns publishes nothing outside the zone. Each client
@@ -269,6 +276,22 @@ read_datapath() {
   ' <<<"${json}"
 }
 
+# Per-node Cilium ingress IPs — the source address a node's Envoy uses toward backends. Emits
+# "FP <fingerprint>" then "ING <node> <ipv4>" per node, or "ERR none" / "ERR incomplete" /
+# "ERR duplicate".
+read_ingress_ips() {
+  local json
+  json="$(kc get ciliumnodes -o json)" || return 1
+  jq -r '
+    [.items[]? | {name: (.metadata.name // ""), ip: (.spec.ingress.ipv4 // "")}]
+    | if length == 0 then "ERR none"
+      elif any(.[]; .name == "" or .ip == "") then "ERR incomplete"
+      elif ([.[].ip] | unique | length) != length then "ERR duplicate"
+      else "FP " + (map(.name + "|" + .ip) | sort | join(";")), (.[] | "ING " + .name + " " + .ip)
+      end
+  ' <<<"${json}"
+}
+
 # ---------------------------------------------------------------------------
 # 1. Topology before: settled oauth2-proxy endpoints, and the nodes a probe pod may run on.
 # ---------------------------------------------------------------------------
@@ -321,6 +344,19 @@ done < <(sed -n 's/^SCHED //p' <<<"${node_lines}")
 
 [[ -n "${cross_node}" ]] || inconclusive 'no schedulable node without an oauth2-proxy endpoint exists, so no cross-node path can be forced'
 [[ -n "${same_node}" ]] || inconclusive 'no schedulable node hosts an oauth2-proxy endpoint, so there is no same-node control'
+
+ingress_lines="$(read_ingress_ips)" || inconclusive 'could not read the per-node Cilium ingress IPs'
+case "${ingress_lines}" in
+  'ERR none' | 'ERR incomplete') inconclusive 'a node has no Cilium ingress IP, so the Envoy that answers a request cannot be attributed' ;;
+  'ERR duplicate') inconclusive 'two nodes report the same Cilium ingress IP' ;;
+esac
+ingress_fp_before="$(sed -n 's/^FP //p' <<<"${ingress_lines}")"
+cross_ingress="$(awk -v n="${cross_node}" '$1 == "ING" && $2 == n { print $3 }' <<<"${ingress_lines}")"
+same_ingress="$(awk -v n="${same_node}" '$1 == "ING" && $2 == n { print $3 }' <<<"${ingress_lines}")"
+readonly ipv4_re='^[0-9]{1,3}(\.[0-9]{1,3}){3}$'
+if [[ -z "${ingress_fp_before}" || ! "${cross_ingress}" =~ ${ipv4_re} || ! "${same_ingress}" =~ ${ipv4_re} ]]; then
+  inconclusive 'the chosen nodes have no well-formed Cilium ingress IP'
+fi
 
 printf 'oauth2-proxy endpoints on %s node(s); schedulable nodes: %s\n' \
   "$(grep -c . <<<"${endpoint_nodes}" || true)" "$(grep -c '^SCHED ' <<<"${node_lines}" || true)"
@@ -466,15 +502,25 @@ spec:
           ask() {
             curl -s -o /dev/null --max-time "\$TIMEOUT" -H "Host: \$1" -w '%{http_code} %{size_download} %{redirect_url}' "\$GATEWAY_URL" 2>/dev/null
           }
-          # Warm-up: both routes must be programmed before anything is counted. An unprogrammed
-          # hostname answers at once with 404 or the listener's 301 redirect. A timeout on the
-          # ExternalAuth route is NOT unprogrammed — it is what a black-holed check looks like — so it
-          # ends the warm-up and is measured below.
+          # The control route's whoami backend echoes the connection's source address, which is the
+          # ingress IP of the node whose Envoy handled the request. Prints "<code> <size> <ip-or->".
+          ask_control() {
+            out=\$(curl -s --max-time "\$TIMEOUT" -H "Host: \$1" -w '\\nPROBE-STATUS %{http_code} %{size_download}' "\$GATEWAY_URL" 2>/dev/null)
+            status=\$(printf '%s\\n' "\$out" | sed -n 's/^PROBE-STATUS //p' | tail -n 1)
+            ip=\$(printf '%s\\n' "\$out" | sed -n 's/^RemoteAddr: *\\[\\{0,1\\}\\([0-9A-Fa-f.:]*\\)\\]\\{0,1\\}:[0-9]*\$/\\1/p' | head -n 1)
+            printf '%s %s' "\${status:-000 0}" "\${ip:--}"
+          }
+          # Warm-up: this node's Envoy must serve the control route (200). The control route was
+          # created only after the ExternalAuth route was accepted, and Envoy applies the gateway's
+          # configuration in order, so that 200 proves the ExternalAuth route is programmed here too.
+          # As a second check the ExternalAuth route must not answer like an unprogrammed hostname
+          # (404, or the listener's 301 redirect). A timeout there is NOT unprogrammed — it is what
+          # a black-holed check looks like — so it ends the warm-up and is measured below.
           warm=0
           n=0
           while [ "\$n" -lt "\$WARMUP_ATTEMPTS" ]; do
             n=\$((n + 1))
-            c=\$(ask "\$CONTROL_HOST" | cut -d' ' -f1)
+            c=\$(ask_control "\$CONTROL_HOST" | cut -d' ' -f1)
             a=\$(ask "\$AUTHZ_HOST" | cut -d' ' -f1)
             if [ "\$c" = 200 ] && [ -n "\$a" ] && [ "\$a" != 404 ] && [ "\$a" != 301 ]; then
               warm=1
@@ -490,7 +536,7 @@ spec:
           i=0
           while [ "\$i" -lt "\$REQUESTS" ]; do
             i=\$((i + 1))
-            printf 'PROBE control %s\\n' "\$(ask "\$CONTROL_HOST" || true)"
+            printf 'PROBE control %s\\n' "\$(ask_control "\$CONTROL_HOST" || true)"
             printf 'PROBE authz %s\\n' "\$(ask "\$AUTHZ_HOST" || true)"
           done
           printf 'PROBE guard %s\\n' "\$(ask "\$GUARD_HOST" || true)"
@@ -561,33 +607,56 @@ spec:
             - port: "80"
               protocol: TCP
 YAML
-  route_manifest "${control_route}" "${control_host}" ''
   route_manifest "${authz_route}" "${authz_host}" "${authz_filters}"
 )"
 
-if ! kc apply -f - <<<"${manifest}" >/dev/null; then
-  inconclusive 'could not create the probe routes, grant and policy'
-fi
+# Prints how many of the named routes are Accepted with resolved references.
+ready_routes() {
+  local json
+  json="$(kc -n "${probe_namespace}" get httproutes -l "${probe_label}=${run_id}" -o json)" || {
+    printf '0'
+    return 0
+  }
+  jq -r --arg names "$*" '
+    def cond($t): [.status.parents[]?.conditions[]? | select(.type == $t) | .status];
+    ($names | split(" ")) as $want
+    | [.items[]? | select((.metadata.name // "") as $n | $want | index($n))
+        | select((cond("Accepted") | length) > 0 and all(cond("Accepted")[]; . == "True")
+                 and (cond("ResolvedRefs") | length) > 0 and all(cond("ResolvedRefs")[]; . == "True"))]
+    | length' <<<"${json}" 2>/dev/null || printf '0'
+}
 
-# Both routes must be Accepted with resolved references before a client is started, so a slow
-# controller is not measured as a lost subrequest.
-routes_ready=0
-readonly route_deadline=$((SECONDS + route_wait_seconds))
-while ((SECONDS < route_deadline)); do
-  if routes_json="$(kc -n "${probe_namespace}" get httproutes -l "${probe_label}=${run_id}" -o json)"; then
-    ready_count="$(jq -r '
-      def cond($t): [.status.parents[]?.conditions[]? | select(.type == $t) | .status];
-      [.items[]? | select((cond("Accepted") | length) > 0 and all(cond("Accepted")[]; . == "True")
-                          and (cond("ResolvedRefs") | length) > 0 and all(cond("ResolvedRefs")[]; . == "True"))]
-      | length' <<<"${routes_json}" 2>/dev/null || printf '0')"
-    if [[ "${ready_count}" == '2' ]]; then
-      routes_ready=1
-      break
+# Waits, under the shared wall-clock deadline, until every named route is ready. It always checks at
+# least once before honouring the deadline: the two phases share one deadline, so a slow first phase
+# must not leave the second phase refusing without ever looking.
+wait_routes() {
+  while :; do
+    if [[ "$(ready_routes "$@")" == "$#" ]]; then
+      return 0
     fi
-  fi
-  sleep "${poll_seconds}"
-done
-[[ "${routes_ready}" -eq 1 ]] || inconclusive 'the probe routes were not accepted with resolved references in time'
+    ((SECONDS < route_deadline)) || return 1
+    sleep "${poll_seconds}"
+  done
+}
+
+readonly route_deadline=$((SECONDS + route_wait_seconds))
+
+# ORDER MATTERS, because it is what makes the pods' warm-up sound. Both routes are compiled into the
+# gateway's single CiliumEnvoyConfig, and each Envoy applies its versions in order. The ExternalAuth
+# route is created FIRST and the control route only once the ExternalAuth route is accepted, so any
+# Envoy that already serves the control route (200) has also applied the ExternalAuth route. A
+# failure on the ExternalAuth route after warm-up is therefore a measurement, never an Envoy whose
+# configuration is still converging.
+if ! kc apply -f - <<<"${manifest}" >/dev/null; then
+  inconclusive 'could not create the ExternalAuth probe route, grant and policy'
+fi
+wait_routes "${authz_route}" ||
+  inconclusive 'the ExternalAuth probe route was not accepted with resolved references in time'
+if ! kc apply -f - <<<"$(route_manifest "${control_route}" "${control_host}" '')" >/dev/null; then
+  inconclusive 'could not create the control probe route'
+fi
+wait_routes "${authz_route}" "${control_route}" ||
+  inconclusive 'the control probe route was not accepted with resolved references in time'
 
 pods_manifest="$(
   pod_manifest "${cross_pod}" "${cross_host}" cross
@@ -636,15 +705,18 @@ done
 # ---------------------------------------------------------------------------
 # 5. Classify each client's answers.
 # ---------------------------------------------------------------------------
-# Prints: control_ok control_bad delivered lost other guard_code other_codes
+# Prints: control_ok control_bad delivered lost other guard_code other_codes control_on_node
+# ($2 is the ingress IP of the node the pod was pinned to; a control answer counts as on-node only
+# when whoami saw exactly that source address.)
 classify() {
-  local log="$1"
-  awk -v want="${requests}" '
+  local log="$1" want_ip="$2"
+  awk -v want="${requests}" -v want_ip="${want_ip}" '
     $1 == "PROBE-WARMUP" { warm = $2 }
     $1 == "PROBE-DONE" { done = $2 }
     $1 == "PROBE" && $2 == "control" {
       nc++
       if ($3 == "200") ok++; else bad++
+      if (want_ip != "" && $5 == want_ip) onnode++
     }
     $1 == "PROBE" && $2 == "guard" { guard = ($3 == "" ? "none" : $3); ng++ }
     $1 == "PROBE" && $2 == "authz" {
@@ -662,16 +734,22 @@ classify() {
     END {
       if (warm != "ok") { print "ERR warmup"; exit }
       if (done != want || nc != want || na != want || ng != 1) { print "ERR incomplete"; exit }
-      printf "%d %d %d %d %d %s %s\n", ok, bad, delivered, lost, other, guard, (codes == "" ? "-" : codes)
+      printf "%d %d %d %d %d %s %s %d\n", ok, bad, delivered, lost, other, guard, (codes == "" ? "-" : codes), onnode
     }
   ' <<<"${log}"
 }
 
 results=''
 for role in cross same; do
-  if [[ "${role}" == 'cross' ]]; then name="${cross_pod}"; else name="${same_pod}"; fi
+  if [[ "${role}" == 'cross' ]]; then
+    name="${cross_pod}"
+    role_ingress="${cross_ingress}"
+  else
+    name="${same_pod}"
+    role_ingress="${same_ingress}"
+  fi
   log="$(kc -n "${probe_namespace}" logs "${name}")" || inconclusive 'could not read a probe pod log'
-  counts="$(classify "${log}")" || inconclusive 'a probe pod log could not be classified'
+  counts="$(classify "${log}" "${role_ingress}")" || inconclusive 'a probe pod log could not be classified'
   case "${counts}" in
     'ERR warmup') inconclusive 'a probe pod could not reach both routes during warm-up, so the path or policy is broken' ;;
     'ERR incomplete') inconclusive 'a probe pod log did not contain every expected answer' ;;
@@ -692,12 +770,15 @@ node_lines_after="$(read_nodes)" || inconclusive 'could not re-read the nodes'
 datapath_lines_after="$(read_datapath)" || inconclusive 'could not re-read the Cilium and cilium-envoy DaemonSets'
 [[ "$(sed -n 's/^FP //p' <<<"${datapath_lines_after}")" == "${datapath_fp_before}" ]] ||
   inconclusive 'the Cilium or cilium-envoy rollout changed during the run'
+ingress_lines_after="$(read_ingress_ips)" || inconclusive 'could not re-read the per-node Cilium ingress IPs'
+[[ "$(sed -n 's/^FP //p' <<<"${ingress_lines_after}")" == "${ingress_fp_before}" ]] ||
+  inconclusive 'the per-node Cilium ingress IPs changed during the run'
 
 # ---------------------------------------------------------------------------
 # 7. Verdict.
 # ---------------------------------------------------------------------------
-read -r _ cross_ok cross_bad cross_delivered cross_lost cross_other cross_guard cross_codes <<<"$(grep '^cross ' <<<"${results}")"
-read -r _ same_ok same_bad same_delivered same_lost same_other same_guard same_codes <<<"$(grep '^same ' <<<"${results}")"
+read -r _ cross_ok cross_bad cross_delivered cross_lost cross_other cross_guard cross_codes cross_onnode <<<"$(grep '^cross ' <<<"${results}")"
+read -r _ same_ok same_bad same_delivered same_lost same_other same_guard same_codes same_onnode <<<"$(grep '^same ' <<<"${results}")"
 
 printf 'cross-node client: control %s ok / %s failed; ExternalAuth %s delivered / %s lost / %s other\n' \
   "${cross_ok}" "${cross_bad}" "${cross_delivered}" "${cross_lost}" "${cross_other}"
@@ -715,6 +796,9 @@ fi
 if ((cross_bad + same_bad > 0)); then
   inconclusive 'the plain control route did not answer every time, so failures cannot be attributed to ExternalAuth'
 fi
+if ((cross_onnode != requests || same_onnode != requests)); then
+  inconclusive "not every control request was answered by the Envoy on the client's own node (cross ${cross_onnode}/${requests}, same ${same_onnode}/${requests}), so the path each client exercised is unproven"
+fi
 if ((cross_other + same_other > 0)); then
   inconclusive "the ExternalAuth route returned answers that are neither delivered nor lost (status codes: cross ${cross_codes}, same ${same_codes})"
 fi
@@ -730,7 +814,21 @@ if ((cross_lost == 0)); then
   fi
   conclude 'FIXED' "every cross-node ExternalAuth request (${cross_delivered}) was delivered"
 fi
-if ((cross_lost * 10 >= requests * 9 && cross_lost > same_lost)); then
+# Separation. The same-node client shares its node with some endpoints, so under the #2284 fault only
+# its calls to REMOTE endpoints are lost: its expected loss is the remote share of the endpoints.
+# Node-independent loss hits both clients alike, so FAULT-PERSISTS also needs the same-node loss to
+# stay within 15 points of that expectation and at least 15 points below the cross-node loss.
+endpoint_node_list="$(sed -n 's/^NODE //p' <<<"${endpoint_lines}")"
+total_endpoints="$(grep -c . <<<"${endpoint_node_list}" || true)"
+local_endpoints="$(grep -Fxc -- "${same_node}" <<<"${endpoint_node_list}" || true)"
+remote_endpoints=$((total_endpoints - local_endpoints))
+separated=0
+if ((total_endpoints > 0)) &&
+  ((same_lost * 100 * total_endpoints <= requests * (100 * remote_endpoints + 15 * total_endpoints))) &&
+  (((cross_lost - same_lost) * 100 >= requests * 15)); then
+  separated=1
+fi
+if ((cross_lost * 10 >= requests * 9 && separated == 1)); then
   conclude 'FAULT-PERSISTS' "${cross_lost} of ${requests} cross-node ExternalAuth requests were lost (same-node: ${same_lost}) while the control route answered every time"
 fi
 inconclusive "${cross_lost} of ${requests} cross-node requests were lost (same-node: ${same_lost}), which is intermittent loss rather than the #2284 black-hole"
