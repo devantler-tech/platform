@@ -10,7 +10,9 @@
 # order only; it does not alter the DNS server, search domains, or network
 # policy. The option is applied at Pod admission; the Coroot and CNPG manifests
 # carry a shared rollout token so existing pods are recreated declaratively when
-# this policy first reaches a cluster.
+# this policy first reaches a cluster. Match CREATE only: adding dnsConfig to an
+# existing Pod during an unrelated metadata UPDATE would violate Kubernetes Pod
+# immutability and can block the owning controller's reconciliation.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -32,6 +34,8 @@ spec:
           - resources:
               kinds:
                 - Pod
+              operations:
+                - CREATE
               namespaces:
                 - observability
               selector:
@@ -60,6 +64,8 @@ spec:
           - resources:
               kinds:
                 - Pod
+              operations:
+                - CREATE
               namespaces:
                 - observability
               selector:
