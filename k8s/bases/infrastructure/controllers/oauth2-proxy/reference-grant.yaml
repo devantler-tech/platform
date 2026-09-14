@@ -43,6 +43,11 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: policy-reporter
+    # The Umami browser route is SSO-protected; its separate Flagger route
+    # continues to send only tracker collection paths directly to the app.
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: umami
   to:
     - group: ""
       kind: Service

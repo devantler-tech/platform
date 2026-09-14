@@ -17,6 +17,15 @@ spec:
         - ports:
             - port: "3000"
               protocol: TCP
+    # Browser dashboard traffic after oauth2-proxy's maintainer-team SSO gate.
+    - fromEndpoints:
+        - matchLabels:
+            app: auth-proxy
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
     # Flagger load-tester (acceptance smoke + load) -> the canary pods.
     - fromEndpoints:
         - matchLabels:
