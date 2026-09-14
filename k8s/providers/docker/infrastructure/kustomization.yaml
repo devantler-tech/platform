@@ -21,7 +21,7 @@ resources:
   # Observability (needs controllers/coroot):
   #   - ../../../bases/infrastructure/coroot/
   # Progressive delivery (needs controllers/flagger):
-  #   - ../../../bases/infrastructure/flagger/
+  #   - ../../../bases/infrastructure/metric-templates/
   # Runtime security:
   #   - ../../../bases/infrastructure/cluster-security-exceptions/  # Kubescape exceptions — needs controllers/kubescape
   #   - ../../../bases/infrastructure/tracing-policies/     # Tetragon TracingPolicy — needs controllers/tetragon

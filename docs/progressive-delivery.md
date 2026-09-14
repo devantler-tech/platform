@@ -42,7 +42,7 @@ Promotion vs rollback is gated on:
 | Component | Layer | Path |
 | --- | --- | --- |
 | `flagger` controller + `flagger-loadtester` | infra-controllers | [`controllers/flagger/`](../k8s/bases/infrastructure/controllers/flagger) |
-| `coroot-request-success-rate` / `coroot-request-duration` `MetricTemplate`s | infrastructure | [`infrastructure/flagger/`](../k8s/bases/infrastructure/flagger) |
+| `coroot-request-success-rate` / `coroot-request-duration` `MetricTemplate`s | infrastructure | [`infrastructure/metric-templates/`](../k8s/bases/infrastructure/metric-templates) |
 | **umami** Canary (weighted) | apps | [`apps/umami/canary.yaml`](../k8s/bases/apps/umami/canary.yaml) |
 | **homepage** Canary (blue/green) | apps | [`apps/homepage/canary.yaml`](../k8s/bases/apps/homepage/canary.yaml) |
 
@@ -132,7 +132,7 @@ matches a hash but never "primary" (it has i/a).
 against live data** — before trusting auto-promotion, confirm in
 `coroot-prometheus` the `status` label format, the `container_id` format, and the
 latency bucket series, and tune
-[`infrastructure/flagger/metric-template-*.yaml`](../k8s/bases/infrastructure/flagger).
+[`infrastructure/metric-templates/metric-template-*.yaml`](../k8s/bases/infrastructure/metric-templates).
 
 ## References
 - [Flagger Gateway API tutorial](https://docs.flagger.app/tutorials/gatewayapi-progressive-delivery)

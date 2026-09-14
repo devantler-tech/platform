@@ -8,7 +8,7 @@ resources:
   - cluster-secret-stores/
   - coroot/
   - external-secrets/
-  - flagger/
+  - metric-templates/
   - gateway/
   # Kyverno Policy Reporter (core + UI + kyverno-plugin) visualises the
   # PolicyReport / ClusterPolicyReport CRs Kyverno emits. In the `infrastructure`

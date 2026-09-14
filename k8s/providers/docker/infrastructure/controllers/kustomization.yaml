@@ -45,7 +45,7 @@ resources:
   #   - ../../../../bases/infrastructure/controllers/coroot/      # also infrastructure/coroot/
   #   - ../../../../bases/infrastructure/controllers/prune-protected-orphan-alert/ # needs coroot/'s namespace
   # Progressive delivery:
-  #   - ../../../../bases/infrastructure/controllers/flagger/     # also infrastructure/flagger/
+  #   - ../../../../bases/infrastructure/controllers/flagger/     # also infrastructure/metric-templates/
   # Autoscaling (KEDA request-rate ScaledObjects, e.g. homepage/umami):
   #   - ../../../../bases/infrastructure/controllers/keda/
   # Runtime security (add the matching patch below):

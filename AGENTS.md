@@ -345,7 +345,7 @@ Resources under `k8s/bases/infrastructure/` are **component-folder-first**: a co
 
 A CR is split out into its own **plural-Kind folder** only when it cannot live with its component:
 
-- **Dependency split** — the CRD ships with the controller's HelmRelease, so the CR must reconcile a layer later to avoid the CR-and-its-CRD-in-one-Kustomization deadlock: `flagger/` (`MetricTemplate`; see [`docs/progressive-delivery.md`](docs/progressive-delivery.md)), `tracing-policies/` (Tetragon `TracingPolicy`), the Coroot CR in `coroot/`, and `resource-graph-definitions/` (KRO, which also installs its CRD via the controller layer).
+- **Dependency split** — the CRD ships with the controller's HelmRelease, so the CR must reconcile a layer later to avoid the CR-and-its-CRD-in-one-Kustomization deadlock: `metric-templates/` (Flagger `MetricTemplate`; see [`docs/progressive-delivery.md`](docs/progressive-delivery.md)), `tracing-policies/` (Tetragon `TracingPolicy`), the Coroot CR in `coroot/`, and `resource-graph-definitions/` (KRO, which also installs its CRD via the controller layer).
 - **Cluster-scoped / cross-cutting** — no single owning component: `cluster-policies/` (Kyverno), `cluster-roles/` + `cluster-role-bindings/`, `cluster-secret-stores/`, `external-secrets/` (bootstrap ExternalSecrets), `cluster-security-exceptions/` (Kubescape), `limit-ranges/`, and `vertical-pod-autoscalers/` (prod system VPAs).
 
 ### Kustomization Flow
