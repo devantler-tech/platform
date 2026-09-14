@@ -132,7 +132,8 @@ setup_scenario() {
       {application_id:"95rsc5yp:actual-budget:Deployment:actual-budget-actualbudget",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:backstage:Deployment:backstage",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:$backstage_reason}},
       {application_id:"95rsc5yp:retired:Deployment:old-tool",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:"manual dismissal outside GitOps"}},
-      {application_id:"95rsc5yp:new-service:Deployment:new-service",key:{category:"Availability",type:"single-instance-app"}}
+      {application_id:"95rsc5yp:new-service:Deployment:new-service",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:database:StatefulSet:database",key:{category:"Security",type:"db-internet-exposure"},dismissal:{reason:"owned by a separate security policy"}}
     ]}}' >"${dir}/risks.json"
   elif [ "${mode}" = 'drift' ]; then
     jq -n '{data:{risks:[

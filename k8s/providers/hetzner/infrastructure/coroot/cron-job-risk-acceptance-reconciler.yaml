@@ -2,12 +2,13 @@
 #
 # Coroot persists risk dismissal only through its API. This CronJob projects the
 # reviewed ConfigMap into that API so the state survives a Coroot database
-# rebuild without a UI click. The allowlist is the complete desired dismissal
-# set: removing an entry or dismissing an undeclared risk reactivates that risk,
-# while a declared entry with a different reason is corrected. Unknown active
-# risks stay visible. Application coordinates omit the generated Coroot cluster
-# id and match the remaining namespace/kind/name tuple exactly, preserving the
-# declaration across a project rebuild.
+# rebuild without a UI click. The allowlist is the complete desired Availability
+# dismissal set: removing an entry or dismissing an undeclared Availability risk
+# reactivates that risk, while a declared entry with a different reason is
+# corrected. Unknown active Availability risks stay visible; other categories
+# remain outside this controller's scope. Application coordinates omit the
+# generated Coroot cluster id and match the remaining namespace/kind/name tuple
+# exactly, preserving the declaration across a project rebuild.
 #
 # The in-cluster service is intentionally credentialless because the Coroot CR
 # sets authAnonymousRole=Admin; the external UI remains behind oauth2-proxy.
@@ -88,7 +89,9 @@ spec:
                       (.application | type == "string") and
                       (.application | split(":") | length == 3) and
                       .category == "Availability" and
-                      .type == "single-instance-app" and
+                      (.type as $type |
+                        ["single-instance-app", "single-node-app", "single-az-app", "spot-only-app", "unreplicated-database"] |
+                        index($type) != null) and
                       (.reason | startswith("platform#3812: "))
                     ) and
                     ([.[] | [.application, .category, .type] | @tsv] | length) ==
@@ -139,13 +142,13 @@ spec:
                       "$BASE/api/project/$PID/app/$encoded_id/risks" >/dev/null
                   }
 
-                  # The allowlist is authoritative for all dismissal state:
-                  # anything currently dismissed but not declared is reopened.
+                  # The allowlist is authoritative for Availability dismissal
+                  # state. Other risk categories are explicitly out of scope.
                   stale=$(printf '%s' "$RISKS" | jq -c \
                     --slurpfile desired "$ACCEPTANCES_FILE" '
                       def coordinate: .application_id | split(":") | .[1:] | join(":");
                       .data.risks[]
-                      | select(.dismissal != null)
+                      | select(.key.category == "Availability" and .dismissal != null)
                       | . as $risk
                       | select(($desired[0] | any(.[];
                           .application == ($risk | coordinate) and
