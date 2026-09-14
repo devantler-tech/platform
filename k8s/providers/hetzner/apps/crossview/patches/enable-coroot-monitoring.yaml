@@ -1,0 +1,89 @@
+# Prod-only Coroot integration for the PostgreSQL Deployment rendered by the
+# Crossview chart. Unlike the platform CNPG databases, this operand has no
+# operator-managed role or extension API, so the chart's supported pod
+# annotations are combined with one post-render patch for server settings and
+# its docker-entrypoint init hook.
+- op: add
+  path: /spec/values/database/podAnnotations
+  value:
+    coroot.com/postgres-scrape: "true"
+    coroot.com/postgres-scrape-port: "5432"
+    coroot.com/postgres-scrape-credentials-secret-name: crossview-postgres-coroot-monitor
+    coroot.com/postgres-scrape-credentials-secret-username-key: username
+    coroot.com/postgres-scrape-credentials-secret-password-key: password
+    # The chart's bundled PostgreSQL server does not enable TLS. Pod-to-pod
+    # traffic remains encrypted by the platform's Cilium WireGuard layer.
+    coroot.com/postgres-scrape-param-sslmode: disable
+- op: add
+  path: /spec/values/database/extraEnv
+  value:
+    - name: COROOT_MONITOR_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: crossview-postgres-coroot-monitor
+          key: password
+- op: add
+  path: /spec/postRenderers/0/kustomize/patches/-
+  value:
+    target:
+      kind: Deployment
+      name: crossview-postgres
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: crossview-postgres
+      spec:
+        # The data directory is an emptyDir. Recreate prevents the old and new
+        # database pods from serving different ephemeral clusters behind one
+        # Service during this settings-changing rollout.
+        strategy:
+          type: Recreate
+          rollingUpdate: null
+        template:
+          spec:
+            containers:
+              - name: postgres
+                args:
+                  - -c
+                  - shared_preload_libraries=pg_stat_statements
+                  - -c
+                  - track_io_timing=on
+                volumeMounts:
+                  - name: coroot-monitor-init
+                    mountPath: /docker-entrypoint-initdb.d
+                    readOnly: true
+            volumes:
+              - name: coroot-monitor-init
+                configMap:
+                  name: crossview-postgres-coroot-monitor-init
+                  defaultMode: 365
+- op: add
+  path: /spec/postRenderers/0/kustomize/patches/-
+  value:
+    target:
+      kind: Deployment
+      name: crossview
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: crossview
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: wait-for-db
+                args:
+                  - |
+                    until PGPASSWORD="$DB_PASS" psql -X -w \
+                      -h crossview-postgres \
+                      -p "$DB_PORT" \
+                      -U "$DB_USER" \
+                      -d postgres \
+                      -tAc "SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'" \
+                      2>/dev/null | grep -qx '1'; do
+                      echo "Waiting for the instrumented database to be ready..."
+                      sleep 2
+                    done
+                    echo "Instrumented database is ready and accepting connections!"

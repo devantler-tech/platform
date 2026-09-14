@@ -20,7 +20,7 @@ resources:
   # capture the completed Job's logs, then remove it again so its generic
   # ephemeral PVC and Longhorn volume are garbage-collected.
   # - userns-longhorn-smoke/
-  # Prod-only Coroot Postgres integration for the platform-owned CNPG DBs:
+  # Prod-only Coroot Postgres integration for platform-owned databases:
   # additive CiliumNetworkPolicies that let the observability cluster-agent
   # scrape each on 5432 (the Cluster patches below stamp the
   # coroot.com/postgres-scrape annotations + dedicated pg_monitor roles + pg_stat_statements).
@@ -34,6 +34,13 @@ resources:
   - backstage/cilium-network-policy.yaml
   - backstage/password-coroot-monitor.yaml
   - backstage/external-secret-coroot-monitor.yaml
+  # Crossview bundles a plain PostgreSQL Deployment instead of CNPG. These
+  # resources supply its init hook, dedicated credential, and scrape-only
+  # network path; the HelmRelease patch below wires them into the chart output.
+  - crossview/config-map-coroot-monitor-init.yaml
+  - crossview/cilium-network-policy.yaml
+  - crossview/password-coroot-monitor.yaml
+  - crossview/external-secret-coroot-monitor.yaml
 components:
   - ../../../bases/components/annotations-transformers
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
@@ -59,6 +66,15 @@ patches:
   # for backstage a dedicated pg_monitor managed role). These self-identify, so no target.
   - path: umami/patches/enable-coroot-monitoring.yaml
   - path: backstage/patches/enable-coroot-monitoring.yaml
+  # Crossview is a Helm-rendered Deployment, so its JSON6902 patch adds chart
+  # values and appends post-render patches without replacing the base list.
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: crossview
+      namespace: crossview
+    path: crossview/patches/enable-coroot-monitoring.yaml
   # umami's dedicated pg_monitor role is a JSON6902 append onto the existing
   # managed.roles list (so it doesn't replace / desync the OpenBao-rotation enforcer); a
   # JSON6902 patch has no embedded identity, so it keeps an explicit target.
