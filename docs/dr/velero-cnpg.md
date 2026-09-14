@@ -39,8 +39,20 @@ and a reviewed cutover changes it to `wedding-db-dedicated`. The dispatch-only
 `wedding-app` namespace and reports the evaluator's parity verdict: it can be
 re-run safely, and only a `CONVERGED` run means the switch may start. Run it once
 more immediately before the switch. `CONVERGED` does not cover WAL archived between
-that run and the reference change, so the cutover must end with a verified
-catch-up of that gap. Until then, a
+that run and the reference change, so after the reference change the cutover
+**must** run the same workflow in `catch-up` mode with the recorded switch time.
+That pass requires the Cluster to archive through `wedding-db-dedicated`, copies
+the now-quiescent shared catalogue once more, and refuses any destination object
+written before the switch or outside the Cluster's server directory. Within that
+server directory it proves the first segment archived through the dedicated store
+that is newer than the shared catalogue's newest segment is that segment's
+successor, so there is no gap. Record the switch time in UTC at or after the last
+archive to the shared store and before the first archive to the dedicated store:
+too early and the pass refuses the newest shared objects, too late and it refuses
+the Cluster's first post-switch objects. The cutover is complete only when it
+reports `CAUGHT UP`; `NOT CAUGHT UP` means no newer segment has been archived
+through the dedicated store yet, so run it again after the next archive. Until
+then, a
 shared-token rotation must verify Wedding together with Umami, Coroot, and
 Velero before the previous shared token is revoked.
 

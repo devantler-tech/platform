@@ -40,16 +40,19 @@ jobs:
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
       # The Wedding backup catalogue must be proven complete before the database
-      # switches to its dedicated bucket. The evaluator's refusals (credential
-      # reuse, wrong destination, partial copy, source changed mid-run) are the
-      # only thing standing between a bad mirror and a cutover with no history.
+      # switches to its dedicated bucket, and continuous after it. The evaluator's
+      # refusals (credential reuse, wrong destination, partial copy, source changed
+      # mid-run, and for the catch-up a stale destination object or a WAL gap
+      # across the switch) are the only thing standing between a bad copy and a
+      # cutover with lost history.
       - name: 💒 Validate Wedding backup mirror evaluator
         run: go test ./scripts/mirror-wedding-backup-catalogue
 
-      # The copy that feeds the evaluator: it must refuse a switched or drifted
-      # store, never reuse one credential, and hand the evaluator listings it
-      # actually accepts. The happy path runs the real pod script into the real
-      # evaluator, so the two cannot drift apart on the listing format.
+      # The copy that feeds the evaluator: each mode must refuse a Cluster that
+      # archives through the wrong store or a drifted store, never reuse one
+      # credential, and hand the evaluator listings it actually accepts. The
+      # converging paths run the real pod script into the real evaluator, so the
+      # two cannot drift apart on the listing format.
       - name: 💒 Validate Wedding backup mirror copy
         run: |
           shellcheck scripts/mirror-wedding-backup-catalogue.sh scripts/mirror-wedding-backup-catalogue-pod.sh scripts/tests/test-mirror-wedding-backup-catalogue.sh
