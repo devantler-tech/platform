@@ -90,6 +90,10 @@ helmrelease_json="$(get_optional_json \
 namespace_json="$(get_optional_json namespace/${namespace})"
 
 if [[ -n "${helmrelease_json}" || -n "${namespace_json}" ]]; then
+  kube wait --for=condition=Ready=True \
+    kustomization.kustomize.toolkit.fluxcd.io/infrastructure \
+    --namespace flux-system --timeout=2m ||
+    fail 'Flux Kustomization flux-system/infrastructure did not become Ready within 2m'
   kustomization_json="$(kube get \
     kustomization.kustomize.toolkit.fluxcd.io/infrastructure \
     --namespace flux-system -o json)"

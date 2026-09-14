@@ -52,13 +52,19 @@ case "$*" in
     [[ ! -e "${FAKE_STATE_DIR}/pvc" ]] || printf '%s\n' 'persistentvolumeclaim/opencost-data'
     ;;
   'get kustomization.kustomize.toolkit.fluxcd.io/infrastructure --namespace flux-system -o json')
-    if [[ -e "${FAKE_STATE_DIR}/missing-inventory" ]]; then
+    if [[ -e "${FAKE_STATE_DIR}/transient-not-ready" ]]; then
+      jq -n '{status:{conditions:[{type:"Ready",status:"False"}],inventory:{entries:[{id:"observability_coroot_operator_helm.toolkit.fluxcd.io_HelmRelease"}]}}}'
+    elif [[ -e "${FAKE_STATE_DIR}/missing-inventory" ]]; then
       jq -n '{status:{conditions:[{type:"Ready",status:"True"}]}}'
     elif [[ -e "${FAKE_STATE_DIR}/managed-helmrelease" ]]; then
       jq -n '{status:{conditions:[{type:"Ready",status:"True"}],inventory:{entries:[{id:"opencost_opencost_helm.toolkit.fluxcd.io_HelmRelease"}]}}}'
     else
       jq -n '{status:{conditions:[{type:"Ready",status:"True"}],inventory:{entries:[{id:"observability_coroot_operator_helm.toolkit.fluxcd.io_HelmRelease"}]}}}'
     fi
+    ;;
+  'wait --for=condition=Ready=True kustomization.kustomize.toolkit.fluxcd.io/infrastructure --namespace flux-system --timeout=2m')
+    [[ ! -e "${FAKE_STATE_DIR}/ready-timeout" ]] || exit 1
+    rm -f "${FAKE_STATE_DIR}/transient-not-ready"
     ;;
   'delete helmrelease.helm.toolkit.fluxcd.io/opencost --namespace opencost --wait=false')
     rm -f "${FAKE_STATE_DIR}/helmrelease" "${FAKE_STATE_DIR}/clusterrole" "${FAKE_STATE_DIR}/clusterrolebinding"
@@ -183,6 +189,25 @@ namespace_delete_line="$(grep -nFx -- '--context admin@prod delete namespace/ope
 [[ "${helm_delete_line}" -lt "${namespace_delete_line}" ]] || fail 'the HelmRelease must be deleted before its Namespace'
 grep -qF 'PASS: OpenCost production retirement completed' <<<"${happy_output}" ||
   fail 'successful retirement did not report its completion'
+
+transient_ready_state="$(init_state transient-ready)"
+touch "${transient_ready_state}/transient-not-ready"
+if ! transient_ready_output="$(run_subject "${transient_ready_state}" --execute 2>&1)"; then
+  fail "retirement should wait for a transient Flux reconciliation: ${transient_ready_output}"
+fi
+grep -qF -- '--context admin@prod wait --for=condition=Ready=True kustomization.kustomize.toolkit.fluxcd.io/infrastructure --namespace flux-system --timeout=2m' \
+  "${transient_ready_state}/commands.log" ||
+  fail 'retirement did not wait for Flux to become Ready before reading inventory'
+
+ready_timeout_state="$(init_state ready-timeout)"
+touch "${ready_timeout_state}/ready-timeout"
+if run_subject "${ready_timeout_state}" --execute >"${temp_dir}/ready-timeout.out" 2>&1; then
+  fail 'retirement must refuse deletion when Flux does not become Ready in time'
+fi
+grep -qF 'did not become Ready within 2m' "${temp_dir}/ready-timeout.out" ||
+  fail 'the Ready timeout did not explain the unjudgeable Flux state'
+grep -qF 'delete helmrelease' "${ready_timeout_state}/commands.log" &&
+  fail 'the Ready timeout issued a destructive command'
 
 unarmed_state="$(init_state unarmed)"
 if run_subject "${unarmed_state}" >"${temp_dir}/unarmed.out" 2>&1; then
