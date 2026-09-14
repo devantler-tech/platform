@@ -2,8 +2,17 @@ name: Mirror Wedding Backup Catalogue
 
 # Copy the shared Wedding backup catalogue into its dedicated bucket and record
 # the evaluator's parity verdict (#3767). The Cluster keeps archiving to the
-# shared store while this runs; switching its reference is #3252's separate,
-# later step, and needs a CONVERGED run here first.
+# shared store while the mirror runs; switching its reference is #3252's separate,
+# later step, and needs a CONVERGED mirror run here first.
+#
+# TWO MODES.
+#   mirror    runs before the switch, while the Cluster still archives through
+#             `wedding-db`. CONVERGED means the switch may start.
+#   catch-up  runs after the switch, once the Cluster archives through
+#             `wedding-db-dedicated`, and needs the recorded switch time. It copies
+#             the now-quiescent shared catalogue once more and proves the WAL
+#             sequence continues across the switch (#3778). The cutover is not
+#             complete until a catch-up run reports CAUGHT UP.
 #
 # DORMANT. There is no schedule and no pull_request trigger, and the operator
 # must type an exact confirmation phrase, so an accidental dispatch does nothing.
@@ -14,10 +23,7 @@ name: Mirror Wedding Backup Catalogue
 #
 # RE-RUNNABLE. The copy never deletes and overwrites only differing objects, so a
 # NOT CONVERGED result (exit 3, shown as a failed run) is resolved by dispatching
-# again. CONVERGED means the switch can start NOW; it is not the last word, because
-# the shared archive keeps receiving WAL until the Cluster's reference changes.
-# The cutover must therefore be followed by a verified catch-up of anything
-# archived in between (#3778).
+# again.
 
 on:
   workflow_dispatch:
@@ -25,6 +31,18 @@ on:
       confirm:
         description: "Type exactly: mirror-wedding-backup-catalogue"
         required: true
+        type: string
+      mode:
+        description: "mirror before the switch, catch-up after it"
+        required: true
+        type: choice
+        default: mirror
+        options:
+          - mirror
+          - catch-up
+      switch-time:
+        description: "catch-up only: the UTC time the Cluster archive reference changed, as YYYY-MM-DDTHH:MM:SSZ"
+        required: false
         type: string
 
 permissions: {}
@@ -53,6 +71,8 @@ jobs:
         env:
           CONFIRM: ${{ inputs.confirm }}
           DISPATCH_REF: ${{ github.ref }}
+          MODE: ${{ inputs.mode }}
+          SWITCH_TIME: ${{ inputs.switch-time }}
         run: |
           set -euo pipefail
           if [[ "${DISPATCH_REF}" != 'refs/heads/main' ]]; then
@@ -64,6 +84,24 @@ jobs:
             printf 'This copies into a production bucket. Nothing has been touched.\n' >&2
             exit 1
           fi
+          case "${MODE}" in
+            mirror)
+              if [[ -n "${SWITCH_TIME}" ]]; then
+                printf 'Refusing to run: switch-time applies only to the catch-up mode.\n' >&2
+                exit 1
+              fi
+              ;;
+            catch-up)
+              if [[ ! "${SWITCH_TIME}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+                printf 'Refusing to run: the catch-up needs switch-time as YYYY-MM-DDTHH:MM:SSZ.\n' >&2
+                exit 1
+              fi
+              ;;
+            *)
+              printf 'Refusing to run: unknown mode.\n' >&2
+              exit 1
+              ;;
+          esac
           printf 'Confirmation accepted.\n'
 
       - name: 📑 Checkout
@@ -98,4 +136,13 @@ jobs:
 
       - name: 💒 Copy and prove the catalogue
         shell: bash
-        run: ./scripts/mirror-wedding-backup-catalogue.sh --confirm
+        env:
+          MODE: ${{ inputs.mode }}
+          SWITCH_TIME: ${{ inputs.switch-time }}
+        run: |
+          set -euo pipefail
+          if [[ "${MODE}" == catch-up ]]; then
+            ./scripts/mirror-wedding-backup-catalogue.sh --confirm --catch-up "${SWITCH_TIME}"
+          else
+            ./scripts/mirror-wedding-backup-catalogue.sh --confirm
+          fi

@@ -475,4 +475,89 @@ run_wrapper "${dir}" "${bin}/fake-evaluator" --confirm
 [[ "${wrapper_rc}" == 1 ]] || fail "a summary without a verdict must exit 1, got ${wrapper_rc}"
 cases_run=$((cases_run + 1))
 
+# --- catch-up after the switch (#3778) ---------------------------------------
+
+# The pod's catalogue was archived on ${old}; the switch was recorded after that
+# and before the catch-up's own listings start.
+readonly switch_time='2026-09-10T00:00:00Z'
+readonly next_wal='000000010000000000000043'
+readonly gap_wal='000000010000000000000045'
+
+# with_post_switch_segment <dir> <segment> <lastModified>: the destination listing
+# gains one segment archived through the dedicated store.
+with_post_switch_segment() {
+  local listing="$1/work/destination"
+  {
+    grep -v '"type":"listing-complete"' "${happy_work}/destination"
+    printf '{"status":"success","type":"file","lastModified":"%s","size":512,"key":"wedding-db/wals/0000000100000000/%s.gz","etag":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}\n' "$3" "$2"
+    grep '"type":"listing-complete"' "${happy_work}/destination" | sed 's/"files":3}/"files":4}/'
+  } >"${listing}"
+  grep -q '"files":4}' "${listing}" || fail 'the post-switch fixture was not built'
+}
+
+dir="$(new_wrapper_case catch-up-caught-up)"
+printf 'wedding-db-dedicated' >"${dir}/archive"
+with_post_switch_segment "${dir}" "${next_wal}" '2026-09-12T00:00:00Z'
+run_wrapper "${dir}" "${evaluator}" --confirm --catch-up "${switch_time}"
+[[ "${wrapper_rc}" == 0 ]] || fail "a complete catch-up with continuous WAL must exit 0, got ${wrapper_rc}: ${wrapper_err}"
+require_text "${wrapper_out}" '"converged":true' 'the catch-up summary is printed'
+require_text "${wrapper_out}" "\"oldestPostSwitchWal\":\"${next_wal}\"" 'the summary names the first post-switch segment'
+require_text "${wrapper_out}" 'CAUGHT UP' 'the catch-up verdict is stated'
+refute_text "${wrapper_out}" 'NOT CAUGHT UP' 'a caught-up pass is not reported as pending'
+[[ "$(cat "${dir}/archive-count")" == 2 ]] || fail 'the catch-up checks the archive reference before and after the copy'
+cases_run=$((cases_run + 1))
+
+dir="$(new_wrapper_case catch-up-waiting)"
+printf 'wedding-db-dedicated' >"${dir}/archive"
+run_wrapper "${dir}" "${evaluator}" --confirm --catch-up "${switch_time}"
+[[ "${wrapper_rc}" == 3 ]] || fail "a catch-up with no post-switch segment yet must exit 3, got ${wrapper_rc}: ${wrapper_err}"
+require_text "${wrapper_out}" 'NOT CAUGHT UP' 'the operator is told the catch-up is not complete'
+cases_run=$((cases_run + 1))
+
+dir="$(new_wrapper_case catch-up-before-cutover)"
+run_wrapper "${dir}" "${evaluator}" --confirm --catch-up "${switch_time}"
+refuse_before_pod "${dir}" 'a catch-up while the Cluster still archives to the shared store'
+require_text "${wrapper_err}" 'only runs after the cutover' 'the refusal names the reason'
+cases_run=$((cases_run + 1))
+
+dir="$(new_wrapper_case catch-up-switched-back)"
+printf 'wedding-db-dedicated' >"${dir}/archive"
+printf 'wedding-db' >"${dir}/archive-2"
+run_wrapper "${dir}" "${evaluator}" --confirm --catch-up "${switch_time}"
+[[ "${wrapper_rc}" == 1 ]] || fail "a Cluster that switched back during the catch-up must be refused, got ${wrapper_rc}"
+refute_text "${wrapper_out}" 'CAUGHT UP' 'no verdict is reported once the reference moved'
+cases_run=$((cases_run + 1))
+
+dir="$(new_wrapper_case catch-up-gap)"
+printf 'wedding-db-dedicated' >"${dir}/archive"
+with_post_switch_segment "${dir}" "${gap_wal}" '2026-09-12T00:00:00Z'
+run_wrapper "${dir}" "${evaluator}" --confirm --catch-up "${switch_time}"
+[[ "${wrapper_rc}" == 1 ]] || fail "a WAL gap across the switch must be refused, got ${wrapper_rc}"
+require_text "${wrapper_err}" 'WAL gap' 'the evaluator names the gap'
+cases_run=$((cases_run + 1))
+
+dir="$(new_wrapper_case catch-up-stale-object)"
+printf 'wedding-db-dedicated' >"${dir}/archive"
+with_post_switch_segment "${dir}" "${next_wal}" '2026-09-05T00:00:00Z'
+run_wrapper "${dir}" "${evaluator}" --confirm --catch-up "${switch_time}"
+[[ "${wrapper_rc}" == 1 ]] || fail "a destination object written before the switch must be refused, got ${wrapper_rc}"
+require_text "${wrapper_err}" 'unexpected destination object' 'the evaluator names the stale object'
+cases_run=$((cases_run + 1))
+
+for bad in 'yesterday' '2026-09-10' '2999-01-01T00:00:00Z'; do
+  dir="$(new_wrapper_case "catch-up-bad-time-${bad//[^a-z0-9]/-}")"
+  printf 'wedding-db-dedicated' >"${dir}/archive"
+  run_wrapper "${dir}" "${evaluator}" --confirm --catch-up "${bad}"
+  [[ "${wrapper_rc}" == 1 ]] || fail "switch time '${bad}' must be refused, got ${wrapper_rc}"
+  [[ ! -e "${dir}/calls" ]] || fail "switch time '${bad}' must be refused before touching the cluster"
+  cases_run=$((cases_run + 1))
+done
+
+dir="$(new_wrapper_case catch-up-no-time)"
+printf 'wedding-db-dedicated' >"${dir}/archive"
+run_wrapper "${dir}" "${evaluator}" --confirm --catch-up
+[[ "${wrapper_rc}" == 1 ]] || fail "a catch-up without a switch time must exit 1, got ${wrapper_rc}"
+[[ ! -e "${dir}/calls" ]] || fail 'a catch-up without a switch time must not touch the cluster'
+cases_run=$((cases_run + 1))
+
 printf 'test-mirror-wedding-backup-catalogue: %d cases passed\n' "${cases_run}"

@@ -5,24 +5,37 @@
 #
 # This is the copy step #3252's cutover waits on: the Cluster may only switch its
 # archive reference to wedding-db-dedicated once the dedicated bucket holds the
-# full recoverable history.
+# full recoverable history, and the cutover is only complete once a catch-up pass
+# has proven nothing was lost across the switch.
+#
+# TWO MODES.
+#   --confirm                           mirror, before the switch
+#   --confirm --catch-up <switch-time>  catch-up, after the switch (#3778)
 #
 # WHAT IT DOES, in order, refusing at the first thing it cannot prove:
-#   1. Confirms the live Cluster still archives through `wedding-db`.
+#   1. Confirms the live Cluster archives through the store the mode expects:
+#      `wedding-db` for the mirror, `wedding-db-dedicated` for the catch-up.
 #   2. Reads both live ObjectStores and hands their exact bucket, prefix and
 #      Secret names to `validate-plan`, so a drifted store is refused rather than
 #      replaced with the reviewed value.
 #   3. Runs scripts/mirror-wedding-backup-catalogue-pod.sh in a short-lived pod in
 #      wedding-app, where both credentials and R2 egress already exist, and
-#      collects its listings with `kubectl exec` once it reports them ready.
-#   4. Confirms the Cluster STILL archives through `wedding-db`.
-#   5. Runs `evaluate` on the three listings.
+#      collects its listings with `kubectl exec` once it reports them ready. The
+#      copy walks only the shared catalogue's keys, so it never touches an object
+#      the Cluster archived through the dedicated store after the switch.
+#   4. Confirms the Cluster STILL archives through that store.
+#   5. Runs `evaluate` (mirror) or `evaluate-catch-up` (catch-up) on the three
+#      listings.
 #
-# Exit status: 0 converged (the destination is ready for the cutover), 3 copied
-# and verified but not converged (objects archived during the run are still
-# pending, so run it again), 1 refused or failed. Only 0 means the switch may
-# start, and even 0 covers nothing archived after the run: the cutover must end
-# with a verified catch-up (#3778).
+# Exit status for the mirror: 0 converged (the destination is ready for the
+# cutover), 3 copied and verified but not converged (objects archived during the
+# run are still pending, so run it again), 1 refused or failed. Only 0 means the
+# switch may start, and even 0 covers nothing archived after the run.
+#
+# Exit status for the catch-up: 0 caught up (every shared object is copied and the
+# dedicated store's WAL continues the shared catalogue with no gap), 3 verified but
+# not caught up (no segment has been archived through the dedicated store yet, so
+# run it again after the next archive), 1 refused or failed.
 #
 # Needs --confirm. The pod writes to a production bucket, so a bare invocation
 # does nothing.
@@ -71,9 +84,27 @@ fail() {
   exit 1
 }
 
-if [[ "$#" -ne 1 || "$1" != '--confirm' ]]; then
-  fail 'refusing to run without --confirm: this copies into a production bucket. Nothing has been touched.'
+mode=''
+switch_time=''
+if [[ "$#" -eq 1 && "$1" == '--confirm' ]]; then
+  mode=mirror
+elif [[ "$#" -eq 3 && "$1" == '--confirm' && "$2" == '--catch-up' ]]; then
+  mode=catch-up
+  switch_time="$3"
+else
+  fail 'refusing to run: use --confirm, or --confirm --catch-up <switch-time>. This copies into a production bucket. Nothing has been touched.'
 fi
+readonly mode
+
+if [[ "${mode}" == catch-up ]]; then
+  [[ "${switch_time}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] ||
+    fail 'the switch time must be the UTC time the archive reference changed, as YYYY-MM-DDTHH:MM:SSZ. Nothing has been touched.'
+  # The fixed-width UTC form orders lexically, so a string comparison is a time
+  # comparison. A switch recorded in the future cannot have happened yet.
+  [[ ! "${switch_time}" > "$(date -u +%Y-%m-%dT%H:%M:%SZ)" ]] ||
+    fail 'the switch time is in the future. Nothing has been touched.'
+fi
+readonly switch_time
 
 run_id="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 [[ "${run_id}" =~ ^[a-z0-9-]{1,40}$ ]] || fail 'the run identifier is not a valid name fragment'
@@ -97,11 +128,19 @@ archive_reference() {
     -o "jsonpath={.spec.plugins[?(@.name==\"${plugin}\")].parameters.barmanObjectName}"
 }
 
-require_shared_archive() {
+# require_archive_reference refuses unless the Cluster archives through the store
+# this mode depends on: the shared store before the cutover, the dedicated store
+# after it.
+require_archive_reference() {
   local reference
   reference="$(archive_reference)" || fail "could not read the ${cluster} Cluster"
-  [[ "${reference}" == "${source_store}" ]] ||
-    fail "the ${cluster} Cluster archives through '${reference}', not '${source_store}'. The mirror only runs before the cutover."
+  if [[ "${mode}" == catch-up ]]; then
+    [[ "${reference}" == "${destination_store}" ]] ||
+      fail "the ${cluster} Cluster archives through '${reference}', not '${destination_store}'. The catch-up only runs after the cutover."
+  else
+    [[ "${reference}" == "${source_store}" ]] ||
+      fail "the ${cluster} Cluster archives through '${reference}', not '${source_store}'. The mirror only runs before the cutover."
+  fi
 }
 
 store_field() {
@@ -142,7 +181,7 @@ read_store() {
     fail "the ${store} ObjectStore endpoint is not an https URL with a bare host"
 }
 
-require_shared_archive
+require_archive_reference
 
 read_store "${source_store}"
 readonly source_bucket="${store_bucket}" source_prefix="${store_prefix}" \
@@ -316,9 +355,15 @@ run_start="$(cat "${work_dir}/run-start")"
 [[ "${run_start}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] ||
   fail 'the mirror pod reported a malformed run start'
 
-require_shared_archive
+require_archive_reference
 
-if ! "${evaluator}" evaluate "${run_start}" "${source_bucket}" \
+if [[ "${mode}" == catch-up ]]; then
+  if ! "${evaluator}" evaluate-catch-up "${switch_time}" "${source_bucket}" \
+    "${work_dir}/source-before" "${work_dir}/source-after" \
+    "${work_dir}/destination" >"${work_dir}/summary.json"; then
+    fail 'the evaluator refused the catch-up'
+  fi
+elif ! "${evaluator}" evaluate "${run_start}" "${source_bucket}" \
   "${work_dir}/source-before" "${work_dir}/source-after" \
   "${work_dir}/destination" >"${work_dir}/summary.json"; then
   fail 'the evaluator refused the mirror'
@@ -328,12 +373,20 @@ fi
 report_verdict() {
   cat "$1"
   if grep -q '"converged":true' "$1"; then
-    printf 'CONVERGED: the dedicated bucket holds the full catalogue as of this run, so the switch may start.\n'
-    printf 'WAL archived after this run is not covered: the cutover must end with a verified catch-up (#3778).\n'
+    if [[ "${mode}" == catch-up ]]; then
+      printf 'CAUGHT UP: every shared object is in the dedicated bucket and its WAL continues the shared catalogue with no gap. The cutover is complete.\n'
+    else
+      printf 'CONVERGED: the dedicated bucket holds the full catalogue as of this run, so the switch may start.\n'
+      printf 'WAL archived after this run is not covered: after the switch, run the catch-up (--catch-up <switch-time>).\n'
+    fi
     exit 0
   fi
   if grep -q '"converged":false' "$1"; then
-    printf 'NOT CONVERGED: objects archived during the run are still pending. Run the mirror again.\n'
+    if [[ "${mode}" == catch-up ]]; then
+      printf 'NOT CAUGHT UP: no segment has been archived through the dedicated store yet. Run the catch-up again after the next archive.\n'
+    else
+      printf 'NOT CONVERGED: objects archived during the run are still pending. Run the mirror again.\n'
+    fi
     exit 3
   fi
   fail 'the evaluator summary has no convergence verdict'
