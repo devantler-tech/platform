@@ -41,6 +41,7 @@ done
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 
+# Prints a failure message and exits the test.
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
@@ -55,6 +56,8 @@ substitute() {
     "$1"
 }
 
+# Renders one HelmRelease's pinned chart with its committed values into
+# <work>/rbac.yaml, keeping only its Roles and ClusterRoles.
 render() {
   local dir="$1" work="$2"
   local release_file="${repo_root}/${dir}/helm-release.yaml"
@@ -76,11 +79,27 @@ render() {
     fi
   done
 
-  # The render skips Flux post-renderers, which is exact for RBAC only while no
-  # post-renderer touches a Role or ClusterRole.
-  jq -e '(.spec.postRenderers // []) | tostring | test("\\b(Cluster)?Role\\b") | not' \
-    "${work}/release.json" >/dev/null ||
-    fail "${dir}: a post-renderer references Role or ClusterRole; render it through the post-renderer"
+  # The render skips Flux post-renderers, which is exact for RBAC only while every
+  # post-renderer is a kustomize patch or image override whose patches each name an
+  # explicit kind outside the RBAC API. A patch without a kind could select a role by
+  # name alone, so it fails closed too.
+  jq -e '
+    (.spec.postRenderers // []) | all(.[];
+      keys == ["kustomize"] and
+      (.kustomize | keys - ["images", "patches"] | length) == 0 and
+      ((.kustomize.patches // []) | all(.[];
+        (.target.kind // "") as $kind |
+        (.target.group // "") as $group |
+        $kind != "" and
+        ($kind | test("^(Cluster)?Role(Binding)?$") | not) and
+        $group != "rbac.authorization.k8s.io")))
+  ' "${work}/release.json" >/dev/null ||
+    fail "${dir}: a post-renderer is not an explicit non-RBAC kustomize patch; render it through the post-renderer"
+
+  # Flux merges spec.valuesFrom before spec.values, and this render reads only the
+  # inline values, so a release that sources values elsewhere fails closed.
+  jq -e '(.spec.valuesFrom // []) | length == 0' "${work}/release.json" >/dev/null ||
+    fail "${dir}: spec.valuesFrom is not rendered by this test; merge it before evaluating the policy"
 
   jq '.spec.values // {}' "${work}/release.json" >"${work}/values.json"
   case "$url" in
