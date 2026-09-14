@@ -7,10 +7,11 @@
 # The reconciler dismisses only these pairs. A newly named workload, a new risk
 # type, or a new application therefore stays active for investigation.
 #
-# The three remediated workloads are deliberately absent: Alertmanager and the
-# Longhorn CSI snapshotter get warm replicas, while Origin CA Issuer is disabled.
-# crossview-postgres is also absent: its unreplicated-database CRITICAL remains
-# visible until platform#3319 delivers and verifies durable storage.
+# Four initial warnings are deliberately absent: Alertmanager and the Longhorn
+# CSI snapshotter get warm replicas, Origin CA Issuer is disabled, and #3818
+# removes the superseded OpenCost usage scraper. crossview-postgres is also
+# absent: its unreplicated-database CRITICAL remains visible until platform#3319
+# delivers and verifies durable storage.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -156,12 +157,6 @@ data:
         "category": "Availability",
         "type": "single-instance-app",
         "reason": "platform#3812: vulnerability worker is off the serving path and uses single-writer persisted state"
-      },
-      {
-        "application": "opencost:Deployment:opencost-usage-scraper",
-        "category": "Availability",
-        "type": "single-instance-app",
-        "reason": "platform#3812: bounded metrics scraper is off the serving path; the next sample recovers a restart gap"
       },
       {
         "application": "kubescape:Deployment:operator",

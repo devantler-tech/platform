@@ -39,7 +39,7 @@ acceptances_file="${work_root}/risks.json"
 yq e -r '.data."risks.json"' "${acceptances_manifest}" >"${acceptances_file}"
 
 jq -e '
-  type == "array" and length == 34 and
+  type == "array" and length == 33 and
   all(.[ ];
     (.application | type == "string") and
     (.application | split(":") | length == 3) and
@@ -50,7 +50,7 @@ jq -e '
   ([.[] | [.application, .category, .type] | @tsv] | length) ==
     ([.[] | [.application, .category, .type] | @tsv] | unique | length)
 ' "${acceptances_file}" >/dev/null ||
-  fail 'the availability acceptance allowlist must contain 34 unique, reasoned singleton entries'
+  fail 'the availability acceptance allowlist must contain 33 unique, reasoned singleton entries'
 
 expected_applications=(
   'actual-budget:Deployment:actual-budget-actualbudget'
@@ -76,7 +76,6 @@ expected_applications=(
   'longhorn-system:InstanceManager:instance-manager-44efed9835a6c0c7c26e0d4ed66b757b'
   'kubescape:Deployment:kubescape'
   'kubescape:Deployment:kubevuln'
-  'opencost:Deployment:opencost-usage-scraper'
   'kubescape:Deployment:operator'
   'cnpg-system:Deployment:plugin-barman-cloud'
   'crossplane-system:Deployment:provider-aws-iam-87e81d392ac1'
