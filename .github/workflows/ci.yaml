@@ -376,6 +376,13 @@ jobs:
               - 'scripts/diagnose-cilium-ext-authz-ipcache.sh'
               - 'scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh'
               - '.github/workflows/diagnose-cilium-ext-authz-ipcache.yaml'
+              # The #2284 cross-node datapath probe, its test and its workflow are
+              # one contract for the same reason: the test pins what the probe may
+              # write to production, that it cleans up, and that no address reaches
+              # the public log.
+              - 'scripts/probe-cilium-externalauth-crossnode.sh'
+              - 'scripts/tests/test-probe-cilium-externalauth-crossnode.sh'
+              - '.github/workflows/probe-cilium-externalauth-crossnode.yaml'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
@@ -1234,6 +1241,18 @@ jobs:
         run: |
           shellcheck scripts/diagnose-cilium-ext-authz-ipcache.sh scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh
           bash scripts/tests/test-diagnose-cilium-ext-authz-ipcache.sh
+
+      - name: 🧪 Validate Cilium ExternalAuth cross-node probe
+        if: needs.changes.outputs.k8s == 'true'
+        # The probe needs prod and runs only on dispatch, and unlike the ipcache
+        # diagnostic it WRITES while it runs. Its test fakes kubectl from fixtures
+        # and pins what makes dispatching it acceptable: no exec/patch and only
+        # run-scoped deletes, cleanup whenever anything was created, nothing created
+        # over leftovers, pods pinned to the right nodes, no address in the public
+        # log, and each conclusive verdict against a one-fixture control.
+        run: |
+          shellcheck scripts/probe-cilium-externalauth-crossnode.sh scripts/tests/test-probe-cilium-externalauth-crossnode.sh
+          bash scripts/tests/test-probe-cilium-externalauth-crossnode.sh
 
       - name: 🔐 Validate Cilium mutual-auth policy scope
         if: needs.changes.outputs.k8s == 'true'
