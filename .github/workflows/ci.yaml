@@ -1302,9 +1302,10 @@ jobs:
         if: needs.changes.outputs.k8s == 'true'
         # The kube-system LimitRange only reaches pods admitted after it exists, so the
         # non-datapath add-ons carry their CPU limit in their own chart values (#3789).
-        # Pin a CPU request next to every limit: auto-vpa keeps the ratio, and a
-        # limit alone would default the request to the limit and throttle the add-on.
-        # Also pin that the Cilium agent and Envoy DaemonSets stay unlimited here.
+        # Pin the exact CPU request next to every limit: the static prod VPAs keep the
+        # ratio, and a limit alone, or a request raised to the limit, would let the VPA
+        # throttle the add-on. Also pin that the Cilium agent and Envoy DaemonSets
+        # stay unlimited here.
         run: bash scripts/tests/test-kube-system-addon-cpu-limits.sh
 
       - name: 📣 Validate the rollout gate cannot suppress sync silently

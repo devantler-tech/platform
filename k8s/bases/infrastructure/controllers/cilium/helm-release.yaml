@@ -95,12 +95,13 @@ spec:
           # both fields, so minAvailable is nulled.
           minAvailable: null
           maxUnavailable: 1
-        # CPU limit declared in the template so it no longer depends on the
+        # The CPU limit is declared in the template, so it does not depend on the
         # kube-system LimitRange admitting the pod (#3789). The chart default is
-        # empty, so the request must be stated too: a limit alone would default the
-        # request to 2 CPUs, and auto-vpa (which controls requests AND limits and
-        # keeps their ratio) would then pin the limit at the request. 15m:2 is
-        # exactly the pair the LimitRange admits today.
+        # empty, so the request is stated too. A limit alone would default the
+        # request to 2 CPUs, and the static prod VPAs
+        # (providers/hetzner/infrastructure/vertical-pod-autoscalers/), which control
+        # requests AND limits and keep their ratio, would then pin the limit at the
+        # request. 15m:2 is the pair the LimitRange admits.
         resources:
           requests:
             cpu: 15m
@@ -108,8 +109,8 @@ spec:
             cpu: "2"
       ui:
         enabled: true
-        # Static single replica that just stays on; auto-vpa right-sizes it at
-        # idle.
+        # Static single replica that just stays on; its static prod VPA right-sizes
+        # it at idle.
         replicas: ${hubble_ui_replicas:=1}
         rollOutPods: true
         # Same reasoning as hubble.relay.resources, for both UI containers.
@@ -168,9 +169,10 @@ spec:
       # (request > 0 -- the BestEffort escape that matters) with ~1.7x
       # headroom over the observed peak. The operator runs on the
       # control-plane nodes, so this frees control-plane memory requests.
-      # The CPU limit is declared in the template so it no longer depends on the
-      # kube-system LimitRange admitting the pod (#3789). "2" is the LimitRange default,
-      # so the 100m:2 ratio auto-vpa preserves, and with it the live values, is unchanged.
+      # The CPU limit is declared in the template, so it does not depend on the
+      # kube-system LimitRange admitting the pod (#3789). "2" is the LimitRange
+      # default, so the 100m:2 ratio kept by the static prod VPA matches the admitted
+      # ratio, as do the live values.
       resources:
         requests:
           cpu: 100m

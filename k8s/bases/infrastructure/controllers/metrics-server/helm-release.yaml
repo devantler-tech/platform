@@ -39,10 +39,12 @@ spec:
       # user, dropped capabilities, read-only root filesystem and seccomp profile
       # are all preserved; the rendered container gains this one field.
       seLinuxOptions: {}
-    # CPU limit declared in the template so it no longer depends on the kube-system
-    # LimitRange admitting the pod (#3789). The requests restate the chart's defaults:
-    # auto-vpa controls requests AND limits and keeps their ratio, so the declared
-    # 100m:2 pair reproduces exactly the live values the LimitRange produces today.
+    # The CPU limit is declared in the template, so it does not depend on the
+    # kube-system LimitRange admitting the pod (#3789). The requests restate the
+    # chart's defaults. The static prod VPAs
+    # (providers/hetzner/infrastructure/vertical-pod-autoscalers/) control requests
+    # AND limits and keep their ratio, so this 100m:2 pair gives the same live values
+    # as the LimitRange-admitted pair.
     resources:
       requests:
         cpu: 100m
