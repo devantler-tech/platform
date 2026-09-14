@@ -456,6 +456,10 @@ jobs:
               # test alone — still runs the check that covers it.
               - 'scripts/reconcile-flux-workloads.sh'
               - 'scripts/tests/test-flux-reconcile-control-plane-restart.sh'
+              # Both halves, so editing the CoreDNS restart alone — or its test
+              # alone — still runs the check that covers it.
+              - 'scripts/restart-uncapped-talos-coredns.sh'
+              - 'scripts/tests/test-restart-uncapped-talos-coredns.sh'
               - 'scripts/tests/test-opencost-usage-scraper.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
               - 'scripts/tests/test-crossplane-sync-alerter.sh'
@@ -1282,6 +1286,14 @@ jobs:
         # retries that self-inflicted failure exactly once — and, in the other
         # direction, that a genuine reconcile failure is still never retried.
         run: bash scripts/tests/test-flux-reconcile-control-plane-restart.sh
+
+      - name: 🧢 Validate the DR rebuild caps Talos-bootstrapped CoreDNS
+        if: needs.changes.outputs.k8s == 'true'
+        # Talos admits CoreDNS before the kube-system LimitRange exists, so a fresh
+        # prod cluster runs it without a CPU limit (#3567). Pin that the rebuild
+        # restarts CoreDNS only when a running pod is uncapped, restarts nothing
+        # else, and fails closed on any input it cannot read.
+        run: bash scripts/tests/test-restart-uncapped-talos-coredns.sh
 
       - name: 📣 Validate the rollout gate cannot suppress sync silently
         if: needs.changes.outputs.k8s == 'true'
