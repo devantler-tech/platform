@@ -223,6 +223,9 @@ require_safe_surface() {
   [[ ! -e "${fixtures}/UNEXPECTED_CONTEXT" ]] || fail 'a call used another kube context'
   [[ ! -e "${fixtures}/FORBIDDEN_VERB" ]] || fail 'the probe issued a forbidden verb (exec, patch, edit, replace, scale, cordon or drain)'
   [[ ! -e "${fixtures}/UNEXPECTED_CALL" ]] || fail 'the probe issued a kubectl call outside its pinned surface'
+  if grep -Fvq -- '--context admin@prod --request-timeout=30s ' "${fixtures}/calls.log"; then
+    fail 'a kubectl call was not bounded by --request-timeout'
+  fi
   if calls | grep -E ' delete ' | grep -Fvq -- "-l ${label}=${run_id} "; then
     fail 'a delete was not scoped to this run'"'"'s label'
   fi
@@ -659,7 +662,7 @@ output="${wf}"
 rc=0
 on_block="$(awk '/^on:/{f=1; next} f&&/^[a-z]/{exit} f' "${workflow}")"
 grep -Fq 'workflow_dispatch:' <<<"${on_block}" || fail 'the workflow must be dispatch-triggered'
-if grep -Eq '^\s*(schedule|pull_request|pull_request_target|push|merge_group|workflow_run):' <<<"${on_block}"; then
+if grep -Eq '^[[:space:]]*(schedule|pull_request|pull_request_target|push|merge_group|workflow_run):' <<<"${on_block}"; then
   fail 'the workflow must have no trigger other than workflow_dispatch'
 fi
 guard_line="$(grep -n "refs/heads/main" "${workflow}" | head -1 | cut -d: -f1)"

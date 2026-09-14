@@ -189,8 +189,11 @@ conclude() {
   exit 0
 }
 
+# Every request is bounded: a stalled API server or network must end in INCONCLUSIVE (or a reported
+# cleanup failure), never in a probe that hangs until the workflow kills it mid-cleanup.
+readonly request_timeout='30s'
 kc() {
-  kubectl --context "${context}" "$@" 2>/dev/null
+  kubectl --context "${context}" --request-timeout="${request_timeout}" "$@" 2>/dev/null
 }
 
 is_k8s_name() {
