@@ -22,8 +22,9 @@ for tool in yq jq shellcheck; do
   command -v "${tool}" >/dev/null 2>&1 || fail "${tool} is required"
 done
 
-[ -f "${acceptances_manifest}" ] && [ -f "${reconciler_manifest}" ] ||
+if [ ! -f "${acceptances_manifest}" ] || [ ! -f "${reconciler_manifest}" ]; then
   fail 'declarative Coroot risk acceptance manifests are missing'
+fi
 
 if ! yq e -e '.resources[] == "coroot/config-map-risk-acceptances.yaml"' \
   "${infrastructure_kustomization}" >/dev/null ||
@@ -113,8 +114,9 @@ yq e -e '
 
 script_body="$(yq e -r '.spec.jobTemplate.spec.template.spec.containers[0].command[2]' \
   "${reconciler_manifest}" | sed 's/\$\${/${/g')"
-[ -n "${script_body}" ] && [ "${script_body}" != 'null' ] ||
+if [ -z "${script_body}" ] || [ "${script_body}" = 'null' ]; then
   fail 'could not extract the Coroot risk acceptance reconciler'
+fi
 printf '%s\n' "${script_body}" | shellcheck -s sh -
 
 setup_scenario() {
