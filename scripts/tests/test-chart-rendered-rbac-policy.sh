@@ -1,37 +1,38 @@
 #!/usr/bin/env bash
 # The privileged-RBAC policy excludes roles by the exact names their charts render.
 # Those charts render in-cluster through Flux, so nothing else evaluates their RBAC
-# before admission: a chart bump that renames an excluded role, or adds a privileged
-# one, would pass its own PR and then fail the whole infrastructure-controllers
-# Kustomization. This test renders each chart at its pinned version and committed
-# values and applies the Enforce policy to the rendered Roles and ClusterRoles.
+# before admission: a chart bump that renames an excluded role, broadens one, or adds
+# a privileged one would pass its own PR and then fail or silently widen the cluster.
+# This test renders each chart from the production controllers overlay, at its pinned
+# version and effective values, and checks the rendered RBAC three ways:
+#   1. the Enforce policy passes every role it evaluates;
+#   2. the policy's exclusions split exactly into chart-rendered roles and an explicit
+#      list of roles no chart renders;
+#   3. every excluded chart role still grants exactly its reviewed rules.
+# Run with UPDATE_BASELINE=1 to record reviewed grants after checking the diff.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/audit-privileged-rbac.yaml"
+overlay="${repo_root}/k8s/providers/hetzner/infrastructure/controllers"
+baseline="${repo_root}/tests/chart-rendered-rbac-policy/excluded-role-grants.json"
 
-# The HelmReleases whose chart-rendered roles the policy names as exclusions.
-releases=(
-  k8s/bases/infrastructure/controllers/kro
-  k8s/bases/infrastructure/controllers/ksail-operator
-  k8s/bases/infrastructure/controllers/velero
-  k8s/providers/hetzner/infrastructure/controllers/crossplane
-  k8s/providers/hetzner/infrastructure/controllers/longhorn
-)
+# The HelmReleases, as the production overlay builds them, whose rendered roles the
+# policy may exclude.
+releases=(crossplane kro ksail-operator longhorn velero)
 
-# Every exclusion these charts are responsible for. Each must appear in the render,
-# so an exclusion can never silently cover a role the chart no longer creates.
-expected_chart_exclusions='[
-  "ClusterRole||crossplane",
-  "ClusterRole||crossplane-rbac-manager",
-  "ClusterRole||kro:controller",
-  "ClusterRole||ksail-operator",
-  "ClusterRole||longhorn-role",
-  "Role|longhorn-system|longhorn",
-  "Role|velero|velero-server"
+# Exclusions for roles no chart here renders: Kubernetes built-ins and roles this
+# repository commits. Every other policy exclusion must be rendered by a chart above.
+non_chart_exclusions='[
+  "ClusterRole||admin",
+  "ClusterRole||cluster-admin",
+  "ClusterRole||edit",
+  "ClusterRole||kro-tenant-rgd",
+  "ClusterRole||system:aggregate-to-edit",
+  "ClusterRole||system:controller:clusterrole-aggregation-controller"
 ]'
 
-for tool in helm jq kyverno yq; do
+for tool in helm jq kubectl kyverno yq; do
   command -v "$tool" >/dev/null || {
     printf 'FAIL: %s is required\n' "$tool" >&2
     exit 1
@@ -56,26 +57,37 @@ substitute() {
     "$1"
 }
 
-# Renders one HelmRelease's pinned chart with its committed values into
+kubectl kustomize "$overlay" >"${scratch}/overlay-raw.yaml"
+substitute "${scratch}/overlay-raw.yaml" >"${scratch}/overlay.yaml"
+
+# Renders one HelmRelease from the built overlay with its effective values into
 # <work>/rbac.yaml, keeping only its Roles and ClusterRoles.
 render() {
-  local dir="$1" work="$2"
-  local release_file="${repo_root}/${dir}/helm-release.yaml"
-  local repository_file="${repo_root}/${dir}/helm-repository.yaml"
+  local name="$1" work="$2"
   mkdir -p "$work"
 
-  substitute "$release_file" | yq -o=json 'select(.kind == "HelmRelease")' >"${work}/release.json"
-  local chart version release namespace url
+  yq -o=json "select(.kind == \"HelmRelease\" and .metadata.name == \"${name}\")" \
+    "${scratch}/overlay.yaml" >"${work}/release.json"
+  [ "$(jq -s length "${work}/release.json")" -eq 1 ] ||
+    fail "${name}: expected exactly one HelmRelease in the production controllers overlay"
+
+  local chart version release namespace source_kind source_name source_namespace url
   chart="$(jq -r '.spec.chart.spec.chart' "${work}/release.json")"
   version="$(jq -r '.spec.chart.spec.version' "${work}/release.json")"
   release="$(jq -r '.spec.releaseName // .metadata.name' "${work}/release.json")"
   namespace="$(jq -r '.spec.targetNamespace // .metadata.namespace' "${work}/release.json")"
-  url="$(yq -r 'select(.kind == "HelmRepository") | .spec.url' "$repository_file")"
+  source_kind="$(jq -r '.spec.chart.spec.sourceRef.kind' "${work}/release.json")"
+  source_name="$(jq -r '.spec.chart.spec.sourceRef.name' "${work}/release.json")"
+  source_namespace="$(jq -r '.spec.chart.spec.sourceRef.namespace // .metadata.namespace' "${work}/release.json")"
+  [ "$source_kind" = "HelmRepository" ] || fail "${name}: chart source is not a HelmRepository"
+  url="$(yq -r "select(.kind == \"HelmRepository\" and .metadata.name == \"${source_name}\"
+      and .metadata.namespace == \"${source_namespace}\") | .spec.url" "${scratch}/overlay.yaml")"
+
   # jq and yq print "null" for a missing field, so an empty check alone passes it.
   local field
   for field in "$chart" "$version" "$release" "$namespace" "$url"; do
     if [ -z "$field" ] || [ "$field" = "null" ]; then
-      fail "${dir}: could not read chart, version, release, namespace and repository"
+      fail "${name}: could not read chart, version, release, namespace and repository"
     fi
   done
 
@@ -94,12 +106,12 @@ render() {
         ($kind | test("^(Cluster)?Role(Binding)?$") | not) and
         $group != "rbac.authorization.k8s.io")))
   ' "${work}/release.json" >/dev/null ||
-    fail "${dir}: a post-renderer is not an explicit non-RBAC kustomize patch; render it through the post-renderer"
+    fail "${name}: a post-renderer is not an explicit non-RBAC kustomize patch; render it through the post-renderer"
 
   # Flux merges spec.valuesFrom before spec.values, and this render reads only the
   # inline values, so a release that sources values elsewhere fails closed.
   jq -e '(.spec.valuesFrom // []) | length == 0' "${work}/release.json" >/dev/null ||
-    fail "${dir}: spec.valuesFrom is not rendered by this test; merge it before evaluating the policy"
+    fail "${name}: spec.valuesFrom is not rendered by this test; merge it before evaluating the policy"
 
   jq '.spec.values // {}' "${work}/release.json" >"${work}/values.json"
   case "$url" in
@@ -117,7 +129,7 @@ render() {
 
   local count
   count="$(yq ea '[select(.kind == "Role" or .kind == "ClusterRole")] | length' "${work}/rbac.yaml")"
-  [ "$count" -gt 0 ] || fail "${dir}: ${chart} ${version} rendered no Role or ClusterRole"
+  [ "$count" -gt 0 ] || fail "${name}: ${chart} ${version} rendered no Role or ClusterRole"
   printf '%s %s rendered %s roles\n' "$chart" "$version" "$count"
 }
 
@@ -137,22 +149,77 @@ census() {
   return "$status"
 }
 
+# Prints each excluded chart role's grants, normalised so order does not matter.
+excluded_grants() {
+  local resources="$1"
+  yq ea -o=json '[select(.kind == "Role" or .kind == "ClusterRole")]' "$resources" |
+    jq -S --argjson excluded "$chart_exclusions" '
+      def normalise: walk(if type == "array" then sort else . end);
+      [.[] | {
+        key: "\(.kind)|\(.metadata.namespace // "")|\(.metadata.name)",
+        value: ({rules: (.rules // []), aggregationRule: (.aggregationRule // null)} | normalise)
+      }]
+      | map(select(.key as $key | $excluded | index($key)))
+      | from_entries'
+}
+
 : >"${scratch}/rbac.yaml"
-for dir in "${releases[@]}"; do
-  work="${scratch}/$(basename "$dir")"
-  render "$dir" "$work"
+for name in "${releases[@]}"; do
+  work="${scratch}/${name}"
+  render "$name" "$work"
   {
     printf -- '---\n'
     cat "${work}/rbac.yaml"
   } >>"${scratch}/rbac.yaml"
 done
 
+# The policy's exclusion inventory, as kind|namespace|name.
+yq -o=json '.' "$policy" |
+  jq '[.spec.rules[0].exclude.any[].resources
+    | (.kinds[0] | split("/") | last) as $kind
+    | (.namespaces // [""])[] as $ns
+    | .names[] | "\($kind)|\($ns)|\(.)"] | sort' >"${scratch}/policy-exclusions.json"
 yq ea -o=json '[select(.kind == "Role" or .kind == "ClusterRole")]' "${scratch}/rbac.yaml" |
-  jq '[.[] | "\(.kind)|\(.metadata.namespace // "")|\(.metadata.name)"]' >"${scratch}/identities.json"
-missing="$(jq -r --argjson expected "$expected_chart_exclusions" \
-  '. as $rendered | $expected - $rendered | .[]' "${scratch}/identities.json")"
+  jq '[.[] | "\(.kind)|\(.metadata.namespace // "")|\(.metadata.name)"] | unique' >"${scratch}/rendered.json"
+
+stale="$(jq -r --argjson listed "$non_chart_exclusions" '$listed - . | .[]' "${scratch}/policy-exclusions.json")"
+[ -z "$stale" ] ||
+  fail "non-chart exclusions no longer in the policy, update this test: ${stale//$'\n'/, }"
+rendered_non_chart="$(jq -r --argjson listed "$non_chart_exclusions" '. as $rendered | $listed | map(select(. as $id | $rendered | index($id))) | .[]' "${scratch}/rendered.json")"
+[ -z "$rendered_non_chart" ] ||
+  fail "exclusions listed as non-chart are rendered by a chart, move them to the reviewed grants: ${rendered_non_chart//$'\n'/, }"
+
+chart_exclusions="$(jq -c --argjson listed "$non_chart_exclusions" '. - $listed' "${scratch}/policy-exclusions.json")"
+missing="$(jq -r --argjson expected "$chart_exclusions" '. as $rendered | $expected - $rendered | .[]' "${scratch}/rendered.json")"
 [ -z "$missing" ] ||
-  fail "excluded roles no longer rendered by their charts, review the policy exclusions: ${missing//$'\n'/, }"
+  fail "policy exclusions no chart renders, review the exclusion or list it as non-chart: ${missing//$'\n'/, }"
+[ "$(jq length <<<"$chart_exclusions")" -gt 0 ] || fail "no chart-rendered exclusion was derived from the policy"
+
+excluded_grants "${scratch}/rbac.yaml" >"${scratch}/grants.json"
+if [ "${UPDATE_BASELINE:-}" = "1" ]; then
+  mkdir -p "$(dirname "$baseline")"
+  cp "${scratch}/grants.json" "$baseline"
+  printf 'Recorded %s excluded role grants in %s; review the diff before committing.\n' \
+    "$(jq length "$baseline")" "${baseline#"${repo_root}"/}"
+  exit 0
+fi
+
+[ -f "$baseline" ] ||
+  fail "no reviewed grants baseline; run UPDATE_BASELINE=1 bash scripts/tests/test-chart-rendered-rbac-policy.sh and review it"
+if ! diff -u "$baseline" "${scratch}/grants.json" >"${scratch}/grants.diff"; then
+  cat "${scratch}/grants.diff" >&2
+  fail "excluded chart roles grant different rules than reviewed; review the diff above, then run UPDATE_BASELINE=1 bash scripts/tests/test-chart-rendered-rbac-policy.sh"
+fi
+[ "$(jq -S 'keys' "$baseline")" = "$(jq -S --argjson expected "$chart_exclusions" -n '$expected | sort')" ] ||
+  fail "the grants baseline does not cover exactly the chart-rendered policy exclusions"
+
+# Negative control: broadening one excluded role must not match the baseline, or the
+# comparison above proves nothing.
+jq -S 'to_entries | .[0].value.rules += [{"apiGroups": ["*"], "resources": ["*"], "verbs": ["*"]}] | from_entries' \
+  "${scratch}/grants.json" >"${scratch}/broadened.json"
+if diff -q "$baseline" "${scratch}/broadened.json" >/dev/null; then
+  fail "a broadened excluded role still matched the reviewed grants"
+fi
 
 status=0
 census "${scratch}/rbac.yaml" "${scratch}/result.txt" "${scratch}/result.census" || status=$?
@@ -188,5 +255,5 @@ if [ "$negative_status" -ne 1 ] || [ "$negative_failed" -ne 1 ] ||
   fail "an unexcluded privileged role in the render was not refused"
 fi
 
-printf 'PASS: %s chart-rendered roles pass the privileged-RBAC policy (%s excluded roles present); an unexcluded privileged role fails\n' \
-  "$pass" "$(jq length <<<"$expected_chart_exclusions")"
+printf 'PASS: %s chart-rendered roles pass the privileged-RBAC policy; %s excluded chart roles match their reviewed grants; broadened and unexcluded privileged roles fail\n' \
+  "$pass" "$(jq length "$baseline")"
