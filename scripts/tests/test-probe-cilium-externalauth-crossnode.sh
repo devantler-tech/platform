@@ -120,12 +120,12 @@ case "${args}" in
   *" -n whoami get pod externalauth-probe-same-12345 -o json ") serve pod-same.json ;;
   *" -n whoami logs externalauth-probe-cross-12345 ") serve log-cross.txt ;;
   *" -n whoami logs externalauth-probe-same-12345 ") serve log-same.txt ;;
-  *" -n whoami delete pods,httproutes,ciliumnetworkpolicies -l ${label}=12345 --ignore-not-found --wait=false ")
+  *" -n whoami delete pods,httproutes,ciliumnetworkpolicies -l ${label}=12345 --ignore-not-found --wait=true --timeout=25s ")
     touch "${FIXTURES}/deleted-whoami"
     [[ -f "${FIXTURES}/delete-fails" ]] && exit 1
     exit 0
     ;;
-  *" -n oauth2-proxy delete referencegrants -l ${label}=12345 --ignore-not-found --wait=false ")
+  *" -n oauth2-proxy delete referencegrants -l ${label}=12345 --ignore-not-found --wait=true --timeout=25s ")
     touch "${FIXTURES}/deleted-grants"
     exit 0
     ;;
@@ -383,18 +383,19 @@ pass 'FAULT-PERSISTS: a complete cross-node black-hole while the control route a
 
 reset_fixtures
 gen_log "${fixtures}/log-cross.txt" '200 45 ' "302 0 ${dex_redirect}" 9 '000 0 '
+gen_log "${fixtures}/log-same.txt" '200 45 ' "302 0 ${dex_redirect}" 5 '000 0 '
 run_default
 require_text 'VERDICT: FAULT-PERSISTS' '9 of 10 lost meets the 90% bar'
 reset_fixtures
 gen_log "${fixtures}/log-cross.txt" '200 45 ' "302 0 ${dex_redirect}" 8 '000 0 '
 run_default
-require_inconclusive '8 of 10 lost is below the 90% bar' 'intermittent loss'
+require_inconclusive '8 of 10 lost is below the 90% bar' 'does not match the #2284 pattern'
 pass 'FAULT-PERSISTS needs at least 90% cross-node loss (9 of 10 yes, 8 of 10 no)'
 
 reset_fixtures
 gen_log "${fixtures}/log-cross.txt" '200 45 ' "302 0 ${dex_redirect}" 1 '000 0 '
 run_default
-require_inconclusive 'one transient timeout must not be conclusive either way' 'intermittent loss'
+require_inconclusive 'one transient timeout must not be conclusive either way' 'does not match the #2284 pattern'
 pass 'a single lost request is INCONCLUSIVE, not FAULT-PERSISTS'
 
 reset_fixtures
@@ -408,16 +409,18 @@ reset_fixtures
 gen_log "${fixtures}/log-cross.txt" '200 45 ' "302 0 ${dex_redirect}" 9 '000 0 '
 gen_log "${fixtures}/log-same.txt" '200 45 ' "302 0 ${dex_redirect}" 9 '000 0 '
 run_default
-require_inconclusive 'cross-node loss not above same-node loss is not the #2284 pattern' 'intermittent loss'
+require_inconclusive 'cross-node loss not above same-node loss is not the #2284 pattern' 'does not match the #2284 pattern'
 pass 'FAULT-PERSISTS needs same-node delivery and cross-node loss above same-node loss'
 
 reset_fixtures
 gen_log "${fixtures}/log-cross.txt" '200 45 ' '403 0 '
+gen_log "${fixtures}/log-same.txt" '200 45 ' "302 0 ${dex_redirect}" 5 '000 0 '
 run_default
 require_text 'VERDICT: FAULT-PERSISTS' 'an EMPTY 403 is Envoy'"'"'s ext_authz error and counts as lost'
 for code in 502 503 504; do
   reset_fixtures
   gen_log "${fixtures}/log-cross.txt" '200 45 ' "${code} 19 "
+  gen_log "${fixtures}/log-same.txt" '200 45 ' "302 0 ${dex_redirect}" 5 '000 0 '
   run_default
   require_text 'VERDICT: FAULT-PERSISTS' "a ${code} on the ExternalAuth route counts as lost"
 done
@@ -676,13 +679,28 @@ reset_fixtures
 gen_log "${fixtures}/log-cross.txt" '200 45 ' '000 0 '
 gen_log "${fixtures}/log-same.txt" '200 45 ' "302 0 ${dex_redirect}" 8 '000 0 '
 run_default
-require_inconclusive 'node-independent loss (cross 10, same 8 of 10) is not the #2284 pattern' 'intermittent loss'
+require_inconclusive 'node-independent loss (cross 10, same 8 of 10) is not the #2284 pattern' 'does not match the #2284 pattern'
 reset_fixtures
 gen_log "${fixtures}/log-cross.txt" '200 45 ' '000 0 '
 gen_log "${fixtures}/log-same.txt" '200 45 ' "302 0 ${dex_redirect}" 6 '000 0 '
 run_default
 require_text 'VERDICT: FAULT-PERSISTS' 'same-node loss within 15 points of the remote-endpoint share (6 of 10 vs 50%) still separates'
 pass 'FAULT-PERSISTS needs same-node loss near the remote-endpoint share, well below cross-node loss'
+
+# The lower side of the band: near-total cross-node loss while the same-node client, half of whose
+# calls go to a remote endpoint, loses almost nothing. Its remote calls are being delivered, which
+# contradicts a cross-node black-hole.
+reset_fixtures
+gen_log "${fixtures}/log-cross.txt" '200 45 ' '000 0 '
+gen_log "${fixtures}/log-same.txt" '200 45 ' "302 0 ${dex_redirect}" 1 '000 0 '
+run_default
+require_inconclusive 'same-node loss far below the remote-endpoint share (1 of 10 vs 50%) is not the #2284 pattern' 'does not match the #2284 pattern'
+reset_fixtures
+gen_log "${fixtures}/log-cross.txt" '200 45 ' '000 0 '
+gen_log "${fixtures}/log-same.txt" '200 45 ' "302 0 ${dex_redirect}" 4 '000 0 '
+run_default
+require_text 'VERDICT: FAULT-PERSISTS' 'same-node loss 10 points below the remote-endpoint share (4 of 10 vs 50%) is inside the band'
+pass 'FAULT-PERSISTS also rejects same-node loss more than 15 points below the remote-endpoint share'
 
 reset_fixtures
 printf '%s\n' '{"spec":{"nodeName":"prod-worker-2"},"status":{"phase":"Succeeded"}}' >"${fixtures}/pod-cross.json"

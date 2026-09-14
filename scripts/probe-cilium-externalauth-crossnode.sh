@@ -384,8 +384,11 @@ cleanup() {
   local rc=$?
   local failed=0
   trap - EXIT INT TERM
-  kc -n "${probe_namespace}" delete pods,httproutes,ciliumnetworkpolicies -l "${probe_label}=${run_id}" --ignore-not-found --wait=false >/dev/null || failed=1
-  kc -n "${oauth2_namespace}" delete referencegrants -l "${probe_label}=${run_id}" --ignore-not-found --wait=false >/dev/null || failed=1
+  # Wait for the objects to be gone, bounded below the 30s request timeout so the watch is not cut
+  # off first: a delete that returns while finalizers still hold an object would report success and
+  # leave the next run refusing to start. A timeout counts as a cleanup failure.
+  kc -n "${probe_namespace}" delete pods,httproutes,ciliumnetworkpolicies -l "${probe_label}=${run_id}" --ignore-not-found --wait=true --timeout=25s >/dev/null || failed=1
+  kc -n "${oauth2_namespace}" delete referencegrants -l "${probe_label}=${run_id}" --ignore-not-found --wait=true --timeout=25s >/dev/null || failed=1
   if [[ "${failed}" -ne 0 ]]; then
     printf 'CLEANUP: FAILED — delete objects labelled %s=%s by hand\n' "${probe_label}" "${run_id}"
     summary ""
@@ -465,6 +468,9 @@ metadata:
 spec:
   restartPolicy: Never
   activeDeadlineSeconds: ${pod_deadline_seconds}
+  # The client only runs curl, so a short grace period keeps cleanup's bounded delete wait sufficient
+  # even when a pod is still running at exit.
+  terminationGracePeriodSeconds: 5
   automountServiceAccountToken: false
   enableServiceLinks: false
   hostUsers: false
@@ -817,7 +823,9 @@ fi
 # Separation. The same-node client shares its node with some endpoints, so under the #2284 fault only
 # its calls to REMOTE endpoints are lost: its expected loss is the remote share of the endpoints.
 # Node-independent loss hits both clients alike, so FAULT-PERSISTS also needs the same-node loss to
-# stay within 15 points of that expectation and at least 15 points below the cross-node loss.
+# stay within 15 points of that expectation ON EITHER SIDE (far below it means this node's calls to
+# remote endpoints are being delivered, which contradicts a cross-node black-hole) and at least 15
+# points below the cross-node loss.
 endpoint_node_list="$(sed -n 's/^NODE //p' <<<"${endpoint_lines}")"
 total_endpoints="$(grep -c . <<<"${endpoint_node_list}" || true)"
 local_endpoints="$(grep -Fxc -- "${same_node}" <<<"${endpoint_node_list}" || true)"
@@ -825,10 +833,11 @@ remote_endpoints=$((total_endpoints - local_endpoints))
 separated=0
 if ((total_endpoints > 0)) &&
   ((same_lost * 100 * total_endpoints <= requests * (100 * remote_endpoints + 15 * total_endpoints))) &&
+  ((same_lost * 100 * total_endpoints >= requests * (100 * remote_endpoints - 15 * total_endpoints))) &&
   (((cross_lost - same_lost) * 100 >= requests * 15)); then
   separated=1
 fi
 if ((cross_lost * 10 >= requests * 9 && separated == 1)); then
   conclude 'FAULT-PERSISTS' "${cross_lost} of ${requests} cross-node ExternalAuth requests were lost (same-node: ${same_lost}) while the control route answered every time"
 fi
-inconclusive "${cross_lost} of ${requests} cross-node requests were lost (same-node: ${same_lost}), which is intermittent loss rather than the #2284 black-hole"
+inconclusive "${cross_lost} of ${requests} cross-node and ${same_lost} same-node requests were lost, which does not match the #2284 pattern (near-total cross-node loss, with same-node loss close to the remote-endpoint share)"
