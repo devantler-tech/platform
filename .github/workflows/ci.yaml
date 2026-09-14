@@ -483,6 +483,9 @@ jobs:
               - 'scripts/restart-uncapped-talos-coredns.sh'
               - 'scripts/tests/test-restart-uncapped-talos-coredns.sh'
               - 'scripts/tests/test-coroot-cost-convergence.sh'
+              - 'scripts/retire-opencost.sh'
+              - 'scripts/tests/test-opencost-retirement.sh'
+              - 'scripts/tests/test-opencost-retirement-wiring.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
               - 'scripts/tests/test-crossplane-sync-alerter.sh'
               - 'scripts/tests/test-crossplane-egress-policy.sh'
@@ -1359,6 +1362,16 @@ jobs:
         # so OpenCost cannot return through a route, workload, policy or optional
         # local integration, while the production pricing reconciler stays live.
         run: bash scripts/tests/test-coroot-cost-convergence.sh
+
+      - name: 🧹 Validate OpenCost production retirement
+        if: needs.changes.outputs.k8s == 'true'
+        # The rendered deletion leaves its prune-protected HelmRelease and
+        # Namespace running. Exercise the exact manual cleanup against a fake
+        # API and pin that merge-group/heal deploys cannot opt into it.
+        run: |
+          shellcheck scripts/retire-opencost.sh scripts/tests/test-opencost-retirement.sh scripts/tests/test-opencost-retirement-wiring.sh
+          bash scripts/tests/test-opencost-retirement.sh
+          bash scripts/tests/test-opencost-retirement-wiring.sh
 
       - name: 🔄 Validate Crossplane sync exporter metrics path
         if: needs.changes.outputs.k8s == 'true'

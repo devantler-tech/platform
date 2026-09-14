@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly root_dir
+readonly subject="${root_dir}/scripts/retire-opencost.sh"
+
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
+
+temp_dir="$(mktemp -d)"
+readonly temp_dir
+trap 'rm -rf "${temp_dir}"' EXIT
+
+readonly fake_kubectl="${temp_dir}/kubectl"
+cat >"${fake_kubectl}" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${FAKE_STATE_DIR:?}"
+printf '%s\n' "$*" >>"${FAKE_STATE_DIR}/commands.log"
+
+if [[ "${1:-}" != '--context' || "${2:-}" != 'admin@prod' ]]; then
+  printf 'unexpected context: %s\n' "$*" >&2
+  exit 64
+fi
+shift 2
+
+metadata() {
+  jq -n '{
+    metadata: {
+      annotations: {"kustomize.toolkit.fluxcd.io/prune": "disabled"},
+      labels: {
+        "kustomize.toolkit.fluxcd.io/name": "infrastructure",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      }
+    }
+  }'
+}
+
+case "$*" in
+  'get helmrelease.helm.toolkit.fluxcd.io/opencost --namespace opencost --ignore-not-found=true -o json')
+    [[ ! -e "${FAKE_STATE_DIR}/helmrelease" ]] || metadata
+    ;;
+  'get namespace/opencost --ignore-not-found=true -o json')
+    [[ ! -e "${FAKE_STATE_DIR}/namespace" ]] || metadata
+    ;;
+  'get persistentvolumeclaims --namespace opencost -o name')
+    [[ ! -e "${FAKE_STATE_DIR}/pvc" ]] || printf '%s\n' 'persistentvolumeclaim/opencost-data'
+    ;;
+  'get kustomization.kustomize.toolkit.fluxcd.io/infrastructure --namespace flux-system -o json')
+    if [[ -e "${FAKE_STATE_DIR}/managed-helmrelease" ]]; then
+      jq -n '{status:{conditions:[{type:"Ready",status:"True"}],inventory:{entries:[{id:"opencost_opencost_helm.toolkit.fluxcd.io_HelmRelease"}]}}}'
+    else
+      jq -n '{status:{conditions:[{type:"Ready",status:"True"}],inventory:{entries:[{id:"observability_coroot_operator_helm.toolkit.fluxcd.io_HelmRelease"}]}}}'
+    fi
+    ;;
+  'delete helmrelease.helm.toolkit.fluxcd.io/opencost --namespace opencost --wait=false')
+    rm -f "${FAKE_STATE_DIR}/helmrelease" "${FAKE_STATE_DIR}/clusterrole" "${FAKE_STATE_DIR}/clusterrolebinding"
+    ;;
+  'wait --for=delete helmrelease.helm.toolkit.fluxcd.io/opencost --namespace opencost --timeout=5m')
+    [[ ! -e "${FAKE_STATE_DIR}/helmrelease" ]]
+    ;;
+  'get clusterrole.rbac.authorization.k8s.io/opencost --ignore-not-found=true -o name')
+    [[ ! -e "${FAKE_STATE_DIR}/clusterrole" ]] || printf '%s\n' 'clusterrole.rbac.authorization.k8s.io/opencost'
+    ;;
+  'get clusterrolebinding.rbac.authorization.k8s.io/opencost --ignore-not-found=true -o name')
+    [[ ! -e "${FAKE_STATE_DIR}/clusterrolebinding" ]] || printf '%s\n' 'clusterrolebinding.rbac.authorization.k8s.io/opencost'
+    ;;
+  'delete namespace/opencost --wait=false')
+    [[ ! -e "${FAKE_STATE_DIR}/helmrelease" ]] || exit 65
+    rm -f "${FAKE_STATE_DIR}/namespace"
+    ;;
+  'wait --for=delete namespace/opencost --timeout=5m')
+    [[ ! -e "${FAKE_STATE_DIR}/namespace" ]]
+    ;;
+  'create job --from=cronjob/prune-protected-orphan-alert prune-protected-orphan-check-opencost-test --namespace observability')
+    touch "${FAKE_STATE_DIR}/job"
+    ;;
+  'wait --for=condition=complete job/prune-protected-orphan-check-opencost-test --namespace observability --timeout=4m')
+    [[ -e "${FAKE_STATE_DIR}/job" ]]
+    ;;
+  'logs job/prune-protected-orphan-check-opencost-test --namespace observability')
+    if [[ -e "${FAKE_STATE_DIR}/orphan-finding" ]]; then
+      printf '%s\n' 'WARNING: HelmRelease opencost/opencost is left behind'
+    else
+      printf '%s\n' 'Checked 8 prune-protected Flux resource(s); none left behind for 604800s or longer.'
+    fi
+    ;;
+  'delete job/prune-protected-orphan-check-opencost-test --namespace observability --ignore-not-found=true --wait=false')
+    rm -f "${FAKE_STATE_DIR}/job"
+    ;;
+  *)
+    printf 'unexpected kubectl invocation: %s\n' "$*" >&2
+    exit 66
+    ;;
+esac
+FAKE
+chmod +x "${fake_kubectl}"
+
+init_state() {
+  local name="$1"
+  local state="${temp_dir}/${name}"
+  mkdir -p "${state}"
+  touch "${state}/helmrelease" "${state}/namespace" "${state}/clusterrole" "${state}/clusterrolebinding"
+  : >"${state}/commands.log"
+  printf '%s\n' "${state}"
+}
+
+happy_state="$(init_state happy)"
+if ! happy_output="$(FAKE_STATE_DIR="${happy_state}" KUBECTL_BIN="${fake_kubectl}" OPENCOST_RETIRE_JOB_SUFFIX=test GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF_NAME=main bash "${subject}" --execute 2>&1)"; then
+  fail "the safe orphan retirement should succeed: ${happy_output}"
+fi
+for removed in helmrelease namespace clusterrole clusterrolebinding job; do
+  [[ ! -e "${happy_state}/${removed}" ]] || fail "successful retirement left ${removed} behind"
+done
+helm_delete_line="$(grep -nFx -- '--context admin@prod delete helmrelease.helm.toolkit.fluxcd.io/opencost --namespace opencost --wait=false' "${happy_state}/commands.log" | cut -d: -f1)"
+namespace_delete_line="$(grep -nFx -- '--context admin@prod delete namespace/opencost --wait=false' "${happy_state}/commands.log" | cut -d: -f1)"
+[[ "${helm_delete_line}" -lt "${namespace_delete_line}" ]] || fail 'the HelmRelease must be deleted before its Namespace'
+grep -qF 'PASS: OpenCost production retirement completed' <<<"${happy_output}" ||
+  fail 'successful retirement did not report its completion'
+
+unarmed_state="$(init_state unarmed)"
+if FAKE_STATE_DIR="${unarmed_state}" KUBECTL_BIN="${fake_kubectl}" OPENCOST_RETIRE_JOB_SUFFIX=test GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF_NAME=main bash "${subject}" >"${temp_dir}/unarmed.out" 2>&1; then
+  fail 'retirement must be default-off without the explicit execution flag'
+fi
+grep -qF 'requires the sole argument --execute' "${temp_dir}/unarmed.out" ||
+  fail 'the default-off refusal did not explain the required execution flag'
+grep -qF 'delete helmrelease' "${unarmed_state}/commands.log" &&
+  fail 'the default-off refusal issued a destructive command'
+
+pvc_state="$(init_state pvc)"
+touch "${pvc_state}/pvc"
+if FAKE_STATE_DIR="${pvc_state}" KUBECTL_BIN="${fake_kubectl}" OPENCOST_RETIRE_JOB_SUFFIX=test GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF_NAME=main bash "${subject}" --execute >"${temp_dir}/pvc.out" 2>&1; then
+  fail 'retirement must refuse a namespace that contains a PersistentVolumeClaim'
+fi
+grep -qF 'refusing to retire OpenCost while PersistentVolumeClaims exist' "${temp_dir}/pvc.out" ||
+  fail 'the PVC refusal did not explain the protected dependency'
+grep -qF 'delete helmrelease' "${pvc_state}/commands.log" &&
+  fail 'the PVC refusal issued a destructive command'
+
+managed_state="$(init_state managed)"
+touch "${managed_state}/managed-helmrelease"
+if FAKE_STATE_DIR="${managed_state}" KUBECTL_BIN="${fake_kubectl}" OPENCOST_RETIRE_JOB_SUFFIX=test GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF_NAME=main bash "${subject}" --execute >"${temp_dir}/managed.out" 2>&1; then
+  fail 'retirement must refuse a HelmRelease that Flux still inventories'
+fi
+grep -qF 'still inventories HelmRelease opencost/opencost' "${temp_dir}/managed.out" ||
+  fail 'the managed-resource refusal did not explain the ownership conflict'
+grep -qF 'delete helmrelease' "${managed_state}/commands.log" &&
+  fail 'the managed-resource refusal issued a destructive command'
+
+finding_state="$(init_state finding)"
+touch "${finding_state}/orphan-finding"
+if FAKE_STATE_DIR="${finding_state}" KUBECTL_BIN="${fake_kubectl}" OPENCOST_RETIRE_JOB_SUFFIX=test GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF_NAME=main bash "${subject}" --execute >"${temp_dir}/finding.out" 2>&1; then
+  fail 'retirement must fail when the independent orphan check still names OpenCost'
+fi
+grep -qF 'the independent orphan check still reports OpenCost' "${temp_dir}/finding.out" ||
+  fail 'the orphan-check failure did not explain the remaining finding'
+
+printf 'PASS: OpenCost retirement is ordered, default-safe, PVC-safe, ownership-safe, and independently verified\n'
