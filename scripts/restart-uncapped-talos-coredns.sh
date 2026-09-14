@@ -93,6 +93,10 @@ if ! counts="$(count_uncapped)"; then
   die "could not re-read ${deployment} pods after the restart"
 fi
 read -r running uncapped <<<"${counts}"
+# Zero uncapped containers out of zero running pods proves nothing was capped: a rollout
+# can complete with the Deployment scaled to zero. Refuse it as the pre-restart check does.
+[[ "${running}" -gt 0 ]] ||
+  die "no running ${deployment} pod after the restart (selector ${selector})"
 if [[ "${uncapped}" -ne 0 ]]; then
   printf 'restart-uncapped-talos-coredns: %s container(s) still lack a CPU limit after the restart\n' \
     "${uncapped}" >&2

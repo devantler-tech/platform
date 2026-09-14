@@ -175,6 +175,13 @@ run_case rollout_stuck PODS_BEFORE="${uncapped}" ROLLOUT_FAIL=1
 expect_status rollout_stuck 2
 [[ "${output}" == *'did not complete'* ]] || fail "rollout_stuck: must say the rollout did not complete: ${output}"
 
+# 6b. A completed rollout that leaves no running pod has capped nothing ⇒ exit 2, never
+#     "all 0 running pod(s) now carry a CPU limit". Zero uncapped out of zero is not proof.
+run_case vanished PODS_BEFORE="${uncapped}" PODS_AFTER="${no_pods}"
+expect_status vanished 2
+[[ "${output}" == *'no running coredns pod after the restart'* ]] ||
+  fail "vanished: must say no CoreDNS pod is running after the restart: ${output}"
+
 # 7–12. Every unreadable or unjudgeable input fails closed, without restarting.
 run_case no_limitrange LR_FAIL=1 PODS_BEFORE="${uncapped}"
 expect_status no_limitrange 2
