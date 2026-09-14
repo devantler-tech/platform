@@ -10,10 +10,18 @@ resources:
   - resources.yaml
 # The claim resolves to the cluster default Longhorn class. Longhorn replicates
 # across nodes and is guarded separately, so an unpinned Pod is not caught.
+# Both rules passing proves the mocked lookup is applied: without values.yaml
+# the CLI reports both rules as error, so this fixture cannot pass vacuously.
 variables: values.yaml
 results:
   - policy: require-baseline-workers-for-hcloud-volumes
     rule: require-baseline-worker-affinity
+    resources:
+      - observability/longhorn-claim-unguarded
+    kind: Pod
+    result: pass
+  - policy: require-baseline-workers-for-hcloud-volumes
+    rule: report-claim-lookup-failure
     resources:
       - observability/longhorn-claim-unguarded
     kind: Pod

@@ -1,7 +1,8 @@
 ---
 # The Kyverno CLI has no API server, so the claim's storage class lookup in the
-# foreach context is supplied here. Every Pod in resources.yaml mounts at most
-# one claim, so one value per iteration covers them all.
+# foreach context is supplied here, for both rules that perform it. Every Pod in
+# resources.yaml mounts at most one claim, so one value per iteration covers
+# them all.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Values
 metadata:
@@ -10,6 +11,10 @@ policies:
   - name: require-baseline-workers-for-hcloud-volumes
     rules:
       - name: require-baseline-worker-affinity
+        foreachValues:
+          claimStorageClass:
+            - hcloud
+      - name: report-claim-lookup-failure
         foreachValues:
           claimStorageClass:
             - hcloud

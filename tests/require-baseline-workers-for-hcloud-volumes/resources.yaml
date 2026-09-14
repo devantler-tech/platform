@@ -278,3 +278,76 @@ spec:
   volumes:
     - name: cache
       emptyDir: {}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: guarded-by-node-selector
+  namespace: observability
+spec:
+  nodeSelector:
+    platform.devantler.tech/baseline-worker: "true"
+  containers:
+    - name: app
+      image: busybox
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: data-guarded-by-node-selector
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: node-selector-wrong-value
+  namespace: observability
+spec:
+  nodeSelector:
+    platform.devantler.tech/baseline-worker: "false"
+  containers:
+    - name: app
+      image: busybox
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: data-node-selector-wrong-value
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: match-fields-only-term
+  namespace: observability
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchFields:
+              - key: metadata.name
+                operator: In
+                values: ["prod-worker-1"]
+  containers:
+    - name: app
+      image: busybox
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: data-match-fields-only-term
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: empty-term
+  namespace: observability
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - {}
+  containers:
+    - name: app
+      image: busybox
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: data-empty-term

@@ -10,3 +10,7 @@ policies:
         foreachValues:
           claimStorageClass:
             - longhorn-wffc
+      - name: report-claim-lookup-failure
+        foreachValues:
+          claimStorageClass:
+            - longhorn-wffc
