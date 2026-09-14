@@ -68,8 +68,13 @@ render() {
   release="$(jq -r '.spec.releaseName // .metadata.name' "${work}/release.json")"
   namespace="$(jq -r '.spec.targetNamespace // .metadata.namespace' "${work}/release.json")"
   url="$(yq -r 'select(.kind == "HelmRepository") | .spec.url' "$repository_file")"
-  [ -n "$chart" ] && [ -n "$version" ] && [ -n "$namespace" ] && [ -n "$url" ] ||
-    fail "${dir}: could not read chart, version, namespace and repository"
+  # jq and yq print "null" for a missing field, so an empty check alone passes it.
+  local field
+  for field in "$chart" "$version" "$release" "$namespace" "$url"; do
+    if [ -z "$field" ] || [ "$field" = "null" ]; then
+      fail "${dir}: could not read chart, version, release, namespace and repository"
+    fi
+  done
 
   # The render skips Flux post-renderers, which is exact for RBAC only while no
   # post-renderer touches a Role or ClusterRole.
