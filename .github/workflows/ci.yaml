@@ -468,6 +468,7 @@ jobs:
               - 'scripts/tests/test-crossview-postgres-durable-storage.sh'
               - 'scripts/tests/test-coroot-api-key-contract.sh'
               - 'scripts/tests/test-coroot-availability-remediation.sh'
+              - 'scripts/tests/test-coroot-risk-acceptance-reconciler.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh'
@@ -1345,6 +1346,8 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-availability-remediation.sh
           bash scripts/tests/test-coroot-availability-remediation.sh
+          shellcheck scripts/tests/test-coroot-risk-acceptance-reconciler.sh
+          bash scripts/tests/test-coroot-risk-acceptance-reconciler.sh
 
       - name: 🌐 Validate active Cilium device selection
         if: needs.changes.outputs.k8s == 'true' || needs.changes.outputs.bridge_validation == 'true'
