@@ -21,10 +21,15 @@
 #   3. Runs scripts/mirror-wedding-backup-catalogue-pod.sh in a short-lived pod in
 #      wedding-app, where both credentials and R2 egress already exist, and
 #      collects its listings with `kubectl exec` once it reports them ready. The
-#      copy walks only the shared catalogue's keys, so it never touches an object
-#      the Cluster archived through the dedicated store after the switch.
-#   4. Confirms the Cluster STILL archives through that store.
-#   5. Runs `evaluate` (mirror) or `evaluate-catch-up` (catch-up) on the three
+#      copy walks only the shared catalogue's keys, so after the switch it can only
+#      rewrite a destination object that shares a key with a shared object and
+#      differs from it. Both stores write the same gzip-compressed segment names,
+#      so such a key holds the same segment, and the evaluator checks its content.
+#   4. For the catch-up, reads the Cluster's server directory and refuses if it
+#      changes before the final check, because WAL continuity is only meaningful
+#      within one server directory.
+#   5. Confirms the Cluster STILL archives through that store.
+#   6. Runs `evaluate` (mirror) or `evaluate-catch-up` (catch-up) on the three
 #      listings.
 #
 # Exit status for the mirror: 0 converged (the destination is ready for the
@@ -123,20 +128,42 @@ if [[ -z "${evaluator}" ]]; then
 fi
 readonly evaluator
 
+# The format check above accepts impossible dates such as February 30. Parse the
+# switch time as the evaluator will, before anything touches the cluster.
+if [[ "${mode}" == catch-up ]]; then
+  "${evaluator}" validate-switch-time "${switch_time}" ||
+    fail 'the switch time is not a valid UTC time. Nothing has been touched.'
+fi
+
 archive_reference() {
   kube get cluster.postgresql.cnpg.io "${cluster}" \
     -o "jsonpath={.spec.plugins[?(@.name==\"${plugin}\")].parameters.barmanObjectName}"
 }
 
+server_name_reference() {
+  kube get cluster.postgresql.cnpg.io "${cluster}" \
+    -o "jsonpath={.spec.plugins[?(@.name==\"${plugin}\")].parameters.serverName}"
+}
+
 # require_archive_reference refuses unless the Cluster archives through the store
 # this mode depends on: the shared store before the cutover, the dedicated store
-# after it.
+# after it. The catch-up also records the Cluster's server directory, because WAL
+# continuity is only meaningful within it, and refuses if it changes mid-run.
+server_name=''
 require_archive_reference() {
-  local reference
+  local reference current_server
   reference="$(archive_reference)" || fail "could not read the ${cluster} Cluster"
   if [[ "${mode}" == catch-up ]]; then
     [[ "${reference}" == "${destination_store}" ]] ||
       fail "the ${cluster} Cluster archives through '${reference}', not '${destination_store}'. The catch-up only runs after the cutover."
+    current_server="$(server_name_reference)" || fail "could not read the ${cluster} Cluster server name"
+    [[ "${current_server}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+      fail "the ${cluster} Cluster names an invalid server directory"
+    if [[ -z "${server_name}" ]]; then
+      server_name="${current_server}"
+    elif [[ "${current_server}" != "${server_name}" ]]; then
+      fail "the ${cluster} Cluster server name changed from '${server_name}' to '${current_server}' during the catch-up"
+    fi
   else
     [[ "${reference}" == "${source_store}" ]] ||
       fail "the ${cluster} Cluster archives through '${reference}', not '${source_store}'. The mirror only runs before the cutover."
@@ -358,7 +385,7 @@ run_start="$(cat "${work_dir}/run-start")"
 require_archive_reference
 
 if [[ "${mode}" == catch-up ]]; then
-  if ! "${evaluator}" evaluate-catch-up "${switch_time}" "${source_bucket}" \
+  if ! "${evaluator}" evaluate-catch-up "${switch_time}" "${server_name}" "${source_bucket}" \
     "${work_dir}/source-before" "${work_dir}/source-after" \
     "${work_dir}/destination" >"${work_dir}/summary.json"; then
     fail 'the evaluator refused the catch-up'
@@ -383,7 +410,7 @@ report_verdict() {
   fi
   if grep -q '"converged":false' "$1"; then
     if [[ "${mode}" == catch-up ]]; then
-      printf 'NOT CAUGHT UP: no segment has been archived through the dedicated store yet. Run the catch-up again after the next archive.\n'
+      printf 'NOT CAUGHT UP: no WAL segment newer than the shared catalogue has been archived through the dedicated store yet. Run the catch-up again after the next archive.\n'
     else
       printf 'NOT CONVERGED: objects archived during the run are still pending. Run the mirror again.\n'
     fi

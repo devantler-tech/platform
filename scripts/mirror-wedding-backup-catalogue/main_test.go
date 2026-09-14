@@ -702,13 +702,18 @@ func TestBindRunStart(t *testing.T) {
 }
 
 // The catch-up runs after the Cluster switched its archive reference. newerWAL
-// is the newest segment in the shared catalogue, so its successor is the first
-// segment the Cluster can archive through the dedicated store.
+// (segment ...01) is the newest segment of the Cluster's server in the shared
+// catalogue, so segment ...02 is the first one it can archive through the
+// dedicated store. Each constant names its segment, so no two share a key.
 const (
-	preSwitchWAL   = "wedding-db-20260909/wals/0000000300000001/000000030000000100000002.gz"
-	postSwitchWAL  = "wedding-db-20260909/wals/0000000300000001/000000030000000100000002.gz"
-	afterGapWAL    = "wedding-db-20260909/wals/0000000300000001/000000030000000100000004.gz"
-	newTimelineWAL = "wedding-db-20260909/wals/0000000400000001/000000040000000100000002.gz"
+	catchUpServer     = "wedding-db-20260909"
+	wal00             = "wedding-db-20260909/wals/0000000300000001/000000030000000100000000.gz"
+	wal02             = "wedding-db-20260909/wals/0000000300000001/000000030000000100000002.gz"
+	wal03             = "wedding-db-20260909/wals/0000000300000001/000000030000000100000003.gz"
+	wal05             = "wedding-db-20260909/wals/0000000300000001/000000030000000100000005.gz"
+	newTimelineWAL    = "wedding-db-20260909/wals/0000000400000001/000000040000000100000002.gz"
+	otherServerOldWAL = "wedding-db/wals/0000000300000009/0000000300000009000000FF.gz"
+	otherServerNewWAL = "wedding-db/wals/0000000300000001/000000030000000100000002.gz"
 )
 
 var (
@@ -717,45 +722,68 @@ var (
 	afterSwitch  = switchTime.Add(10 * time.Minute)
 )
 
+// walAt is a WAL object of the given key and modification time.
+func walAt(key string, at time.Time) Object {
+	return Object{Key: key, Size: 4300, ETag: "f6", LastModified: at}
+}
+
 // catchUpDestination is a complete copy of the shared catalogue plus the first
 // segment the Cluster archived through the dedicated store after the switch.
 func catchUpDestination() []Object {
-	return append(destinationListing(), Object{Key: postSwitchWAL, Size: 4300, ETag: "f6", LastModified: afterSwitch})
+	return append(destinationListing(), walAt(wal02, afterSwitch))
 }
 
 func TestEvaluateCatchUpProvesContinuityAcrossTheSwitch(t *testing.T) {
-	summary, err := EvaluateCatchUp(switchTime, sourceListing(), sourceListing(), catchUpDestination())
+	summary, err := EvaluateCatchUp(switchTime, catchUpServer, sourceListing(), sourceListing(), catchUpDestination())
 	if err != nil {
 		t.Fatalf("EvaluateCatchUp() = %v, want nil", err)
 	}
 	if summary.SourceObjects != 4 || summary.MatchedObjects != 4 || summary.PostSwitchObjects != 1 || !summary.Converged {
 		t.Fatalf("summary = %+v, want 4 source, 4 matched, 1 post-switch, converged", summary)
 	}
-	if summary.SourceNewestWAL != "000000030000000100000001" || summary.OldestPostSwitchWAL != "000000030000000100000002" {
-		t.Fatalf("WAL = %q -> %q, want the post-switch segment to follow the shared catalogue", summary.SourceNewestWAL, summary.OldestPostSwitchWAL)
+	if summary.ServerName != catchUpServer || summary.SourceNewestWAL != "000000030000000100000001" ||
+		summary.FirstPostSwitchWAL != "000000030000000100000002" {
+		t.Fatalf("summary = %+v, want the post-switch segment to follow the server's newest shared segment", summary)
 	}
 }
 
-// Before the Cluster archives its first segment through the dedicated store
-// there is nothing to prove continuity against, so the pass is verified but not
-// converged rather than accepted.
-func TestEvaluateCatchUpWaitsForTheFirstPostSwitchSegment(t *testing.T) {
-	summary, err := EvaluateCatchUp(switchTime, sourceListing(), sourceListing(), destinationListing())
+// A post-switch segment at or below the shared catalogue's newest one, such as a
+// retry, is ignored rather than refused, and does not replace the successor.
+func TestEvaluateCatchUpIgnoresASegmentThatIsNotNewer(t *testing.T) {
+	destination := append(catchUpDestination(), walAt(wal00, afterSwitch))
+	summary, err := EvaluateCatchUp(switchTime, catchUpServer, sourceListing(), sourceListing(), destination)
 	if err != nil {
 		t.Fatalf("EvaluateCatchUp() = %v, want nil", err)
 	}
-	if summary.Converged || summary.OldestPostSwitchWAL != "" {
+	if !summary.Converged || summary.FirstPostSwitchWAL != "000000030000000100000002" || summary.PostSwitchObjects != 2 {
+		t.Fatalf("summary = %+v, want converged on segment ...02 with 2 post-switch objects", summary)
+	}
+}
+
+// Before the Cluster archives a newer segment through the dedicated store there
+// is nothing to prove continuity against, so the pass is verified but not
+// converged rather than accepted.
+func TestEvaluateCatchUpWaitsForTheFirstPostSwitchSegment(t *testing.T) {
+	summary, err := EvaluateCatchUp(switchTime, catchUpServer, sourceListing(), sourceListing(), destinationListing())
+	if err != nil {
+		t.Fatalf("EvaluateCatchUp() = %v, want nil", err)
+	}
+	if summary.Converged || summary.FirstPostSwitchWAL != "" {
 		t.Fatalf("summary = %+v, want not converged with no post-switch segment", summary)
 	}
 }
 
 func TestEvaluateCatchUpRefusals(t *testing.T) {
-	withSourceObject := func(object Object) func() []Object {
-		return func() []Object { return append(sourceListing(), object) }
+	withSource := func(objects ...Object) func() []Object {
+		return func() []Object { return append(sourceListing(), objects...) }
+	}
+	withDestination := func(objects ...Object) func() []Object {
+		return func() []Object { return append(destinationListing(), objects...) }
 	}
 	tests := []struct {
 		name        string
-		switchTime  time.Time
+		noSwitch    bool
+		server      string
 		before      func() []Object
 		after       func() []Object
 		destination func() []Object
@@ -764,49 +792,84 @@ func TestEvaluateCatchUpRefusals(t *testing.T) {
 		{
 			// The segment the Cluster archived to the shared store just before the
 			// switch is the one a mirror run taken before the switch cannot cover.
-			name:   "segment archived just before the switch is missing from the destination",
-			before: withSourceObject(Object{Key: preSwitchWAL, Size: 4200, ETag: "e5", LastModified: beforeSwitch}),
-			after:  withSourceObject(Object{Key: preSwitchWAL, Size: 4200, ETag: "e5", LastModified: beforeSwitch}),
-			destination: func() []Object {
-				return append(destinationListing(), Object{Key: afterGapWAL, Size: 4300, ETag: "f6", LastModified: afterSwitch})
-			},
-			want: ErrPartialCopy,
+			name:        "segment archived just before the switch is missing from the destination",
+			before:      withSource(walAt(wal02, beforeSwitch)),
+			after:       withSource(walAt(wal02, beforeSwitch)),
+			destination: withDestination(walAt(wal03, afterSwitch)),
+			want:        ErrPartialCopy,
 		},
 		{
 			// Residue from an earlier failed copy predates the switch, so it cannot be
 			// something the Cluster archived through the dedicated store.
-			name:   "stale destination object",
-			before: sourceListing,
-			after:  sourceListing,
-			destination: func() []Object {
-				return append(catchUpDestination(), Object{Key: afterGapWAL, Size: 10, ETag: "zz", LastModified: beforeSwitch})
-			},
-			want: ErrUnexpectedDestinationObject,
+			name:        "stale destination object",
+			before:      sourceListing,
+			after:       sourceListing,
+			destination: withDestination(walAt(wal02, afterSwitch), walAt(wal05, beforeSwitch)),
+			want:        ErrUnexpectedDestinationObject,
 		},
 		{
-			name:   "gap in WAL continuity",
-			before: sourceListing,
-			after:  sourceListing,
-			destination: func() []Object {
-				return append(destinationListing(), Object{Key: afterGapWAL, Size: 4300, ETag: "f6", LastModified: afterSwitch})
-			},
-			want: ErrWALGap,
+			name:        "gap in WAL continuity",
+			before:      sourceListing,
+			after:       sourceListing,
+			destination: withDestination(walAt(wal05, afterSwitch)),
+			want:        ErrWALGap,
 		},
 		{
-			name:   "timeline changed across the switch",
-			before: sourceListing,
-			after:  sourceListing,
-			destination: func() []Object {
-				return append(destinationListing(), Object{Key: newTimelineWAL, Size: 4300, ETag: "f6", LastModified: afterSwitch})
-			},
-			want: ErrWALGap,
+			// A retry at or below the shared newest segment must not hide that the
+			// successor never arrived.
+			name:        "a segment that is not newer does not hide a gap",
+			before:      sourceListing,
+			after:       sourceListing,
+			destination: withDestination(walAt(wal00, afterSwitch), walAt(wal05, afterSwitch)),
+			want:        ErrWALGap,
+		},
+		{
+			name:        "timeline changed across the switch",
+			before:      sourceListing,
+			after:       sourceListing,
+			destination: withDestination(walAt(newTimelineWAL, afterSwitch)),
+			want:        ErrWALGap,
+		},
+		{
+			// The shared catalogue keeps an earlier server's WAL. Its higher segment
+			// names say nothing about this Cluster, so they must not mask a gap.
+			name:        "an earlier server's higher segment does not hide a gap",
+			before:      withSource(walAt(otherServerOldWAL, beforeRun)),
+			after:       withSource(walAt(otherServerOldWAL, beforeRun)),
+			destination: withDestination(walAt(otherServerOldWAL, duringTheRun), walAt(wal05, afterSwitch)),
+			want:        ErrWALGap,
+		},
+		{
+			name:        "post-switch segment outside the server directory",
+			before:      sourceListing,
+			after:       sourceListing,
+			destination: withDestination(walAt(otherServerNewWAL, afterSwitch)),
+			want:        ErrUnexpectedDestinationObject,
+		},
+		{
+			// The shared catalogue has no base backup for this server name, so a
+			// restore from the dedicated store would have nothing to start from.
+			name:        "no base backup under the server directory",
+			server:      "wedding-db",
+			before:      sourceListing,
+			after:       sourceListing,
+			destination: destinationListing,
+			want:        ErrNoBaseBackup,
+		},
+		{
+			name:        "server name that is not one path segment",
+			server:      "../wedding-db-20260909",
+			before:      sourceListing,
+			after:       sourceListing,
+			destination: catchUpDestination,
+			want:        ErrMalformedListing,
 		},
 		{
 			// The Cluster still archiving to the shared store means the switch has not
 			// happened, whatever the recorded time says.
 			name:        "shared catalogue still receiving WAL",
 			before:      sourceListing,
-			after:       withSourceObject(Object{Key: preSwitchWAL, Size: 4200, ETag: "e5", LastModified: afterSwitch}),
+			after:       withSource(walAt(wal02, afterSwitch)),
 			destination: catchUpDestination,
 			want:        ErrSourceChanged,
 		},
@@ -825,14 +888,14 @@ func TestEvaluateCatchUpRefusals(t *testing.T) {
 			// A shared object newer than the recorded switch proves the recorded time
 			// is too early, so post-switch objects could not be told apart.
 			name:        "switch time recorded before the last shared archive",
-			before:      withSourceObject(Object{Key: preSwitchWAL, Size: 4200, ETag: "e5", LastModified: afterSwitch}),
-			after:       withSourceObject(Object{Key: preSwitchWAL, Size: 4200, ETag: "e5", LastModified: afterSwitch}),
+			before:      withSource(walAt(wal02, afterSwitch)),
+			after:       withSource(walAt(wal02, afterSwitch)),
 			destination: catchUpDestination,
 			want:        ErrSwitchTime,
 		},
 		{
 			name:        "no switch time",
-			switchTime:  time.Time{},
+			noSwitch:    true,
 			before:      sourceListing,
 			after:       sourceListing,
 			destination: catchUpDestination,
@@ -842,10 +905,14 @@ func TestEvaluateCatchUpRefusals(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			at := switchTime
-			if tt.name == "no switch time" {
-				at = tt.switchTime
+			if tt.noSwitch {
+				at = time.Time{}
 			}
-			_, err := EvaluateCatchUp(at, tt.before(), tt.after(), tt.destination())
+			server := catchUpServer
+			if tt.server != "" {
+				server = tt.server
+			}
+			_, err := EvaluateCatchUp(at, server, tt.before(), tt.after(), tt.destination())
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("EvaluateCatchUp() = %v, want %v", err, tt.want)
 			}
@@ -872,21 +939,41 @@ func TestNextWALSegment(t *testing.T) {
 	}
 }
 
-// The command binds the catch-up to the switch: its starting listing must be
-// taken after the recorded switch, and the switch time must parse.
+// The command binds the catch-up to the switch and the server: its starting
+// listing must be taken after the recorded switch, the switch time must parse, and
+// the server name must be one path segment.
 func TestRunEvaluateCatchUpBindsTheListingsToTheSwitch(t *testing.T) {
 	keys := []string{baseInfo, baseData, olderWAL}
 	before := writeListing(t, "before", sourceLocation, runStartArg, keys...)
 	after := writeListing(t, "after", sourceLocation, afterStarted, keys...)
 	destination := writeListing(t, "destination", destinationLocation, destinationStarted, keys...)
 	recorded := "2026-09-12T11:00:00Z"
-	if err := run([]string{"evaluate-catch-up", recorded, "platform-backups", before, after, destination}, io.Discard); err != nil {
+	catchUp := func(switchAt, server string) error {
+		return run([]string{"evaluate-catch-up", switchAt, server, "platform-backups", before, after, destination}, io.Discard)
+	}
+	if err := catchUp(recorded, catchUpServer); err != nil {
 		t.Fatalf("run(evaluate-catch-up) = %v, want nil", err)
 	}
-	if err := run([]string{"evaluate-catch-up", afterStarted, "platform-backups", before, after, destination}, io.Discard); !errors.Is(err, ErrSwitchTime) {
+	if err := catchUp(afterStarted, catchUpServer); !errors.Is(err, ErrSwitchTime) {
 		t.Fatalf("run(evaluate-catch-up, switch after the starting listing) = %v, want %v", err, ErrSwitchTime)
 	}
-	if err := run([]string{"evaluate-catch-up", "yesterday", "platform-backups", before, after, destination}, io.Discard); !errors.Is(err, ErrMalformedListing) {
+	if err := catchUp("yesterday", catchUpServer); !errors.Is(err, ErrMalformedListing) {
 		t.Fatalf("run(evaluate-catch-up, malformed switch time) = %v, want %v", err, ErrMalformedListing)
+	}
+	if err := catchUp(recorded, "wedding-db/../other"); !errors.Is(err, ErrMalformedListing) {
+		t.Fatalf("run(evaluate-catch-up, malformed server name) = %v, want %v", err, ErrMalformedListing)
+	}
+}
+
+// The wrapper validates the switch time with this command before it touches the
+// cluster, so an impossible date that matches the shell's format check is refused.
+func TestRunValidateSwitchTime(t *testing.T) {
+	if err := run([]string{"validate-switch-time", "2026-09-10T00:00:00Z"}, io.Discard); err != nil {
+		t.Fatalf("run(validate-switch-time, valid) = %v, want nil", err)
+	}
+	for _, bad := range []string{"2026-02-30T00:00:00Z", "2026-09-10T25:00:00Z", "yesterday"} {
+		if err := run([]string{"validate-switch-time", bad}, io.Discard); !errors.Is(err, ErrMalformedListing) {
+			t.Fatalf("run(validate-switch-time, %q) = %v, want %v", bad, err, ErrMalformedListing)
+		}
 	}
 }

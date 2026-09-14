@@ -258,6 +258,14 @@ while [[ "${1:-}" == --context || "${1:-}" == --namespace ]]; do shift 2; done
 printf '%s\n' "$*" >>"${f}/calls"
 case "$1 $2" in
   'get cluster.postgresql.cnpg.io')
+    # The server name read is not an archive-reference check, so it is served
+    # separately and does not advance the archive counter.
+    if [[ "$*" == *serverName* ]]; then
+      n=$(( $(cat "${f}/server-count" 2>/dev/null || echo 0) + 1 ))
+      printf '%s' "${n}" >"${f}/server-count"
+      if [[ -e "${f}/server-${n}" ]]; then cat "${f}/server-${n}"; else cat "${f}/server" 2>/dev/null || printf 'wedding-db'; fi
+      exit 0
+    fi
     n=$(( $(cat "${f}/archive-count" 2>/dev/null || echo 0) + 1 ))
     printf '%s' "${n}" >"${f}/archive-count"
     if [[ -e "${f}/archive-${n}" ]]; then cat "${f}/archive-${n}"; else cat "${f}/archive"; fi
@@ -501,7 +509,8 @@ with_post_switch_segment "${dir}" "${next_wal}" '2026-09-12T00:00:00Z'
 run_wrapper "${dir}" "${evaluator}" --confirm --catch-up "${switch_time}"
 [[ "${wrapper_rc}" == 0 ]] || fail "a complete catch-up with continuous WAL must exit 0, got ${wrapper_rc}: ${wrapper_err}"
 require_text "${wrapper_out}" '"converged":true' 'the catch-up summary is printed'
-require_text "${wrapper_out}" "\"oldestPostSwitchWal\":\"${next_wal}\"" 'the summary names the first post-switch segment'
+require_text "${wrapper_out}" "\"firstPostSwitchWal\":\"${next_wal}\"" 'the summary names the first post-switch segment'
+require_text "${wrapper_out}" '"serverName":"wedding-db"' 'the summary names the server directory continuity was judged in'
 require_text "${wrapper_out}" 'CAUGHT UP' 'the catch-up verdict is stated'
 refute_text "${wrapper_out}" 'NOT CAUGHT UP' 'a caught-up pass is not reported as pending'
 [[ "$(cat "${dir}/archive-count")" == 2 ]] || fail 'the catch-up checks the archive reference before and after the copy'
@@ -544,7 +553,19 @@ run_wrapper "${dir}" "${evaluator}" --confirm --catch-up "${switch_time}"
 require_text "${wrapper_err}" 'unexpected destination object' 'the evaluator names the stale object'
 cases_run=$((cases_run + 1))
 
-for bad in 'yesterday' '2026-09-10' '2999-01-01T00:00:00Z'; do
+dir="$(new_wrapper_case catch-up-server-changed)"
+printf 'wedding-db-dedicated' >"${dir}/archive"
+printf 'wedding-db-20260914' >"${dir}/server-2"
+with_post_switch_segment "${dir}" "${next_wal}" '2026-09-12T00:00:00Z'
+run_wrapper "${dir}" "${evaluator}" --confirm --catch-up "${switch_time}"
+[[ "${wrapper_rc}" == 1 ]] || fail "a server name that changes during the catch-up must be refused, got ${wrapper_rc}"
+require_text "${wrapper_err}" 'server name changed' 'the refusal names the server change'
+refute_text "${wrapper_out}" 'CAUGHT UP' 'no verdict is reported once the server name moved'
+cases_run=$((cases_run + 1))
+
+# An impossible date passes the shell's format check, so the evaluator must refuse
+# it before anything touches the cluster.
+for bad in 'yesterday' '2026-09-10' '2999-01-01T00:00:00Z' '2026-02-30T00:00:00Z'; do
   dir="$(new_wrapper_case "catch-up-bad-time-${bad//[^a-z0-9]/-}")"
   printf 'wedding-db-dedicated' >"${dir}/archive"
   run_wrapper "${dir}" "${evaluator}" --confirm --catch-up "${bad}"
