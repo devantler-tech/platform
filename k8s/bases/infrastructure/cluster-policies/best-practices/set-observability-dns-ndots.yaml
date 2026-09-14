@@ -36,6 +36,16 @@ spec:
               selector:
                 matchLabels:
                   app.kubernetes.io/part-of: coroot
+                  app.kubernetes.io/managed-by: coroot-operator
+      # PodDNSConfig.options is an atomic list in Kyverno's strategic merge.
+      # All current operator-generated targets omit it; if a future target
+      # authors resolver options, preserve that explicit contract rather than
+      # replacing the whole list behind the operator's back.
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.dnsConfig.options || `[]` }}"
+            operator: Equals
+            value: []
       mutate:
         patchStrategicMerge:
           spec:
@@ -54,6 +64,11 @@ spec:
               selector:
                 matchLabels:
                   cnpg.io/cluster: coroot-db
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.dnsConfig.options || `[]` }}"
+            operator: Equals
+            value: []
       mutate:
         patchStrategicMerge:
           spec:
