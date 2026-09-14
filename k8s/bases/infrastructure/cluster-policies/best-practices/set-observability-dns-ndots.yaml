@@ -1,0 +1,63 @@
+# Coroot's server, ClickHouse, and CloudNativePG integration use qualified
+# service or object-store names. Kubernetes' default ndots:5 resolver policy
+# first expands names with fewer than five dots through every namespace search
+# suffix, generating several guaranteed NXDOMAIN responses for each successful
+# lookup. Coroot correctly surfaces that amplification as a DNS warning.
+#
+# Keep the mutation deliberately narrow: only Coroot-owned pods and the CNPG
+# Cluster backing Coroot receive ndots:1. Other workloads retain the Kubernetes
+# default until their own lookup behavior is measured. This changes lookup
+# order only; it does not alter the DNS server, search domains, or network
+# policy. The option is applied at Pod admission, so existing pods need one
+# controlled restart when this policy first reaches a cluster.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: set-observability-dns-ndots
+  annotations:
+    policies.kyverno.io/title: Prefer Absolute Observability DNS Names
+    policies.kyverno.io/category: Observability, Reliability
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Prevents Coroot and its database from expanding qualified DNS names
+      through every cluster search suffix before trying the absolute name.
+spec:
+  background: false
+  rules:
+    - name: set-coroot-dns-ndots
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - observability
+              selector:
+                matchLabels:
+                  app.kubernetes.io/part-of: coroot
+      mutate:
+        patchStrategicMerge:
+          spec:
+            dnsConfig:
+              options:
+                - name: ndots
+                  value: "1"
+    - name: set-coroot-db-dns-ndots
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - observability
+              selector:
+                matchLabels:
+                  cnpg.io/cluster: coroot-db
+      mutate:
+        patchStrategicMerge:
+          spec:
+            dnsConfig:
+              options:
+                - name: ndots
+                  value: "1"
