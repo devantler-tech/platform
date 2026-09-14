@@ -977,3 +977,44 @@ func TestRunValidateSwitchTime(t *testing.T) {
 		}
 	}
 }
+
+// A same-content rewrite keeps size, ETag and digest but changes the modification
+// time. The shared catalogue changed during the pass, so the catch-up must refuse.
+func TestEvaluateCatchUpRefusesASameContentRewriteOfASharedObject(t *testing.T) {
+	after := sourceListing()
+	after[2].LastModified = afterSwitch
+	_, err := EvaluateCatchUp(switchTime, catchUpServer, sourceListing(), after, catchUpDestination())
+	if !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("EvaluateCatchUp() = %v, want %v", err, ErrSourceChanged)
+	}
+}
+
+// Barman stores a segment under the log directory named by its first 16
+// characters. A successor filename anywhere else is not where recovery looks, so
+// it must not satisfy continuity.
+func TestEvaluateCatchUpIgnoresASegmentInTheWrongLogDirectory(t *testing.T) {
+	misplaced := "wedding-db-20260909/wals/0000000300000009/000000030000000100000002.gz"
+	summary, err := EvaluateCatchUp(switchTime, catchUpServer, sourceListing(), sourceListing(),
+		append(destinationListing(), walAt(misplaced, afterSwitch)))
+	if err != nil {
+		t.Fatalf("EvaluateCatchUp() = %v, want nil", err)
+	}
+	if summary.Converged || summary.FirstPostSwitchWAL != "" {
+		t.Fatalf("summary = %+v, want not converged: a misplaced segment proves nothing", summary)
+	}
+}
+
+func TestWALSegmentOfRequiresTheMatchingLogDirectory(t *testing.T) {
+	tests := []struct{ key, want string }{
+		{"wedding-db-20260909/wals/0000000300000001/000000030000000100000002.gz", "000000030000000100000002"},
+		{"wedding-db-20260909/wals/0000000300000001/000000030000000100000002", "000000030000000100000002"},
+		{"wedding-db-20260909/wals/0000000300000009/000000030000000100000002.gz", ""},
+		{"wedding-db-20260909/wals/0000000300000001/00000003.history", ""},
+		{"wedding-db-20260909/base/20260908T030000/backup.info", ""},
+	}
+	for _, tt := range tests {
+		if got := walSegmentOf(tt.key); got != tt.want {
+			t.Fatalf("walSegmentOf(%q) = %q, want %q", tt.key, got, tt.want)
+		}
+	}
+}

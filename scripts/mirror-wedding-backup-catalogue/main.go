@@ -379,9 +379,13 @@ func EvaluateCatchUp(switchTime time.Time, serverName string, before, after, des
 			return CatchUpSummary{}, fmt.Errorf("%w: %s appeared in the shared catalogue during the pass", ErrSourceChanged, key)
 		}
 	}
+	// A rewrite can keep size, ETag and digest while changing the modification
+	// time, and the switch-time check below only sees the starting listing, so a
+	// changed time is a change to the shared catalogue too.
 	for key, source := range beforeIndex {
 		current, ok := afterIndex[key]
 		if !ok || current.Size != source.Size || current.ETag != source.ETag ||
+			!current.LastModified.Equal(source.LastModified) ||
 			(current.SHA256 != "" && source.SHA256 != "" && current.SHA256 != source.SHA256) {
 			return CatchUpSummary{}, fmt.Errorf("%w: %s", ErrSourceChanged, key)
 		}
@@ -479,14 +483,17 @@ func EvaluateCatchUp(switchTime time.Time, serverName string, before, after, des
 }
 
 // walSegmentOf returns the WAL segment name a catalogue key holds, or "" for any
-// other key, such as a timeline history file or a base backup.
+// other key, such as a timeline history file or a base backup. Barman stores a
+// segment under the log directory named by its first 16 characters; a segment
+// filename anywhere else is not where recovery looks for it, so it is not a
+// segment of this catalogue.
 func walSegmentOf(key string) string {
 	parts := strings.Split(key, "/")
 	if len(parts) != 4 || parts[1] != "wals" {
 		return ""
 	}
 	segment := strings.TrimSuffix(parts[3], ".gz")
-	if !walSegment.MatchString(segment) {
+	if !walSegment.MatchString(segment) || parts[2] != segment[:16] {
 		return ""
 	}
 	return segment
@@ -589,16 +596,13 @@ func newestBaseBackup(objects map[string]Object) string {
 }
 
 // newestWAL returns the highest WAL segment name. Segment names order by
-// timeline and then position, so the lexical maximum is the newest segment.
+// timeline and then position, so the lexical maximum is the newest segment. It
+// uses walSegmentOf, so a segment filename outside its log directory is ignored
+// here exactly as it is by the catch-up continuity check.
 func newestWAL(objects map[string]Object) string {
 	newest := ""
 	for key := range objects {
-		parts := strings.Split(key, "/")
-		if len(parts) != 4 || parts[1] != "wals" {
-			continue
-		}
-		segment := strings.TrimSuffix(parts[3], ".gz")
-		if walSegment.MatchString(segment) && segment > newest {
+		if segment := walSegmentOf(key); segment != "" && segment > newest {
 			newest = segment
 		}
 	}
