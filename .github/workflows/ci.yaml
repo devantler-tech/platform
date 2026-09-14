@@ -1170,8 +1170,6 @@ jobs:
           kyverno test ./tests
           shellcheck scripts/tests/test-audit-privileged-rbac.sh
           bash scripts/tests/test-audit-privileged-rbac.sh
-          shellcheck scripts/tests/test-chart-rendered-rbac-policy.sh
-          bash scripts/tests/test-chart-rendered-rbac-policy.sh
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
           shellcheck scripts/tests/test-restrict-tenant-network-policies.sh
@@ -1197,6 +1195,17 @@ jobs:
           shellcheck scripts/guard-longhorn-ui-baseline-context.sh scripts/tests/test-guard-longhorn-ui-baseline-context.sh scripts/tests/test-longhorn-ui-baseline-context.sh
           bash scripts/tests/test-guard-longhorn-ui-baseline-context.sh
           bash scripts/tests/test-longhorn-ui-baseline-context.sh
+
+      - name: 🛡️ Validate chart-rendered RBAC
+        if: needs.changes.outputs.k8s == 'true'
+        # Pulls the charts whose roles the privileged-RBAC policy excludes and applies
+        # the policy to their rendered RBAC (#3792). It reaches five upstream chart
+        # registries, so it is bounded like the registry-facing production render: a
+        # stalled registry fails this step instead of holding the whole job.
+        timeout-minutes: 10
+        run: |
+          shellcheck scripts/tests/test-chart-rendered-rbac-policy.sh
+          bash scripts/tests/test-chart-rendered-rbac-policy.sh
 
       - name: 🚦 Validate default-off Cilium bandwidth manager
         if: needs.changes.outputs.k8s == 'true'

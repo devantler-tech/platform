@@ -3,14 +3,17 @@
 # Those charts render in-cluster through Flux, so nothing else evaluates their RBAC
 # before admission: a chart bump that renames an excluded role, broadens one, or adds
 # a privileged one would pass its own PR and then fail or silently widen the cluster.
-# This test renders each chart from the production controllers overlay, at its pinned
-# version and effective values, and checks the rendered RBAC three ways:
+# This test renders each chart the way production does: from the production
+# controllers overlay, with the production Flux substitutions, at the production
+# Kubernetes version, as both an install and an upgrade. It checks the rendered RBAC
+# three ways:
 #   1. the Enforce policy passes every role it evaluates;
 #   2. the policy's exclusions split exactly into chart-rendered roles and an explicit
 #      list of roles no chart renders;
 #   3. every excluded chart role still grants exactly its reviewed rules, and an
 #      aggregated one still collects exactly its reviewed contributors, whether a
 #      chart renders them or this repository commits them.
+# Anything the render cannot model the way Flux does fails closed.
 # Run with UPDATE_BASELINE=1 to record reviewed grants after checking the diff.
 set -euo pipefail
 
@@ -18,6 +21,13 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/audit-privileged-rbac.yaml"
 overlay="${repo_root}/k8s/providers/hetzner/infrastructure/controllers"
 baseline="${repo_root}/tests/chart-rendered-rbac-policy/excluded-role-grants.json"
+prod_config="${repo_root}/ksail.prod.yaml"
+# Flux substitutes from these ConfigMaps in this order, later entries winning, and
+# then from the SOPS-encrypted variables-cluster Secret, which this test cannot read.
+variable_sources=(
+  "${repo_root}/k8s/bases/bootstrap/config-map.yaml"
+  "${repo_root}/k8s/clusters/prod/bootstrap/config-map.yaml"
+)
 
 # The HelmReleases, as the production overlay builds them, whose rendered roles the
 # policy may exclude.
@@ -35,9 +45,10 @@ non_chart_exclusions='[
 ]'
 
 # Flux substitutions the watched HelmReleases may carry. Each sets only a replica
-# count, backup storage or an OIDC setting, so rendering it with a default or a
-# placeholder cannot change the RBAC. Any other token fails closed, because a value
-# this test cannot resolve could change which roles render and what they grant.
+# count, backup storage or an OIDC setting. They resolve to their production values
+# where a ConfigMap above holds one; a value held only in the encrypted Secret
+# renders as a placeholder, which is why every token must be reviewed as unable to
+# change which roles render or what they grant. Any other token fails closed.
 allowed_tokens='[
   "dex_client_secret",
   "domain",
@@ -55,7 +66,7 @@ allowed_tokens='[
   "velero_replicas"
 ]'
 
-for tool in helm jq kubectl kyverno yq; do
+for tool in awk helm jq kubectl kyverno yq; do
   command -v "$tool" >/dev/null || {
     printf 'FAIL: %s is required\n' "$tool" >&2
     exit 1
@@ -71,13 +82,44 @@ fail() {
   exit 1
 }
 
-# Flux substitutes ${name:=default} before Helm sees the values. Resolve those to
-# their defaults, and give a bare ${name} a placeholder string.
+kube_version="$(yq -r '.spec.cluster.kubernetesVersion' "$prod_config")"
+case "$kube_version" in
+  v[0-9]*.[0-9]*.[0-9]*) ;;
+  *) fail "could not read spec.cluster.kubernetesVersion from ksail.prod.yaml (got '${kube_version}')" ;;
+esac
+
+# The production substitution variables, later sources overriding earlier ones.
+for source in "${variable_sources[@]}"; do
+  yq -o=json '.data // {}' "$source"
+done |
+  jq -s -r 'add | to_entries[]
+    | select((.value | type) == "string" and (.value | test("[\t\n]") | not))
+    | "\(.key)\t\(.value)"' >"${scratch}/variables.tsv"
+[ -s "${scratch}/variables.tsv" ] || fail "no production substitution variables were read"
+
+# Resolves Flux substitutions as production does: a ConfigMap variable wins, then an
+# inline ${name:=default}, then a placeholder for a value held only in the Secret.
 substitute() {
-  sed -E \
-    -e 's/\$\{[A-Za-z0-9_]+:=([^}]*)\}/\1/g' \
-    -e 's/\$\{[A-Za-z0-9_]+\}/placeholder/g' \
-    "$1"
+  awk -F '\t' '
+    FNR == NR { vars[$1] = substr($0, length($1) + 2); next }
+    {
+      line = $0
+      out = ""
+      while (match(line, /[$][{][A-Za-z0-9_]+(:=[^}]*)?[}]/)) {
+        token = substr(line, RSTART + 2, RLENGTH - 3)
+        name = token
+        value = "placeholder"
+        split_at = index(token, ":=")
+        if (split_at > 0) {
+          name = substr(token, 1, split_at - 1)
+          value = substr(token, split_at + 2)
+        }
+        if (name in vars) value = vars[name]
+        out = out substr(line, 1, RSTART - 1) value
+        line = substr(line, RSTART + RLENGTH)
+      }
+      print out line
+    }' "${scratch}/variables.tsv" "$1"
 }
 
 kubectl kustomize "$overlay" >"${scratch}/overlay-raw.yaml"
@@ -93,8 +135,18 @@ done
 
 substitute "${scratch}/overlay-raw.yaml" >"${scratch}/overlay.yaml"
 
-# Renders one HelmRelease from the built overlay with its effective values into
-# <work>/rbac.yaml, keeping only its Roles and ClusterRoles.
+# Keeps only the Roles and ClusterRoles of one render, placing a namespaced one in the
+# release namespace when its template leaves the namespace unset, as Helm installs it.
+extract_rbac() {
+  local rendered="$1" namespace="$2"
+  yq "select(.kind == \"Role\" or .kind == \"ClusterRole\")
+      | (select(.kind == \"Role\" and (.metadata.namespace // \"\") == \"\") | .metadata.namespace) = \"${namespace}\"" \
+    "$rendered"
+}
+
+# Renders one HelmRelease from the built overlay with its effective values, as both
+# an install and an upgrade, into <work>/rbac.yaml, keeping only its Roles and
+# ClusterRoles.
 render() {
   local name="$1" work="$2"
   mkdir -p "$work"
@@ -151,19 +203,35 @@ render() {
     oci://*) helm pull "${url}/${chart}" --version "$version" --destination "$work" >/dev/null ;;
     *) helm pull "$chart" --repo "$url" --version "$version" --destination "$work" >/dev/null ;;
   esac
-  helm template "$release" "${work}/${chart}-${version}.tgz" \
-    --namespace "$namespace" --values "${work}/values.json" >"${work}/rendered.yaml"
 
-  # Helm installs a namespaced object into the release namespace when its template
-  # leaves the namespace unset, so the render must carry it for exclusions to match.
-  yq "select(.kind == \"Role\" or .kind == \"ClusterRole\")
-      | (select(.kind == \"Role\" and (.metadata.namespace // \"\") == \"\") | .metadata.namespace) = \"${namespace}\"" \
-    "${work}/rendered.yaml" >"${work}/rbac.yaml"
+  # A chart can condition RBAC on .Release.IsUpgrade, and Flux upgrades an existing
+  # release when its chart version changes, so both renders are evaluated.
+  helm template "$release" "${work}/${chart}-${version}.tgz" \
+    --namespace "$namespace" --kube-version "$kube_version" \
+    --values "${work}/values.json" >"${work}/rendered-install.yaml"
+  helm template "$release" "${work}/${chart}-${version}.tgz" \
+    --namespace "$namespace" --kube-version "$kube_version" --is-upgrade \
+    --values "${work}/values.json" >"${work}/rendered-upgrade.yaml"
+  extract_rbac "${work}/rendered-install.yaml" "$namespace" >"${work}/rbac-install.yaml"
+  extract_rbac "${work}/rendered-upgrade.yaml" "$namespace" >"${work}/rbac-upgrade.yaml"
+
+  # The same role must grant the same thing in both renders, or the baseline could not
+  # say which one it reviewed; a role present in only one render is kept.
+  yq ea -o=json '[select(.kind == "Role" or .kind == "ClusterRole")]' \
+    "${work}/rbac-install.yaml" "${work}/rbac-upgrade.yaml" >"${work}/rbac-both.json"
+  jq -e '
+    def normalise: walk(if type == "array" then sort else . end);
+    group_by("\(.kind)|\(.metadata.namespace // "")|\(.metadata.name)")
+    | all(.[]; map({rules, aggregationRule, labels: .metadata.labels} | normalise) | unique | length == 1)
+  ' "${work}/rbac-both.json" >/dev/null ||
+    fail "${name}: a role grants different rules, aggregation or labels on install and upgrade; review both before evaluating the policy"
+  jq 'unique_by("\(.kind)|\(.metadata.namespace // "")|\(.metadata.name)")' "${work}/rbac-both.json" |
+    yq -p=json -o=yaml '.[] | split_doc' >"${work}/rbac.yaml"
 
   local count
   count="$(yq ea '[select(.kind == "Role" or .kind == "ClusterRole")] | length' "${work}/rbac.yaml")"
   [ "$count" -gt 0 ] || fail "${name}: ${chart} ${version} rendered no Role or ClusterRole"
-  printf '%s %s rendered %s roles\n' "$chart" "$version" "$count"
+  printf '%s %s rendered %s roles for Kubernetes %s (install and upgrade)\n' "$chart" "$version" "$count" "$kube_version"
 }
 
 # Writes "pass fail warn error skip" from one kyverno apply run to the census file
