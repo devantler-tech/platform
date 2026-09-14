@@ -478,7 +478,7 @@ jobs:
               # alone — still runs the check that covers it.
               - 'scripts/restart-uncapped-talos-coredns.sh'
               - 'scripts/tests/test-restart-uncapped-talos-coredns.sh'
-              - 'scripts/tests/test-opencost-usage-scraper.sh'
+              - 'scripts/tests/test-coroot-cost-convergence.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
               - 'scripts/tests/test-crossplane-sync-alerter.sh'
               - 'scripts/tests/test-crossplane-egress-policy.sh'
@@ -1345,12 +1345,12 @@ jobs:
         # is real — a skipped step in a green deploy is otherwise invisible.
         run: bash scripts/tests/test-cilium-rollout-gate-suppression-signal.sh
 
-      - name: 📊 Validate OpenCost usage metrics path
+      - name: 📊 Validate Coroot cost convergence
         if: needs.changes.outputs.k8s == 'true'
-        # OpenCost cannot distinguish a dead usage sensor from an idle cluster.
-        # Render the full component contract so the cAdvisor scrape and its
-        # least-privilege delivery path cannot silently disappear.
-        run: bash scripts/tests/test-opencost-usage-scraper.sh
+        # Coroot is the single cost surface. Render both infrastructure overlays
+        # so OpenCost cannot return through a route, workload, policy or optional
+        # local integration, while the production pricing reconciler stays live.
+        run: bash scripts/tests/test-coroot-cost-convergence.sh
 
       - name: 🔄 Validate Crossplane sync exporter metrics path
         if: needs.changes.outputs.k8s == 'true'
@@ -1514,9 +1514,9 @@ jobs:
         # now runs, producing findings that are not real gaps.
         #
         # The comparison is NOT against the exclusion list: add-pod-security-context
-        # excludes fifteen namespaces, and three of them (cert-manager, keda,
-        # opencost) are reached by the by-name add-imageuid rule. Reading exclusions
-        # alone reports three false differences on a correct tree, and the natural way
+        # excludes fourteen namespaces, and two of them (cert-manager and keda)
+        # are reached by the by-name add-imageuid rule. Reading exclusions
+        # alone reports two false differences on a correct tree, and the natural way
         # to silence that is to add them to the exception — the very drift this
         # catches (#3224).
         run: |

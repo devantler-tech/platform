@@ -20,9 +20,8 @@ resources:
   # --- Opt-in (enable together with the matching controller) --------------
   # Observability (needs controllers/coroot):
   #   - ../../../bases/infrastructure/coroot/
-  #   - ../../../bases/infrastructure/opencost/
   # Progressive delivery (needs controllers/flagger):
-  #   - ../../../bases/infrastructure/flagger/
+  #   - ../../../bases/infrastructure/metric-templates/
   # Runtime security:
   #   - ../../../bases/infrastructure/cluster-security-exceptions/  # Kubescape exceptions — needs controllers/kubescape
   #   - ../../../bases/infrastructure/tracing-policies/     # Tetragon TracingPolicy — needs controllers/tetragon
@@ -32,7 +31,7 @@ resources:
   #   - ../../../bases/infrastructure/resource-graph-definitions/
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled). No-op until an
-  # opt-in HelmRelease (e.g. coroot/opencost) is enabled above. See
+  # opt-in HelmRelease (for example Coroot) is enabled above. See
   # bases/components/helmrelease-drift-detection.
   - ../../../bases/components/helmrelease-drift-detection
   - ../../../bases/components/helmrelease-flux-defaults
