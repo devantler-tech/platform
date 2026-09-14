@@ -8,30 +8,43 @@
 #
 # WHY THE PATH IS KNOWN, NOT GUESSED. Cilium runs one Envoy per node, and pod socket load balancing
 # is off, so a pod's connection to the gateway Service is handled by the Envoy on the POD'S OWN node.
-# That Envoy makes the ExternalAuth call. So:
-#   * a client pinned to a node running NO oauth2-proxy replica forces every call to cross nodes;
-#   * a client pinned to a node running a replica is the same-node control (Envoy does not prefer
-#     local endpoints, so it is a mix, which is enough to prove ext_authz works at all).
-# Replica placement and the node set are read before and after; any change is INCONCLUSIVE.
+# That Envoy makes the ExternalAuth call to an oauth2-proxy endpoint. So:
+#   * a client pinned to a node hosting NO oauth2-proxy endpoint forces every call to cross nodes;
+#   * a client pinned to a node hosting one is the same-node control (Envoy does not prefer local
+#     endpoints, so it is a mix — enough to prove ext_authz works at all).
+# Placement is read from the oauth2-proxy Service's EndpointSlices — what Envoy actually targets —
+# before and after the run, together with the node set; any change is INCONCLUSIVE.
 #
 # WHY A FAILURE IS ATTRIBUTABLE. Requests stay inside the cluster, over plain HTTP on the gateway's
 # `http` listener, to hostnames under `externalauth-probe.invalid`. Nothing in the path is
 # Cloudflare, public DNS or TLS, and external-dns publishes nothing outside the zone. Each client
-# alternates two routes with the SAME backend: a plain control route and the ExternalAuth route.
-# If the control route does not answer every time, the path or policy is broken and the run is
+# alternates two routes with the SAME backend: a plain control route and the ExternalAuth route. If
+# the control route does not answer every time, the path or policy is broken and the run is
 # INCONCLUSIVE rather than blamed on ext_authz.
 #
 #   delivered  a 302/303 whose Location is the Dex login (only oauth2-proxy produces it), or a 401
-#   lost       no response within the timeout, a 5xx, or an EMPTY 403 (Envoy's ext_authz error)
-#   other      anything else (a 200 means the filter is not applied; a 404 means the route is not
-#              programmed) — counted, and any occurrence makes the run INCONCLUSIVE
+#   lost       no response within the timeout, a 502/503/504, or an EMPTY 403 (Envoy's ext_authz
+#              error) — the shapes a subrequest that never arrived takes
+#   other      anything else (a 200 means the filter is not applied; a 404 or 301 means the route is
+#              not programmed; another 5xx came from a backend that DID answer) — any occurrence
+#              makes the run INCONCLUSIVE, and the distinct status codes are printed
 #
-# THE VERDICT
+# Warm-up waits until the control route answers 200 and the ExternalAuth route answers anything but
+# the unprogrammed-route shapes (404, 301). A timeout counts as programmed there, so a COMPLETE
+# black-hole still reaches the measurement instead of reading as a broken path.
+#
+# THE VERDICT (at least 10 requests per client; fewer is a smoke run and always INCONCLUSIVE)
 #   FIXED           control routes answered every time, the same-node client was delivered at least
 #                   once, and EVERY cross-node request was delivered.
 #   FAULT-PERSISTS  control routes answered every time, the same-node client was delivered at least
-#                   once, and at least one cross-node request was lost.
-#   INCONCLUSIVE    anything else.
+#                   once, at least 90% of cross-node requests were lost, and more cross-node than
+#                   same-node requests were lost — the #2284 pattern, not an intermittent blip.
+#   INCONCLUSIVE    anything else, including intermittent loss below that bar.
+#
+# GUARD. The ExternalAuth route shares the `http` listener with the platform's HTTP→HTTPS redirect.
+# Each client finishes with one request to an unrouted hostname, which must still get that redirect
+# (301); anything else means the probe changed another route's behaviour, and the run is
+# INCONCLUSIVE. This detects the exposure; it cannot prevent it for the run's duration.
 #
 # WHAT IT WRITES — stated plainly, because unlike the ipcache read this changes production while it
 # runs. Everything carries the label `platform.devantler.tech/externalauth-probe=<run-id>`:
@@ -39,12 +52,12 @@
 #     probe pods reach the gateway Service, and two pods;
 #   * in `oauth2-proxy`: one ReferenceGrant letting the ExternalAuth route name the oauth2-proxy
 #     Service.
-# No existing object is modified. An EXIT trap deletes everything carrying the run's label. If a
-# previous run left labelled objects behind, this run refuses before creating anything.
+# No existing object is modified. EXIT, INT and TERM all delete everything carrying the run's label.
+# If a previous run left labelled objects behind, this run refuses before creating anything.
 #
 # WHAT IT PRINTS. The workflow log of a public repository is public, so no address, node name, UID
-# or redirect URL is printed — only counts and the verdict. kubectl's stderr is discarded for the
-# same reason.
+# or redirect URL is printed — only counts, status codes and the verdict. kubectl's stderr is
+# discarded for the same reason.
 #
 # EXIT CODES
 #   0  a conclusive verdict (FIXED or FAULT-PERSISTS)
@@ -57,19 +70,21 @@ set -euo pipefail
 
 readonly probe_namespace='whoami'
 readonly oauth2_namespace='oauth2-proxy'
-readonly oauth2_selector='app.kubernetes.io/name=oauth2-proxy,app.kubernetes.io/instance=oauth2-proxy'
+readonly oauth2_service='oauth2-proxy'
 readonly probe_label='platform.devantler.tech/externalauth-probe'
 readonly control_host='control.externalauth-probe.invalid'
 readonly authz_host='authz.externalauth-probe.invalid'
+readonly guard_host='unrouted.externalauth-probe.invalid'
 readonly gateway_url='http://cilium-gateway-platform.kube-system.svc.cluster.local/'
 # The same pinned image the coroot heartbeat CronJob runs; it is not first-party, so no Talos image
 # verification rule matches it.
 readonly client_image='docker.io/curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777'
 # Each pod sends 2 requests per round (control + ExternalAuth), each bounded by the timeout, so its
-# worst case is 2 * requests * timeout. The cap keeps that, plus warm-up and scheduling, well
-# inside the workflow's job timeout (pinned by the test).
+# request phase is at most 2 * requests * timeout. The cap keeps the whole run, including warm-up
+# and scheduling, inside the workflow's job timeout (pinned by the test).
 readonly max_request_seconds=250
-readonly warmup_attempts=30
+readonly min_conclusive_requests=10
+readonly warmup_attempts=12
 readonly route_wait_attempts=24
 readonly poll_seconds="${PROBE_POLL_SECONDS:-5}"
 
@@ -138,7 +153,10 @@ if ((requests * timeout > max_request_seconds)); then
   exit 1
 fi
 
-readonly pod_deadline_seconds=$((2 * requests * timeout + 2 * warmup_attempts + 60))
+# Worst case per pod: every warm-up attempt makes two timed-out requests and sleeps a second, then
+# every round times out twice, then the guard request; plus scheduling and image pull.
+readonly pod_deadline_seconds=$(((2 * requests + 2 * warmup_attempts + 1) * timeout + warmup_attempts + 60))
+# One deadline for waiting on BOTH pods, measured in wall-clock seconds.
 readonly pod_wait_seconds=$((pod_deadline_seconds + 180))
 readonly cross_pod="externalauth-probe-cross-${run_id}"
 readonly same_pod="externalauth-probe-same-${run_id}"
@@ -179,58 +197,54 @@ is_k8s_name() {
   [[ "$1" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]
 }
 
-# Shared jq definitions so the before and after reads apply the SAME tests.
-readonly replica_jq_defs='
-  def ready: ([.status.conditions[]? | select(.type == "Ready") | .status] == ["True"]);
-  def replicas: [.items[]? | {
-      ok: (.status.phase == "Running" and .metadata.deletionTimestamp == null and ready),
-      uid: (.metadata.uid // ""),
-      node: (.spec.nodeName // "")
-    }];
-  def fingerprint: map(.uid + "|" + .node) | sort | join(";");
-'
-# A node can run a probe pod when it is Ready and carries no NoSchedule/NoExecute taint.
-readonly node_jq_defs='
-  def ready: ([.status.conditions[]? | select(.type == "Ready") | .status] == ["True"]);
-  def schedulable: (.spec.unschedulable != true)
-    and ([.spec.taints[]? | select(.effect == "NoSchedule" or .effect == "NoExecute")] | length == 0);
-  def fingerprint: [.items[]? | (.metadata.name // "") + "|" + (.metadata.uid // "")] | sort | join(";");
-'
-
-read_replicas() {
+# Placement from the Service's EndpointSlices: every endpoint must be ready, not terminating, and
+# carry a node and a target UID. Emits "FP <fingerprint>" then one "NODE <name>" per endpoint.
+read_endpoints() {
   local json
-  json="$(kc -n "${oauth2_namespace}" get pods -l "${oauth2_selector}" -o json)" || return 1
-  jq -r "${replica_jq_defs}"'
-    replicas
+  json="$(kc -n "${oauth2_namespace}" get endpointslices -l "kubernetes.io/service-name=${oauth2_service}" -o json)" || return 1
+  jq -r '
+    [.items[]?.endpoints[]? | {
+        ready: (.conditions.ready == true),
+        terminating: (.conditions.terminating == true),
+        node: (.nodeName // ""),
+        uid: (.targetRef.uid // "")
+      }]
     | if length == 0 then "ERR none"
-      elif any(.[]; (.ok | not) or .uid == "" or .node == "") then "ERR unsettled"
-      else "FP " + fingerprint, (.[] | "NODE " + .node)
+      elif any(.[]; (.ready | not) or .terminating or .node == "" or .uid == "") then "ERR unsettled"
+      else "FP " + (map(.uid + "|" + .node) | sort | join(";")), (.[] | "NODE " + .node)
       end
   ' <<<"${json}"
 }
 
+# A node can run a probe pod when it is Ready and carries no NoSchedule/NoExecute taint. Emits
+# "FP <fingerprint>" then "SCHED <name> <hostname-label>" per schedulable node, sorted by name.
 read_nodes() {
   local json
   json="$(kc get nodes -o json)" || return 1
-  jq -r "${node_jq_defs}"'
+  jq -r '
+    def ready: ([.status.conditions[]? | select(.type == "Ready") | .status] == ["True"]);
+    def schedulable: (.spec.unschedulable != true)
+      and ([.spec.taints[]? | select(.effect == "NoSchedule" or .effect == "NoExecute")] | length == 0);
     if ([.items[]?] | length) == 0 then "ERR none"
     elif any(.items[]?; (.metadata.name // "") == "" or (.metadata.uid // "") == "") then "ERR identity"
-    else "FP " + fingerprint,
-      ([.items[] | select(ready and schedulable) | .metadata.name] | sort | .[] | "SCHED " + .)
+    else "FP " + ([.items[] | .metadata.name + "|" + .metadata.uid] | sort | join(";")),
+      ([.items[] | select(ready and schedulable)
+        | {name: .metadata.name, host: (.metadata.labels["kubernetes.io/hostname"] // "")}]
+       | sort_by(.name) | .[] | "SCHED " + .name + " " + .host)
     end
   ' <<<"${json}"
 }
 
 # ---------------------------------------------------------------------------
-# 1. Topology before: settled oauth2-proxy replicas, and the nodes a probe pod may run on.
+# 1. Topology before: settled oauth2-proxy endpoints, and the nodes a probe pod may run on.
 # ---------------------------------------------------------------------------
-replica_lines="$(read_replicas)" || inconclusive 'could not read the oauth2-proxy pods'
-case "${replica_lines}" in
-  'ERR none') inconclusive 'no oauth2-proxy pods were found' ;;
-  'ERR unsettled') inconclusive 'an oauth2-proxy replica is not settled (rollout in flight)' ;;
+endpoint_lines="$(read_endpoints)" || inconclusive 'could not read the oauth2-proxy endpoints'
+case "${endpoint_lines}" in
+  'ERR none') inconclusive 'the oauth2-proxy Service has no endpoints' ;;
+  'ERR unsettled') inconclusive 'an oauth2-proxy endpoint is not settled (rollout in flight)' ;;
 esac
-replica_fp_before="$(sed -n 's/^FP //p' <<<"${replica_lines}")"
-replica_nodes="$(sed -n 's/^NODE //p' <<<"${replica_lines}" | sort -u)"
+endpoint_fp_before="$(sed -n 's/^FP //p' <<<"${endpoint_lines}")"
+endpoint_nodes="$(sed -n 's/^NODE //p' <<<"${endpoint_lines}" | sort -u)"
 
 node_lines="$(read_nodes)" || inconclusive 'could not read the nodes'
 case "${node_lines}" in
@@ -238,27 +252,38 @@ case "${node_lines}" in
   'ERR identity') inconclusive 'a node reported no name or UID' ;;
 esac
 node_fp_before="$(sed -n 's/^FP //p' <<<"${node_lines}")"
-if [[ -z "${replica_fp_before}" || -z "${node_fp_before}" ]]; then
+if [[ -z "${endpoint_fp_before}" || -z "${node_fp_before}" ]]; then
   inconclusive 'the topology reads did not parse'
 fi
 
 cross_node=''
+cross_host=''
 same_node=''
-while IFS= read -r node; do
+same_host=''
+while read -r node host; do
   [[ -z "${node}" ]] && continue
   is_k8s_name "${node}" || inconclusive 'a node reported a malformed name'
-  if grep -Fxq -- "${node}" <<<"${replica_nodes}"; then
-    [[ -z "${same_node}" ]] && same_node="${node}"
-  else
-    [[ -z "${cross_node}" ]] && cross_node="${node}"
+  # The pod is pinned by this label, so it must be present and well-formed, or the pod would sit
+  # Pending until the deadline.
+  if [[ -z "${host:-}" ]] || ! is_k8s_name "${host}"; then
+    continue
+  fi
+  if grep -Fxq -- "${node}" <<<"${endpoint_nodes}"; then
+    if [[ -z "${same_node}" ]]; then
+      same_node="${node}"
+      same_host="${host}"
+    fi
+  elif [[ -z "${cross_node}" ]]; then
+    cross_node="${node}"
+    cross_host="${host}"
   fi
 done < <(sed -n 's/^SCHED //p' <<<"${node_lines}")
 
-[[ -n "${cross_node}" ]] || inconclusive 'no schedulable node without an oauth2-proxy replica exists, so no cross-node path can be forced'
-[[ -n "${same_node}" ]] || inconclusive 'no schedulable node hosts an oauth2-proxy replica, so there is no same-node control'
+[[ -n "${cross_node}" ]] || inconclusive 'no schedulable node without an oauth2-proxy endpoint exists, so no cross-node path can be forced'
+[[ -n "${same_node}" ]] || inconclusive 'no schedulable node hosts an oauth2-proxy endpoint, so there is no same-node control'
 
-printf 'oauth2-proxy replicas on %s node(s); schedulable nodes: %s\n' \
-  "$(grep -c . <<<"${replica_nodes}" || true)" "$(grep -c '^SCHED ' <<<"${node_lines}" || true)"
+printf 'oauth2-proxy endpoints on %s node(s); schedulable nodes: %s\n' \
+  "$(grep -c . <<<"${endpoint_nodes}" || true)" "$(grep -c '^SCHED ' <<<"${node_lines}" || true)"
 
 # ---------------------------------------------------------------------------
 # 2. Refuse to run over leftovers. A labelled object from an earlier run means its cleanup failed;
@@ -275,12 +300,14 @@ if [[ -n "${leftovers}${leftover_grants}" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Create the probe objects. From here on, the EXIT trap removes everything this run labelled.
+# 3. Create the probe objects. From here on, the traps remove everything this run labelled.
 # ---------------------------------------------------------------------------
-# shellcheck disable=SC2329 # invoked by the EXIT trap below
+# Invoked by the EXIT trap below. CI's shellcheck reports that as SC2317, newer releases as SC2329.
+# shellcheck disable=SC2317,SC2329
 cleanup() {
   local rc=$?
   local failed=0
+  trap - EXIT INT TERM
   kc -n "${probe_namespace}" delete pods,httproutes,ciliumnetworkpolicies -l "${probe_label}=${run_id}" --ignore-not-found --wait=false >/dev/null || failed=1
   kc -n "${oauth2_namespace}" delete referencegrants -l "${probe_label}=${run_id}" --ignore-not-found --wait=false >/dev/null || failed=1
   if [[ "${failed}" -ne 0 ]]; then
@@ -293,6 +320,8 @@ cleanup() {
   exit "${rc}"
 }
 trap cleanup EXIT
+# A cancelled job sends TERM (or INT); turning it into a normal exit runs the same cleanup at once.
+trap 'exit 143' INT TERM
 
 route_manifest() {
   local name="$1" host="$2" filters="$3"
@@ -346,7 +375,7 @@ readonly authz_filters='      filters:
                 - x-auth-request-groups'
 
 pod_manifest() {
-  local name="$1" node="$2" role="$3"
+  local name="$1" host="$2" role="$3"
   cat <<YAML
 ---
 apiVersion: v1
@@ -364,7 +393,7 @@ spec:
   enableServiceLinks: false
   hostUsers: false
   nodeSelector:
-    kubernetes.io/hostname: ${node}
+    kubernetes.io/hostname: ${host}
   securityContext:
     runAsNonRoot: true
     runAsUser: 65532
@@ -385,6 +414,8 @@ spec:
           value: ${control_host}
         - name: AUTHZ_HOST
           value: ${authz_host}
+        - name: GUARD_HOST
+          value: ${guard_host}
         - name: GATEWAY_URL
           value: ${gateway_url}
       command:
@@ -395,15 +426,17 @@ spec:
           ask() {
             curl -s -o /dev/null --max-time "\$TIMEOUT" -H "Host: \$1" -w '%{http_code} %{size_download} %{redirect_url}' "\$GATEWAY_URL" 2>/dev/null
           }
-          # Warm-up: both routes must be programmed before anything is counted. A 404 means the
-          # gateway has not picked the route up yet; any other answer on both routes means it has.
+          # Warm-up: both routes must be programmed before anything is counted. An unprogrammed
+          # hostname answers at once with 404 or the listener's 301 redirect. A timeout on the
+          # ExternalAuth route is NOT unprogrammed — it is what a black-holed check looks like — so it
+          # ends the warm-up and is measured below.
           warm=0
           n=0
           while [ "\$n" -lt "\$WARMUP_ATTEMPTS" ]; do
             n=\$((n + 1))
             c=\$(ask "\$CONTROL_HOST" | cut -d' ' -f1)
             a=\$(ask "\$AUTHZ_HOST" | cut -d' ' -f1)
-            if [ "\$c" = 200 ] && [ -n "\$a" ] && [ "\$a" != 000 ] && [ "\$a" != 404 ]; then
+            if [ "\$c" = 200 ] && [ -n "\$a" ] && [ "\$a" != 404 ] && [ "\$a" != 301 ]; then
               warm=1
               break
             fi
@@ -420,6 +453,7 @@ spec:
             printf 'PROBE control %s\\n' "\$(ask "\$CONTROL_HOST" || true)"
             printf 'PROBE authz %s\\n' "\$(ask "\$AUTHZ_HOST" || true)"
           done
+          printf 'PROBE guard %s\\n' "\$(ask "\$GUARD_HOST" || true)"
           printf 'PROBE-DONE %s\\n' "\$i"
       securityContext:
         allowPrivilegeEscalation: false
@@ -458,7 +492,7 @@ spec:
   to:
     - group: ""
       kind: Service
-      name: oauth2-proxy
+      name: ${oauth2_service}
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -517,55 +551,53 @@ done
 [[ "${routes_ready}" -eq 1 ]] || inconclusive 'the probe routes were not accepted with resolved references in time'
 
 pods_manifest="$(
-  pod_manifest "${cross_pod}" "${cross_node}" cross
-  pod_manifest "${same_pod}" "${same_node}" same
+  pod_manifest "${cross_pod}" "${cross_host}" cross
+  pod_manifest "${same_pod}" "${same_host}" same
 )"
 if ! kc apply -f - <<<"${pods_manifest}" >/dev/null; then
   inconclusive 'could not create the probe pods'
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Wait for both clients to finish, on the nodes they were pinned to.
+# 4. Wait for BOTH clients under one wall-clock deadline, and check each ran where it was pinned.
 # ---------------------------------------------------------------------------
-wait_pod() {
-  local name="$1" node="$2" waited=0 json phase actual
-  while [[ "${waited}" -lt "${pod_wait_seconds}" ]]; do
-    if json="$(kc -n "${probe_namespace}" get pod "${name}" -o json)"; then
-      phase="$(jq -r '.status.phase // ""' <<<"${json}")"
-      actual="$(jq -r '.spec.nodeName // ""' <<<"${json}")"
-      case "${phase}" in
-        Succeeded)
-          [[ "${actual}" == "${node}" ]] || return 2
-          return 0
-          ;;
-        Failed) return 1 ;;
-      esac
-    fi
-    sleep "${poll_seconds}"
-    # At least one second per iteration, so a zero poll interval (the test) still terminates.
-    waited=$((waited + (poll_seconds > 0 ? poll_seconds : 1)))
-  done
-  return 1
+# Prints "done", "pending", "elsewhere" or "failed" for one pod.
+pod_state() {
+  local name="$1" node="$2" json phase actual
+  json="$(kc -n "${probe_namespace}" get pod "${name}" -o json)" || {
+    printf 'pending'
+    return 0
+  }
+  phase="$(jq -r '.status.phase // ""' <<<"${json}" 2>/dev/null || true)"
+  actual="$(jq -r '.spec.nodeName // ""' <<<"${json}" 2>/dev/null || true)"
+  case "${phase}" in
+    Succeeded)
+      if [[ "${actual}" == "${node}" ]]; then printf 'done'; else printf 'elsewhere'; fi
+      ;;
+    Failed) printf 'failed' ;;
+    *) printf 'pending' ;;
+  esac
 }
 
-for pair in "${cross_pod}:${cross_node}" "${same_pod}:${same_node}"; do
-  name="${pair%%:*}"
-  node="${pair#*:}"
-  set +e
-  wait_pod "${name}" "${node}"
-  status=$?
-  set -e
-  case "${status}" in
-    0) ;;
-    2) inconclusive 'a probe pod ran on a node other than the one it was pinned to' ;;
-    *) inconclusive 'a probe pod did not complete (not scheduled, refused, or past its deadline)' ;;
+readonly wait_deadline=$((SECONDS + pod_wait_seconds))
+while :; do
+  cross_state="$(pod_state "${cross_pod}" "${cross_node}")"
+  same_state="$(pod_state "${same_pod}" "${same_node}")"
+  case "${cross_state} ${same_state}" in
+    *elsewhere*) inconclusive 'a probe pod ran on a node other than the one it was pinned to' ;;
+    *failed*) inconclusive 'a probe pod did not complete (refused, or past its deadline)' ;;
+    'done done') break ;;
   esac
+  if ((SECONDS >= wait_deadline)); then
+    inconclusive 'a probe pod did not complete in time (not scheduled, or still running)'
+  fi
+  sleep "${poll_seconds}"
 done
 
 # ---------------------------------------------------------------------------
 # 5. Classify each client's answers.
 # ---------------------------------------------------------------------------
-# Prints: control_ok control_bad delivered lost other
+# Prints: control_ok control_bad delivered lost other guard_code other_codes
 classify() {
   local log="$1"
   awk -v want="${requests}" '
@@ -575,18 +607,23 @@ classify() {
       nc++
       if ($3 == "200") ok++; else bad++
     }
+    $1 == "PROBE" && $2 == "guard" { guard = ($3 == "" ? "none" : $3); ng++ }
     $1 == "PROBE" && $2 == "authz" {
       na++
       code = $3; size = $4; loc = $5
       if ((code == "302" || code == "303") && index(loc, "https://dex.") == 1) delivered++
       else if (code == "401") delivered++
-      else if (code == "000" || code == "" || code ~ /^5[0-9][0-9]$/ || (code == "403" && size == "0")) lost++
-      else other++
+      else if (code == "000" || code == "" || code == "502" || code == "503" || code == "504" || (code == "403" && size == "0")) lost++
+      else {
+        other++
+        c = (code == "" ? "none" : code)
+        if (!(c in seen)) { seen[c] = 1; codes = (codes == "" ? c : codes "," c) }
+      }
     }
     END {
       if (warm != "ok") { print "ERR warmup"; exit }
-      if (done != want || nc != want || na != want) { print "ERR incomplete"; exit }
-      printf "%d %d %d %d %d\n", ok, bad, delivered, lost, other
+      if (done != want || nc != want || na != want || ng != 1) { print "ERR incomplete"; exit }
+      printf "%d %d %d %d %d %s %s\n", ok, bad, delivered, lost, other, guard, (codes == "" ? "-" : codes)
     }
   ' <<<"${log}"
 }
@@ -595,10 +632,11 @@ results=''
 for role in cross same; do
   if [[ "${role}" == 'cross' ]]; then name="${cross_pod}"; else name="${same_pod}"; fi
   log="$(kc -n "${probe_namespace}" logs "${name}")" || inconclusive 'could not read a probe pod log'
-  counts="$(classify "${log}")"
+  counts="$(classify "${log}")" || inconclusive 'a probe pod log could not be classified'
   case "${counts}" in
     'ERR warmup') inconclusive 'a probe pod could not reach both routes during warm-up, so the path or policy is broken' ;;
     'ERR incomplete') inconclusive 'a probe pod log did not contain every expected answer' ;;
+    '') inconclusive 'a probe pod log could not be classified' ;;
   esac
   results="${results}${role} ${counts}"$'\n'
 done
@@ -606,9 +644,9 @@ done
 # ---------------------------------------------------------------------------
 # 6. Topology after: the placement the verdict relies on must not have changed.
 # ---------------------------------------------------------------------------
-replica_lines_after="$(read_replicas)" || inconclusive 'could not re-read the oauth2-proxy pods'
-[[ "$(sed -n 's/^FP //p' <<<"${replica_lines_after}")" == "${replica_fp_before}" ]] ||
-  inconclusive 'the oauth2-proxy replicas changed during the run'
+endpoint_lines_after="$(read_endpoints)" || inconclusive 'could not re-read the oauth2-proxy endpoints'
+[[ "$(sed -n 's/^FP //p' <<<"${endpoint_lines_after}")" == "${endpoint_fp_before}" ]] ||
+  inconclusive 'the oauth2-proxy endpoints changed during the run'
 node_lines_after="$(read_nodes)" || inconclusive 'could not re-read the nodes'
 [[ "$(sed -n 's/^FP //p' <<<"${node_lines_after}")" == "${node_fp_before}" ]] ||
   inconclusive 'the node set changed during the run'
@@ -616,8 +654,8 @@ node_lines_after="$(read_nodes)" || inconclusive 'could not re-read the nodes'
 # ---------------------------------------------------------------------------
 # 7. Verdict.
 # ---------------------------------------------------------------------------
-read -r _ cross_ok cross_bad cross_delivered cross_lost cross_other <<<"$(grep '^cross ' <<<"${results}")"
-read -r _ same_ok same_bad same_delivered same_lost same_other <<<"$(grep '^same ' <<<"${results}")"
+read -r _ cross_ok cross_bad cross_delivered cross_lost cross_other cross_guard cross_codes <<<"$(grep '^cross ' <<<"${results}")"
+read -r _ same_ok same_bad same_delivered same_lost same_other same_guard same_codes <<<"$(grep '^same ' <<<"${results}")"
 
 printf 'cross-node client: control %s ok / %s failed; ExternalAuth %s delivered / %s lost / %s other\n' \
   "${cross_ok}" "${cross_bad}" "${cross_delivered}" "${cross_lost}" "${cross_other}"
@@ -629,14 +667,20 @@ summary "| cross-node | ${cross_ok} | ${cross_bad} | ${cross_delivered} | ${cros
 summary "| same-node | ${same_ok} | ${same_bad} | ${same_delivered} | ${same_lost} | ${same_other} |"
 summary ""
 
+if [[ "${cross_guard}" != '301' || "${same_guard}" != '301' ]]; then
+  inconclusive "the http listener's redirect answered ${cross_guard}/${same_guard} instead of 301 during the run, so the probe route affected other traffic"
+fi
 if ((cross_bad + same_bad > 0)); then
   inconclusive 'the plain control route did not answer every time, so failures cannot be attributed to ExternalAuth'
 fi
 if ((cross_other + same_other > 0)); then
-  inconclusive 'the ExternalAuth route returned answers that are neither delivered nor lost (filter not applied, or route not serving)'
+  inconclusive "the ExternalAuth route returned answers that are neither delivered nor lost (status codes: cross ${cross_codes}, same ${same_codes})"
+fi
+if ((requests < min_conclusive_requests)); then
+  inconclusive "a run of fewer than ${min_conclusive_requests} requests per client is a smoke run and never conclusive"
 fi
 if ((same_delivered == 0)); then
-  inconclusive 'no ExternalAuth request was delivered even from a node with a local replica, so the route or backend is broken'
+  inconclusive 'no ExternalAuth request was delivered even from a node with a local endpoint, so the route or backend is broken'
 fi
 if ((cross_lost == 0)); then
   if ((same_lost > 0)); then
@@ -644,4 +688,7 @@ if ((cross_lost == 0)); then
   fi
   conclude 'FIXED' "every cross-node ExternalAuth request (${cross_delivered}) was delivered"
 fi
-conclude 'FAULT-PERSISTS' "${cross_lost} of ${requests} cross-node ExternalAuth requests were lost while the control route answered every time"
+if ((cross_lost * 10 >= requests * 9 && cross_lost > same_lost)); then
+  conclude 'FAULT-PERSISTS' "${cross_lost} of ${requests} cross-node ExternalAuth requests were lost (same-node: ${same_lost}) while the control route answered every time"
+fi
+inconclusive "${cross_lost} of ${requests} cross-node requests were lost (same-node: ${same_lost}), which is intermittent loss rather than the #2284 black-hole"
