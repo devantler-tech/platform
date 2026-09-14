@@ -20,13 +20,13 @@
 #
 # 🔴 THE EXCLUSION LIST IS NOT THE ANSWER — READ THE MATCH BLOCKS TOO.
 #
-# `add-pod-security-context` excludes FIFTEEN namespaces, not twelve: the twelve plus
-# cert-manager, keda and opencost. Those three are excluded there only because
+# `add-pod-security-context` excludes FOURTEEN namespaces, not twelve: the twelve plus
+# cert-manager and keda. Those two are excluded there only because
 # `add-imageuid-pod-security-context` matches them BY NAME and supplies the same
 # pod-level fields, so the mutation does reach them and the exception correctly does
 # not list them. A guard that compares the exception against the exclusion list alone
-# reports three false differences on a correct tree, and the natural way to silence it
-# is to add those three to the exception — which is precisely the drift it is meant to
+# reports two false differences on a correct tree, and the natural way to silence it
+# is to add those two to the exception — which is precisely the drift it is meant to
 # catch. So the set this guard compares is:
 #
 #     namespaces the mutation does NOT reach

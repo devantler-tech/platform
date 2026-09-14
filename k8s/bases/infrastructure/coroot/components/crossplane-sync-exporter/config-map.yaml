@@ -375,8 +375,7 @@ data:
   # The agent scrapes its own pod over loopback, so kube-state-metrics needs no
   # Service and no ingress. Remote-write is the only ingest path Coroot's bundled
   # Prometheus exposes (spec.prometheus carries no scrape configuration and there
-  # is no prometheus-operator), which is the same reason the opencost
-  # usage-scraper is shaped this way.
+  # is no prometheus-operator).
   prometheus.yml: |
     global:
       scrape_interval: 1m

@@ -26,8 +26,8 @@
 #   own runAsUser still overrides this pod-level default for that container (so e.g.
 #   homepage's container keeps runAsUser:1000, auth-proxy keeps 65532, etc.).
 # - EXEMPTIONS — images with a baked-in non-1000 UID and no chart-set runAsUser must
-#   NOT be forced to 1000 (cert-manager / trust-manager / origin-ca-issuer = 65532,
-#   keda = 65532, opencost = 1001; tofu-controller tf-runner takes its UID from its
+#   NOT be forced to 1000 (cert-manager / trust-manager / origin-ca-issuer and
+#   keda run as 65532; tofu-controller tf-runner takes its UID from its
 #   runnerPodTemplate). They are excluded from add-pod-security-context and handled by
 #   add-imageuid-pod-security-context below, which supplies pod-level seccomp,
 #   runAsNonRoot, fsGroup and fsGroupChangePolicy but NEITHER runAsUser NOR runAsGroup
@@ -128,8 +128,8 @@ spec:
                 - velero
                 - chaos-mesh
           # Workloads with an image-baked non-1000 UID and no chart-set runAsUser
-          # (cert-manager/trust-manager/origin-ca-issuer = 65532, keda = 65532,
-          # opencost = 1001). Forcing pod-level runAsUser:1000 would override their
+          # (cert-manager/trust-manager/origin-ca-issuer and keda run as 65532).
+          # Forcing pod-level runAsUser:1000 would override their
           # image UID; instead they are handled by add-imageuid-pod-security-context
           # below, which omits runAsUser/runAsGroup so they keep their UID and the
           # sandbox still builds.
@@ -137,7 +137,6 @@ spec:
               namespaces:
                 - cert-manager
                 - keda
-                - opencost
           # tofu-controller runner pods take their UID from their runnerPodTemplate
           # and ship no image-baked UID; same handling as the namespaces above.
           - resources:
@@ -237,9 +236,9 @@ spec:
                 path: /spec/initContainers/{{elementIndex}}/securityContext/seLinuxOptions
                 value: {}
     # Pods exempt from the pod-level runAsUser/runAsGroup injection in
-    # add-pod-security-context (image-baked non-1000 UIDs: cert-manager, keda,
-    # opencost; and tofu-controller runner pods) still must satisfy the rest of
-    # C-0211 at the pod level. tofu-controller does NOT propagate its
+    # add-pod-security-context (cert-manager and keda use image-baked non-1000
+    # UIDs; tofu-controller runner pods inherit their template UID) still must
+    # satisfy the rest of C-0211 at the pod level. tofu-controller does NOT propagate its
     # runnerPodTemplate's pod-level securityContext to the created runner pod, and
     # the excluded namespaces' charts do not all set these either, so re-supply them
     # here — everything the pod rule injects EXCEPT the sandbox-sensitive
@@ -266,7 +265,6 @@ spec:
               namespaces:
                 - cert-manager
                 - keda
-                - opencost
       mutate:
         patchStrategicMerge:
           spec:
