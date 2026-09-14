@@ -81,7 +81,20 @@
                       -p "$DB_PORT" \
                       -U "$DB_USER" \
                       -d postgres \
-                      -tAc "SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'" \
+                      -tAc "SELECT 1
+                        FROM pg_catalog.pg_roles AS monitor
+                        JOIN pg_catalog.pg_auth_members AS membership
+                          ON membership.member = monitor.oid
+                        JOIN pg_catalog.pg_roles AS granted_role
+                          ON granted_role.oid = membership.roleid
+                        WHERE monitor.rolname = 'coroot_monitor'
+                          AND monitor.rolcanlogin
+                          AND granted_role.rolname = 'pg_monitor'
+                          AND EXISTS (
+                            SELECT 1
+                            FROM pg_catalog.pg_extension
+                            WHERE extname = 'pg_stat_statements'
+                          )" \
                       2>/dev/null | grep -qx '1'; do
                       echo "Waiting for the instrumented database to be ready..."
                       sleep 2

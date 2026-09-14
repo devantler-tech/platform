@@ -20,10 +20,11 @@ resources:
   # capture the completed Job's logs, then remove it again so its generic
   # ephemeral PVC and Longhorn volume are garbage-collected.
   # - userns-longhorn-smoke/
-  # Prod-only Coroot Postgres integration for platform-owned databases:
-  # additive CiliumNetworkPolicies that let the observability cluster-agent
-  # scrape each on 5432 (the Cluster patches below stamp the
-  # coroot.com/postgres-scrape annotations + dedicated pg_monitor roles + pg_stat_statements).
+  # Prod-only Coroot Postgres integrations for platform-owned databases:
+  # the Cluster patches below configure CNPG annotations, roles and extensions;
+  # the Crossview resources and HelmRelease patch configure its bundled
+  # PostgreSQL Deployment. Additive CiliumNetworkPolicies let only the
+  # observability cluster-agent scrape each database on 5432.
   # coroot-db needs none — it is intra-namespace to the agent and already
   # covered by the base allow-coroot policy. The wedding-app TENANT owns its own
   # equivalent in its repo's deploy/ (cluster.yaml + networkpolicy.yaml), since

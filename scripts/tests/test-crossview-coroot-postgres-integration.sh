@@ -126,11 +126,16 @@ printf '%s\n' "${app_patch}" |
       .args[] |
       select(
         contains("pg_stat_statements") and
-        contains("-d postgres")
+        contains("-d postgres") and
+        contains("FROM pg_catalog.pg_roles AS monitor") and
+        contains("monitor.rolcanlogin") and
+        contains("pg_catalog.pg_auth_members AS membership") and
+        contains("granted_role.rolname =") and
+        contains("pg_monitor")
       )
     ] | length == 1)
   ' - >/dev/null ||
-  fail 'the Crossview app must verify the Coroot maintenance database before bootstrapping'
+  fail 'the Crossview app must verify the extension, login role, and pg_monitor membership before bootstrapping'
 
 printf '%s\n' "${snapshot}" |
   yq e -e '
