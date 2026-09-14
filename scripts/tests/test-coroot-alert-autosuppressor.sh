@@ -7,7 +7,9 @@
 # The live signal is deterministic: scheduler liveness + readiness yields
 # 0.6/s, while controller-manager liveness yields 0.3/s. Suppression is safe
 # only while those are the complete set of active upstream series. A third
-# active upstream must keep the alert visible.
+# active upstream must keep the alert visible. Log-pattern alerts are never
+# suppressed from a representative Sample because one Coroot fingerprint can
+# group several weakly-equal raw patterns.
 
 set -euo pipefail
 
@@ -111,22 +113,20 @@ run_scenario "${extra_dir}" >/dev/null
   fail "a kubelet alert with an additional active upstream was suppressed"
 pass "an additional active upstream keeps the kubelet alert visible"
 
-kcm_dir="$(setup_scenario kcm false)"
-cat >"${kcm_dir}/alerts.json" <<'JSON'
+log_pattern_dir="$(setup_scenario log-patterns false)"
+cat >"${log_pattern_dir}/alerts.json" <<'JSON'
 {"data":{"alerts":[
-  {"id":"expected-cronjob-retry","suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","application_id":"95rsc5yp:kube-system:StaticPods:kube-controller-manager"},
-  {"id":"different-controller-error","suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","application_id":"95rsc5yp:kube-system:StaticPods:kube-controller-manager"}
+  {"id":"mixed-controller-patterns","suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","application_id":"95rsc5yp:kube-system:StaticPods:kube-controller-manager"},
+  {"id":"mixed-reflector-patterns","suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","application_id":"95rsc5yp:kube-system:StaticPods:kube-controller-manager"}
 ]}}
 JSON
-cat >"${kcm_dir}/detail-expected-cronjob-retry.json" <<'JSON'
+cat >"${log_pattern_dir}/detail-mixed-controller-patterns.json" <<'JSON'
 {"data":{"details":[{"name":"Sample","value":"cronjob_controllerv2.go:179 Unhandled Error: error syncing CronJobController observability/crossplane-sync-alerter, requeuing: Operation cannot be fulfilled on cronjobs.batch \"crossplane-sync-alerter\": the object has been modified; please apply your changes to the latest version and try again"}]}}
 JSON
-cat >"${kcm_dir}/detail-different-controller-error.json" <<'JSON'
-{"data":{"details":[{"name":"Sample","value":"cronjob_controllerv2.go:179 Unhandled Error: error syncing CronJobController observability/other-job: admission webhook denied the request"}]}}
+cat >"${log_pattern_dir}/detail-mixed-reflector-patterns.json" <<'JSON'
+{"data":{"details":[{"name":"Sample","value":"reflector.go:229 Failed to watch *v1.PartialObjectMetadata: could not find the requested resource"}]}}
 JSON
-run_scenario "${kcm_dir}" >/dev/null
-[ -f "${kcm_dir}/suppressed.json" ] ||
-  fail "the expected crossplane-sync-alerter resource-version retry was not suppressed"
-jq -e '.ids == ["expected-cronjob-retry"]' "${kcm_dir}/suppressed.json" >/dev/null ||
-  fail "the CronJob retry scenario suppressed an adjacent controller error"
-pass "only the exact crossplane-sync-alerter optimistic-concurrency retry is suppressed"
+run_scenario "${log_pattern_dir}" >/dev/null
+[ ! -e "${log_pattern_dir}/suppressed.json" ] ||
+  fail "a representative sample suppressed a mixed Coroot log-pattern fingerprint"
+pass "mixed kube-controller-manager log-pattern fingerprints remain visible"
