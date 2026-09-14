@@ -329,6 +329,8 @@ jobs:
               - 'scripts/tests/test-label-baseline-workers.sh'
               # The hcloud consumers that require that label (#3287).
               - 'scripts/tests/test-hcloud-baseline-worker-affinity.sh'
+              # The admission guard for every hcloud consumer, and its fixtures.
+              - 'tests/require-baseline-workers-for-hcloud-volumes/**'
               - 'tests/audit-privileged-rbac/**'
               - 'tests/auto-vpa/**'
               - 'scripts/tests/test-audit-privileged-rbac.sh'

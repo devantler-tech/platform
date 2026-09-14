@@ -1,0 +1,129 @@
+# Prod-only: refuse any Pod that mounts an hcloud volume unless it is pinned to
+# the static baseline workers.
+#
+# WHY: an hcloud block volume attaches to exactly one node and is not
+# force-detached when that node departs. A volume on an autoscaler node is
+# stranded the moment the autoscaler reclaims the node; on 2026-07-01 a
+# stranded OpenBao volume wedged the prod merge queue for ~9h (#2363).
+#
+# WHY AT ADMISSION: the per-workload guards (scripts/tests/
+# test-hcloud-baseline-worker-affinity.sh) cover the consumers that exist
+# today, but only the ones that test knows by name. The next chart that
+# requests an hcloud PVC, and any workload rendered from a HelmRelease that CI
+# never sees as a Pod, would be exposed with nothing to catch it (#3287). This
+# policy checks every Pod, whichever manifest produced it.
+#
+# WHAT COUNTS AS GUARDED: the Pod has at least one required nodeSelectorTerm,
+# and EVERY term carries one of:
+#   * platform.devantler.tech/baseline-worker In ["true"] — the positive label
+#     stamped by label-baseline-workers; or
+#   * kubernetes.io/hostname In [...] with every value prod-worker-* — for
+#     OpenBao, which deploys before the label policies exist on a rebuilt
+#     cluster.
+# Terms are ORed, so a single term without the guard fails open; that is why
+# every term is checked. A `ksail.io/autoscaled DoesNotExist` rule is NOT a
+# guard: measured on prod 2026-09-13, autoscaler nodes do not carry that label.
+#
+# WHAT COUNTS AS AN hcloud VOLUME: a persistentVolumeClaim whose claim has
+# storageClassName hcloud (looked up from the API), or a generic ephemeral
+# volume that names hcloud directly. The cluster default class is Longhorn,
+# so an ephemeral volume without a class is out of scope. A claim that does
+# not exist yet reads as no class; the StatefulSet controller creates its
+# claims before the Pod, so the normal hcloud consumer path is still checked.
+#
+# The check reads only the Pod spec, never node labels, so it cannot deadlock
+# a rebuild waiting for a label to appear.
+#
+# FAILURE POLICY: Ignore. With Fail, a Kyverno outage would reject every Pod,
+# including the ones needed to bring Kyverno back.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-baseline-workers-for-hcloud-volumes
+  annotations:
+    # Pod-only, no controller variants. Kyverno's autogen rewrites the claim
+    # lookup's namespace to spec.template.metadata.namespace, which pod
+    # templates never set, so every Deployment, StatefulSet, Job and CronJob
+    # that mounts a claim would ERROR at admission. Measured against prod on
+    # 2026-09-14: 37 errors from the autogen variants, 0 from the Pod rule. A
+    # controller whose Pod is refused surfaces as a FailedCreate event.
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Require Baseline Workers for hcloud Volumes
+    policies.kyverno.io/category: Scheduling, Storage
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Refuses a Pod that mounts an hcloud volume unless every required
+      nodeSelectorTerm pins it to the static baseline workers, either by the
+      platform.devantler.tech/baseline-worker=true label or by prod-worker-*
+      hostnames. hcloud volumes are not force-detached when their node
+      departs, so a volume on an autoscaler node strands when the node is
+      reclaimed.
+spec:
+  background: true
+  failurePolicy: Ignore
+  rules:
+    - name: require-baseline-worker-affinity
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              operations:
+                - CREATE
+      preconditions:
+        any:
+          - key: "{{ length(request.object.spec.volumes[?persistentVolumeClaim || ephemeral] || `[]`) }}"
+            operator: GreaterThan
+            value: 0
+      context:
+        - name: nodeSelectorTerms
+          variable:
+            jmesPath: request.object.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms
+            default: []
+        - name: baselineWorkerOnly
+          variable:
+            jmesPath: >-
+              length(nodeSelectorTerms) > `0` &&
+              length(nodeSelectorTerms[?!(
+                matchExpressions[?key == 'platform.devantler.tech/baseline-worker' && operator == 'In' && values == ['true']] ||
+                matchExpressions[?key == 'kubernetes.io/hostname' && operator == 'In' && length(values) > `0` && length(values[?!starts_with(@, 'prod-worker-')]) == `0`]
+              )]) == `0`
+      validate:
+        failureAction: Enforce
+        message: >-
+          Pod {{ request.object.metadata.namespace }}/{{ request.object.metadata.name }}
+          mounts an hcloud volume but is not pinned to the static baseline
+          workers, so the volume strands if an autoscaler node that runs it is
+          reclaimed. Fix: give the workload a required node affinity where
+          every nodeSelectorTerm includes
+          platform.devantler.tech/baseline-worker In ["true"] (or, for
+          workloads that deploy before that label exists,
+          kubernetes.io/hostname In prod-worker-* only). See platform#3287.
+        foreach:
+          - list: request.object.spec.volumes[?persistentVolumeClaim]
+            context:
+              - name: claimStorageClass
+                apiCall:
+                  urlPath: "/api/v1/namespaces/{{ request.object.metadata.namespace }}/persistentvolumeclaims/{{ element.persistentVolumeClaim.claimName }}"
+                  jmesPath: spec.storageClassName
+                  default: ""
+            deny:
+              conditions:
+                all:
+                  - key: "{{ claimStorageClass }}"
+                    operator: Equals
+                    value: hcloud
+                  - key: "{{ baselineWorkerOnly }}"
+                    operator: Equals
+                    value: false
+          - list: request.object.spec.volumes[?ephemeral]
+            deny:
+              conditions:
+                all:
+                  - key: "{{ element.ephemeral.volumeClaimTemplate.spec.storageClassName || '' }}"
+                    operator: Equals
+                    value: hcloud
+                  - key: "{{ baselineWorkerOnly }}"
+                    operator: Equals
+                    value: false

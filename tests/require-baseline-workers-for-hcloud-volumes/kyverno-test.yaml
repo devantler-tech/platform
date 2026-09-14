@@ -1,0 +1,52 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: require-baseline-workers-for-hcloud-volumes
+policies:
+  - >-
+    ../../k8s/providers/hetzner/infrastructure/cluster-policies/require-baseline-workers-for-hcloud-volumes.yaml
+resources:
+  - resources.yaml
+# Every claim in this fixture resolves to storage class hcloud. The CLI cannot
+# reach an API server, so values.yaml supplies the claim lookup. The sibling
+# longhorn-claim/ fixture proves a non-hcloud claim is not caught.
+variables: values.yaml
+results:
+  # The two accepted guards: the positive label, and prod-worker-* hostnames.
+  - policy: require-baseline-workers-for-hcloud-volumes
+    rule: require-baseline-worker-affinity
+    resources:
+      - observability/guarded-by-label
+      - openbao/guarded-by-hostname
+      - observability/guarded-by-label-in-every-term
+      - observability/ephemeral-hcloud-guarded
+    kind: Pod
+    result: pass
+  # Every way the guard can be missing or fail open.
+  - policy: require-baseline-workers-for-hcloud-volumes
+    rule: require-baseline-worker-affinity
+    resources:
+      - observability/no-affinity
+      - observability/extra-unguarded-or-term
+      - observability/label-value-false
+      - observability/negative-autoscaled-guard
+      - openbao/hostname-includes-autoscaler
+      - openbao/hostname-operator-notin
+      - observability/ephemeral-hcloud-unguarded
+    kind: Pod
+    result: fail
+  # An ephemeral volume on the default (Longhorn) class is out of scope.
+  - policy: require-baseline-workers-for-hcloud-volumes
+    rule: require-baseline-worker-affinity
+    resources:
+      - observability/ephemeral-default-class-unguarded
+    kind: Pod
+    result: pass
+  # A Pod with no claim volumes does not match the precondition.
+  - policy: require-baseline-workers-for-hcloud-volumes
+    rule: require-baseline-worker-affinity
+    resources:
+      - observability/no-claims
+    kind: Pod
+    result: skip

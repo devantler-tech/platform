@@ -52,6 +52,11 @@ resources:
   # retrofit half, split for the same Kyverno reason as the pair above.
   - cluster-policies/label-baseline-workers.yaml
   - cluster-policies/label-existing-baseline-workers.yaml
+  # Prod-only: refuse any Pod that mounts an hcloud volume unless it is pinned
+  # to the baseline workers, so a new hcloud consumer cannot strand its volume
+  # on an autoscaler node unnoticed (#3287). Checks the Pod spec only, so it
+  # never waits on the label above.
+  - cluster-policies/require-baseline-workers-for-hcloud-volumes.yaml
   # Prod-only: reconcile Coroot's node Custom Cloud Pricing to Hetzner rates
   # (Coroot otherwise prices non-AWS/GCP/Azure nodes at the GCP-C4 fallback,
   # ~16x the real bill). Lives in this `infrastructure` layer because it targets
