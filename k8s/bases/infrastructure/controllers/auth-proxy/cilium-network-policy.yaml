@@ -94,6 +94,14 @@ spec:
         - ports:
             - port: "8200"
               protocol: TCP
+    # Umami browser UI after oauth2-proxy has authenticated the request.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: umami
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:

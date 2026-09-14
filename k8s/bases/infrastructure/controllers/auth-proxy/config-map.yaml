@@ -73,6 +73,14 @@ data:
           rule: "Host(`vault.${domain}`)"
           entryPoints: ["web"]
           service: openbao
+        # Umami's public collector paths bypass this router via the more
+        # specific Flagger-owned route. The browser UI reaches this router only
+        # after oauth2-proxy has enforced the maintainer-team SSO gate.
+        umami:
+          rule: "Host(`analytics.${domain}`)"
+          entryPoints: ["web"]
+          middlewares: ["forwarded-proto-https"]
+          service: umami
       middlewares:
         # Restores the scheme the client actually used. Traefik derives
         # X-Forwarded-Proto from the entryPoint it received on, and this
@@ -127,3 +135,7 @@ data:
           loadBalancer:
             servers:
               - url: "http://openbao-active.openbao.svc.cluster.local:8200"
+        umami:
+          loadBalancer:
+            servers:
+              - url: "http://umami-umami-primary.umami.svc.cluster.local:80"
