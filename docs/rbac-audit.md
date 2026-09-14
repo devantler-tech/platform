@@ -25,6 +25,19 @@ chart change that renames one of them, or adds a new privileged role, is refused
 admission. Flux dry-runs through the same webhook, so the whole Kustomization fails
 until the new role is reviewed and added here.
 
+The built-in `admin` and `edit` roles are aggregated: they grant whatever every
+ClusterRole labelled `rbac.authorization.k8s.io/aggregate-to-admin`,
+`aggregate-to-edit` or `aggregate-to-view` grants, because `edit` aggregates into
+`admin` and `view` into `edit`. Each contributor is still checked on its own at
+admission, so a privileged one is refused, but a label edit that quietly widens
+what every `admin` or `edit` holder can do would not be. So
+`scripts/tests/test-chart-rendered-rbac-policy.sh` records the contributors that
+charts render and this repository commits, with their rules and labels, in
+`tests/chart-rendered-rbac-policy/builtin-aggregate-contributors.json`. Adding or
+removing a contributor, or changing its rules, fails CI with a diff until the
+baseline is re-recorded with `UPDATE_BASELINE=1` and reviewed. ClusterRoles that an
+operator creates at runtime are not covered.
+
 Kyverno's own resource filters skip `kube-system`, `kube-public`,
 `kube-node-lease`, `kyverno` and Kyverno's controller roles for every policy. A
 privileged grant created there is not evaluated, so this policy does not cover

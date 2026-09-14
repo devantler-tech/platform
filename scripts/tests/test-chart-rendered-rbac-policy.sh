@@ -6,13 +6,17 @@
 # This test renders each chart the way production does: from the production
 # controllers overlay, with the production Flux substitutions, at the production
 # Kubernetes version, as both an install and an upgrade. It checks the rendered RBAC
-# three ways:
+# four ways:
 #   1. the Enforce policy passes every role it evaluates;
 #   2. the policy's exclusions split exactly into chart-rendered roles and an explicit
 #      list of roles no chart renders;
 #   3. every excluded chart role still grants exactly its reviewed rules, and an
 #      aggregated one still collects exactly its reviewed contributors, whether a
-#      chart renders them or this repository commits them.
+#      chart renders them or this repository commits them;
+#   4. the excluded Kubernetes built-in aggregated roles, admin and edit, still collect
+#      exactly their reviewed contributors from the ClusterRoles charts render and this
+#      repository commits. ClusterRoles a controller creates at runtime are out of
+#      scope: nothing here renders them.
 # Anything the render cannot model the way Flux does fails closed.
 # Run with UPDATE_BASELINE=1 to record reviewed grants after checking the diff.
 set -euo pipefail
@@ -21,6 +25,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/audit-privileged-rbac.yaml"
 overlay="${repo_root}/k8s/providers/hetzner/infrastructure/controllers"
 baseline="${repo_root}/tests/chart-rendered-rbac-policy/excluded-role-grants.json"
+builtin_baseline="${repo_root}/tests/chart-rendered-rbac-policy/builtin-aggregate-contributors.json"
 prod_config="${repo_root}/ksail.prod.yaml"
 # Flux substitutes from these ConfigMaps in this order, later entries winning, and
 # then from the SOPS-encrypted variables-cluster Secret, which this test cannot read.
@@ -340,12 +345,56 @@ yq ea -o=json '[select(.kind == "ClusterRole")]' "${scratch}/rbac.yaml" |
   ' >/dev/null ||
   fail "an excluded aggregated role uses a selector form this test cannot resolve; only non-empty matchLabels selectors are supported"
 
+# The Kubernetes built-in aggregated ClusterRoles the policy excludes, with every
+# aggregation label whose contributors reach them. The API server fixes these
+# selectors, so no manifest here declares them: admin selects aggregate-to-admin,
+# edit selects aggregate-to-edit, the built-in edit carries aggregate-to-admin, and
+# the built-in view carries aggregate-to-edit. So a view contributor widens edit and
+# admin too, and an edit contributor widens admin.
+builtin_aggregates='{
+  "ClusterRole||admin": [
+    "rbac.authorization.k8s.io/aggregate-to-admin",
+    "rbac.authorization.k8s.io/aggregate-to-edit",
+    "rbac.authorization.k8s.io/aggregate-to-view"
+  ],
+  "ClusterRole||edit": [
+    "rbac.authorization.k8s.io/aggregate-to-edit",
+    "rbac.authorization.k8s.io/aggregate-to-view"
+  ]
+}'
+
+# Prints the contributors to each excluded built-in aggregated ClusterRole, with their
+# grants and aggregation labels, normalised so order does not matter.
+builtin_contributors() {
+  local resources="$1" committed="$2"
+  jq -S -n \
+    --argjson aggregates "$builtin_aggregates" \
+    --slurpfile rendered <(yq ea -o=json '[select(.kind == "ClusterRole")]' "$resources") \
+    --slurpfile committed <(yq ea -o=json '[select(.kind == "ClusterRole")]' "$committed") '
+      def normalise: walk(if type == "array" then sort else . end);
+      def identity: "\(.kind)|\(.metadata.namespace // "")|\(.metadata.name)";
+      def grants: {rules: (.rules // []), aggregationRule: (.aggregationRule // null)} | normalise;
+      def aggregation_labels: [(.metadata.labels // {}) | to_entries[]
+        | select(.key | startswith("rbac.authorization.k8s.io/aggregate-to-"))
+        | "\(.key)=\(.value | tostring)"] | sort;
+      ($rendered[0] + $committed[0]) as $all
+      | $aggregates
+      | with_entries(.value as $labels | .value = ([$all[]
+          | . as $role
+          | select(any($labels[]; (($role.metadata.labels // {})[.] | tostring) == "true"))
+          | {key: identity, value: (grants + {labels: aggregation_labels})}]
+        | from_entries))'
+}
+
 excluded_grants "${scratch}/rbac.yaml" "${scratch}/committed.yaml" >"${scratch}/grants.json"
+builtin_contributors "${scratch}/rbac.yaml" "${scratch}/committed.yaml" >"${scratch}/builtin.json"
 if [ "${UPDATE_BASELINE:-}" = "1" ]; then
   mkdir -p "$(dirname "$baseline")"
   cp "${scratch}/grants.json" "$baseline"
-  printf 'Recorded %s excluded role grants in %s; review the diff before committing.\n' \
-    "$(jq length "$baseline")" "${baseline#"${repo_root}"/}"
+  cp "${scratch}/builtin.json" "$builtin_baseline"
+  printf 'Recorded %s excluded role grants in %s and %s built-in aggregate contributor entries in %s; review the diff before committing.\n' \
+    "$(jq length "$baseline")" "${baseline#"${repo_root}"/}" \
+    "$(jq '[.[] | length] | add // 0' "$builtin_baseline")" "${builtin_baseline#"${repo_root}"/}"
   exit 0
 fi
 
@@ -400,5 +449,42 @@ if [ "$negative_status" -ne 1 ] || [ "$negative_failed" -ne 1 ] ||
   fail "an unexcluded privileged role in the render was not refused"
 fi
 
-printf 'PASS: %s chart-rendered roles pass the privileged-RBAC policy; %s excluded chart roles match their reviewed grants and contributors; broadened and unexcluded privileged roles fail\n' \
-  "$pass" "$(jq length "$baseline")"
+# The built-in aggregated roles must still be policy exclusions listed as non-chart
+# roles, or their contributors are being recorded for an exclusion that is gone.
+unlisted_builtin="$(jq -r --argjson aggregates "$builtin_aggregates" --argjson listed "$non_chart_exclusions" '
+  . as $policy | $aggregates | keys
+  | map(select(. as $id | ($policy | index($id)) == null or ($listed | index($id)) == null)) | .[]
+' "${scratch}/policy-exclusions.json")"
+[ -z "$unlisted_builtin" ] ||
+  fail "built-in aggregated roles are no longer non-chart policy exclusions, update this test: ${unlisted_builtin//$'\n'/, }"
+
+[ -f "$builtin_baseline" ] ||
+  fail "no reviewed built-in aggregate contributors baseline; run UPDATE_BASELINE=1 bash scripts/tests/test-chart-rendered-rbac-policy.sh and review it"
+if ! diff -u "$builtin_baseline" "${scratch}/builtin.json" >"${scratch}/builtin.diff"; then
+  cat "${scratch}/builtin.diff" >&2
+  fail "contributors to the built-in admin and edit roles differ from those reviewed; review the diff above, then run UPDATE_BASELINE=1 bash scripts/tests/test-chart-rendered-rbac-policy.sh"
+fi
+
+# Negative control: labelling an unrelated committed ClusterRole into edit must make it
+# a contributor to edit and admin and change the result, or the comparison above
+# proves nothing.
+unrelated="$(yq ea -o=json '[select(.kind == "ClusterRole")]' "${scratch}/committed.yaml" |
+  jq -r '[.[]
+    | select((.metadata.labels // {}) | keys | any(startswith("rbac.authorization.k8s.io/aggregate-to-")) | not)
+    | .metadata.name] | first // empty')"
+[ -n "$unrelated" ] ||
+  fail "every committed ClusterRole already carries an aggregation label; the negative control has no unrelated role to label"
+yq "(select(.kind == \"ClusterRole\" and .metadata.name == \"${unrelated}\")
+    | .metadata.labels[\"rbac.authorization.k8s.io/aggregate-to-edit\"]) = \"true\"" \
+  "${scratch}/committed.yaml" >"${scratch}/committed-labelled.yaml"
+builtin_contributors "${scratch}/rbac.yaml" "${scratch}/committed-labelled.yaml" >"${scratch}/builtin-labelled.json"
+jq -e --arg id "ClusterRole||${unrelated}" \
+  '(.["ClusterRole||edit"] | has($id)) and (.["ClusterRole||admin"] | has($id))' \
+  "${scratch}/builtin-labelled.json" >/dev/null ||
+  fail "labelling ${unrelated} aggregate-to-edit did not make it a contributor to edit and admin"
+if diff -q "$builtin_baseline" "${scratch}/builtin-labelled.json" >/dev/null; then
+  fail "a ClusterRole labelled into edit still matched the reviewed contributors"
+fi
+
+printf 'PASS: %s chart-rendered roles pass the privileged-RBAC policy; %s excluded chart roles match their reviewed grants and contributors; %s contributor entries of the built-in admin and edit roles match their review; broadened, unexcluded and newly aggregated roles fail\n' \
+  "$pass" "$(jq length "$baseline")" "$(jq '[.[] | length] | add // 0' "$builtin_baseline")"
