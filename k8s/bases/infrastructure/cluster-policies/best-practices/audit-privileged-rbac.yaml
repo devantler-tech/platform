@@ -14,18 +14,24 @@ metadata:
       expressed through wildcard verbs, unless the object is one of the
       reviewed identities excluded below.
 spec:
-  # Enforced at admission (platform#3486). The policy keeps its original name so
+  # Enforced at admission (platform#3486). The name stays audit-privileged-rbac so
   # its reports and references stay continuous.
   #
   # Every exclusion is a reviewed object that legitimately needs such a grant, and
   # each is an exact identity: ClusterRoles by name, Roles by namespace AND name.
   # A different object therefore cannot borrow an exclusion by reusing a name in
   # another namespace or as another kind. scripts/tests/test-audit-privileged-rbac.sh
-  # pins the list, so adding an exclusion is a reviewed change to that test too.
+  # pins this policy's whole shape and the list, so an exclusion is a reviewed change
+  # to that test too.
+  #
+  # The excluded names are set by the charts and releases that create them. A chart
+  # change that renames one of these roles, or adds a new privileged role, is refused
+  # at admission; because Flux dry-runs through the same webhook, that fails the
+  # whole Kustomization until the new role is reviewed here.
   #
   # Coverage limit: Kyverno's own resource filters skip kube-system, kube-public,
-  # kyverno, and Kyverno's controller roles for every policy, so a privileged grant
-  # created there is not evaluated in any mode.
+  # kube-node-lease, kyverno, and Kyverno's controller roles for every policy, so a
+  # privileged grant created there is not evaluated in any mode.
   background: true
   rules:
     - name: privileged-rules

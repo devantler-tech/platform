@@ -50,7 +50,10 @@ results:
       - crossplane-rbac-manager-lookalike
       # A Role exclusion never exempts a ClusterRole of the same name.
       - velero-server
-  # An excluded ClusterRole is skipped by name, whatever it grants.
+  # An excluded ClusterRole is skipped by name, whatever it grants. kyverno test also
+  # reports a rule that never matched as skip, so these rows alone cannot tell
+  # "excluded" from "not evaluated": the exact census in
+  # scripts/tests/test-audit-privileged-rbac.sh is what proves the exclusion applies.
   - policy: audit-privileged-rbac
     rule: privileged-rules
     kind: ClusterRole
