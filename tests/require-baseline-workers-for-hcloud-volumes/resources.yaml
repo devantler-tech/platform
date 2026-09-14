@@ -351,3 +351,35 @@ spec:
     - name: data
       persistentVolumeClaim:
         claimName: data-empty-term
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: node-name-autoscaler-overrides-selector
+  namespace: observability
+spec:
+  nodeName: autoscale-cx43-59ee3c84869749a0
+  nodeSelector:
+    platform.devantler.tech/baseline-worker: "true"
+  containers:
+    - name: app
+      image: busybox
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: data-node-name-autoscaler-overrides-selector
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: node-name-baseline-worker
+  namespace: observability
+spec:
+  nodeName: prod-worker-2
+  containers:
+    - name: app
+      image: busybox
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: data-node-name-baseline-worker

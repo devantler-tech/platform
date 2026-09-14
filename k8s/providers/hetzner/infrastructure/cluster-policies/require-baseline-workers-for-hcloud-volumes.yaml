@@ -13,7 +13,9 @@
 # never sees as a Pod, would be exposed with nothing to catch it (#3287). This
 # policy checks every Pod the Kyverno webhook sees.
 #
-# WHAT COUNTS AS GUARDED, either:
+# WHAT COUNTS AS GUARDED: a Pod that sets spec.nodeName bypasses the scheduler,
+# so nodeSelector and affinity do not apply to it. Such a Pod is guarded only
+# when nodeName is a prod-worker-* node. Otherwise, with no nodeName, either:
 #   * spec.nodeSelector sets platform.devantler.tech/baseline-worker: "true"
 #     (nodeSelector is ANDed with affinity, so it is sufficient on its own); or
 #   * the Pod has at least one required nodeSelectorTerm, and EVERY term
@@ -103,12 +105,14 @@ spec:
         - name: baselineWorkerOnly
           variable:
             jmesPath: >-
+              starts_with(request.object.spec.nodeName || '', 'prod-worker-') ||
+              ((request.object.spec.nodeName || '') == '' && (
               request.object.spec.nodeSelector."platform.devantler.tech/baseline-worker" == 'true' ||
               (length(nodeSelectorTerms) > `0` &&
               length(nodeSelectorTerms[?!(
                 matchExpressions[?key == 'platform.devantler.tech/baseline-worker' && operator == 'In' && values == ['true']] ||
                 matchExpressions[?key == 'kubernetes.io/hostname' && operator == 'In' && length(values) > `0` && length(values[?!starts_with(@, 'prod-worker-')]) == `0`]
-              )]) == `0`)
+              )]) == `0`)))
       validate:
         failureAction: Enforce
         message: >-

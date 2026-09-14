@@ -22,6 +22,7 @@ results:
       - openbao/guarded-by-hostname
       - observability/guarded-by-label-in-every-term
       - observability/guarded-by-node-selector
+      - observability/node-name-baseline-worker
       - observability/ephemeral-hcloud-guarded
     kind: Pod
     result: pass
@@ -34,6 +35,7 @@ results:
       - observability/label-value-false
       - observability/negative-autoscaled-guard
       - observability/node-selector-wrong-value
+      - observability/node-name-autoscaler-overrides-selector
       - observability/match-fields-only-term
       - observability/empty-term
       - openbao/hostname-includes-autoscaler
