@@ -61,11 +61,15 @@ spec:
             matchLabels:
               app.kubernetes.io/name: snapshot-controller
               app.kubernetes.io/instance: snapshot-controller
+      # The CPU limit is declared in the template so it no longer depends on the
+      # kube-system LimitRange admitting the pod (#3789). "2" is the LimitRange default,
+      # so the 10m:2 ratio auto-vpa preserves, and with it the live values, is unchanged.
       resources:
         requests:
           cpu: 10m
           memory: 32Mi
         limits:
+          cpu: "2"
           memory: 64Mi
       # C-0211 baseline context, supplied through the chart's own values because
       # kube-system is excluded from the add-security-context mutation (#3239).

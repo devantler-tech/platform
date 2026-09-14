@@ -460,6 +460,9 @@ jobs:
               # alone — still runs the check that covers it.
               - 'scripts/restart-uncapped-talos-coredns.sh'
               - 'scripts/tests/test-restart-uncapped-talos-coredns.sh'
+              # The values it checks live under k8s/**; this entry makes an edit to
+              # the test alone run it too.
+              - 'scripts/tests/test-kube-system-addon-cpu-limits.sh'
               - 'scripts/tests/test-opencost-usage-scraper.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
               - 'scripts/tests/test-crossplane-sync-alerter.sh'
@@ -1294,6 +1297,15 @@ jobs:
         # restarts CoreDNS only when a running pod is uncapped, restarts nothing
         # else, and fails closed on any input it cannot read.
         run: bash scripts/tests/test-restart-uncapped-talos-coredns.sh
+
+      - name: 🧢 Validate kube-system add-ons declare their CPU limit
+        if: needs.changes.outputs.k8s == 'true'
+        # The kube-system LimitRange only reaches pods admitted after it exists, so the
+        # non-datapath add-ons carry their CPU limit in their own chart values (#3789).
+        # Pin a CPU request next to every limit: auto-vpa keeps the ratio, and a
+        # limit alone would default the request to the limit and throttle the add-on.
+        # Also pin that the Cilium agent and Envoy DaemonSets stay unlimited here.
+        run: bash scripts/tests/test-kube-system-addon-cpu-limits.sh
 
       - name: 📣 Validate the rollout gate cannot suppress sync silently
         if: needs.changes.outputs.k8s == 'true'

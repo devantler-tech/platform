@@ -22,6 +22,16 @@ spec:
       enabled: true
       clusterCIDR: 10.244.0.0/16
     replicaCount: ${hcloud_ccm_replicas:=2}
+    # CPU limit declared in the template so it no longer depends on the kube-system
+    # LimitRange admitting the pod (#3789). The requests restate the chart's defaults:
+    # auto-vpa controls requests AND limits and keeps their ratio, so the declared
+    # 100m:2 pair reproduces exactly the live values the LimitRange produces today.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 50Mi
+      limits:
+        cpu: "2"
     strategy:
       type: RollingUpdate
       rollingUpdate:
