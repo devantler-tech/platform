@@ -1939,6 +1939,17 @@ func TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentit
 			binding: awsIdentityBinding{subject: awsServiceAccountSubject},
 		},
 		{
+			// A namespaced binding's ServiceAccount subject may omit its namespace; it then
+			// resolves to the binding's own namespace, so this still reaches aws/aws.
+			name: "namespace-less service account in AWS namespace",
+			binding: awsIdentityBinding{
+				namespace: "aws",
+				subject: `  - kind: ServiceAccount
+    name: aws
+`,
+			},
+		},
+		{
 			name: "service account user identity",
 			binding: awsIdentityBinding{
 				namespace: "tenant-shadow",
@@ -1977,10 +1988,80 @@ func TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentit
 		t.Run(tt.name, func(t *testing.T) {
 			mutated := append(append([]byte{}, rendered...), []byte(tt.binding.manifest())...)
 			err := validateAuthorization(role, boundary, mutated)
-			if err == nil || !strings.Contains(err.Error(), "unapproved rendered authorization surface") {
-				t.Fatalf("validateAuthorization() error = %v, want unapproved rendered authorization surface", err)
+			// Assert the identity-specific error, not the aggregate surface hash: appending ANY
+			// document moves the aggregate, so that error alone cannot show the identity was
+			// detected (#2806).
+			if err == nil || !strings.Contains(err.Error(), awsIdentityGrantError) {
+				t.Fatalf("validateAuthorization() error = %v, want %q", err, awsIdentityGrantError)
 			}
 		})
+	}
+}
+
+// TestValidateAuthorizationIdentityErrorCoversBindingsBorrowingAnApprovedName proves the
+// approval exemption keys on content: a binding that reuses the approved
+// aws/aws-managed-resources identity but grants a group containing aws/aws is still reported as
+// an identity grant, not only as a fingerprint mismatch.
+func TestValidateAuthorizationIdentityErrorCoversBindingsBorrowingAnApprovedName(t *testing.T) {
+	role, boundary, rendered := repositoryInputs(t)
+
+	borrowed := `---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aws-managed-resources
+  namespace: aws
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aws-managed-resources
+subjects:
+  - kind: Group
+    name: system:authenticated
+`
+	mutated := append(append([]byte{}, rendered...), []byte(borrowed)...)
+	err := validateAuthorization(role, boundary, mutated)
+	if err == nil || !strings.Contains(err.Error(), awsIdentityGrantError) {
+		t.Fatalf("validateAuthorization() error = %v, want %q", err, awsIdentityGrantError)
+	}
+}
+
+// TestValidateAuthorizationIdentityErrorIgnoresUnrelatedBindings is the negative control for
+// the identity cases above: an appended binding that cannot reach aws/aws still moves the
+// aggregate surface, but must not be reported as an aws/aws identity grant. Without it, an
+// identity assertion that matched any binding would pass those cases for the wrong reason.
+func TestValidateAuthorizationIdentityErrorIgnoresUnrelatedBindings(t *testing.T) {
+	role, boundary, rendered := repositoryInputs(t)
+
+	unrelated := []awsIdentityBinding{
+		{
+			namespace: "tenant-shadow",
+			subject: `  - kind: ServiceAccount
+    name: aws
+    namespace: tenant-shadow
+`,
+		},
+		{
+			subject: `  - kind: User
+    name: system:serviceaccount:tenant-shadow:aws
+`,
+		},
+		{
+			subject: `  - kind: Group
+    name: system:serviceaccounts:tenant-shadow
+`,
+		},
+	}
+
+	for _, binding := range unrelated {
+		mutated := append(append([]byte{}, rendered...), []byte(binding.manifest())...)
+		err := validateAuthorization(role, boundary, mutated)
+		if err == nil || !strings.Contains(err.Error(), "unapproved rendered authorization surface") {
+			t.Fatalf("validateAuthorization() error = %v, want the aggregate surface mismatch", err)
+		}
+		if strings.Contains(err.Error(), awsIdentityGrantError) {
+			t.Fatalf("validateAuthorization() reported an aws/aws identity grant for an unrelated binding: %v", err)
+		}
 	}
 }
 
