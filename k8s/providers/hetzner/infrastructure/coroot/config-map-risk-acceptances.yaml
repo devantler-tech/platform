@@ -9,9 +9,9 @@
 #
 # Four initial warnings are deliberately absent: Alertmanager and the Longhorn
 # CSI snapshotter get warm replicas, Origin CA Issuer is disabled, and #3818
-# removes the superseded OpenCost usage scraper. crossview-postgres is also
-# absent: its unreplicated-database CRITICAL remains visible until platform#3319
-# delivers and verifies durable storage.
+# removes the superseded OpenCost usage scraper. Crossview PostgreSQL is accepted
+# only after #3829 delivered a retained, three-node-replicated Longhorn volume
+# and live Coroot PostgreSQL collection.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -79,6 +79,12 @@ data:
         "category": "Availability",
         "type": "single-instance-app",
         "reason": "platform#3812: low-criticality internal UI; fast rescheduling meets its recovery objective"
+      },
+      {
+        "application": "crossview:Deployment:crossview-postgres",
+        "category": "Availability",
+        "type": "unreplicated-database",
+        "reason": "platform#3812: low-criticality dashboard database on a cross-node replicated Longhorn volume; pod rescheduling meets its recovery objective"
       },
       {
         "application": "kube-system:Deployment:descheduler",

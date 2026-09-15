@@ -39,18 +39,18 @@ acceptances_file="${work_root}/risks.json"
 yq e -r '.data."risks.json"' "${acceptances_manifest}" >"${acceptances_file}"
 
 jq -e '
-  type == "array" and length == 33 and
+  type == "array" and length == 34 and
   all(.[ ];
     (.application | type == "string") and
     (.application | split(":") | length == 3) and
     .category == "Availability" and
-    .type == "single-instance-app" and
+    (.type | IN("single-instance-app", "unreplicated-database")) and
     (.reason | startswith("platform#3812: "))
   ) and
   ([.[] | [.application, .category, .type] | @tsv] | length) ==
     ([.[] | [.application, .category, .type] | @tsv] | unique | length)
 ' "${acceptances_file}" >/dev/null ||
-  fail 'the availability acceptance allowlist must contain 33 unique, reasoned singleton entries'
+  fail 'the availability acceptance allowlist must contain 34 unique, reasoned entries'
 
 expected_applications=(
   'actual-budget:Deployment:actual-budget-actualbudget'
@@ -63,6 +63,7 @@ expected_applications=(
   'crossplane-system:Deployment:crossplane-rbac-manager'
   'observability:Deployment:crossplane-sync-exporter'
   'crossview:Deployment:crossview'
+  'crossview:Deployment:crossview-postgres'
   'kube-system:Deployment:descheduler'
   'external-dns:Deployment:external-dns'
   'ascoachingogvaner:Deployment:external-dns'
@@ -94,7 +95,17 @@ for application in "${expected_applications[@]}"; do
     fail "missing reviewed risk acceptance for ${application}"
 done
 
-for prohibited in alertmanager csi-snapshotter origin-ca-issuer crossview-postgres; do
+if ! jq -e '
+  any(.[];
+    .application == "crossview:Deployment:crossview-postgres" and
+    .category == "Availability" and
+    .type == "unreplicated-database"
+  )
+' "${acceptances_file}" >/dev/null; then
+  fail 'Crossview PostgreSQL must bind the reviewed unreplicated-database risk exactly'
+fi
+
+for prohibited in alertmanager csi-snapshotter origin-ca-issuer; do
   if jq -e --arg prohibited "${prohibited}" \
     'any(.[]; .application | contains($prohibited))' "${acceptances_file}" >/dev/null; then
     fail "${prohibited} must be fixed or held, not dismissed"
