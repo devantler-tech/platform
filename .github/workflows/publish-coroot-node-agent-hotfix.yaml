@@ -1,0 +1,191 @@
+name: Publish Coroot Node Agent Hotfix
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-coroot-node-agent-hotfix.yaml
+      - k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
+      - k8s/bases/infrastructure/coroot/node-agent-v1.35.8-alert-remediation.patch
+      - scripts/tests/test-coroot-node-agent-hotfix.sh
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-coroot-node-agent-hotfix.yaml
+      - k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
+      - k8s/bases/infrastructure/coroot/node-agent-v1.35.8-alert-remediation.patch
+      - scripts/tests/test-coroot-node-agent-hotfix.sh
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  COROOT_NODE_AGENT_SOURCE_COMMIT: ee62018e73b90b1549f5b81ba0d3d6e28851a1df
+  UPSTREAM_IMAGE: ghcr.io/coroot/coroot-node-agent:1.35.8@sha256:a08143e4ea42420d4d8b8b2cd21f67dc76743d6e0e37ab9a97b304171e670b93
+  IMAGE: ghcr.io/devantler-tech/platform-coroot-node-agent
+  IMAGE_TAG: v1.35.8-alerts.1-${{ github.sha }}
+  PATCH_PATH: k8s/bases/infrastructure/coroot/node-agent-v1.35.8-alert-remediation.patch
+  DOCKERFILE_PATH: k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
+
+jobs:
+  verify:
+    name: Verify pinned source and patch
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Check out platform contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out exact Coroot node-agent source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: coroot/coroot-node-agent
+          ref: ${{ env.COROOT_NODE_AGENT_SOURCE_COMMIT }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.24.9
+          cache: false
+
+      - name: Install systemd development headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libsystemd-dev
+
+      - name: Apply, test and build compatibility binary
+        working-directory: upstream
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ env.COROOT_NODE_AGENT_SOURCE_COMMIT }}
+          HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
+          VERSION: ${{ env.IMAGE_TAG }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
+          git apply --check "${HOTFIX_PATCH}"
+          git apply "${HOTFIX_PATCH}"
+          git diff --check
+          go test ./ebpftracer ./node ./logs
+          CGO_ENABLED=1 go build -mod=readonly \
+            -ldflags "-extldflags='-Wl,-z,lazy' -X 'github.com/coroot/coroot-node-agent/flags.Version=${VERSION}'" \
+            -o coroot-node-agent .
+
+      - name: Build compatibility image without publishing
+        working-directory: upstream
+        env:
+          DOCKERFILE: ${{ github.workspace }}/${{ env.DOCKERFILE_PATH }}
+        run: docker buildx build --platform linux/amd64 --file "${DOCKERFILE}" .
+
+  publish:
+    name: Publish and sign immutable image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Check out platform contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out exact Coroot node-agent source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: coroot/coroot-node-agent
+          ref: ${{ env.COROOT_NODE_AGENT_SOURCE_COMMIT }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.24.9
+          cache: false
+
+      - name: Install systemd development headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libsystemd-dev
+
+      - name: Reapply reviewed patch and build compatibility binary
+        working-directory: upstream
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ env.COROOT_NODE_AGENT_SOURCE_COMMIT }}
+          HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
+          VERSION: ${{ env.IMAGE_TAG }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
+          git apply --check "${HOTFIX_PATCH}"
+          git apply "${HOTFIX_PATCH}"
+          git diff --check
+          CGO_ENABLED=1 go build -mod=readonly \
+            -ldflags "-extldflags='-Wl,-z,lazy' -X 'github.com/coroot/coroot-node-agent/flags.Version=${VERSION}'" \
+            -o coroot-node-agent .
+
+      - name: Set up Buildx container driver
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        with:
+          driver: docker-container
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push compatibility image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./upstream
+          file: ./k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ env.IMAGE_TAG }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.IMAGE_TAG }}
+            io.devantler.coroot-node-agent.upstream-revision=${{ env.COROOT_NODE_AGENT_SOURCE_COMMIT }}
+
+      - name: Set up Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign and verify published digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test -n "${DIGEST}"
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign verify \
+            --certificate-identity "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-node-agent-hotfix.yaml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}@${DIGEST}"
+          printf 'Published signed image: %s@%s\n' "${IMAGE}" "${DIGEST}"
