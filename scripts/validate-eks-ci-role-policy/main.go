@@ -3630,6 +3630,7 @@ type surfaceMismatchError struct {
 	entries []string
 }
 
+// Error keeps the aggregate mismatch message the gate has always reported.
 func (e *surfaceMismatchError) Error() string {
 	return "unapproved rendered authorization surface fingerprint: " + e.actual
 }

@@ -39,6 +39,7 @@ subjects:
     name: bravo-editors
 `
 
+// testSurfaceEntry builds one ClusterRole surface entry without going through selection.
 func testSurfaceEntry(t *testing.T, name string, verb string) string {
 	t.Helper()
 	identity := resourceIdentity{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: name}
@@ -55,6 +56,7 @@ func testSurfaceEntry(t *testing.T, name string, verb string) string {
 	return entry
 }
 
+// fixtureEntries evaluates a render and fails unless the fixture selected both bindings.
 func fixtureEntries(t *testing.T, rendered string) []string {
 	t.Helper()
 	entries, _, _, err := evaluateRenderedSurface([]byte(rendered))
@@ -67,6 +69,7 @@ func fixtureEntries(t *testing.T, rendered string) []string {
 	return entries
 }
 
+// approvingSource is a validator source whose approved aggregate matches entries.
 func approvingSource(t *testing.T, entries []string) []byte {
 	t.Helper()
 	canonical, err := json.Marshal(entries)
@@ -76,6 +79,7 @@ func approvingSource(t *testing.T, entries []string) []byte {
 	return []byte("package main\n\nconst expectedRenderedSurfaceSHA = \"" + fingerprint(canonical) + "\"\n")
 }
 
+// TestDescribeSurfaceDeltaNamesOnlyTheChangedEntry proves one changed entry is named alone.
 func TestDescribeSurfaceDeltaNamesOnlyTheChangedEntry(t *testing.T) {
 	base := []string{testSurfaceEntry(t, "a", "get"), testSurfaceEntry(t, "b", "get"), testSurfaceEntry(t, "c", "get")}
 	head := []string{base[0], testSurfaceEntry(t, "b", "delete"), base[2]}
@@ -86,6 +90,7 @@ func TestDescribeSurfaceDeltaNamesOnlyTheChangedEntry(t *testing.T) {
 	}
 }
 
+// TestDescribeSurfaceDeltaReportsAddedAndRemovedEntries names additions and removals separately.
 func TestDescribeSurfaceDeltaReportsAddedAndRemovedEntries(t *testing.T) {
 	base := []string{testSurfaceEntry(t, "a", "get"), testSurfaceEntry(t, "b", "get")}
 	head := []string{base[1], testSurfaceEntry(t, "c", "get")}
@@ -99,6 +104,7 @@ func TestDescribeSurfaceDeltaReportsAddedAndRemovedEntries(t *testing.T) {
 	}
 }
 
+// TestDescribeSurfaceDeltaTreatsADuplicateAsAChange compares duplicate identities as a multiset.
 func TestDescribeSurfaceDeltaTreatsADuplicateAsAChange(t *testing.T) {
 	entry := testSurfaceEntry(t, "a", "get")
 
@@ -108,6 +114,7 @@ func TestDescribeSurfaceDeltaTreatsADuplicateAsAChange(t *testing.T) {
 	}
 }
 
+// TestDescribeSurfaceMismatchReportsAnUnavailableBaseAsUnknown never implies nothing moved without a base.
 func TestDescribeSurfaceMismatchReportsAnUnavailableBaseAsUnknown(t *testing.T) {
 	head := []string{testSurfaceEntry(t, "a", "get")}
 	for name, lines := range map[string][]string{
@@ -121,6 +128,7 @@ func TestDescribeSurfaceMismatchReportsAnUnavailableBaseAsUnknown(t *testing.T) 
 	}
 }
 
+// TestDescribeSurfaceMismatchSaysNoneOnlyAgainstAVerifiedBase limits "none" to a base that reproduces its approval.
 func TestDescribeSurfaceMismatchSaysNoneOnlyAgainstAVerifiedBase(t *testing.T) {
 	entries := fixtureEntries(t, deltaFixture)
 
@@ -142,12 +150,14 @@ func TestDescribeSurfaceMismatchSaysNoneOnlyAgainstAVerifiedBase(t *testing.T) {
 	}
 }
 
+// TestSurfaceEntryKeyToleratesAMalformedEntry keeps a malformed entry from panicking the report.
 func TestSurfaceEntryKeyToleratesAMalformedEntry(t *testing.T) {
 	if got := surfaceEntryKey("no identity fields"); got != "malformed entry" {
 		t.Fatalf("surfaceEntryKey() = %q, want malformed entry", got)
 	}
 }
 
+// TestDescribeSurfaceMismatchNamesEntriesAgainstAVerifiedBase names entries under the verified header.
 func TestDescribeSurfaceMismatchNamesEntriesAgainstAVerifiedBase(t *testing.T) {
 	baseEntries := fixtureEntries(t, deltaFixture)
 	head := fixtureEntries(t, strings.Replace(deltaFixture, "name: edit", "name: admin", 1))
@@ -162,6 +172,7 @@ func TestDescribeSurfaceMismatchNamesEntriesAgainstAVerifiedBase(t *testing.T) {
 	}
 }
 
+// TestDescribeSurfaceMismatchMarksAnUnreproducedBaseUnverified labels a base that does not reproduce its approval.
 func TestDescribeSurfaceMismatchMarksAnUnreproducedBaseUnverified(t *testing.T) {
 	baseEntries := fixtureEntries(t, deltaFixture)
 	head := fixtureEntries(t, strings.Replace(deltaFixture, "name: bravo-editors", "name: bravo-owners", 1))
@@ -179,6 +190,7 @@ func TestDescribeSurfaceMismatchMarksAnUnreproducedBaseUnverified(t *testing.T) 
 	}
 }
 
+// TestValidateRenderedMismatchCarriesItsEntries keeps the mismatch message and exposes its entries.
 func TestValidateRenderedMismatchCarriesItsEntries(t *testing.T) {
 	err := validateRendered([]byte(deltaFixture))
 	var mismatch *surfaceMismatchError
@@ -193,6 +205,7 @@ func TestValidateRenderedMismatchCarriesItsEntries(t *testing.T) {
 	}
 }
 
+// TestSurfaceMismatchReportRendersTheBaseRoot renders and verifies a base checkout, and reports a failed render as unknown.
 func TestSurfaceMismatchReportRendersTheBaseRoot(t *testing.T) {
 	baseRoot := t.TempDir()
 	source := filepath.Join(baseRoot, validatorSourcePath)
