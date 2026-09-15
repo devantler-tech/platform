@@ -32,6 +32,12 @@ metadata:
       default-deny so the segmentation is visible to NetworkPolicy-aware
       scanners and the CIS benchmark.
 spec:
+  # Flux also server-side applies scanner-visible NetworkPolicy mirrors from
+  # tenant repositories. Kyverno's default create/update synchronization can
+  # race that apply even when both managers declare the same spec, producing an
+  # optimistic-lock PolicyError. Apply generated resources through SSA so the
+  # two field managers converge without a resourceVersion update race.
+  useServerSideApply: true
   rules:
     - name: generate-default-deny
       match:

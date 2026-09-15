@@ -31,8 +31,8 @@ spec:
             k8s:io.kubernetes.pod.namespace: keda
     # KEDA operator -> Coroot's bundled Prometheus, for ScaledObject prometheus
     # triggers (request-rate horizontal scaling of the Flagger-managed apps,
-    # homepage/umami). Same endpoint Flagger and OpenCost query; Coroot's
-    # netpol allows this namespace in on :9090.
+    # homepage/umami). Flagger uses the same endpoint; Coroot's netpol allows
+    # this namespace in on :9090.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: observability

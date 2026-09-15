@@ -34,7 +34,7 @@ spec:
     # Expose Prometheus policy-result metrics on :8080/metrics for Coroot's
     # node-agent to scrape. `simple` mode keeps label cardinality bounded. No
     # prometheus-operator here, so the ServiceMonitor sub-chart stays disabled
-    # (see monitoring below) -- same as opencost.
+    # (see monitoring below).
     metrics:
       enabled: true
       mode: simple
@@ -152,6 +152,6 @@ spec:
             type: RuntimeDefault
 
     # No prometheus-operator in the cluster, so skip the ServiceMonitor the
-    # monitoring sub-chart would create (matches opencost's metrics wiring).
+    # monitoring sub-chart would create.
     monitoring:
       enabled: false

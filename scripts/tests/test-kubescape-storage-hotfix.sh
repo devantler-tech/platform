@@ -35,8 +35,8 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
   fail 'the workflow image destination drifted'
 # The literal GitHub expression is the contract.
 # shellcheck disable=SC2016
-[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.4-${{ github.sha }}' ]] ||
-  fail 'the workflow image tag must identify the short-transaction revision'
+[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.5-${{ github.sha }}' ]] ||
+  fail 'the workflow image tag must identify the conflict-log-classification revision'
 
 grep -qF 'repository: kubescape/storage' "${workflow}" ||
   fail 'the workflow must check out the upstream storage source explicitly'
@@ -126,8 +126,18 @@ readonly image_build_index
 grep -qF 'cosign sign --yes "${IMAGE}@${DIGEST}"' "${workflow}" ||
   fail 'the published compatibility image must be keylessly signed by digest'
 
-[[ "$(grep -c '^diff --git ' "${patch_file}")" == '6' ]] ||
+[[ "$(grep -c '^diff --git ' "${patch_file}")" == '8' ]] ||
   fail 'the compatibility patch must touch only implementation and regression-test files'
+grep -qF 'diff --git a/pkg/registry/file/storage.go b/pkg/registry/file/storage.go' "${patch_file}" ||
+  fail 'the compatibility patch does not classify GuaranteedUpdate retry errors'
+grep -qF 'diff --git a/pkg/registry/file/storage_test.go b/pkg/registry/file/storage_test.go' "${patch_file}" ||
+  fail 'the compatibility patch lacks a GuaranteedUpdate error-classification regression test'
+grep -qF 'func shouldLogGuaranteedUpdateError(err error) bool' "${patch_file}" ||
+  fail 'GuaranteedUpdate must centralize its error-level classification'
+grep -qF '!apierrors.IsConflict(err)' "${patch_file}" ||
+  fail 'expected optimistic-concurrency conflicts must stay below error level'
+grep -qF 'TestShouldLogGuaranteedUpdateError' "${patch_file}" ||
+  fail 'the compatibility patch must prove conflict retries are not error-level logs'
 grep -qF 'diff --git a/pkg/registry/file/sqlite.go b/pkg/registry/file/sqlite.go' "${patch_file}" ||
   fail 'the compatibility patch does not modify SQLite pool setup'
 grep -qF 'diff --git a/pkg/registry/file/sqlite_test.go b/pkg/registry/file/sqlite_test.go' "${patch_file}" ||

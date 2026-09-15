@@ -60,11 +60,9 @@ spec:
     # "umami-umami-primary" on the primary Deployment, while leaving
     # app.kubernetes.io/instance=umami intact on the running pods.
     #
-    # The tile is disabled because this route serves only the collection
-    # endpoints above — https://analytics.${domain}/ has no match and would give
-    # the reader a dead link. The remaining annotations are kept so re-enabling
-    # is a one-line change once the SSO-protected dashboard route exists
-    # (devantler-tech/platform#3134).
+    # The tile stays disabled on this collector-only route so Homepage discovers
+    # exactly one Umami entry. The separate umami-dashboard HTTPRoute owns the
+    # enabled tile and sends browser traffic through SSO (platform#3134).
     apex:
       annotations:
         gethomepage.dev/enabled: "false"

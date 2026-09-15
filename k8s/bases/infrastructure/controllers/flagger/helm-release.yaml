@@ -11,8 +11,7 @@ metadata:
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   # Flagger queries Coroot's bundled Prometheus for canary SLO metrics, so the
-  # operator that stands that stack up should reconcile first (mirrors opencost,
-  # which depends on the same Prometheus). Flagger does not need Prometheus at
+  # operator that stands that stack up should reconcile first. Flagger does not need Prometheus at
   # install time — only while a Canary is being analysed.
   dependsOn:
     - name: coroot-operator
@@ -52,7 +51,7 @@ spec:
       replicaCount: ${flagger_replicas:=1}
 
     # Reuse Coroot's bundled Prometheus (the metrics TSDB the coroot-operator
-    # deploys, the same endpoint OpenCost queries). Coroot's eBPF node-agent
+    # deploys). Coroot's eBPF node-agent
     # exports server-side HTTP metrics — container_http_inbound_requests_total
     # and ..._duration_seconds_total — which the MetricTemplates in the
     # `infrastructure` layer turn into request-success-rate / latency SLOs.

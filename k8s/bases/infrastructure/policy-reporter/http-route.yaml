@@ -1,5 +1,5 @@
 # Expose the Policy Reporter UI behind oauth2-proxy SSO (the same forward-auth
-# pattern as the Coroot / OpenCost UIs): the route backends to the oauth2-proxy
+# pattern as the Coroot UI): the route backends to the oauth2-proxy
 # Service; after authentication oauth2-proxy forwards to auth-proxy, which routes
 # policy-reporter.${domain} by Host to the policy-reporter-ui Service (see
 # auth-proxy config-map.yaml). Policy Reporter UI has no native SSO, so this is
@@ -22,8 +22,8 @@ metadata:
     gethomepage.dev/icon: https://raw.githubusercontent.com/kyverno/kyverno/main/img/logo.png
     # Status dot: key on the UI pod. app.kubernetes.io/instance=policy-reporter is
     # shared by the core and kyverno-plugin pods too, so target the UI explicitly
-    # via app.kubernetes.io/name=policy-reporter-ui (same reason coroot/opencost
-    # pin a specific selector).
+    # via app.kubernetes.io/name=policy-reporter-ui (the same reason Coroot pins
+    # a specific selector).
     gethomepage.dev/pod-selector: app.kubernetes.io/name=policy-reporter-ui
 spec:
   parentRefs:

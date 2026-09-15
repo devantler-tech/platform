@@ -53,7 +53,11 @@ spec:
   # window (02:17 UTC).
   timeZone: Etc/UTC
   concurrencyPolicy: Forbid
-  successfulJobsHistoryLimit: 3
+  # Snapshot data has its own 14-copy retention on the PVC and R2. Keep only
+  # the latest successful Kubernetes Job for diagnostics so completed pods from
+  # an obsolete template do not keep producing background-policy events after a
+  # scheduling guard is fixed. Failed Jobs retain the broader diagnostic window.
+  successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:

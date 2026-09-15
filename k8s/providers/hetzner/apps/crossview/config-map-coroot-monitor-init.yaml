@@ -1,0 +1,35 @@
+# The Crossview chart uses the upstream postgres image directly rather than
+# CloudNativePG, so its monitoring role and extension must be initialized by the
+# image entrypoint. The script runs only for a fresh data directory; Crossview's
+# database is currently ephemeral, making every database pod replacement a
+# fresh initialization. psql imports the password from the process environment
+# so the credential never appears in the command line or this public ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crossview-postgres-coroot-monitor-init
+  namespace: crossview
+data:
+  init-coroot-monitor.sh: |
+    #!/usr/bin/env bash
+    set -Eeuo pipefail
+
+    # Annotation-based Coroot targets always connect to the postgres
+    # maintenance database, so the extension must exist there.
+    psql \
+      --username "$POSTGRES_USER" \
+      --dbname postgres \
+      --no-psqlrc \
+      --set=ON_ERROR_STOP=1 <<'SQL'
+    \getenv coroot_monitor_password COROOT_MONITOR_PASSWORD
+    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+    SELECT format(
+      'CREATE ROLE coroot_monitor LOGIN PASSWORD %L',
+      :'coroot_monitor_password'
+    )
+    WHERE NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'coroot_monitor'
+    ) \gexec
+    ALTER ROLE coroot_monitor LOGIN PASSWORD :'coroot_monitor_password';
+    GRANT pg_monitor TO coroot_monitor;
+    SQL

@@ -29,10 +29,6 @@ data:
           rule: "Host(`observability.${domain}`)"
           entryPoints: ["web"]
           service: coroot
-        opencost:
-          rule: "Host(`opencost.${domain}`)"
-          entryPoints: ["web"]
-          service: opencost
         ksail:
           rule: "Host(`ksail.${domain}`)"
           entryPoints: ["web"]
@@ -68,7 +64,7 @@ data:
         # Kyverno Policy Reporter UI. Prod-only (the app lives in the
         # `infrastructure` layer, pulled in full only by the hetzner overlay), so
         # this router is inert on local/CI -- no HTTPRoute sends
-        # policy-reporter.${domain} to oauth2-proxy there (same as coroot/opencost).
+        # policy-reporter.${domain} to oauth2-proxy there (same as Coroot).
         policy-reporter:
           rule: "Host(`policy-reporter.${domain}`)"
           entryPoints: ["web"]
@@ -77,6 +73,14 @@ data:
           rule: "Host(`vault.${domain}`)"
           entryPoints: ["web"]
           service: openbao
+        # Umami's public collector paths bypass this router via the more
+        # specific Flagger-owned route. The browser UI reaches this router only
+        # after oauth2-proxy has enforced the maintainer-team SSO gate.
+        umami:
+          rule: "Host(`analytics.${domain}`)"
+          entryPoints: ["web"]
+          middlewares: ["forwarded-proto-https"]
+          service: umami
       middlewares:
         # Restores the scheme the client actually used. Traefik derives
         # X-Forwarded-Proto from the entryPoint it received on, and this
@@ -107,10 +111,6 @@ data:
           loadBalancer:
             servers:
               - url: "http://coroot-coroot.observability.svc.cluster.local:8080"
-        opencost:
-          loadBalancer:
-            servers:
-              - url: "http://opencost.opencost.svc.cluster.local:9090"
         ksail-operator:
           loadBalancer:
             servers:
@@ -135,3 +135,7 @@ data:
           loadBalancer:
             servers:
               - url: "http://openbao-active.openbao.svc.cluster.local:8200"
+        umami:
+          loadBalancer:
+            servers:
+              - url: "http://umami-umami-primary.umami.svc.cluster.local:80"

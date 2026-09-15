@@ -1,0 +1,25 @@
+# Let only the Coroot cluster-agent reach the bundled Crossview PostgreSQL pod
+# on 5432. This is additive to allow-crossview: that base policy keeps app and
+# database traffic inside the namespace, while this prod-only policy opens the
+# one cross-namespace path used by the declarative PostgreSQL integration.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-coroot-postgres-scrape
+  namespace: crossview
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/component: postgres
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability
+            app.kubernetes.io/managed-by: coroot-operator
+            app.kubernetes.io/part-of: coroot
+            app.kubernetes.io/component: coroot-cluster-agent
+            io.cilium.k8s.policy.serviceaccount: coroot-cluster-agent
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
