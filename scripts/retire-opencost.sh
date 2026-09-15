@@ -8,11 +8,15 @@ readonly helmrelease='opencost'
 readonly kubectl_bin="${KUBECTL_BIN:-kubectl}"
 readonly git_bin="${GIT_BIN:-git}"
 readonly repository_url='https://github.com/devantler-tech/platform.git'
+readonly inventory_poll_seconds="${OPENCOST_RETIRE_POLL_SECONDS:-2}"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1
 }
+
+[[ "${inventory_poll_seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+  fail 'OpenCost retirement inventory poll interval must be a non-negative number'
 
 if [[ "$#" -ne 1 || ("$1" != '--preflight' && "$1" != '--execute') ]]; then
   fail 'OpenCost retirement requires the sole argument --execute or --preflight'
@@ -53,6 +57,31 @@ get_optional_json() {
   kube get "${resource}" "$@" --ignore-not-found=true -o json
 }
 
+get_ready_inventory_snapshot() {
+  local attempt
+  local kustomization_json
+
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    kustomization_json="$(kube get \
+      kustomization.kustomize.toolkit.fluxcd.io/infrastructure \
+      --namespace flux-system -o json)" ||
+      fail 'unable to read Flux Kustomization flux-system/infrastructure'
+    if jq -e 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' \
+      <<<"${kustomization_json}" >/dev/null; then
+      jq -e '(.status.inventory.entries | type) == "array"' \
+        <<<"${kustomization_json}" >/dev/null ||
+        fail 'Flux Kustomization flux-system/infrastructure does not expose a valid inventory entry list'
+      printf '%s\n' "${kustomization_json}"
+      return 0
+    fi
+    if ((attempt < 60)); then
+      sleep "${inventory_poll_seconds}"
+    fi
+  done
+
+  fail 'Flux Kustomization flux-system/infrastructure did not expose a Ready inventory snapshot within 2m'
+}
+
 assert_prune_protected() {
   local description="$1"
   local object_json="$2"
@@ -72,12 +101,6 @@ assert_not_in_inventory() {
   local inventory_id="$2"
   local kustomization_json="$3"
 
-  jq -e 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' \
-    <<<"${kustomization_json}" >/dev/null ||
-    fail 'Flux Kustomization flux-system/infrastructure is not Ready'
-  jq -e '(.status.inventory.entries | type) == "array"' \
-    <<<"${kustomization_json}" >/dev/null ||
-    fail 'Flux Kustomization flux-system/infrastructure does not expose a valid inventory entry list'
   if jq -e --arg id "${inventory_id}" \
     'any(.status.inventory.entries[]?; .id == $id)' \
     <<<"${kustomization_json}" >/dev/null; then
@@ -90,13 +113,7 @@ helmrelease_json="$(get_optional_json \
 namespace_json="$(get_optional_json namespace/${namespace})"
 
 if [[ -n "${helmrelease_json}" || -n "${namespace_json}" ]]; then
-  kube wait --for=condition=Ready=True \
-    kustomization.kustomize.toolkit.fluxcd.io/infrastructure \
-    --namespace flux-system --timeout=2m ||
-    fail 'Flux Kustomization flux-system/infrastructure did not become Ready within 2m'
-  kustomization_json="$(kube get \
-    kustomization.kustomize.toolkit.fluxcd.io/infrastructure \
-    --namespace flux-system -o json)"
+  kustomization_json="$(get_ready_inventory_snapshot)"
 
   if [[ -n "${helmrelease_json}" ]]; then
     assert_prune_protected 'HelmRelease opencost/opencost' "${helmrelease_json}"
