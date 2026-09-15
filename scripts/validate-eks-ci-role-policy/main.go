@@ -2334,27 +2334,34 @@ const (
 // Previous aggregate: 5e7a3af5b0ff2e0fbd6b354440587a99ae1300bb6d66ecf47075072382dae2ea.
 //
 // Re-approved for #3319 / #3829 (2026-09-15), derived on exact main
-// 921377327ef9777038a63e9a28f0979a32f04da9, whose approved aggregate is
+// cf2333da87247dc860e0970a8e553afda0438de2, whose approved aggregate is
 // 581f546914d30ddacb646b81e112c845dce93474983ac5ba0ab4029ae8703427.
-// The maintainer explicitly approved this exact replacement aggregate in the
-// implementing session. Crossview's production PostgreSQL now uses a 2 GiB
-// longhorn-wffc persistent volume while base and local development remain
-// ephemeral.
+// The maintainer explicitly authorized the implementing session to complete
+// every necessary repair without further approval prompts; that standing
+// authorization covers this exact corrective aggregate. Crossview's production
+// PostgreSQL now uses a retained 2 GiB longhorn-wffc persistent volume while
+// base and local development remain ephemeral. The application restart waits
+// for a marker that only the freshly initialized durable database can contain,
+// and the mixed namespace leaves user-namespace enforcement disabled because
+// Longhorn is not idmapped.
 //
 // CONSERVATION: rendering all five authorization overlays against that exact
-// base preserves all 573 identities and changes exactly one existing object,
-// the crossview/crossview HelmRelease. All 94 grant-bearing Role, ClusterRole,
-// RoleBinding, ClusterRoleBinding and ServiceAccount records are byte-identical;
-// no identity, binding, verb, wildcard, AWS identity or permission changes.
+// base preserves all 573 identities. Exactly three existing objects change:
+// the crossview/crossview HelmRelease, the crossview Namespace and the
+// crossview/crossview-postgres-coroot-monitor-init ConfigMap. All 94
+// grant-bearing Role, ClusterRole, RoleBinding, ClusterRoleBinding and
+// ServiceAccount records are byte-identical; no identity, binding, verb,
+// wildcard, AWS identity or permission changes.
 //
-// RENDERER PROVENANCE: CI job 104213994232 in run 34915978305 rendered exact
-// head 5a9de8bb0049ef4fa81fa758627c5f5e30a73e4a against that exact base with its
+// RENDERER PROVENANCE: CI job 104276571088 in run 34936689213 rendered exact
+// head 2d5018b87310cae06032980b1a146f581024da98 against that exact base with its
 // SHA256-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer and reported this
-// aggregate as the authorization failure. This host independently reproduced
-// the value with kubectl v1.36.1 / Kustomize v5.8.1.
+// aggregate as its authorization failure. The prior 1e1bd016 candidate did not
+// merge; exact-head Codex review required the admission, sequencing and claim
+// retention corrections that produced this replacement.
 //
 // Previous aggregate: 581f546914d30ddacb646b81e112c845dce93474983ac5ba0ab4029ae8703427.
-const expectedRenderedSurfaceSHA = "1e1bd0164d18113eda7c1510a9adf5f033314831d44506c7a107ca15bdea946c"
+const expectedRenderedSurfaceSHA = "be696639e32e670edcd9011fba2d370772bbdf9ecc6646c37f95024a5f3831c7"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
