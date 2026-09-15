@@ -488,6 +488,28 @@ func TestResolveFailsClosedWhenAnyAttestedCommitIsUnavailable(t *testing.T) {
 	}
 }
 
+// Older gh releases name the statement field predicate_type. A provenance
+// attestation in that shape is accepted; any other predicate still is not.
+func TestResolveAcceptsTheLegacyPredicateTypeField(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+
+	legacy := func(predicateType string) *ghStub {
+		a := verifiedAttestation(f.deployInput)
+		statement := a["verificationResult"].(map[string]any)["statement"].(map[string]any)
+		delete(statement, "predicateType")
+		statement["predicate_type"] = predicateType
+		return stubFor(t, a)
+	}
+
+	if got := resolve(configFor(f), legacy(provenancePredicate).runner()); got.verdict != converged {
+		t.Fatalf("legacy provenance field: verdict = %s (%s), want CONVERGED", got.verdict, got.detail)
+	}
+	if got := resolve(configFor(f), legacy("https://cyclonedx.org/bom").runner()); got.verdict != unknown {
+		t.Fatalf("legacy SBOM field: verdict = %s (%s), want UNKNOWN", got.verdict, got.detail)
+	}
+}
+
 func TestRunReportsFlagErrorsOnTheVerdictLine(t *testing.T) {
 	t.Parallel()
 

@@ -250,7 +250,9 @@ type attestation struct {
 		} `json:"signature"`
 		Statement struct {
 			PredicateType string `json:"predicateType"`
-			Subject       []struct {
+			// Older gh releases emit the statement field in snake case.
+			LegacyPredicateType string `json:"predicate_type"`
+			Subject             []struct {
 				Digest map[string]string `json:"digest"`
 			} `json:"subject"`
 		} `json:"statement"`
@@ -289,8 +291,12 @@ func attestedCommits(cfg config, run runner) ([]string, error) {
 		if cert.SourceRepositoryURI != wantURI {
 			return nil, fmt.Errorf("attestation %d was built from %q, not %s", i, cert.SourceRepositoryURI, wantURI)
 		}
-		if a.VerificationResult.Statement.PredicateType != provenancePredicate {
-			return nil, fmt.Errorf("attestation %d has predicate type %q", i, a.VerificationResult.Statement.PredicateType)
+		predicateType := a.VerificationResult.Statement.PredicateType
+		if predicateType == "" {
+			predicateType = a.VerificationResult.Statement.LegacyPredicateType
+		}
+		if predicateType != provenancePredicate {
+			return nil, fmt.Errorf("attestation %d has predicate type %q", i, predicateType)
 		}
 		if !namesDigest(a, wantHex) {
 			return nil, fmt.Errorf("attestation %d does not name %s as its subject", i, cfg.digest)
@@ -465,16 +471,16 @@ func run(args []string, stdout io.Writer, runCmd runner) int {
 	flags.StringVar(&cfg.workflow, "workflow", ".github/workflows/ci.yaml", "workflow holding the deploy-input filter")
 	flags.StringVar(&cfg.filter, "filter", "k8s", "paths-filter name listing deploy inputs")
 	if err := flags.Parse(args); err != nil {
-		fmt.Fprintf(stdout, "%s %v\n", unknown, err)
+		_, _ = fmt.Fprintf(stdout, "%s %v\n", unknown, err)
 		return exitCode(unknown)
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stdout, "%s unexpected arguments: %v\n", unknown, flags.Args())
+		_, _ = fmt.Fprintf(stdout, "%s unexpected arguments: %v\n", unknown, flags.Args())
 		return exitCode(unknown)
 	}
 
 	res := resolve(cfg, runCmd)
-	fmt.Fprintf(stdout, "%s %s\n", res.verdict, res.detail)
+	_, _ = fmt.Fprintf(stdout, "%s %s\n", res.verdict, res.detail)
 	return exitCode(res.verdict)
 }
 
