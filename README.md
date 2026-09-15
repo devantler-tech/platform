@@ -126,7 +126,7 @@ A high-level inventory of what Flux reconciles onto the cluster. The manifests l
 - **Storage** — Longhorn (replicated block/RWX, prod via Hetzner CSI), CloudNativePG (PostgreSQL operator); see [`docs/rwx-storage.md`](docs/rwx-storage.md)
 - **Autoscaling** — Cluster Autoscaler (nodes), SIG Descheduler (pod rebalancing + node consolidation), Vertical Pod Autoscaler, KEDA request-rate autoscaling (homepage/umami); see [`docs/node-autoscaling.md`](docs/node-autoscaling.md)
 - **Progressive delivery** — Flagger (Gateway API canary deployments with SLO-gated automated rollback, metrics from Coroot); see [`docs/progressive-delivery.md`](docs/progressive-delivery.md)
-- **Observability** — Coroot (self-hosted, eBPF: metrics, logs, traces, profiling, service map, SLO alerting), OpenCost (cost); see [`docs/dr/alerting.md`](docs/dr/alerting.md)
+- **Observability** — Coroot (self-hosted, eBPF: metrics, logs, traces, profiling, service map, SLO alerting, cost allocation); see [`docs/dr/alerting.md`](docs/dr/alerting.md)
 - **Backup / DR** — Velero with CloudNativePG backups; see [`docs/dr/`](docs/dr)
 - **Virtualization** — KubeVirt + CDI *(local/CI only; disabled on the Hetzner/prod overlay)*
 - **Testing** — Testkube *(local/CI only; not deployed to prod)*

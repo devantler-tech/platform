@@ -305,6 +305,10 @@ jobs:
               - 'docs/oidc-kubectl.md'
               - 'docs/talos-access.md'
               - 'scripts/tests/test-actual-budget-auth-route.sh'
+              - 'scripts/tests/test-umami-sso-dashboard-route.sh'
+              - 'scripts/tests/test-umami-tracking-probe.sh'
+              - 'scripts/tests/fixtures/umami-curl-stub.sh'
+              - 'scripts/verify-umami-tracking.sh'
               - 'scripts/tests/test-actual-budget-user-namespaces.sh'
               # The provider DeploymentRuntimeConfigs, this gate and its kyverno
               # fixture are one contract: a container-only seccompProfile is
@@ -398,6 +402,12 @@ jobs:
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
               - '.github/workflows/publish-kubescape-storage-hotfix.yaml'
+              - 'scripts/tests/test-coroot-node-agent-hotfix.sh'
+              - '.github/workflows/publish-coroot-node-agent-hotfix.yaml'
+              - 'k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile'
+              - 'k8s/bases/infrastructure/coroot/node-agent-v1.35.8-alert-remediation.patch'
+              - 'scripts/tests/test-kubescape-node-agent-hotfix.sh'
+              - '.github/workflows/publish-kubescape-node-agent-hotfix.yaml'
               - 'scripts/kubescape-backlog-bridge/**'
               # The updater and its annotation helper are one fail-closed
               # contract for the vendored CDI/KubeVirt manifests.
@@ -460,6 +470,7 @@ jobs:
               - 'scripts/tests/test-cilium-mutual-auth-policy.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy-regressions.sh'
               - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
+              - 'scripts/tests/test-crossview-coroot-postgres-integration.sh'
               - 'scripts/tests/test-coroot-api-key-contract.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
@@ -481,11 +492,15 @@ jobs:
               # The values it checks live under k8s/**; this entry makes an edit to
               # the test alone run it too.
               - 'scripts/tests/test-kube-system-addon-cpu-limits.sh'
-              - 'scripts/tests/test-opencost-usage-scraper.sh'
+              - 'scripts/tests/test-coroot-cost-convergence.sh'
+              - 'scripts/retire-opencost.sh'
+              - 'scripts/tests/test-opencost-retirement.sh'
+              - 'scripts/tests/test-opencost-retirement-wiring.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
               - 'scripts/tests/test-crossplane-sync-alerter.sh'
               - 'scripts/tests/test-crossplane-egress-policy.sh'
               - 'scripts/tests/crossplane-egress-policy-rules.yaml'
+              - 'scripts/tests/test-coroot-alert-remediation.sh'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               - 'scripts/tests/test-stranded-volume-attach-alert.sh'
               - 'scripts/tests/test-prune-protected-orphan-alert.sh'
@@ -1195,6 +1210,11 @@ jobs:
           bash scripts/tests/test-tenant-route-hostname-boundary.sh
           shellcheck scripts/tests/test-actual-budget-auth-route.sh
           bash scripts/tests/test-actual-budget-auth-route.sh
+          shellcheck scripts/tests/test-umami-sso-dashboard-route.sh
+          bash scripts/tests/test-umami-sso-dashboard-route.sh
+          shellcheck scripts/tests/test-umami-tracking-probe.sh
+          bash scripts/tests/test-umami-tracking-probe.sh
+          shellcheck scripts/verify-umami-tracking.sh
           shellcheck scripts/tests/test-provider-drc-pod-seccomp.sh
           bash scripts/tests/test-provider-drc-pod-seccomp.sh
           shellcheck scripts/tests/test-add-baseline-context.sh
@@ -1303,6 +1323,8 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-postgres-scrape-policy.sh
           bash scripts/tests/test-coroot-postgres-scrape-policy.sh
+          shellcheck scripts/tests/test-crossview-coroot-postgres-integration.sh
+          bash scripts/tests/test-crossview-coroot-postgres-integration.sh
 
       - name: 🔑 Validate Coroot API key and registry egress
         if: needs.changes.outputs.k8s == 'true'
@@ -1357,12 +1379,12 @@ jobs:
         # is real — a skipped step in a green deploy is otherwise invisible.
         run: bash scripts/tests/test-cilium-rollout-gate-suppression-signal.sh
 
-      - name: 📊 Validate OpenCost usage metrics path
+      - name: 📊 Validate Coroot cost convergence
         if: needs.changes.outputs.k8s == 'true'
-        # OpenCost cannot distinguish a dead usage sensor from an idle cluster.
-        # Render the full component contract so the cAdvisor scrape and its
-        # least-privilege delivery path cannot silently disappear.
-        run: bash scripts/tests/test-opencost-usage-scraper.sh
+        # Coroot is the single cost surface. Render both infrastructure overlays
+        # so OpenCost cannot return through a route, workload, policy or optional
+        # local integration, while the production pricing reconciler stays live.
+        run: bash scripts/tests/test-coroot-cost-convergence.sh
 
       - name: 🔄 Validate Crossplane sync exporter metrics path
         if: needs.changes.outputs.k8s == 'true'
@@ -1526,9 +1548,9 @@ jobs:
         # now runs, producing findings that are not real gaps.
         #
         # The comparison is NOT against the exclusion list: add-pod-security-context
-        # excludes fifteen namespaces, and three of them (cert-manager, keda,
-        # opencost) are reached by the by-name add-imageuid rule. Reading exclusions
-        # alone reports three false differences on a correct tree, and the natural way
+        # excludes fourteen namespaces, and two of them (cert-manager and keda)
+        # are reached by the by-name add-imageuid rule. Reading exclusions
+        # alone reports two false differences on a correct tree, and the natural way
         # to silence that is to add them to the exception — the very drift this
         # catches (#3224).
         run: |
@@ -1746,6 +1768,32 @@ jobs:
         run: |
           shellcheck scripts/tests/test-kubescape-storage-hotfix.sh
           bash scripts/tests/test-kubescape-storage-hotfix.sh
+
+      - name: 🔭 Validate Coroot node-agent compatibility image
+        if: needs.changes.outputs.k8s == 'true'
+        # Talos does not expose journald, this cluster blocks its metadata
+        # endpoint, and stripped Go binaries cannot accept TLS uprobes. Keep
+        # those optional limitations visible as warnings while increasing the
+        # L7 event buffer that protects actionable telemetry under bursts.
+        run: |
+          shellcheck scripts/tests/test-coroot-node-agent-hotfix.sh
+          bash scripts/tests/test-coroot-node-agent-hotfix.sh
+
+      - name: 🛡️ Validate Kubescape node-agent compatibility image
+        if: needs.changes.outputs.k8s == 'true'
+        # The pinned upstream release reports expected short-lived-container
+        # lifecycle races and Kubernetes optimistic-concurrency conflicts as
+        # application errors. Keep the narrow severity-classification build,
+        # its source pin, and its tests executable until upstream supersedes it.
+        run: |
+          shellcheck scripts/tests/test-kubescape-node-agent-hotfix.sh
+          bash scripts/tests/test-kubescape-node-agent-hotfix.sh
+
+      - name: 🚨 Validate Coroot alert remediations
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-coroot-alert-remediation.sh
+          bash scripts/tests/test-coroot-alert-remediation.sh
 
       - name: 📤 Save kubeconform schema cache
         # Runs even if the validate step above failed (see the restore step's

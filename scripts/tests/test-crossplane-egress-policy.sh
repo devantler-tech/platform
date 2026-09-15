@@ -720,6 +720,15 @@ assert_helm_rules_reject \
   "${helm_apply_one_generator_fixture}" \
   'the Helm-render guard must reject policy-level changes to the approved generator'
 
+helm_client_side_apply_generator_fixture="$(
+  yq e '.spec.useServerSideApply = false' \
+    "${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/add-default-deny.yaml"
+)"
+assert_helm_rules_reject \
+  'helm-client-side-apply-generator' \
+  "${helm_client_side_apply_generator_fixture}" \
+  'the Helm-render guard must require server-side apply on the approved generator'
+
 helm_clone_list_generator_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-clone-list-network-policy\nspec:\n  rules:\n  - name: chart-clone-list-network-policy\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      namespace: crossplane-system\n      cloneList:\n        namespace: attacker\n        kinds: [cilium.io/v2/CiliumNetworkPolicy]'
 assert_helm_rules_reject \
   'helm-clone-list-generator' \

@@ -136,18 +136,14 @@ spec:
       enabled: true
     nodeAgent:
       image:
-        # Chart 1.40.2 pins node-agent v0.3.119, whose vendored inspektor-gadget
-        # has a data race in GadgetPubSub.Publish -- under container churn the
-        # DaemonSet dies with "fatal error: concurrent map writes" (observed
-        # crashlooping every prod node, 15/8/3 restarts, during the 06-20..06-23
-        # load). node-agent v0.3.128 fixed it by bumping the inspektor-gadget pin
-        # (kubescape/node-agent#825); this pin also carries the later v0.3.132
-        # (eBPF deadlock + OOM under load) and v0.3.136 (send-on-closed-channel
-        # panic on SIGTERM/rolling restart) crash fixes. The chart's node-agent
-        # default still lags the node-agent release train (kubevuln is already at
-        # v0.3.142 in the same chart), so override it here; drop this once the
-        # chart default catches up past v0.3.128.
-        tag: v0.3.142
+        # Keep the operand pinned explicitly at the version supported by chart
+        # 1.40.4. v0.3.219 retains the crash fixes that originally required the
+        # override and adds lifecycle fixes for containers terminating while
+        # their profile, SBOM, and runtime-rule managers are still processing
+        # them. Those races surfaced as delayed "container not found" errors on
+        # short-lived monitoring Jobs. Re-evaluate this pin with each chart bump
+        # rather than letting the component move independently of its CRDs.
+        tag: v0.3.219
       config:
         hostSensor:
           enabled: true
@@ -223,6 +219,19 @@ spec:
     kubevulnScheduler:
       scanSchedule: "12 1 * * *"
     storage:
+      # Kubevuln may submit updates for the same workload close together as
+      # node agents refresh its shared profile. The storage queue protects only
+      # individual HTTP handlers; two summary workers can still read the same
+      # resourceVersion and race their updates. Serialize that kind explicitly.
+      #
+      # Valid VEX records currently exceed the chart's 500 kB default and are
+      # rejected with HTTP 413 before persistence. One megabyte covers the
+      # observed records with headroom while retaining a finite queue bound.
+      kindQueues:
+        vulnerabilitymanifestsummaries:
+          workerCount: 1
+        openvulnerabilityexchangecontainers:
+          maxObjectSize: 1000000
       image:
         # Storage v0.0.297 starts two deferred profile-maintenance workers. They
         # can both read and then race while promoting to SQLite's single writer;

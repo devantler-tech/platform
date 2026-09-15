@@ -15,8 +15,8 @@ spec:
     - toEntities:
         - kube-apiserver
     # Coroot's bundled Prometheus (in the observability namespace) — canary SLO
-    # metric queries (success-rate, latency). Same endpoint OpenCost queries;
-    # Coroot's netpol allows this namespace in on :9090.
+    # metric queries (success-rate, latency). Coroot's netpol allows this
+    # namespace in on :9090.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: observability
@@ -42,13 +42,6 @@ spec:
       toPorts:
         - ports:
             - port: "3000"
-              protocol: TCP
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: opencost
-      toPorts:
-        - ports:
-            - port: "9090"
               protocol: TCP
     # DNS resolution
     - toEndpoints:

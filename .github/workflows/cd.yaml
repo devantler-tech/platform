@@ -13,6 +13,11 @@ on:
         required: false
         type: boolean
         default: false
+      retire-opencost:
+        description: Complete the approved prune-protected OpenCost retirement after deployment
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -319,6 +324,7 @@ jobs:
         with:
           sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
           verify-wedding-backup-staging: ${{ inputs.verify-wedding-backup-staging }}
+          retire-opencost: ${{ inputs.retire-opencost }}
           kube-config: ${{ secrets.KUBE_CONFIG }}
           talos-config: ${{ secrets.TALOS_CONFIG }}
           ghcr-token: ${{ secrets.GHCR_TOKEN }}

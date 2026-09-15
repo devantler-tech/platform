@@ -2,8 +2,8 @@
 
 **Coroot** (Community Edition, fully self-hosted) is the single observability
 tool — metrics, logs, traces, continuous profiling, a service map, predefined
-dashboards/inspections and SLO-based alerting, all out of the box — plus
-**OpenCost** (cost), running per cluster. No SaaS tier, no remote-write.
+dashboards/inspections, SLO-based alerting and cost allocation, all out of the
+box. No SaaS tier, no remote-write, and no separate cost UI.
 
 It replaces the previous `kube-prometheus-stack` + Loki + Alloy assembly: one
 operator and one custom resource collapse Prometheus, Grafana, Alertmanager,
@@ -17,12 +17,11 @@ The `coroot-operator` HelmRelease installs the operator + the `Coroot` CRD; the
 
 | Component         | Role                                                          | Persistence (prod)   |
 | ----------------- | ------------------------------------------------------------- | -------------------- |
-| Coroot (UI/app)   | Web UI, dashboards, inspections, alerting engine              | `hcloud` PVC, 2 Gi   |
-| Prometheus        | Bundled metrics TSDB (14 d retention), queryable by OpenCost  | `hcloud` PVC, 20 Gi  |
+| Coroot (UI/app)   | Web UI, dashboards, inspections, alerting and cost allocation | `hcloud` PVC, 2 Gi   |
+| Prometheus        | Bundled metrics TSDB (14 d retention)                         | `hcloud` PVC, 20 Gi  |
 | ClickHouse        | Logs, traces and continuous profiles (+ 1 keeper)             | `hcloud` PVC, 15 Gi  |
 | node-agent        | eBPF DaemonSet: per-node + per-pod metrics, logs, traces      | n/a                  |
 | cluster-agent     | kube-state-metrics-equivalent cluster inventory               | n/a                  |
-| OpenCost          | Cost allocation, querying Coroot's bundled Prometheus         | n/a                  |
 
 The node-agent uses eBPF, so it observes every pod's traffic, latency, errors,
 logs and traces **without** per-app scrape config or ServiceMonitors — there is
@@ -40,9 +39,9 @@ way OpenBao gets block storage.
 
 Coroot CE has no native OIDC (SSO is an Enterprise feature), so the UI is
 fronted by **oauth2-proxy** (Dex) — the same forward-auth pattern the Prometheus
-and Alertmanager UIs used. The `coroot.${domain}` HTTPRoute backends to
+and Alertmanager UIs used. The `observability.${domain}` HTTPRoute backends to
 oauth2-proxy; after authentication, auth-proxy routes by Host to the Coroot
-Service (`coroot-coroot.coroot.svc:8080`). The CR sets `authAnonymousRole:
+Service (`coroot-coroot.observability.svc:8080`). The CR sets `authAnonymousRole:
 Admin`, so whoever clears the GitHub SSO gate (oauth2-proxy, `devantler` only)
 is the operator — mirroring the old "everyone → Grafana Admin" posture.
 
@@ -237,12 +236,12 @@ Recommended heartbeat monitor: [healthchecks.io](https://healthchecks.io) — a
 
 ## On-call: inspect
 
-- **Everything** — Coroot UI at `https://coroot.${domain}`: the service map,
+- **Everything, including cost** — Coroot UI at `https://observability.${domain}`: the service map,
   per-app SLOs, metrics, logs (full-text over ClickHouse), traces, continuous
-  profiling, and the active inspections/incidents.
-- **Cost** — OpenCost at `https://opencost.${domain}`.
+  profiling, infrastructure and per-app cost allocation, and the active
+  inspections/incidents.
 
-Both are behind GitHub SSO (oauth2-proxy, `devantler` only).
+It is behind GitHub SSO (oauth2-proxy, `devantler` only).
 
 ## Resource footprint (prod, approximate)
 

@@ -2252,7 +2252,87 @@ const (
 // aggregate. This host's renderer is unapproved, so no local digest is claimed.
 //
 // Previous aggregate: 6bd9fb1f77c6aa59b2e2dae27ac0a45dd4637920b9bc2d36a451ac64e3abd952.
-const expectedRenderedSurfaceSHA = "52a79b87b9658ab6854980401565f66734d41ff87e90081f1a8c05fcdb7aa789"
+//
+// Re-approved for #3810 (2026-09-14), derived on exact main
+// bd0b2ad4cc9a07db8c93f437bdefbde44485ea52, whose approved aggregate is
+// 52a79b87b9658ab6854980401565f66734d41ff87e90081f1a8c05fcdb7aa789.
+// The maintainer approved the exact replacement aggregate in the implementing
+// session. OpenCost is retired so Coroot remains the single cost-monitoring
+// surface.
+//
+// CONSERVATION: rendering all five authorization overlays against that base is
+// strictly subtractive: 215 identities replace 229, with no additions. The 14
+// removed objects are confined to OpenCost (its namespace, Helm source/release,
+// route, policies, disruption budget, Flagger canary, usage scraper workload and
+// config) plus its now-unused readonly-rootfs exception. Grant-bearing objects
+// narrow from 27 to 24 by removing only the opencost-usage-scraper ClusterRole,
+// ClusterRoleBinding and ServiceAccount. No role, binding, ServiceAccount, verb,
+// wildcard, AWS identity or permission is added.
+//
+// Previous aggregate: 52a79b87b9658ab6854980401565f66734d41ff87e90081f1a8c05fcdb7aa789.
+//
+// Re-approved for #3820 (2026-09-15), derived on exact main
+// 70e2142adb923bd90727ccae07ffd9238e0715d6, whose approved aggregate is
+// 39e2ce5061122eb00b8e2dc800a25333eac457e76aeb9e7b2e7100444a949837.
+// The maintainer explicitly approved the exact replacement aggregate in the
+// implementing session. The change fixes recurring Coroot warning sources and
+// adds one narrow, declarative suppression for a benign controller retry.
+//
+// CONSERVATION: rendering all five authorization overlays against that base
+// changes 568 identities to 569 by adding only the
+// set-observability-dns-ndots ClusterPolicy. Exactly five existing identities
+// change: the coroot-alert-autosuppressor and vault-snapshot CronJobs, the
+// observability Coroot custom resource, the kubescape HelmRelease, and the
+// add-default-deny ClusterPolicy. All 94 grant-bearing Role, ClusterRole,
+// RoleBinding, ClusterRoleBinding and ServiceAccount records are byte-identical;
+// no identity, binding, verb, wildcard, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was read from CI job 104169323408 for
+// merge commit 144aa7e5b551d33a0869c378344ade7e3afa95cb (head 34e6cbce
+// merged into exact base 70e2142a). Its approval-base check passed and the
+// SHA256-verified kubectl v1.36.2 renderer reported this aggregate as its only
+// static authorization failure. This host independently reproduced the value.
+//
+// Previous aggregate: 39e2ce5061122eb00b8e2dc800a25333eac457e76aeb9e7b2e7100444a949837.
+//
+// Re-approved for #3811 (2026-09-15), derived on exact main
+// e96d5ff513f07e7ba2f5078aade7ff12b2c5c2e1, whose approved aggregate is
+// 5e7a3af5b0ff2e0fbd6b354440587a99ae1300bb6d66ecf47075072382dae2ea.
+// The maintainer explicitly authorized the implementing session to complete
+// every necessary repair through merge without further approval prompts; that
+// standing authorization covers this exact corrective aggregate. Crossview's
+// bundled PostgreSQL now exposes Coroot's documented integration contract with
+// a generated monitor credential, pg_monitor role, pg_stat_statements preload,
+// atomic readiness checks and a scrape policy bound to the Coroot cluster-agent
+// service account.
+//
+// CONSERVATION: rendering all five authorization overlays against that base
+// grows the identity set from 569 to 573 by exactly four Crossview objects:
+// crossview/allow-coroot-postgres-scrape CiliumNetworkPolicy,
+// crossview/crossview-postgres-coroot-monitor ExternalSecret and Password, and
+// crossview/crossview-postgres-coroot-monitor-init ConfigMap. Exactly one
+// existing object changes, the crossview/crossview HelmRelease. All 94
+// grant-bearing Role, ClusterRole, RoleBinding, ClusterRoleBinding and
+// ServiceAccount records are unchanged; no Kubernetes verb, wildcard or AWS
+// identity or permission is added or changed.
+//
+// RENDERER PROVENANCE: the value below was read from CI job 104200529835 for
+// merge commit eba4949ac7c80ad85769a2de945f485e4e7d0d25 (exact head
+// 3dff390ee9b0716e0def7edb75f3faa1a9a9ed2b merged onto exact base
+// e96d5ff513f07e7ba2f5078aade7ff12b2c5c2e1). The job's approval-base check
+// passed and its SHA256-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer
+// reported this aggregate as its only static authorization failure. This host
+// independently reproduced the value after merging that exact base.
+//
+// The prior a295c1f7f6bcffd196ae36a2ed9a1a08eddf6d8450b266fc1846ad210c946801
+// candidate never merged: its merge-group deployment rolled back after Helm's
+// server-side apply retained the live Deployment's API-defaulted rollingUpdate
+// child while changing the strategy to Recreate. This replacement keeps the
+// compatible RollingUpdate type and serializes the one-replica ephemeral
+// database replacement with maxSurge zero and maxUnavailable one.
+//
+// Previous aggregate: 5e7a3af5b0ff2e0fbd6b354440587a99ae1300bb6d66ecf47075072382dae2ea.
+const expectedRenderedSurfaceSHA = "581f546914d30ddacb646b81e112c845dce93474983ac5ba0ab4029ae8703427"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2265,7 +2345,7 @@ const expectedRenderedSurfaceSHA = "52a79b87b9658ab6854980401565f66734d41ff87e90
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "6bd9fb1f77c6aa59b2e2dae27ac0a45dd4637920b9bc2d36a451ac64e3abd952"
+const previousRenderedSurfaceSHA = "5e7a3af5b0ff2e0fbd6b354440587a99ae1300bb6d66ecf47075072382dae2ea"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -2467,12 +2547,10 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "aws", name: "aws-managed-resources"}:                         "ff4c3264c519b1b4a7ec9b5145412f39ea2ba7b6163d8dc50fb029b1460edcda",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}:                  "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                           "4447f41c03e8297fafdabcadf4fdd8ca3260f2c84264c531b2179cb7df2c1556",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "opencost-usage-scraper"}:                                   "3cb22a5a2d178e9cc93ebc3995d936d124800c441785dc23d780281746569937",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "crossview-cluster-reader"}:                          "bc6c370f5bff72c541428274f9ef7ab13e3bb5a2b804ec5f4c81087171311c0d",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "crossview-view"}:                                    "536a4baa1970100ea117d1655f80e06ed874e2248b75f33f161e8b44ca3df50c",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "opencost-usage-scraper"}:                            "4b28e1da280a7940a1cb4d538bc31ede1b5d272c17189a81afeae48acbb8b7a0",
 	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "072e4478cdad39c0a7d9f5119cad63d4c56a9fc96ba88d657fef97f6b91bae31",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",

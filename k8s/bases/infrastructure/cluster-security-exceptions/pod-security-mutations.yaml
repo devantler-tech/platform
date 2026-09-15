@@ -9,9 +9,9 @@
 #
 # SCOPE. add-pod-security-context and add-container-security-context exclude the
 # twelve namespaces listed below, so this exception excludes them too, expressed
-# as `NotIn` and rendered by namespaceNotInPattern. cert-manager, keda and
-# opencost are deliberately NOT in that set: add-imageuid-pod-security-context
-# matches those three by name and supplies the pod-level fields, so the mutation —
+# as `NotIn` and rendered by namespaceNotInPattern. cert-manager and keda are
+# deliberately NOT in that set: add-imageuid-pod-security-context matches those
+# two by name and supplies the pod-level fields, so the mutation —
 # and therefore this exception — still applies there. Read the mutation's match
 # blocks, not only its exclusions.
 #
