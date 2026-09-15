@@ -136,14 +136,14 @@ spec:
       enabled: true
     nodeAgent:
       image:
-        # Keep the operand pinned explicitly at the version supported by chart
-        # 1.40.4. v0.3.219 retains the crash fixes that originally required the
-        # override and adds lifecycle fixes for containers terminating while
-        # their profile, SBOM, and runtime-rule managers are still processing
-        # them. Those races surfaced as delayed "container not found" errors on
-        # short-lived monitoring Jobs. Re-evaluate this pin with each chart bump
-        # rather than letting the component move independently of its CRDs.
-        tag: v0.3.219
+        # Exact signed compatibility build from the v0.3.219 source supported by
+        # chart 1.40.4. It retains the upstream crash fixes and classifies races
+        # with containers that have already exited as expected lifecycle noise,
+        # while preserving errors for containers that are still live. Re-evaluate
+        # this pin with each chart bump rather than letting the operand move
+        # independently of its CRDs.
+        repository: ghcr.io/devantler-tech/platform-kubescape-node-agent
+        tag: "v0.3.219-alerts.1-f6cbf54c4e76f511442d49c43c3f1880831b469c@sha256:5d12b81ad92b75b3aae06166d0936ae441b79ba5f29eb9b7e0d666bd72a7cf0b"
       config:
         hostSensor:
           enabled: true
@@ -248,7 +248,7 @@ spec:
         # main-only publisher attaches SBOM/provenance and signs the digest
         # before this pin may advance.
         repository: ghcr.io/devantler-tech/platform-kubescape-storage
-        tag: "v0.0.297-sqlite-contention.4-c674d63c1c391b47839a4a6246945b70ddfe1c01@sha256:e21df062e2c3598fec5b8c2170c5cc68ceeceb412379c3aef986b42c9a46241e"
+        tag: "v0.0.297-sqlite-contention.5-9d251617d5c9637a9724362a906e2da73ac33bdd@sha256:9018f46109c6e48cdc5ff2c87263d1950882b6bed92845e4337629b0aa0b08db"
         pullPolicy: IfNotPresent
     # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
     # to avoid Helm upgrade failures from PVC shrink rejection.
