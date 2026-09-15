@@ -18,10 +18,10 @@ metadata:
     policies.kyverno.io/description: >-
       Requires keyless cosign signatures from the matching devantler-tech
       release pipeline on first-party container images at Pod admission:
-      publish-app for app images, the platform's dedicated Kubescape storage
-      compatibility publisher, each Crossplane provider's own package workflow,
-      and KSail's release workflow. Each class is verified only against its own
-      identity; third-party images admit unverified.
+      publish-app for app images, the platform's dedicated compatibility-image
+      publishers, each Crossplane provider's own package workflow, and KSail's
+      release workflow. Each class is verified only against its own identity;
+      third-party images admit unverified.
 spec:
   failurePolicy: Fail
   validationActions: [Deny]
@@ -88,6 +88,22 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kubescape-storage-hotfix\.yaml@refs/heads/main$
+    # The two agent compatibility images follow the same reviewed, main-only
+    # publisher contract as storage, but each workflow has a distinct Fulcio
+    # identity. Keep each in its own attestor and exact-repository route so no
+    # one-off workflow can satisfy another first-party image class.
+    - name: publishkubescapenodeagent
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kubescape-node-agent-hotfix\.yaml@refs/heads/main$
+    - name: publishcorootnodeagent
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-coroot-node-agent-hotfix\.yaml@refs/heads/main$
     # Crossplane provider packages (provider-upjet-*): the crossplane-contrib
     # reusable publish workflow they use cannot sign, so each provider repo
     # attaches the keyless signature in its own publish-provider-package.yml
@@ -146,7 +162,13 @@ spec:
           !image.startsWith('ghcr.io/devantler-tech/provider-upjet-') &&
           image != 'ghcr.io/devantler-tech/platform-kubescape-storage' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:') &&
-          !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@'))
+          !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@') &&
+          image != 'ghcr.io/devantler-tech/platform-kubescape-node-agent' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-node-agent:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-node-agent@') &&
+          image != 'ghcr.io/devantler-tech/platform-coroot-node-agent' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@'))
         .map(image, verifyImageSignatures(image, [attestors.publishapp]))
         .all(e, e > 0)
       message: >-
@@ -163,6 +185,28 @@ spec:
         .all(e, e > 0)
       message: >-
         Kubescape storage compatibility image is not signed by the platform
+        repository's dedicated main-branch publisher (keyless cosign)
+    - expression: >-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-kubescape-node-agent' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kubescape-node-agent:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kubescape-node-agent@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishkubescapenodeagent]))
+        .all(e, e > 0)
+      message: >-
+        Kubescape node-agent compatibility image is not signed by the platform
+        repository's dedicated main-branch publisher (keyless cosign)
+    - expression: >-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-coroot-node-agent' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishcorootnodeagent]))
+        .all(e, e > 0)
+      message: >-
+        Coroot node-agent compatibility image is not signed by the platform
         repository's dedicated main-branch publisher (keyless cosign)
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
