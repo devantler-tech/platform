@@ -34,12 +34,17 @@
       metadata:
         name: crossview-postgres
       spec:
-        # The data directory is an emptyDir. Recreate prevents the old and new
-        # database pods from serving different ephemeral clusters behind one
-        # Service during this settings-changing rollout.
+        # The data directory is an emptyDir. A serialized RollingUpdate prevents
+        # the old and new database pods from serving different ephemeral
+        # clusters behind one Service during this settings-changing rollout.
+        # Keep the strategy type compatible with the live Deployment: changing
+        # it to Recreate through Helm's server-side apply leaves Kubernetes'
+        # defaulted rollingUpdate child in place and is rejected by the API.
         strategy:
-          type: Recreate
-          rollingUpdate: null
+          type: RollingUpdate
+          rollingUpdate:
+            maxSurge: 0
+            maxUnavailable: 1
         template:
           spec:
             containers:

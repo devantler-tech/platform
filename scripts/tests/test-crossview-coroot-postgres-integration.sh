@@ -79,7 +79,9 @@ postgres_patch="$(
 
 printf '%s\n' "${postgres_patch}" |
   yq e -e '
-    (.spec.strategy.type == "Recreate") and
+    (.spec.strategy.type == "RollingUpdate") and
+    (.spec.strategy.rollingUpdate.maxSurge == 0) and
+    (.spec.strategy.rollingUpdate.maxUnavailable == 1) and
     ([
       .spec.template.spec.containers[] |
       select(
@@ -106,7 +108,7 @@ printf '%s\n' "${postgres_patch}" |
       )
     ] | length == 1)
   ' - >/dev/null ||
-  fail 'the PostgreSQL post-render patch must preload statistics, enable I/O timing, and mount an executable init hook'
+  fail 'the PostgreSQL post-render patch must serialize ephemeral-database replacement, preload statistics, enable I/O timing, and mount an executable init hook'
 
 app_patch="$(
   printf '%s\n' "${snapshot}" |
