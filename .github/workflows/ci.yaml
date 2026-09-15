@@ -402,6 +402,10 @@ jobs:
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
               - '.github/workflows/publish-kubescape-storage-hotfix.yaml'
+              - 'scripts/tests/test-coroot-node-agent-hotfix.sh'
+              - '.github/workflows/publish-coroot-node-agent-hotfix.yaml'
+              - 'k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile'
+              - 'k8s/bases/infrastructure/coroot/node-agent-v1.35.8-alert-remediation.patch'
               - 'scripts/kubescape-backlog-bridge/**'
               # The updater and its annotation helper are one fail-closed
               # contract for the vendored CDI/KubeVirt manifests.
@@ -1749,6 +1753,16 @@ jobs:
         run: |
           shellcheck scripts/tests/test-kubescape-storage-hotfix.sh
           bash scripts/tests/test-kubescape-storage-hotfix.sh
+
+      - name: 🔭 Validate Coroot node-agent compatibility image
+        if: needs.changes.outputs.k8s == 'true'
+        # Talos does not expose journald, this cluster blocks its metadata
+        # endpoint, and stripped Go binaries cannot accept TLS uprobes. Keep
+        # those optional limitations visible as warnings while increasing the
+        # L7 event buffer that protects actionable telemetry under bursts.
+        run: |
+          shellcheck scripts/tests/test-coroot-node-agent-hotfix.sh
+          bash scripts/tests/test-coroot-node-agent-hotfix.sh
 
       - name: 🚨 Validate Coroot alert remediations
         if: needs.changes.outputs.k8s == 'true'
