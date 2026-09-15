@@ -1,0 +1,188 @@
+name: Publish Kubescape Node Agent Hotfix
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-kubescape-node-agent-hotfix.yaml
+      - k8s/bases/infrastructure/controllers/kubescape/node-agent-v0.3.219-alert-classification.patch
+      - scripts/tests/test-kubescape-node-agent-hotfix.sh
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-kubescape-node-agent-hotfix.yaml
+      - k8s/bases/infrastructure/controllers/kubescape/node-agent-v0.3.219-alert-classification.patch
+      - scripts/tests/test-kubescape-node-agent-hotfix.sh
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  KUBESCAPE_NODE_AGENT_SOURCE_COMMIT: 4956ea26aabadb9daff42c4717842dd7bda26aa3
+  UPSTREAM_IMAGE: quay.io/kubescape/node-agent:v0.3.219@sha256:2044ed750f5e20a7c5150479963e2b33108c304a40d526c0de7ed412495467c6
+  IMAGE: ghcr.io/devantler-tech/platform-kubescape-node-agent
+  IMAGE_TAG: v0.3.219-alerts.1-${{ github.sha }}
+  PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/node-agent-v0.3.219-alert-classification.patch
+
+jobs:
+  verify:
+    name: Verify pinned source and patch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Check out platform contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out exact Kubescape node-agent source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: kubescape/node-agent
+          ref: ${{ env.KUBESCAPE_NODE_AGENT_SOURCE_COMMIT }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: upstream/go.mod
+          cache: false
+
+      - name: Apply and test compatibility patch
+        working-directory: upstream
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ env.KUBESCAPE_NODE_AGENT_SOURCE_COMMIT }}
+          HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
+          git apply --check "${HOTFIX_PATCH}"
+          git apply "${HOTFIX_PATCH}"
+          git diff --check
+          go test -exec sudo ./pkg/containerprofilemanager/v1 ./pkg/objectcache/containerprofilecache ./pkg/rulemanager ./pkg/sbommanager/v1
+
+      - name: Extract the pinned upstream tracer bundle
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          container_id="$(docker create --platform linux/amd64 "${UPSTREAM_IMAGE}")"
+          trap 'docker rm -f "${container_id}" >/dev/null' EXIT
+          docker cp "${container_id}:/root/tracers.tar" tracers.tar
+          test -s tracers.tar
+
+      - name: Build compatibility image without publishing
+        working-directory: upstream
+        env:
+          VERSION: ${{ env.IMAGE_TAG }}
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --file build/Dockerfile \
+            --build-arg "image_version=${VERSION}" \
+            .
+
+  publish:
+    name: Publish and sign immutable image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Check out platform contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out exact Kubescape node-agent source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: kubescape/node-agent
+          ref: ${{ env.KUBESCAPE_NODE_AGENT_SOURCE_COMMIT }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Reapply reviewed patch to exact source
+        working-directory: upstream
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ env.KUBESCAPE_NODE_AGENT_SOURCE_COMMIT }}
+          HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
+          git apply --check "${HOTFIX_PATCH}"
+          git apply "${HOTFIX_PATCH}"
+          git diff --check
+
+      - name: Extract the pinned upstream tracer bundle
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          container_id="$(docker create --platform linux/amd64 "${UPSTREAM_IMAGE}")"
+          trap 'docker rm -f "${container_id}" >/dev/null' EXIT
+          docker cp "${container_id}:/root/tracers.tar" tracers.tar
+          test -s tracers.tar
+
+      - name: Set up Buildx container driver
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        with:
+          driver: docker-container
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push compatibility image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./upstream
+          file: ./upstream/build/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ env.IMAGE_TAG }}
+          build-args: image_version=${{ env.IMAGE_TAG }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.IMAGE_TAG }}
+            io.devantler.kubescape-node-agent.upstream-revision=${{ env.KUBESCAPE_NODE_AGENT_SOURCE_COMMIT }}
+
+      - name: Set up Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign and verify published digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test -n "${DIGEST}"
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign verify \
+            --certificate-identity "https://github.com/devantler-tech/platform/.github/workflows/publish-kubescape-node-agent-hotfix.yaml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}@${DIGEST}"
+          printf 'Published signed image: %s@%s\n' "${IMAGE}" "${DIGEST}"
