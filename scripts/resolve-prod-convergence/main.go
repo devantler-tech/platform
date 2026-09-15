@@ -13,18 +13,28 @@
 //
 //	0  CONVERGED  the attested commit is main, or an ancestor with no deploy-input change since
 //	1  BEHIND     an ancestor of main, but a deploy input changed since (prod missed a merge)
-//	1  DIVERGED   not reachable from main (an ejected merge-group artifact)
+//	1  DIVERGED   not reachable from main; redeploying main converges it
 //	2  UNKNOWN    anything could not be read or verified; never reported as CONVERGED
 //
 // The source commit is taken from the attestation's signing certificate, which
 // GitHub fills in from the workflow's OIDC token. The provenance predicate is
 // deliberately not read: the workflow that signs it controls its contents.
 //
+// That certificate names the commit that TRIGGERED the run, not the commit a job
+// checked out. The merge-group heal checks out main inside the failed group's
+// run, so a healed artifact is attested with the ejected group's commit and
+// reads as DIVERGED although it holds main. The verdict is still actionable:
+// in both cases redeploying main converges prod, and does so once.
+//
+// One digest can carry several attestations when identical manifests are
+// published again from another run. Each attested commit is judged, and the
+// least converged verdict wins.
+//
 // Deploy inputs are the paths-filter patterns of the `changes` job in
 // .github/workflows/ci.yaml, read at the main revision being compared, so this
 // command and the deploy trigger cannot disagree about what a deploy input is.
 //
-// The caller must have the attested commit's object locally (for an ejected
+// The caller must have each attested commit's object locally (for an ejected
 // merge-group artifact, fetch it by SHA first); a missing object is UNKNOWN.
 package main
 
@@ -51,6 +61,9 @@ const (
 	diverged  verdict = "DIVERGED"
 	unknown   verdict = "UNKNOWN"
 )
+
+// severity orders the verdicts a judged commit can produce, least converged last.
+var severity = map[verdict]int{converged: 0, behind: 1, diverged: 2}
 
 const (
 	provenancePredicate = "https://slsa.dev/provenance/v1"
@@ -117,7 +130,7 @@ func evaluate(cfg config, run runner) (result, error) {
 		return result{}, fmt.Errorf("digest %q is not sha256:<64 hex>", cfg.digest)
 	}
 
-	commit, err := attestedCommit(cfg, run)
+	commits, err := attestedCommits(cfg, run)
 	if err != nil {
 		return result{}, err
 	}
@@ -129,57 +142,102 @@ func evaluate(cfg config, run runner) (result, error) {
 	if !commitPattern.MatchString(mainSHA) {
 		return result{}, fmt.Errorf("%s resolved to %q, not a commit", cfg.mainRef, mainSHA)
 	}
-	if commit == mainSHA {
-		return result{verdict: converged, detail: "prod runs main " + mainSHA}, nil
+
+	j := judge{cfg: cfg, run: run, mainSHA: mainSHA}
+	var worst result
+	for i, commit := range commits {
+		res, err := j.commit(commit)
+		if err != nil {
+			return result{}, err
+		}
+		if i == 0 || severity[res.verdict] > severity[worst.verdict] {
+			worst = res
+		}
+	}
+	if len(commits) > 1 {
+		worst.detail += fmt.Sprintf(" (least converged of %d attested commits)", len(commits))
+	}
+	return worst, nil
+}
+
+// judge compares attested commits with one main revision, reading the deploy
+// inputs at most once.
+type judge struct {
+	cfg      config
+	run      runner
+	mainSHA  string
+	patterns []string
+	matchers []*regexp.Regexp
+}
+
+func (j *judge) commit(commit string) (result, error) {
+	if commit == j.mainSHA {
+		return result{verdict: converged, detail: "prod runs main " + j.mainSHA}, nil
 	}
 
-	if _, exit, err := git(cfg, run, "cat-file", "-e", commit+"^{commit}"); err != nil || exit != 0 {
+	if _, exit, err := git(j.cfg, j.run, "cat-file", "-e", commit+"^{commit}"); err != nil || exit != 0 {
 		return result{}, fmt.Errorf("attested commit %s is not available locally", commit)
 	}
 
-	_, exit, err := git(cfg, run, "merge-base", "--is-ancestor", commit, mainSHA)
+	_, exit, err := git(j.cfg, j.run, "merge-base", "--is-ancestor", commit, j.mainSHA)
 	if err != nil {
 		return result{}, fmt.Errorf("ancestry check: %w", err)
 	}
 	switch exit {
 	case 0:
 	case 1:
-		return result{verdict: diverged, detail: fmt.Sprintf("prod runs %s, which main %s cannot reach", commit, mainSHA)}, nil
+		return result{
+			verdict: diverged,
+			detail: fmt.Sprintf("prod's artifact was attested by a run for %s, which main %s cannot reach "+
+				"(an ejected merge-group deploy, or that run's heal of main)", commit, j.mainSHA),
+		}, nil
 	default:
 		return result{}, fmt.Errorf("ancestry check exited %d", exit)
 	}
 
-	workflow, err := gitOutputRaw(cfg, run, "show", mainSHA+":"+cfg.workflow)
-	if err != nil {
-		return result{}, fmt.Errorf("read %s at %s: %w", cfg.workflow, mainSHA, err)
-	}
-	patterns, err := deployInputPatterns(workflow, cfg.filter)
-	if err != nil {
-		return result{}, err
-	}
-	matchers, err := compileGlobs(patterns)
-	if err != nil {
+	if err := j.loadDeployInputs(); err != nil {
 		return result{}, err
 	}
 
-	changed, err := gitOutputRaw(cfg, run, "diff", "--name-only", "--no-renames", "-z", commit, mainSHA, "--")
+	changed, err := gitOutputRaw(j.cfg, j.run, "diff", "--name-only", "--no-renames", "-z", commit, j.mainSHA, "--")
 	if err != nil {
-		return result{}, fmt.Errorf("diff %s..%s: %w", commit, mainSHA, err)
+		return result{}, fmt.Errorf("diff %s..%s: %w", commit, j.mainSHA, err)
 	}
 	for _, path := range strings.Split(string(changed), "\x00") {
 		if path == "" {
 			continue
 		}
-		for i, m := range matchers {
+		for i, m := range j.matchers {
 			if m.MatchString(path) {
 				return result{
 					verdict: behind,
-					detail:  fmt.Sprintf("prod runs %s; main %s changed deploy input %s (pattern %s)", commit, mainSHA, path, patterns[i]),
+					detail: fmt.Sprintf("prod runs %s; main %s changed deploy input %s (pattern %s)",
+						commit, j.mainSHA, path, j.patterns[i]),
 				}, nil
 			}
 		}
 	}
-	return result{verdict: converged, detail: fmt.Sprintf("prod runs %s; no deploy input changed up to main %s", commit, mainSHA)}, nil
+	return result{verdict: converged, detail: fmt.Sprintf("prod runs %s; no deploy input changed up to main %s", commit, j.mainSHA)}, nil
+}
+
+func (j *judge) loadDeployInputs() error {
+	if j.matchers != nil {
+		return nil
+	}
+	workflow, err := gitOutputRaw(j.cfg, j.run, "show", j.mainSHA+":"+j.cfg.workflow)
+	if err != nil {
+		return fmt.Errorf("read %s at %s: %w", j.cfg.workflow, j.mainSHA, err)
+	}
+	patterns, err := deployInputPatterns(workflow, j.cfg.filter)
+	if err != nil {
+		return err
+	}
+	matchers, err := compileGlobs(patterns)
+	if err != nil {
+		return err
+	}
+	j.patterns, j.matchers = patterns, matchers
+	return nil
 }
 
 type attestation struct {
@@ -199,9 +257,9 @@ type attestation struct {
 	} `json:"verificationResult"`
 }
 
-// attestedCommit verifies the digest's provenance and returns the commit its
-// signing certificate names. Every verified attestation must agree.
-func attestedCommit(cfg config, run runner) (string, error) {
+// attestedCommits verifies the digest's provenance and returns the distinct
+// commits its signing certificates name, in the order they were returned.
+func attestedCommits(cfg config, run runner) ([]string, error) {
 	out, exit, err := run("gh", "attestation", "verify", "oci://"+cfg.subject+"@"+cfg.digest,
 		"--bundle-from-oci",
 		"--repo", cfg.repo,
@@ -209,43 +267,51 @@ func attestedCommit(cfg config, run runner) (string, error) {
 		"--predicate-type", provenancePredicate,
 		"--format", "json")
 	if err != nil {
-		return "", fmt.Errorf("run gh attestation verify: %w", err)
+		return nil, fmt.Errorf("run gh attestation verify: %w", err)
 	}
 	if exit != 0 {
-		return "", fmt.Errorf("provenance for %s did not verify (gh exited %d)", cfg.digest, exit)
+		return nil, fmt.Errorf("provenance for %s did not verify (gh exited %d)", cfg.digest, exit)
 	}
 
 	var attestations []attestation
 	if err := json.Unmarshal(out, &attestations); err != nil {
-		return "", fmt.Errorf("parse verification output: %w", err)
+		return nil, fmt.Errorf("parse verification output: %w", err)
 	}
 	if len(attestations) == 0 {
-		return "", errors.New("verification returned no attestations")
+		return nil, errors.New("verification returned no attestations")
 	}
 
 	wantURI := "https://github.com/" + cfg.repo
 	wantHex := strings.TrimPrefix(cfg.digest, "sha256:")
-	commit := ""
+	var commits []string
 	for i, a := range attestations {
 		cert := a.VerificationResult.Signature.Certificate
 		if cert.SourceRepositoryURI != wantURI {
-			return "", fmt.Errorf("attestation %d was built from %q, not %s", i, cert.SourceRepositoryURI, wantURI)
+			return nil, fmt.Errorf("attestation %d was built from %q, not %s", i, cert.SourceRepositoryURI, wantURI)
 		}
 		if a.VerificationResult.Statement.PredicateType != provenancePredicate {
-			return "", fmt.Errorf("attestation %d has predicate type %q", i, a.VerificationResult.Statement.PredicateType)
+			return nil, fmt.Errorf("attestation %d has predicate type %q", i, a.VerificationResult.Statement.PredicateType)
 		}
 		if !namesDigest(a, wantHex) {
-			return "", fmt.Errorf("attestation %d does not name %s as its subject", i, cfg.digest)
+			return nil, fmt.Errorf("attestation %d does not name %s as its subject", i, cfg.digest)
 		}
 		if !commitPattern.MatchString(cert.SourceRepositoryDigest) {
-			return "", fmt.Errorf("attestation %d certificate carries no source commit", i)
+			return nil, fmt.Errorf("attestation %d certificate carries no source commit", i)
 		}
-		if commit != "" && commit != cert.SourceRepositoryDigest {
-			return "", fmt.Errorf("attestations disagree on the source commit: %s and %s", commit, cert.SourceRepositoryDigest)
+		if !contains(commits, cert.SourceRepositoryDigest) {
+			commits = append(commits, cert.SourceRepositoryDigest)
 		}
-		commit = cert.SourceRepositoryDigest
 	}
-	return commit, nil
+	return commits, nil
+}
+
+func contains(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 func namesDigest(a attestation, wantHex string) bool {
@@ -386,7 +452,9 @@ func exitCode(v verdict) int {
 
 func run(args []string, stdout io.Writer, runCmd runner) int {
 	flags := flag.NewFlagSet("resolve-prod-convergence", flag.ContinueOnError)
-	flags.SetOutput(stdout)
+	// The output contract is one verdict line, so flag errors and usage text are
+	// reported through that line rather than printed ahead of it.
+	flags.SetOutput(io.Discard)
 	cfg := config{}
 	flags.StringVar(&cfg.digest, "digest", "", "published manifests digest (sha256:<64 hex>)")
 	flags.StringVar(&cfg.subject, "subject", defaultSubject, "OCI repository the digest belongs to")

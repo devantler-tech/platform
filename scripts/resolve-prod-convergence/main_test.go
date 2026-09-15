@@ -276,8 +276,6 @@ func TestResolveFailsClosedOnAttestationProblems(t *testing.T) {
 			attestationWith(certificate{SourceRepositoryDigest: f.deployInput, SourceRepositoryURI: repoURI}, "https://cyclonedx.org/bom", hex))},
 		{name: "subject is another digest", stub: stubFor(t,
 			attestationWith(certificate{SourceRepositoryDigest: f.deployInput, SourceRepositoryURI: repoURI}, provenancePredicate, strings.Repeat("0", 64)))},
-		{name: "attestations disagree", stub: stubFor(t,
-			verifiedAttestation(f.deployInput), verifiedAttestation(f.base))},
 		{name: "attested commit is not available locally", stub: stubFor(t,
 			verifiedAttestation(strings.Repeat("a", 40)))},
 	}
@@ -445,5 +443,58 @@ func TestRunExitCodes(t *testing.T) {
 				t.Fatalf("run() = %d, %q; want %d with prefix %q", got, out.String(), tt.want, tt.prefix)
 			}
 		})
+	}
+}
+
+// Identical manifests published again re-attest the same digest from another
+// run, so several attested commits are legitimate. The least converged wins.
+func TestResolveReportsTheLeastConvergedAttestedCommit(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+
+	tests := []struct {
+		name    string
+		commits []string
+		want    verdict
+	}{
+		{name: "main and an older ancestor", commits: []string{f.deployInput, f.docsOnly}, want: behind},
+		{name: "older ancestor listed first", commits: []string{f.docsOnly, f.deployInput}, want: behind},
+		{name: "main and an ejected commit", commits: []string{f.deployInput, f.ejected}, want: diverged},
+		{name: "the same commit twice", commits: []string{f.deployInput, f.deployInput}, want: converged},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			attestations := make([]map[string]any, 0, len(tt.commits))
+			for _, commit := range tt.commits {
+				attestations = append(attestations, verifiedAttestation(commit))
+			}
+			got := resolve(configFor(f), stubFor(t, attestations...).runner())
+			if got.verdict != tt.want {
+				t.Fatalf("verdict = %s (%s), want %s", got.verdict, got.detail, tt.want)
+			}
+		})
+	}
+}
+
+// Any unverifiable commit among several still makes the whole answer UNKNOWN.
+func TestResolveFailsClosedWhenAnyAttestedCommitIsUnavailable(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+
+	stub := stubFor(t, verifiedAttestation(f.deployInput), verifiedAttestation(strings.Repeat("a", 40)))
+	if got := resolve(configFor(f), stub.runner()); got.verdict != unknown {
+		t.Fatalf("verdict = %s (%s), want UNKNOWN", got.verdict, got.detail)
+	}
+}
+
+func TestRunReportsFlagErrorsOnTheVerdictLine(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	got := run([]string{"--digets", testDigest}, &out, (&ghStub{}).runner())
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if got != 2 || len(lines) != 1 || !strings.HasPrefix(lines[0], "UNKNOWN ") {
+		t.Fatalf("run() = %d, %q; want exit 2 and one UNKNOWN line", got, out.String())
 	}
 }
