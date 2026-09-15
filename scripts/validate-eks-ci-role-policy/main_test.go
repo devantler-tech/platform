@@ -1987,6 +1987,34 @@ func TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentit
 	}
 }
 
+// TestValidateAuthorizationIdentityErrorCoversBindingsBorrowingAnApprovedName proves the
+// approval exemption keys on content: a binding that reuses the approved
+// aws/aws-managed-resources identity but grants a group containing aws/aws is still reported as
+// an identity grant, not only as a fingerprint mismatch.
+func TestValidateAuthorizationIdentityErrorCoversBindingsBorrowingAnApprovedName(t *testing.T) {
+	role, boundary, rendered := repositoryInputs(t)
+
+	borrowed := `---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aws-managed-resources
+  namespace: aws
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aws-managed-resources
+subjects:
+  - kind: Group
+    name: system:authenticated
+`
+	mutated := append(append([]byte{}, rendered...), []byte(borrowed)...)
+	err := validateAuthorization(role, boundary, mutated)
+	if err == nil || !strings.Contains(err.Error(), awsIdentityGrantError) {
+		t.Fatalf("validateAuthorization() error = %v, want %q", err, awsIdentityGrantError)
+	}
+}
+
 // TestValidateAuthorizationIdentityErrorIgnoresUnrelatedBindings is the negative control for
 // the identity cases above: an appended binding that cannot reach aws/aws still moves the
 // aggregate surface, but must not be reported as an aws/aws identity grant. Without it, an

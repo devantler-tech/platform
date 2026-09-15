@@ -3619,15 +3619,19 @@ var awsIdentityGroups = map[string]bool{
 }
 
 // awsIdentityGrantProblem reports a RoleBinding or ClusterRoleBinding whose subjects reach the
-// aws/aws service account, unless the binding is one of the pinned, approved resources in
-// expectedRenderedHashes, whose content the per-resource fingerprint already controls.
+// aws/aws service account, unless the binding is byte-for-byte one of the pinned, approved
+// resources in expectedRenderedHashes. The exemption keys on CONTENT, not name: a binding that
+// only borrows an approved identity (a modified or duplicated aws-managed-resources) still has
+// its grant reported here, rather than surfacing only as a fingerprint mismatch.
 func awsIdentityGrantProblem(document map[string]any, identity resourceIdentity) error {
 	if identity.apiVersion != "rbac.authorization.k8s.io/v1" ||
 		(identity.kind != "RoleBinding" && identity.kind != "ClusterRoleBinding") {
 		return nil
 	}
-	if _, approved := expectedRenderedHashes[identity]; approved {
-		return nil
+	if expected, pinned := expectedRenderedHashes[identity]; pinned {
+		if actual, hashErr := canonicalFingerprint(document); hashErr == nil && actual == expected {
+			return nil
+		}
 	}
 	subjects, _ := document["subjects"].([]any)
 	for _, rawSubject := range subjects {
