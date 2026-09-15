@@ -874,9 +874,19 @@ jobs:
       - name: 🔐 Validate static production authorization controls
         # The Go validator pins the EKS CI role and the authored authorization
         # graph before either a PR or merge-group commit may proceed.
+        # The HEAD^1 checkout is diagnostic only: on an unapproved aggregate the
+        # validator names the surface entries that differ from it. Without it the
+        # verdict is identical and the moved entries are reported as unknown.
         run: |
+          set -euo pipefail
           go test ./scripts/validate-eks-ci-role-policy
-          go run ./scripts/validate-eks-ci-role-policy .
+          base_root="$RUNNER_TEMP/approval-base-tree"
+          if git worktree add --detach "$base_root" HEAD^1; then
+            go run ./scripts/validate-eks-ci-role-policy . "$base_root"
+          else
+            echo "::warning::approval base checkout failed; an aggregate mismatch will not name moved entries"
+            go run ./scripts/validate-eks-ci-role-policy .
+          fi
 
       - name: ⚙️ Setup KSail for effective authorization validation
         shell: bash

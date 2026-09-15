@@ -3694,9 +3694,40 @@ func awsIdentityGrantProblem(document map[string]any, identity resourceIdentity)
 // validateRendered requires the complete selected authorization surface to
 // match one canonical hash while preserving precise core-object diagnostics.
 func validateRendered(rendered []byte) error {
-	documents, err := decodeDocuments(rendered)
+	surfaceEntries, problems, substitutionProblems, err := evaluateRenderedSurface(rendered)
 	if err != nil {
 		return err
+	}
+	canonicalSurface, marshalErr := json.Marshal(surfaceEntries)
+	if marshalErr != nil {
+		problems = append(problems, fmt.Errorf("marshal authorization surface: %w", marshalErr))
+		problems = append(problems, substitutionProblems...)
+	} else if actualSurfaceSHA := fingerprint(canonicalSurface); actualSurfaceSHA != expectedRenderedSurfaceSHA {
+		problems = append(problems, &surfaceMismatchError{actual: actualSurfaceSHA, entries: surfaceEntries})
+		problems = append(problems, substitutionProblems...)
+	}
+	return errors.Join(problems...)
+}
+
+// surfaceMismatchError reports an unapproved aggregate and keeps the sorted
+// entries behind it, so the caller can name the entries that moved.
+type surfaceMismatchError struct {
+	actual  string
+	entries []string
+}
+
+// Error keeps the aggregate mismatch message the gate has always reported.
+func (e *surfaceMismatchError) Error() string {
+	return "unapproved rendered authorization surface fingerprint: " + e.actual
+}
+
+// evaluateRenderedSurface selects the authorization surface of one render. It
+// returns the sorted surface entries with the per-object problems it found, and
+// never compares the aggregate, so an approval base can be evaluated the same way.
+func evaluateRenderedSurface(rendered []byte) ([]string, []error, []error, error) {
+	documents, err := decodeDocuments(rendered)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	roleIdentities := authorizationRoleIdentities(documents)
 	substitutionSourceIdentities := authorizationSubstitutionSourceIdentities(documents)
@@ -3790,18 +3821,139 @@ func validateRendered(rendered []byte) error {
 	// containsFluxSubstitution matches a document anywhere. A validator that is
 	// red on the approved state is not a stricter gate, it is a disabled one.
 	sort.Strings(surfaceEntries)
-	canonicalSurface, marshalErr := json.Marshal(surfaceEntries)
-	if marshalErr != nil {
-		problems = append(problems, fmt.Errorf("marshal authorization surface: %w", marshalErr))
-		problems = append(problems, substitutionProblems...)
-	} else if actualSurfaceSHA := fingerprint(canonicalSurface); actualSurfaceSHA != expectedRenderedSurfaceSHA {
-		problems = append(problems, fmt.Errorf(
-			"unapproved rendered authorization surface fingerprint: %s",
-			actualSurfaceSHA,
-		))
-		problems = append(problems, substitutionProblems...)
+	return surfaceEntries, problems, substitutionProblems, nil
+}
+
+// surfaceEntryKey is the apiVersion|kind|namespace|name identity of an entry.
+// An entry without all four identity fields shares one "malformed entry" key.
+func surfaceEntryKey(entry string) string {
+	fields := strings.SplitN(entry, "\x00", 5)
+	if len(fields) < 5 {
+		return "malformed entry"
 	}
-	return errors.Join(problems...)
+	return strings.Join(fields[:4], "|")
+}
+
+// sameSurfaceEntries reports whether two sorted entry lists are identical.
+func sameSurfaceEntries(first []string, second []string) bool {
+	if len(first) != len(second) {
+		return false
+	}
+	for index := range first {
+		if first[index] != second[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// describeSurfaceDelta names every identity whose entries differ between the
+// approval base and this render: added, removed, or changed. Duplicate
+// identities compare as a multiset, so a duplicated object is a change too.
+func describeSurfaceDelta(base []string, head []string) []string {
+	group := func(entries []string) map[string][]string {
+		grouped := make(map[string][]string)
+		for _, entry := range entries {
+			key := surfaceEntryKey(entry)
+			grouped[key] = append(grouped[key], entry)
+		}
+		for key := range grouped {
+			sort.Strings(grouped[key])
+		}
+		return grouped
+	}
+	baseGroups, headGroups := group(base), group(head)
+	keys := make([]string, 0, len(baseGroups))
+	for key := range baseGroups {
+		keys = append(keys, key)
+	}
+	for key := range headGroups {
+		if _, ok := baseGroups[key]; !ok {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	delta := make([]string, 0)
+	for _, key := range keys {
+		baseEntries, inBase := baseGroups[key]
+		headEntries, inHead := headGroups[key]
+		switch {
+		case !inBase:
+			delta = append(delta, "added "+key)
+		case !inHead:
+			delta = append(delta, "removed "+key)
+		case !sameSurfaceEntries(baseEntries, headEntries):
+			delta = append(delta, "changed "+key)
+		}
+	}
+	return delta
+}
+
+// validatorSourcePath is this validator's source, read from the approval base
+// to learn which aggregate that base approves.
+const validatorSourcePath = "scripts/validate-eks-ci-role-policy/main.go"
+
+// describeSurfaceMismatch explains an unapproved aggregate against the approval
+// base. It changes no verdict: it only names entries, and says "unknown" whenever
+// the base cannot be evaluated rather than implying that nothing moved.
+func describeSurfaceMismatch(
+	headEntries []string,
+	baseRendered []byte,
+	baseRenderErr error,
+	baseSource []byte,
+	baseSourceErr error,
+) []string {
+	const prefix = "moved authorization surface entries"
+	if baseRenderErr != nil {
+		return []string{fmt.Sprintf("%s: unknown (approval base unavailable: %v)", prefix, baseRenderErr)}
+	}
+	baseEntries, _, _, err := evaluateRenderedSurface(baseRendered)
+	if err != nil {
+		return []string{fmt.Sprintf("%s: unknown (evaluate approval base: %v)", prefix, err)}
+	}
+	verified := ""
+	if baseSourceErr != nil {
+		verified = fmt.Sprintf("unverified: read approval base validator: %v", baseSourceErr)
+	} else if approval, parseErr := parseSurfaceApproval(baseSource, "approval base validator source"); parseErr != nil {
+		verified = "unverified: " + parseErr.Error()
+	} else if canonical, marshalErr := json.Marshal(baseEntries); marshalErr != nil {
+		verified = fmt.Sprintf("unverified: marshal approval base surface: %v", marshalErr)
+	} else if actual := fingerprint(canonical); actual != approval.expected {
+		verified = fmt.Sprintf(
+			"unverified: the approval base renders %s here, not the %s it approves",
+			actual,
+			approval.expected,
+		)
+	}
+	delta := describeSurfaceDelta(baseEntries, headEntries)
+	if len(delta) == 0 {
+		if verified != "" {
+			return []string{fmt.Sprintf("%s: unknown (%s)", prefix, verified)}
+		}
+		return []string{prefix + ": none; the approval base renders this same surface, so only the approved aggregate differs"}
+	}
+	header := prefix + " (against the approval base):"
+	if verified != "" {
+		header = fmt.Sprintf("%s (%s):", prefix, verified)
+	}
+	lines := []string{header}
+	for _, line := range delta {
+		lines = append(lines, "  "+line)
+	}
+	return lines
+}
+
+// surfaceMismatchReport renders the approval base only after a mismatch, so a
+// passing run pays nothing for the diagnostics. The base is rendered with this
+// validator's overlay paths, so a change that adds an overlay directory cannot
+// render the base and is reported as unknown rather than guessed at.
+func surfaceMismatchReport(ctx context.Context, baseRoot string, headEntries []string, execute commandExecutor) []string {
+	if baseRoot == "" {
+		return describeSurfaceMismatch(headEntries, nil, errors.New("no approval base root was supplied"), nil, nil)
+	}
+	baseRendered, renderErr := renderAuthorizationLayers(ctx, baseRoot, execute)
+	baseSource, sourceErr := os.ReadFile(filepath.Join(baseRoot, validatorSourcePath)) //nolint:gosec // CI-supplied approval base checkout.
+	return describeSurfaceMismatch(headEntries, baseRendered, renderErr, baseSource, sourceErr)
 }
 
 // validateAuthorization combines source and final-render checks so neither
@@ -3872,7 +4024,9 @@ func renderAuthorizationLayers(ctx context.Context, repoRoot string, execute com
 
 // run executes the complete repository-root authorization validation and
 // returns a process-compatible status without mutating cluster state.
-func run(repoRoot string, stdout io.Writer, stderr io.Writer) int {
+// baseRoot, when not empty, is a checkout of the approval base used only to
+// name the entries behind an unapproved aggregate.
+func run(repoRoot string, baseRoot string, stdout io.Writer, stderr io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), rendererCommandTimeout)
 	defer cancel()
 
@@ -3902,6 +4056,16 @@ func run(repoRoot string, stdout io.Writer, stderr io.Writer) int {
 	}
 	if err := validateAuthorization(role, boundary, rendered); err != nil {
 		_, _ = fmt.Fprintf(stderr, "EKS CI role policy: %v\n", err)
+		var mismatch *surfaceMismatchError
+		if errors.As(err, &mismatch) {
+			// The base render gets its own deadline: the head render may have used
+			// most of ctx, which would misreport an available base as unknown.
+			reportCtx, reportCancel := context.WithTimeout(context.Background(), rendererCommandTimeout)
+			defer reportCancel()
+			for _, line := range surfaceMismatchReport(reportCtx, baseRoot, mismatch.entries, commandOutput) {
+				_, _ = fmt.Fprintf(stderr, "EKS CI role policy: %s\n", line)
+			}
+		}
 		return 1
 	}
 	_, _ = fmt.Fprintln(stdout, "EKS CI role authorization contract passed.")
@@ -4062,15 +4226,19 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 		}
 		return runApprovalBase(args[1], args[2], stdout, stderr)
 	}
-	if len(args) != 1 {
-		_, _ = fmt.Fprintln(stderr, "usage: validate-eks-ci-role-policy <repository-root>")
+	if len(args) != 1 && len(args) != 2 {
+		_, _ = fmt.Fprintln(stderr, "usage: validate-eks-ci-role-policy <repository-root> [<approval-base-root>]")
 		return 2
 	}
 	if err := validateApprovalRecord(expectedRenderedSurfaceSHA, previousRenderedSurfaceSHA); err != nil {
 		_, _ = fmt.Fprintf(stderr, "EKS CI role policy: %v\n", err)
 		return 1
 	}
-	return run(args[0], stdout, stderr)
+	baseRoot := ""
+	if len(args) == 2 {
+		baseRoot = args[1]
+	}
+	return run(args[0], baseRoot, stdout, stderr)
 }
 
 // main executes the validator process and returns its contract result to CI.
