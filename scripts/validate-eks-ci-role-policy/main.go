@@ -3605,6 +3605,59 @@ func authorizationSurfaceEntry(identity resourceIdentity, document map[string]an
 	}, "\x00"), nil
 }
 
+// awsIdentityGrantError names an unapproved RBAC binding whose subjects reach the aws/aws
+// service account. It is deliberately distinct from the aggregate surface mismatch, which any
+// added document triggers, so a test can prove the identity itself was detected (#2806).
+const awsIdentityGrantError = "unapproved binding grants the aws/aws service account identity"
+
+// awsIdentityGroups are the RBAC groups the aws/aws service account belongs to. A binding to
+// any of them grants that identity whatever else it grants.
+var awsIdentityGroups = map[string]bool{
+	"system:serviceaccounts:aws": true,
+	"system:serviceaccounts":     true,
+	"system:authenticated":       true,
+}
+
+// awsIdentityGrantProblem reports a RoleBinding or ClusterRoleBinding whose subjects reach the
+// aws/aws service account, unless the binding is one of the pinned, approved resources in
+// expectedRenderedHashes, whose content the per-resource fingerprint already controls.
+func awsIdentityGrantProblem(document map[string]any, identity resourceIdentity) error {
+	if identity.apiVersion != "rbac.authorization.k8s.io/v1" ||
+		(identity.kind != "RoleBinding" && identity.kind != "ClusterRoleBinding") {
+		return nil
+	}
+	if _, approved := expectedRenderedHashes[identity]; approved {
+		return nil
+	}
+	subjects, _ := document["subjects"].([]any)
+	for _, rawSubject := range subjects {
+		subject, ok := rawSubject.(map[string]any)
+		if !ok {
+			continue
+		}
+		kind, _ := subject["kind"].(string)
+		name, _ := subject["name"].(string)
+		namespace, _ := subject["namespace"].(string)
+		reaches := false
+		switch kind {
+		case "ServiceAccount":
+			// A RoleBinding subject without a namespace resolves to the binding's own namespace.
+			if namespace == "" && identity.kind == "RoleBinding" {
+				namespace = identity.namespace
+			}
+			reaches = name == "aws" && namespace == "aws"
+		case "User":
+			reaches = name == "system:serviceaccount:aws:aws"
+		case "Group":
+			reaches = awsIdentityGroups[name]
+		}
+		if reaches {
+			return fmt.Errorf("%s: %+v subject %s %q", awsIdentityGrantError, identity, kind, name)
+		}
+	}
+	return nil
+}
+
 // validateRendered requires the complete selected authorization surface to
 // match one canonical hash while preserving precise core-object diagnostics.
 func validateRendered(rendered []byte) error {
@@ -3624,6 +3677,9 @@ func validateRendered(rendered []byte) error {
 	substitutionProblems := make([]error, 0)
 	for _, document := range documents {
 		identity := identityOf(document)
+		if grantErr := awsIdentityGrantProblem(document, identity); grantErr != nil {
+			problems = append(problems, grantErr)
+		}
 		if isolationErr := validateAuthorizationIsolation(document, identity); isolationErr != nil {
 			problems = append(problems, fmt.Errorf("invalid authorization isolation for %+v: %w", identity, isolationErr))
 		}

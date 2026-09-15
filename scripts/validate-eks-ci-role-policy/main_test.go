@@ -1977,10 +1977,52 @@ func TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentit
 		t.Run(tt.name, func(t *testing.T) {
 			mutated := append(append([]byte{}, rendered...), []byte(tt.binding.manifest())...)
 			err := validateAuthorization(role, boundary, mutated)
-			if err == nil || !strings.Contains(err.Error(), "unapproved rendered authorization surface") {
-				t.Fatalf("validateAuthorization() error = %v, want unapproved rendered authorization surface", err)
+			// Assert the identity-specific error, not the aggregate surface hash: appending ANY
+			// document moves the aggregate, so that error alone cannot show the identity was
+			// detected (#2806).
+			if err == nil || !strings.Contains(err.Error(), awsIdentityGrantError) {
+				t.Fatalf("validateAuthorization() error = %v, want %q", err, awsIdentityGrantError)
 			}
 		})
+	}
+}
+
+// TestValidateAuthorizationIdentityErrorIgnoresUnrelatedBindings is the negative control for
+// the identity cases above: an appended binding that cannot reach aws/aws still moves the
+// aggregate surface, but must not be reported as an aws/aws identity grant. Without it, an
+// identity assertion that matched any binding would pass those cases for the wrong reason.
+func TestValidateAuthorizationIdentityErrorIgnoresUnrelatedBindings(t *testing.T) {
+	role, boundary, rendered := repositoryInputs(t)
+
+	unrelated := []awsIdentityBinding{
+		{
+			namespace: "tenant-shadow",
+			subject: `  - kind: ServiceAccount
+    name: aws
+    namespace: tenant-shadow
+`,
+		},
+		{
+			subject: `  - kind: User
+    name: system:serviceaccount:tenant-shadow:aws
+`,
+		},
+		{
+			subject: `  - kind: Group
+    name: system:serviceaccounts:tenant-shadow
+`,
+		},
+	}
+
+	for _, binding := range unrelated {
+		mutated := append(append([]byte{}, rendered...), []byte(binding.manifest())...)
+		err := validateAuthorization(role, boundary, mutated)
+		if err == nil || !strings.Contains(err.Error(), "unapproved rendered authorization surface") {
+			t.Fatalf("validateAuthorization() error = %v, want the aggregate surface mismatch", err)
+		}
+		if strings.Contains(err.Error(), awsIdentityGrantError) {
+			t.Fatalf("validateAuthorization() reported an aws/aws identity grant for an unrelated binding: %v", err)
+		}
 	}
 }
 
