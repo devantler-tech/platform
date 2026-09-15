@@ -10,6 +10,7 @@ readonly crossplane_alerter="${root_dir}/k8s/providers/hetzner/infrastructure/co
 readonly dr_runbook="${root_dir}/docs/dr/velero-cnpg.md"
 readonly longhorn_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/longhorn/helm-release.yaml"
 readonly origin_ca_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/origin-ca-issuer/helm-release.yaml"
+readonly cluster_issuers_dir="${root_dir}/k8s/providers/hetzner/infrastructure/cluster-issuers"
 readonly prod_variables="${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml"
 readonly replica_floor="${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/validate-replica-floor.yaml"
 # These are intentionally literal Flux post-build substitution expressions.
@@ -24,6 +25,7 @@ fail() {
 }
 
 command -v yq >/dev/null || fail 'yq is required'
+command -v kubectl >/dev/null || fail 'kubectl is required'
 
 yq e -e '
   .spec.values.replicaCount == 2 and
@@ -68,5 +70,13 @@ ORIGIN_CA_SUBSTITUTION="${origin_ca_substitution}" yq e -e '
   (.spec.values | has("replicaCount") | not)
 ' "${origin_ca_release}" >/dev/null ||
   fail 'Origin CA Issuer must use the chart-supported controller.replicaCount scale-to-zero value'
+
+cluster_issuers_render="$(kubectl kustomize "${cluster_issuers_dir}")" ||
+  fail 'the production ClusterIssuer layer must render'
+if printf '%s\n' "${cluster_issuers_render}" | yq e -e '
+  select(.kind == "ClusterOriginIssuer" and .metadata.name == "cloudflare-origin")
+' - >/dev/null 2>&1; then
+  fail 'the disabled Origin CA controller must not leave a fresh ClusterOriginIssuer waiting for status'
+fi
 
 printf 'PASS: actionable Coroot availability risks are encoded as safe HA or an effective scale-to-zero\n'
