@@ -1,0 +1,251 @@
+diff --git a/ebpftracer/tls.go b/ebpftracer/tls.go
+index 771b96a..a1f63af 100644
+--- a/ebpftracer/tls.go
++++ b/ebpftracer/tls.go
+@@ -25,6 +25,19 @@ var silentErrors = []string{
+ 	"permission denied",
+ }
+ 
++var expectedCapabilityErrors = []string{
++	"no symbols found",
++}
++
++func isExpectedCapabilityError(err error) bool {
++	for _, suffix := range expectedCapabilityErrors {
++		if strings.HasSuffix(err.Error(), suffix) {
++			return true
++		}
++	}
++	return false
++}
++
+ func uprobeLog(pid uint32, prefix string) func(string, error) {
+ 	return func(msg string, err error) {
+ 		if err != nil {
+@@ -33,6 +46,10 @@ func uprobeLog(pid uint32, prefix string) func(string, error) {
+ 					return
+ 				}
+ 			}
++			if isExpectedCapabilityError(err) {
++				klog.WarningfDepth(2, "pid=%d%s: %s: %s", pid, prefix, msg, err)
++				return
++			}
+ 			klog.ErrorfDepth(2, "pid=%d%s: %s: %s", pid, prefix, msg, err)
+ 			return
+ 		}
+diff --git a/ebpftracer/tls_test.go b/ebpftracer/tls_test.go
+new file mode 100644
+index 0000000..1e9a55c
+--- /dev/null
++++ b/ebpftracer/tls_test.go
+@@ -0,0 +1,24 @@
++package ebpftracer
++
++import (
++	"errors"
++	"testing"
++)
++
++func TestExpectedCapabilityErrors(t *testing.T) {
++	tests := []struct {
++		name string
++		err  error
++		want bool
++	}{
++		{name: "stripped Go binary", err: errors.New("no symbols found"), want: true},
++		{name: "unexpected attach failure", err: errors.New("operation not permitted"), want: false},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			if got := isExpectedCapabilityError(tt.err); got != tt.want {
++				t.Fatalf("isExpectedCapabilityError(%q) = %t, want %t", tt.err, got, tt.want)
++			}
++		})
++	}
++}
+diff --git a/ebpftracer/tracer.go b/ebpftracer/tracer.go
+index de1e336..74d54c4 100644
+--- a/ebpftracer/tracer.go
++++ b/ebpftracer/tracer.go
+@@ -29,7 +29,10 @@ import (
+ 	"k8s.io/klog/v2"
+ )
+ 
+-const MaxPayloadSize = 1024
++const (
++	MaxPayloadSize        = 1024
++	l7PerfBufferSizePages = 128
++)
+ 
+ type EventType uint32
+ type EventReason uint32
+@@ -321,7 +324,7 @@ func (t *Tracer) ebpf(ch chan<- Event) error {
+ 	}
+ 
+ 	if !t.disableL7Tracing {
+-		perfMaps = append(perfMaps, perfMap{name: "l7_events", typ: perfMapTypeL7Events, perCPUBufferSizePages: 32})
++		perfMaps = append(perfMaps, perfMap{name: "l7_events", typ: perfMapTypeL7Events, perCPUBufferSizePages: l7PerfBufferSizePages})
+ 	}
+ 
+ 	pageSize := os.Getpagesize()
+diff --git a/ebpftracer/tracer_test.go b/ebpftracer/tracer_test.go
+index c8cf7cc..d9e1ef1 100644
+--- a/ebpftracer/tracer_test.go
++++ b/ebpftracer/tracer_test.go
+@@ -31,6 +31,10 @@ func skipIfNotVM(t *testing.T) {
+ 	}
+ }
+ 
++func TestL7PerfBufferHasBurstHeadroom(t *testing.T) {
++	assert.Equal(t, 128, l7PerfBufferSizePages)
++}
++
+ func TestProcessEvents(t *testing.T) {
+ 	skipIfNotVM(t)
+ 	src := `
+diff --git a/logs/journald_reader.go b/logs/journald_reader.go
+index 803286a..159e77a 100644
+--- a/logs/journald_reader.go
++++ b/logs/journald_reader.go
+@@ -6,6 +6,7 @@ package logs
+ 
+ import (
+ 	"fmt"
++	"os"
+ 	"strings"
+ 	"sync"
+ 	"time"
+@@ -32,16 +33,20 @@ func NewJournaldReader(journalPaths ...string) (*JournaldReader, error) {
+ 	var err error
+ 	for _, journalPath := range journalPaths {
+ 		if r.journal, err = sdjournal.NewJournalFromDir(journalPath); err != nil {
+-			klog.Errorf("failed to get journal at %s: %s", journalPath, err)
++			if os.IsNotExist(err) {
++				klog.Warningf("journald is unavailable at %s: %s", journalPath, err)
++			} else {
++				klog.Errorf("failed to get journal at %s: %s", journalPath, err)
++			}
+ 			continue
+ 		}
+ 		usage, err := r.journal.GetUsage()
+ 		if err != nil {
+ 			klog.Errorf("failed to read journal disk space usage at %s: %s", journalPath, err)
+ 			continue
+ 		}
+ 		if usage == 0 {
+-			klog.Errorf("journal at %s is empty", journalPath)
++			klog.Warningf("journal at %s is empty", journalPath)
+ 			r.journal = nil
+ 			continue
+ 		}
+diff --git a/logs/journald_reader_test.go b/logs/journald_reader_test.go
+new file mode 100644
+index 0000000..3b36901
+--- /dev/null
++++ b/logs/journald_reader_test.go
+@@ -0,0 +1,28 @@
++//go:build linux
++
++package logs
++
++import (
++	"errors"
++	"os"
++	"testing"
++)
++
++func TestJournalOpenSeverityBoundary(t *testing.T) {
++	tests := []struct {
++		name string
++		err  error
++		want bool
++	}{
++		{name: "Talos journal path absent", err: os.ErrNotExist, want: true},
++		{name: "journal permission denied", err: os.ErrPermission, want: false},
++		{name: "unexpected journal corruption", err: errors.New("journal header is corrupt"), want: false},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			if got := os.IsNotExist(tt.err); got != tt.want {
++				t.Fatalf("os.IsNotExist(%q) = %t, want %t", tt.err, got, tt.want)
++			}
++		})
++	}
++}
+diff --git a/node/collector.go b/node/collector.go
+index 202eeea..707cc9f 100644
+--- a/node/collector.go
++++ b/node/collector.go
+@@ -14,11 +14,7 @@ type Collector struct {
+ }
+ 
+ func NewCollector(hostname, kernelVersion string, overrides metadata.Overrides) *Collector {
+-	md := metadata.GetInstanceMetadata()
+-	if md == nil {
+-		md = &metadata.CloudMetadata{}
+-	}
+-	md.ApplyOverrides(overrides)
++	md := resolveInstanceMetadata(overrides, metadata.GetInstanceMetadata)
+ 	klog.Infof("instance metadata: %+v", md)
+ 	return &Collector{
+ 		hostname:         hostname,
+@@ -27,6 +23,18 @@ func NewCollector(hostname, kernelVersion string, overrides metadata.Overrides)
+ 	}
+ }
+ 
++func resolveInstanceMetadata(overrides metadata.Overrides, discover func() *metadata.CloudMetadata) *metadata.CloudMetadata {
++	var md *metadata.CloudMetadata
++	if overrides.Provider == "" {
++		md = discover()
++	}
++	if md == nil {
++		md = &metadata.CloudMetadata{}
++	}
++	md.ApplyOverrides(overrides)
++	return md
++}
++
+ func (c *Collector) Metadata() *metadata.CloudMetadata {
+ 	return c.instanceMetadata
+ }
+diff --git a/node/collector_test.go b/node/collector_test.go
+new file mode 100644
+index 0000000..e288a5b
+--- /dev/null
++++ b/node/collector_test.go
+@@ -0,0 +1,35 @@
++package node
++
++import (
++	"testing"
++
++	"github.com/coroot/coroot-node-agent/node/metadata"
++)
++
++func TestResolveInstanceMetadataSkipsDiscoveryForDeclaredProvider(t *testing.T) {
++	discoveryCalled := false
++	md := resolveInstanceMetadata(metadata.Overrides{Provider: "Hetzner"}, func() *metadata.CloudMetadata {
++		discoveryCalled = true
++		return &metadata.CloudMetadata{Provider: metadata.CloudProviderAWS}
++	})
++	if discoveryCalled {
++		t.Fatal("metadata discovery must be skipped when the provider is declared")
++	}
++	if md.Provider != metadata.CloudProviderHetzner {
++		t.Fatalf("provider = %q, want %q", md.Provider, metadata.CloudProviderHetzner)
++	}
++}
++
++func TestResolveInstanceMetadataDiscoversWhenProviderIsUnknown(t *testing.T) {
++	discoveryCalled := false
++	md := resolveInstanceMetadata(metadata.Overrides{}, func() *metadata.CloudMetadata {
++		discoveryCalled = true
++		return &metadata.CloudMetadata{Provider: metadata.CloudProviderAWS}
++	})
++	if !discoveryCalled {
++		t.Fatal("metadata discovery must run when the provider is not declared")
++	}
++	if md.Provider != metadata.CloudProviderAWS {
++		t.Fatalf("provider = %q, want %q", md.Provider, metadata.CloudProviderAWS)
++	}
++}

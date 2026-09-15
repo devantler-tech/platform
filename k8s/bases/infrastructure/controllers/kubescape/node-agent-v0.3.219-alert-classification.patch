@@ -1,0 +1,273 @@
+diff --git a/pkg/containerprofilemanager/v1/lifecycle.go b/pkg/containerprofilemanager/v1/lifecycle.go
+index 40af1d2b..c23bc2c3 100644
+--- a/pkg/containerprofilemanager/v1/lifecycle.go
++++ b/pkg/containerprofilemanager/v1/lifecycle.go
+@@ -2,6 +2,7 @@ package containerprofilemanager
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"fmt"
+ 	"time"
+ 
+@@ -55,7 +56,11 @@ func (cpm *ContainerProfileManager) addContainerWithTimeout(container *container
+ 	select {
+ 	case err := <-done:
+ 		if err != nil {
+-			logger.L().Error("failed to add container to the container profile manager", helpers.Error(err))
++			if errors.Is(err, context.DeadlineExceeded) {
++				logger.L().Warning("container exited before the container profile manager became ready", helpers.Error(err))
++			} else {
++				logger.L().Error("failed to add container to the container profile manager", helpers.Error(err))
++			}
+ 			// Close ready channel and remove entry on error
+ 			entry.readyOnce.Do(func() {
+ 				close(entry.ready)
+@@ -63,7 +68,7 @@ func (cpm *ContainerProfileManager) addContainerWithTimeout(container *container
+ 			cpm.removeContainerEntry(containerID)
+ 		}
+ 	case <-ctx.Done():
+-		logger.L().Error("timeout while adding container to the container profile manager",
++		logger.L().Warning("timeout while adding container to the container profile manager",
+ 			helpers.String("containerID", container.Runtime.ContainerID),
+ 			helpers.String("containerName", container.Runtime.ContainerName),
+ 			helpers.String("podName", container.K8s.PodName),
+diff --git a/pkg/objectcache/containerprofilecache/containerprofilecache.go b/pkg/objectcache/containerprofilecache/containerprofilecache.go
+index 2a5394d1..8e2a5d48 100644
+--- a/pkg/objectcache/containerprofilecache/containerprofilecache.go
++++ b/pkg/objectcache/containerprofilecache/containerprofilecache.go
+@@ -3,6 +3,7 @@ package containerprofilecache
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"fmt"
+ 	"sync"
+ 	"sync/atomic"
+@@ -246,10 +247,14 @@ func (c *ContainerProfileCacheImpl) addContainerWithTimeout(container *container
+ 	select {
+ 	case err := <-done:
+ 		if err != nil {
+-			logger.L().Error("failed to add container to the container-profile cache", helpers.Error(err))
++			if errors.Is(err, context.DeadlineExceeded) {
++				logger.L().Warning("container exited before the container-profile cache became ready", helpers.Error(err))
++			} else {
++				logger.L().Error("failed to add container to the container-profile cache", helpers.Error(err))
++			}
+ 		}
+ 	case <-ctx.Done():
+-		logger.L().Error("timeout while adding container to the container-profile cache",
++		logger.L().Warning("timeout while adding container to the container-profile cache",
+ 			helpers.String("containerID", container.Runtime.ContainerID),
+ 			helpers.String("containerName", container.Runtime.ContainerName),
+ 			helpers.String("podName", container.K8s.PodName),
+@@ -267,9 +272,15 @@ func (c *ContainerProfileCacheImpl) addContainer(container *containercollection.
+ 	return c.containerLocks.WithLockAndError(containerID, func() error {
+ 		sharedData, err := c.waitForSharedContainerData(containerID, ctx)
+ 		if err != nil {
+-			logger.L().Error("failed to get shared data for container",
+-				helpers.String("containerID", containerID),
+-				helpers.Error(err))
++			if errors.Is(err, context.DeadlineExceeded) {
++				logger.L().Warning("container exited before shared data became ready",
++					helpers.String("containerID", containerID),
++					helpers.Error(err))
++			} else {
++				logger.L().Error("failed to get shared data for container",
++					helpers.String("containerID", containerID),
++					helpers.Error(err))
++			}
+ 			return err
+ 		}
+ 
+diff --git a/pkg/rulemanager/rule_manager.go b/pkg/rulemanager/rule_manager.go
+index 3d88c3ab..6c39038c 100644
+--- a/pkg/rulemanager/rule_manager.go
++++ b/pkg/rulemanager/rule_manager.go
+@@ -232,7 +232,11 @@ func (rm *RuleManager) startRuleManager(container *containercollection.Container
+ 
+ 	sharedData, err := rm.waitForSharedContainerData(container.Runtime.ContainerID)
+ 	if err != nil {
+-		logger.L().Error("RuleManager - failed to get shared container data", helpers.Error(err))
++		if containerExited(done) {
++			logger.L().Warning("RuleManager - container exited before shared data became ready", helpers.Error(err))
++		} else {
++			logger.L().Error("RuleManager - failed to get shared container data", helpers.Error(err))
++		}
+ 		return
+ 	}
+ 
+@@ -253,6 +257,15 @@ func (rm *RuleManager) startRuleManager(container *containercollection.Container
+ 	}
+ }
+ 
++func containerExited(done <-chan struct{}) bool {
++	select {
++	case <-done:
++		return true
++	default:
++		return false
++	}
++}
++
+ func (rm *RuleManager) ReportEnrichedEvent(enrichedEvent *events.EnrichedEvent) {
+ 	if enrichedEvent.Duplicate {
+ 		return
+diff --git a/pkg/rulemanager/rule_manager_alerts_test.go b/pkg/rulemanager/rule_manager_alerts_test.go
+new file mode 100644
+index 00000000..a9e23b0b
+--- /dev/null
++++ b/pkg/rulemanager/rule_manager_alerts_test.go
+@@ -0,0 +1,16 @@
++package rulemanager
++
++import "testing"
++
++func TestContainerExited(t *testing.T) {
++	running := make(chan struct{})
++	if containerExited(running) {
++		t.Fatal("an open lifecycle channel must represent a running container")
++	}
++
++	closed := make(chan struct{})
++	close(closed)
++	if !containerExited(closed) {
++		t.Fatal("a closed lifecycle channel must represent an exited container")
++	}
++}
+diff --git a/pkg/sbommanager/v1/sbom_manager.go b/pkg/sbommanager/v1/sbom_manager.go
+index 2961fde6..43fbe18a 100644
+--- a/pkg/sbommanager/v1/sbom_manager.go
++++ b/pkg/sbommanager/v1/sbom_manager.go
+@@ -57,6 +57,19 @@ import (
+ 	_ "modernc.org/sqlite" // required for rpmdb and other features
+ )
+ 
++// shouldLogSBOMGenerationError distinguishes scanner failures from the normal
++// race where a container exits and containerd removes its overlay before Syft
++// opens it.
++func shouldLogSBOMGenerationError(err error) bool {
++	return !errors.Is(err, os.ErrNotExist)
++}
++
++// shouldLogSBOMSaveError keeps Kubernetes optimistic-concurrency retries out
++// of the error stream while preserving unexpected storage failures.
++func shouldLogSBOMSaveError(err error) bool {
++	return !k8serrors.IsConflict(err)
++}
++
+ const (
+ 	digestDelim                   = "@"
+ 	NodeNameMetadataKey           = "kubescape.io/node-name"
+@@ -606,12 +619,21 @@ func (s *SbomManager) processContainerWithMetadata(notif containercollection.Pub
+ 		}
+ 		syftSBOM, syftErr := syft.CreateSBOM(context.Background(), src, sbomCfg)
+ 		if syftErr != nil {
+-			logger.L().Ctx(s.ctx).Error("SbomManager - failed to generate SBOM",
+-				helpers.Error(syftErr),
+-				helpers.String("namespace", notif.Container.K8s.Namespace),
+-				helpers.String("pod", notif.Container.K8s.PodName),
+-				helpers.String("container", notif.Container.K8s.ContainerName),
+-				helpers.String("sbomName", sbomName))
++			if shouldLogSBOMGenerationError(syftErr) {
++				logger.L().Ctx(s.ctx).Error("SbomManager - failed to generate SBOM",
++					helpers.Error(syftErr),
++					helpers.String("namespace", notif.Container.K8s.Namespace),
++					helpers.String("pod", notif.Container.K8s.PodName),
++					helpers.String("container", notif.Container.K8s.ContainerName),
++					helpers.String("sbomName", sbomName))
++			} else {
++				logger.L().Ctx(s.ctx).Warning("SbomManager - container filesystem disappeared before SBOM generation",
++					helpers.Error(syftErr),
++					helpers.String("namespace", notif.Container.K8s.Namespace),
++					helpers.String("pod", notif.Container.K8s.PodName),
++					helpers.String("container", notif.Container.K8s.ContainerName),
++					helpers.String("sbomName", sbomName))
++			}
+ 			s.handleGenericFailure(sbomName)
+ 			s.reportFailure(notif, imageTag, imageID, scanfailure.ReasonSBOMGenerationFailed, syftErr)
+ 			return
+@@ -649,12 +671,21 @@ func (s *SbomManager) processContainerWithMetadata(notif containercollection.Pub
+ 	// save the SBOM
+ 	_, err = s.storageClient.ReplaceSBOM(wipSbom)
+ 	if err != nil {
+-		logger.L().Ctx(s.ctx).Error("SbomManager - failed to save SBOM",
+-			helpers.Error(err),
+-			helpers.String("namespace", notif.Container.K8s.Namespace),
+-			helpers.String("pod", notif.Container.K8s.PodName),
+-			helpers.String("container", notif.Container.K8s.ContainerName),
+-			helpers.String("sbomName", sbomName))
++		if shouldLogSBOMSaveError(err) {
++			logger.L().Ctx(s.ctx).Error("SbomManager - failed to save SBOM",
++				helpers.Error(err),
++				helpers.String("namespace", notif.Container.K8s.Namespace),
++				helpers.String("pod", notif.Container.K8s.PodName),
++				helpers.String("container", notif.Container.K8s.ContainerName),
++				helpers.String("sbomName", sbomName))
++		} else {
++			logger.L().Ctx(s.ctx).Warning("SbomManager - concurrent SBOM update will be retried",
++				helpers.Error(err),
++				helpers.String("namespace", notif.Container.K8s.Namespace),
++				helpers.String("pod", notif.Container.K8s.PodName),
++				helpers.String("container", notif.Container.K8s.ContainerName),
++				helpers.String("sbomName", sbomName))
++		}
+ 		s.reportFailure(notif, imageTag, imageID, scanfailure.ReasonSBOMStorageFailed, err)
+ 		return
+ 	}
+diff --git a/pkg/sbommanager/v1/sbom_manager_alerts_test.go b/pkg/sbommanager/v1/sbom_manager_alerts_test.go
+new file mode 100644
+index 00000000..26678b77
+--- /dev/null
++++ b/pkg/sbommanager/v1/sbom_manager_alerts_test.go
+@@ -0,0 +1,50 @@
++package v1
++
++import (
++	"errors"
++	"fmt"
++	"os"
++	"testing"
++
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++)
++
++func TestShouldLogSBOMSaveError(t *testing.T) {
++	resource := schema.GroupResource{Group: "spdx.softwarecomposition.kubescape.io", Resource: "sbomsyfts"}
++	tests := []struct {
++		name string
++		err  error
++		want bool
++	}{
++		{name: "optimistic concurrency conflict", err: apierrors.NewConflict(resource, "example", errors.New("stale resource version")), want: false},
++		{name: "unexpected storage failure", err: errors.New("storage unavailable"), want: true},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			if got := shouldLogSBOMSaveError(tt.err); got != tt.want {
++				t.Fatalf("shouldLogSBOMSaveError() = %v, want %v", got, tt.want)
++			}
++		})
++	}
++}
++
++func TestShouldLogSBOMGenerationError(t *testing.T) {
++	tests := []struct {
++		name string
++		err  error
++		want bool
++	}{
++		{name: "container filesystem disappeared", err: fmt.Errorf("stat overlay: %w", os.ErrNotExist), want: false},
++		{name: "unexpected scanner failure", err: errors.New("cataloger crashed"), want: true},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			if got := shouldLogSBOMGenerationError(tt.err); got != tt.want {
++				t.Fatalf("shouldLogSBOMGenerationError() = %v, want %v", got, tt.want)
++			}
++		})
++	}
++}
