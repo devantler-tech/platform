@@ -42,6 +42,11 @@
           maxSurge: 0
           maxUnavailable: 1
       template:
+        metadata:
+          annotations:
+            # Declarative production proof: this database-only token forces one
+            # post-migration restart while the application pod stays unchanged.
+            platform.devantler.tech/durability-proof: 2026-09-15-pod-restart-v1
         spec:
           # The namespace remains opted into user namespaces for the app.
           # Longhorn's volume is not idmapped, so only the database explicitly

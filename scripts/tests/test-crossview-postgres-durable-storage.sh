@@ -150,9 +150,11 @@ jq -e "[.[] | ${database_filter} | (
   .spec.replicas == 1 and
   .spec.strategy.type == \"RollingUpdate\" and
   .spec.strategy.rollingUpdate.maxSurge == 0 and
-  .spec.strategy.rollingUpdate.maxUnavailable == 1
+  .spec.strategy.rollingUpdate.maxUnavailable == 1 and
+  .spec.template.metadata.annotations[\"platform.devantler.tech/durability-proof\"] ==
+    \"2026-09-15-pod-restart-v1\"
 )] == [true]" "${scratch_dir}/workload.json" >/dev/null ||
-  fail 'the single-writer PostgreSQL rollout must terminate the old pod before creating its replacement'
+  fail 'the single-writer PostgreSQL rollout must carry the reviewed database-only restart proof'
 
 jq -e "[.[] | ${database_filter} |
   .spec.template.spec.hostUsers == true
