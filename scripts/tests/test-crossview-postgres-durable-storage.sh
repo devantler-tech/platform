@@ -70,10 +70,10 @@ jq -e '[.[] | select(
 jq -e '[.[] | select(
   .kind == "Namespace" and .metadata.name == "crossview"
 ) | (
-  .metadata.labels["pod-security.devantler.tech/user-namespaces"] == "enabled" and
+  (.metadata.labels["pod-security.devantler.tech/user-namespaces"] // null) == null and
   .metadata.annotations["kustomize.toolkit.fluxcd.io/prune"] == "disabled"
 )] == [true]' "${scratch_dir}/prod.json" >/dev/null ||
-  fail 'the persistent Crossview namespace must retain userns enforcement and prune protection'
+  fail 'the mixed Crossview namespace must leave userns enforcement disabled while PostgreSQL uses Longhorn'
 
 chart_name="$(jq -r '.spec.chart.spec.chart' "${scratch_dir}/prod-release.json")"
 chart_version="$(jq -r '.spec.chart.spec.version' "${scratch_dir}/prod-release.json")"
@@ -123,9 +123,18 @@ jq -e '[.[] | select(
 ) | (
   .spec.storageClassName == "longhorn-wffc" and
   .spec.accessModes == ["ReadWriteOnce"] and
-  .spec.resources.requests.storage == "2Gi"
+  .spec.resources.requests.storage == "2Gi" and
+  .metadata.annotations["helm.sh/resource-policy"] == "keep"
 )] == [true]' "${scratch_dir}/workload.json" >/dev/null ||
-  fail 'the pinned chart must render the exact Crossview PostgreSQL PVC contract'
+  fail 'the pinned chart must render the exact retained Crossview PostgreSQL PVC contract'
+
+jq -e '[.[] | select(
+  .kind == "ConfigMap" and
+  .metadata.namespace == "crossview" and
+  .metadata.name == "crossview-postgres-coroot-monitor-init"
+) | .data["init-coroot-monitor.sh"] | contains("durable-storage-v1")] == [true]' \
+  "${scratch_dir}/prod.json" >/dev/null ||
+  fail 'the fresh persistent database must create the durable-storage bootstrap gate'
 
 database_filter='select(
   .kind == "Deployment" and
@@ -179,8 +188,15 @@ jq -e '[.[] | select(
   .kind == "Deployment" and
   .metadata.namespace == "crossview" and
   .metadata.name == "crossview"
-) | (.spec.template.spec.hostUsers // null)] == [null]' \
+) | (
+  (.spec.template.spec.hostUsers // null) == null and
+  .spec.template.metadata.annotations["platform.devantler.tech/db-bootstrap"] ==
+    "2026-09-15-durable-storage-v1" and
+  ([.spec.template.spec.initContainers[] | select(.name == "wait-for-db") |
+    .args[] | contains("durable-storage-v1")
+  ] | any)
+)] == [true]' \
   "${scratch_dir}/workload.json" >/dev/null ||
-  fail 'the Crossview app must remain eligible for user-namespace mutation'
+  fail 'the Crossview app must restart only after the durable database bootstrap gate exists'
 
 printf 'PASS: Crossview PostgreSQL renders durable single-writer storage without changing the local provider\n'

@@ -369,6 +369,9 @@ jobs:
               # change to either must re-run both.
               - 'scripts/validate-image-verifier-liveness.sh'
               - 'scripts/tests/test-validate-image-verifier-liveness.sh'
+              # Stages exact admission and pull-time signer routes before the
+              # compatibility-image workloads consume them.
+              - 'scripts/tests/test-coroot-image-verifier-prerequisite.sh'
               # The trigger-set test for the liveness WORKFLOW (listed above), so a
               # PR that edits only the test still runs it.
               - 'scripts/tests/test-validate-image-verifier-liveness-workflow.sh'
@@ -498,6 +501,7 @@ jobs:
               - 'scripts/tests/test-crossplane-egress-policy.sh'
               - 'scripts/tests/crossplane-egress-policy-rules.yaml'
               - 'scripts/tests/test-coroot-alert-remediation.sh'
+              - 'scripts/tests/test-coroot-final-remediation.sh'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               - 'scripts/tests/test-stranded-volume-attach-alert.sh'
               - 'scripts/tests/test-prune-protected-orphan-alert.sh'
@@ -873,15 +877,25 @@ jobs:
       - name: 🔐 Validate static production authorization controls
         # The Go validator pins the EKS CI role and the authored authorization
         # graph before either a PR or merge-group commit may proceed.
+        # The HEAD^1 checkout is diagnostic only: on an unapproved aggregate the
+        # validator names the surface entries that differ from it. Without it the
+        # verdict is identical and the moved entries are reported as unknown.
         run: |
+          set -euo pipefail
           go test ./scripts/validate-eks-ci-role-policy
-          go run ./scripts/validate-eks-ci-role-policy .
+          base_root="$RUNNER_TEMP/approval-base-tree"
+          if git worktree add --detach "$base_root" HEAD^1; then
+            go run ./scripts/validate-eks-ci-role-policy . "$base_root"
+          else
+            echo "::warning::approval base checkout failed; an aggregate mismatch will not name moved entries"
+            go run ./scripts/validate-eks-ci-role-policy .
+          fi
 
       - name: ⚙️ Setup KSail for effective authorization validation
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.1"
+          KSAIL_VERSION: "7.183.2"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1258,6 +1272,12 @@ jobs:
           bash scripts/tests/test-validate-image-verifier-liveness.sh
           bash scripts/tests/test-validate-image-verifier-liveness-workflow.sh
 
+      - name: 🔏 Validate Coroot compatibility-image verifier prerequisite
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-coroot-image-verifier-prerequisite.sh
+          bash scripts/tests/test-coroot-image-verifier-prerequisite.sh
+
       - name: 🔏 Validate image-signature enforcement probe
         if: needs.changes.outputs.k8s == 'true'
         # The probe itself needs a cluster and WRITES to a node, so it never
@@ -1437,10 +1457,12 @@ jobs:
 
       - name: 🔕 Validate narrow Coroot alert suppressions
         if: needs.changes.outputs.k8s == 'true'
-        # The kubelet alert fingerprint is shared across every failed upstream.
-        # Exercise the rendered script so the two known static-pod probe series
-        # suppress, while one additional active upstream keeps the alert visible.
-        run: bash scripts/tests/test-coroot-alert-autosuppressor.sh
+        # Exercise the rendered script: exact by-design network and lifecycle
+        # signals suppress, while active extra upstreams and message/label near
+        # matches remain visible.
+        run: |
+          shellcheck scripts/tests/test-coroot-alert-autosuppressor.sh
+          bash scripts/tests/test-coroot-alert-autosuppressor.sh
 
       - name: 💾 Validate the Velero maintenance OOM alert
         if: needs.changes.outputs.k8s == 'true'
@@ -1690,7 +1712,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.1"
+          KSAIL_VERSION: "7.183.2"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -1801,6 +1823,8 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-alert-remediation.sh
           bash scripts/tests/test-coroot-alert-remediation.sh
+          shellcheck scripts/tests/test-coroot-final-remediation.sh
+          bash scripts/tests/test-coroot-final-remediation.sh
 
       - name: 📤 Save kubeconform schema cache
         # Runs even if the validate step above failed (see the restore step's
@@ -2052,7 +2076,7 @@ jobs:
           persist-credentials: false
 
       - name: 🏷️ Validate naming conventions
-        uses: devantler-tech/actions/validate-naming@759ff9b2526cd1b142b49c5dc1616118a1ef44d9 # v13.6.0
+        uses: devantler-tech/actions/validate-naming@efdff74933a4c137d5b442f54687882a24de88db # v13.6.3
         with:
           enabled: "true"
 
@@ -2394,7 +2418,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.1"
+          KSAIL_VERSION: "7.183.2"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2452,7 +2476,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@759ff9b2526cd1b142b49c5dc1616118a1ef44d9 # v13.6.0
+        uses: devantler-tech/actions/aggregate-job-checks@efdff74933a4c137d5b442f54687882a24de88db # v13.6.3
         with:
           job-results: >-
             ${{ needs.changes.result }}

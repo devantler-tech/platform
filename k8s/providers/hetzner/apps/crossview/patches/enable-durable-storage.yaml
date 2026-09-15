@@ -14,6 +14,13 @@
 - op: add
   path: /spec/values/database/persistence/storageClass
   value: longhorn-wffc
+# Roll the application in the same release, but gate its startup on the marker
+# written only while the new PVC-backed PostgreSQL cluster is initialized. A
+# plain pod-template bump is insufficient: its wait-for-db container could
+# otherwise connect to the outgoing ephemeral database before Service cutover.
+- op: replace
+  path: /spec/values/podAnnotations/platform.devantler.tech~1db-bootstrap
+  value: 2026-09-15-durable-storage-v1
 # Replace the base's ephemeral database post-render patch. Replacing the patch
 # text (rather than trying to delete its nested list items in a later renderer)
 # lets the chart-owned postgres-storage mount survive strategic merge intact.
@@ -51,3 +58,70 @@
             - name: tmp
               emptyDir:
                 sizeLimit: 128Mi
+# The PVC is Helm-owned. Flux prune protection on the HelmRelease does not stop
+# Helm deleting a child that disappears from a later chart render, so retain the
+# claim explicitly and retire it only through the repository's two-stage flow.
+- op: add
+  path: /spec/postRenderers/0/kustomize/patches/-
+  value:
+    target:
+      kind: PersistentVolumeClaim
+      name: crossview-postgres-pvc
+    patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: crossview-postgres-pvc
+        annotations:
+          helm.sh/resource-policy: keep
+# The Coroot integration patch already strengthens wait-for-db to require the
+# monitoring role and extension. This later patch additionally requires the
+# durable init marker, so the replacement app cannot bootstrap against the
+# outgoing ephemeral database even if both Deployments reconcile concurrently.
+- op: add
+  path: /spec/postRenderers/0/kustomize/patches/-
+  value:
+    target:
+      kind: Deployment
+      name: crossview
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: crossview
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: wait-for-db
+                args:
+                  - |
+                    until PGPASSWORD="$DB_PASS" psql -X -w \
+                      -h crossview-postgres \
+                      -p "$DB_PORT" \
+                      -U "$DB_USER" \
+                      -d postgres \
+                      -tAc "SELECT 1
+                        FROM pg_catalog.pg_roles AS monitor
+                        JOIN pg_catalog.pg_auth_members AS membership
+                          ON membership.member = monitor.oid
+                        JOIN pg_catalog.pg_roles AS granted_role
+                          ON granted_role.oid = membership.roleid
+                        WHERE monitor.rolname = 'coroot_monitor'
+                          AND monitor.rolcanlogin
+                          AND granted_role.rolname = 'pg_monitor'
+                          AND EXISTS (
+                            SELECT 1
+                            FROM pg_catalog.pg_extension
+                            WHERE extname = 'pg_stat_statements'
+                          )
+                          AND EXISTS (
+                            SELECT 1
+                            FROM platform_bootstrap.gates
+                            WHERE name = 'durable-storage-v1'
+                          )" \
+                      2>/dev/null | grep -qx '1'; do
+                      echo "Waiting for the durable instrumented database to be ready..."
+                      sleep 2
+                    done
+                    echo "Durable instrumented database is ready and accepting connections!"

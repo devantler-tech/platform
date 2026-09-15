@@ -119,6 +119,20 @@ spec:
               app.kubernetes.io/instance: cert-manager
     cainjector:
       replicaCount: ${cert_manager_replicas:=2}
+      # Cilium intentionally copies Gateway TLS Secrets into this managed
+      # namespace so agents do not need cross-namespace Secret reads. The copies
+      # retain cert-manager.io/certificate-name, whose Certificate exists only
+      # in the SOURCE namespace; cainjector otherwise interprets it as a local
+      # ownership pointer and emits a permanent Certificate-not-found error.
+      # CAInjectorConfiguration supports an exact Secret-source namespace
+      # exclusion. Nothing in cilium-secrets is a CA source for an injectable
+      # API object, so ignoring only this namespace preserves every webhook/CRD
+      # injection while leaving Cilium's synchronized TLS data untouched.
+      config:
+        apiVersion: cainjector.config.cert-manager.io/v1alpha1
+        kind: CAInjectorConfiguration
+        ignoreNamespaces:
+          - cilium-secrets
       securityContext:
         fsGroupChangePolicy: OnRootMismatch
       containerSecurityContext:

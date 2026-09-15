@@ -40,8 +40,14 @@ readonly ssa_count
 node_agent_tag="$(yq -er '.spec.values.nodeAgent.image.tag' "${kubescape_release}")" ||
   fail 'the Kubescape node-agent image tag is missing'
 readonly node_agent_tag
-[[ "${node_agent_tag}" == 'v0.3.219' ]] ||
-  fail 'Kubescape node-agent must use the chart-supported v0.3.219 lifecycle fixes'
+[[ "${node_agent_tag}" == 'v0.3.219-alerts.1-f6cbf54c4e76f511442d49c43c3f1880831b469c@sha256:5d12b81ad92b75b3aae06166d0936ae441b79ba5f29eb9b7e0d666bd72a7cf0b' ]] ||
+  fail 'Kubescape node-agent must use the exact signed alert-remediation build'
+
+node_agent_repository="$(yq -er '.spec.values.nodeAgent.image.repository' "${kubescape_release}")" ||
+  fail 'the Kubescape node-agent image repository is missing'
+readonly node_agent_repository
+[[ "${node_agent_repository}" == 'ghcr.io/devantler-tech/platform-kubescape-node-agent' ]] ||
+  fail 'Kubescape node-agent must use the dedicated signed compatibility repository'
 
 summary_workers="$(
   yq -er '.spec.values.storage.kindQueues.vulnerabilitymanifestsummaries.workerCount' \
@@ -62,8 +68,14 @@ readonly vex_capacity
 coroot_node_agent_image="$(yq -er '.spec.nodeAgent.image.name' "${coroot}")" ||
   fail 'the Coroot node-agent image pin is missing'
 readonly coroot_node_agent_image
-[[ "${coroot_node_agent_image}" == 'ghcr.io/coroot/coroot-node-agent:1.35.8' ]] ||
-  fail 'the Coroot node-agent must include the current upstream L7 and lifecycle fixes'
+[[ "${coroot_node_agent_image}" == 'ghcr.io/devantler-tech/platform-coroot-node-agent:v1.35.8-alerts.1-cd1efe238d3c4dfd3fcb11a74656456c7a20a9e4@sha256:ec3dbc7ff7ecd638af9e2f0e79d617e10c5dd835fccf9d044099181edd3177e4' ]] ||
+  fail 'the Coroot node-agent must use the exact signed alert-remediation build'
+
+coroot_provider="$(yq -er '.spec.nodeAgent.env[] | select(.name == "PROVIDER") | .value' "${coroot}")" ||
+  fail 'the Coroot node-agent provider is missing'
+readonly coroot_provider
+[[ "${coroot_provider}" == 'Hetzner' ]] ||
+  fail 'the Coroot node-agent must skip non-Hetzner cloud metadata discovery'
 
 snapshot_success_history="$(yq -er '.spec.successfulJobsHistoryLimit' "${vault_snapshot}")" ||
   fail 'the OpenBao snapshot successful Job history limit is missing'

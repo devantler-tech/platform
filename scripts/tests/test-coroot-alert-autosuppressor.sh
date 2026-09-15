@@ -35,8 +35,9 @@ done
 
 [ -f "${manifest}" ] || fail "manifest not found: ${manifest}"
 script_body="$(yq eval '.spec.jobTemplate.spec.template.spec.containers[0].command[2]' "${manifest}")"
-[ -n "${script_body}" ] && [ "${script_body}" != "null" ] ||
+if [ -z "${script_body}" ] || [ "${script_body}" = "null" ]; then
   fail "could not extract the autosuppressor script"
+fi
 
 work_root="$(mktemp -d /tmp/tmp.XXXXXXXXXX)"
 trap 'rm -rf "${work_root}"' EXIT
@@ -130,3 +131,82 @@ run_scenario "${log_pattern_dir}" >/dev/null
 [ ! -e "${log_pattern_dir}/suppressed.json" ] ||
   fail "a representative sample suppressed a mixed Coroot log-pattern fingerprint"
 pass "mixed kube-controller-manager log-pattern fingerprints remain visible"
+
+event_dir="$(setup_scenario exact-events false)"
+cat >"${event_dir}/alerts.json" <<'JSON'
+{"data":{"alerts":[
+  {
+    "id":"auto-vpa-write-conflict",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:_:Unknown:auto-vpa",
+    "details":[
+      {"name":"Event message","value":"policy auto-vpa/generate-vpa-for-deployment fail: Operation cannot be fulfilled on verticalpodautoscalers.autoscaling.k8s.io \"example\": the object has been modified; please apply your changes to the latest version and try again"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"ClusterPolicy\"\nname=\"auto-vpa\"\nreason=\"PolicyError\""}
+    ]
+  },
+  {
+    "id":"flux-status-canceled",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "details":[
+      {"name":"Event message","value":"failed to update status: context canceled"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"apps\"\nnamespace=\"flux-system\"\nreason=\"Progressing\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
+    "id":"monitor-secret-race",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:crossview:Deployment:external-secrets",
+    "details":[
+      {"name":"Event message","value":"secrets \"crossview-postgres-coroot-monitor\" already exists"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"ExternalSecret\"\nname=\"crossview-postgres-coroot-monitor\"\nnamespace=\"crossview\"\nreason=\"UpdateFailed\"\nsource=\"external-secrets\""}
+    ]
+  },
+  {
+    "id":"near-match-vpa",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:_:Unknown:auto-vpa",
+    "details":[
+      {"name":"Event message","value":"policy auto-vpa/generate-vpa-for-deployment fail: forbidden"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"ClusterPolicy\"\nname=\"auto-vpa\"\nreason=\"PolicyError\""}
+    ]
+  },
+  {
+    "id":"near-match-flux",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "details":[
+      {"name":"Event message","value":"health check failed after timeout"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"apps\"\nnamespace=\"flux-system\"\nreason=\"HealthCheckFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
+    "id":"near-match-secret",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:crossview:Deployment:external-secrets",
+    "details":[
+      {"name":"Event message","value":"secrets \"crossview-postgres-coroot-monitor\" is forbidden"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"ExternalSecret\"\nname=\"crossview-postgres-coroot-monitor\"\nnamespace=\"crossview\"\nreason=\"UpdateFailed\"\nsource=\"external-secrets\""}
+    ]
+  }
+]}}
+JSON
+run_scenario "${event_dir}" >/dev/null
+[ -f "${event_dir}/suppressed.json" ] ||
+  fail "the exact by-design Kubernetes lifecycle events were not suppressed"
+jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-status-canceled", "monitor-secret-race"]' \
+  "${event_dir}/suppressed.json" >/dev/null ||
+  fail "the event exemptions were broader than their exact label and message contracts"
+pass "exact self-healing lifecycle events are suppressed while near matches stay visible"

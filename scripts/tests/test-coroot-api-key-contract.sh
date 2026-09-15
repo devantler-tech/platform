@@ -53,10 +53,12 @@ assert "${infrastructure}" \
 
 # Component images stay pinned. The operator lists the registry only when an
 # image is unset, so pins remain the primary path and GHCR egress the fallback.
+# The node-agent may use either Coroot's upstream image or the platform's
+# signed compatibility build; both repositories are explicit allow-list entries.
 assert "${infrastructure}" \
   "${coroot} | .[0].spec |
     (.communityEdition.image.name | test(\"^ghcr[.]io/coroot/coroot:[0-9]\")) and
-    (.nodeAgent.image.name | test(\"^ghcr[.]io/coroot/coroot-node-agent:[0-9]\")) and
+    (.nodeAgent.image.name | test(\"^ghcr[.]io/(coroot/coroot-node-agent:[0-9]|devantler-tech/platform-coroot-node-agent:v[0-9])\")) and
     (.clusterAgent.image.name | test(\"^ghcr[.]io/coroot/coroot-cluster-agent:[0-9]\"))" \
   'the Coroot component images must remain pinned to explicit GHCR tags'
 
