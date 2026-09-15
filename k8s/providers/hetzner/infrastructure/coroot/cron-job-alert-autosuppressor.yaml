@@ -231,7 +231,7 @@ spec:
                   done
 
                   # Exemption 5 - the exact ExternalSecret target-creation race
-                  # during Crossview's ephemeral PostgreSQL roll.
+                  # during Crossview PostgreSQL reconciliation.
                   for id in $(printf '%s' "$ALERTS" | jq -r '
                       def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
                       def labels($d): ($d.Labels | split("\n") | map(capture("^(?<key>[^=]+)=\"(?<value>.*)\"$")) | from_entries);

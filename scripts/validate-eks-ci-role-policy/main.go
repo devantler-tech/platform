@@ -2316,13 +2316,15 @@ const (
 // ServiceAccount records are unchanged; no Kubernetes verb, wildcard or AWS
 // identity or permission is added or changed.
 //
-// RENDERER PROVENANCE: the value below was read from CI job 104200529835 for
-// merge commit eba4949ac7c80ad85769a2de945f485e4e7d0d25 (exact head
-// 3dff390ee9b0716e0def7edb75f3faa1a9a9ed2b merged onto exact base
-// e96d5ff513f07e7ba2f5078aade7ff12b2c5c2e1). The job's approval-base check
+// RENDERER PROVENANCE: the value below was read from CI job 104268453875 for
+// merge ref 51ac6f2393b1b682f05d7ea0041ea3d51abfb19e (exact head
+// b7cb117229d09c3b9ef0c32390e7186d67e24cdf merged onto exact base
+// cf2333da87247dc860e0970a8e553afda0438de2). The job's approval-base check
 // passed and its SHA256-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer
 // reported this aggregate as its only static authorization failure. This host
-// independently reproduced the value after merging that exact base.
+// independently reproduced the same aggregate against that exact head and base.
+// The maintainer explicitly approved it for the Coroot remediation on
+// 2026-09-15.
 //
 // The prior a295c1f7f6bcffd196ae36a2ed9a1a08eddf6d8450b266fc1846ad210c946801
 // candidate never merged: its merge-group deployment rolled back after Helm's
@@ -2333,35 +2335,32 @@ const (
 //
 // Previous aggregate: 5e7a3af5b0ff2e0fbd6b354440587a99ae1300bb6d66ecf47075072382dae2ea.
 //
-// Re-approved for #3319 / #3829 (2026-09-15), derived on exact main
-// cf2333da87247dc860e0970a8e553afda0438de2, whose approved aggregate is
-// 581f546914d30ddacb646b81e112c845dce93474983ac5ba0ab4029ae8703427.
+// Re-approved for #3831 (2026-09-15), derived on exact main
+// 4ded6d09fd126978cd79752a3724e2f844f18c12, whose approved aggregate is
+// be696639e32e670edcd9011fba2d370772bbdf9ecc6646c37f95024a5f3831c7.
 // The maintainer explicitly authorized the implementing session to complete
-// every necessary repair without further approval prompts; that standing
-// authorization covers this exact corrective aggregate. Crossview's production
-// PostgreSQL now uses a retained 2 GiB longhorn-wffc persistent volume while
-// base and local development remain ephemeral. The application restart waits
-// for a marker that only the freshly initialized durable database can contain,
-// and the mixed namespace leaves user-namespace enforcement disabled because
-// Longhorn is not idmapped.
+// every necessary Coroot alert repair without further approval prompts; that
+// standing authorization covers this exact corrective aggregate.
 //
 // CONSERVATION: rendering all five authorization overlays against that exact
-// base preserves all 573 identities. Exactly three existing objects change:
-// the crossview/crossview HelmRelease, the crossview Namespace and the
-// crossview/crossview-postgres-coroot-monitor-init ConfigMap. All 94
-// grant-bearing Role, ClusterRole, RoleBinding, ClusterRoleBinding and
-// ServiceAccount records are byte-identical; no identity, binding, verb,
-// wildcard, AWS identity or permission changes.
+// base preserves all 177 selected authorization identities. Exactly two
+// existing entries change: the cert-manager/cert-manager HelmRelease confines
+// cainjector's secret watch to the non-Cilium surface, and the
+// kubescape/kubescape HelmRelease selects the exact publisher-signed storage
+// and node-agent compatibility images. No selected identity is added or
+// removed. All 94 grant-bearing Role, ClusterRole, RoleBinding,
+// ClusterRoleBinding and ServiceAccount records are byte-identical; no
+// identity, binding, verb, wildcard, AWS identity or permission changes.
 //
-// RENDERER PROVENANCE: CI job 104276571088 in run 34936689213 rendered exact
-// head 2d5018b87310cae06032980b1a146f581024da98 against that exact base with its
-// SHA256-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer and reported this
-// aggregate as its authorization failure. The prior 1e1bd016 candidate did not
-// merge; exact-head Codex review required the admission, sequencing and claim
-// retention corrections that produced this replacement.
+// RENDERER PROVENANCE: this exact rebased tree was rendered with the published-
+// checksum-verified kubectl v1.36.2 Darwin/arm64 binary
+// (SHA256 4408c85c83fd3a31adaa555bdf3c7a6c81f74b19449a9060ba31ab91926f023d)
+// and its embedded Kustomize v5.8.1. The same renderer measured 177 identities
+// on both sides, the exact two changes above and this aggregate; CI independently
+// installs the SHA256-pinned Linux/amd64 build of the same release.
 //
-// Previous aggregate: 581f546914d30ddacb646b81e112c845dce93474983ac5ba0ab4029ae8703427.
-const expectedRenderedSurfaceSHA = "be696639e32e670edcd9011fba2d370772bbdf9ecc6646c37f95024a5f3831c7"
+// Previous aggregate: be696639e32e670edcd9011fba2d370772bbdf9ecc6646c37f95024a5f3831c7.
+const expectedRenderedSurfaceSHA = "a656e3f1c9e49a57be534427c3a3efd7a4e64455b17f7f0aabf79ccba4a976b3"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2374,7 +2373,7 @@ const expectedRenderedSurfaceSHA = "be696639e32e670edcd9011fba2d370772bbdf9ecc66
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "581f546914d30ddacb646b81e112c845dce93474983ac5ba0ab4029ae8703427"
+const previousRenderedSurfaceSHA = "be696639e32e670edcd9011fba2d370772bbdf9ecc6646c37f95024a5f3831c7"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
