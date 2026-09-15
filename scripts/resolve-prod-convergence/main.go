@@ -384,7 +384,7 @@ func exitCode(v verdict) int {
 	}
 }
 
-func run(args []string, stdout io.Writer, exec runner) int {
+func run(args []string, stdout io.Writer, runCmd runner) int {
 	flags := flag.NewFlagSet("resolve-prod-convergence", flag.ContinueOnError)
 	flags.SetOutput(stdout)
 	cfg := config{}
@@ -405,7 +405,7 @@ func run(args []string, stdout io.Writer, exec runner) int {
 		return exitCode(unknown)
 	}
 
-	res := resolve(cfg, exec)
+	res := resolve(cfg, runCmd)
 	fmt.Fprintf(stdout, "%s %s\n", res.verdict, res.detail)
 	return exitCode(res.verdict)
 }
