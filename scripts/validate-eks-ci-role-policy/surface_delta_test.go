@@ -115,9 +115,36 @@ func TestDescribeSurfaceMismatchReportsAnUnavailableBaseAsUnknown(t *testing.T) 
 		"no base root":      surfaceMismatchReport(context.Background(), "", head, nil),
 		"unreadable render": describeSurfaceMismatch(head, []byte("{not yaml"), nil, nil, nil),
 	} {
-		if len(lines) != 1 || !strings.Contains(lines[0], ": unknown (") || strings.Contains(lines[0], "none") {
+		if len(lines) != 1 || !strings.HasPrefix(lines[0], "moved authorization surface entries: unknown (") {
 			t.Fatalf("%s: lines = %q, want a single unknown report", name, lines)
 		}
+	}
+}
+
+func TestDescribeSurfaceMismatchSaysNoneOnlyAgainstAVerifiedBase(t *testing.T) {
+	entries := fixtureEntries(t, deltaFixture)
+
+	got := describeSurfaceMismatch(entries, []byte(deltaFixture), nil, approvingSource(t, entries), nil)
+	want := []string{
+		"moved authorization surface entries: none; the approval base renders this same surface, so only the approved aggregate differs",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("describeSurfaceMismatch() = %q, want %q", got, want)
+	}
+
+	for name, lines := range map[string][]string{
+		"unreadable base source":  describeSurfaceMismatch(entries, []byte(deltaFixture), nil, nil, errors.New("no such file")),
+		"unparseable base source": describeSurfaceMismatch(entries, []byte(deltaFixture), nil, []byte("package main\n"), nil),
+	} {
+		if len(lines) != 1 || !strings.HasPrefix(lines[0], "moved authorization surface entries: unknown (unverified: ") {
+			t.Fatalf("%s: lines = %q, want an unverified unknown report", name, lines)
+		}
+	}
+}
+
+func TestSurfaceEntryKeyToleratesAMalformedEntry(t *testing.T) {
+	if got := surfaceEntryKey("no identity fields"); got != "malformed entry" {
+		t.Fatalf("surfaceEntryKey() = %q, want malformed entry", got)
 	}
 }
 

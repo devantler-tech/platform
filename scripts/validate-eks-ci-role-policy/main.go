@@ -3735,8 +3735,26 @@ func evaluateRenderedSurface(rendered []byte) ([]string, []error, []error, error
 }
 
 // surfaceEntryKey is the apiVersion|kind|namespace|name identity of an entry.
+// An entry without all four identity fields shares one "malformed entry" key.
 func surfaceEntryKey(entry string) string {
-	return strings.Join(strings.SplitN(entry, "\x00", 5)[:4], "|")
+	fields := strings.SplitN(entry, "\x00", 5)
+	if len(fields) < 5 {
+		return "malformed entry"
+	}
+	return strings.Join(fields[:4], "|")
+}
+
+// sameSurfaceEntries reports whether two sorted entry lists are identical.
+func sameSurfaceEntries(first []string, second []string) bool {
+	if len(first) != len(second) {
+		return false
+	}
+	for index := range first {
+		if first[index] != second[index] {
+			return false
+		}
+	}
+	return true
 }
 
 // describeSurfaceDelta names every identity whose entries differ between the
@@ -3744,12 +3762,8 @@ func surfaceEntryKey(entry string) string {
 // identities compare as a multiset, so a duplicated object is a change too.
 func describeSurfaceDelta(base []string, head []string) []string {
 	group := func(entries []string) map[string][]string {
-		grouped := make(map[string][]string, len(entries))
+		grouped := make(map[string][]string)
 		for _, entry := range entries {
-			if strings.Count(entry, "\x00") < 4 {
-				grouped["malformed entry"] = append(grouped["malformed entry"], entry)
-				continue
-			}
 			key := surfaceEntryKey(entry)
 			grouped[key] = append(grouped[key], entry)
 		}
@@ -3759,7 +3773,7 @@ func describeSurfaceDelta(base []string, head []string) []string {
 		return grouped
 	}
 	baseGroups, headGroups := group(base), group(head)
-	keys := make([]string, 0, len(baseGroups)+len(headGroups))
+	keys := make([]string, 0, len(baseGroups))
 	for key := range baseGroups {
 		keys = append(keys, key)
 	}
@@ -3778,7 +3792,7 @@ func describeSurfaceDelta(base []string, head []string) []string {
 			delta = append(delta, "added "+key)
 		case !inHead:
 			delta = append(delta, "removed "+key)
-		case strings.Join(baseEntries, "\x01") != strings.Join(headEntries, "\x01"):
+		case !sameSurfaceEntries(baseEntries, headEntries):
 			delta = append(delta, "changed "+key)
 		}
 	}
@@ -3832,8 +3846,7 @@ func describeSurfaceMismatch(
 	if verified != "" {
 		header = fmt.Sprintf("%s (%s):", prefix, verified)
 	}
-	lines := make([]string, 0, len(delta)+1)
-	lines = append(lines, header)
+	lines := []string{header}
 	for _, line := range delta {
 		lines = append(lines, "  "+line)
 	}
@@ -3841,7 +3854,9 @@ func describeSurfaceMismatch(
 }
 
 // surfaceMismatchReport renders the approval base only after a mismatch, so a
-// passing run pays nothing for the diagnostics.
+// passing run pays nothing for the diagnostics. The base is rendered with this
+// validator's overlay paths, so a change that adds an overlay directory cannot
+// render the base and is reported as unknown rather than guessed at.
 func surfaceMismatchReport(ctx context.Context, baseRoot string, headEntries []string, execute commandExecutor) []string {
 	if baseRoot == "" {
 		return describeSurfaceMismatch(headEntries, nil, errors.New("no approval base root was supplied"), nil, nil)
@@ -3953,7 +3968,11 @@ func run(repoRoot string, baseRoot string, stdout io.Writer, stderr io.Writer) i
 		_, _ = fmt.Fprintf(stderr, "EKS CI role policy: %v\n", err)
 		var mismatch *surfaceMismatchError
 		if errors.As(err, &mismatch) {
-			for _, line := range surfaceMismatchReport(ctx, baseRoot, mismatch.entries, commandOutput) {
+			// The base render gets its own deadline: the head render may have used
+			// most of ctx, which would misreport an available base as unknown.
+			reportCtx, reportCancel := context.WithTimeout(context.Background(), rendererCommandTimeout)
+			defer reportCancel()
+			for _, line := range surfaceMismatchReport(reportCtx, baseRoot, mismatch.entries, commandOutput) {
 				_, _ = fmt.Fprintf(stderr, "EKS CI role policy: %s\n", line)
 			}
 		}
