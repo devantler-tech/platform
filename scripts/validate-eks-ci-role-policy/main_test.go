@@ -1939,6 +1939,17 @@ func TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentit
 			binding: awsIdentityBinding{subject: awsServiceAccountSubject},
 		},
 		{
+			// A namespaced binding's ServiceAccount subject may omit its namespace; it then
+			// resolves to the binding's own namespace, so this still reaches aws/aws.
+			name: "namespace-less service account in AWS namespace",
+			binding: awsIdentityBinding{
+				namespace: "aws",
+				subject: `  - kind: ServiceAccount
+    name: aws
+`,
+			},
+		},
+		{
 			name: "service account user identity",
 			binding: awsIdentityBinding{
 				namespace: "tenant-shadow",
