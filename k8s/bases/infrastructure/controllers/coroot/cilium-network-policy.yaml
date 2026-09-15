@@ -32,14 +32,6 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
-    # OpenCost queries the bundled Prometheus for cost allocation.
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: opencost
-      toPorts:
-        - ports:
-            - port: "9090"
-              protocol: TCP
     # Flagger queries the bundled Prometheus for canary SLO metrics
     # (request-success-rate / latency derived from the node-agent's
     # container_http_inbound_requests_* series).

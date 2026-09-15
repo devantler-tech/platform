@@ -8,9 +8,7 @@
 # roughly 16x the real Hetzner bill (~€43 ≈ $50/mo). Idle-cost and every
 # per-app cost allocation inherit the same inflation.
 #
-# WHAT: pin the project's Custom Cloud Pricing to Hetzner's CX33 rate, using the
-# EXACT same source of truth as the OpenCost costModel (k8s/bases/infrastructure/
-# opencost/helm-release.yaml) so the two cost views agree to the cent:
+# WHAT: pin the project's Custom Cloud Pricing to the declared Hetzner CX33 rate:
 #   CX33 = €6.49/server/month (4 vCPU / 8 GB) · ECB EUR->USD 1.1637 (2026-05-27)
 #   50/50 CPU:RAM split (Hetzner publishes no breakdown — convention)
 #     CPU: €6.49 x 1.1637 x 0.5 / 4 vCPU = $0.9441 /vCPU-month  -> /730 = $0.0012933 /vCPU-hour
@@ -20,10 +18,8 @@
 # line is a fixed 1 vCPU : 2 GB ratio, so this single per-unit rate is exact for
 # our six CX33 control-plane/worker nodes; Hetzner's mild economy-of-scale (CX23
 # €2.00/vCPU -> CX53 €1.41/vCPU) makes it a few % off for other autoscale sizes —
-# still ~16x closer than the GCP fallback, and identical to what OpenCost reports.
-# Coroot's model is per-CPU/per-GB only; it cannot do the per-instance hcloud-API
-# lookup OpenCost's native hcloud provider (opencost#3710) can, so a blended CX
-# rate is the correct-by-design approach for Coroot.
+# still ~16x closer than the GCP fallback. Coroot's model is per-CPU/per-GB only,
+# so a blended CX rate is the correct-by-design approach for this fleet.
 #
 # WHY AN API CRONJOB (not the CR or a UI click): the coroot-operator's
 # ProjectSpec has no pricing field and Coroot exposes Custom Cloud Pricing only
@@ -111,8 +107,7 @@ spec:
                   cpu: 100m
                   memory: 64Mi
               env:
-                # Coroot CX33-derived per-unit rates (USD/hour). Keep in lockstep
-                # with the OpenCost costModel CPU/RAM (those values / 730).
+                # Coroot CX33-derived per-unit rates (USD/hour).
                 - name: PER_CPU_CORE
                   value: "0.0012933"
                 - name: PER_MEMORY_GB

@@ -349,7 +349,7 @@ rules:
           object.kind == 'ClusterPolicy' &&
           object.metadata.name == 'add-default-deny' &&
           !has(object.metadata.namespace) &&
-          object.spec == {'rules': [{
+          object.spec == {'useServerSideApply': true, 'rules': [{
              'name': 'generate-default-deny',
              'match': {'any': [{'resources': {'kinds': ['Namespace']}}]},
              'exclude': {'any': [{'resources': {'names': [

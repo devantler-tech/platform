@@ -31,8 +31,15 @@ spec:
   # rolls the server's pods on change; the annotation goes on the pod template via
   # podAnnotations, matching the platform's existing convention (auth-proxy,
   # oauth2-proxy, coredns).
+  #
+  # The DNS-policy rollout token is deliberately repeated on every Coroot-owned
+  # pod template below. set-observability-dns-ndots is admission-only, so this
+  # declarative template change recreates the existing stack once and ensures
+  # every pod is admitted with ndots:1. Change the token only when another
+  # admission-time DNS policy migration needs a controlled rollout.
   podAnnotations:
     secret.reloader.stakater.com/reload: coroot-db-app
+    platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-1
 
   # COMPONENT IMAGE PINS. The operator does NOT bake a fixed tag into its
   # components: when an image is left unset it lists `ghcr.io/coroot/<component>`
@@ -82,8 +89,8 @@ spec:
     size: 2Gi
 
   # Bundled Prometheus = the metrics TSDB. Kept as a real Prometheus (we do
-  # NOT set storeMetricsInClickhouse) precisely so OpenCost can still query it
-  # at http://coroot-prometheus.observability.svc.cluster.local:9090.
+  # NOT set storeMetricsInClickhouse) because Flagger and KEDA query it at
+  # http://coroot-prometheus.observability.svc.cluster.local:9090.
   #
   # SINGLE-INSTANCE BY DESIGN: the Coroot CRD's `prometheus` block exposes only
   # affinity/image/nodeSelector/outOfOrderTimeWindow/podAnnotations/resources/
@@ -95,6 +102,8 @@ spec:
   # Durability instead of HA: its PVC is hcloud-backed (hetzner overlay) and
   # Velero backs the observability namespace up daily.
   prometheus:
+    podAnnotations:
+      platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-1
     retention: 7d
     storage:
       size: 10Gi
@@ -120,6 +129,8 @@ spec:
   # hostname. The operator exposes only `affinity` (no topologySpreadConstraints
   # field), so anti-affinity is the available placement knob.
   clickhouse:
+    podAnnotations:
+      platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-1
     shards: 1
     replicas: 2
     affinity:
@@ -131,6 +142,8 @@ spec:
                 app.kubernetes.io/component: clickhouse
             topologyKey: kubernetes.io/hostname
     keeper:
+      podAnnotations:
+        platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-1
       replicas: 3
       affinity:
         podAntiAffinity:
@@ -151,6 +164,8 @@ spec:
   # (the operator only exposes priorityClassName on the node-agent, not on the
   # bundled Prometheus/ClickHouse).
   nodeAgent:
+    podAnnotations:
+      platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-1
     # Disable the ICMP latency pinger. It measures node/pod RTT by sending ICMP
     # echo probes and reading kernel RX timestamps via SO_TIMESTAMPING
     # (SOF_TIMESTAMPING_RX_SOFTWARE) — but Cilium's eBPF datapath here (VXLAN
@@ -159,10 +174,11 @@ spec:
     # netif-receive hook that stamps software RX timestamps. So every probe logs
     # `failed to get RX timestamp: no timestamp found` (pinger.go) — ~40-70x per
     # node per 30m on ALL nodes — and Coroot's own log-error detector then raises
-    # recurring "new error in the logs" Slack alerts on it. This is a known,
-    # unfixed upstream issue (coroot/coroot-node-agent#90, open since 2024; the
-    # pinned 1.33.3 is the latest release and does not address it) and is not
-    # fixable without degrading the datapath (reverting to host legacy routing).
+    # recurring "new error in the logs" Slack alerts on it. The pinned 1.35.8
+    # includes upstream's missing-timestamp fix (coroot/coroot-node-agent#349), but
+    # enabling the pinger here would also require restoring broad intra-cluster
+    # ICMP policy solely for this supplementary signal. Keep it disabled: the
+    # eBPF-derived service signals below provide the actionable network view.
     # The pinger's only output is the supplementary ICMP RTT line in Coroot's Net
     # view; ALL eBPF-derived signal (L7 latency, TCP connect latency / retransmits
     # / failures, connectivity SLOs) is independent of it and unaffected.
@@ -174,7 +190,7 @@ spec:
         value: "true"
     # Pinned (see the COMPONENT IMAGE PINS note at the top of spec).
     image:
-      name: ghcr.io/coroot/coroot-node-agent:1.33.3
+      name: ghcr.io/coroot/coroot-node-agent:1.35.8
     priorityClassName: platform-critical
     # Authored memory sizing — REQUIRED. DaemonSet VPAs are CPU-only (see
     # cluster-policies/best-practices/auto-vpa.yaml: VPA sized every node's
@@ -211,5 +227,10 @@ spec:
   # It stays at its default (enabled); only the image is pinned here (see the
   # COMPONENT IMAGE PINS note at the top of spec).
   clusterAgent:
+    podAnnotations:
+      # The first rollout shared the same Flux reconciliation as the admission
+      # policy and this pod was recreated before that policy became Ready. Use a
+      # second token so it is admitted only after the policy has landed.
+      platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-2
     image:
       name: ghcr.io/coroot/coroot-cluster-agent:1.7.1

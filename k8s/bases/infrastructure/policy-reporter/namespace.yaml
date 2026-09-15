@@ -7,7 +7,6 @@ metadata:
     # UI and kyverno-plugin (runAsNonRoot, runAsUser 1234, readOnlyRootFilesystem,
     # capabilities drop ALL, seccompProfile RuntimeDefault) at the container
     # level, and creates no hook/Job pods -- so PSA `restricted` enforces cleanly
-    # without relying on Kyverno's add-security-context mutation (unlike opencost,
-    # whose upstream chart ships only a partial securityContext).
+    # without relying on Kyverno's add-security-context mutation.
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest

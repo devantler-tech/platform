@@ -1,6 +1,6 @@
 ---
 # Remove Kubescape host-data objects after the Kubernetes Node they describe is
-# gone. Node-agent v0.3.142 creates these cluster-scoped objects without owner
+# gone. Node-agent creates these cluster-scoped objects without owner
 # references and performs no deletion, so autoscaler churn otherwise grows a
 # permanently stale host inventory (kubescape/node-agent#963).
 #
