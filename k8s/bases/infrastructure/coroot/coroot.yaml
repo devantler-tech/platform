@@ -228,6 +228,9 @@ spec:
   # COMPONENT IMAGE PINS note at the top of spec).
   clusterAgent:
     podAnnotations:
-      platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-1
+      # The first rollout shared the same Flux reconciliation as the admission
+      # policy and this pod was recreated before that policy became Ready. Use a
+      # second token so it is admitted only after the policy has landed.
+      platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-2
     image:
       name: ghcr.io/coroot/coroot-cluster-agent:1.7.1

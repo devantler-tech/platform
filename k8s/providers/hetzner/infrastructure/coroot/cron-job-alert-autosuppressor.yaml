@@ -14,21 +14,13 @@
 # no credential is needed.
 #
 # The exemption list IS this script (every entry is reviewed via PR). Each entry
-# is deliberately narrow and is documented with WHY it is by-design:
+# is deliberately narrow and is documented with WHY it is by-design. Never add a
+# `new-log-patterns` exemption based on the detail view's Sample field: Coroot
+# groups weakly-equal raw patterns under one alert fingerprint, so Sample is only
+# a representative and can change while the alert id stays the same. Suppressing
+# that id would also suppress every other pattern in the group.
 #
-#   1. kcm-keda-gc-reflector - kube-controller-manager "Log errors" for the
-#      `reflector.go ... Failed to watch *v1.PartialObjectMetadata ... could not
-#      find the requested resource` line. KEDA's external.metrics.k8s.io is a
-#      get-only aggregated metrics API, so the kube-controller-manager garbage
-#      collector's metadata informer can only 404 - inherent to aggregated metrics
-#      APIs (kubernetes-sigs/custom-metrics-apiserver#146, SIG-confirmed correct).
-#      SAFETY: matched on the alert's Sample log line containing BOTH distinctive
-#      substrings, so the SEPARATE `horizontal.go "failed to compute"` pattern on
-#      the same app (`horizontal.go "failed to compute"`) and any genuinely new
-#      kube-controller-manager error are never
-#      touched (they are a different pattern / fingerprint and still alert).
-#
-#   2. extensions-host-failed-conns - the `network-tcp-connections` ("failed to
+#   1. extensions-host-failed-conns - the `network-tcp-connections` ("failed to
 #      connect to N upstream services") warning on `_:Unknown:extensions`. This is
 #      NOT a Kubernetes workload: Coroot groups the Talos host-level processes it
 #      sees via eBPF but cannot map to a pod into per-node "Unknown" apps, and
@@ -46,7 +38,7 @@
 #      SLOs, so this host-app connectivity signal is the least-actionable place to
 #      lose. Scoped to rule_id + the single app id.
 #
-#   3. kubelet-static-pod-probes - the sibling `network-tcp-connections` warning
+#   2. kubelet-static-pod-probes - the sibling `network-tcp-connections` warning
 #      on `_:Unknown:kubelet`, but ONLY while its complete active-upstream set is
 #      kube-scheduler + kube-controller-manager. These are the kubelet's HTTPS
 #      health probes against the Talos static pods: three schedulers each have a
@@ -57,17 +49,6 @@
 #      with a positive sample must be one of those exact two names. Any new active
 #      upstream keeps the alert visible, even though Coroot reuses the same alert
 #      fingerprint for all kubelet TCP failures.
-#
-#   4. kcm-crossplane-sync-alerter-conflict - kube-controller-manager can race
-#      Flux while updating the status of the GitOps-managed
-#      `observability/crossplane-sync-alerter` CronJob. Kubernetes reports the
-#      losing resourceVersion update as an "object has been modified" error and
-#      the controller immediately requeues against the latest object; the Job's
-#      schedule and alert delivery remain intact. This optimistic-concurrency
-#      retry cannot be removed from either controller. SAFETY: match the static
-#      controller app plus all of the controller, namespace/name, resource type,
-#      and retry-message fragments. A different CronJob or any other
-#      kube-controller-manager error remains visible.
 #
 # PROD-ONLY: Coroot alerting (the Slack webhook) is wired only in the hetzner
 # overlay, so this lives here, not in the base.
@@ -151,40 +132,7 @@ spec:
                   ALERTS=$(curl $RETRY "$BASE/api/project/$PID/alerts?limit=500")
                   ids=""
 
-                  # Exemption 1 - kube-controller-manager KEDA-GC reflector pattern.
-                  # Match the Sample line on BOTH substrings so the separate
-                  # horizontal.go pattern and any new kcm
-                  # error are never suppressed.
-                  for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]
-                      | select(.suppressed==false and .resolved_at==null and .rule_id=="new-log-patterns"
-                               and (.application_id | endswith(":kube-system:StaticPods:kube-controller-manager")))
-                      | .id'); do
-                    hit=$(curl $RETRY "$BASE/api/project/$PID/alerts/$id" | jq -r '
-                      ([.data.details[]? | select(.name=="Sample") | .value] | first // "")
-                      | if (contains("PartialObjectMetadata") and contains("could not find the requested resource"))
-                        then "y" else "n" end')
-                    [ "$hit" = "y" ] && { ids="$ids $id"; echo "match kcm-keda-gc-reflector: $id"; }
-                  done
-
-                  # Exemption 4 - an expected optimistic-concurrency retry when
-                  # kube-controller-manager and Flux touch the same declarative
-                  # CronJob. Require every stable identity fragment so another
-                  # controller error or another CronJob never inherits it.
-                  for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]
-                      | select(.suppressed==false and .resolved_at==null and .rule_id=="new-log-patterns"
-                               and (.application_id | endswith(":kube-system:StaticPods:kube-controller-manager")))
-                      | .id'); do
-                    hit=$(curl $RETRY "$BASE/api/project/$PID/alerts/$id" | jq -r '
-                      ([.data.details[]? | select(.name=="Sample") | .value] | first // "")
-                      | if (contains("cronjob_controllerv2.go") and
-                            contains("error syncing CronJobController observability/crossplane-sync-alerter") and
-                            contains("Operation cannot be fulfilled on cronjobs.batch \"crossplane-sync-alerter\"") and
-                            contains("the object has been modified"))
-                        then "y" else "n" end')
-                    [ "$hit" = "y" ] && { ids="$ids $id"; echo "match kcm-crossplane-sync-alerter-conflict: $id"; }
-                  done
-
-                  # Exemption 2 - Talos host system-extension group benign failed
+                  # Exemption 1 - Talos host system-extension group benign failed
                   # TCP connections (see header entry 2). Coroot-synthesised non-k8s
                   # host app, so a genuine fault surfaces elsewhere (Longhorn volume
                   # health, instance-manager SLOs), not here.
@@ -195,7 +143,7 @@ spec:
                     ids="$ids $id"; echo "match extensions-host-failed-conns: $id"
                   done
 
-                  # Exemption 3 - kubelet health probes to the static scheduler
+                  # Exemption 2 - kubelet health probes to the static scheduler
                   # and controller-manager pods. Refuse the exemption if ANY
                   # other upstream has a positive sample in the failed-TCP chart.
                   for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]

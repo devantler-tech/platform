@@ -176,12 +176,11 @@ readonly rollout_annotation
 rollout_token="$(yq -er ".spec.podAnnotations.\"${rollout_annotation}\"" "${coroot}")" ||
   fail 'the Coroot server DNS-policy rollout token is missing'
 readonly rollout_token
-[[ -n "${rollout_token}" ]] ||
-  fail 'the Coroot server DNS-policy rollout token must not be empty'
+[[ "${rollout_token}" == '2026-09-15-ndots-1' ]] ||
+  fail 'the Coroot server must retain the first DNS-policy rollout token'
 
 for component_path in \
   nodeAgent \
-  clusterAgent \
   prometheus \
   clickhouse \
   clickhouse.keeper; do
@@ -192,11 +191,25 @@ for component_path in \
     fail "the ${component_path} DNS-policy rollout token must match the server token"
 done
 
+cluster_agent_rollout_token="$(
+  yq -er ".spec.clusterAgent.podAnnotations.\"${rollout_annotation}\"" "${coroot}"
+)" || fail 'the clusterAgent DNS-policy rollout token is missing'
+readonly cluster_agent_rollout_token
+[[ "${cluster_agent_rollout_token}" == '2026-09-15-ndots-2' ]] ||
+  fail 'the clusterAgent must use the post-policy rollout token'
+
 database_rollout_token="$(
   yq -er ".spec.inheritedMetadata.annotations.\"${rollout_annotation}\"" "${coroot_db}"
 )" || fail 'the Coroot database DNS-policy rollout token is missing'
 readonly database_rollout_token
 [[ "${database_rollout_token}" == "${rollout_token}" ]] ||
   fail 'the Coroot database DNS-policy rollout token must match every Coroot component'
+
+database_restart_request="$(
+  yq -er '.metadata.annotations."kubectl.kubernetes.io/restartedAt"' "${coroot_db}"
+)" || fail 'the Coroot database declarative restart request is missing'
+readonly database_restart_request
+[[ "${database_restart_request}" == '2026-09-14T22:48:00Z' ]] ||
+  fail 'the Coroot database must request the reviewed post-policy rolling restart'
 
 printf 'Coroot alert remediation contract is valid.\n'
