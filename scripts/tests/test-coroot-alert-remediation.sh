@@ -81,6 +81,8 @@ resolver_policy_count="$(
         select(
           (.match.any[0].resources.kinds | length) == 1 and
           .match.any[0].resources.kinds[0] == "Pod" and
+          (.match.any[0].resources.operations | length) == 1 and
+          .match.any[0].resources.operations[0] == "CREATE" and
           (.match.any[0].resources.namespaces | length) == 1 and
           .match.any[0].resources.namespaces[0] == "observability" and
           (.mutate.patchStrategicMerge.spec.dnsConfig.options | length) == 1 and
@@ -97,7 +99,7 @@ resolver_policy_count="$(
 )"
 readonly resolver_policy_count
 [[ "${resolver_policy_count}" == '1' ]] ||
-  fail 'the resolver policy must set ndots:1 only on Coroot and its CNPG database pods'
+  fail 'the resolver policy must set ndots:1 only when Coroot and its CNPG database pods are created'
 
 apply_resolver_policy() {
   local labels="$1"
