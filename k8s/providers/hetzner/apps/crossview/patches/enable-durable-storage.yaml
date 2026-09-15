@@ -1,0 +1,53 @@
+# Production-only durable storage for Crossview's bundled PostgreSQL. The base
+# stays ephemeral so Docker/local installs do not acquire a Longhorn dependency.
+# Longhorn replicates the block volume across three nodes; PostgreSQL remains a
+# single process because Crossview is a low-criticality read-only dashboard.
+- op: replace
+  path: /spec/values/database/persistence/enabled
+  value: true
+- op: add
+  path: /spec/values/database/persistence/size
+  value: 2Gi
+- op: add
+  path: /spec/values/database/persistence/accessMode
+  value: ReadWriteOnce
+- op: add
+  path: /spec/values/database/persistence/storageClass
+  value: longhorn-wffc
+# Replace the base's ephemeral database post-render patch. Replacing the patch
+# text (rather than trying to delete its nested list items in a later renderer)
+# lets the chart-owned postgres-storage mount survive strategic merge intact.
+- op: replace
+  path: /spec/postRenderers/0/kustomize/patches/1/patch
+  value: |
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: crossview-postgres
+    spec:
+      # A ReadWriteOnce database volume cannot safely overlap old and new pods.
+      # Keep the live strategy type and serialize the rollout: for one replica,
+      # zero surge plus one unavailable terminates the old pod before replacement
+      # just like Recreate, without an incompatible strategy-type transition.
+      strategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxSurge: 0
+          maxUnavailable: 1
+      template:
+        spec:
+          # The namespace remains opted into user namespaces for the app.
+          # Longhorn's volume is not idmapped, so only the database explicitly
+          # retains the host user namespace.
+          hostUsers: true
+          containers:
+            - name: postgres
+              securityContext:
+                readOnlyRootFilesystem: true
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 128Mi
