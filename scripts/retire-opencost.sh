@@ -9,14 +9,20 @@ readonly kubectl_bin="${KUBECTL_BIN:-kubectl}"
 readonly git_bin="${GIT_BIN:-git}"
 readonly repository_url='https://github.com/devantler-tech/platform.git'
 readonly inventory_poll_seconds="${OPENCOST_RETIRE_POLL_SECONDS:-2}"
+readonly inventory_request_timeout_seconds="${OPENCOST_RETIRE_REQUEST_TIMEOUT_SECONDS:-5}"
+readonly inventory_timeout_seconds="${OPENCOST_RETIRE_TIMEOUT_SECONDS:-120}"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1
 }
 
-[[ "${inventory_poll_seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
-  fail 'OpenCost retirement inventory poll interval must be a non-negative number'
+[[ "${inventory_poll_seconds}" =~ ^[0-9]+$ ]] ||
+  fail 'OpenCost retirement inventory poll interval must be a non-negative integer'
+[[ "${inventory_request_timeout_seconds}" =~ ^[1-9][0-9]*$ ]] ||
+  fail 'OpenCost retirement inventory request timeout must be a positive integer'
+[[ "${inventory_timeout_seconds}" =~ ^[1-9][0-9]*$ ]] ||
+  fail 'OpenCost retirement inventory deadline must be a positive integer'
 
 if [[ "$#" -ne 1 || ("$1" != '--preflight' && "$1" != '--execute') ]]; then
   fail 'OpenCost retirement requires the sole argument --execute or --preflight'
@@ -58,15 +64,22 @@ get_optional_json() {
 }
 
 get_ready_inventory_snapshot() {
-  local attempt
+  local deadline="$((SECONDS + inventory_timeout_seconds))"
   local kustomization_json
+  local remaining_seconds
+  local request_timeout_seconds
+  local sleep_seconds
 
-  for ((attempt = 1; attempt <= 60; attempt++)); do
-    kustomization_json="$(kube get \
+  while ((SECONDS < deadline)); do
+    remaining_seconds="$((deadline - SECONDS))"
+    request_timeout_seconds="${inventory_request_timeout_seconds}"
+    if ((request_timeout_seconds > remaining_seconds)); then
+      request_timeout_seconds="${remaining_seconds}"
+    fi
+    if kustomization_json="$(kube get \
       kustomization.kustomize.toolkit.fluxcd.io/infrastructure \
-      --namespace flux-system -o json)" ||
-      fail 'unable to read Flux Kustomization flux-system/infrastructure'
-    if jq -e 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' \
+      --namespace flux-system --request-timeout="${request_timeout_seconds}s" -o json)" &&
+      jq -e 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' \
       <<<"${kustomization_json}" >/dev/null; then
       jq -e '(.status.inventory.entries | type) == "array"' \
         <<<"${kustomization_json}" >/dev/null ||
@@ -74,12 +87,20 @@ get_ready_inventory_snapshot() {
       printf '%s\n' "${kustomization_json}"
       return 0
     fi
-    if ((attempt < 60)); then
-      sleep "${inventory_poll_seconds}"
+    remaining_seconds="$((deadline - SECONDS))"
+    if ((remaining_seconds > 0)); then
+      sleep_seconds="${inventory_poll_seconds}"
+      if ((sleep_seconds > remaining_seconds)); then
+        sleep_seconds="${remaining_seconds}"
+      fi
+      sleep "${sleep_seconds}"
     fi
   done
 
-  fail 'Flux Kustomization flux-system/infrastructure did not expose a Ready inventory snapshot within 2m'
+  if [[ "${inventory_timeout_seconds}" == '120' ]]; then
+    fail 'Flux Kustomization flux-system/infrastructure did not expose a Ready inventory snapshot within 2m'
+  fi
+  fail "Flux Kustomization flux-system/infrastructure did not expose a Ready inventory snapshot within ${inventory_timeout_seconds}s"
 }
 
 assert_prune_protected() {

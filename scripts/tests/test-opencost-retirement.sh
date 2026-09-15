@@ -51,7 +51,7 @@ case "$*" in
   'get persistentvolumeclaims --namespace opencost -o name')
     [[ ! -e "${FAKE_STATE_DIR}/pvc" ]] || printf '%s\n' 'persistentvolumeclaim/opencost-data'
     ;;
-  'get kustomization.kustomize.toolkit.fluxcd.io/infrastructure --namespace flux-system -o json')
+  'get kustomization.kustomize.toolkit.fluxcd.io/infrastructure --namespace flux-system --request-timeout=1s -o json')
     if [[ -e "${FAKE_STATE_DIR}/ready-timeout" ]]; then
       jq -n '{status:{conditions:[{type:"Ready",status:"False"}],inventory:{entries:[{id:"observability_coroot_operator_helm.toolkit.fluxcd.io_HelmRelease"}]}}}'
     elif [[ -e "${FAKE_STATE_DIR}/transient-not-ready" ]]; then
@@ -151,6 +151,8 @@ run_subject() {
     GIT_BIN="${fake_git}" \
     OPENCOST_RETIRE_JOB_SUFFIX=test \
     OPENCOST_RETIRE_POLL_SECONDS=0 \
+    OPENCOST_RETIRE_REQUEST_TIMEOUT_SECONDS=1 \
+    OPENCOST_RETIRE_TIMEOUT_SECONDS=3 \
     GITHUB_EVENT_NAME=workflow_dispatch \
     GITHUB_REF=refs/heads/main \
     GITHUB_REF_NAME=main \
@@ -195,17 +197,21 @@ touch "${transient_ready_state}/transient-not-ready"
 if ! transient_ready_output="$(run_subject "${transient_ready_state}" --execute 2>&1)"; then
   fail "retirement should wait for a transient Flux reconciliation: ${transient_ready_output}"
 fi
-transient_get_count="$(grep -cFx -- '--context admin@prod get kustomization.kustomize.toolkit.fluxcd.io/infrastructure --namespace flux-system -o json' \
+transient_get_count="$(grep -cFx -- '--context admin@prod get kustomization.kustomize.toolkit.fluxcd.io/infrastructure --namespace flux-system --request-timeout=1s -o json' \
   "${transient_ready_state}/commands.log")"
 [[ "${transient_get_count}" -ge 2 ]] ||
   fail 'retirement did not poll for a single Ready inventory snapshot'
 
 ready_timeout_state="$(init_state ready-timeout)"
 touch "${ready_timeout_state}/ready-timeout"
+ready_timeout_started="${SECONDS}"
 if run_subject "${ready_timeout_state}" --execute >"${temp_dir}/ready-timeout.out" 2>&1; then
   fail 'retirement must refuse deletion when Flux does not become Ready in time'
 fi
-grep -qF 'did not expose a Ready inventory snapshot within 2m' "${temp_dir}/ready-timeout.out" ||
+ready_timeout_elapsed="$((SECONDS - ready_timeout_started))"
+[[ "${ready_timeout_elapsed}" -le 4 ]] ||
+  fail "the Ready polling deadline took ${ready_timeout_elapsed}s despite a 3s limit"
+grep -qF 'did not expose a Ready inventory snapshot within 3s' "${temp_dir}/ready-timeout.out" ||
   fail 'the Ready timeout did not explain the unjudgeable Flux state'
 grep -qF 'delete helmrelease' "${ready_timeout_state}/commands.log" &&
   fail 'the Ready timeout issued a destructive command'
