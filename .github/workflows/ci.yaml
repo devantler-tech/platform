@@ -474,6 +474,7 @@ jobs:
               - 'scripts/tests/test-cilium-mutual-auth-policy-regressions.sh'
               - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
               - 'scripts/tests/test-crossview-coroot-postgres-integration.sh'
+              - 'scripts/tests/test-crossview-postgres-durable-storage.sh'
               - 'scripts/tests/test-coroot-api-key-contract.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
@@ -1328,6 +1329,14 @@ jobs:
           bash scripts/tests/test-coroot-postgres-scrape-policy.sh
           shellcheck scripts/tests/test-crossview-coroot-postgres-integration.sh
           bash scripts/tests/test-crossview-coroot-postgres-integration.sh
+
+      - name: 💾 Validate Crossview PostgreSQL durable storage
+        if: needs.changes.outputs.k8s == 'true'
+        # Render the pinned chart through Flux's production post-renderers so
+        # persistence cannot regress to an emptyDir or an overlapping rollout.
+        run: |
+          shellcheck scripts/tests/test-crossview-postgres-durable-storage.sh
+          bash scripts/tests/test-crossview-postgres-durable-storage.sh
 
       - name: 🔑 Validate Coroot API key and registry egress
         if: needs.changes.outputs.k8s == 'true'
