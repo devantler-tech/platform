@@ -14,10 +14,6 @@ inputs:
     description: Compare the staged dedicated wedding backup credential during an opted-in manual deployment.
     required: false
     default: "false"
-  retire-opencost:
-    description: Complete the approved prune-protected OpenCost retirement after a successful manual main deployment.
-    required: false
-    default: "false"
   sops-age-key:
     description: SOPS Age private key (secrets.SOPS_AGE_KEY) for decrypting SOPS-encrypted manifests.
     required: true
@@ -60,16 +56,6 @@ runs:
       env:
         APPROVED_REVISIONS_ENFORCE: '1'
       run: ./scripts/guard-publish-workflow-approved-revisions.sh
-
-    - name: 🧭 Bind OpenCost retirement to current main
-      id: retire_opencost_preflight
-      # workflow_dispatch can target an old main SHA or be rerun after main has
-      # advanced. Refuse before publishing that stale checkout: otherwise a
-      # newer revision restoring OpenCost could be overwritten and then deleted
-      # as though it were still an approved orphan.
-      if: inputs.retire-opencost == 'true'
-      shell: bash
-      run: ./scripts/retire-opencost.sh --preflight
 
     - name: ⚙️ Setup KSail
       # Install the KSail CLI from the release tarball and verify the
@@ -464,14 +450,3 @@ runs:
         ./scripts/refresh-flux-ghcr-auth.sh
         --reuse-runtime-proof
         "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
-
-    - name: 🧹 Retire OpenCost from Production
-      id: retire_opencost
-      # Prune protection deliberately left the removed HelmRelease and Namespace
-      # running after #3818. This irreversible third retirement stage is
-      # default-off, hard-coded to OpenCost, and accepted only by the script on
-      # a manual run of main. Keep it last: ordinary deployment and recovery
-      # checks must succeed before deleting either orphan.
-      if: inputs.retire-opencost == 'true'
-      shell: bash
-      run: ./scripts/retire-opencost.sh --execute
