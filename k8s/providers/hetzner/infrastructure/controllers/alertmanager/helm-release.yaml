@@ -38,8 +38,10 @@ spec:
         name: prometheus-community
   # https://github.com/prometheus-community/helm-charts/blob/main/charts/alertmanager/values.yaml
   values:
-    # Deterministic in-cluster name so the node-agent exporter target and the
-    # Headlamp plugin setting can hard-code it: Service = alertmanager.kubescape.svc:9093.
+    # Deterministic in-cluster names. Producers post to every peer through the
+    # headless Service (alertmanager-N.alertmanager-headless.kubescape.svc:9093),
+    # because received alerts are not replicated between peers; the Headlamp
+    # plugin reads through the Service alertmanager.kubescape.svc:9093.
     fullnameOverride: alertmanager
     replicaCount: 2
     # Keep the two peers on distinct nodes. The cluster-wide spread-pods policy

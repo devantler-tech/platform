@@ -108,7 +108,9 @@ CSI snapshots need cluster-wide plumbing that the hetzner overlay adds:
   v8.5.0, the version Longhorn 1.11 targets), in `kube-system`. The conversion
   webhook is disabled (only the v1 API is used).
 - **Longhorn CSI snapshotter sidecar** — enabled via
-  `longhorn_csi_snapshotter_replicas: "1"`. Longhorn `dependsOn`
+  `longhorn_csi_snapshotter_replicas: "2"`: a leader-elected active plus a
+  warm standby, so snapshot orchestration survives one storage-node failure.
+  Do not lower it back to `"1"` during recovery. Longhorn `dependsOn`
   snapshot-controller so the CRDs exist before the sidecar starts.
 - **`VolumeSnapshotClass` `longhorn-snapshot-vsc`** (`type: snap`, labelled
   `velero.io/csi-volumesnapshot-class`) — a plain in-cluster Longhorn snapshot

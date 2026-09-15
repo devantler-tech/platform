@@ -5,6 +5,9 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly alertmanager_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/alertmanager/helm-release.yaml"
+readonly kubescape_alert_route="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kubescape/patches/route-runtime-detection-alerts.yaml"
+readonly crossplane_alerter="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/cron-job-crossplane-sync-alerter.yaml"
+readonly dr_runbook="${root_dir}/docs/dr/velero-cnpg.md"
 readonly longhorn_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/longhorn/helm-release.yaml"
 readonly origin_ca_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/origin-ca-issuer/helm-release.yaml"
 readonly prod_variables="${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml"
@@ -28,6 +31,24 @@ yq e -e '
   .spec.values.podDisruptionBudget.maxUnavailable == 1
 ' "${alertmanager_release}" >/dev/null ||
   fail 'Alertmanager must run two cross-node peers behind a drain-safe PDB'
+
+# Alertmanager HA does not replicate received alerts, so both producers must
+# post to each peer rather than to the load-balanced Service.
+yq e -e '
+  (.spec.values.nodeAgent.config.alertManagerExporterUrls | join(",")) ==
+    "alertmanager-0.alertmanager-headless.kubescape.svc:9093,alertmanager-1.alertmanager-headless.kubescape.svc:9093"
+' "${kubescape_alert_route}" >/dev/null ||
+  fail 'the node-agent must export runtime alerts to every Alertmanager peer'
+
+grep -Fq 'AM_PEERS="http://alertmanager-0.alertmanager-headless.kubescape.svc.cluster.local:9093 http://alertmanager-1.alertmanager-headless.kubescape.svc.cluster.local:9093"' \
+  "${crossplane_alerter}" ||
+  fail 'the Crossplane sync alerter must post to every Alertmanager peer'
+if grep -Fq 'alertmanager.kubescape.svc.cluster.local:9093' "${crossplane_alerter}"; then
+  fail 'the Crossplane sync alerter must not post through the load-balanced Service'
+fi
+
+grep -Fq 'longhorn_csi_snapshotter_replicas: "2"' "${dr_runbook}" ||
+  fail 'the Velero/CNPG runbook must document the warm-standby snapshotter value'
 
 yq e -e '.data.longhorn_csi_snapshotter_replicas == "2"' \
   "${prod_variables}" >/dev/null ||

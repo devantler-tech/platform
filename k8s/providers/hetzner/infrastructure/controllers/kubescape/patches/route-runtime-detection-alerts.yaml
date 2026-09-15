@@ -18,7 +18,10 @@ spec:
         #      (GET /api/v2/alerts), and the Alertmanager Slack receiver forwards
         #      them to the shared incoming-webhook. The value is HOST:PORT ONLY
         #      (no scheme, no path) — the node-agent's Prometheus Alertmanager
-        #      client appends /api/v2/alerts itself.
+        #      client appends /api/v2/alerts itself. Alertmanager HA does not
+        #      replicate received alerts between peers, so each StatefulSet pod
+        #      is listed through the headless Service; the load-balanced
+        #      Service would deliver every alert to only one peer.
         #   3. Coroot — via stdout. Coroot CE has no inbound alert receiver, but
         #      its eBPF node-agent captures this pod's stdout, so the alerts show
         #      up in Coroot's Logs view (and its log-pattern inspection). This is
@@ -29,5 +32,6 @@ spec:
         # left untouched: it is what feeds the plugin's other Runtime Detection
         # tabs (Application Profiles, Rules, …) from the Kubescape storage CRs.
         alertManagerExporterUrls:
-          - alertmanager.kubescape.svc:9093
+          - alertmanager-0.alertmanager-headless.kubescape.svc:9093
+          - alertmanager-1.alertmanager-headless.kubescape.svc:9093
         stdoutExporter: true
