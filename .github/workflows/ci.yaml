@@ -499,6 +499,7 @@ jobs:
               - 'scripts/tests/test-crossplane-egress-policy.sh'
               - 'scripts/tests/crossplane-egress-policy-rules.yaml'
               - 'scripts/tests/test-coroot-alert-remediation.sh'
+              - 'scripts/tests/test-coroot-final-remediation.sh'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               - 'scripts/tests/test-stranded-volume-attach-alert.sh'
               - 'scripts/tests/test-prune-protected-orphan-alert.sh'
@@ -1442,10 +1443,12 @@ jobs:
 
       - name: 🔕 Validate narrow Coroot alert suppressions
         if: needs.changes.outputs.k8s == 'true'
-        # The kubelet alert fingerprint is shared across every failed upstream.
-        # Exercise the rendered script so the two known static-pod probe series
-        # suppress, while one additional active upstream keeps the alert visible.
-        run: bash scripts/tests/test-coroot-alert-autosuppressor.sh
+        # Exercise the rendered script: exact by-design network and lifecycle
+        # signals suppress, while active extra upstreams and message/label near
+        # matches remain visible.
+        run: |
+          shellcheck scripts/tests/test-coroot-alert-autosuppressor.sh
+          bash scripts/tests/test-coroot-alert-autosuppressor.sh
 
       - name: 💾 Validate the Velero maintenance OOM alert
         if: needs.changes.outputs.k8s == 'true'
@@ -1806,6 +1809,8 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-alert-remediation.sh
           bash scripts/tests/test-coroot-alert-remediation.sh
+          shellcheck scripts/tests/test-coroot-final-remediation.sh
+          bash scripts/tests/test-coroot-final-remediation.sh
 
       - name: 📤 Save kubeconform schema cache
         # Runs even if the validate step above failed (see the restore step's
