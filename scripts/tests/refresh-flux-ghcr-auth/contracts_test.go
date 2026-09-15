@@ -617,6 +617,8 @@ func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 	for _, expected := range []string{
 		"name: publishapp",
 		"name: publishkubescapestorage",
+		"name: publishkubescapenodeagent",
+		"name: publishcorootnodeagent",
 		"name: publishprovider",
 		"name: ksailcd",
 		"^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-storage-hotfix\\.yaml@refs/heads/main$",
@@ -625,6 +627,14 @@ func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 		"image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:')",
 		"image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@')",
 		"verifyImageSignatures(image, [attestors.publishkubescapestorage])",
+		"^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-node-agent-hotfix\\.yaml@refs/heads/main$",
+		"image != 'ghcr.io/devantler-tech/platform-kubescape-node-agent'",
+		"image == 'ghcr.io/devantler-tech/platform-kubescape-node-agent'",
+		"verifyImageSignatures(image, [attestors.publishkubescapenodeagent])",
+		"^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-coroot-node-agent-hotfix\\.yaml@refs/heads/main$",
+		"image != 'ghcr.io/devantler-tech/platform-coroot-node-agent'",
+		"image == 'ghcr.io/devantler-tech/platform-coroot-node-agent'",
+		"verifyImageSignatures(image, [attestors.publishcorootnodeagent])",
 		"image.startsWith('ghcr.io/devantler-tech/ksail')",
 	} {
 		requireContains(t, policy, expected)

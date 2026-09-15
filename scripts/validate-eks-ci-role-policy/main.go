@@ -2332,7 +2332,36 @@ const (
 // database replacement with maxSurge zero and maxUnavailable one.
 //
 // Previous aggregate: 5e7a3af5b0ff2e0fbd6b354440587a99ae1300bb6d66ecf47075072382dae2ea.
-const expectedRenderedSurfaceSHA = "581f546914d30ddacb646b81e112c845dce93474983ac5ba0ab4029ae8703427"
+//
+// Re-approved for #3319 / #3829 (2026-09-15), derived on exact main
+// cf2333da87247dc860e0970a8e553afda0438de2, whose approved aggregate is
+// 581f546914d30ddacb646b81e112c845dce93474983ac5ba0ab4029ae8703427.
+// The maintainer explicitly authorized the implementing session to complete
+// every necessary repair without further approval prompts; that standing
+// authorization covers this exact corrective aggregate. Crossview's production
+// PostgreSQL now uses a retained 2 GiB longhorn-wffc persistent volume while
+// base and local development remain ephemeral. The application restart waits
+// for a marker that only the freshly initialized durable database can contain,
+// and the mixed namespace leaves user-namespace enforcement disabled because
+// Longhorn is not idmapped.
+//
+// CONSERVATION: rendering all five authorization overlays against that exact
+// base preserves all 573 identities. Exactly three existing objects change:
+// the crossview/crossview HelmRelease, the crossview Namespace and the
+// crossview/crossview-postgres-coroot-monitor-init ConfigMap. All 94
+// grant-bearing Role, ClusterRole, RoleBinding, ClusterRoleBinding and
+// ServiceAccount records are byte-identical; no identity, binding, verb,
+// wildcard, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: CI job 104276571088 in run 34936689213 rendered exact
+// head 2d5018b87310cae06032980b1a146f581024da98 against that exact base with its
+// SHA256-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer and reported this
+// aggregate as its authorization failure. The prior 1e1bd016 candidate did not
+// merge; exact-head Codex review required the admission, sequencing and claim
+// retention corrections that produced this replacement.
+//
+// Previous aggregate: 581f546914d30ddacb646b81e112c845dce93474983ac5ba0ab4029ae8703427.
+const expectedRenderedSurfaceSHA = "be696639e32e670edcd9011fba2d370772bbdf9ecc6646c37f95024a5f3831c7"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2345,7 +2374,7 @@ const expectedRenderedSurfaceSHA = "581f546914d30ddacb646b81e112c845dce93474983a
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "5e7a3af5b0ff2e0fbd6b354440587a99ae1300bb6d66ecf47075072382dae2ea"
+const previousRenderedSurfaceSHA = "581f546914d30ddacb646b81e112c845dce93474983ac5ba0ab4029ae8703427"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -3605,6 +3634,63 @@ func authorizationSurfaceEntry(identity resourceIdentity, document map[string]an
 	}, "\x00"), nil
 }
 
+// awsIdentityGrantError names an unapproved RBAC binding whose subjects reach the aws/aws
+// service account. It is deliberately distinct from the aggregate surface mismatch, which any
+// added document triggers, so a test can prove the identity itself was detected (#2806).
+const awsIdentityGrantError = "unapproved binding grants the aws/aws service account identity"
+
+// awsIdentityGroups are the RBAC groups the aws/aws service account belongs to. A binding to
+// any of them grants that identity whatever else it grants.
+var awsIdentityGroups = map[string]bool{
+	"system:serviceaccounts:aws": true,
+	"system:serviceaccounts":     true,
+	"system:authenticated":       true,
+}
+
+// awsIdentityGrantProblem reports a RoleBinding or ClusterRoleBinding whose subjects reach the
+// aws/aws service account, unless the binding is byte-for-byte one of the pinned, approved
+// resources in expectedRenderedHashes. The exemption keys on CONTENT, not name: a binding that
+// only borrows an approved identity (a modified or duplicated aws-managed-resources) still has
+// its grant reported here, rather than surfacing only as a fingerprint mismatch.
+func awsIdentityGrantProblem(document map[string]any, identity resourceIdentity) error {
+	if identity.apiVersion != "rbac.authorization.k8s.io/v1" ||
+		(identity.kind != "RoleBinding" && identity.kind != "ClusterRoleBinding") {
+		return nil
+	}
+	if expected, pinned := expectedRenderedHashes[identity]; pinned {
+		if actual, hashErr := canonicalFingerprint(document); hashErr == nil && actual == expected {
+			return nil
+		}
+	}
+	subjects, _ := document["subjects"].([]any)
+	for _, rawSubject := range subjects {
+		subject, ok := rawSubject.(map[string]any)
+		if !ok {
+			continue
+		}
+		kind, _ := subject["kind"].(string)
+		name, _ := subject["name"].(string)
+		namespace, _ := subject["namespace"].(string)
+		reaches := false
+		switch kind {
+		case "ServiceAccount":
+			// A RoleBinding subject without a namespace resolves to the binding's own namespace.
+			if namespace == "" && identity.kind == "RoleBinding" {
+				namespace = identity.namespace
+			}
+			reaches = name == "aws" && namespace == "aws"
+		case "User":
+			reaches = name == "system:serviceaccount:aws:aws"
+		case "Group":
+			reaches = awsIdentityGroups[name]
+		}
+		if reaches {
+			return fmt.Errorf("%s: %+v subject %s %q", awsIdentityGrantError, identity, kind, name)
+		}
+	}
+	return nil
+}
+
 // validateRendered requires the complete selected authorization surface to
 // match one canonical hash while preserving precise core-object diagnostics.
 func validateRendered(rendered []byte) error {
@@ -3624,6 +3710,9 @@ func validateRendered(rendered []byte) error {
 	substitutionProblems := make([]error, 0)
 	for _, document := range documents {
 		identity := identityOf(document)
+		if grantErr := awsIdentityGrantProblem(document, identity); grantErr != nil {
+			problems = append(problems, grantErr)
+		}
 		if isolationErr := validateAuthorizationIsolation(document, identity); isolationErr != nil {
 			problems = append(problems, fmt.Errorf("invalid authorization isolation for %+v: %w", identity, isolationErr))
 		}

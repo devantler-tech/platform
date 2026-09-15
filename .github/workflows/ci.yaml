@@ -369,6 +369,9 @@ jobs:
               # change to either must re-run both.
               - 'scripts/validate-image-verifier-liveness.sh'
               - 'scripts/tests/test-validate-image-verifier-liveness.sh'
+              # Stages exact admission and pull-time signer routes before the
+              # compatibility-image workloads consume them.
+              - 'scripts/tests/test-coroot-image-verifier-prerequisite.sh'
               # The trigger-set test for the liveness WORKFLOW (listed above), so a
               # PR that edits only the test still runs it.
               - 'scripts/tests/test-validate-image-verifier-liveness-workflow.sh'
@@ -1257,6 +1260,12 @@ jobs:
           shellcheck scripts/tests/test-validate-image-verifier-liveness-workflow.sh
           bash scripts/tests/test-validate-image-verifier-liveness.sh
           bash scripts/tests/test-validate-image-verifier-liveness-workflow.sh
+
+      - name: 🔏 Validate Coroot compatibility-image verifier prerequisite
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-coroot-image-verifier-prerequisite.sh
+          bash scripts/tests/test-coroot-image-verifier-prerequisite.sh
 
       - name: 🔏 Validate image-signature enforcement probe
         if: needs.changes.outputs.k8s == 'true'

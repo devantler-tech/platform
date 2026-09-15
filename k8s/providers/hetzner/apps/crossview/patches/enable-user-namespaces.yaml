@@ -1,14 +1,3 @@
-# Opt crossview into the label-gated `add-user-namespaces` Kyverno rule
-# (#1807). Hetzner-only: real Talos kernels support user namespaces; the
-# nested local Docker provider stays default-off. The production overlay keeps
-# the app eligible for mutation but explicitly sets hostUsers: true on the
-# bundled PostgreSQL Deployment because its Longhorn PVC is not idmapped. The
-# namespace has no CNPG pods, so the rule's cnpg.io/cluster exclude is moot;
-# the authored database value prevents the conditional mutation instead.
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: crossview
-  labels:
-    pod-security.devantler.tech/user-namespaces: enabled
+# Retired and intentionally unreferenced. Crossview's Longhorn-backed database
+# requires the namespace to remain outside user-namespace enforcement; the live
+# production kustomization therefore does not include this fragment.

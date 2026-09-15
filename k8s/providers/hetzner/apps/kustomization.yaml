@@ -114,7 +114,6 @@ patches:
   - path: whoami/patches/enable-user-namespaces.yaml
   - path: homepage/patches/enable-user-namespaces.yaml
   - path: backstage/patches/enable-user-namespaces.yaml
-  - path: crossview/patches/enable-user-namespaces.yaml
   - target:
       group: helm.toolkit.fluxcd.io
       version: v2
