@@ -17,8 +17,8 @@ fail() {
   exit 1
 }
 
-[[ "${inventory_poll_seconds}" =~ ^[0-9]+$ ]] ||
-  fail 'OpenCost retirement inventory poll interval must be a non-negative integer'
+[[ "${inventory_poll_seconds}" =~ ^[1-9][0-9]*$ ]] ||
+  fail 'OpenCost retirement inventory poll interval must be a positive integer'
 [[ "${inventory_request_timeout_seconds}" =~ ^[1-9][0-9]*$ ]] ||
   fail 'OpenCost retirement inventory request timeout must be a positive integer'
 [[ "${inventory_timeout_seconds}" =~ ^[1-9][0-9]*$ ]] ||
@@ -81,7 +81,11 @@ get_ready_inventory_snapshot() {
       --namespace flux-system --request-timeout="${request_timeout_seconds}s" -o json)" &&
       jq -e 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' \
       <<<"${kustomization_json}" >/dev/null; then
-      jq -e '(.status.inventory.entries | type) == "array"' \
+      jq -e '
+        (.status.inventory.entries | type) == "array" and
+        all(.status.inventory.entries[]?;
+          type == "object" and (.id | type) == "string")
+      ' \
         <<<"${kustomization_json}" >/dev/null ||
         fail 'Flux Kustomization flux-system/infrastructure does not expose a valid inventory entry list'
       printf '%s\n' "${kustomization_json}"

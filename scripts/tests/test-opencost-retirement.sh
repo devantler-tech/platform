@@ -59,6 +59,8 @@ case "$*" in
       jq -n '{status:{conditions:[{type:"Ready",status:"False"}],inventory:{entries:[{id:"observability_coroot_operator_helm.toolkit.fluxcd.io_HelmRelease"}]}}}'
     elif [[ -e "${FAKE_STATE_DIR}/missing-inventory" ]]; then
       jq -n '{status:{conditions:[{type:"Ready",status:"True"}]}}'
+    elif [[ -e "${FAKE_STATE_DIR}/malformed-inventory" ]]; then
+      jq -n '{status:{conditions:[{type:"Ready",status:"True"}],inventory:{entries:["invalid"]}}}'
     elif [[ -e "${FAKE_STATE_DIR}/managed-helmrelease" ]]; then
       jq -n '{status:{conditions:[{type:"Ready",status:"True"}],inventory:{entries:[{id:"opencost_opencost_helm.toolkit.fluxcd.io_HelmRelease"}]}}}'
     else
@@ -150,7 +152,7 @@ run_subject() {
     KUBECTL_BIN="${fake_kubectl}" \
     GIT_BIN="${fake_git}" \
     OPENCOST_RETIRE_JOB_SUFFIX=test \
-    OPENCOST_RETIRE_POLL_SECONDS=0 \
+    OPENCOST_RETIRE_POLL_SECONDS="${TEST_POLL_SECONDS:-1}" \
     OPENCOST_RETIRE_REQUEST_TIMEOUT_SECONDS=1 \
     OPENCOST_RETIRE_TIMEOUT_SECONDS=3 \
     GITHUB_EVENT_NAME=workflow_dispatch \
@@ -178,6 +180,15 @@ grep -qF 'current main tip' "${temp_dir}/stale.out" ||
   fail 'the stale-main refusal did not explain the tip mismatch'
 [[ ! -s "${stale_state}/commands.log" ]] ||
   fail 'the stale-main refusal contacted Kubernetes'
+
+zero_poll_state="$(init_state zero-poll)"
+if TEST_POLL_SECONDS=0 run_subject "${zero_poll_state}" --execute >"${temp_dir}/zero-poll.out" 2>&1; then
+  fail 'retirement must refuse a zero-second polling interval'
+fi
+grep -qF 'poll interval must be a positive integer' "${temp_dir}/zero-poll.out" ||
+  fail 'the zero-poll refusal did not explain the positive-interval requirement'
+[[ ! -s "${zero_poll_state}/commands.log" ]] ||
+  fail 'the zero-poll refusal contacted Kubernetes'
 
 happy_state="$(init_state happy)"
 if ! happy_output="$(run_subject "${happy_state}" --execute 2>&1)"; then
@@ -254,6 +265,16 @@ grep -qF 'does not expose a valid inventory entry list' "${temp_dir}/missing-inv
   fail 'the missing-inventory refusal did not explain the unjudgeable ownership state'
 grep -qF 'delete helmrelease' "${missing_inventory_state}/commands.log" &&
   fail 'the missing-inventory refusal issued a destructive command'
+
+malformed_inventory_state="$(init_state malformed-inventory)"
+touch "${malformed_inventory_state}/malformed-inventory"
+if run_subject "${malformed_inventory_state}" --execute >"${temp_dir}/malformed-inventory.out" 2>&1; then
+  fail 'retirement must refuse malformed entries in a Flux inventory list'
+fi
+grep -qF 'does not expose a valid inventory entry list' "${temp_dir}/malformed-inventory.out" ||
+  fail 'the malformed-inventory refusal did not explain the invalid entry list'
+grep -qF 'delete helmrelease' "${malformed_inventory_state}/commands.log" &&
+  fail 'the malformed-inventory refusal issued a destructive command'
 
 finding_state="$(init_state finding)"
 touch "${finding_state}/orphan-finding"
