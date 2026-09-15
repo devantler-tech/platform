@@ -35,8 +35,9 @@ done
 
 [ -f "${manifest}" ] || fail "manifest not found: ${manifest}"
 script_body="$(yq eval '.spec.jobTemplate.spec.template.spec.containers[0].command[2]' "${manifest}")"
-[ -n "${script_body}" ] && [ "${script_body}" != "null" ] ||
+if [ -z "${script_body}" ] || [ "${script_body}" = "null" ]; then
   fail "could not extract the autosuppressor script"
+fi
 
 work_root="$(mktemp -d /tmp/tmp.XXXXXXXXXX)"
 trap 'rm -rf "${work_root}"' EXIT
