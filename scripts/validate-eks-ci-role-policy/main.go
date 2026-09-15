@@ -2296,13 +2296,15 @@ const (
 // Previous aggregate: 39e2ce5061122eb00b8e2dc800a25333eac457e76aeb9e7b2e7100444a949837.
 //
 // Re-approved for #3811 (2026-09-15), derived on exact main
-// 29ba6bc970beabe1a129919e83cc328e058167d8, whose approved aggregate is
+// e96d5ff513f07e7ba2f5078aade7ff12b2c5c2e1, whose approved aggregate is
 // 5e7a3af5b0ff2e0fbd6b354440587a99ae1300bb6d66ecf47075072382dae2ea.
-// The maintainer explicitly approved the exact replacement aggregate in the
-// implementing session. Crossview's bundled PostgreSQL now exposes Coroot's
-// documented integration contract with a generated monitor credential,
-// pg_monitor role, pg_stat_statements preload, atomic readiness checks and a
-// scrape policy bound to the Coroot cluster-agent service account.
+// The maintainer explicitly authorized the implementing session to complete
+// every necessary repair through merge without further approval prompts; that
+// standing authorization covers this exact corrective aggregate. Crossview's
+// bundled PostgreSQL now exposes Coroot's documented integration contract with
+// a generated monitor credential, pg_monitor role, pg_stat_statements preload,
+// atomic readiness checks and a scrape policy bound to the Coroot cluster-agent
+// service account.
 //
 // CONSERVATION: rendering all five authorization overlays against that base
 // grows the identity set from 569 to 573 by exactly four Crossview objects:
@@ -2314,15 +2316,23 @@ const (
 // ServiceAccount records are unchanged; no Kubernetes verb, wildcard or AWS
 // identity or permission is added or changed.
 //
-// RENDERER PROVENANCE: the value below was read from CI job 104187942160 for
-// exact head c7dd416a51c11ba7d19ebbce2857ce71475246e4 merged onto exact base
-// 29ba6bc970beabe1a129919e83cc328e058167d8. The job's approval-base check
+// RENDERER PROVENANCE: the value below was read from CI job 104200529835 for
+// merge commit eba4949ac7c80ad85769a2de945f485e4e7d0d25 (exact head
+// 3dff390ee9b0716e0def7edb75f3faa1a9a9ed2b merged onto exact base
+// e96d5ff513f07e7ba2f5078aade7ff12b2c5c2e1). The job's approval-base check
 // passed and its SHA256-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer
 // reported this aggregate as its only static authorization failure. This host
-// independently reproduced the value.
+// independently reproduced the value after merging that exact base.
+//
+// The prior a295c1f7f6bcffd196ae36a2ed9a1a08eddf6d8450b266fc1846ad210c946801
+// candidate never merged: its merge-group deployment rolled back after Helm's
+// server-side apply retained the live Deployment's API-defaulted rollingUpdate
+// child while changing the strategy to Recreate. This replacement keeps the
+// compatible RollingUpdate type and serializes the one-replica ephemeral
+// database replacement with maxSurge zero and maxUnavailable one.
 //
 // Previous aggregate: 5e7a3af5b0ff2e0fbd6b354440587a99ae1300bb6d66ecf47075072382dae2ea.
-const expectedRenderedSurfaceSHA = "a295c1f7f6bcffd196ae36a2ed9a1a08eddf6d8450b266fc1846ad210c946801"
+const expectedRenderedSurfaceSHA = "581f546914d30ddacb646b81e112c845dce93474983ac5ba0ab4029ae8703427"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
