@@ -360,6 +360,9 @@ jobs:
               # The Homepage layout and the policy's allow-list are one contract:
               # either side changing alone is the drift this test exists to catch.
               - 'scripts/tests/test-restrict-homepage-service-groups.sh'
+              # The bookmark validator and its tests guard the same ConfigMap (#2909).
+              - 'scripts/validate-homepage-bookmarks.sh'
+              - 'scripts/tests/test-validate-homepage-bookmarks.sh'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
               - 'scripts/tests/test-kyverno-github-team-report-rbac.sh'
               - 'scripts/tests/test-tenant-route-hostname-boundary.sh'
@@ -1194,6 +1197,17 @@ jobs:
         run: |
           shellcheck scripts/tests/test-umami-provisioning-bootstrap.sh
           bash scripts/tests/test-umami-provisioning-bootstrap.sh
+
+      - name: 🔖 Validate Homepage bookmarks
+        if: needs.changes.outputs.k8s == 'true'
+        # bookmarks.yaml is an embedded block scalar, so schema validation cannot
+        # see a missing icon, a non-https link, or a group name that collides with
+        # a service group. The tests prove each check fires; the validator gates
+        # the real ConfigMap (#2909).
+        run: |
+          shellcheck scripts/validate-homepage-bookmarks.sh scripts/tests/test-validate-homepage-bookmarks.sh
+          bash scripts/tests/test-validate-homepage-bookmarks.sh
+          bash scripts/validate-homepage-bookmarks.sh
 
       - name: 🔐 Validate vault snapshots stay group-readable
         if: needs.changes.outputs.k8s == 'true'
