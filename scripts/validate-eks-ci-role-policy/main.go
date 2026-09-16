@@ -2360,7 +2360,40 @@ const (
 // installs the SHA256-pinned Linux/amd64 build of the same release.
 //
 // Previous aggregate: be696639e32e670edcd9011fba2d370772bbdf9ecc6646c37f95024a5f3831c7.
-const expectedRenderedSurfaceSHA = "a656e3f1c9e49a57be534427c3a3efd7a4e64455b17f7f0aabf79ccba4a976b3"
+//
+// That remediation established aggregate:
+//
+//	a656e3f1c9e49a57be534427c3a3efd7a4e64455b17f7f0aabf79ccba4a976b3
+//
+// Moved again by the C-0211 baseline context for keda (#3239), derived on main
+// b0ae0aea, whose approved aggregate is a656e3f1 above. The keda/keda
+// HelmRelease gains fsGroupChangePolicy: OnRootMismatch in podSecurityContext
+// and an empty seLinuxOptions object in securityContext for the operator,
+// metric server and webhooks, through the chart's own values. A HelmRelease is
+// a controller-RBAC emitter, so a pure VALUES change moves this aggregate even
+// though nothing is granted.
+//
+// CONSERVATION: rendering all five authorization overlays on this branch and on
+// main b0ae0aea yields 573 documents per side with an identical identity set.
+// Only the controllers overlay differs, by exactly 14 added lines, all inside
+// the keda/keda HelmRelease values. The 94 grant-bearing ClusterRole, Role,
+// ClusterRoleBinding, RoleBinding and ServiceAccount documents hash
+// byte-identically on both sides; injecting one synthetic ClusterRole into the
+// branch render changes that hash, so the identical result is a finding rather
+// than a blind read. No identity, binding, ServiceAccount, verb, wildcard, AWS
+// identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 104789963493 for head 38ade386 (the merge of main b0ae0aea into this branch),
+// which renders under the approved SHA256-verified kubectl v1.36.2 after its
+// approval-base check passed; the job's single error was this unapproved
+// aggregate. The pre-merge head f1cc3a75 reported the same aggregate, as
+// predicted: main was green against a656e3f1, so the levelling merge could not
+// move it. This host's kubectl v1.36.1 renderer is unapproved, so it was used
+// only for the conservation comparison and no local digest is claimed.
+//
+// Previous aggregate: a656e3f1c9e49a57be534427c3a3efd7a4e64455b17f7f0aabf79ccba4a976b3.
+const expectedRenderedSurfaceSHA = "f5ebe07839ad6a8230cfb608a7367ae24b485138716ec5ee815fe0177c564c34"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2373,7 +2406,7 @@ const expectedRenderedSurfaceSHA = "a656e3f1c9e49a57be534427c3a3efd7a4e64455b17f
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "be696639e32e670edcd9011fba2d370772bbdf9ecc6646c37f95024a5f3831c7"
+const previousRenderedSurfaceSHA = "a656e3f1c9e49a57be534427c3a3efd7a4e64455b17f7f0aabf79ccba4a976b3"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
