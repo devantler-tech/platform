@@ -410,6 +410,12 @@ jobs:
               - 'scripts/probe-cilium-externalauth-crossnode.sh'
               - 'scripts/tests/test-probe-cilium-externalauth-crossnode.sh'
               - '.github/workflows/probe-cilium-externalauth-crossnode.yaml'
+              # The #3790 datapath throttling measurement, its test and its workflow
+              # are one contract: the test pins that the script stays read-only, its
+              # arithmetic, and that no node or pod name reaches the public log.
+              - 'scripts/measure-datapath-cpu-throttling.sh'
+              - 'scripts/tests/test-measure-datapath-cpu-throttling.sh'
+              - '.github/workflows/measure-datapath-cpu-throttling.yaml'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
@@ -1336,6 +1342,16 @@ jobs:
         run: |
           shellcheck scripts/probe-cilium-externalauth-crossnode.sh scripts/tests/test-probe-cilium-externalauth-crossnode.sh
           bash scripts/tests/test-probe-cilium-externalauth-crossnode.sh
+
+      - name: 📏 Validate datapath CPU throttling measurement
+        if: needs.changes.outputs.k8s == 'true'
+        # The measurement needs prod and runs only on dispatch. Its test fakes kubectl
+        # from fixtures and pins the ratio arithmetic, every INCONCLUSIVE path, that it
+        # issues reads only, that no node or pod name reaches the public log, and the
+        # workflow's guards.
+        run: |
+          shellcheck scripts/measure-datapath-cpu-throttling.sh scripts/tests/test-measure-datapath-cpu-throttling.sh
+          bash scripts/tests/test-measure-datapath-cpu-throttling.sh
 
       - name: 🔐 Validate Cilium mutual-auth policy scope
         if: needs.changes.outputs.k8s == 'true'
