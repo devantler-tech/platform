@@ -25,8 +25,23 @@ mkdir -p "$scratch/bin"
 cat >"$scratch/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
-[ "${STUB_DOCKER_RC:-0}" = 0 ] || { printf 'denied\n'; exit "$STUB_DOCKER_RC"; }
+[ "${STUB_DOCKER_RC:-0}" = 0 ] || { printf 'denied\n' >&2; exit "$STUB_DOCKER_RC"; }
+printf 'WARNING: a harmless notice on stderr\n' >&2
 printf '%s\n' "$STUB_DIGEST"
+EOF
+cat >"$scratch/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+printf 'gh %s\n' "$*" >>"$STUB_LOG"
+[ -n "${STUB_ATTESTED:-}" ] || exit 1
+printf '%s\n' $STUB_ATTESTED
+EOF
+cat >"$scratch/bin/git" <<'EOF'
+#!/usr/bin/env bash
+printf 'git %s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+  cat-file) [[ " ${STUB_PRESENT:-} " == *" ${3%^\{commit\}} "* ]] ;;
+  fetch) exit 0 ;;
+esac
 EOF
 cat >"$scratch/bin/go" <<'EOF'
 #!/usr/bin/env bash
@@ -34,7 +49,8 @@ printf 'go %s\n' "$*" >>"$STUB_LOG"
 printf '%s\n' "$STUB_RESOLVER_OUT"
 exit "$STUB_RESOLVER_RC"
 EOF
-chmod +x "$scratch/bin/docker" "$scratch/bin/go"
+chmod +x "$scratch/bin/docker" "$scratch/bin/go" "$scratch/bin/gh" "$scratch/bin/git"
+export STUB_ATTESTED="" STUB_PRESENT=""
 
 run_case() { # <label> <expected-rc> <expected-annotation> <digest> <docker-rc> <resolver-rc> <resolver-out>
   local label="$1" want_rc="$2" want_annotation="$3" out rc
@@ -84,6 +100,30 @@ run_case "exit 0 without CONVERGED fails" 1 "resolver exited 0" \
   "$good_digest" 0 0 "BEHIND contradicts exit 0"
 run_case "exit 1 claiming CONVERGED fails" 1 "resolver exited 1" \
   "$good_digest" 0 1 "CONVERGED contradicts exit 1"
+
+assert_no_log() { # <label> <needle>
+  assertions=$((assertions + 1))
+  if grep -Fq -- "$2" "$scratch/log"; then
+    printf '  FAIL %s: %s unexpectedly in stub log\n' "$1" "$2"
+    failures=$((failures + 1))
+  else
+    printf '  ok   %s\n' "$1"
+  fi
+}
+
+missing_commit="$(printf 'b%.0s' {1..40})"
+present_commit="$(printf 'c%.0s' {1..40})"
+STUB_ATTESTED="$missing_commit $present_commit" STUB_PRESENT="$present_commit"
+export STUB_ATTESTED STUB_PRESENT
+run_case "attested commits are prepared before resolving" 0 "CONVERGED" \
+  "$good_digest" 0 0 "CONVERGED healed artifact"
+assert_log "a missing attested commit is fetched" "git fetch --quiet --no-tags origin $missing_commit"
+assert_no_log "a present attested commit is not fetched" "origin $present_commit"
+
+STUB_ATTESTED="not-a-commit"
+run_case "a malformed attested value is never fetched" 0 "CONVERGED" \
+  "$good_digest" 0 0 "CONVERGED ignored"
+assert_no_log "malformed value reaches no fetch" "git fetch"
 
 printf '%s assertions, %s failures\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ]

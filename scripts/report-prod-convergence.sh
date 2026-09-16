@@ -29,11 +29,31 @@ fail() {
   exit 1
 }
 
-if ! digest="$(docker buildx imagetools inspect "${subject}:latest" --format '{{.Manifest.Digest}}' 2>&1)"; then
-  fail "could not read the digest ${subject}:latest names: ${digest}"
+err_file="$(mktemp)"
+trap 'rm -f "$err_file"' EXIT
+
+# stderr is kept apart from the digest: a harmless warning must not read as a broken digest.
+if ! digest="$(docker buildx imagetools inspect "${subject}:latest" --format '{{.Manifest.Digest}}' 2>"$err_file")"; then
+  fail "could not read the digest ${subject}:latest names: $(tr '\n' ' ' <"$err_file")"
 fi
 digest="${digest//[[:space:]]/}"
 [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "${subject}:latest resolved to '${digest}', not a sha256 digest"
+
+# The resolver needs every attested commit locally. After a merge-group heal, `:latest`
+# is attested with the ejected group's commit, whose queue branch is already gone, so a
+# normal checkout lacks it and the verdict would be UNKNOWN for a prod that is fine.
+# The commit list read here only decides what to FETCH; the resolver verifies every
+# attestation again, so a failure here is left for it to report.
+if attested="$(gh attestation verify "oci://${subject}@${digest}" --bundle-from-oci \
+  --repo devantler-tech/platform --predicate-type https://slsa.dev/provenance/v1 \
+  --format json --jq '.[].verificationResult.signature.certificate.sourceRepositoryDigest' 2>"$err_file")"; then
+  for commit in $attested; do
+    [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || continue
+    git cat-file -e "${commit}^{commit}" 2>/dev/null ||
+      git fetch --quiet --no-tags origin "$commit" ||
+      printf '::warning::could not fetch attested commit %s\n' "$commit"
+  done
+fi
 
 if output="$(go run ./scripts/resolve-prod-convergence --digest "$digest" --subject "$subject" --main-ref "$main_ref")"; then
   rc=0
