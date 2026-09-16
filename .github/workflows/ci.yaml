@@ -499,6 +499,9 @@ jobs:
               # alone — still runs the check that covers it.
               - 'scripts/restart-uncapped-talos-coredns.sh'
               - 'scripts/tests/test-restart-uncapped-talos-coredns.sh'
+              # The values it checks live under k8s/**; this entry makes an edit to
+              # the test alone run it too.
+              - 'scripts/tests/test-kube-system-addon-cpu-limits.sh'
               - 'scripts/tests/test-coroot-cost-convergence.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
               - 'scripts/tests/test-crossplane-sync-alerter.sh'
@@ -899,7 +902,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.4"
+          KSAIL_VERSION: "7.184.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1390,6 +1393,16 @@ jobs:
         # else, and fails closed on any input it cannot read.
         run: bash scripts/tests/test-restart-uncapped-talos-coredns.sh
 
+      - name: 🧢 Validate kube-system add-ons declare their CPU limit
+        if: needs.changes.outputs.k8s == 'true'
+        # The kube-system LimitRange only reaches pods admitted after it exists, so the
+        # non-datapath add-ons carry their CPU limit in their own chart values (#3789).
+        # Pin the exact CPU request next to every limit: the static prod VPAs keep the
+        # ratio, and a limit alone, or a request raised to the limit, would let the VPA
+        # throttle the add-on. Also pin that the Cilium agent and Envoy DaemonSets
+        # stay unlimited here.
+        run: bash scripts/tests/test-kube-system-addon-cpu-limits.sh
+
       - name: 📣 Validate the rollout gate cannot suppress sync silently
         if: needs.changes.outputs.k8s == 'true'
         # The gate skips the pipeline's only Talos machine-config sync. Pin that
@@ -1704,7 +1717,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.4"
+          KSAIL_VERSION: "7.184.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2068,7 +2081,7 @@ jobs:
           persist-credentials: false
 
       - name: 🏷️ Validate naming conventions
-        uses: devantler-tech/actions/validate-naming@efdff74933a4c137d5b442f54687882a24de88db # v13.6.3
+        uses: devantler-tech/actions/validate-naming@3c3a6348b3e7aacc995ae49fc60032f95f70a779 # v13.6.5
         with:
           enabled: "true"
 
@@ -2410,7 +2423,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.4"
+          KSAIL_VERSION: "7.184.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2468,7 +2481,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@efdff74933a4c137d5b442f54687882a24de88db # v13.6.3
+        uses: devantler-tech/actions/aggregate-job-checks@3c3a6348b3e7aacc995ae49fc60032f95f70a779 # v13.6.5
         with:
           job-results: >-
             ${{ needs.changes.result }}
