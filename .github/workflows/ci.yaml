@@ -39,6 +39,12 @@ jobs:
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
+      # Reports whether prod's published artifact is on main, from its signed
+      # provenance (#3846). Not wired into any deploy yet; its tests also read
+      # this workflow's k8s filter, so a filter it can no longer parse fails here.
+      - name: 🧭 Validate prod convergence resolver
+        run: go test ./scripts/resolve-prod-convergence
+
       # The Wedding backup catalogue must be proven complete before the database
       # switches to its dedicated bucket, and continuous after it. The evaluator's
       # refusals (credential reuse, wrong destination, partial copy, source changed
@@ -895,7 +901,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.2"
+          KSAIL_VERSION: "7.183.4"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1712,7 +1718,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.2"
+          KSAIL_VERSION: "7.183.4"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2418,7 +2424,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.2"
+          KSAIL_VERSION: "7.183.4"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
