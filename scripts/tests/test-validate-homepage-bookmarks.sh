@@ -58,10 +58,10 @@ expect_fail() {
 first='.[0] | keys | .[0]'
 g="$(yq -r '.data."bookmarks.yaml"' "${config_map}" | yq -r "${first}")"
 b="$(yq -r '.data."bookmarks.yaml"' "${config_map}" | yq -r '.[0][] | .[0] | keys | .[0]')"
-[ -n "${g}" ] && [ "${g}" != "null" ] && [ -n "${b}" ] && [ "${b}" != "null" ] || {
+if [ -z "${g}" ] || [ "${g}" = "null" ] || [ -z "${b}" ] || [ "${b}" = "null" ]; then
   echo "::error::could not read the first bookmark group and entry from ${config_map}"
   exit 1
-}
+fi
 sel=".[0].\"${g}\"[0].\"${b}\""
 
 expect_pass "real config map" "${config_map}"
