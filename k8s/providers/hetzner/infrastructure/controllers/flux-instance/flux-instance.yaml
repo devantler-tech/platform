@@ -37,6 +37,15 @@ spec:
           - op: add
             path: /spec/template/spec/containers/0/args/-
             value: --requeue-dependency=5s
+          # The production image-verification handoff deliberately restarts this
+          # Deployment so no pre-suspension policy execution survives the
+          # credential boundary. The listener needs a few seconds to bind after
+          # process start; probing immediately creates a connect-refused event
+          # even though the controller becomes Ready normally. Keep the
+          # security restart and delay only its readiness observation.
+          - op: add
+            path: /spec/template/spec/containers/0/readinessProbe/initialDelaySeconds
+            value: 5
           - op: replace
             path: /spec/replicas
             value: 2

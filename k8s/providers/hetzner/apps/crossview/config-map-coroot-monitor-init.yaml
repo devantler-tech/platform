@@ -1,9 +1,10 @@
 # The Crossview chart uses the upstream postgres image directly rather than
 # CloudNativePG, so its monitoring role and extension must be initialized by the
 # image entrypoint. The script runs only for a fresh data directory; Crossview's
-# database is currently ephemeral, making every database pod replacement a
-# fresh initialization. psql imports the password from the process environment
-# so the credential never appears in the command line or this public ConfigMap.
+# database was ephemeral before #3319; after the durable-storage migration the
+# same script initializes only a genuinely fresh claim. psql imports the
+# password from the process environment so the credential never appears in the
+# command line or this public ConfigMap.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -32,4 +33,18 @@ data:
     ) \gexec
     ALTER ROLE coroot_monitor LOGIN PASSWORD :'coroot_monitor_password';
     GRANT pg_monitor TO coroot_monitor;
+
+    -- This durable marker distinguishes the new PVC-backed cluster from the
+    -- outgoing ephemeral cluster during the one-time cutover. The Crossview
+    -- app's init container waits for it before allowing the app process to
+    -- recreate its schema. Because docker-entrypoint-initdb.d runs only for an
+    -- empty data directory, the marker cannot appear on the outgoing cluster.
+    CREATE SCHEMA IF NOT EXISTS platform_bootstrap;
+    CREATE TABLE IF NOT EXISTS platform_bootstrap.gates (
+      name text PRIMARY KEY,
+      completed_at timestamptz NOT NULL DEFAULT clock_timestamp()
+    );
+    INSERT INTO platform_bootstrap.gates (name)
+    VALUES ('durable-storage-v1')
+    ON CONFLICT (name) DO NOTHING;
     SQL
