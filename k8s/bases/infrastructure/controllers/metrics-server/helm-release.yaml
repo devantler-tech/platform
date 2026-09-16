@@ -39,6 +39,18 @@ spec:
       # user, dropped capabilities, read-only root filesystem and seccomp profile
       # are all preserved; the rendered container gains this one field.
       seLinuxOptions: {}
+    # The CPU limit is declared in the template, so it does not depend on the
+    # kube-system LimitRange admitting the pod (#3789). The requests restate the
+    # chart's defaults. The static prod VPAs
+    # (providers/hetzner/infrastructure/vertical-pod-autoscalers/) control requests
+    # AND limits and keep their ratio, so this 100m:2 pair gives the same live values
+    # as the LimitRange-admitted pair.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 200Mi
+      limits:
+        cpu: "2"
     podDisruptionBudget:
       enabled: true
       # Stays minAvailable: 1: ksail bootstrap-installs metrics-server (ksail.yaml
