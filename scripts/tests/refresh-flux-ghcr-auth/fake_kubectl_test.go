@@ -759,13 +759,16 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	spec, _ := patch["spec"].(map[string]any)
 	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
 	attestors, _ := spec["attestors"].([]any)
-	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 4 {
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 6 {
 		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
 	}
 	storageAttestorValid := false
+	kubescapeNodeAgentAttestorValid := false
+	corootNodeAgentAttestorValid := false
 	for _, rawAttestor := range attestors {
 		attestor, _ := rawAttestor.(map[string]any)
-		if attestor["name"] != "publishkubescapestorage" {
+		name, _ := attestor["name"].(string)
+		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" {
 			continue
 		}
 		cosign, _ := attestor["cosign"].(map[string]any)
@@ -775,12 +778,24 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			break
 		}
 		identity, _ := identities[0].(map[string]any)
-		storageAttestorValid = identity["issuer"] == "https://token.actions.githubusercontent.com" &&
-			identity["subjectRegExp"] == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-storage-hotfix\\.yaml@refs/heads/main$"
+		issuerValid := identity["issuer"] == "https://token.actions.githubusercontent.com"
+		subject, _ := identity["subjectRegExp"].(string)
+		switch name {
+		case "publishkubescapestorage":
+			storageAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-storage-hotfix\\.yaml@refs/heads/main$"
+		case "publishkubescapenodeagent":
+			kubescapeNodeAgentAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-node-agent-hotfix\\.yaml@refs/heads/main$"
+		case "publishcorootnodeagent":
+			corootNodeAgentAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-coroot-node-agent-hotfix\\.yaml@refs/heads/main$"
+		}
 	}
 	validations, _ := spec["validations"].([]any)
 	genericExcludesStorage := false
 	dedicatedRoutesStorage := false
+	genericExcludesKubescapeNodeAgent := false
+	dedicatedRoutesKubescapeNodeAgent := false
+	genericExcludesCorootNodeAgent := false
+	dedicatedRoutesCorootNodeAgent := false
 	for _, rawValidation := range validations {
 		validation, _ := rawValidation.(map[string]any)
 		expression, _ := validation["expression"].(string)
@@ -788,15 +803,33 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			genericExcludesStorage = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-kubescape-storage'") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:')") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@')")
+			genericExcludesKubescapeNodeAgent = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-kubescape-node-agent'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kubescape-node-agent:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kubescape-node-agent@')")
+			genericExcludesCorootNodeAgent = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-coroot-node-agent'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@')")
 		}
 		if strings.Contains(expression, "attestors.publishkubescapestorage") {
 			dedicatedRoutesStorage = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-kubescape-storage'") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:')") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@')")
 		}
+		if strings.Contains(expression, "attestors.publishkubescapenodeagent") {
+			dedicatedRoutesKubescapeNodeAgent = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-kubescape-node-agent'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kubescape-node-agent:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kubescape-node-agent@')")
+		}
+		if strings.Contains(expression, "attestors.publishcorootnodeagent") {
+			dedicatedRoutesCorootNodeAgent = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-coroot-node-agent'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@')")
+		}
 	}
-	if !storageAttestorValid || !genericExcludesStorage || !dedicatedRoutesStorage {
-		return commandFailure(91, "consolidated image-validating policy patch omitted the dedicated storage publisher identity or exact repository routing")
+	if !storageAttestorValid || !kubescapeNodeAgentAttestorValid || !corootNodeAgentAttestorValid ||
+		!genericExcludesStorage || !genericExcludesKubescapeNodeAgent || !genericExcludesCorootNodeAgent ||
+		!dedicatedRoutesStorage || !dedicatedRoutesKubescapeNodeAgent || !dedicatedRoutesCorootNodeAgent {
+		return commandFailure(91, "consolidated image-validating policy patch omitted a compatibility publisher identity or exact repository routing")
 	}
 	if containsArg(args, "--dry-run=server") {
 		if os.Getenv("FAKE_IMAGE_VERIFICATION_POLICY_DRY_RUN_FAILURE") == "true" {
