@@ -432,3 +432,49 @@ jobs:
           shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
           bash scripts/guard-ghcr-fanout-component-gate.sh
           bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+
+  # Reports whether production runs what main now says (#3848, the follow-up to the
+  # resolver merged in #3846). After a merge group lands, prod should already hold its
+  # artifact; #2838 describes the interleaving where a heal overwrote it and nothing
+  # deployed it again. This job only READS the signed provenance of `:latest` and
+  # annotates the run — it never deploys. Acting on BEHIND/DIVERGED is the next slice.
+  #
+  # Warns rather than fails on BEHIND/DIVERGED: a queued merge group deploys before it
+  # merges, so a push can briefly see the next group's artifact. UNKNOWN fails, so a
+  # broken check never reads as a converged prod.
+  observe-prod-convergence:
+    name: 🧭 Observe Production Convergence
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository history for the ancestry check
+      packages: read # read the private manifests artifact and its attestations from GHCR
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history plus every branch: the resolver needs main's ancestry and the
+          # commit of any queued merge group whose artifact `:latest` may already name.
+          fetch-depth: 0
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🧭 Validate the convergence report
+        run: |
+          shellcheck scripts/report-prod-convergence.sh
+          shellcheck scripts/tests/test-report-prod-convergence.sh
+          bash scripts/tests/test-report-prod-convergence.sh
+
+      - name: 🔑 Log in to GHCR (read-only)
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "${REGISTRY_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: 🧭 Report production convergence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/report-prod-convergence.sh
