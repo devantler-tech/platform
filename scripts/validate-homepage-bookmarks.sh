@@ -65,14 +65,20 @@ problems="$(printf '%s\n' "${bookmarks_json}" | jq -r '
   if type != "array" or length == 0 then
     "no bookmark groups parsed — bookmarks.yaml is empty or not a list"
   else
-    .[] | to_entries[0] as $group
+    to_entries[] as $gi
+    | if ($gi.value | type) != "object" or ($gi.value | length) != 1 then
+        "bookmark group item \($gi.key + 1) must map exactly one group name"
+      else
+        $gi.value | to_entries[0] as $group
     | if ($group.value | type) != "array" or ($group.value | length) == 0 then
         "\($group.key): group has no bookmarks"
+      elif any($group.value[]; type != "object" or length != 1) then
+        "\($group.key): every bookmark item must map exactly one bookmark name"
       else
         ([$group.value[] | to_entries[0].key] | group_by(.) | map(select(length > 1) | .[0]) | .[]
           | "\($group.key) -> \(.): duplicate bookmark name in this group"),
         ($group.value[] | to_entries[0] as $b
-          | (if ($b.value | type) == "array" then ($b.value | add // {}) else {} end) as $f
+          | (if ($b.value | type) == "array" and all($b.value[]; type == "object") then ($b.value | add // {}) else {} end) as $f
           | "\($group.key) -> \($b.key)" as $where
           | (if ($f.icon // "") == "" then "\($where): missing icon"
              elif ($f.icon | tostring | slug | not) then "\($where): icon \"\($f.icon)\" does not match <slug>[-#RRGGBB]"
@@ -80,6 +86,7 @@ problems="$(printf '%s\n' "${bookmarks_json}" | jq -r '
             (if ($f.href // "") == "" then "\($where): missing href"
              elif ($f.href | tostring | test("^https://\\S+$") | not) then "\($where): href \"\($f.href)\" must be an https:// URL"
              else empty end))
+      end
       end
   end')"
 

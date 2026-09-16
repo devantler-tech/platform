@@ -88,6 +88,13 @@ expect_fail "group reuses a service group name" \
 expect_fail "group missing from the layout" \
   "$(mutate unlisted ".[0] |= with_entries(.key = \"Unlisted Group\")")" \
   "Unlisted Group: bookmark group is not listed in settings.yaml layout"
+expect_fail "group item with two group names" \
+  "$(mutate two-groups ".[0].Extra = .[0].\"${g}\"")" "bookmark group item 1 must map exactly one group name"
+expect_fail "bookmark item with two bookmark names" \
+  "$(mutate two-names ".[0].\"${g}\"[0].Extra = [{\"href\": \"http://bad\"}]")" \
+  "${g}: every bookmark item must map exactly one bookmark name"
+expect_fail "bookmark fields that are not mappings" \
+  "$(mutate scalar-fields "${sel} = [\"docker\"]")" "${g} -> ${b}: missing icon"
 expect_fail "empty bookmarks" "$(mutate empty '[]')" "no bookmark groups parsed"
 expect_fail "group without bookmarks" "$(mutate hollow ".[0].\"${g}\" = []")" "${g}: group has no bookmarks"
 # With services.yaml emptied the k8s annotations still name service groups, so the
