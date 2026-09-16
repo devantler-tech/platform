@@ -29,12 +29,13 @@
 #
 # THE VERDICT
 #   MEASURED      every sample was read, the node set and the measured pod set did not change, no
-#                 counter went backwards, and every measured container accumulated CFS periods.
+#                 counter went backwards, and cilium-agent and cilium-envoy accumulated CFS periods.
 #                 Each container line is then marked `ABOVE-1%` or `within-1%`; the 1% bar is the
 #                 one #3790 uses to reopen its decision. The exit code does not depend on it.
 #   INCONCLUSIVE  anything else: a failed read, a node or pod that appeared or disappeared (a
 #                 rollout or the autoscaler), a counter reset, a container with no series or with
-#                 zero CFS periods (no quota in effect, so there is no ratio to report).
+#                 zero CFS periods for cilium-agent or cilium-envoy (no ratio to decide on). Zero periods
+#                 for another container is reported, not failed: it was idle or uncapped.
 #
 # WHAT IT PRINTS. The workflow log of a public repository is public, so no node name, pod name or
 # address is printed — only container names, counts, ratios and the verdict. kubectl's stderr is
@@ -239,8 +240,12 @@ while IFS='|' read -r state key count periods throttled ratio worst; do
       problems="${problems} ${key}:no-series"
       ;;
     NOPERIODS)
-      report "| ${key} | ${count} | 0 | — | — | — | no quota in effect |"
-      problems="${problems} ${key}:no-periods"
+      report "| ${key} | ${count} | 0 | — | — | — | no periods (idle, or no quota in effect) |"
+      # Zero periods means the container never ran under a quota in the window: idle, or uncapped.
+      # Only the containers #3790 decides on must have a ratio; the others are reported.
+      if [[ "${gated_containers}" == *" ${key} "* ]]; then
+        problems="${problems} ${key}:no-periods"
+      fi
       ;;
     OK)
       bar='within-1%'

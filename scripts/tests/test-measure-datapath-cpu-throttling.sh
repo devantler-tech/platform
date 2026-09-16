@@ -209,6 +209,16 @@ for f in "${dir}"/1/*.prom; do
 done
 expect_inconclusive no-periods 'not every container could be measured: cilium-envoy/cilium-envoy:no-periods'
 
+# An idle container outside the gated pair is reported, not failed.
+dir="$(fixture idle)"
+for f in "${dir}"/2/*.prom; do
+  sed -i.bak 's/\(container_cpu_cfs_periods_total{container="csi-node-driver-registrar".*}\) [0-9]* /\1 10 /' "${f}"
+done
+run "${dir}" --context admin@prod --window-seconds 60
+require_rc 0 'idle: an idle ungated container must not make the run INCONCLUSIVE'
+require_text '| hcloud-csi-node/csi-node-driver-registrar | 2 | 0 | — | — | — | no periods (idle, or no quota in effect) |' 'idle: the idle container is not reported'
+require_text 'Verdict: MEASURED' 'idle: no MEASURED verdict'
+
 dir="$(fixture read-fails)"
 rm "${dir}/2/node-b.prom"
 expect_inconclusive read-fails 'the second cAdvisor read failed'
@@ -264,4 +274,4 @@ timeout_minutes="$(sed -n 's/^ *timeout-minutes: *\([0-9]*\)$/\1/p' "${workflow}
 # Worst case: the longest window plus two samples of kubectl calls at their request timeout.
 ((timeout_minutes * 60 >= 1800 + 600)) || fail 'the job timeout cannot fit the longest window'
 
-printf 'measure-datapath-cpu-throttling: ratios pinned, 8 inconclusive paths, usage, read-only verbs and workflow shape verified.\n'
+printf 'measure-datapath-cpu-throttling: ratios pinned, 8 inconclusive paths, idle reporting, usage, read-only verbs and workflow shape verified.\n'
