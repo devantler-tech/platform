@@ -22,6 +22,17 @@ spec:
       enabled: true
       clusterCIDR: 10.244.0.0/16
     replicaCount: ${hcloud_ccm_replicas:=2}
+    # The CPU limit is declared in the template, so it does not depend on the
+    # kube-system LimitRange admitting the pod (#3789). The requests restate the
+    # chart's defaults. The static prod VPAs (../../vertical-pod-autoscalers/)
+    # control requests AND limits and keep their ratio, so this 100m:2 pair gives the
+    # same live values as the LimitRange-admitted pair.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 50Mi
+      limits:
+        cpu: "2"
     strategy:
       type: RollingUpdate
       rollingUpdate:

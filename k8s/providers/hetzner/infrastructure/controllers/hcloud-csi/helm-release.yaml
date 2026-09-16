@@ -32,6 +32,41 @@ spec:
       # eviction candidates so volume operations keep working under pressure.
       priorityClassName: system-cluster-critical
       replicaCount: ${hcloud_csi_controller_replicas:=2}
+      # The CPU limit is declared per container, so it does not depend on the
+      # kube-system LimitRange admitting the pod (#3789). The chart leaves every
+      # controller container's resources empty, so the CPU request is stated alongside
+      # the limit. A limit alone would default the request to 2 CPUs, and the static
+      # prod VPAs (../../vertical-pod-autoscalers/), which control requests AND limits
+      # and keep their ratio, would then pin each container's limit at its request.
+      # 15m:2 is the pair the LimitRange admits, so the live values are the same.
+      # Memory keeps the LimitRange defaults: a 128Mi request, plus the 4Gi limit the
+      # hetzner overlay adds.
+      resources:
+        csiAttacher:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
+        csiResizer:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
+        csiProvisioner:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
+        livenessProbe:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
+        hcloudCSIDriver:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
       hcloudVolumeDefaultLocation: fsn1
       podDisruptionBudget:
         create: true
