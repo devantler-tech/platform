@@ -68,15 +68,15 @@ spec:
                       - name: crossview
                         securityContext:
                           readOnlyRootFilesystem: true
-          # Bundled Postgres (postgres:18.4, persistence disabled → data dir is an
-          # emptyDir). Flip the root FS read-only and add the writable mounts the
-          # postgres entrypoint genuinely needs:
+          # Bundled Postgres (postgres:18.6). The provider-neutral base keeps
+          # persistence disabled, so its data directory is an emptyDir; the
+          # production overlay enables Longhorn and replaces this exact patch.
+          # Flip the root FS read-only and add the writable mounts the ephemeral
+          # base genuinely needs:
           #   /var/lib/postgresql  the image VOLUME. PG18 initdb writes the fresh
           #                        cluster to PGDATA=/var/lib/postgresql/18/docker;
           #                        with persistence off the chart mounts nothing
-          #                        here, so it must be a writable emptyDir. This is
-          #                        the ephemeral data dir — see database.persistence
-          #                        below for what that costs and what #3315 tracks.
+          #                        here, so it must be a writable emptyDir.
           #   /tmp                 the entrypoint mktemp's the initdb pwfile here.
           # /var/run/postgresql (the socket dir) is already a chart emptyDir.
           - target:
@@ -179,27 +179,12 @@ spec:
         # crossview.${domain}, so the Secure cookie is valid in every environment.
         - name: NODE_ENV
           value: "production"
-    # The chart bundles a Postgres for session/user state. It runs ephemeral (no
-    # PVC) rather than on a Longhorn volume: Crossview is an SSO-fronted,
-    # read-only dashboard, so losing session/user rows on a pod restart is
-    # acceptable — and it avoids the autoscaler-node Longhorn data-loss footgun
-    # that bites stateful prod volumes.
-    #
-    # 🔴 Ephemeral costs more than the rows, and #3315 tracks the remainder.
-    # Crossview creates its tables once, at its OWN startup, so a Postgres-only
-    # restart — which VPA's `InPlaceOrRecreate` causes routinely — leaves a
-    # schemaless database that nothing repairs, and every OIDC login fails on
-    # `relation "users" does not exist` while `/api/health` still reports ok.
-    #
-    # Making the data directory persistent is the obvious fix and is NOT a
-    # drop-in: this namespace opts into user namespaces
-    # (providers/hetzner/apps/crossview/patches/enable-user-namespaces.yaml),
-    # whose stated precondition is that there is no PVC and no idmapped-volume
-    # dependency, and the add-security-context rule excludes only
-    # `cnpg.io/cluster` pods from `hostUsers: false`. A PVC here therefore lands
-    # the database on the idmapped-mount path that userns-longhorn-smoke
-    # (platform#2599) exists to validate and which is not validated yet. Sequence
-    # those together, not separately.
+    # Keep the reusable base provider-neutral. Production enables a protected
+    # longhorn-wffc PVC in its Crossview overlay and couples it to a serialized,
+    # no-surge rollout plus an explicit database-only hostUsers choice (#3319).
+    # The Docker provider does not deploy Crossview by default and therefore
+    # acquires no storage-class dependency. A disposable consumer that opts into
+    # this base directly keeps the chart's ephemeral behavior.
     database:
       # Pin the chart's bundled Postgres image. The crossview chart defaults
       # database.image.tag to `latest` (a disallow-latest-tag policy violation,

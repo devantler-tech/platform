@@ -57,7 +57,7 @@
 # pods, a compromised registry serving a tampered image).
 #
 # Scope: FIRST-PARTY images (ghcr.io/devantler-tech/*). All are keyless-cosign
-# signed, but by FOUR different signing identities, so they need four rules:
+# signed, but by SIX different signing identities, so they need six rules:
 #   1. ghcr.io/devantler-tech/ksail — the ksail-operator image — is signed by
 #      ksail's OWN release pipeline (devantler-tech/ksail .github/workflows/
 #      cd.yaml; see that repo's GoReleaser `docker_signs` step), at a release tag.
@@ -67,11 +67,15 @@
 #   3. ghcr.io/devantler-tech/platform-kubescape-storage — the compatibility
 #      image — is signed by this repository's dedicated main-only
 #      publish-kubescape-storage-hotfix.yaml workflow.
-#   4. the app images (wedding-app, ascoachingogvaner, …) are signed by the
+#   4. ghcr.io/devantler-tech/platform-kubescape-node-agent — signed by the
+#      dedicated publish-kubescape-node-agent-hotfix.yaml workflow on main.
+#   5. ghcr.io/devantler-tech/platform-coroot-node-agent — signed by the
+#      dedicated publish-coroot-node-agent-hotfix.yaml workflow on main.
+#   6. the app images (wedding-app, ascoachingogvaner, …) are signed by the
 #      shared publish-app.yaml workflow in devantler-tech/actions, pinned by
 #      commit SHA — the SAME form their Flux OCIRepository verify blocks and the
 #      verify-app-images ImageValidatingPolicy pin (#3022).
-# Talos evaluates rules in order, first match wins, so the three specific rules
+# Talos evaluates rules in order, first match wins, so the five specific rules
 # MUST precede the ghcr.io/devantler-tech/* catch-all.
 #
 # FAIL-OPEN by design for everything else: an image matching NO rule is pulled
@@ -150,6 +154,18 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kubescape-storage-hotfix\.yaml@refs/heads/main$
+  # Agent compatibility images are built from exact upstream sources by their
+  # own reviewed main-only workflows. These exact-repository rules must also
+  # precede the generic app catch-all, and each keeps its workflow identity
+  # separate from the other compatibility images.
+  - image: ghcr.io/devantler-tech/platform-kubescape-node-agent
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kubescape-node-agent-hotfix\.yaml@refs/heads/main$
+  - image: ghcr.io/devantler-tech/platform-coroot-node-agent
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-coroot-node-agent-hotfix\.yaml@refs/heads/main$
   # First-party APP images signed by the shared publish-app.yaml workflow in
   # devantler-tech/actions. Callers pin that reusable workflow by commit SHA, so
   # the ref admits that form alone and rejects everything else — a mutable ref
