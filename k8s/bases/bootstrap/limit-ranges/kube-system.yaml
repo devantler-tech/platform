@@ -14,7 +14,7 @@
 # Why a generous CPU-ONLY limit:
 #   * default.cpu "2" is a deliberately high ceiling: CPU is compressible and a
 #     limit does NOT affect scheduling (only requests do), so a high limit costs
-#     nothing, never throttles the datapath under burst, and is ~10x cilium's
+#     nothing, lets a container burst up to 2 CPUs before it is throttled, and is ~10x cilium's
 #     200m request / much more for the smaller add-ons (honouring the
 #     "high limit when request is low" burst-headroom goal). It comfortably
 #     exceeds every authored request in the namespace (max 200m), so the
