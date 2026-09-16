@@ -14,9 +14,9 @@ spec:
   # Prometheus Alertmanager `GET /api/v2/alerts` (filtered on
   # alertname="KubescapeRuleViolated"); it cannot read Kubescape storage CRs and
   # cannot query Coroot's Prometheus (a metrics store, not an Alertmanager). So a
-  # single, minimal Alertmanager is reintroduced here — scoped to the kubescape
+  # minimal Alertmanager cluster is reintroduced here — scoped to the kubescape
   # namespace and to runtime alerts only, NOT a general re-adoption of the
-  # Prometheus stack. One instance both RECEIVES the node-agent's pushed alerts
+  # Prometheus stack. The service both RECEIVES the node-agent's pushed alerts
   # (POST /api/v2/alerts, wired via the nodeAgent.config.alertManagerExporterUrls
   # patch in ../kubescape/patches/) and SERVES them to the Headlamp plugin (GET),
   # and routes them to Slack (slack_configs → the shared incoming-webhook). The
@@ -24,6 +24,9 @@ spec:
   # exporter (Coroot's eBPF log capture surfaces the alerts in its Logs view;
   # Coroot CE has no inbound alert receiver). Prod-only because runtimeDetection
   # is disabled on the docker/local overlay and Slack is a prod-only concern.
+  # Two gossip-connected replicas keep alert ingestion and Slack delivery
+  # available through one node failure. The chart wires cluster peers
+  # automatically whenever replicaCount is greater than one.
   interval: 10m
   timeout: 10m
   chart:
@@ -35,10 +38,19 @@ spec:
         name: prometheus-community
   # https://github.com/prometheus-community/helm-charts/blob/main/charts/alertmanager/values.yaml
   values:
-    # Deterministic in-cluster name so the node-agent exporter target and the
-    # Headlamp plugin setting can hard-code it: Service = alertmanager.kubescape.svc:9093.
+    # Deterministic in-cluster names. Producers post to every peer through the
+    # headless Service (alertmanager-N.alertmanager-headless.kubescape.svc:9093),
+    # because received alerts are not replicated between peers; the Headlamp
+    # plugin reads through the Service alertmanager.kubescape.svc:9093.
     fullnameOverride: alertmanager
-    replicaCount: 1
+    replicaCount: 2
+    # Keep the two peers on distinct nodes. The cluster-wide spread-pods policy
+    # also injects a hard topology spread, but chart-owned anti-affinity makes
+    # the availability contract explicit at its source.
+    podAntiAffinity: hard
+    # One voluntary disruption remains drainable while the other peer serves.
+    podDisruptionBudget:
+      maxUnavailable: 1
     # This Alertmanager never calls the Kubernetes API — don't mount the SA
     # token (chart default is true).
     automountServiceAccountToken: false

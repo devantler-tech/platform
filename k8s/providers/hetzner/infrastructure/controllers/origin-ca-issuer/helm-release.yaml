@@ -17,10 +17,17 @@ spec:
         name: origin-ca-issuer
   # https://github.com/cloudflare/origin-ca-issuer/blob/trunk/deploy/charts/origin-ca-issuer/values.yaml
   values:
-    replicaCount: ${origin_ca_issuer_replicas:=2}
-  # Chart hardcodes 1 CPU / 512Mi without templating; override via
-  # postRenderers since values.resources is not wired in the chart.
-  # The same patch supplies the C-0211 baseline context: cert-manager is
+    # Chart 0.6.4 nests the deployment count under controller. The old
+    # top-level replicaCount was ignored, leaving the supposedly disabled
+    # controller running 1/1 from the chart default.
+    controller:
+      replicaCount: ${origin_ca_issuer_replicas:=0}
+  # Keep the existing post-rendered resource reduction beside the C-0211
+  # baseline-context patch below. Chart 0.6.4 now exposes
+  # controller.resources, but moving the already-proven limits between
+  # equivalent configuration surfaces adds rollout churn without changing the
+  # disabled controller's availability behavior. The same patch supplies the
+  # C-0211 baseline context: cert-manager is
   # excluded from add-security-context's pod and container rules, and the scan
   # reads the stored Deployment template rather than the mutated pod (#3239).
   # Both fields are inert here: the pod mounts no volume, and the empty

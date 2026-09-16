@@ -2,7 +2,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - cloudflare-origin-issuer.yaml
+  # The Origin CA controller is disabled. Keep its unused custom resource out
+  # of this wait-gated layer so fresh and DR reconciliations do not wait for a
+  # Ready condition that no controller can publish.
   - cloudflare-api-token-external-secret.yaml
   - cloudflare-origin-ca-trust-bundle.yaml
   - letsencrypt-prod-issuer.yaml

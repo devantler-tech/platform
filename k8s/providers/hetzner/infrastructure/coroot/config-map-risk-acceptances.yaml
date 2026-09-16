@@ -1,0 +1,221 @@
+# Reviewed Coroot availability-risk acceptances for platform#3812.
+#
+# This is an allowlist, not a snapshot of everything Coroot currently reports.
+# Each entry binds one application identity (without Coroot's generated cluster
+# id) to one exact risk key and records why adding replicas would cost more or
+# make the workload less safe without improving its declared recovery objective.
+# The reconciler dismisses only these pairs. A newly named workload, a new risk
+# type, or a new application therefore stays active for investigation.
+#
+# Four initial warnings are deliberately absent: Alertmanager and the Longhorn
+# CSI snapshotter get warm replicas, Origin CA Issuer is disabled, and #3818
+# removes the superseded OpenCost usage scraper. crossview-postgres is also
+# absent: its unreplicated-database CRITICAL remains visible until platform#3319
+# delivers and verifies durable storage.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coroot-risk-acceptances
+  namespace: observability
+data:
+  risks.json: |
+    [
+      {
+        "application": "actual-budget:Deployment:actual-budget-actualbudget",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: RWO SQLite data; pod rescheduling and restore meet its recovery objective"
+      },
+      {
+        "application": "backstage:Deployment:backstage",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: single-writer state and migration safety; rescheduling meets its recovery objective"
+      },
+      {
+        "application": "kube-system:Deployment:cluster-autoscaler-hetzner-cluster-autoscaler",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: control-loop singleton off the serving path; workloads continue on existing nodes"
+      },
+      {
+        "application": "observability:Deployment:coroot-cluster-agent",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: duplicate cluster agents would double-ingest telemetry; the Coroot server remains HA"
+      },
+      {
+        "application": "observability:Deployment:coroot-operator",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: reconciler is off the serving path; Kubernetes restarts it from retained desired state"
+      },
+      {
+        "application": "observability:Deployment:coroot-prometheus",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: embedded metrics store has no deduplicating HA pair; Coroot server and database remain HA"
+      },
+      {
+        "application": "crossplane-system:Deployment:crossplane",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: single external-state reconciler avoids concurrent writes; managed workloads keep serving"
+      },
+      {
+        "application": "crossplane-system:Deployment:crossplane-rbac-manager",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: single RBAC reconciler avoids concurrent writes and is off the workload serving path"
+      },
+      {
+        "application": "observability:Deployment:crossplane-sync-exporter",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: telemetry exporter is off the serving path; a short scrape gap is acceptable"
+      },
+      {
+        "application": "crossview:Deployment:crossview",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: low-criticality internal UI; fast rescheduling meets its recovery objective"
+      },
+      {
+        "application": "kube-system:Deployment:descheduler",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: periodic optimizer is off the serving path; Kubernetes scheduling continues without it"
+      },
+      {
+        "application": "external-dns:Deployment:external-dns",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: single DNS writer avoids conflicting provider updates; published records keep serving"
+      },
+      {
+        "application": "ascoachingogvaner:Deployment:external-dns",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: single tenant DNS writer avoids conflicts; published records keep serving"
+      },
+      {
+        "application": "flux-system:Deployment:flux-operator",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: operator is off the serving path; the Flux controllers continue reconciling workloads"
+      },
+      {
+        "application": "headlamp:Deployment:headlamp",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: operator-only UI; the Kubernetes API remains available during rescheduling"
+      },
+      {
+        "application": "kube-system:Deployment:hubble-ui",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: diagnostic UI only; Hubble relay and the data plane remain available during rescheduling"
+      },
+      {
+        "application": "longhorn-system:InstanceManager:instance-manager-0c0363730e10c9272de1f53e608f8860",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: node-scoped Longhorn instance manager; storage durability comes from cross-node volume replicas"
+      },
+      {
+        "application": "longhorn-system:InstanceManager:instance-manager-0d470075ebcae8875301aa53419e1d24",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: node-scoped Longhorn instance manager; storage durability comes from cross-node volume replicas"
+      },
+      {
+        "application": "longhorn-system:InstanceManager:instance-manager-1d6354ff91a9ad3b1922050e547fde38",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: node-scoped Longhorn instance manager; storage durability comes from cross-node volume replicas"
+      },
+      {
+        "application": "longhorn-system:InstanceManager:instance-manager-2c5e0312dd2690e02ad4cfbc6a7b2b25",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: node-scoped Longhorn instance manager; storage durability comes from cross-node volume replicas"
+      },
+      {
+        "application": "longhorn-system:InstanceManager:instance-manager-44efed9835a6c0c7c26e0d4ed66b757b",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: node-scoped Longhorn instance manager; storage durability comes from cross-node volume replicas"
+      },
+      {
+        "application": "kubescape:Deployment:kubescape",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: security scanner is off the serving path; the next scheduled scan recovers a restart gap"
+      },
+      {
+        "application": "kubescape:Deployment:kubevuln",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: vulnerability worker is off the serving path and uses single-writer persisted state"
+      },
+      {
+        "application": "kubescape:Deployment:operator",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: security reconciler is off the serving path; declared scan state survives rescheduling"
+      },
+      {
+        "application": "cnpg-system:Deployment:plugin-barman-cloud",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: leader-only backup reconciler; database serving and retained backups remain available"
+      },
+      {
+        "application": "crossplane-system:Deployment:provider-aws-iam-87e81d392ac1",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: provider reconciler is off the serving path; a singleton prevents duplicate AWS writes"
+      },
+      {
+        "application": "crossplane-system:Deployment:provider-upjet-github-2516bc50dd55",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: provider reconciler is off the serving path; a singleton prevents duplicate GitHub writes"
+      },
+      {
+        "application": "crossplane-system:Deployment:provider-upjet-unifi-5523eabd691d",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: provider reconciler is off the serving path; a singleton prevents duplicate UniFi writes"
+      },
+      {
+        "application": "flux-system:Deployment:source-controller",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: leader-only source reconciler; a warm replica fails readiness and deployed artifacts keep serving"
+      },
+      {
+        "application": "kubescape:Deployment:storage",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: single-writer scanner state; security enforcement does not depend on this reporting store"
+      },
+      {
+        "application": "crossplane-system:Deployment:upbound-provider-family-aws-1d3725bd4a0b",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: provider reconciler is off the serving path; a singleton prevents duplicate AWS writes"
+      },
+      {
+        "application": "velero:Deployment:velero",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: single backup controller avoids duplicate operations; stored backups remain available"
+      },
+      {
+        "application": "whoami:Deployment:whoami",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: non-critical diagnostic endpoint; rescheduling meets its recovery objective"
+      }
+    ]
