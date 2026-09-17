@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# The Flux-managed, non-datapath kube-system add-ons declare their CPU limit in the
-# chart values, so a fresh or rebuilt cluster does not depend on the kube-system
-# LimitRange existing before the pod is admitted (#3789).
+# The Flux-managed kube-system add-ons, including the node datapath DaemonSets,
+# declare their CPU limit in the chart values, so a fresh or rebuilt cluster does not
+# depend on the kube-system LimitRange existing before the pod is admitted (#3789,
+# #3790).
 #
 # Each target pins BOTH its CPU request and the CPU limit. The static prod system VPAs
 # control requests and limits and keep their ratio, and Kubernetes defaults a missing
@@ -13,16 +14,13 @@
 # Scope: this reads the HelmRelease values in the base and hetzner provider files. It
 # does not render overlays, so an overlay patch that overrides these values is not
 # seen here.
-#
-# The datapath DaemonSets (the Cilium agent and cilium-envoy) are deliberately NOT
-# limited here; that decision belongs to #3790, so this test fails if one gains a
-# limit through these values.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly repo_root
 
 readonly cilium='k8s/bases/infrastructure/controllers/cilium/helm-release.yaml'
+readonly tetragon='k8s/bases/infrastructure/controllers/tetragon/helm-release.yaml'
 readonly metrics='k8s/bases/infrastructure/controllers/metrics-server/helm-release.yaml'
 readonly ccm='k8s/providers/hetzner/infrastructure/controllers/hcloud-ccm/helm-release.yaml'
 readonly csi='k8s/providers/hetzner/infrastructure/controllers/hcloud-csi/helm-release.yaml'
@@ -33,6 +31,10 @@ readonly targets="${cilium}|.spec.values.operator.resources|100m
 ${cilium}|.spec.values.hubble.relay.resources|15m
 ${cilium}|.spec.values.hubble.ui.frontend.resources|15m
 ${cilium}|.spec.values.hubble.ui.backend.resources|15m
+${cilium}|.spec.values.resources|200m
+${cilium}|.spec.values.envoy.resources|50m
+${tetragon}|.spec.values.tetragon.resources|100m
+${tetragon}|.spec.values.export.resources|15m
 ${metrics}|.spec.values.resources|100m
 ${ccm}|.spec.values.resources|100m
 ${csi}|.spec.values.controller.resources.csiAttacher|15m
@@ -40,10 +42,10 @@ ${csi}|.spec.values.controller.resources.csiResizer|15m
 ${csi}|.spec.values.controller.resources.csiProvisioner|15m
 ${csi}|.spec.values.controller.resources.livenessProbe|15m
 ${csi}|.spec.values.controller.resources.hcloudCSIDriver|15m
+${csi}|.spec.values.node.resources.csiNodeDriverRegistrar|15m
+${csi}|.spec.values.node.resources.livenessProbe|15m
+${csi}|.spec.values.node.resources.hcloudCSIDriver|15m
 ${snapshot}|.spec.values.controller.resources|10m"
-
-readonly datapath="${cilium}|.spec.values.resources
-${cilium}|.spec.values.envoy.resources"
 
 # check <root> — prints one FAIL line per violation and returns non-zero on any.
 check() {
@@ -68,15 +70,6 @@ check() {
       failures=$((failures + 1))
     fi
   done <<<"${targets}"
-  while IFS= read -r line; do
-    [[ -n "${line}" ]] || continue
-    file="${line%%|*}"
-    path="${line#*|}"
-    if ! yq -e "(${path}.limits // null) == null" "${root}/${file}" >/dev/null 2>&1; then
-      printf 'FAIL %s %s: datapath limits are decided in #3790, not here\n' "${file}" "${path}"
-      failures=$((failures + 1))
-    fi
-  done <<<"${datapath}"
   [[ "${failures}" -eq 0 ]]
 }
 
@@ -93,7 +86,7 @@ if ! out="$(check "${repo_root}")"; then
   fail 'committed kube-system add-on values are missing a declared CPU limit or the expected request'
 fi
 
-# 2-7. Each defect is caught, by name, on a copy of the tree. A control that could
+# 2-9. Each defect is caught, by name, on a copy of the tree. A control that could
 #      fail for any other reason proves nothing, so every one asserts the exact file
 #      and path.
 scratch="$(mktemp -d)"
@@ -106,7 +99,7 @@ expect_caught() { # <name> <file> <yq-edit> <expected-message-fragment>
     [[ -n "${f}" ]] || continue
     mkdir -p "${copy}/$(dirname "${f}")"
     cp "${repo_root}/${f}" "${copy}/${f}"
-  done < <(printf '%s\n%s\n' "${targets}" "${datapath}" | cut -d'|' -f1 | sort -u)
+  done < <(printf '%s\n' "${targets}" | cut -d'|' -f1 | sort -u)
   yq -i "${edit}" "${copy}/${file}"
   if out="$(check "${copy}")"; then
     fail "${name}: the defect was not caught"
@@ -122,9 +115,13 @@ expect_caught request-raised-to-limit "${csi}" '.spec.values.controller.resource
   "${csi} .spec.values.controller.resources.livenessProbe: requests.cpu must be 15m"
 expect_caught limit-changed "${metrics}" '.spec.values.resources.limits.cpu = "1"' \
   "${metrics} .spec.values.resources: limits.cpu must be \"2\""
-expect_caught agent-limited "${cilium}" '.spec.values.resources.limits.cpu = "2"' \
-  "${cilium} .spec.values.resources: datapath limits are decided in #3790"
-expect_caught envoy-limited "${cilium}" '.spec.values.envoy.resources.limits.cpu = "2"' \
-  "${cilium} .spec.values.envoy.resources: datapath limits are decided in #3790"
+expect_caught agent-limit-removed "${cilium}" 'del(.spec.values.resources.limits)' \
+  "${cilium} .spec.values.resources: limits.cpu must be \"2\""
+expect_caught envoy-limit-removed "${cilium}" 'del(.spec.values.envoy.resources.limits)' \
+  "${cilium} .spec.values.envoy.resources: limits.cpu must be \"2\""
+expect_caught tetragon-export-request-removed "${tetragon}" 'del(.spec.values.export.resources.requests)' \
+  "${tetragon} .spec.values.export.resources: requests.cpu must be 15m"
+expect_caught csi-node-limit-removed "${csi}" 'del(.spec.values.node.resources.hcloudCSIDriver.limits)' \
+  "${csi} .spec.values.node.resources.hcloudCSIDriver: limits.cpu must be \"2\""
 
-printf 'kube-system add-on CPU limits: 12 containers pin request + limit, datapath untouched, 6 defects caught.\n'
+printf 'kube-system add-on CPU limits: 19 containers pin request + limit, 8 defects caught.\n'

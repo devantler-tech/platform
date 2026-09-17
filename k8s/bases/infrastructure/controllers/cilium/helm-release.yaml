@@ -203,17 +203,29 @@ spec:
     # QoS so they survive node memory pressure; an OOMKilled cilium-agent
     # leaves BPF state degraded and the node loses ClusterIP routing
     # (observed cascading into ~13 workload crash-loops on prod-worker-2,
-    # 2026-05-28). Limits intentionally unset — Cilium recommends against
-    # capping the agent (https://docs.cilium.io/en/stable/operations/performance/).
+    # 2026-05-28).
+    #
+    # CPU limit "2" equals the kube-system default-limitrange default, which
+    # both DaemonSets already receive at admission. Declaring it here keeps a
+    # fresh cluster from starting them uncapped before that LimitRange exists
+    # (#3790). The value is deliberately generous: Cilium recommends against
+    # tight agent caps (https://docs.cilium.io/en/stable/operations/performance/),
+    # and the busiest agent already throttles close to 1% of CFS periods. The
+    # requests stay unchanged so the prod VPA keeps its admitted request:limit
+    # ratio. Memory limits stay unset.
     # ------------------------------------------------------------------
     resources:
       requests:
         cpu: 200m
         memory: 512Mi
+      limits:
+        cpu: "2"
     envoy:
       # Restart on config changes (same rationale as rollOutCiliumPods).
       rollOutPods: true
       resources:
+        limits:
+          cpu: "2"
         requests:
           cpu: 50m
           # memory 128Mi -> 64Mi: the standalone cilium-envoy DaemonSet uses

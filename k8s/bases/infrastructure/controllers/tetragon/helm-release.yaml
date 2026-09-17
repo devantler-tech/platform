@@ -58,9 +58,14 @@ spec:
     tetragon:
       # Resource requests promote the per-node agent DaemonSet out of
       # BestEffort QoS so it survives node memory pressure -- the same
-      # lesson as the cilium-agent OOM cascade. Limits are intentionally
-      # left unset (an event burst must not get the agent OOMKilled),
-      # matching the cilium-agent posture.
+      # lesson as the cilium-agent OOM cascade. The memory limit is
+      # intentionally left unset (an event burst must not get the agent
+      # OOMKilled), matching the cilium-agent posture.
+      #
+      # CPU limit "2" equals the kube-system default-limitrange default the
+      # pod already receives at admission, so a fresh cluster cannot start
+      # the agent uncapped before that LimitRange exists (#3790). The request
+      # is unchanged, so the prod VPA keeps its admitted request:limit ratio.
       #
       # Memory request right-sized 256Mi -> 128Mi: live prod agents use
       # only 63-128Mi, and the 256Mi reservation no longer fit a
@@ -78,6 +83,8 @@ spec:
         requests:
           cpu: 100m
           memory: 128Mi
+        limits:
+          cpu: "2"
       # Enrich exec / kprobe events with process capabilities and
       # namespaces (both default to false). enablePolicyFilter (default
       # true) is required for the K8s namespace / pod-label filtering that
@@ -142,3 +149,16 @@ spec:
     # The export-stdout sidecar is on by default (export.mode: stdout), so
     # Tetragon's JSON events go to the pod's stdout -- where Coroot's node-agent
     # ingests them, making them searchable in the Coroot UI with no extra wiring.
+    export:
+      # The sidecar declares no resources in the chart, so today it takes both
+      # kube-system default-limitrange defaults: request 15m, limit "2".
+      # Declaring the same pair keeps a fresh cluster from starting it uncapped
+      # before that LimitRange exists (#3790). The request must be pinned too:
+      # Kubernetes defaults a missing request to the limit, which would turn
+      # 15m:2 into 2:2 and the prod VPA would then shrink the limit to the
+      # request.
+      resources:
+        requests:
+          cpu: 15m
+        limits:
+          cpu: "2"
