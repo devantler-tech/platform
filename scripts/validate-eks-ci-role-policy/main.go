@@ -2602,7 +2602,33 @@ const (
 // digest is claimed.
 //
 // Previous aggregate: 1ef7baab087081f6145391fe81e52d5ec712edec311e6c56009318509faa8d46.
-const expectedRenderedSurfaceSHA = "a4781e58fb84590c887d65a6672e2d4857965c5b2ce998b5729c41ecc6c9fba6"
+//
+// Moved again by pinning the Kubescape relevancy capability (#3707). The
+// kubescape HelmRelease gains one values line, relevancy: enable, which the
+// chart already defaults to; a HelmRelease is a controller-RBAC emitter, so
+// this moves the aggregate even though nothing is granted and no rendered
+// behaviour changes.
+//
+// CONSERVATION: rendering all five authorization overlays on this branch and on
+// main eea5453d yields 573 identities per side with an identical sorted identity
+// list. Exactly one rendered document differs between the two sides, and it is
+// the kubescape HelmRelease, whose whole delta is the single added values line.
+// The 94 grant-bearing ClusterRole, Role, ClusterRoleBinding, RoleBinding and
+// ServiceAccount documents hash byte-identically on both sides (fac77cff);
+// appending one synthetic ClusterRole to the branch render changes that hash and
+// adds an identity to the sorted list, so both identical results are findings
+// rather than blind reads. No identity, binding, ServiceAccount, verb, wildcard,
+// AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 105399991022 for head 75a0308e (this branch, on CI run 35279942247), which
+// renders under the approved SHA256-verified kubectl v1.36.2; the job's single
+// failing test was this unapproved aggregate. This host's kubectl renderer is
+// unapproved, so it was used only for the conservation comparison and no local
+// digest is claimed.
+//
+// Previous aggregate: a4781e58fb84590c887d65a6672e2d4857965c5b2ce998b5729c41ecc6c9fba6.
+const expectedRenderedSurfaceSHA = "f6e7e761ab655cf26aace0e8f0e5df6ee469ebc012c047148cba322c01ef3cd3"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2615,7 +2641,7 @@ const expectedRenderedSurfaceSHA = "a4781e58fb84590c887d65a6672e2d4857965c5b2ce9
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "1ef7baab087081f6145391fe81e52d5ec712edec311e6c56009318509faa8d46"
+const previousRenderedSurfaceSHA = "a4781e58fb84590c887d65a6672e2d4857965c5b2ce998b5729c41ecc6c9fba6"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
