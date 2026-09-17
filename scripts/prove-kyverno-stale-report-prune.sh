@@ -74,12 +74,19 @@ log "ok: defect reproduced, stale result survives three scans"
 
 control_before="$(report_state always-current)"
 control_before="${control_before%% *}"
+stale_report_uid="$(report_state excluded-later)"
+stale_report_uid="${stale_report_uid%% *}"
 
 log "applying the deleting policy (stale after $stale_after, every minute)"
 sed -e "s/STALE_AFTER/$stale_after/" -e 's#schedule: ".*"#schedule: "* * * * *"#' "$dir/deleting-policy.yaml" | kubectl apply -f -
 
 wait_for "excluded-later's stale result pruned and its report recreated with only the current result" 900 \
   has_results excluded-later "require-owner-label/owner-label"
+
+recreated_uid="$(report_state excluded-later)"
+[[ "${recreated_uid%% *}" != "$stale_report_uid" ]] ||
+  fail "the report still carries its original uid ($stale_report_uid), so it was never deleted and recreated"
+log "ok: report deleted and recreated ($stale_report_uid -> ${recreated_uid%% *})"
 
 control_after="$(report_state always-current)"
 [[ "${control_after%% *}" == "$control_before" ]] ||
