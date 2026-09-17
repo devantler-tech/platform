@@ -137,11 +137,14 @@ run_case "a malformed attested value is never fetched" 0 "CONVERGED" \
   "$good_digest" 0 0 "CONVERGED ignored" "verdict=CONVERGED"
 assert_no_log "malformed value reaches no fetch" "git fetch"
 
+
 # The workflow acts on the verdict written above. Only BEHIND may deploy: DIVERGED is
 # what a merge group that deployed before merging looks like, and a failed check writes
-# no verdict at all. The observer must also wait on the prod-deploy lock, so it cannot
-# read `:latest` while a heal is still about to overwrite it.
+# no verdict at all. The decision runs inside the observer, which holds the prod-deploy
+# lock, so no two observers can decide at once and none reads `:latest` while a heal is
+# still about to overwrite it.
 workflow="$repo_root/.github/workflows/validate-main.yaml"
+redeploy='.jobs.observe-prod-convergence.steps[] | select(.run == "./scripts/redeploy-main-when-behind.sh")'
 assert_workflow() { # <label> <yq-expression> <expected>
   local got
   assertions=$((assertions + 1))
@@ -152,22 +155,18 @@ assert_workflow() { # <label> <yq-expression> <expected>
     failures=$((failures + 1))
   fi
 }
-# shellcheck disable=SC2016 # a literal workflow expression, not a shell expansion
-assert_workflow "the observer exposes the report's verdict" \
-  '.jobs.observe-prod-convergence.outputs.verdict' '${{ steps.report.outputs.verdict }}'
-assert_workflow "the report step carries the id the output reads" \
+assert_workflow "the report step carries the id the redeploy reads" \
   '.jobs.observe-prod-convergence.steps[] | select(.run == "./scripts/report-prod-convergence.sh") | .id' 'report'
 assert_workflow "the observer waits on the prod-deploy lock" \
   '.jobs.observe-prod-convergence.concurrency.group' 'prod-deploy'
 assert_workflow "the observer never cancels a queued deploy" \
   '.jobs.observe-prod-convergence.concurrency.cancel-in-progress' 'false'
-assert_workflow "the redeploy waits for the observer" \
-  '.jobs.redeploy-prod-when-behind.needs' 'observe-prod-convergence'
 assert_workflow "only BEHIND redeploys" \
-  '.jobs.redeploy-prod-when-behind.if' "needs.observe-prod-convergence.outputs.verdict == 'BEHIND'"
-# shellcheck disable=SC2016 # a literal workflow command, not a shell expansion
-assert_workflow "the redeploy goes through the gated CD workflow on main" \
-  '.jobs.redeploy-prod-when-behind.steps[-1].run' 'gh workflow run cd.yaml --repo "${REPOSITORY}" --ref main'
+  "$redeploy | .if" "steps.report.outputs.verdict == 'BEHIND'"
+assert_workflow "the redeploy is the locked job's last step, after the report" \
+  '.jobs.observe-prod-convergence.steps[-1].run' './scripts/redeploy-main-when-behind.sh'
+assert_workflow "no separate job decides outside the lock" \
+  '[.jobs[] | .steps[]? | select(.run // "" | test("workflow run cd.yaml|redeploy-main-when-behind.sh$"))] | length' '1'
 
 printf '%s assertions, %s failures\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ]
