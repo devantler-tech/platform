@@ -45,6 +45,14 @@ jobs:
       - name: 🧭 Validate prod convergence resolver
         run: go test ./scripts/resolve-prod-convergence
 
+      # validate-main.yaml runs the report after each push to main (#3848); test it on the
+      # pull request too, so a broken report is caught before it can turn main red.
+      - name: 🧭 Validate prod convergence report
+        run: |
+          shellcheck scripts/report-prod-convergence.sh
+          shellcheck scripts/tests/test-report-prod-convergence.sh
+          bash scripts/tests/test-report-prod-convergence.sh
+
       # The Wedding backup catalogue must be proven complete before the database
       # switches to its dedicated bucket, and continuous after it. The evaluator's
       # refusals (credential reuse, wrong destination, partial copy, source changed
@@ -360,6 +368,9 @@ jobs:
               # The Homepage layout and the policy's allow-list are one contract:
               # either side changing alone is the drift this test exists to catch.
               - 'scripts/tests/test-restrict-homepage-service-groups.sh'
+              # The bookmark validator and its tests guard the same ConfigMap (#2909).
+              - 'scripts/validate-homepage-bookmarks.sh'
+              - 'scripts/tests/test-validate-homepage-bookmarks.sh'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
               - 'scripts/tests/test-kyverno-github-team-report-rbac.sh'
               - 'scripts/tests/test-tenant-route-hostname-boundary.sh'
@@ -407,6 +418,12 @@ jobs:
               - 'scripts/probe-cilium-externalauth-crossnode.sh'
               - 'scripts/tests/test-probe-cilium-externalauth-crossnode.sh'
               - '.github/workflows/probe-cilium-externalauth-crossnode.yaml'
+              # The #3790 datapath throttling measurement, its test and its workflow
+              # are one contract: the test pins that the script stays read-only, its
+              # arithmetic, and that no node or pod name reaches the public log.
+              - 'scripts/measure-datapath-cpu-throttling.sh'
+              - 'scripts/tests/test-measure-datapath-cpu-throttling.sh'
+              - '.github/workflows/measure-datapath-cpu-throttling.yaml'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
@@ -1198,6 +1215,17 @@ jobs:
           shellcheck scripts/tests/test-umami-provisioning-bootstrap.sh
           bash scripts/tests/test-umami-provisioning-bootstrap.sh
 
+      - name: 🔖 Validate Homepage bookmarks
+        if: needs.changes.outputs.k8s == 'true'
+        # bookmarks.yaml is an embedded block scalar, so schema validation cannot
+        # see a missing icon, a non-https link, or a group name that collides with
+        # a service group. The tests prove each check fires; the validator gates
+        # the real ConfigMap (#2909).
+        run: |
+          shellcheck scripts/validate-homepage-bookmarks.sh scripts/tests/test-validate-homepage-bookmarks.sh
+          bash scripts/tests/test-validate-homepage-bookmarks.sh
+          bash scripts/validate-homepage-bookmarks.sh
+
       - name: 🔐 Validate vault snapshots stay group-readable
         if: needs.changes.outputs.k8s == 'true'
         run: |
@@ -1322,6 +1350,16 @@ jobs:
         run: |
           shellcheck scripts/probe-cilium-externalauth-crossnode.sh scripts/tests/test-probe-cilium-externalauth-crossnode.sh
           bash scripts/tests/test-probe-cilium-externalauth-crossnode.sh
+
+      - name: 📏 Validate datapath CPU throttling measurement
+        if: needs.changes.outputs.k8s == 'true'
+        # The measurement needs prod and runs only on dispatch. Its test fakes kubectl
+        # from fixtures and pins the ratio arithmetic, every INCONCLUSIVE path, that it
+        # issues reads only, that no node or pod name reaches the public log, and the
+        # workflow's guards.
+        run: |
+          shellcheck scripts/measure-datapath-cpu-throttling.sh scripts/tests/test-measure-datapath-cpu-throttling.sh
+          bash scripts/tests/test-measure-datapath-cpu-throttling.sh
 
       - name: 🔐 Validate Cilium mutual-auth policy scope
         if: needs.changes.outputs.k8s == 'true'

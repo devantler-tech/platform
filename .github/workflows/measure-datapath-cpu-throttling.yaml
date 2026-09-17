@@ -1,0 +1,124 @@
+name: Measure Datapath CPU Throttling
+
+# Record the throttled share of CFS periods for the datapath DaemonSets (#3790), before and after
+# their CPU limit is declared. #3790 reopens its decision if cilium-agent or cilium-envoy stays
+# above 1%.
+#
+# HOW. scripts/measure-datapath-cpu-throttling.sh samples every node's kubelet cAdvisor counters
+# twice, a window apart, and reports throttled periods / CFS periods per container. The script
+# header carries the reasoning and the verdicts.
+#
+# READ-ONLY. The script issues `get` calls only; nothing in the cluster is created or changed.
+#
+# ACCESS USED — the same established production mechanism as the ipcache diagnostic
+# (diagnose-cilium-ext-authz-ipcache.yaml) and .github/actions/deploy-prod/action.yml:
+#   * KUBE_CONFIG (the `prod` environment secret), context `admin@prod`. That identity is
+#     cluster-admin; the agents' read-only identity cannot reach nodes/proxy.
+#   * HCLOUD_TOKEN, exposed ONLY to the endpoint-selection step, for one read of the KSail-owned
+#     floating IP.
+# What bounds the job is the reviewed script, the main-branch guard, the pinned context, the
+# confirmation phrase and `contents: read` on the GitHub token — not the credentials.
+#
+# REVIEWED CODE ONLY. The first step refuses any ref but `refs/heads/main` before anything is
+# checked out, and checkout is pinned to that dispatch commit.
+#
+# DORMANT, TWICE OVER. No `schedule:` or `pull_request:` trigger, and an exact confirmation phrase.
+#
+# PUBLIC LOG. The script prints only container names, counts, ratios and the verdict — no node name,
+# pod name or address. The endpoint helper's success line names the API endpoint, so it is
+# discarded.
+#
+# scripts/tests/test-measure-datapath-cpu-throttling.sh pins the script's behaviour and the shape of
+# this workflow. It needs no cluster and no secrets, so it runs in ci.yaml's required `validate` job.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: read-production-datapath-throttling"
+        required: true
+        type: string
+      window_seconds:
+        description: "Seconds between the two samples (60-1800)"
+        required: false
+        type: string
+        default: "600"
+
+permissions: {}
+
+concurrency:
+  # Serialised with every production deploy path. A deploy rolls the datapath DaemonSets, and a
+  # replaced pod makes the window INCONCLUSIVE anyway.
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  measure-datapath-cpu-throttling:
+    name: 📏 Measure Datapath CPU Throttling
+    runs-on: ubuntu-latest
+    # The longest window (30 min) plus two samples of kubectl reads at their request timeout, with
+    # setup slack (pinned by the test).
+    timeout-minutes: 45
+    # KUBE_CONFIG is a `prod` ENVIRONMENT secret; without this it resolves to the empty string.
+    environment: prod
+    permissions:
+      contents: read # checkout repository
+    steps:
+      # Fails closed BEFORE checkout. `github.ref` reaches bash through `env:`, never interpolated.
+      - name: 🛑 Require the reviewed main branch
+        shell: bash
+        env:
+          RUN_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "${RUN_REF}" != 'refs/heads/main' ]]; then
+            printf 'Refusing to run: dispatch this workflow from main (got %s).\n' "${RUN_REF}" >&2
+            printf 'Only the script CI tested on main may run with production credentials.\n' >&2
+            exit 1
+          fi
+          printf 'Running from main.\n'
+
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # Checked BEFORE the kubeconfig is restored, so a mistyped dispatch cannot reach the cluster.
+      - name: 🛑 Require explicit confirmation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [[ "${CONFIRM}" != 'read-production-datapath-throttling' ]]; then
+            printf 'Refusing to run: the confirm input must be exactly "read-production-datapath-throttling".\n' >&2
+            printf 'Nothing has been read.\n' >&2
+            exit 1
+          fi
+          printf 'Confirmation accepted.\n'
+
+      - name: 🔑 Restore kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          umask 077
+          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🔗 Select stable prod API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
+
+      - name: 📏 Sample the datapath containers' CFS throttling
+        shell: bash
+        # Exit 3 is INCONCLUSIVE and fails the job on purpose. The window input reaches the script
+        # through `env:` and is validated there.
+        env:
+          WINDOW_SECONDS: ${{ inputs.window_seconds }}
+        run: ./scripts/measure-datapath-cpu-throttling.sh --context admin@prod --window-seconds "${WINDOW_SECONDS}"
