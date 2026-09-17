@@ -33,6 +33,16 @@ report_state() {
     jq -r '[.metadata.uid, ([.results[]? | "\(.policy)/\(.rule)"] | sort | join(" "))] | join(" ")' || true
 }
 
+# Prints the unix seconds of one result's timestamp in a ConfigMap's report.
+result_timestamp() { # <configmap> <policy> <rule>
+  local cm_uid
+  cm_uid="$(kubectl -n "$ns" get configmap "$1" -o jsonpath='{.metadata.uid}')"
+  kubectl -n "$ns" get policyreport "$cm_uid" -o json 2>/dev/null |
+    jq -r --arg policy "$2" --arg rule "$3" \
+      'first(.results[]? | select(.policy == $policy and .rule == $rule) | .timestamp.seconds) // empty' ||
+    true
+}
+
 # wait_for <description> <seconds> <command...>: retries the command every 10s.
 wait_for() {
   local what="$1" budget="$2"
@@ -63,14 +73,30 @@ both="require-owner-label/owner-label require-team-label/team-label"
 wait_for "both results reported for excluded-later" 600 has_results excluded-later "$both"
 wait_for "both results reported for always-current" 600 has_results always-current "$both"
 
+team_before="$(result_timestamp excluded-later require-team-label team-label)"
+owner_before="$(result_timestamp excluded-later require-owner-label owner-label)"
+[[ -n "$team_before" && -n "$owner_before" ]] || fail "could not read the result timestamps to compare against"
+
 log "excluding excluded-later from require-team-label"
 kubectl patch clusterpolicy require-team-label --type=json -p '[{"op":"add","path":"/spec/rules/0/exclude","value":{"any":[{"resources":{"names":["excluded-later"]}}]}}]'
 
-# Reproduce the defect before relying on the fix: three scans later the
-# excluded rule's result must still be there.
-sleep 180
+# Reproduce the defect before relying on the fix. A scan that has actually run
+# since the exclusion rewrites the still-evaluated result, so waiting for the
+# owner-label timestamp to advance proves a scan completed — a plain sleep would
+# not, and the stale result could then simply be one the scanner never reached.
+scan_ran() {
+  local now
+  now="$(result_timestamp excluded-later require-owner-label owner-label)"
+  [[ -n "$now" ]] && ((now > owner_before))
+}
+
+wait_for "a background scan to complete after the exclusion" 600 scan_ran
+
+team_after="$(result_timestamp excluded-later require-team-label team-label)"
+[[ "$team_after" == "$team_before" ]] ||
+  fail "the excluded rule's result was rewritten ($team_before -> $team_after), so it is not stale"
 has_results excluded-later "$both" || fail "defect did not reproduce: the stale result cleared without the policy"
-log "ok: defect reproduced, stale result survives three scans"
+log "ok: defect reproduced, the excluded rule's result survives a completed scan unchanged"
 
 control_before="$(report_state always-current)"
 control_before="${control_before%% *}"
