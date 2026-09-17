@@ -131,7 +131,7 @@ field() {
   esac
 }
 
-# assert_gate_behaviour runs the three cases every copy of the step must satisfy.
+# assert_gate_behaviour runs the four cases every copy of the step must satisfy.
 #
 #   $1 label   $2 script path   $3 shell flags
 #   $4 "diagnostics" to require the moved-entry line
@@ -161,7 +161,16 @@ assert_gate_behaviour() {
   [ "$(field "${result}" 1)" != "0" ] ||
     fail "${label}: a failing 'go test' was swallowed when 'go run' passed — the step reports success on a broken validator"
 
-  # Case C — control: both pass, so the step passes.
+  # Case C — the mirror of B, and the half of "the step fails if either did" that
+  # nothing else here covers: the verdict passes and only the diagnostics fail.
+  # Cases A, B and D are all satisfied by a step that ignores `go run` entirely,
+  # so dropping `|| status=1` from either `go run` line would otherwise land
+  # silently — and the diagnostics this gate exists for would stop being checked.
+  result="$(run_step "${script}" 0 1 "${shell_flags}")"
+  [ "$(field "${result}" 1)" != "0" ] ||
+    fail "${label}: a failing 'go run' was swallowed when 'go test' passed — the step reports success although the moved-entry diagnostics did not run"
+
+  # Case D — control: both pass, so the step passes.
   result="$(run_step "${script}" 0 0 "${shell_flags}")"
   [ "$(field "${result}" 1)" = "0" ] ||
     fail "${label}: the step failed while both commands passed (exit $(field "${result}" 1): '$(field "${result}" 3)')"
