@@ -4665,8 +4665,47 @@ flux_policy_parent_is_released() {
   ' "${flux_policy_parent_state_file}" >/dev/null
 }
 
+flux_policy_parent_has_any_owner() {
+  jq -e \
+    --arg annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" '
+    ((.metadata.annotations // {})[$annotation] // "") != ""
+  ' "${flux_policy_parent_state_file}" >/dev/null
+}
+
+# A killed transaction leaves the owner annotation behind, so this refusal — not the
+# malformed/suspended one — is what an orphaned parent fence actually hits. It needs
+# the same pointer the child-handoff refusal already carries. Emitted from two places
+# (the pre-acquisition check and the contention re-read), so the wording is shared:
+# an operator must not have to tell two differently-worded refusals apart.
+refuse_owned_flux_policy_parent() {
+  echo "::error::Another transaction already owns the parent Flux policy handoff; refusing cluster mutation. Run './scripts/refresh-flux-ghcr-auth.sh --fences' to list every held fence with its liveness evidence and exact release command, and see docs/dr/runbook.md → 'Recover an orphaned GHCR deploy fence'."
+}
+
+# Whether a re-read parent is still the object this transaction may fence: the same
+# object (UID), well-formed, unfenced by anyone, and not suspended. Only then is a
+# rejected acquisition contention rather than a conflict.
+flux_policy_parent_claim_preconditions_still_hold() {
+  jq -e \
+    --arg uid "${flux_policy_parent_uid}" \
+    --arg annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" '
+    .kind == "Kustomization"
+    and .metadata.uid == $uid
+    and (.metadata.resourceVersion | type == "string" and length > 0)
+    and ((.metadata.annotations // {}) | type == "object")
+    and (((.metadata.annotations // {})[$annotation] // "") == "")
+    and ((.spec.suspend // false) == false)
+  ' "${flux_policy_parent_state_file}" >/dev/null
+}
+
 pause_flux_policy_parent() {
   local resource_version attempt annotations_present
+  local max_attempts="${FLUX_POLICY_PARENT_CLAIM_MAX_ATTEMPTS:-5}"
+  local reread_resource_version
+  # The re-read below needs its own stderr sink. Pointed at the result file it would
+  # succeed, write nothing, and truncate the rejection that explains why the fence was
+  # refused — leaving a bare refusal with no cause in exactly the case that matters
+  # most, another actor or the controller competing for the object.
+  local reread_error_file="${flux_policy_parent_result_file}.reread"
 
   # The parent/child ownership annotations are a separate fail-closed fence:
   # even if this process loses the synchronization Lease during acquisition, a
@@ -4687,14 +4726,8 @@ pause_flux_policy_parent() {
     echo "::error::Could not inspect the parent Flux reconciliation before the image-verification policy handoff."
     return 1
   fi
-  if jq -e \
-    --arg annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" '
-    ((.metadata.annotations // {})[$annotation] // "") != ""
-  ' "${flux_policy_parent_state_file}" >/dev/null; then
-    # A killed transaction leaves this annotation behind, so this branch — not the
-    # malformed/suspended one below — is what an orphaned parent fence actually hits.
-    # It needs the same pointer the child-handoff refusal already carries.
-    echo "::error::Another transaction already owns the parent Flux policy handoff; refusing cluster mutation. Run './scripts/refresh-flux-ghcr-auth.sh --fences' to list every held fence with its liveness evidence and exact release command, and see docs/dr/runbook.md → 'Recover an orphaned GHCR deploy fence'."
+  if flux_policy_parent_has_any_owner; then
+    refuse_owned_flux_policy_parent
     return 1
   fi
   if ! jq -e '
@@ -4711,44 +4744,55 @@ pause_flux_policy_parent() {
     return 1
   fi
 
-  resource_version="$(jq -er '.metadata.resourceVersion' \
-    "${flux_policy_parent_state_file}")"
   flux_policy_parent_uid="$(jq -er '.metadata.uid' \
     "${flux_policy_parent_state_file}")"
   flux_policy_parent_owner="${sync_lease_holder}"
-  annotations_present="$(jq -r \
-    '(.metadata.annotations? | type) == "object"' \
-    "${flux_policy_parent_state_file}")"
-  jq -n \
-    --arg resource_version "${resource_version}" \
-    --arg uid "${flux_policy_parent_uid}" \
-    --arg owner_path "${FLUX_POLICY_PARENT_OWNER_JSON_PATH}" \
-    --arg owner "${flux_policy_parent_owner}" \
-    --argjson annotations_present "${annotations_present}" '
-    [
-      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
-      {op: "test", path: "/metadata/uid", value: $uid}
-    ]
-    + (if $annotations_present then [] else
-      [{op: "add", path: "/metadata/annotations", value: {}}]
-    end)
-    + [
-      {op: "add", path: $owner_path, value: $owner},
-      {op: "add", path: "/spec/suspend", value: true}
-    ]
-  ' >"${flux_policy_parent_patch_file}"
-  if kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace flux-system \
-    patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
-    "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
-    --type=json \
-    --patch-file="${flux_policy_parent_patch_file}" \
-    -o json \
-    >"${flux_policy_parent_state_file}" \
-    2>"${flux_policy_parent_result_file}"; then
-    flux_policy_parent_acquired=true
-  else
+
+  # The contended object is a Flux Kustomization whose status the controller rewrites
+  # continuously, so its resourceVersion moves on its own and this CAS is lost exactly
+  # when Flux is busiest — which, on a serialized merge queue, is the moment the next
+  # deploy starts. Losing it is contention, not a conflict, so it is retried; every
+  # other rejection, and every state that is no longer ours to fence, still fails
+  # closed on the first attempt (#3046).
+  attempt=1
+  while :; do
+    resource_version="$(jq -er '.metadata.resourceVersion' \
+      "${flux_policy_parent_state_file}")"
+    annotations_present="$(jq -r \
+      '(.metadata.annotations? | type) == "object"' \
+      "${flux_policy_parent_state_file}")"
+    jq -n \
+      --arg resource_version "${resource_version}" \
+      --arg uid "${flux_policy_parent_uid}" \
+      --arg owner_path "${FLUX_POLICY_PARENT_OWNER_JSON_PATH}" \
+      --arg owner "${flux_policy_parent_owner}" \
+      --argjson annotations_present "${annotations_present}" '
+      [
+        {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
+        {op: "test", path: "/metadata/uid", value: $uid}
+      ]
+      + (if $annotations_present then [] else
+        [{op: "add", path: "/metadata/annotations", value: {}}]
+      end)
+      + [
+        {op: "add", path: $owner_path, value: $owner},
+        {op: "add", path: "/spec/suspend", value: true}
+      ]
+    ' >"${flux_policy_parent_patch_file}"
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
+      --type=json \
+      --patch-file="${flux_policy_parent_patch_file}" \
+      -o json \
+      >"${flux_policy_parent_state_file}" \
+      2>"${flux_policy_parent_result_file}"; then
+      flux_policy_parent_acquired=true
+      break
+    fi
+
     # A lost patch response is ambiguous. Re-read and adopt only the exact
     # UID/owner/suspend tuple written by this transaction so EXIT cleanup owns
     # the durable fence even when kubectl reported failure.
@@ -4757,14 +4801,60 @@ pause_flux_policy_parent() {
       --namespace flux-system \
       get "${FLUX_KUSTOMIZATION_RESOURCE}" \
       "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
-      -o json >"${flux_policy_parent_state_file}" ||
-      ! flux_policy_parent_is_owned; then
+      -o json >"${flux_policy_parent_state_file}" \
+      2>"${reread_error_file}"; then
+      # A failed re-read is now the actionable cause, so it replaces the patch
+      # rejection in the emitted output. The redirection truncates the result file
+      # before cat runs, so a failed copy would leave it EMPTY -- and
+      # emit_safe_operation_output skips an empty file entirely, which is the very
+      # silence this block exists to prevent. Fall back to a deterministic
+      # non-empty line instead of discarding the failure.
+      if ! cat "${reread_error_file}" \
+        >"${flux_policy_parent_result_file}" 2>/dev/null; then
+        echo "parent re-read failed; its diagnostic could not be read" \
+          >"${flux_policy_parent_result_file}"
+      fi
+      break
+    fi
+    if flux_policy_parent_is_owned; then
+      flux_policy_parent_acquired=true
+      break
+    fi
+
+    # An owner that is not ours is a genuine foreign fence, never contention: refuse it
+    # with the same wording the pre-acquisition check uses, so the two are one thing to
+    # an operator rather than two.
+    if flux_policy_parent_has_any_owner; then
+      rm -f "${reread_error_file}"
       emit_safe_operation_output "flux-policy-parent-patch" \
         "${flux_policy_parent_result_file}"
-      echo "::error::Could not atomically pause or adopt the parent Flux policy handoff."
+      refuse_owned_flux_policy_parent
       return 1
     fi
-    flux_policy_parent_acquired=true
+
+    # Only a rejection whose resourceVersion demonstrably MOVED is contention. A
+    # rejection at an unchanged resourceVersion is something else entirely -- a
+    # permission denial, a validation error -- and retrying it would just repeat a
+    # request the server has already refused on its merits.
+    reread_resource_version="$(jq -r '.metadata.resourceVersion // ""' \
+      "${flux_policy_parent_state_file}")"
+    if [[ "${reread_resource_version}" == "${resource_version}" ]] ||
+      ((attempt >= max_attempts)) ||
+      ! flux_policy_parent_claim_preconditions_still_hold ||
+      [[ -e "${sync_lease_lost_file}" ]]; then
+      break
+    fi
+
+    attempt=$((attempt + 1))
+    sleep "${SYNC_INTERVAL}"
+  done
+
+  rm -f "${reread_error_file}"
+  if [[ "${flux_policy_parent_acquired}" != "true" ]]; then
+    emit_safe_operation_output "flux-policy-parent-patch" \
+      "${flux_policy_parent_result_file}"
+    echo "::error::Could not atomically pause or adopt the parent Flux policy handoff."
+    return 1
   fi
 
   # New parent reconciliations now stop at spec.suspend. After a mandatory

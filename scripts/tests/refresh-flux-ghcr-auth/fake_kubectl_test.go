@@ -508,6 +508,38 @@ func fakeKubectlPatchFluxPolicyParent(args []string, namespace, patchFile string
 			appendEnvFile("OPERATION_LOG", "flux-policy-parent-patch-rejected\n")
 			return commandFailure(56, "%s", rejection)
 		}
+		// Ordinary Flux controller churn advances the parent's resourceVersion between
+		// the script's read and its patch, so the CAS test fails against an object that
+		// is still perfectly claimable. Model exactly that -- advance the stored version
+		// and reject -- for the first N acquisition attempts. Note this deliberately
+		// MOVES the version, which is what separates contention from the rejection knob
+		// above: that one rejects without moving anything, and must never be retried.
+		if budget := parseInt(
+			os.Getenv("FAKE_FLUX_POLICY_PARENT_CAS_CHURN_REJECTIONS"), 0,
+		); budget > 0 {
+			fired := parseInt(markerContent("flux-policy-parent-cas-churn-count"), 0)
+			if fired < budget {
+				setMarkerContent(
+					"flux-policy-parent-cas-churn-count",
+					strconv.Itoa(fired+1),
+				)
+				setMarkerContent(
+					"flux-policy-parent-resource-version",
+					incrementDecimal(currentResourceVersion),
+				)
+				if os.Getenv("FAKE_FLUX_POLICY_PARENT_FOREIGN_OWNER_AFTER_CAS_CHURN") == "true" {
+					setMarkerContent(
+						"flux-policy-parent-owner",
+						"fixture-foreign-transaction",
+					)
+				}
+				appendEnvFile("OPERATION_LOG", "flux-policy-parent-cas-churn:flux-system\n")
+				return commandFailure(
+					56,
+					"Error from server (Invalid): the server rejected our request due to an error in our request",
+				)
+			}
+		}
 		owner := patchValueString(patch, "add", ownerPath)
 		if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
 			owner == "" ||
