@@ -2422,8 +2422,37 @@ const (
 // aggregate. This host's kubectl v1.36.1 renderer is unapproved, so it was used
 // only for the conservation comparison and no local digest is claimed.
 //
-// Previous aggregate: f5ebe07839ad6a8230cfb608a7367ae24b485138716ec5ee815fe0177c564c34.
-const expectedRenderedSurfaceSHA = "462515ecca04b510b5dc75d657bea337abda6c330c11f7296f9b8825c8fcdb5f"
+// That CPU-limit change established aggregate:
+//
+//	462515ecca04b510b5dc75d657bea337abda6c330c11f7296f9b8825c8fcdb5f
+//
+// Moved again by activating the Actual Budget user-namespace pilot (#3604),
+// derived on main 0aa8e705, whose approved aggregate is 462515ec above. The
+// actual-budget Namespace gains the pod-security.devantler.tech/user-namespaces
+// label, and the actual-budget-actualbudget Deployment gains a kustomize patch
+// setting hostUsers: false. Both are inside the apps overlay's HelmRelease and
+// Namespace documents, which the aggregate selects.
+//
+// CONSERVATION: rendering all five authorization overlays on this branch and on
+// main 0aa8e705 yields 569 identities per side, with zero added and zero
+// removed. Only the apps overlay differs, by 12 added lines, exactly the label
+// and the hostUsers patch. The grant-bearing ClusterRole, Role,
+// ClusterRoleBinding, RoleBinding and ServiceAccount documents hash
+// byte-identically on both sides; appending one synthetic ClusterRole changes
+// that hash, and dropping one identity reports exactly one removal, so both
+// results are findings rather than blind reads. No identity, binding,
+// ServiceAccount, verb, wildcard, AWS identity or permission changes, and
+// hostUsers: false narrows what the workload's UIDs map to on the host.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 104880822893 for head 1e98677c (the merge of main 0aa8e705 into this branch),
+// which renders under the approved SHA256-verified kubectl v1.36.2 after its
+// approval-base check passed; the job's single error was this unapproved
+// aggregate. This host's kubectl v1.36.1 renderer is unapproved, so it was used
+// only for the conservation comparison and no local digest is claimed.
+//
+// Previous aggregate: 462515ecca04b510b5dc75d657bea337abda6c330c11f7296f9b8825c8fcdb5f.
+const expectedRenderedSurfaceSHA = "8389e299bad09a06bb237fd1cf057d283e73edaed1cdb9c0c1d71627376aee51"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2436,7 +2465,7 @@ const expectedRenderedSurfaceSHA = "462515ecca04b510b5dc75d657bea337abda6c330c11
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "f5ebe07839ad6a8230cfb608a7367ae24b485138716ec5ee815fe0177c564c34"
+const previousRenderedSurfaceSHA = "462515ecca04b510b5dc75d657bea337abda6c330c11f7296f9b8825c8fcdb5f"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

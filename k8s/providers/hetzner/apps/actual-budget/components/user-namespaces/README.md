@@ -1,11 +1,12 @@
 # Actual Budget user-namespace pilot
 
-This production-only component is **disabled by default**. It sets
-`hostUsers: false` on the Actual Budget Deployment and labels its namespace for
-the existing Kyverno user-namespace admission policy. The sync server and
+This production-only component is **active**; its runtime verdict is recorded
+on [#3604](https://github.com/devantler-tech/platform/issues/3604). It
+sets `hostUsers: false` on the Actual Budget Deployment and labels its namespace
+for the existing Kyverno user-namespace admission policy. The sync server and
 `enablebanking-seed` sidecar keep their existing user/group IDs, mounts, and
 shared database volume. The deployment retains its single-replica `Recreate`
-strategy.
+strategy, so each rollout of this pod entails a brief outage.
 
 The pod setting is applied through an appended Helm post-renderer. The chart's
 Deployment has no `metadata.namespace`, so the inner target uses its exact
@@ -29,38 +30,24 @@ ksail workload validate
 ksail --config ksail.prod.yaml workload validate
 ```
 
-The regression script requires `kubectl`, Helm, `jq`, and `yq` v4. It downloads
-the chart version pinned by the HelmRelease, renders all its post-renderers,
-and compares both pilot states. Only `hostUsers` may change in the chart's
-workload; the complete PVC and container definitions must remain identical.
-It also checks the full production overlay, local isolation, and exact rollback.
-It uses a temporary copy of the manifests and needs no cluster or secrets.
+The regression script requires `kubectl`, Helm, `jq`, and `yq` v4. It checks
+that production references the component exactly once, then builds the disabled
+state by removing that reference in a temporary copy of the manifests. It
+downloads the chart version pinned by the HelmRelease, renders all its
+post-renderers, and compares both states. Only `hostUsers` may change in the
+chart's workload; the complete PVC and container definitions must remain
+identical. It also checks the full production overlay, local isolation, exact
+rollback, and that re-enabling reproduces the committed render. It needs no
+cluster or secrets.
 
-## Activate through a separate PR
+## Runtime verdict
 
-Activation is tracked by [#3604](https://github.com/devantler-tech/platform/issues/3604).
-Before enabling it, confirm the app, nodes, storage and backups are healthy.
-Record the current Deployment revision and pod UID privately as pre-rollout
-baselines; both are expected to change during the rollout. Also record the PVC
-UID, PV name and storage volume identity so post-rollout verification confirms
+The pre-rollout Deployment revision, pod UID, PVC UID, PV name and storage
+volume identity are recorded privately, so post-rollout verification can confirm
 that the same storage objects remain bound. A different healthy volume is not
 evidence that the original data was preserved.
 
-Uncomment only this component entry in
-[`apps/kustomization.yaml`](../../../kustomization.yaml):
-
-```yaml
-components:
-  # Other existing components stay in place.
-  - actual-budget/components/user-namespaces
-```
-
-Run the validations above, adapting the staging-only default-off assertion in
-the activation PR to test the new committed state and a temporary disabled
-state. Submit through the normal review and deployment path. Enabling the
-component replaces the one pod; the `Recreate` strategy entails a brief outage.
-
-The runtime verdict requires all the following:
+The verdict requires all the following:
 
 - The new deployed revision is the reviewed one. The Deployment is Available
   1/1, its replacement pod is Ready 2/2, and the pod spec contains
@@ -75,11 +62,11 @@ The runtime verdict requires all the following:
 - The same PVC/PV/storage volume remains bound and healthy. No new mount,
   permission, or warning events appear.
 - The app stays healthy for at least 30 minutes, including a sidecar interval.
-  Record the observation window and an aggregate verdict on the activation
-  issue, with detailed evidence kept private.
+  Record the observation window and an aggregate verdict on #3604, with detailed
+  evidence kept private.
 
-Only after this verdict should the short-lived component be retired and the
-proven setting made permanent through a separate reviewed change, tracked by
+After a passing verdict, the short-lived component is retired and the proven
+setting made permanent through a separate reviewed change, tracked by
 [#3605](https://github.com/devantler-tech/platform/issues/3605).
 
 ## Roll back without touching storage
@@ -93,4 +80,5 @@ sidecar reconciliation work again.
 Do not delete or recreate PVCs, reinstall the chart, change ownership
 recursively, or disable namespace policy independently as part of rollback.
 Those actions are not the inverse of this pilot. The regression test proves
-that removing the single reference restores the original rendered resources.
+that removing the single reference drops only the namespace label and the
+appended post-renderer.
