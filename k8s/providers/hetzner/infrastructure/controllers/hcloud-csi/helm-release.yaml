@@ -95,6 +95,25 @@ spec:
       # ranks the DaemonSet among the last eviction candidates so stateful pods
       # can keep mounting their storage under node memory pressure.
       priorityClassName: system-node-critical
+      # Same CPU pair as the controller containers above, for the same reasons
+      # (#3790): the chart leaves every node container's resources empty, so the
+      # 15m:2 pair the LimitRange admits is stated here, request included.
+      resources:
+        csiNodeDriverRegistrar:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
+        livenessProbe:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
+        hcloudCSIDriver:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
