@@ -437,14 +437,24 @@ jobs:
   # resolver merged in #3846). After a merge group lands, prod should already hold its
   # artifact; #2838 describes the interleaving where a heal overwrote it and nothing
   # deployed it again. This job only READS the signed provenance of `:latest` and
-  # annotates the run — it never deploys. Acting on BEHIND/DIVERGED is the next slice.
+  # annotates the run; redeploy-prod-when-behind below acts on a BEHIND verdict.
   #
   # Warns rather than fails on BEHIND/DIVERGED: a queued merge group deploys before it
   # merges, so a push can briefly see the next group's artifact. UNKNOWN fails, so a
   # broken check never reads as a converged prod.
+  #
+  # It takes the prod-deploy lock so it reads `:latest` only after any deploy or heal
+  # already in flight has finished publishing. Read earlier, a heal that checked out
+  # main before this push landed could still overwrite prod after a CONVERGED reading.
   observe-prod-convergence:
     name: 🧭 Observe Production Convergence
     runs-on: ubuntu-latest
+    concurrency:
+      group: prod-deploy
+      cancel-in-progress: false
+      queue: max
+    outputs:
+      verdict: ${{ steps.report.outputs.verdict }}
     permissions:
       contents: read # checkout repository history for the ancestry check
       packages: read # read the private manifests artifact and its attestations from GHCR
@@ -475,6 +485,27 @@ jobs:
         run: printf '%s' "${REGISTRY_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
 
       - name: 🧭 Report production convergence
+        id: report
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./scripts/report-prod-convergence.sh
+
+  # Closes #2838: when prod is BEHIND main, deploy main through the manual CD workflow,
+  # which carries every production gate and queues on the same prod-deploy lock.
+  # DIVERGED does not deploy — it is what a queued merge group that has deployed but not
+  # yet merged looks like, and redeploying main would roll that group back. The race in
+  # #2838 reads BEHIND once the later group merges. An UNKNOWN verdict writes no output,
+  # so a broken check never deploys.
+  redeploy-prod-when-behind:
+    name: 🔁 Redeploy Main When Prod Is Behind
+    needs: observe-prod-convergence
+    if: needs.observe-prod-convergence.outputs.verdict == 'BEHIND'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write # dispatch the CD workflow on main
+    steps:
+      - name: 🔁 Dispatch CD on main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: gh workflow run cd.yaml --repo "${REPOSITORY}" --ref main

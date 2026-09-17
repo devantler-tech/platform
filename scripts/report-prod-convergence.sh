@@ -2,9 +2,11 @@
 #
 # Reports whether production runs what main says, after a push to main (#3848).
 #
-# Observe-only: it resolves the digest `:latest` names, asks
-# scripts/resolve-prod-convergence for a verdict, and annotates the run. It never
-# deploys. The follow-up slice of #3848 acts on the verdict.
+# It resolves the digest `:latest` names, asks scripts/resolve-prod-convergence for
+# a verdict, annotates the run, and writes `verdict=<CONVERGED|BEHIND|DIVERGED>` to
+# $GITHUB_OUTPUT. It never deploys itself; the workflow redeploys main on BEHIND
+# (#3869). No verdict is written when the check fails, so a broken check can never
+# trigger a deploy.
 #
 #   exit 0  CONVERGED, or BEHIND/DIVERGED reported as a warning
 #   exit 1  the verdict could not be established (UNKNOWN, an unreadable digest,
@@ -73,6 +75,8 @@ case "${rc}:${verdict}" in
     fail "resolver exited ${rc} with '${output}' for ${digest}"
     ;;
 esac
+
+printf 'verdict=%s\n' "$verdict" >>"${GITHUB_OUTPUT:-/dev/null}"
 
 # shellcheck disable=SC2016 # the backticks are Markdown code spans, not expansions
 printf '### 🧭 Production convergence\n\n`%s` for `%s@%s` against `%s`.\n' "$output" "$subject" "$digest" "$main_ref" >>"$summary"
