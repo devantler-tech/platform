@@ -162,9 +162,18 @@ jobs:
           kubectl version --client
 
       - name: 🔐 Validate static production authorization controls
+        # Both commands run unconditionally, and the step fails if either did.
+        # They are independent outputs over the same surface: `go test` is the
+        # verdict, `go run` is the only caller of the moved-entry diagnostics. A
+        # real aggregate mismatch fails BOTH, so short-circuiting on the first
+        # left the one failure that most needs explaining with no entry names at
+        # all (#3879). Covered by scripts/tests/test-authorization-gate-diagnostics.sh.
         run: |
-          go test ./scripts/validate-eks-ci-role-policy
-          go run ./scripts/validate-eks-ci-role-policy .
+          set -euo pipefail
+          status=0
+          go test ./scripts/validate-eks-ci-role-policy || status=1
+          go run ./scripts/validate-eks-ci-role-policy . || status=1
+          exit "$status"
 
       - name: ⚙️ Setup KSail for effective authorization validation
         shell: bash

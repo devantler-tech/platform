@@ -230,6 +230,19 @@ jobs:
           shellcheck scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
           bash scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
 
+      # The authorization gate's verdict and its moved-entry diagnostics are two
+      # commands in one step, and a real aggregate mismatch fails BOTH — so a step
+      # that stopped at the first never ran the diagnostics on the one failure they
+      # exist to explain (#3879). That is a property of the STEP's shape, which no
+      # script it calls can enforce, so the test executes the step against stub
+      # binaries and ablates each assertion. Unconditional for the same reason as
+      # the steps above: its subjects are ci.yaml and cd.yaml themselves, which sit
+      # outside the k8s paths.
+      - name: 🔐 Validate the authorization gate reports its diagnostics
+        run: |
+          shellcheck scripts/tests/test-authorization-gate-diagnostics.sh
+          bash scripts/tests/test-authorization-gate-diagnostics.sh
+
       # Both subject guards above examine a file only when it already carries a
       # shared-publish-workflow subject, so an OCIRepository pointed at a devantler-tech
       # artifact with NO spec.verify at all is invisible to them — and refused by nothing
@@ -906,16 +919,24 @@ jobs:
         # The HEAD^1 checkout is diagnostic only: on an unapproved aggregate the
         # validator names the surface entries that differ from it. Without it the
         # verdict is identical and the moved entries are reported as unknown.
+        # Both commands run unconditionally, and the step fails if either did.
+        # They are independent outputs over the same surface: `go test` is the
+        # verdict, `go run` is the only caller of the moved-entry diagnostics. A
+        # real aggregate mismatch fails BOTH, so short-circuiting on the first
+        # left the one failure that most needs explaining with no entry names at
+        # all (#3879). Covered by scripts/tests/test-authorization-gate-diagnostics.sh.
         run: |
           set -euo pipefail
-          go test ./scripts/validate-eks-ci-role-policy
+          status=0
+          go test ./scripts/validate-eks-ci-role-policy || status=1
           base_root="$RUNNER_TEMP/approval-base-tree"
           if git worktree add --detach "$base_root" HEAD^1; then
-            go run ./scripts/validate-eks-ci-role-policy . "$base_root"
+            go run ./scripts/validate-eks-ci-role-policy . "$base_root" || status=1
           else
             echo "::warning::approval base checkout failed; an aggregate mismatch will not name moved entries"
-            go run ./scripts/validate-eks-ci-role-policy .
+            go run ./scripts/validate-eks-ci-role-policy . || status=1
           fi
+          exit "$status"
 
       - name: ⚙️ Setup KSail for effective authorization validation
         shell: bash
