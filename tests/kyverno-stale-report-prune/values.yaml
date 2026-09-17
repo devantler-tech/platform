@@ -1,0 +1,17 @@
+# Production's report settings (k8s/bases/infrastructure/controllers/kyverno/helm-release.yaml)
+# with a one-minute scan so the proof finishes in minutes.
+features:
+  backgroundScan:
+    skipResourceFilters: false
+    backgroundScanInterval: 1m
+config:
+  resourceFiltersInclude:
+    - "[Lease,*,*]"
+    - "[PolicyReport,*,*]"
+    - "[ClusterPolicyReport,*,*]"
+    - "[AdmissionReport,*,*]"
+    - "[ClusterAdmissionReport,*,*]"
+    - "[BackgroundScanReport,*,*]"
+    - "[ClusterBackgroundScanReport,*,*]"
+  resourceFiltersExclude:
+    - "[Node,*,*]"
