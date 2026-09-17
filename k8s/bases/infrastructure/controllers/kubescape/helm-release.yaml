@@ -53,6 +53,14 @@ spec:
       # posture silently ages (observed live 2026-08-28, issue #3275).
       continuousScan: enable
       vulnerabilityScan: enable
+      # Pinned rather than inherited. Chart 1.40.4 already defaults this to `enable`, so
+      # this changes nothing today — it is here so a future chart default flipping to
+      # `disable` cannot silently switch a security capability off. Relevancy is what makes
+      # the ApplicationProfile/VEX verdicts above meaningful: the eBPF node agent observes
+      # which libraries a container actually loads, so kubevuln can mark unreachable CVEs
+      # not_affected. Verified live 2026-09-17: ks-capabilities reads relevancy=enable, with
+      # 1133 vulnerabilitymanifests labelled kubescape.io/context: filtered vs 235 non-filtered.
+      relevancy: enable
       # kubevuln emits an OpenVEX document per scanned image (stored in-cluster
       # as OpenVulnerabilityExchangeContainer CRs), marking CVEs not_affected
       # when the workload's ApplicationProfile shows the vulnerable component
