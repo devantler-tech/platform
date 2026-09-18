@@ -53,6 +53,14 @@ spec:
       # posture silently ages (observed live 2026-08-28, issue #3275).
       continuousScan: enable
       vulnerabilityScan: enable
+      # Pinned rather than inherited. Chart 1.40.4 already defaults this to `enable`, so
+      # this changes nothing today — it is here so a future chart default flipping to
+      # `disable` cannot silently switch a security capability off. Relevancy is what makes
+      # the ApplicationProfile/VEX verdicts above meaningful: the eBPF node agent observes
+      # which libraries a container actually loads, so kubevuln can mark unreachable CVEs
+      # not_affected. Verified live 2026-09-17: ks-capabilities reads relevancy=enable, with
+      # 1133 vulnerabilitymanifests labelled kubescape.io/context: filtered vs 235 non-filtered.
+      relevancy: enable
       # kubevuln emits an OpenVEX document per scanned image (stored in-cluster
       # as OpenVulnerabilityExchangeContainer CRs), marking CVEs not_affected
       # when the workload's ApplicationProfile shows the vulnerable component
@@ -320,6 +328,43 @@ spec:
                 path: /spec/template/spec/containers/0/securityContext/seccompProfile
                 value:
                   type: RuntimeDefault
+          # C-0211 baseline context (#3239). The kubescape namespace is excluded
+          # from add-security-context and the chart exposes no securityContext
+          # value, so the two fields are post-rendered here. The pods already
+          # run with fsGroup 65532, whose volumes kubelet has chowned on every
+          # past mount, so OnRootMismatch only skips a recursive chown that
+          # changes nothing. The empty seLinuxOptions object leaves SELinux
+          # type and MCS category selection to the runtime.
+          - target:
+              kind: Deployment
+              name: ^(kubescape|kubevuln|operator|storage)$
+            patch: |
+              - op: add
+                path: /spec/template/spec/securityContext/fsGroupChangePolicy
+                value: OnRootMismatch
+              - op: add
+                path: /spec/template/spec/containers/0/securityContext/seLinuxOptions
+                value: {}
+          - target:
+              kind: CronJob
+              name: ^(kubescape|kubevuln)-scheduler$
+            patch: |
+              - op: add
+                path: /spec/jobTemplate/spec/template/spec/securityContext/fsGroupChangePolicy
+                value: OnRootMismatch
+              - op: add
+                path: /spec/jobTemplate/spec/template/spec/containers/0/securityContext/seLinuxOptions
+                value: {}
+          # node-agent keeps its chart-set `spc_t` SELinux type, which it needs
+          # to trace host processes. It sets no fsGroup, so OnRootMismatch
+          # changes no volume ownership; it only declares the policy.
+          - target:
+              kind: DaemonSet
+              name: ^node-agent$
+            patch: |
+              - op: add
+                path: /spec/template/spec/securityContext/fsGroupChangePolicy
+                value: OnRootMismatch
           # Chart 1.40.4 removes this rule from the node-agent ClusterRole, but
           # node-agent still lists ApplicationProfiles during its storage
           # readiness gate. Restore exactly the read-only rule from 1.40.3 so

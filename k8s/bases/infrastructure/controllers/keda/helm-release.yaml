@@ -36,6 +36,29 @@ spec:
       replicaCount: ${keda_metrics_server_replicas:=1}
     webhooks:
       replicaCount: ${keda_webhooks_replicas:=1}
+    # C-0211 baseline context, supplied through the chart's own values because
+    # keda is excluded from add-security-context's pod and container rules, and
+    # the scan reads the stored Deployment template rather than the mutated pod
+    # (#3239). Helm merges these maps into the chart defaults, so runAsNonRoot,
+    # the RuntimeDefault seccomp profile, the read-only root filesystem and the
+    # dropped capabilities are kept. None of the three pods sets fsGroup and each
+    # mounts only a Secret volume, so OnRootMismatch changes no ownership, and
+    # the empty seLinuxOptions object leaves SELinux type and MCS category
+    # selection to the runtime.
+    podSecurityContext:
+      operator:
+        fsGroupChangePolicy: OnRootMismatch
+      metricServer:
+        fsGroupChangePolicy: OnRootMismatch
+      webhooks:
+        fsGroupChangePolicy: OnRootMismatch
+    securityContext:
+      operator:
+        seLinuxOptions: {}
+      metricServer:
+        seLinuxOptions: {}
+      webhooks:
+        seLinuxOptions: {}
     # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never deadlocks a
     # node drain regardless of replica count. The webhooks PDB matters most:
     # keda-admission-webhooks validates every ScaledObject/TriggerAuthentication

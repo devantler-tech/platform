@@ -2360,7 +2360,275 @@ const (
 // installs the SHA256-pinned Linux/amd64 build of the same release.
 //
 // Previous aggregate: be696639e32e670edcd9011fba2d370772bbdf9ecc6646c37f95024a5f3831c7.
-const expectedRenderedSurfaceSHA = "a656e3f1c9e49a57be534427c3a3efd7a4e64455b17f7f0aabf79ccba4a976b3"
+//
+// That remediation established aggregate:
+//
+//	a656e3f1c9e49a57be534427c3a3efd7a4e64455b17f7f0aabf79ccba4a976b3
+//
+// Moved again by the C-0211 baseline context for keda (#3239), derived on main
+// b0ae0aea, whose approved aggregate is a656e3f1 above. The keda/keda
+// HelmRelease gains fsGroupChangePolicy: OnRootMismatch in podSecurityContext
+// and an empty seLinuxOptions object in securityContext for the operator,
+// metric server and webhooks, through the chart's own values. A HelmRelease is
+// a controller-RBAC emitter, so a pure VALUES change moves this aggregate even
+// though nothing is granted.
+//
+// CONSERVATION: rendering all five authorization overlays on this branch and on
+// main b0ae0aea yields 573 documents per side with an identical identity set.
+// Only the controllers overlay differs, by exactly 14 added lines, all inside
+// the keda/keda HelmRelease values. The 94 grant-bearing ClusterRole, Role,
+// ClusterRoleBinding, RoleBinding and ServiceAccount documents hash
+// byte-identically on both sides; injecting one synthetic ClusterRole into the
+// branch render changes that hash, so the identical result is a finding rather
+// than a blind read. No identity, binding, ServiceAccount, verb, wildcard, AWS
+// identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 104789963493 for head 38ade386 (the merge of main b0ae0aea into this branch),
+// which renders under the approved SHA256-verified kubectl v1.36.2 after its
+// approval-base check passed; the job's single error was this unapproved
+// aggregate. The pre-merge head f1cc3a75 reported the same aggregate, as
+// predicted: main was green against a656e3f1, so the levelling merge could not
+// move it. This host's kubectl v1.36.1 renderer is unapproved, so it was used
+// only for the conservation comparison and no local digest is claimed.
+//
+// Previous aggregate: a656e3f1c9e49a57be534427c3a3efd7a4e64455b17f7f0aabf79ccba4a976b3.
+//
+// That keda change established aggregate:
+//
+//	f5ebe07839ad6a8230cfb608a7367ae24b485138716ec5ee815fe0177c564c34
+//
+// Moved again by CPU limits on the non-datapath kube-system add-ons (#3789),
+// derived on main 7e333932, whose approved aggregate is f5ebe078 above. The
+// kube-system/cilium, hcloud-cloud-controller-manager, hcloud-csi,
+// metrics-server and snapshot-controller HelmReleases gain CPU limits in their
+// values. A HelmRelease is a controller-RBAC emitter, so a pure VALUES change
+// moves this aggregate even though nothing is granted.
+//
+// CONSERVATION: rendering all five authorization overlays on this branch and on
+// main 7e333932 yields 573 documents per side with an identical identity set.
+// Only the controllers overlay differs, by 58 added lines, all inside those five
+// kube-system HelmReleases. The 94 grant-bearing ClusterRole, Role,
+// ClusterRoleBinding, RoleBinding and ServiceAccount documents hash
+// byte-identically on both sides when each overlay is read as its own stream;
+// appending one synthetic ClusterRole to the branch changes that hash, so the
+// identical result is a finding rather than a blind read. No identity,
+// binding, ServiceAccount, verb, wildcard, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 104811014462 for head 294d29b3 (the merge of main 7e333932 into this branch),
+// which renders under the approved SHA256-verified kubectl v1.36.2 after its
+// approval-base check passed; the job's single error was this unapproved
+// aggregate. This host's kubectl v1.36.1 renderer is unapproved, so it was used
+// only for the conservation comparison and no local digest is claimed.
+//
+// That CPU-limit change established aggregate:
+//
+//	462515ecca04b510b5dc75d657bea337abda6c330c11f7296f9b8825c8fcdb5f
+//
+// Moved again by activating the Actual Budget user-namespace pilot (#3604),
+// derived on main 0aa8e705, whose approved aggregate is 462515ec above. The
+// actual-budget Namespace gains the pod-security.devantler.tech/user-namespaces
+// label, and the actual-budget-actualbudget Deployment gains a kustomize patch
+// setting hostUsers: false. Both are inside the apps overlay's HelmRelease and
+// Namespace documents, which the aggregate selects.
+//
+// CONSERVATION: rendering all five authorization overlays on this branch and on
+// main 0aa8e705 yields 569 identities per side, with zero added and zero
+// removed. Only the apps overlay differs, by 12 added lines, exactly the label
+// and the hostUsers patch. The grant-bearing ClusterRole, Role,
+// ClusterRoleBinding, RoleBinding and ServiceAccount documents hash
+// byte-identically on both sides; appending one synthetic ClusterRole changes
+// that hash, and dropping one identity reports exactly one removal, so both
+// results are findings rather than blind reads. No identity, binding,
+// ServiceAccount, verb, wildcard, AWS identity or permission changes, and
+// hostUsers: false narrows what the workload's UIDs map to on the host.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 104880822893 for head 1e98677c (the merge of main 0aa8e705 into this branch),
+// which renders under the approved SHA256-verified kubectl v1.36.2 after its
+// approval-base check passed; the job's single error was this unapproved
+// aggregate. This host's kubectl v1.36.1 renderer is unapproved, so it was used
+// only for the conservation comparison and no local digest is claimed.
+//
+// Previous aggregate: 462515ecca04b510b5dc75d657bea337abda6c330c11f7296f9b8825c8fcdb5f.
+//
+// That user-namespace pilot established aggregate:
+//
+//	8389e299bad09a06bb237fd1cf057d283e73edaed1cdb9c0c1d71627376aee51
+//
+// Moved again by CPU limits on the datapath DaemonSets (#3790), derived on main
+// 1dff6239, whose approved aggregate is 8389e299 above. The kube-system cilium,
+// tetragon and hcloud-csi HelmReleases gain CPU limits and pinned CPU requests in
+// their values. A HelmRelease is a controller-RBAC emitter, so a pure VALUES
+// change moves this aggregate even though nothing is granted.
+//
+// CONSERVATION: rendering all five authorization overlays on this branch and on
+// main 1dff6239 yields 573 identities per side, with zero added and zero
+// removed. Only the controllers overlay differs, by 28 added lines, all CPU
+// requests and limits inside those three HelmReleases. The grant-bearing
+// ClusterRole, Role, ClusterRoleBinding, RoleBinding and ServiceAccount documents
+// hash byte-identically on both sides for every overlay; appending one synthetic
+// ClusterRole changes that hash, and dropping one identity reports exactly one
+// removal, so both results are findings rather than blind reads. No identity,
+// binding, ServiceAccount, verb, wildcard, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 105176670094 for head dada9a29 (the merge of this branch into main 1dff6239),
+// which renders under the approved SHA256-verified kubectl v1.36.2 after its
+// approval-base check passed; the job's single error was this unapproved
+// aggregate. This host's kubectl v1.36.1 renderer is unapproved, so it was used
+// only for the conservation comparison and no local digest is claimed.
+//
+// Previous aggregate: 8389e299bad09a06bb237fd1cf057d283e73edaed1cdb9c0c1d71627376aee51.
+//
+// That datapath change established aggregate:
+//
+//	d6a129d4252a08a182aaf6f372d365fafaff1632fef7edac9a27fc57a0ac5f1c
+//
+// Moved again by the C-0211 baseline context for audit-log-forwarder (#3239),
+// derived on main 48e8bec3, whose approved aggregate is d6a129d4 above. The
+// observability/audit-log-forwarder HelmRelease gains fsGroupChangePolicy:
+// OnRootMismatch in podSecurityContext and an empty seLinuxOptions object in
+// its container securityContext, through the chart's own values. A HelmRelease
+// is a controller-RBAC emitter, so a pure VALUES change moves this aggregate
+// even though nothing is granted.
+//
+// CONSERVATION: rendering all five authorization overlays on this branch and on
+// main 48e8bec3 yields 569 identities per side with an identical sorted identity
+// list. Only the infrastructure overlay differs, by exactly 3 added lines, all
+// inside the audit-log-forwarder HelmRelease values. The 94 grant-bearing
+// ClusterRole, Role, ClusterRoleBinding, RoleBinding and ServiceAccount documents
+// hash byte-identically on both sides; appending one synthetic ClusterRole to the
+// branch render changes that hash, so the identical result is a finding rather
+// than a blind read. No identity, binding, ServiceAccount, verb, wildcard, AWS
+// identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 105195317192 for head 471a05be (the merge of this branch into main 48e8bec3),
+// which renders under the approved SHA256-verified kubectl v1.36.2; the job's
+// single error was this unapproved aggregate. This host's kubectl renderer is
+// unapproved, so it was used only for the conservation comparison and no local
+// digest is claimed.
+//
+// Previous aggregate: d6a129d4252a08a182aaf6f372d365fafaff1632fef7edac9a27fc57a0ac5f1c.
+//
+// That audit-log-forwarder change established aggregate:
+//
+//	5cfb6c88467d2590bfc7cbbd969667146db1cac42cf8ac05069f8b970bae52fe
+//
+// Moved again by the C-0211 baseline context for the kubescape workloads
+// (#3239), derived on main bc65ed8f, whose approved aggregate is 5cfb6c88
+// above. The kubescape HelmRelease gains three post-renderer patches adding
+// fsGroupChangePolicy: OnRootMismatch and an empty container seLinuxOptions
+// object to the kubescape, kubevuln, operator and storage Deployments and the
+// two scheduler CronJobs, and fsGroupChangePolicy to the node-agent DaemonSet.
+// A HelmRelease is a controller-RBAC emitter, so this moves the aggregate even
+// though nothing is granted.
+//
+// CONSERVATION: rendering all five authorization overlays on this branch and on
+// main bc65ed8f yields 569 identities per side with an identical sorted identity
+// list. Only the controllers overlay differs, by 27 added lines, all inside the
+// kubescape HelmRelease postRenderers. The 94 grant-bearing ClusterRole, Role,
+// ClusterRoleBinding, RoleBinding and ServiceAccount documents hash
+// byte-identically on both sides; appending one synthetic ClusterRole to the
+// branch render changes that hash, so the identical result is a finding rather
+// than a blind read. No identity, binding, ServiceAccount, verb, wildcard, AWS
+// identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 105238496421 for head 097e76f (the merge of this branch into main bc65ed8f),
+// which renders under the approved SHA256-verified kubectl v1.36.2; the job's
+// single error was this unapproved aggregate. This host's kubectl renderer is
+// unapproved, so it was used only for the conservation comparison and no local
+// digest is claimed.
+//
+// Previous aggregate: 5cfb6c88467d2590bfc7cbbd969667146db1cac42cf8ac05069f8b970bae52fe.
+//
+// That kubescape change established aggregate:
+//
+//	a98548ac8a079e0572d117894e650b65891a0350843bd14088cc8c33cd319634
+//
+// Moved again by the C-0211 baseline context for the Longhorn workloads
+// (#3239), derived on main aebd44e4, whose approved aggregate is a98548ac
+// above. The longhorn HelmRelease gains two post-renderer patches adding
+// fsGroupChangePolicy: OnRootMismatch and an empty container seLinuxOptions
+// object to the longhorn-manager DaemonSet and the longhorn-driver-deployer
+// Deployment. A HelmRelease is a controller-RBAC emitter, so this moves the
+// aggregate even though nothing is granted.
+//
+// CONSERVATION: rendering all five authorization overlays on this branch and on
+// main aebd44e4 yields 573 identities per side with an identical sorted identity
+// list. Only the controllers overlay differs, by 41 added lines, all inside the
+// longhorn HelmRelease postRenderers. The 94 grant-bearing ClusterRole, Role,
+// ClusterRoleBinding, RoleBinding and ServiceAccount documents hash
+// byte-identically on both sides; appending one synthetic ClusterRole to the
+// branch render changes that hash, so the identical result is a finding rather
+// than a blind read. No identity, binding, ServiceAccount, verb, wildcard, AWS
+// identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 105260655356 for head 66951b8 (the merge of this branch into main aebd44e4),
+// which renders under the approved SHA256-verified kubectl v1.36.2; the job's
+// single failing test was this unapproved aggregate. This host's kubectl
+// renderer is unapproved, so it was used only for the conservation comparison
+// and no local digest is claimed.
+//
+// Previous aggregate: a98548ac8a079e0572d117894e650b65891a0350843bd14088cc8c33cd319634.
+//
+// Moved again by the C-0211 baseline context for the Hetzner CSI workloads
+// (#3239), derived on main 20240dae, whose approved aggregate is 1ef7baab
+// below. The hcloud-csi HelmRelease gains two post-renderer patches adding
+// fsGroupChangePolicy: OnRootMismatch and an empty container seLinuxOptions
+// object to the hcloud-csi-node DaemonSet and the hcloud-csi-controller
+// Deployment. A HelmRelease is a controller-RBAC emitter, so this moves the
+// aggregate even though nothing is granted.
+//
+// CONSERVATION: rendering all five authorization overlays on this branch and on
+// main 20240dae yields 573 identities per side with an identical sorted identity
+// list. Exactly one rendered document differs between the two sides, and it is
+// the hcloud-csi HelmRelease, whose only delta is the postRenderers block above.
+// The 94 grant-bearing ClusterRole, Role, ClusterRoleBinding, RoleBinding and
+// ServiceAccount documents hash byte-identically on both sides; appending one
+// synthetic ClusterRole to the branch render changes that hash, so the identical
+// result is a finding rather than a blind read. No identity, binding,
+// ServiceAccount, verb, wildcard, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 105324573289 for head 85576ed0 (this branch, on CI run 35257229458), which
+// renders under the approved SHA256-verified kubectl v1.36.2; the job's single
+// failing test was this unapproved aggregate. This host's kubectl renderer is
+// unapproved, so it was used only for the conservation comparison and no local
+// digest is claimed.
+//
+// Previous aggregate: 1ef7baab087081f6145391fe81e52d5ec712edec311e6c56009318509faa8d46.
+//
+// Moved again by pinning the Kubescape relevancy capability (#3707). The
+// kubescape HelmRelease gains one values line, relevancy: enable, which the
+// chart already defaults to; a HelmRelease is a controller-RBAC emitter, so
+// this moves the aggregate even though nothing is granted and no rendered
+// behaviour changes.
+//
+// CONSERVATION: rendering all five authorization overlays on this branch and on
+// main eea5453d yields 573 identities per side with an identical sorted identity
+// list. Exactly one rendered document differs between the two sides, and it is
+// the kubescape HelmRelease, whose whole delta is the single added values line.
+// The 94 grant-bearing ClusterRole, Role, ClusterRoleBinding, RoleBinding and
+// ServiceAccount documents hash byte-identically on both sides (fac77cff);
+// appending one synthetic ClusterRole to the branch render changes that hash and
+// adds an identity to the sorted list, so both identical results are findings
+// rather than blind reads. No identity, binding, ServiceAccount, verb, wildcard,
+// AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was read from CI's own failure on job
+// 105399991022 for head 75a0308e (this branch, on CI run 35279942247), which
+// renders under the approved SHA256-verified kubectl v1.36.2; the job's single
+// failing test was this unapproved aggregate. This host's kubectl renderer is
+// unapproved, so it was used only for the conservation comparison and no local
+// digest is claimed.
+//
+// Previous aggregate: a4781e58fb84590c887d65a6672e2d4857965c5b2ce998b5729c41ecc6c9fba6.
+const expectedRenderedSurfaceSHA = "f6e7e761ab655cf26aace0e8f0e5df6ee469ebc012c047148cba322c01ef3cd3"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2373,7 +2641,7 @@ const expectedRenderedSurfaceSHA = "a656e3f1c9e49a57be534427c3a3efd7a4e64455b17f
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "be696639e32e670edcd9011fba2d370772bbdf9ecc6646c37f95024a5f3831c7"
+const previousRenderedSurfaceSHA = "a4781e58fb84590c887d65a6672e2d4857965c5b2ce998b5729c41ecc6c9fba6"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

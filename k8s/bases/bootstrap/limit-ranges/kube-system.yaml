@@ -3,17 +3,18 @@
 #
 # kube-system is in Kyverno's global resourceFilters (`[*/*,kube-system,*]`), so
 # NONE of the Kyverno resource policies touch it: no `add-resource-defaults`
-# stamp, no generated `default-limitrange`, and no `auto-vpa` VerticalPodAutoscaler
-# (there are 0 VPAs in kube-system on the live cluster — the auto-vpa.yaml comment
-# claiming VPA right-sizes kube-system is defeated by this global filter). Its
-# datapath/control-plane add-ons (cilium, coredns, hubble, spire-agent, hcloud
-# ccm/csi, metrics-server, tetragon, cluster-autoscaler, …) therefore run with no
-# CPU limit and fail kubescape C-0270.
+# stamp, no generated `default-limitrange`, and no `auto-vpa` VerticalPodAutoscaler.
+# Its VPAs are instead the static prod objects in
+# providers/hetzner/infrastructure/vertical-pod-autoscalers/, which control requests
+# AND limits and keep the ratio this LimitRange admits. This LimitRange supplies a CPU
+# limit to any container that declares none; the Flux-managed non-datapath add-ons
+# also declare it in their own chart values (#3789), so theirs does not depend on this
+# LimitRange existing before the pod is admitted.
 #
 # Why a generous CPU-ONLY limit:
 #   * default.cpu "2" is a deliberately high ceiling: CPU is compressible and a
 #     limit does NOT affect scheduling (only requests do), so a high limit costs
-#     nothing, never throttles the datapath under burst, and is ~10x cilium's
+#     nothing, lets a container burst up to 2 CPUs before it is throttled, and is ~10x cilium's
 #     200m request / much more for the smaller add-ons (honouring the
 #     "high limit when request is low" burst-headroom goal). It comfortably
 #     exceeds every authored request in the namespace (max 200m), so the

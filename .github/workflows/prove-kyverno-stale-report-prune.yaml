@@ -1,0 +1,51 @@
+name: Prove Kyverno Stale Report Prune
+
+# #2573: prove the stale-report DeletingPolicy on a throwaway kind cluster
+# before it reaches production. Runs no production credentials.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/prove-kyverno-stale-report-prune.yaml
+      - scripts/prove-kyverno-stale-report-prune.sh
+      - tests/kyverno-stale-report-prune/**
+      - k8s/bases/infrastructure/controllers/kyverno/helm-release.yaml
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: prove-kyverno-stale-report-prune-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Create a kind cluster
+        env:
+          # renovate: datasource=go depName=sigs.k8s.io/kind
+          KIND_VERSION: v0.33.0
+        run: |
+          go install "sigs.k8s.io/kind@${KIND_VERSION}"
+          "$(go env GOPATH)/bin/kind" create cluster --name prune --wait 5m
+
+      - name: Prove the stale report prune
+        run: |
+          # Prove against the chart version production runs.
+          KYVERNO_CHART_VERSION="$(yq '.spec.chart.spec.version' k8s/bases/infrastructure/controllers/kyverno/helm-release.yaml)"
+          export KYVERNO_CHART_VERSION
+          scripts/prove-kyverno-stale-report-prune.sh

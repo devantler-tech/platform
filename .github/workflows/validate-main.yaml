@@ -80,7 +80,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.4"
+          KSAIL_VERSION: "7.184.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -252,7 +252,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.4"
+          KSAIL_VERSION: "7.184.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -316,7 +316,7 @@ jobs:
         if: >-
           !cancelled() &&
           steps.normalize-sarif.outputs.sarif == 'ready'
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           sarif_file: ${{ runner.temp }}/kubescape.sarif
           # MUST match ci.yaml's category: Code Scanning dedupes and closes per
@@ -432,3 +432,78 @@ jobs:
           shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
           bash scripts/guard-ghcr-fanout-component-gate.sh
           bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+
+  # Reports whether production runs what main now says (#3848, the follow-up to the
+  # resolver merged in #3846). After a merge group lands, prod should already hold its
+  # artifact; #2838 describes the interleaving where a heal overwrote it and nothing
+  # deployed it again. This job only READS the signed provenance of `:latest` and
+  # annotates the run; its last step deploys main on a BEHIND verdict.
+  #
+  # Warns rather than fails on BEHIND/DIVERGED: a queued merge group deploys before it
+  # merges, so a push can briefly see the next group's artifact. UNKNOWN fails, so a
+  # broken check never reads as a converged prod.
+  #
+  # It takes the prod-deploy lock so it reads `:latest` only after any deploy or heal
+  # already in flight has finished publishing. Read earlier, a heal that checked out
+  # main before this push landed could still overwrite prod after a CONVERGED reading.
+  observe-prod-convergence:
+    name: 🧭 Observe Production Convergence
+    runs-on: ubuntu-latest
+    concurrency:
+      group: prod-deploy
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read # checkout repository history for the ancestry check
+      packages: read # read the private manifests artifact and its attestations from GHCR
+      actions: write # list and dispatch CD runs on main when prod is behind
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history plus every branch: the resolver needs main's ancestry and the
+          # commit of any queued merge group whose artifact `:latest` may already name.
+          fetch-depth: 0
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🧭 Validate the convergence report
+        run: |
+          shellcheck scripts/report-prod-convergence.sh
+          shellcheck scripts/tests/test-report-prod-convergence.sh
+          bash scripts/tests/test-report-prod-convergence.sh
+          shellcheck scripts/redeploy-main-when-behind.sh scripts/tests/test-redeploy-main-when-behind.sh
+          bash scripts/tests/test-redeploy-main-when-behind.sh
+
+      - name: 🔑 Log in to GHCR (read-only)
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "${REGISTRY_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: 🧭 Report production convergence
+        id: report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/report-prod-convergence.sh
+
+      # Closes #2838: when prod is BEHIND main, deploy main through the manual CD
+      # workflow, which carries every production gate and queues on the same lock.
+      # DIVERGED does not deploy — it is what a queued merge group that has deployed but
+      # not yet merged looks like, and redeploying main would roll that group back. The
+      # race in #2838 reads BEHIND once the later group merges. A failed report writes no
+      # verdict, so a broken check never deploys.
+      #
+      # This runs inside the lock so the decision is serialized: the script skips when a
+      # CD run for main's tip is already pending, and waits until its own dispatch is
+      # listed before the lock is released to the next observer.
+      - name: 🔁 Redeploy main when prod is behind
+        if: steps.report.outputs.verdict == 'BEHIND'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REDEPLOY_REPOSITORY: ${{ github.repository }}
+        run: ./scripts/redeploy-main-when-behind.sh
