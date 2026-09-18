@@ -4804,12 +4804,15 @@ pause_flux_policy_parent() {
       -o json >"${flux_policy_parent_state_file}" \
       2>"${reread_error_file}"; then
       # A failed re-read is now the actionable cause, so it replaces the patch
-      # rejection in the emitted output. The redirection truncates the result file
-      # before cat runs, so a failed copy would leave it EMPTY -- and
-      # emit_safe_operation_output skips an empty file entirely, which is the very
-      # silence this block exists to prevent. Fall back to a deterministic
-      # non-empty line instead of discarding the failure.
-      if ! cat "${reread_error_file}" \
+      # rejection in the emitted output. Two things can leave that output empty:
+      # the copy fails, or kubectl exits non-zero having written no stderr, so the
+      # diagnostic file is zero bytes and copying it SUCCEEDS while the redirection
+      # truncates the result file. emit_safe_operation_output skips an empty file
+      # entirely, which is the very silence this block exists to prevent, so an
+      # empty diagnostic counts as a failed copy and falls back to a deterministic
+      # non-empty line.
+      if [[ ! -s "${reread_error_file}" ]] ||
+        ! cat "${reread_error_file}" \
         >"${flux_policy_parent_result_file}" 2>/dev/null; then
         echo "parent re-read failed; its diagnostic could not be read" \
           >"${flux_policy_parent_result_file}"

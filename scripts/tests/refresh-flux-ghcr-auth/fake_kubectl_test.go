@@ -390,6 +390,19 @@ func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile
 }
 
 func fakeKubectlGetFluxPolicyParent(args []string, namespace string) int {
+	// A re-read that fails after the patch response was lost. The silent variant
+	// leaves the caller's diagnostic file at zero bytes, so copying it succeeds
+	// while carrying nothing; the diagnostic variant writes real stderr, whose
+	// content must survive to the operator.
+	if markerExists("flux-policy-parent-patch-response-lost") {
+		diagnostic := os.Getenv("FAKE_FLUX_POLICY_PARENT_REREAD_FAILURE_DIAGNOSTIC")
+		if diagnostic != "" {
+			return commandFailure(92, "%s", diagnostic)
+		}
+		if os.Getenv("FAKE_FLUX_POLICY_PARENT_REREAD_SILENT_FAILURE") == "true" {
+			return 92
+		}
+	}
 	if namespace != "flux-system" ||
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid parent Flux Kustomization lookup")

@@ -2085,3 +2085,44 @@ func TestRuntimeProbeKubeletRejectionFailsFastAndDistinctly(t *testing.T) {
 	// Kubelet's raw message can carry node detail; it must not reach the log.
 	requireNotContains(t, output, "Node didn't have enough resource")
 }
+
+// A parent re-read can fail without writing anything to stderr. The diagnostic
+// file is then zero bytes rather than absent, so copying it succeeds while
+// carrying nothing -- and emit_safe_operation_output skips an empty file. The
+// operator must still be told why the fence could not be taken.
+func TestSilentFluxParentRereadFailureStillEmitsADiagnostic(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_PARENT_PATCH_RESPONSE_LOST":   "true",
+		"FAKE_FLUX_POLICY_PARENT_REREAD_SILENT_FAILURE": "true",
+	})
+	requireFailureResult(t, result)
+
+	if !pathExists(filepath.Join(f.syncStateDir, "flux-policy-parent-patch-response-lost")) {
+		t.Fatal("fixture did not lose the applied fence patch response")
+	}
+	requireContains(t, result.stdout+result.stderr,
+		"flux-policy-parent-patch: parent re-read failed; its diagnostic could not be read")
+}
+
+// The empty-diagnostic guard must not swallow a real one: when the failed
+// re-read does write stderr, that text is what the operator needs, not the
+// deterministic fallback.
+func TestFluxParentRereadFailureDiagnosticSurvives(t *testing.T) {
+	t.Parallel()
+
+	const diagnostic = "Error from server (Forbidden): kustomizations.kustomize.toolkit.fluxcd.io is forbidden"
+
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_PARENT_PATCH_RESPONSE_LOST":       "true",
+		"FAKE_FLUX_POLICY_PARENT_REREAD_FAILURE_DIAGNOSTIC": diagnostic,
+	})
+	requireFailureResult(t, result)
+
+	output := result.stdout + result.stderr
+	requireContains(t, output, "flux-policy-parent-patch: "+diagnostic)
+	requireNotContains(t, output, "its diagnostic could not be read")
+}
