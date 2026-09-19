@@ -437,10 +437,42 @@ func fakeFluxPolicyParentObject() map[string]any {
 			"reason": "ReconciliationSucceeded",
 		},
 	}
+	if !suspended {
+		readCount := parseInt(markerContent("flux-policy-parent-read-count"), 0) + 1
+		setMarkerContent("flux-policy-parent-read-count", strconv.Itoa(readCount))
+		reconcilingReads := parseInt(
+			os.Getenv("FAKE_FLUX_PARENT_RECONCILING_READS_BEFORE_PAUSE"),
+			0,
+		)
+		if readCount <= reconcilingReads {
+			touchMarker("flux-policy-parent-currently-reconciling")
+			conditions = append(conditions, map[string]any{
+				"type":   "Reconciling",
+				"status": "True",
+				"reason": "Progressing",
+			})
+			appendEnvFile("OPERATION_LOG", "flux-policy-parent-reconciling-before-pause:flux-system\n")
+		} else {
+			removeMarker("flux-policy-parent-currently-reconciling")
+			if reconcilingReads > 0 &&
+				!markerExists("flux-policy-parent-preclaim-stable-logged") {
+				touchMarker("flux-policy-parent-preclaim-stable-logged")
+				appendEnvFile("OPERATION_LOG", "flux-policy-parent-stable-before-pause:flux-system\n")
+			}
+		}
+	}
 	if suspended {
 		readCount := parseInt(markerContent("flux-policy-parent-suspended-read-count"), 0) + 1
 		setMarkerContent("flux-policy-parent-suspended-read-count", strconv.Itoa(readCount))
-		if os.Getenv("FAKE_FLUX_PARENT_RECONCILING_AFTER_PAUSE") == "true" &&
+		if os.Getenv("FAKE_FLUX_PARENT_STALE_RECONCILING_WHEN_PAUSED") == "true" &&
+			markerExists("flux-policy-parent-currently-reconciling") {
+			conditions = append(conditions, map[string]any{
+				"type":   "Reconciling",
+				"status": "True",
+				"reason": "Progressing",
+			})
+			appendEnvFile("OPERATION_LOG", "flux-policy-parent-stale-reconciling:flux-system\n")
+		} else if os.Getenv("FAKE_FLUX_PARENT_RECONCILING_AFTER_PAUSE") == "true" &&
 			readCount <= 2 {
 			conditions = append(conditions, map[string]any{
 				"type":   "Reconciling",

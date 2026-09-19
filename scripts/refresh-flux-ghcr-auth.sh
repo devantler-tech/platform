@@ -4658,12 +4658,16 @@ flux_policy_parent_is_owned() {
   ' "${flux_policy_parent_state_file}" >/dev/null
 }
 
+flux_policy_parent_is_quiescent() {
+  jq -e '
+    any(.status.conditions[]?;
+      .type == "Reconciling" and .status == "True") | not
+  ' "${flux_policy_parent_state_file}" >/dev/null
+}
+
 flux_policy_parent_is_stable() {
   flux_policy_parent_is_owned &&
-    jq -e '
-      any(.status.conditions[]?;
-        .type == "Reconciling" and .status == "True") | not
-    ' "${flux_policy_parent_state_file}" >/dev/null
+    flux_policy_parent_is_quiescent
 }
 
 flux_policy_parent_is_released() {
@@ -4708,8 +4712,36 @@ flux_policy_parent_claim_preconditions_still_hold() {
   ' "${flux_policy_parent_state_file}" >/dev/null
 }
 
+# Flux documents that suspension stops subsequent reconciliations, not one that
+# has already started. Claim only from an observed quiet state. The exact
+# resourceVersion CAS below closes the ordinary status-update race, while the
+# existing post-claim quiet check covers a reconcile that started after this
+# observation but before the suspension patch landed.
+wait_for_flux_policy_parent_quiescence_before_claim() {
+  local attempt
+
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    flux_policy_parent_claim_preconditions_still_hold || return 2
+    flux_policy_parent_is_quiescent && return 0
+    if ((attempt < SYNC_ATTEMPTS)); then
+      sleep "${SYNC_INTERVAL}"
+      if ! kubectl \
+        --context "${KUBE_CONTEXT}" \
+        --namespace flux-system \
+        get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+        "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
+        -o json >"${flux_policy_parent_state_file}" \
+        2>"${flux_policy_parent_result_file}"; then
+        return 3
+      fi
+    fi
+  done
+
+  return 1
+}
+
 pause_flux_policy_parent() {
-  local resource_version attempt annotations_present
+  local resource_version attempt annotations_present wait_status
   local max_attempts="${FLUX_POLICY_PARENT_CLAIM_MAX_ATTEMPTS:-5}"
   local reread_resource_version
   # The re-read below needs its own stderr sink. Pointed at the result file it would
@@ -4758,6 +4790,28 @@ pause_flux_policy_parent() {
   flux_policy_parent_uid="$(jq -er '.metadata.uid' \
     "${flux_policy_parent_state_file}")"
   flux_policy_parent_owner="${sync_lease_holder}"
+
+  if wait_for_flux_policy_parent_quiescence_before_claim; then
+    :
+  else
+    wait_status=$?
+    if flux_policy_parent_has_any_owner; then
+      refuse_owned_flux_policy_parent
+    elif ((wait_status == 1)); then
+      flux_policy_report_conditions \
+        "${flux_policy_parent_state_file}" \
+        "kustomization/${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}"
+      echo "::error::The parent Flux reconciliation did not quiesce before acquiring the image-verification policy handoff."
+    elif ((wait_status == 3)); then
+      emit_safe_operation_output \
+        "flux-policy-parent-quiesce" \
+        "${flux_policy_parent_result_file}"
+      echo "::error::Could not inspect the parent Flux reconciliation while waiting to acquire the image-verification policy handoff."
+    else
+      echo "::error::The parent Flux reconciliation changed ownership or suspension state before the image-verification policy handoff."
+    fi
+    return 1
+  fi
 
   # The contended object is a Flux Kustomization whose status the controller rewrites
   # continuously, so its resourceVersion moves on its own and this CAS is lost exactly
@@ -4854,8 +4908,8 @@ pause_flux_policy_parent() {
       "${flux_policy_parent_state_file}")"
     if [[ "${reread_resource_version}" == "${resource_version}" ]] ||
       ((attempt >= max_attempts)) ||
-      ! flux_policy_parent_claim_preconditions_still_hold ||
-      [[ -e "${sync_lease_lost_file}" ]]; then
+      [[ -e "${sync_lease_lost_file}" ]] ||
+      ! wait_for_flux_policy_parent_quiescence_before_claim; then
       break
     fi
 

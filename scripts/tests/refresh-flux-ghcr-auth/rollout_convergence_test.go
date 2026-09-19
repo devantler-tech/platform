@@ -982,6 +982,30 @@ func TestFluxPolicyHandoffSuspendsOwningReconcileAcrossRuntimeProof(t *testing.T
 	}
 }
 
+func TestFluxPolicyParentQuiescesBeforeSuspension(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_PARENT_RECONCILING_READS_BEFORE_PAUSE": "1",
+		"FAKE_FLUX_PARENT_STALE_RECONCILING_WHEN_PAUSED":  "true",
+		"FLUX_GHCR_SYNC_ATTEMPTS":                         "3",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	reconciling := lineIndex(t, operations, "flux-policy-parent-reconciling-before-pause:flux-system")
+	stable := lineIndex(t, operations, "flux-policy-parent-stable-before-pause:flux-system")
+	pause := lineIndex(t, operations, "flux-policy-parent-pause:flux-system")
+	if reconciling >= stable || stable >= pause {
+		t.Fatalf(
+			"unsafe parent handoff ordering: reconciling=%d stable=%d pause=%d",
+			reconciling,
+			stable,
+			pause,
+		)
+	}
+	requireNoLine(t, operations, "flux-policy-parent-stale-reconciling:flux-system")
+}
+
 func TestFluxChildReconciliationBlocksBeforePolicyHandoffAcquisition(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
