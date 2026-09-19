@@ -170,8 +170,9 @@ printf '%s\n' "${known_output}" | jq -s -e \
   'length > 0 and all(.[]; .level == "info" and (.msg | type == "string" and length > 0))' \
   >/dev/null || fail 'successful reconciliation must emit structured info JSON'
 jq -s -e '
-  any(.[]; (.url | endswith("/NetworkTCPConnections/config")) and .body.configs[2].threshold == 2) and
-  any(.[]; (.url | endswith("/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
+  any(.[]; (.url | endswith("/NetworkTCPConnections/config")) and .body.configs[2].threshold == 3) and
+  any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-background-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
+  any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
   any(.[]; (.url | contains("%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Adex%3ADeployment%3Adex/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Ainit/inspection/LogErrors/config")) and .body.configs[2].threshold == 1000) and
