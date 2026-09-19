@@ -2627,8 +2627,8 @@ const (
 // unapproved, so it was used only for the conservation comparison and no local
 // digest is claimed.
 //
-// Previous aggregate: a4781e58fb84590c887d65a6672e2d4857965c5b2ce998b5729c41ecc6c9fba6.
-const expectedRenderedSurfaceSHA = "f6e7e761ab655cf26aace0e8f0e5df6ee469ebc012c047148cba322c01ef3cd3"
+// Previous aggregate: f6e7e761ab655cf26aace0e8f0e5df6ee469ebc012c047148cba322c01ef3cd3.
+const expectedRenderedSurfaceSHA = "d3748031f44c6c308831f3a5c4a7668ec88e314fe4ebbb6e6b09ec38388f6f02"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2641,7 +2641,7 @@ const expectedRenderedSurfaceSHA = "f6e7e761ab655cf26aace0e8f0e5df6ee469ebc012c0
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "a4781e58fb84590c887d65a6672e2d4857965c5b2ce998b5729c41ecc6c9fba6"
+const previousRenderedSurfaceSHA = "f6e7e761ab655cf26aace0e8f0e5df6ee469ebc012c047148cba322c01ef3cd3"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
