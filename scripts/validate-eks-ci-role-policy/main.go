@@ -2767,7 +2767,32 @@ const (
 // approval-base check passed against cf3e10.
 //
 // Previous aggregate: cf3e10be68e3a77cdac612347d4d91c2db567d616de5fc1b6bba391ae48b8698.
-const expectedRenderedSurfaceSHA = "bd15655a621002ee2f1bef6f44683c8cdc89abc90e47e1626ae80279234c405b"
+//
+// That SOPS-projection change established aggregate:
+//
+//	bd15655a621002ee2f1bef6f44683c8cdc89abc90e47e1626ae80279234c405b
+//
+// Moved by the C-0211 baseline context for the Hetzner cloud controller
+// manager (#3239), whose base is bd15655a above. The
+// kube-system/hcloud-cloud-controller-manager HelmRelease values gain
+// fsGroupChangePolicy: OnRootMismatch on the pod security context and an
+// empty seLinuxOptions object on the container. A HelmRelease is a
+// controller-RBAC emitter, so this moves the aggregate even though nothing is
+// granted.
+//
+// CONSERVATION: the approval-base comparison names exactly one moved entry,
+// helm.toolkit.fluxcd.io/v2 HelmRelease kube-system/hcloud-cloud-controller-manager.
+// No ClusterRole, Role, ClusterRoleBinding, RoleBinding or ServiceAccount
+// source changes; no identity, binding, verb, wildcard, AWS identity or
+// permission changes.
+//
+// RENDERER PROVENANCE: the value below was printed by CI's checksum-verified
+// kubectl v1.36.2 renderer (TestValidateAuthorizationAcceptsCommittedPolicy) on
+// this change merged with main 8e3b5641a3acaca778d396edcdce26d65182947d, whose
+// approval-base check passed against bd15655a.
+//
+// Previous aggregate: bd15655a621002ee2f1bef6f44683c8cdc89abc90e47e1626ae80279234c405b.
+const expectedRenderedSurfaceSHA = "0000000000000000000000000000000000000000000000000000000000000000"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2780,7 +2805,7 @@ const expectedRenderedSurfaceSHA = "bd15655a621002ee2f1bef6f44683c8cdc89abc90e47
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "cf3e10be68e3a77cdac612347d4d91c2db567d616de5fc1b6bba391ae48b8698"
+const previousRenderedSurfaceSHA = "bd15655a621002ee2f1bef6f44683c8cdc89abc90e47e1626ae80279234c405b"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
