@@ -134,7 +134,6 @@ spec:
               - cluster-autoscaler-hetzner-cluster-autoscaler
               - keda-operator-metrics-apiserver
               - longhorn-driver-deployer
-              - csi-snapshotter
               - spire-server
               # CNPG-I exposes its gRPC readiness endpoint only on the elected
               # leader, so a second replica can never become Ready.

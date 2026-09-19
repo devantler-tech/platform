@@ -1,0 +1,209 @@
+# Declarative reconciler for the reviewed Coroot availability-risk allowlist.
+#
+# Coroot persists risk dismissal only through its API. This CronJob projects the
+# reviewed ConfigMap into that API so the state survives a Coroot database
+# rebuild without a UI click. The allowlist is the complete desired Availability
+# dismissal set: removing an entry or dismissing an undeclared Availability risk
+# reactivates that risk, while a declared entry with a different reason is
+# corrected. Unknown active Availability risks stay visible; other categories
+# remain outside this controller's scope. Application coordinates omit the
+# generated Coroot cluster id and match the remaining namespace/kind/name tuple
+# exactly, preserving the declaration across a project rebuild.
+#
+# The in-cluster service is intentionally credentialless because the Coroot CR
+# sets authAnonymousRole=Admin; the external UI remains behind oauth2-proxy.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: coroot-risk-acceptance-reconciler
+  namespace: observability
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app: coroot-risk-acceptance-reconciler
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+            fsGroupChangePolicy: OnRootMismatch
+          containers:
+            - name: reconciler
+              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                seLinuxOptions: {}
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              volumeMounts:
+                - name: acceptances
+                  mountPath: /config
+                  readOnly: true
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+
+                  # Double-dollar escapes Flux post-build substitution; the
+                  # runtime shell receives the ordinary parameter expansion.
+                  BASE="$${COROOT_BASE_URL:-http://coroot-coroot.observability.svc.cluster.local:8080}"
+                  ACCEPTANCES_FILE="$${ACCEPTANCES_FILE:-/config/risks.json}"
+                  api() {
+                    curl -fsS --retry 5 --retry-delay 2 --retry-all-errors \
+                      --retry-connrefused --max-time 30 "$@"
+                  }
+
+                  PID=$(api "$BASE/api/user" | jq -r \
+                    '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
+                  [ -n "$PID" ] || { echo "ERROR: could not resolve platform project id" >&2; exit 1; }
+
+                  jq -e '
+                    type == "array" and
+                    all(.[];
+                      (.application | type == "string") and
+                      (.application | split(":") | length == 3) and
+                      .category == "Availability" and
+                      (.type as $type |
+                        ["single-instance-app", "single-node-app", "single-az-app", "spot-only-app", "unreplicated-database"] |
+                        index($type) != null) and
+                      (.reason | startswith("platform#3812: "))
+                    ) and
+                    ([.[] | [.application, .category, .type] | @tsv] | length) ==
+                      ([.[] | [.application, .category, .type] | @tsv] | unique | length)
+                  ' "$ACCEPTANCES_FILE" >/dev/null || {
+                    echo "ERROR: invalid or duplicate risk acceptance declaration" >&2
+                    exit 1
+                  }
+
+                  RISKS=$(api "$BASE/api/project/$PID/overview/risks")
+                  printf '%s' "$RISKS" | jq -e '.data.risks | type == "array"' >/dev/null || {
+                    echo "ERROR: Coroot overview response has no risk array" >&2
+                    exit 1
+                  }
+
+                  # Preflight the complete desired/live join before the first
+                  # write. Duplicate live identities are ambiguous and must not
+                  # let one declaration silently affect multiple clusters.
+                  printf '%s' "$RISKS" | jq -e --slurpfile desired "$ACCEPTANCES_FILE" '
+                    def coordinate: .application_id | split(":") | .[1:] | join(":");
+                    .data.risks as $risks |
+                    all($desired[0][]; . as $declared |
+                      ([$risks[] | select(
+                        coordinate == $declared.application and
+                        .key.category == $declared.category and
+                        .key.type == $declared.type
+                      )] | length) <= 1
+                    )
+                  ' >/dev/null || {
+                    echo "ERROR: ambiguous live application identity; no changes made" >&2
+                    exit 1
+                  }
+
+                  post_override() {
+                    action="$1"
+                    application_id="$2"
+                    category="$3"
+                    risk_type="$4"
+                    reason="$5"
+                    encoded_id=$(jq -nr --arg value "$application_id" '$value | @uri')
+                    payload=$(jq -cn \
+                      --arg action "$action" \
+                      --arg category "$category" \
+                      --arg type "$risk_type" \
+                      --arg reason "$reason" \
+                      '{action:$action,key:{category:$category,type:$type},reason:$reason}')
+                    api -X POST -H 'Content-Type: application/json' -d "$payload" \
+                      "$BASE/api/project/$PID/app/$encoded_id/risks" >/dev/null
+                  }
+
+                  # The allowlist is authoritative for Availability dismissal
+                  # state. Other risk categories are explicitly out of scope.
+                  stale=$(printf '%s' "$RISKS" | jq -c \
+                    --slurpfile desired "$ACCEPTANCES_FILE" '
+                      def coordinate: .application_id | split(":") | .[1:] | join(":");
+                      .data.risks[]
+                      | select(.key.category == "Availability" and .dismissal != null)
+                      | . as $risk
+                      | select(($desired[0] | any(.[];
+                          .application == ($risk | coordinate) and
+                          .category == $risk.key.category and
+                          .type == $risk.key.type
+                        )) | not)
+                    ')
+
+                  old_ifs=$IFS
+                  IFS='
+                  '
+                  reactivated=0
+                  for risk in $stale; do
+                    application_id=$(printf '%s' "$risk" | jq -r '.application_id')
+                    category=$(printf '%s' "$risk" | jq -r '.key.category')
+                    risk_type=$(printf '%s' "$risk" | jq -r '.key.type')
+                    post_override mark_as_active "$application_id" "$category" "$risk_type" ''
+                    reactivated=$((reactivated + 1))
+                  done
+
+                  declared=$(jq -c '.[]' "$ACCEPTANCES_FILE")
+                  dismissed=0
+                  unchanged=0
+                  absent=0
+                  for acceptance in $declared; do
+                    application=$(printf '%s' "$acceptance" | jq -r '.application')
+                    category=$(printf '%s' "$acceptance" | jq -r '.category')
+                    risk_type=$(printf '%s' "$acceptance" | jq -r '.type')
+                    reason=$(printf '%s' "$acceptance" | jq -r '.reason')
+                    match=$(printf '%s' "$RISKS" | jq -c \
+                      --arg application "$application" \
+                      --arg category "$category" \
+                      --arg type "$risk_type" '
+                        .data.risks[]
+                        | select(
+                            (.application_id | split(":") | .[1:] | join(":")) == $application and
+                            .key.category == $category and
+                            .key.type == $type
+                          )
+                      ')
+                    if [ -z "$match" ]; then
+                      absent=$((absent + 1))
+                    elif printf '%s' "$match" | jq -e --arg reason "$reason" \
+                      '.dismissal.reason? == $reason' >/dev/null; then
+                      unchanged=$((unchanged + 1))
+                    else
+                      application_id=$(printf '%s' "$match" | jq -r '.application_id')
+                      post_override dismiss "$application_id" "$category" "$risk_type" "$reason"
+                      dismissed=$((dismissed + 1))
+                    fi
+                  done
+                  IFS=$old_ifs
+
+                  echo "risk acceptances reconciled: dismissed=$dismissed unchanged=$unchanged absent=$absent reactivated=$reactivated"
+          volumes:
+            - name: acceptances
+              configMap:
+                name: coroot-risk-acceptances

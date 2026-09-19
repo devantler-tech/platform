@@ -66,6 +66,11 @@ resources:
   # API on a schedule, since Coroot has no declarative per-alert exemption. See
   # the file header for the exemption list + why each is by-design.
   - coroot/cron-job-alert-autosuppressor.yaml
+  # Reconcile reviewed Coroot availability-risk acceptances from an exact
+  # version-controlled allowlist. Unknown findings remain active, and removing
+  # an entry reactivates any dismissal previously managed by platform#3812.
+  - coroot/config-map-risk-acceptances.yaml
+  - coroot/cron-job-risk-acceptance-reconciler.yaml
   # Prod-only: turns the crossplane-sync-exporter's series into a Slack
   # notification via Alertmanager, which nothing else consumes. See the file
   # header for why this is a CronJob rather than a PrometheusRule.

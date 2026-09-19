@@ -107,9 +107,11 @@ data:
   # The snapshot.storage.k8s.io CRDs are now installed cluster-wide by the
   # snapshot-controller HelmRelease (providers/hetzner/infrastructure/
   # controllers/snapshot-controller), so the CSI snapshotter no longer
-  # crash-loops. Run it (1 replica, leader-elected) to service the
-  # VolumeSnapshots Velero creates for CSI backups of Longhorn volumes.
-  longhorn_csi_snapshotter_replicas: "1"
+  # crash-loops. Run it active + warm standby to service the VolumeSnapshots
+  # Velero creates for CSI backups of Longhorn volumes. The sidecar is
+  # leader-elected, the live active uses ~1m CPU / 13Mi, and a second instance
+  # preserves snapshot orchestration through one storage-node failure.
+  longhorn_csi_snapshotter_replicas: "2"
   # CSI control-plane sidecars (attacher/provisioner/resizer) default to a
   # single replica in the base HelmRelease. They are leader-elected, so a
   # second replica is a cheap warm standby that costs ~nothing when idle.

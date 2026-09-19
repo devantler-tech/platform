@@ -122,7 +122,10 @@ spec:
                 - |
                   set -u
                   PROM="http://coroot-prometheus.observability.svc.cluster.local:9090"
-                  AM="http://alertmanager.kubescape.svc.cluster.local:9093"
+                  # Alertmanager HA does not replicate received alerts between
+                  # peers, so every alert goes to each StatefulSet pod directly;
+                  # the load-balanced Service would reach only one of them.
+                  AM_PEERS="http://alertmanager-0.alertmanager-headless.kubescape.svc.cluster.local:9093 http://alertmanager-1.alertmanager-headless.kubescape.svc.cluster.local:9093"
                   KUBE_API="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS}"
                   SA_DIR="/var/run/secrets/kubernetes.io/serviceaccount"
                   CRD_PAGE="/tmp/crossplane-crds.json"
@@ -419,13 +422,24 @@ spec:
                   # exactly like a healthy fleet, which is the failure mode this
                   # whole CronJob exists to remove. It also lets --retry-all-errors
                   # retry a 5xx instead of accepting it.
-                  if curl_retry --fail -X POST -H 'Content-Type: application/json' \
-                       -d "$alerts" "$AM/api/v2/alerts" >/dev/null; then
-                    echo "posted $n alert(s) to alertmanager"
-                  else
-                    echo "ERROR: alertmanager rejected the POST; $n alert(s) NOT delivered"
+                  # Post to every peer. A peer that is down (one node lost) is
+                  # logged but tolerated, because the surviving peer holds the
+                  # alerts and is the only endpoint the Service still routes to;
+                  # the job fails only when no peer accepted them.
+                  delivered=0
+                  for am in $AM_PEERS; do
+                    if curl_retry --fail -X POST -H 'Content-Type: application/json' \
+                         -d "$alerts" "$am/api/v2/alerts" >/dev/null; then
+                      delivered=$((delivered + 1))
+                    else
+                      echo "WARN: $am rejected the POST"
+                    fi
+                  done
+                  if [ "$delivered" -eq 0 ]; then
+                    echo "ERROR: no alertmanager peer accepted the POST; $n alert(s) NOT delivered"
                     exit 1
                   fi
+                  echo "posted $n alert(s) to $delivered alertmanager peer(s)"
           volumes:
             - name: exporter-config
               configMap:

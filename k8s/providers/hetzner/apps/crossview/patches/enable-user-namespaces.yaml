@@ -1,0 +1,3 @@
+# Retired and intentionally unreferenced. Crossview's Longhorn-backed database
+# requires the namespace to remain outside user-namespace enforcement; the live
+# production kustomization therefore does not include this fragment.
