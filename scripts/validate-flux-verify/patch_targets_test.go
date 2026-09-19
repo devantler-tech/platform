@@ -220,7 +220,7 @@ func TestPatchTargetsRejectATargetThatSelectsNothing(t *testing.T) {
 			name: "root source misnamed",
 			old:  "kind: OCIRepository\n          name: flux-system",
 			new:  "kind: OCIRepository\n          name: flux-root",
-			want: `kind "OCIRepository"`,
+			want: `name "flux-root" is not "flux-system", the root OCIRepository`,
 		},
 		{
 			name: "patch without target",

@@ -233,6 +233,16 @@ func selectorProblem(selector patchSelector, components []string) string {
 		selector.labelSelector == "" && !selector.annotationSelector {
 		return ""
 	}
+	if selector.kind == rootSourceKind {
+		switch {
+		case selector.name != rootSourceName:
+			return fmt.Sprintf("name %q is not %q, the root %s", selector.name, rootSourceName, rootSourceKind)
+		case selector.labelSelector != "" || selector.annotationSelector:
+			return fmt.Sprintf("the root %s is selected by name, not by a label or annotation selector", rootSourceKind)
+		default:
+			return fmt.Sprintf("namespace %q is not %q, the namespace of the root %s", selector.namespace, rootSourceName, rootSourceKind)
+		}
+	}
 	if selector.kind != "Deployment" {
 		return fmt.Sprintf("kind %q is neither a controller Deployment nor the root %s; if flux-operator generates it, teach this check about it (with a test) rather than working around it", selector.kind, rootSourceKind)
 	}
