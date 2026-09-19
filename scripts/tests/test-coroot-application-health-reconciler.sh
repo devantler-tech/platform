@@ -53,10 +53,14 @@ trap 'rm -rf "${work_root}"' EXIT
 
 setup_scenario() {
   local name="$1" dex_mode="$2" dex_current="$3"
+  local state_error="${4:-context deadline exceeded}"
+  local init_current="${5:-null}"
   local dir="${work_root}/${name}"
   mkdir -p "${dir}/bin"
   printf '%s' "${dex_mode}" >"${dir}/dex-mode"
   printf '%s' "${dex_current}" >"${dir}/dex-current"
+  printf '%s' "${state_error}" >"${dir}/state-error"
+  printf '%s' "${init_current}" >"${dir}/init-current"
 
   cat >"${dir}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
@@ -81,6 +85,12 @@ case "${url}" in
     cat <<'JSON'
 {"data":{"reports":[{"name":"Net","status":"warning","checks":[{"id":"NetworkTCPConnections","status":"warning","threshold":0}],"widgets":[{"chart":{"title":"Failed TCP connections, per second","series":[{"name":"→kube-scheduler","data":[0.6,0.6]},{"name":"→kube-controller-manager","data":[0.3,0.3]},{"name":"→coredns","data":[0,0]}]}}]}]}}
 JSON
+    ;;
+  */overview/logs?query=*)
+    jq -cn --arg error "$(cat "${dir}/state-error")" '{data:{logs:{entries:[{
+      message:"get state for fe039a7e0bb7e1ce7637b0e33da1c6776268dcb222f92e4c79374af54e5c569d",
+      attributes:{error:$error,"service.name":"/talos/init"}
+    }]}}}'
     ;;
   */logs?query=*)
     if [[ "$url" == *'%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor'* ]]; then
@@ -107,6 +117,7 @@ JSON
   {"severity":"fatal","sample":"Observed pod startup duration"},
   {"severity":"error","sample":"time=\"2026-09-19T16:45:07.668204590Z\" level=error msg=\"failed sending message on channel\" error=\"write unix /run/containerd/s/id->@: write: broken pipe\" runtime=io.containerd.runc.v2"},
   {"severity":"error","sample":"collecting metrics for 8015f69b6b683d1b1c0eb5187bdfa57e1193bb07cc1e12eff8f3b61354312539"},
+  {"severity":"error","sample":"get state for fe039a7e0bb7e1ce7637b0e33da1c6776268dcb222f92e4c79374af54e5c569d"},
   {"severity":"error","sample":"ttrpc: received message on inactive stream"}
 ]}}
 JSON
@@ -138,6 +149,13 @@ JSON
       jq -cn --arg url "${url}" --argjson body "${payload}" '{url:$url,body:$body}' >>"${dir}/posts.ndjson"
     elif [[ "${url}" == *'/MemoryLeakPercent/'* ]]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":10},null,null]}}'
+    elif [[ "${url}" == *'%3A_%3AUnknown%3Ainit'* ]]; then
+      current="$(cat "${dir}/init-current")"
+      if [ "${current}" = "null" ]; then
+        printf '%s\n' '{"form":{"configs":[{"threshold":0},null,null]}}'
+      else
+        printf '{"form":{"configs":[{"threshold":0},null,{"threshold":%s}]}}\n' "${current}"
+      fi
     elif [[ "${url}" == *'%3Adex%3ADeployment%3Adex'* ]]; then
       current="$(cat "${dir}/dex-current")"
       if [ "${current}" = "null" ]; then
@@ -190,6 +208,14 @@ jq -s -e '
 ' "${unknown_dir}/posts.ndjson" >/dev/null ||
   fail 'an unknown Dex error did not remove the reviewed app-level threshold'
 pass 'an unreviewed log pattern fails closed and becomes visible'
+
+runtime_dir="$(setup_scenario runtime known null 'permission denied' 1000)"
+run_scenario "${runtime_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3A_%3AUnknown%3Ainit/inspection/LogErrors/config")) and .body.configs[2] == null)
+' "${runtime_dir}/posts.ndjson" >/dev/null ||
+  fail 'a get-state error without exact deadline evidence did not remain visible'
+pass 'a runtime state error requires exact timeout evidence'
 
 aged_dir="$(setup_scenario aged none 10)"
 run_scenario "${aged_dir}" >/dev/null

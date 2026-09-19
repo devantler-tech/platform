@@ -30,11 +30,15 @@
 # message becomes visible. Empty/aged-out pattern sets inherit the global zero.
 # The allowlist covers: this reconciler's predecessor lifecycle text while it
 # ages out; malformed public Dex authorization requests; an upstream Linux 6.18
-# audit context regression plus bounded runtime teardown races; millisecond
-# apiserver client cancellations and one exact read-only audit-parser false
-# positive; stale controller-manager metadata informers until the declarative
-# Talos static-pod refresh lands; and VPA's non-retryable Normal Event recording
-# denial (granting broad Event patch permission would be the worse fix).
+# audit context regression plus bounded runtime teardown races. Containerd
+# state-lookups are accepted only when the raw entry also carries the exact
+# context-deadline error and Talos init service attributes; a same-shaped
+# message with another cause remains visible. The other allowlists cover
+# millisecond apiserver client cancellations and one exact read-only
+# audit-parser false positive; stale controller-manager metadata informers until
+# the declarative Talos static-pod refresh lands; and VPA's non-retryable Normal
+# Event recording denial (granting broad Event patch permission would be the
+# worse fix).
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -209,9 +213,46 @@ spec:
                             (($s | contains("level=error msg=\"failed sending message on channel\"")) and
                              ($s | contains("write: broken pipe")) and ($s | endswith("runtime=io.containerd.runc.v2"))) or
                             ($s | test("^collecting metrics for [0-9a-f]{64}$")) or
+                            ($s | test("^get state for [0-9a-f]{64}$")) or
                             $s=="ttrpc: received message on inactive stream"
                           )] as $ok | "\($all|length):\($ok|length)"
                         ')
+
+                        state_messages=$(printf '%s' "$patterns" | jq -c '
+                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")
+                           | .sample | select(test("^get state for [0-9a-f]{64}$"))] | unique
+                        ')
+                        state_message_count=$(printf '%s' "$state_messages" | jq -r 'length')
+                        state_message_index=0
+                        state_evidence_valid=1
+                        while [ "$state_message_index" -lt "$state_message_count" ]; do
+                          state_message=$(printf '%s' "$state_messages" | jq -r --argjson index "$state_message_index" '.[$index]')
+                          state_query=$(jq -nr --arg message "$state_message" '
+                            {agent:true,otel:false,filters:[{name:"Message",op:"=",value:$message}],limit:1000}
+                            | tojson | @uri
+                          ')
+                          if state_logs=$(curl $RETRY "$BASE/api/project/$PID/overview/logs?query=$state_query"); then
+                            if ! printf '%s' "$state_logs" | jq -e --arg message "$state_message" '
+                              [.data.logs.entries[]? | select(.message==$message)] as $entries |
+                              ($entries | length) > 0 and
+                              all($entries[];
+                                .attributes.error=="context deadline exceeded" and
+                                .attributes["service.name"]=="/talos/init"
+                              )
+                            ' >/dev/null; then
+                              state_evidence_valid=0
+                              break
+                            fi
+                          else
+                            state_evidence_valid=0
+                            break
+                          fi
+                          state_message_index=$((state_message_index + 1))
+                        done
+                        if [ "$state_evidence_valid" -ne 1 ]; then
+                          state_pattern_count=$(printf '%s' "$counts" | cut -d: -f1)
+                          counts="$state_pattern_count:0"
+                        fi
                         ;;
                       apiserver-client-noise)
                         counts=$(printf '%s' "$patterns" | jq -r '
