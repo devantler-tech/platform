@@ -87,9 +87,6 @@ team_before="$(result_timestamp excluded-later require-team-label team-label)"
 owner_before="$(result_timestamp excluded-later require-owner-label owner-label)"
 [[ -n "$team_before" && -n "$owner_before" ]] || fail "could not read the result timestamps to compare against"
 
-never_owner_before="$(result_timestamp never-rescanned require-owner-label owner-label)"
-[[ -n "$never_owner_before" ]] || fail "could not read never-rescanned's owner-label timestamp"
-
 log "excluding excluded-later from require-team-label, and never-rescanned from both policies"
 kubectl patch clusterpolicy require-team-label --type=json -p '[{"op":"add","path":"/spec/rules/0/exclude","value":{"any":[{"resources":{"names":["excluded-later","never-rescanned"]}}]}}]'
 kubectl patch clusterpolicy require-owner-label --type=json -p '[{"op":"add","path":"/spec/rules/0/exclude","value":{"any":[{"resources":{"names":["never-rescanned"]}}]}}]'
@@ -110,8 +107,18 @@ team_after="$(result_timestamp excluded-later require-team-label team-label)"
 [[ "$team_after" == "$team_before" ]] ||
   fail "the excluded rule's result was rewritten ($team_before -> $team_after), so it is not stale"
 has_results excluded-later "$both" || fail "defect did not reproduce: the stale result cleared without the policy"
-[[ "$(result_timestamp never-rescanned require-owner-label owner-label)" == "$never_owner_before" ]] ||
-  fail "never-rescanned's owner-label result was rewritten, so that report is still being scanned"
+
+# The first scan may have started before the second patch reached the scanner, so
+# never-rescanned's results can move once more. Snapshot them now, wait for one
+# more complete scan, and require that none of them was rewritten by it.
+never_owner_mid="$(result_timestamp never-rescanned require-owner-label owner-label)"
+never_team_mid="$(result_timestamp never-rescanned require-team-label team-label)"
+[[ -n "$never_owner_mid" && -n "$never_team_mid" ]] || fail "could not read never-rescanned's result timestamps"
+owner_before="$(result_timestamp excluded-later require-owner-label owner-label)"
+wait_for "one more complete background scan" 600 scan_ran
+[[ "$(result_timestamp never-rescanned require-owner-label owner-label)" == "$never_owner_mid" &&
+  "$(result_timestamp never-rescanned require-team-label team-label)" == "$never_team_mid" ]] ||
+  fail "a completed scan rewrote a never-rescanned result, so that report is still being scanned"
 has_results never-rescanned "$both" || fail "never-rescanned lost its results without the policy"
 log "ok: defect reproduced, the excluded rule's result survives a completed scan unchanged"
 
