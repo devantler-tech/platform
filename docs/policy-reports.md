@@ -32,8 +32,8 @@ name and wildcard primary name) to emit `skip`.
 1. Express a new replica-floor exemption as a precondition in
    `validate-replica-floor.yaml`. Do not add a new `exclude` entry.
 2. Run the Kyverno test above and the normal local/prod static validation.
-3. Let Flux deploy the policy change. Do not patch or delete PolicyReports and
-   do not restart the reports controller.
+3. Let Flux deploy the policy change. Do not patch or delete PolicyReports by
+   hand and do not restart the reports controller.
 4. Wait for the reports controller's normal background scan (configured for one
    hour), then verify the target rule has no failures:
 
@@ -47,11 +47,26 @@ name and wildcard primary name) to emit `skip`.
 The precondition changes only the target policy/rule result. Other results in
 the same per-resource report remain controller-owned and untouched.
 
-## Limitation
+## Automatic pruning of stale failures
 
 Kyverno 1.18.1 exposes no supported API to prune one arbitrary result when a
 policy stops matching because its kind, match block, rule name or policy name
-changes. `CleanupPolicy` deletes whole Kubernetes resources, not individual
-report results. Whole-report deletion, direct result patches and controller
-restarts are therefore not recovery mechanisms for this platform. Investigate
-and track those cases separately instead of mutating generated reports.
+changes. Instead, the `prune-stale-policy-reports` Kyverno `DeletingPolicy`
+(`k8s/bases/infrastructure/deleting-policies/`) runs every hour at minute 17 and
+deletes a namespaced PolicyReport that holds a `fail`, `warn` or `error` result
+older than six hours. The next background scan recreates the report with only
+the results that are still evaluated.
+
+What operators should expect:
+
+- A PolicyReport disappearing and returning within about an hour is this policy
+  working, not an incident.
+- A current failure is rewritten by every background scan, so it never reaches
+  six hours and its report is never deleted. Old `pass` and `skip` results,
+  which mutate rules record once at admission, do not trigger deletion.
+- Cluster-scoped `ClusterPolicyReport` objects are not covered.
+
+Manual whole-report deletion, direct result patches and controller restarts are
+still not recovery mechanisms for this platform. If a stale failure survives
+the automatic pruning, investigate and track it separately instead of mutating
+generated reports.

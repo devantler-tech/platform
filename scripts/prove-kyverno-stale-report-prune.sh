@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Proves, on a throwaway cluster, that the production DeletingPolicy
-# (k8s/bases/infrastructure/deleting-policies/deleting-policy-prune-stale-policy-reports.yaml)
+# (k8s/bases/infrastructure/deleting-policies/prune-stale-policy-reports.yaml)
 # removes a Kyverno result that a name exclusion left stale, that the next scan
 # recreates the report with only its current results, and that a report whose
 # results are all current is left alone.
@@ -12,7 +12,7 @@ set -euo pipefail
 dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tests/kyverno-stale-report-prune"
 # The shipped policy itself, so this proof cannot drift from what deploys. Only its
 # threshold and schedule are shortened below.
-policy="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/k8s/bases/infrastructure/deleting-policies/deleting-policy-prune-stale-policy-reports.yaml"
+policy="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/k8s/bases/infrastructure/deleting-policies/prune-stale-policy-reports.yaml"
 chart_version="${KYVERNO_CHART_VERSION:?set KYVERNO_CHART_VERSION}"
 # Short enough to finish in minutes, still several one-minute scan intervals.
 stale_after="${STALE_AFTER:-4m}"

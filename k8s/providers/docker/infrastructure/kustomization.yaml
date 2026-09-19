@@ -10,6 +10,7 @@ resources:
   - ../../../bases/infrastructure/cluster-policies/ # Kyverno policies (prod-like admission)
   - ../../../bases/infrastructure/cluster-role-bindings/ # OIDC read-only binding
   - ../../../bases/infrastructure/cluster-roles/ # tenant/OIDC aggregated roles
+  - ../../../bases/infrastructure/deleting-policies/ # prunes stale failing policy reports
   - ../../../bases/infrastructure/cluster-secret-stores/ # ESO ↔ OpenBao
   - ../../../bases/infrastructure/external-secrets/ # ExternalSecrets (velero one is pruned below)
   - ../../../bases/infrastructure/gateway/ # central Gateway + HTTP→HTTPS redirect

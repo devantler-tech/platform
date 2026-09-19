@@ -11,6 +11,7 @@ cr-directories:
   - k8s/bases/infrastructure/cluster-secret-stores
   - k8s/bases/infrastructure/limit-ranges
   - k8s/bases/infrastructure/cluster-security-exceptions
+  - k8s/bases/infrastructure/deleting-policies
   - k8s/bases/infrastructure/tracing-policies
   - k8s/bases/infrastructure/external-secrets
   - k8s/bases/bootstrap/limit-ranges
