@@ -2792,7 +2792,7 @@ const (
 // approval-base check passed against bd15655a.
 //
 // Previous aggregate: bd15655a621002ee2f1bef6f44683c8cdc89abc90e47e1626ae80279234c405b.
-const expectedRenderedSurfaceSHA = "0000000000000000000000000000000000000000000000000000000000000000"
+const expectedRenderedSurfaceSHA = "c6e42dad361a132d416925d2b10206b5979d4425b6702efec8c0fe165f170639"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
