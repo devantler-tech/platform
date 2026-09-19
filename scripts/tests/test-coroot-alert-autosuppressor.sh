@@ -401,6 +401,15 @@ cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
     "details":[{"name":"Sample","value":"E0919 11:20:10.744070       1 status.go:71] \"Unhandled Error\" err=\"apiserver received an error that is not an metav1.Status: &errors.errorString{s:\\\"context canceled\\\"}: context canceled\" logger=\"UnhandledError\""}]
   },
   {
+    "id":"rotated-vpa-event-alert",
+    "fingerprint":"4caedf68675462a5",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater",
+    "details":[{"name":"Sample","value":"E0915 11:38:42.856589       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"events \\\"kyverno-reports-controller.example\\\" is forbidden: User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\"kyverno\\\"\" event=\"&Event{ObjectMeta:{...},Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater.,Source:EventSource{Component:vpa-updater}}\""}]
+  },
+  {
     "id":"near-runtime-alert",
     "fingerprint":"not-the-reviewed-fingerprint",
     "suppressed":false,
@@ -417,13 +426,22 @@ cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
     "rule_id":"new-log-patterns",
     "application_id":"95rsc5yp:kube-system:StaticPods:kube-apiserver",
     "details":[{"name":"Sample","value":"E0919 11:20:10.747072       1 timeout.go:140] \"Post-timeout activity\" logger=\"UnhandledError\" timeElapsed=\"2.1s\" method=\"POST\" path=\"/api/v1/secrets\" result=null"}]
+  },
+  {
+    "id":"near-vpa-event-alert",
+    "fingerprint":"4caedf68675462a5",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater",
+    "details":[{"name":"Sample","value":"E0915 11:38:42.856589       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"forbidden: cannot patch resource \\\"pods\\\"\""}]
   }
 ]}}
 JSON
 run_scenario "${pinned_logs_dir}" >/dev/null
 [ -f "${pinned_logs_dir}/suppressed.json" ] ||
   fail "the exact control-plane and runtime log fingerprints were not suppressed"
-jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "rotated-post-timeout-alert", "rotated-runtime-alert", "sandbox-resize-alert"]' \
+jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "rotated-post-timeout-alert", "rotated-runtime-alert", "rotated-vpa-event-alert", "sandbox-resize-alert"]' \
   "${pinned_logs_dir}/suppressed.json" >/dev/null ||
   fail "the reviewed log exemptions were broader than their exact fingerprints and message shapes"
 pass "exact benign control-plane and runtime fingerprints survive ID rotation while near matches stay visible"
@@ -441,13 +459,24 @@ cat >"${changed_controller_dir}/alerts.json" <<'JSON'
     "details":[
       {"name":"Sample","value":"E0919 03:00:00.000000       1 replica_set.go:640] \"Unhandled Error\" err=\"sync \\\"kube-system/example\\\" failed: forbidden\" logger=\"UnhandledError\""}
     ]
+  },
+  {
+    "id":"rotated-vpa-event-alert",
+    "fingerprint":"4caedf68675462a5",
+    "suppressed":true,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater",
+    "details":[
+      {"name":"Sample","value":"E0919 03:00:00.000000       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"forbidden: cannot patch resource \\\"pods\\\"\""}
+    ]
   }
 ]}}
 JSON
 run_scenario "${changed_controller_dir}" >/dev/null
 [ -f "${changed_controller_dir}/reopened.json" ] ||
   fail "a suppressed controller alert whose representative pattern changed was not reopened"
-jq -e '.ids == ["rotated-controller-alert"]' "${changed_controller_dir}/reopened.json" >/dev/null ||
+jq -e '.ids | sort == ["rotated-controller-alert", "rotated-vpa-event-alert"]' "${changed_controller_dir}/reopened.json" >/dev/null ||
   fail "the controller-pattern revalidation reopened the wrong alert set"
 [ ! -e "${changed_controller_dir}/suppressed.json" ] ||
   fail "a changed controller pattern was suppressed again"

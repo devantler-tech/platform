@@ -127,6 +127,15 @@
 #      a millisecond (never second) tail. Writes, slower completions, and every
 #      other API-server log pattern remain visible.
 #
+#  13. vpa-event-recording-denial - the updater successfully performs an
+#      in-place resize, then client-go tries to patch the repeated Normal Event's
+#      count/timestamp. The chart grants cluster-wide Event create but not patch,
+#      so only that optional record update is rejected; the Pod resize has
+#      already succeeded. Granting patch across every workload namespace would
+#      let a compromised updater alter all Events for non-critical bookkeeping.
+#      Keep that safer RBAC boundary and suppress only the reviewed fingerprint,
+#      exact updater identity, Event-only denial, and InPlaceResizedByVPA message.
+#
 # PROD-ONLY: Coroot alerting (the Slack webhook) is wired only in the hetzner
 # overlay, so this lives here, not in the base.
 apiVersion: batch/v1
@@ -331,7 +340,7 @@ spec:
                     ids="$ids $id"; echo "match cilium-dns-search-expansion: $id"
                   done
 
-                  # Exemptions 7 and 9-12 - exact weak-equality log fingerprints.
+                  # Exemptions 7 and 9-13 - exact weak-equality log fingerprints.
                   # The fingerprint is stable across Coroot alert-ID rotation.
                   # Every fingerprint and current representative must qualify; a
                   # changed representative is reopened below instead of hidden.
@@ -369,6 +378,12 @@ spec:
                            and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 timeout\\.go:140\\] "))
                            and (($d.Sample // "") | contains("\"Post-timeout activity\" logger=\"UnhandledError\""))
                            and (($d.Sample // "") | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$"))) then "apiserver-millisecond-post-timeout"
+                          elif (.fingerprint=="4caedf68675462a5"
+                           and ((.application_id // "") | endswith(":vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 event\\.go:359\\] "))
+                           and (($d.Sample // "") | contains("\"Server rejected event (will not retry!)\""))
+                           and (($d.Sample // "") | contains("User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\""))
+                           and (($d.Sample // "") | contains("Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater."))) then "vpa-event-recording-denial"
                           else null end;
                       .data.alerts[]
                       | select(.suppressed==false and .resolved_at==null)
@@ -416,6 +431,12 @@ spec:
                            and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 timeout\\.go:140\\] "))
                            and (($d.Sample // "") | contains("\"Post-timeout activity\" logger=\"UnhandledError\""))
                            and (($d.Sample // "") | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$"))) then "apiserver-millisecond-post-timeout"
+                          elif (.fingerprint=="4caedf68675462a5"
+                           and ((.application_id // "") | endswith(":vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 event\\.go:359\\] "))
+                           and (($d.Sample // "") | contains("\"Server rejected event (will not retry!)\""))
+                           and (($d.Sample // "") | contains("User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\""))
+                           and (($d.Sample // "") | contains("Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater."))) then "vpa-event-recording-denial"
                           else null end;
                       .data.alerts[]
                       | select(.suppressed==true and .resolved_at==null
@@ -424,7 +445,8 @@ spec:
                                     or .fingerprint=="c2ca6857aa3bdbbe"
                                     or .fingerprint=="66adf607437525e7"
                                     or .fingerprint=="3222402a73798da3"
-                                    or .fingerprint=="1da0a938819a7336"))
+                                    or .fingerprint=="1da0a938819a7336"
+                                    or .fingerprint=="4caedf68675462a5"))
                       | select(reviewed_log_reason == null)
                       | .id'); do
                     reopen_ids="$reopen_ids $id"; echo "reopen changed reviewed log pattern: $id"
