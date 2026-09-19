@@ -113,7 +113,9 @@ jobs:
       # The DR contract runs in its own dedicated job (below). This checks that
       # the verify block is in effect at all: it ran at spec.cluster.verify for
       # ~3 weeks, where KSail discards it, and every text-based check passed
-      # throughout (#2920).
+      # throughout (#2920). It also refuses any FluxInstance kustomize patch whose
+      # target selects no operator-generated resource, which flux-operator
+      # would otherwise drop silently (#2996).
       - name: 🔐 Validate Flux verification is in effect
         run: |
           go test ./scripts/validate-flux-verify
