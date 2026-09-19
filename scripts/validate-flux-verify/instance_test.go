@@ -24,7 +24,6 @@ spec:
       - target:
           kind: Deployment
           name: kustomize-controller
-          namespace: flux-system
         patch: |
           - op: replace
             path: /spec/replicas

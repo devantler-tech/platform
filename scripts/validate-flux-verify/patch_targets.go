@@ -9,9 +9,12 @@
 //
 // No renderer can see the result, because flux-operator applies these patches
 // at reconcile time. So each target is checked against what this FluxInstance
-// itself declares the operator will generate: one Deployment per entry in
-// spec.components, all carrying fluxComponentLabelSelector, plus the root
-// source. A target outside that set is reported, not guessed at.
+// itself declares the operator will generate: one Deployment per component,
+// all carrying fluxComponentLabelSelector, plus the root source. The two
+// flux-operator behaviours recorded in the production FluxInstance are
+// enforced as well: component patches run before the namespace transformer,
+// so a namespaced Deployment selector matches nothing, and only the first of
+// two name-targeted patches on one controller is applied.
 package main
 
 import (
@@ -26,7 +29,23 @@ import (
 // else cannot be proven to match a generated resource.
 const fluxComponentLabelSelector = "app.kubernetes.io/part-of=flux"
 
-// validatePatchTargets reports every spec.kustomize.patches target that cannot
+// defaultFluxComponents is what flux-operator deploys when a FluxInstance
+// omits spec.components.
+var defaultFluxComponents = []string{
+	"source-controller",
+	"kustomize-controller",
+	"helm-controller",
+	"notification-controller",
+}
+
+// patchSelector is the resource a patch is aimed at, from its target or, for a
+// target-less strategic-merge patch, from the document it merges.
+type patchSelector struct {
+	kind, name, namespace, labelSelector string
+	annotationSelector                   bool
+}
+
+// validatePatchTargets reports every spec.kustomize.patches entry that cannot
 // be shown to select a resource this FluxInstance generates, or nil when every
 // patch lands.
 func validatePatchTargets(manifest []byte) error {
@@ -45,6 +64,7 @@ func validatePatchTargets(manifest []byte) error {
 	entries, _ := patches.([]any)
 
 	var problems []string
+	namedDeployments := map[string]int{}
 	for index, entry := range entries {
 		patch, ok := asMapping(entry)
 		if !ok {
@@ -52,7 +72,19 @@ func validatePatchTargets(manifest []byte) error {
 
 			continue
 		}
-		if reason := patchTargetProblem(patch["target"], components); reason != "" {
+
+		selector, reason := selectorOf(patch)
+		if reason == "" {
+			reason = selectorProblem(selector, components)
+		}
+		if reason == "" && selector.kind == "Deployment" && selector.name != "" {
+			if first, seen := namedDeployments[selector.name]; seen {
+				reason = fmt.Sprintf("patch %d already targets %q by name; flux-operator applies only the first, so merge them", first, selector.name)
+			} else {
+				namedDeployments[selector.name] = index
+			}
+		}
+		if reason != "" {
 			problems = append(problems, fmt.Sprintf("patch %d (target %s): %s", index, describeTarget(patch["target"]), reason))
 		}
 	}
@@ -66,11 +98,14 @@ func validatePatchTargets(manifest []byte) error {
 	return nil
 }
 
-// instanceComponents returns spec.components, the controllers flux-operator
-// generates a Deployment for.
+// instanceComponents returns spec.components, or flux-operator's default set
+// when the field is absent.
 func instanceComponents(instance any) []string {
-	value, _ := lookup(instance, []string{"spec", "components"})
-	list, _ := value.([]any)
+	value, present := lookup(instance, []string{"spec", "components"})
+	list, isList := value.([]any)
+	if !present || !isList {
+		return defaultFluxComponents
+	}
 
 	components := make([]string, 0, len(list))
 	for _, item := range list {
@@ -82,47 +117,78 @@ func instanceComponents(instance any) []string {
 	return components
 }
 
-// patchTargetProblem explains why a target cannot be shown to select a
-// generated resource, or returns "" when it can.
-func patchTargetProblem(value any, components []string) string {
-	target, ok := asMapping(value)
-	if !ok {
-		return "has no target, so the patch is not aimed at any named resource"
+// selectorOf reads the resource a patch is aimed at. A target-less patch is
+// accepted only as a strategic merge whose own document names the resource: a
+// target-less JSON6902 operation list selects nothing.
+func selectorOf(patch map[string]any) (patchSelector, string) {
+	if target, ok := asMapping(patch["target"]); ok {
+		_, annotated := target["annotationSelector"]
+
+		return patchSelector{
+			kind:               trimmed(target["kind"]),
+			name:               trimmed(target["name"]),
+			namespace:          trimmed(target["namespace"]),
+			labelSelector:      trimmed(target["labelSelector"]),
+			annotationSelector: annotated,
+		}, ""
 	}
-	if targetsRootSource(value) {
+
+	body, _ := patch["patch"].(string)
+	documents, err := decodeAll([]byte(body))
+	if err != nil || len(documents) != 1 {
+		return patchSelector{}, "has no target, and its patch is not a single strategic-merge document that names the resource"
+	}
+	document, ok := asMapping(documents[0])
+	if !ok {
+		return patchSelector{}, "has no target, and a JSON6902 operation list without one selects nothing"
+	}
+	metadata, _ := asMapping(document["metadata"])
+
+	return patchSelector{
+		kind:      trimmed(document["kind"]),
+		name:      trimmed(metadata["name"]),
+		namespace: trimmed(metadata["namespace"]),
+	}, ""
+}
+
+// selectorProblem explains why a selector cannot be shown to select a
+// generated resource, or returns "" when it can.
+func selectorProblem(selector patchSelector, components []string) string {
+	if selector.kind == rootSourceKind && selector.name == rootSourceName &&
+		(selector.namespace == "" || selector.namespace == rootSourceName) &&
+		selector.labelSelector == "" && !selector.annotationSelector {
 		return ""
 	}
-
-	kind, _ := target["kind"].(string)
-	name, _ := target["name"].(string)
-	selector, _ := target["labelSelector"].(string)
-	namespace, _ := target["namespace"].(string)
-	kind, name, selector, namespace = strings.TrimSpace(kind), strings.TrimSpace(name), strings.TrimSpace(selector), strings.TrimSpace(namespace)
-
-	if kind != "Deployment" {
-		return fmt.Sprintf("kind %q is neither a controller Deployment nor the root %s", kind, rootSourceKind)
+	if selector.kind != "Deployment" {
+		return fmt.Sprintf("kind %q is neither a controller Deployment nor the root %s", selector.kind, rootSourceKind)
 	}
-	if namespace != "" && namespace != rootSourceName {
-		return fmt.Sprintf("namespace %q excludes every generated controller, which run in %s", namespace, rootSourceName)
+	if selector.namespace != "" {
+		return fmt.Sprintf("namespace %q on a Deployment matches nothing, because flux-operator applies component patches before it sets the namespace; omit it", selector.namespace)
 	}
-	if _, present := target["annotationSelector"]; present {
+	if selector.annotationSelector {
 		return "an annotationSelector cannot be matched against the generated controllers"
 	}
 
 	switch {
-	case name != "" && selector != "":
+	case selector.name != "" && selector.labelSelector != "":
 		return "names a Deployment and a labelSelector at once; name it by one or the other"
-	case name != "":
-		if !slices.Contains(components, name) {
-			return fmt.Sprintf("no component named %q is declared in spec.components %v", name, components)
+	case selector.name != "":
+		if !slices.Contains(components, selector.name) {
+			return fmt.Sprintf("no component named %q is generated; components are %v", selector.name, components)
 		}
-	case selector != "":
-		if selector != fluxComponentLabelSelector {
-			return fmt.Sprintf("labelSelector %q is not %q, the label every generated controller carries", selector, fluxComponentLabelSelector)
+	case selector.labelSelector != "":
+		if selector.labelSelector != fluxComponentLabelSelector {
+			return fmt.Sprintf("labelSelector %q is not %q, the label every generated controller carries", selector.labelSelector, fluxComponentLabelSelector)
 		}
 	default:
 		return "a Deployment target with neither a name nor a labelSelector does not say which controller it changes"
 	}
 
 	return ""
+}
+
+func trimmed(value any) string {
+	text, _ := value.(string)
+
+	return strings.TrimSpace(text)
 }

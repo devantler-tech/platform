@@ -39,6 +39,32 @@ func TestPatchTargetsAcceptEveryGeneratedResource(t *testing.T) {
 	}
 }
 
+func TestPatchTargetsAcceptTheOperatorDefaults(t *testing.T) {
+	cases := map[string]struct{ old, new string }{
+		// flux-operator deploys the four core controllers when components is omitted.
+		"omitted components": {
+			old: "  components:\n    - source-controller\n    - kustomize-controller\n",
+			new: "",
+		},
+		"target-less strategic merge naming a controller": {
+			old: "        patch: verify\n",
+			new: "        patch: verify\n" +
+				"      - patch: |\n          apiVersion: apps/v1\n          kind: Deployment\n          metadata:\n            name: source-controller\n",
+		},
+	}
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(patchTargetsManifest, testCase.old, testCase.new, 1)
+			if mutated == patchTargetsManifest {
+				t.Fatalf("fixture did not change for %q", testCase.old)
+			}
+			if err := validatePatchTargets([]byte(mutated)); err != nil {
+				t.Fatalf("validatePatchTargets() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestPatchTargetsRejectATargetThatSelectsNothing(t *testing.T) {
 	cases := []struct {
 		name string
@@ -75,6 +101,35 @@ func TestPatchTargetsRejectATargetThatSelectsNothing(t *testing.T) {
 			old:  "name: kustomize-controller\n        patch",
 			new:  "name: kustomize-controller\n          namespace: kube-system\n        patch",
 			want: `namespace "kube-system"`,
+		},
+		{
+			// flux-operator applies component patches before the namespace
+			// transformer, so even the controllers' own namespace matches nothing.
+			name: "namespaced deployment target",
+			old:  "name: kustomize-controller\n        patch",
+			new:  "name: kustomize-controller\n          namespace: flux-system\n        patch",
+			want: `namespace "flux-system" on a Deployment matches nothing`,
+		},
+		{
+			name: "second name-targeted patch on one controller",
+			old:  "        patch: verify\n",
+			new: "        patch: verify\n" +
+				"      - target:\n          kind: Deployment\n          name: kustomize-controller\n        patch: more\n",
+			want: `already targets "kustomize-controller" by name`,
+		},
+		{
+			name: "target-less strategic merge naming an undeclared controller",
+			old:  "        patch: verify\n",
+			new: "        patch: verify\n" +
+				"      - patch: |\n          apiVersion: apps/v1\n          kind: Deployment\n          metadata:\n            name: image-reflector-controller\n",
+			want: `no component named "image-reflector-controller"`,
+		},
+		{
+			name: "target-less JSON6902 list",
+			old:  "        patch: verify\n",
+			new: "        patch: verify\n" +
+				"      - patch: |\n          - op: add\n            path: /spec/replicas\n            value: 2\n",
+			want: "JSON6902 operation list without one selects nothing",
 		},
 		{
 			name: "deployment with neither name nor selector",
