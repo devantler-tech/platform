@@ -33,6 +33,20 @@ spec:
         memory: 50Mi
       limits:
         cpu: "2"
+    # C-0211 baseline context (#3239). kube-system is excluded from
+    # add-security-context, so the two fields it would supply are declared here.
+    # Helm merges these maps over the chart's own defaults, so the chart's
+    # non-root user, RuntimeDefault seccomp, read-only root filesystem and
+    # dropped capabilities are all kept.
+    #
+    # Both fields are inert for this pod. It mounts no volumes, so there is
+    # nothing for fsGroupChangePolicy to govern. The empty seLinuxOptions object
+    # declares the field without pinning a type, level or MCS category, so the
+    # container keeps the runtime's own SELinux defaults.
+    podSecurityContext:
+      fsGroupChangePolicy: OnRootMismatch
+    securityContext:
+      seLinuxOptions: {}
     strategy:
       type: RollingUpdate
       rollingUpdate:
