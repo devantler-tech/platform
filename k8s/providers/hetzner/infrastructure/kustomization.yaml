@@ -66,6 +66,10 @@ resources:
   # API on a schedule, since Coroot has no declarative per-alert exemption. See
   # the file header for the exemption list + why each is by-design.
   - coroot/cron-job-alert-autosuppressor.yaml
+  # Reconciles narrow, reasoned per-application inspection thresholds. Log
+  # exemptions remain active only while every current error pattern matches its
+  # reviewed contract; any novel pattern restores the global fail-visible rule.
+  - coroot/cron-job-application-health-reconciler.yaml
   # Reconcile reviewed Coroot availability-risk acceptances from an exact
   # version-controlled allowlist. Unknown findings remain active, and removing
   # an entry reactivates any dismissal previously managed by platform#3812.

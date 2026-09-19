@@ -2720,8 +2720,33 @@ const (
 //
 //	4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7
 //
-// Moved by #2803, derived on exact main 4cac44f6, whose approved aggregate is
-// 4822c6 above. No manifest changes: the surface entry of a SOPS-encrypted
+// Moved again by the C-0211 baseline context for the Kubescape alertmanager
+// (#3239), derived on exact main e0cce893896718a764ec55127220da6f9fb42a2c,
+// whose approved aggregate is 4822c6a3 above. The kubescape/alertmanager
+// HelmRelease values gain fsGroupChangePolicy: OnRootMismatch on the pod
+// security context and an empty seLinuxOptions object on the container. A
+// HelmRelease is a controller-RBAC emitter, so this moves the aggregate even
+// though nothing is granted.
+//
+// CONSERVATION: the approval-base comparison names only the
+// kubescape/alertmanager HelmRelease. No ClusterRole, Role,
+// ClusterRoleBinding, RoleBinding or ServiceAccount source changes; no identity,
+// binding, verb, wildcard, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was re-derived locally with the
+// repository-approved kubectl v1.36.2 Darwin arm64 binary, whose official
+// SHA256 was reverified as
+// 4408c85c83fd3a31adaa555bdf3c7a6c81f74b19449a9060ba31ab91926f023d,
+// against exact current main e0cce893896718a764ec55127220da6f9fb42a2c.
+//
+// Previous aggregate: 4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7.
+//
+// That C-0211 alertmanager baseline established aggregate:
+//
+//	cf3e10be68e3a77cdac612347d4d91c2db567d616de5fc1b6bba391ae48b8698
+//
+// Moved by #2803, rebased onto main after #3239, whose approved aggregate is
+// cf3e10 above. No manifest changes: the surface entry of a SOPS-encrypted
 // Secret now fingerprints its key set, each encrypted key's declared type,
 // every unencrypted value and the stable `sops` metadata (recipients,
 // encrypted_regex), instead of the ciphertext, mac, timestamps, version and
@@ -2741,8 +2766,8 @@ const (
 // 4822c6 exactly with the projection disabled before the value below was read.
 // CI's pinned renderer is authoritative.
 //
-// Previous aggregate: 4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7.
-const expectedRenderedSurfaceSHA = "a5a345af9819ebcd71815827fb0778cda725800e829bfe2185a167f657134a0b"
+// Previous aggregate: cf3e10be68e3a77cdac612347d4d91c2db567d616de5fc1b6bba391ae48b8698.
+const expectedRenderedSurfaceSHA = "0000000000000000000000000000000000000000000000000000000000000000"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2755,7 +2780,7 @@ const expectedRenderedSurfaceSHA = "a5a345af9819ebcd71815827fb0778cda725800e829b
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7"
+const previousRenderedSurfaceSHA = "cf3e10be68e3a77cdac612347d4d91c2db567d616de5fc1b6bba391ae48b8698"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

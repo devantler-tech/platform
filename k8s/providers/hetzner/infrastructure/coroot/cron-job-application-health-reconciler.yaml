@@ -1,0 +1,281 @@
+# Declarative Coroot Applications-view health policy.
+#
+# Coroot stores per-application inspection thresholds in coroot-db and exposes
+# no CRD fields for them. This CronJob makes the reviewed policy self-healing
+# after database restore/rebuild. It never changes a global or project default:
+# only configs[2], the exact application override, is reconciled.
+#
+# The metric exceptions are deliberately bounded:
+#
+#   * kubelet NetworkTCPConnections = 3 only while the complete positive failed
+#     upstream set is kube-scheduler + kube-controller-manager. These are the
+#     IPv6-first localhost attempts made by healthy static-pod probes before
+#     their successful IPv4 fallback. Coroot warns when the observed count
+#     equals its threshold despite displaying a greater-than condition, so 3 is
+#     the smallest value that clears the reviewed count of 2. A third failed
+#     upstream removes the override instead of being accepted.
+#   * kyverno-background-controller MemoryLeakPercent = 35. Two 48-hour live
+#     series had only 3.5% and 4.9% net growth with bounded 50-87 MiB sawteeth;
+#     Coroot's short-window regression reported 29%/h. Thirty-five still exposes
+#     a sustained severe leak and is scoped to this one application.
+#   * crossplane MemoryLeakPercent = 35. Its 22-day-old, restart-free pod has a
+#     seven-day daily sawtooth that repeatedly returns to 270-300 MiB after
+#     451-520 MiB peaks; Coroot reported 27%/h while the cache was warming.
+#     Thirty-five preserves a warning for sustained growth outside that cycle.
+#
+# Log thresholds are even narrower: the override is installed only when EVERY
+# current ERROR/CRITICAL pattern matches the app-specific allowlist below. A new
+# pattern removes the override on the next five-minute run. Each cap is above the
+# observed reviewed hourly count but remains finite, so a storm of even a known
+# message becomes visible. Empty/aged-out pattern sets inherit the global zero.
+# The allowlist covers: this reconciler's predecessor lifecycle text while it
+# ages out; malformed public Dex authorization requests; an upstream Linux 6.18
+# audit context regression plus bounded runtime teardown races; millisecond
+# apiserver client cancellations and one exact read-only audit-parser false
+# positive; stale controller-manager metadata informers until the declarative
+# Talos static-pod refresh lands; and VPA's non-retryable Normal Event recording
+# denial (granting broad Event patch permission would be the worse fix).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: coroot-application-health-reconciler
+  namespace: observability
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app: coroot-application-health-reconciler
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+            fsGroupChangePolicy: OnRootMismatch
+          containers:
+            - name: reconcile
+              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                seLinuxOptions: {}
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
+                  RETRY="-fsS --retry 5 --retry-delay 2 --retry-all-errors --retry-connrefused --max-time 30"
+
+                  log_info() {
+                    jq -nc --arg msg "$1" '{level:"info",msg:$msg}'
+                  }
+                  log_error() {
+                    jq -nc --arg msg "$1" '{level:"error",msg:$msg}' >&2
+                  }
+                  encode() {
+                    jq -nr --arg value "$1" '$value | @uri'
+                  }
+
+                  PID=$(curl $RETRY "$BASE/api/user" | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
+                  [ -n "$PID" ] || { log_error "could not resolve platform project id"; exit 1; }
+
+                  reconcile_threshold() {
+                    app="$1"
+                    check="$2"
+                    global="$3"
+                    desired="$4"
+                    reason="$5"
+                    encoded_app=$(encode "$app")
+                    url="$BASE/api/project/$PID/app/$encoded_app/inspection/$check/config"
+                    config=$(curl $RETRY "$url")
+                    if ! printf '%s' "$config" | jq -e --argjson global "$global" '
+                      (.form.configs | type == "array" and length == 3) and
+                      .form.configs[0].threshold == $global
+                    ' >/dev/null; then
+                      log_error "refusing $reason: unexpected global config for $app/$check"
+                      exit 1
+                    fi
+
+                    current=$(printf '%s' "$config" | jq -r '
+                      if .form.configs[2] == null then "inherit"
+                      else (.form.configs[2].threshold | tostring) end
+                    ')
+                    if [ "$current" = "$desired" ]; then
+                      log_info "$reason already reconciled: $app/$check=$desired"
+                      return
+                    fi
+
+                    if [ "$desired" = "inherit" ]; then
+                      payload=$(printf '%s' "$config" | jq -c '.form | .configs[2] = null')
+                    else
+                      payload=$(printf '%s' "$config" | jq -c --argjson threshold "$desired" '
+                        .form | .configs[2] = {threshold:$threshold}
+                      ')
+                    fi
+                    curl $RETRY -X POST -H 'Content-Type: application/json' -d "$payload" "$url" >/dev/null
+                    log_info "$reason reconciled: $app/$check=$desired"
+                  }
+
+                  KUBELET="$PID:_:Unknown:kubelet"
+                  encoded_kubelet=$(encode "$KUBELET")
+                  kubelet=$(curl $RETRY "$BASE/api/project/$PID/app/$encoded_kubelet")
+                  active=$(printf '%s' "$kubelet" | jq -c '
+                    [.data.reports[]? | .widgets[]? | .chart?
+                     | select(.title=="Failed TCP connections, per second")
+                     | .series[]?
+                     | select(.data | any(.[]?; type=="number" and . > 0))
+                     | .name] | unique | sort
+                  ')
+                  if [ "$active" = '["→kube-controller-manager","→kube-scheduler"]' ]; then
+                    reconcile_threshold "$KUBELET" NetworkTCPConnections 0 3 kubelet-static-pod-probes
+                  else
+                    reconcile_threshold "$KUBELET" NetworkTCPConnections 0 inherit kubelet-unreviewed-upstream
+                  fi
+
+                  KYVERNO="$PID:kyverno:Deployment:kyverno-background-controller"
+                  reconcile_threshold "$KYVERNO" MemoryLeakPercent 10 35 kyverno-bounded-cache-sawtooth
+
+                  CROSSPLANE="$PID:crossplane-system:Deployment:crossplane"
+                  reconcile_threshold "$CROSSPLANE" MemoryLeakPercent 10 35 crossplane-daily-memory-sawtooth
+
+                  LOG_QUERY=$(jq -nr '{source:"agent",view:"patterns"} | tojson | @uri')
+                  reconcile_logs() {
+                    app="$1"
+                    policy="$2"
+                    cap="$3"
+                    encoded_app=$(encode "$app")
+                    patterns=$(curl $RETRY "$BASE/api/project/$PID/app/$encoded_app/logs?query=$LOG_QUERY")
+                    if ! printf '%s' "$patterns" | jq -e '
+                      .data.patterns == null or (.data.patterns | type == "array")
+                    ' >/dev/null; then
+                      log_error "refusing $policy: invalid log-pattern response for $app"
+                      exit 1
+                    fi
+
+                    case "$policy" in
+                      autosuppressor-lifecycle)
+                        counts=$(printf '%s' "$patterns" | jq -r '
+                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")] as $all |
+                          [$all[] | select(.sample=="no by-design alerts to suppress" or
+                            (.sample | test("^(reopened [0-9]+ changed exemption\\(s\\)|suppressed [0-9]+ by-design alert\\(s\\))$")))] as $ok |
+                          "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      dex-invalid-client)
+                        counts=$(printf '%s' "$patterns" | jq -r '
+                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")] as $all |
+                          [$all[] | .sample as $s | select(
+                            ($s | startswith("time=")) and
+                            ($s | contains("level=ERROR msg=\"failed to parse authorization request\"")) and
+                            ($s | contains("err=\"Invalid client_id")) and
+                            ($s | test(" request_id=[0-9a-f-]{36}$"))
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      talos-runtime)
+                        counts=$(printf '%s' "$patterns" | jq -r '
+                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")] as $all |
+                          [$all[] | .sample as $s | select(
+                            ($s | test("^kern: +err: \\[.*\\]: audit: error in audit_log_subj_ctx$")) or
+                            $s=="ContainerStatus from runtime service failed" or
+                            $s=="DeleteContainer returned error" or
+                            ($s | test("^ContainerStatus for \"[0-9a-f]{64}\" failed$")) or
+                            $s=="Observed pod startup duration" or
+                            (($s | contains("level=error msg=\"failed sending message on channel\"")) and
+                             ($s | contains("write: broken pipe")) and ($s | endswith("runtime=io.containerd.runc.v2"))) or
+                            ($s | test("^collecting metrics for [0-9a-f]{64}$")) or
+                            $s=="ttrpc: received message on inactive stream"
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      apiserver-client-noise)
+                        counts=$(printf '%s' "$patterns" | jq -r '
+                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")] as $all |
+                          [$all[] | .sample as $s | select(
+                            (($s | test("^E[0-9]{4} [0-9:.]+ +1 status\\.go:71\\] ")) and
+                             ($s | contains("errors.errorString{s:\\\"context canceled\\\"}: context canceled")) and
+                             ($s | endswith("logger=\"UnhandledError\""))) or
+                            (($s | test("^E[0-9]{4} [0-9:.]+ +1 timeout\\.go:140\\] ")) and
+                             ($s | contains("\"Post-timeout activity\"")) and
+                             ($s | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$"))) or
+                            (($s | fromjson? // {}) as $audit |
+                             $audit.kind=="Event" and $audit.apiVersion=="audit.k8s.io/v1" and
+                             $audit.level=="Metadata" and $audit.stage=="RequestReceived" and
+                             $audit.verb=="get" and
+                             $audit.user.username=="system:serviceaccount:flux-system:helm-controller" and
+                             $audit.objectRef.resource=="secrets" and $audit.objectRef.namespace=="kubescape" and
+                             ($audit.objectRef.name | test("^sh\\.helm\\.release\\.v1\\.alertmanager\\.v[0-9]+$")))
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      controller-informer-transition)
+                        counts=$(printf '%s' "$patterns" | jq -r '
+                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")] as $all |
+                          [$all[] | .sample as $s | select(
+                            (($s | test("^E[0-9]{4} [0-9:.]+ +1 reflector\\.go:227\\] ")) and
+                             ($s | contains("failed to list *v1.PartialObjectMetadata: the server could not find the requested resource")) and
+                             ($s | contains("reflector=\"k8s.io/client-go/metadata/metadatainformer/informer.go:146\""))) or
+                            (($s | test("^E[0-9]{4} [0-9:.]+ +1 replica_set\\.go:640\\] ")) and
+                             ($s | contains("\"Unhandled Error\" err=\"sync ")) and
+                             ($s | contains(" failed with read version: ")) and
+                             ($s | test(" is not as new as written version: [0-9]+ for group resource replicasets\\.apps\" logger=\"UnhandledError\"$")))
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      vpa-normal-event-denial)
+                        counts=$(printf '%s' "$patterns" | jq -r '
+                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")] as $all |
+                          [$all[] | .sample as $s | select(
+                            ($s | test("^E[0-9]{4} [0-9:.]+ +1 event\\.go:359\\] ")) and
+                            ($s | contains("\"Server rejected event (will not retry!)\"")) and
+                            ($s | contains("User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\"")) and
+                            ($s | contains("Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater."))
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      *)
+                        log_error "unknown log policy: $policy"
+                        exit 1
+                        ;;
+                    esac
+
+                    all=$(printf '%s' "$counts" | cut -d: -f1)
+                    reviewed=$(printf '%s' "$counts" | cut -d: -f2)
+                    if [ "$all" -gt 0 ] && [ "$all" -eq "$reviewed" ]; then
+                      reconcile_threshold "$app" LogErrors 0 "$cap" "$policy"
+                    else
+                      reconcile_threshold "$app" LogErrors 0 inherit "$policy-fail-visible"
+                    fi
+                  }
+
+                  reconcile_logs "$PID:observability:CronJob:coroot-alert-autosuppressor" autosuppressor-lifecycle 10
+                  reconcile_logs "$PID:dex:Deployment:dex" dex-invalid-client 10
+                  reconcile_logs "$PID:_:Unknown:init" talos-runtime 1000
+                  reconcile_logs "$PID:kube-system:StaticPods:kube-apiserver" apiserver-client-noise 100
+                  reconcile_logs "$PID:kube-system:StaticPods:kube-controller-manager" controller-informer-transition 5000
+                  reconcile_logs "$PID:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater" vpa-normal-event-denial 10

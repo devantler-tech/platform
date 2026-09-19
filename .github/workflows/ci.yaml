@@ -547,6 +547,7 @@ jobs:
               - 'scripts/tests/test-stranded-volume-attach-alert.sh'
               - 'scripts/tests/test-prune-protected-orphan-alert.sh'
               - 'scripts/tests/test-coroot-alert-autosuppressor.sh'
+              - 'scripts/tests/test-coroot-application-health-reconciler.sh'
               - 'scripts/tests/test-velero-maintenance-oom-alert.sh'
               # That test also asserts the alerting runbook points at the alert's
               # manifest, so a runbook-only edit must still run it.
@@ -1543,6 +1544,14 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-alert-autosuppressor.sh
           bash scripts/tests/test-coroot-alert-autosuppressor.sh
+
+      - name: 🩺 Validate declarative Coroot application health
+        if: needs.changes.outputs.k8s == 'true'
+        # Exact reviewed app signals receive per-app thresholds; any novel log
+        # pattern resets its threshold so the Applications view fails visible.
+        run: |
+          shellcheck scripts/tests/test-coroot-application-health-reconciler.sh
+          bash scripts/tests/test-coroot-application-health-reconciler.sh
 
       - name: 💾 Validate the Velero maintenance OOM alert
         if: needs.changes.outputs.k8s == 'true'

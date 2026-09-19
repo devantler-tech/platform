@@ -20,6 +20,12 @@ Crossplane, KRO, KSail operator, Longhorn and Velero controllers. Adding one
 means changing the policy and the pinned list in
 `scripts/tests/test-audit-privileged-rbac.sh` in the same reviewed change.
 
+The exclusions are a false precondition keyed on each object's
+`kind|namespace|name`, not a rule `exclude`. The background scan therefore records
+an excluded role as a current `skip`, so a role that was accepted after it was first
+reported shows as accepted instead of keeping its old warning. See
+[Policy reports](policy-reports.md) for why an `exclude` leaves that warning behind.
+
 The excluded names come from the charts and releases that create those roles. A
 chart change that renames one of them, or adds a new privileged role, is refused at
 admission. Flux dry-runs through the same webhook, so the whole Kustomization fails
@@ -61,7 +67,8 @@ mutation.
 
 The local regression suite checks ordinary grants, privileged grants and the
 exclusion boundaries with the same Kyverno version used in CI and production. A
-separate check requires the exact fixture census, the exact exclusion list and
-the policy's complete enforcement shape. A policy that stops matching, widens an
+separate check requires the exact fixture census, the exact exclusion list, a
+current `skip` for exactly the excluded fixtures, and the policy's complete
+enforcement shape. A policy that stops matching, widens an
 exclusion, or weakens enforcement through another field cannot pass. Existing Kubescape scanner exceptions are not admission exceptions.
 Production role and binding inventories remain private operator evidence.
