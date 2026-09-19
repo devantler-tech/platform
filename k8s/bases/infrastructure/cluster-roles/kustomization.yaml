@@ -12,3 +12,4 @@ resources:
   - tenant-edit.yaml
   - tenant-external-dns.yaml
   - tenant-external-dns-global.yaml
+  - kyverno-cleanup-policy-reports.yaml

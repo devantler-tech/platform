@@ -620,13 +620,28 @@ rules:
       before deployment
     severity: error
 
+  # The one reviewed exception (#2573): a DeletingPolicy whose every resource
+  # rule names only the wgpolicyk8s.io group and only policy-report resources.
+  # Kyverno report objects cannot carry or restore network egress, so such a
+  # policy cannot delete allow-crossplane. Any other group, a wildcard, or a
+  # rule missing either list keeps the policy rejected.
   - name: reject-cel-policy-producers
     expression: >-
       !has(object.apiVersion) ||
       !object.apiVersion.startsWith('policies.kyverno.io/') ||
       !(object.kind in [
         'GeneratingPolicy', 'MutatingPolicy', 'DeletingPolicy'
-      ])
+      ]) ||
+      (object.kind == 'DeletingPolicy' &&
+       has(object.spec) &&
+       has(object.spec.matchConstraints) &&
+       has(object.spec.matchConstraints.resourceRules) &&
+       object.spec.matchConstraints.resourceRules.size() > 0 &&
+       object.spec.matchConstraints.resourceRules.all(rule,
+         has(rule.apiGroups) && rule.apiGroups == ['wgpolicyk8s.io'] &&
+         has(rule.resources) && rule.resources.size() > 0 &&
+         rule.resources.all(resource,
+           resource in ['policyreports', 'clusterpolicyreports'])))
     message: >-
       Helm-rendered CEL policy producers require explicit effective-policy
       review before deployment
