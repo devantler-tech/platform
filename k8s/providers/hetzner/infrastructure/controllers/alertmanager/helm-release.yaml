@@ -51,6 +51,18 @@ spec:
     # One voluntary disruption remains drainable while the other peer serves.
     podDisruptionBudget:
       maxUnavailable: 1
+    # This chart owns Alertmanager independently of the Kubescape operator
+    # release. Production showed that its default immediate, one-second
+    # readiness probe can race port 9093 during both HA replica starts even
+    # though neither container restarts and both converge. Preserve the chart's
+    # endpoint while adding a bounded initialization window and response
+    # headroom; the peer remains available during a rolling update.
+    readinessProbe:
+      httpGet:
+        path: /
+        port: http
+      initialDelaySeconds: 30
+      timeoutSeconds: 5
     # This Alertmanager never calls the Kubernetes API — don't mount the SA
     # token (chart default is true).
     automountServiceAccountToken: false

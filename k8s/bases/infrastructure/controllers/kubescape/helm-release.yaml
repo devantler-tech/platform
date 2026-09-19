@@ -329,6 +329,39 @@ spec:
               - op: add
                 path: /spec/template/spec/containers/0/livenessProbe/timeoutSeconds
                 value: 5
+          # A config-driven rollout recorded startup/readiness timeouts on every
+          # node-agent while all five pods converged without a restart. The live
+          # correction rollout then measured 73 seconds from container start to
+          # Ready and still emitted six startup-probe warnings with a five-second
+          # response timeout. Give initialization a bounded two-minute grace
+          # period before probing, then retain the chart cadence and failure
+          # threshold with five-second response headroom. A genuinely stuck agent
+          # still fails startup within seven minutes while the remaining
+          # DaemonSet pods continue serving the cluster during the rolling update.
+          # The same rollout recorded one readiness reset three seconds after an
+          # old pod began termination. Kubernetes' native sleep hook keeps the
+          # healthy endpoint alive briefly while the terminating pod is removed
+          # from service, avoiding that shutdown-probe race without requiring a
+          # shell in the security-sensitive sensor image.
+          - target:
+              kind: DaemonSet
+              name: ^node-agent$
+            patch: |
+              - op: add
+                path: /spec/template/spec/containers/0/startupProbe/initialDelaySeconds
+                value: 120
+              - op: add
+                path: /spec/template/spec/containers/0/startupProbe/timeoutSeconds
+                value: 5
+              - op: add
+                path: /spec/template/spec/containers/0/readinessProbe/timeoutSeconds
+                value: 5
+              - op: add
+                path: /spec/template/spec/containers/0/lifecycle
+                value:
+                  preStop:
+                    sleep:
+                      seconds: 10
           - target:
               kind: Deployment
               name: ^(kubescape|kubevuln|operator|storage)$
