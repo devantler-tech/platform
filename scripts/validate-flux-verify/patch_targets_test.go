@@ -153,6 +153,20 @@ func TestPatchTargetsRejectATargetThatSelectsNothing(t *testing.T) {
 			want: `no component named "image-reflector-controller"`,
 		},
 		{
+			name: "target-less strategic merge with a core apiVersion",
+			old:  "        patch: verify\n",
+			new: "        patch: verify\n" +
+				"      - patch: |\n          apiVersion: v1\n          kind: Deployment\n          metadata:\n            name: source-controller\n",
+			want: `group "" is not "apps"`,
+		},
+		{
+			name: "target-less strategic merge without an apiVersion",
+			old:  "        patch: verify\n",
+			new: "        patch: verify\n" +
+				"      - patch: |\n          kind: Deployment\n          metadata:\n            name: source-controller\n",
+			want: `group "" is not "apps"`,
+		},
+		{
 			name: "target-less JSON6902 list",
 			old:  "        patch: verify\n",
 			new: "        patch: verify\n" +

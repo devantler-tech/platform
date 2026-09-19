@@ -43,6 +43,9 @@ var defaultFluxComponents = []string{
 type patchSelector struct {
 	group, version, kind, name, namespace, labelSelector string
 	annotationSelector                                   bool
+	// exactGroupVersion is set for a target-less strategic merge, whose apiVersion
+	// is the resource's identity rather than an optional constraint.
+	exactGroupVersion bool
 	// padded names a field whose value carries surrounding whitespace. Kustomize
 	// matches the raw value, so a padded name selects nothing even though it
 	// reads correctly.
@@ -155,6 +158,7 @@ func selectorOf(patch map[string]any) (patchSelector, string) {
 		return patchSelector{}, "has no target, and a JSON6902 operation list without one selects nothing"
 	}
 	metadata, _ := asMapping(document["metadata"])
+	selector.exactGroupVersion = true
 	apiVersion := selector.field("apiVersion", document["apiVersion"])
 	if slash := strings.LastIndex(apiVersion, "/"); slash >= 0 {
 		selector.group, selector.version = apiVersion[:slash], apiVersion[slash+1:]
@@ -186,10 +190,10 @@ func selectorProblem(selector patchSelector, components []string) string {
 		return fmt.Sprintf("%s carries surrounding whitespace, which kustomize matches literally, so it selects nothing", selector.padded)
 	}
 	if groupVersion, known := generatedGroupVersions[selector.kind]; known {
-		if selector.group != "" && selector.group != groupVersion[0] {
+		if (selector.exactGroupVersion || selector.group != "") && selector.group != groupVersion[0] {
 			return fmt.Sprintf("group %q is not %q, the group of a generated %s", selector.group, groupVersion[0], selector.kind)
 		}
-		if selector.version != "" && selector.version != groupVersion[1] {
+		if (selector.exactGroupVersion || selector.version != "") && selector.version != groupVersion[1] {
 			return fmt.Sprintf("version %q is not %q, the version of a generated %s", selector.version, groupVersion[1], selector.kind)
 		}
 	}
