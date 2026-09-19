@@ -2720,11 +2720,12 @@ const (
 //
 //	4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7
 //
-// Moved by #2803, derived on exact main d72441cf, whose approved aggregate is
+// Moved by #2803, derived on exact main 4cac44f6, whose approved aggregate is
 // 4822c6 above. No manifest changes: the surface entry of a SOPS-encrypted
-// Secret now fingerprints its key set, each encrypted key's declared type and
-// every unencrypted value, instead of the ciphertext and the root `sops`
-// metadata. Encrypted values are nulled in place and their paths and types
+// Secret now fingerprints its key set, each encrypted key's declared type,
+// every unencrypted value and the stable `sops` metadata (recipients,
+// encrypted_regex), instead of the ciphertext, mac, timestamps, version and
+// wrapped data keys. Encrypted values are nulled in place and their paths and types
 // recorded in a separate list, so no plaintext can mimic them. The ciphertext
 // moved on every re-encryption while this validator could never decrypt or
 // interpret it, so a routine secret rotation reddened the gate with no
@@ -2741,7 +2742,7 @@ const (
 // CI's pinned renderer is authoritative.
 //
 // Previous aggregate: 4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7.
-const expectedRenderedSurfaceSHA = "921056c2fe556238cfc006fd756840413c1c947d454b9b67ced383c5765195de"
+const expectedRenderedSurfaceSHA = "a5a345af9819ebcd71815827fb0778cda725800e829bfe2185a167f657134a0b"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.

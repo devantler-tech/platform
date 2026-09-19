@@ -20,8 +20,9 @@ var sopsEncryptedScalar = regexp.MustCompile(
 // review: its identity, its key set, which keys are encrypted and with what
 // declared type, and every unencrypted value.
 //
-// The ciphertext and the root `sops` metadata are dropped because they move on
-// every re-encryption — a routine rotation or a SOPS version bump — while the
+// The ciphertext and the volatile `sops` metadata (mac, timestamps, version and
+// each key group's wrapped data key) are dropped because they move on every
+// re-encryption — a routine rotation or a SOPS version bump — while the
 // validator can neither decrypt nor interpret them (#2803). Fingerprinting
 // them turned every rotation into a red gate whose only documented remedy was
 // re-approving the hash, which trains the re-approval into a rubber stamp.
@@ -41,13 +42,16 @@ func sopsSubstitutionSourceSurfaceDocument(identity resourceIdentity, document m
 	if identity.apiVersion != "v1" || identity.kind != "Secret" {
 		return document
 	}
-	if _, encrypted := document["sops"].(map[string]any); !encrypted {
+	sopsMetadata, encrypted := document["sops"].(map[string]any)
+	if !encrypted {
 		return document
 	}
 	encryptedScalars := make([]string, 0)
 	projected := make(map[string]any, len(document))
 	for key, value := range document {
 		if key == "sops" {
+			projected[key] = stableSOPSMetadata(sopsMetadata)
+
 			continue
 		}
 		projected[key] = projectSOPSCiphertext(value, "/"+escapeJSONPointerToken(key), &encryptedScalars)
@@ -57,6 +61,54 @@ func sopsSubstitutionSourceSurfaceDocument(identity resourceIdentity, document m
 		"sopsProjectedDocument": projected,
 		"sopsEncryptedScalars":  encryptedScalars,
 	}
+}
+
+// volatileSOPSFields move on every re-encryption without any change in who can
+// decrypt the Secret or which of its keys are encrypted.
+var volatileSOPSFields = map[string]bool{"mac": true, "lastmodified": true, "version": true}
+
+// volatileSOPSKeyGroupFields are the per-recipient fields that change when the
+// data key is re-wrapped for the same recipient.
+var volatileSOPSKeyGroupFields = map[string]bool{"enc": true, "created_at": true}
+
+// stableSOPSMetadata keeps every `sops` field that says who can decrypt the
+// Secret and how it is encrypted — each key group's recipient, encrypted_regex
+// and the like — and drops only the fields listed as volatile. Losing or
+// replacing a recipient leaves Flux unable to decrypt the substitution source,
+// so it must still move the surface. An unrecognised field is kept, so it moves
+// the surface rather than being silently ignored.
+func stableSOPSMetadata(metadata map[string]any) map[string]any {
+	stable := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		if volatileSOPSFields[key] {
+			continue
+		}
+		groups, isList := value.([]any)
+		if !isList {
+			stable[key] = value
+
+			continue
+		}
+		stableGroups := make([]any, len(groups))
+		for index, group := range groups {
+			fields, isMap := group.(map[string]any)
+			if !isMap {
+				stableGroups[index] = group
+
+				continue
+			}
+			stableFields := make(map[string]any, len(fields))
+			for field, fieldValue := range fields {
+				if !volatileSOPSKeyGroupFields[field] {
+					stableFields[field] = fieldValue
+				}
+			}
+			stableGroups[index] = stableFields
+		}
+		stable[key] = stableGroups
+	}
+
+	return stable
 }
 
 // projectSOPSCiphertext nulls each whole encrypted scalar and records its JSON

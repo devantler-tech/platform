@@ -20,6 +20,12 @@ sops:
   lastmodified: "2026-07-25T10:00:00Z"
   version: 3.13.2
   encrypted_regex: ^(data|stringData)$
+  age:
+    - recipient: age1productionrecipientaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      enc: |
+        -----BEGIN AGE ENCRYPTED FILE-----
+        d3JhcHBlZC1rZXktb25l
+        -----END AGE ENCRYPTED FILE-----
 `
 
 func sopsSourceEntry(t *testing.T, contents string) string {
@@ -44,6 +50,7 @@ func TestAuthorizationSurfaceEntryIgnoresSOPSReEncryption(t *testing.T) {
 		"data:bWFj,iv:aXYz", "data:b3RoZXI=,iv:bmV3Mw==",
 		`lastmodified: "2026-07-25T10:00:00Z"`, `lastmodified: "2026-09-19T14:00:00Z"`,
 		"version: 3.13.2", "version: 3.13.3",
+		"d3JhcHBlZC1rZXktb25l", "cmUtd3JhcHBlZC1rZXk=",
 	).Replace(sopsSubstitutionSourceManifest)
 	if reEncrypted == sopsSubstitutionSourceManifest {
 		t.Fatal("fixture did not change: the re-encryption case would pass vacuously")
@@ -105,6 +112,13 @@ func TestAuthorizationSurfaceEntryKeepsSOPSKeySetAndPlaintext(t *testing.T) {
 		},
 		{name: "secret identity", old: "name: variables-cluster", new: "name: variables-shadow"},
 		{name: "secret type", old: "type: Opaque", new: "type: kubernetes.io/basic-auth"},
+		{name: "age recipient replaced", old: "age1productionrecipient", new: "age1someotherrecipient0"},
+		{
+			name: "age recipient removed",
+			old:  "  age:\n    - recipient: age1productionrecipientaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+			new:  "  age:\n    - other: kept\n",
+		},
+		{name: "encrypted_regex", old: "encrypted_regex: ^(data|stringData)$", new: "encrypted_regex: ^(data)$"},
 	}
 	for _, mutation := range mutations {
 		t.Run(mutation.name, func(t *testing.T) {
@@ -151,8 +165,19 @@ func TestSOPSSubstitutionSourceProjectionLeavesDecodedDocumentIntact(t *testing.
 	}
 	projected := sopsSubstitutionSourceSurfaceDocument(identityOf(documents[0]), documents[0])
 	document, _ := projected["sopsProjectedDocument"].(map[string]any)
-	if _, kept := document["sops"]; kept {
-		t.Fatal("projection kept the SOPS metadata")
+	metadata, _ := document["sops"].(map[string]any)
+	for _, volatile := range []string{"mac", "lastmodified", "version"} {
+		if _, kept := metadata[volatile]; kept {
+			t.Fatalf("projection kept the volatile SOPS field %q", volatile)
+		}
+	}
+	groups, _ := metadata["age"].([]any)
+	if len(groups) != 1 {
+		t.Fatalf("projection dropped the SOPS recipients: %v", metadata)
+	}
+	group, _ := groups[0].(map[string]any)
+	if _, kept := group["enc"]; kept || group["recipient"] == nil {
+		t.Fatalf("projection must keep each recipient and drop its wrapped key: %v", group)
 	}
 	stringData, _ := document["stringData"].(map[string]any)
 	if stringData["cluster_domain"] != nil || stringData["replica_count"] != nil ||
