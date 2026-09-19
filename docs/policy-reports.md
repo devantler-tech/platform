@@ -68,8 +68,10 @@ What operators should expect:
 - A report with no recent result is never deleted. Background scans skip
   ReplicaSets and the kube-system, kube-public, kube-node-lease and kyverno
   namespaces, so reports there are written at admission and never refreshed.
-  Their old failures may still be real, so they stay visible, and they also
-  stay in place if the reports controller stops publishing.
+  Their old failures may still be real, so they stay visible. If the reports
+  controller stops publishing, failures stay in place once its newest result is
+  two hours old; in those first two hours a report can still be deleted, and it
+  stays missing until the controller recovers and rescans.
 - A result left behind by an `exclude` on a resource that no other rule still
   evaluates is not pruned either. Use a precondition for the exemption (see
   above) so the scan rewrites it as a current `skip`.
