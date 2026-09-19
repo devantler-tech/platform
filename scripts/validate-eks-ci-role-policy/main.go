@@ -2693,9 +2693,11 @@ const (
 // whose approved aggregate is 97f4e8 above. No manifest changes: the surface
 // entry of a SOPS-encrypted Secret now fingerprints its key set, each encrypted
 // key's declared type and every unencrypted value, instead of the ciphertext
-// and the root `sops` metadata. The ciphertext moved on every re-encryption
-// while this validator could never decrypt or interpret it, so a routine secret
-// rotation reddened the gate with no authorization change at all.
+// and the root `sops` metadata. Encrypted values are nulled in place and their
+// paths and types recorded in a separate list, so no plaintext can mimic them.
+// The ciphertext moved on every re-encryption while this validator could never
+// decrypt or interpret it, so a routine secret rotation reddened the gate with
+// no authorization change at all.
 //
 // CONSERVATION: 177 surface entries on both sides, membership identical.
 // Exactly ONE entry moves — v1 Secret flux-system/variables-cluster — and its
@@ -2708,7 +2710,7 @@ const (
 // CI's pinned renderer is authoritative.
 //
 // Previous aggregate: 97f4e8723a381f6f12398475de43badfe7f7d74c5dd87303e91d686b8d6d78cc.
-const expectedRenderedSurfaceSHA = "731ba17decb76d016969851039707d91ea146709f525c83eb359a0ff48ee38c5"
+const expectedRenderedSurfaceSHA = "34c2feac58f6d41d682ebaebdd1be7a7bb67349c2b8dce6c09bfeeaa46fbe1d4"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.

@@ -80,6 +80,25 @@ func TestAuthorizationSurfaceEntryKeepsSOPSKeySetAndPlaintext(t *testing.T) {
 			new:  "example.com",
 		},
 		{
+			name: "value moved out of encryption as the old placeholder text",
+			old:  "ENC[AES256_GCM,data:QUJD,iv:aXYx,tag:dGFnMQ==,type:str]",
+			new:  "<sops-encrypted:str>",
+		},
+		{
+			name: "value moved out of encryption as null",
+			old:  "ENC[AES256_GCM,data:QUJD,iv:aXYx,tag:dGFnMQ==,type:str]",
+			new:  "null",
+		},
+		{
+			name: "encryption swapped between two keys",
+			old: "  cluster_domain: ENC[AES256_GCM,data:QUJD,iv:aXYx,tag:dGFnMQ==,type:str]\n" +
+				"  replica_count: ENC[AES256_GCM,data:MTI=,iv:aXYy,tag:dGFnMg==,type:int]\n" +
+				"  region_encrypted_not: eu-central\n",
+			new: "  cluster_domain: ENC[AES256_GCM,data:QUJD,iv:aXYx,tag:dGFnMQ==,type:str]\n" +
+				"  replica_count: 12\n" +
+				"  region_encrypted_not: ENC[AES256_GCM,data:ZXU=,iv:aXY1,tag:dGFnNQ==,type:str]\n",
+		},
+		{
 			name: "partial ciphertext stays exact",
 			old:  "ENC[AES256_GCM,data:QUJD,iv:aXYx,tag:dGFnMQ==,type:str]",
 			new:  "prefix-ENC[AES256_GCM,data:QUJD,iv:aXYx,tag:dGFnMQ==,type:str]",
@@ -131,12 +150,19 @@ func TestSOPSSubstitutionSourceProjectionLeavesDecodedDocumentIntact(t *testing.
 		t.Fatalf("canonicalFingerprint() error = %v", err)
 	}
 	projected := sopsSubstitutionSourceSurfaceDocument(identityOf(documents[0]), documents[0])
-	if _, kept := projected["sops"]; kept {
+	document, _ := projected["sopsProjectedDocument"].(map[string]any)
+	if _, kept := document["sops"]; kept {
 		t.Fatal("projection kept the SOPS metadata")
 	}
-	stringData, _ := projected["stringData"].(map[string]any)
-	if stringData["cluster_domain"] != "<sops-encrypted:str>" || stringData["replica_count"] != "<sops-encrypted:int>" {
-		t.Fatalf("projection did not replace ciphertext with typed placeholders: %v", stringData)
+	stringData, _ := document["stringData"].(map[string]any)
+	if stringData["cluster_domain"] != nil || stringData["replica_count"] != nil ||
+		stringData["region_encrypted_not"] != "eu-central" {
+		t.Fatalf("projection did not null only the ciphertext: %v", stringData)
+	}
+	recorded, _ := projected["sopsEncryptedScalars"].([]any)
+	if len(recorded) != 2 || recorded[0] != "/stringData/cluster_domain str" ||
+		recorded[1] != "/stringData/replica_count int" {
+		t.Fatalf("projection did not record the encrypted paths and types: %v", recorded)
 	}
 	after, err := canonicalFingerprint(documents[0])
 	if err != nil {
