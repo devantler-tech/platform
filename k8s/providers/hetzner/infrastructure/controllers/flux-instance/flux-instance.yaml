@@ -46,6 +46,17 @@ spec:
           - op: add
             path: /spec/template/spec/containers/0/readinessProbe/initialDelaySeconds
             value: 5
+          # The handoff terminates the old leader after its replacement starts.
+          # Without a pre-stop grace period the process exits before kube-proxy
+          # removes the terminating endpoint, and kubelet records a transient
+          # readiness connection refusal. Keep the listener alive long enough
+          # for endpoint propagation; Kubernetes sends SIGTERM after this sleep.
+          - op: add
+            path: /spec/template/spec/containers/0/lifecycle
+            value:
+              preStop:
+                sleep:
+                  seconds: 10
           - op: replace
             path: /spec/replicas
             value: 2
