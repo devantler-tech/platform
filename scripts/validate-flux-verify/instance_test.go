@@ -16,6 +16,9 @@ metadata:
   name: flux
   namespace: flux-system
 spec:
+  components:
+    - source-controller
+    - kustomize-controller
   kustomize:
     patches:
       - target:
