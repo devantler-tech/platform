@@ -39,6 +39,14 @@ if [ -z "${script_body}" ] || [ "${script_body}" = "null" ]; then
   fail "could not extract the autosuppressor script"
 fi
 
+# Flux post-build substitution consumes unescaped ${...} expressions in
+# rendered resources. Shell parameter slicing therefore arrives in the live
+# CronJob as an empty assignment even though executing this source manifest
+# directly works. Keep the embedded script free of brace-form expansions.
+# shellcheck disable=SC2016 # The single-quoted sequence is the literal hazard.
+[[ "${script_body}" != *'${'* ]] ||
+  fail 'the autosuppressor script contains a Flux-consumable shell expansion'
+
 work_root="$(mktemp -d /tmp/tmp.XXXXXXXXXX)"
 trap 'rm -rf "${work_root}"' EXIT
 
@@ -163,7 +171,7 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"kubernetes-events",
-    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "application_id":":::",
     "details":[
       {"name":"Event message","value":"failed to update status: context canceled"},
       {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"apps\"\nnamespace=\"flux-system\"\nreason=\"Progressing\"\nsource=\"kustomize-controller\""}
@@ -174,10 +182,21 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"kubernetes-events",
-    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "application_id":":::",
     "details":[
       {"name":"Event message","value":"health check failed after 9.155610095s: context canceled"},
       {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"infrastructure\"\nnamespace=\"flux-system\"\nreason=\"HealthCheckFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
+    "id":"flux-dryrun-canceled",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"TeamRepository/github-config/maintainers-platform-template dry-run failed: Patch \"https://10.96.0.1:443/apis/team.github.m.upbound.io/v1alpha1/namespaces/github-config/teamrepositories/maintainers-platform-template?dryRun=All&fieldManager=kustomize-controller&force=true\": context canceled\n"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"github-config\"\nnamespace=\"github-config\"\nreason=\"ReconciliationFailed\"\nsource=\"kustomize-controller\""}
     ]
   },
   {
@@ -189,6 +208,17 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     "details":[
       {"name":"Event message","value":"secrets \"crossview-postgres-coroot-monitor\" already exists"},
       {"name":"Labels","value":"cluster=\"platform\"\nkind=\"ExternalSecret\"\nname=\"crossview-postgres-coroot-monitor\"\nnamespace=\"crossview\"\nreason=\"UpdateFailed\"\nsource=\"external-secrets\""}
+    ]
+  },
+  {
+    "id":"flux-build-canceled",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"post build failed for 'ClusterRole.v1.rbac.authorization.k8s.io/kyverno:reports-controller:read-network-routes': substitute from 'ConfigMap/variables-cluster' error: Get \"https://10.96.0.1:443/api/v1/namespaces/flux-system/configmaps/variables-cluster\": context canceled"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"infrastructure-controllers\"\nnamespace=\"flux-system\"\nreason=\"BuildFailed\"\nsource=\"kustomize-controller\""}
     ]
   },
   {
@@ -214,6 +244,50 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     ]
   },
   {
+    "id":"near-match-flux-dryrun",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"TeamRepository/github-config/maintainers-platform-template dry-run failed: forbidden"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"github-config\"\nnamespace=\"github-config\"\nreason=\"ReconciliationFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
+    "id":"near-match-flux-build",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"post build failed for 'Deployment.apps/observability/coroot': validation failed"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"infrastructure-controllers\"\nnamespace=\"flux-system\"\nreason=\"BuildFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
+    "id":"near-match-flux-build-reason",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"post build failed for 'ClusterRole.v1.rbac.authorization.k8s.io/kyverno:reports-controller:read-network-routes': substitute from 'ConfigMap/variables-cluster' error: Get \"https://10.96.0.1:443/api/v1/namespaces/flux-system/configmaps/variables-cluster\": context canceled"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"infrastructure-controllers\"\nnamespace=\"flux-system\"\nreason=\"ReconciliationFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
+    "id":"near-match-flux-application",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "details":[
+      {"name":"Event message","value":"TeamRepository/github-config/maintainers-platform-template dry-run failed: Patch \"https://10.96.0.1:443/apis/team.github.m.upbound.io/v1alpha1/namespaces/github-config/teamrepositories/maintainers-platform-template?dryRun=All&fieldManager=kustomize-controller&force=true\": context canceled\n"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"github-config\"\nnamespace=\"github-config\"\nreason=\"ReconciliationFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
     "id":"near-match-secret",
     "suppressed":false,
     "resolved_at":null,
@@ -229,9 +303,11 @@ JSON
 run_scenario "${event_dir}" >/dev/null
 [ -f "${event_dir}/suppressed.json" ] ||
   fail "the exact by-design Kubernetes lifecycle events were not suppressed"
-jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-health-canceled", "flux-status-canceled", "monitor-secret-race"]' \
-  "${event_dir}/suppressed.json" >/dev/null ||
+jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-build-canceled", "flux-dryrun-canceled", "flux-health-canceled", "flux-status-canceled", "monitor-secret-race"]' \
+  "${event_dir}/suppressed.json" >/dev/null || {
+  jq -c '.ids | sort' "${event_dir}/suppressed.json" >&2
   fail "the event exemptions were broader than their exact label and message contracts"
+}
 pass "exact self-healing lifecycle events are suppressed while near matches stay visible"
 
 remaining_dir="$(setup_scenario remaining-operational-warnings false)"
@@ -371,6 +447,15 @@ cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
     "details":[{"name":"Sample","value":"E0919 11:20:10.744070       1 status.go:71] \"Unhandled Error\" err=\"apiserver received an error that is not an metav1.Status: &errors.errorString{s:\\\"context canceled\\\"}: context canceled\" logger=\"UnhandledError\""}]
   },
   {
+    "id":"rotated-vpa-event-alert",
+    "fingerprint":"4caedf68675462a5",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater",
+    "details":[{"name":"Sample","value":"E0915 11:38:42.856589       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"events \\\"kyverno-reports-controller.example\\\" is forbidden: User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\"kyverno\\\"\" event=\"&Event{ObjectMeta:{...},Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater.,Source:EventSource{Component:vpa-updater}}\""}]
+  },
+  {
     "id":"near-runtime-alert",
     "fingerprint":"not-the-reviewed-fingerprint",
     "suppressed":false,
@@ -387,13 +472,22 @@ cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
     "rule_id":"new-log-patterns",
     "application_id":"95rsc5yp:kube-system:StaticPods:kube-apiserver",
     "details":[{"name":"Sample","value":"E0919 11:20:10.747072       1 timeout.go:140] \"Post-timeout activity\" logger=\"UnhandledError\" timeElapsed=\"2.1s\" method=\"POST\" path=\"/api/v1/secrets\" result=null"}]
+  },
+  {
+    "id":"near-vpa-event-alert",
+    "fingerprint":"4caedf68675462a5",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater",
+    "details":[{"name":"Sample","value":"E0915 11:38:42.856589       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"forbidden: cannot patch resource \\\"pods\\\"\""}]
   }
 ]}}
 JSON
 run_scenario "${pinned_logs_dir}" >/dev/null
 [ -f "${pinned_logs_dir}/suppressed.json" ] ||
   fail "the exact control-plane and runtime log fingerprints were not suppressed"
-jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "rotated-post-timeout-alert", "rotated-runtime-alert", "sandbox-resize-alert"]' \
+jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "rotated-post-timeout-alert", "rotated-runtime-alert", "rotated-vpa-event-alert", "sandbox-resize-alert"]' \
   "${pinned_logs_dir}/suppressed.json" >/dev/null ||
   fail "the reviewed log exemptions were broader than their exact fingerprints and message shapes"
 pass "exact benign control-plane and runtime fingerprints survive ID rotation while near matches stay visible"
@@ -411,13 +505,24 @@ cat >"${changed_controller_dir}/alerts.json" <<'JSON'
     "details":[
       {"name":"Sample","value":"E0919 03:00:00.000000       1 replica_set.go:640] \"Unhandled Error\" err=\"sync \\\"kube-system/example\\\" failed: forbidden\" logger=\"UnhandledError\""}
     ]
+  },
+  {
+    "id":"rotated-vpa-event-alert",
+    "fingerprint":"4caedf68675462a5",
+    "suppressed":true,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater",
+    "details":[
+      {"name":"Sample","value":"E0919 03:00:00.000000       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"forbidden: cannot patch resource \\\"pods\\\"\""}
+    ]
   }
 ]}}
 JSON
 run_scenario "${changed_controller_dir}" >/dev/null
 [ -f "${changed_controller_dir}/reopened.json" ] ||
   fail "a suppressed controller alert whose representative pattern changed was not reopened"
-jq -e '.ids == ["rotated-controller-alert"]' "${changed_controller_dir}/reopened.json" >/dev/null ||
+jq -e '.ids | sort == ["rotated-controller-alert", "rotated-vpa-event-alert"]' "${changed_controller_dir}/reopened.json" >/dev/null ||
   fail "the controller-pattern revalidation reopened the wrong alert set"
 [ ! -e "${changed_controller_dir}/suppressed.json" ] ||
   fail "a changed controller pattern was suppressed again"

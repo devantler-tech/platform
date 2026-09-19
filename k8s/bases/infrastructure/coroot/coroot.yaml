@@ -196,13 +196,12 @@ spec:
     # Exact signed compatibility build from upstream 1.35.8. It retains the
     # upstream behavior while classifying unavailable Talos journald, expected
     # non-AWS metadata, unsupported stripped-binary TLS uprobes, and collector
-    # reconnects as optional lifecycle warnings. Its 128-page-per-CPU L7 ring
-    # buffer reduced the upstream overflow rate but still dropped 164 samples
-    # during a production burst. The reviewed compatibility patch now builds a
-    # 512-page successor; that image is pinned here by a separate exact-digest
-    # change after the main-only publisher creates and signs it.
+    # reconnects as optional lifecycle warnings. Its original 128-page-per-CPU
+    # L7 ring reduced the upstream overflow rate but still dropped 164 samples
+    # during a production burst. This main-only-published and signed successor
+    # carries the reviewed 512-page-per-CPU patch (2 MiB per CPU).
     image:
-      name: ghcr.io/devantler-tech/platform-coroot-node-agent:v1.35.8-alerts.1-cd1efe238d3c4dfd3fcb11a74656456c7a20a9e4@sha256:ec3dbc7ff7ecd638af9e2f0e79d617e10c5dd835fccf9d044099181edd3177e4
+      name: ghcr.io/devantler-tech/platform-coroot-node-agent:v1.35.8-alerts.1-d72441cff6e32c8cabdf631a882a28af1e503e84@sha256:e71f4d608092ccd150ad33d5443e16d9fdccca659ebc1fd5b336c49d27fa5d63
     priorityClassName: platform-critical
     # Authored memory sizing — REQUIRED. DaemonSet VPAs are CPU-only (see
     # cluster-policies/best-practices/auto-vpa.yaml: VPA sized every node's
