@@ -55,7 +55,25 @@ spec:
     extraHostPathMounts:
       - name: sys-kernel-tracing
         mountPath: /sys/kernel/tracing
+    # C-0211 baseline context (#3239). kube-system is excluded from
+    # add-security-context, so the two fields it would supply are declared on
+    # both workloads here: fsGroupChangePolicy on each pod, and seLinuxOptions
+    # on each container (tetragon.securityContext, export.securityContext and
+    # tetragonOperator.containerSecurityContext below). Helm merges these maps
+    # over the chart's defaults, so the agent keeps `privileged: true` and the
+    # operator keeps its non-root, no-escalation, drop-ALL context.
+    #
+    # Both fields are inert here. Neither pod sets fsGroup, and without one
+    # kubelet applies no volume ownership change, so fsGroupChangePolicy has
+    # nothing to govern. The empty seLinuxOptions object pins no type, level
+    # or MCS category, so every container keeps the runtime's own SELinux
+    # defaults -- including the privileged agent, which the runtime labels
+    # spc_t.
+    podSecurityContext:
+      fsGroupChangePolicy: OnRootMismatch
     tetragon:
+      securityContext:
+        seLinuxOptions: {}
       # Resource requests promote the per-node agent DaemonSet out of
       # BestEffort QoS so it survives node memory pressure -- the same
       # lesson as the cilium-agent OOM cascade. The memory limit is
@@ -136,6 +154,11 @@ spec:
       replicas: ${tetragon_operator_replicas:=2}
       failoverLease:
         enabled: true
+      # C-0211 baseline context (#3239), explained at the top of these values.
+      podSecurityContext:
+        fsGroupChangePolicy: OnRootMismatch
+      containerSecurityContext:
+        seLinuxOptions: {}
       # The chart already ships a hostname podAntiAffinity (preferred) for the
       # operator pods, so the 2 replicas spread across nodes without an extra
       # topologySpread. Drain safety is added via the standalone
@@ -150,6 +173,9 @@ spec:
     # Tetragon's JSON events go to the pod's stdout -- where Coroot's node-agent
     # ingests them, making them searchable in the Coroot UI with no extra wiring.
     export:
+      # C-0211 baseline context (#3239), explained at the top of these values.
+      securityContext:
+        seLinuxOptions: {}
       # The sidecar declares no resources in the chart, so today it takes both
       # kube-system default-limitrange defaults: request 15m, limit "2".
       # Declaring the same pair keeps a fresh cluster from starting it uncapped
