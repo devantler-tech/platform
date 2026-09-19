@@ -5,16 +5,23 @@
 # after database restore/rebuild. It never changes a global or project default:
 # only configs[2], the exact application override, is reconciled.
 #
-# The two metric exceptions are deliberately bounded:
+# The metric exceptions are deliberately bounded:
 #
-#   * kubelet NetworkTCPConnections = 2 only while the complete positive failed
+#   * kubelet NetworkTCPConnections = 3 only while the complete positive failed
 #     upstream set is kube-scheduler + kube-controller-manager. These are the
 #     IPv6-first localhost attempts made by healthy static-pod probes before
-#     their successful IPv4 fallback. A third upstream removes the override.
+#     their successful IPv4 fallback. Coroot warns when the observed count
+#     equals its threshold despite displaying a greater-than condition, so 3 is
+#     the smallest value that clears the reviewed count of 2. A third failed
+#     upstream removes the override instead of being accepted.
 #   * kyverno-background-controller MemoryLeakPercent = 35. Two 48-hour live
 #     series had only 3.5% and 4.9% net growth with bounded 50-87 MiB sawteeth;
 #     Coroot's short-window regression reported 29%/h. Thirty-five still exposes
 #     a sustained severe leak and is scoped to this one application.
+#   * crossplane MemoryLeakPercent = 35. Its 22-day-old, restart-free pod has a
+#     seven-day daily sawtooth that repeatedly returns to 270-300 MiB after
+#     451-520 MiB peaks; Coroot reported 27%/h while the cache was warming.
+#     Thirty-five preserves a warning for sustained growth outside that cycle.
 #
 # Log thresholds are even narrower: the override is installed only when EVERY
 # current ERROR/CRITICAL pattern matches the app-specific allowlist below. A new
@@ -145,13 +152,16 @@ spec:
                      | .name] | unique | sort
                   ')
                   if [ "$active" = '["→kube-controller-manager","→kube-scheduler"]' ]; then
-                    reconcile_threshold "$KUBELET" NetworkTCPConnections 0 2 kubelet-static-pod-probes
+                    reconcile_threshold "$KUBELET" NetworkTCPConnections 0 3 kubelet-static-pod-probes
                   else
                     reconcile_threshold "$KUBELET" NetworkTCPConnections 0 inherit kubelet-unreviewed-upstream
                   fi
 
                   KYVERNO="$PID:kyverno:Deployment:kyverno-background-controller"
                   reconcile_threshold "$KYVERNO" MemoryLeakPercent 10 35 kyverno-bounded-cache-sawtooth
+
+                  CROSSPLANE="$PID:crossplane-system:Deployment:crossplane"
+                  reconcile_threshold "$CROSSPLANE" MemoryLeakPercent 10 35 crossplane-daily-memory-sawtooth
 
                   LOG_QUERY=$(jq -nr '{source:"agent",view:"patterns"} | tojson | @uri')
                   reconcile_logs() {
