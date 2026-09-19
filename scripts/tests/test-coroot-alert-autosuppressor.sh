@@ -77,9 +77,12 @@ for arg in "$@"; do
 done
 case "${url}" in
   */api/user) cat "${dir}/user.json" ;;
-  *'/alerts?limit=500') cat "${dir}/alerts.json" ;;
+  *'/alerts?include_resolved=true&limit=500'|*'/alerts?limit=500') cat "${dir}/alerts.json" ;;
   */alerts/suppress)
     printf '%s' "${payload}" >"${dir}/suppressed.json"
+    ;;
+  */alerts/reopen)
+    printf '%s' "${payload}" >"${dir}/reopened.json"
     ;;
   */alerts/*)
     id="${url##*/}"
@@ -210,3 +213,104 @@ jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-status-canceled", "monit
   "${event_dir}/suppressed.json" >/dev/null ||
   fail "the event exemptions were broader than their exact label and message contracts"
 pass "exact self-healing lifecycle events are suppressed while near matches stay visible"
+
+remaining_dir="$(setup_scenario remaining-operational-warnings false)"
+cat >"${remaining_dir}/alerts.json" <<'JSON'
+{"data":{"alerts":[
+  {
+    "id":"cilium-search-expansion",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"dns-nxdomain-errors",
+    "application_id":"95rsc5yp:kube-system:DaemonSet:cilium",
+    "details":[]
+  },
+  {
+    "id":"coredns-real-nxdomain",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"dns-nxdomain-errors",
+    "application_id":"95rsc5yp:kube-system:Deployment:coredns",
+    "details":[]
+  },
+  {
+    "id":"to3d0cyc7cnn",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:kube-system:StaticPods:kube-controller-manager",
+    "details":[
+      {"name":"Sample","value":"E0919 02:51:35.804560       1 replica_set.go:640] \"Unhandled Error\" err=\"sync \\\"flux-system/kustomize-controller-74dff55bb4\\\" failed with read version: 294462871 is not as new as written version: 294462886 for group resource replicasets.apps\" logger=\"UnhandledError\""}
+    ]
+  },
+  {
+    "id":"another-controller-log-alert",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:kube-system:StaticPods:kube-controller-manager",
+    "details":[
+      {"name":"Sample","value":"E0919 02:51:35.804560       1 replica_set.go:640] \"Unhandled Error\" err=\"sync \\\"flux-system/kustomize-controller-74dff55bb4\\\" failed with read version: 294462871 is not as new as written version: 294462886 for group resource replicasets.apps\" logger=\"UnhandledError\""}
+    ]
+  },
+  {
+    "id":"wge5tiucp7k5",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"dns-server-errors",
+    "application_id":"95rsc5yp:kubescape:StatefulSet:alertmanager",
+    "opened_at":1787841164000,
+    "updated_at":1787846982000,
+    "details":[]
+  },
+  {
+    "id":"future-alertmanager-dns-error",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"dns-server-errors",
+    "application_id":"95rsc5yp:kubescape:StatefulSet:alertmanager",
+    "opened_at":1789810000000,
+    "updated_at":1789810000000,
+    "details":[]
+  },
+  {
+    "id":"kubescape-memory-growth",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"memory-leak",
+    "application_id":"95rsc5yp:kubescape:Deployment:kubescape",
+    "details":[]
+  }
+]}}
+JSON
+run_scenario "${remaining_dir}" >/dev/null
+[ -f "${remaining_dir}/suppressed.json" ] ||
+  fail "the exact remaining by-design operational warnings were not suppressed"
+jq -e '.ids | sort == ["cilium-search-expansion", "to3d0cyc7cnn", "wge5tiucp7k5"]' \
+  "${remaining_dir}/suppressed.json" >/dev/null ||
+  fail "the operational exemptions suppressed a neighboring DNS, log, or memory alert"
+pass "remaining exemptions are bound to Cilium, one revalidated controller fingerprint, and one historical record"
+
+changed_controller_dir="$(setup_scenario changed-controller-pattern false)"
+cat >"${changed_controller_dir}/alerts.json" <<'JSON'
+{"data":{"alerts":[
+  {
+    "id":"to3d0cyc7cnn",
+    "suppressed":true,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:kube-system:StaticPods:kube-controller-manager",
+    "details":[
+      {"name":"Sample","value":"E0919 03:00:00.000000       1 replica_set.go:640] \"Unhandled Error\" err=\"sync \\\"kube-system/example\\\" failed: forbidden\" logger=\"UnhandledError\""}
+    ]
+  }
+]}}
+JSON
+run_scenario "${changed_controller_dir}" >/dev/null
+[ -f "${changed_controller_dir}/reopened.json" ] ||
+  fail "a suppressed controller alert whose representative pattern changed was not reopened"
+jq -e '.ids == ["to3d0cyc7cnn"]' "${changed_controller_dir}/reopened.json" >/dev/null ||
+  fail "the controller-pattern revalidation reopened the wrong alert set"
+[ ! -e "${changed_controller_dir}/suppressed.json" ] ||
+  fail "a changed controller pattern was suppressed again"
+pass "a changed weakly-equal controller pattern automatically becomes visible again"

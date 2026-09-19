@@ -315,6 +315,20 @@ spec:
   postRenderers:
     - kustomize:
         patches:
+          # The chart hard-codes a one-second liveness timeout. A full posture
+          # scan can hold the scanner busy longer than that without wedging it:
+          # production recorded one timeout during the daily scan while the pod
+          # stayed Ready, never restarted, and returned to its memory baseline.
+          # Give only liveness enough response headroom to avoid killing healthy
+          # scan work. Readiness remains strict, so a genuinely unavailable
+          # scanner still leaves service endpoints immediately.
+          - target:
+              kind: Deployment
+              name: ^kubescape$
+            patch: |
+              - op: add
+                path: /spec/template/spec/containers/0/livenessProbe/timeoutSeconds
+                value: 5
           - target:
               kind: Deployment
               name: ^(kubescape|kubevuln|operator|storage)$
