@@ -95,6 +95,12 @@ func TestPatchTargetsRejectATargetThatSelectsNothing(t *testing.T) {
 			want: `spec.components names "kustomize-controllr", which flux-operator does not deploy`,
 		},
 		{
+			name: "blank component entry",
+			old:  "    - kustomize-controller\n  kustomize",
+			new:  "    - kustomize-controller\n    - \"\"\n  kustomize",
+			want: `spec.components names "", which flux-operator does not deploy`,
+		},
+		{
 			// flux-operator uses the raw entry, so a padded name deploys nothing.
 			name: "padded component name",
 			old:  "    - kustomize-controller\n  kustomize",

@@ -153,9 +153,10 @@ func instanceComponents(instance any) []string {
 
 	components := make([]string, 0, len(list))
 	for _, item := range list {
-		if name, ok := item.(string); ok && strings.TrimSpace(name) != "" {
-			components = append(components, name)
-		}
+		// Every entry is kept, blank or not, so the caller reports it instead of
+		// silently dropping a component that can generate nothing.
+		name, _ := item.(string)
+		components = append(components, name)
 	}
 
 	return components
