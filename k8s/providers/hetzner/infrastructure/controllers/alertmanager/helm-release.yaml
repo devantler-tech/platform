@@ -36,6 +36,21 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: prometheus-community
+  # The chart's headless peer Service does not publish not-yet-Ready endpoints.
+  # During a two-peer restart each Alertmanager therefore looks up its stable
+  # StatefulSet peer names before DNS records exist, producing repeated
+  # NXDOMAINs until readiness. Publish only the headless gossip endpoints early;
+  # the client-facing ClusterIP Service remains readiness-gated.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Service
+              name: ^alertmanager-headless$
+            patch: |
+              - op: add
+                path: /spec/publishNotReadyAddresses
+                value: true
   # https://github.com/prometheus-community/helm-charts/blob/main/charts/alertmanager/values.yaml
   values:
     # Deterministic in-cluster names. Producers post to every peer through the

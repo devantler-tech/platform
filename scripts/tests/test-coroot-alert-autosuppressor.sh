@@ -7,9 +7,9 @@
 # The live signal is deterministic: scheduler liveness + readiness yields
 # 0.6/s, while controller-manager liveness yields 0.3/s. Suppression is safe
 # only while those are the complete set of active upstream series. A third
-# active upstream must keep the alert visible. Log-pattern alerts are never
-# suppressed from a representative Sample because one Coroot fingerprint can
-# group several weakly-equal raw patterns.
+# active upstream must keep the alert visible. Log-pattern exemptions bind to a
+# stable Coroot fingerprint plus an exact current representative. IDs rotate
+# after resolution; a changed weakly-equal representative must be reopened.
 
 set -euo pipefail
 
@@ -170,6 +170,17 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     ]
   },
   {
+    "id":"flux-health-canceled",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "details":[
+      {"name":"Event message","value":"health check failed after 9.155610095s: context canceled"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"infrastructure\"\nnamespace=\"flux-system\"\nreason=\"HealthCheckFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
     "id":"monitor-secret-race",
     "suppressed":false,
     "resolved_at":null,
@@ -218,7 +229,7 @@ JSON
 run_scenario "${event_dir}" >/dev/null
 [ -f "${event_dir}/suppressed.json" ] ||
   fail "the exact by-design Kubernetes lifecycle events were not suppressed"
-jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-status-canceled", "monitor-secret-race"]' \
+jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-health-canceled", "flux-status-canceled", "monitor-secret-race"]' \
   "${event_dir}/suppressed.json" >/dev/null ||
   fail "the event exemptions were broader than their exact label and message contracts"
 pass "exact self-healing lifecycle events are suppressed while near matches stay visible"
@@ -243,7 +254,8 @@ cat >"${remaining_dir}/alerts.json" <<'JSON'
     "details":[]
   },
   {
-    "id":"to3d0cyc7cnn",
+    "id":"rotated-controller-alert",
+    "fingerprint":"04241ff02d662139",
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"new-log-patterns",
@@ -254,6 +266,7 @@ cat >"${remaining_dir}/alerts.json" <<'JSON'
   },
   {
     "id":"another-controller-log-alert",
+    "fingerprint":"not-the-reviewed-fingerprint",
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"new-log-patterns",
@@ -295,7 +308,7 @@ JSON
 run_scenario "${remaining_dir}" >/dev/null
 [ -f "${remaining_dir}/suppressed.json" ] ||
   fail "the exact remaining by-design operational warnings were not suppressed"
-jq -e '.ids | sort == ["cilium-search-expansion", "to3d0cyc7cnn", "wge5tiucp7k5"]' \
+jq -e '.ids | sort == ["cilium-search-expansion", "rotated-controller-alert", "wge5tiucp7k5"]' \
   "${remaining_dir}/suppressed.json" >/dev/null ||
   fail "the operational exemptions suppressed a neighboring DNS, log, or memory alert"
 pass "remaining exemptions are bound to Cilium, one revalidated controller fingerprint, and one historical record"
@@ -304,7 +317,17 @@ pinned_logs_dir="$(setup_scenario pinned-control-plane-and-runtime-logs false)"
 cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
 {"data":{"alerts":[
   {
-    "id":"tww9bz3fo4je",
+    "id":"rotated-runtime-alert",
+    "fingerprint":"3eade000863df726",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:_:Unknown:init",
+    "details":[{"name":"Sample","value":"ContainerStatus from runtime service failed"}]
+  },
+  {
+    "id":"sandbox-resize-alert",
+    "fingerprint":"3eade000863df726",
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"new-log-patterns",
@@ -313,6 +336,7 @@ cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
   },
   {
     "id":"9qrrrlq3eooh",
+    "fingerprint":"c2ca6857aa3bdbbe",
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"new-log-patterns",
@@ -321,6 +345,7 @@ cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
   },
   {
     "id":"7f3auk0cezgo",
+    "fingerprint":"66adf607437525e7",
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"new-log-patterns",
@@ -328,7 +353,8 @@ cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
     "details":[{"name":"Sample","value":"DeleteContainer returned error"}]
   },
   {
-    "id":"0konif35mxxn",
+    "id":"rotated-post-timeout-alert",
+    "fingerprint":"1da0a938819a7336",
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"new-log-patterns",
@@ -337,6 +363,7 @@ cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
   },
   {
     "id":"h9q7onv4l20i",
+    "fingerprint":"3222402a73798da3",
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"new-log-patterns",
@@ -345,14 +372,16 @@ cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
   },
   {
     "id":"near-runtime-alert",
+    "fingerprint":"not-the-reviewed-fingerprint",
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"new-log-patterns",
     "application_id":"95rsc5yp:_:Unknown:init",
-    "details":[{"name":"Sample","value":"UpdatePodSandboxResources from runtime service failed"}]
+    "details":[{"name":"Sample","value":"ContainerStatus from runtime service failed"}]
   },
   {
     "id":"near-apiserver-alert",
+    "fingerprint":"1da0a938819a7336",
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"new-log-patterns",
@@ -364,16 +393,17 @@ JSON
 run_scenario "${pinned_logs_dir}" >/dev/null
 [ -f "${pinned_logs_dir}/suppressed.json" ] ||
   fail "the exact control-plane and runtime log fingerprints were not suppressed"
-jq -e '.ids | sort == ["0konif35mxxn", "7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "tww9bz3fo4je"]' \
+jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "rotated-post-timeout-alert", "rotated-runtime-alert", "sandbox-resize-alert"]' \
   "${pinned_logs_dir}/suppressed.json" >/dev/null ||
-  fail "the pinned log exemptions were broader than their exact IDs and message shapes"
-pass "exact benign control-plane and runtime log fingerprints are suppressed while near matches stay visible"
+  fail "the reviewed log exemptions were broader than their exact fingerprints and message shapes"
+pass "exact benign control-plane and runtime fingerprints survive ID rotation while near matches stay visible"
 
 changed_controller_dir="$(setup_scenario changed-controller-pattern false)"
 cat >"${changed_controller_dir}/alerts.json" <<'JSON'
 {"data":{"alerts":[
   {
-    "id":"to3d0cyc7cnn",
+    "id":"rotated-controller-alert",
+    "fingerprint":"04241ff02d662139",
     "suppressed":true,
     "resolved_at":null,
     "rule_id":"new-log-patterns",
@@ -387,7 +417,7 @@ JSON
 run_scenario "${changed_controller_dir}" >/dev/null
 [ -f "${changed_controller_dir}/reopened.json" ] ||
   fail "a suppressed controller alert whose representative pattern changed was not reopened"
-jq -e '.ids == ["to3d0cyc7cnn"]' "${changed_controller_dir}/reopened.json" >/dev/null ||
+jq -e '.ids == ["rotated-controller-alert"]' "${changed_controller_dir}/reopened.json" >/dev/null ||
   fail "the controller-pattern revalidation reopened the wrong alert set"
 [ ! -e "${changed_controller_dir}/suppressed.json" ] ||
   fail "a changed controller pattern was suppressed again"

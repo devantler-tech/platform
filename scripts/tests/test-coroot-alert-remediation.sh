@@ -84,6 +84,16 @@ readonly alertmanager_probe
 [[ "${alertmanager_probe}" == '{"httpGet":{"path":"/","port":"http"},"initialDelaySeconds":30,"timeoutSeconds":5}' ]] ||
   fail 'Alertmanager readiness must keep the chart endpoint, wait thirty seconds, and tolerate five-second responses'
 
+alertmanager_peer_service_patch="$(
+  yq -er '.spec.postRenderers[].kustomize.patches[] |
+    select(.target.kind == "Service" and .target.name == "^alertmanager-headless$") |
+    .patch' "${alertmanager_release}"
+)" || fail 'the Alertmanager headless peer-service patch is missing'
+readonly alertmanager_peer_service_patch
+[[ "${alertmanager_peer_service_patch}" == *'/spec/publishNotReadyAddresses'* &&
+  "${alertmanager_peer_service_patch}" == *$'value: true'* ]] ||
+  fail 'Alertmanager peer DNS must publish stable names before readiness'
+
 alertmanager_noop_patch_count="$(
   yq -r '[.spec.postRenderers[].kustomize.patches[] |
     select(.target.kind == "StatefulSet" and .target.name == "^alertmanager$")] | length' \
