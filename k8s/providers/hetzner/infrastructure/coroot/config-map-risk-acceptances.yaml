@@ -83,6 +83,12 @@ data:
       {
         "application": "crossview:Deployment:crossview-postgres",
         "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: single-writer low-criticality database on retained cross-node storage; Kubernetes rescheduling meets its recovery objective"
+      },
+      {
+        "application": "crossview:Deployment:crossview-postgres",
+        "category": "Availability",
         "type": "unreplicated-database",
         "reason": "platform#3812: low-criticality dashboard database on a cross-node replicated Longhorn volume; pod rescheduling meets its recovery objective"
       },
@@ -121,6 +127,12 @@ data:
         "category": "Availability",
         "type": "single-instance-app",
         "reason": "platform#3812: diagnostic UI only; Hubble relay and the data plane remain available during rescheduling"
+      },
+      {
+        "application": "longhorn-system:Deployment:longhorn-driver-deployer",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: lifecycle reconciler is off the volume data path; CSI controllers and node plugins keep serving while Kubernetes restarts it"
       },
       {
         "application": "longhorn-system:InstanceManager:instance-manager-0c0363730e10c9272de1f53e608f8860",

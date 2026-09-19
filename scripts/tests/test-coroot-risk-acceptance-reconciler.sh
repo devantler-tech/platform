@@ -39,7 +39,7 @@ acceptances_file="${work_root}/risks.json"
 yq e -r '.data."risks.json"' "${acceptances_manifest}" >"${acceptances_file}"
 
 jq -e '
-  type == "array" and length == 34 and
+  type == "array" and length == 36 and
   all(.[ ];
     (.application | type == "string") and
     (.application | split(":") | length == 3) and
@@ -50,7 +50,7 @@ jq -e '
   ([.[] | [.application, .category, .type] | @tsv] | length) ==
     ([.[] | [.application, .category, .type] | @tsv] | unique | length)
 ' "${acceptances_file}" >/dev/null ||
-  fail 'the availability acceptance allowlist must contain 34 unique, reasoned entries'
+  fail 'the availability acceptance allowlist must contain 36 unique, reasoned entries'
 
 expected_applications=(
   'actual-budget:Deployment:actual-budget-actualbudget'
@@ -70,6 +70,7 @@ expected_applications=(
   'flux-system:Deployment:flux-operator'
   'headlamp:Deployment:headlamp'
   'kube-system:Deployment:hubble-ui'
+  'longhorn-system:Deployment:longhorn-driver-deployer'
   'longhorn-system:InstanceManager:instance-manager-0c0363730e10c9272de1f53e608f8860'
   'longhorn-system:InstanceManager:instance-manager-0d470075ebcae8875301aa53419e1d24'
   'longhorn-system:InstanceManager:instance-manager-1d6354ff91a9ad3b1922050e547fde38'
@@ -96,13 +97,27 @@ for application in "${expected_applications[@]}"; do
 done
 
 if ! jq -e '
-  any(.[];
-    .application == "crossview:Deployment:crossview-postgres" and
-    .category == "Availability" and
-    .type == "unreplicated-database"
+  . as $acceptances |
+  ["unreplicated-database", "single-instance-app"] |
+  all(.[]; . as $type |
+    any($acceptances[];
+      .application == "crossview:Deployment:crossview-postgres" and
+      .category == "Availability" and
+      .type == $type
+    )
   )
 ' "${acceptances_file}" >/dev/null; then
-  fail 'Crossview PostgreSQL must bind the reviewed unreplicated-database risk exactly'
+  fail 'Crossview PostgreSQL must bind both reviewed availability risks exactly'
+fi
+
+if ! jq -e '
+  any(.[];
+    .application == "longhorn-system:Deployment:longhorn-driver-deployer" and
+    .category == "Availability" and
+    .type == "single-instance-app"
+  )
+' "${acceptances_file}" >/dev/null; then
+  fail 'Longhorn driver deployer must bind the reviewed single-instance risk exactly'
 fi
 
 for prohibited in alertmanager csi-snapshotter origin-ca-issuer; do
