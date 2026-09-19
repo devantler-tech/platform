@@ -62,11 +62,12 @@
 #
 #   4. flux-status-context-canceled - the production image-verification handoff
 #      intentionally restarts kustomize-controller after suspending reconciliation,
-#      terminating in-flight status writes. A canceled status write is retried by
-#      the replacement leader and does not describe the Kustomization's health.
-#      Only Kustomization Progressing/HealthCheckFailed events from
-#      kustomize-controller with the two exact cancellation message shapes qualify;
-#      timeouts, apply errors, and dependency failures remain visible.
+#      terminating in-flight status writes, health checks, or server-side dry
+#      runs. A canceled operation is retried by the replacement leader and does
+#      not describe the Kustomization's health. Only Kustomization Progressing,
+#      HealthCheckFailed, or ReconciliationFailed events from kustomize-controller
+#      with an exact cancellation shape qualify; timeouts, apply/authorization
+#      errors, and dependency failures remain visible.
 #
 #   5. crossview-monitor-secret-create-race - Coroot and External Secrets can race
 #      to create the generated crossview-postgres-coroot-monitor Secret during a
@@ -125,6 +126,15 @@
 #      This exemption requires the existing fingerprint, GET, null result, and
 #      a millisecond (never second) tail. Writes, slower completions, and every
 #      other API-server log pattern remain visible.
+#
+#  13. vpa-event-recording-denial - the updater successfully performs an
+#      in-place resize, then client-go tries to patch the repeated Normal Event's
+#      count/timestamp. The chart grants cluster-wide Event create but not patch,
+#      so only that optional record update is rejected; the Pod resize has
+#      already succeeded. Granting patch across every workload namespace would
+#      let a compromised updater alter all Events for non-critical bookkeeping.
+#      Keep that safer RBAC boundary and suppress only the reviewed fingerprint,
+#      exact updater identity, Event-only denial, and InPlaceResizedByVPA message.
 #
 # PROD-ONLY: Coroot alerting (the Slack webhook) is wired only in the hetzner
 # overlay, so this lives here, not in the base.
@@ -268,7 +278,7 @@ spec:
                     ids="$ids $id"; echo "match auto-vpa-write-conflict: $id"
                   done
 
-                  # Exemption 4 - canceled Flux Kustomization status writes from
+                  # Exemption 4 - canceled Flux Kustomization operations from
                   # the intentional credential-handoff controller restart.
                   for id in $(printf '%s' "$ALERTS" | jq -r '
                       def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
@@ -278,17 +288,22 @@ spec:
                       | details as $d
                       | labels($d) as $l
                       | select(($l | keys | sort) == ["cluster","kind","name","namespace","reason","source"]
+                               and ((.application_id // "") | endswith(":flux-system:Deployment:kustomize-controller"))
                                and $l.cluster=="platform"
                                and $l.kind=="Kustomization"
-                               and $l.namespace=="flux-system"
-                               and ($l.reason=="Progressing" or $l.reason=="HealthCheckFailed")
+                               and ($l.reason=="Progressing"
+                                    or $l.reason=="HealthCheckFailed"
+                                    or $l.reason=="ReconciliationFailed")
                                and $l.source=="kustomize-controller"
                                and (($d["Event message"] == "failed to update status: context canceled")
                                     or ($d["Event message"]
                                       | test("^unable to update the healthy status to progressing: \\[.*fieldManager=gotk-kustomize-controller.*context canceled, context canceled\\]$"))
                                     or ($l.reason=="HealthCheckFailed"
                                         and ($d["Event message"]
-                                          | test("^health check failed after [0-9.]+s: context canceled$")))))
+                                          | test("^health check failed after [0-9.]+s: context canceled$")))
+                                    or ($l.reason=="ReconciliationFailed"
+                                        and ($d["Event message"]
+                                          | test("^[^[:space:]/]+/[^[:space:]/]+/[^[:space:]]+ dry-run failed: (Patch|Post|Put|Delete) \\\"https://10[.]96[.]0[.]1:443/apis/[^\\\"]+\\\": context canceled\\n?$")))))
                       | .id'); do
                     ids="$ids $id"; echo "match flux-status-context-canceled: $id"
                   done
@@ -325,7 +340,7 @@ spec:
                     ids="$ids $id"; echo "match cilium-dns-search-expansion: $id"
                   done
 
-                  # Exemptions 7 and 9-12 - exact weak-equality log fingerprints.
+                  # Exemptions 7 and 9-13 - exact weak-equality log fingerprints.
                   # The fingerprint is stable across Coroot alert-ID rotation.
                   # Every fingerprint and current representative must qualify; a
                   # changed representative is reopened below instead of hidden.
@@ -363,14 +378,22 @@ spec:
                            and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 timeout\\.go:140\\] "))
                            and (($d.Sample // "") | contains("\"Post-timeout activity\" logger=\"UnhandledError\""))
                            and (($d.Sample // "") | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$"))) then "apiserver-millisecond-post-timeout"
+                          elif (.fingerprint=="4caedf68675462a5"
+                           and ((.application_id // "") | endswith(":vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 event\\.go:359\\] "))
+                           and (($d.Sample // "") | contains("\"Server rejected event (will not retry!)\""))
+                           and (($d.Sample // "") | contains("User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\""))
+                           and (($d.Sample // "") | contains("Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater."))) then "vpa-event-recording-denial"
                           else null end;
                       .data.alerts[]
                       | select(.suppressed==false and .resolved_at==null)
                       | reviewed_log_reason as $reason
                       | select($reason != null)
                       | "\($reason):\(.id)"'); do
-                    reason=${match%%:*}
-                    id=${match#*:}
+                    # Avoid brace-form shell expansions: Flux post-build
+                    # substitution evaluates them before this script runs.
+                    reason=$(printf '%s' "$match" | cut -d: -f1)
+                    id=$(printf '%s' "$match" | cut -d: -f2-)
                     ids="$ids $id"; echo "match $reason: $id"
                   done
 
@@ -408,6 +431,12 @@ spec:
                            and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 timeout\\.go:140\\] "))
                            and (($d.Sample // "") | contains("\"Post-timeout activity\" logger=\"UnhandledError\""))
                            and (($d.Sample // "") | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$"))) then "apiserver-millisecond-post-timeout"
+                          elif (.fingerprint=="4caedf68675462a5"
+                           and ((.application_id // "") | endswith(":vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 event\\.go:359\\] "))
+                           and (($d.Sample // "") | contains("\"Server rejected event (will not retry!)\""))
+                           and (($d.Sample // "") | contains("User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\""))
+                           and (($d.Sample // "") | contains("Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater."))) then "vpa-event-recording-denial"
                           else null end;
                       .data.alerts[]
                       | select(.suppressed==true and .resolved_at==null
@@ -416,7 +445,8 @@ spec:
                                     or .fingerprint=="c2ca6857aa3bdbbe"
                                     or .fingerprint=="66adf607437525e7"
                                     or .fingerprint=="3222402a73798da3"
-                                    or .fingerprint=="1da0a938819a7336"))
+                                    or .fingerprint=="1da0a938819a7336"
+                                    or .fingerprint=="4caedf68675462a5"))
                       | select(reviewed_log_reason == null)
                       | .id'); do
                     reopen_ids="$reopen_ids $id"; echo "reopen changed reviewed log pattern: $id"
