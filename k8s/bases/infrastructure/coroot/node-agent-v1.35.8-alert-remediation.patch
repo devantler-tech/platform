@@ -74,7 +74,7 @@ index de1e336..74d54c4 100644
 -const MaxPayloadSize = 1024
 +const (
 +	MaxPayloadSize        = 1024
-+	l7PerfBufferSizePages = 128
++	l7PerfBufferSizePages = 512
 +)
  
  type EventType uint32
@@ -97,7 +97,7 @@ index c8cf7cc..d9e1ef1 100644
  }
  
 +func TestL7PerfBufferHasBurstHeadroom(t *testing.T) {
-+	assert.Equal(t, 128, l7PerfBufferSizePages)
++	assert.Equal(t, 512, l7PerfBufferSizePages)
 +}
 +
  func TestProcessEvents(t *testing.T) {

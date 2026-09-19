@@ -36,9 +36,11 @@ kustomize_controller_patch="$({
 })" || fail 'the kustomize-controller patch is missing'
 readonly kustomize_controller_patch
 [[ "${kustomize_controller_patch}" == *'/spec/template/spec/containers/0/readinessProbe/initialDelaySeconds'* &&
-  "${kustomize_controller_patch}" == *$'value: 5'* ]] ||
-  fail 'kustomize-controller readiness must wait through the intentional auth-handoff restart'
-pass 'expected kustomize-controller restarts have a readiness grace period'
+  "${kustomize_controller_patch}" == *$'value: 5'* &&
+  "${kustomize_controller_patch}" == *'/spec/template/spec/containers/0/lifecycle'* &&
+  "${kustomize_controller_patch}" == *$'preStop:\n      sleep:\n        seconds: 10'* ]] ||
+  fail 'kustomize-controller must have startup readiness grace and a ten-second graceful pre-stop'
+pass 'expected kustomize-controller restarts have startup and shutdown probe grace'
 
 cainjector_config="$({
   yq -o=json -I=0 '.spec.values.cainjector.config' "${cert_manager_release}"

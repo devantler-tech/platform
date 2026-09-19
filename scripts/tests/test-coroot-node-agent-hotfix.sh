@@ -56,8 +56,8 @@ grep -qF 'cosign sign --yes "${IMAGE}@${DIGEST}"' "${workflow}" ||
 
 [[ "$(grep -c '^diff --git ' "${patch_file}")" == '8' ]] ||
   fail 'the compatibility patch must touch only the four implementations and four regression-test files'
-grep -qF 'l7PerfBufferSizePages = 128' "${patch_file}" ||
-  fail 'the L7 perf buffer must have four times the upstream burst capacity'
+grep -qF 'l7PerfBufferSizePages = 512' "${patch_file}" ||
+  fail 'the L7 perf buffer must have sixteen times the upstream burst capacity'
 grep -qF 'TestL7PerfBufferHasBurstHeadroom' "${patch_file}" ||
   fail 'the compatibility patch lacks an executable L7 buffer regression test'
 grep -qF 'isExpectedCapabilityError' "${patch_file}" ||
