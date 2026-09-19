@@ -234,13 +234,26 @@ assert_generated_policy_contract() {
   mutation_output_dir="${case_dir}/mutated"
   printf '%s\n' "${candidate_render}" >"${policy_bundle}"
 
+  # Every policies.kyverno.io version counts, not only v1: the shipped report-prune
+  # policy is v1beta1. The one exception mirrors reject-cel-policy-producers in
+  # crossplane-egress-policy-rules.yaml (#2573): every resource rule names only the
+  # wgpolicyk8s.io group and only policy-report resources, which cannot carry
+  # egress. yq array equality is unreliable, so the group is checked by length and
+  # element.
   unsafe_deletion_policies="$(
     yq e -N -r '
       select(
         (((.apiVersion // "") | test("^kyverno\\.io/")) and
          (.kind == "CleanupPolicy" or .kind == "ClusterCleanupPolicy")) or
-        (.apiVersion == "policies.kyverno.io/v1" and
-         .kind == "DeletingPolicy")
+        (((.apiVersion // "") | test("^policies\\.kyverno\\.io/")) and
+         .kind == "DeletingPolicy" and
+         ((((.spec.matchConstraints.resourceRules // []) | length) > 0 and
+           ((.spec.matchConstraints.resourceRules // []) | all_c(
+             ((.apiGroups // []) | length) == 1 and
+             (.apiGroups // [])[0] == "wgpolicyk8s.io" and
+             ((.resources // []) | length) > 0 and
+             ((.resources // []) | all_c(
+               . == "policyreports" or . == "clusterpolicyreports"))))) | not))
       ) |
       [.apiVersion, .kind, .metadata.name] |
       join("|")
@@ -893,6 +906,25 @@ fi
 render_with_deleting_policy="${effective_policy_render}"$'\n---\n'"${helm_deleting_policy_fixture}"
 if (assert_generated_policy_contract "${render_with_deleting_policy}") >/dev/null 2>&1; then
   fail 'the aggregate guard must reject CEL deleting policies'
+fi
+
+# The static guard must see every policies.kyverno.io version, and apply the
+# report-prune exception exactly as the Helm-render rule does.
+beta_deleting_policy_fixture="${helm_deleting_policy_fixture/policies.kyverno.io\/v1/policies.kyverno.io/v1beta1}"
+render_with_beta_deleting_policy="${effective_policy_render}"$'\n---\n'"${beta_deleting_policy_fixture}"
+if (assert_generated_policy_contract "${render_with_beta_deleting_policy}") >/dev/null 2>&1; then
+  fail 'the aggregate guard must reject a v1beta1 CEL deleting policy that reaches egress'
+fi
+for report_prune_widened in \
+  "${report_prune_mixed_group_fixture}" \
+  "${report_prune_second_rule_fixture}" \
+  "${report_prune_wildcard_fixture}"; do
+  if (assert_generated_policy_contract "${effective_policy_render}"$'\n---\n'"${report_prune_widened}") >/dev/null 2>&1; then
+    fail 'the aggregate guard must void the report-prune exception once a deleting policy widens'
+  fi
+done
+if ! (assert_generated_policy_contract "${effective_policy_render}"$'\n---\n'"${report_prune_policy_fixture}") >/dev/null 2>&1; then
+  fail 'the aggregate guard must accept a deleting policy confined to policy reports'
 fi
 
 unexpected_generate_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: generate-crossplane-world-egress\nspec:\n  rules:\n  - name: generate-world-egress\n    match:\n      resources:\n        kinds: [Namespace]\n    generate:\n      generateExisting: true\n      apiVersion: cilium.io/v2\n      kind: CiliumNetworkPolicy\n      name: allow-world\n      namespace: "{{request.object.metadata.name}}"\n      synchronize: true\n      data:\n        spec:\n          endpointSelector: {}\n          egress:\n          - toEntities: [world]'
