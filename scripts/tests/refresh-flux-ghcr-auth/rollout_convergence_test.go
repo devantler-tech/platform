@@ -1330,6 +1330,113 @@ func TestRejectedFluxParentPatchPreservesSafeDiagnostic(t *testing.T) {
 	}
 }
 
+// The parent Flux Kustomization's status is rewritten continuously by its own
+// controller, so the fence CAS is lost to nothing but ordinary churn -- and, on a
+// serialized merge queue, it is lost precisely when the queue is busiest. Losing it
+// used to kill the whole production deploy and evict the PR (#3046).
+func TestFluxParentFenceRetriesWhenControllerChurnBreaksItsCAS(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_PARENT_CAS_CHURN_REJECTIONS": "2",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	// Assert the contention actually HAPPENED, not merely that the run passed: a
+	// fixture knob that silently stopped firing would make this test vacuous.
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-parent-cas-churn:flux-system",
+	); got != 2 {
+		t.Fatalf("CAS rejections = %d, want the 2 the fixture injected", got)
+	}
+	// ... and that the fence still landed, released, and let the transaction through.
+	requireLine(t, operations, "flux-policy-parent-pause:flux-system")
+	requireLine(t, operations, "root-patch")
+	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
+	for _, marker := range []string{
+		"flux-policy-parent-owner", "flux-policy-parent-suspended",
+	} {
+		if pathExists(filepath.Join(f.syncStateDir, marker)) {
+			t.Fatalf("converged fence left %s behind", marker)
+		}
+	}
+}
+
+// Contention is retried; a foreign owner is not. The retry re-reads before deciding,
+// so this is the case where that re-read must change the verdict -- and it must say
+// which of the two it found, or an operator cannot tell a busy controller from a
+// competing transaction.
+func TestFluxParentFenceRefusesAForeignOwnerFoundByTheContentionReRead(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_PARENT_CAS_CHURN_REJECTIONS":          "5",
+		"FAKE_FLUX_POLICY_PARENT_FOREIGN_OWNER_AFTER_CAS_CHURN": "true",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output,
+		"Another transaction already owns the parent Flux policy handoff")
+	requireNotContains(t, output, "Could not atomically pause or adopt")
+	operations := readLines(f.operationLog)
+	// Exactly one: a foreign fence is refused on sight rather than retried against,
+	// even though the fixture would happily reject four more times.
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-parent-cas-churn:flux-system",
+	); got != 1 {
+		t.Fatalf("CAS rejections = %d, want a single refusal on sight", got)
+	}
+	for _, unexpected := range []string{
+		"flux-policy-parent-pause:flux-system", "flux-policy-pause:infrastructure",
+		"root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+	// The foreign owner marker is the fixture's own, but the SUSPEND is not: refusing
+	// must never have paused anyone else's parent.
+	if pathExists(filepath.Join(f.syncStateDir, "flux-policy-parent-suspended")) {
+		t.Fatal("refused foreign fence suspended the parent anyway")
+	}
+}
+
+func TestFluxParentFenceStillFailsClosedWhenCASRetriesAreExhausted(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_PARENT_CAS_CHURN_REJECTIONS": "99",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output,
+		"Could not atomically pause or adopt the parent Flux policy handoff")
+	// The last rejection's own text still reaches the operator through the bounded,
+	// printable helper -- a retry that swallowed the cause would be worse than none.
+	requireContains(t, output,
+		"flux-policy-parent-patch: Error from server (Invalid): "+
+			"the server rejected our request due to an error in our request")
+	operations := readLines(f.operationLog)
+	// Bounded, and bounded at the budget: neither one attempt (no retry at all) nor
+	// unbounded (a deploy that never gives up is its own outage).
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-parent-cas-churn:flux-system",
+	); got != 5 {
+		t.Fatalf("CAS rejections = %d, want the bounded budget of 5", got)
+	}
+	for _, unexpected := range []string{
+		"flux-policy-parent-pause:flux-system", "flux-policy-pause:infrastructure",
+		"root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+	for _, marker := range []string{
+		"flux-policy-parent-owner", "flux-policy-parent-suspended",
+	} {
+		if pathExists(filepath.Join(f.syncStateDir, marker)) {
+			t.Fatalf("exhausted CAS retries left %s", marker)
+		}
+	}
+}
+
 func TestAmbiguousFluxFenceAcquisitionIsAdoptedAndCleaned(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
@@ -1977,4 +2084,45 @@ func TestRuntimeProbeKubeletRejectionFailsFastAndDistinctly(t *testing.T) {
 	requireNotContains(t, output, "Timed out proving the running containerd GHCR credential")
 	// Kubelet's raw message can carry node detail; it must not reach the log.
 	requireNotContains(t, output, "Node didn't have enough resource")
+}
+
+// A parent re-read can fail without writing anything to stderr. The diagnostic
+// file is then zero bytes rather than absent, so copying it succeeds while
+// carrying nothing -- and emit_safe_operation_output skips an empty file. The
+// operator must still be told why the fence could not be taken.
+func TestSilentFluxParentRereadFailureStillEmitsADiagnostic(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_PARENT_PATCH_RESPONSE_LOST":   "true",
+		"FAKE_FLUX_POLICY_PARENT_REREAD_SILENT_FAILURE": "true",
+	})
+	requireFailureResult(t, result)
+
+	if !pathExists(filepath.Join(f.syncStateDir, "flux-policy-parent-patch-response-lost")) {
+		t.Fatal("fixture did not lose the applied fence patch response")
+	}
+	requireContains(t, result.stdout+result.stderr,
+		"flux-policy-parent-patch: parent re-read failed; its diagnostic could not be read")
+}
+
+// The empty-diagnostic guard must not swallow a real one: when the failed
+// re-read does write stderr, that text is what the operator needs, not the
+// deterministic fallback.
+func TestFluxParentRereadFailureDiagnosticSurvives(t *testing.T) {
+	t.Parallel()
+
+	const diagnostic = "Error from server (Forbidden): kustomizations.kustomize.toolkit.fluxcd.io is forbidden"
+
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_PARENT_PATCH_RESPONSE_LOST":       "true",
+		"FAKE_FLUX_POLICY_PARENT_REREAD_FAILURE_DIAGNOSTIC": diagnostic,
+	})
+	requireFailureResult(t, result)
+
+	output := result.stdout + result.stderr
+	requireContains(t, output, "flux-policy-parent-patch: "+diagnostic)
+	requireNotContains(t, output, "its diagnostic could not be read")
 }

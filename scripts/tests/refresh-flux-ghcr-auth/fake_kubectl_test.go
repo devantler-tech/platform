@@ -390,6 +390,19 @@ func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile
 }
 
 func fakeKubectlGetFluxPolicyParent(args []string, namespace string) int {
+	// A re-read that fails after the patch response was lost. The silent variant
+	// leaves the caller's diagnostic file at zero bytes, so copying it succeeds
+	// while carrying nothing; the diagnostic variant writes real stderr, whose
+	// content must survive to the operator.
+	if markerExists("flux-policy-parent-patch-response-lost") {
+		diagnostic := os.Getenv("FAKE_FLUX_POLICY_PARENT_REREAD_FAILURE_DIAGNOSTIC")
+		if diagnostic != "" {
+			return commandFailure(92, "%s", diagnostic)
+		}
+		if os.Getenv("FAKE_FLUX_POLICY_PARENT_REREAD_SILENT_FAILURE") == "true" {
+			return 92
+		}
+	}
 	if namespace != "flux-system" ||
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid parent Flux Kustomization lookup")
@@ -507,6 +520,38 @@ func fakeKubectlPatchFluxPolicyParent(args []string, namespace, patchFile string
 		if rejection := os.Getenv("FAKE_FLUX_POLICY_PARENT_PATCH_REJECTION"); rejection != "" {
 			appendEnvFile("OPERATION_LOG", "flux-policy-parent-patch-rejected\n")
 			return commandFailure(56, "%s", rejection)
+		}
+		// Ordinary Flux controller churn advances the parent's resourceVersion between
+		// the script's read and its patch, so the CAS test fails against an object that
+		// is still perfectly claimable. Model exactly that -- advance the stored version
+		// and reject -- for the first N acquisition attempts. Note this deliberately
+		// MOVES the version, which is what separates contention from the rejection knob
+		// above: that one rejects without moving anything, and must never be retried.
+		if budget := parseInt(
+			os.Getenv("FAKE_FLUX_POLICY_PARENT_CAS_CHURN_REJECTIONS"), 0,
+		); budget > 0 {
+			fired := parseInt(markerContent("flux-policy-parent-cas-churn-count"), 0)
+			if fired < budget {
+				setMarkerContent(
+					"flux-policy-parent-cas-churn-count",
+					strconv.Itoa(fired+1),
+				)
+				setMarkerContent(
+					"flux-policy-parent-resource-version",
+					incrementDecimal(currentResourceVersion),
+				)
+				if os.Getenv("FAKE_FLUX_POLICY_PARENT_FOREIGN_OWNER_AFTER_CAS_CHURN") == "true" {
+					setMarkerContent(
+						"flux-policy-parent-owner",
+						"fixture-foreign-transaction",
+					)
+				}
+				appendEnvFile("OPERATION_LOG", "flux-policy-parent-cas-churn:flux-system\n")
+				return commandFailure(
+					56,
+					"Error from server (Invalid): the server rejected our request due to an error in our request",
+				)
+			}
 		}
 		owner := patchValueString(patch, "add", ownerPath)
 		if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
