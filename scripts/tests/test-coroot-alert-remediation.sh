@@ -122,7 +122,7 @@ readonly vex_capacity
 coroot_node_agent_image="$(yq -er '.spec.nodeAgent.image.name' "${coroot}")" ||
   fail 'the Coroot node-agent image pin is missing'
 readonly coroot_node_agent_image
-[[ "${coroot_node_agent_image}" == 'ghcr.io/devantler-tech/platform-coroot-node-agent:v1.35.8-alerts.1-cd1efe238d3c4dfd3fcb11a74656456c7a20a9e4@sha256:ec3dbc7ff7ecd638af9e2f0e79d617e10c5dd835fccf9d044099181edd3177e4' ]] ||
+[[ "${coroot_node_agent_image}" == 'ghcr.io/devantler-tech/platform-coroot-node-agent:v1.35.8-alerts.1-d72441cff6e32c8cabdf631a882a28af1e503e84@sha256:e71f4d608092ccd150ad33d5443e16d9fdccca659ebc1fd5b336c49d27fa5d63' ]] ||
   fail 'the Coroot node-agent must use the exact signed alert-remediation build'
 
 coroot_provider="$(yq -er '.spec.nodeAgent.env[] | select(.name == "PROVIDER") | .value' "${coroot}")" ||
