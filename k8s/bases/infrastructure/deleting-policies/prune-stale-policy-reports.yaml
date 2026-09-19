@@ -1,0 +1,61 @@
+# Deletes a PolicyReport that still carries a failing result the scanner has
+# stopped refreshing, while the scanner is still visiting that report (#2573).
+#
+# Kyverno's background scan rewrites every validate result it still evaluates
+# on each pass (1h, the chart default). A result for a rule that stopped
+# matching the resource (a name exclusion, an exclude block or a precondition)
+# is never rewritten and never removed, so a stale failure keeps a problem on
+# the dashboard that the live resource no longer has. Deleting the whole report
+# is safe: the next scan recreates it holding only the results that are still
+# evaluated. This was proven on a real Kyverno 3.9.1 cluster, including a
+# control report that kept its current results (#3877,
+# tests/kyverno-stale-report-prune/).
+#
+# ONLY fail, warn and error results count. Mutate rules record their result at
+# admission and background scans never rewrite it, so in production most
+# reports legitimately hold pass and skip results that are weeks old (measured
+# 2026-09-19: 438 of 849 reports carry a result older than two hours, and 3
+# carry a stale failing one). Counting those would delete and regenerate
+# hundreds of healthy reports every few hours.
+#
+# A report is deleted only when it ALSO holds a result written within the last
+# two scan intervals, which shows the background scan is still visiting it.
+# Some reports are written at admission and never rescanned: the chart's
+# resource filters skip ReplicaSets and the kube-system, kube-public,
+# kube-node-lease and kyverno namespaces in background scans (168 ReplicaSet
+# reports on prod on 2026-09-19). A failing result there is old because nothing
+# re-checks it, not because the violation is gone, and deleting it would hide a
+# live violation that no scan brings back. The same guard bounds what a reports
+# controller that stops publishing can lose (#3760): once its newest result is
+# two hours old, failures freeze in place instead of being deleted. Inside those
+# two hours a pass can still delete a report that the stopped controller will
+# not rewrite, so that report is missing, rather than stale, until the
+# controller recovers and its next scan recreates it. A report whose every
+# result is stale therefore stays; a reviewed exclusion is expressed as a
+# precondition instead, which rewrites its result as a current skip (docs/policy-reports.md, #3900).
+#
+# The 6h threshold is six scan intervals, so a scan that is merely late never
+# deletes a current report.
+apiVersion: policies.kyverno.io/v1beta1
+kind: DeletingPolicy
+metadata:
+  name: prune-stale-policy-reports
+spec:
+  schedule: "17 * * * *"
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [wgpolicyk8s.io]
+        apiVersions: [v1alpha2]
+        resources: [policyreports]
+  conditions:
+    - name: has-stale-failing-result
+      expression: >-
+        object.?results.orValue([]).exists(r,
+          has(r.result) && r.result in ['fail', 'warn', 'error'] &&
+          has(r.timestamp) && has(r.timestamp.seconds) &&
+          timestamp(int(r.timestamp.seconds)) < time.now() - duration('6h'))
+    - name: still-rescanned
+      expression: >-
+        object.?results.orValue([]).exists(r,
+          has(r.timestamp) && has(r.timestamp.seconds) &&
+          timestamp(int(r.timestamp.seconds)) >= time.now() - duration('2h'))

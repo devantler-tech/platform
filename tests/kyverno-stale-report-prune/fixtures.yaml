@@ -11,6 +11,16 @@ metadata:
   namespace: prune-test
 data: {}
 ---
+# Excluded from both policies, so every result in its report goes stale and no
+# scan writes a current one. This stands in for a report the background scan
+# never revisits (a filtered kind or namespace): its failures must survive.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: never-rescanned
+  namespace: prune-test
+data: {}
+---
 # Control: every result stays current, so its report must never be deleted.
 apiVersion: v1
 kind: ConfigMap
