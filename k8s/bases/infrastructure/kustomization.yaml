@@ -20,6 +20,9 @@ resources:
   # RGD CRs land a layer after the KRO controller that installs the RGD CRD.
   - resource-graph-definitions/
   - cluster-security-exceptions/
+  # Kyverno DeletingPolicy CRs, a layer after the controller that installs
+  # their CRD.
+  - deleting-policies/
   - tracing-policies/
   - vault-config/
   - vault-backup/

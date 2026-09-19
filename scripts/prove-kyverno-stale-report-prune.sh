@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Proves, on a throwaway cluster, that tests/kyverno-stale-report-prune/deleting-policy.yaml
+# Proves, on a throwaway cluster, that the production DeletingPolicy
+# (k8s/bases/infrastructure/deleting-policies/prune-stale-policy-reports.yaml)
 # removes a Kyverno result that a name exclusion left stale, that the next scan
 # recreates the report with only its current results, and that a report whose
 # results are all current is left alone.
@@ -9,6 +10,9 @@
 set -euo pipefail
 
 dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tests/kyverno-stale-report-prune"
+# The shipped policy itself, so this proof cannot drift from what deploys. Only its
+# threshold and schedule are shortened below.
+policy="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/k8s/bases/infrastructure/deleting-policies/prune-stale-policy-reports.yaml"
 chart_version="${KYVERNO_CHART_VERSION:?set KYVERNO_CHART_VERSION}"
 # Short enough to finish in minutes, still several one-minute scan intervals.
 stale_after="${STALE_AFTER:-4m}"
@@ -104,7 +108,8 @@ stale_report_uid="$(report_state excluded-later)"
 stale_report_uid="${stale_report_uid%% *}"
 
 log "applying the deleting policy (stale after $stale_after, every minute)"
-sed -e "s/STALE_AFTER/$stale_after/" -e 's#schedule: ".*"#schedule: "* * * * *"#' "$dir/deleting-policy.yaml" | kubectl apply -f -
+grep -qF "duration('6h')" "$policy" || fail "the production policy no longer carries duration('6h'); update this substitution"
+sed -e "s/duration('6h')/duration('$stale_after')/" -e 's#schedule: ".*"#schedule: "* * * * *"#' "$policy" | kubectl apply -f -
 
 wait_for "excluded-later's stale result pruned and its report recreated with only the current result" 900 \
   has_results excluded-later "require-owner-label/owner-label"

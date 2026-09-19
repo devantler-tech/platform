@@ -8,6 +8,7 @@ on:
       - .github/workflows/prove-kyverno-stale-report-prune.yaml
       - scripts/prove-kyverno-stale-report-prune.sh
       - tests/kyverno-stale-report-prune/**
+      - k8s/bases/infrastructure/deleting-policies/**
       - k8s/bases/infrastructure/controllers/kyverno/helm-release.yaml
   workflow_dispatch:
 
