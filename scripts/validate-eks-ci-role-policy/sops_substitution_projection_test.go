@@ -159,7 +159,7 @@ func TestSOPSSubstitutionSourceProjectionLeavesDecodedDocumentIntact(t *testing.
 		stringData["region_encrypted_not"] != "eu-central" {
 		t.Fatalf("projection did not null only the ciphertext: %v", stringData)
 	}
-	recorded, _ := projected["sopsEncryptedScalars"].([]any)
+	recorded, _ := projected["sopsEncryptedScalars"].([]string)
 	if len(recorded) != 2 || recorded[0] != "/stringData/cluster_domain str" ||
 		recorded[1] != "/stringData/replica_count int" {
 		t.Fatalf("projection did not record the encrypted paths and types: %v", recorded)

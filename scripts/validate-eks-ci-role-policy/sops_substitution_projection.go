@@ -44,7 +44,7 @@ func sopsSubstitutionSourceSurfaceDocument(identity resourceIdentity, document m
 	if _, encrypted := document["sops"].(map[string]any); !encrypted {
 		return document
 	}
-	encryptedScalars := make([]any, 0)
+	encryptedScalars := make([]string, 0)
 	projected := make(map[string]any, len(document))
 	for key, value := range document {
 		if key == "sops" {
@@ -52,9 +52,7 @@ func sopsSubstitutionSourceSurfaceDocument(identity resourceIdentity, document m
 		}
 		projected[key] = projectSOPSCiphertext(value, "/"+escapeJSONPointerToken(key), &encryptedScalars)
 	}
-	sort.Slice(encryptedScalars, func(i, j int) bool {
-		return encryptedScalars[i].(string) < encryptedScalars[j].(string)
-	})
+	sort.Strings(encryptedScalars)
 	return map[string]any{
 		"sopsProjectedDocument": projected,
 		"sopsEncryptedScalars":  encryptedScalars,
@@ -64,7 +62,7 @@ func sopsSubstitutionSourceSurfaceDocument(identity resourceIdentity, document m
 // projectSOPSCiphertext nulls each whole encrypted scalar and records its JSON
 // pointer and declared type, copying containers so the decoded document stays
 // untouched.
-func projectSOPSCiphertext(value any, pointer string, encryptedScalars *[]any) any {
+func projectSOPSCiphertext(value any, pointer string, encryptedScalars *[]string) any {
 	switch typedValue := value.(type) {
 	case string:
 		if match := sopsEncryptedScalar.FindStringSubmatch(typedValue); match != nil {
