@@ -2804,19 +2804,19 @@ const (
 // operator containers. A HelmRelease is a controller-RBAC emitter, so this
 // moves the aggregate even though nothing is granted.
 //
-// CONSERVATION: the approval-base comparison must name exactly one moved
-// entry, helm.toolkit.fluxcd.io/v2 HelmRelease kube-system/tetragon. No
+// CONSERVATION: the approval-base comparison names exactly one moved entry,
+// helm.toolkit.fluxcd.io/v2 HelmRelease kube-system/tetragon. No
 // ClusterRole, Role, ClusterRoleBinding, RoleBinding or ServiceAccount source
 // changes; no identity, binding, verb, wildcard, AWS identity or permission
 // changes.
 //
-// RENDERER PROVENANCE: the value below is printed by CI's checksum-verified
-// kubectl v1.36.2 renderer (TestValidateAuthorizationAcceptsCommittedPolicy)
-// on this change merged with main, whose approval-base check must pass
-// against c6e42dad.
+// RENDERER PROVENANCE: the value below was printed by CI's checksum-verified
+// kubectl v1.36.2 renderer (TestValidateAuthorizationAcceptsCommittedPolicy,
+// job 105966427772) on this change merged with main
+// ca2ff5b2d, whose approval-base check passed against c6e42dad.
 //
 // Previous aggregate: c6e42dad361a132d416925d2b10206b5979d4425b6702efec8c0fe165f170639.
-const expectedRenderedSurfaceSHA = "0000000000000000000000000000000000000000000000000000000000000000"
+const expectedRenderedSurfaceSHA = "1e026cb853f51a99c254e758bb24f98be749d00659005fc27d9c3fc10937277f"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
