@@ -13,6 +13,8 @@ resources:
   - namespace-umami.yaml
   - role.yaml
   - role-binding.yaml
+  - role-vpa-updater-events.yaml
+  - role-binding-vpa-updater-events.yaml
   - cluster-role-reports-controller-read-keda.yaml
   - cluster-role-reports-controller-read-network-routes.yaml
   - cluster-role-read-github-teams.yaml

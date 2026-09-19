@@ -43,6 +43,7 @@ fi
 # rendered resources. Shell parameter slicing therefore arrives in the live
 # CronJob as an empty assignment even though executing this source manifest
 # directly works. Keep the embedded script free of brace-form expansions.
+# shellcheck disable=SC2016 # The single-quoted sequence is the literal hazard.
 [[ "${script_body}" != *'${'* ]] ||
   fail 'the autosuppressor script contains a Flux-consumable shell expansion'
 
@@ -188,6 +189,17 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     ]
   },
   {
+    "id":"flux-dryrun-canceled",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "details":[
+      {"name":"Event message","value":"TeamRepository/github-config/maintainers-platform-template dry-run failed: Patch \"https://10.96.0.1:443/apis/team.github.m.upbound.io/v1alpha1/namespaces/github-config/teamrepositories/maintainers-platform-template?dryRun=All&fieldManager=kustomize-controller&force=true\": context canceled\n"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"github-config\"\nnamespace=\"github-config\"\nreason=\"ReconciliationFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
     "id":"monitor-secret-race",
     "suppressed":false,
     "resolved_at":null,
@@ -221,6 +233,17 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     ]
   },
   {
+    "id":"near-match-flux-dryrun",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "details":[
+      {"name":"Event message","value":"TeamRepository/github-config/maintainers-platform-template dry-run failed: forbidden"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"github-config\"\nnamespace=\"github-config\"\nreason=\"ReconciliationFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
     "id":"near-match-secret",
     "suppressed":false,
     "resolved_at":null,
@@ -236,7 +259,7 @@ JSON
 run_scenario "${event_dir}" >/dev/null
 [ -f "${event_dir}/suppressed.json" ] ||
   fail "the exact by-design Kubernetes lifecycle events were not suppressed"
-jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-health-canceled", "flux-status-canceled", "monitor-secret-race"]' \
+jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-dryrun-canceled", "flux-health-canceled", "flux-status-canceled", "monitor-secret-race"]' \
   "${event_dir}/suppressed.json" >/dev/null ||
   fail "the event exemptions were broader than their exact label and message contracts"
 pass "exact self-healing lifecycle events are suppressed while near matches stay visible"

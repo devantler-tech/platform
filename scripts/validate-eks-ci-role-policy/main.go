@@ -2715,7 +2715,35 @@ const (
 // d4442f10428caf2c4d3849bfdd009a770a3cdcff and named only the HelmRelease above.
 //
 // Previous aggregate: 97f4e8723a381f6f12398475de43badfe7f7d74c5dd87303e91d686b8d6d78cc.
-const expectedRenderedSurfaceSHA = "4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7"
+//
+// That live-alert closeout established aggregate:
+//
+//	4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7
+//
+// Moved again by the VPA Event-delivery repair in #3894, derived on exact main
+// d72441cff6e32c8cabdf631a882a28af1e503e84. Production proved that the chart's
+// vpa-actor ClusterRole grants create but not patch on core Events. client-go
+// creates the first in-place-resize Event and patches repeated occurrences, so
+// the updater completed the resize but logged a forbidden patch in kyverno.
+//
+// CONSERVATION: the approval-base comparison names exactly two added objects:
+// Role/kyverno/vpa-updater-event-patch and its same-named RoleBinding. The Role
+// grants only the missing `patch` verb on core `events`, only in the demonstrated
+// kyverno namespace. The binding has one subject: the existing
+// vertical-pod-autoscaler/vertical-pod-autoscaler-vpa-updater ServiceAccount.
+// No cluster-wide role, wildcard, other resource, other verb, identity, AWS
+// identity, or permission changes. The Coroot image digest, autosuppressor, and
+// focused tests are outside the selected authorization surface.
+//
+// RENDERER PROVENANCE: the value below was derived with the repository-approved
+// kubectl v1.36.2 Darwin arm64 binary, whose official SHA256 was reverified as
+// 4408c85c83fd3a31adaa555bdf3c7a6c81f74b19449a9060ba31ab91926f023d.
+// The approval-base comparison used exact current main
+// d72441cff6e32c8cabdf631a882a28af1e503e84 and named only the Role and
+// RoleBinding above.
+//
+// Previous aggregate: 4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7.
+const expectedRenderedSurfaceSHA = "7314349715c6842d8df5a48ad40fcc4bf6434dd4112fa915b42e32b1a1d31dc8"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2728,7 +2756,7 @@ const expectedRenderedSurfaceSHA = "4822c6a3ea561003113a2989d08274fabae063a5ceb6
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "97f4e8723a381f6f12398475de43badfe7f7d74c5dd87303e91d686b8d6d78cc"
+const previousRenderedSurfaceSHA = "4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

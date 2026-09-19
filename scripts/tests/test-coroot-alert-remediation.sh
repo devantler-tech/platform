@@ -11,6 +11,8 @@ readonly coroot="${root_dir}/k8s/bases/infrastructure/coroot/coroot.yaml"
 readonly coroot_patch="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/patches/enable-ha.yaml"
 readonly coroot_db="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/cluster.yaml"
 readonly vault_snapshot="${root_dir}/k8s/bases/infrastructure/vault-backup/cron-job.yaml"
+readonly vpa_event_role="${root_dir}/k8s/bases/infrastructure/controllers/kyverno/role-vpa-updater-events.yaml"
+readonly vpa_event_binding="${root_dir}/k8s/bases/infrastructure/controllers/kyverno/role-binding-vpa-updater-events.yaml"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -102,6 +104,20 @@ alertmanager_noop_patch_count="$(
 readonly alertmanager_noop_patch_count
 [[ "${alertmanager_noop_patch_count}" == '0' ]] ||
   fail 'the Kubescape HelmRelease must not carry a no-op patch for separately owned Alertmanager'
+
+vpa_event_patch_rule="$(
+  yq -o=json -I=0 '{"apiVersion": .apiVersion, "kind": .kind, "metadata": .metadata, "rules": .rules}' "${vpa_event_role}"
+)" || fail 'the Kyverno-scoped VPA updater Event patch Role is missing'
+readonly vpa_event_patch_rule
+[[ "${vpa_event_patch_rule}" == '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"vpa-updater-event-patch","namespace":"kyverno"},"rules":[{"apiGroups":[""],"resources":["events"],"verbs":["patch"]}]}' ]] ||
+  fail 'the VPA updater may only patch core Events beyond its chart-provided grants'
+
+vpa_event_patch_binding="$(
+  yq -o=json -I=0 '{"apiVersion": .apiVersion, "kind": .kind, "metadata": .metadata, "roleRef": .roleRef, "subjects": .subjects}' "${vpa_event_binding}"
+)" || fail 'the Kyverno-scoped VPA updater Event patch RoleBinding is missing'
+readonly vpa_event_patch_binding
+[[ "${vpa_event_patch_binding}" == '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"vpa-updater-event-patch","namespace":"kyverno"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"vpa-updater-event-patch"},"subjects":[{"kind":"ServiceAccount","name":"vertical-pod-autoscaler-vpa-updater","namespace":"vertical-pod-autoscaler"}]}' ]] ||
+  fail 'the Kyverno Event patch grant must bind only the VPA updater service account'
 
 summary_workers="$(
   yq -er '.spec.values.storage.kindQueues.vulnerabilitymanifestsummaries.workerCount' \

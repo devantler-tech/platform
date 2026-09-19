@@ -1,0 +1,15 @@
+---
+# The chart-provided VPA actor role can create core Events but cannot patch
+# them. client-go creates the first Event and patches its count/timestamp when
+# the same in-place resize recurs, so the updater otherwise completes a Kyverno
+# resize but logs a forbidden error on every repeated Event. Grant only the
+# missing verb, only for core Events, and only in this demonstrated namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vpa-updater-event-patch
+  namespace: kyverno
+rules:
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["patch"]
