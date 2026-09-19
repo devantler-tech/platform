@@ -440,6 +440,12 @@ func run(args []string, stderr io.Writer) int {
 		return 1
 	}
 
+	if err := validatePatchTargets(manifest); err != nil {
+		_, _ = fmt.Fprintf(stderr, "flux verify contract: %v\n", err)
+
+		return 1
+	}
+
 	// Last, because it is the only check that assumes BOTH halves are already
 	// well-formed: comparing a block that failed its own checks would report
 	// drift where the real fault is the block itself.
