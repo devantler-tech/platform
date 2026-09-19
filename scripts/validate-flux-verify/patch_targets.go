@@ -41,8 +41,19 @@ var defaultFluxComponents = []string{
 // patchSelector is the resource a patch is aimed at, from its target or, for a
 // target-less strategic-merge patch, from the document it merges.
 type patchSelector struct {
-	kind, name, namespace, labelSelector string
-	annotationSelector                   bool
+	group, version, kind, name, namespace, labelSelector string
+	annotationSelector                                   bool
+	// padded names a field whose value carries surrounding whitespace. Kustomize
+	// matches the raw value, so a padded name selects nothing even though it
+	// reads correctly.
+	padded string
+}
+
+// generatedGroupVersions are the API group and version of each kind a patch
+// may target. An empty group or version in a target matches any.
+var generatedGroupVersions = map[string][2]string{
+	"Deployment":   {"apps", "v1"},
+	rootSourceKind: {"source.toolkit.fluxcd.io", "v1"},
 }
 
 // validatePatchTargets reports every spec.kustomize.patches entry that cannot
@@ -121,16 +132,17 @@ func instanceComponents(instance any) []string {
 // accepted only as a strategic merge whose own document names the resource: a
 // target-less JSON6902 operation list selects nothing.
 func selectorOf(patch map[string]any) (patchSelector, string) {
+	var selector patchSelector
 	if target, ok := asMapping(patch["target"]); ok {
-		_, annotated := target["annotationSelector"]
+		_, selector.annotationSelector = target["annotationSelector"]
+		selector.group = selector.field("group", target["group"])
+		selector.version = selector.field("version", target["version"])
+		selector.kind = selector.field("kind", target["kind"])
+		selector.name = selector.field("name", target["name"])
+		selector.namespace = selector.field("namespace", target["namespace"])
+		selector.labelSelector = selector.field("labelSelector", target["labelSelector"])
 
-		return patchSelector{
-			kind:               trimmed(target["kind"]),
-			name:               trimmed(target["name"]),
-			namespace:          trimmed(target["namespace"]),
-			labelSelector:      trimmed(target["labelSelector"]),
-			annotationSelector: annotated,
-		}, ""
+		return selector, ""
 	}
 
 	body, _ := patch["patch"].(string)
@@ -143,24 +155,51 @@ func selectorOf(patch map[string]any) (patchSelector, string) {
 		return patchSelector{}, "has no target, and a JSON6902 operation list without one selects nothing"
 	}
 	metadata, _ := asMapping(document["metadata"])
+	apiVersion := selector.field("apiVersion", document["apiVersion"])
+	if slash := strings.LastIndex(apiVersion, "/"); slash >= 0 {
+		selector.group, selector.version = apiVersion[:slash], apiVersion[slash+1:]
+	} else {
+		selector.version = apiVersion
+	}
+	selector.kind = selector.field("kind", document["kind"])
+	selector.name = selector.field("name", metadata["name"])
+	selector.namespace = selector.field("namespace", metadata["namespace"])
 
-	return patchSelector{
-		kind:      trimmed(document["kind"]),
-		name:      trimmed(metadata["name"]),
-		namespace: trimmed(metadata["namespace"]),
-	}, ""
+	return selector, ""
+}
+
+// field returns a selector value exactly as written, recording the first one
+// that carries surrounding whitespace instead of trimming it away.
+func (selector *patchSelector) field(key string, value any) string {
+	text, _ := value.(string)
+	if selector.padded == "" && text != strings.TrimSpace(text) {
+		selector.padded = key
+	}
+
+	return text
 }
 
 // selectorProblem explains why a selector cannot be shown to select a
 // generated resource, or returns "" when it can.
 func selectorProblem(selector patchSelector, components []string) string {
+	if selector.padded != "" {
+		return fmt.Sprintf("%s carries surrounding whitespace, which kustomize matches literally, so it selects nothing", selector.padded)
+	}
+	if groupVersion, known := generatedGroupVersions[selector.kind]; known {
+		if selector.group != "" && selector.group != groupVersion[0] {
+			return fmt.Sprintf("group %q is not %q, the group of a generated %s", selector.group, groupVersion[0], selector.kind)
+		}
+		if selector.version != "" && selector.version != groupVersion[1] {
+			return fmt.Sprintf("version %q is not %q, the version of a generated %s", selector.version, groupVersion[1], selector.kind)
+		}
+	}
 	if selector.kind == rootSourceKind && selector.name == rootSourceName &&
 		(selector.namespace == "" || selector.namespace == rootSourceName) &&
 		selector.labelSelector == "" && !selector.annotationSelector {
 		return ""
 	}
 	if selector.kind != "Deployment" {
-		return fmt.Sprintf("kind %q is neither a controller Deployment nor the root %s", selector.kind, rootSourceKind)
+		return fmt.Sprintf("kind %q is neither a controller Deployment nor the root %s; if flux-operator generates it, teach this check about it (with a test) rather than working around it", selector.kind, rootSourceKind)
 	}
 	if selector.namespace != "" {
 		return fmt.Sprintf("namespace %q on a Deployment matches nothing, because flux-operator applies component patches before it sets the namespace; omit it", selector.namespace)
@@ -185,10 +224,4 @@ func selectorProblem(selector patchSelector, components []string) string {
 	}
 
 	return ""
-}
-
-func trimmed(value any) string {
-	text, _ := value.(string)
-
-	return strings.TrimSpace(text)
 }

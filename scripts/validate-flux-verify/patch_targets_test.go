@@ -46,6 +46,10 @@ func TestPatchTargetsAcceptTheOperatorDefaults(t *testing.T) {
 			old: "  components:\n    - source-controller\n    - kustomize-controller\n",
 			new: "",
 		},
+		"explicit matching group and version": {
+			old: "kind: Deployment\n          name: kustomize-controller",
+			new: "group: apps\n          version: v1\n          kind: Deployment\n          name: kustomize-controller",
+		},
 		"target-less strategic merge naming a controller": {
 			old: "        patch: verify\n",
 			new: "        patch: verify\n" +
@@ -101,6 +105,30 @@ func TestPatchTargetsRejectATargetThatSelectsNothing(t *testing.T) {
 			old:  "name: kustomize-controller\n        patch",
 			new:  "name: kustomize-controller\n          namespace: kube-system\n        patch",
 			want: `namespace "kube-system"`,
+		},
+		{
+			name: "controller target in the wrong group",
+			old:  "kind: Deployment\n          name: kustomize-controller",
+			new:  "group: batch\n          kind: Deployment\n          name: kustomize-controller",
+			want: `group "batch" is not "apps"`,
+		},
+		{
+			name: "root source target at the wrong version",
+			old:  "kind: OCIRepository\n          name: flux-system",
+			new:  "version: v1beta2\n          kind: OCIRepository\n          name: flux-system",
+			want: `version "v1beta2" is not "v1"`,
+		},
+		{
+			name: "padded name",
+			old:  "name: kustomize-controller\n        patch",
+			new:  "name: \"kustomize-controller \"\n        patch",
+			want: "name carries surrounding whitespace",
+		},
+		{
+			name: "padded kind",
+			old:  "kind: Deployment\n          name: kustomize-controller",
+			new:  "kind: \" Deployment\"\n          name: kustomize-controller",
+			want: "kind carries surrounding whitespace",
 		},
 		{
 			// flux-operator applies component patches before the namespace
