@@ -221,3 +221,55 @@ spec:
                               - ALL
                           seccompProfile:
                             type: RuntimeDefault
+          # C-0211 baseline context (#3239) for the two other workloads this chart
+          # renders. longhorn-system is excluded from add-security-context and the
+          # chart exposes no securityContext value for either, so both fields are
+          # post-rendered here. Neither pod sets an fsGroup, so OnRootMismatch changes
+          # no volume ownership; it only declares the policy. The empty seLinuxOptions
+          # object leaves SELinux type and MCS selection to the runtime, which still
+          # assigns the privileged longhorn-manager container its privileged label.
+          #
+          # The CSI sidecar Deployments, the longhorn-csi-plugin DaemonSet and the
+          # engine-image DaemonSets are created by longhorn-manager at runtime, not by
+          # this chart, so no postRenderer can reach them.
+          - target:
+              kind: DaemonSet
+              name: longhorn-manager
+            patch: |
+              apiVersion: apps/v1
+              kind: DaemonSet
+              metadata:
+                name: longhorn-manager
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      fsGroupChangePolicy: OnRootMismatch
+                    containers:
+                      - name: longhorn-manager
+                        securityContext:
+                          seLinuxOptions: {}
+                      - name: pre-pull-share-manager-image
+                        securityContext:
+                          seLinuxOptions: {}
+          - target:
+              kind: Deployment
+              name: longhorn-driver-deployer
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: longhorn-driver-deployer
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      fsGroupChangePolicy: OnRootMismatch
+                    initContainers:
+                      - name: wait-longhorn-manager
+                        securityContext:
+                          seLinuxOptions: {}
+                    containers:
+                      - name: longhorn-driver-deployer
+                        securityContext:
+                          seLinuxOptions: {}

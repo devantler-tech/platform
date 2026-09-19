@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prune-test
+---
+# Its team-label result becomes stale once require-team-label excludes it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: excluded-later
+  namespace: prune-test
+data: {}
+---
+# Control: every result stays current, so its report must never be deleted.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: always-current
+  namespace: prune-test
+data: {}
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-team-label
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: team-label
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+              namespaces: [prune-test]
+      validate:
+        message: team label required
+        pattern:
+          metadata:
+            labels:
+              team: "?*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-owner-label
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: owner-label
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+              namespaces: [prune-test]
+      validate:
+        message: owner label required
+        pattern:
+          metadata:
+            labels:
+              owner: "?*"

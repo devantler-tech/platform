@@ -39,6 +39,22 @@ jobs:
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
+      # Reports whether prod's published artifact is on main, from its signed
+      # provenance (#3846). Not wired into any deploy yet; its tests also read
+      # this workflow's k8s filter, so a filter it can no longer parse fails here.
+      - name: 🧭 Validate prod convergence resolver
+        run: go test ./scripts/resolve-prod-convergence
+
+      # validate-main.yaml runs the report after each push to main (#3848); test it on the
+      # pull request too, so a broken report is caught before it can turn main red.
+      - name: 🧭 Validate prod convergence report
+        run: |
+          shellcheck scripts/report-prod-convergence.sh
+          shellcheck scripts/tests/test-report-prod-convergence.sh
+          bash scripts/tests/test-report-prod-convergence.sh
+          shellcheck scripts/redeploy-main-when-behind.sh scripts/tests/test-redeploy-main-when-behind.sh
+          bash scripts/tests/test-redeploy-main-when-behind.sh
+
       # The Wedding backup catalogue must be proven complete before the database
       # switches to its dedicated bucket, and continuous after it. The evaluator's
       # refusals (credential reuse, wrong destination, partial copy, source changed
@@ -214,6 +230,19 @@ jobs:
           shellcheck scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
           bash scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
 
+      # The authorization gate's verdict and its moved-entry diagnostics are two
+      # commands in one step, and a real aggregate mismatch fails BOTH — so a step
+      # that stopped at the first never ran the diagnostics on the one failure they
+      # exist to explain (#3879). That is a property of the STEP's shape, which no
+      # script it calls can enforce, so the test executes the step against stub
+      # binaries and ablates each assertion. Unconditional for the same reason as
+      # the steps above: its subjects are ci.yaml and cd.yaml themselves, which sit
+      # outside the k8s paths.
+      - name: 🔐 Validate the authorization gate reports its diagnostics
+        run: |
+          shellcheck scripts/tests/test-authorization-gate-diagnostics.sh
+          bash scripts/tests/test-authorization-gate-diagnostics.sh
+
       # Both subject guards above examine a file only when it already carries a
       # shared-publish-workflow subject, so an OCIRepository pointed at a devantler-tech
       # artifact with NO spec.verify at all is invisible to them — and refused by nothing
@@ -354,6 +383,9 @@ jobs:
               # The Homepage layout and the policy's allow-list are one contract:
               # either side changing alone is the drift this test exists to catch.
               - 'scripts/tests/test-restrict-homepage-service-groups.sh'
+              # The bookmark validator and its tests guard the same ConfigMap (#2909).
+              - 'scripts/validate-homepage-bookmarks.sh'
+              - 'scripts/tests/test-validate-homepage-bookmarks.sh'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
               - 'scripts/tests/test-kyverno-github-team-report-rbac.sh'
               - 'scripts/tests/test-tenant-route-hostname-boundary.sh'
@@ -401,6 +433,12 @@ jobs:
               - 'scripts/probe-cilium-externalauth-crossnode.sh'
               - 'scripts/tests/test-probe-cilium-externalauth-crossnode.sh'
               - '.github/workflows/probe-cilium-externalauth-crossnode.yaml'
+              # The #3790 datapath throttling measurement, its test and its workflow
+              # are one contract: the test pins that the script stays read-only, its
+              # arithmetic, and that no node or pod name reaches the public log.
+              - 'scripts/measure-datapath-cpu-throttling.sh'
+              - 'scripts/tests/test-measure-datapath-cpu-throttling.sh'
+              - '.github/workflows/measure-datapath-cpu-throttling.yaml'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
@@ -495,12 +533,16 @@ jobs:
               # alone — still runs the check that covers it.
               - 'scripts/restart-uncapped-talos-coredns.sh'
               - 'scripts/tests/test-restart-uncapped-talos-coredns.sh'
+              # The values it checks live under k8s/**; this entry makes an edit to
+              # the test alone run it too.
+              - 'scripts/tests/test-kube-system-addon-cpu-limits.sh'
               - 'scripts/tests/test-coroot-cost-convergence.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
               - 'scripts/tests/test-crossplane-sync-alerter.sh'
               - 'scripts/tests/test-crossplane-egress-policy.sh'
               - 'scripts/tests/crossplane-egress-policy-rules.yaml'
               - 'scripts/tests/test-coroot-alert-remediation.sh'
+              - 'scripts/tests/test-coroot-final-remediation.sh'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               - 'scripts/tests/test-stranded-volume-attach-alert.sh'
               - 'scripts/tests/test-prune-protected-orphan-alert.sh'
@@ -876,15 +918,33 @@ jobs:
       - name: 🔐 Validate static production authorization controls
         # The Go validator pins the EKS CI role and the authored authorization
         # graph before either a PR or merge-group commit may proceed.
+        # The HEAD^1 checkout is diagnostic only: on an unapproved aggregate the
+        # validator names the surface entries that differ from it. Without it the
+        # verdict is identical and the moved entries are reported as unknown.
+        # Both commands run unconditionally, and the step fails if either did.
+        # They are independent outputs over the same surface: `go test` is the
+        # verdict, `go run` is the only caller of the moved-entry diagnostics. A
+        # real aggregate mismatch fails BOTH, so short-circuiting on the first
+        # left the one failure that most needs explaining with no entry names at
+        # all (#3879). Covered by scripts/tests/test-authorization-gate-diagnostics.sh.
         run: |
-          go test ./scripts/validate-eks-ci-role-policy
-          go run ./scripts/validate-eks-ci-role-policy .
+          set -euo pipefail
+          status=0
+          go test ./scripts/validate-eks-ci-role-policy || status=1
+          base_root="$RUNNER_TEMP/approval-base-tree"
+          if git worktree add --detach "$base_root" HEAD^1; then
+            go run ./scripts/validate-eks-ci-role-policy . "$base_root" || status=1
+          else
+            echo "::warning::approval base checkout failed; an aggregate mismatch will not name moved entries"
+            go run ./scripts/validate-eks-ci-role-policy . || status=1
+          fi
+          exit "$status"
 
       - name: ⚙️ Setup KSail for effective authorization validation
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.1"
+          KSAIL_VERSION: "7.184.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -906,8 +966,8 @@ jobs:
           bash scripts/tests/test-production-authorization-rules.sh
 
       - name: 🚦 Validate Actual Budget user-namespace pilot
-        # Exercise the dormant component on both the PR and the speculative
-        # merge-group revision before deploy-prod can publish that revision.
+        # Exercise the active component and its rollback on both the PR and the
+        # speculative merge-group revision before deploy-prod can publish it.
         timeout-minutes: 5
         run: |
           shellcheck scripts/tests/test-actual-budget-user-namespaces.sh
@@ -1180,6 +1240,17 @@ jobs:
           shellcheck scripts/tests/test-umami-provisioning-bootstrap.sh
           bash scripts/tests/test-umami-provisioning-bootstrap.sh
 
+      - name: 🔖 Validate Homepage bookmarks
+        if: needs.changes.outputs.k8s == 'true'
+        # bookmarks.yaml is an embedded block scalar, so schema validation cannot
+        # see a missing icon, a non-https link, or a group name that collides with
+        # a service group. The tests prove each check fires; the validator gates
+        # the real ConfigMap (#2909).
+        run: |
+          shellcheck scripts/validate-homepage-bookmarks.sh scripts/tests/test-validate-homepage-bookmarks.sh
+          bash scripts/tests/test-validate-homepage-bookmarks.sh
+          bash scripts/validate-homepage-bookmarks.sh
+
       - name: 🔐 Validate vault snapshots stay group-readable
         if: needs.changes.outputs.k8s == 'true'
         run: |
@@ -1305,6 +1376,16 @@ jobs:
           shellcheck scripts/probe-cilium-externalauth-crossnode.sh scripts/tests/test-probe-cilium-externalauth-crossnode.sh
           bash scripts/tests/test-probe-cilium-externalauth-crossnode.sh
 
+      - name: 📏 Validate datapath CPU throttling measurement
+        if: needs.changes.outputs.k8s == 'true'
+        # The measurement needs prod and runs only on dispatch. Its test fakes kubectl
+        # from fixtures and pins the ratio arithmetic, every INCONCLUSIVE path, that it
+        # issues reads only, that no node or pod name reaches the public log, and the
+        # workflow's guards.
+        run: |
+          shellcheck scripts/measure-datapath-cpu-throttling.sh scripts/tests/test-measure-datapath-cpu-throttling.sh
+          bash scripts/tests/test-measure-datapath-cpu-throttling.sh
+
       - name: 🔐 Validate Cilium mutual-auth policy scope
         if: needs.changes.outputs.k8s == 'true'
         # An authentication stanza is still an allow rule. Reject a cluster-wide
@@ -1387,6 +1468,16 @@ jobs:
         # else, and fails closed on any input it cannot read.
         run: bash scripts/tests/test-restart-uncapped-talos-coredns.sh
 
+      - name: 🧢 Validate kube-system add-ons declare their CPU limit
+        if: needs.changes.outputs.k8s == 'true'
+        # The kube-system LimitRange only reaches pods admitted after it exists, so the
+        # non-datapath add-ons carry their CPU limit in their own chart values (#3789).
+        # Pin the exact CPU request next to every limit: the static prod VPAs keep the
+        # ratio, and a limit alone, or a request raised to the limit, would let the VPA
+        # throttle the add-on. Also pin that the Cilium agent and Envoy DaemonSets
+        # stay unlimited here.
+        run: bash scripts/tests/test-kube-system-addon-cpu-limits.sh
+
       - name: 📣 Validate the rollout gate cannot suppress sync silently
         if: needs.changes.outputs.k8s == 'true'
         # The gate skips the pipeline's only Talos machine-config sync. Pin that
@@ -1446,10 +1537,12 @@ jobs:
 
       - name: 🔕 Validate narrow Coroot alert suppressions
         if: needs.changes.outputs.k8s == 'true'
-        # The kubelet alert fingerprint is shared across every failed upstream.
-        # Exercise the rendered script so the two known static-pod probe series
-        # suppress, while one additional active upstream keeps the alert visible.
-        run: bash scripts/tests/test-coroot-alert-autosuppressor.sh
+        # Exercise the rendered script: exact by-design network and lifecycle
+        # signals suppress, while active extra upstreams and message/label near
+        # matches remain visible.
+        run: |
+          shellcheck scripts/tests/test-coroot-alert-autosuppressor.sh
+          bash scripts/tests/test-coroot-alert-autosuppressor.sh
 
       - name: 💾 Validate the Velero maintenance OOM alert
         if: needs.changes.outputs.k8s == 'true'
@@ -1699,7 +1792,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.1"
+          KSAIL_VERSION: "7.184.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -1810,6 +1903,8 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-alert-remediation.sh
           bash scripts/tests/test-coroot-alert-remediation.sh
+          shellcheck scripts/tests/test-coroot-final-remediation.sh
+          bash scripts/tests/test-coroot-final-remediation.sh
 
       - name: 📤 Save kubeconform schema cache
         # Runs even if the validate step above failed (see the restore step's
@@ -1993,7 +2088,7 @@ jobs:
           !cancelled() &&
           steps.normalize-sarif.outputs.sarif == 'ready' &&
           github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           sarif_file: ${{ runner.temp }}/kubescape.sarif
           # Distinguishes these alerts from the CodeQL and zizmor analyses that
@@ -2061,7 +2156,7 @@ jobs:
           persist-credentials: false
 
       - name: 🏷️ Validate naming conventions
-        uses: devantler-tech/actions/validate-naming@759ff9b2526cd1b142b49c5dc1616118a1ef44d9 # v13.6.0
+        uses: devantler-tech/actions/validate-naming@3c3a6348b3e7aacc995ae49fc60032f95f70a779 # v13.6.5
         with:
           enabled: "true"
 
@@ -2403,7 +2498,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.183.1"
+          KSAIL_VERSION: "7.184.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2461,7 +2556,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@759ff9b2526cd1b142b49c5dc1616118a1ef44d9 # v13.6.0
+        uses: devantler-tech/actions/aggregate-job-checks@3c3a6348b3e7aacc995ae49fc60032f95f70a779 # v13.6.5
         with:
           job-results: >-
             ${{ needs.changes.result }}

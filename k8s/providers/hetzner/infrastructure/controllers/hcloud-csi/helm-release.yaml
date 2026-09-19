@@ -32,6 +32,41 @@ spec:
       # eviction candidates so volume operations keep working under pressure.
       priorityClassName: system-cluster-critical
       replicaCount: ${hcloud_csi_controller_replicas:=2}
+      # The CPU limit is declared per container, so it does not depend on the
+      # kube-system LimitRange admitting the pod (#3789). The chart leaves every
+      # controller container's resources empty, so the CPU request is stated alongside
+      # the limit. A limit alone would default the request to 2 CPUs, and the static
+      # prod VPAs (../../vertical-pod-autoscalers/), which control requests AND limits
+      # and keep their ratio, would then pin each container's limit at its request.
+      # 15m:2 is the pair the LimitRange admits, so the live values are the same.
+      # Memory keeps the LimitRange defaults: a 128Mi request, plus the 4Gi limit the
+      # hetzner overlay adds.
+      resources:
+        csiAttacher:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
+        csiResizer:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
+        csiProvisioner:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
+        livenessProbe:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
+        hcloudCSIDriver:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
       hcloudVolumeDefaultLocation: fsn1
       podDisruptionBudget:
         create: true
@@ -60,6 +95,25 @@ spec:
       # ranks the DaemonSet among the last eviction candidates so stateful pods
       # can keep mounting their storage under node memory pressure.
       priorityClassName: system-node-critical
+      # Same CPU pair as the controller containers above, for the same reasons
+      # (#3790): the chart leaves every node container's resources empty, so the
+      # 15m:2 pair the LimitRange admits is stated here, request included.
+      resources:
+        csiNodeDriverRegistrar:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
+        livenessProbe:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
+        hcloudCSIDriver:
+          requests:
+            cpu: 15m
+          limits:
+            cpu: "2"
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -79,3 +133,66 @@ spec:
       - name: hcloud
         defaultStorageClass: false
         reclaimPolicy: Delete
+  # C-0211 baseline context (#3239). kube-system is excluded from
+  # add-security-context, and chart 2.23.0 exposes only `enabled` and `fsGroup`
+  # under podSecurityContext, so the two universal gaps are post-rendered here.
+  #
+  # OnRootMismatch is inert for both workloads, which is why it is safe to state
+  # without a staged rollout: the node DaemonSet mounts only hostPath volumes,
+  # and kubelet never applies fsGroup ownership management to hostPath at all;
+  # the controller's single volume is an emptyDir, which is created root-owned
+  # on every pod start, so the root GID always mismatches and kubelet performs
+  # exactly the same recursive chown it performs today.
+  #
+  # The empty seLinuxOptions object declares the field without pinning a type,
+  # level or MCS category, so every container keeps the runtime's own SELinux
+  # defaults -- including the privileged hcloud-csi-driver container on the node
+  # DaemonSet, which the runtime already labels spc_t.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: DaemonSet
+              name: ^hcloud-csi-node$
+            patch: |
+              - op: add
+                path: /spec/template/spec/securityContext/fsGroupChangePolicy
+                value: OnRootMismatch
+              - op: add
+                path: /spec/template/spec/containers/0/securityContext
+                value:
+                  seLinuxOptions: {}
+              - op: add
+                path: /spec/template/spec/containers/1/securityContext
+                value:
+                  seLinuxOptions: {}
+              - op: add
+                path: /spec/template/spec/containers/2/securityContext/seLinuxOptions
+                value: {}
+          - target:
+              kind: Deployment
+              name: ^hcloud-csi-controller$
+            patch: |
+              - op: add
+                path: /spec/template/spec/securityContext/fsGroupChangePolicy
+                value: OnRootMismatch
+              - op: add
+                path: /spec/template/spec/containers/0/securityContext
+                value:
+                  seLinuxOptions: {}
+              - op: add
+                path: /spec/template/spec/containers/1/securityContext
+                value:
+                  seLinuxOptions: {}
+              - op: add
+                path: /spec/template/spec/containers/2/securityContext
+                value:
+                  seLinuxOptions: {}
+              - op: add
+                path: /spec/template/spec/containers/3/securityContext
+                value:
+                  seLinuxOptions: {}
+              - op: add
+                path: /spec/template/spec/containers/4/securityContext
+                value:
+                  seLinuxOptions: {}

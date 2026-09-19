@@ -188,9 +188,18 @@ spec:
     env:
       - name: DISABLE_PINGER
         value: "true"
-    # Pinned (see the COMPONENT IMAGE PINS note at the top of spec).
+      # The custom node-agent keeps cloud metadata discovery provider-aware.
+      # This cluster is hosted on Hetzner, so it must not probe AWS IMDS and
+      # report the expected refusal as an application error.
+      - name: PROVIDER
+        value: Hetzner
+    # Exact signed compatibility build from upstream 1.35.8. It retains the
+    # upstream behavior while classifying unavailable Talos journald, expected
+    # non-AWS metadata, unsupported stripped-binary TLS uprobes, and collector
+    # reconnects as optional lifecycle warnings. Its larger L7 ring buffer also
+    # prevents the recurring lost-sample signal under production bursts.
     image:
-      name: ghcr.io/coroot/coroot-node-agent:1.35.8
+      name: ghcr.io/devantler-tech/platform-coroot-node-agent:v1.35.8-alerts.1-cd1efe238d3c4dfd3fcb11a74656456c7a20a9e4@sha256:ec3dbc7ff7ecd638af9e2f0e79d617e10c5dd835fccf9d044099181edd3177e4
     priorityClassName: platform-critical
     # Authored memory sizing — REQUIRED. DaemonSet VPAs are CPU-only (see
     # cluster-policies/best-practices/auto-vpa.yaml: VPA sized every node's
