@@ -73,10 +73,12 @@ spec:
     # here instead of relying on Kyverno. readOnlyRootFilesystem is safe: the only
     # path Alertmanager writes is --storage.path=/alertmanager, mounted as the
     # emptyDir above; config + the webhook secret are read-only mounts.
-    # C-0211 baseline context (#3239): the pod already runs with fsGroup 65534
-    # and backs /alertmanager with a fresh emptyDir, so OnRootMismatch only
-    # skips a recursive chown that changes nothing. The empty seLinuxOptions
-    # object leaves SELinux type and MCS category selection to the runtime.
+    # C-0211 baseline context (#3239). The pod mounts only an emptyDir, a
+    # Secret and a ConfigMap, and Kubernetes ignores fsGroupChangePolicy for
+    # those ephemeral volume types, so OnRootMismatch has no runtime effect
+    # here. It is declared to satisfy the C-0211 control. The empty
+    # seLinuxOptions object leaves SELinux type and MCS category selection to
+    # the runtime.
     podSecurityContext:
       fsGroup: 65534
       fsGroupChangePolicy: OnRootMismatch
