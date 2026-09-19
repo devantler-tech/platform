@@ -310,11 +310,11 @@ const (
 // byte-identical across the two trees, so nothing granted to the aws/aws
 // service account this validator exists to protect is touched.
 //
-// NOTE for whoever re-approves this next: an opaque ciphertext in the surface
-// moves on ANY re-encryption — this value also absorbed a SOPS version bump
-// (3.13.2 -> 3.13.3) — so a routine secret rotation reds this gate with no
-// authorization change at all. Do NOT treat a moved hash as self-evidently
-// benign: re-run the per-entry membership measurement above before re-approving.
+// NOTE for whoever re-approves this next: SOPS-encrypted Secrets are
+// fingerprinted by key set, declared type and unencrypted values, not by
+// ciphertext (#2803), so a re-encryption or SOPS version bump no longer moves
+// this value. Do NOT treat a moved hash as self-evidently benign: re-run the
+// per-entry membership measurement above before re-approving.
 // A Go toolchain is only needed to recompute the hash; MEMBERSHIP is a plain
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
@@ -2740,7 +2740,34 @@ const (
 // against exact current main e0cce893896718a764ec55127220da6f9fb42a2c.
 //
 // Previous aggregate: 4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7.
-const expectedRenderedSurfaceSHA = "cf3e10be68e3a77cdac612347d4d91c2db567d616de5fc1b6bba391ae48b8698"
+//
+// That C-0211 alertmanager baseline established aggregate:
+//
+//	cf3e10be68e3a77cdac612347d4d91c2db567d616de5fc1b6bba391ae48b8698
+//
+// Moved by #2803, rebased onto main after #3239, whose approved aggregate is
+// cf3e10 above. No manifest changes: the surface entry of a SOPS-encrypted
+// Secret now fingerprints its key set, each encrypted key's declared type,
+// every unencrypted value and the stable `sops` metadata (recipients,
+// encrypted_regex), instead of the ciphertext, mac, timestamps, version and
+// wrapped data keys. Encrypted values are nulled in place and their paths and types
+// recorded in a separate list, so no plaintext can mimic them. The ciphertext
+// moved on every re-encryption while this validator could never decrypt or
+// interpret it, so a routine secret rotation reddened the gate with no
+// authorization change at all.
+//
+// CONSERVATION: 177 surface entries on both sides, membership identical.
+// Exactly ONE entry moves — v1 Secret flux-system/variables-cluster — and its
+// ten encrypted values all match the projected whole-scalar form, so no
+// ciphertext survives into the entry. No other document is touched.
+//
+// RENDERER PROVENANCE: the value below was printed by CI's checksum-verified
+// kubectl v1.36.2 renderer (TestValidateAuthorizationAcceptsCommittedPolicy) on
+// this change merged with main b03d231527b7e827684c99d483dbf30e898a5a53, whose
+// approval-base check passed against cf3e10.
+//
+// Previous aggregate: cf3e10be68e3a77cdac612347d4d91c2db567d616de5fc1b6bba391ae48b8698.
+const expectedRenderedSurfaceSHA = "bd15655a621002ee2f1bef6f44683c8cdc89abc90e47e1626ae80279234c405b"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2753,7 +2780,7 @@ const expectedRenderedSurfaceSHA = "cf3e10be68e3a77cdac612347d4d91c2db567d616de5
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7"
+const previousRenderedSurfaceSHA = "cf3e10be68e3a77cdac612347d4d91c2db567d616de5fc1b6bba391ae48b8698"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -3953,8 +3980,9 @@ func cloneStringAnyMap(source map[string]any) map[string]any {
 	return clone
 }
 
-// authorizationSurfaceDocument normalizes immutable Helm dependency pins and
-// strict signer subsets handled by the required approved-revisions guard.
+// authorizationSurfaceDocument normalizes immutable Helm dependency pins,
+// strict signer subsets handled by the required approved-revisions guard, and
+// the uninterpretable ciphertext of SOPS-encrypted substitution sources.
 // Identity, source, values, post-renderers, substitutions and policy stay exact.
 // The required manifest job separately Helm-renders and security-scans the
 // selected chart version, so a routine Renovate pin does not require a manual
@@ -3965,6 +3993,9 @@ func authorizationSurfaceDocument(
 ) map[string]any {
 	if identity.kind == "OCIRepository" {
 		return publishMatcherSurfaceDocument(identity, document)
+	}
+	if identity.kind == "Secret" {
+		return sopsSubstitutionSourceSurfaceDocument(identity, document)
 	}
 	if !strings.HasPrefix(identity.apiVersion, "helm.toolkit.fluxcd.io/") || identity.kind != "HelmRelease" {
 		return document
