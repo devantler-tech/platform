@@ -677,7 +677,9 @@ func fakeFluxControllerDeploymentObject() map[string]any {
 			},
 		},
 		"status": map[string]any{
+			"observedGeneration": generation,
 			"availableReplicas": 1,
+			"readyReplicas":     1,
 			"updatedReplicas":   1,
 		},
 	}
@@ -783,6 +785,45 @@ func fakeKubectlGetFluxControllerPods(namespace string) int {
 			}},
 		},
 	}}
+	// A Flux reconciliation can finish before the Deployment rollout it started has
+	// replaced every Pod. Model the pre-handoff sample seeing the old Ready Pod plus
+	// a new Pod that is not Ready yet, followed by the completed declarative rollout.
+	preRestartUnreadySamples := parseInt(
+		os.Getenv("FAKE_FLUX_CONTROLLER_PRE_RESTART_UNREADY_SAMPLES"),
+		0,
+	)
+	if rolloutCount == 0 && preRestartUnreadySamples > 0 {
+		observed := parseInt(markerContent("flux-controller-pre-restart-pod-sample-count"), 0) + 1
+		setMarkerContent("flux-controller-pre-restart-pod-sample-count", strconv.Itoa(observed))
+		if observed <= preRestartUnreadySamples {
+			items = append(items, map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Pod",
+				"metadata": map[string]any{
+					"name":      "kustomize-controller-declarative-rollout",
+					"namespace": "flux-system",
+					"uid":       "kustomize-controller-declarative-rollout-uid",
+					"labels":    map[string]any{"app": "kustomize-controller"},
+				},
+				"status": map[string]any{
+					"conditions": []any{map[string]any{
+						"type":   "Ready",
+						"status": "False",
+					}},
+				},
+			})
+			appendEnvFile(
+				"OPERATION_LOG",
+				"flux-controller-declarative-rollout-in-progress:kustomize-controller\n",
+			)
+		} else if !markerExists("flux-controller-pre-restart-stable-logged") {
+			touchMarker("flux-controller-pre-restart-stable-logged")
+			appendEnvFile(
+				"OPERATION_LOG",
+				"flux-controller-declarative-rollout-stable:kustomize-controller\n",
+			)
+		}
+	}
 	// A pre-handoff Pod that lingers for a bounded number of samples and then disappears models
 	// the real termination grace period: the rollout is correct, the old Pod is simply not gone
 	// yet at the first sample. Distinct from FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING, where it
