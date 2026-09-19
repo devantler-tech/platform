@@ -7,9 +7,9 @@
 # The live signal is deterministic: scheduler liveness + readiness yields
 # 0.6/s, while controller-manager liveness yields 0.3/s. Suppression is safe
 # only while those are the complete set of active upstream series. A third
-# active upstream must keep the alert visible. Log-pattern alerts are never
-# suppressed from a representative Sample because one Coroot fingerprint can
-# group several weakly-equal raw patterns.
+# active upstream must keep the alert visible. Log-pattern exemptions bind to a
+# stable Coroot fingerprint plus an exact current representative. IDs rotate
+# after resolution; a changed weakly-equal representative must be reopened.
 
 set -euo pipefail
 
@@ -39,6 +39,14 @@ if [ -z "${script_body}" ] || [ "${script_body}" = "null" ]; then
   fail "could not extract the autosuppressor script"
 fi
 
+# Flux post-build substitution consumes unescaped ${...} expressions in
+# rendered resources. Shell parameter slicing therefore arrives in the live
+# CronJob as an empty assignment even though executing this source manifest
+# directly works. Keep the embedded script free of brace-form expansions.
+# shellcheck disable=SC2016 # The single-quoted sequence is the literal hazard.
+[[ "${script_body}" != *'${'* ]] ||
+  fail 'the autosuppressor script contains a Flux-consumable shell expansion'
+
 work_root="$(mktemp -d /tmp/tmp.XXXXXXXXXX)"
 trap 'rm -rf "${work_root}"' EXIT
 
@@ -52,6 +60,9 @@ setup_scenario() {
 JSON
   cat >"${dir}/alerts.json" <<'JSON'
 {"data":{"alerts":[{"id":"kubelet-probe-noise","suppressed":false,"resolved_at":null,"rule_id":"network-tcp-connections","application_id":"95rsc5yp:_:Unknown:kubelet"}]}}
+JSON
+  cat >"${dir}/history.json" <<'JSON'
+{"data":{"alerts":[]}}
 JSON
 
   jq -cn --argjson extra "${extra_upstream}" '
@@ -77,7 +88,8 @@ for arg in "$@"; do
 done
 case "${url}" in
   */api/user) cat "${dir}/user.json" ;;
-  *'/alerts?include_resolved=true&limit=500'|*'/alerts?limit=500') cat "${dir}/alerts.json" ;;
+  *'/alerts?include_resolved=true&limit=500') cat "${dir}/history.json" ;;
+  *'/alerts?limit=500') cat "${dir}/alerts.json" ;;
   */alerts/suppress)
     printf '%s' "${payload}" >"${dir}/suppressed.json"
     ;;
@@ -86,7 +98,12 @@ case "${url}" in
     ;;
   */alerts/*)
     id="${url##*/}"
-    cat "${dir}/detail-${id}.json"
+    if [ -f "${dir}/detail-${id}.json" ]; then
+      cat "${dir}/detail-${id}.json"
+    else
+      jq -c --arg id "${id}" '{data: ([.data.alerts[] | select(.id == $id)] | first)}' \
+        "${dir}/alerts.json"
+    fi
     ;;
   *)
     printf 'unstubbed curl URL: %s\n' "${url}" >&2
@@ -161,6 +178,28 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     ]
   },
   {
+    "id":"flux-health-canceled",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "details":[
+      {"name":"Event message","value":"health check failed after 9.155610095s: context canceled"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"infrastructure\"\nnamespace=\"flux-system\"\nreason=\"HealthCheckFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
+    "id":"flux-dryrun-canceled",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "details":[
+      {"name":"Event message","value":"TeamRepository/github-config/maintainers-platform-template dry-run failed: Patch \"https://10.96.0.1:443/apis/team.github.m.upbound.io/v1alpha1/namespaces/github-config/teamrepositories/maintainers-platform-template?dryRun=All&fieldManager=kustomize-controller&force=true\": context canceled\n"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"github-config\"\nnamespace=\"github-config\"\nreason=\"ReconciliationFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
     "id":"monitor-secret-race",
     "suppressed":false,
     "resolved_at":null,
@@ -194,6 +233,17 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     ]
   },
   {
+    "id":"near-match-flux-dryrun",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "details":[
+      {"name":"Event message","value":"TeamRepository/github-config/maintainers-platform-template dry-run failed: forbidden"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"github-config\"\nnamespace=\"github-config\"\nreason=\"ReconciliationFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
     "id":"near-match-secret",
     "suppressed":false,
     "resolved_at":null,
@@ -209,7 +259,7 @@ JSON
 run_scenario "${event_dir}" >/dev/null
 [ -f "${event_dir}/suppressed.json" ] ||
   fail "the exact by-design Kubernetes lifecycle events were not suppressed"
-jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-status-canceled", "monitor-secret-race"]' \
+jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-dryrun-canceled", "flux-health-canceled", "flux-status-canceled", "monitor-secret-race"]' \
   "${event_dir}/suppressed.json" >/dev/null ||
   fail "the event exemptions were broader than their exact label and message contracts"
 pass "exact self-healing lifecycle events are suppressed while near matches stay visible"
@@ -234,7 +284,8 @@ cat >"${remaining_dir}/alerts.json" <<'JSON'
     "details":[]
   },
   {
-    "id":"to3d0cyc7cnn",
+    "id":"rotated-controller-alert",
+    "fingerprint":"04241ff02d662139",
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"new-log-patterns",
@@ -245,6 +296,7 @@ cat >"${remaining_dir}/alerts.json" <<'JSON'
   },
   {
     "id":"another-controller-log-alert",
+    "fingerprint":"not-the-reviewed-fingerprint",
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"new-log-patterns",
@@ -286,16 +338,120 @@ JSON
 run_scenario "${remaining_dir}" >/dev/null
 [ -f "${remaining_dir}/suppressed.json" ] ||
   fail "the exact remaining by-design operational warnings were not suppressed"
-jq -e '.ids | sort == ["cilium-search-expansion", "to3d0cyc7cnn", "wge5tiucp7k5"]' \
+jq -e '.ids | sort == ["cilium-search-expansion", "rotated-controller-alert", "wge5tiucp7k5"]' \
   "${remaining_dir}/suppressed.json" >/dev/null ||
   fail "the operational exemptions suppressed a neighboring DNS, log, or memory alert"
 pass "remaining exemptions are bound to Cilium, one revalidated controller fingerprint, and one historical record"
+
+pinned_logs_dir="$(setup_scenario pinned-control-plane-and-runtime-logs false)"
+cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
+{"data":{"alerts":[
+  {
+    "id":"rotated-runtime-alert",
+    "fingerprint":"3eade000863df726",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:_:Unknown:init",
+    "details":[{"name":"Sample","value":"ContainerStatus from runtime service failed"}]
+  },
+  {
+    "id":"sandbox-resize-alert",
+    "fingerprint":"3eade000863df726",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:_:Unknown:init",
+    "details":[{"name":"Sample","value":"UpdatePodSandboxResources from runtime service failed"}]
+  },
+  {
+    "id":"9qrrrlq3eooh",
+    "fingerprint":"c2ca6857aa3bdbbe",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:_:Unknown:init",
+    "details":[{"name":"Sample","value":"ContainerStatus for \"fbff0a8e783183c662e92422987872377643c5e40704f3b8dfd7b0152502d05e\" failed"}]
+  },
+  {
+    "id":"7f3auk0cezgo",
+    "fingerprint":"66adf607437525e7",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:_:Unknown:init",
+    "details":[{"name":"Sample","value":"DeleteContainer returned error"}]
+  },
+  {
+    "id":"rotated-post-timeout-alert",
+    "fingerprint":"1da0a938819a7336",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:kube-system:StaticPods:kube-apiserver",
+    "details":[{"name":"Sample","value":"E0919 11:20:10.747072       1 timeout.go:140] \"Post-timeout activity\" logger=\"UnhandledError\" timeElapsed=\"3.449701ms\" method=\"GET\" path=\"/apis/apps/v1/namespaces/kubescape/deployments/kubevuln\" result=null"}]
+  },
+  {
+    "id":"h9q7onv4l20i",
+    "fingerprint":"3222402a73798da3",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:kube-system:StaticPods:kube-apiserver",
+    "details":[{"name":"Sample","value":"E0919 11:20:10.744070       1 status.go:71] \"Unhandled Error\" err=\"apiserver received an error that is not an metav1.Status: &errors.errorString{s:\\\"context canceled\\\"}: context canceled\" logger=\"UnhandledError\""}]
+  },
+  {
+    "id":"rotated-vpa-event-alert",
+    "fingerprint":"4caedf68675462a5",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater",
+    "details":[{"name":"Sample","value":"E0915 11:38:42.856589       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"events \\\"kyverno-reports-controller.example\\\" is forbidden: User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\"kyverno\\\"\" event=\"&Event{ObjectMeta:{...},Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater.,Source:EventSource{Component:vpa-updater}}\""}]
+  },
+  {
+    "id":"near-runtime-alert",
+    "fingerprint":"not-the-reviewed-fingerprint",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:_:Unknown:init",
+    "details":[{"name":"Sample","value":"ContainerStatus from runtime service failed"}]
+  },
+  {
+    "id":"near-apiserver-alert",
+    "fingerprint":"1da0a938819a7336",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:kube-system:StaticPods:kube-apiserver",
+    "details":[{"name":"Sample","value":"E0919 11:20:10.747072       1 timeout.go:140] \"Post-timeout activity\" logger=\"UnhandledError\" timeElapsed=\"2.1s\" method=\"POST\" path=\"/api/v1/secrets\" result=null"}]
+  },
+  {
+    "id":"near-vpa-event-alert",
+    "fingerprint":"4caedf68675462a5",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater",
+    "details":[{"name":"Sample","value":"E0915 11:38:42.856589       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"forbidden: cannot patch resource \\\"pods\\\"\""}]
+  }
+]}}
+JSON
+run_scenario "${pinned_logs_dir}" >/dev/null
+[ -f "${pinned_logs_dir}/suppressed.json" ] ||
+  fail "the exact control-plane and runtime log fingerprints were not suppressed"
+jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "rotated-post-timeout-alert", "rotated-runtime-alert", "rotated-vpa-event-alert", "sandbox-resize-alert"]' \
+  "${pinned_logs_dir}/suppressed.json" >/dev/null ||
+  fail "the reviewed log exemptions were broader than their exact fingerprints and message shapes"
+pass "exact benign control-plane and runtime fingerprints survive ID rotation while near matches stay visible"
 
 changed_controller_dir="$(setup_scenario changed-controller-pattern false)"
 cat >"${changed_controller_dir}/alerts.json" <<'JSON'
 {"data":{"alerts":[
   {
-    "id":"to3d0cyc7cnn",
+    "id":"rotated-controller-alert",
+    "fingerprint":"04241ff02d662139",
     "suppressed":true,
     "resolved_at":null,
     "rule_id":"new-log-patterns",
@@ -303,13 +459,24 @@ cat >"${changed_controller_dir}/alerts.json" <<'JSON'
     "details":[
       {"name":"Sample","value":"E0919 03:00:00.000000       1 replica_set.go:640] \"Unhandled Error\" err=\"sync \\\"kube-system/example\\\" failed: forbidden\" logger=\"UnhandledError\""}
     ]
+  },
+  {
+    "id":"rotated-vpa-event-alert",
+    "fingerprint":"4caedf68675462a5",
+    "suppressed":true,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater",
+    "details":[
+      {"name":"Sample","value":"E0919 03:00:00.000000       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"forbidden: cannot patch resource \\\"pods\\\"\""}
+    ]
   }
 ]}}
 JSON
 run_scenario "${changed_controller_dir}" >/dev/null
 [ -f "${changed_controller_dir}/reopened.json" ] ||
   fail "a suppressed controller alert whose representative pattern changed was not reopened"
-jq -e '.ids == ["to3d0cyc7cnn"]' "${changed_controller_dir}/reopened.json" >/dev/null ||
+jq -e '.ids | sort == ["rotated-controller-alert", "rotated-vpa-event-alert"]' "${changed_controller_dir}/reopened.json" >/dev/null ||
   fail "the controller-pattern revalidation reopened the wrong alert set"
 [ ! -e "${changed_controller_dir}/suppressed.json" ] ||
   fail "a changed controller pattern was suppressed again"

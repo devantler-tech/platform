@@ -36,6 +36,21 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: prometheus-community
+  # The chart's headless peer Service does not publish not-yet-Ready endpoints.
+  # During a two-peer restart each Alertmanager therefore looks up its stable
+  # StatefulSet peer names before DNS records exist, producing repeated
+  # NXDOMAINs until readiness. Publish only the headless gossip endpoints early;
+  # the client-facing ClusterIP Service remains readiness-gated.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Service
+              name: ^alertmanager-headless$
+            patch: |
+              - op: add
+                path: /spec/publishNotReadyAddresses
+                value: true
   # https://github.com/prometheus-community/helm-charts/blob/main/charts/alertmanager/values.yaml
   values:
     # Deterministic in-cluster names. Producers post to every peer through the
@@ -51,6 +66,18 @@ spec:
     # One voluntary disruption remains drainable while the other peer serves.
     podDisruptionBudget:
       maxUnavailable: 1
+    # This chart owns Alertmanager independently of the Kubescape operator
+    # release. Production showed that its default immediate, one-second
+    # readiness probe can race port 9093 during both HA replica starts even
+    # though neither container restarts and both converge. Preserve the chart's
+    # endpoint while adding a bounded initialization window and response
+    # headroom; the peer remains available during a rolling update.
+    readinessProbe:
+      httpGet:
+        path: /
+        port: http
+      initialDelaySeconds: 30
+      timeoutSeconds: 5
     # This Alertmanager never calls the Kubernetes API — don't mount the SA
     # token (chart default is true).
     automountServiceAccountToken: false

@@ -2657,36 +2657,90 @@ const (
 //
 // Previous aggregate: d3748031f44c6c308831f3a5c4a7668ec88e314fe4ebbb6e6b09ec38388f6f02.
 //
-// That liveness correction established aggregate:
+// Moved again by the follow-up probe correction in #3894, derived on exact main
+// f8806e03ca1e4e12a77ce9be95c32276c69dc2c8, whose approved aggregate is b06d95
+// above. The kubescape HelmRelease raises only node-agent startup/readiness
+// response timeouts. The first protected deployment measured node-agent
+// initialization at 73 seconds and still emitted six startup-probe warning
+// events, so the same exact-head review added a 120-second startup grace. It
+// also proved Alertmanager is owned by the separate kubescape/alertmanager
+// HelmRelease, so its native readinessProbe values now carry the bounded delay
+// and response headroom instead of a no-op patch on the Kubescape release. The
+// corrected rollout then caught one readiness reset three seconds after an old
+// node-agent began termination; a native ten-second pre-stop sleep now keeps
+// that endpoint alive through removal without requiring a shell in the image.
+// HelmReleases are controller-RBAC emitters, so both documents move the aggregate
+// even though no privilege changes.
 //
-//	b06d95d75c688406dd8bda7b2eba7d7d1bb4a3153f66ae73eec7ff95c0530086
+// CONSERVATION: the exact branch diff changes two authorization-surface
+// documents, the kubescape/kubescape and kubescape/alertmanager HelmReleases,
+// and the approval-base validator names exactly those two identities. No
+// ClusterRole, Role, ClusterRoleBinding, RoleBinding or ServiceAccount source
+// changes; no identity, binding, verb, wildcard, AWS identity or permission
+// changes. The Coroot autosuppressor and focused shell contracts are outside
+// the selected authorization overlays.
+//
+// RENDERER PROVENANCE: the value below was derived with the repository-approved
+// kubectl v1.36.2 Darwin arm64 binary, whose official SHA256 was reverified as
+// 4408c85c83fd3a31adaa555bdf3c7a6c81f74b19449a9060ba31ab91926f023d.
+// The approval-base comparison against exact current main
+// 4c878e5365078f61ea340272bca210d44a74cd7c named only kubescape/kubescape and
+// kubescape/alertmanager as changed.
+//
+// Previous aggregate: b06d95d75c688406dd8bda7b2eba7d7d1bb4a3153f66ae73eec7ff95c0530086.
+//
+// That follow-up established aggregate:
+//
+//	97f4e8723a381f6f12398475de43badfe7f7d74c5dd87303e91d686b8d6d78cc
+//
+// Moved again by the live-alert closeout in #3894, derived on exact main
+// d4442f10428caf2c4d3849bfdd009a770a3cdcff. The kubescape/alertmanager
+// HelmRelease gains one post-renderer patch that sets
+// publishNotReadyAddresses on only its headless gossip Service. This makes the
+// StatefulSet peers resolvable while they start and leaves the client-facing
+// readiness-gated Service unchanged. A HelmRelease is a controller-RBAC emitter,
+// so the aggregate moves even though the patch grants no permission.
+//
+// CONSERVATION: the approval-base comparison names exactly one moved
+// authorization-surface identity, kubescape/alertmanager. No ClusterRole, Role,
+// ClusterRoleBinding, RoleBinding or ServiceAccount source changes; no identity,
+// binding, verb, wildcard, AWS identity or permission changes. The Flux
+// lifecycle, Coroot agent compatibility patch, autosuppressor and focused tests
+// are outside the selected authorization surface.
+//
+// RENDERER PROVENANCE: the value below was derived with the repository-approved
+// kubectl v1.36.2 Darwin arm64 binary, whose official SHA256 was reverified as
+// 4408c85c83fd3a31adaa555bdf3c7a6c81f74b19449a9060ba31ab91926f023d.
+// The approval-base comparison used exact current main
+// d4442f10428caf2c4d3849bfdd009a770a3cdcff and named only the HelmRelease above.
+//
+// Previous aggregate: 97f4e8723a381f6f12398475de43badfe7f7d74c5dd87303e91d686b8d6d78cc.
+//
+// That live-alert closeout established aggregate:
+//
+//	4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7
 //
 // Moved again by the C-0211 baseline context for the Kubescape alertmanager
-// (#3239), derived on exact main d4952c82fe894f47709552f9d3078441bdbe732c,
-// whose approved aggregate is b06d95d7 above. The kubescape/alertmanager
+// (#3239), derived on exact main e0cce893896718a764ec55127220da6f9fb42a2c,
+// whose approved aggregate is 4822c6a3 above. The kubescape/alertmanager
 // HelmRelease values gain fsGroupChangePolicy: OnRootMismatch on the pod
 // security context and an empty seLinuxOptions object on the container. A
 // HelmRelease is a controller-RBAC emitter, so this moves the aggregate even
 // though nothing is granted.
 //
-// CONSERVATION: rendering all five authorization overlays on this branch and on
-// main d4952c82 yields 575 identities per side with an identical sorted identity
-// list, and the full renders differ by exactly those two added lines. The 94
-// grant-bearing ClusterRole, Role, ClusterRoleBinding, RoleBinding and
-// ServiceAccount documents hash byte-identically on both sides; appending one
-// synthetic ClusterRole to the branch render changes that hash, so the identical
-// result is a finding rather than a blind read. No identity, binding,
-// ServiceAccount, verb, wildcard, AWS identity or permission changes.
+// CONSERVATION: the approval-base comparison names only the
+// kubescape/alertmanager HelmRelease. No ClusterRole, Role,
+// ClusterRoleBinding, RoleBinding or ServiceAccount source changes; no identity,
+// binding, verb, wildcard, AWS identity or permission changes.
 //
-// RENDERER PROVENANCE: the value below was read from CI's failure on job
-// 105896066209 for head fb60017c (merge ref 4110932 onto d4952c82, CI run
-// 35442537760), which renders under the approved SHA256-verified kubectl
-// v1.36.2. The gate's moved-entry diagnostic named only the
-// kubescape/alertmanager HelmRelease. This host's renderer is unapproved, so it
-// was used only for the conservation comparison and no local digest is claimed.
+// RENDERER PROVENANCE: the value below was re-derived locally with the
+// repository-approved kubectl v1.36.2 Darwin arm64 binary, whose official
+// SHA256 was reverified as
+// 4408c85c83fd3a31adaa555bdf3c7a6c81f74b19449a9060ba31ab91926f023d,
+// against exact current main e0cce893896718a764ec55127220da6f9fb42a2c.
 //
-// Previous aggregate: b06d95d75c688406dd8bda7b2eba7d7d1bb4a3153f66ae73eec7ff95c0530086.
-const expectedRenderedSurfaceSHA = "c01b530f50c8e3966ce8c05c1c05bb25861ae4ed8ae536e4df2a87fa7325b838"
+// Previous aggregate: 4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7.
+const expectedRenderedSurfaceSHA = "cf3e10be68e3a77cdac612347d4d91c2db567d616de5fc1b6bba391ae48b8698"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2699,7 +2753,7 @@ const expectedRenderedSurfaceSHA = "c01b530f50c8e3966ce8c05c1c05bb25861ae4ed8ae5
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "b06d95d75c688406dd8bda7b2eba7d7d1bb4a3153f66ae73eec7ff95c0530086"
+const previousRenderedSurfaceSHA = "4822c6a3ea561003113a2989d08274fabae063a5ceb6880483bcee807655ebc7"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

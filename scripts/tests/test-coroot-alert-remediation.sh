@@ -6,6 +6,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly policy_dir="${root_dir}/k8s/bases/infrastructure/cluster-policies"
 readonly kubescape_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
+readonly alertmanager_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/alertmanager/helm-release.yaml"
 readonly coroot="${root_dir}/k8s/bases/infrastructure/coroot/coroot.yaml"
 readonly coroot_patch="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/patches/enable-ha.yaml"
 readonly coroot_db="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/cluster.yaml"
@@ -59,6 +60,49 @@ readonly kubescape_probe_patch
   "${kubescape_probe_patch}" == *$'value: 5'* ]] ||
   fail 'Kubescape liveness must tolerate scan-time response latency for five seconds'
 
+node_agent_probe_patch="$(
+  yq -er '.spec.postRenderers[].kustomize.patches[] |
+    select(
+      .target.kind == "DaemonSet" and
+      .target.name == "^node-agent$" and
+      (.patch | contains("/startupProbe/timeoutSeconds"))
+    ) | .patch' "${kubescape_release}"
+)" || fail 'the node-agent probe-latency patch is missing'
+readonly node_agent_probe_patch
+[[ "${node_agent_probe_patch}" == *'/spec/template/spec/containers/0/startupProbe/timeoutSeconds'* &&
+  "${node_agent_probe_patch}" == *'/spec/template/spec/containers/0/startupProbe/initialDelaySeconds'* &&
+  "${node_agent_probe_patch}" == *$'value: 120'* &&
+  "${node_agent_probe_patch}" == *'/spec/template/spec/containers/0/readinessProbe/timeoutSeconds'* &&
+  "${node_agent_probe_patch}" == *'/spec/template/spec/containers/0/lifecycle'* &&
+  "${node_agent_probe_patch}" == *$'preStop:\n      sleep:\n        seconds: 10'* &&
+  "$(grep -c 'value: 5' <<<"${node_agent_probe_patch}")" == '2' ]] ||
+  fail 'node-agent must have startup headroom, five-second probes, and a ten-second graceful pre-stop'
+
+alertmanager_probe="$(yq -o=json -I=0 '.spec.values.readinessProbe' "${alertmanager_release}")" ||
+  fail 'the Alertmanager readiness probe values are missing from its owning HelmRelease'
+readonly alertmanager_probe
+[[ "${alertmanager_probe}" == '{"httpGet":{"path":"/","port":"http"},"initialDelaySeconds":30,"timeoutSeconds":5}' ]] ||
+  fail 'Alertmanager readiness must keep the chart endpoint, wait thirty seconds, and tolerate five-second responses'
+
+alertmanager_peer_service_patch="$(
+  yq -er '.spec.postRenderers[].kustomize.patches[] |
+    select(.target.kind == "Service" and .target.name == "^alertmanager-headless$") |
+    .patch' "${alertmanager_release}"
+)" || fail 'the Alertmanager headless peer-service patch is missing'
+readonly alertmanager_peer_service_patch
+[[ "${alertmanager_peer_service_patch}" == *'/spec/publishNotReadyAddresses'* &&
+  "${alertmanager_peer_service_patch}" == *$'value: true'* ]] ||
+  fail 'Alertmanager peer DNS must publish stable names before readiness'
+
+alertmanager_noop_patch_count="$(
+  yq -r '[.spec.postRenderers[].kustomize.patches[] |
+    select(.target.kind == "StatefulSet" and .target.name == "^alertmanager$")] | length' \
+    "${kubescape_release}"
+)" || fail 'the Kubescape post-renderer patches could not be inspected'
+readonly alertmanager_noop_patch_count
+[[ "${alertmanager_noop_patch_count}" == '0' ]] ||
+  fail 'the Kubescape HelmRelease must not carry a no-op patch for separately owned Alertmanager'
+
 summary_workers="$(
   yq -er '.spec.values.storage.kindQueues.vulnerabilitymanifestsummaries.workerCount' \
     "${kubescape_release}"
@@ -78,7 +122,7 @@ readonly vex_capacity
 coroot_node_agent_image="$(yq -er '.spec.nodeAgent.image.name' "${coroot}")" ||
   fail 'the Coroot node-agent image pin is missing'
 readonly coroot_node_agent_image
-[[ "${coroot_node_agent_image}" == 'ghcr.io/devantler-tech/platform-coroot-node-agent:v1.35.8-alerts.1-cd1efe238d3c4dfd3fcb11a74656456c7a20a9e4@sha256:ec3dbc7ff7ecd638af9e2f0e79d617e10c5dd835fccf9d044099181edd3177e4' ]] ||
+[[ "${coroot_node_agent_image}" == 'ghcr.io/devantler-tech/platform-coroot-node-agent:v1.35.8-alerts.1-d72441cff6e32c8cabdf631a882a28af1e503e84@sha256:e71f4d608092ccd150ad33d5443e16d9fdccca659ebc1fd5b336c49d27fa5d63' ]] ||
   fail 'the Coroot node-agent must use the exact signed alert-remediation build'
 
 coroot_provider="$(yq -er '.spec.nodeAgent.env[] | select(.name == "PROVIDER") | .value' "${coroot}")" ||
