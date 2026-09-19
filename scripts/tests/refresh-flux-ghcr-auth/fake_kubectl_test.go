@@ -437,10 +437,42 @@ func fakeFluxPolicyParentObject() map[string]any {
 			"reason": "ReconciliationSucceeded",
 		},
 	}
+	if !suspended {
+		readCount := parseInt(markerContent("flux-policy-parent-read-count"), 0) + 1
+		setMarkerContent("flux-policy-parent-read-count", strconv.Itoa(readCount))
+		reconcilingReads := parseInt(
+			os.Getenv("FAKE_FLUX_PARENT_RECONCILING_READS_BEFORE_PAUSE"),
+			0,
+		)
+		if readCount <= reconcilingReads {
+			touchMarker("flux-policy-parent-currently-reconciling")
+			conditions = append(conditions, map[string]any{
+				"type":   "Reconciling",
+				"status": "True",
+				"reason": "Progressing",
+			})
+			appendEnvFile("OPERATION_LOG", "flux-policy-parent-reconciling-before-pause:flux-system\n")
+		} else {
+			removeMarker("flux-policy-parent-currently-reconciling")
+			if reconcilingReads > 0 &&
+				!markerExists("flux-policy-parent-preclaim-stable-logged") {
+				touchMarker("flux-policy-parent-preclaim-stable-logged")
+				appendEnvFile("OPERATION_LOG", "flux-policy-parent-stable-before-pause:flux-system\n")
+			}
+		}
+	}
 	if suspended {
 		readCount := parseInt(markerContent("flux-policy-parent-suspended-read-count"), 0) + 1
 		setMarkerContent("flux-policy-parent-suspended-read-count", strconv.Itoa(readCount))
-		if os.Getenv("FAKE_FLUX_PARENT_RECONCILING_AFTER_PAUSE") == "true" &&
+		if os.Getenv("FAKE_FLUX_PARENT_STALE_RECONCILING_WHEN_PAUSED") == "true" &&
+			markerExists("flux-policy-parent-currently-reconciling") {
+			conditions = append(conditions, map[string]any{
+				"type":   "Reconciling",
+				"status": "True",
+				"reason": "Progressing",
+			})
+			appendEnvFile("OPERATION_LOG", "flux-policy-parent-stale-reconciling:flux-system\n")
+		} else if os.Getenv("FAKE_FLUX_PARENT_RECONCILING_AFTER_PAUSE") == "true" &&
 			readCount <= 2 {
 			conditions = append(conditions, map[string]any{
 				"type":   "Reconciling",
@@ -645,7 +677,9 @@ func fakeFluxControllerDeploymentObject() map[string]any {
 			},
 		},
 		"status": map[string]any{
+			"observedGeneration": generation,
 			"availableReplicas": 1,
+			"readyReplicas":     1,
 			"updatedReplicas":   1,
 		},
 	}
@@ -751,6 +785,45 @@ func fakeKubectlGetFluxControllerPods(namespace string) int {
 			}},
 		},
 	}}
+	// A Flux reconciliation can finish before the Deployment rollout it started has
+	// replaced every Pod. Model the pre-handoff sample seeing the old Ready Pod plus
+	// a new Pod that is not Ready yet, followed by the completed declarative rollout.
+	preRestartUnreadySamples := parseInt(
+		os.Getenv("FAKE_FLUX_CONTROLLER_PRE_RESTART_UNREADY_SAMPLES"),
+		0,
+	)
+	if rolloutCount == 0 && preRestartUnreadySamples > 0 {
+		observed := parseInt(markerContent("flux-controller-pre-restart-pod-sample-count"), 0) + 1
+		setMarkerContent("flux-controller-pre-restart-pod-sample-count", strconv.Itoa(observed))
+		if observed <= preRestartUnreadySamples {
+			items = append(items, map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Pod",
+				"metadata": map[string]any{
+					"name":      "kustomize-controller-declarative-rollout",
+					"namespace": "flux-system",
+					"uid":       "kustomize-controller-declarative-rollout-uid",
+					"labels":    map[string]any{"app": "kustomize-controller"},
+				},
+				"status": map[string]any{
+					"conditions": []any{map[string]any{
+						"type":   "Ready",
+						"status": "False",
+					}},
+				},
+			})
+			appendEnvFile(
+				"OPERATION_LOG",
+				"flux-controller-declarative-rollout-in-progress:kustomize-controller\n",
+			)
+		} else if !markerExists("flux-controller-pre-restart-stable-logged") {
+			touchMarker("flux-controller-pre-restart-stable-logged")
+			appendEnvFile(
+				"OPERATION_LOG",
+				"flux-controller-declarative-rollout-stable:kustomize-controller\n",
+			)
+		}
+	}
 	// A pre-handoff Pod that lingers for a bounded number of samples and then disappears models
 	// the real termination grace period: the rollout is correct, the old Pod is simply not gone
 	// yet at the first sample. Distinct from FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING, where it
@@ -988,6 +1061,14 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 	if namespace != "flux-system" || argumentAfter(args, "lease") != "ghcr-auth-refresh" ||
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid synchronization lease lookup")
+	}
+	if os.Getenv("FAKE_TRANSIENT_SYNC_LEASE_API_FAIL_BEFORE_CLAIM") == "true" &&
+		!markerExists("sync-lease-api-unreachable-before-claim") {
+		touchMarker("sync-lease-api-unreachable-before-claim")
+		return commandFailure(
+			54,
+			"The connection to the server api.example.test:6443 was refused: connect: connection refused",
+		)
 	}
 	if os.Getenv("FAKE_TRANSIENT_SYNC_LEASE_API_FAIL_AFTER_FIRST_CLAIM") == "true" &&
 		markerExists("cordon-owner-prod-worker-1") &&

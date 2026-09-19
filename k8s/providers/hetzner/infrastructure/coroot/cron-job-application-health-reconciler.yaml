@@ -7,13 +7,6 @@
 #
 # The metric exceptions are deliberately bounded:
 #
-#   * kubelet NetworkTCPConnections = 3 only while the complete positive failed
-#     upstream set is kube-scheduler + kube-controller-manager. These are the
-#     IPv6-first localhost attempts made by healthy static-pod probes before
-#     their successful IPv4 fallback. Coroot warns when the observed count
-#     equals its threshold despite displaying a greater-than condition, so 3 is
-#     the smallest value that clears the reviewed count of 2. A third failed
-#     upstream removes the override instead of being accepted.
 #   * kyverno-background-controller MemoryLeakPercent = 35. Two 48-hour live
 #     series had only 3.5% and 4.9% net growth with bounded 50-87 MiB sawteeth;
 #     Coroot's short-window regression reported 29%/h. Thirty-five still exposes
@@ -146,20 +139,11 @@ spec:
                   }
 
                   KUBELET="$PID:_:Unknown:kubelet"
-                  encoded_kubelet=$(encode "$KUBELET")
-                  kubelet=$(curl $RETRY "$BASE/api/project/$PID/app/$encoded_kubelet")
-                  active=$(printf '%s' "$kubelet" | jq -c '
-                    [.data.reports[]? | .widgets[]? | .chart?
-                     | select(.title=="Failed TCP connections, per second")
-                     | .series[]?
-                     | select(.data | any(.[]?; type=="number" and . > 0))
-                     | .name] | unique | sort
-                  ')
-                  if [ "$active" = '["→kube-controller-manager","→kube-scheduler"]' ]; then
-                    reconcile_threshold "$KUBELET" NetworkTCPConnections 0 3 kubelet-static-pod-probes
-                  else
-                    reconcile_threshold "$KUBELET" NetworkTCPConnections 0 inherit kubelet-unreviewed-upstream
-                  fi
+                  # Coroot item-based checks fire whenever their item set is
+                  # non-empty; their displayed threshold is not consulted.
+                  # Remove the obsolete override now that the Talos probe/listen
+                  # address mismatch is fixed at source.
+                  reconcile_threshold "$KUBELET" NetworkTCPConnections 0 inherit kubelet-probe-source-fixed
 
                   KYVERNO="$PID:kyverno:Deployment:kyverno-background-controller"
                   reconcile_threshold "$KYVERNO" MemoryLeakPercent 10 35 kyverno-bounded-cache-sawtooth

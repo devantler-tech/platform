@@ -982,6 +982,30 @@ func TestFluxPolicyHandoffSuspendsOwningReconcileAcrossRuntimeProof(t *testing.T
 	}
 }
 
+func TestFluxPolicyParentQuiescesBeforeSuspension(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_PARENT_RECONCILING_READS_BEFORE_PAUSE": "1",
+		"FAKE_FLUX_PARENT_STALE_RECONCILING_WHEN_PAUSED":  "true",
+		"FLUX_GHCR_SYNC_ATTEMPTS":                         "3",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	reconciling := lineIndex(t, operations, "flux-policy-parent-reconciling-before-pause:flux-system")
+	stable := lineIndex(t, operations, "flux-policy-parent-stable-before-pause:flux-system")
+	pause := lineIndex(t, operations, "flux-policy-parent-pause:flux-system")
+	if reconciling >= stable || stable >= pause {
+		t.Fatalf(
+			"unsafe parent handoff ordering: reconciling=%d stable=%d pause=%d",
+			reconciling,
+			stable,
+			pause,
+		)
+	}
+	requireNoLine(t, operations, "flux-policy-parent-stale-reconciling:flux-system")
+}
+
 func TestFluxChildReconciliationBlocksBeforePolicyHandoffAcquisition(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -1141,6 +1165,63 @@ func TestFluxControllerRestartTerminatesPrePauseProcessesBeforePolicyStage(t *te
 			firstPolicyApply,
 		)
 	}
+}
+
+func TestFluxControllerDeclarativeRolloutStabilizesBeforeHandoffRestart(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_CONTROLLER_PRE_RESTART_UNREADY_SAMPLES": "1",
+		"FAKE_LOG_FLUX_CONTROLLER_RESTART":                 "true",
+		"FLUX_GHCR_SYNC_ATTEMPTS":                          "3",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	rolloutInProgress := lineIndex(
+		t,
+		operations,
+		"flux-controller-declarative-rollout-in-progress:kustomize-controller",
+	)
+	rolloutStable := lineIndex(
+		t,
+		operations,
+		"flux-controller-declarative-rollout-stable:kustomize-controller",
+	)
+	restart := lineIndex(t, operations, "flux-controller-restart:kustomize-controller")
+	if rolloutInProgress >= rolloutStable || rolloutStable >= restart {
+		t.Fatalf(
+			"unsafe controller handoff ordering: in-progress=%d stable=%d restart=%d",
+			rolloutInProgress,
+			rolloutStable,
+			restart,
+		)
+	}
+}
+
+func TestFluxControllerDeclarativeRolloutTimeoutBlocksHandoffRestart(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_CONTROLLER_PRE_RESTART_UNREADY_SAMPLES": "5",
+		"FAKE_LOG_FLUX_CONTROLLER_RESTART":                 "true",
+		"FLUX_GHCR_SYNC_ATTEMPTS":                          "2",
+	})
+	requireFailureResult(t, result)
+	requireContains(
+		t,
+		result.stdout+result.stderr,
+		"Deployment and Pods stabilized before restarting them",
+	)
+	operations := readLines(f.operationLog)
+	requireLine(
+		t,
+		operations,
+		"flux-controller-declarative-rollout-in-progress:kustomize-controller",
+	)
+	requireNoLine(t, operations, "flux-controller-restart:kustomize-controller")
+	requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
+	requireLine(t, operations, "flux-policy-resume:infrastructure")
+	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
 }
 
 func TestFluxControllerRolloutFailureBlocksPolicyMutationAndReleasesFences(t *testing.T) {
