@@ -46,6 +46,11 @@ func TestPatchTargetsAcceptTheOperatorDefaults(t *testing.T) {
 			old: "  components:\n    - source-controller\n    - kustomize-controller\n",
 			new: "",
 		},
+		// An explicit empty list gets the same defaults as an omitted one.
+		"empty components": {
+			old: "  components:\n    - source-controller\n    - kustomize-controller\n",
+			new: "  components: []\n",
+		},
 		"explicit matching group and version": {
 			old: "kind: Deployment\n          name: kustomize-controller",
 			new: "group: apps\n          version: v1\n          kind: Deployment\n          name: kustomize-controller",
@@ -88,6 +93,13 @@ func TestPatchTargetsRejectATargetThatSelectsNothing(t *testing.T) {
 			old:  "    - kustomize-controller\n  kustomize",
 			new:  "    - kustomize-controller\n    - kustomize-controllr\n  kustomize",
 			want: `spec.components names "kustomize-controllr", which flux-operator does not deploy`,
+		},
+		{
+			// flux-operator uses the raw entry, so a padded name deploys nothing.
+			name: "padded component name",
+			old:  "    - kustomize-controller\n  kustomize",
+			new:  "    - \"kustomize-controller \"\n  kustomize",
+			want: `spec.components entry "kustomize-controller " carries surrounding whitespace`,
 		},
 		{
 			name: "component removed from spec.components",

@@ -94,6 +94,11 @@ func validatePatchTargets(manifest []byte) error {
 	var problems []string
 	components := make([]string, 0, len(declared))
 	for _, component := range declared {
+		if component != strings.TrimSpace(component) {
+			problems = append(problems, fmt.Sprintf("spec.components entry %q carries surrounding whitespace, which flux-operator uses literally", component))
+
+			continue
+		}
 		if !slices.Contains(supportedFluxComponents, component) {
 			problems = append(problems, fmt.Sprintf("spec.components names %q, which flux-operator does not deploy", component))
 
@@ -135,19 +140,21 @@ func validatePatchTargets(manifest []byte) error {
 	return nil
 }
 
-// instanceComponents returns spec.components, or flux-operator's default set
-// when the field is absent.
+// instanceComponents returns spec.components exactly as written, or
+// flux-operator's default set when the field is absent or empty. Names are not
+// trimmed: flux-operator uses the raw entry, so a padded name is reported, not
+// silently repaired.
 func instanceComponents(instance any) []string {
 	value, present := lookup(instance, []string{"spec", "components"})
 	list, isList := value.([]any)
-	if !present || !isList {
+	if !present || !isList || len(list) == 0 {
 		return defaultFluxComponents
 	}
 
 	components := make([]string, 0, len(list))
 	for _, item := range list {
 		if name, ok := item.(string); ok && strings.TrimSpace(name) != "" {
-			components = append(components, strings.TrimSpace(name))
+			components = append(components, name)
 		}
 	}
 
