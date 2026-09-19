@@ -121,12 +121,17 @@ run_scenario() {
 }
 
 exact_dir="$(setup_scenario exact false)"
-run_scenario "${exact_dir}" >/dev/null
+exact_output="$(run_scenario "${exact_dir}")"
+printf '%s\n' "${exact_output}" | jq -s -e '
+  length > 0 and all(.[]; .level == "info" and (.msg | type == "string" and length > 0))
+' >/dev/null ||
+  fail "normal autosuppressor lifecycle output must be structured info JSON"
 [ -f "${exact_dir}/suppressed.json" ] ||
   fail "the exact kubelet health-probe series were not suppressed"
 jq -e '.ids == ["kubelet-probe-noise"]' "${exact_dir}/suppressed.json" >/dev/null ||
   fail "the exact scenario suppressed the wrong alert set"
 pass "exact kubelet scheduler/controller-manager probe noise is suppressed"
+pass "normal autosuppressor lifecycle output is structured as info"
 
 extra_dir="$(setup_scenario extra true)"
 run_scenario "${extra_dir}" >/dev/null

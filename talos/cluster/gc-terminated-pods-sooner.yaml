@@ -25,4 +25,14 @@
 cluster:
   controllerManager:
     extraArgs:
+      # Keep the upstream default explicit so Talos refreshes every static
+      # kube-controller-manager pod after retired CRDs are removed. Kubernetes'
+      # metadata informer factory cannot stop an individual deleted-resource
+      # reflector, so discovery refresh alone leaves it retrying 404s until the
+      # process restarts. This is a one-time declarative refresh trigger and
+      # preserves the required garbage collector.
+      # This CLI-only logging flag is false by default; spelling that no-op
+      # default explicitly changes the static-pod manifest without colliding
+      # with the component-config fields Talos already owns.
+      log-text-split-stream: "false"
       terminated-pod-gc-threshold: "100"

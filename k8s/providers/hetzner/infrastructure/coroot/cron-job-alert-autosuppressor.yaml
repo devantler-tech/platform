@@ -207,6 +207,12 @@ spec:
                 - |
                   set -u
                   BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
+                  log_info() {
+                    jq -nc --arg msg "$1" '{level:"info",msg:$msg}'
+                  }
+                  log_error() {
+                    jq -nc --arg msg "$1" '{level:"error",msg:$msg}' >&2
+                  }
                   # This short-lived pod can race endpoint readiness or transient
                   # CNI convergence, so retry connection/setup errors.
                   RETRY="-sS --retry 5 --retry-delay 2 --retry-all-errors --retry-connrefused --max-time 30"
@@ -214,7 +220,7 @@ spec:
                   # Resolve the operator-created 'platform' project id (a random
                   # NanoId, so match by name) - robust to response-shape changes.
                   PID=$(curl $RETRY "$BASE/api/user" | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
-                  [ -n "$PID" ] || { echo "ERROR: could not resolve 'platform' project id"; exit 1; }
+                  [ -n "$PID" ] || { log_error "could not resolve platform project id"; exit 1; }
 
                   # The default list is the firing-alert surface. Do NOT request
                   # include_resolved here: production has >31k historical records,
@@ -233,7 +239,7 @@ spec:
                       | select(.suppressed==false and .resolved_at==null and .rule_id=="network-tcp-connections"
                                and ((.application_id // "") | endswith(":_:Unknown:extensions")))
                       | .id'); do
-                    ids="$ids $id"; echo "match extensions-host-failed-conns: $id"
+                    ids="$ids $id"; log_info "match extensions-host-failed-conns: $id"
                   done
 
                   # Exemption 2 - kubelet health probes to the static scheduler
@@ -250,9 +256,9 @@ spec:
                        | select(.data | any(.[]?; type=="number" and . > 0))
                        | .name] | unique | sort')
                     if [ "$active" = '["→kube-controller-manager","→kube-scheduler"]' ]; then
-                      ids="$ids $id"; echo "match kubelet-static-pod-probes: $id"
+                      ids="$ids $id"; log_info "match kubelet-static-pod-probes: $id"
                     else
-                      echo "keep kubelet TCP alert visible; active upstreams: $active"
+                      log_info "keep kubelet TCP alert visible; active upstreams: $active"
                     fi
                   done
 
@@ -276,7 +282,7 @@ spec:
                                and ($d["Event message"] | contains("Operation cannot be fulfilled on verticalpodautoscalers.autoscaling.k8s.io"))
                                and ($d["Event message"] | endswith("the object has been modified; please apply your changes to the latest version and try again")))
                       | .id'); do
-                    ids="$ids $id"; echo "match auto-vpa-write-conflict: $id"
+                    ids="$ids $id"; log_info "match auto-vpa-write-conflict: $id"
                   done
 
                   # Exemption 4 - canceled Flux Kustomization operations from
@@ -307,7 +313,7 @@ spec:
                                         and ($d["Event message"]
                                           | test("^post build failed for \\x27[^\\x27]+\\x27: substitute from \\x27ConfigMap/variables-cluster\\x27 error: Get \\\"https://10[.]96[.]0[.]1:443/api/v1/namespaces/flux-system/configmaps/variables-cluster\\\": context canceled$")))))
                       | .id'); do
-                    ids="$ids $id"; echo "match flux-status-context-canceled: $id"
+                    ids="$ids $id"; log_info "match flux-status-context-canceled: $id"
                   done
 
                   # Exemption 5 - the exact ExternalSecret target-creation race
@@ -328,7 +334,7 @@ spec:
                                and $l.source=="external-secrets"
                                and $d["Event message"]=="secrets \"crossview-postgres-coroot-monitor\" already exists")
                       | .id'); do
-                    ids="$ids $id"; echo "match crossview-monitor-secret-create-race: $id"
+                    ids="$ids $id"; log_info "match crossview-monitor-secret-create-race: $id"
                   done
 
                   # Exemption 6 - Kubernetes resolver search-list candidates
@@ -339,7 +345,7 @@ spec:
                                and .rule_id=="dns-nxdomain-errors"
                                and ((.application_id // "") | endswith(":kube-system:DaemonSet:cilium")))
                       | .id'); do
-                    ids="$ids $id"; echo "match cilium-dns-search-expansion: $id"
+                    ids="$ids $id"; log_info "match cilium-dns-search-expansion: $id"
                   done
 
                   # Exemptions 7 and 9-13 - exact weak-equality log fingerprints.
@@ -396,7 +402,7 @@ spec:
                     # substitution evaluates them before this script runs.
                     reason=$(printf '%s' "$match" | cut -d: -f1)
                     id=$(printf '%s' "$match" | cut -d: -f2-)
-                    ids="$ids $id"; echo "match $reason: $id"
+                    ids="$ids $id"; log_info "match $reason: $id"
                   done
 
                   for id in $(printf '%s' "$ALERTS" | jq -r '
@@ -451,7 +457,7 @@ spec:
                                     or .fingerprint=="4caedf68675462a5"))
                       | select(reviewed_log_reason == null)
                       | .id'); do
-                    reopen_ids="$reopen_ids $id"; echo "reopen changed reviewed log pattern: $id"
+                    reopen_ids="$reopen_ids $id"; log_info "reopen changed reviewed log pattern: $id"
                   done
 
                   # Exemption 8 - only the old, non-recurring Alertmanager record.
@@ -464,21 +470,21 @@ spec:
                                and .opened_at==1787841164000
                                and .updated_at==1787846982000)
                       | .id'); do
-                    ids="$ids $id"; echo "match historical-alertmanager-dns-record: $id"
+                    ids="$ids $id"; log_info "match historical-alertmanager-dns-record: $id"
                   done
 
-                  reopen_n=$(echo $reopen_ids | wc -w)
+                  reopen_n=$(printf '%s' "$reopen_ids" | wc -w)
                   if [ "$reopen_n" -gt 0 ]; then
                     payload=$(printf '%s\n' $reopen_ids | jq -R . | jq -s '{ids: .}')
                     curl $RETRY -X POST -H 'Content-Type: application/json' -d "$payload" "$BASE/api/project/$PID/alerts/reopen" >/dev/null \
-                      && echo "reopened $reopen_n changed exemption(s)"
+                      && log_info "reopened $reopen_n changed exemption(s)"
                   fi
 
-                  n=$(echo $ids | wc -w)
+                  n=$(printf '%s' "$ids" | wc -w)
                   if [ "$n" -gt 0 ]; then
                     payload=$(printf '%s\n' $ids | jq -R . | jq -s '{ids: .}')
                     curl $RETRY -X POST -H 'Content-Type: application/json' -d "$payload" "$BASE/api/project/$PID/alerts/suppress" >/dev/null \
-                      && echo "suppressed $n by-design alert(s)"
+                      && log_info "suppressed $n by-design alert(s)"
                   else
-                    echo "no by-design alerts to suppress"
+                    log_info "no by-design alerts to suppress"
                   fi
