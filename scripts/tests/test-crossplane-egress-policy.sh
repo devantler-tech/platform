@@ -825,6 +825,36 @@ assert_helm_rules_reject \
   "${helm_deleting_policy_fixture}" \
   'the Helm-render guard must require explicit review for CEL deleting policies'
 
+# The reviewed exception (#2573): a DeletingPolicy confined to Kyverno's own
+# report objects cannot delete egress. Each reject below widens exactly one
+# thing, so the carve-out cannot pass a policy that also reaches another group.
+report_prune_policy_fixture=$'apiVersion: policies.kyverno.io/v1beta1\nkind: DeletingPolicy\nmetadata:\n  name: prune-stale-policy-reports\nspec:\n  schedule: "17 * * * *"\n  matchConstraints:\n    resourceRules:\n    - apiGroups: [wgpolicyk8s.io]\n      apiVersions: [v1alpha2]\n      resources: [policyreports]'
+assert_helm_rules_accept \
+  'report-prune-deleting-policy' \
+  "${report_prune_policy_fixture}" \
+  'a DeletingPolicy confined to wgpolicyk8s.io policy reports is the reviewed exception'
+
+report_prune_mixed_group_fixture=$'apiVersion: policies.kyverno.io/v1beta1\nkind: DeletingPolicy\nmetadata:\n  name: prune-reports-and-egress\nspec:\n  schedule: "17 * * * *"\n  matchConstraints:\n    resourceRules:\n    - apiGroups: [wgpolicyk8s.io, cilium.io]\n      apiVersions: [v1alpha2, v2]\n      resources: [policyreports]'
+assert_helm_rules_reject \
+  'report-prune-mixed-group' \
+  "${report_prune_mixed_group_fixture}" \
+  'a second API group beside wgpolicyk8s.io must void the report-prune exception' \
+  'reject-cel-policy-producers'
+
+report_prune_second_rule_fixture=$'apiVersion: policies.kyverno.io/v1beta1\nkind: DeletingPolicy\nmetadata:\n  name: prune-reports-then-egress\nspec:\n  schedule: "17 * * * *"\n  matchConstraints:\n    resourceRules:\n    - apiGroups: [wgpolicyk8s.io]\n      apiVersions: [v1alpha2]\n      resources: [policyreports]\n    - apiGroups: [cilium.io]\n      apiVersions: [v2]\n      resources: [ciliumnetworkpolicies]'
+assert_helm_rules_reject \
+  'report-prune-second-rule' \
+  "${report_prune_second_rule_fixture}" \
+  'one compliant resource rule must not carry a second rule that reaches egress' \
+  'reject-cel-policy-producers'
+
+report_prune_wildcard_fixture=$'apiVersion: policies.kyverno.io/v1beta1\nkind: DeletingPolicy\nmetadata:\n  name: prune-everything-in-group\nspec:\n  schedule: "17 * * * *"\n  matchConstraints:\n    resourceRules:\n    - apiGroups: [wgpolicyk8s.io]\n      apiVersions: [v1alpha2]\n      resources: ["*"]'
+assert_helm_rules_reject \
+  'report-prune-wildcard-resource' \
+  "${report_prune_wildcard_fixture}" \
+  'a wildcard resource must void the report-prune exception' \
+  'reject-cel-policy-producers'
+
 helm_admin_network_policy_fixture=$'apiVersion: policy.networking.k8s.io/v1alpha1\nkind: AdminNetworkPolicy\nmetadata:\n  name: crossplane-world-egress\nspec:\n  priority: 10\n  subject:\n    namespaces:\n      matchLabels:\n        kubernetes.io/metadata.name: crossplane-system\n  egress:\n  - name: allow-world\n    action: Allow\n    to:\n    - networks: [0.0.0.0/0]'
 assert_helm_rules_reject \
   'helm-crossplane-admin-network-policy' \
