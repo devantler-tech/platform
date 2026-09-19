@@ -83,6 +83,13 @@ func TestPatchTargetsRejectATargetThatSelectsNothing(t *testing.T) {
 			want: `no component named "kustomize-controllr"`,
 		},
 		{
+			// A typo shared by spec.components and the target must not certify it.
+			name: "unsupported component declared and targeted",
+			old:  "    - kustomize-controller\n  kustomize",
+			new:  "    - kustomize-controller\n    - kustomize-controllr\n  kustomize",
+			want: `spec.components names "kustomize-controllr", which flux-operator does not deploy`,
+		},
+		{
 			name: "component removed from spec.components",
 			old:  "    - kustomize-controller\n  kustomize",
 			new:  "  kustomize",

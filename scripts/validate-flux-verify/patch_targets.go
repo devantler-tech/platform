@@ -38,6 +38,20 @@ var defaultFluxComponents = []string{
 	"notification-controller",
 }
 
+// supportedFluxComponents is every component flux-operator can deploy. The
+// FluxInstance schema does not enumerate them, so a misspelt entry in
+// spec.components reconciles without a matching Deployment; a patch aimed at
+// the same misspelling must not be certified by it.
+var supportedFluxComponents = []string{
+	"source-controller",
+	"kustomize-controller",
+	"helm-controller",
+	"notification-controller",
+	"image-reflector-controller",
+	"image-automation-controller",
+	"source-watcher",
+}
+
 // patchSelector is the resource a patch is aimed at, from its target or, for a
 // target-less strategic-merge patch, from the document it merges.
 type patchSelector struct {
@@ -73,11 +87,20 @@ func validatePatchTargets(manifest []byte) error {
 		return err
 	}
 
-	components := instanceComponents(instance)
+	declared := instanceComponents(instance)
 	patches, _ := lookup(instance, []string{"spec", "kustomize", "patches"})
 	entries, _ := patches.([]any)
 
 	var problems []string
+	components := make([]string, 0, len(declared))
+	for _, component := range declared {
+		if !slices.Contains(supportedFluxComponents, component) {
+			problems = append(problems, fmt.Sprintf("spec.components names %q, which flux-operator does not deploy", component))
+
+			continue
+		}
+		components = append(components, component)
+	}
 	namedDeployments := map[string]int{}
 	for index, entry := range entries {
 		patch, ok := asMapping(entry)
