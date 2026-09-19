@@ -53,6 +53,9 @@ JSON
   cat >"${dir}/alerts.json" <<'JSON'
 {"data":{"alerts":[{"id":"kubelet-probe-noise","suppressed":false,"resolved_at":null,"rule_id":"network-tcp-connections","application_id":"95rsc5yp:_:Unknown:kubelet"}]}}
 JSON
+  cat >"${dir}/history.json" <<'JSON'
+{"data":{"alerts":[]}}
+JSON
 
   jq -cn --argjson extra "${extra_upstream}" '
     {data:{widgets:[{chart:{title:"Failed TCP connections, per second",series:(
@@ -77,7 +80,8 @@ for arg in "$@"; do
 done
 case "${url}" in
   */api/user) cat "${dir}/user.json" ;;
-  *'/alerts?include_resolved=true&limit=500'|*'/alerts?limit=500') cat "${dir}/alerts.json" ;;
+  *'/alerts?include_resolved=true&limit=500') cat "${dir}/history.json" ;;
+  *'/alerts?limit=500') cat "${dir}/alerts.json" ;;
   */alerts/suppress)
     printf '%s' "${payload}" >"${dir}/suppressed.json"
     ;;
@@ -86,7 +90,12 @@ case "${url}" in
     ;;
   */alerts/*)
     id="${url##*/}"
-    cat "${dir}/detail-${id}.json"
+    if [ -f "${dir}/detail-${id}.json" ]; then
+      cat "${dir}/detail-${id}.json"
+    else
+      jq -c --arg id "${id}" '{data: ([.data.alerts[] | select(.id == $id)] | first)}' \
+        "${dir}/alerts.json"
+    fi
     ;;
   *)
     printf 'unstubbed curl URL: %s\n' "${url}" >&2
@@ -290,6 +299,75 @@ jq -e '.ids | sort == ["cilium-search-expansion", "to3d0cyc7cnn", "wge5tiucp7k5"
   "${remaining_dir}/suppressed.json" >/dev/null ||
   fail "the operational exemptions suppressed a neighboring DNS, log, or memory alert"
 pass "remaining exemptions are bound to Cilium, one revalidated controller fingerprint, and one historical record"
+
+pinned_logs_dir="$(setup_scenario pinned-control-plane-and-runtime-logs false)"
+cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
+{"data":{"alerts":[
+  {
+    "id":"tww9bz3fo4je",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:_:Unknown:init",
+    "details":[{"name":"Sample","value":"UpdatePodSandboxResources from runtime service failed"}]
+  },
+  {
+    "id":"9qrrrlq3eooh",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:_:Unknown:init",
+    "details":[{"name":"Sample","value":"ContainerStatus for \"fbff0a8e783183c662e92422987872377643c5e40704f3b8dfd7b0152502d05e\" failed"}]
+  },
+  {
+    "id":"7f3auk0cezgo",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:_:Unknown:init",
+    "details":[{"name":"Sample","value":"DeleteContainer returned error"}]
+  },
+  {
+    "id":"0konif35mxxn",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:kube-system:StaticPods:kube-apiserver",
+    "details":[{"name":"Sample","value":"E0919 11:20:10.747072       1 timeout.go:140] \"Post-timeout activity\" logger=\"UnhandledError\" timeElapsed=\"3.449701ms\" method=\"GET\" path=\"/apis/apps/v1/namespaces/kubescape/deployments/kubevuln\" result=null"}]
+  },
+  {
+    "id":"h9q7onv4l20i",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:kube-system:StaticPods:kube-apiserver",
+    "details":[{"name":"Sample","value":"E0919 11:20:10.744070       1 status.go:71] \"Unhandled Error\" err=\"apiserver received an error that is not an metav1.Status: &errors.errorString{s:\\\"context canceled\\\"}: context canceled\" logger=\"UnhandledError\""}]
+  },
+  {
+    "id":"near-runtime-alert",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:_:Unknown:init",
+    "details":[{"name":"Sample","value":"UpdatePodSandboxResources from runtime service failed"}]
+  },
+  {
+    "id":"near-apiserver-alert",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:kube-system:StaticPods:kube-apiserver",
+    "details":[{"name":"Sample","value":"E0919 11:20:10.747072       1 timeout.go:140] \"Post-timeout activity\" logger=\"UnhandledError\" timeElapsed=\"2.1s\" method=\"POST\" path=\"/api/v1/secrets\" result=null"}]
+  }
+]}}
+JSON
+run_scenario "${pinned_logs_dir}" >/dev/null
+[ -f "${pinned_logs_dir}/suppressed.json" ] ||
+  fail "the exact control-plane and runtime log fingerprints were not suppressed"
+jq -e '.ids | sort == ["0konif35mxxn", "7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "tww9bz3fo4je"]' \
+  "${pinned_logs_dir}/suppressed.json" >/dev/null ||
+  fail "the pinned log exemptions were broader than their exact IDs and message shapes"
+pass "exact benign control-plane and runtime log fingerprints are suppressed while near matches stay visible"
 
 changed_controller_dir="$(setup_scenario changed-controller-pattern false)"
 cat >"${changed_controller_dir}/alerts.json" <<'JSON'

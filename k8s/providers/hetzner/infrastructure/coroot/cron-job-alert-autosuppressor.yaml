@@ -18,9 +18,9 @@
 # broad `new-log-patterns` exemption based only on the detail view's Sample field:
 # Coroot groups weakly-equal raw patterns under one alert fingerprint, so Sample
 # is only a representative and can change while the alert id stays the same. The
-# single exception below is pinned to one already-observed alert id AND revalidates
-# the representative on every run; if it changes, the job automatically reopens
-# the alert instead of continuing to hide a neighboring pattern.
+# exceptions below are pinned to already-observed alert ids AND revalidate each
+# representative on every run; if one changes, the job automatically reopens the
+# alert instead of continuing to hide a neighboring pattern.
 #
 #   1. extensions-host-failed-conns - the `network-tcp-connections` ("failed to
 #      connect to N upstream services") warning on `_:Unknown:extensions`. This is
@@ -96,6 +96,33 @@
 #      DNS or error recurrence. Suppress only that immutable record (id, app,
 #      rule, and timestamps); a future Alertmanager DNS alert gets a new id and
 #      remains visible.
+#
+#   9. kubelet-sandbox-resize-unimplemented - Talos' kubelet asks containerd
+#      2.2.7 to update pod-sandbox resources, and the runtime returns the CRI
+#      `Unimplemented` status. Live logs across every worker show only that exact
+#      unsupported optional call, with no restart or unavailable pod. Pin the
+#      exemption to the one Coroot fingerprint and its exact representative;
+#      other kubelet/runtime errors remain visible.
+#
+#  10. kubelet-removed-container-cleanup - kubelet can discover that containerd
+#      already removed a terminated container between its status lookup and
+#      deletion pass. The paired production messages contain CRI `NotFound`, then
+#      kubelet continues volume cleanup; all nodes and workloads remain Ready.
+#      Pin both representative messages to their existing fingerprints. A
+#      different cleanup error automatically reopens either alert.
+#
+#  11. apiserver-client-cancel - clients canceled read-only requests while the
+#      protected deployment polled convergence. The API server reports the
+#      cancellation as a non-Status error even though the client has already
+#      gone away. Current `/readyz?verbose` passes every check, Flux converged,
+#      and etcd retained quorum. Pin the exact context-canceled fingerprint; a
+#      different representative automatically becomes visible.
+#
+#  12. apiserver-millisecond-post-timeout - after those canceled GETs, the
+#      handler completed only a few milliseconds after the response timeout.
+#      This exemption requires the existing fingerprint, GET, null result, and
+#      a millisecond (never second) tail. Writes, slower completions, and every
+#      other API-server log pattern remain visible.
 #
 # PROD-ONLY: Coroot alerting (the Slack webhook) is wired only in the hetzner
 # overlay, so this lives here, not in the base.
@@ -176,10 +203,26 @@ spec:
                   PID=$(curl $RETRY "$BASE/api/user" | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
                   [ -n "$PID" ] || { echo "ERROR: could not resolve 'platform' project id"; exit 1; }
 
-                  # Include suppressed/resolved records so the revalidation below
-                  # can reopen the one log-pattern exemption if its representative
-                  # ever changes under Coroot's weak-equality grouping.
-                  ALERTS=$(curl $RETRY "$BASE/api/project/$PID/alerts?include_resolved=true&limit=500")
+                  # The default list is the firing-alert surface. Do NOT request
+                  # include_resolved here: production has >31k historical records,
+                  # so a 500-row history page can omit old-but-still-firing alerts.
+                  ALERTS=$(curl $RETRY "$BASE/api/project/$PID/alerts?limit=500")
+
+                  # Pinned weak-equality log fingerprints need direct reads so
+                  # their suppressed records remain available for revalidation
+                  # without depending on list ordering or history pagination.
+                  PINNED_LOG_ALERTS=$(
+                    for id in \
+                      to3d0cyc7cnn \
+                      tww9bz3fo4je \
+                      9qrrrlq3eooh \
+                      7f3auk0cezgo \
+                      h9q7onv4l20i \
+                      0konif35mxxn; do
+                      curl $RETRY "$BASE/api/project/$PID/alerts/$id"
+                    done | jq -s '{data: {alerts: map(.data // empty)}}'
+                  )
+                  ALERTMANAGER_DNS_ALERT=$(curl $RETRY "$BASE/api/project/$PID/alerts/wge5tiucp7k5")
                   ids=""
                   reopen_ids=""
 
@@ -291,48 +334,112 @@ spec:
                     ids="$ids $id"; echo "match cilium-dns-search-expansion: $id"
                   done
 
-                  # Exemption 7 - one known Kubernetes 1.36 ReplicaSet stale-cache
-                  # guard fingerprint. Both the immutable alert id and the current
-                  # representative must qualify. A weakly-equal pattern can reuse
-                  # the fingerprint, so re-open it if the representative changes.
-                  for id in $(printf '%s' "$ALERTS" | jq -r '
+                  # Exemptions 7 and 9-12 - exact weak-equality log fingerprints.
+                  # Every ID and current representative must qualify; a changed
+                  # representative is reopened below instead of remaining hidden.
+                  for id in $(printf '%s' "$PINNED_LOG_ALERTS" | jq -r '
                       def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
                       def consistency_sample($s):
                         ($s | test("^E[0-9]{4} [0-9:.]+ +1 replica_set\\.go:640\\] "))
                         and ($s | contains("\"Unhandled Error\" err=\"sync \\\""))
                         and ($s | contains("\" failed with read version: "))
                         and ($s | test(" is not as new as written version: [0-9]+ for group resource replicasets\\.apps\" logger=\"UnhandledError\"$"));
+                      def pinned_log_sample:
+                        details as $d
+                        | (.rule_id=="new-log-patterns")
+                        and (
+                          (.id=="to3d0cyc7cnn"
+                           and ((.application_id // "") | endswith(":kube-system:StaticPods:kube-controller-manager"))
+                           and consistency_sample($d.Sample // ""))
+                          or
+                          (.id=="tww9bz3fo4je"
+                           and ((.application_id // "") | endswith(":_:Unknown:init"))
+                           and ($d.Sample // "")=="UpdatePodSandboxResources from runtime service failed")
+                          or
+                          (.id=="9qrrrlq3eooh"
+                           and ((.application_id // "") | endswith(":_:Unknown:init"))
+                           and (($d.Sample // "") | test("^ContainerStatus for \\\"[0-9a-f]{64}\\\" failed$")))
+                          or
+                          (.id=="7f3auk0cezgo"
+                           and ((.application_id // "") | endswith(":_:Unknown:init"))
+                           and ($d.Sample // "")=="DeleteContainer returned error")
+                          or
+                          (.id=="h9q7onv4l20i"
+                           and ((.application_id // "") | endswith(":kube-system:StaticPods:kube-apiserver"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 status\\.go:71\\] "))
+                           and (($d.Sample // "") | contains("apiserver received an error that is not an metav1.Status"))
+                           and (($d.Sample // "") | contains("errors.errorString{s:\\\"context canceled\\\"}: context canceled"))
+                           and (($d.Sample // "") | endswith("\" logger=\"UnhandledError\"")))
+                          or
+                          (.id=="0konif35mxxn"
+                           and ((.application_id // "") | endswith(":kube-system:StaticPods:kube-apiserver"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 timeout\\.go:140\\] "))
+                           and (($d.Sample // "") | contains("\"Post-timeout activity\" logger=\"UnhandledError\""))
+                           and (($d.Sample // "") | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$")))
+                        );
                       .data.alerts[]
-                      | select(.id=="to3d0cyc7cnn" and .suppressed==false and .resolved_at==null
-                               and .rule_id=="new-log-patterns"
-                               and ((.application_id // "") | endswith(":kube-system:StaticPods:kube-controller-manager")))
-                      | details as $d
-                      | select(consistency_sample($d.Sample // ""))
+                      | select(.suppressed==false and .resolved_at==null and pinned_log_sample)
                       | .id'); do
-                    ids="$ids $id"; echo "match replicaset-consistency-requeue: $id"
+                    case "$id" in
+                      to3d0cyc7cnn) reason="replicaset-consistency-requeue" ;;
+                      tww9bz3fo4je) reason="kubelet-sandbox-resize-unimplemented" ;;
+                      9qrrrlq3eooh|7f3auk0cezgo) reason="kubelet-removed-container-cleanup" ;;
+                      h9q7onv4l20i) reason="apiserver-client-cancel" ;;
+                      0konif35mxxn) reason="apiserver-millisecond-post-timeout" ;;
+                    esac
+                    ids="$ids $id"; echo "match $reason: $id"
                   done
 
-                  for id in $(printf '%s' "$ALERTS" | jq -r '
+                  for id in $(printf '%s' "$PINNED_LOG_ALERTS" | jq -r '
                       def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
                       def consistency_sample($s):
                         ($s | test("^E[0-9]{4} [0-9:.]+ +1 replica_set\\.go:640\\] "))
                         and ($s | contains("\"Unhandled Error\" err=\"sync \\\""))
                         and ($s | contains("\" failed with read version: "))
                         and ($s | test(" is not as new as written version: [0-9]+ for group resource replicasets\\.apps\" logger=\"UnhandledError\"$"));
+                      def pinned_log_sample:
+                        details as $d
+                        | (.rule_id=="new-log-patterns")
+                        and (
+                          (.id=="to3d0cyc7cnn"
+                           and ((.application_id // "") | endswith(":kube-system:StaticPods:kube-controller-manager"))
+                           and consistency_sample($d.Sample // ""))
+                          or
+                          (.id=="tww9bz3fo4je"
+                           and ((.application_id // "") | endswith(":_:Unknown:init"))
+                           and ($d.Sample // "")=="UpdatePodSandboxResources from runtime service failed")
+                          or
+                          (.id=="9qrrrlq3eooh"
+                           and ((.application_id // "") | endswith(":_:Unknown:init"))
+                           and (($d.Sample // "") | test("^ContainerStatus for \\\"[0-9a-f]{64}\\\" failed$")))
+                          or
+                          (.id=="7f3auk0cezgo"
+                           and ((.application_id // "") | endswith(":_:Unknown:init"))
+                           and ($d.Sample // "")=="DeleteContainer returned error")
+                          or
+                          (.id=="h9q7onv4l20i"
+                           and ((.application_id // "") | endswith(":kube-system:StaticPods:kube-apiserver"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 status\\.go:71\\] "))
+                           and (($d.Sample // "") | contains("apiserver received an error that is not an metav1.Status"))
+                           and (($d.Sample // "") | contains("errors.errorString{s:\\\"context canceled\\\"}: context canceled"))
+                           and (($d.Sample // "") | endswith("\" logger=\"UnhandledError\"")))
+                          or
+                          (.id=="0konif35mxxn"
+                           and ((.application_id // "") | endswith(":kube-system:StaticPods:kube-apiserver"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 timeout\\.go:140\\] "))
+                           and (($d.Sample // "") | contains("\"Post-timeout activity\" logger=\"UnhandledError\""))
+                           and (($d.Sample // "") | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$")))
+                        );
                       .data.alerts[]
-                      | select(.id=="to3d0cyc7cnn" and .suppressed==true)
-                      | details as $d
-                      | select((.rule_id=="new-log-patterns"
-                                and ((.application_id // "") | endswith(":kube-system:StaticPods:kube-controller-manager"))
-                                and consistency_sample($d.Sample // "")) | not)
+                      | select(.suppressed==true and (pinned_log_sample | not))
                       | .id'); do
-                    reopen_ids="$reopen_ids $id"; echo "reopen changed controller pattern: $id"
+                    reopen_ids="$reopen_ids $id"; echo "reopen changed pinned log pattern: $id"
                   done
 
                   # Exemption 8 - only the old, non-recurring Alertmanager record.
                   # Exact timestamps prevent this clause from becoming a rule-level
                   # DNS exemption if Coroot ever reuses or migrates identifiers.
-                  for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]
+                  for id in $(printf '%s' "$ALERTMANAGER_DNS_ALERT" | jq -r '.data
                       | select(.id=="wge5tiucp7k5" and .suppressed==false and .resolved_at==null
                                and .rule_id=="dns-server-errors"
                                and ((.application_id // "") | endswith(":kubescape:StatefulSet:alertmanager"))
