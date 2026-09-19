@@ -2761,13 +2761,13 @@ const (
 // ten encrypted values all match the projected whole-scalar form, so no
 // ciphertext survives into the entry. No other document is touched.
 //
-// RENDERER PROVENANCE: derived with this host's unapproved kubectl v1.36.1 /
-// kustomize v5.8.1 through the package test, which reproduced main's approved
-// 4822c6 exactly with the projection disabled before the value below was read.
-// CI's pinned renderer is authoritative.
+// RENDERER PROVENANCE: the value below was printed by CI's checksum-verified
+// kubectl v1.36.2 renderer (TestValidateAuthorizationAcceptsCommittedPolicy) on
+// this change merged with main b03d231527b7e827684c99d483dbf30e898a5a53, whose
+// approval-base check passed against cf3e10.
 //
 // Previous aggregate: cf3e10be68e3a77cdac612347d4d91c2db567d616de5fc1b6bba391ae48b8698.
-const expectedRenderedSurfaceSHA = "0000000000000000000000000000000000000000000000000000000000000000"
+const expectedRenderedSurfaceSHA = "bd15655a621002ee2f1bef6f44683c8cdc89abc90e47e1626ae80279234c405b"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
