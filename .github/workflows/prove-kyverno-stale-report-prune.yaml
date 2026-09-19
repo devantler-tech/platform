@@ -9,6 +9,7 @@ on:
       - scripts/prove-kyverno-stale-report-prune.sh
       - tests/kyverno-stale-report-prune/**
       - k8s/bases/infrastructure/deleting-policies/**
+      - k8s/bases/infrastructure/cluster-roles/kyverno-cleanup-policy-reports.yaml
       - k8s/bases/infrastructure/controllers/kyverno/helm-release.yaml
   workflow_dispatch:
 

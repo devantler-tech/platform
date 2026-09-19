@@ -2,20 +2,25 @@
 # Proves, on a throwaway cluster, that the production DeletingPolicy
 # (k8s/bases/infrastructure/deleting-policies/prune-stale-policy-reports.yaml)
 # removes a Kyverno result that a name exclusion left stale, that the next scan
-# recreates the report with only its current results, and that a report whose
-# results are all current is left alone.
+# recreates the report with only its current results, that a report whose
+# results are all current is left alone, and that a report the scan no longer
+# writes any current result to keeps its failures.
 #
 # Requires kubectl, helm and a cluster in the current kubeconfig context with
 # nothing else on it. CI creates one with kind (.github/workflows/prove-kyverno-stale-report-prune.yaml).
 set -euo pipefail
 
-dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tests/kyverno-stale-report-prune"
-# The shipped policy itself, so this proof cannot drift from what deploys. Only its
-# threshold and schedule are shortened below.
-policy="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/k8s/bases/infrastructure/deleting-policies/prune-stale-policy-reports.yaml"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+dir="$root/tests/kyverno-stale-report-prune"
+# The shipped policy and its delete grant themselves, so this proof cannot drift
+# from what deploys. Only the policy's two windows and schedule are shortened below.
+policy="$root/k8s/bases/infrastructure/deleting-policies/prune-stale-policy-reports.yaml"
+cleanup_role="$root/k8s/bases/infrastructure/cluster-roles/kyverno-cleanup-policy-reports.yaml"
 chart_version="${KYVERNO_CHART_VERSION:?set KYVERNO_CHART_VERSION}"
 # Short enough to finish in minutes, still several one-minute scan intervals.
 stale_after="${STALE_AFTER:-4m}"
+# Two one-minute scan intervals, as production uses two one-hour intervals.
+rescanned_within="${RESCANNED_WITHIN:-2m}"
 ns=prune-test
 
 log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
@@ -70,19 +75,24 @@ helm repo add kyverno https://kyverno.github.io/kyverno/ >/dev/null
 helm upgrade --install kyverno kyverno/kyverno --version "$chart_version" \
   -n kyverno --create-namespace -f "$dir/values.yaml" --wait --timeout 10m >/dev/null
 
-kubectl apply -f "$dir/cleanup-controller-role.yaml"
+kubectl apply -f "$cleanup_role"
 kubectl apply -f "$dir/fixtures.yaml"
 
 both="require-owner-label/owner-label require-team-label/team-label"
 wait_for "both results reported for excluded-later" 600 has_results excluded-later "$both"
+wait_for "both results reported for never-rescanned" 600 has_results never-rescanned "$both"
 wait_for "both results reported for always-current" 600 has_results always-current "$both"
 
 team_before="$(result_timestamp excluded-later require-team-label team-label)"
 owner_before="$(result_timestamp excluded-later require-owner-label owner-label)"
 [[ -n "$team_before" && -n "$owner_before" ]] || fail "could not read the result timestamps to compare against"
 
-log "excluding excluded-later from require-team-label"
-kubectl patch clusterpolicy require-team-label --type=json -p '[{"op":"add","path":"/spec/rules/0/exclude","value":{"any":[{"resources":{"names":["excluded-later"]}}]}}]'
+never_owner_before="$(result_timestamp never-rescanned require-owner-label owner-label)"
+[[ -n "$never_owner_before" ]] || fail "could not read never-rescanned's owner-label timestamp"
+
+log "excluding excluded-later from require-team-label, and never-rescanned from both policies"
+kubectl patch clusterpolicy require-team-label --type=json -p '[{"op":"add","path":"/spec/rules/0/exclude","value":{"any":[{"resources":{"names":["excluded-later","never-rescanned"]}}]}}]'
+kubectl patch clusterpolicy require-owner-label --type=json -p '[{"op":"add","path":"/spec/rules/0/exclude","value":{"any":[{"resources":{"names":["never-rescanned"]}}]}}]'
 
 # Reproduce the defect before relying on the fix. A scan that has actually run
 # since the exclusion rewrites the still-evaluated result, so waiting for the
@@ -100,16 +110,23 @@ team_after="$(result_timestamp excluded-later require-team-label team-label)"
 [[ "$team_after" == "$team_before" ]] ||
   fail "the excluded rule's result was rewritten ($team_before -> $team_after), so it is not stale"
 has_results excluded-later "$both" || fail "defect did not reproduce: the stale result cleared without the policy"
+[[ "$(result_timestamp never-rescanned require-owner-label owner-label)" == "$never_owner_before" ]] ||
+  fail "never-rescanned's owner-label result was rewritten, so that report is still being scanned"
+has_results never-rescanned "$both" || fail "never-rescanned lost its results without the policy"
 log "ok: defect reproduced, the excluded rule's result survives a completed scan unchanged"
 
 control_before="$(report_state always-current)"
 control_before="${control_before%% *}"
 stale_report_uid="$(report_state excluded-later)"
 stale_report_uid="${stale_report_uid%% *}"
+never_before="$(report_state never-rescanned)"
+never_before="${never_before%% *}"
 
-log "applying the deleting policy (stale after $stale_after, every minute)"
+log "applying the deleting policy (stale after $stale_after, rescanned within $rescanned_within, every minute)"
 grep -qF "duration('6h')" "$policy" || fail "the production policy no longer carries duration('6h'); update this substitution"
-sed -e "s/duration('6h')/duration('$stale_after')/" -e 's#schedule: ".*"#schedule: "* * * * *"#' "$policy" | kubectl apply -f -
+grep -qF "duration('2h')" "$policy" || fail "the production policy no longer carries duration('2h'); update this substitution"
+sed -e "s/duration('6h')/duration('$stale_after')/" -e "s/duration('2h')/duration('$rescanned_within')/" \
+  -e 's#schedule: ".*"#schedule: "* * * * *"#' "$policy" | kubectl apply -f -
 
 wait_for "excluded-later's stale result pruned and its report recreated with only the current result" 900 \
   has_results excluded-later "require-owner-label/owner-label"
@@ -124,5 +141,14 @@ control_after="$(report_state always-current)"
   fail "the control report was deleted although all its results were current ($control_before -> ${control_after%% *})"
 has_results always-current "$both" || fail "the control report lost a current result"
 log "ok: control report untouched"
+
+# excluded-later was pruned by a run that also evaluated never-rescanned, whose
+# failures are at least as old. Let a few more runs pass before judging it.
+sleep 180
+never_after="$(report_state never-rescanned)"
+[[ "${never_after%% *}" == "$never_before" ]] ||
+  fail "never-rescanned was deleted although no scan wrote a current result to it ($never_before -> ${never_after%% *})"
+has_results never-rescanned "$both" || fail "never-rescanned lost a failing result"
+log "ok: a report with no current result keeps its failures"
 
 log "PASS"

@@ -54,7 +54,8 @@ policy stops matching because its kind, match block, rule name or policy name
 changes. Instead, the `prune-stale-policy-reports` Kyverno `DeletingPolicy`
 (`k8s/bases/infrastructure/deleting-policies/`) runs every hour at minute 17 and
 deletes a namespaced PolicyReport that holds a `fail`, `warn` or `error` result
-older than six hours. The next background scan recreates the report with only
+older than six hours, provided the same report also holds a result written in
+the last two hours. The next background scan recreates the report with only
 the results that are still evaluated.
 
 What operators should expect:
@@ -64,6 +65,14 @@ What operators should expect:
 - A current failure is rewritten by every background scan, so it never reaches
   six hours and its report is never deleted. Old `pass` and `skip` results,
   which mutate rules record once at admission, do not trigger deletion.
+- A report with no recent result is never deleted. Background scans skip
+  ReplicaSets and the kube-system, kube-public, kube-node-lease and kyverno
+  namespaces, so reports there are written at admission and never refreshed.
+  Their old failures may still be real, so they stay visible, and they also
+  stay in place if the reports controller stops publishing.
+- A result left behind by an `exclude` on a resource that no other rule still
+  evaluates is not pruned either. Use a precondition for the exemption (see
+  above) so the scan rewrites it as a current `skip`.
 - Cluster-scoped `ClusterPolicyReport` objects are not covered.
 
 Manual whole-report deletion, direct result patches and controller restarts are
