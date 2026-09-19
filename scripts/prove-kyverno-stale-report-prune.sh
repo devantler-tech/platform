@@ -150,8 +150,23 @@ has_results always-current "$both" || fail "the control report lost a current re
 log "ok: control report untouched"
 
 # excluded-later was pruned by a run that also evaluated never-rescanned, whose
-# failures are at least as old. Let a few more runs pass before judging it.
-sleep 180
+# failures are at least as old. Require the cleanup controller to record two more
+# completed runs before judging it, so a survival cannot be a run that never came.
+last_run() {
+  kubectl get deletingpolicies.policies.kyverno.io prune-stale-policy-reports \
+    -o jsonpath='{.status.lastExecutionTime}' 2>/dev/null || true
+}
+run_mark="$(last_run)"
+[[ -n "$run_mark" ]] || fail "the deleting policy reports no lastExecutionTime, so its runs cannot be counted"
+ran_since_mark() {
+  local now
+  now="$(last_run)"
+  [[ -n "$now" && "$now" > "$run_mark" ]]
+}
+for cycle in 1 2; do
+  wait_for "cleanup run $cycle after excluded-later was pruned" 300 ran_since_mark
+  run_mark="$(last_run)"
+done
 never_after="$(report_state never-rescanned)"
 [[ "${never_after%% *}" == "$never_before" ]] ||
   fail "never-rescanned was deleted although no scan wrote a current result to it ($never_before -> ${never_after%% *})"
