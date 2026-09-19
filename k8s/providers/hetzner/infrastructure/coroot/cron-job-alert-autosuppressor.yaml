@@ -62,12 +62,13 @@
 #
 #   4. flux-status-context-canceled - the production image-verification handoff
 #      intentionally restarts kustomize-controller after suspending reconciliation,
-#      terminating in-flight status writes, health checks, or server-side dry
-#      runs. A canceled operation is retried by the replacement leader and does
-#      not describe the Kustomization's health. Only Kustomization Progressing,
-#      HealthCheckFailed, or ReconciliationFailed events from kustomize-controller
-#      with an exact cancellation shape qualify; timeouts, apply/authorization
-#      errors, and dependency failures remain visible.
+#      terminating in-flight status writes, health checks, server-side dry runs,
+#      or the post-build variables ConfigMap read. A canceled operation is
+#      retried by the replacement leader and does not describe the
+#      Kustomization's health. Only the exact unattributed Kubernetes-event app,
+#      Kustomization Progressing/HealthCheckFailed/ReconciliationFailed/
+#      BuildFailed labels, and exact cancellation shapes qualify; timeouts,
+#      apply/authorization errors, and dependency failures remain visible.
 #
 #   5. crossview-monitor-secret-create-race - Coroot and External Secrets can race
 #      to create the generated crossview-postgres-coroot-monitor Secret during a
@@ -288,22 +289,23 @@ spec:
                       | details as $d
                       | labels($d) as $l
                       | select(($l | keys | sort) == ["cluster","kind","name","namespace","reason","source"]
-                               and ((.application_id // "") | endswith(":flux-system:Deployment:kustomize-controller"))
+                               and (.application_id // "")==":::"
                                and $l.cluster=="platform"
                                and $l.kind=="Kustomization"
-                               and ($l.reason=="Progressing"
-                                    or $l.reason=="HealthCheckFailed"
-                                    or $l.reason=="ReconciliationFailed")
                                and $l.source=="kustomize-controller"
-                               and (($d["Event message"] == "failed to update status: context canceled")
-                                    or ($d["Event message"]
-                                      | test("^unable to update the healthy status to progressing: \\[.*fieldManager=gotk-kustomize-controller.*context canceled, context canceled\\]$"))
+                               and (($l.reason=="Progressing"
+                                     and (($d["Event message"] == "failed to update status: context canceled")
+                                          or ($d["Event message"]
+                                            | test("^unable to update the healthy status to progressing: \\[.*fieldManager=gotk-kustomize-controller.*context canceled, context canceled\\]$"))))
                                     or ($l.reason=="HealthCheckFailed"
                                         and ($d["Event message"]
                                           | test("^health check failed after [0-9.]+s: context canceled$")))
                                     or ($l.reason=="ReconciliationFailed"
                                         and ($d["Event message"]
-                                          | test("^[^[:space:]/]+/[^[:space:]/]+/[^[:space:]]+ dry-run failed: (Patch|Post|Put|Delete) \\\"https://10[.]96[.]0[.]1:443/apis/[^\\\"]+\\\": context canceled\\n?$")))))
+                                          | test("^[^[:space:]/]+/[^[:space:]/]+/[^[:space:]]+ dry-run failed: (Patch|Post|Put|Delete) \\\"https://10[.]96[.]0[.]1:443/apis/[^\\\"]+\\\": context canceled\\n?$")))
+                                    or ($l.reason=="BuildFailed"
+                                        and ($d["Event message"]
+                                          | test("^post build failed for \\x27[^\\x27]+\\x27: substitute from \\x27ConfigMap/variables-cluster\\x27 error: Get \\\"https://10[.]96[.]0[.]1:443/api/v1/namespaces/flux-system/configmaps/variables-cluster\\\": context canceled$")))))
                       | .id'); do
                     ids="$ids $id"; echo "match flux-status-context-canceled: $id"
                   done

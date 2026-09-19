@@ -171,7 +171,7 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"kubernetes-events",
-    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "application_id":":::",
     "details":[
       {"name":"Event message","value":"failed to update status: context canceled"},
       {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"apps\"\nnamespace=\"flux-system\"\nreason=\"Progressing\"\nsource=\"kustomize-controller\""}
@@ -182,7 +182,7 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"kubernetes-events",
-    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "application_id":":::",
     "details":[
       {"name":"Event message","value":"health check failed after 9.155610095s: context canceled"},
       {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"infrastructure\"\nnamespace=\"flux-system\"\nreason=\"HealthCheckFailed\"\nsource=\"kustomize-controller\""}
@@ -193,7 +193,7 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"kubernetes-events",
-    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "application_id":":::",
     "details":[
       {"name":"Event message","value":"TeamRepository/github-config/maintainers-platform-template dry-run failed: Patch \"https://10.96.0.1:443/apis/team.github.m.upbound.io/v1alpha1/namespaces/github-config/teamrepositories/maintainers-platform-template?dryRun=All&fieldManager=kustomize-controller&force=true\": context canceled\n"},
       {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"github-config\"\nnamespace=\"github-config\"\nreason=\"ReconciliationFailed\"\nsource=\"kustomize-controller\""}
@@ -208,6 +208,17 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     "details":[
       {"name":"Event message","value":"secrets \"crossview-postgres-coroot-monitor\" already exists"},
       {"name":"Labels","value":"cluster=\"platform\"\nkind=\"ExternalSecret\"\nname=\"crossview-postgres-coroot-monitor\"\nnamespace=\"crossview\"\nreason=\"UpdateFailed\"\nsource=\"external-secrets\""}
+    ]
+  },
+  {
+    "id":"flux-build-canceled",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"post build failed for 'ClusterRole.v1.rbac.authorization.k8s.io/kyverno:reports-controller:read-network-routes': substitute from 'ConfigMap/variables-cluster' error: Get \"https://10.96.0.1:443/api/v1/namespaces/flux-system/configmaps/variables-cluster\": context canceled"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"infrastructure-controllers\"\nnamespace=\"flux-system\"\nreason=\"BuildFailed\"\nsource=\"kustomize-controller\""}
     ]
   },
   {
@@ -237,9 +248,42 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     "suppressed":false,
     "resolved_at":null,
     "rule_id":"kubernetes-events",
-    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "application_id":":::",
     "details":[
       {"name":"Event message","value":"TeamRepository/github-config/maintainers-platform-template dry-run failed: forbidden"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"github-config\"\nnamespace=\"github-config\"\nreason=\"ReconciliationFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
+    "id":"near-match-flux-build",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"post build failed for 'Deployment.apps/observability/coroot': validation failed"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"infrastructure-controllers\"\nnamespace=\"flux-system\"\nreason=\"BuildFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
+    "id":"near-match-flux-build-reason",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"post build failed for 'ClusterRole.v1.rbac.authorization.k8s.io/kyverno:reports-controller:read-network-routes': substitute from 'ConfigMap/variables-cluster' error: Get \"https://10.96.0.1:443/api/v1/namespaces/flux-system/configmaps/variables-cluster\": context canceled"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"infrastructure-controllers\"\nnamespace=\"flux-system\"\nreason=\"ReconciliationFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
+    "id":"near-match-flux-application",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:flux-system:Deployment:kustomize-controller",
+    "details":[
+      {"name":"Event message","value":"TeamRepository/github-config/maintainers-platform-template dry-run failed: Patch \"https://10.96.0.1:443/apis/team.github.m.upbound.io/v1alpha1/namespaces/github-config/teamrepositories/maintainers-platform-template?dryRun=All&fieldManager=kustomize-controller&force=true\": context canceled\n"},
       {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"github-config\"\nnamespace=\"github-config\"\nreason=\"ReconciliationFailed\"\nsource=\"kustomize-controller\""}
     ]
   },
@@ -259,9 +303,11 @@ JSON
 run_scenario "${event_dir}" >/dev/null
 [ -f "${event_dir}/suppressed.json" ] ||
   fail "the exact by-design Kubernetes lifecycle events were not suppressed"
-jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-dryrun-canceled", "flux-health-canceled", "flux-status-canceled", "monitor-secret-race"]' \
-  "${event_dir}/suppressed.json" >/dev/null ||
+jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-build-canceled", "flux-dryrun-canceled", "flux-health-canceled", "flux-status-canceled", "monitor-secret-race"]' \
+  "${event_dir}/suppressed.json" >/dev/null || {
+  jq -c '.ids | sort' "${event_dir}/suppressed.json" >&2
   fail "the event exemptions were broader than their exact label and message contracts"
+}
 pass "exact self-healing lifecycle events are suppressed while near matches stay visible"
 
 remaining_dir="$(setup_scenario remaining-operational-warnings false)"
