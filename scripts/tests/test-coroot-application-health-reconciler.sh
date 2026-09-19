@@ -39,6 +39,12 @@ fi
 # shellcheck disable=SC2016
 [[ "${script_body}" != *'${'* ]] ||
   fail 'the reconciler contains a Flux-consumable shell expansion'
+# The embedded script must contain this literal variable reference.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'reconcile_threshold "$KUBELET" NetworkTCPConnections 0 inherit kubelet-probe-source-fixed'* ]] ||
+  fail 'the reconciler must remove the obsolete kubelet item-check threshold'
+[[ "${script_body}" != *'kubelet-static-pod-probes'* ]] ||
+  fail 'item-based Coroot checks ignore thresholds; kubelet probe failures must be fixed at source'
 
 yq eval -e '.cluster.controllerManager.extraArgs."log-text-split-stream" == "false"' \
   "${talos_patch}" >/dev/null ||
@@ -46,7 +52,13 @@ yq eval -e '.cluster.controllerManager.extraArgs."log-text-split-stream" == "fal
 yq eval -e '.cluster.controllerManager.extraArgs."terminated-pod-gc-threshold" == "100"' \
   "${talos_patch}" >/dev/null ||
   fail 'the controller-manager refresh must preserve the tuned PodGC threshold'
-pass 'the stale-informer repair preserves the controller-manager GC contract'
+yq eval -e '.cluster.controllerManager.extraArgs."bind-address" == "::1"' \
+  "${talos_patch}" >/dev/null ||
+  fail 'the controller-manager health endpoint must match the IPv6-first localhost probe'
+yq eval -e '.cluster.scheduler.extraArgs."bind-address" == "::1"' \
+  "${talos_patch}" >/dev/null ||
+  fail 'the scheduler health endpoint must match the IPv6-first localhost probe'
+pass 'control-plane probe targets match loopback-only component listeners'
 
 work_root="$(mktemp -d /tmp/tmp.XXXXXXXXXX)"
 trap 'rm -rf "${work_root}"' EXIT
@@ -80,11 +92,6 @@ done
 case "${url}" in
   */api/user)
     printf '%s\n' '{"data":{"projects":[{"id":"95rsc5yp","name":"platform"}]}}'
-    ;;
-  *'%3A_%3AUnknown%3Akubelet')
-    cat <<'JSON'
-{"data":{"reports":[{"name":"Net","status":"warning","checks":[{"id":"NetworkTCPConnections","status":"warning","threshold":0}],"widgets":[{"chart":{"title":"Failed TCP connections, per second","series":[{"name":"→kube-scheduler","data":[0.6,0.6]},{"name":"→kube-controller-manager","data":[0.3,0.3]},{"name":"→coredns","data":[0,0]}]}}]}]}}
-JSON
     ;;
   */overview/logs?query=*)
     jq -cn --arg error "$(cat "${dir}/state-error")" '{data:{logs:{entries:[{
@@ -149,6 +156,8 @@ JSON
       jq -cn --arg url "${url}" --argjson body "${payload}" '{url:$url,body:$body}' >>"${dir}/posts.ndjson"
     elif [[ "${url}" == *'/MemoryLeakPercent/'* ]]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":10},null,null]}}'
+    elif [[ "${url}" == *'%3A_%3AUnknown%3Akubelet/inspection/NetworkTCPConnections/config'* ]]; then
+      printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":3}]}}'
     elif [[ "${url}" == *'%3A_%3AUnknown%3Ainit'* ]]; then
       current="$(cat "${dir}/init-current")"
       if [ "${current}" = "null" ]; then
@@ -188,7 +197,7 @@ printf '%s\n' "${known_output}" | jq -s -e \
   'length > 0 and all(.[]; .level == "info" and (.msg | type == "string" and length > 0))' \
   >/dev/null || fail 'successful reconciliation must emit structured info JSON'
 jq -s -e '
-  any(.[]; (.url | endswith("/NetworkTCPConnections/config")) and .body.configs[2].threshold == 3) and
+  any(.[]; (.url | contains("%3A_%3AUnknown%3Akubelet/inspection/NetworkTCPConnections/config")) and .body.configs[2] == null) and
   any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-background-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
   any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
   any(.[]; (.url | contains("%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
@@ -198,8 +207,8 @@ jq -s -e '
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-controller-manager/inspection/LogErrors/config")) and .body.configs[2].threshold == 5000) and
   any(.[]; (.url | contains("%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater/inspection/LogErrors/config")) and .body.configs[2].threshold == 10)
 ' "${known_dir}/posts.ndjson" >/dev/null ||
-  fail 'reviewed network, memory, and Dex evidence did not produce exact app-level thresholds'
-pass 'reviewed application-health signals receive narrow app-level thresholds'
+  fail 'reviewed evidence did not produce the exact app-level policies'
+pass 'reviewed application-health signals receive narrow app-level policies'
 
 unknown_dir="$(setup_scenario unknown unknown 1)"
 run_scenario "${unknown_dir}" >/dev/null

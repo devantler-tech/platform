@@ -25,6 +25,12 @@
 cluster:
   controllerManager:
     extraArgs:
+      # Talos generates the static-pod health probe with host `localhost`, which
+      # resolves to ::1 first on these nodes. Binding only to the Talos default
+      # 127.0.0.1 makes every healthy probe record a failed IPv6 attempt before
+      # its successful IPv4 fallback. Bind to IPv6 loopback instead: the first
+      # attempt succeeds while the endpoint remains loopback-only.
+      bind-address: "::1"
       # Keep the upstream default explicit so Talos refreshes every static
       # kube-controller-manager pod after retired CRDs are removed. Kubernetes'
       # metadata informer factory cannot stop an individual deleted-resource
@@ -36,3 +42,9 @@ cluster:
       # with the component-config fields Talos already owns.
       log-text-split-stream: "false"
       terminated-pod-gc-threshold: "100"
+  scheduler:
+    extraArgs:
+      # Same Talos localhost probe and IPv4-only listener mismatch as the
+      # controller-manager. This remains loopback-only and removes the kubelet's
+      # false failed-upstream signal without weakening Coroot inspection.
+      bind-address: "::1"
