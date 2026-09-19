@@ -313,10 +313,7 @@ substitute "${scratch}/committed-raw.yaml" >"${scratch}/committed.yaml"
 
 # The policy's exclusion inventory, as kind|namespace|name.
 yq -o=json '.' "$policy" |
-  jq '[.spec.rules[0].exclude.any[].resources
-    | (.kinds[0] | split("/") | last) as $kind
-    | (.namespaces // [""])[] as $ns
-    | .names[] | "\($kind)|\($ns)|\(.)"] | sort' >"${scratch}/policy-exclusions.json"
+  jq '.spec.rules[0].preconditions.all[0].value | sort' >"${scratch}/policy-exclusions.json"
 yq ea -o=json '[select(.kind == "Role" or .kind == "ClusterRole")]' "${scratch}/rbac.yaml" |
   jq '[.[] | "\(.kind)|\(.metadata.namespace // "")|\(.metadata.name)"] | unique' >"${scratch}/rendered.json"
 

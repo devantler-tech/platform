@@ -44,64 +44,46 @@ spec:
               kinds:
                 - rbac.authorization.k8s.io/v1/Role
                 - rbac.authorization.k8s.io/v1/ClusterRole
-      exclude:
-        any:
-          # Kubernetes built-ins. The API server bootstraps them, and the
-          # clusterrole aggregation controller rewrites the aggregated rules.
-          - resources:
-              kinds:
-                - rbac.authorization.k8s.io/v1/ClusterRole
-              names:
-                - admin
-                - cluster-admin
-                - edit
-                - system:aggregate-to-edit
-                - system:controller:clusterrole-aggregation-controller
-          # Crossplane core. The RBAC manager creates and binds provider roles.
-          - resources:
-              kinds:
-                - rbac.authorization.k8s.io/v1/ClusterRole
-              names:
-                - crossplane
-                - crossplane-rbac-manager
-                - crossplane:system:aggregate-to-crossplane
-          # KRO. The controller, and the platform's tenant ResourceGraphDefinition
-          # role, which binds the ClusterRoles each tenant is provisioned with.
-          - resources:
-              kinds:
-                - rbac.authorization.k8s.io/v1/ClusterRole
-              names:
-                - kro-tenant-rgd
-                - kro:controller
-          # KSail operator. Creates and binds the RBAC of the clusters it manages.
-          # This is the broadest grant excluded here: bind and escalate on every
-          # RBAC resource.
-          - resources:
-              kinds:
-                - rbac.authorization.k8s.io/v1/ClusterRole
-              names:
-                - ksail-operator
-          # Longhorn storage controller.
-          - resources:
-              kinds:
-                - rbac.authorization.k8s.io/v1/ClusterRole
-              names:
-                - longhorn-role
-          - resources:
-              kinds:
-                - rbac.authorization.k8s.io/v1/Role
-              namespaces:
-                - longhorn-system
-              names:
-                - longhorn
-          # Velero server. Restores arbitrary namespaced objects in its namespace.
-          - resources:
-              kinds:
-                - rbac.authorization.k8s.io/v1/Role
-              namespaces:
-                - velero
-              names:
-                - velero-server
+      # Reviewed exclusions, each an exact kind|namespace|name identity (namespace is
+      # empty for a ClusterRole). They are a false precondition rather than an
+      # `exclude` so the background scan records a current `skip` for an accepted
+      # role; an `exclude` records nothing, which left a role's earlier warning in
+      # its report after it was accepted (docs/policy-reports.md). The values carry
+      # no `*` or `?`, which Kyverno would treat as wildcards.
+      # The key falls back to request.oldObject because a DELETE request carries no
+      # request.object; without it a reviewed role would lose its exclusion on delete.
+      preconditions:
+        all:
+          - key: >-
+              {{ request.object.kind || request.oldObject.kind || '' }}|{{ request.object.metadata.namespace || request.oldObject.metadata.namespace || '' }}|{{ request.object.metadata.name || request.oldObject.metadata.name || '' }}
+            operator: AnyNotIn
+            value:
+              # Kubernetes built-ins. The API server bootstraps them, and the
+              # clusterrole aggregation controller rewrites the aggregated rules.
+              - ClusterRole||admin
+              - ClusterRole||cluster-admin
+              - ClusterRole||edit
+              - ClusterRole||system:aggregate-to-edit
+              - ClusterRole||system:controller:clusterrole-aggregation-controller
+              # Crossplane core. The RBAC manager creates and binds provider roles.
+              - ClusterRole||crossplane
+              - ClusterRole||crossplane-rbac-manager
+              - ClusterRole||crossplane:system:aggregate-to-crossplane
+              # KRO. The controller, and the platform's tenant
+              # ResourceGraphDefinition role, which binds the ClusterRoles each
+              # tenant is provisioned with.
+              - ClusterRole||kro-tenant-rgd
+              - ClusterRole||kro:controller
+              # KSail operator. Creates and binds the RBAC of the clusters it
+              # manages. This is the broadest grant excluded here: bind and
+              # escalate on every RBAC resource.
+              - ClusterRole||ksail-operator
+              # Longhorn storage controller.
+              - ClusterRole||longhorn-role
+              - Role|longhorn-system|longhorn
+              # Velero server. Restores arbitrary namespaced objects in its
+              # namespace.
+              - Role|velero|velero-server
       validate:
         failureAction: Enforce
         cel:
