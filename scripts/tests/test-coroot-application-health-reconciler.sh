@@ -67,12 +67,14 @@ setup_scenario() {
   local name="$1" dex_mode="$2" dex_current="$3"
   local state_error="${4:-context deadline exceeded}"
   local init_current="${5:-null}"
+  local controller_mode="${6:-known}"
   local dir="${work_root}/${name}"
   mkdir -p "${dir}/bin"
   printf '%s' "${dex_mode}" >"${dir}/dex-mode"
   printf '%s' "${dex_current}" >"${dir}/dex-current"
   printf '%s' "${state_error}" >"${dir}/state-error"
   printf '%s' "${init_current}" >"${dir}/init-current"
+  printf '%s' "${controller_mode}" >"${dir}/controller-mode"
 
   cat >"${dir}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
@@ -137,12 +139,21 @@ JSON
 ]}}
 JSON
     elif [[ "$url" == *'%3Akube-system%3AStaticPods%3Akube-controller-manager'* ]]; then
-      cat <<'JSON'
+      if [ "$(cat "${dir}/controller-mode")" = "known" ]; then
+        cat <<'JSON'
 {"data":{"patterns":[
   {"severity":"error","sample":"E0919 15:54:02.455011       1 reflector.go:227] \"Failed to watch\" err=\"failed to list *v1.PartialObjectMetadata: the server could not find the requested resource\" logger=\"UnhandledError\" reflector=\"k8s.io/client-go/metadata/metadatainformer/informer.go:146\" type=\"*v1.PartialObjectMetadata\""},
-  {"severity":"error","sample":"E0919 15:54:57.858842       1 replica_set.go:640] \"Unhandled Error\" err=\"sync \\\"flux-system/kustomize-controller-9895f7fb8\\\" failed with read version: 295731570 is not as new as written version: 295731572 for group resource replicasets.apps\" logger=\"UnhandledError\""}
+  {"severity":"error","sample":"E0919 15:54:57.858842       1 replica_set.go:640] \"Unhandled Error\" err=\"sync \\\"flux-system/kustomize-controller-9895f7fb8\\\" failed with read version: 295731570 is not as new as written version: 295731572 for group resource replicasets.apps\" logger=\"UnhandledError\""},
+  {"severity":"error","sample":"E0919 23:15:11.248729       1 cronjob_controllerv2.go:179] \"Unhandled Error\" err=\"error syncing CronJobController observability/cluster-heartbeat, requeuing: Operation cannot be fulfilled on cronjobs.batch \\\"cluster-heartbeat\\\": the object has been modified; please apply your changes to the latest version and try again\" logger=\"UnhandledError\""}
 ]}}
 JSON
+      else
+        cat <<'JSON'
+{"data":{"patterns":[
+  {"severity":"error","sample":"E0919 23:15:11.248729       1 cronjob_controllerv2.go:179] \"Unhandled Error\" err=\"error syncing CronJobController observability/cluster-heartbeat, requeuing: Operation cannot be fulfilled on cronjobs.batch \\\"different-job\\\": the object has been modified; please apply your changes to the latest version and try again\" logger=\"UnhandledError\""}
+]}}
+JSON
+      fi
     elif [[ "$url" == *'%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater'* ]]; then
       cat <<'JSON'
 {"data":{"patterns":[{"severity":"error","sample":"E0919 17:00:42.892044       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"events \\\"pod.123\\\" is forbidden: User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\"kubescape\\\"\" event=\"&Event{Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater.}\""}]}}
@@ -172,6 +183,9 @@ JSON
       else
         printf '{"form":{"configs":[{"threshold":0},null,{"threshold":%s}]}}\n' "${current}"
       fi
+    elif [[ "${url}" == *'%3Akube-system%3AStaticPods%3Akube-controller-manager'* ]] &&
+      [ "$(cat "${dir}/controller-mode")" = "near-miss" ]; then
+      printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":5000}]}}'
     else
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,null]}}'
     fi
@@ -225,6 +239,14 @@ jq -s -e '
 ' "${runtime_dir}/posts.ndjson" >/dev/null ||
   fail 'a get-state error without exact deadline evidence did not remain visible'
 pass 'a runtime state error requires exact timeout evidence'
+
+controller_near_miss_dir="$(setup_scenario controller-near-miss known null 'context deadline exceeded' null near-miss)"
+run_scenario "${controller_near_miss_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-controller-manager/inspection/LogErrors/config")) and .body.configs[2] == null)
+' "${controller_near_miss_dir}/posts.ndjson" >/dev/null ||
+  fail 'a CronJob conflict whose object name differs from the controller key did not remain visible'
+pass 'the controller retry policy rejects same-shaped name mismatches'
 
 aged_dir="$(setup_scenario aged none 10)"
 run_scenario "${aged_dir}" >/dev/null
