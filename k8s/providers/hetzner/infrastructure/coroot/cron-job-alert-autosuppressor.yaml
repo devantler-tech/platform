@@ -369,8 +369,10 @@ spec:
                       | reviewed_log_reason as $reason
                       | select($reason != null)
                       | "\($reason):\(.id)"'); do
-                    reason=${match%%:*}
-                    id=${match#*:}
+                    # Avoid brace-form shell expansions: Flux post-build
+                    # substitution evaluates them before this script runs.
+                    reason=$(printf '%s' "$match" | cut -d: -f1)
+                    id=$(printf '%s' "$match" | cut -d: -f2-)
                     ids="$ids $id"; echo "match $reason: $id"
                   done
 

@@ -39,6 +39,13 @@ if [ -z "${script_body}" ] || [ "${script_body}" = "null" ]; then
   fail "could not extract the autosuppressor script"
 fi
 
+# Flux post-build substitution consumes unescaped ${...} expressions in
+# rendered resources. Shell parameter slicing therefore arrives in the live
+# CronJob as an empty assignment even though executing this source manifest
+# directly works. Keep the embedded script free of brace-form expansions.
+[[ "${script_body}" != *'${'* ]] ||
+  fail 'the autosuppressor script contains a Flux-consumable shell expansion'
+
 work_root="$(mktemp -d /tmp/tmp.XXXXXXXXXX)"
 trap 'rm -rf "${work_root}"' EXIT
 
