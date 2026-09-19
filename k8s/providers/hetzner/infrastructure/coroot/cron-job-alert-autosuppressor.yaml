@@ -15,10 +15,12 @@
 #
 # The exemption list IS this script (every entry is reviewed via PR). Each entry
 # is deliberately narrow and is documented with WHY it is by-design. Never add a
-# `new-log-patterns` exemption based on the detail view's Sample field: Coroot
-# groups weakly-equal raw patterns under one alert fingerprint, so Sample is only
-# a representative and can change while the alert id stays the same. Suppressing
-# that id would also suppress every other pattern in the group.
+# broad `new-log-patterns` exemption based only on the detail view's Sample field:
+# Coroot groups weakly-equal raw patterns under one alert fingerprint, so Sample
+# is only a representative and can change while the alert id stays the same. The
+# single exception below is pinned to one already-observed alert id AND revalidates
+# the representative on every run; if it changes, the job automatically reopens
+# the alert instead of continuing to hide a neighboring pattern.
 #
 #   1. extensions-host-failed-conns - the `network-tcp-connections` ("failed to
 #      connect to N upstream services") warning on `_:Unknown:extensions`. This is
@@ -71,6 +73,29 @@
 #      immediately reaches Ready/SecretSynced and continues owning the target.
 #      Only that exact object, reason, source, and AlreadyExists message qualify;
 #      forbidden, refresh, provider, and all other ExternalSecret errors remain.
+#
+#   6. cilium-dns-search-expansion - Cilium's DNS proxy aggregates resolver
+#      attempts from every workload into the Cilium DaemonSet application. The
+#      observed NXDOMAINs are Kubernetes search-list candidates (including the
+#      synthetic `.search_path_suffix` form) followed by successful canonical
+#      lookups; the same report shows DNS latency and server errors healthy. This
+#      exempts only dns-nxdomain-errors on that exact application. Cilium DNS
+#      server errors, latency, and NXDOMAINs attributed to any other app remain.
+#
+#   7. replicaset-consistency-requeue - Kubernetes 1.36's
+#      StaleControllerConsistencyReplicaSet guard intentionally refuses to act
+#      until its informer has observed the resourceVersion the controller just
+#      wrote, then rate-limits and requeues the ReplicaSet. Production shows the
+#      exact upstream message during rapid rollouts and every affected Deployment
+#      converges. Coroot can group weakly-equal patterns, so this is bound to the
+#      one existing alert id plus its exact app/rule/message shape. A changed
+#      representative is automatically REOPENED on the next run.
+#
+#   8. historical-alertmanager-dns-record - alert wge5tiucp7k5 contains two DNS
+#      server errors last updated 2026-08-27. The current Alertmanager pod has no
+#      DNS or error recurrence. Suppress only that immutable record (id, app,
+#      rule, and timestamps); a future Alertmanager DNS alert gets a new id and
+#      remains visible.
 #
 # PROD-ONLY: Coroot alerting (the Slack webhook) is wired only in the hetzner
 # overlay, so this lives here, not in the base.
@@ -151,16 +176,20 @@ spec:
                   PID=$(curl $RETRY "$BASE/api/user" | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
                   [ -n "$PID" ] || { echo "ERROR: could not resolve 'platform' project id"; exit 1; }
 
-                  ALERTS=$(curl $RETRY "$BASE/api/project/$PID/alerts?limit=500")
+                  # Include suppressed/resolved records so the revalidation below
+                  # can reopen the one log-pattern exemption if its representative
+                  # ever changes under Coroot's weak-equality grouping.
+                  ALERTS=$(curl $RETRY "$BASE/api/project/$PID/alerts?include_resolved=true&limit=500")
                   ids=""
+                  reopen_ids=""
 
                   # Exemption 1 - Talos host system-extension group benign failed
-                  # TCP connections (see header entry 2). Coroot-synthesised non-k8s
+                  # TCP connections (see header entry 1). Coroot-synthesised non-k8s
                   # host app, so a genuine fault surfaces elsewhere (Longhorn volume
                   # health, instance-manager SLOs), not here.
                   for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]
                       | select(.suppressed==false and .resolved_at==null and .rule_id=="network-tcp-connections"
-                               and (.application_id | endswith(":_:Unknown:extensions")))
+                               and ((.application_id // "") | endswith(":_:Unknown:extensions")))
                       | .id'); do
                     ids="$ids $id"; echo "match extensions-host-failed-conns: $id"
                   done
@@ -170,7 +199,7 @@ spec:
                   # other upstream has a positive sample in the failed-TCP chart.
                   for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]
                       | select(.suppressed==false and .resolved_at==null and .rule_id=="network-tcp-connections"
-                               and (.application_id | endswith(":_:Unknown:kubelet")))
+                               and ((.application_id // "") | endswith(":_:Unknown:kubelet")))
                       | .id'); do
                     active=$(curl $RETRY "$BASE/api/project/$PID/alerts/$id" | jq -c '
                       [.data.widgets[]? | .chart?
@@ -250,6 +279,75 @@ spec:
                       | .id'); do
                     ids="$ids $id"; echo "match crossview-monitor-secret-create-race: $id"
                   done
+
+                  # Exemption 6 - Kubernetes resolver search-list candidates
+                  # observed by Cilium's cluster-wide DNS proxy. Preserve every
+                  # other DNS check and every other application's NXDOMAINs.
+                  for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]
+                      | select(.suppressed==false and .resolved_at==null
+                               and .rule_id=="dns-nxdomain-errors"
+                               and ((.application_id // "") | endswith(":kube-system:DaemonSet:cilium")))
+                      | .id'); do
+                    ids="$ids $id"; echo "match cilium-dns-search-expansion: $id"
+                  done
+
+                  # Exemption 7 - one known Kubernetes 1.36 ReplicaSet stale-cache
+                  # guard fingerprint. Both the immutable alert id and the current
+                  # representative must qualify. A weakly-equal pattern can reuse
+                  # the fingerprint, so re-open it if the representative changes.
+                  for id in $(printf '%s' "$ALERTS" | jq -r '
+                      def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
+                      def consistency_sample($s):
+                        ($s | test("^E[0-9]{4} [0-9:.]+ +1 replica_set\\.go:640\\] "))
+                        and ($s | contains("\"Unhandled Error\" err=\"sync \\\""))
+                        and ($s | contains("\" failed with read version: "))
+                        and ($s | test(" is not as new as written version: [0-9]+ for group resource replicasets\\.apps\" logger=\"UnhandledError\"$"));
+                      .data.alerts[]
+                      | select(.id=="to3d0cyc7cnn" and .suppressed==false and .resolved_at==null
+                               and .rule_id=="new-log-patterns"
+                               and ((.application_id // "") | endswith(":kube-system:StaticPods:kube-controller-manager")))
+                      | details as $d
+                      | select(consistency_sample($d.Sample // ""))
+                      | .id'); do
+                    ids="$ids $id"; echo "match replicaset-consistency-requeue: $id"
+                  done
+
+                  for id in $(printf '%s' "$ALERTS" | jq -r '
+                      def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
+                      def consistency_sample($s):
+                        ($s | test("^E[0-9]{4} [0-9:.]+ +1 replica_set\\.go:640\\] "))
+                        and ($s | contains("\"Unhandled Error\" err=\"sync \\\""))
+                        and ($s | contains("\" failed with read version: "))
+                        and ($s | test(" is not as new as written version: [0-9]+ for group resource replicasets\\.apps\" logger=\"UnhandledError\"$"));
+                      .data.alerts[]
+                      | select(.id=="to3d0cyc7cnn" and .suppressed==true)
+                      | details as $d
+                      | select((.rule_id=="new-log-patterns"
+                                and ((.application_id // "") | endswith(":kube-system:StaticPods:kube-controller-manager"))
+                                and consistency_sample($d.Sample // "")) | not)
+                      | .id'); do
+                    reopen_ids="$reopen_ids $id"; echo "reopen changed controller pattern: $id"
+                  done
+
+                  # Exemption 8 - only the old, non-recurring Alertmanager record.
+                  # Exact timestamps prevent this clause from becoming a rule-level
+                  # DNS exemption if Coroot ever reuses or migrates identifiers.
+                  for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]
+                      | select(.id=="wge5tiucp7k5" and .suppressed==false and .resolved_at==null
+                               and .rule_id=="dns-server-errors"
+                               and ((.application_id // "") | endswith(":kubescape:StatefulSet:alertmanager"))
+                               and .opened_at==1787841164000
+                               and .updated_at==1787846982000)
+                      | .id'); do
+                    ids="$ids $id"; echo "match historical-alertmanager-dns-record: $id"
+                  done
+
+                  reopen_n=$(echo $reopen_ids | wc -w)
+                  if [ "$reopen_n" -gt 0 ]; then
+                    payload=$(printf '%s\n' $reopen_ids | jq -R . | jq -s '{ids: .}')
+                    curl $RETRY -X POST -H 'Content-Type: application/json' -d "$payload" "$BASE/api/project/$PID/alerts/reopen" >/dev/null \
+                      && echo "reopened $reopen_n changed exemption(s)"
+                  fi
 
                   n=$(echo $ids | wc -w)
                   if [ "$n" -gt 0 ]; then

@@ -49,6 +49,16 @@ readonly node_agent_repository
 [[ "${node_agent_repository}" == 'ghcr.io/devantler-tech/platform-kubescape-node-agent' ]] ||
   fail 'Kubescape node-agent must use the dedicated signed compatibility repository'
 
+kubescape_probe_patch="$(
+  yq -er '.spec.postRenderers[].kustomize.patches[] |
+    select(.target.kind == "Deployment" and .target.name == "^kubescape$") |
+    .patch' "${kubescape_release}"
+)" || fail 'the Kubescape liveness-probe patch is missing'
+readonly kubescape_probe_patch
+[[ "${kubescape_probe_patch}" == *'/spec/template/spec/containers/0/livenessProbe/timeoutSeconds'* &&
+  "${kubescape_probe_patch}" == *$'value: 5'* ]] ||
+  fail 'Kubescape liveness must tolerate scan-time response latency for five seconds'
+
 summary_workers="$(
   yq -er '.spec.values.storage.kindQueues.vulnerabilitymanifestsummaries.workerCount' \
     "${kubescape_release}"
