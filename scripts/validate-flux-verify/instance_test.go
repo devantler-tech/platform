@@ -16,12 +16,14 @@ metadata:
   name: flux
   namespace: flux-system
 spec:
+  components:
+    - source-controller
+    - kustomize-controller
   kustomize:
     patches:
       - target:
           kind: Deployment
           name: kustomize-controller
-          namespace: flux-system
         patch: |
           - op: replace
             path: /spec/replicas
