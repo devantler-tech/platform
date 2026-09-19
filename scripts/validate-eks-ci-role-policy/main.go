@@ -2792,7 +2792,31 @@ const (
 // approval-base check passed against bd15655a.
 //
 // Previous aggregate: bd15655a621002ee2f1bef6f44683c8cdc89abc90e47e1626ae80279234c405b.
-const expectedRenderedSurfaceSHA = "c6e42dad361a132d416925d2b10206b5979d4425b6702efec8c0fe165f170639"
+//
+// That CCM baseline context established aggregate:
+//
+//	c6e42dad361a132d416925d2b10206b5979d4425b6702efec8c0fe165f170639
+//
+// Moved by the C-0211 baseline context for Tetragon (#3239), whose base is
+// c6e42dad above. The kube-system/tetragon HelmRelease values gain
+// fsGroupChangePolicy: OnRootMismatch on the agent and operator pod security
+// contexts and an empty seLinuxOptions object on the agent, export-stdout and
+// operator containers. A HelmRelease is a controller-RBAC emitter, so this
+// moves the aggregate even though nothing is granted.
+//
+// CONSERVATION: the approval-base comparison must name exactly one moved
+// entry, helm.toolkit.fluxcd.io/v2 HelmRelease kube-system/tetragon. No
+// ClusterRole, Role, ClusterRoleBinding, RoleBinding or ServiceAccount source
+// changes; no identity, binding, verb, wildcard, AWS identity or permission
+// changes.
+//
+// RENDERER PROVENANCE: the value below is printed by CI's checksum-verified
+// kubectl v1.36.2 renderer (TestValidateAuthorizationAcceptsCommittedPolicy)
+// on this change merged with main, whose approval-base check must pass
+// against c6e42dad.
+//
+// Previous aggregate: c6e42dad361a132d416925d2b10206b5979d4425b6702efec8c0fe165f170639.
+const expectedRenderedSurfaceSHA = "0000000000000000000000000000000000000000000000000000000000000000"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2805,7 +2829,7 @@ const expectedRenderedSurfaceSHA = "c6e42dad361a132d416925d2b10206b5979d4425b670
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "bd15655a621002ee2f1bef6f44683c8cdc89abc90e47e1626ae80279234c405b"
+const previousRenderedSurfaceSHA = "c6e42dad361a132d416925d2b10206b5979d4425b6702efec8c0fe165f170639"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
