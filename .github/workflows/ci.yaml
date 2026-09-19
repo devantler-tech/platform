@@ -1049,7 +1049,9 @@ jobs:
             scripts/refresh-flux-ghcr-auth.sh \
             scripts/run-ksail-prod-with-pull-auth.sh \
             scripts/use-prod-stable-api-endpoint.sh \
+            scripts/wait-for-prod-api-stability.sh \
             scripts/tests/test-use-prod-stable-api-endpoint.sh \
+            scripts/tests/test-wait-for-prod-api-stability.sh \
             scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           shellcheck \
             scripts/ghcr-auth-lib.sh \
@@ -1057,9 +1059,12 @@ jobs:
             scripts/refresh-flux-ghcr-auth.sh \
             scripts/run-ksail-prod-with-pull-auth.sh \
             scripts/use-prod-stable-api-endpoint.sh \
+            scripts/wait-for-prod-api-stability.sh \
             scripts/tests/test-use-prod-stable-api-endpoint.sh \
+            scripts/tests/test-wait-for-prod-api-stability.sh \
             scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           bash scripts/tests/test-use-prod-stable-api-endpoint.sh
+          bash scripts/tests/test-wait-for-prod-api-stability.sh
           bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           go test -timeout=20m ./scripts/tests/refresh-flux-ghcr-auth
 

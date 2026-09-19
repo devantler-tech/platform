@@ -4050,9 +4050,20 @@ acquire_sync_lease() {
       --namespace flux-system \
       get lease "${SYNC_LEASE_NAME}" \
       --ignore-not-found \
-      -o json >"${sync_lease_file}"; then
-      echo "::error::Could not inspect the GHCR synchronization lease."
-      return 1
+      -o json >"${sync_lease_file}" 2>"${sync_lease_result_file}"; then
+      if ! kubernetes_api_transport_interrupted "${sync_lease_result_file}"; then
+        echo "::error::Could not inspect the GHCR synchronization lease."
+        emit_safe_operation_output "sync-lease-read" "${sync_lease_result_file}"
+        return 1
+      fi
+      if ((attempt == 3)); then
+        echo "::error::Could not inspect the GHCR synchronization lease after Kubernetes API recovery retries."
+        emit_safe_operation_output "sync-lease-read" "${sync_lease_result_file}"
+        return 1
+      fi
+      echo "::warning::Kubernetes API was unreachable before claiming the GHCR synchronization Lease; waiting for API recovery before retrying the read-only inspection."
+      wait_for_sync_lease_api_recovery || return 1
+      continue
     fi
     now="$(kubernetes_microtime_now)"
     if [[ ! -s "${sync_lease_file}" ]]; then

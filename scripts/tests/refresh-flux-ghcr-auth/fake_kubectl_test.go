@@ -989,6 +989,14 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid synchronization lease lookup")
 	}
+	if os.Getenv("FAKE_TRANSIENT_SYNC_LEASE_API_FAIL_BEFORE_CLAIM") == "true" &&
+		!markerExists("sync-lease-api-unreachable-before-claim") {
+		touchMarker("sync-lease-api-unreachable-before-claim")
+		return commandFailure(
+			54,
+			"The connection to the server api.example.test:6443 was refused: connect: connection refused",
+		)
+	}
 	if os.Getenv("FAKE_TRANSIENT_SYNC_LEASE_API_FAIL_AFTER_FIRST_CLAIM") == "true" &&
 		markerExists("cordon-owner-prod-worker-1") &&
 		!markerExists("sync-lease-api-unreachable-after-first-claim") {

@@ -380,6 +380,20 @@ runs:
         WG_SERVER_PRIVATE_KEY: ${{ inputs.wg-server-private-key }}
       run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update
 
+    - name: ⏳ Wait for the production Kubernetes API to stabilize
+      id: wait_prod_api_stability
+      # Talos accepts an in-place machine-config update before the affected
+      # static control-plane pods have necessarily restarted. One successful
+      # /readyz probe can therefore hit the old API process immediately before
+      # it disappears. Require a sustained ready window before any later
+      # Kubernetes mutation. Run after both successful and failed update
+      # attempts because a partial apply can trigger the same delayed restart.
+      if: >-
+        !cancelled() &&
+        steps.cluster_update.outcome != 'skipped'
+      shell: bash
+      run: ./scripts/wait-for-prod-api-stability.sh
+
     - name: 📣 Report suppressed machine-config sync
       # The step above is the pipeline's ONLY Talos machine-config sync, and the
       # rollout gate skips it. A skipped step inside a green deploy reads as
@@ -444,7 +458,11 @@ runs:
       if: >-
         !cancelled() &&
         steps.verify_flux_ghcr_auth_after_push.outcome == 'success' &&
-        steps.reconcile.outcome == 'success'
+        steps.reconcile.outcome == 'success' &&
+        (
+          steps.cluster_update.outcome == 'skipped' ||
+          steps.wait_prod_api_stability.outcome == 'success'
+        )
       shell: bash
       run: >-
         ./scripts/refresh-flux-ghcr-auth.sh

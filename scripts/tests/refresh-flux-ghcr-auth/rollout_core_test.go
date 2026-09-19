@@ -472,6 +472,26 @@ func TestTransientDrainAPITransportFailureRetriesUnderTheSameClaim(t *testing.T)
 	requireLine(t, operations, "root-patch")
 }
 
+func TestTransientAPIFailureBeforeLeaseClaimWaitsAndRetries(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TRANSIENT_SYNC_LEASE_API_FAIL_BEFORE_CLAIM": "true",
+	})
+	requireSuccessResult(t, result)
+	if !pathExists(filepath.Join(f.syncStateDir, "sync-lease-api-unreachable-before-claim")) {
+		t.Fatal("fixture did not interrupt the initial synchronization Lease lookup")
+	}
+	requireContains(
+		t,
+		result.stdout+result.stderr,
+		"Kubernetes API was unreachable before claiming the GHCR synchronization Lease",
+	)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "api-readyz")
+	requireLine(t, operations, "root-patch")
+}
+
 func TestTransientAPIFailureWhileAssertingLeaseWaitsAndReprovesHolder(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
