@@ -442,17 +442,6 @@ spec:
                           ] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
-                      vpa-normal-event-denial)
-                        counts=$(printf '%s' "$entries" | jq -r '
-                          . as $all |
-                          [$all[] | .message as $s | select(
-                            ($s | test("^E[0-9]{4} [0-9:.]+ +1 event\\.go:359\\] ")) and
-                            ($s | contains("\"Server rejected event (will not retry!)\"")) and
-                            ($s | contains("User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\"")) and
-                            ($s | contains("Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater."))
-                          )] as $ok | "\($all|length):\($ok|length)"
-                        ')
-                        ;;
                       velero-plugin-stdout-close)
                         counts=$(printf '%s' "$entries" | jq -r '
                           . as $all |
@@ -566,7 +555,11 @@ spec:
                   # and Kustomization identity before applying the finite cap.
                   reconcile_logs "$PID:flux-system:Deployment:kustomize-controller" flux-kustomize-restart-cancellation 10
                   reconcile_logs "$PID:kube-system:Deployment:cluster-autoscaler-hetzner-cluster-autoscaler" autoscaler-capacity-buffer-conflict 10
-                  reconcile_logs "$PID:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater" vpa-normal-event-denial 10
+                  # Event writes are part of the updater's functional contract.
+                  # The dedicated RBAC grant fixes the denial at source, so
+                  # declaratively retire the former finite exemption and let
+                  # any regression fail visible again.
+                  reconcile_threshold "$PID:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater" LogErrors 0 inherit vpa-event-rbac-fixed
                   reconcile_logs "$PID:velero:Deployment:velero" velero-plugin-stdout-close 10
                   # CNPG's scheduled retention deletes the oldest successful
                   # Backup and can then drain one already-queued reconcile for

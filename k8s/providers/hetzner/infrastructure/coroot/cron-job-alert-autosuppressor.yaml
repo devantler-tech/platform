@@ -128,16 +128,7 @@
 #      a millisecond (never second) tail. Writes, slower completions, and every
 #      other API-server log pattern remain visible.
 #
-#  13. vpa-event-recording-denial - the updater successfully performs an
-#      in-place resize, then client-go tries to patch the repeated Normal Event's
-#      count/timestamp. The chart grants cluster-wide Event create but not patch,
-#      so only that optional record update is rejected; the Pod resize has
-#      already succeeded. Granting patch across every workload namespace would
-#      let a compromised updater alter all Events for non-critical bookkeeping.
-#      Keep that safer RBAC boundary and suppress only the reviewed fingerprint,
-#      exact updater identity, Event-only denial, and InPlaceResizedByVPA message.
-#
-#  14. openbao-snapshot-device-link-race - Hetzner reports a newly attached
+#  13. openbao-snapshot-device-link-race - Hetzner reports a newly attached
 #      volume before udev has created its `/dev/disk/by-id` link. Kubelet emits
 #      one FailedMount for the daily OpenBao snapshot, retries two seconds later,
 #      and the Job completes. Suppress only that exact scheduled-pod, provider
@@ -145,7 +136,7 @@
 #      still alerts when a pending pod's FailedMount persists, so a real attach
 #      failure remains visible on the purpose-built signal.
 #
-#  15. longhorn-backup-clone-lifecycle - Velero's CSI data path creates
+#  14. longhorn-backup-clone-lifecycle - Velero's CSI data path creates
 #      short-lived Longhorn clones. Longhorn emits Normal clone-copy-complete
 #      events while waiting for the replica set to become HA, CSI deletion can
 #      briefly find a clone still attached, and snapshot cleanup can observe
@@ -155,16 +146,16 @@
 #      Longhorn volume health and the stranded-volume-attach monitor remain the
 #      durable fault signals.
 #
-#  16. csi-provisioner-clone-delete-retry - the external provisioner retries a
+#  15. csi-provisioner-clone-delete-retry - the external provisioner retries a
 #      short-lived clone deletion until Longhorn detaches it. Bind the stable
 #      fingerprint to an exact message whose PV field repeats the same object;
 #      permission and provider deletion failures remain visible.
 #
-#  17. longhorn-clone-copy-in-progress - Longhorn rejects attachment of a clone
+#  16. longhorn-clone-copy-in-progress - Longhorn rejects attachment of a clone
 #      until its snapshot data copy completes, then the same volume becomes HA.
 #      Bind the stable fingerprint to the exact Aborted clone-copy message.
 #
-#  18. controller-clone-attach-retry - Kubernetes' nested-pending-operations
+#  17. controller-clone-attach-retry - Kubernetes' nested-pending-operations
 #      loop reports the same retryable Longhorn clone-copy state with a 500ms
 #      backoff. Bind its stable fingerprint and exact terminal cause; other
 #      AttachVolume failures remain visible.
@@ -446,7 +437,7 @@ spec:
                     ids="$ids $id"; log_info "match longhorn-backup-clone-lifecycle: $id"
                   done
 
-                  # Exemptions 7, 9-13, and 16-18 - exact weak-equality log fingerprints.
+                  # Exemptions 7, 9-12, and 15-17 - exact weak-equality log fingerprints.
                   # The fingerprint is stable across Coroot alert-ID rotation.
                   # Every fingerprint and current representative must qualify; a
                   # changed representative is reopened below instead of hidden.
@@ -484,12 +475,6 @@ spec:
                            and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 timeout\\.go:140\\] "))
                            and (($d.Sample // "") | contains("\"Post-timeout activity\" logger=\"UnhandledError\""))
                            and (($d.Sample // "") | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$"))) then "apiserver-millisecond-post-timeout"
-                          elif (.fingerprint=="4caedf68675462a5"
-                           and ((.application_id // "") | endswith(":vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater"))
-                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 event\\.go:359\\] "))
-                           and (($d.Sample // "") | contains("\"Server rejected event (will not retry!)\""))
-                           and (($d.Sample // "") | contains("User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\""))
-                           and (($d.Sample // "") | contains("Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater."))) then "vpa-event-recording-denial"
                           elif (.fingerprint=="023675248cbc16ad"
                            and ((.application_id // "") | endswith(":longhorn-system:Deployment:csi-provisioner"))
                            and ((try (($d.Sample // "") | capture(
@@ -555,12 +540,6 @@ spec:
                            and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 timeout\\.go:140\\] "))
                            and (($d.Sample // "") | contains("\"Post-timeout activity\" logger=\"UnhandledError\""))
                            and (($d.Sample // "") | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$"))) then "apiserver-millisecond-post-timeout"
-                          elif (.fingerprint=="4caedf68675462a5"
-                           and ((.application_id // "") | endswith(":vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater"))
-                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 event\\.go:359\\] "))
-                           and (($d.Sample // "") | contains("\"Server rejected event (will not retry!)\""))
-                           and (($d.Sample // "") | contains("User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\""))
-                           and (($d.Sample // "") | contains("Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater."))) then "vpa-event-recording-denial"
                           elif (.fingerprint=="023675248cbc16ad"
                            and ((.application_id // "") | endswith(":longhorn-system:Deployment:csi-provisioner"))
                            and ((try (($d.Sample // "") | capture(
