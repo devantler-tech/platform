@@ -39,7 +39,7 @@ acceptances_file="${work_root}/risks.json"
 yq e -r '.data."risks.json"' "${acceptances_manifest}" >"${acceptances_file}"
 
 jq -e '
-  type == "array" and length == 36 and
+  type == "array" and length == 37 and
   all(.[ ];
     (.application | type == "string") and
     (.application | split(":") | length == 3) and
@@ -50,7 +50,7 @@ jq -e '
   ([.[] | [.application, .category, .type] | @tsv] | length) ==
     ([.[] | [.application, .category, .type] | @tsv] | unique | length)
 ' "${acceptances_file}" >/dev/null ||
-  fail 'the availability acceptance allowlist must contain 36 unique, reasoned entries'
+  fail 'the availability acceptance allowlist must contain 37 unique, reasoned entries'
 
 expected_applications=(
   'actual-budget:Deployment:actual-budget-actualbudget'
@@ -76,6 +76,7 @@ expected_applications=(
   'longhorn-system:InstanceManager:instance-manager-1d6354ff91a9ad3b1922050e547fde38'
   'longhorn-system:InstanceManager:instance-manager-2c5e0312dd2690e02ad4cfbc6a7b2b25'
   'longhorn-system:InstanceManager:instance-manager-44efed9835a6c0c7c26e0d4ed66b757b'
+  'longhorn-system:InstanceManager:instance-manager-c210015368cfb1db9feb55fd74623baa'
   'kubescape:Deployment:kubescape'
   'kubescape:Deployment:kubevuln'
   'kubescape:Deployment:operator'
