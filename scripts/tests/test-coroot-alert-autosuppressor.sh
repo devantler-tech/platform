@@ -556,13 +556,31 @@ cat >"${controlled_dir}/alerts.json" <<'JSON'
       {"name":"Event message","value":"MountVolume.SetUp failed for volume \"data\" : permission denied"},
       {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Pod\"\nname=\"database-0\"\nnamespace=\"production\"\nreason=\"FailedMount\"\nsource=\"kubelet\""}
     ]
+  },
+  {
+    "id":"history-correlated-node-shutdown","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":12005000,"updated_at":12005000,
+    "details":[
+      {"name":"Event message","value":"Pod was rejected as the node is shutting down."},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Pod\"\nname=\"coroot-node-agent-history\"\nnamespace=\"observability\"\nreason=\"NodeShutdown\"\nsource=\"kubelet\""}
+    ]
+  }
+]}}
+JSON
+cat >"${controlled_dir}/history.json" <<'JSON'
+{"data":{"alerts":[
+  {
+    "id":"resolved-autoscale-reboot-anchor","suppressed":false,"resolved_at":12001000,"rule_id":"kubernetes-events","application_id":":::","opened_at":12000000,"updated_at":12000000,
+    "details":[
+      {"name":"Event message","value":"Node autoscale-cx43-history has been rebooted, boot id: 216ffb86-e3bf-4975-8cb1-5c4f51bc5c22"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Node\"\nname=\"autoscale-cx43-history\"\nreason=\"Rebooted\"\nsource=\"kubelet\""}
+    ]
   }
 ]}}
 JSON
 run_scenario "${controlled_dir}" >/dev/null
 [ -f "${controlled_dir}/suppressed.json" ] ||
   fail "the exact controlled lifecycle alerts were not suppressed"
-jq -e '.ids | sort == ["autoscale-delete-anchor", "autoscale-endpoint-slice", "autoscale-failed-daemon", "autoscale-invalid-disk", "autoscale-provider-anchor", "autoscale-ready", "autoscale-reboot-anchor", "autoscale-schedulable", "correlated-cilium-startup", "correlated-failed-mount", "correlated-failed-scheduling", "correlated-grace-period", "correlated-network-not-ready", "correlated-node-not-ready", "correlated-node-shutdown", "quiet-ksail-rollout"]' \
+jq -e '.ids | sort == ["autoscale-delete-anchor", "autoscale-endpoint-slice", "autoscale-failed-daemon", "autoscale-invalid-disk", "autoscale-provider-anchor", "autoscale-ready", "autoscale-reboot-anchor", "autoscale-schedulable", "correlated-cilium-startup", "correlated-failed-mount", "correlated-failed-scheduling", "correlated-grace-period", "correlated-network-not-ready", "correlated-node-not-ready", "correlated-node-shutdown", "history-correlated-node-shutdown", "quiet-ksail-rollout"]' \
   "${controlled_dir}/suppressed.json" >/dev/null || {
   jq -c '.ids | sort' "${controlled_dir}/suppressed.json" >&2
   fail "controlled lifecycle classification admitted an active or unrelated alert"

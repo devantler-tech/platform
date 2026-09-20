@@ -267,6 +267,10 @@ spec:
                   # include_resolved here: production has >31k historical records,
                   # so a 500-row history page can omit old-but-still-firing alerts.
                   ALERTS=$(curl $RETRY "$BASE/api/project/$PID/alerts?limit=500")
+                  # Correlated symptoms can remain firing after their node anchor
+                  # resolves. Use only the bounded recent page to recover anchor
+                  # timestamps; suppression candidates always come from ALERTS.
+                  RECENT_ALERTS=$(curl $RETRY "$BASE/api/project/$PID/alerts?include_resolved=true&limit=500")
                   NOW_MS=$(($(date -u +%s) * 1000))
 
                   ALERTMANAGER_DNS_ALERT=$(curl $RETRY "$BASE/api/project/$PID/alerts/wge5tiucp7k5")
@@ -459,7 +463,7 @@ spec:
                   # Exemption 18 - exact, quiescent autoscaler node-lifecycle
                   # events. Signals without a node identity must correlate in
                   # time with an exact node deletion, reboot, or provider anchor.
-                  for id in $(printf '%s' "$ALERTS" | jq -r --argjson now "$NOW_MS" '
+                  for id in $(printf '%s\n%s\n' "$ALERTS" "$RECENT_ALERTS" | jq -s -r --argjson now "$NOW_MS" '
                       def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
                       def labels($d): (($d.Labels // "") | split("\n") | map(select(length > 0) | capture("^(?<key>[^=]+)=\"(?<value>.*)\"$")) | from_entries);
                       def quiet($a): (($a.updated_at // $a.opened_at // $now) <= ($now - 300000));
@@ -549,11 +553,11 @@ spec:
                         and $e.l.reason=="Unhealthy"
                         and $e.l.source=="kubelet"
                         and ($e.d["Event message"] | test("^Readiness probe failed: Get \\\"http://10\\.244\\.[0-9]+\\.[0-9]+:8081/readyz\\\": dial tcp 10\\.244\\.[0-9]+\\.[0-9]+:8081: connect: connection refused$"));
-                      [.data.alerts[]
-                       | select(.suppressed==false and .resolved_at==null and quiet(.))
-                       | select(anchor(.))
-                       | .opened_at] as $anchors
-                      | .data.alerts[] as $a
+                      ([.[0].data.alerts[], .[1].data.alerts[]]
+                       | map(select(quiet(.) and anchor(.)))
+                       | map(.opened_at)
+                       | unique) as $anchors
+                      | .[0].data.alerts[] as $a
                       | select($a.suppressed==false and $a.resolved_at==null and quiet($a)
                                and $a.rule_id=="kubernetes-events")
                       | event_shape($a) as $e
