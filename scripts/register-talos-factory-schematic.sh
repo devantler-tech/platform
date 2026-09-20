@@ -33,6 +33,7 @@ talos_version=$(yq eval '.spec.cluster.talos.version' "$cluster_config")
 
 response=$(
   "$curl_bin" --fail-with-body --silent --show-error \
+    --connect-timeout 15 --max-time 300 \
     --retry 3 --retry-all-errors \
     --request POST \
     --header 'Content-Type: application/yaml' \
@@ -49,6 +50,7 @@ registered_id=$(jq -er '.id | select(type == "string" and length == 64)' <<<"$re
 
 image_url="$factory_url/image/$schematic_id/$talos_version/hcloud-amd64.raw.xz"
 "$curl_bin" --fail --silent --show-error --head \
+  --connect-timeout 15 --max-time 300 \
   --retry 5 --retry-all-errors --retry-delay 5 \
   "$image_url" >/dev/null
 

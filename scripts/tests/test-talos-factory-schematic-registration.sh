@@ -82,7 +82,11 @@ fi
 MOCK
 chmod +x "$mock_curl"
 
-schematic_id=$(sha256sum "$schematic" | awk '{print $1}')
+if command -v sha256sum >/dev/null 2>&1; then
+  schematic_id=$(sha256sum "$schematic" | awk '{print $1}')
+else
+  schematic_id=$(shasum -a 256 "$schematic" | awk '{print $1}')
+fi
 talos_version=$(yq eval '.spec.cluster.talos.version' "$cluster_config")
 factory_url='https://factory.test.invalid'
 expected_image_url="$factory_url/image/$schematic_id/$talos_version/hcloud-amd64.raw.xz"
