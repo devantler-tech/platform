@@ -608,3 +608,19 @@ spec:
           containers:
             - name: velero
               image: velero/velero:v1.16.0
+---
+# Opted-in namespace (kube-system) mirror pod: must NOT be mutated by either
+# opt-in rule (#3921). Static mirror pods are read-only API projections whose spec
+# is managed by kubelet from host machine config. Mutating them in admission
+# creates false compliance without securing the actual running containers.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-apiserver-mirror
+  namespace: kube-system
+  annotations:
+    kubernetes.io/config.mirror: "1234567890abcdef"
+spec:
+  containers:
+    - name: kube-apiserver
+      image: registry.k8s.io/kube-apiserver:v1.31.0

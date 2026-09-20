@@ -39,3 +39,9 @@ namespaceSelector:
   - name: kubescape
     labels:
       pod-security.devantler.tech/baseline-context: enabled
+  # kube-system: opted in for the mirror-pod regression test (#3921). Proves that
+  # when the namespace is opted in, mirror pods (annotated kubernetes.io/config.mirror)
+  # are skipped by both opt-in rules.
+  - name: kube-system
+    labels:
+      pod-security.devantler.tech/baseline-context: enabled

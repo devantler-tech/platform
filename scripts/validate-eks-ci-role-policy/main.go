@@ -2817,13 +2817,43 @@ const (
 //
 // Previous aggregate: c6e42dad361a132d416925d2b10206b5979d4425b6702efec8c0fe165f170639.
 //
-// Moved by the Kubescape CPU-throttling repair in #3915, derived on exact main
-// cf2f6248e2228d2c5a0a291863909c9655c567c9. The kubescape/kubescape
-// HelmRelease adds only the scanner's authored CPU request and limit: its
-// request remains the chart's 250m baseline while the limit becomes 2 cores so
-// auto-vpa preserves an 8:1 burst ratio instead of throttling scans at 120m.
-// A HelmRelease is a controller-RBAC emitter, so this resource-only values
-// change moves the authorization aggregate even though it grants no permission.
+// That Tetragon baseline context established aggregate:
+//
+//	1e026cb853f51a99c254e758bb24f98be749d00659005fc27d9c3fc10937277f
+//
+// Moved by declaring Kubescape's scanned-namespace scope (#3923), whose base is
+// 1e026cb8 above. The kubescape/kubescape HelmRelease values gain an explicit
+// excludeNamespaces key, pinned to the chart default the cluster already runs,
+// so the operator's rendered config.json is byte-identical. A HelmRelease is a
+// controller-RBAC emitter, so this moves the aggregate even though nothing is
+// granted and no runtime behaviour changes.
+//
+// CONSERVATION: the approval-base comparison names exactly one moved entry,
+// helm.toolkit.fluxcd.io/v2 HelmRelease kubescape/kubescape. No ClusterRole,
+// Role, ClusterRoleBinding, RoleBinding or ServiceAccount source changes; no
+// identity, binding, verb, wildcard, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below was printed by CI's checksum-verified
+// kubectl v1.36.2 renderer (TestValidateAuthorizationAcceptsCommittedPolicy,
+// job 106055927834) on this change merged with main
+// c80eb20be1c1f21cf9e12f49b25caad336991115, whose approval-base check passed
+// against 1e026cb8. A local render on kubectl v1.36.1 printed the same
+// aggregate, so two independent renderers agree on it.
+//
+// Previous aggregate: 1e026cb853f51a99c254e758bb24f98be749d00659005fc27d9c3fc10937277f.
+//
+// That explicit Kubescape scan scope established aggregate:
+//
+//	99aef50f4a6fce8f9ce7db65369cbdab8b9403accc1337faff657328ffb0fed0
+//
+// Moved again by the Kubescape CPU-throttling repair in #3915, re-derived on
+// exact main 9f3a937e6a31f9fc38b304b5e9b8e96363e84387. The
+// kubescape/kubescape HelmRelease adds only the scanner's authored CPU request
+// and limit: its request remains the chart's 250m baseline while the limit
+// becomes 2 cores so auto-vpa preserves an 8:1 burst ratio instead of
+// throttling scans at 120m. A HelmRelease is a controller-RBAC emitter, so this
+// resource-only values change moves the authorization aggregate even though it
+// grants no permission.
 //
 // CONSERVATION: the approval-base diagnostic names exactly one changed entry,
 // helm.toolkit.fluxcd.io/v2 HelmRelease kubescape/kubescape. No ClusterRole,
@@ -2838,12 +2868,12 @@ const (
 // The approval-base comparison against the exact main above names only the
 // HelmRelease entry described here.
 //
-// Previous aggregate: 1e026cb853f51a99c254e758bb24f98be749d00659005fc27d9c3fc10937277f.
+// Previous aggregate: 99aef50f4a6fce8f9ce7db65369cbdab8b9403accc1337faff657328ffb0fed0.
 //
 // This Kubescape CPU repair establishes aggregate:
 //
-//	c32162fadcf465b5bc2690f5164217d637b625863ba7f831bb8aa85398649d1d
-const expectedRenderedSurfaceSHA = "c32162fadcf465b5bc2690f5164217d637b625863ba7f831bb8aa85398649d1d"
+//	b77f4952280b334ccfcd377afc05cf74c612097b9a5bf90e17fd8b6d22006f82
+const expectedRenderedSurfaceSHA = "b77f4952280b334ccfcd377afc05cf74c612097b9a5bf90e17fd8b6d22006f82"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2856,7 +2886,7 @@ const expectedRenderedSurfaceSHA = "c32162fadcf465b5bc2690f5164217d637b625863ba7
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "1e026cb853f51a99c254e758bb24f98be749d00659005fc27d9c3fc10937277f"
+const previousRenderedSurfaceSHA = "99aef50f4a6fce8f9ce7db65369cbdab8b9403accc1337faff657328ffb0fed0"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
