@@ -4834,7 +4834,7 @@ pause_flux_policy_parent() {
   local resource_version attempt annotations_present wait_status
   local max_attempts="${FLUX_POLICY_PARENT_CLAIM_MAX_ATTEMPTS:-5}"
   local reread_resource_version
-  local wait_started_at="${SECONDS}"
+  local wait_started_at
   # The re-read below needs its own stderr sink. Pointed at the result file it would
   # succeed, write nothing, and truncate the rejection that explains why the fence was
   # refused — leaving a bare refusal with no cause in exactly the case that matters
@@ -4882,6 +4882,7 @@ pause_flux_policy_parent() {
     "${flux_policy_parent_state_file}")"
   flux_policy_parent_owner="${sync_lease_holder}"
 
+  wait_started_at="${SECONDS}"
   if wait_for_flux_policy_parent_quiescence_before_claim; then
     :
   else
@@ -5019,6 +5020,7 @@ pause_flux_policy_parent() {
   # New parent reconciliations now stop at spec.suspend. After a mandatory
   # quiet interval, require a fresh observation without an in-flight
   # Reconciling condition before touching the child that this parent owns.
+  wait_started_at="${SECONDS}"
   for ((attempt = 1; attempt <= PARENT_QUIESCE_ATTEMPTS; attempt++)); do
     sleep "${SYNC_INTERVAL}"
     if kubectl \
