@@ -314,6 +314,23 @@ spec:
               namespaceSelector:
                 matchLabels:
                   pod-security.devantler.tech/baseline-context: enabled
+      # NEVER MUTATE A KUBELET MIRROR POD. A static pod's API object is a read-only
+      # projection of a spec kubelet owns and rebuilds from Talos machine config, so
+      # an admission mutation edits the projection and never the running container.
+      # Kubescape scores the API object, so mutating one flips it to PASSING while
+      # the real kube-apiserver, kube-controller-manager and kube-scheduler
+      # containers are unchanged — a posture number improving without the cluster
+      # improving, and invisible from the score alone. That is strictly worse than
+      # the honest FAIL it replaces, and it becomes reachable the moment kube-system
+      # is labelled, where all nine of prod's control-plane mirror pods live.
+      # Supplying the fields at the source is not an alternative: Talos machine
+      # config exposes no securityContext on any control-plane component (verified
+      # against v1.13, the version prod runs, and v1.14 — see #3919).
+      preconditions:
+        all:
+          - key: "{{ to_string(contains(keys(request.object.metadata.annotations || `{}`), 'kubernetes.io/config.mirror')) }}"
+            operator: Equals
+            value: "false"
       mutate:
         patchStrategicMerge:
           spec:
@@ -335,6 +352,23 @@ spec:
               namespaceSelector:
                 matchLabels:
                   pod-security.devantler.tech/baseline-context: enabled
+      # NEVER MUTATE A KUBELET MIRROR POD. A static pod's API object is a read-only
+      # projection of a spec kubelet owns and rebuilds from Talos machine config, so
+      # an admission mutation edits the projection and never the running container.
+      # Kubescape scores the API object, so mutating one flips it to PASSING while
+      # the real kube-apiserver, kube-controller-manager and kube-scheduler
+      # containers are unchanged — a posture number improving without the cluster
+      # improving, and invisible from the score alone. That is strictly worse than
+      # the honest FAIL it replaces, and it becomes reachable the moment kube-system
+      # is labelled, where all nine of prod's control-plane mirror pods live.
+      # Supplying the fields at the source is not an alternative: Talos machine
+      # config exposes no securityContext on any control-plane component (verified
+      # against v1.13, the version prod runs, and v1.14 — see #3919).
+      preconditions:
+        all:
+          - key: "{{ to_string(contains(keys(request.object.metadata.annotations || `{}`), 'kubernetes.io/config.mirror')) }}"
+            operator: Equals
+            value: "false"
       mutate:
         foreach:
           - list: "request.object.spec.containers"
