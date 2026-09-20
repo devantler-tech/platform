@@ -817,8 +817,10 @@ spec:
                     select(
                       (.context | type) == "object"
                       and (.context.alerts | type) == "object"
-                      and ((.context.alerts.critical // 0) | type) == "number"
-                      and ((.context.alerts.warning // 0) | type) == "number"
+                      and ((.context.alerts | has("critical") | not)
+                        or ((.context.alerts.critical | type) == "number"))
+                      and ((.context.alerts | has("warning") | not)
+                        or ((.context.alerts.warning | type) == "number"))
                       and (.data.applications | type) == "array"
                       and all(.data.applications[];
                         .status == "critical"

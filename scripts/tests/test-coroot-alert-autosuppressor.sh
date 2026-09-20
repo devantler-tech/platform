@@ -172,7 +172,36 @@ JSON
 if run_scenario "${invalid_state_dir}" >/dev/null 2>&1; then
   fail "an invalid Coroot counter response reported a false clean state"
 fi
-pass "invalid Coroot counter responses fail closed"
+
+false_critical_dir="$(setup_scenario false-critical false)"
+cat >"${false_critical_dir}/applications.json" <<'JSON'
+{"context":{"alerts":{"critical":false,"warning":0}},"data":{"applications":[]}}
+JSON
+if run_scenario "${false_critical_dir}" >/dev/null 2>&1; then
+  fail "a boolean critical counter reported a false clean state"
+fi
+
+false_warning_dir="$(setup_scenario false-warning false)"
+cat >"${false_warning_dir}/applications.json" <<'JSON'
+{"context":{"alerts":{"critical":0,"warning":false}},"data":{"applications":[]}}
+JSON
+if run_scenario "${false_warning_dir}" >/dev/null 2>&1; then
+  fail "a boolean warning counter reported a false clean state"
+fi
+
+missing_counters_dir="$(setup_scenario missing-counters false)"
+cat >"${missing_counters_dir}/applications.json" <<'JSON'
+{"context":{"alerts":{}},"data":{"applications":[]}}
+JSON
+missing_counters_output="$(run_scenario "${missing_counters_dir}")"
+printf '%s\n' "${missing_counters_output}" | jq -s -e '
+  any(.[];
+    .msg == "coroot clean-state counters"
+    and .coroot_clean_state.alerts == {critical: 0, warning: 0}
+  )
+' >/dev/null ||
+  fail "missing zero-valued alert counters did not match Coroot UI semantics"
+pass "missing counters default to zero while malformed counters fail closed"
 
 extra_dir="$(setup_scenario extra true)"
 run_scenario "${extra_dir}" >/dev/null
