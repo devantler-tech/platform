@@ -94,6 +94,7 @@ setup_scenario() {
   local sandbox_service="${16:-/talos/init}"
   local kustomize_mode="${17:-known}"
   local autoscaler_mode="${18:-known}"
+  local autosuppressor_mode="${19:-present}"
   local dir="${work_root}/${name}"
   mkdir -p "${dir}/bin"
   printf '%s' "${dex_mode}" >"${dir}/dex-mode"
@@ -113,6 +114,7 @@ setup_scenario() {
   printf '%s' "${sandbox_service}" >"${dir}/sandbox-service"
   printf '%s' "${kustomize_mode}" >"${dir}/kustomize-mode"
   printf '%s' "${autoscaler_mode}" >"${dir}/autoscaler-mode"
+  printf '%s' "${autosuppressor_mode}" >"${dir}/autosuppressor-mode"
 
   cat >"${dir}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
@@ -121,10 +123,12 @@ dir="${SCENARIO_DIR}"
 url=""
 payload=""
 method="GET"
+write_out=""
 prev=""
 for arg in "$@"; do
   [ "${prev}" = "-d" ] && payload="${arg}"
   [ "${prev}" = "-X" ] && method="${arg}"
+  { [ "${prev}" = "-w" ] || [ "${prev}" = "--write-out" ]; } && write_out="${arg}"
   case "${arg}" in http://*) url="${arg}" ;; esac
   prev="${arg}"
 done
@@ -137,7 +141,10 @@ case "${url}" in
     severity="error"
     [[ "${url}" == *'%22value%22%3A%22fatal%22'* ]] && severity="fatal"
     if [[ "$url" == *'%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor'* ]]; then
-      if [ "${severity}" = "fatal" ]; then
+      if [ "$(cat "${dir}/autosuppressor-mode")" = "absent" ]; then
+        [ -z "${write_out}" ] || printf '404'
+        exit 22
+      elif [ "${severity}" = "fatal" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"fatal","message":"suppressed 3 by-design alert(s)"},{"severity":"fatal","message":"no by-design alerts to suppress"}]}}'
       else
         printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
@@ -375,6 +382,20 @@ run_scenario() {
   local dir="$1"
   SCENARIO_DIR="${dir}" PATH="${dir}/bin:${PATH}" /bin/sh -c "${script_body}"
 }
+
+absent_log_stream_dir="$(setup_scenario absent-log-stream known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known known absent)"
+absent_log_stream_output="$(run_scenario "${absent_log_stream_dir}" 2>&1)"
+printf '%s\n' "${absent_log_stream_output}" | jq -s -e '
+  length > 0 and
+  all(.[]; .level == "info") and
+  any(.[]; .msg == "autosuppressor-lifecycle skipped: no log stream for 95rsc5yp:observability:CronJob:coroot-alert-autosuppressor")
+' >/dev/null || fail 'an absent Coroot log stream produced a recurring reconciler error'
+jq -s -e '
+  any(.[]; (.url | contains("%3Adex%3ADeployment%3Adex/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
+  all(.[]; .url | contains("%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor/inspection/LogErrors/config") | not)
+' "${absent_log_stream_dir}/posts.ndjson" >/dev/null ||
+  fail 'an absent log stream either stopped later policies or mutated a nonexistent policy target'
+pass 'an absent Coroot log stream is a clean no-policy target'
 
 known_dir="$(setup_scenario known known null)"
 known_output="$(run_scenario "${known_dir}")"

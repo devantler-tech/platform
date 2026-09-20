@@ -31,6 +31,10 @@
 # responses also fail visible. Each cap is above the observed reviewed hourly
 # count but remains finite, so a storm of even a known message becomes visible.
 # Empty/aged-out message sets inherit the global zero.
+# An exact HTTP 404 from an application's log endpoint means Coroot has no log
+# stream, so there is no LogErrors policy target to reconcile. That absence is
+# recorded as structured info; transport, server, and malformed-response
+# failures remain visible.
 # The allowlist covers: this reconciler's predecessor lifecycle text while it
 # ages out; malformed public Dex authorization requests; an upstream Linux 6.18
 # audit context regression plus bounded runtime teardown races. Containerd
@@ -130,6 +134,9 @@ spec:
                   encode() {
                     jq -nr --arg value "$1" '$value | @uri'
                   }
+                  http_status() {
+                    curl -sS --output /dev/null --write-out '%{http_code}' --max-time 30 "$1" 2>/dev/null || true
+                  }
 
                   PID=$(curl $RETRY "$BASE/api/user" | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
                   [ -n "$PID" ] || { log_error "could not resolve platform project id"; exit 1; }
@@ -209,12 +216,22 @@ spec:
                     policy="$2"
                     cap="$3"
                     encoded_app=$(encode "$app")
-                    if ! error_response=$(curl $RETRY "$BASE/api/project/$PID/app/$encoded_app/logs?query=$ERROR_QUERY"); then
+                    error_url="$BASE/api/project/$PID/app/$encoded_app/logs?query=$ERROR_QUERY"
+                    if ! error_response=$(curl $RETRY "$error_url" 2>/dev/null); then
+                      if [ "$(http_status "$error_url")" = "404" ]; then
+                        log_info "$policy skipped: no log stream for $app"
+                        return
+                      fi
                       log_error "refusing $policy: error-message query failed for $app"
                       reconcile_threshold "$app" LogErrors 0 inherit "$policy-query-fail-visible"
                       return
                     fi
-                    if ! fatal_response=$(curl $RETRY "$BASE/api/project/$PID/app/$encoded_app/logs?query=$FATAL_QUERY"); then
+                    fatal_url="$BASE/api/project/$PID/app/$encoded_app/logs?query=$FATAL_QUERY"
+                    if ! fatal_response=$(curl $RETRY "$fatal_url" 2>/dev/null); then
+                      if [ "$(http_status "$fatal_url")" = "404" ]; then
+                        log_info "$policy skipped: no log stream for $app"
+                        return
+                      fi
                       log_error "refusing $policy: fatal-message query failed for $app"
                       reconcile_threshold "$app" LogErrors 0 inherit "$policy-query-fail-visible"
                       return
