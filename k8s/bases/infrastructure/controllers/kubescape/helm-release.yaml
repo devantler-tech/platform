@@ -44,6 +44,30 @@ spec:
     # replicas (helm-charts README). Revisit if the chart adds leader election
     # / multi-replica support for any of these components.
     clusterName: ${cluster_name}
+    # Pinned rather than inherited, for the same reason as `capabilities.relevancy`
+    # below: chart 1.40.4 already defaults to exactly this list, so this changes
+    # nothing today, and from here a chart default that quietly gains or loses a
+    # namespace cannot silently change what the cluster scans.
+    #
+    # This one value decides the SCOPE of every posture claim the platform makes.
+    # A namespace listed here produces no `workloadconfigurationscan` object at
+    # all, so no control is ever evaluated against its workloads — and unscanned
+    # is NOT the same as passing. A posture score that omits a namespace reads
+    # exactly like one where that namespace is clean, and nothing distinguishes
+    # them from the score alone. The same trap is documented for the `kubescape`
+    # namespace in cluster-security-exceptions/pod-security-mutations-unscoped.yaml.
+    #
+    # It was undeclared until #3923, so the scope could only be learned by reading
+    # a live ConfigMap. Two issues were planned against `kube-system` on the
+    # assumption it was scanned (#3239, #3919); it is not, and the exception #3919
+    # asked for would have suppressed a verdict that is never produced.
+    #
+    # Measured before pinning (2026-09-20): this value is byte-identical to what
+    # `configmap/operator` carries in production, and `helm template` renders the
+    # same `config.json` with and without it. Rendering a DIFFERENT value does
+    # change that ConfigMap, which is what proves the key reaches it rather than
+    # being silently ignored.
+    excludeNamespaces: "kubescape,kube-system,kube-public,kube-node-lease,kubeconfig,gmp-system,gmp-public"
     capabilities:
       configurationScan: enable
       # Chart 1.40.4 derives clusterData.continuousPostureScan from this value,
