@@ -194,6 +194,17 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     ]
   },
   {
+    "id":"flux-health-canceled-milliseconds",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"health check failed after 45.576415ms: context canceled"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Kustomization\"\nname=\"ascoachingogvaner\"\nnamespace=\"ascoachingogvaner\"\nreason=\"HealthCheckFailed\"\nsource=\"kustomize-controller\""}
+    ]
+  },
+  {
     "id":"flux-dryrun-canceled",
     "suppressed":false,
     "resolved_at":null,
@@ -396,7 +407,7 @@ JSON
 run_scenario "${event_dir}" >/dev/null
 [ -f "${event_dir}/suppressed.json" ] ||
   fail "the exact by-design Kubernetes lifecycle events were not suppressed"
-jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-build-canceled", "flux-dryrun-canceled", "flux-health-canceled", "flux-status-canceled", "longhorn-clone-awaiting-healthy", "longhorn-volume-failed-delete", "monitor-secret-race", "openbao-snapshot-device-race", "snapshot-content-cleanup"]' \
+jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-build-canceled", "flux-dryrun-canceled", "flux-health-canceled", "flux-health-canceled-milliseconds", "flux-status-canceled", "longhorn-clone-awaiting-healthy", "longhorn-volume-failed-delete", "monitor-secret-race", "openbao-snapshot-device-race", "snapshot-content-cleanup"]' \
   "${event_dir}/suppressed.json" >/dev/null || {
   jq -c '.ids | sort' "${event_dir}/suppressed.json" >&2
   fail "the event exemptions were broader than their exact label and message contracts"

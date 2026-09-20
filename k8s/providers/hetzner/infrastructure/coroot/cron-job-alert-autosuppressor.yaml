@@ -337,7 +337,7 @@ spec:
                                             | test("^unable to update the healthy status to progressing: \\[.*fieldManager=gotk-kustomize-controller.*context canceled, context canceled\\]$"))))
                                     or ($l.reason=="HealthCheckFailed"
                                         and ($d["Event message"]
-                                          | test("^health check failed after [0-9.]+s: context canceled$")))
+                                          | test("^health check failed after [0-9.]+(ms|s): context canceled$")))
                                     or ($l.reason=="ReconciliationFailed"
                                         and ($d["Event message"]
                                           | test("^[^[:space:]/]+/[^[:space:]/]+/[^[:space:]]+ dry-run failed: (Patch|Post|Put|Delete) \\\"https://10[.]96[.]0[.]1:443/apis/[^\\\"]+\\\": context canceled\\n?$")))
