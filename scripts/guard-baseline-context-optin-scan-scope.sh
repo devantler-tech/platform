@@ -77,7 +77,20 @@ excluded="$(printf '%s\n' "$excluded_raw" | tr ',' '\n' | sed 's/^[[:space:]]*//
 # suffixes are swept: k8s/ uses .yaml throughout today, but the repository does use .yml
 # elsewhere, and a namespace manifest written that way would otherwise be invisible here
 # — a silent miss rather than a failure.
-candidates="$(grep -rl --include='*.yaml' --include='*.yml' -- "$LABEL" "$k8s_dir" 2>/dev/null | sort -u)"
+#
+# 🔴 The discovery STATUS is checked before the result is used. `grep -r` reports a path it
+# could not traverse or read with exit 2, and it does that WHILE still printing the matches
+# it did find — so piping straight into `sort` (which reports its own status) turns a partial
+# sweep into an ordinary-looking non-empty candidate set. One unreadable subtree holding an
+# unmarked opted-in namespace would then leave this guard exiting 0 having never looked at
+# it: a clean reading that is an artifact of the file not being read, which is the exact
+# failure class this guard exists to make impossible.
+candidates_raw="$(grep -rl --include='*.yaml' --include='*.yml' -- "$LABEL" "$k8s_dir" 2>/dev/null)"
+discovery_status=$?
+[ "$discovery_status" -le 1 ] ||
+  die "could not traverse or read every path under '$k8s_dir' while looking for '$LABEL' (grep exit $discovery_status); refusing to compare against a partial candidate set"
+
+candidates="$(printf '%s\n' "$candidates_raw" | sed '/^$/d' | sort -u)"
 [ -n "$candidates" ] ||
   die "no file under '$k8s_dir' mentions '$LABEL'; refusing to report a clean tree from an empty opted-in set"
 
@@ -99,6 +112,53 @@ EOF
 [ -n "$optin_pairs" ] ||
   die "no Namespace under '$k8s_dir' carries '$LABEL: enabled'; the rollout has always had at least one, so this is treated as a broken read rather than a clean tree"
 
+# --- is the caveat stated AT this namespace's opt-in? ---------------------------------
+# 🔴 Bound to the opt-in SITE, not to the file. The whole point of the guard is that a
+# reader following the opt-in pattern meets the caveat where the decision is made, so a
+# marker anywhere in the file does not satisfy it: a multi-document manifest declaring
+# several namespaces, or an unrelated header comment, would let an unscanned namespace opt
+# in while its own label says nothing — which is the pre-#3925 shape one level down.
+#
+# `yq`'s `line` is what makes the binding exact: it returns the file line of THIS
+# namespace's label node, so the search window is that label plus the contiguous run of
+# comment lines directly above it. A line number that cannot be read is exit 2 rather than
+# a fall back to a file-wide search, because the fallback is the defect.
+declares_caveat() { # <namespace> <file>
+  local ns
+  local file
+  local label_line
+  local rc
+  ns="$1"
+  file="$2"
+
+  label_line="$(yq -r "select(.kind == \"Namespace\" and .metadata.name == \"${ns}\" and .metadata.labels.\"${LABEL}\" == \"enabled\") | .metadata.labels.\"${LABEL}\" | line" "$file" 2>/dev/null)" ||
+    die "could not locate the '$LABEL' label line for '$ns' in '$file' — unparseable YAML, or the expression no longer matches"
+  case "$label_line" in
+    '' | *[!0-9]*)
+      die "yq returned no usable line number for the '$ns' opt-in label in '$file' (got '$label_line'); refusing to fall back to a file-wide marker search" ;;
+  esac
+  [ "$label_line" -gt 0 ] ||
+    die "yq returned line 0 for the '$ns' opt-in label in '$file'; refusing to fall back to a file-wide marker search"
+
+  # awk does the matching itself rather than piping into `grep -q`. Two reasons, both about
+  # not inverting the answer: `grep -q` exits on its first match, which can SIGPIPE awk, and
+  # `pipefail` would then report a FOUND marker as a failed pipeline — a correct tree read as
+  # a violation. And the marker arrives through the environment, not `-v`, because `-v`
+  # processes escape sequences in the value. `index()` is a literal search, as `grep -F` was.
+  rc=0
+  GUARD_MARKER="$MARKER" awk -v stop="$label_line" '
+    NR == stop { block = block $0 "\n"; exit }
+    /^[ \t]*#/ { block = block $0 "\n"; next }
+    { block = "" }
+    END { exit(index(block, ENVIRON["GUARD_MARKER"]) ? 0 : 1) }
+  ' "$file" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) die "could not read the comment block above the '$ns' opt-in label in '$file' (awk exit $rc); refusing to report a missing declaration from a failed read" ;;
+  esac
+}
+
 # --- the comparison -------------------------------------------------------------------
 status=0
 unscanned_count=0
@@ -107,7 +167,7 @@ while IFS=' ' read -r ns file; do
   [ -n "$ns" ] || continue
   printf '%s\n' "$excluded" | grep -qxF -- "$ns" || continue
   unscanned_count=$((unscanned_count + 1))
-  if grep -qF -- "$MARKER" "$file"; then
+  if declares_caveat "$ns" "$file"; then
     printf 'guard-baseline-context-optin-scan-scope: %s is opted in and unscanned, and declares it\n' "$ns"
     continue
   fi
@@ -117,7 +177,11 @@ while IFS=' ' read -r ns file; do
   printf '  excluded by       : %s (.spec.values.excludeNamespaces)\n' "$helm_release" >&2
   printf '  fix: state the caveat AT the opt-in — add a comment line containing exactly\n' >&2
   printf '         %s\n' "$MARKER" >&2
-  printf '       to %s, next to the label, so a reader following the opt-in pattern meets it there.\n' "$file" >&2
+  printf '       to %s, in the comment block DIRECTLY ABOVE the\n' "$file" >&2
+  printf '         %s: enabled\n' "$LABEL" >&2
+  printf '       label for %s, so a reader following the opt-in pattern meets it there.\n' "$ns" >&2
+  printf '       Elsewhere in the file does NOT count: a marker under another namespace, or in an\n' >&2
+  printf '       unrelated header comment, is not something that reader would ever see.\n' >&2
   printf '       Do NOT exempt the namespace instead: the opt-in is fine, the silent read-back is not.\n' >&2
 done <<EOF
 $optin_pairs

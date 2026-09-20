@@ -33,6 +33,9 @@ tmp="$(mktemp -d)"
 finished=0
 cleanup() {
   local rc=$?
+  # One case deliberately makes a fixture directory untraversable. Restore modes first, or
+  # the removal fails and leaves the tree behind.
+  chmod -R u+rwX "${tmp}" 2>/dev/null || true
   rm -rf "${tmp}"
   if [ "${finished}" != 1 ] && [ "${rc}" -eq 0 ]; then
     printf 'test-guard-baseline-context-optin-scan-scope: aborted before finishing; reporting failure rather than a clean pass\n' >&2
@@ -142,7 +145,46 @@ grep -qF -- "${MARKER}" "${root}/k8s/kubescape/namespace.yml" &&
 expect 'an undeclared opt-in in a .yml manifest is still caught' 1 \
   "${root}/helm-release.yaml" "${root}/k8s"
 
+# --- the marker must be at THIS namespace's opt-in, not merely somewhere in the file ----
+# The file-wide search this replaced is the pre-#3925 shape one level down: the caveat exists,
+# but not where a reader following the opt-in pattern meets it. The fixture keeps the marker
+# in the file and moves it out of the opt-in's comment block, so a guard that greps the whole
+# file passes and a guard bound to the label does not.
+root="$(mkfixture marker-elsewhere)"
+ns="${root}/k8s/kubescape/namespace.yaml"
+grep -vF -- "${MARKER}" "${ns}" >"${ns}.new" && mv "${ns}.new" "${ns}"
+grep -qF -- "${MARKER}" "${ns}" && bad 'fixture build: the marker survived removal from the opt-in block'
+printf '# %s — stated here, in a header comment, instead of at the label\n' "${MARKER}" >"${ns}.new"
+cat "${ns}" >>"${ns}.new" && mv "${ns}.new" "${ns}"
+grep -qF -- "${MARKER}" "${ns}" ||
+  bad 'fixture build: the relocated marker is not in the file, so the case would not be about placement'
+relocated_name="$(yq -r 'select(.kind == "Namespace") | .metadata.name' "${ns}")"
+[ "${relocated_name}" = 'kubescape' ] ||
+  bad 'fixture build: the namespace no longer parses after relocating the marker'
+expect 'a marker elsewhere in the same file does not satisfy the opt-in' 1 \
+  "${root}/helm-release.yaml" "${root}/k8s"
+
 # --- AC3: fail closed on every unreadable or empty input -------------------------------
+# A path the sweep cannot read is cannot-check, never a partial sweep. `grep -r` reports an
+# unreadable path with exit 2 while still printing the matches it did find, so the readable
+# half of this fixture passes on its own — a guard that ignores the discovery status exits 0
+# here, having never looked inside the locked subtree.
+root="$(mkfixture unreadable-subtree)"
+locked="${root}/k8s/locked"
+mkdir -p "${locked}"
+cp "${REAL_NS}" "${locked}/namespace.yaml"
+chmod 000 "${locked}"
+if cat "${locked}/namespace.yaml" >/dev/null 2>&1; then
+  # root traverses a 0000 directory regardless of mode, so there is nothing unreadable here
+  # and the case would record a pass it never earned. Say so instead.
+  printf 'skip: this user can read a 0000 directory (running as root?), so the unreadable-path case would be vacuous\n'
+  chmod 755 "${locked}"
+else
+  expect 'an unreadable path under the k8s dir is cannot-check, not a partial sweep' 2 \
+    "${root}/helm-release.yaml" "${root}/k8s"
+  chmod 755 "${locked}"
+fi
+
 root="$(mkfixture empty-exclusions)"
 hr="${root}/helm-release.yaml"
 sed -i.bak 's/^\( *excludeNamespaces: \).*/\1""/' "${hr}" && rm -f "${hr}.bak"
