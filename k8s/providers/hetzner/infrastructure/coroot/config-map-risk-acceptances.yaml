@@ -165,6 +165,12 @@ data:
         "reason": "platform#3812: node-scoped Longhorn instance manager; storage durability comes from cross-node volume replicas"
       },
       {
+        "application": "longhorn-system:InstanceManager:instance-manager-c210015368cfb1db9feb55fd74623baa",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: node-scoped Longhorn instance manager; storage durability comes from cross-node volume replicas"
+      },
+      {
         "application": "kubescape:Deployment:kubescape",
         "category": "Availability",
         "type": "single-instance-app",
