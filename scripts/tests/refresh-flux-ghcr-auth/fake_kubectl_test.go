@@ -504,6 +504,26 @@ func fakeKubectlGetFluxPolicyFences(args []string, namespace string) int {
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid Flux policy fence list lookup")
 	}
+	if os.Getenv("FAKE_FLUX_OPERATOR_RECONCILES_PARENT_BEFORE_CHILD_FENCE") == "true" &&
+		markerExists("flux-policy-parent-suspended") &&
+		!markerExists("flux-policy-handoff-suspended") &&
+		!markerExists("flux-operator-parent-reconciled-before-child") {
+		// The Flux Operator can reconcile the generated root Kustomization after
+		// the parent claim has settled but before the child is fenced. Model the
+		// exact same-UID, ownerless, unsuspended replacement observed in prod.
+		touchMarker("flux-operator-parent-reconciled-before-child")
+		removeMarker("flux-policy-parent-owner")
+		removeMarker("flux-policy-parent-suspended")
+		currentResourceVersion := defaultString(
+			markerContent("flux-policy-parent-resource-version"),
+			"30",
+		)
+		setMarkerContent(
+			"flux-policy-parent-resource-version",
+			incrementDecimal(currentResourceVersion),
+		)
+		appendEnvFile("OPERATION_LOG", "flux-operator-parent-reconcile-before-child:flux-system\n")
+	}
 	if markerExists("flux-policy-handoff-suspended") &&
 		os.Getenv("FAKE_FLUX_POLICY_RESOURCE_VERSION_CHURN_AFTER_PAUSE") == "true" {
 		currentResourceVersion := defaultString(

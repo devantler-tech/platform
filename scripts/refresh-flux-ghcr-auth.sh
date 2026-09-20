@@ -5393,8 +5393,28 @@ pause_flux_policy_handoff() {
         echo "::error::The Flux image-verification policy owner is malformed, already suspended, or already excluded from reconciliation."
         return 1
       fi
-      if flux_policy_parent_is_stable &&
-        flux_policy_handoff_is_quiescent; then
+
+      # The Flux Operator owns the generated root Kustomization and may restore
+      # it after our parent claim has settled but before the child claim lands.
+      # No policy or credential mutation has happened yet and the child remains
+      # unfenced, so accept only the exact same-UID, ownerless, unsuspended
+      # replacement and reacquire it atomically. Re-read both objects on the
+      # next loop before deciding that the child is safe to claim.
+      if ! flux_policy_parent_is_stable; then
+        if ! flux_policy_parent_is_released; then
+          echo "::error::The parent Flux policy fence changed to an unrecognized state before the image-verification policy handoff."
+          return 1
+        fi
+        flux_policy_parent_acquired=false
+        flux_policy_parent_owner=""
+        flux_policy_parent_uid=""
+        if ! pause_flux_policy_parent; then
+          echo "::error::Could not reacquire the parent Flux policy fence before the image-verification policy handoff."
+          return 1
+        fi
+        continue
+      fi
+      if flux_policy_handoff_is_quiescent; then
         break
       fi
     fi

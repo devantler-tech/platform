@@ -1217,6 +1217,39 @@ func TestFluxParentFenceIsReacquiredAfterControllerRestartAndOperatorReconcile(t
 	}
 }
 
+// The Flux Operator also reconciles its generated root Kustomization during a
+// normal rollout, independently of the controller restart boundary. If that
+// lands between the settled parent claim and the child claim, the child remains
+// untouched and it is safe to reacquire only the exact released parent state.
+func TestFluxParentFenceIsReacquiredWhenOperatorReconcilesBeforeChildFence(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_OPERATOR_RECONCILES_PARENT_BEFORE_CHILD_FENCE": "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	parentPauses := lineIndexes(operations, "flux-policy-parent-pause:flux-system")
+	if len(parentPauses) != 2 {
+		t.Fatalf("parent fence acquisitions = %d, want initial claim plus pre-child reacquisition", len(parentPauses))
+	}
+	operatorReconcile := lineIndex(t, operations, "flux-operator-parent-reconcile-before-child:flux-system")
+	childPause := lineIndex(t, operations, "flux-policy-pause:infrastructure")
+	firstPolicyApply := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
+	if parentPauses[0] >= operatorReconcile ||
+		operatorReconcile >= parentPauses[1] ||
+		parentPauses[1] >= childPause ||
+		childPause >= firstPolicyApply {
+		t.Fatalf(
+			"unsafe pre-child Flux operator ordering: parent-pauses=%v operator=%d child=%d policy=%d",
+			parentPauses,
+			operatorReconcile,
+			childPause,
+			firstPolicyApply,
+		)
+	}
+}
+
 func TestFluxControllerDeclarativeRolloutStabilizesBeforeHandoffRestart(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
