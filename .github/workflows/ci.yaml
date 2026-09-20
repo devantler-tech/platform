@@ -679,6 +679,8 @@ jobs:
             talos:
               - 'talos/**'
               - 'talos-local/**'
+              - 'scripts/register-talos-factory-schematic.sh'
+              - 'scripts/tests/test-talos-factory-schematic-registration.sh'
               - 'scripts/tests/test-talos-apparmor-lsm.sh'
               - 'ksail.prod.yaml'
               - '.github/scripts/setup-talosctl.sh'
@@ -2224,6 +2226,11 @@ jobs:
         run: |
           shellcheck scripts/tests/test-talos-apparmor-lsm.sh
           bash scripts/tests/test-talos-apparmor-lsm.sh
+
+      - name: 🧱 Validate Talos Image Factory schematic registration
+        run: |
+          shellcheck scripts/register-talos-factory-schematic.sh scripts/tests/test-talos-factory-schematic-registration.sh
+          bash scripts/tests/test-talos-factory-schematic-registration.sh
 
       - name: ✅ Render + validate patched machine configs
         run: |

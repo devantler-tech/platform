@@ -162,6 +162,15 @@ runs:
         echo "::error::Prod Kubernetes API (context admin@prod) failed its readiness probe after stable endpoint selection (last kubectl error: ${last_err}). Inspect the selected endpoint, network reachability, and API readiness, then diagnose any reported TLS, authentication, or authorization failure. Recover kubeconfig credentials only if that diagnosis confirms a credential failure; this Kubernetes probe does not test Talos credentials. See docs/dr/runbook.md → 'Endpoint selection during ordinary deployments' and, for confirmed credential failures, 'Credential refresh after a full rebuild'."
         exit 1
 
+    - name: 🧱 Register and verify the Talos Image Factory schematic
+      # KSail computes this content-addressed ID when it folds the declarative
+      # extensions and kernel arguments into the installer image. Image Factory
+      # does not serve an unknown ID: register the exact canonical body and
+      # prove the pinned-version Hetzner image exists before any live rollout
+      # guard or mutable production manifest publication changes state.
+      shell: bash
+      run: ./scripts/register-talos-factory-schematic.sh
+
     - name: 🧪 Check the Longhorn UI baseline canary
       id: longhorn_ui_baseline
       # Only arms when the desired source declares the two defaults and the
