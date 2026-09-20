@@ -629,6 +629,11 @@ jobs:
               - 'scripts/guard-pod-security-exception-scope.sh'
               - 'scripts/tests/test-guard-pod-security-exception-scope.sh'
               # Both halves, for the same reason as the guards above. The guard also
+              # reads the kubescape HelmRelease and every Namespace manifest, both
+              # covered by 'k8s/**'.
+              - 'scripts/guard-baseline-context-optin-scan-scope.sh'
+              - 'scripts/tests/test-guard-baseline-context-optin-scan-scope.sh'
+              # Both halves, for the same reason as the guards above. The guard also
               # reads the exception manifest itself, covered by 'k8s/**'.
               - 'scripts/guard-pod-security-exception-documented.sh'
               - 'scripts/tests/test-guard-pod-security-exception-documented.sh'
@@ -1681,6 +1686,27 @@ jobs:
         run: |
           bash scripts/guard-pod-security-exception-scope.sh
           bash scripts/tests/test-guard-pod-security-exception-scope.sh
+
+      - name: 🔬 Validate every unscanned baseline-context opt-in declares it
+        if: needs.changes.outputs.k8s == 'true'
+        # The per-namespace baseline-context rollout has a documented read-back step:
+        # opt the namespace in, then confirm the posture signal shows C-0211's residual
+        # dropping. For a namespace Kubescape never scans, that step cannot be performed
+        # and does not fail — it comes back clean, which reads as validation.
+        #
+        # `kubescape` is opted in and sits inside the operator's own excludeNamespaces.
+        # Before #3925 its opt-in comment read exactly like the three scanned namespaces'
+        # comments, with the caveat three files away in helm-release.yaml, about a
+        # different change. #3919 was written on the same missing fact — that labelling
+        # kube-system would move a verdict that is never produced — and settling it took
+        # a live-cluster measurement. This makes the consequence checkable at the opt-in.
+        #
+        # Scanned opt-ins need no declaration, so the guard compares the intersection
+        # rather than the label alone; both inputs are required non-empty first, because
+        # an empty set compared against an empty set passes vacuously forever.
+        run: |
+          bash scripts/guard-baseline-context-optin-scan-scope.sh
+          bash scripts/tests/test-guard-baseline-context-optin-scan-scope.sh
 
       - name: 🔎 Validate every suppressed control is documented as failing open
         if: needs.changes.outputs.k8s == 'true'

@@ -16,4 +16,10 @@ metadata:
     # prod specs on 2026-08-31, none of kubescape's pods carried either field, while
     # every velero pod created since that namespace opted in carried both and none
     # failed to start.
+    # kubescape-scan-scope: excluded — this namespace is named in the operator's own
+    # excludeNamespaces (helm-release.yaml, .spec.values.excludeNamespaces), so no scan
+    # result will ever reflect this opt-in, in either direction. The rollout's usual
+    # read-back against the posture signal therefore cannot validate it here: a clean
+    # reading would be an artifact of the namespace not being looked at. Verify this
+    # namespace against live pod specs instead.
     pod-security.devantler.tech/baseline-context: enabled
