@@ -578,6 +578,20 @@ func TestRequiredPackageCoverageExactDeclaredKsailOperatorImageIsPreflighted(t *
 	}
 }
 
+func TestRuntimeCredentialProbesUseAuthenticatedManifestDigests(t *testing.T) {
+	helper := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+
+	for _, expected := range []string{
+		`readonly -a RUNTIME_CREDENTIAL_PROBE_REPOSITORIES=(`,
+		`Docker-Content-Digest`,
+		`^sha256:[0-9a-f]{64}$`,
+		`ghcr.io/${repository}@${digest}`,
+	} {
+		requireContains(t, helper, expected)
+	}
+	requireNotContains(t, helper, `readonly -a RUNTIME_CREDENTIAL_PROBE_IMAGES=(`)
+}
+
 func TestTalosRegistryAuthStaticDesiredRevisionCannotClaimVerifiedPull(t *testing.T) {
 	staticRevision := readRepositoryFile(t, "talos/cluster/mark-ghcr-pull-revision.yaml")
 	helper := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")

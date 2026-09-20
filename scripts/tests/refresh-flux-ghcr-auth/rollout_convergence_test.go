@@ -439,9 +439,9 @@ func TestRevokedPreviousCredentialBootstrapsThroughEmptyWorker(t *testing.T) {
 	seedDrain := lineIndex(t, operations, "node-drain:prod-worker-2")
 	seedReboot := lineIndex(t, operations, "talos-reboot:10.0.0.5")
 	seedPull := lineIndex(t, operations, "talos-pull:10.0.0.5:"+ksailTargetImage)
-	seedDataProductProbe := lineIndex(t, operations, "runtime-probe-success:prod-worker-2:ghcr.io/devantler-tech/data-product-controller:latest")
-	seedWeddingProbe := lineIndex(t, operations, "runtime-probe-success:prod-worker-2:ghcr.io/devantler-tech/wedding-app:latest")
-	seedCoachingProbe := lineIndex(t, operations, "runtime-probe-success:prod-worker-2:ghcr.io/devantler-tech/ascoachingogvaner:latest")
+	seedDataProductProbe := lineIndex(t, operations, "runtime-probe-success:prod-worker-2:"+fakeRuntimeProbeImage("devantler-tech/data-product-controller"))
+	seedWeddingProbe := lineIndex(t, operations, "runtime-probe-success:prod-worker-2:"+fakeRuntimeProbeImage("devantler-tech/wedding-app"))
+	seedCoachingProbe := lineIndex(t, operations, "runtime-probe-success:prod-worker-2:"+fakeRuntimeProbeImage("devantler-tech/ascoachingogvaner"))
 	seedRelease := lineIndex(t, operations, "node-uncordon:prod-worker-2")
 	firstWorkloadDrain := lineIndex(t, operations, "node-drain:prod-worker-1")
 	if seedDrain >= seedReboot || seedReboot >= seedPull ||
@@ -953,7 +953,7 @@ func TestFluxPolicyHandoffSuspendsOwningReconcileAcrossRuntimeProof(t *testing.T
 	firstRuntimeProbe := lineIndex(
 		t,
 		operations,
-		"runtime-probe-success:prod-control-plane-2:ghcr.io/devantler-tech/data-product-controller:latest",
+		"runtime-probe-success:prod-control-plane-2:"+fakeRuntimeProbeImage("devantler-tech/data-product-controller"),
 	)
 	rootPatch := lineIndex(t, operations, "root-patch")
 	resume := lineIndex(t, operations, "flux-policy-resume:infrastructure")
@@ -1770,7 +1770,7 @@ func TestStaleImageVerificationWebhookBudgetIsStagedBeforeRuntimeProbe(t *testin
 	firstRuntimeProbe := lineIndex(
 		t,
 		operations,
-		"runtime-probe-success:prod-control-plane-2:ghcr.io/devantler-tech/data-product-controller:latest",
+		"runtime-probe-success:prod-control-plane-2:"+fakeRuntimeProbeImage("devantler-tech/data-product-controller"),
 	)
 	if dryRun >= appApply ||
 		appApply >= consolidatedReady ||
@@ -1888,7 +1888,7 @@ func TestValidationOnlyImageVerificationWebhookConverges(t *testing.T) {
 	firstRuntimeProbe := lineIndex(
 		t,
 		operations,
-		"runtime-probe-success:prod-control-plane-2:ghcr.io/devantler-tech/data-product-controller:latest",
+		"runtime-probe-success:prod-control-plane-2:"+fakeRuntimeProbeImage("devantler-tech/data-product-controller"),
 	)
 	if consolidatedReady >= ksailDelete || ksailDelete >= webhookReady || webhookReady >= firstRuntimeProbe {
 		t.Fatalf(
@@ -2114,9 +2114,9 @@ func TestRuntimeProbePersistentAdmissionTimeoutFailsClosed(t *testing.T) {
 func TestEachPrivateRuntimePackageACLMustPass(t *testing.T) {
 	t.Parallel()
 	for _, image := range []string{
-		"ghcr.io/devantler-tech/data-product-controller:latest",
-		"ghcr.io/devantler-tech/wedding-app:latest",
-		"ghcr.io/devantler-tech/ascoachingogvaner:latest",
+		fakeRuntimeProbeImage("devantler-tech/data-product-controller"),
+		fakeRuntimeProbeImage("devantler-tech/wedding-app"),
+		fakeRuntimeProbeImage("devantler-tech/ascoachingogvaner"),
 	} {
 		t.Run(image, func(t *testing.T) {
 			f := newFixture(t)
@@ -2127,6 +2127,54 @@ func TestEachPrivateRuntimePackageACLMustPass(t *testing.T) {
 			requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
 			requireNoLine(t, operations, "root-patch")
 		})
+	}
+}
+
+func TestRuntimeProbesPinAuthenticatedManifestDigests(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_LOG_RUNTIME_PROBE_SUCCESS": "true",
+	})
+	requireSuccessResult(t, result)
+	operations := strings.Join(readLines(f.operationLog), "\n")
+	for _, repository := range []string{
+		"devantler-tech/data-product-controller",
+		"devantler-tech/wedding-app",
+		"devantler-tech/ascoachingogvaner",
+	} {
+		requireContains(t, operations, "runtime-probe-success:prod-control-plane-2:"+fakeRuntimeProbeImage(repository))
+		requireNotContains(t, operations, "runtime-probe-success:prod-control-plane-2:ghcr.io/"+repository+":latest")
+	}
+}
+
+func TestMalformedRuntimeProbeDigestFailsBeforeClusterMutation(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_CURL_MALFORMED_DIGEST_REPOSITORY": "devantler-tech/wedding-app",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "invalid Docker-Content-Digest for devantler-tech/wedding-app")
+	if pathExists(f.operationLog) {
+		operations := strings.Join(readLines(f.operationLog), "\n")
+		requireNotContains(t, operations, "node-drain:")
+		requireNotContains(t, operations, "root-patch")
+	}
+}
+
+func TestAmbiguousRuntimeProbeDigestFailsBeforeClusterMutation(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_CURL_AMBIGUOUS_DIGEST_REPOSITORY": "devantler-tech/wedding-app",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "ambiguous Docker-Content-Digest evidence for devantler-tech/wedding-app")
+	if pathExists(f.operationLog) {
+		operations := strings.Join(readLines(f.operationLog), "\n")
+		requireNotContains(t, operations, "node-drain:")
+		requireNotContains(t, operations, "root-patch")
 	}
 }
 
