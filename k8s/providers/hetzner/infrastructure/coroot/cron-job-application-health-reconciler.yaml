@@ -29,7 +29,10 @@
 # message with another cause remains visible. The other allowlists cover
 # millisecond apiserver client cancellations and one exact read-only
 # audit-parser false positive; stale controller-manager metadata informers until
-# the declarative Talos static-pod refresh lands; and VPA's non-retryable Normal
+# the declarative Talos static-pod refresh lands; Kubernetes CronJob status
+# conflicts only when the controller key and stale object name are identical
+# (the controller rate-limits and requeues that optimistic-concurrency retry,
+# and the affected Jobs continue to succeed); and VPA's non-retryable Normal
 # Event recording denial (granting broad Event patch permission would be the
 # worse fix).
 apiVersion: batch/v1
@@ -258,7 +261,7 @@ spec:
                           )] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
-                      controller-informer-transition)
+                      controller-known-safe-retries)
                         counts=$(printf '%s' "$patterns" | jq -r '
                           [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")] as $all |
                           [$all[] | .sample as $s | select(
@@ -268,7 +271,16 @@ spec:
                             (($s | test("^E[0-9]{4} [0-9:.]+ +1 replica_set\\.go:640\\] ")) and
                              ($s | contains("\"Unhandled Error\" err=\"sync ")) and
                              ($s | contains(" failed with read version: ")) and
-                             ($s | test(" is not as new as written version: [0-9]+ for group resource replicasets\\.apps\" logger=\"UnhandledError\"$")))
+                             ($s | test(" is not as new as written version: [0-9]+ for group resource replicasets\\.apps\" logger=\"UnhandledError\"$"))) or
+                            ((try ($s | capture(
+                              "^E[0-9]{4} [0-9:.]+ +1 cronjob_controllerv2\\.go:179\\] \"Unhandled Error\" err=\"error syncing CronJobController (?<namespace>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)/(?<key>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?), requeuing: "
+                            )) catch null) as $retry |
+                             $retry != null and
+                             ($s | endswith(
+                               "Operation cannot be fulfilled on cronjobs.batch \\\"" +
+                               $retry.key +
+                               "\\\": the object has been modified; please apply your changes to the latest version and try again\" logger=\"UnhandledError\""
+                             )))
                           )] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
@@ -302,5 +314,5 @@ spec:
                   reconcile_logs "$PID:dex:Deployment:dex" dex-invalid-client 10
                   reconcile_logs "$PID:_:Unknown:init" talos-runtime 1000
                   reconcile_logs "$PID:kube-system:StaticPods:kube-apiserver" apiserver-client-noise 100
-                  reconcile_logs "$PID:kube-system:StaticPods:kube-controller-manager" controller-informer-transition 5000
+                  reconcile_logs "$PID:kube-system:StaticPods:kube-controller-manager" controller-known-safe-retries 5000
                   reconcile_logs "$PID:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater" vpa-normal-event-denial 10
