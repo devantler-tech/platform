@@ -195,17 +195,32 @@ readonly -a FANOUT_NAMESPACES=(
   "kyverno"
 )
 
+# Bash arithmetic is signed 64-bit on the supported runners. Keep the source
+# budget at or below LONG_MAX / 3 so deriving the default parent budget cannot
+# wrap. Compare decimal strings before arithmetic so an already-oversized input
+# cannot overflow while it is being validated.
+readonly MAX_SYNC_ATTEMPTS="3074457345618258602"
+decimal_is_at_most() {
+  local value="$1"
+  local maximum="$2"
+
+  ((${#value} < ${#maximum})) ||
+    { ((${#value} == ${#maximum})) && [[ "${value}" < "${maximum}" || "${value}" == "${maximum}" ]]; }
+}
+
 if ! [[ "${SYNC_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] ||
   ((SYNC_ATTEMPTS < 2)) ||
+  ! decimal_is_at_most "${SYNC_ATTEMPTS}" "${MAX_SYNC_ATTEMPTS}" ||
   { [[ -n "${PARENT_QUIESCE_ATTEMPTS}" ]] &&
     { ! [[ "${PARENT_QUIESCE_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] ||
-      ((PARENT_QUIESCE_ATTEMPTS < 2)); }; } ||
+      ((PARENT_QUIESCE_ATTEMPTS < 2)) ||
+      ! decimal_is_at_most "${PARENT_QUIESCE_ATTEMPTS}" "${MAX_SYNC_ATTEMPTS}"; }; } ||
   ! [[ "${TALOS_CONVERGENCE_ATTEMPTS}" =~ ^[3-9]$|^[1-9][0-9]+$ ]] ||
   ! [[ "${SYNC_INTERVAL}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
   ! [[ "${DRAIN_TIMEOUT}" =~ ^[1-9][0-9]*(s|m|h)$ ]] ||
   ! [[ "${SYNC_LEASE_HEARTBEAT_SECONDS}" =~ ^[1-9][0-9]*$ ]] ||
   ((SYNC_LEASE_HEARTBEAT_SECONDS >= SYNC_LEASE_DURATION_SECONDS)); then
-  echo "::error::FLUX_GHCR_SYNC_ATTEMPTS and FLUX_GHCR_PARENT_QUIESCE_ATTEMPTS must be at least 2, FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS must be at least 3, FLUX_GHCR_SYNC_INTERVAL must be non-negative, FLUX_GHCR_DRAIN_TIMEOUT must be a positive whole number of seconds, minutes, or hours, and FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS must be a positive integer below the Lease duration."
+  echo "::error::FLUX_GHCR_SYNC_ATTEMPTS and FLUX_GHCR_PARENT_QUIESCE_ATTEMPTS must be at least 2 and no greater than ${MAX_SYNC_ATTEMPTS}, FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS must be at least 3, FLUX_GHCR_SYNC_INTERVAL must be non-negative, FLUX_GHCR_DRAIN_TIMEOUT must be a positive whole number of seconds, minutes, or hours, and FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS must be a positive integer below the Lease duration."
   exit 64
 fi
 if [[ -z "${PARENT_QUIESCE_ATTEMPTS}" ]]; then

@@ -1458,6 +1458,26 @@ func TestFluxSyncAttemptsMustPermitTwoFenceObservations(t *testing.T) {
 	}
 }
 
+func TestFluxSyncAttemptsMustNotOverflowDerivedParentBudget(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FLUX_GHCR_SYNC_ATTEMPTS": "3074457345618258603",
+	})
+	if result.exitCode != 64 {
+		t.Fatalf(
+			"command exit = %d, want 64\nstdout:\n%s\nstderr:\n%s",
+			result.exitCode,
+			result.stdout,
+			result.stderr,
+		)
+	}
+	requireContains(t, result.stdout+result.stderr, "no greater than 3074457345618258602")
+	if pathExists(f.kubectlCalled) {
+		t.Fatal("overflowing sync attempt budget reached kubectl")
+	}
+}
+
 func TestFluxParentQuiesceAttemptsMustPermitTwoObservations(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
