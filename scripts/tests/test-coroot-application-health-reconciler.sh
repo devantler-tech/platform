@@ -93,6 +93,7 @@ setup_scenario() {
   local sandbox_attributes_mode="${15:-valid}"
   local sandbox_service="${16:-/talos/init}"
   local kustomize_mode="${17:-known}"
+  local autoscaler_mode="${18:-known}"
   local dir="${work_root}/${name}"
   mkdir -p "${dir}/bin"
   printf '%s' "${dex_mode}" >"${dir}/dex-mode"
@@ -111,6 +112,7 @@ setup_scenario() {
   printf '%s' "${sandbox_attributes_mode}" >"${dir}/sandbox-attributes-mode"
   printf '%s' "${sandbox_service}" >"${dir}/sandbox-service"
   printf '%s' "${kustomize_mode}" >"${dir}/kustomize-mode"
+  printf '%s' "${autoscaler_mode}" >"${dir}/autoscaler-mode"
 
   cat >"${dir}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
@@ -231,6 +233,20 @@ case "${url}" in
           {"severity":"error","message":"Reconciler error","attributes":{"Kustomization.name":"ascoachingogvaner","Kustomization.namespace":"ascoachingogvaner","controller":"kustomization","controllerGroup":"kustomize.toolkit.fluxcd.io","controllerKind":"Kustomization","error":"context canceled","errorCauses":"[{\"error\":\"context canceled\"}]","name":"ascoachingogvaner","namespace":"ascoachingogvaner","reconcileID":"different-reconcile-id","service.name":"/k8s/flux-system/kustomize-controller"}}
         ]}}'
       fi
+    elif [[ "$url" == *'%3Akube-system%3ADeployment%3Acluster-autoscaler-hetzner-cluster-autoscaler'* ]]; then
+      if [ "${severity}" = "fatal" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
+      elif [ "$(cat "${dir}/autoscaler-mode")" = "known" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[
+          {"severity":"error","message":"E0920 07:58:01.416402       1 controller.go:300] \"Unhandled Error\" err=\"capacity buffer controller error: Operation cannot be fulfilled on capacitybuffers.autoscaling.x-k8s.io \\\"overprovisioning\\\": the object has been modified; please apply your changes to the latest version and try again\" logger=\"UnhandledError\""},
+          {"severity":"error","message":"E0920 07:58:01.416472       1 controller.go:250] \"Unhandled Error\" err=\"error syncing namespace \\\"overprovisioning\\\"\" logger=\"UnhandledError\""}
+        ]}}'
+      else
+        printf '%s\n' '{"data":{"status":"ok","entries":[
+          {"severity":"error","message":"E0920 07:58:01.416402       1 controller.go:300] \"Unhandled Error\" err=\"capacity buffer controller error: Operation cannot be fulfilled on capacitybuffers.autoscaling.x-k8s.io \\\"overprovisioning\\\": the object has been modified; please apply your changes to the latest version and try again\" logger=\"UnhandledError\""},
+          {"severity":"error","message":"E0920 07:58:02.416472       1 controller.go:250] \"Unhandled Error\" err=\"error syncing namespace \\\"overprovisioning\\\"\" logger=\"UnhandledError\""}
+        ]}}'
+      fi
     elif [[ "$url" == *'%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater'* ]]; then
       if [ "${severity}" = "fatal" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
@@ -323,6 +339,9 @@ case "${url}" in
     elif [[ "${url}" == *'%3Aflux-system%3ADeployment%3Akustomize-controller'* ]] &&
       [ "$(cat "${dir}/kustomize-mode")" != "known" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
+    elif [[ "${url}" == *'%3Akube-system%3ADeployment%3Acluster-autoscaler-hetzner-cluster-autoscaler'* ]] &&
+      [ "$(cat "${dir}/autoscaler-mode")" != "known" ]; then
+      printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
     elif [[ "${url}" == *'%3Akubescape%3ADeployment%3Aoperator'* ]] &&
       [ "$(cat "${dir}/operator-mode")" != "known" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":100}]}}'
@@ -365,6 +384,7 @@ printf '%s\n' "${known_output}" | jq -s -e \
 jq -s -e '
   any(.[]; (.url | contains("%3A_%3AUnknown%3Akubelet/inspection/NetworkTCPConnections/config")) and .body.configs[2] == null) and
   any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-background-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
+  any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-cleanup-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 40) and
   any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
   any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 500) and
   any(.[]; (.url | contains("%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
@@ -373,6 +393,7 @@ jq -s -e '
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-apiserver/inspection/LogErrors/config")) and .body.configs[2].threshold == 100) and
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-controller-manager/inspection/LogErrors/config")) and .body.configs[2].threshold == 5000) and
   any(.[]; (.url | contains("%3Aflux-system%3ADeployment%3Akustomize-controller/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
+  any(.[]; (.url | contains("%3Akube-system%3ADeployment%3Acluster-autoscaler-hetzner-cluster-autoscaler/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Avelero%3ADeployment%3Avelero/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Acnpg-system%3ADeployment%3Acloudnative-pg/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
@@ -447,6 +468,14 @@ jq -s -e '
 ' "${kustomize_near_miss_dir}/posts.ndjson" >/dev/null ||
   fail 'an uncorrelated Flux cancellation pair did not remain visible'
 pass 'the Flux cancellation policy rejects uncorrelated or malformed entries'
+
+autoscaler_near_miss_dir="$(setup_scenario autoscaler-near-miss known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known near-miss)"
+run_scenario "${autoscaler_near_miss_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Akube-system%3ADeployment%3Acluster-autoscaler-hetzner-cluster-autoscaler/inspection/LogErrors/config")) and .body.configs[2] == null)
+' "${autoscaler_near_miss_dir}/posts.ndjson" >/dev/null ||
+  fail 'an uncorrelated CapacityBuffer retry pair did not remain visible'
+pass 'the CapacityBuffer retry policy rejects uncorrelated entries'
 
 operator_near_miss_dir="$(setup_scenario operator-near-miss known null 'context deadline exceeded' null known complete near-miss)"
 run_scenario "${operator_near_miss_dir}" >/dev/null

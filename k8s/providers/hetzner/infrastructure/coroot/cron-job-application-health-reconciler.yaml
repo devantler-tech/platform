@@ -181,6 +181,14 @@ spec:
                   KYVERNO="$PID:kyverno:Deployment:kyverno-background-controller"
                   reconcile_threshold "$KYVERNO" MemoryLeakPercent 10 35 kyverno-bounded-cache-sawtooth
 
+                  KYVERNO_CLEANUP="$PID:kyverno:Deployment:kyverno-cleanup-controller"
+                  # Cleanup-controller restarts initialise informer/cache state
+                  # quickly enough to look like a one-hour leak. The reviewed
+                  # rollout showed stable or declining established replicas,
+                  # no OOM/pressure, and a 200 MiB hard limit. Keep a finite
+                  # ceiling above that measured 36%/h cold-start slope.
+                  reconcile_threshold "$KYVERNO_CLEANUP" MemoryLeakPercent 10 40 kyverno-cleanup-rollout-cold-start
+
                   CROSSPLANE="$PID:crossplane-system:Deployment:crossplane"
                   reconcile_threshold "$CROSSPLANE" MemoryLeakPercent 10 35 crossplane-daily-memory-sawtooth
 
@@ -394,6 +402,23 @@ spec:
                           ] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
+                      autoscaler-capacity-buffer-conflict)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | .message as $s | select(
+                            ($s | test("^E[0-9]{4} [0-9:.]+ +1 controller\\.go:(250|300)\\] ")) and
+                            ($s | endswith(" logger=\"UnhandledError\"")) and
+                            (($s | contains("controller.go:300] \"Unhandled Error\" err=\"capacity buffer controller error: Operation cannot be fulfilled on capacitybuffers.autoscaling.x-k8s.io \\\"overprovisioning\\\": the object has been modified; please apply your changes to the latest version and try again\"")) or
+                             ($s | contains("controller.go:250] \"Unhandled Error\" err=\"error syncing namespace \\\"overprovisioning\\\"\"")))
+                          )] as $valid |
+                          [$valid | group_by(.message[0:14])[] |
+                            select(length==2) |
+                            select(([.[] | select(.message | contains("controller.go:300]"))] | length)==1) |
+                            select(([.[] | select(.message | contains("controller.go:250]"))] | length)==1) |
+                            .[]
+                          ] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
                       vpa-normal-event-denial)
                         counts=$(printf '%s' "$entries" | jq -r '
                           . as $all |
@@ -517,6 +542,7 @@ spec:
                   # Require both Flux log records to share the exact reconcile
                   # and Kustomization identity before applying the finite cap.
                   reconcile_logs "$PID:flux-system:Deployment:kustomize-controller" flux-kustomize-restart-cancellation 10
+                  reconcile_logs "$PID:kube-system:Deployment:cluster-autoscaler-hetzner-cluster-autoscaler" autoscaler-capacity-buffer-conflict 10
                   reconcile_logs "$PID:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater" vpa-normal-event-denial 10
                   reconcile_logs "$PID:velero:Deployment:velero" velero-plugin-stdout-close 10
                   # CNPG's scheduled retention deletes the oldest successful
