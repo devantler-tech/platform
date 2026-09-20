@@ -169,11 +169,12 @@ readonly -a REQUIRED_PULL_TARGETS=(
 # These packages are intentionally private and have independent ACLs. A public
 # image (including KSail itself) can prove registry reachability but cannot
 # prove that containerd loaded a working credential.
-readonly -a RUNTIME_CREDENTIAL_PROBE_IMAGES=(
-  "ghcr.io/devantler-tech/data-product-controller:latest"
-  "ghcr.io/devantler-tech/wedding-app:latest"
-  "ghcr.io/devantler-tech/ascoachingogvaner:latest"
+readonly -a RUNTIME_CREDENTIAL_PROBE_REPOSITORIES=(
+  "devantler-tech/data-product-controller"
+  "devantler-tech/wedding-app"
+  "devantler-tech/ascoachingogvaner"
 )
+RUNTIME_CREDENTIAL_PROBE_IMAGES=()
 readonly -a FANOUT_NAMESPACES=(
   # data-product-controller is staged off in k8s/bases/apps/kustomization.yaml,
   # so production never reconciles data-product-controller/ghcr-auth and this
@@ -266,6 +267,8 @@ credentials_file="${work_dir}/credentials.json"
 basic_curl_config="${work_dir}/curl-basic.config"
 bearer_curl_config="${work_dir}/curl-bearer.config"
 token_response="${work_dir}/token.json"
+manifest_headers_file="${work_dir}/manifest-headers.txt"
+runtime_probe_digests_file="${work_dir}/runtime-probe-digests.tsv"
 current_root_secret_file="${work_dir}/current-root-secret.json"
 current_root_docker_config="${work_dir}/current-root-config.json"
 current_root_credentials_file="${work_dir}/current-root-credentials.json"
@@ -1320,6 +1323,61 @@ verify_consumer_secret() {
   fi
 }
 
+is_runtime_credential_probe_repository() {
+  local candidate="$1"
+  local repository
+
+  for repository in "${RUNTIME_CREDENTIAL_PROBE_REPOSITORIES[@]}"; do
+    [[ "${candidate}" == "${repository}" ]] && return 0
+  done
+  return 1
+}
+
+# Record the immutable identity returned by the same authenticated manifest
+# read that proves package access. A moving latest tag during the transaction is
+# ambiguous evidence, so a second, different digest fails closed instead of
+# silently changing the image exercised by later kubelet/containerd probes.
+record_runtime_probe_digest() {
+  local repository="$1"
+  local digest="$2"
+  local existing_digest
+
+  if ! [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "::error::GHCR returned an invalid Docker-Content-Digest for ${repository}; refusing mutable runtime probe evidence."
+    return 1
+  fi
+  existing_digest="$(awk -F '\t' -v repository="${repository}" '
+    $1 == repository { print $2 }
+  ' "${runtime_probe_digests_file}" 2>/dev/null || true)"
+  if [[ -n "${existing_digest}" && "${existing_digest}" != "${digest}" ]]; then
+    echo "::error::GHCR latest moved while validating ${repository}; refusing inconsistent runtime probe evidence."
+    return 1
+  fi
+  if [[ -z "${existing_digest}" ]]; then
+    printf '%s\t%s\n' "${repository}" "${digest}" \
+      >>"${runtime_probe_digests_file}"
+  fi
+}
+
+load_runtime_credential_probe_images() {
+  local repository digest matches
+
+  RUNTIME_CREDENTIAL_PROBE_IMAGES=()
+  for repository in "${RUNTIME_CREDENTIAL_PROBE_REPOSITORIES[@]}"; do
+    matches="$(awk -F '\t' -v repository="${repository}" '
+      $1 == repository { count += 1; digest = $2 }
+      END { print count + 0, digest }
+    ' "${runtime_probe_digests_file}" 2>/dev/null)" || return 1
+    if [[ ! "${matches}" =~ ^1\ (sha256:[0-9a-f]{64})$ ]]; then
+      echo "::error::Authenticated immutable runtime probe evidence is incomplete for ${repository}."
+      return 1
+    fi
+    digest="${BASH_REMATCH[1]}"
+    RUNTIME_CREDENTIAL_PROBE_IMAGES+=("ghcr.io/${repository}@${digest}")
+  done
+  readonly -a RUNTIME_CREDENTIAL_PROBE_IMAGES
+}
+
 # Emit bounded, printable output only from operations that cannot contain the
 # registry credential. Prefix each line so it cannot become a workflow command.
 emit_safe_operation_output() {
@@ -1342,7 +1400,8 @@ verify_ghcr_pull_credential() {
   local token_file="$2"
   local bearer_config="$3"
   local credential_label="$4"
-  local target repository reference http_status
+  local target repository reference http_status digest
+  local digest_evidence digest_count
 
   for target in "${REQUIRED_PULL_TARGETS[@]}"; do
     repository="${target%:*}"
@@ -1383,6 +1442,7 @@ verify_ghcr_pull_credential() {
       --silent \
       --show-error \
       --output /dev/null \
+      --dump-header "${manifest_headers_file}" \
       --write-out '%{http_code}' \
       --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
       "https://ghcr.io/v2/${repository}/manifests/${reference}")"; then
@@ -1392,6 +1452,23 @@ verify_ghcr_pull_credential() {
     if [[ "${http_status}" != "200" ]]; then
       echo "::error::The ${credential_label} cannot read ${target} (GHCR HTTP ${http_status}); root Flux auth was not changed."
       return 1
+    fi
+    if is_runtime_credential_probe_repository "${repository}"; then
+      digest_evidence="$(awk '
+        tolower($1) == "docker-content-digest:" {
+          gsub(/\r/, "", $2)
+          count += 1
+          digest = $2
+        }
+        END { print count + 0 "\t" digest }
+      ' "${manifest_headers_file}")"
+      digest_count="${digest_evidence%%$'\t'*}"
+      digest="${digest_evidence#*$'\t'}"
+      if [[ "${digest_count}" != "1" ]]; then
+        echo "::error::GHCR returned ambiguous Docker-Content-Digest evidence for ${repository}; refusing runtime probes."
+        return 1
+      fi
+      record_runtime_probe_digest "${repository}" "${digest}" || return 1
     fi
   done
 }
@@ -3972,6 +4049,7 @@ verify_ghcr_pull_credential \
   "${token_response}" \
   "${bearer_curl_config}" \
   "SOPS GHCR credential" || exit 1
+load_runtime_credential_probe_images || exit 1
 
 if [[ "${check_only}" == "true" ]]; then
   echo "✅ Validated every required GHCR package pull from Git/SOPS."

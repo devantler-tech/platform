@@ -83,7 +83,7 @@ func fakeCurl(args []string) int {
 	if len(args) == 0 || args[0] != "--disable" {
 		return commandFailure(90, "curl must disable user config")
 	}
-	var configPath, outputPath, scope, requestURL string
+	var configPath, outputPath, headerPath, scope, requestURL string
 	var connectTimeout, maxTime string
 	for index := 1; index < len(args); {
 		switch args[index] {
@@ -95,6 +95,8 @@ func fakeCurl(args []string) int {
 			maxTime = requiredNext(args, &index)
 		case "--output":
 			outputPath = requiredNext(args, &index)
+		case "--dump-header":
+			headerPath = requiredNext(args, &index)
 		case "--data-urlencode":
 			value := requiredNext(args, &index)
 			if strings.HasPrefix(value, "scope=") {
@@ -151,9 +153,38 @@ func fakeCurl(args []string) int {
 	if repository == os.Getenv("FAKE_CURL_DENY_REPOSITORY") {
 		fmt.Print("403")
 	} else {
+		if headerPath == "" {
+			return commandFailure(90, "manifest read did not capture response headers")
+		}
+		digest := fakeManifestDigest(repository)
+		if repository == os.Getenv("FAKE_CURL_MALFORMED_DIGEST_REPOSITORY") {
+			digest = "sha256:invalid"
+		}
+		headers := "HTTP/2 200\r\nDocker-Content-Digest: " + digest + "\r\n"
+		if repository == os.Getenv("FAKE_CURL_AMBIGUOUS_DIGEST_REPOSITORY") {
+			headers += "Docker-Content-Digest: sha256:" + strings.Repeat("e", 64) + "\r\n"
+		}
+		mustWriteCommandFile(headerPath, headers+"\r\n")
 		fmt.Print("200")
 	}
 	return 0
+}
+
+func fakeManifestDigest(repository string) string {
+	digit := "d"
+	switch repository {
+	case "devantler-tech/data-product-controller":
+		digit = "a"
+	case "devantler-tech/wedding-app":
+		digit = "b"
+	case "devantler-tech/ascoachingogvaner":
+		digit = "c"
+	}
+	return "sha256:" + strings.Repeat(digit, 64)
+}
+
+func fakeRuntimeProbeImage(repository string) string {
+	return "ghcr.io/" + repository + "@" + fakeManifestDigest(repository)
 }
 
 func fakeTalosctl(args []string) int {
