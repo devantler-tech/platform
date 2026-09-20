@@ -1,0 +1,27 @@
+# Kyverno's background controller needs write access for the exact
+# mutate-existing retrofit in
+# cluster-policies/add-existing-csi-sidecar-baseline-context.yaml (#3946).
+# Keep this namespaced and resourceNames-pinned: a namespace-wide deployments
+# grant would let the controller rewrite longhorn-manager, longhorn-ui and the
+# driver deployer too, which is precisely the storage-plane blast radius #3918
+# sequences separately. The policy lists its targets statically so Kyverno's
+# admission-time permission check is name-scoped and this grant satisfies it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kyverno:background-controller:mutate-csi-sidecars
+  namespace: longhorn-system
+rules:
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    resourceNames:
+      - csi-attacher
+      - csi-provisioner
+      - csi-resizer
+      - csi-snapshotter
+    verbs:
+      - get
+      - patch
+      - update

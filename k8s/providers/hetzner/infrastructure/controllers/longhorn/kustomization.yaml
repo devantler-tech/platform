@@ -24,6 +24,10 @@ resources:
   # It must precede the ClusterPolicy in the next Flux layer.
   - role-kyverno-mutate-longhorn-csi-plugin.yaml
   - role-binding-kyverno-mutate-longhorn-csi-plugin.yaml
+  # Exact namespaced grant for the CSI sidecar C-0211 retrofit (#3946).
+  # Same layering rule: it must precede the ClusterPolicy in the next layer.
+  - role-kyverno-mutate-csi-sidecars.yaml
+  - role-binding-kyverno-mutate-csi-sidecars.yaml
   # Self-healing cleanup of orphaned Longhorn Node CRs left by autoscaler
   # scale-downs (Longhorn never auto-deletes them). See #2024.
   - service-account-stale-node-cleanup.yaml
