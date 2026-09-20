@@ -463,6 +463,9 @@ spec:
                   # Exemption 18 - exact, quiescent autoscaler node-lifecycle
                   # events. Signals without a node identity must correlate in
                   # time with an exact node deletion, reboot, or provider anchor.
+                  # Application-attributed DaemonSet probes additionally bind to
+                  # the reviewed application, fingerprint, labels, and message;
+                  # changed or recurring probe failures remain visible.
                   for id in $(printf '%s\n%s\n' "$ALERTS" "$RECENT_ALERTS" | jq -s -r --argjson now "$NOW_MS" '
                       def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
                       def labels($d): (($d.Labels // "") | split("\n") | map(select(length > 0) | capture("^(?<key>[^=]+)=\"(?<value>.*)\"$")) | from_entries);
@@ -547,6 +550,21 @@ spec:
                                  and $e.d["Event message"]=="Node is not ready"
                                  and all(($e.l.affected | split(", "))[];
                                          test("^(cilium(-envoy)?|engine-image-ei-[a-z0-9]+|longhorn-manager|tetragon)-[a-z0-9]+$"))));
+                      def correlated_component_probe($a; $e; $anchors):
+                        any($anchors[]; . >= (($a.opened_at // 0) - 180000) and . <= (($a.opened_at // 0) + 180000))
+                        and (($e.l | keys | sort) == ["cluster","reason","source"])
+                        and $e.l.cluster=="platform"
+                        and $e.l.reason=="Unhealthy"
+                        and $e.l.source=="kubelet"
+                        and (((($a.application_id // "") | endswith(":kubescape:DaemonSet:node-agent"))
+                              and $a.fingerprint=="40e9576c5418c1af"
+                              and ($e.d["Event message"] | test("^Readiness probe failed: Get \\\"http://10\\.244\\.[0-9]+\\.[0-9]+:7888/readyz\\\": read tcp 10\\.244\\.[0-9]+\\.[0-9]+:[0-9]+->10\\.244\\.[0-9]+\\.[0-9]+:7888: read: connection reset by peer$")))
+                             or ((($a.application_id // "") | endswith(":longhorn-system:DaemonSet:engine-image-ei-a4d05f02"))
+                                 and $a.fingerprint=="4674ee962cf0d212"
+                                 and $e.d["Event message"]=="Readiness probe errored and resulted in unknown state: rpc error: code = Canceled desc = context canceled")
+                             or ((($a.application_id // "") | endswith(":longhorn-system:DaemonSet:engine-image-ei-493e04e7"))
+                                 and $a.fingerprint=="4beaceba9155d4c3"
+                                 and ($e.d["Event message"] | test("^Readiness probe failed: Get \\\"https://10\\.244\\.[0-9]+\\.[0-9]+:9502/v1/healthz\\\": dial tcp 10\\.244\\.[0-9]+\\.[0-9]+:9502: connect: connection refused$"))));
                       def quiet_ksail_rollout($a; $e):
                         (($a.application_id // "") | endswith(":ksail-operator:Deployment:ksail-operator"))
                         and (($e.l | keys | sort) == ["cluster","reason","source"])
@@ -561,12 +579,12 @@ spec:
                       | select($a.suppressed==false and $a.resolved_at==null and quiet($a)
                                and $a.rule_id=="kubernetes-events")
                       | event_shape($a) as $e
-                      | select(($a.application_id // "")==":::"
-                               and $e.l.cluster=="platform"
-                               or quiet_ksail_rollout($a; $e))
-                      | select(direct_lifecycle($a; $e)
-                               or correlated_lifecycle($a; $e; $anchors)
-                               or quiet_ksail_rollout($a; $e))
+                      | select(((($a.application_id // "")==":::"
+                                  and $e.l.cluster=="platform")
+                                 and (direct_lifecycle($a; $e)
+                                      or correlated_lifecycle($a; $e; $anchors)))
+                                or correlated_component_probe($a; $e; $anchors)
+                                or quiet_ksail_rollout($a; $e))
                       | $a.id'); do
                     ids="$ids $id"; log_info "match controlled-autoscaler-lifecycle: $id"
                   done
