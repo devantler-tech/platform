@@ -73,8 +73,11 @@ excluded="$(printf '%s\n' "$excluded_raw" | tr ',' '\n' | sed 's/^[[:space:]]*//
 
 # --- input 2: the namespaces opted into the baseline-context mutation -----------------
 # Narrow with grep on the label KEY (robust to how the value is quoted), then let yq
-# decide, so a file that merely mentions the label in prose is not counted.
-candidates="$(grep -rl --include='*.yaml' -- "$LABEL" "$k8s_dir" 2>/dev/null | sort -u)"
+# decide, so a file that merely mentions the label in prose is not counted. Both YAML
+# suffixes are swept: k8s/ uses .yaml throughout today, but the repository does use .yml
+# elsewhere, and a namespace manifest written that way would otherwise be invisible here
+# — a silent miss rather than a failure.
+candidates="$(grep -rl --include='*.yaml' --include='*.yml' -- "$LABEL" "$k8s_dir" 2>/dev/null | sort -u)"
 [ -n "$candidates" ] ||
   die "no file under '$k8s_dir' mentions '$LABEL'; refusing to report a clean tree from an empty opted-in set"
 

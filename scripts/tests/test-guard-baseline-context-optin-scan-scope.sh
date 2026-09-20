@@ -128,6 +128,20 @@ yq -r '.spec.values.excludeNamespaces' "${hr}" | grep -q 'velero' ||
   bad 'fixture build: velero was not added to excludeNamespaces'
 expect 'a namespace added to excludeNamespaces while opted in fails' 1 "${hr}" "${root}/k8s"
 
+# --- the same opt-in written with the other YAML suffix ---------------------------------
+# k8s/ is all .yaml today, but the repository uses .yml elsewhere, so a sweep pinned to one
+# suffix would not FAIL on such a file — it would not see it at all, which is the silent
+# miss this case exists to keep closed.
+root="$(mkfixture yml-suffix)"
+ns="${root}/k8s/kubescape/namespace.yaml"
+grep -vF -- "${MARKER}" "${ns}" >"${root}/k8s/kubescape/namespace.yml"
+rm -f "${ns}"
+[ -f "${root}/k8s/kubescape/namespace.yml" ] || bad 'fixture build: the .yml namespace was not created'
+grep -qF -- "${MARKER}" "${root}/k8s/kubescape/namespace.yml" &&
+  bad 'fixture build: the marker survived removal in the .yml file'
+expect 'an undeclared opt-in in a .yml manifest is still caught' 1 \
+  "${root}/helm-release.yaml" "${root}/k8s"
+
 # --- AC3: fail closed on every unreadable or empty input -------------------------------
 root="$(mkfixture empty-exclusions)"
 hr="${root}/helm-release.yaml"
