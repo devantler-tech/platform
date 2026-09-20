@@ -276,7 +276,9 @@ spec:
         vulnerabilitymanifestsummaries:
           workerCount: 1
         openvulnerabilityexchangecontainers:
-          maxObjectSize: 1000000
+          # Backstage 1.52.0 produced a valid 6,604,551-byte VEX record. Keep a
+          # finite 8 MB ceiling (about 21% headroom) for this exact object kind.
+          maxObjectSize: 8000000
       image:
         # Storage v0.0.297 starts two deferred profile-maintenance workers. They
         # can both read and then race while promoting to SQLite's single writer;
