@@ -402,7 +402,9 @@ func TestFenceReportRefusesJournalsItCannotValidate(t *testing.T) {
 	// declares is pinned, so a partial object cannot pass by omission.
 	for _, field := range []string{
 		`"desiredRevision", "initialTaints", "owner", "phase",`,
-		`and .v == 1`,
+		`.v == 1`,
+		`.v == 2`,
+		`"scaleDownGuardOwned", "uid", "v", "wasCordoned"`,
 		`and (.wasCordoned == 0 or .wasCordoned == 1)`,
 		`and (.initialTaints | type == "array")`,
 		`test("^[0-9a-f]{64}$")`,
@@ -816,7 +818,9 @@ func TestFenceReportSentinelAppliesTheReconcilersFullJournalSchema(t *testing.T)
 
 	// The rest of the reconciler's schema, likewise `.record`-scoped.
 	requireContains(t, report, "(.record | keys | sort) == ([")
-	requireContains(t, report, "and .record.v == 1")
+	requireContains(t, report, ".record.v == 1")
+	requireContains(t, report, ".record.v == 2")
+	requireContains(t, report, ".record.scaleDownGuardOwned == 0")
 	requireContains(t, report, `and (.record.owner | type == "string" and length > 0)`)
 	requireContains(t, report, "and (.record.wasCordoned == 0 or .record.wasCordoned == 1)")
 	requireContains(t, report, `and (.record.phase == "rollback-safe"`)

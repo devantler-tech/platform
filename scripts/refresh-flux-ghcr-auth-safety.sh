@@ -215,6 +215,7 @@ node_scheduling_state_is_safe_to_reboot() {
   local owner_token="$3"
   local initial_node_uid="$4"
   local initial_node_taints="$5"
+  local scale_down_guard_owned="${6:-0}"
 
   jq -e \
     --arg owner_annotation \
@@ -226,6 +227,7 @@ node_scheduling_state_is_safe_to_reboot() {
     --arg owner "${owner_token}" \
     --arg uid "${initial_node_uid}" \
     --argjson was_cordoned "${was_cordoned}" \
+    --argjson scale_down_guard_owned "${scale_down_guard_owned}" \
     --argjson initial_taints "${initial_node_taints}" '
     def scheduling_taints:
       map(select((
@@ -242,9 +244,14 @@ node_scheduling_state_is_safe_to_reboot() {
     and .metadata.annotations[$owner_annotation] == $owner
     and (if ((.metadata.labels // {})["ksail.io/autoscaled"] // "") == "true" then
       ((.metadata.annotations // {})[$scale_down_annotation] // "") == "true"
-      and ((((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == "")
-        or ((.metadata.annotations // {})[$scale_down_owner_annotation] == $owner))
+      and (if $scale_down_guard_owned == 1 then
+        ((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == $owner
+      else
+        ((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == ""
+      end)
     else
+      $scale_down_guard_owned == 0
+      and
       (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == "")
     end)
     and (((.spec.taints // []) | scheduling_taints)
@@ -264,6 +271,7 @@ node_scheduling_state_is_safe_while_lifecycle_taints_clear() {
   local owner_token="$3"
   local initial_node_uid="$4"
   local initial_node_taints="$5"
+  local scale_down_guard_owned="${6:-0}"
 
   jq -e \
     --arg owner_annotation \
@@ -275,6 +283,7 @@ node_scheduling_state_is_safe_while_lifecycle_taints_clear() {
     --arg owner "${owner_token}" \
     --arg uid "${initial_node_uid}" \
     --argjson was_cordoned "${was_cordoned}" \
+    --argjson scale_down_guard_owned "${scale_down_guard_owned}" \
     --argjson initial_taints "${initial_node_taints}" '
     def scheduling_taints:
       map(select((
@@ -294,9 +303,14 @@ node_scheduling_state_is_safe_while_lifecycle_taints_clear() {
     and .metadata.annotations[$owner_annotation] == $owner
     and (if ((.metadata.labels // {})["ksail.io/autoscaled"] // "") == "true" then
       ((.metadata.annotations // {})[$scale_down_annotation] // "") == "true"
-      and ((((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == "")
-        or ((.metadata.annotations // {})[$scale_down_owner_annotation] == $owner))
+      and (if $scale_down_guard_owned == 1 then
+        ((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == $owner
+      else
+        ((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == ""
+      end)
     else
+      $scale_down_guard_owned == 0
+      and
       (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == "")
     end)
     and (((.spec.taints // []) | scheduling_taints)

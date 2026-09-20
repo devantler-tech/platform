@@ -496,7 +496,7 @@ report_fences_now() {
   local fence_report_nodes="${work_dir}/fence-report-nodes.rs"
   local held=0
   local holder name uid suspend phase resource_version uncordon deleting
-  local drain_phase scheduling_intent
+  local drain_phase scheduling_intent recovery_scale_down_guard_owned
 
   printf '== GHCR deploy fences on context %s ==\n\n' "${KUBE_CONTEXT}"
 
@@ -597,11 +597,18 @@ report_fences_now() {
         if any($entries[];
              (
                .record != null
-               and (.record | keys | sort) == ([
-                 "desiredRevision", "initialTaints", "owner", "phase",
-                 "uid", "v", "wasCordoned"
-               ] | sort)
-               and .record.v == 1
+               and (
+                 (.record.v == 1 and (.record | keys | sort) == ([
+                   "desiredRevision", "initialTaints", "owner", "phase",
+                   "uid", "v", "wasCordoned"
+                 ] | sort))
+                 or (.record.v == 2 and (.record | keys | sort) == ([
+                   "desiredRevision", "initialTaints", "owner", "phase",
+                   "scaleDownGuardOwned", "uid", "v", "wasCordoned"
+                 ] | sort)
+                   and (.record.scaleDownGuardOwned == 0
+                     or .record.scaleDownGuardOwned == 1))
+               )
                and (.record.owner | type == "string" and length > 0)
                and (.record.uid | type == "string" and length > 0)
                and (.record.desiredRevision
@@ -830,11 +837,17 @@ report_fences_now() {
       ! printf '%s' "${recovery}" | jq -e \
         --arg owner "${owner}" \
         --arg uid "${uid}" '
-        (keys | sort) == ([
-          "desiredRevision", "initialTaints", "owner", "phase",
-          "uid", "v", "wasCordoned"
-        ] | sort)
-        and .v == 1
+        (
+          (.v == 1 and (keys | sort) == ([
+            "desiredRevision", "initialTaints", "owner", "phase",
+            "uid", "v", "wasCordoned"
+          ] | sort))
+          or (.v == 2 and (keys | sort) == ([
+            "desiredRevision", "initialTaints", "owner", "phase",
+            "scaleDownGuardOwned", "uid", "v", "wasCordoned"
+          ] | sort)
+            and (.scaleDownGuardOwned == 0 or .scaleDownGuardOwned == 1))
+        )
         and (.owner | type == "string" and length > 0)
         and .owner == $owner
         and .uid == $uid
@@ -848,6 +861,18 @@ report_fences_now() {
       printf '    Run the bridge so bootstrap recovery adjudicates it; releasing on a\n'
       printf '    journal this script cannot validate is how a node gets uncordoned\n'
       printf '    against a state nobody verified.\n\n'
+      continue
+    fi
+    recovery_scale_down_guard_owned=0
+    if [[ -n "${recovery}" ]]; then
+      recovery_scale_down_guard_owned="$(printf '%s' "${recovery}" | jq -r \
+        'if .v == 2 then .scaleDownGuardOwned else 0 end')"
+    fi
+    if [[ "${recovery_scale_down_guard_owned}" == 1 &&
+      ("${scale_down_owner}" != "${owner}" || "${scale_down_disabled}" != "true") ]]; then
+      printf '    NOT releasable: this recovery journal records a bridge-created\n'
+      printf '    autoscaler guard, but its exact owner/value is no longer present.\n'
+      printf '    Run the bridge so recovery fails closed on the ownership change.\n\n'
       continue
     fi
     # The cordon owner annotation IS the fence, so releasing without one proves
@@ -2301,17 +2326,23 @@ build_and_apply_cordon_claim() {
 # remain untouched.
 node_schedulability_release_is_complete() {
   local state_file="$1" node_uid="$2" was_cordoned="$3"
+  local scale_down_guard_owned="${4:-0}"
 
   jq -e \
     --arg uid "${node_uid}" \
     --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
     --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
     --arg scale_down_owner_annotation "${SCALE_DOWN_GUARD_OWNER_ANNOTATION}" \
-    --argjson was_cordoned "${was_cordoned}" '
+    --arg scale_down_disabled_annotation "${AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION}" \
+    --argjson was_cordoned "${was_cordoned}" \
+    --argjson scale_down_guard_owned "${scale_down_guard_owned}" '
     .metadata.uid == $uid
     and (((.metadata.annotations // {})[$owner_annotation] // "") == "")
     and (((.metadata.annotations // {})[$recovery_annotation] // "") == "")
     and (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == "")
+    and (if $scale_down_guard_owned == 1 then
+      (((.metadata.annotations // {}) | has($scale_down_disabled_annotation)) | not)
+    else true end)
     and ((.spec.unschedulable // false) == ($was_cordoned == 1))
   ' "${state_file}" >/dev/null
 }
@@ -2320,7 +2351,8 @@ restore_node_schedulability_if_needed() {
   local node_name="$1" was_cordoned="$2" owner_token="$3"
   local initial_node_uid="$4" initial_node_taints="$5" result_file="$6"
   local expected_recovery="${7:-}"
-  local release_attempt="${8:-1}"
+  local scale_down_guard_owned="${8:-0}"
+  local release_attempt="${9:-1}"
   local current_resource_version current_recovery
   local current_scale_down_owner current_scale_down_disabled
 
@@ -2339,7 +2371,8 @@ restore_node_schedulability_if_needed() {
     return 1
   fi
   if node_schedulability_release_is_complete \
-    "${cordon_state_file}" "${initial_node_uid}" "${was_cordoned}"; then
+    "${cordon_state_file}" "${initial_node_uid}" "${was_cordoned}" \
+    "${scale_down_guard_owned}"; then
     if [[ "${was_cordoned}" == "0" ]]; then
       echo "Restored schedulability on ${node_name}."
     else
@@ -2352,7 +2385,8 @@ restore_node_schedulability_if_needed() {
     "${was_cordoned}" \
     "${owner_token}" \
     "${initial_node_uid}" \
-    "${initial_node_taints}"; then
+    "${initial_node_taints}" \
+    "${scale_down_guard_owned}"; then
     echo "::error::Cordon ownership changed or scheduling safety state changed for Talos node ${node_name}; refusing to uncordon it."
     return 1
   fi
@@ -2370,12 +2404,17 @@ restore_node_schedulability_if_needed() {
     --arg annotation "${AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION}" \
     '(.metadata.annotations // {})[$annotation] // ""' \
     "${cordon_state_file}")"
-  if [[ -n "${current_scale_down_owner}" &&
+  if [[ "${scale_down_guard_owned}" == 1 &&
     "${current_scale_down_owner}" != "${owner_token}" ]]; then
+    echo "::error::Owned scale-down guard owner changed or disappeared for Talos node ${node_name}; refusing to release it."
+    return 1
+  fi
+  if [[ "${scale_down_guard_owned}" == 0 &&
+    -n "${current_scale_down_owner}" ]]; then
     echo "::error::Scale-down guard ownership changed for Talos node ${node_name}; refusing to release it."
     return 1
   fi
-  if [[ "${current_scale_down_owner}" == "${owner_token}" &&
+  if [[ "${scale_down_guard_owned}" == 1 &&
     "${current_scale_down_disabled}" != "true" ]]; then
     echo "::error::Owned scale-down guard changed for Talos node ${node_name}; refusing to release it."
     return 1
@@ -2388,10 +2427,15 @@ restore_node_schedulability_if_needed() {
     ! jq -ne \
       --arg recovery "${current_recovery}" \
       --arg owner "${owner_token}" \
-      --arg uid "${initial_node_uid}" '
+      --arg uid "${initial_node_uid}" \
+      --argjson scale_down_guard_owned "${scale_down_guard_owned}" '
       ($recovery | fromjson?) as $record
       | $record != null
-      and $record.v == 1
+      and (
+        ($record.v == 1 and $scale_down_guard_owned == 0)
+        or ($record.v == 2
+          and $record.scaleDownGuardOwned == $scale_down_guard_owned)
+      )
       and $record.owner == $owner
       and $record.uid == $uid
       and ($record.phase == "rollback-safe"
@@ -2455,7 +2499,7 @@ restore_node_schedulability_if_needed() {
         "${node_name}" "${was_cordoned}" "${owner_token}" \
         "${initial_node_uid}" "${initial_node_taints}" \
         "${result_file}" "${expected_recovery}" \
-        "$((release_attempt + 1))"; then
+        "${scale_down_guard_owned}" "$((release_attempt + 1))"; then
         return 0
       fi
       return 1
@@ -2476,7 +2520,7 @@ update_bootstrap_recovery_phase() {
   local desired_revision="$4" expected_phase="$5" next_phase="$6"
   local result_file="$7"
   local current_recovery updated_recovery current_resource_version
-  local was_cordoned initial_taints
+  local was_cordoned initial_taints scale_down_guard_owned
 
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
@@ -2499,11 +2543,18 @@ update_bootstrap_recovery_phase() {
     --arg phase "${expected_phase}" '
     ($recovery | fromjson?) as $record
     | $record != null
-    and ($record | keys | sort) == ([
-      "desiredRevision", "initialTaints", "owner", "phase",
-      "uid", "v", "wasCordoned"
-    ] | sort)
-    and $record.v == 1
+    and (
+      ($record.v == 1 and ($record | keys | sort) == ([
+        "desiredRevision", "initialTaints", "owner", "phase",
+        "uid", "v", "wasCordoned"
+      ] | sort))
+      or ($record.v == 2 and ($record | keys | sort) == ([
+        "desiredRevision", "initialTaints", "owner", "phase",
+        "scaleDownGuardOwned", "uid", "v", "wasCordoned"
+      ] | sort)
+        and ($record.scaleDownGuardOwned == 0
+          or $record.scaleDownGuardOwned == 1))
+    )
     and $record.owner == $owner
     and $record.uid == $uid
     and $record.desiredRevision == $revision
@@ -2520,9 +2571,15 @@ update_bootstrap_recovery_phase() {
   initial_taints="$(jq -nc \
     --arg recovery "${current_recovery}" \
     '$recovery | fromjson | .initialTaints')"
+  scale_down_guard_owned="$(jq -nr \
+    --arg recovery "${current_recovery}" '
+    $recovery | fromjson
+    | if .v == 2 then .scaleDownGuardOwned else 0 end
+  ')"
   if ! node_scheduling_state_is_safe_to_reboot \
     "${cordon_state_file}" "${was_cordoned}" "${owner_token}" \
-    "${initial_node_uid}" "${initial_taints}"; then
+    "${initial_node_uid}" "${initial_taints}" \
+    "${scale_down_guard_owned}"; then
     echo "::error::Bootstrap scheduling state changed on ${node_name}; refusing to cross the reboot/release edge."
     return 1
   fi
@@ -2572,7 +2629,7 @@ update_bootstrap_recovery_phase() {
 cleanup_bootstrap_quarantine() {
   local state_file node_name was_cordoned owner_token initial_uid
   local initial_taints current_owner current_recovery expected_recovery
-  local expected_phase desired_revision
+  local expected_phase desired_revision scale_down_guard_owned
   local cleanup_failed=0
 
   [[ -d "${bootstrap_cordon_dir:-}" ]] || return 0
@@ -2590,6 +2647,7 @@ cleanup_bootstrap_quarantine() {
     if ! owner_token="$(jq -er '.ownerToken' "${state_file}")" ||
       ! initial_uid="$(jq -er '.initialUID' "${state_file}")" ||
       ! initial_taints="$(jq -c '.initialTaints' "${state_file}")" ||
+      ! scale_down_guard_owned="$(jq -er '.scaleDownGuardOwned' "${state_file}")" ||
       ! expected_recovery="$(jq -er '.recoveryRecord' "${state_file}")"; then
       echo "::error::Bootstrap recovery state for ${node_name} was malformed; the durable node journal was left intact."
       cleanup_failed=1
@@ -2649,7 +2707,8 @@ cleanup_bootstrap_quarantine() {
     if restore_node_schedulability_if_needed \
       "${node_name}" "${was_cordoned}" "${owner_token}" \
       "${initial_uid}" "${initial_taints}" \
-      "${drain_result_file}" "${expected_recovery}"; then
+      "${drain_result_file}" "${expected_recovery}" \
+      "${scale_down_guard_owned}"; then
       rm -f "${state_file}"
     else
       cleanup_failed=1
@@ -2662,6 +2721,7 @@ reconcile_bootstrap_recovery_journals() {
   local desired_revision="$1"
   local node_json node_name owner_token initial_uid initial_taints
   local was_cordoned phase recorded_revision recovery_record
+  local scale_down_guard_owned
   local reconcile_failed=0
 
   assert_sync_lease_held || return 1
@@ -2696,11 +2756,18 @@ reconcile_bootstrap_recovery_journals() {
     ] as $journals
     | all($journals[];
         .record != null
-        and (.record | keys | sort) == ([
-          "desiredRevision", "initialTaints", "owner", "phase",
-          "uid", "v", "wasCordoned"
-        ] | sort)
-        and .record.v == 1
+        and (
+          (.record.v == 1 and (.record | keys | sort) == ([
+            "desiredRevision", "initialTaints", "owner", "phase",
+            "uid", "v", "wasCordoned"
+          ] | sort))
+          or (.record.v == 2 and (.record | keys | sort) == ([
+            "desiredRevision", "initialTaints", "owner", "phase",
+            "scaleDownGuardOwned", "uid", "v", "wasCordoned"
+          ] | sort)
+            and (.record.scaleDownGuardOwned == 0
+              or .record.scaleDownGuardOwned == 1))
+        )
         and (.record.owner | type == "string" and length > 0)
         and (.record.uid | type == "string" and length > 0)
         and (.record.desiredRevision
@@ -2752,11 +2819,18 @@ reconcile_bootstrap_recovery_journals() {
       --arg node_name "${node_name}" '
       ($recovery | fromjson?) as $record
       | $record != null
-      and ($record | keys | sort) == ([
-        "desiredRevision", "initialTaints", "owner", "phase",
-        "uid", "v", "wasCordoned"
-      ] | sort)
-      and $record.v == 1
+      and (
+        ($record.v == 1 and ($record | keys | sort) == ([
+          "desiredRevision", "initialTaints", "owner", "phase",
+          "uid", "v", "wasCordoned"
+        ] | sort))
+        or ($record.v == 2 and ($record | keys | sort) == ([
+          "desiredRevision", "initialTaints", "owner", "phase",
+          "scaleDownGuardOwned", "uid", "v", "wasCordoned"
+        ] | sort)
+          and ($record.scaleDownGuardOwned == 0
+            or $record.scaleDownGuardOwned == 1))
+      )
       and ($record.owner | type == "string" and length > 0)
       and ($record.uid | type == "string" and length > 0)
       and ($record.desiredRevision
@@ -2781,6 +2855,9 @@ reconcile_bootstrap_recovery_journals() {
     initial_uid="$(jq -er '.uid' "${recovery_record_file}")"
     initial_taints="$(jq -c '.initialTaints' "${recovery_record_file}")"
     was_cordoned="$(jq -er '.wasCordoned' "${recovery_record_file}")"
+    scale_down_guard_owned="$(jq -er \
+      'if .v == 2 then .scaleDownGuardOwned else 0 end' \
+      "${recovery_record_file}")"
     phase="$(jq -er '.phase' "${recovery_record_file}")"
     recorded_revision="$(jq -er '.desiredRevision' "${recovery_record_file}")"
 
@@ -2819,7 +2896,7 @@ reconcile_bootstrap_recovery_journals() {
     if ! restore_node_schedulability_if_needed \
       "${node_name}" "${was_cordoned}" "${owner_token}" \
       "${initial_uid}" "${initial_taints}" "${drain_result_file}" \
-      "${recovery_record}"; then
+      "${recovery_record}" "${scale_down_guard_owned}"; then
       echo "::error::Could not reconcile durable GHCR bootstrap recovery journal on ${node_name}; leaving it cordoned."
       reconcile_failed=1
     fi
@@ -2925,7 +3002,7 @@ prepare_runtime_bootstrap_roll() {
   local node_role node_name node_ip node_mode node_uid
   local seed_line="" state_file was_cordoned owner_token existing_owner
   local initial_taints bootstrap_owner existing_recovery recovery_record
-  local workload_rc
+  local scale_down_guard_owned workload_rc
 
   bootstrap_seed_uid=""
   : >"${bootstrap_ordered_targets}"
@@ -3036,20 +3113,28 @@ prepare_runtime_bootstrap_roll() {
     else
       was_cordoned=0
     fi
+    scale_down_guard_owned="$(jq -r \
+      --arg annotation "${AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION}" '
+      if ((.metadata.labels // {})["ksail.io/autoscaled"] // "") == "true"
+        and (((.metadata.annotations // {}) | has($annotation)) | not)
+      then 1 else 0 end
+    ' "${cordon_state_file}")"
     owner_token="${bootstrap_owner}"
     recovery_record="$(jq -cn \
       --arg owner "${owner_token}" \
       --arg uid "${node_uid}" \
       --arg desired_revision "${desired_revision}" \
       --argjson was_cordoned "${was_cordoned}" \
-      --argjson initial_taints "${initial_taints}" '
+      --argjson initial_taints "${initial_taints}" \
+      --argjson scale_down_guard_owned "${scale_down_guard_owned}" '
       {
-        v: 1,
+        v: 2,
         owner: $owner,
         uid: $uid,
         desiredRevision: $desired_revision,
         wasCordoned: $was_cordoned,
         initialTaints: $initial_taints,
+        scaleDownGuardOwned: $scale_down_guard_owned,
         phase: "active"
       }
     ')"
@@ -3059,6 +3144,7 @@ prepare_runtime_bootstrap_roll() {
       --arg recovery_record "${recovery_record}" \
       --arg initial_uid "${node_uid}" \
       --argjson was_cordoned "${was_cordoned}" \
+      --argjson scale_down_guard_owned "${scale_down_guard_owned}" \
       --argjson initial_taints "${initial_taints}" '
       {
         nodeName: $node_name,
@@ -3066,6 +3152,7 @@ prepare_runtime_bootstrap_roll() {
         recoveryRecord: $recovery_record,
         initialUID: $initial_uid,
         wasCordoned: $was_cordoned,
+        scaleDownGuardOwned: $scale_down_guard_owned,
         initialTaints: $initial_taints
       }
     ' >"${state_file}"; then
@@ -3096,7 +3183,8 @@ revalidate_node_scheduling_guard() {
   local initial_node_uid="$4" initial_node_taints="$5" result_file="$6"
   local selected_node_ip="$7" selected_node_role="$8"
   local operation="$9"
-  local allow_removed="${10:-0}"
+  local scale_down_guard_owned="${10:-0}"
+  local allow_removed="${11:-0}"
 
   assert_sync_lease_held || return 1
   if ! kubectl \
@@ -3130,7 +3218,8 @@ revalidate_node_scheduling_guard() {
       "${was_cordoned}" \
       "${owner_token}" \
       "${initial_node_uid}" \
-      "${initial_node_taints}"; then
+      "${initial_node_taints}" \
+      "${scale_down_guard_owned}"; then
     echo "::error::Talos node ${node_name} identity changed, cordon ownership changed, or scheduling safety state changed before ${operation}; refusing the mutation."
     return 1
   fi
@@ -3140,6 +3229,7 @@ wait_for_node_lifecycle_taints_to_clear() {
   local node_name="$1" was_cordoned="$2" owner_token="$3"
   local initial_node_uid="$4" initial_node_taints="$5" result_file="$6"
   local selected_node_ip="$7" selected_node_role="$8"
+  local scale_down_guard_owned="${9:-0}"
   local attempt
 
   for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
@@ -3163,7 +3253,8 @@ wait_for_node_lifecycle_taints_to_clear() {
         "${was_cordoned}" \
         "${owner_token}" \
         "${initial_node_uid}" \
-        "${initial_node_taints}"; then
+        "${initial_node_taints}" \
+        "${scale_down_guard_owned}"; then
       echo "::error::Talos node ${node_name} identity changed, cordon ownership changed, or non-lifecycle scheduling safety state changed while waiting for its post-reboot lifecycle taints to clear; refusing image verification."
       return 1
     fi
@@ -3292,6 +3383,7 @@ process_talos_node_target() {
   local reusable_proof_uid=""
   local identity_result=0 allow_removed=1
   local selected_node_autoscaled=0 guard_result=0
+  local scale_down_guard_owned=0
 
   assert_sync_lease_held || return 1
 
@@ -3399,6 +3491,7 @@ process_talos_node_target() {
         and (.ownerToken | type == "string")
         and (.recoveryRecord | type == "string" and length > 0)
         and (.wasCordoned == 0 or .wasCordoned == 1)
+        and (.scaleDownGuardOwned == 0 or .scaleDownGuardOwned == 1)
         and (.initialTaints | type == "array")
       ' "${bootstrap_state_file}" >/dev/null; then
       echo "::error::Bootstrap ownership state for ${node_name} was malformed; refusing the mutation."
@@ -3407,6 +3500,7 @@ process_talos_node_target() {
     initial_node_uid="$(jq -er '.initialUID' "${bootstrap_state_file}")"
     initial_node_taints="$(jq -c '.initialTaints' "${bootstrap_state_file}")"
     was_cordoned="$(jq -er '.wasCordoned' "${bootstrap_state_file}")"
+    scale_down_guard_owned="$(jq -er '.scaleDownGuardOwned' "${bootstrap_state_file}")"
     cordon_owner_token="$(jq -er '.ownerToken' "${bootstrap_state_file}")"
     recovery_record="$(jq -er '.recoveryRecord' "${bootstrap_state_file}")"
     if ! jq -e \
@@ -3422,7 +3516,8 @@ process_talos_node_target() {
       "${was_cordoned}" \
       "${cordon_owner_token}" \
       "${initial_node_uid}" \
-      "${initial_node_taints}"; then
+      "${initial_node_taints}" \
+      "${scale_down_guard_owned}"; then
       echo "::error::Bootstrap quarantine ownership or scheduling state changed for ${node_name}; refusing the mutation."
       return 1
     fi
@@ -3461,6 +3556,13 @@ process_talos_node_target() {
     else
       was_cordoned=0
     fi
+    if [[ "${selected_node_autoscaled}" == 1 ]] &&
+      jq -e \
+        --arg annotation "${AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION}" '
+        ((.metadata.annotations // {}) | has($annotation)) | not
+      ' "${cordon_state_file}" >/dev/null; then
+      scale_down_guard_owned=1
+    fi
     cordon_owner_token="${desired_revision:0:16}-$(fence_run_segment)-$$-${RANDOM}"
     assert_sync_lease_held || return 1
     claim_node_cordon_ownership \
@@ -3477,14 +3579,16 @@ process_talos_node_target() {
     "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
     "${initial_node_uid}" "${initial_node_taints}" \
     "${talos_result_file}" "${node_ip}" "${node_role}" \
-    "credential patch" "${selected_node_autoscaled}" || guard_result=$?
+    "credential patch" "${scale_down_guard_owned}" \
+    "${selected_node_autoscaled}" || guard_result=$?
   if ((guard_result == 2)); then
     return 2
   elif ((guard_result != 0)); then
     restore_node_schedulability_if_needed \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
-      "${drain_result_file}" "${recovery_record}" || true
+      "${drain_result_file}" "${recovery_record}" \
+      "${scale_down_guard_owned}" || true
     return 1
   fi
 
@@ -3498,7 +3602,8 @@ process_talos_node_target() {
     restore_node_schedulability_if_needed \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
-      "${drain_result_file}" "${recovery_record}" || true
+      "${drain_result_file}" "${recovery_record}" \
+      "${scale_down_guard_owned}" || true
     return 1
   fi
 
@@ -3513,7 +3618,8 @@ process_talos_node_target() {
       restore_node_schedulability_if_needed \
         "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
         "${initial_node_uid}" "${initial_node_taints}" \
-        "${drain_result_file}" "${recovery_record}" || return 1
+        "${drain_result_file}" "${recovery_record}" \
+        "${scale_down_guard_owned}" || return 1
       return 1
     fi
 
@@ -3523,7 +3629,8 @@ process_talos_node_target() {
     revalidate_node_scheduling_guard \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
-      "${drain_result_file}" "${node_ip}" "${node_role}" "drain" || return 1
+      "${drain_result_file}" "${node_ip}" "${node_role}" "drain" \
+      "${scale_down_guard_owned}" || return 1
 
     # Drain through the Kubernetes context already proven by this deployment.
     # Talos v1.13's integrated --drain path fetches a separate admin kubeconfig;
@@ -3545,7 +3652,8 @@ process_talos_node_target() {
         restore_node_schedulability_if_needed \
           "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
           "${initial_node_uid}" "${initial_node_taints}" \
-          "${drain_result_file}" "${recovery_record}" || return 1
+          "${drain_result_file}" "${recovery_record}" \
+          "${scale_down_guard_owned}" || return 1
         return 1
       fi
 
@@ -3571,21 +3679,23 @@ process_talos_node_target() {
         restore_node_schedulability_if_needed \
           "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
           "${initial_node_uid}" "${initial_node_taints}" \
-          "${drain_result_file}" "${recovery_record}" || return 1
+          "${drain_result_file}" "${recovery_record}" \
+          "${scale_down_guard_owned}" || return 1
         return 1
       fi
       if ! recover_sync_lease_heartbeat_after_transport_interruption; then
         restore_node_schedulability_if_needed \
           "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
           "${initial_node_uid}" "${initial_node_taints}" \
-          "${drain_result_file}" "${recovery_record}" || return 1
+          "${drain_result_file}" "${recovery_record}" \
+          "${scale_down_guard_owned}" || return 1
         return 1
       fi
       revalidate_node_scheduling_guard \
         "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
         "${initial_node_uid}" "${initial_node_taints}" \
         "${drain_result_file}" "${node_ip}" "${node_role}" \
-        "drain retry" || return 1
+        "drain retry" "${scale_down_guard_owned}" || return 1
       drain_attempt=$((drain_attempt + 1))
     done
 
@@ -3599,14 +3709,16 @@ process_talos_node_target() {
       restore_node_schedulability_if_needed \
         "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
         "${initial_node_uid}" "${initial_node_taints}" \
-        "${drain_result_file}" "${recovery_record}" || return 1
+        "${drain_result_file}" "${recovery_record}" \
+        "${scale_down_guard_owned}" || return 1
       return 1
     fi
 
     if ! revalidate_node_scheduling_guard \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
-      "${drain_result_file}" "${node_ip}" "${node_role}" "reboot"; then
+      "${drain_result_file}" "${node_ip}" "${node_role}" "reboot" \
+      "${scale_down_guard_owned}"; then
       # Scheduling intent changed after the PDB-respecting drain. Never reboot
       # or undo the newer actor's decision; leave the node in its observed state
       # for an operator or the next run to reconcile explicitly.
@@ -3679,7 +3791,8 @@ process_talos_node_target() {
     wait_for_node_lifecycle_taints_to_clear \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
-      "${reboot_result_file}" "${node_ip}" "${node_role}" || return 1
+      "${reboot_result_file}" "${node_ip}" "${node_role}" \
+      "${scale_down_guard_owned}" || return 1
   fi
 
   if [[ "${node_mode}" != "proof-only" ]]; then
@@ -3690,7 +3803,7 @@ process_talos_node_target() {
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
       "${talos_result_file}" "${node_ip}" "${node_role}" \
-      "image verification" || return 1
+      "image verification" "${scale_down_guard_owned}" || return 1
 
     # A cached image can make a pull look healthy without proving that the
     # node's runtime can authenticate to GHCR. Remove the incoming exact target
@@ -3711,7 +3824,7 @@ process_talos_node_target() {
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
       "${talos_result_file}" "${node_ip}" "${node_role}" \
-      "image pull" || return 1
+      "image pull" "${scale_down_guard_owned}" || return 1
 
     # Credential validity against GHCR (see the caveat above: this is not, on
     # its own, proof that containerd is using it — the reboot is).
@@ -3728,7 +3841,7 @@ process_talos_node_target() {
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
       "${talos_result_file}" "${node_ip}" "${node_role}" \
-      "runtime pull proof" || return 1
+      "runtime pull proof" "${scale_down_guard_owned}" || return 1
 
     # Talos' image API authenticates from machine config, not through the
     # kubelet's running CRI client. Before this freshly rebooted node can
@@ -3748,7 +3861,7 @@ process_talos_node_target() {
     "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
     "${initial_node_uid}" "${initial_node_taints}" \
     "${talos_result_file}" "${node_ip}" "${node_role}" \
-    "revision marker" || return 1
+    "revision marker" "${scale_down_guard_owned}" || return 1
 
   # Record the proof only after the real runtime checks, while the selected
   # machine remains protected by the owned cordon. Releasing ownership first
@@ -3787,7 +3900,8 @@ process_talos_node_target() {
   restore_node_schedulability_if_needed \
     "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
     "${initial_node_uid}" "${initial_node_taints}" \
-    "${drain_result_file}" "${recovery_record}" || return 1
+    "${drain_result_file}" "${recovery_record}" \
+    "${scale_down_guard_owned}" || return 1
 
   # The release is the final replacement boundary before this UID is marked
   # processed in the convergence loop. Rebind it once more so a replacement

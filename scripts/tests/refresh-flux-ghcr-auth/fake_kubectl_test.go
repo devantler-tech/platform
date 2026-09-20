@@ -1693,6 +1693,13 @@ func fakeKubectlGetNode(args []string) int {
 			appendEnvFile("OPERATION_LOG", "concurrent-recovery-phase:"+nodeName+":active\n")
 		}
 	}
+	if nodeName == os.Getenv("FAKE_SCALE_DOWN_OWNER_REMOVED_AFTER_CLAIM_NODE") &&
+		markerContent("scale-down-owner-"+nodeName) != "" &&
+		!markerExists("scale-down-owner-removed-after-claim-"+nodeName) {
+		removeMarker("scale-down-owner-" + nodeName)
+		touchMarker("scale-down-owner-removed-after-claim-" + nodeName)
+		appendEnvFile("OPERATION_LOG", "external-remove-scale-down-owner:"+nodeName+"\n")
+	}
 
 	nodeUID := fakeExpectedNodeUID(nodeName)
 	nodeIP, controlPlane := fakeNodeAddress(nodeName)

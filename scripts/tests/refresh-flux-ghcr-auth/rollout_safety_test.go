@@ -599,6 +599,33 @@ func TestAutoscaledNodePreservesPreexistingScaleDownGuard(t *testing.T) {
 	requireNoLine(t, operations, "node-release-scale-down-guard:prod-worker-1")
 }
 
+func TestAutoscaledNodeRejectsOwnedScaleDownGuardOwnerRemoval(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALED_NODES":                          "prod-worker-1",
+		"FAKE_SCALE_DOWN_OWNER_REMOVED_AFTER_CLAIM_NODE": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "scheduling safety state changed")
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
+	requireLine(t, operations, "node-scale-down-guard:prod-worker-1")
+	requireLine(t, operations, "external-remove-scale-down-owner:prod-worker-1")
+	for _, unexpected := range []string{
+		"talos-auth:10.0.0.2",
+		"node-drain:prod-worker-1",
+		"talos-reboot:10.0.0.2",
+		"node-uncordon:prod-worker-1",
+		"root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+	if !pathExists(filepath.Join(f.syncStateDir, "cordoned-prod-worker-1")) {
+		t.Fatal("node was not left cordoned after bridge-owned guard ownership disappeared")
+	}
+}
+
 func TestAutoscaledNodeRemovedAfterClaimIsDeselectedFromFreshInventory(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
