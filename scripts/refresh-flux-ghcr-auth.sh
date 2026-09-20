@@ -3598,7 +3598,8 @@ process_talos_node_target() {
   # cannot be advanced -- an un-advanced marker would make a mutated node look
   # reclaimable, which is the one direction that is never safe.
   if ! mark_node_fence_mutating \
-    "${node_name}" "${cordon_owner_token}" "${initial_node_uid}"; then
+    "${node_name}" "${cordon_owner_token}" "${initial_node_uid}" \
+    "${scale_down_guard_owned}"; then
     restore_node_schedulability_if_needed \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
@@ -4601,6 +4602,7 @@ renew_sync_lease() {
 # the one direction that is never safe.
 mark_node_fence_mutating() {
   local node_name="$1" owner_token="$2" node_uid="$3"
+  local scale_down_guard_owned="${4:-0}"
   local patch_file_local="${work_dir}/fence-phase-patch.json"
   local result_file="${work_dir}/fence-phase-result.txt"
 
@@ -4610,10 +4612,19 @@ mark_node_fence_mutating() {
     --arg uid "${node_uid}" \
     --arg owner_path "${CORDON_OWNER_JSON_PATH}" \
     --arg owner "${owner_token}" \
+    --arg scale_down_owner_path "${SCALE_DOWN_GUARD_OWNER_JSON_PATH}" \
+    --arg scale_down_disabled_path "${AUTOSCALER_SCALE_DOWN_DISABLED_JSON_PATH}" \
+    --argjson scale_down_guard_owned "${scale_down_guard_owned}" \
     --arg phase_path "${CORDON_PHASE_JSON_PATH}" '
     [
       {op: "test", path: "/metadata/uid", value: $uid},
-      {op: "test", path: $owner_path, value: $owner},
+      {op: "test", path: $owner_path, value: $owner}
+    ]
+    + (if $scale_down_guard_owned == 1 then [
+      {op: "test", path: $scale_down_owner_path, value: $owner},
+      {op: "test", path: $scale_down_disabled_path, value: "true"}
+    ] else [] end)
+    + [
       {op: "add", path: $phase_path, value: "mutating"}
     ]
   ' >"${patch_file_local}"

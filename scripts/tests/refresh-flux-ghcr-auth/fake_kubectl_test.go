@@ -1983,13 +1983,33 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
 	) && !hasPatchOperation(patch, "add", "/spec/unschedulable", true)
 	if isFencePhase {
+		if nodeName == os.Getenv("FAKE_SCALE_DOWN_OWNER_REMOVED_BEFORE_FENCE_PHASE_NODE") &&
+			markerContent("scale-down-owner-"+nodeName) != "" &&
+			!markerExists("scale-down-owner-removed-before-fence-phase-"+nodeName) {
+			removeMarker("scale-down-owner-" + nodeName)
+			touchMarker("scale-down-owner-removed-before-fence-phase-" + nodeName)
+			appendEnvFile("OPERATION_LOG", "external-remove-scale-down-owner-before-fence-phase:"+nodeName+"\n")
+		}
 		expectedOwner := patchValueString(
 			patch,
 			"test",
 			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner",
 		)
+		expectedScaleDownOwner := patchValueString(
+			patch,
+			"test",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-scale-down-owner",
+		)
 		if nodeName == os.Getenv("FAKE_FENCE_PHASE_FAIL_NODE") ||
 			expectedOwner == "" || expectedOwner != markerContent("cordon-owner-"+nodeName) ||
+			(expectedScaleDownOwner != "" &&
+				(expectedScaleDownOwner != markerContent("scale-down-owner-"+nodeName) ||
+					!hasPatchOperation(
+						patch,
+						"test",
+						"/metadata/annotations/cluster-autoscaler.kubernetes.io~1scale-down-disabled",
+						"true",
+					))) ||
 			!hasPatchOperation(patch, "test", "/metadata/uid", fakeExpectedNodeUID(nodeName)) {
 			return commandFailure(57, "invalid fence phase update")
 		}
