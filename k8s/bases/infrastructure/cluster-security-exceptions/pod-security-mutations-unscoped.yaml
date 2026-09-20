@@ -120,9 +120,10 @@
 # remaining workload in this population under the 2026-09-03 reading, and it fails
 # neither gap today.
 #
-# The per-workload table and the remediation split are on #3217. These counts are
-# prod-only and the local overlay opts in to a different namespace set, so re-measure
-# rather than inheriting them.
+# The per-workload table and the remediation split are on #3217, closed COMPLETED on
+# 2026-08-29 once the sizing was delivered; the remaining remediation is tracked on
+# #3239. These counts are prod-only and the local overlay opts in to a different
+# namespace set, so re-measure rather than inheriting them.
 #
 # node-agent and storage are NOT in that population. Both live in `kubescape`, whose
 # workloads the operator's own excludeNamespaces drops from scanning: neither has a
@@ -141,8 +142,9 @@ metadata:
     # Cluster-wide, and knowingly wider than its own rationale: in the twelve
     # namespaces "add-security-context" excludes, nothing injects these fields.
     # C-0211 is retained rather than narrowed on an unmeasured guess — sized
-    # 2026-09-20 and pending #3217. C-0013 was narrowed out on 2026-09-09 (#3223)
-    # once #3480 removed the one workload that failed it.
+    # 2026-09-20, with the remaining remediation on #3239. C-0013 was narrowed
+    # out on 2026-09-09 (#3223) once #3480 removed the one workload that
+    # failed it.
     platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
@@ -152,7 +154,7 @@ spec:
     control remains cluster-wide because narrowing it is blocked on evidence rather
     than on expressiveness: C-0211's residual population is every scanned workload
     the mutation does not reach, sized at 39 by the 2026-09-20 re-measurement
-    against the live PROD stored specs (#3217).
+    against the live PROD stored specs; remaining remediation on #3239.
   posture:
     - controlID: C-0211
       action: ignore
