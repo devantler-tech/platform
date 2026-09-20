@@ -1372,6 +1372,10 @@ func fakeKubectlGetNodes() int {
 			defaultString(os.Getenv("FAKE_LEAKED_FENCE_PHASE"), "claimed"),
 		)
 		touchMarker("cordoned-" + leaked)
+		if wordListContains(os.Getenv("FAKE_AUTOSCALED_NODES"), leaked) {
+			setMarkerContent("scale-down-owner-"+leaked, "dead-transaction-owner")
+			touchMarker("scale-down-disabled-" + leaked)
+		}
 	}
 	if custom := os.Getenv("FAKE_NODE_JSON"); custom != "" {
 		fmt.Println(custom)
@@ -1480,6 +1484,9 @@ func fakeKubectlGetNodes() int {
 	for _, node := range nodes {
 		name := node.(map[string]any)["metadata"].(map[string]any)["name"].(string)
 		if markerExists("removed-before-process-" + name) {
+			if name == os.Getenv("FAKE_AUTOSCALER_REMOVES_AFTER_CLAIM_NODE") {
+				appendEnvFile("OPERATION_LOG", "node-removal-inventory:"+name+"\n")
+			}
 			switch os.Getenv("FAKE_REMOVAL_CONFIRMATION") {
 			case "list-fails":
 				return commandFailure(46, "node discovery failed")
@@ -1522,6 +1529,9 @@ func fakeInventoryNode(
 	if controlPlane {
 		labels["node-role.kubernetes.io/control-plane"] = ""
 	}
+	if wordListContains(os.Getenv("FAKE_AUTOSCALED_NODES"), name) {
+		labels["ksail.io/autoscaled"] = "true"
+	}
 	annotations := map[string]any{
 		"platform.devantler.tech/ghcr-pull-desired-revision": desiredRevision,
 	}
@@ -1540,6 +1550,13 @@ func fakeInventoryNode(
 	if recovery := markerContent("cordon-recovery-" + name); recovery != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
 	}
+	if wordListContains(os.Getenv("FAKE_SCALE_DOWN_DISABLED_NODES"), name) ||
+		markerExists("scale-down-disabled-"+name) {
+		annotations["cluster-autoscaler.kubernetes.io/scale-down-disabled"] = "true"
+	}
+	if owner := markerContent("scale-down-owner-" + name); owner != "" {
+		annotations["platform.devantler.tech/ghcr-auth-scale-down-owner"] = owner
+	}
 	status := map[string]any{
 		"addresses": []any{
 			map[string]any{"type": "InternalIP", "address": internalIP},
@@ -1554,6 +1571,12 @@ func fakeInventoryNode(
 	if cordoned {
 		taints = append(taints, map[string]any{
 			"key":    "node.kubernetes.io/unschedulable",
+			"effect": "NoSchedule",
+		})
+	}
+	if wordListContains(os.Getenv("FAKE_AUTOSCALER_DELETING_NODES"), name) {
+		taints = append(taints, map[string]any{
+			"key":    "ToBeDeletedByClusterAutoscaler",
 			"effect": "NoSchedule",
 		})
 	}
@@ -1633,7 +1656,9 @@ func fakeKubectlGetNode(args []string) int {
 	}
 	removedAfterQuarantine := nodeName == os.Getenv("FAKE_NODE_REMOVED_AFTER_QUARANTINE") &&
 		(markerExists("cordon-owner-prod-control-plane-3") || markerExists("removed-before-process-"+nodeName))
-	if wordListContains(os.Getenv("FAKE_NODE_REMOVED_BEFORE_PROCESS"), nodeName) || removedAfterQuarantine ||
+	removedAfterClaim := nodeName == os.Getenv("FAKE_AUTOSCALER_REMOVES_AFTER_CLAIM_NODE") &&
+		markerExists("cordon-owner-"+nodeName)
+	if wordListContains(os.Getenv("FAKE_NODE_REMOVED_BEFORE_PROCESS"), nodeName) || removedAfterQuarantine || removedAfterClaim ||
 		(nodeName == os.Getenv("FAKE_NODE_REMOVED_AFTER_UNCORDON") && markerExists("uncordoned-"+nodeName)) {
 		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "forbidden" {
 			return commandFailure(1, "Error from server (Forbidden): nodes is forbidden")
@@ -1691,6 +1716,9 @@ func fakeKubectlGetNode(args []string) int {
 	if controlPlane {
 		labels["node-role.kubernetes.io/control-plane"] = ""
 	}
+	if wordListContains(os.Getenv("FAKE_AUTOSCALED_NODES"), nodeName) {
+		labels["ksail.io/autoscaled"] = "true"
+	}
 	annotations := map[string]any{}
 	if owner := markerContent("cordon-owner-" + nodeName); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-owner"] = owner
@@ -1700,6 +1728,13 @@ func fakeKubectlGetNode(args []string) int {
 	}
 	if recovery := markerContent("cordon-recovery-" + nodeName); recovery != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
+	}
+	if wordListContains(os.Getenv("FAKE_SCALE_DOWN_DISABLED_NODES"), nodeName) ||
+		markerExists("scale-down-disabled-"+nodeName) {
+		annotations["cluster-autoscaler.kubernetes.io/scale-down-disabled"] = "true"
+	}
+	if owner := markerContent("scale-down-owner-" + nodeName); owner != "" {
+		annotations["platform.devantler.tech/ghcr-auth-scale-down-owner"] = owner
 	}
 	cordoned := wordListContains(os.Getenv("FAKE_CORDONED_NODES"), nodeName) || markerExists("cordoned-"+nodeName)
 	if nodeName == os.Getenv("FAKE_EXTERNAL_UNCORDON_AFTER_READY_NODE") && markerExists("ready-"+nodeName) {
@@ -1713,6 +1748,12 @@ func fakeKubectlGetNode(args []string) int {
 		})
 	}
 	if markerExists("autoscaler-cordon-" + nodeName) {
+		taints = append(taints, map[string]any{
+			"key":    "ToBeDeletedByClusterAutoscaler",
+			"effect": "NoSchedule",
+		})
+	}
+	if wordListContains(os.Getenv("FAKE_AUTOSCALER_DELETING_NODES"), nodeName) {
 		taints = append(taints, map[string]any{
 			"key":    "ToBeDeletedByClusterAutoscaler",
 			"effect": "NoSchedule",
@@ -2016,6 +2057,7 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 			"test",
 			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner",
 		)
+		currentScaleDownOwner := markerContent("scale-down-owner-" + nodeName)
 		// CAS on identity, the exact owner value, AND the "claimed" phase: a
 		// reclaim must never clear a fence that changed hands, sits on a
 		// replaced node reusing the name, or already reached Talos mutation.
@@ -2035,8 +2077,38 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 			) {
 			return commandFailure(56, "invalid orphaned fence reclaim")
 		}
+		if currentScaleDownOwner != "" {
+			if patchValueString(
+				patch,
+				"test",
+				"/metadata/annotations/platform.devantler.tech~1ghcr-auth-scale-down-owner",
+			) != currentScaleDownOwner ||
+				!hasPatchOperation(
+					patch,
+					"test",
+					"/metadata/annotations/cluster-autoscaler.kubernetes.io~1scale-down-disabled",
+					"true",
+				) ||
+				!hasPatchPath(
+					patch,
+					"remove",
+					"/metadata/annotations/platform.devantler.tech~1ghcr-auth-scale-down-owner",
+				) ||
+				!hasPatchPath(
+					patch,
+					"remove",
+					"/metadata/annotations/cluster-autoscaler.kubernetes.io~1scale-down-disabled",
+				) {
+				return commandFailure(56, "invalid autoscaler guard reclaim")
+			}
+		}
 		removeMarker("cordon-owner-" + nodeName)
 		removeMarker("cordon-phase-" + nodeName)
+		if currentScaleDownOwner != "" {
+			removeMarker("scale-down-owner-" + nodeName)
+			removeMarker("scale-down-disabled-" + nodeName)
+			appendEnvFile("OPERATION_LOG", "node-reclaim-scale-down-guard:"+nodeName+"\n")
+		}
 		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
 		// The cordon marker is deliberately left in place: reclaim releases
 		// ownership without uncordoning, because the pre-claim schedulability
@@ -2077,6 +2149,34 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		if !hasPatchOperation(patch, "test", "/metadata/uid", expectedNodeUID) {
 			return commandFailure(56, "atomic cordon claim omitted node UID")
 		}
+		if wordListContains(os.Getenv("FAKE_AUTOSCALED_NODES"), nodeName) {
+			preexistingGuard := wordListContains(os.Getenv("FAKE_SCALE_DOWN_DISABLED_NODES"), nodeName)
+			guardOwner := patchValueString(
+				patch,
+				"add",
+				"/metadata/annotations/platform.devantler.tech~1ghcr-auth-scale-down-owner",
+			)
+			if preexistingGuard {
+				if guardOwner != "" || hasPatchPath(
+					patch,
+					"add",
+					"/metadata/annotations/cluster-autoscaler.kubernetes.io~1scale-down-disabled",
+				) {
+					return commandFailure(56, "autoscaled node claim replaced a pre-existing scale-down guard")
+				}
+			} else {
+				if guardOwner != owner || !hasPatchOperation(
+					patch,
+					"add",
+					"/metadata/annotations/cluster-autoscaler.kubernetes.io~1scale-down-disabled",
+					"true",
+				) {
+					return commandFailure(56, "autoscaled node claim omitted its owned scale-down guard")
+				}
+				setMarkerContent("scale-down-owner-"+nodeName, owner)
+				touchMarker("scale-down-disabled-" + nodeName)
+			}
+		}
 		setMarkerContent("cordon-owner-"+nodeName, owner)
 		if phase := patchValueString(
 			patch,
@@ -2095,6 +2195,9 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		touchMarker("cordoned-" + nodeName)
 		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
 		appendEnvFile("OPERATION_LOG", "node-claim-cordon:"+nodeName+"\n")
+		if markerContent("scale-down-owner-"+nodeName) == owner {
+			appendEnvFile("OPERATION_LOG", "node-scale-down-guard:"+nodeName+"\n")
+		}
 		if os.Getenv("FAKE_SYNC_LEASE_LOST_AFTER_FIRST_CLAIM") == "true" &&
 			!markerExists("sync-lease-lost-after-claim") {
 			setMarkerContent("sync-lease-holder", "newer-transaction")
@@ -2131,6 +2234,37 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		!hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
 		!hasPatchPath(patch, "remove", "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner") {
 		return commandFailure(56, "invalid atomic cordon release")
+	}
+	currentScaleDownOwner := markerContent("scale-down-owner-" + nodeName)
+	if currentScaleDownOwner != "" {
+		if currentScaleDownOwner != expectedOwner ||
+			!hasPatchOperation(
+				patch,
+				"test",
+				"/metadata/annotations/platform.devantler.tech~1ghcr-auth-scale-down-owner",
+				currentScaleDownOwner,
+			) ||
+			!hasPatchOperation(
+				patch,
+				"test",
+				"/metadata/annotations/cluster-autoscaler.kubernetes.io~1scale-down-disabled",
+				"true",
+			) ||
+			!hasPatchPath(
+				patch,
+				"remove",
+				"/metadata/annotations/platform.devantler.tech~1ghcr-auth-scale-down-owner",
+			) ||
+			!hasPatchPath(
+				patch,
+				"remove",
+				"/metadata/annotations/cluster-autoscaler.kubernetes.io~1scale-down-disabled",
+			) {
+			return commandFailure(56, "atomic cordon release omitted its owned scale-down guard")
+		}
+		removeMarker("scale-down-owner-" + nodeName)
+		removeMarker("scale-down-disabled-" + nodeName)
+		appendEnvFile("OPERATION_LOG", "node-release-scale-down-guard:"+nodeName+"\n")
 	}
 	currentRecovery := markerContent("cordon-recovery-" + nodeName)
 	if currentRecovery != "" &&

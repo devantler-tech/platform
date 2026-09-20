@@ -309,7 +309,8 @@ func TestFenceReportSweepsCordonOwnerNotOnlyTheRecoveryJournal(t *testing.T) {
 
 	report := functionBody(t, script, "report_fences_now")
 	requireContains(t, report, "CORDON_OWNER_ANNOTATION")
-	requireContains(t, report, `select($owner != "" or $recovery != "")`)
+	requireContains(t, report,
+		`select($owner != "" or $recovery != "" or $scale_down_owner != "")`)
 
 	// The ordinary path really does claim ownership with an empty journal —
 	// if that ever stops being true this test should be revisited, not deleted.
@@ -350,10 +351,38 @@ func TestFenceReportNodeReleaseIsCASGuarded(t *testing.T) {
 		`{op: "test", path: "/metadata/resourceVersion", value: $resource_version}`,
 		`{op: "test", path: $owner_path, value: $owner}`,
 		`{op: "test", path: $recovery_path, value: $recovery}`,
+		`{op: "test", path: $scale_down_owner_path, value: $scale_down_owner}`,
+		`{op: "test", path: $scale_down_disabled_path, value: $scale_down_disabled}`,
 	} {
 		requireContains(t, command, guard)
 	}
 	requireContains(t, command, "patch node %s --type=json")
+	requireContains(t, command, `{op: "remove", path: $scale_down_owner_path}`)
+	requireContains(t, command, `{op: "remove", path: $scale_down_disabled_path}`)
+}
+
+// An autoscaled node's scale-down guard is owned by the same transaction as
+// its drain fence. The report must surface that ownership, reject drift, and
+// remove the exact owned guard in the same CAS patch. A pre-existing standard
+// guard has no bridge owner and is deliberately left untouched.
+func TestFenceReportReleasesOnlyBridgeOwnedAutoscalerGuard(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	report := functionBody(t, script, "report_fences_now")
+	command := functionBody(t, script, "fence_node_release_command")
+
+	for _, required := range []string{
+		"SCALE_DOWN_GUARD_OWNER_ANNOTATION",
+		"AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION",
+		"autoscaler guard owner:",
+		"autoscaler scale-down-disabled:",
+		`"${scale_down_owner}" != "${owner}"`,
+		`"${scale_down_disabled}" != "true"`,
+		"NOT releasable: the autoscaler guard owner/value no longer matches",
+	} {
+		requireContains(t, report, required)
+	}
+	requireContains(t, command, `if $scale_down_owner == "" then [] else`)
 }
 
 // CAS guards against a CONCURRENT change; it does not say the recorded state is

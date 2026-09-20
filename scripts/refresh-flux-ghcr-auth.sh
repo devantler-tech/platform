@@ -154,6 +154,10 @@ readonly CORDON_RECOVERY_JSON_PATH="/metadata/annotations/platform.devantler.tec
 # still reading "claimed".
 readonly CORDON_PHASE_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-phase"
 readonly CORDON_PHASE_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase"
+readonly AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION="cluster-autoscaler.kubernetes.io/scale-down-disabled"
+readonly AUTOSCALER_SCALE_DOWN_DISABLED_JSON_PATH="/metadata/annotations/cluster-autoscaler.kubernetes.io~1scale-down-disabled"
+readonly SCALE_DOWN_GUARD_OWNER_ANNOTATION="platform.devantler.tech/ghcr-auth-scale-down-owner"
+readonly SCALE_DOWN_GUARD_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-scale-down-owner"
 KSAIL_OPERATOR_VERSION="$(yq -er '.spec.chart.spec.version' \
   k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml)"
 readonly KSAIL_OPERATOR_VERSION
@@ -657,7 +661,9 @@ report_fences_now() {
   if ! jq -r \
     --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
     --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
-    --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" '
+    --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" \
+    --arg scale_down_owner_annotation "${SCALE_DOWN_GUARD_OWNER_ANNOTATION}" \
+    --arg scale_down_disabled_annotation "${AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION}" '
     # The SAME normalization node_scheduling_state_is_safe_to_reboot applies,
     # and the same one that captured initialTaints. A different one would
     # disagree with the reference predicate on exactly the taint it exists to
@@ -676,7 +682,8 @@ report_fences_now() {
     | (.metadata.annotations // {}) as $a
     | ($a[$owner_annotation] // "") as $owner
     | ($a[$recovery_annotation] // "") as $recovery
-    | select($owner != "" or $recovery != "")
+    | ($a[$scale_down_owner_annotation] // "") as $scale_down_owner
+    | select($owner != "" or $recovery != "" or $scale_down_owner != "")
     # `try/catch null`, never `fromjson?`: the latter yields EMPTY on a malformed
     # journal, and `empty as $record` drops the whole node from this feed — so a
     # node carrying an unparseable journal would disappear from the report and
@@ -702,7 +709,9 @@ report_fences_now() {
              == ($record.initialTaints | scheduling_taints)))
          then "true"
          else "false"
-         end)
+         end),
+        $scale_down_owner,
+        ($a[$scale_down_disabled_annotation] // "")
       ]
     | map(tostring | gsub("[\u001f\n\r]"; " "))
     | join("\u001f")
@@ -710,7 +719,7 @@ report_fences_now() {
     echo "::error::Could not enumerate node fences for the report; refusing to report fence state from a truncated feed. A corrupted recovery journal is the likely cause. Run './scripts/refresh-flux-ghcr-auth.sh --fences' after repairing it, and see docs/dr/runbook.md → 'Recover an orphaned GHCR deploy fence'."
     return 1
   fi
-  while IFS=$'\037' read -r name owner recovery unschedulable uid resource_version deleting drain_phase scheduling_intent; do
+  while IFS=$'\037' read -r name owner recovery unschedulable uid resource_version deleting drain_phase scheduling_intent scale_down_owner scale_down_disabled; do
     [[ -n "${name}" ]] || continue
     held=$((held + 1))
     printf 'HELD  Node %s (drain quarantine)\n' "${name}"
@@ -718,6 +727,8 @@ report_fences_now() {
     printf '    recovery record: %s\n' "${recovery:-<none — claimed without a journal>}"
     printf '    drain phase: %s\n' "${drain_phase:-<none>}"
     printf '    unschedulable: %s\n' "${unschedulable}"
+    printf '    autoscaler guard owner: %s\n' "${scale_down_owner:-<none>}"
+    printf '    autoscaler scale-down-disabled: %s\n' "${scale_down_disabled:-<none>}"
     [[ -n "${owner}" ]] && fence_report_liveness "${owner}"
     # The no-journal case is the ordinary per-node claim, and reclaim_orphaned_
     # node_fences clears it ONLY at phase "claimed": "mutating" means a Talos
@@ -855,6 +866,13 @@ report_fences_now() {
       printf '    Let the deletion finish; there is nothing to restore.\n\n'
       continue
     fi
+    if [[ -n "${scale_down_owner}" &&
+      ("${scale_down_owner}" != "${owner}" || "${scale_down_disabled}" != "true") ]]; then
+      printf '    NOT releasable: the autoscaler guard owner/value no longer matches\n'
+      printf '    this drain owner and the exact bridge-owned value true. Run the\n'
+      printf '    bridge so recovery can fail closed on the changed ownership.\n\n'
+      continue
+    fi
     if [[ -z "${owner}" ]]; then
       printf '    NOT releasable: the node carries no cordon owner annotation, so no\n'
       printf '    release can prove this transaction holds the fence. Run the bridge so\n'
@@ -896,7 +914,8 @@ report_fences_now() {
     printf '      %s\n' \
       "$(fence_node_release_command \
         "${name}" "${uid}" "${resource_version}" \
-        "${owner}" "${recovery}" "${uncordon}")"
+        "${owner}" "${recovery}" "${uncordon}" \
+        "${scale_down_owner}" "${scale_down_disabled}")"
     printf '\n'
   done <"${fence_report_nodes}"
   fence_node_held=$((held - fence_policy_held))
@@ -1152,6 +1171,8 @@ fence_node_release_command() {
   local owner="$4"
   local recovery="$5"
   local uncordon="$6"
+  local scale_down_owner="$7"
+  local scale_down_disabled="$8"
   local patch
 
   # `test` on the annotation paths only when the annotation is actually present:
@@ -1164,6 +1185,10 @@ fence_node_release_command() {
     --arg owner "${owner}" \
     --arg recovery_path "${CORDON_RECOVERY_JSON_PATH}" \
     --arg recovery "${recovery}" \
+    --arg scale_down_owner_path "${SCALE_DOWN_GUARD_OWNER_JSON_PATH}" \
+    --arg scale_down_owner "${scale_down_owner}" \
+    --arg scale_down_disabled_path "${AUTOSCALER_SCALE_DOWN_DISABLED_JSON_PATH}" \
+    --arg scale_down_disabled "${scale_down_disabled}" \
     --argjson uncordon "${uncordon}" '
     [
       {op: "test", path: "/metadata/uid", value: $uid},
@@ -1173,12 +1198,20 @@ fence_node_release_command() {
         [{op: "test", path: $owner_path, value: $owner}] end)
     + (if $recovery == "" then [] else
         [{op: "test", path: $recovery_path, value: $recovery}] end)
+    + (if $scale_down_owner == "" then [] else [
+        {op: "test", path: $scale_down_owner_path, value: $scale_down_owner},
+        {op: "test", path: $scale_down_disabled_path, value: $scale_down_disabled}
+      ] end)
     + (if $uncordon then
         [{op: "add", path: "/spec/unschedulable", value: false}] else [] end)
     + (if $recovery == "" then [] else
         [{op: "remove", path: $recovery_path}] end)
     + (if $owner == "" then [] else
         [{op: "remove", path: $owner_path}] end)
+    + (if $scale_down_owner == "" then [] else [
+        {op: "remove", path: $scale_down_owner_path},
+        {op: "remove", path: $scale_down_disabled_path}
+      ] end)
   ')"
   printf "kubectl --context %s patch node %s --type=json -p %s" \
     "$(fence_shell_quote "${KUBE_CONTEXT}")" "${name}" "$(fence_shell_quote "${patch}")"
@@ -2096,6 +2129,7 @@ claim_node_cordon_ownership() {
   local recovery_record="${5:-}"
   local was_cordoned="${6:-}" initial_taints="${7:-}"
   local resource_version node_uid initial_node_uid
+  local was_autoscaled scale_down_was_disabled
   local attempt=1
   local max_attempts="${CORDON_CLAIM_MAX_ATTEMPTS:-5}"
   # The re-read below needs its own stderr sink. Pointed at result_file it would
@@ -2105,8 +2139,21 @@ claim_node_cordon_ownership() {
   local reread_error_file="${result_file}.reread"
 
   initial_node_uid="$(jq -er '.metadata.uid' "${state_file}")"
+  was_autoscaled="$(jq -r '
+    if ((.metadata.labels // {})["ksail.io/autoscaled"] // "") == "true"
+    then 1 else 0 end
+  ' "${state_file}")"
+  scale_down_was_disabled="$(jq -r \
+    --arg annotation "${AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION}" '
+    if ((.metadata.annotations // {})[$annotation] // "") == "true"
+    then 1 else 0 end
+  ' "${state_file}")"
 
   while :; do
+    if ! autoscaled_node_claim_is_safe "${state_file}"; then
+      echo "::error::Refusing to synchronize ${node_name}: the autoscaled node is already unschedulable, marked for deletion, or carries ambiguous scale-down ownership."
+      return 1
+    fi
     build_and_apply_cordon_claim \
       "${node_name}" "${owner_token}" "${state_file}" "${result_file}" \
       "${recovery_record}" && return 0
@@ -2138,7 +2185,8 @@ claim_node_cordon_ownership() {
 
     if ! node_claim_preconditions_still_hold \
       "${state_file}" "${initial_node_uid}" \
-      "${was_cordoned}" "${initial_taints}"; then
+      "${was_cordoned}" "${initial_taints}" \
+      "${was_autoscaled}" "${scale_down_was_disabled}"; then
       break
     fi
 
@@ -2158,8 +2206,16 @@ build_and_apply_cordon_claim() {
   local node_name="$1" owner_token="$2" state_file="$3" result_file="$4"
   local recovery_record="${5:-}"
   local resource_version node_uid
+  local protect_autoscaled=false
   resource_version="$(jq -er '.metadata.resourceVersion' "${state_file}")"
   node_uid="$(jq -er '.metadata.uid' "${state_file}")"
+  if jq -e \
+    --arg annotation "${AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION}" '
+    ((.metadata.labels // {})["ksail.io/autoscaled"] // "") == "true"
+    and (((.metadata.annotations // {}) | has($annotation)) | not)
+  ' "${state_file}" >/dev/null; then
+    protect_autoscaled=true
+  fi
 
   if jq -e '.metadata.annotations | type == "object"' \
     "${state_file}" >/dev/null; then
@@ -2169,6 +2225,9 @@ build_and_apply_cordon_claim() {
       --arg recovery_path "${CORDON_RECOVERY_JSON_PATH}" \
       --arg recovery "${recovery_record}" \
       --arg phase_path "${CORDON_PHASE_JSON_PATH}" \
+      --arg scale_down_path "${AUTOSCALER_SCALE_DOWN_DISABLED_JSON_PATH}" \
+      --arg scale_down_owner_path "${SCALE_DOWN_GUARD_OWNER_JSON_PATH}" \
+      --argjson protect_autoscaled "${protect_autoscaled}" \
       --arg uid "${node_uid}" \
       --arg resource_version "${resource_version}" '
       [
@@ -2184,6 +2243,10 @@ build_and_apply_cordon_claim() {
       + (if $recovery == "" then [] else
           [{op: "add", path: $recovery_path, value: $recovery}]
         end)
+      + (if $protect_autoscaled then [
+          {op: "add", path: $scale_down_path, value: "true"},
+          {op: "add", path: $scale_down_owner_path, value: $owner}
+        ] else [] end)
       + [
         {op: "add", path: "/spec/unschedulable", value: true}
       ]
@@ -2195,6 +2258,9 @@ build_and_apply_cordon_claim() {
       --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
       --arg recovery "${recovery_record}" \
       --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" \
+      --arg scale_down_annotation "${AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION}" \
+      --arg scale_down_owner_annotation "${SCALE_DOWN_GUARD_OWNER_ANNOTATION}" \
+      --argjson protect_autoscaled "${protect_autoscaled}" \
       --arg uid "${node_uid}" \
       --arg resource_version "${resource_version}" '
       [
@@ -2209,6 +2275,10 @@ build_and_apply_cordon_claim() {
           path: "/metadata/annotations",
           value: ({($owner_annotation): $owner,
                    ($phase_annotation): "claimed"}
+            + (if $protect_autoscaled then
+                {($scale_down_annotation): "true",
+                 ($scale_down_owner_annotation): $owner}
+              else {} end)
             + (if $recovery == "" then {} else
                 {($recovery_annotation): $recovery}
               end))
@@ -2236,10 +2306,12 @@ node_schedulability_release_is_complete() {
     --arg uid "${node_uid}" \
     --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
     --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
+    --arg scale_down_owner_annotation "${SCALE_DOWN_GUARD_OWNER_ANNOTATION}" \
     --argjson was_cordoned "${was_cordoned}" '
     .metadata.uid == $uid
     and (((.metadata.annotations // {})[$owner_annotation] // "") == "")
     and (((.metadata.annotations // {})[$recovery_annotation] // "") == "")
+    and (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == "")
     and ((.spec.unschedulable // false) == ($was_cordoned == 1))
   ' "${state_file}" >/dev/null
 }
@@ -2250,6 +2322,7 @@ restore_node_schedulability_if_needed() {
   local expected_recovery="${7:-}"
   local release_attempt="${8:-1}"
   local current_resource_version current_recovery
+  local current_scale_down_owner current_scale_down_disabled
 
   if [[ -z "${owner_token}" ]]; then
     echo "::error::Refusing to release Talos node ${node_name} without a bridge ownership token."
@@ -2289,6 +2362,24 @@ restore_node_schedulability_if_needed() {
     --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
     '.metadata.annotations[$recovery_annotation] // ""' \
     "${cordon_state_file}")"
+  current_scale_down_owner="$(jq -r \
+    --arg annotation "${SCALE_DOWN_GUARD_OWNER_ANNOTATION}" \
+    '(.metadata.annotations // {})[$annotation] // ""' \
+    "${cordon_state_file}")"
+  current_scale_down_disabled="$(jq -r \
+    --arg annotation "${AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION}" \
+    '(.metadata.annotations // {})[$annotation] // ""' \
+    "${cordon_state_file}")"
+  if [[ -n "${current_scale_down_owner}" &&
+    "${current_scale_down_owner}" != "${owner_token}" ]]; then
+    echo "::error::Scale-down guard ownership changed for Talos node ${node_name}; refusing to release it."
+    return 1
+  fi
+  if [[ "${current_scale_down_owner}" == "${owner_token}" &&
+    "${current_scale_down_disabled}" != "true" ]]; then
+    echo "::error::Owned scale-down guard changed for Talos node ${node_name}; refusing to release it."
+    return 1
+  fi
   if [[ "${current_recovery}" != "${expected_recovery}" ]]; then
     echo "::error::Recovery journal changed for Talos node ${node_name}; refusing to release its cordon ownership."
     return 1
@@ -2317,6 +2408,9 @@ restore_node_schedulability_if_needed() {
     --arg owner "${owner_token}" \
     --arg recovery_path "${CORDON_RECOVERY_JSON_PATH}" \
     --arg recovery "${current_recovery}" \
+    --arg scale_down_path "${AUTOSCALER_SCALE_DOWN_DISABLED_JSON_PATH}" \
+    --arg scale_down_owner_path "${SCALE_DOWN_GUARD_OWNER_JSON_PATH}" \
+    --arg scale_down_owner "${current_scale_down_owner}" \
     --arg uid "${initial_node_uid}" \
     --arg resource_version "${current_resource_version}" \
     --argjson was_cordoned "${was_cordoned}" '
@@ -2336,6 +2430,14 @@ restore_node_schedulability_if_needed() {
         [
           {op: "test", path: $recovery_path, value: $recovery},
           {op: "remove", path: $recovery_path}
+        ]
+      end)
+    + (if $scale_down_owner == "" then [] else
+        [
+          {op: "test", path: $scale_down_owner_path, value: $owner},
+          {op: "test", path: $scale_down_path, value: "true"},
+          {op: "remove", path: $scale_down_owner_path},
+          {op: "remove", path: $scale_down_path}
         ]
       end)
     + [{op: "remove", path: $path}]
@@ -2994,15 +3096,27 @@ revalidate_node_scheduling_guard() {
   local initial_node_uid="$4" initial_node_taints="$5" result_file="$6"
   local selected_node_ip="$7" selected_node_role="$8"
   local operation="$9"
+  local allow_removed="${10:-0}"
 
   assert_sync_lease_held || return 1
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     get node "${node_name}" \
+    --ignore-not-found \
     --output json \
     >"${cordon_state_file}" 2>"${result_file}"; then
     echo "::error::Could not re-read Talos node ${node_name} immediately before ${operation}; refusing the mutation."
     emit_safe_operation_output "scheduling-guard" "${result_file}"
+    return 1
+  fi
+  if [[ ! -s "${cordon_state_file}" ]]; then
+    if [[ "${allow_removed}" == 1 ]] &&
+      prove_selected_node_removed_without_replacement \
+        "${node_name}" "${initial_node_uid}" "${selected_node_ip}"; then
+      echo "::notice::Talos node ${node_name} was removed after the owned scheduling claim; deselected before ${operation}."
+      return 2
+    fi
+    echo "::error::Talos node ${node_name} disappeared before ${operation}; refusing the mutation."
     return 1
   fi
   if ! selected_node_identity_is_current \
@@ -3100,6 +3214,25 @@ kubernetes_api_transport_interrupted() {
     "${result_file}"
 }
 
+prove_selected_node_removed_without_replacement() {
+  local node_name="$1" node_uid="$2" node_ip="$3"
+
+  if ! kubectl --context "${KUBE_CONTEXT}" get nodes -o json \
+    >"${cordon_state_file}" 2>"${talos_result_file}" ||
+    ! validate_talos_node_inventory "${cordon_state_file}" ||
+    ! jq -e --arg name "${node_name}" --arg uid "${node_uid}" \
+      --arg address "${node_ip}" '
+        all(.items[];
+          .metadata.name != $name and .metadata.uid != $uid
+          and all(.status.addresses[]?;
+            .type != "InternalIP" or .address != $address))
+      ' "${cordon_state_file}" >/dev/null; then
+    echo "::error::Could not prove selected Talos node ${node_name} was removed without replacement; refusing to continue."
+    return 1
+  fi
+  assert_sync_lease_held || return 1
+}
+
 revalidate_selected_node_identity_before_mutation() {
   local node_name="$1" node_uid="$2" node_ip="$3" node_role="$4"
   local allow_removed="${5:-0}"
@@ -3118,20 +3251,8 @@ revalidate_selected_node_identity_before_mutation() {
     # Empty output from a successful --ignore-not-found GET is authoritative
     # absence, unlike stderr text or a failed request. Rebind the whole live
     # inventory too: a replacement reusing this identity/address is not removal.
-    if ! kubectl --context "${KUBE_CONTEXT}" get nodes -o json \
-      >"${cordon_state_file}" 2>"${talos_result_file}" ||
-      ! validate_talos_node_inventory "${cordon_state_file}" ||
-      ! jq -e --arg name "${node_name}" --arg uid "${node_uid}" \
-        --arg address "${node_ip}" '
-          all(.items[];
-            .metadata.name != $name and .metadata.uid != $uid
-            and all(.status.addresses[]?;
-              .type != "InternalIP" or .address != $address))
-        ' "${cordon_state_file}" >/dev/null; then
-      echo "::error::Could not prove selected Talos node ${node_name} was removed without replacement; refusing to continue."
-      return 1
-    fi
-    assert_sync_lease_held || return 1
+    prove_selected_node_removed_without_replacement \
+      "${node_name}" "${node_uid}" "${node_ip}" || return 1
     echo "::notice::Talos node ${node_name} was removed before mutation; deselected without recording verification."
     return 2
   fi
@@ -3170,6 +3291,7 @@ process_talos_node_target() {
   local ready_attempt
   local reusable_proof_uid=""
   local identity_result=0 allow_removed=1
+  local selected_node_autoscaled=0 guard_result=0
 
   assert_sync_lease_held || return 1
 
@@ -3264,6 +3386,10 @@ process_talos_node_target() {
     echo "::error::Refusing to synchronize ${node_name}: its identity changed or scheduling state was malformed."
     return 1
   fi
+  selected_node_autoscaled="$(jq -r '
+    if ((.metadata.labels // {})["ksail.io/autoscaled"] // "") == "true"
+    then 1 else 0 end
+  ' "${cordon_state_file}")"
   if [[ -f "${bootstrap_state_file}" ]]; then
     if ! jq -e \
       --arg node_name "${node_name}" \
@@ -3346,11 +3472,15 @@ process_talos_node_target() {
   # A node resourceVersion fences only the claim itself. Renew after the claim
   # and re-read the owned scheduling guard so a process that lost its cluster
   # transaction cannot carry stale credentials into Talos.
-  if ! revalidate_node_scheduling_guard \
+  guard_result=0
+  revalidate_node_scheduling_guard \
     "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
     "${initial_node_uid}" "${initial_node_taints}" \
     "${talos_result_file}" "${node_ip}" "${node_role}" \
-    "credential patch"; then
+    "credential patch" "${selected_node_autoscaled}" || guard_result=$?
+  if ((guard_result == 2)); then
+    return 2
+  elif ((guard_result != 0)); then
     restore_node_schedulability_if_needed \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
@@ -4415,9 +4545,9 @@ reclaim_orphaned_node_fences() {
   local nodes_file="$1"
   local patch_file_local="${work_dir}/reclaim-fence-patch.json"
   local result_file="${work_dir}/reclaim-fence-result.txt"
-  local name uid owner cordoned reclaimed=0
+  local name uid owner cordoned scale_down_owner scale_down_disabled reclaimed=0
 
-  while IFS=$'\t' read -r name uid owner cordoned; do
+  while IFS=$'\t' read -r name uid owner cordoned scale_down_owner scale_down_disabled; do
     [[ -n "${name}" ]] || continue
     # CAS on identity AND the exact owner value: a node replaced under the same
     # name, or a fence that changed hands since the read, must not be cleared.
@@ -4425,14 +4555,28 @@ reclaim_orphaned_node_fences() {
       --arg uid "${uid}" \
       --arg owner_path "${CORDON_OWNER_JSON_PATH}" \
       --arg owner "${owner}" \
-      --arg phase_path "${CORDON_PHASE_JSON_PATH}" '
+      --arg phase_path "${CORDON_PHASE_JSON_PATH}" \
+      --arg scale_down_owner_path "${SCALE_DOWN_GUARD_OWNER_JSON_PATH}" \
+      --arg scale_down_owner "${scale_down_owner}" \
+      --arg scale_down_disabled_path "${AUTOSCALER_SCALE_DOWN_DISABLED_JSON_PATH}" \
+      --arg scale_down_disabled "${scale_down_disabled}" '
       [
         {op: "test", path: "/metadata/uid", value: $uid},
         {op: "test", path: $owner_path, value: $owner},
-        {op: "test", path: $phase_path, value: "claimed"},
+        {op: "test", path: $phase_path, value: "claimed"}
+      ]
+      + (if $scale_down_owner == "" then [] else [
+          {op: "test", path: $scale_down_owner_path, value: $scale_down_owner},
+          {op: "test", path: $scale_down_disabled_path, value: $scale_down_disabled}
+        ] end)
+      + [
         {op: "remove", path: $owner_path},
         {op: "remove", path: $phase_path}
       ]
+      + (if $scale_down_owner == "" then [] else [
+          {op: "remove", path: $scale_down_owner_path},
+          {op: "remove", path: $scale_down_disabled_path}
+        ] end)
     ' >"${patch_file_local}"
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
@@ -4446,6 +4590,10 @@ reclaim_orphaned_node_fences() {
     reclaimed=$((reclaimed + 1))
     printf '::warning::Reclaimed a leaked GHCR drain fence on node %s (owner %s). The synchronization Lease was free when this transaction acquired it, so no owner was alive to protect it.\n' \
       "${name}" "${owner}"
+    if [[ -n "${scale_down_owner}" ]]; then
+      printf '::warning::Released the bridge-owned autoscaler scale-down guard on node %s with the same orphaned owner %s.\n' \
+        "${name}" "${scale_down_owner}"
+    fi
     if [[ "${cordoned}" == "true" ]]; then
       printf '::warning::Node %s is left CORDONED on purpose: the killed transaction recorded no pre-claim schedulability, so this cannot tell whether it was already drained. Confirm it should be schedulable, then: kubectl --context %s uncordon %s\n' \
         "${name}" "${KUBE_CONTEXT}" "${name}"
