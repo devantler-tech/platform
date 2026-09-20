@@ -130,14 +130,22 @@ node_claim_preconditions_still_hold() {
   local initial_node_uid="$2"
   local was_cordoned="$3"
   local initial_node_taints="$4"
+  local was_autoscaled="${5:-0}"
+  local scale_down_was_disabled="${6:-0}"
 
   jq -e \
     --arg owner_annotation \
     "platform.devantler.tech/ghcr-auth-drain-owner" \
     --arg recovery_annotation \
     "platform.devantler.tech/ghcr-auth-drain-recovery" \
+    --arg scale_down_annotation \
+    "cluster-autoscaler.kubernetes.io/scale-down-disabled" \
+    --arg scale_down_owner_annotation \
+    "platform.devantler.tech/ghcr-auth-scale-down-owner" \
     --arg uid "${initial_node_uid}" \
     --argjson was_cordoned "${was_cordoned}" \
+    --argjson was_autoscaled "${was_autoscaled}" \
+    --argjson scale_down_was_disabled "${scale_down_was_disabled}" \
     --argjson initial_taints "${initial_node_taints}" '
     def scheduling_taints:
       map(select((
@@ -152,10 +160,46 @@ node_claim_preconditions_still_hold() {
     and .metadata.deletionTimestamp == null
     and ((.metadata.annotations[$owner_annotation] // "") == "")
     and ((.metadata.annotations[$recovery_annotation] // "") == "")
+    and ((if ((.metadata.labels // {})["ksail.io/autoscaled"] // "") == "true"
+          then 1 else 0 end) == $was_autoscaled)
+    and (if $was_autoscaled == 1 then
+      ((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == ""
+      and (if $scale_down_was_disabled == 1 then
+        ((.metadata.annotations // {})[$scale_down_annotation] // "") == "true"
+      else
+        ((.metadata.annotations // {}) | has($scale_down_annotation) | not)
+      end)
+    else true end)
     and ((if (.spec.unschedulable // false) then 1 else 0 end)
       == $was_cordoned)
     and (((.spec.taints // []) | scheduling_taints)
       == ($initial_taints | scheduling_taints))
+  ' "${state_file}" >/dev/null
+}
+
+# Autoscaled nodes can already be inside Cluster Autoscaler's destructive
+# scale-down transaction before its hard deletion taint is visible. A
+# pre-existing cordon is therefore not adoptable on that node class. An
+# operator-owned scale-down-disabled=true guard is safe and must be preserved;
+# any other pre-existing value or bridge owner is ambiguous and fails closed.
+autoscaled_node_claim_is_safe() {
+  local state_file="$1"
+
+  jq -e \
+    --arg scale_down_annotation \
+    "cluster-autoscaler.kubernetes.io/scale-down-disabled" \
+    --arg scale_down_owner_annotation \
+    "platform.devantler.tech/ghcr-auth-scale-down-owner" '
+    if ((.metadata.labels // {})["ksail.io/autoscaled"] // "") != "true" then
+      true
+    else
+      .metadata.deletionTimestamp == null
+      and ((.spec.unschedulable // false) == false)
+      and all(.spec.taints[]?; .key != "ToBeDeletedByClusterAutoscaler")
+      and (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == "")
+      and (((.metadata.annotations // {}) | has($scale_down_annotation) | not)
+        or ((.metadata.annotations // {})[$scale_down_annotation] == "true"))
+    end
   ' "${state_file}" >/dev/null
 }
 
@@ -171,13 +215,19 @@ node_scheduling_state_is_safe_to_reboot() {
   local owner_token="$3"
   local initial_node_uid="$4"
   local initial_node_taints="$5"
+  local scale_down_guard_owned="${6:-0}"
 
   jq -e \
     --arg owner_annotation \
     "platform.devantler.tech/ghcr-auth-drain-owner" \
+    --arg scale_down_annotation \
+    "cluster-autoscaler.kubernetes.io/scale-down-disabled" \
+    --arg scale_down_owner_annotation \
+    "platform.devantler.tech/ghcr-auth-scale-down-owner" \
     --arg owner "${owner_token}" \
     --arg uid "${initial_node_uid}" \
     --argjson was_cordoned "${was_cordoned}" \
+    --argjson scale_down_guard_owned "${scale_down_guard_owned}" \
     --argjson initial_taints "${initial_node_taints}" '
     def scheduling_taints:
       map(select((
@@ -192,6 +242,18 @@ node_scheduling_state_is_safe_to_reboot() {
     and .metadata.deletionTimestamp == null
     and .spec.unschedulable == true
     and .metadata.annotations[$owner_annotation] == $owner
+    and (if ((.metadata.labels // {})["ksail.io/autoscaled"] // "") == "true" then
+      ((.metadata.annotations // {})[$scale_down_annotation] // "") == "true"
+      and (if $scale_down_guard_owned == 1 then
+        ((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == $owner
+      else
+        ((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == ""
+      end)
+    else
+      $scale_down_guard_owned == 0
+      and
+      (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == "")
+    end)
     and (((.spec.taints // []) | scheduling_taints)
       == ($initial_taints | scheduling_taints))
   ' "${state_file}" >/dev/null
@@ -209,13 +271,19 @@ node_scheduling_state_is_safe_while_lifecycle_taints_clear() {
   local owner_token="$3"
   local initial_node_uid="$4"
   local initial_node_taints="$5"
+  local scale_down_guard_owned="${6:-0}"
 
   jq -e \
     --arg owner_annotation \
     "platform.devantler.tech/ghcr-auth-drain-owner" \
+    --arg scale_down_annotation \
+    "cluster-autoscaler.kubernetes.io/scale-down-disabled" \
+    --arg scale_down_owner_annotation \
+    "platform.devantler.tech/ghcr-auth-scale-down-owner" \
     --arg owner "${owner_token}" \
     --arg uid "${initial_node_uid}" \
     --argjson was_cordoned "${was_cordoned}" \
+    --argjson scale_down_guard_owned "${scale_down_guard_owned}" \
     --argjson initial_taints "${initial_node_taints}" '
     def scheduling_taints:
       map(select((
@@ -233,6 +301,18 @@ node_scheduling_state_is_safe_while_lifecycle_taints_clear() {
     and .metadata.deletionTimestamp == null
     and .spec.unschedulable == true
     and .metadata.annotations[$owner_annotation] == $owner
+    and (if ((.metadata.labels // {})["ksail.io/autoscaled"] // "") == "true" then
+      ((.metadata.annotations // {})[$scale_down_annotation] // "") == "true"
+      and (if $scale_down_guard_owned == 1 then
+        ((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == $owner
+      else
+        ((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == ""
+      end)
+    else
+      $scale_down_guard_owned == 0
+      and
+      (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == "")
+    end)
     and (((.spec.taints // []) | scheduling_taints)
       == ($initial_taints | scheduling_taints))
   ' "${state_file}" >/dev/null
@@ -523,7 +603,9 @@ select_orphaned_node_fences() {
   jq -r \
     --arg owner_annotation "platform.devantler.tech/ghcr-auth-drain-owner" \
     --arg recovery_annotation "platform.devantler.tech/ghcr-auth-drain-recovery" \
-    --arg phase_annotation "platform.devantler.tech/ghcr-auth-drain-phase" '
+    --arg phase_annotation "platform.devantler.tech/ghcr-auth-drain-phase" \
+    --arg scale_down_owner_annotation "platform.devantler.tech/ghcr-auth-scale-down-owner" \
+    --arg scale_down_disabled_annotation "cluster-autoscaler.kubernetes.io/scale-down-disabled" '
     .items[]
     | (.metadata.annotations // {}) as $annotations
     | select((($annotations[$owner_annotation]) // "") != "")
@@ -532,11 +614,23 @@ select_orphaned_node_fences() {
     # A missing phase is a PRE-#3070 fence of unknown depth, so it fails closed
     # here exactly like "mutating" does -- absence is never read as innocence.
     | select((($annotations[$phase_annotation]) // "") == "claimed")
+    # A bridge-owned autoscaler guard is part of the same claim. Only reclaim it
+    # when its owner is the exact drain owner and the standard guard still has
+    # the value this bridge wrote. An unrelated or changed guard fails closed.
+    | select(
+        (($annotations[$scale_down_owner_annotation] // "") == "")
+        or (
+          $annotations[$scale_down_owner_annotation] == $annotations[$owner_annotation]
+          and ($annotations[$scale_down_disabled_annotation] // "") == "true"
+        )
+      )
     | [
         .metadata.name,
         (.metadata.uid // ""),
         $annotations[$owner_annotation],
-        ((.spec.unschedulable // false) | tostring)
+        ((.spec.unschedulable // false) | tostring),
+        ($annotations[$scale_down_owner_annotation] // ""),
+        ($annotations[$scale_down_disabled_annotation] // "")
       ]
     | @tsv
   ' "${nodes_file}" >"${targets_file}"

@@ -523,6 +523,159 @@ func TestAutoscalerDeletionCandidateTaintDoesNotBlockDeploy(t *testing.T) {
 	requireLine(t, operations, "root-patch")
 }
 
+// A pre-existing cordon on an autoscaled node is positive evidence that the
+// autoscaler may already have crossed into destructive scale-down. The bridge
+// must not adopt that cordon and race the cloud deletion with a Talos write.
+func TestAutoscaledNodeAlreadyCordonedIsRejectedBeforeTalosMutation(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALED_NODES": "prod-worker-1",
+		"FAKE_CORDONED_NODES":   "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "autoscaled node is already unschedulable")
+	operations := readLines(f.operationLog)
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-worker-1",
+		"node-scale-down-guard:prod-worker-1",
+		"talos-auth:10.0.0.2",
+		"talos-reboot:10.0.0.2",
+		"root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
+func TestAutoscaledNodeAlreadyMarkedForDeletionIsRejectedBeforeTalosMutation(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALED_NODES":          "prod-worker-1",
+		"FAKE_AUTOSCALER_DELETING_NODES": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "marked for deletion")
+	operations := readLines(f.operationLog)
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-worker-1",
+		"talos-auth:10.0.0.2",
+		"talos-reboot:10.0.0.2",
+		"root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
+func TestAutoscaledNodeClaimOwnsAndReleasesScaleDownGuard(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALED_NODES": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	claim := lineIndex(t, operations, "node-claim-cordon:prod-worker-1")
+	guard := lineIndex(t, operations, "node-scale-down-guard:prod-worker-1")
+	release := lineIndex(t, operations, "node-release-scale-down-guard:prod-worker-1")
+	uncordon := lineIndex(t, operations, "node-uncordon:prod-worker-1")
+	if guard != claim+1 || release >= uncordon {
+		t.Fatalf("scale-down guard was not bounded by bridge ownership: claim=%d guard=%d release=%d uncordon=%d", claim, guard, release, uncordon)
+	}
+}
+
+func TestAutoscaledNodePreservesPreexistingScaleDownGuard(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALED_NODES":          "prod-worker-1",
+		"FAKE_SCALE_DOWN_DISABLED_NODES": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireNoLine(t, operations, "node-scale-down-guard:prod-worker-1")
+	requireNoLine(t, operations, "node-release-scale-down-guard:prod-worker-1")
+}
+
+func TestAutoscaledNodeRejectsOwnedScaleDownGuardOwnerRemoval(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALED_NODES":                          "prod-worker-1",
+		"FAKE_SCALE_DOWN_OWNER_REMOVED_AFTER_CLAIM_NODE": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "scheduling safety state changed")
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
+	requireLine(t, operations, "node-scale-down-guard:prod-worker-1")
+	requireLine(t, operations, "external-remove-scale-down-owner:prod-worker-1")
+	for _, unexpected := range []string{
+		"talos-auth:10.0.0.2",
+		"node-drain:prod-worker-1",
+		"talos-reboot:10.0.0.2",
+		"node-uncordon:prod-worker-1",
+		"root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+	if !pathExists(filepath.Join(f.syncStateDir, "cordoned-prod-worker-1")) {
+		t.Fatal("node was not left cordoned after bridge-owned guard ownership disappeared")
+	}
+}
+
+func TestAutoscaledNodeRejectsOwnedScaleDownGuardRemovalAtFenceTransition(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALED_NODES":                                 "prod-worker-1",
+		"FAKE_SCALE_DOWN_OWNER_REMOVED_BEFORE_FENCE_PHASE_NODE": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "Could not mark node prod-worker-1 as entering Talos mutation")
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
+	requireLine(t, operations, "node-scale-down-guard:prod-worker-1")
+	requireLine(t, operations, "external-remove-scale-down-owner-before-fence-phase:prod-worker-1")
+	for _, unexpected := range []string{
+		"node-fence-phase:prod-worker-1",
+		"talos-auth:10.0.0.2",
+		"node-drain:prod-worker-1",
+		"talos-reboot:10.0.0.2",
+		"node-uncordon:prod-worker-1",
+		"root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+	if !pathExists(filepath.Join(f.syncStateDir, "cordoned-prod-worker-1")) {
+		t.Fatal("node was not left cordoned after bridge-owned guard ownership disappeared at the fence transition")
+	}
+}
+
+func TestAutoscaledNodeRemovedAfterClaimIsDeselectedFromFreshInventory(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALED_NODES":                    "prod-worker-1",
+		"FAKE_AUTOSCALER_REMOVES_AFTER_CLAIM_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "removed after the owned scheduling claim")
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
+	requireLine(t, operations, "node-removal-inventory:prod-worker-1")
+	for _, unexpected := range []string{
+		"talos-auth:10.0.0.2",
+		"node-drain:prod-worker-1",
+		"talos-reboot:10.0.0.2",
+		"node-uncordon:prod-worker-1",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
 func TestExternalUncordonAfterDrainBlocksReboot(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -885,6 +1038,23 @@ func TestOrphanedFenceIsReclaimed(t *testing.T) {
 	operations := readLines(f.operationLog)
 	// lineIndex fails when absent, which is the assertion.
 	lineIndex(t, operations, "node-reclaim-fence:prod-control-plane-2")
+}
+
+// The bridge's autoscaler guard is the same owned claim as the drain fence. A
+// transaction that dies before Talos mutation must not leave the node pinned
+// against scale-down forever; reclaim removes both bridge-owned annotations but
+// deliberately preserves the cordon because its pre-claim state is unknown.
+func TestOrphanedAutoscaledFenceReclaimsOwnedScaleDownGuard(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_LEAKED_FENCE_NODE": "prod-control-plane-2",
+		"FAKE_AUTOSCALED_NODES":  "prod-control-plane-2",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	lineIndex(t, operations, "node-reclaim-fence:prod-control-plane-2")
+	lineIndex(t, operations, "node-reclaim-scale-down-guard:prod-control-plane-2")
 }
 
 // The same fence at "mutating" is NEVER reclaimed. The Lease proves no owner is
