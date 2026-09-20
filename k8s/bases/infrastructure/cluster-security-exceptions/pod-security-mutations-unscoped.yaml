@@ -27,9 +27,10 @@
 #
 #   * C-0211 — 35 of 35 scanned workloads read passed with subStatus "w/exceptions",
 #     each carrying appliedIgnoreRules: [pod-security-mutations-unscoped/C-0211]. Against
-#     the stored specs (re-measured 2026-09-03, below) six of the 35 pass both universal
-#     gaps and 29 do not, and status alone cannot tell the six from the 29: it yields
-#     exactly the "0 of 35 fail" that #3239 states as its success signal either way.
+#     the stored specs (re-measured 2026-09-20, below) twenty-five of the population pass
+#     both universal gaps and fourteen do not, and status alone cannot tell the passers
+#     from the failers: it yields exactly the "0 of N fail" that #3239 states as its
+#     success signal either way.
 #
 # The discriminator is subStatus plus a populated appliedIgnoreRules, never status,
 # and it does discriminate: on one such workload the same scan carries 53 controls
@@ -70,16 +71,20 @@
 #
 # Twenty-five of the 39 pass both universal gaps and 14 do not. The pod-level
 # `securityContext.fsGroupChangePolicy` is absent on 14 of 39 (read under
-# `jobTemplate` for the CronJobs), and no effective seLinux `level` reaches every
-# container on the same 14 — "effective" meaning the container's own seLinuxOptions
-# where it sets them and the pod-level object otherwise. That test is deliberately
-# generous, since a container-level object actually replaces the pod struct wholesale,
-# so 14 of 39 is a floor rather than an artifact of a strict rule. Both gaps fall on
-# exactly the same 14 workloads, so they remain universal in the sense that matters:
-# no workload closes one without the other. The residual is longhorn-system 8 of 12
-# and observability 6 of 20; flux-system (0 of 5) and velero (0 of 2) are fully
-# closed. Measured 2026-09-20 against the live PROD stored specs, superseding the
-# 29-of-35 reading of 2026-09-03.
+# `jobTemplate` for the CronJobs), and no effective `seLinuxOptions` object reaches
+# every container on the same 14 — "effective" meaning the container's own
+# seLinuxOptions where it sets them and the pod-level object otherwise. The test is
+# object PRESENCE, not a populated `level`: no workload in this population sets
+# `seLinuxOptions.level` at all, and every one of the 29 objects that do exist is
+# empty (`seLinuxOptions: {}`), so a `level`-based test would report 39 of 39 and
+# hide the split this measurement exists to draw. The presence test is also
+# deliberately generous, since a container-level object actually replaces the pod
+# struct wholesale, so 14 of 39 is a floor rather than an artifact of a strict rule.
+# Both gaps fall on exactly the same 14 workloads, so they remain universal in the
+# sense that matters: no workload closes one without the other. The residual is
+# longhorn-system 8 of 12 and observability 6 of 20; flux-system (0 of 5) and
+# velero (0 of 2) are fully closed. Measured 2026-09-20 against the live PROD
+# stored specs, superseding the 29-of-35 reading of 2026-09-03.
 #
 # Those three are NO LONGER strict subsets of the two universal gaps, and that is a
 # behavioural change rather than bookkeeping: five workloads — flux-system's four
@@ -91,26 +96,29 @@
 # no fix behind it — lowering the score to absorb a gap rather than closing it — so it
 # stays cluster-wide.
 #
-# The remaining 29 split observability 15, longhorn-system 12, flux-system 2.
-# observability and longhorn-system are already labelled into
+# The remaining 14 split longhorn-system 8 and observability 6; flux-system and
+# velero contribute none. Both namespaces are already labelled into
 # add-baseline-context-optin-*, but that label gates only the three `kinds: Pod`
 # rules, so they mutate at admission and leave the stored spec Kubescape reads
-# untouched — which is why the opt-in alone moves none of those 27. The rules that
+# untouched — which is why the opt-in alone moves none of those 14. The rules that
 # DO reach the stored spec are TWO families, both gated on a SECOND label,
 # `baseline-context-controllers`: add-baseline-context-optin-controllers*
 # (Deployment/StatefulSet/DaemonSet on CREATE and UPDATE, Job on CREATE) and
-# add-baseline-context-optin-cronjobs* (CronJob on CREATE and UPDATE). Both are
-# load-bearing for this rollout — seven of the residual workloads are CronJobs, so
-# planning only the controller family would silently leave those out along with
-# their read-back checks. That label is deliberately applied in NO namespace —
-# tests/add-baseline-context pins
+# add-baseline-context-optin-cronjobs* (CronJob on CREATE and UPDATE). The
+# controller family is the one that reaches this residual: the 14 are 6 Deployments,
+# 5 DaemonSets and 3 StatefulSets, and NO CronJob is among them — all 12 CronJobs
+# already carry both fields in their stored spec. The cronjob family therefore
+# guards against regression here rather than closing anything, a change from the
+# 2026-09-03 reading that put seven CronJobs in the residual and so treated both
+# families as load-bearing for this rollout. That second label is deliberately
+# applied in NO namespace — tests/add-baseline-context pins
 # that empty inventory, and a namespace joins only together with the measured
-# post-rollout read-back its documented flip procedure produces. So the 27 are
+# post-rollout read-back its documented flip procedure produces. So the 14 are
 # waiting on that per-namespace rollout, not on a mechanism that cannot reach
-# them. Template-level changes are what moved velero and flux-system. flux-system's
-# sole remaining workload in this population is flux-operator; tofu-controller was the
-# second, but it was removed in #3480 (closed 2026-09-08), reducing the population
-# from 35 to 34.
+# them. Template-level changes are what moved velero and flux-system, and both are
+# now fully closed on the two universal gaps: flux-operator was flux-system's sole
+# remaining workload in this population under the 2026-09-03 reading, and it fails
+# neither gap today.
 #
 # The per-workload table and the remediation split are on #3217. These counts are
 # prod-only and the local overlay opts in to a different namespace set, so re-measure
@@ -133,7 +141,7 @@ metadata:
     # Cluster-wide, and knowingly wider than its own rationale: in the twelve
     # namespaces "add-security-context" excludes, nothing injects these fields.
     # C-0211 is retained rather than narrowed on an unmeasured guess — sized
-    # 2026-09-02 and pending #3217. C-0013 was narrowed out on 2026-09-09 (#3223)
+    # 2026-09-20 and pending #3217. C-0013 was narrowed out on 2026-09-09 (#3223)
     # once #3480 removed the one workload that failed it.
     platform.devantler.tech/cluster-wide: declared
 spec:
@@ -143,8 +151,8 @@ spec:
     not contain them and Kubescape scans the stored spec, not the live pod. This
     control remains cluster-wide because narrowing it is blocked on evidence rather
     than on expressiveness: C-0211's residual population is every scanned workload
-    the mutation does not reach, sized at 34 (35 in the 2026-09-02 baseline,
-    before tofu-controller removal in #3480; #3217).
+    the mutation does not reach, sized at 39 by the 2026-09-20 re-measurement
+    against the live PROD stored specs (#3217).
   posture:
     - controlID: C-0211
       action: ignore
