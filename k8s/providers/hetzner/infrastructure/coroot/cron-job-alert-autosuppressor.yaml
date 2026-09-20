@@ -160,6 +160,24 @@
 #      backoff. Bind its stable fingerprint and exact terminal cause; other
 #      AttachVolume failures remain visible.
 #
+#  18. controlled-autoscaler-lifecycle - node creation, reboot, and deletion
+#      produce a bounded family of transient Kubernetes events while DaemonSets,
+#      Longhorn, Cilium, and EndpointSlices converge. Direct node events must
+#      name an `autoscale-*` node. Events that carry no node identity qualify
+#      only when their exact message is within three minutes of an exact
+#      autoscaler anchor. Every candidate must also remain quiet for five
+#      minutes; recurring or unrelated readiness, mount, scheduling, and
+#      shutdown failures stay visible.
+#
+#  19. controlled-lifecycle-log-tail - deleting an autoscaled node or an
+#      ephemeral deploy-probe pod leaves five known log representatives: a
+#      metrics scrape timeout for the removed autoscale node, Longhorn's manager
+#      reconnect and deleted-node reconciliation, Kubescape loading an already
+#      deleted runtime probe, and Backstage's connection close during a verified
+#      PostgreSQL failover. Bind every case to its stable fingerprint, exact app,
+#      representative shape, and the same five-minute quiet period. A recurrence
+#      or changed representative is automatically visible (or reopened).
+#
 # PROD-ONLY: Coroot alerting (the Slack webhook) is wired only in the hetzner
 # overlay, so this lives here, not in the base.
 apiVersion: batch/v1
@@ -249,6 +267,11 @@ spec:
                   # include_resolved here: production has >31k historical records,
                   # so a 500-row history page can omit old-but-still-firing alerts.
                   ALERTS=$(curl $RETRY "$BASE/api/project/$PID/alerts?limit=500")
+                  # Correlated symptoms can remain firing after their node anchor
+                  # resolves. Use only the bounded recent page to recover anchor
+                  # timestamps; suppression candidates always come from ALERTS.
+                  RECENT_ALERTS=$(curl $RETRY "$BASE/api/project/$PID/alerts?include_resolved=true&limit=500")
+                  NOW_MS=$(($(date -u +%s) * 1000))
 
                   ALERTMANAGER_DNS_ALERT=$(curl $RETRY "$BASE/api/project/$PID/alerts/wge5tiucp7k5")
                   ids=""
@@ -437,12 +460,142 @@ spec:
                     ids="$ids $id"; log_info "match longhorn-backup-clone-lifecycle: $id"
                   done
 
-                  # Exemptions 7, 9-12, and 15-17 - exact weak-equality log fingerprints.
+                  # Exemption 18 - exact, quiescent autoscaler node-lifecycle
+                  # events. Signals without a node identity must correlate in
+                  # time with an exact node deletion, reboot, or provider anchor.
+                  # Application-attributed DaemonSet probes additionally bind to
+                  # the reviewed application, fingerprint, labels, and message;
+                  # changed or recurring probe failures remain visible.
+                  for id in $(printf '%s\n%s\n' "$ALERTS" "$RECENT_ALERTS" | jq -s -r --argjson now "$NOW_MS" '
+                      def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
+                      def labels($d): (($d.Labels // "") | split("\n") | map(select(length > 0) | capture("^(?<key>[^=]+)=\"(?<value>.*)\"$")) | from_entries);
+                      def quiet($a): (($a.updated_at // $a.opened_at // $now) <= ($now - 300000));
+                      def event_shape($a):
+                        $a | details as $d | labels($d) as $l
+                        | {d: $d, l: $l};
+                      def anchor($a):
+                        if $a.rule_id!="kubernetes-events" then false
+                        else event_shape($a) as $e
+                        | (($a.application_id // "")==":::"
+                           and $e.l.cluster=="platform"
+                           and $e.l.kind=="Node"
+                           and ($e.l.name | test("^autoscale-[a-z0-9-]+$"))
+                           and ((($e.l | keys | sort) == ["cluster","kind","name","namespace","reason","source"]
+                                 and $e.l.namespace=="longhorn-system"
+                                 and $e.l.reason=="Delete"
+                                 and $e.l.source=="longhorn-node-controller"
+                                 and $e.d["Event message"]==("Deleting node " + $e.l.name))
+                                or (($e.l | keys | sort) == ["cluster","kind","name","reason","source"]
+                                    and $e.l.reason=="Rebooted"
+                                    and $e.l.source=="kubelet"
+                                    and ($e.d["Event message"] | test("^Node " + $e.l.name + " has been rebooted, boot id: [0-9a-f-]{36}$")))
+                                or (($e.l | keys | sort) == ["cluster","kind","name","reason","source"]
+                                    and $e.l.reason=="UnknownProviderIDPrefix"
+                                    and $e.l.source=="hcloud-cloud-controller-manager"
+                                    and $e.d["Event message"]=="Node could not be added to Load Balancer for service cilium-gateway-platform because the provider ID does not match any known format")))
+                        end;
+                      def direct_lifecycle($a; $e):
+                        anchor($a)
+                        or (($e.l | keys | sort) == ["cluster","kind","name","namespace","reason","source"]
+                            and $e.l.kind=="Node"
+                            and ($e.l.name | test("^autoscale-[a-z0-9-]+$"))
+                            and $e.l.namespace=="longhorn-system"
+                            and $e.l.source=="longhorn-node-controller"
+                            and (($e.l.reason=="Schedulable"
+                                  and ($e.d["Event message"] | test("^Waiting for disk default-disk-[a-z0-9]+ \\(/var/lib/longhorn\\) on node " + $e.l.name + " to be schedulable$")))
+                                 or ($e.l.reason=="Ready"
+                                     and (($e.d["Event message"]==("Kubernetes node " + $e.l.name + " not ready: NodeStatusUnknown"))
+                                          or ($e.d["Event message"] | test("^Node " + $e.l.name + " is down: manager pod [a-z0-9-]+ not running$"))))))
+                        or (($e.l | keys | sort) == ["cluster","kind","name","reason","source"]
+                            and $e.l.kind=="Node"
+                            and ($e.l.name | test("^autoscale-[a-z0-9-]+$"))
+                            and $e.l.reason=="InvalidDiskCapacity"
+                            and $e.l.source=="kubelet"
+                            and $e.d["Event message"]=="invalid capacity 0 on image filesystem")
+                        or (($e.l | keys | sort) == ["cluster","reason","source"]
+                            and $e.l.reason=="FailedDaemonPod"
+                            and $e.l.source=="daemonset-controller"
+                            and ($e.d["Event message"] | test("^Found failed daemon pod [a-z0-9-]+/[a-z0-9-]+ on node autoscale-[a-z0-9-]+, will try to kill it$")))
+                        or (($e.l | keys | sort) == ["cluster","kind","name","namespace","reason","source"]
+                            and $e.l.kind=="Service"
+                            and $e.l.reason=="FailedToUpdateEndpointSlices"
+                            and $e.l.source=="endpoint-slice-controller"
+                            and ($e.d["Event message"] | test("^Error updating Endpoint Slices for Service [a-z0-9-]+/[a-z0-9-]+: skipping Pod [a-z0-9-]+ for Service [a-z0-9-]+/[a-z0-9-]+: Node autoscale-[a-z0-9-]+ Not Found$")));
+                      def correlated_lifecycle($a; $e; $anchors):
+                        any($anchors[]; . >= (($a.opened_at // 0) - 180000) and . <= (($a.opened_at // 0) + 180000))
+                        and (((($e.l | keys | sort) == ["cluster","kind","name","namespace","reason","source"])
+                              and $e.l.kind=="Pod"
+                              and $e.l.source=="kubelet"
+                              and (($e.l.reason=="NetworkNotReady"
+                                    and $e.d["Event message"]=="network is not ready: container runtime network not ready: NetworkReady=false reason:NetworkPluginNotReady message:Network plugin returns error: cni plugin not initialized")
+                                   or ($e.l.reason=="FailedMount"
+                                       and ($e.d["Event message"] | test("^MountVolume.SetUp failed for volume \\\"kube-api-access-[a-z0-9]+\\\" : object \\\"[a-z0-9-]+\\\"/\\\"kube-root-ca.crt\\\" not registered$")))
+                                   or ($e.l.reason=="NodeShutdown"
+                                       and $e.d["Event message"]=="Pod was rejected as the node is shutting down.")
+                                   or ($e.l.reason=="Unhealthy"
+                                       and $e.l.namespace=="kube-system"
+                                       and ($e.l.name | test("^cilium-[a-z0-9-]+$"))
+                                       and ($e.d["Event message"] | test("^Startup probe failed: Get \\\"http://127\\.0\\.0\\.1:987[89]/healthz\\\": dial tcp 127\\.0\\.0\\.1:987[89]: connect: connection refused$")))))
+                             or (($e.l | keys | sort) == ["cluster","kind","name","namespace","reason"]
+                                 and $e.l.kind=="Pod"
+                                 and $e.l.reason=="FailedScheduling"
+                                 and ($e.d["Event message"] | test("^0/[0-9]+ nodes are available: .*didn.t satisfy plugin\\(s\\) \\[NodeAffinity\\].*preemption: .*Preemption is not helpful for scheduling\\.$")))
+                             or (($e.l | keys | sort) == ["cluster","reason","source"]
+                                 and $e.l.reason=="ExceededGracePeriod"
+                                 and $e.l.source=="kubelet"
+                                 and $e.d["Event message"]=="Container runtime did not kill the pod within specified grace period.")
+                             or (($e.l | keys | sort) == ["affected","cluster","reason","source"]
+                                 and $e.l.reason=="NodeNotReady"
+                                 and $e.l.source=="node-controller"
+                                 and $e.d["Event message"]=="Node is not ready"
+                                 and all(($e.l.affected | split(", "))[];
+                                         test("^(cilium(-envoy)?|engine-image-ei-[a-z0-9]+|longhorn-manager|tetragon)-[a-z0-9]+$"))));
+                      def correlated_component_probe($a; $e; $anchors):
+                        any($anchors[]; . >= (($a.opened_at // 0) - 180000) and . <= (($a.opened_at // 0) + 180000))
+                        and (($e.l | keys | sort) == ["cluster","reason","source"])
+                        and $e.l.cluster=="platform"
+                        and $e.l.reason=="Unhealthy"
+                        and $e.l.source=="kubelet"
+                        and (((($a.application_id // "") | endswith(":kubescape:DaemonSet:node-agent"))
+                              and $a.fingerprint=="40e9576c5418c1af"
+                              and ($e.d["Event message"] | test("^Readiness probe failed: Get \\\"http://10\\.244\\.[0-9]+\\.[0-9]+:7888/readyz\\\": read tcp 10\\.244\\.[0-9]+\\.[0-9]+:[0-9]+->10\\.244\\.[0-9]+\\.[0-9]+:7888: read: connection reset by peer$")))
+                             or ((($a.application_id // "") | endswith(":longhorn-system:DaemonSet:engine-image-ei-a4d05f02"))
+                                 and $a.fingerprint=="4674ee962cf0d212"
+                                 and $e.d["Event message"]=="Readiness probe errored and resulted in unknown state: rpc error: code = Canceled desc = context canceled")
+                             or ((($a.application_id // "") | endswith(":longhorn-system:DaemonSet:engine-image-ei-493e04e7"))
+                                 and $a.fingerprint=="4beaceba9155d4c3"
+                                 and ($e.d["Event message"] | test("^Readiness probe failed: Get \\\"https://10\\.244\\.[0-9]+\\.[0-9]+:9502/v1/healthz\\\": dial tcp 10\\.244\\.[0-9]+\\.[0-9]+:9502: connect: connection refused$"))));
+                      def quiet_ksail_rollout($a; $e):
+                        (($a.application_id // "") | endswith(":ksail-operator:Deployment:ksail-operator"))
+                        and (($e.l | keys | sort) == ["cluster","reason","source"])
+                        and $e.l.reason=="Unhealthy"
+                        and $e.l.source=="kubelet"
+                        and ($e.d["Event message"] | test("^Readiness probe failed: Get \\\"http://10\\.244\\.[0-9]+\\.[0-9]+:8081/readyz\\\": dial tcp 10\\.244\\.[0-9]+\\.[0-9]+:8081: connect: connection refused$"));
+                      ([.[0].data.alerts[], .[1].data.alerts[]]
+                       | map(select(quiet(.) and anchor(.)))
+                       | map(.opened_at)
+                       | unique) as $anchors
+                      | .[0].data.alerts[] as $a
+                      | select($a.suppressed==false and $a.resolved_at==null and quiet($a)
+                               and $a.rule_id=="kubernetes-events")
+                      | event_shape($a) as $e
+                      | select(((($a.application_id // "")==":::"
+                                  and $e.l.cluster=="platform")
+                                 and (direct_lifecycle($a; $e)
+                                      or correlated_lifecycle($a; $e; $anchors)))
+                                or correlated_component_probe($a; $e; $anchors)
+                                or quiet_ksail_rollout($a; $e))
+                      | $a.id'); do
+                    ids="$ids $id"; log_info "match controlled-autoscaler-lifecycle: $id"
+                  done
+
+                  # Exemptions 7, 9-12, and 15-17 and 19 - exact weak-equality log fingerprints.
                   # The fingerprint is stable across Coroot alert-ID rotation.
                   # Every fingerprint and current representative must qualify; a
                   # changed representative is reopened below instead of hidden.
-                  for match in $(printf '%s' "$ALERTS" | jq -r '
+                  for match in $(printf '%s' "$ALERTS" | jq -r --argjson now "$NOW_MS" '
                       def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
+                      def quiet: ((.updated_at // .opened_at // $now) <= ($now - 300000));
                       def consistency_sample($s):
                         ($s | test("^E[0-9]{4} [0-9:.]+ +1 replica_set\\.go:640\\] "))
                         and ($s | contains("\"Unhandled Error\" err=\"sync \\\""))
@@ -493,6 +646,26 @@ spec:
                            and (($d.Sample // "") | test(
                              "rpc error: code = Aborted desc = volume pvc-[0-9a-f-]{36} is not ready for workloads: volume request cloning data but has not finished copying data$"
                            ))) then "controller-clone-attach-retry"
+                          elif (.fingerprint=="67863977ffafb8f1"
+                           and quiet
+                           and ((.application_id // "") | endswith(":kube-system:Deployment:metrics-server"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 scraper\\.go:147\\] \\\"Failed to scrape node, timeout to access kubelet\\\" err=\\\"Get \\\\\\\"https://10\\.[0-9]+\\.[0-9]+\\.[0-9]+:10250/metrics/resource\\\\\\\": context deadline exceeded\\\" node=\\\"autoscale-[a-z0-9-]+\\\" timeout=\\\"10s\\\"$"))) then "metrics-removed-autoscale-node"
+                          elif (.fingerprint=="46c10dbc7f271afe"
+                           and quiet
+                           and ((.application_id // "") | endswith(":longhorn-system:DaemonSet:longhorn-manager"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 instance_manager_controller\\.go:305\\] \\\"Unhandled Error\\\" err=\\\"failed to sync instance manager for longhorn-system/instance-manager-[a-z0-9]+: failed to initialize process manager client for instance-manager-[a-z0-9]+ IP 10\\.244\\.[0-9]+\\.[0-9]+: failed to check process manager client connection for instance-manager-[a-z0-9]+ IP 10\\.244\\.[0-9]+\\.[0-9]+: rpc error: code = Unavailable desc = connection error: desc = \\\\\\\"transport: Error while dialing: dial tcp 10\\.244\\.[0-9]+\\.[0-9]+:8500: connect: connection refused\\\\\\\"\\\" logger=\\\"UnhandledError\\\"$"))) then "longhorn-instance-manager-reconnect"
+                          elif (.fingerprint=="2a2851e9f89ad845"
+                           and quiet
+                           and ((.application_id // "") | endswith(":longhorn-system:DaemonSet:longhorn-manager"))
+                           and (($d.Sample // "") | test("^time=\\\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z\\\" level=error msg=\\\"Failed to sync Kubernetes node\\\" func=controller\\.handleReconcileErrorLogging file=\\\"utils\\.go:181\\\" KubernetesNode=longhorn-system/autoscale-[a-z0-9-]+ controller=longhorn-kubernetes-node error=\\\"failed to sync node longhorn-system/autoscale-[a-z0-9-]+: nodes\\.longhorn\\.io \\\\\\\"autoscale-[a-z0-9-]+\\\\\\\" not found\\\" node=prod-worker-[0-9]+$"))) then "longhorn-deleted-autoscale-node"
+                          elif (.fingerprint=="1d72238cd236f016"
+                           and quiet
+                           and ((.application_id // "") | endswith(":kubescape:Deployment:operator"))
+                           and ($d.Sample // "")=="failed loading pod spec") then "kubescape-deleted-runtime-probe"
+                          elif (.fingerprint=="019fd2a540f61820"
+                           and quiet
+                           and ((.application_id // "") | endswith(":backstage:Deployment:backstage"))
+                           and ($d.Sample // "")=="Connection Error: Connection ended unexpectedly") then "backstage-controlled-db-failover"
                           else null end;
                       .data.alerts[]
                       | select(.suppressed==false and .resolved_at==null)
@@ -506,8 +679,9 @@ spec:
                     ids="$ids $id"; log_info "match $reason: $id"
                   done
 
-                  for id in $(printf '%s' "$ALERTS" | jq -r '
+                  for id in $(printf '%s' "$ALERTS" | jq -r --argjson now "$NOW_MS" '
                       def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
+                      def quiet: ((.updated_at // .opened_at // $now) <= ($now - 300000));
                       def consistency_sample($s):
                         ($s | test("^E[0-9]{4} [0-9:.]+ +1 replica_set\\.go:640\\] "))
                         and ($s | contains("\"Unhandled Error\" err=\"sync \\\""))
@@ -558,6 +732,26 @@ spec:
                            and (($d.Sample // "") | test(
                              "rpc error: code = Aborted desc = volume pvc-[0-9a-f-]{36} is not ready for workloads: volume request cloning data but has not finished copying data$"
                            ))) then "controller-clone-attach-retry"
+                          elif (.fingerprint=="67863977ffafb8f1"
+                           and quiet
+                           and ((.application_id // "") | endswith(":kube-system:Deployment:metrics-server"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 scraper\\.go:147\\] \\\"Failed to scrape node, timeout to access kubelet\\\" err=\\\"Get \\\\\\\"https://10\\.[0-9]+\\.[0-9]+\\.[0-9]+:10250/metrics/resource\\\\\\\": context deadline exceeded\\\" node=\\\"autoscale-[a-z0-9-]+\\\" timeout=\\\"10s\\\"$"))) then "metrics-removed-autoscale-node"
+                          elif (.fingerprint=="46c10dbc7f271afe"
+                           and quiet
+                           and ((.application_id // "") | endswith(":longhorn-system:DaemonSet:longhorn-manager"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 instance_manager_controller\\.go:305\\] \\\"Unhandled Error\\\" err=\\\"failed to sync instance manager for longhorn-system/instance-manager-[a-z0-9]+: failed to initialize process manager client for instance-manager-[a-z0-9]+ IP 10\\.244\\.[0-9]+\\.[0-9]+: failed to check process manager client connection for instance-manager-[a-z0-9]+ IP 10\\.244\\.[0-9]+\\.[0-9]+: rpc error: code = Unavailable desc = connection error: desc = \\\\\\\"transport: Error while dialing: dial tcp 10\\.244\\.[0-9]+\\.[0-9]+:8500: connect: connection refused\\\\\\\"\\\" logger=\\\"UnhandledError\\\"$"))) then "longhorn-instance-manager-reconnect"
+                          elif (.fingerprint=="2a2851e9f89ad845"
+                           and quiet
+                           and ((.application_id // "") | endswith(":longhorn-system:DaemonSet:longhorn-manager"))
+                           and (($d.Sample // "") | test("^time=\\\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z\\\" level=error msg=\\\"Failed to sync Kubernetes node\\\" func=controller\\.handleReconcileErrorLogging file=\\\"utils\\.go:181\\\" KubernetesNode=longhorn-system/autoscale-[a-z0-9-]+ controller=longhorn-kubernetes-node error=\\\"failed to sync node longhorn-system/autoscale-[a-z0-9-]+: nodes\\.longhorn\\.io \\\\\\\"autoscale-[a-z0-9-]+\\\\\\\" not found\\\" node=prod-worker-[0-9]+$"))) then "longhorn-deleted-autoscale-node"
+                          elif (.fingerprint=="1d72238cd236f016"
+                           and quiet
+                           and ((.application_id // "") | endswith(":kubescape:Deployment:operator"))
+                           and ($d.Sample // "")=="failed loading pod spec") then "kubescape-deleted-runtime-probe"
+                          elif (.fingerprint=="019fd2a540f61820"
+                           and quiet
+                           and ((.application_id // "") | endswith(":backstage:Deployment:backstage"))
+                           and ($d.Sample // "")=="Connection Error: Connection ended unexpectedly") then "backstage-controlled-db-failover"
                           else null end;
                       .data.alerts[]
                       | select(.suppressed==true and .resolved_at==null
@@ -570,7 +764,12 @@ spec:
                                     or .fingerprint=="4caedf68675462a5"
                                     or .fingerprint=="023675248cbc16ad"
                                     or .fingerprint=="7a7736f01bfa9b65"
-                                    or .fingerprint=="0e29ac857c924dfa"))
+                                    or .fingerprint=="0e29ac857c924dfa"
+                                    or .fingerprint=="67863977ffafb8f1"
+                                    or .fingerprint=="46c10dbc7f271afe"
+                                    or .fingerprint=="2a2851e9f89ad845"
+                                    or .fingerprint=="1d72238cd236f016"
+                                    or .fingerprint=="019fd2a540f61820"))
                       | select(reviewed_log_reason == null)
                       | .id'); do
                     reopen_ids="$reopen_ids $id"; log_info "reopen changed reviewed log pattern: $id"

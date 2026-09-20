@@ -414,6 +414,221 @@ jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-build-canceled", "flux-d
 }
 pass "exact self-healing lifecycle events are suppressed while near matches stay visible"
 
+controlled_dir="$(setup_scenario controlled-platform-lifecycle false)"
+cat >"${controlled_dir}/alerts.json" <<'JSON'
+{"data":{"alerts":[
+  {
+    "id":"autoscale-delete-anchor","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":1000000,"updated_at":1000000,
+    "details":[
+      {"name":"Event message","value":"Deleting node autoscale-cx43-deadbeef"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Node\"\nname=\"autoscale-cx43-deadbeef\"\nnamespace=\"longhorn-system\"\nreason=\"Delete\"\nsource=\"longhorn-node-controller\""}
+    ]
+  },
+  {
+    "id":"autoscale-schedulable","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":1000000,"updated_at":1000000,
+    "details":[
+      {"name":"Event message","value":"Waiting for disk default-disk-fa0100000000 (/var/lib/longhorn) on node autoscale-cx43-deadbeef to be schedulable"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Node\"\nname=\"autoscale-cx43-deadbeef\"\nnamespace=\"longhorn-system\"\nreason=\"Schedulable\"\nsource=\"longhorn-node-controller\""}
+    ]
+  },
+  {
+    "id":"autoscale-ready","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":1000000,"updated_at":1000000,
+    "details":[
+      {"name":"Event message","value":"Kubernetes node autoscale-cx43-deadbeef not ready: NodeStatusUnknown"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Node\"\nname=\"autoscale-cx43-deadbeef\"\nnamespace=\"longhorn-system\"\nreason=\"Ready\"\nsource=\"longhorn-node-controller\""}
+    ]
+  },
+  {
+    "id":"autoscale-provider-anchor","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":2000000,"updated_at":2000000,
+    "details":[
+      {"name":"Event message","value":"Node could not be added to Load Balancer for service cilium-gateway-platform because the provider ID does not match any known format"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Node\"\nname=\"autoscale-cx43-cafebabe\"\nreason=\"UnknownProviderIDPrefix\"\nsource=\"hcloud-cloud-controller-manager\""}
+    ]
+  },
+  {
+    "id":"autoscale-invalid-disk","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":2000000,"updated_at":2000000,
+    "details":[
+      {"name":"Event message","value":"invalid capacity 0 on image filesystem"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Node\"\nname=\"autoscale-cx43-cafebabe\"\nreason=\"InvalidDiskCapacity\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"autoscale-reboot-anchor","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":3000000,"updated_at":3000000,
+    "details":[
+      {"name":"Event message","value":"Node autoscale-cx43-feedface has been rebooted, boot id: 216ffb86-e3bf-4975-8cb1-5c4f51bc5c22"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Node\"\nname=\"autoscale-cx43-feedface\"\nreason=\"Rebooted\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"autoscale-failed-daemon","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":3000000,"updated_at":3000000,
+    "details":[
+      {"name":"Event message","value":"Found failed daemon pod observability/coroot-node-agent-abcde on node autoscale-cx43-feedface, will try to kill it"},
+      {"name":"Labels","value":"cluster=\"platform\"\nreason=\"FailedDaemonPod\"\nsource=\"daemonset-controller\""}
+    ]
+  },
+  {
+    "id":"autoscale-endpoint-slice","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":1000000,"updated_at":1000000,
+    "details":[
+      {"name":"Event message","value":"Error updating Endpoint Slices for Service kube-system/tetragon: skipping Pod tetragon-abcde for Service kube-system/tetragon: Node autoscale-cx43-deadbeef Not Found"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Service\"\nname=\"tetragon\"\nnamespace=\"kube-system\"\nreason=\"FailedToUpdateEndpointSlices\"\nsource=\"endpoint-slice-controller\""}
+    ]
+  },
+  {
+    "id":"correlated-network-not-ready","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":2005000,"updated_at":2005000,
+    "details":[
+      {"name":"Event message","value":"network is not ready: container runtime network not ready: NetworkReady=false reason:NetworkPluginNotReady message:Network plugin returns error: cni plugin not initialized"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Pod\"\nname=\"coroot-node-agent-abcde\"\nnamespace=\"observability\"\nreason=\"NetworkNotReady\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"correlated-failed-mount","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":2005000,"updated_at":2005000,
+    "details":[
+      {"name":"Event message","value":"MountVolume.SetUp failed for volume \"kube-api-access-zln7b\" : object \"observability\"/\"kube-root-ca.crt\" not registered"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Pod\"\nname=\"coroot-node-agent-abcde\"\nnamespace=\"observability\"\nreason=\"FailedMount\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"correlated-failed-scheduling","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":3005000,"updated_at":3005000,
+    "details":[
+      {"name":"Event message","value":"0/8 nodes are available: 1 node(s) didn't match pod affinity rules, 7 node(s) didn't satisfy plugin(s) [NodeAffinity]. no new claims to deallocate, preemption: 0/8 nodes are available: 8 Preemption is not helpful for scheduling."},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Pod\"\nname=\"cilium-envoy-abcde\"\nnamespace=\"kube-system\"\nreason=\"FailedScheduling\""}
+    ]
+  },
+  {
+    "id":"correlated-node-shutdown","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":3005000,"updated_at":3005000,
+    "details":[
+      {"name":"Event message","value":"Pod was rejected as the node is shutting down."},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Pod\"\nname=\"coroot-node-agent-abcde\"\nnamespace=\"observability\"\nreason=\"NodeShutdown\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"correlated-grace-period","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":3005000,"updated_at":3005000,
+    "details":[
+      {"name":"Event message","value":"Container runtime did not kill the pod within specified grace period."},
+      {"name":"Labels","value":"cluster=\"platform\"\nreason=\"ExceededGracePeriod\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"correlated-node-not-ready","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":1005000,"updated_at":1005000,
+    "details":[
+      {"name":"Event message","value":"Node is not ready"},
+      {"name":"Labels","value":"affected=\"cilium-envoy-abcde, cilium-abcde, engine-image-ei-a4d05f02-abcde, longhorn-manager-abcde, tetragon-abcde\"\ncluster=\"platform\"\nreason=\"NodeNotReady\"\nsource=\"node-controller\""}
+    ]
+  },
+  {
+    "id":"correlated-cilium-startup","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":2005000,"updated_at":2005000,
+    "details":[
+      {"name":"Event message","value":"Startup probe failed: Get \"http://127.0.0.1:9879/healthz\": dial tcp 127.0.0.1:9879: connect: connection refused"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Pod\"\nname=\"cilium-abcde\"\nnamespace=\"kube-system\"\nreason=\"Unhealthy\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"correlated-node-agent-reset","fingerprint":"40e9576c5418c1af","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":"95rsc5yp:kubescape:DaemonSet:node-agent","opened_at":1005000,"updated_at":1005000,
+    "details":[
+      {"name":"Event message","value":"Readiness probe failed: Get \"http://10.244.12.14:7888/readyz\": read tcp 10.244.12.1:41234->10.244.12.14:7888: read: connection reset by peer"},
+      {"name":"Labels","value":"cluster=\"platform\"\nreason=\"Unhealthy\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"correlated-engine-rpc-canceled","fingerprint":"4674ee962cf0d212","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":"95rsc5yp:longhorn-system:DaemonSet:engine-image-ei-a4d05f02","opened_at":1005000,"updated_at":1005000,
+    "details":[
+      {"name":"Event message","value":"Readiness probe errored and resulted in unknown state: rpc error: code = Canceled desc = context canceled"},
+      {"name":"Labels","value":"cluster=\"platform\"\nreason=\"Unhealthy\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"correlated-engine-health-refused","fingerprint":"4beaceba9155d4c3","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":"95rsc5yp:longhorn-system:DaemonSet:engine-image-ei-493e04e7","opened_at":1005000,"updated_at":1005000,
+    "details":[
+      {"name":"Event message","value":"Readiness probe failed: Get \"https://10.244.12.15:9502/v1/healthz\": dial tcp 10.244.12.15:9502: connect: connection refused"},
+      {"name":"Labels","value":"cluster=\"platform\"\nreason=\"Unhealthy\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"quiet-ksail-rollout","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":"95rsc5yp:ksail-operator:Deployment:ksail-operator","opened_at":4000000,"updated_at":4000000,
+    "details":[
+      {"name":"Event message","value":"Readiness probe failed: Get \"http://10.244.23.12:8081/readyz\": dial tcp 10.244.23.12:8081: connect: connection refused"},
+      {"name":"Labels","value":"cluster=\"platform\"\nreason=\"Unhealthy\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"active-ksail-rollout","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":"95rsc5yp:ksail-operator:Deployment:ksail-operator","opened_at":4102444800000,"updated_at":4102444800000,
+    "details":[
+      {"name":"Event message","value":"Readiness probe failed: Get \"http://10.244.23.99:8081/readyz\": dial tcp 10.244.23.99:8081: connect: connection refused"},
+      {"name":"Labels","value":"cluster=\"platform\"\nreason=\"Unhealthy\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"fixed-node-delete","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":1000000,"updated_at":1000000,
+    "details":[
+      {"name":"Event message","value":"Deleting node prod-worker-1"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Node\"\nname=\"prod-worker-1\"\nnamespace=\"longhorn-system\"\nreason=\"Delete\"\nsource=\"longhorn-node-controller\""}
+    ]
+  },
+  {
+    "id":"uncorrelated-node-shutdown","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":9000000,"updated_at":9000000,
+    "details":[
+      {"name":"Event message","value":"Pod was rejected as the node is shutting down."},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Pod\"\nname=\"database-0\"\nnamespace=\"production\"\nreason=\"NodeShutdown\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"near-node-agent-fingerprint","fingerprint":"not-the-reviewed-fingerprint","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":"95rsc5yp:kubescape:DaemonSet:node-agent","opened_at":1005000,"updated_at":1005000,
+    "details":[
+      {"name":"Event message","value":"Readiness probe failed: Get \"http://10.244.12.14:7888/readyz\": read tcp 10.244.12.1:41234->10.244.12.14:7888: read: connection reset by peer"},
+      {"name":"Labels","value":"cluster=\"platform\"\nreason=\"Unhealthy\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"uncorrelated-engine-probe","fingerprint":"4674ee962cf0d212","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":"95rsc5yp:longhorn-system:DaemonSet:engine-image-ei-a4d05f02","opened_at":9000000,"updated_at":9000000,
+    "details":[
+      {"name":"Event message","value":"Readiness probe errored and resulted in unknown state: rpc error: code = Canceled desc = context canceled"},
+      {"name":"Labels","value":"cluster=\"platform\"\nreason=\"Unhealthy\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"wrong-engine-application","fingerprint":"4beaceba9155d4c3","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":"95rsc5yp:production:StatefulSet:database","opened_at":1005000,"updated_at":1005000,
+    "details":[
+      {"name":"Event message","value":"Readiness probe failed: Get \"https://10.244.12.15:9502/v1/healthz\": dial tcp 10.244.12.15:9502: connect: connection refused"},
+      {"name":"Labels","value":"cluster=\"platform\"\nreason=\"Unhealthy\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"near-failed-mount","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":2005000,"updated_at":2005000,
+    "details":[
+      {"name":"Event message","value":"MountVolume.SetUp failed for volume \"data\" : permission denied"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Pod\"\nname=\"database-0\"\nnamespace=\"production\"\nreason=\"FailedMount\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"history-correlated-node-shutdown","suppressed":false,"resolved_at":null,"rule_id":"kubernetes-events","application_id":":::","opened_at":12005000,"updated_at":12005000,
+    "details":[
+      {"name":"Event message","value":"Pod was rejected as the node is shutting down."},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Pod\"\nname=\"coroot-node-agent-history\"\nnamespace=\"observability\"\nreason=\"NodeShutdown\"\nsource=\"kubelet\""}
+    ]
+  }
+]}}
+JSON
+cat >"${controlled_dir}/history.json" <<'JSON'
+{"data":{"alerts":[
+  {
+    "id":"resolved-autoscale-reboot-anchor","suppressed":false,"resolved_at":12001000,"rule_id":"kubernetes-events","application_id":":::","opened_at":12000000,"updated_at":12000000,
+    "details":[
+      {"name":"Event message","value":"Node autoscale-cx43-history has been rebooted, boot id: 216ffb86-e3bf-4975-8cb1-5c4f51bc5c22"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Node\"\nname=\"autoscale-cx43-history\"\nreason=\"Rebooted\"\nsource=\"kubelet\""}
+    ]
+  }
+]}}
+JSON
+run_scenario "${controlled_dir}" >/dev/null
+[ -f "${controlled_dir}/suppressed.json" ] ||
+  fail "the exact controlled lifecycle alerts were not suppressed"
+jq -e '.ids | sort == ["autoscale-delete-anchor", "autoscale-endpoint-slice", "autoscale-failed-daemon", "autoscale-invalid-disk", "autoscale-provider-anchor", "autoscale-ready", "autoscale-reboot-anchor", "autoscale-schedulable", "correlated-cilium-startup", "correlated-engine-health-refused", "correlated-engine-rpc-canceled", "correlated-failed-mount", "correlated-failed-scheduling", "correlated-grace-period", "correlated-network-not-ready", "correlated-node-agent-reset", "correlated-node-not-ready", "correlated-node-shutdown", "history-correlated-node-shutdown", "quiet-ksail-rollout"]' \
+  "${controlled_dir}/suppressed.json" >/dev/null || {
+  jq -c '.ids | sort' "${controlled_dir}/suppressed.json" >&2
+  fail "controlled lifecycle classification admitted an active or unrelated alert"
+}
+pass "controlled autoscaler and rollout lifecycle alerts require exact shapes, correlation, and quiescence"
+
 remaining_dir="$(setup_scenario remaining-operational-warnings false)"
 cat >"${remaining_dir}/alerts.json" <<'JSON'
 {"data":{"alerts":[
@@ -587,6 +802,55 @@ cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
     "details":[{"name":"Sample","value":"E0920 02:19:21.019896       1 nestedpendingoperations.go:348] Operation for \"{volumeName:kubernetes.io/csi/driver.longhorn.io^pvc-092a5e54-701b-47b7-92a1-047ab444b15f podName: nodeName:}\" failed. No retries permitted until 2026-09-20 02:19:21.519875328 +0000 UTC m=+12182.116106049 (durationBeforeRetry 500ms). Error: AttachVolume.Attach failed for volume \"pvc-092a5e54-701b-47b7-92a1-047ab444b15f\" (UniqueName: \"kubernetes.io/csi/driver.longhorn.io^pvc-092a5e54-701b-47b7-92a1-047ab444b15f\") from node \"autoscale-cx43-55e35623532a65dc\" : rpc error: code = Aborted desc = volume pvc-092a5e54-701b-47b7-92a1-047ab444b15f is not ready for workloads: volume request cloning data but has not finished copying data"}]
   },
   {
+    "id":"metrics-removed-autoscale-node",
+    "fingerprint":"67863977ffafb8f1",
+    "suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","updated_at":1000000,
+    "application_id":"95rsc5yp:kube-system:Deployment:metrics-server",
+    "details":[{"name":"Sample","value":"E0920 08:47:44.544358       1 scraper.go:147] \"Failed to scrape node, timeout to access kubelet\" err=\"Get \\\"https://10.0.1.10:10250/metrics/resource\\\": context deadline exceeded\" node=\"autoscale-cx43-78218cc7ab3a29bc\" timeout=\"10s\""}]
+  },
+  {
+    "id":"longhorn-reboot-reconnect",
+    "fingerprint":"46c10dbc7f271afe",
+    "suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","updated_at":1000000,
+    "application_id":"95rsc5yp:longhorn-system:DaemonSet:longhorn-manager",
+    "details":[{"name":"Sample","value":"E0920 17:49:12.384473       1 instance_manager_controller.go:305] \"Unhandled Error\" err=\"failed to sync instance manager for longhorn-system/instance-manager-c210015368cfb1db9feb55fd74623baa: failed to initialize process manager client for instance-manager-c210015368cfb1db9feb55fd74623baa IP 10.244.18.40: failed to check process manager client connection for instance-manager-c210015368cfb1db9feb55fd74623baa IP 10.244.18.40: rpc error: code = Unavailable desc = connection error: desc = \\\"transport: Error while dialing: dial tcp 10.244.18.40:8500: connect: connection refused\\\"\" logger=\"UnhandledError\""}]
+  },
+  {
+    "id":"longhorn-deleted-autoscale-node",
+    "fingerprint":"2a2851e9f89ad845",
+    "suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","updated_at":1000000,
+    "application_id":"95rsc5yp:longhorn-system:DaemonSet:longhorn-manager",
+    "details":[{"name":"Sample","value":"time=\"2026-09-20T08:33:08.234578652Z\" level=error msg=\"Failed to sync Kubernetes node\" func=controller.handleReconcileErrorLogging file=\"utils.go:181\" KubernetesNode=longhorn-system/autoscale-cx43-55e35623532a65dc controller=longhorn-kubernetes-node error=\"failed to sync node longhorn-system/autoscale-cx43-55e35623532a65dc: nodes.longhorn.io \\\"autoscale-cx43-55e35623532a65dc\\\" not found\" node=prod-worker-3"}]
+  },
+  {
+    "id":"kubescape-deleted-runtime-probe",
+    "fingerprint":"1d72238cd236f016",
+    "suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","updated_at":1000000,
+    "application_id":"95rsc5yp:kubescape:Deployment:operator",
+    "details":[{"name":"Sample","value":"failed loading pod spec"}]
+  },
+  {
+    "id":"backstage-controlled-db-failover",
+    "fingerprint":"019fd2a540f61820",
+    "suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","updated_at":1000000,
+    "application_id":"95rsc5yp:backstage:Deployment:backstage",
+    "details":[{"name":"Sample","value":"Connection Error: Connection ended unexpectedly"}]
+  },
+  {
+    "id":"active-metrics-timeout",
+    "fingerprint":"67863977ffafb8f1",
+    "suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","updated_at":4102444800000,
+    "application_id":"95rsc5yp:kube-system:Deployment:metrics-server",
+    "details":[{"name":"Sample","value":"E0920 08:47:44.544358       1 scraper.go:147] \"Failed to scrape node, timeout to access kubelet\" err=\"Get \\\"https://10.0.1.10:10250/metrics/resource\\\": context deadline exceeded\" node=\"autoscale-cx43-78218cc7ab3a29bc\" timeout=\"10s\""}]
+  },
+  {
+    "id":"fixed-node-metrics-timeout",
+    "fingerprint":"67863977ffafb8f1",
+    "suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","updated_at":1000000,
+    "application_id":"95rsc5yp:kube-system:Deployment:metrics-server",
+    "details":[{"name":"Sample","value":"E0920 08:47:44.544358       1 scraper.go:147] \"Failed to scrape node, timeout to access kubelet\" err=\"Get \\\"https://10.0.1.4:10250/metrics/resource\\\": context deadline exceeded\" node=\"prod-worker-1\" timeout=\"10s\""}]
+  },
+  {
     "id":"near-runtime-alert",
     "fingerprint":"not-the-reviewed-fingerprint",
     "suppressed":false,
@@ -645,7 +909,7 @@ JSON
 run_scenario "${pinned_logs_dir}" >/dev/null
 [ -f "${pinned_logs_dir}/suppressed.json" ] ||
   fail "the exact control-plane and runtime log fingerprints were not suppressed"
-jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "longhorn-clone-log-alert", "nested-clone-retry-alert", "provisioner-delete-retry-alert", "rotated-post-timeout-alert", "rotated-runtime-alert", "sandbox-resize-alert"]' \
+jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "backstage-controlled-db-failover", "h9q7onv4l20i", "kubescape-deleted-runtime-probe", "longhorn-clone-log-alert", "longhorn-deleted-autoscale-node", "longhorn-reboot-reconnect", "metrics-removed-autoscale-node", "nested-clone-retry-alert", "provisioner-delete-retry-alert", "rotated-post-timeout-alert", "rotated-runtime-alert", "sandbox-resize-alert"]' \
   "${pinned_logs_dir}/suppressed.json" >/dev/null ||
   fail "the reviewed log exemptions were broader than their exact fingerprints and message shapes"
 pass "exact benign control-plane and runtime fingerprints survive ID rotation while near matches stay visible"
