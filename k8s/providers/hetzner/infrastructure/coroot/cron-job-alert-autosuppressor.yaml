@@ -803,3 +803,46 @@ spec:
                   else
                     log_info "no by-design alerts to suppress"
                   fi
+
+                  # Browserless readback of the exact counters rendered by
+                  # Coroot v1.22.2's Alerts and Applications legends. Missing
+                  # zero-valued alert keys match the frontend's `|| 0`; a
+                  # missing context, application list, or unknown status is a
+                  # schema failure and must never be reported as a clean state.
+                  STATE_RESPONSE=$(curl $RETRY "$BASE/api/project/$PID/overview/applications") || {
+                    log_error "could not query Coroot clean-state counters"
+                    exit 1
+                  }
+                  STATE=$(printf '%s' "$STATE_RESPONSE" | jq -ce '
+                    select(
+                      (.context | type) == "object"
+                      and (.context.alerts | type) == "object"
+                      and ((.context.alerts.critical // 0) | type) == "number"
+                      and ((.context.alerts.warning // 0) | type) == "number"
+                      and (.data.applications | type) == "array"
+                      and all(.data.applications[];
+                        .status == "critical"
+                        or .status == "warning"
+                        or .status == "info"
+                        or .status == "unknown"
+                        or .status == "ok")
+                    )
+                    | {
+                        alerts: {
+                          critical: (.context.alerts.critical // 0),
+                          warning: (.context.alerts.warning // 0)
+                        },
+                        applications: {
+                          slo_violations: ([.data.applications[] | select(.status == "critical")] | length),
+                          warnings: ([.data.applications[] | select(.status == "warning")] | length),
+                          errors_in_logs: ([.data.applications[] | select(.status == "info")] | length),
+                          integration_required: ([.data.applications[] | select(.status == "unknown")] | length),
+                          ok: ([.data.applications[] | select(.status == "ok")] | length)
+                        }
+                      }
+                  ') || {
+                    log_error "invalid Coroot clean-state counter response"
+                    exit 1
+                  }
+                  jq -cn --argjson state "$STATE" \
+                    '{level:"info",msg:"coroot clean-state counters",coroot_clean_state:$state}'

@@ -64,6 +64,20 @@ JSON
   cat >"${dir}/history.json" <<'JSON'
 {"data":{"alerts":[]}}
 JSON
+  cat >"${dir}/applications.json" <<'JSON'
+{"context":{"alerts":{"critical":2,"warning":3}},"data":{"applications":[
+  {"status":"critical"},
+  {"status":"critical"},
+  {"status":"warning"},
+  {"status":"info"},
+  {"status":"info"},
+  {"status":"info"},
+  {"status":"info"},
+  {"status":"unknown"},
+  {"status":"ok"},
+  {"status":"ok"}
+]}}
+JSON
 
   jq -cn --argjson extra "${extra_upstream}" '
     {data:{widgets:[{chart:{title:"Failed TCP connections, per second",series:(
@@ -88,6 +102,7 @@ for arg in "$@"; do
 done
 case "${url}" in
   */api/user) cat "${dir}/user.json" ;;
+  *'/overview/applications') cat "${dir}/applications.json" ;;
   *'/alerts?include_resolved=true&limit=500') cat "${dir}/history.json" ;;
   *'/alerts?limit=500') cat "${dir}/alerts.json" ;;
   */alerts/suppress)
@@ -126,12 +141,38 @@ printf '%s\n' "${exact_output}" | jq -s -e '
   length > 0 and all(.[]; .level == "info" and (.msg | type == "string" and length > 0))
 ' >/dev/null ||
   fail "normal autosuppressor lifecycle output must be structured info JSON"
+printf '%s\n' "${exact_output}" | jq -s -e '
+  any(.[];
+    .msg == "coroot clean-state counters"
+    and .coroot_clean_state == {
+      alerts: {critical: 2, warning: 3},
+      applications: {
+        slo_violations: 2,
+        warnings: 1,
+        errors_in_logs: 4,
+        integration_required: 1,
+        ok: 2
+      }
+    }
+  )
+' >/dev/null ||
+  fail "the autosuppressor did not expose exact Coroot UI counters"
 [ -f "${exact_dir}/suppressed.json" ] ||
   fail "the exact kubelet health-probe series were not suppressed"
 jq -e '.ids == ["kubelet-probe-noise"]' "${exact_dir}/suppressed.json" >/dev/null ||
   fail "the exact scenario suppressed the wrong alert set"
 pass "exact kubelet scheduler/controller-manager probe noise is suppressed"
 pass "normal autosuppressor lifecycle output is structured as info"
+pass "Coroot alert and application UI counters are emitted as structured evidence"
+
+invalid_state_dir="$(setup_scenario invalid-state false)"
+cat >"${invalid_state_dir}/applications.json" <<'JSON'
+{"context":{"alerts":{"critical":"0","warning":0}},"data":{"applications":[]}}
+JSON
+if run_scenario "${invalid_state_dir}" >/dev/null 2>&1; then
+  fail "an invalid Coroot counter response reported a false clean state"
+fi
+pass "invalid Coroot counter responses fail closed"
 
 extra_dir="$(setup_scenario extra true)"
 run_scenario "${extra_dir}" >/dev/null
