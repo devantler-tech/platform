@@ -254,12 +254,6 @@ case "${url}" in
           {"severity":"error","message":"E0920 07:58:02.416472       1 controller.go:250] \"Unhandled Error\" err=\"error syncing namespace \\\"overprovisioning\\\"\" logger=\"UnhandledError\""}
         ]}}'
       fi
-    elif [[ "$url" == *'%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater'* ]]; then
-      if [ "${severity}" = "fatal" ]; then
-        printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
-      else
-        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0919 17:00:42.892044       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"events \\\"pod.123\\\" is forbidden: User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\"kubescape\\\"\" event=\"&Event{Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater.}\""}]}}'
-      fi
     elif [[ "$url" == *'%3Avelero%3ADeployment%3Avelero'* ]]; then
       if [ "${severity}" = "fatal" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
@@ -349,6 +343,10 @@ case "${url}" in
     elif [[ "${url}" == *'%3Akube-system%3ADeployment%3Acluster-autoscaler-hetzner-cluster-autoscaler'* ]] &&
       [ "$(cat "${dir}/autoscaler-mode")" != "known" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
+    elif [[ "${url}" == *'%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater'* ]]; then
+      # Reproduce the formerly reconciled finite exemption. The RBAC repair
+      # must actively return it to inherited fail-visible behavior.
+      printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
     elif [[ "${url}" == *'%3Akubescape%3ADeployment%3Aoperator'* ]] &&
       [ "$(cat "${dir}/operator-mode")" != "known" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":100}]}}'
@@ -415,7 +413,7 @@ jq -s -e '
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-controller-manager/inspection/LogErrors/config")) and .body.configs[2].threshold == 5000) and
   any(.[]; (.url | contains("%3Aflux-system%3ADeployment%3Akustomize-controller/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Akube-system%3ADeployment%3Acluster-autoscaler-hetzner-cluster-autoscaler/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
-  any(.[]; (.url | contains("%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
+  any(.[]; (.url | contains("%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater/inspection/LogErrors/config")) and .body.configs[2] == null) and
   any(.[]; (.url | contains("%3Avelero%3ADeployment%3Avelero/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Acnpg-system%3ADeployment%3Acloudnative-pg/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Akube-system%3ADeployment%3Ahcloud-csi-controller/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and

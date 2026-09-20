@@ -1,0 +1,14 @@
+---
+# VPA records InPlaceResizedByVPA against the resized workload, so the Event
+# lives in whichever namespace owns that workload. The upstream chart grants
+# Event creation but a repeated Event is maintained with patch/update. Keep the
+# missing authority in a dedicated role instead of widening the updater's chart
+# role, and grant no reads or writes to any other resource.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vpa-updater-event-writer
+rules:
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch", "update"]

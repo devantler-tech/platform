@@ -645,7 +645,7 @@ JSON
 run_scenario "${pinned_logs_dir}" >/dev/null
 [ -f "${pinned_logs_dir}/suppressed.json" ] ||
   fail "the exact control-plane and runtime log fingerprints were not suppressed"
-jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "longhorn-clone-log-alert", "nested-clone-retry-alert", "provisioner-delete-retry-alert", "rotated-post-timeout-alert", "rotated-runtime-alert", "rotated-vpa-event-alert", "sandbox-resize-alert"]' \
+jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "longhorn-clone-log-alert", "nested-clone-retry-alert", "provisioner-delete-retry-alert", "rotated-post-timeout-alert", "rotated-runtime-alert", "sandbox-resize-alert"]' \
   "${pinned_logs_dir}/suppressed.json" >/dev/null ||
   fail "the reviewed log exemptions were broader than their exact fingerprints and message shapes"
 pass "exact benign control-plane and runtime fingerprints survive ID rotation while near matches stay visible"
@@ -672,7 +672,7 @@ cat >"${changed_controller_dir}/alerts.json" <<'JSON'
     "rule_id":"new-log-patterns",
     "application_id":"95rsc5yp:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater",
     "details":[
-      {"name":"Sample","value":"E0919 03:00:00.000000       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"forbidden: cannot patch resource \\\"pods\\\"\""}
+      {"name":"Sample","value":"E0919 03:00:00.000000       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"events \\\"kyverno-reports-controller.example\\\" is forbidden: User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\"kyverno\\\"\" event=\"&Event{ObjectMeta:{...},Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater.,Source:EventSource{Component:vpa-updater}}\""}
     ]
   }
 ]}}
@@ -684,4 +684,4 @@ jq -e '.ids | sort == ["rotated-controller-alert", "rotated-vpa-event-alert"]' "
   fail "the controller-pattern revalidation reopened the wrong alert set"
 [ ! -e "${changed_controller_dir}/suppressed.json" ] ||
   fail "a changed controller pattern was suppressed again"
-pass "a changed weakly-equal controller pattern automatically becomes visible again"
+pass "changed patterns and the retired VPA denial exemption automatically become visible again"

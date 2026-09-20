@@ -6,5 +6,7 @@ resources:
   - helm-release.yaml
   - helm-repository.yaml
   - cilium-network-policy.yaml
+  - cluster-role-event-writer.yaml
+  - cluster-role-binding-event-writer.yaml
   - role.yaml
   - role-binding.yaml

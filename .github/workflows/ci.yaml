@@ -402,6 +402,7 @@ jobs:
               - 'scripts/tests/test-vault-snapshot-group-readable.sh'
               - 'scripts/tests/test-kyverno-admission-vpa.sh'
               - 'scripts/tests/kyverno-admission-vpa-rules.yaml'
+              - 'scripts/tests/test-vpa-updater-event-rbac.sh'
               # The image-verifier liveness checker and its test are one
               # contract: the checker's whole value is failing loudly, so a
               # change to either must re-run both.
@@ -1893,6 +1894,15 @@ jobs:
         run: |
           shellcheck scripts/tests/test-kyverno-admission-vpa.sh
           bash scripts/tests/test-kyverno-admission-vpa.sh
+
+      - name: 📝 Validate VPA updater Event authorization
+        if: needs.changes.outputs.k8s == 'true'
+        # The updater emits an InPlaceResizedByVPA Event in the workload's own
+        # namespace. The chart's create-only grant cannot patch a repeated
+        # Event, so render both routes and pin the exact cluster-wide write set.
+        run: |
+          shellcheck scripts/tests/test-vpa-updater-event-rbac.sh
+          bash scripts/tests/test-vpa-updater-event-rbac.sh
 
       - name: ✅ Validate manifests (local + prod overlays)
         # Schema-aware kubeconform validation with Flux variable substitution,
