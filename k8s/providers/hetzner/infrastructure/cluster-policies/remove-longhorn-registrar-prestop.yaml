@@ -1,0 +1,61 @@
+# Prod-only: remove Longhorn v1.12.1's impossible pre-stop hook from the
+# generated CSI node-driver-registrar container.
+#
+# ROOT CAUSE (#3931): Longhorn v1.12.1 generates longhorn-csi-plugin with a
+# `/bin/sh -c rm ...` pre-stop hook on
+# longhornio/csi-node-driver-registrar:v2.17.0. That image is distroless and
+# has no /bin/sh, so every pod termination emits FailedPreStopHook and Talos
+# ExecSync errors. The registrar already handles SIGTERM and removes its
+# registration socket itself. Removing this hook therefore restores the
+# upstream sidecar's intended shutdown path; it does not suppress the error.
+#
+# Longhorn's manager container has a separate, valid /bin/sh cleanup hook for
+# /csi and MUST remain untouched. This admission policy names the exact
+# generated DaemonSet and list-merge key (`node-driver-registrar`) so later
+# Longhorn reconciles cannot reintroduce only the broken hook. The sibling
+# mutate-existing policy retrofits the DaemonSet that predates this policy.
+#
+# VERSION COUPLING: the annotation is asserted against the HelmRelease's exact
+# chart pin by test-longhorn-registrar-prestop-policy.sh. A chart upgrade must
+# check whether upstream fixed the generator before carrying this workaround.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: remove-longhorn-registrar-prestop
+  annotations:
+    platform.devantler.tech/longhorn-chart-version: "1.12.1"
+    policies.kyverno.io/title: Remove Broken Longhorn Registrar Pre-stop Hook
+    policies.kyverno.io/category: Storage, Reliability
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: DaemonSet
+    policies.kyverno.io/description: >-
+      Removes only the shell-based pre-stop hook that Longhorn 1.12.1 adds to
+      its distroless node-driver-registrar sidecar. The registrar performs its
+      own SIGTERM socket cleanup; the valid longhorn-manager hook is retained.
+spec:
+  # Storage must remain able to reconcile if Kyverno is unavailable. The
+  # retrofit policy repairs the hook when the background controller returns.
+  failurePolicy: Ignore
+  rules:
+    - name: remove-broken-registrar-prestop
+      match:
+        any:
+          - resources:
+              kinds:
+                - apps/v1/DaemonSet
+              names:
+                - longhorn-csi-plugin
+              namespaces:
+                - longhorn-system
+              operations:
+                - CREATE
+                - UPDATE
+      mutate:
+        patchStrategicMerge:
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: node-driver-registrar
+                    lifecycle:
+                      preStop: null

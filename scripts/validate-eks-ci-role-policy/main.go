@@ -2873,7 +2873,35 @@ const (
 // This Kubescape CPU repair establishes aggregate:
 //
 //	b77f4952280b334ccfcd377afc05cf74c612097b9a5bf90e17fd8b6d22006f82
-const expectedRenderedSurfaceSHA = "b77f4952280b334ccfcd377afc05cf74c612097b9a5bf90e17fd8b6d22006f82"
+//
+// Moved again by the Longhorn registrar shutdown repair in #3931, re-derived
+// on exact main 59c8dbbe0ed2b27dc521256da5b11af274e7a09b. The new Role and
+// RoleBinding let only Kyverno's background controller update only the
+// longhorn-system/longhorn-csi-plugin DaemonSet. The grant is namespaced,
+// resourceNames-pinned, and limited to get, patch, and update; it exists only
+// so the mutate-existing policy can delete the impossible shell pre-stop hook
+// from the distroless registrar. It does not grant create, delete, wildcard,
+// secret, workload-exec, impersonation, AWS, or cluster-wide privileges.
+//
+// CONSERVATION: the approval-base diagnostic names exactly the two added
+// entries rbac.authorization.k8s.io/v1 Role and RoleBinding
+// longhorn-system/kyverno:background-controller:mutate-longhorn-csi-plugin.
+// No ClusterRole, ClusterRoleBinding, ServiceAccount, identity, subject,
+// wildcard, AWS identity, or unrelated permission moved. The policies and
+// focused tests themselves are outside the selected authorization surface.
+//
+// RENDERER PROVENANCE: reproduced locally with the official kubectl v1.36.2
+// Darwin arm64 binary (Kustomize v5.8.1), whose SHA256 was verified as
+// 4408c85c83fd3a31adaa555bdf3c7a6c81f74b19449a9060ba31ab91926f023d.
+// The approval-base comparison against exact main above names only the two
+// least-privilege entries described here.
+//
+// Previous aggregate: b77f4952280b334ccfcd377afc05cf74c612097b9a5bf90e17fd8b6d22006f82.
+//
+// This Longhorn registrar repair establishes aggregate:
+//
+//	96bf47f84305524872c11d2a8f87868f3ab9b5ba1641da90a8949575dc0d5117
+const expectedRenderedSurfaceSHA = "96bf47f84305524872c11d2a8f87868f3ab9b5ba1641da90a8949575dc0d5117"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2886,7 +2914,7 @@ const expectedRenderedSurfaceSHA = "b77f4952280b334ccfcd377afc05cf74c612097b9a5b
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "99aef50f4a6fce8f9ce7db65369cbdab8b9403accc1337faff657328ffb0fed0"
+const previousRenderedSurfaceSHA = "b77f4952280b334ccfcd377afc05cf74c612097b9a5bf90e17fd8b6d22006f82"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

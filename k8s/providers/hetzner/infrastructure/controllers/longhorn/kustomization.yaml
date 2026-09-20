@@ -20,6 +20,10 @@ resources:
   # before the policies are admitted.
   - cluster-role-kyverno-mutate-longhorn-nodes.yaml
   - cluster-role-kyverno-reports-longhorn-nodes.yaml
+  # Exact namespaced grant for the Longhorn v1.12.1 registrar-hook retrofit.
+  # It must precede the ClusterPolicy in the next Flux layer.
+  - role-kyverno-mutate-longhorn-csi-plugin.yaml
+  - role-binding-kyverno-mutate-longhorn-csi-plugin.yaml
   # Self-healing cleanup of orphaned Longhorn Node CRs left by autoscaler
   # scale-downs (Longhorn never auto-deletes them). See #2024.
   - service-account-stale-node-cleanup.yaml

@@ -1,0 +1,49 @@
+# Prod-only — the RETROFIT half of remove-longhorn-registrar-prestop.yaml.
+# Read that file for the full root cause and safety boundary.
+#
+# Kept separate because Kyverno requires every mutate rule in a
+# mutateExistingOnPolicyUpdate policy to declare mutate.targets; combining it
+# with the admission rule would make the policy invalid. The exact namespaced
+# background-controller grant ships in infrastructure-controllers/longhorn,
+# one Flux layer earlier.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: remove-existing-longhorn-registrar-prestop
+  annotations:
+    platform.devantler.tech/longhorn-chart-version: "1.12.1"
+    policies.kyverno.io/title: Remove Existing Broken Longhorn Registrar Pre-stop Hook
+    policies.kyverno.io/category: Storage, Reliability
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: DaemonSet
+    policies.kyverno.io/description: >-
+      Retrofits the existing Longhorn 1.12.1 CSI DaemonSet by removing only
+      the impossible shell pre-stop hook from its distroless registrar.
+spec:
+  failurePolicy: Ignore
+  mutateExistingOnPolicyUpdate: true
+  rules:
+    - name: remove-existing-broken-registrar-prestop
+      match:
+        any:
+          - resources:
+              kinds:
+                - apps/v1/DaemonSet
+              names:
+                - longhorn-csi-plugin
+              namespaces:
+                - longhorn-system
+      mutate:
+        targets:
+          - apiVersion: apps/v1
+            kind: DaemonSet
+            name: longhorn-csi-plugin
+            namespace: longhorn-system
+        patchStrategicMerge:
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: node-driver-registrar
+                    lifecycle:
+                      preStop: null
