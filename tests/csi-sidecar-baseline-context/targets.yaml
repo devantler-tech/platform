@@ -1,0 +1,111 @@
+# The live shape measured against prod 2026-09-20T21:20Z: no pod-level
+# securityContext, one container, no container securityContext.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csi-attacher
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: csi-attacher
+  template:
+    metadata:
+      labels:
+        app: csi-attacher
+    spec:
+      containers:
+        - name: csi-attacher
+          image: csi-attacher:v1
+---
+# A container that ALREADY carries a securityContext with other fields, plus an
+# initContainer with none. The existing field must survive: replacing the whole
+# container securityContext object is the wholesale-replace hazard the split
+# preconditions exist to prevent.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csi-provisioner
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: csi-provisioner
+  template:
+    metadata:
+      labels:
+        app: csi-provisioner
+    spec:
+      initContainers:
+        - name: wait-for-manager
+          image: busybox:1
+      containers:
+        - name: csi-provisioner
+          image: csi-provisioner:v1
+          securityContext:
+            runAsNonRoot: true
+---
+# Pod-level seLinuxOptions is already inherited, so no container override may be
+# written: Kubernetes replaces the whole pod-level struct with a container one,
+# even an empty one. fsGroupChangePolicy is already set to a non-default value,
+# which the +() anchor must leave alone.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csi-resizer
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: csi-resizer
+  template:
+    metadata:
+      labels:
+        app: csi-resizer
+    spec:
+      securityContext:
+        fsGroupChangePolicy: Always
+        seLinuxOptions:
+          level: s0:c1,c2
+      containers:
+        - name: csi-resizer
+          image: csi-resizer:v1
+---
+# NEAR MISS: the same Deployment name in another namespace.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csi-attacher
+  namespace: tenant-control
+spec:
+  selector:
+    matchLabels:
+      app: csi-attacher
+  template:
+    metadata:
+      labels:
+        app: csi-attacher
+    spec:
+      containers:
+        - name: csi-attacher
+          image: csi-attacher:v1
+---
+# NEAR MISS: another longhorn-system Deployment. longhorn-manager is storage
+# plane and stays on #3918; rolling it here is exactly what must not happen.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: longhorn-manager
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: longhorn-manager
+  template:
+    metadata:
+      labels:
+        app: longhorn-manager
+    spec:
+      containers:
+        - name: longhorn-manager
+          image: longhorn-manager:v1

@@ -1,0 +1,22 @@
+# The rule's trigger. It is one of the four matched Deployments; the policy
+# lists its four targets statically, so any one of them firing patches all
+# four. Kyverno's CLI fake client rejects the same object appearing as both a
+# trigger and a target, so this one is held out of targets.yaml and the other
+# three carry the assertions.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csi-snapshotter
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: csi-snapshotter
+  template:
+    metadata:
+      labels:
+        app: csi-snapshotter
+    spec:
+      containers:
+        - name: csi-snapshotter
+          image: csi-snapshotter:v1

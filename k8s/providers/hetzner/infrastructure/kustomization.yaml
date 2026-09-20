@@ -51,6 +51,11 @@ resources:
   # runtime-generated DaemonSet. Both are exact and version-coupled (#3931).
   - cluster-policies/remove-longhorn-registrar-prestop.yaml
   - cluster-policies/remove-existing-longhorn-registrar-prestop.yaml
+  # Prod-only: retrofit the two non-privilege C-0211 fields onto the four
+  # Longhorn CSI sidecar Deployments that predate the longhorn-system
+  # baseline-context opt-in. mutate-existing only -- nothing writes those
+  # stored specs, so the CREATE/UPDATE opt-in rules never reach them (#3946).
+  - cluster-policies/add-existing-csi-sidecar-baseline-context.yaml
   # Prod-only: a POSITIVE platform.devantler.tech/baseline-worker label on the
   # static workers, so workloads that must never ride an autoscaler node can
   # require it and fail closed (#3287). Admission half + mutate-existing

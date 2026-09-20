@@ -369,6 +369,10 @@ jobs:
               # version coupling and least-privilege background-controller RBAC.
               - 'tests/longhorn-registrar-prestop/**'
               - 'scripts/tests/test-longhorn-registrar-prestop-policy.sh'
+              # Exact CSI-sidecar C-0211 retrofit, its near-miss fixtures and the
+              # resourceNames-pinned background-controller grant (#3946).
+              - 'tests/csi-sidecar-baseline-context/**'
+              - 'scripts/tests/test-csi-sidecar-baseline-context.sh'
               # The hcloud consumers that require that label (#3287).
               - 'scripts/tests/test-hcloud-baseline-worker-affinity.sh'
               # The admission guard for every hcloud consumer, and its fixtures.
@@ -1316,6 +1320,8 @@ jobs:
           bash scripts/tests/test-label-baseline-workers.sh
           shellcheck scripts/tests/test-longhorn-registrar-prestop-policy.sh
           bash scripts/tests/test-longhorn-registrar-prestop-policy.sh
+          shellcheck scripts/tests/test-csi-sidecar-baseline-context.sh
+          bash scripts/tests/test-csi-sidecar-baseline-context.sh
           shellcheck scripts/tests/test-hcloud-baseline-worker-affinity.sh
           bash scripts/tests/test-hcloud-baseline-worker-affinity.sh
           shellcheck scripts/guard-longhorn-ui-baseline-context.sh scripts/tests/test-guard-longhorn-ui-baseline-context.sh scripts/tests/test-longhorn-ui-baseline-context.sh
