@@ -53,6 +53,19 @@ results:
       - velero/podlevel-partial
     kind: Pod
     result: skip
+  # Mirror pod in opted-in kube-system namespace must NOT be mutated by either rule (#3921).
+  - policy: add-security-context
+    rule: add-baseline-context-optin-namespaces
+    resources:
+      - kube-system/kube-apiserver-mirror
+    kind: Pod
+    result: skip
+  - policy: add-security-context
+    rule: add-baseline-context-optin-containers
+    resources:
+      - kube-system/kube-apiserver-mirror
+    kind: Pod
+    result: skip
   - policy: add-security-context
     rule: add-baseline-context-optin-controllers
     resources:
