@@ -56,7 +56,7 @@ fi
 # Cilium agent's own resolver configuration (which does not rewrite proxied DNS
 # packets).
 # shellcheck disable=SC2016
-[[ "${script_body}" == *'reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 500 cilium-dns-search-expansion'* ]] ||
+[[ "${script_body}" == *'reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 5000 cilium-dns-search-expansion'* ]] ||
   fail 'the Cilium DNS proxy aggregation must have a finite app-level threshold'
 pass 'the Cilium DNS proxy aggregation has a narrow application policy'
 
@@ -407,7 +407,7 @@ jq -s -e '
   any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-background-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
   any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-cleanup-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 40) and
   any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
-  any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 500) and
+  any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 5000) and
   any(.[]; (.url | contains("%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Adex%3ADeployment%3Adex/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Ainit/inspection/LogErrors/config")) and .body.configs[2].threshold == 1000) and

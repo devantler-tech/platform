@@ -15,13 +15,17 @@
 #     seven-day daily sawtooth that repeatedly returns to 270-300 MiB after
 #     451-520 MiB peaks; Coroot reported 27%/h while the cache was warming.
 #     Thirty-five preserves a warning for sustained growth outside that cycle.
-#   * cilium DnsNxdomainErrors = 500. Cilium's cluster-wide DNS proxy forwards
+#   * cilium DnsNxdomainErrors = 5000. Cilium's cluster-wide DNS proxy forwards
 #     workload resolver packets unchanged, so Coroot attributes every workload's
 #     search-list candidate to the Cilium DaemonSet application. The reviewed
-#     report contains only those candidates (including `.search_path_suffix`)
-#     followed by successful canonical lookups; DNS latency and server errors
-#     are healthy. The finite cap is above the observed 142-per-hour baseline;
-#     other DNS checks and per-workload NXDOMAIN reports remain at global zero.
+#     one-hour report contained 3,792 NXDOMAINs from the Coroot operator's
+#     namespace-qualified ClickHouse replica and Keeper names before their
+#     canonical `.svc.cluster.local` lookups succeeded. Every generated Coroot
+#     pod already uses ndots:1, but the CRD exposes no endpoint-template field;
+#     rewriting the operator's generated ClickHouse config at admission would
+#     be a brittle ownership violation. DNS latency and server-error checks are
+#     healthy. The finite cap leaves measured headroom above that 3,792/hour
+#     baseline; other DNS checks and per-workload NXDOMAIN reports stay at zero.
 #
 # Log thresholds are even narrower: the override is installed only when EVERY
 # raw ERROR/FATAL message matches the app-specific allowlist below. Coroot's
@@ -200,7 +204,7 @@ spec:
                   reconcile_threshold "$CROSSPLANE" MemoryLeakPercent 10 35 crossplane-daily-memory-sawtooth
 
                   CILIUM="$PID:kube-system:DaemonSet:cilium"
-                  reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 500 cilium-dns-search-expansion
+                  reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 5000 cilium-dns-search-expansion
 
                   LOG_MESSAGE_LIMIT=1000
                   ERROR_QUERY=$(jq -nr --argjson limit "$LOG_MESSAGE_LIMIT" '
