@@ -814,13 +814,18 @@ spec:
                     exit 1
                   }
                   STATE=$(printf '%s' "$STATE_RESPONSE" | jq -ce '
+                    def valid_counter($key):
+                      (.context.alerts | has($key) | not)
+                      or (
+                        (.context.alerts[$key] | type) == "number"
+                        and .context.alerts[$key] >= 0
+                        and .context.alerts[$key] == (.context.alerts[$key] | floor)
+                      );
                     select(
                       (.context | type) == "object"
                       and (.context.alerts | type) == "object"
-                      and ((.context.alerts | has("critical") | not)
-                        or ((.context.alerts.critical | type) == "number"))
-                      and ((.context.alerts | has("warning") | not)
-                        or ((.context.alerts.warning | type) == "number"))
+                      and valid_counter("critical")
+                      and valid_counter("warning")
                       and (.data.applications | type) == "array"
                       and all(.data.applications[];
                         .status == "critical"

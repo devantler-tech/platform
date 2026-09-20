@@ -189,6 +189,22 @@ if run_scenario "${false_warning_dir}" >/dev/null 2>&1; then
   fail "a boolean warning counter reported a false clean state"
 fi
 
+negative_counter_dir="$(setup_scenario negative-counter false)"
+cat >"${negative_counter_dir}/applications.json" <<'JSON'
+{"context":{"alerts":{"critical":-1,"warning":0}},"data":{"applications":[]}}
+JSON
+if run_scenario "${negative_counter_dir}" >/dev/null 2>&1; then
+  fail "a negative alert counter reported valid clean-state evidence"
+fi
+
+fractional_counter_dir="$(setup_scenario fractional-counter false)"
+cat >"${fractional_counter_dir}/applications.json" <<'JSON'
+{"context":{"alerts":{"critical":0,"warning":1.5}},"data":{"applications":[]}}
+JSON
+if run_scenario "${fractional_counter_dir}" >/dev/null 2>&1; then
+  fail "a fractional alert counter reported valid clean-state evidence"
+fi
+
 missing_counters_dir="$(setup_scenario missing-counters false)"
 cat >"${missing_counters_dir}/applications.json" <<'JSON'
 {"context":{"alerts":{}},"data":{"applications":[]}}
