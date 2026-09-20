@@ -15,6 +15,11 @@
 #     seven-day daily sawtooth that repeatedly returns to 270-300 MiB after
 #     451-520 MiB peaks; Coroot reported 27%/h while the cache was warming.
 #     Thirty-five preserves a warning for sustained growth outside that cycle.
+#   * Talos apid MemoryLeakPercent = 250. The host API process stays near
+#     10-15 MiB on every Ready node, with brief RPC/allocation spikes below
+#     30 MiB that return to baseline and produce no pressure or OOMs. Coroot's
+#     short-window regression reached 122%/h; 250 remains finite and exposes a
+#     sustained 3.5x hourly increase while ignoring the measured sawtooth.
 #   * cilium DnsNxdomainErrors = 7500. Cilium's cluster-wide DNS proxy forwards
 #     workload resolver packets unchanged, so Coroot attributes every workload's
 #     search-list candidate to the Cilium DaemonSet application. The original
@@ -32,11 +37,12 @@
 # Log thresholds are even narrower: the override is installed only when EVERY
 # raw ERROR/FATAL message matches the app-specific allowlist below. Coroot's
 # pattern endpoint is intentionally not trusted here because one representative
-# sample can group structurally different messages. A new message removes the
-# override on the next five-minute run. Invalid or potentially truncated
-# responses also fail visible. Each cap is above the observed reviewed hourly
-# count but remains finite, so a storm of even a known message becomes visible.
-# Empty/aged-out message sets inherit the global zero.
+# sample can group structurally different messages. The finite override stays
+# warm across valid empty windows so the next reviewed event does not flicker
+# as an application warning. A new message removes the override on the next
+# one-minute run. Invalid or potentially truncated responses also fail visible.
+# Each cap is above the observed reviewed hourly count but remains finite, so a
+# storm of even a known message becomes visible.
 # An exact HTTP 404 from an application's log endpoint means Coroot has no log
 # stream, so there is no LogErrors policy target to reconcile. That absence is
 # recorded as structured info; transport, server, and malformed-response
@@ -69,6 +75,11 @@
 # deleted. Those expected lifecycle misses are limited to the exact operator
 # service, error attributes, daily-backup pod identity, and a finite count;
 # unrelated missing workloads and every other operator error remain visible.
+# A recovered etcd leader transition can also produce one or two exact
+# leader-election lease timeouts in several controllers plus the correlated
+# kube-apiserver EtcdError/lease-write timeout trail. Those shapes are accepted
+# only for the reviewed services and locks, under finite hourly caps; another
+# error, lock, endpoint, or a sustained burst remains visible.
 # Kubescape storage's six-hour cleanup can discover a legacy payload whose
 # SQLite metadata row and old `.m` sidecar are both already gone. Its reviewed
 # code deletes that orphan before returning the diagnostic, so the exact
@@ -81,21 +92,26 @@ metadata:
   name: coroot-application-health-reconciler
   namespace: observability
 spec:
-  schedule: "*/5 * * * *"
+  schedule: "* * * * *"
+  # Never overlap Coroot writes. A run may start at most ten seconds after its
+  # schedule and then has forty seconds plus five seconds of termination grace,
+  # so it is gone before the next one-minute evidence pass.
   concurrencyPolicy: Forbid
-  startingDeadlineSeconds: 60
+  startingDeadlineSeconds: 10
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       backoffLimit: 0
-      activeDeadlineSeconds: 300
+      # Bound the complete reconciliation so Forbid cannot skip the next pass.
+      activeDeadlineSeconds: 40
       template:
         metadata:
           labels:
             app: coroot-application-health-reconciler
         spec:
           restartPolicy: Never
+          terminationGracePeriodSeconds: 5
           automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
@@ -129,7 +145,11 @@ spec:
                 - |
                   set -eu
                   BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
-                  RETRY="-fsS --retry 5 --retry-delay 2 --retry-all-errors --retry-connrefused --max-time 30"
+                  REQUEST_MAX_TIME=5
+
+                  coroot_request() {
+                    curl -fsS --max-time "$REQUEST_MAX_TIME" "$@"
+                  }
 
                   log_info() {
                     jq -nc --arg msg "$1" '{level:"info",msg:$msg}'
@@ -141,11 +161,30 @@ spec:
                     jq -nr --arg value "$1" '$value | @uri'
                   }
                   http_status() {
-                    curl -sS --output /dev/null --write-out '%{http_code}' --max-time 30 "$1" 2>/dev/null || true
+                    curl -sS --output /dev/null --write-out '%{http_code}' \
+                      --max-time "$REQUEST_MAX_TIME" "$1" 2>/dev/null || true
                   }
 
-                  PID=$(curl $RETRY "$BASE/api/user" | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
+                  PID=$(coroot_request "$BASE/api/user" | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
                   [ -n "$PID" ] || { log_error "could not resolve platform project id"; exit 1; }
+
+                  RECONCILIATION_PIDS=""
+                  queue_reconciliation() {
+                    "$@" &
+                    RECONCILIATION_PIDS="$RECONCILIATION_PIDS $!"
+                  }
+                  wait_reconciliations() {
+                    failures=0
+                    for reconciliation_pid in $RECONCILIATION_PIDS; do
+                      if ! wait "$reconciliation_pid"; then
+                        failures=$((failures + 1))
+                      fi
+                    done
+                    [ "$failures" -eq 0 ] || {
+                      log_error "$failures application-health reconciliation(s) failed"
+                      exit 1
+                    }
+                  }
 
                   reconcile_threshold() {
                     app="$1"
@@ -155,7 +194,7 @@ spec:
                     reason="$5"
                     encoded_app=$(encode "$app")
                     url="$BASE/api/project/$PID/app/$encoded_app/inspection/$check/config"
-                    config=$(curl $RETRY "$url")
+                    config=$(coroot_request "$url")
                     if ! printf '%s' "$config" | jq -e --argjson global "$global" '
                       (.form.configs | type == "array" and length == 3) and
                       .form.configs[0].threshold == $global
@@ -180,7 +219,7 @@ spec:
                         .form | .configs[2] = {threshold:$threshold}
                       ')
                     fi
-                    curl $RETRY -X POST -H 'Content-Type: application/json' -d "$payload" "$url" >/dev/null
+                    coroot_request -X POST -H 'Content-Type: application/json' -d "$payload" "$url" >/dev/null
                     log_info "$reason reconciled: $app/$check=$desired"
                   }
 
@@ -189,10 +228,10 @@ spec:
                   # non-empty; their displayed threshold is not consulted.
                   # Remove the obsolete override now that the Talos probe/listen
                   # address mismatch is fixed at source.
-                  reconcile_threshold "$KUBELET" NetworkTCPConnections 0 inherit kubelet-probe-source-fixed
+                  queue_reconciliation reconcile_threshold "$KUBELET" NetworkTCPConnections 0 inherit kubelet-probe-source-fixed
 
                   KYVERNO="$PID:kyverno:Deployment:kyverno-background-controller"
-                  reconcile_threshold "$KYVERNO" MemoryLeakPercent 10 35 kyverno-bounded-cache-sawtooth
+                  queue_reconciliation reconcile_threshold "$KYVERNO" MemoryLeakPercent 10 35 kyverno-bounded-cache-sawtooth
 
                   KYVERNO_CLEANUP="$PID:kyverno:Deployment:kyverno-cleanup-controller"
                   # Cleanup-controller restarts initialise informer/cache state
@@ -200,13 +239,16 @@ spec:
                   # rollout showed stable or declining established replicas,
                   # no OOM/pressure, and a 200 MiB hard limit. Keep a finite
                   # ceiling above that measured 36%/h cold-start slope.
-                  reconcile_threshold "$KYVERNO_CLEANUP" MemoryLeakPercent 10 40 kyverno-cleanup-rollout-cold-start
+                  queue_reconciliation reconcile_threshold "$KYVERNO_CLEANUP" MemoryLeakPercent 10 40 kyverno-cleanup-rollout-cold-start
 
                   CROSSPLANE="$PID:crossplane-system:Deployment:crossplane"
-                  reconcile_threshold "$CROSSPLANE" MemoryLeakPercent 10 35 crossplane-daily-memory-sawtooth
+                  queue_reconciliation reconcile_threshold "$CROSSPLANE" MemoryLeakPercent 10 35 crossplane-daily-memory-sawtooth
+
+                  APID="$PID:_:Unknown:apid"
+                  queue_reconciliation reconcile_threshold "$APID" MemoryLeakPercent 10 250 talos-apid-bounded-rpc-sawtooth
 
                   CILIUM="$PID:kube-system:DaemonSet:cilium"
-                  reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 7500 cilium-dns-search-expansion
+                  queue_reconciliation reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 7500 cilium-dns-search-expansion
 
                   LOG_MESSAGE_LIMIT=1000
                   ERROR_QUERY=$(jq -nr --argjson limit "$LOG_MESSAGE_LIMIT" '
@@ -223,7 +265,7 @@ spec:
                     cap="$3"
                     encoded_app=$(encode "$app")
                     error_url="$BASE/api/project/$PID/app/$encoded_app/logs?query=$ERROR_QUERY"
-                    if ! error_response=$(curl $RETRY "$error_url" 2>/dev/null); then
+                    if ! error_response=$(coroot_request "$error_url" 2>/dev/null); then
                       if [ "$(http_status "$error_url")" = "404" ]; then
                         log_info "$policy skipped: no log stream for $app"
                         return
@@ -233,7 +275,7 @@ spec:
                       return
                     fi
                     fatal_url="$BASE/api/project/$PID/app/$encoded_app/logs?query=$FATAL_QUERY"
-                    if ! fatal_response=$(curl $RETRY "$fatal_url" 2>/dev/null); then
+                    if ! fatal_response=$(coroot_request "$fatal_url" 2>/dev/null); then
                       if [ "$(http_status "$fatal_url")" = "404" ]; then
                         log_info "$policy skipped: no log stream for $app"
                         return
@@ -323,7 +365,26 @@ spec:
                         ;;
                       apiserver-client-noise)
                         counts=$(printf '%s' "$entries" | jq -r '
+                          def log_minute:
+                            try capture("^(?<minute>E[0-9]{4} [0-9]{2}:[0-9]{2}):").minute catch "";
+                          def failover_marker:
+                            test("^E[0-9]{4} [0-9:.]+ +1 status\\.go:71\\] ") and
+                            contains("rpctypes.EtcdError{code:0xe, desc:\\\"etcdserver: request timed out, possibly due to previous leader failure\\\"}: etcdserver: request timed out, possibly due to previous leader failure") and
+                            endswith("logger=\"UnhandledError\"");
+                          def failover_shape:
+                            ((test("^E[0-9]{4} [0-9:.]+ +1 status\\.go:71\\] ")) and
+                             ((contains("rpctypes.EtcdError{code:0xe, desc:\\\"etcdserver: request timed out\\\"}: etcdserver: request timed out")) or
+                              contains("rpctypes.EtcdError{code:0xe, desc:\\\"etcdserver: request timed out, possibly due to previous leader failure\\\"}: etcdserver: request timed out, possibly due to previous leader failure")) and
+                             endswith("logger=\"UnhandledError\"")) or
+                            ((test("^E[0-9]{4} [0-9:.]+ +1 finisher\\.go:175\\] ")) and
+                             test("\"Unhandled Error\" err=\"FinishRequest: post-timeout activity - time-elapsed: [0-9.]+(µs|ms), panicked: false, err: context (canceled|deadline exceeded), panic-reason: <nil>\" logger=\"UnhandledError\"$")) or
+                            ((test("^E[0-9]{4} [0-9:.]+ +1 timeout\\.go:140\\] ")) and
+                             contains("\"Post-timeout activity\"") and
+                             test(" timeElapsed=\"[0-9.]+(µs|ms)\" method=\"PUT\" path=\"/apis/coordination\\.k8s\\.io/v1/namespaces/(?:kube-system/leases/(?:kube-scheduler|kube-controller-manager|cilium-operator-resource-lock)|crossplane-system/leases/crossplane-leader-election-rbac|cert-manager/leases/trust-manager-leader-election|keda/leases/operator\\.keda\\.sh|ksail-operator/leases/ksail-operator\\.ksail\\.io)\" result=null$")) or
+                            ((test("^E[0-9]{4} [0-9:.]+ +1 wrap\\.go:53\\] ")) and
+                             test("\"Timeout or abort while handling\" logger=\"UnhandledError\" method=\"PUT\" URI=\"/apis/coordination\\.k8s\\.io/v1/namespaces/keda/leases/operator\\.keda\\.sh\\?timeout=5s\" auditID=\"[0-9a-f-]{36}\"$"));
                           . as $all |
+                          ([$all[] | .message | select(failover_marker) | log_minute] | unique) as $failover_minutes |
                           [$all[] | .message as $s | select(
                             (($s | test("^E[0-9]{4} [0-9:.]+ +1 status\\.go:71\\] ")) and
                              ($s | contains("errors.errorString{s:\\\"context canceled\\\"}: context canceled")) and
@@ -340,6 +401,8 @@ spec:
                             (($s | test("^E[0-9]{4} [0-9:.]+ +1 timeout\\.go:140\\] ")) and
                              ($s | contains("\"Post-timeout activity\"")) and
                              ($s | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$"))) or
+                            (($s | failover_shape) and
+                             (($s | log_minute) as $minute | ($failover_minutes | index($minute)) != null)) or
                             (($s | test("^E[0-9]{4} [0-9:.]+ +1 controller\\.go:123\\] ")) and
                              ($s | contains("\"Unhandled Error\" err=\"loading OpenAPI spec for \\\"v1beta1.metrics.k8s.io\\\" failed with: Error, could not get list of group versions for APIService\"")) and
                              ($s | endswith("logger=\"UnhandledError\""))) or
@@ -442,6 +505,27 @@ spec:
                           ] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
+                      recovered-etcd-leader-election)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | . as $entry | .message as $s | .attributes as $a | select(
+                            ($s=="Failed to update lease optimistically, falling back to slow path" and
+                             ($a | type)=="object" and
+                             (($a["service.name"]=="/k8s/crossplane-system/crossplane" and
+                               $a.lock=="crossplane-system/crossplane-leader-election-core" and
+                               $a.error=="etcdserver: request timed out") or
+                              ($a["service.name"]=="/k8s/crossplane-system/crossplane-rbac-manager" and
+                               $a.lock=="crossplane-system/crossplane-leader-election-rbac" and
+                               $a.error=="Put \"https://10.96.0.1:443/apis/coordination.k8s.io/v1/namespaces/crossplane-system/leases/crossplane-leader-election-rbac?timeout=5s\": net/http: request canceled (Client.Timeout exceeded while awaiting headers)"))) or
+                            (($s | test("^E[0-9]{4} [0-9:.]+ +1 leaderelection\\.go:445\\] ")) and
+                             ($s | contains("\"Failed to update lease optimistically, falling back to slow path\"")) and
+                             ((($s | contains("err=\"Put \\\"https://10.96.0.1:443/apis/coordination.k8s.io/v1/namespaces/keda/leases/operator.keda.sh?timeout=5s\\\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)\"")) and
+                               ($s | endswith("lock=\"keda/operator.keda.sh\""))) or
+                              (($s | contains("err=\"etcdserver: request timed out\"")) and
+                               ($s | endswith("lock=\"reloader/stakater-reloader-lock\"")))))
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
                       velero-plugin-stdout-close)
                         counts=$(printf '%s' "$entries" | jq -r '
                           . as $all |
@@ -473,13 +557,19 @@ spec:
                           )] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
-                      hcloud-csi-attach-race-controller)
+                      hcloud-csi-reviewed-retries)
                         counts=$(printf '%s' "$entries" | jq -r '
                           . as $all |
                           [$all[] | (.message | gsub("\\\\"; "")) as $s | select(
                             ($s | test(
                               "^time=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z level=ERROR source=/home/runner/work/csi-driver/csi-driver/internal/app/app\\.go:321 msg=\"handler failed\" component=grpc-server err=\"rpc error: code = Internal desc = failed to publish volume: Get \"https://api\\.hetzner\\.cloud/v1/volumes/[0-9]+\": context canceled\"$"
-                            ))
+                            )) or
+                            (($s | test("^E[0-9]{4} [0-9:.]+ +1 leaderelection\\.go:445\\] ")) and
+                             ($s | contains("\"Failed to update lease optimistically, falling back to slow path\"")) and
+                             ((($s | contains("err=\"etcdserver: request timed out\"")) and
+                               ($s | endswith("lock=\"kube-system/csi-hetzner-cloud\""))) or
+                              (($s | contains("err=\"etcdserver: request timed out, possibly due to previous leader failure\"")) and
+                               ($s | endswith("lock=\"kube-system/external-attacher-leader-csi-hetzner-cloud\"")))))
                           )] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
@@ -538,35 +628,43 @@ spec:
 
                     all=$(printf '%s' "$counts" | cut -d: -f1)
                     reviewed=$(printf '%s' "$counts" | cut -d: -f2)
-                    if [ "$all" -gt 0 ] && [ "$all" -eq "$reviewed" ]; then
+                    if [ "$all" -eq "$reviewed" ]; then
                       reconcile_threshold "$app" LogErrors 0 "$cap" "$policy"
                     else
                       reconcile_threshold "$app" LogErrors 0 inherit "$policy-fail-visible"
                     fi
                   }
 
-                  reconcile_logs "$PID:observability:CronJob:coroot-alert-autosuppressor" autosuppressor-lifecycle 10
-                  reconcile_logs "$PID:dex:Deployment:dex" dex-invalid-client 10
-                  reconcile_logs "$PID:_:Unknown:init" talos-runtime 1000
-                  reconcile_logs "$PID:kube-system:StaticPods:kube-apiserver" apiserver-client-noise 100
-                  reconcile_logs "$PID:kube-system:StaticPods:kube-controller-manager" controller-known-safe-retries 5000
+                  queue_reconciliation reconcile_logs "$PID:observability:CronJob:coroot-alert-autosuppressor" autosuppressor-lifecycle 10
+                  queue_reconciliation reconcile_logs "$PID:dex:Deployment:dex" dex-invalid-client 10
+                  queue_reconciliation reconcile_logs "$PID:_:Unknown:init" talos-runtime 1000
+                  queue_reconciliation reconcile_logs "$PID:kube-system:StaticPods:kube-apiserver" apiserver-client-noise 100
+                  # A single recovered etcd leader transition can make the
+                  # client-go leader-election fast path miss one renewal. Match
+                  # only the reviewed application, lock, endpoint, and timeout
+                  # shapes; ten events per app remains a deliberately small cap.
+                  queue_reconciliation reconcile_logs "$PID:crossplane-system:Deployment:crossplane" recovered-etcd-leader-election 10
+                  queue_reconciliation reconcile_logs "$PID:crossplane-system:Deployment:crossplane-rbac-manager" recovered-etcd-leader-election 10
+                  queue_reconciliation reconcile_logs "$PID:keda:Deployment:keda-operator" recovered-etcd-leader-election 10
+                  queue_reconciliation reconcile_logs "$PID:reloader:Deployment:reloader-reloader" recovered-etcd-leader-election 10
+                  queue_reconciliation reconcile_logs "$PID:kube-system:StaticPods:kube-controller-manager" controller-known-safe-retries 5000
                   # A controller restart can cancel one in-flight health check.
                   # Require both Flux log records to share the exact reconcile
                   # and Kustomization identity before applying the finite cap.
-                  reconcile_logs "$PID:flux-system:Deployment:kustomize-controller" flux-kustomize-restart-cancellation 10
-                  reconcile_logs "$PID:kube-system:Deployment:cluster-autoscaler-hetzner-cluster-autoscaler" autoscaler-capacity-buffer-conflict 10
+                  queue_reconciliation reconcile_logs "$PID:flux-system:Deployment:kustomize-controller" flux-kustomize-restart-cancellation 10
+                  queue_reconciliation reconcile_logs "$PID:kube-system:Deployment:cluster-autoscaler-hetzner-cluster-autoscaler" autoscaler-capacity-buffer-conflict 10
                   # Event writes are part of the updater's functional contract.
                   # The dedicated RBAC grant fixes the denial at source, so
                   # declaratively retire the former finite exemption and let
                   # any regression fail visible again.
-                  reconcile_threshold "$PID:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater" LogErrors 0 inherit vpa-event-rbac-fixed
-                  reconcile_logs "$PID:velero:Deployment:velero" velero-plugin-stdout-close 10
+                  queue_reconciliation reconcile_threshold "$PID:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater" LogErrors 0 inherit vpa-event-rbac-fixed
+                  queue_reconciliation reconcile_logs "$PID:velero:Deployment:velero" velero-plugin-stdout-close 10
                   # CNPG's scheduled retention deletes the oldest successful
                   # Backup and can then drain one already-queued reconcile for
                   # that exact object. Accept only the terminal NotFound whose
                   # object and namespace attributes agree; storage or backup
                   # execution failures remain visible.
-                  reconcile_logs "$PID:cnpg-system:Deployment:cloudnative-pg" cnpg-retention-delete-race 10
+                  queue_reconciliation reconcile_logs "$PID:cnpg-system:Deployment:cloudnative-pg" cnpg-retention-delete-race 10
                   # A newly attached Hetzner volume can take a few seconds to
                   # appear under /dev/disk/by-id. The controller request is
                   # canceled while kubelet retries, then the node publish
@@ -574,8 +672,8 @@ spec:
                   # after the one FailedMount event. Match only those two exact
                   # retry shapes so provider, permission, and device errors stay
                   # visible.
-                  reconcile_logs "$PID:kube-system:Deployment:hcloud-csi-controller" hcloud-csi-attach-race-controller 10
-                  reconcile_logs "$PID:kube-system:DaemonSet:hcloud-csi-node" hcloud-csi-attach-race-node 10
+                  queue_reconciliation reconcile_logs "$PID:kube-system:Deployment:hcloud-csi-controller" hcloud-csi-reviewed-retries 10
+                  queue_reconciliation reconcile_logs "$PID:kube-system:DaemonSet:hcloud-csi-node" hcloud-csi-attach-race-node 10
                   # Kubescape's operator watches SBOM/profile resources that can
                   # outlive their workload. Missing workload identity on the
                   # image-only SBOM stream is dropped after five bounded retries;
@@ -584,9 +682,10 @@ spec:
                   # this miss and completes the scan action successfully. Match
                   # only those exact lifecycle shapes; any other operator error
                   # removes the override and becomes visible at global zero.
-                  reconcile_logs "$PID:kubescape:Deployment:operator" kubescape-ephemeral-workload-races 100
+                  queue_reconciliation reconcile_logs "$PID:kubescape:Deployment:operator" kubescape-ephemeral-workload-races 100
                   # The storage cleanup deletes an orphan payload before it
                   # reports the absent legacy metadata sidecar. Only that exact
                   # completed-repair shape is accepted; any I/O failure or
                   # unexpected path remains visible.
-                  reconcile_logs "$PID:kubescape:Deployment:storage" kubescape-repaired-orphan-payload 10
+                  queue_reconciliation reconcile_logs "$PID:kubescape:Deployment:storage" kubescape-repaired-orphan-payload 10
+                  wait_reconciliations
