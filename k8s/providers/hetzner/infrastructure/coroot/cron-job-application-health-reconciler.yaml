@@ -15,17 +15,19 @@
 #     seven-day daily sawtooth that repeatedly returns to 270-300 MiB after
 #     451-520 MiB peaks; Coroot reported 27%/h while the cache was warming.
 #     Thirty-five preserves a warning for sustained growth outside that cycle.
-#   * cilium DnsNxdomainErrors = 5000. Cilium's cluster-wide DNS proxy forwards
+#   * cilium DnsNxdomainErrors = 7500. Cilium's cluster-wide DNS proxy forwards
 #     workload resolver packets unchanged, so Coroot attributes every workload's
-#     search-list candidate to the Cilium DaemonSet application. The reviewed
-#     one-hour report contained 3,792 NXDOMAINs from the Coroot operator's
-#     namespace-qualified ClickHouse replica and Keeper names before their
-#     canonical `.svc.cluster.local` lookups succeeded. Every generated Coroot
-#     pod already uses ndots:1, but the CRD exposes no endpoint-template field;
-#     rewriting the operator's generated ClickHouse config at admission would
-#     be a brittle ownership violation. DNS latency and server-error checks are
-#     healthy. The finite cap leaves measured headroom above that 3,792/hour
-#     baseline; other DNS checks and per-workload NXDOMAIN reports stay at zero.
+#     search-list candidate to the Cilium DaemonSet application. The original
+#     reviewed one-hour report contained 3,792 NXDOMAINs; a later full-platform
+#     reconciliation window measured 5,318 from the same Coroot operator
+#     ClickHouse and Keeper names, including duplicate namespace expansion,
+#     before canonical `.svc.cluster.local` lookups succeeded. Every generated
+#     Coroot pod already uses ndots:1, but the CRD exposes no endpoint-template
+#     field; rewriting the operator's generated ClickHouse config at admission
+#     would be a brittle ownership violation. DNS latency and server-error
+#     checks are healthy. The finite 7,500 cap leaves 41% headroom above the
+#     measured peak; other DNS checks and per-workload NXDOMAIN reports stay at
+#     zero, and any larger cluster-wide burst remains fail-visible.
 #
 # Log thresholds are even narrower: the override is installed only when EVERY
 # raw ERROR/FATAL message matches the app-specific allowlist below. Coroot's
@@ -204,7 +206,7 @@ spec:
                   reconcile_threshold "$CROSSPLANE" MemoryLeakPercent 10 35 crossplane-daily-memory-sawtooth
 
                   CILIUM="$PID:kube-system:DaemonSet:cilium"
-                  reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 5000 cilium-dns-search-expansion
+                  reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 7500 cilium-dns-search-expansion
 
                   LOG_MESSAGE_LIMIT=1000
                   ERROR_QUERY=$(jq -nr --argjson limit "$LOG_MESSAGE_LIMIT" '
