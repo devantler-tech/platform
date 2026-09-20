@@ -2906,7 +2906,8 @@ const (
 // re-derived on exact main bb8fed6be2771910e4d2086ea8519ac4975c3a31. The new
 // ClusterRole grants only create, patch, and update on core Events, and the
 // ClusterRoleBinding grants it only to the existing
-// vertical-pod-autoscaler/vpa-updater service account. It grants no reads,
+// vertical-pod-autoscaler/vertical-pod-autoscaler-vpa-updater service account.
+// It grants no reads,
 // deletes, wildcard resources, wildcard verbs, secrets, workload exec,
 // impersonation, AWS identity, or unrelated subject.
 //
