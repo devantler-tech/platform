@@ -550,6 +550,7 @@ jobs:
               - 'scripts/tests/test-prune-protected-orphan-alert.sh'
               - 'scripts/tests/test-coroot-alert-autosuppressor.sh'
               - 'scripts/tests/test-coroot-application-health-reconciler.sh'
+              - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-maintenance-oom-alert.sh'
               # That test also asserts the alerting runbook points at the alert's
               # manifest, so a runbook-only edit must still run it.
@@ -678,6 +679,7 @@ jobs:
             talos:
               - 'talos/**'
               - 'talos-local/**'
+              - 'scripts/tests/test-talos-apparmor-lsm.sh'
               - 'ksail.prod.yaml'
               - '.github/scripts/setup-talosctl.sh'
               - 'scripts/validate-talos-kubernetes-compatibility/**'
@@ -1566,6 +1568,14 @@ jobs:
         # manifest's real script so BackupRepository readiness cannot mask it.
         run: bash scripts/tests/test-velero-maintenance-oom-alert.sh
 
+      - name: 💾 Validate Velero data-mover resources
+        if: needs.changes.outputs.k8s == 'true'
+        # Pin the short-lived Kopia mover's authored memory ceiling so the
+        # measured index burst cannot regress to the OOM-producing value.
+        run: |
+          shellcheck scripts/tests/test-velero-data-mover-resources.sh
+          bash scripts/tests/test-velero-data-mover-resources.sh
+
       - name: 🔑 Validate the MinIO bucket Job's credential handling
         if: needs.changes.outputs.k8s == 'true'
         # checkov CKV_K8S_35 was dispositioned here by moving the root
@@ -2209,6 +2219,11 @@ jobs:
         run: |
           go test ./scripts/validate-talos-kubernetes-compatibility
           go run ./scripts/validate-talos-kubernetes-compatibility ksail.prod.yaml
+
+      - name: 🛡️ Validate the Talos AppArmor LSM contract
+        run: |
+          shellcheck scripts/tests/test-talos-apparmor-lsm.sh
+          bash scripts/tests/test-talos-apparmor-lsm.sh
 
       - name: ✅ Render + validate patched machine configs
         run: |

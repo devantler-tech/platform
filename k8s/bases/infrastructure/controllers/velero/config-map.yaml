@@ -12,10 +12,13 @@
 # volume's backup (12 of 99 volumes on the 2026-06-11 daily run).
 #
 # Requests are deliberately tiny: they are admission accounting only, and the
-# most saturated node has had ~12MiB of unrequested memory left. Limits match
-# the platform defaults the Kyverno policy would have stamped, so runtime
-# behaviour is unchanged — the pods just no longer need a 128Mi reservation to
-# be admitted. Velero requires request <= limit for any pair that is set.
+# most saturated node has had ~12MiB of unrequested memory left. The memory
+# limit is deliberately higher than the platform default: while indexing the
+# Coroot ClickHouse volume on 2026-09-20, Kopia reached about 578MiB RSS and the
+# kernel killed it at the previous 512Mi limit, leaving that PodVolumeBackup
+# failed with an empty data-path error. A 1Gi ceiling preserves admission on
+# saturated nodes while giving the bursty index phase measured headroom.
+# Velero requires request <= limit for any pair that is set.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -28,6 +31,6 @@ data:
         "cpuRequest": "5m",
         "cpuLimit": "500m",
         "memoryRequest": "8Mi",
-        "memoryLimit": "512Mi"
+        "memoryLimit": "1Gi"
       }
     }

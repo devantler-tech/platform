@@ -216,6 +216,50 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     ]
   },
   {
+    "id":"openbao-snapshot-device-race",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"MountVolume.SetUp failed for volume \"pvc-4a2f858e-9be5-462c-bc1f-d65e9327ba09\" : rpc error: code = Internal desc = failed to publish volume: device \"/dev/disk/by-id/scsi-0HC_Volume_106045084\" not ready: no such file or directory"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Pod\"\nname=\"vault-snapshot-29831250-fq7w6\"\nnamespace=\"openbao\"\nreason=\"FailedMount\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"longhorn-volume-failed-delete",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"persistentvolume pvc-6c4f1be6-7dd2-44dd-bd1b-f53e2d5204cc is still attached to node autoscale-cx43-59ee3c84869749a0"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"PersistentVolume\"\nname=\"pvc-6c4f1be6-7dd2-44dd-bd1b-f53e2d5204cc\"\nreason=\"VolumeFailedDelete\"\nsource=\"driver.longhorn.io_csi-provisioner-6c4f4d4c6b-626lh_1c664a9d-a3d9-4b66-af8a-74e3eabeb787\""}
+    ]
+  },
+  {
+    "id":"longhorn-clone-awaiting-healthy",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"copied the data from snapshot snapshot-31ab68ae-1c00-4608-a64e-87f35094845e of the source volume pvc-86581c93-a68f-4880-819f-1b3a037157ab. Waiting for volume to be fully HA before marking the clone as completed"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Volume\"\nname=\"pvc-6c4f1be6-7dd2-44dd-bd1b-f53e2d5204cc\"\nnamespace=\"longhorn-system\"\nreason=\"VolumeCloneCopyCompleteAwaitingHealthy\"\nsource=\"longhorn-volume-controller\""}
+    ]
+  },
+  {
+    "id":"snapshot-content-cleanup",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"VolumeSnapshotContent is missing"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"VolumeSnapshot\"\nname=\"\"\nreason=\"SnapshotContentMissing\"\nsource=\"snapshot-controller\""}
+    ]
+  },
+  {
     "id":"flux-build-canceled",
     "suppressed":false,
     "resolved_at":null,
@@ -302,13 +346,57 @@ cat >"${event_dir}/alerts.json" <<'JSON'
       {"name":"Event message","value":"secrets \"crossview-postgres-coroot-monitor\" is forbidden"},
       {"name":"Labels","value":"cluster=\"platform\"\nkind=\"ExternalSecret\"\nname=\"crossview-postgres-coroot-monitor\"\nnamespace=\"crossview\"\nreason=\"UpdateFailed\"\nsource=\"external-secrets\""}
     ]
+  },
+  {
+    "id":"near-match-snapshot-device",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"MountVolume.SetUp failed for volume \"pvc-4a2f858e-9be5-462c-bc1f-d65e9327ba09\" : rpc error: code = Internal desc = failed to publish volume: device \"/dev/disk/by-id/scsi-0HC_Volume_106045084\" not ready: permission denied"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Pod\"\nname=\"vault-snapshot-29831250-fq7w6\"\nnamespace=\"openbao\"\nreason=\"FailedMount\"\nsource=\"kubelet\""}
+    ]
+  },
+  {
+    "id":"near-match-volume-delete",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"persistentvolume pvc-6c4f1be6-7dd2-44dd-bd1b-f53e2d5204cc deletion failed: permission denied"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"PersistentVolume\"\nname=\"pvc-6c4f1be6-7dd2-44dd-bd1b-f53e2d5204cc\"\nreason=\"VolumeFailedDelete\"\nsource=\"driver.longhorn.io_csi-provisioner-6c4f4d4c6b-626lh_1c664a9d-a3d9-4b66-af8a-74e3eabeb787\""}
+    ]
+  },
+  {
+    "id":"near-match-clone-awaiting",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"failed to copy data from snapshot: checksum mismatch"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"Volume\"\nname=\"pvc-6c4f1be6-7dd2-44dd-bd1b-f53e2d5204cc\"\nnamespace=\"longhorn-system\"\nreason=\"VolumeCloneCopyCompleteAwaitingHealthy\"\nsource=\"longhorn-volume-controller\""}
+    ]
+  },
+  {
+    "id":"near-match-snapshot-content",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":":::",
+    "details":[
+      {"name":"Event message","value":"VolumeSnapshotContent is missing"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"VolumeSnapshot\"\nname=\"live-snapshot\"\nreason=\"SnapshotContentMissing\"\nsource=\"snapshot-controller\""}
+    ]
   }
 ]}}
 JSON
 run_scenario "${event_dir}" >/dev/null
 [ -f "${event_dir}/suppressed.json" ] ||
   fail "the exact by-design Kubernetes lifecycle events were not suppressed"
-jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-build-canceled", "flux-dryrun-canceled", "flux-health-canceled", "flux-status-canceled", "monitor-secret-race"]' \
+jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-build-canceled", "flux-dryrun-canceled", "flux-health-canceled", "flux-status-canceled", "longhorn-clone-awaiting-healthy", "longhorn-volume-failed-delete", "monitor-secret-race", "openbao-snapshot-device-race", "snapshot-content-cleanup"]' \
   "${event_dir}/suppressed.json" >/dev/null || {
   jq -c '.ids | sort' "${event_dir}/suppressed.json" >&2
   fail "the event exemptions were broader than their exact label and message contracts"
@@ -461,6 +549,33 @@ cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
     "details":[{"name":"Sample","value":"E0915 11:38:42.856589       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"events \\\"kyverno-reports-controller.example\\\" is forbidden: User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\"kyverno\\\"\" event=\"&Event{ObjectMeta:{...},Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater.,Source:EventSource{Component:vpa-updater}}\""}]
   },
   {
+    "id":"provisioner-delete-retry-alert",
+    "fingerprint":"023675248cbc16ad",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:longhorn-system:Deployment:csi-provisioner",
+    "details":[{"name":"Sample","value":"E0920 02:21:50.040962       1 controller.go:1569] \"Volume deletion failed\" err=\"persistentvolume pvc-092a5e54-701b-47b7-92a1-047ab444b15f is still attached to node autoscale-cx43-55e35623532a65dc\" PV=\"pvc-092a5e54-701b-47b7-92a1-047ab444b15f\""}]
+  },
+  {
+    "id":"longhorn-clone-log-alert",
+    "fingerprint":"7a7736f01bfa9b65",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:longhorn-system:DaemonSet:longhorn-csi-plugin",
+    "details":[{"name":"Sample","value":"time=\"2026-09-20T02:19:20.538217933Z\" level=error msg=\"ControllerPublishVolume: err: rpc error: code = Aborted desc = volume pvc-092a5e54-701b-47b7-92a1-047ab444b15f is not ready for workloads: volume request cloning data but has not finished copying data\" func=csi.logGRPC file=\"server.go:136\""}]
+  },
+  {
+    "id":"nested-clone-retry-alert",
+    "fingerprint":"0e29ac857c924dfa",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:kube-system:StaticPods:kube-controller-manager",
+    "details":[{"name":"Sample","value":"E0920 02:19:21.019896       1 nestedpendingoperations.go:348] Operation for \"{volumeName:kubernetes.io/csi/driver.longhorn.io^pvc-092a5e54-701b-47b7-92a1-047ab444b15f podName: nodeName:}\" failed. No retries permitted until 2026-09-20 02:19:21.519875328 +0000 UTC m=+12182.116106049 (durationBeforeRetry 500ms). Error: AttachVolume.Attach failed for volume \"pvc-092a5e54-701b-47b7-92a1-047ab444b15f\" (UniqueName: \"kubernetes.io/csi/driver.longhorn.io^pvc-092a5e54-701b-47b7-92a1-047ab444b15f\") from node \"autoscale-cx43-55e35623532a65dc\" : rpc error: code = Aborted desc = volume pvc-092a5e54-701b-47b7-92a1-047ab444b15f is not ready for workloads: volume request cloning data but has not finished copying data"}]
+  },
+  {
     "id":"near-runtime-alert",
     "fingerprint":"not-the-reviewed-fingerprint",
     "suppressed":false,
@@ -486,13 +601,40 @@ cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
     "rule_id":"new-log-patterns",
     "application_id":"95rsc5yp:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater",
     "details":[{"name":"Sample","value":"E0915 11:38:42.856589       1 event.go:359] \"Server rejected event (will not retry!)\" err=\"forbidden: cannot patch resource \\\"pods\\\"\""}]
+  },
+  {
+    "id":"near-provisioner-delete-alert",
+    "fingerprint":"023675248cbc16ad",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:longhorn-system:Deployment:csi-provisioner",
+    "details":[{"name":"Sample","value":"E0920 02:21:50.040962       1 controller.go:1569] \"Volume deletion failed\" err=\"persistentvolume deletion forbidden\" PV=\"pvc-092a5e54-701b-47b7-92a1-047ab444b15f\""}]
+  },
+  {
+    "id":"near-longhorn-clone-log",
+    "fingerprint":"7a7736f01bfa9b65",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:longhorn-system:DaemonSet:longhorn-csi-plugin",
+    "details":[{"name":"Sample","value":"time=\"2026-09-20T02:19:20Z\" level=error msg=\"ControllerPublishVolume: permission denied\" func=csi.logGRPC file=\"server.go:136\""}]
+  },
+  {
+    "id":"near-nested-clone-retry",
+    "fingerprint":"0e29ac857c924dfa",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"new-log-patterns",
+    "application_id":"95rsc5yp:kube-system:StaticPods:kube-controller-manager",
+    "details":[{"name":"Sample","value":"E0920 02:19:21.019896       1 nestedpendingoperations.go:348] Operation failed: permission denied"}]
   }
 ]}}
 JSON
 run_scenario "${pinned_logs_dir}" >/dev/null
 [ -f "${pinned_logs_dir}/suppressed.json" ] ||
   fail "the exact control-plane and runtime log fingerprints were not suppressed"
-jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "rotated-post-timeout-alert", "rotated-runtime-alert", "rotated-vpa-event-alert", "sandbox-resize-alert"]' \
+jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "longhorn-clone-log-alert", "nested-clone-retry-alert", "provisioner-delete-retry-alert", "rotated-post-timeout-alert", "rotated-runtime-alert", "rotated-vpa-event-alert", "sandbox-resize-alert"]' \
   "${pinned_logs_dir}/suppressed.json" >/dev/null ||
   fail "the reviewed log exemptions were broader than their exact fingerprints and message shapes"
 pass "exact benign control-plane and runtime fingerprints survive ID rotation while near matches stay visible"
