@@ -28,9 +28,11 @@ if ! grep -Fq "'scripts/register-talos-factory-schematic.sh'" "$ci_workflow" ||
 fi
 
 register_line=$(grep -nF './scripts/register-talos-factory-schematic.sh' "$deploy_action" | cut -d: -f1)
+first_live_mutation_line=$(grep -nE '^[[:space:]]+id: cilium_rollout_gate$' "$deploy_action" | cut -d: -f1)
 publish_line=$(grep -nF 'id: publish_platform_manifest' "$deploy_action" | cut -d: -f1)
-[[ -n "$register_line" && -n "$publish_line" && "$register_line" -lt "$publish_line" ]] || {
-  printf 'deployment must register and verify the Talos schematic before publishing mutable production state\n' >&2
+[[ -n "$register_line" && -n "$first_live_mutation_line" && -n "$publish_line" ]] &&
+  [[ "$register_line" -lt "$first_live_mutation_line" && "$register_line" -lt "$publish_line" ]] || {
+  printf 'deployment must register and verify the Talos schematic before live rollout mutation and publication\n' >&2
   exit 1
 }
 
@@ -122,4 +124,4 @@ if run_registration unavailable >/dev/null 2>&1; then
   exit 1
 fi
 
-printf 'PASS: Talos factory schematic is declaratively registered before production publication\n'
+printf 'PASS: Talos factory schematic is declaratively registered before live rollout mutation and publication\n'
