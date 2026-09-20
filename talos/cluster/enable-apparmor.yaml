@@ -1,22 +1,15 @@
 machine:
   install:
     extraKernelArgs:
-      - security=apparmor
-    # MUST stay false while extraKernelArgs is set above.
-    #
-    # Talos >= 1.13.4 rejects a machine config that sets BOTH
-    # install.extraKernelArgs and install.grubUseUKICmdline=true:
-    #   "install.extraKernelArgs and install.grubUseUKICmdline can't be used together"
-    # and grubUseUKICmdline defaults to TRUE here — KSail generates this cluster's
-    # config with the Talos >=1.12 version contract, and that contract's default
-    # for grubUseUKICmdline is true (gated at >1.11). Without this explicit
-    # override the freshly-generated config carries extraKernelArgs + the
-    # defaulted grubUseUKICmdline:true, so the v1.13.4 installer fails validation
-    # mid-upgrade and `ksail cluster update` aborts on the first node.
-    #
-    # grubUseUKICmdline controls whether the legacy GRUB bootloader reuses the
-    # UKI's baked-in kernel cmdline instead of building one on the host. This
-    # cluster boots GRUB on Hetzner (no SecureBoot/UKI), so the cmdline MUST be
-    # built host-side to carry security=apparmor — which is exactly what
-    # grubUseUKICmdline:false selects.
-    grubUseUKICmdline: false
+      # Preserve Talos v1.13.9's complete upstream CONFIG_LSM order while
+      # explicitly enabling AppArmor. Linux 6.18 no longer reliably supplies an audit
+      # subject context when the legacy security=apparmor selector is used;
+      # every affected audit record then emits
+      # "audit: error in audit_log_subj_ctx". An explicit lsm= list keeps the
+      # other compiled hardening modules active and restores that context.
+      - lsm=yama,selinux,loadpin,safesetid,integrity,bpf,apparmor,lockdown,landlock
+    # KSail folds this native Talos declaration into the Image Factory
+    # schematic, clears the deprecated rendered extraKernelArgs field, and pins
+    # grubUseUKICmdline=true so the baked-in arguments take effect. The canonical
+    # registration body in talos/factory-schematic.yaml is contract-tested
+    # against this source declaration and registered before production publish.

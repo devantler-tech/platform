@@ -131,6 +131,23 @@ readonly continuous_namespace_count
 [[ "${continuous_namespace_count}" == "0" ]] ||
   fail 'continuous-scanning matchingRules.namespaces must stay empty in this self-hosted deployment'
 
+# Kubescape's posture scan is bursty: the live scanner repeatedly saturated the
+# 120m CPU limit produced when VPA preserved the chart default's 600m:250m
+# ratio, accumulating more than two seconds of CPU delay per second of wall
+# time. Keep VPA in charge of the request while authoring enough burst ratio for
+# the scheduled scan to run without sustained throttling.
+scanner_cpu_request="$(yq -er '.spec.values.kubescape.resources.requests.cpu' "${helm_release}")" ||
+  fail 'the Kubescape scanner CPU request is missing'
+readonly scanner_cpu_request
+[[ "${scanner_cpu_request}" == "250m" ]] ||
+  fail 'the Kubescape scanner CPU request must retain the chart baseline for VPA ratio scaling'
+
+scanner_cpu_limit="$(yq -er '.spec.values.kubescape.resources.limits.cpu' "${helm_release}")" ||
+  fail 'the Kubescape scanner CPU limit is missing'
+readonly scanner_cpu_limit
+[[ "${scanner_cpu_limit}" == "2" ]] ||
+  fail 'the Kubescape scanner must retain the reviewed 8:1 CPU burst ratio'
+
 # The chart hashes one shared cluster seed for both default schedules, so its
 # nominally different posture/vulnerability defaults render to the same cron
 # instant. Both scans are high-volume writers to one SQLite-backed storage API;
@@ -200,6 +217,26 @@ yq '.spec.values' "${helm_release}" >"${chart_values}"
 helm template kubescape "${chart_archive}" \
   --namespace kubescape \
   --values "${chart_values}" >"${rendered_chart}" || fail 'the pinned Kubescape chart did not render'
+
+rendered_scanner_cpu_request="$(yq ea -er '
+  select(.kind == "Deployment" and .metadata.name == "kubescape") |
+  .spec.template.spec.containers[] |
+  select(.name == "kubescape") |
+  .resources.requests.cpu
+' "${rendered_chart}")" || fail 'the rendered Kubescape scanner CPU request is missing'
+readonly rendered_scanner_cpu_request
+[[ "${rendered_scanner_cpu_request}" == "250m" ]] ||
+  fail 'the rendered Kubescape scanner does not retain the authored CPU request'
+
+rendered_scanner_cpu_limit="$(yq ea -er '
+  select(.kind == "Deployment" and .metadata.name == "kubescape") |
+  .spec.template.spec.containers[] |
+  select(.name == "kubescape") |
+  .resources.limits.cpu
+' "${rendered_chart}")" || fail 'the rendered Kubescape scanner CPU limit is missing'
+readonly rendered_scanner_cpu_limit
+[[ "${rendered_scanner_cpu_limit}" == "2" ]] ||
+  fail 'the rendered Kubescape scanner does not retain the reviewed CPU burst ceiling'
 
 # Chart 1.40.4 removed the node-agent's existing read-only profile rule while
 # node-agent still lists ApplicationProfiles during its storage readiness gate.

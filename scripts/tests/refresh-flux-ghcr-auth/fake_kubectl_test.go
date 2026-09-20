@@ -504,6 +504,26 @@ func fakeKubectlGetFluxPolicyFences(args []string, namespace string) int {
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid Flux policy fence list lookup")
 	}
+	if os.Getenv("FAKE_FLUX_OPERATOR_RECONCILES_PARENT_BEFORE_CHILD_FENCE") == "true" &&
+		markerExists("flux-policy-parent-suspended") &&
+		!markerExists("flux-policy-handoff-suspended") &&
+		!markerExists("flux-operator-parent-reconciled-before-child") {
+		// The Flux Operator can reconcile the generated root Kustomization after
+		// the parent claim has settled but before the child is fenced. Model the
+		// exact same-UID, ownerless, unsuspended replacement observed in prod.
+		touchMarker("flux-operator-parent-reconciled-before-child")
+		removeMarker("flux-policy-parent-owner")
+		removeMarker("flux-policy-parent-suspended")
+		currentResourceVersion := defaultString(
+			markerContent("flux-policy-parent-resource-version"),
+			"30",
+		)
+		setMarkerContent(
+			"flux-policy-parent-resource-version",
+			incrementDecimal(currentResourceVersion),
+		)
+		appendEnvFile("OPERATION_LOG", "flux-operator-parent-reconcile-before-child:flux-system\n")
+	}
 	if markerExists("flux-policy-handoff-suspended") &&
 		os.Getenv("FAKE_FLUX_POLICY_RESOURCE_VERSION_CHURN_AFTER_PAUSE") == "true" {
 		currentResourceVersion := defaultString(
@@ -678,9 +698,9 @@ func fakeFluxControllerDeploymentObject() map[string]any {
 		},
 		"status": map[string]any{
 			"observedGeneration": generation,
-			"availableReplicas": 1,
-			"readyReplicas":     1,
-			"updatedReplicas":   1,
+			"availableReplicas":  1,
+			"readyReplicas":      1,
+			"updatedReplicas":    1,
 		},
 	}
 }
@@ -745,6 +765,24 @@ func fakeKubectlRolloutFluxController(args []string, namespace string) int {
 		return commandFailure(56, "kustomize-controller rollout did not converge")
 	}
 	setMarkerContent("flux-controller-rollout-count", strconv.Itoa(restartCount))
+	if os.Getenv("FAKE_FLUX_OPERATOR_RECONCILES_PARENT_ON_CONTROLLER_RESTART") == "true" {
+		// Restarting a Flux controller changes a Deployment owned by FluxInstance.
+		// The real Flux Operator observes that change and reconciles the generated
+		// root Kustomization, removing transaction-local fields it does not own.
+		// Model that replacement at the rollout boundary so the regression test
+		// proves the parent is reacquired before later mutations.
+		removeMarker("flux-policy-parent-owner")
+		removeMarker("flux-policy-parent-suspended")
+		currentResourceVersion := defaultString(
+			markerContent("flux-policy-parent-resource-version"),
+			"30",
+		)
+		setMarkerContent(
+			"flux-policy-parent-resource-version",
+			incrementDecimal(currentResourceVersion),
+		)
+		appendEnvFile("OPERATION_LOG", "flux-operator-parent-reconcile:flux-system\n")
+	}
 	if os.Getenv("FAKE_LOG_FLUX_CONTROLLER_RESTART") == "true" {
 		if os.Getenv("FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING") == "true" {
 			appendEnvFile(

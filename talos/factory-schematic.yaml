@@ -1,0 +1,8 @@
+customization:
+    extraKernelArgs:
+        - lsm=yama,selinux,loadpin,safesetid,integrity,bpf,apparmor,lockdown,landlock
+    systemExtensions:
+        officialExtensions:
+            - siderolabs/iscsi-tools
+            - siderolabs/qemu-guest-agent
+            - siderolabs/util-linux-tools

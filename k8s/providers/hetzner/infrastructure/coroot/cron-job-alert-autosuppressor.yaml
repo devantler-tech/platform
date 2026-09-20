@@ -137,6 +137,38 @@
 #      Keep that safer RBAC boundary and suppress only the reviewed fingerprint,
 #      exact updater identity, Event-only denial, and InPlaceResizedByVPA message.
 #
+#  14. openbao-snapshot-device-link-race - Hetzner reports a newly attached
+#      volume before udev has created its `/dev/disk/by-id` link. Kubelet emits
+#      one FailedMount for the daily OpenBao snapshot, retries two seconds later,
+#      and the Job completes. Suppress only that exact scheduled-pod, provider
+#      device, and ENOENT shape. The dedicated stranded-volume-attach monitor
+#      still alerts when a pending pod's FailedMount persists, so a real attach
+#      failure remains visible on the purpose-built signal.
+#
+#  15. longhorn-backup-clone-lifecycle - Velero's CSI data path creates
+#      short-lived Longhorn clones. Longhorn emits Normal clone-copy-complete
+#      events while waiting for the replica set to become HA, CSI deletion can
+#      briefly find a clone still attached, and snapshot cleanup can observe
+#      that its already-deleted content is absent. The observed clone PVs are
+#      gone and both source volumes are attached and healthy. Admit only the
+#      exact lifecycle reasons, sources, object identities, and messages;
+#      Longhorn volume health and the stranded-volume-attach monitor remain the
+#      durable fault signals.
+#
+#  16. csi-provisioner-clone-delete-retry - the external provisioner retries a
+#      short-lived clone deletion until Longhorn detaches it. Bind the stable
+#      fingerprint to an exact message whose PV field repeats the same object;
+#      permission and provider deletion failures remain visible.
+#
+#  17. longhorn-clone-copy-in-progress - Longhorn rejects attachment of a clone
+#      until its snapshot data copy completes, then the same volume becomes HA.
+#      Bind the stable fingerprint to the exact Aborted clone-copy message.
+#
+#  18. controller-clone-attach-retry - Kubernetes' nested-pending-operations
+#      loop reports the same retryable Longhorn clone-copy state with a 500ms
+#      backoff. Bind its stable fingerprint and exact terminal cause; other
+#      AttachVolume failures remain visible.
+#
 # PROD-ONLY: Coroot alerting (the Slack webhook) is wired only in the hetzner
 # overlay, so this lives here, not in the base.
 apiVersion: batch/v1
@@ -305,7 +337,7 @@ spec:
                                             | test("^unable to update the healthy status to progressing: \\[.*fieldManager=gotk-kustomize-controller.*context canceled, context canceled\\]$"))))
                                     or ($l.reason=="HealthCheckFailed"
                                         and ($d["Event message"]
-                                          | test("^health check failed after [0-9.]+s: context canceled$")))
+                                          | test("^health check failed after [0-9.]+(ms|s): context canceled$")))
                                     or ($l.reason=="ReconciliationFailed"
                                         and ($d["Event message"]
                                           | test("^[^[:space:]/]+/[^[:space:]/]+/[^[:space:]]+ dry-run failed: (Patch|Post|Put|Delete) \\\"https://10[.]96[.]0[.]1:443/apis/[^\\\"]+\\\": context canceled\\n?$")))
@@ -348,7 +380,73 @@ spec:
                     ids="$ids $id"; log_info "match cilium-dns-search-expansion: $id"
                   done
 
-                  # Exemptions 7 and 9-13 - exact weak-equality log fingerprints.
+                  # Exemption 14 - one kubelet retry while udev materialises the
+                  # just-attached Hetzner volume for the daily OpenBao snapshot.
+                  # Persistent attach failures remain covered by the dedicated
+                  # stranded-volume-attach monitor.
+                  for id in $(printf '%s' "$ALERTS" | jq -r '
+                      def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
+                      def labels($d): ($d.Labels | split("\n") | map(capture("^(?<key>[^=]+)=\"(?<value>.*)\"$")) | from_entries);
+                      .data.alerts[]
+                      | select(.suppressed==false and .resolved_at==null and .rule_id=="kubernetes-events")
+                      | details as $d
+                      | labels($d) as $l
+                      | select(($l | keys | sort) == ["cluster","kind","name","namespace","reason","source"]
+                               and (.application_id // "")==":::"
+                               and $l.cluster=="platform"
+                               and $l.kind=="Pod"
+                               and $l.namespace=="openbao"
+                               and $l.reason=="FailedMount"
+                               and $l.source=="kubelet"
+                               and ($l.name | test("^vault-snapshot-[0-9]+-[a-z0-9]{5}$"))
+                               and ($d["Event message"] | test(
+                                 "^MountVolume\\.SetUp failed for volume \\\"pvc-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\\" : rpc error: code = Internal desc = failed to publish volume: device \\\"/dev/disk/by-id/scsi-0HC_Volume_[0-9]+\\\" not ready: no such file or directory$"
+                               )))
+                      | .id'); do
+                    ids="$ids $id"; log_info "match openbao-snapshot-device-link-race: $id"
+                  done
+
+                  # Exemption 15 - terminal events from short-lived Longhorn
+                  # clones used by the successful Velero CSI snapshot path.
+                  for id in $(printf '%s' "$ALERTS" | jq -r '
+                      def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
+                      def labels($d): ($d.Labels | split("\n") | map(capture("^(?<key>[^=]+)=\"(?<value>.*)\"$")) | from_entries);
+                      def pvc: "pvc-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+                      .data.alerts[]
+                      | select(.suppressed==false and .resolved_at==null and .rule_id=="kubernetes-events")
+                      | details as $d
+                      | labels($d) as $l
+                      | select((.application_id // "")==":::"
+                               and $l.cluster=="platform"
+                               and (($l | keys | sort) == ["cluster","kind","name","reason","source"]
+                                    and $l.kind=="PersistentVolume"
+                                    and ($l.name | test("^" + pvc + "$"))
+                                    and $l.reason=="VolumeFailedDelete"
+                                    and ($l.source | test("^driver\\.longhorn\\.io_csi-provisioner-[a-z0-9-]+_[0-9a-f-]+$"))
+                                    and ((try ($d["Event message"] | capture(
+                                      "^persistentvolume (?<pv>" + pvc + ") is still attached to node (?<node>[a-z0-9-]+)$"
+                                    )) catch null) as $delete
+                                      | $delete != null and $delete.pv==$l.name)
+                                    or (($l | keys | sort) == ["cluster","kind","name","namespace","reason","source"]
+                                        and $l.kind=="Volume"
+                                        and ($l.name | test("^" + pvc + "$"))
+                                        and $l.namespace=="longhorn-system"
+                                        and $l.reason=="VolumeCloneCopyCompleteAwaitingHealthy"
+                                        and $l.source=="longhorn-volume-controller"
+                                        and ($d["Event message"] | test(
+                                          "^copied the data from snapshot snapshot-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12} of the source volume " + pvc + "\\. Waiting for volume to be fully HA before marking the clone as completed$"
+                                        )))
+                                    or (($l | keys | sort) == ["cluster","kind","name","reason","source"]
+                                        and $l.kind=="VolumeSnapshot"
+                                        and $l.name==""
+                                        and $l.reason=="SnapshotContentMissing"
+                                        and $l.source=="snapshot-controller"
+                                        and $d["Event message"]=="VolumeSnapshotContent is missing")))
+                      | .id'); do
+                    ids="$ids $id"; log_info "match longhorn-backup-clone-lifecycle: $id"
+                  done
+
+                  # Exemptions 7, 9-13, and 16-18 - exact weak-equality log fingerprints.
                   # The fingerprint is stable across Coroot alert-ID rotation.
                   # Every fingerprint and current representative must qualify; a
                   # changed representative is reopened below instead of hidden.
@@ -392,6 +490,24 @@ spec:
                            and (($d.Sample // "") | contains("\"Server rejected event (will not retry!)\""))
                            and (($d.Sample // "") | contains("User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\""))
                            and (($d.Sample // "") | contains("Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater."))) then "vpa-event-recording-denial"
+                          elif (.fingerprint=="023675248cbc16ad"
+                           and ((.application_id // "") | endswith(":longhorn-system:Deployment:csi-provisioner"))
+                           and ((try (($d.Sample // "") | capture(
+                             "^E[0-9]{4} [0-9:.]+ +1 controller\\.go:1569\\] \\\"Volume deletion failed\\\" err=\\\"persistentvolume (?<pv>pvc-[0-9a-f-]{36}) is still attached to node [a-z0-9-]+\\\" PV=\\\"(?<reported>pvc-[0-9a-f-]{36})\\\"$"
+                           )) catch null) as $delete | $delete != null and $delete.pv==$delete.reported)) then "csi-provisioner-clone-delete-retry"
+                          elif (.fingerprint=="7a7736f01bfa9b65"
+                           and ((.application_id // "") | endswith(":longhorn-system:DaemonSet:longhorn-csi-plugin"))
+                           and (($d.Sample // "") | test(
+                             "^time=\\\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z\\\" level=error msg=\\\"ControllerPublishVolume: err: rpc error: code = Aborted desc = volume pvc-[0-9a-f-]{36} is not ready for workloads: volume request cloning data but has not finished copying data\\\" func=csi\\.logGRPC file=\\\"server\\.go:136\\\"$"
+                           ))) then "longhorn-clone-copy-in-progress"
+                          elif (.fingerprint=="0e29ac857c924dfa"
+                           and ((.application_id // "") | endswith(":kube-system:StaticPods:kube-controller-manager"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 nestedpendingoperations\\.go:348\\] Operation for "))
+                           and (($d.Sample // "") | contains("volumeName:kubernetes.io/csi/driver.longhorn.io^pvc-"))
+                           and (($d.Sample // "") | contains("(durationBeforeRetry 500ms). Error: AttachVolume.Attach failed for volume "))
+                           and (($d.Sample // "") | test(
+                             "rpc error: code = Aborted desc = volume pvc-[0-9a-f-]{36} is not ready for workloads: volume request cloning data but has not finished copying data$"
+                           ))) then "controller-clone-attach-retry"
                           else null end;
                       .data.alerts[]
                       | select(.suppressed==false and .resolved_at==null)
@@ -445,6 +561,24 @@ spec:
                            and (($d.Sample // "") | contains("\"Server rejected event (will not retry!)\""))
                            and (($d.Sample // "") | contains("User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\" in API group \\\"\\\" in the namespace \\\""))
                            and (($d.Sample // "") | contains("Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater."))) then "vpa-event-recording-denial"
+                          elif (.fingerprint=="023675248cbc16ad"
+                           and ((.application_id // "") | endswith(":longhorn-system:Deployment:csi-provisioner"))
+                           and ((try (($d.Sample // "") | capture(
+                             "^E[0-9]{4} [0-9:.]+ +1 controller\\.go:1569\\] \\\"Volume deletion failed\\\" err=\\\"persistentvolume (?<pv>pvc-[0-9a-f-]{36}) is still attached to node [a-z0-9-]+\\\" PV=\\\"(?<reported>pvc-[0-9a-f-]{36})\\\"$"
+                           )) catch null) as $delete | $delete != null and $delete.pv==$delete.reported)) then "csi-provisioner-clone-delete-retry"
+                          elif (.fingerprint=="7a7736f01bfa9b65"
+                           and ((.application_id // "") | endswith(":longhorn-system:DaemonSet:longhorn-csi-plugin"))
+                           and (($d.Sample // "") | test(
+                             "^time=\\\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z\\\" level=error msg=\\\"ControllerPublishVolume: err: rpc error: code = Aborted desc = volume pvc-[0-9a-f-]{36} is not ready for workloads: volume request cloning data but has not finished copying data\\\" func=csi\\.logGRPC file=\\\"server\\.go:136\\\"$"
+                           ))) then "longhorn-clone-copy-in-progress"
+                          elif (.fingerprint=="0e29ac857c924dfa"
+                           and ((.application_id // "") | endswith(":kube-system:StaticPods:kube-controller-manager"))
+                           and (($d.Sample // "") | test("^E[0-9]{4} [0-9:.]+ +1 nestedpendingoperations\\.go:348\\] Operation for "))
+                           and (($d.Sample // "") | contains("volumeName:kubernetes.io/csi/driver.longhorn.io^pvc-"))
+                           and (($d.Sample // "") | contains("(durationBeforeRetry 500ms). Error: AttachVolume.Attach failed for volume "))
+                           and (($d.Sample // "") | test(
+                             "rpc error: code = Aborted desc = volume pvc-[0-9a-f-]{36} is not ready for workloads: volume request cloning data but has not finished copying data$"
+                           ))) then "controller-clone-attach-retry"
                           else null end;
                       .data.alerts[]
                       | select(.suppressed==true and .resolved_at==null
@@ -454,7 +588,10 @@ spec:
                                     or .fingerprint=="66adf607437525e7"
                                     or .fingerprint=="3222402a73798da3"
                                     or .fingerprint=="1da0a938819a7336"
-                                    or .fingerprint=="4caedf68675462a5"))
+                                    or .fingerprint=="4caedf68675462a5"
+                                    or .fingerprint=="023675248cbc16ad"
+                                    or .fingerprint=="7a7736f01bfa9b65"
+                                    or .fingerprint=="0e29ac857c924dfa"))
                       | select(reviewed_log_reason == null)
                       | .id'); do
                     reopen_ids="$reopen_ids $id"; log_info "reopen changed reviewed log pattern: $id"

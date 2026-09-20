@@ -1167,6 +1167,89 @@ func TestFluxControllerRestartTerminatesPrePauseProcessesBeforePolicyStage(t *te
 	}
 }
 
+// Restarting kustomize-controller changes a FluxInstance-owned Deployment. The
+// Flux Operator responds by reconciling the generated root Kustomization, so a
+// transaction-local parent fence can be reset during that restart. The child
+// already carries both suspension and the documented per-resource reconciliation
+// exclusion, so recognize only the exact released parent state and atomically
+// reacquire it before any policy or credential mutation continues.
+func TestFluxParentFenceIsReacquiredAfterControllerRestartAndOperatorReconcile(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_OPERATOR_RECONCILES_PARENT_ON_CONTROLLER_RESTART": "true",
+		"FAKE_LOG_FLUX_CONTROLLER_RESTART":                           "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	parentPauses := lineIndexes(operations, "flux-policy-parent-pause:flux-system")
+	if len(parentPauses) != 2 {
+		t.Fatalf("parent fence acquisitions = %d, want initial claim plus post-restart reacquisition", len(parentPauses))
+	}
+	childPause := lineIndex(t, operations, "flux-policy-pause:infrastructure")
+	restart := lineIndex(t, operations, "flux-controller-restart:kustomize-controller")
+	operatorReconcile := lineIndex(t, operations, "flux-operator-parent-reconcile:flux-system")
+	firstPolicyApply := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
+	parentResume := lineIndex(t, operations, "flux-policy-parent-resume:flux-system")
+	if parentPauses[0] >= childPause ||
+		childPause >= restart ||
+		restart >= operatorReconcile ||
+		operatorReconcile >= parentPauses[1] ||
+		parentPauses[1] >= firstPolicyApply ||
+		firstPolicyApply >= parentResume {
+		t.Fatalf(
+			"unsafe Flux operator handoff ordering: parent-pauses=%v child-pause=%d restart=%d operator=%d policy=%d parent-resume=%d",
+			parentPauses,
+			childPause,
+			restart,
+			operatorReconcile,
+			firstPolicyApply,
+			parentResume,
+		)
+	}
+	for _, marker := range []string{
+		"flux-policy-parent-owner", "flux-policy-parent-suspended",
+		"flux-policy-handoff-owner", "flux-policy-handoff-suspended",
+	} {
+		if pathExists(filepath.Join(f.syncStateDir, marker)) {
+			t.Fatalf("successful operator handoff left %s behind", marker)
+		}
+	}
+}
+
+// The Flux Operator also reconciles its generated root Kustomization during a
+// normal rollout, independently of the controller restart boundary. If that
+// lands between the settled parent claim and the child claim, the child remains
+// untouched and it is safe to reacquire only the exact released parent state.
+func TestFluxParentFenceIsReacquiredWhenOperatorReconcilesBeforeChildFence(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_OPERATOR_RECONCILES_PARENT_BEFORE_CHILD_FENCE": "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	parentPauses := lineIndexes(operations, "flux-policy-parent-pause:flux-system")
+	if len(parentPauses) != 2 {
+		t.Fatalf("parent fence acquisitions = %d, want initial claim plus pre-child reacquisition", len(parentPauses))
+	}
+	operatorReconcile := lineIndex(t, operations, "flux-operator-parent-reconcile-before-child:flux-system")
+	childPause := lineIndex(t, operations, "flux-policy-pause:infrastructure")
+	firstPolicyApply := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
+	if parentPauses[0] >= operatorReconcile ||
+		operatorReconcile >= parentPauses[1] ||
+		parentPauses[1] >= childPause ||
+		childPause >= firstPolicyApply {
+		t.Fatalf(
+			"unsafe pre-child Flux operator ordering: parent-pauses=%v operator=%d child=%d policy=%d",
+			parentPauses,
+			operatorReconcile,
+			childPause,
+			firstPolicyApply,
+		)
+	}
+}
+
 func TestFluxControllerDeclarativeRolloutStabilizesBeforeHandoffRestart(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

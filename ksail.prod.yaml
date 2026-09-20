@@ -170,9 +170,13 @@ spec:
       # worker carrying several attached volumes, and an over-budget drain
       # aborts the whole update.
       #
-      # 30m is ~3x the 10m default. That default was reached on a worker
-      # carrying several attached volumes, so this leaves room for the
-      # evict/detach/PDB-release sequence above without being unbounded.
+      # 40m is finite and leaves 10m after CloudNativePG's default 1800s
+      # stopDelay/termination grace for Longhorn to detach the volume and
+      # release its generated InstanceManager PDB. A 30m budget failed at the
+      # exact shared deadline during the AppArmor machine-config rollout:
+      # CNPG switched primary safely, but KSail cancelled the drain just as the
+      # graceful stop window expired. This preserves that graceful shutdown
+      # and PDB protection instead of using unsafe --force-drain.
       #
       # This is an independent per-node drain limit. It is NOT bounded by
       # connection.timeout, which governs the `workload reconcile` wait on the
@@ -182,7 +186,7 @@ spec:
       # --force-drain is NOT the alternative here: it deletes pods bypassing
       # PodDisruptionBudgets, which on Longhorn risks removing the
       # instance-manager still serving a volume's last healthy replica.
-      drainTimeout: 30m
+      drainTimeout: 40m
       # Talos Image Factory extensions baked into the node image. KSail
       # computes the schematic ID from this list and uses it both for
       # machine.install.image (derived during config generation — there is no

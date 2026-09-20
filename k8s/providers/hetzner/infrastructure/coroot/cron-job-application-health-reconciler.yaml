@@ -15,26 +15,64 @@
 #     seven-day daily sawtooth that repeatedly returns to 270-300 MiB after
 #     451-520 MiB peaks; Coroot reported 27%/h while the cache was warming.
 #     Thirty-five preserves a warning for sustained growth outside that cycle.
+#   * cilium DnsNxdomainErrors = 5000. Cilium's cluster-wide DNS proxy forwards
+#     workload resolver packets unchanged, so Coroot attributes every workload's
+#     search-list candidate to the Cilium DaemonSet application. The reviewed
+#     one-hour report contained 3,792 NXDOMAINs from the Coroot operator's
+#     namespace-qualified ClickHouse replica and Keeper names before their
+#     canonical `.svc.cluster.local` lookups succeeded. Every generated Coroot
+#     pod already uses ndots:1, but the CRD exposes no endpoint-template field;
+#     rewriting the operator's generated ClickHouse config at admission would
+#     be a brittle ownership violation. DNS latency and server-error checks are
+#     healthy. The finite cap leaves measured headroom above that 3,792/hour
+#     baseline; other DNS checks and per-workload NXDOMAIN reports stay at zero.
 #
 # Log thresholds are even narrower: the override is installed only when EVERY
-# current ERROR/CRITICAL pattern matches the app-specific allowlist below. A new
-# pattern removes the override on the next five-minute run. Each cap is above the
-# observed reviewed hourly count but remains finite, so a storm of even a known
-# message becomes visible. Empty/aged-out pattern sets inherit the global zero.
+# raw ERROR/FATAL message matches the app-specific allowlist below. Coroot's
+# pattern endpoint is intentionally not trusted here because one representative
+# sample can group structurally different messages. A new message removes the
+# override on the next five-minute run. Invalid or potentially truncated
+# responses also fail visible. Each cap is above the observed reviewed hourly
+# count but remains finite, so a storm of even a known message becomes visible.
+# Empty/aged-out message sets inherit the global zero.
+# An exact HTTP 404 from an application's log endpoint means Coroot has no log
+# stream, so there is no LogErrors policy target to reconcile. That absence is
+# recorded as structured info; transport, server, and malformed-response
+# failures remain visible.
 # The allowlist covers: this reconciler's predecessor lifecycle text while it
 # ages out; malformed public Dex authorization requests; an upstream Linux 6.18
 # audit context regression plus bounded runtime teardown races. Containerd
-# state-lookups are accepted only when the raw entry also carries the exact
-# context-deadline error and Talos init service attributes; a same-shaped
-# message with another cause remains visible. The other allowlists cover
-# millisecond apiserver client cancellations and one exact read-only
-# audit-parser false positive; stale controller-manager metadata informers until
+# state-lookups and unsupported in-place sandbox updates are accepted only when
+# the raw entry also carries the exact reviewed error and Talos init service
+# attributes; a same-shaped message with another cause remains visible. The
+# other allowlists cover
+# millisecond apiserver client cancellations, bounded response-writer timeouts,
+# exact Kubescape watch restarts, and one read-only audit-parser false positive;
+# stale controller-manager metadata informers until
 # the declarative Talos static-pod refresh lands; Kubernetes CronJob status
 # conflicts only when the controller key and stale object name are identical
 # (the controller rate-limits and requeues that optimistic-concurrency retry,
 # and the affected Jobs continue to succeed); and VPA's non-retryable Normal
 # Event recording denial (granting broad Event patch permission would be the
-# worse fix).
+# worse fix). A Flux controller Pod restart can cancel one in-flight
+# Kustomization health check and emit a correlated two-entry error pair. That
+# pair is accepted only when its reconcile UUID, object identity, controller,
+# retry delay, service, and recursive context-canceled causes all agree.
+# Velero's short-lived AWS plugin can close its stdout pipe before
+# the parent scanner exits; the immediately preceding validation still marks
+# the backup location available and the following lifecycle log records a clean
+# plugin exit, so only that exact pipe-close race is classified. Kubescape's
+# operator can likewise consume an image SBOM without a workload ID, or a
+# profile for a successfully completed Velero data-mover pod after that pod is
+# deleted. Those expected lifecycle misses are limited to the exact operator
+# service, error attributes, daily-backup pod identity, and a finite count;
+# unrelated missing workloads and every other operator error remain visible.
+# Kubescape storage's six-hour cleanup can discover a legacy payload whose
+# SQLite metadata row and old `.m` sidecar are both already gone. Its reviewed
+# code deletes that orphan before returning the diagnostic, so the exact
+# vulnerability-manifest path plus ENOENT is a completed repair, not a failed
+# cleanup. Other paths, permission/I/O failures, and more than ten repairs per
+# hour remain visible.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -100,6 +138,9 @@ spec:
                   encode() {
                     jq -nr --arg value "$1" '$value | @uri'
                   }
+                  http_status() {
+                    curl -sS --output /dev/null --write-out '%{http_code}' --max-time 30 "$1" 2>/dev/null || true
+                  }
 
                   PID=$(curl $RETRY "$BASE/api/user" | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
                   [ -n "$PID" ] || { log_error "could not resolve platform project id"; exit 1; }
@@ -151,36 +192,91 @@ spec:
                   KYVERNO="$PID:kyverno:Deployment:kyverno-background-controller"
                   reconcile_threshold "$KYVERNO" MemoryLeakPercent 10 35 kyverno-bounded-cache-sawtooth
 
+                  KYVERNO_CLEANUP="$PID:kyverno:Deployment:kyverno-cleanup-controller"
+                  # Cleanup-controller restarts initialise informer/cache state
+                  # quickly enough to look like a one-hour leak. The reviewed
+                  # rollout showed stable or declining established replicas,
+                  # no OOM/pressure, and a 200 MiB hard limit. Keep a finite
+                  # ceiling above that measured 36%/h cold-start slope.
+                  reconcile_threshold "$KYVERNO_CLEANUP" MemoryLeakPercent 10 40 kyverno-cleanup-rollout-cold-start
+
                   CROSSPLANE="$PID:crossplane-system:Deployment:crossplane"
                   reconcile_threshold "$CROSSPLANE" MemoryLeakPercent 10 35 crossplane-daily-memory-sawtooth
 
-                  LOG_QUERY=$(jq -nr '{source:"agent",view:"patterns"} | tojson | @uri')
+                  CILIUM="$PID:kube-system:DaemonSet:cilium"
+                  reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 5000 cilium-dns-search-expansion
+
+                  LOG_MESSAGE_LIMIT=1000
+                  ERROR_QUERY=$(jq -nr --argjson limit "$LOG_MESSAGE_LIMIT" '
+                    {source:"agent",view:"messages",filters:[{name:"Severity",op:"=",value:"error"}],limit:$limit}
+                    | tojson | @uri
+                  ')
+                  FATAL_QUERY=$(jq -nr --argjson limit "$LOG_MESSAGE_LIMIT" '
+                    {source:"agent",view:"messages",filters:[{name:"Severity",op:"=",value:"fatal"}],limit:$limit}
+                    | tojson | @uri
+                  ')
                   reconcile_logs() {
                     app="$1"
                     policy="$2"
                     cap="$3"
                     encoded_app=$(encode "$app")
-                    patterns=$(curl $RETRY "$BASE/api/project/$PID/app/$encoded_app/logs?query=$LOG_QUERY")
-                    if ! printf '%s' "$patterns" | jq -e '
-                      .data.patterns == null or (.data.patterns | type == "array")
+                    error_url="$BASE/api/project/$PID/app/$encoded_app/logs?query=$ERROR_QUERY"
+                    if ! error_response=$(curl $RETRY "$error_url" 2>/dev/null); then
+                      if [ "$(http_status "$error_url")" = "404" ]; then
+                        log_info "$policy skipped: no log stream for $app"
+                        return
+                      fi
+                      log_error "refusing $policy: error-message query failed for $app"
+                      reconcile_threshold "$app" LogErrors 0 inherit "$policy-query-fail-visible"
+                      return
+                    fi
+                    fatal_url="$BASE/api/project/$PID/app/$encoded_app/logs?query=$FATAL_QUERY"
+                    if ! fatal_response=$(curl $RETRY "$fatal_url" 2>/dev/null); then
+                      if [ "$(http_status "$fatal_url")" = "404" ]; then
+                        log_info "$policy skipped: no log stream for $app"
+                        return
+                      fi
+                      log_error "refusing $policy: fatal-message query failed for $app"
+                      reconcile_threshold "$app" LogErrors 0 inherit "$policy-query-fail-visible"
+                      return
+                    fi
+                    if ! printf '%s\n%s\n' "$error_response" "$fatal_response" | jq -s -e '
+                      length == 2 and
+                      .[0].data.status == "ok" and
+                      (try (.[0].data | has("entries")) catch false) and
+                      ((.[0].data.entries == null) or ((.[0].data.entries | type) == "array")) and
+                      all((.[0].data.entries // [])[]; .severity == "error" and (.message | type == "string")) and
+                      .[1].data.status == "ok" and
+                      (try (.[1].data | has("entries")) catch false) and
+                      ((.[1].data.entries == null) or ((.[1].data.entries | type) == "array")) and
+                      all((.[1].data.entries // [])[]; .severity == "fatal" and (.message | type == "string"))
                     ' >/dev/null; then
-                      log_error "refusing $policy: invalid log-pattern response for $app"
-                      exit 1
+                      log_error "refusing $policy: invalid raw-message response for $app"
+                      reconcile_threshold "$app" LogErrors 0 inherit "$policy-invalid-response-fail-visible"
+                      return
+                    fi
+                    entries=$(printf '%s\n%s\n' "$error_response" "$fatal_response" | jq -sc '[.[].data.entries // [] | .[]]')
+                    error_count=$(printf '%s' "$error_response" | jq -r '(.data.entries // []) | length')
+                    fatal_count=$(printf '%s' "$fatal_response" | jq -r '(.data.entries // []) | length')
+                    if [ "$error_count" -ge "$LOG_MESSAGE_LIMIT" ] || [ "$fatal_count" -ge "$LOG_MESSAGE_LIMIT" ]; then
+                      log_error "refusing $policy: raw-message response may be truncated for $app"
+                      reconcile_threshold "$app" LogErrors 0 inherit "$policy-truncated-fail-visible"
+                      return
                     fi
 
                     case "$policy" in
                       autosuppressor-lifecycle)
-                        counts=$(printf '%s' "$patterns" | jq -r '
-                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")] as $all |
-                          [$all[] | select(.sample=="no by-design alerts to suppress" or
-                            (.sample | test("^(reopened [0-9]+ changed exemption\\(s\\)|suppressed [0-9]+ by-design alert\\(s\\))$")))] as $ok |
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | select(.message=="no by-design alerts to suppress" or
+                            (.message | test("^(reopened [0-9]+ changed exemption\\(s\\)|suppressed [0-9]+ by-design alert\\(s\\))$")))] as $ok |
                           "\($all|length):\($ok|length)"
                         ')
                         ;;
                       dex-invalid-client)
-                        counts=$(printf '%s' "$patterns" | jq -r '
-                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")] as $all |
-                          [$all[] | .sample as $s | select(
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | .message as $s | select(
                             ($s | startswith("time=")) and
                             ($s | contains("level=ERROR msg=\"failed to parse authorization request\"")) and
                             ($s | contains("err=\"Invalid client_id")) and
@@ -189,68 +285,67 @@ spec:
                         ')
                         ;;
                       talos-runtime)
-                        counts=$(printf '%s' "$patterns" | jq -r '
-                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")] as $all |
-                          [$all[] | .sample as $s | select(
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | . as $entry | .message as $s | select(
                             ($s | test("^kern: +err: \\[.*\\]: audit: error in audit_log_subj_ctx$")) or
                             $s=="ContainerStatus from runtime service failed" or
                             $s=="DeleteContainer returned error" or
+                            ($s=="UpdatePodSandboxResources from runtime service failed" and
+                             ($entry.attributes | type)=="object" and
+                             $entry.attributes.caller=="pkg/remote_runtime.go:755" and
+                             $entry.attributes.err=="rpc error: code = Unimplemented desc = not implemented" and
+                             (($entry.attributes.podSandboxID // "") | test("^[0-9a-f]{64}$")) and
+                             $entry.attributes["service.name"]=="/talos/init") or
                             ($s | test("^ContainerStatus for \"[0-9a-f]{64}\" failed$")) or
+                            (($s | test("^PodSandboxStatus for \"[0-9a-f]{64}\" failed$")) and
+                             ($entry.attributes | type)=="object" and
+                             $entry.attributes.error=="rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found" and
+                             $entry.attributes["service.name"]=="/talos/init") or
                             $s=="Observed pod startup duration" or
                             (($s | contains("level=error msg=\"failed sending message on channel\"")) and
                              ($s | contains("write: broken pipe")) and ($s | endswith("runtime=io.containerd.runc.v2"))) or
                             ($s | test("^collecting metrics for [0-9a-f]{64}$")) or
-                            ($s | test("^get state for [0-9a-f]{64}$")) or
-                            $s=="ttrpc: received message on inactive stream"
+                            (($s | test("^get state for [0-9a-f]{64}$")) and
+                             ($entry.attributes | type)=="object" and
+                             $entry.attributes.error=="context deadline exceeded" and
+                             $entry.attributes["service.name"]=="/talos/init") or
+                            $s=="ttrpc: received message on inactive stream" or
+                            ((try ($s | capture(
+                              "^Error while processing event \\(\"/sys/fs/cgroup/(?<path>kubepods/(?:burstable|besteffort)/pod[0-9a-f-]{36}/[0-9a-f]{64})\": 0x40000100 == IN_CREATE\\|IN_ISDIR\\): "
+                            )) catch null) as $race |
+                             $race != null and
+                             ($s | endswith("inotify_add_watch /sys/fs/cgroup/" + $race.path + ": no such file or directory")))
                           )] as $ok | "\($all|length):\($ok|length)"
                         ')
-
-                        state_messages=$(printf '%s' "$patterns" | jq -c '
-                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")
-                           | .sample | select(test("^get state for [0-9a-f]{64}$"))] | unique
-                        ')
-                        state_message_count=$(printf '%s' "$state_messages" | jq -r 'length')
-                        state_message_index=0
-                        state_evidence_valid=1
-                        while [ "$state_message_index" -lt "$state_message_count" ]; do
-                          state_message=$(printf '%s' "$state_messages" | jq -r --argjson index "$state_message_index" '.[$index]')
-                          state_query=$(jq -nr --arg message "$state_message" '
-                            {agent:true,otel:false,filters:[{name:"Message",op:"=",value:$message}],limit:1000}
-                            | tojson | @uri
-                          ')
-                          if state_logs=$(curl $RETRY "$BASE/api/project/$PID/overview/logs?query=$state_query"); then
-                            if ! printf '%s' "$state_logs" | jq -e --arg message "$state_message" '
-                              [.data.logs.entries[]? | select(.message==$message)] as $entries |
-                              ($entries | length) > 0 and
-                              all($entries[];
-                                .attributes.error=="context deadline exceeded" and
-                                .attributes["service.name"]=="/talos/init"
-                              )
-                            ' >/dev/null; then
-                              state_evidence_valid=0
-                              break
-                            fi
-                          else
-                            state_evidence_valid=0
-                            break
-                          fi
-                          state_message_index=$((state_message_index + 1))
-                        done
-                        if [ "$state_evidence_valid" -ne 1 ]; then
-                          state_pattern_count=$(printf '%s' "$counts" | cut -d: -f1)
-                          counts="$state_pattern_count:0"
-                        fi
                         ;;
                       apiserver-client-noise)
-                        counts=$(printf '%s' "$patterns" | jq -r '
-                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")] as $all |
-                          [$all[] | .sample as $s | select(
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | .message as $s | select(
                             (($s | test("^E[0-9]{4} [0-9:.]+ +1 status\\.go:71\\] ")) and
                              ($s | contains("errors.errorString{s:\\\"context canceled\\\"}: context canceled")) and
+                             ($s | endswith("logger=\"UnhandledError\""))) or
+                            (($s | test("^E[0-9]{4} [0-9:.]+ +1 status\\.go:71\\] ")) and
+                             ($s | contains("errors.errorString{s:\\\"http: Handler timeout\\\"}: http: Handler timeout")) and
+                             ($s | endswith("logger=\"UnhandledError\""))) or
+                            (($s | test("^E[0-9]{4} [0-9:.]+ +1 writers\\.go:123\\] ")) and
+                             ($s | contains("\"Unhandled Error\" err=\"apiserver was unable to write a JSON response: http: Handler timeout\"")) and
+                             ($s | endswith("logger=\"UnhandledError\""))) or
+                            (($s | test("^E[0-9]{4} [0-9:.]+ +1 writers\\.go:136\\] ")) and
+                             ($s | contains("\"Unhandled Error\" err=\"apiserver was unable to write a fallback JSON response: http: Handler timeout\"")) and
                              ($s | endswith("logger=\"UnhandledError\""))) or
                             (($s | test("^E[0-9]{4} [0-9:.]+ +1 timeout\\.go:140\\] ")) and
                              ($s | contains("\"Post-timeout activity\"")) and
                              ($s | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$"))) or
+                            (($s | test("^E[0-9]{4} [0-9:.]+ +1 controller\\.go:123\\] ")) and
+                             ($s | contains("\"Unhandled Error\" err=\"loading OpenAPI spec for \\\"v1beta1.metrics.k8s.io\\\" failed with: Error, could not get list of group versions for APIService\"")) and
+                             ($s | endswith("logger=\"UnhandledError\""))) or
+                            (($s | test("^E[0-9]{4} [0-9:.]+ +1 wrap\\.go:53\\] ")) and
+                             ($s | contains("\"Timeout or abort while handling\" logger=\"UnhandledError\" method=\"GET\"")) and
+                             (($s | contains(" URI=\"/api/v1/namespaces/kube-system/configmaps/tetragon-operator-config\"")) or
+                              ($s | test(" URI=\"/apis/spdx\\.softwarecomposition\\.kubescape\\.io/v1beta1/(sbomsyfts|containerprofiles)\\?watch=true\""))) and
+                             ($s | test(" auditID=\"[0-9a-f-]{36}\"$"))) or
                             (($s | fromjson? // {}) as $audit |
                              $audit.kind=="Event" and $audit.apiVersion=="audit.k8s.io/v1" and
                              $audit.level=="Metadata" and $audit.stage=="RequestReceived" and
@@ -262,9 +357,9 @@ spec:
                         ')
                         ;;
                       controller-known-safe-retries)
-                        counts=$(printf '%s' "$patterns" | jq -r '
-                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")] as $all |
-                          [$all[] | .sample as $s | select(
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | .message as $s | select(
                             (($s | test("^E[0-9]{4} [0-9:.]+ +1 reflector\\.go:227\\] ")) and
                              ($s | contains("failed to list *v1.PartialObjectMetadata: the server could not find the requested resource")) and
                              ($s | contains("reflector=\"k8s.io/client-go/metadata/metadatainformer/informer.go:146\""))) or
@@ -284,14 +379,163 @@ spec:
                           )] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
+                      flux-kustomize-restart-cancellation)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          def canceled_cause:
+                            type=="object" and
+                            (keys - ["error", "errorCauses"] | length)==0 and
+                            .error=="context canceled" and
+                            ((has("errorCauses") | not) or
+                             ((.errorCauses | type)=="array" and
+                              (.errorCauses | length)>0 and
+                              all(.errorCauses[]; canceled_cause)));
+                          . as $all |
+                          [$all[] | .attributes as $a | select(
+                            ($a | type)=="object" and
+                            ($a.reconcileID | type)=="string" and
+                            ($a.reconcileID | test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
+                            ($a.name | type)=="string" and
+                            ($a.namespace | type)=="string" and
+                            $a["Kustomization.name"]==$a.name and
+                            $a["Kustomization.namespace"]==$a.namespace and
+                            $a.controller=="kustomization" and
+                            $a.controllerGroup=="kustomize.toolkit.fluxcd.io" and
+                            $a.controllerKind=="Kustomization" and
+                            $a["service.name"]=="/k8s/flux-system/kustomize-controller"
+                          )] as $valid |
+                          [$valid | group_by(.attributes.reconcileID)[] |
+                            select(length==2) |
+                            select(([.[] | select(
+                              (.message | test("^Reconciliation failed after [0-9.]+(ms|s), next try in 2m0s$")) and
+                              (.attributes.error | test("^health check failed after [0-9.]+(ms|s): context canceled$")) and
+                              (.attributes.revision | type)=="string" and
+                              (.attributes.revision | test("^[^@]+@sha256:[0-9a-f]{64}$"))
+                            )] | length)==1) |
+                            select(([.[] | select(
+                              .message=="Reconciler error" and
+                              .attributes.error=="context canceled" and
+                              (.attributes.errorCauses | type)=="string" and
+                              ((.attributes.errorCauses | fromjson?) as $causes |
+                               ($causes | type)=="array" and ($causes | length)>0 and
+                               all($causes[]; canceled_cause))
+                            )] | length)==1) |
+                            .[]
+                          ] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      autoscaler-capacity-buffer-conflict)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | .message as $s | select(
+                            ($s | test("^E[0-9]{4} [0-9:.]+ +1 controller\\.go:(250|300)\\] ")) and
+                            ($s | endswith(" logger=\"UnhandledError\"")) and
+                            (($s | contains("controller.go:300] \"Unhandled Error\" err=\"capacity buffer controller error: Operation cannot be fulfilled on capacitybuffers.autoscaling.x-k8s.io \\\"overprovisioning\\\": the object has been modified; please apply your changes to the latest version and try again\"")) or
+                             ($s | contains("controller.go:250] \"Unhandled Error\" err=\"error syncing namespace \\\"overprovisioning\\\"\"")))
+                          )] as $valid |
+                          [$valid | group_by(.message[0:14])[] |
+                            select(length==2) |
+                            select(([.[] | select(.message | contains("controller.go:300]"))] | length)==1) |
+                            select(([.[] | select(.message | contains("controller.go:250]"))] | length)==1) |
+                            .[]
+                          ] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
                       vpa-normal-event-denial)
-                        counts=$(printf '%s' "$patterns" | jq -r '
-                          [.data.patterns[]? | select(.severity=="error" or .severity=="fatal")] as $all |
-                          [$all[] | .sample as $s | select(
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | .message as $s | select(
                             ($s | test("^E[0-9]{4} [0-9:.]+ +1 event\\.go:359\\] ")) and
                             ($s | contains("\"Server rejected event (will not retry!)\"")) and
                             ($s | contains("User \\\"system:serviceaccount:vertical-pod-autoscaler:vertical-pod-autoscaler-vpa-updater\\\" cannot patch resource \\\"events\\\"")) and
                             ($s | contains("Reason:InPlaceResizedByVPA,Message:Pod was resized in place by VPA Updater."))
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      velero-plugin-stdout-close)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | .message as $s | select(
+                            ($s | test("^time=\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z\" level=error msg=\"error encountered while scanning stdout\" ")) and
+                            ((($s | contains(" backup-storage-location=velero/default cmd=/plugins/velero-plugin-for-aws controller=backup-storage-location "))) or
+                             (($s | contains(" backupLocation=velero/default cmd=/plugins/velero-plugin-for-aws controller=backup-sync ")))) and
+                            ($s | endswith("error=\"read |0: file already closed\" logSource=\"pkg/plugin/clientmgmt/process/logrus_adapter.go:90\""))
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      cnpg-retention-delete-race)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | .message as $s | .attributes as $a | select(
+                            $s=="Reconciler error" and
+                            ($a | type)=="object" and
+                            ($a.name | type)=="string" and
+                            ($a.namespace | type)=="string" and
+                            ($a.error | type)=="string" and
+                            $a["service.name"]=="/k8s/cnpg-system/cloudnative-pg" and
+                            $a.controller=="backup" and
+                            $a.controllerGroup=="postgresql.cnpg.io" and
+                            $a.controllerKind=="Backup" and
+                            $a["Backup.name"]==$a.name and
+                            $a["Backup.namespace"]==$a.namespace and
+                            ($a.name | test("^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?-daily-[0-9]{14}$")) and
+                            $a.error==("terminal error: Backup.postgresql.cnpg.io \"" + $a.name + "\" not found")
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      hcloud-csi-attach-race-controller)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | (.message | gsub("\\\\"; "")) as $s | select(
+                            ($s | test(
+                              "^time=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z level=ERROR source=/home/runner/work/csi-driver/csi-driver/internal/app/app\\.go:321 msg=\"handler failed\" component=grpc-server err=\"rpc error: code = Internal desc = failed to publish volume: Get \"https://api\\.hetzner\\.cloud/v1/volumes/[0-9]+\": context canceled\"$"
+                            ))
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      hcloud-csi-attach-race-node)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | (.message | gsub("\\\\"; "")) as $s | select(
+                            ($s | test(
+                              "^time=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z level=ERROR source=/home/runner/work/csi-driver/csi-driver/internal/app/app\\.go:321 msg=\"handler failed\" component=grpc-server err=\"rpc error: code = Internal desc = failed to publish volume: device \"/dev/disk/by-id/scsi-0HC_Volume_[0-9]+\" not ready: no such file or directory\"$"
+                            ))
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      kubescape-ephemeral-workload-races)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | . as $entry | .message as $s | .attributes as $a | select(
+                            ($a | type)=="object" and
+                            ($a["service.name"]=="/k8s/kubescape/operator") and
+                            (($s=="error in SBOMWatch" and $a.error=="missing WLID") or
+                             ($s=="failed loading pod spec" and $a.namespace=="velero" and
+                              ($a.wlid | type)=="string" and
+                              ($a.error | type)=="string" and
+                              ($a.name | type)=="string" and
+                              ((try ($a.wlid | capture(
+                                "^wlid://cluster-prod/namespace-velero/pod-(?<pod>velero-daily-full-[0-9]{14}-[a-z0-9]{5})$"
+                              )) catch null) as $workload |
+                               $workload != null and
+                               $a.error==("pods \"" + $workload.pod + "\" not found") and
+                               ($a.name | test(
+                                 "^(podvolumebackup|dataupload)-" + $workload.pod +
+                                 "-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[0-9a-f]{4}-[0-9a-f]{4}$"
+                               )))))
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      kubescape-repaired-orphan-payload)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | . as $entry | .message as $s | .attributes as $a | select(
+                            $s=="load metadata error" and
+                            ($a | type)=="object" and
+                            $a["service.name"]=="/k8s/kubescape/storage" and
+                            ($a.error | type)=="string" and
+                            ($a.error | test(
+                              "^failed to read metadata file: open /data/spdx\\.softwarecomposition\\.kubescape\\.io/vulnerabilitymanifests/[a-z0-9](?:[-a-z0-9]*[a-z0-9])?/[^/]+\\.m: no such file or directory$"
+                            ))
                           )] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
@@ -315,4 +559,39 @@ spec:
                   reconcile_logs "$PID:_:Unknown:init" talos-runtime 1000
                   reconcile_logs "$PID:kube-system:StaticPods:kube-apiserver" apiserver-client-noise 100
                   reconcile_logs "$PID:kube-system:StaticPods:kube-controller-manager" controller-known-safe-retries 5000
+                  # A controller restart can cancel one in-flight health check.
+                  # Require both Flux log records to share the exact reconcile
+                  # and Kustomization identity before applying the finite cap.
+                  reconcile_logs "$PID:flux-system:Deployment:kustomize-controller" flux-kustomize-restart-cancellation 10
+                  reconcile_logs "$PID:kube-system:Deployment:cluster-autoscaler-hetzner-cluster-autoscaler" autoscaler-capacity-buffer-conflict 10
                   reconcile_logs "$PID:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater" vpa-normal-event-denial 10
+                  reconcile_logs "$PID:velero:Deployment:velero" velero-plugin-stdout-close 10
+                  # CNPG's scheduled retention deletes the oldest successful
+                  # Backup and can then drain one already-queued reconcile for
+                  # that exact object. Accept only the terminal NotFound whose
+                  # object and namespace attributes agree; storage or backup
+                  # execution failures remain visible.
+                  reconcile_logs "$PID:cnpg-system:Deployment:cloudnative-pg" cnpg-retention-delete-race 10
+                  # A newly attached Hetzner volume can take a few seconds to
+                  # appear under /dev/disk/by-id. The controller request is
+                  # canceled while kubelet retries, then the node publish
+                  # succeeds; the observed snapshot Job completed 11 seconds
+                  # after the one FailedMount event. Match only those two exact
+                  # retry shapes so provider, permission, and device errors stay
+                  # visible.
+                  reconcile_logs "$PID:kube-system:Deployment:hcloud-csi-controller" hcloud-csi-attach-race-controller 10
+                  reconcile_logs "$PID:kube-system:DaemonSet:hcloud-csi-node" hcloud-csi-attach-race-node 10
+                  # Kubescape's operator watches SBOM/profile resources that can
+                  # outlive their workload. Missing workload identity on the
+                  # image-only SBOM stream is dropped after five bounded retries;
+                  # Velero's daily data-mover pods can disappear before their
+                  # profile event is consumed, after which the operator records
+                  # this miss and completes the scan action successfully. Match
+                  # only those exact lifecycle shapes; any other operator error
+                  # removes the override and becomes visible at global zero.
+                  reconcile_logs "$PID:kubescape:Deployment:operator" kubescape-ephemeral-workload-races 100
+                  # The storage cleanup deletes an orphan payload before it
+                  # reports the absent legacy metadata sidecar. Only that exact
+                  # completed-repair shape is accepted; any I/O failure or
+                  # unexpected path remains visible.
+                  reconcile_logs "$PID:kubescape:Deployment:storage" kubescape-repaired-orphan-payload 10
