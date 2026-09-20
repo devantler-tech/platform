@@ -41,6 +41,16 @@ func lineIndex(t *testing.T, lines []string, target string) int {
 	return -1
 }
 
+func lineIndexes(lines []string, target string) []int {
+	var indexes []int
+	for index, line := range lines {
+		if line == target {
+			indexes = append(indexes, index)
+		}
+	}
+	return indexes
+}
+
 func requireLine(t *testing.T, lines []string, target string) {
 	t.Helper()
 	_ = lineIndex(t, lines, target)

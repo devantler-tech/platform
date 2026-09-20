@@ -678,9 +678,9 @@ func fakeFluxControllerDeploymentObject() map[string]any {
 		},
 		"status": map[string]any{
 			"observedGeneration": generation,
-			"availableReplicas": 1,
-			"readyReplicas":     1,
-			"updatedReplicas":   1,
+			"availableReplicas":  1,
+			"readyReplicas":      1,
+			"updatedReplicas":    1,
 		},
 	}
 }
@@ -745,6 +745,24 @@ func fakeKubectlRolloutFluxController(args []string, namespace string) int {
 		return commandFailure(56, "kustomize-controller rollout did not converge")
 	}
 	setMarkerContent("flux-controller-rollout-count", strconv.Itoa(restartCount))
+	if os.Getenv("FAKE_FLUX_OPERATOR_RECONCILES_PARENT_ON_CONTROLLER_RESTART") == "true" {
+		// Restarting a Flux controller changes a Deployment owned by FluxInstance.
+		// The real Flux Operator observes that change and reconciles the generated
+		// root Kustomization, removing transaction-local fields it does not own.
+		// Model that replacement at the rollout boundary so the regression test
+		// proves the parent is reacquired before later mutations.
+		removeMarker("flux-policy-parent-owner")
+		removeMarker("flux-policy-parent-suspended")
+		currentResourceVersion := defaultString(
+			markerContent("flux-policy-parent-resource-version"),
+			"30",
+		)
+		setMarkerContent(
+			"flux-policy-parent-resource-version",
+			incrementDecimal(currentResourceVersion),
+		)
+		appendEnvFile("OPERATION_LOG", "flux-operator-parent-reconcile:flux-system\n")
+	}
 	if os.Getenv("FAKE_LOG_FLUX_CONTROLLER_RESTART") == "true" {
 		if os.Getenv("FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING") == "true" {
 			appendEnvFile(
