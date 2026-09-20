@@ -982,6 +982,33 @@ func TestFluxPolicyHandoffSuspendsOwningReconcileAcrossRuntimeProof(t *testing.T
 	}
 }
 
+func TestFluxParentQuiescenceUsesMeasuredPostPublishBudget(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_PARENT_RECONCILING_READS_AFTER_PAUSE": "5",
+		"FAKE_LOG_RUNTIME_PROBE_SUCCESS":                 "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "flux-policy-parent-stable:flux-system")
+	requireLine(t, operations, "flux-policy-pause:infrastructure")
+}
+
+func TestFluxParentQuiescenceTimeoutReportsConditionAndElapsedWait(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_PARENT_RECONCILING_READS_AFTER_PAUSE": "99",
+		"FLUX_GHCR_PARENT_QUIESCE_ATTEMPTS":              "2",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output, "kustomization/flux-system: Reconciling=True Progressing")
+	requireContains(t, output, "after 2 attempts")
+	requireContains(t, output, "elapsed 0s")
+}
+
 func TestFluxPolicyParentQuiescesBeforeSuspension(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -1428,6 +1455,26 @@ func TestFluxSyncAttemptsMustPermitTwoFenceObservations(t *testing.T) {
 	requireContains(t, result.stdout+result.stderr, "must be at least 2")
 	if pathExists(f.kubectlCalled) {
 		t.Fatal("invalid fence observation budget reached kubectl")
+	}
+}
+
+func TestFluxParentQuiesceAttemptsMustPermitTwoObservations(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FLUX_GHCR_PARENT_QUIESCE_ATTEMPTS": "1",
+	})
+	if result.exitCode != 64 {
+		t.Fatalf(
+			"command exit = %d, want 64\nstdout:\n%s\nstderr:\n%s",
+			result.exitCode,
+			result.stdout,
+			result.stderr,
+		)
+	}
+	requireContains(t, result.stdout+result.stderr, "must be at least 2")
+	if pathExists(f.kubectlCalled) {
+		t.Fatal("invalid parent quiesce budget reached kubectl")
 	}
 }
 
