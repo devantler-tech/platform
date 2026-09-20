@@ -92,6 +92,7 @@ setup_scenario() {
   local sandbox_error="${14:-rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found}"
   local sandbox_attributes_mode="${15:-valid}"
   local sandbox_service="${16:-/talos/init}"
+  local kustomize_mode="${17:-known}"
   local dir="${work_root}/${name}"
   mkdir -p "${dir}/bin"
   printf '%s' "${dex_mode}" >"${dir}/dex-mode"
@@ -109,6 +110,7 @@ setup_scenario() {
   printf '%s' "${sandbox_error}" >"${dir}/sandbox-error"
   printf '%s' "${sandbox_attributes_mode}" >"${dir}/sandbox-attributes-mode"
   printf '%s' "${sandbox_service}" >"${dir}/sandbox-service"
+  printf '%s' "${kustomize_mode}" >"${dir}/kustomize-mode"
 
   cat >"${dir}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
@@ -215,6 +217,20 @@ case "${url}" in
       else
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0919 23:15:11.248729       1 cronjob_controllerv2.go:179] \"Unhandled Error\" err=\"error syncing CronJobController observability/cluster-heartbeat, requeuing: Operation cannot be fulfilled on cronjobs.batch \\\"different-job\\\": the object has been modified; please apply your changes to the latest version and try again\" logger=\"UnhandledError\""}]}}'
       fi
+    elif [[ "$url" == *'%3Aflux-system%3ADeployment%3Akustomize-controller'* ]]; then
+      if [ "${severity}" = "fatal" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
+      elif [ "$(cat "${dir}/kustomize-mode")" = "known" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[
+          {"severity":"error","message":"Reconciliation failed after 269.860866ms, next try in 2m0s","attributes":{"Kustomization.name":"ascoachingogvaner","Kustomization.namespace":"ascoachingogvaner","controller":"kustomization","controllerGroup":"kustomize.toolkit.fluxcd.io","controllerKind":"Kustomization","error":"health check failed after 45.576415ms: context canceled","name":"ascoachingogvaner","namespace":"ascoachingogvaner","reconcileID":"a4f572ba-397d-4032-8576-5fda40821c14","revision":"1.13.7@sha256:1016aa926827717db1339dcc7abbe7b9e8fce1ccfe548f0396422b613c453501","service.name":"/k8s/flux-system/kustomize-controller"}},
+          {"severity":"error","message":"Reconciler error","attributes":{"Kustomization.name":"ascoachingogvaner","Kustomization.namespace":"ascoachingogvaner","controller":"kustomization","controllerGroup":"kustomize.toolkit.fluxcd.io","controllerKind":"Kustomization","error":"context canceled","errorCauses":"[{\"error\":\"context canceled\",\"errorCauses\":[{\"error\":\"context canceled\",\"errorCauses\":[{\"error\":\"context canceled\"},{\"error\":\"context canceled\"}]}]}]","name":"ascoachingogvaner","namespace":"ascoachingogvaner","reconcileID":"a4f572ba-397d-4032-8576-5fda40821c14","service.name":"/k8s/flux-system/kustomize-controller"}}
+        ]}}'
+      else
+        printf '%s\n' '{"data":{"status":"ok","entries":[
+          {"severity":"error","message":"Reconciliation failed after 269.860866ms, next try in 2m0s","attributes":{"Kustomization.name":"ascoachingogvaner","Kustomization.namespace":"ascoachingogvaner","controller":"kustomization","controllerGroup":"kustomize.toolkit.fluxcd.io","controllerKind":"Kustomization","error":"health check failed after 45.576415ms: context canceled","name":"ascoachingogvaner","namespace":"ascoachingogvaner","reconcileID":"a4f572ba-397d-4032-8576-5fda40821c14","service.name":"/k8s/flux-system/kustomize-controller"}},
+          {"severity":"error","message":"Reconciler error","attributes":{"Kustomization.name":"ascoachingogvaner","Kustomization.namespace":"ascoachingogvaner","controller":"kustomization","controllerGroup":"kustomize.toolkit.fluxcd.io","controllerKind":"Kustomization","error":"context canceled","errorCauses":"[{\"error\":\"context canceled\"}]","name":"ascoachingogvaner","namespace":"ascoachingogvaner","reconcileID":"different-reconcile-id","service.name":"/k8s/flux-system/kustomize-controller"}}
+        ]}}'
+      fi
     elif [[ "$url" == *'%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater'* ]]; then
       if [ "${severity}" = "fatal" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
@@ -304,6 +320,9 @@ case "${url}" in
       { [ "$(cat "${dir}/controller-mode")" = "near-miss" ] ||
         [ "$(cat "${dir}/response-mode")" != "complete" ]; }; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":5000}]}}'
+    elif [[ "${url}" == *'%3Aflux-system%3ADeployment%3Akustomize-controller'* ]] &&
+      [ "$(cat "${dir}/kustomize-mode")" != "known" ]; then
+      printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
     elif [[ "${url}" == *'%3Akubescape%3ADeployment%3Aoperator'* ]] &&
       [ "$(cat "${dir}/operator-mode")" != "known" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":100}]}}'
@@ -353,6 +372,7 @@ jq -s -e '
   any(.[]; (.url | contains("%3A_%3AUnknown%3Ainit/inspection/LogErrors/config")) and .body.configs[2].threshold == 1000) and
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-apiserver/inspection/LogErrors/config")) and .body.configs[2].threshold == 100) and
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-controller-manager/inspection/LogErrors/config")) and .body.configs[2].threshold == 5000) and
+  any(.[]; (.url | contains("%3Aflux-system%3ADeployment%3Akustomize-controller/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Avelero%3ADeployment%3Avelero/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Acnpg-system%3ADeployment%3Acloudnative-pg/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
@@ -419,6 +439,14 @@ jq -s -e '
 ' "${controller_near_miss_dir}/posts.ndjson" >/dev/null ||
   fail 'a CronJob conflict whose object name differs from the controller key did not remain visible'
 pass 'the controller retry policy rejects same-shaped name mismatches'
+
+kustomize_near_miss_dir="$(setup_scenario kustomize-near-miss known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init near-miss)"
+run_scenario "${kustomize_near_miss_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Aflux-system%3ADeployment%3Akustomize-controller/inspection/LogErrors/config")) and .body.configs[2] == null)
+' "${kustomize_near_miss_dir}/posts.ndjson" >/dev/null ||
+  fail 'an uncorrelated Flux cancellation pair did not remain visible'
+pass 'the Flux cancellation policy rejects uncorrelated or malformed entries'
 
 operator_near_miss_dir="$(setup_scenario operator-near-miss known null 'context deadline exceeded' null known complete near-miss)"
 run_scenario "${operator_near_miss_dir}" >/dev/null

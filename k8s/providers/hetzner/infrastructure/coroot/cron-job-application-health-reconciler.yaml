@@ -46,7 +46,11 @@
 # (the controller rate-limits and requeues that optimistic-concurrency retry,
 # and the affected Jobs continue to succeed); and VPA's non-retryable Normal
 # Event recording denial (granting broad Event patch permission would be the
-# worse fix). Velero's short-lived AWS plugin can close its stdout pipe before
+# worse fix). A Flux controller Pod restart can cancel one in-flight
+# Kustomization health check and emit a correlated two-entry error pair. That
+# pair is accepted only when its reconcile UUID, object identity, controller,
+# retry delay, service, and recursive context-canceled causes all agree.
+# Velero's short-lived AWS plugin can close its stdout pipe before
 # the parent scanner exits; the immediately preceding validation still marks
 # the backup location available and the following lifecycle log records a clean
 # plugin exit, so only that exact pipe-close race is classified. Kubescape's
@@ -346,6 +350,50 @@ spec:
                           )] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
+                      flux-kustomize-restart-cancellation)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          def canceled_cause:
+                            type=="object" and
+                            (keys - ["error", "errorCauses"] | length)==0 and
+                            .error=="context canceled" and
+                            ((has("errorCauses") | not) or
+                             ((.errorCauses | type)=="array" and
+                              (.errorCauses | length)>0 and
+                              all(.errorCauses[]; canceled_cause)));
+                          . as $all |
+                          [$all[] | .attributes as $a | select(
+                            ($a | type)=="object" and
+                            ($a.reconcileID | type)=="string" and
+                            ($a.reconcileID | test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
+                            ($a.name | type)=="string" and
+                            ($a.namespace | type)=="string" and
+                            $a["Kustomization.name"]==$a.name and
+                            $a["Kustomization.namespace"]==$a.namespace and
+                            $a.controller=="kustomization" and
+                            $a.controllerGroup=="kustomize.toolkit.fluxcd.io" and
+                            $a.controllerKind=="Kustomization" and
+                            $a["service.name"]=="/k8s/flux-system/kustomize-controller"
+                          )] as $valid |
+                          [$valid | group_by(.attributes.reconcileID)[] |
+                            select(length==2) |
+                            select(([.[] | select(
+                              (.message | test("^Reconciliation failed after [0-9.]+(ms|s), next try in 2m0s$")) and
+                              (.attributes.error | test("^health check failed after [0-9.]+(ms|s): context canceled$")) and
+                              (.attributes.revision | type)=="string" and
+                              (.attributes.revision | test("^[^@]+@sha256:[0-9a-f]{64}$"))
+                            )] | length)==1) |
+                            select(([.[] | select(
+                              .message=="Reconciler error" and
+                              .attributes.error=="context canceled" and
+                              (.attributes.errorCauses | type)=="string" and
+                              ((.attributes.errorCauses | fromjson?) as $causes |
+                               ($causes | type)=="array" and ($causes | length)>0 and
+                               all($causes[]; canceled_cause))
+                            )] | length)==1) |
+                            .[]
+                          ] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
                       vpa-normal-event-denial)
                         counts=$(printf '%s' "$entries" | jq -r '
                           . as $all |
@@ -465,6 +513,10 @@ spec:
                   reconcile_logs "$PID:_:Unknown:init" talos-runtime 1000
                   reconcile_logs "$PID:kube-system:StaticPods:kube-apiserver" apiserver-client-noise 100
                   reconcile_logs "$PID:kube-system:StaticPods:kube-controller-manager" controller-known-safe-retries 5000
+                  # A controller restart can cancel one in-flight health check.
+                  # Require both Flux log records to share the exact reconcile
+                  # and Kustomization identity before applying the finite cap.
+                  reconcile_logs "$PID:flux-system:Deployment:kustomize-controller" flux-kustomize-restart-cancellation 10
                   reconcile_logs "$PID:vertical-pod-autoscaler:Deployment:vertical-pod-autoscaler-vpa-updater" vpa-normal-event-denial 10
                   reconcile_logs "$PID:velero:Deployment:velero" velero-plugin-stdout-close 10
                   # CNPG's scheduled retention deletes the oldest successful
