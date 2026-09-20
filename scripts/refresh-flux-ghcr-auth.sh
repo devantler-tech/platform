@@ -106,6 +106,11 @@ readonly SECRET_FILE="${FLUX_GHCR_SECRET_FILE:-k8s/bases/bootstrap/secret.enc.ya
 readonly KUBE_CONTEXT="${KUBE_CONTEXT:-admin@prod}"
 readonly SYNC_ATTEMPTS="${FLUX_GHCR_SYNC_ATTEMPTS:-60}"
 readonly SYNC_INTERVAL="${FLUX_GHCR_SYNC_INTERVAL:-2}"
+# A healthy back-to-back publish has outlived the generic 120s convergence
+# budget (#3188). Give the Flux parent three generic windows: two cover the
+# observed >120s post-publish reconcile and the third retains one full generic
+# window of headroom, while keeping a finite fail-closed bound (360s by default).
+PARENT_QUIESCE_ATTEMPTS="${FLUX_GHCR_PARENT_QUIESCE_ATTEMPTS:-}"
 readonly TALOS_CONVERGENCE_ATTEMPTS="${FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS:-${SYNC_ATTEMPTS}}"
 readonly DRAIN_TIMEOUT="${FLUX_GHCR_DRAIN_TIMEOUT:-45m}"
 # Kyverno image verification is fail-closed and can consume its full webhook
@@ -190,16 +195,38 @@ readonly -a FANOUT_NAMESPACES=(
   "kyverno"
 )
 
+# Bash arithmetic is signed 64-bit on the supported runners. Keep the source
+# budget at or below LONG_MAX / 3 so deriving the default parent budget cannot
+# wrap. Compare decimal strings before arithmetic so an already-oversized input
+# cannot overflow while it is being validated.
+readonly MAX_SYNC_ATTEMPTS="3074457345618258602"
+decimal_is_at_most() {
+  local value="$1"
+  local maximum="$2"
+
+  ((${#value} < ${#maximum})) ||
+    { ((${#value} == ${#maximum})) && [[ "${value}" < "${maximum}" || "${value}" == "${maximum}" ]]; }
+}
+
 if ! [[ "${SYNC_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] ||
   ((SYNC_ATTEMPTS < 2)) ||
+  ! decimal_is_at_most "${SYNC_ATTEMPTS}" "${MAX_SYNC_ATTEMPTS}" ||
+  { [[ -n "${PARENT_QUIESCE_ATTEMPTS}" ]] &&
+    { ! [[ "${PARENT_QUIESCE_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] ||
+      ((PARENT_QUIESCE_ATTEMPTS < 2)) ||
+      ! decimal_is_at_most "${PARENT_QUIESCE_ATTEMPTS}" "${MAX_SYNC_ATTEMPTS}"; }; } ||
   ! [[ "${TALOS_CONVERGENCE_ATTEMPTS}" =~ ^[3-9]$|^[1-9][0-9]+$ ]] ||
   ! [[ "${SYNC_INTERVAL}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
   ! [[ "${DRAIN_TIMEOUT}" =~ ^[1-9][0-9]*(s|m|h)$ ]] ||
   ! [[ "${SYNC_LEASE_HEARTBEAT_SECONDS}" =~ ^[1-9][0-9]*$ ]] ||
   ((SYNC_LEASE_HEARTBEAT_SECONDS >= SYNC_LEASE_DURATION_SECONDS)); then
-  echo "::error::FLUX_GHCR_SYNC_ATTEMPTS must be at least 2, FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS must be at least 3, FLUX_GHCR_SYNC_INTERVAL must be non-negative, FLUX_GHCR_DRAIN_TIMEOUT must be a positive whole number of seconds, minutes, or hours, and FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS must be a positive integer below the Lease duration."
+  echo "::error::FLUX_GHCR_SYNC_ATTEMPTS and FLUX_GHCR_PARENT_QUIESCE_ATTEMPTS must be at least 2 and no greater than ${MAX_SYNC_ATTEMPTS}, FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS must be at least 3, FLUX_GHCR_SYNC_INTERVAL must be non-negative, FLUX_GHCR_DRAIN_TIMEOUT must be a positive whole number of seconds, minutes, or hours, and FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS must be a positive integer below the Lease duration."
   exit 64
 fi
+if [[ -z "${PARENT_QUIESCE_ATTEMPTS}" ]]; then
+  PARENT_QUIESCE_ATTEMPTS=$((SYNC_ATTEMPTS * 3))
+fi
+readonly PARENT_QUIESCE_ATTEMPTS
 
 work_dir="$(mktemp -d)"
 chmod 700 "${work_dir}"
@@ -4798,10 +4825,10 @@ flux_policy_parent_claim_preconditions_still_hold() {
 wait_for_flux_policy_parent_quiescence_before_claim() {
   local attempt
 
-  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+  for ((attempt = 1; attempt <= PARENT_QUIESCE_ATTEMPTS; attempt++)); do
     flux_policy_parent_claim_preconditions_still_hold || return 2
     flux_policy_parent_is_quiescent && return 0
-    if ((attempt < SYNC_ATTEMPTS)); then
+    if ((attempt < PARENT_QUIESCE_ATTEMPTS)); then
       sleep "${SYNC_INTERVAL}"
       if ! kubectl \
         --context "${KUBE_CONTEXT}" \
@@ -4822,6 +4849,7 @@ pause_flux_policy_parent() {
   local resource_version attempt annotations_present wait_status
   local max_attempts="${FLUX_POLICY_PARENT_CLAIM_MAX_ATTEMPTS:-5}"
   local reread_resource_version
+  local wait_started_at
   # The re-read below needs its own stderr sink. Pointed at the result file it would
   # succeed, write nothing, and truncate the rejection that explains why the fence was
   # refused — leaving a bare refusal with no cause in exactly the case that matters
@@ -4869,6 +4897,7 @@ pause_flux_policy_parent() {
     "${flux_policy_parent_state_file}")"
   flux_policy_parent_owner="${sync_lease_holder}"
 
+  wait_started_at="${SECONDS}"
   if wait_for_flux_policy_parent_quiescence_before_claim; then
     :
   else
@@ -4879,7 +4908,7 @@ pause_flux_policy_parent() {
       flux_policy_report_conditions \
         "${flux_policy_parent_state_file}" \
         "kustomization/${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}"
-      echo "::error::The parent Flux reconciliation did not quiesce before acquiring the image-verification policy handoff."
+      echo "::error::The parent Flux reconciliation did not quiesce before acquiring the image-verification policy handoff after ${PARENT_QUIESCE_ATTEMPTS} attempts (elapsed $((SECONDS - wait_started_at))s)."
     elif ((wait_status == 3)); then
       emit_safe_operation_output \
         "flux-policy-parent-quiesce" \
@@ -5006,7 +5035,8 @@ pause_flux_policy_parent() {
   # New parent reconciliations now stop at spec.suspend. After a mandatory
   # quiet interval, require a fresh observation without an in-flight
   # Reconciling condition before touching the child that this parent owns.
-  for ((attempt = 1; attempt <= SYNC_ATTEMPTS + 2; attempt++)); do
+  wait_started_at="${SECONDS}"
+  for ((attempt = 1; attempt <= PARENT_QUIESCE_ATTEMPTS; attempt++)); do
     sleep "${SYNC_INTERVAL}"
     if kubectl \
       --context "${KUBE_CONTEXT}" \
@@ -5019,7 +5049,10 @@ pause_flux_policy_parent() {
     fi
   done
 
-  echo "::error::The parent Flux reconciliation did not quiesce before the image-verification policy handoff."
+  flux_policy_report_conditions \
+    "${flux_policy_parent_state_file}" \
+    "kustomization/${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}"
+  echo "::error::The parent Flux reconciliation did not quiesce before the image-verification policy handoff after ${PARENT_QUIESCE_ATTEMPTS} attempts (elapsed $((SECONDS - wait_started_at))s)."
   return 1
 }
 
