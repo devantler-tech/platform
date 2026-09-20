@@ -46,6 +46,11 @@ resources:
   # the file headers.
   - cluster-policies/restrict-storage-to-baseline-workers.yaml
   - cluster-policies/drain-autoscale-node-storage.yaml
+  # Longhorn 1.12.1 generates a shell pre-stop hook in its distroless CSI
+  # registrar. Admission prevents reintroduction; retrofit fixes the existing
+  # runtime-generated DaemonSet. Both are exact and version-coupled (#3931).
+  - cluster-policies/remove-longhorn-registrar-prestop.yaml
+  - cluster-policies/remove-existing-longhorn-registrar-prestop.yaml
   # Prod-only: a POSITIVE platform.devantler.tech/baseline-worker label on the
   # static workers, so workloads that must never ride an autoscaler node can
   # require it and fail closed (#3287). Admission half + mutate-existing

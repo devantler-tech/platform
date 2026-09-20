@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: longhorn-csi-plugin
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: longhorn-csi-plugin
+  template:
+    metadata:
+      labels:
+        app: longhorn-csi-plugin
+    spec:
+      containers:
+        - name: node-driver-registrar
+          image: docker.io/longhornio/csi-node-driver-registrar:v2.17.0
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - rm -rf /registration/driver.longhorn.io /registration/driver.longhorn.io-reg.sock /csi//*
+        - name: longhorn-csi-plugin
+          image: docker.io/longhornio/longhorn-manager:v1.12.1
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - rm -f /csi//*
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: longhorn-csi-plugin
+  namespace: tenant-control
+spec:
+  selector:
+    matchLabels:
+      app: longhorn-csi-plugin
+  template:
+    metadata:
+      labels:
+        app: longhorn-csi-plugin
+    spec:
+      containers:
+        - name: node-driver-registrar
+          image: example.invalid/registrar:v1
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - keep-wrong-namespace
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: unrelated-csi-plugin
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: unrelated-csi-plugin
+  template:
+    metadata:
+      labels:
+        app: unrelated-csi-plugin
+    spec:
+      containers:
+        - name: node-driver-registrar
+          image: example.invalid/registrar:v1
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - keep-wrong-name

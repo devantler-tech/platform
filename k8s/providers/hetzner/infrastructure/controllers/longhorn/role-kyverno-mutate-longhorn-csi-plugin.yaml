@@ -1,0 +1,20 @@
+# Kyverno's background controller needs write access for the exact
+# mutate-existing retrofit in remove-existing-longhorn-registrar-prestop.yaml.
+# Keep this namespaced and resourceNames-pinned: a cluster-wide DaemonSet grant
+# would let the controller rewrite every node workload's pod template.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kyverno:background-controller:mutate-longhorn-csi-plugin
+  namespace: longhorn-system
+rules:
+  - apiGroups:
+      - apps
+    resources:
+      - daemonsets
+    resourceNames:
+      - longhorn-csi-plugin
+    verbs:
+      - get
+      - patch
+      - update
