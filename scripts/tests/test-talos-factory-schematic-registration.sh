@@ -30,11 +30,11 @@ fi
 register_line=$(grep -nF './scripts/register-talos-factory-schematic.sh' "$deploy_action" | cut -d: -f1)
 first_live_mutation_line=$(grep -nE '^[[:space:]]+id: cilium_rollout_gate$' "$deploy_action" | cut -d: -f1)
 publish_line=$(grep -nF 'id: publish_platform_manifest' "$deploy_action" | cut -d: -f1)
-[[ -n "$register_line" && -n "$first_live_mutation_line" && -n "$publish_line" ]] &&
-  [[ "$register_line" -lt "$first_live_mutation_line" && "$register_line" -lt "$publish_line" ]] || {
+if [[ -z "$register_line" || -z "$first_live_mutation_line" || -z "$publish_line" ]] ||
+  [[ "$register_line" -ge "$first_live_mutation_line" || "$register_line" -ge "$publish_line" ]]; then
   printf 'deployment must register and verify the Talos schematic before live rollout mutation and publication\n' >&2
   exit 1
-}
+fi
 
 declared_extensions=$(yq eval -o=json '.spec.cluster.talos.extensions' "$cluster_config" | jq -r '.[]' | sort -u)
 schematic_extensions=$(yq eval -o=json '.customization.systemExtensions.officialExtensions' "$schematic" | jq -r '.[]')
