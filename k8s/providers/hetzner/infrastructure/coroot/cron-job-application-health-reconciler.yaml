@@ -20,7 +20,13 @@
 #     30 MiB that return to baseline and produce no pressure or OOMs. Coroot's
 #     short-window regression reached 122%/h; 250 remains finite and exposes a
 #     sustained 3.5x hourly increase while ignoring the measured sawtooth.
-#   * cilium DnsNxdomainErrors = 7500. Cilium's cluster-wide DNS proxy forwards
+#   * backstage-db MemoryLeakPercent = 75. Its two PostgreSQL instances remain
+#     in a repeating 40-130 MiB weekly band under 512 MiB limits. Cache warmup
+#     after the runtime rollout produced a 40%/h short-window slope, while the
+#     seven-day regression, OOM, and pressure checks stayed healthy. Seventy-five
+#     leaves 87% headroom above that measured warmup but still exposes sustained
+#     near-doubling growth, and is scoped only to this database cluster.
+#   * cilium DnsNxdomainErrors = 50000. Cilium's cluster-wide DNS proxy forwards
 #     workload resolver packets unchanged, so Coroot attributes every workload's
 #     search-list candidate to the Cilium DaemonSet application. The original
 #     reviewed one-hour report contained 3,792 NXDOMAINs; a later full-platform
@@ -30,9 +36,20 @@
 #     Coroot pod already uses ndots:1, but the CRD exposes no endpoint-template
 #     field; rewriting the operator's generated ClickHouse config at admission
 #     would be a brittle ownership violation. DNS latency and server-error
-#     checks are healthy. The finite 7,500 cap leaves 41% headroom above the
+#     checks are healthy. The current seven-node platform later produced 27,115
+#     of the same expected A/AAAA search expansions in one hour, without any
+#     SERVFAIL response. The finite 50,000 cap leaves 84% headroom above that
 #     measured peak; other DNS checks and per-workload NXDOMAIN reports stay at
-#     zero, and any larger cluster-wide burst remains fail-visible.
+#     zero, and a roughly doubled cluster-wide burst remains fail-visible.
+#   * alertmanager DnsLatency = 750ms. Its two Ready, restart-free peers made
+#     19,600 successful requests to each exact headless-service name over the
+#     reviewed week with no SERVFAIL or previously-valid NXDOMAIN response.
+#     One recovered p95 peak reached roughly 550-600ms while CoreDNS remained
+#     replicated, restart-free, and lightly loaded. Seven hundred fifty keeps
+#     a sustained near-second peer-discovery delay visible while avoiding that
+#     brief successful lookup from flapping the application warning. Server
+#     errors, NXDOMAIN checks, other applications, and the global 100ms default
+#     remain unchanged.
 #
 # Log thresholds are even narrower: the override is installed only when EVERY
 # raw ERROR/FATAL message matches the app-specific allowlist below. Coroot's
@@ -95,7 +112,7 @@ spec:
   schedule: "* * * * *"
   # Never overlap Coroot writes. A run may start at most ten seconds after its
   # schedule and has fifty-five seconds plus two seconds of termination grace.
-  # Seventeen two-query log checks require five four-worker batches, whose
+  # Eighteen two-query log checks require five four-worker batches, whose
   # worst-case query budget is fifty seconds; five seconds remain for PID and
   # threshold work. The launch allowance applies only to a missed schedule; it
   # does not extend the preceding Job, so each run is still gone before the
@@ -259,8 +276,16 @@ spec:
                   APID="$PID:_:Unknown:apid"
                   queue_reconciliation reconcile_threshold "$APID" MemoryLeakPercent 10 250 talos-apid-bounded-rpc-sawtooth
 
+                  BACKSTAGE_DB="$PID:backstage:DatabaseCluster:backstage-db"
+                  queue_reconciliation reconcile_threshold "$BACKSTAGE_DB" MemoryLeakPercent 10 75 backstage-postgres-cache-warmup
+
                   CILIUM="$PID:kube-system:DaemonSet:cilium"
-                  queue_reconciliation reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 7500 cilium-dns-search-expansion
+                  queue_reconciliation reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 50000 cilium-dns-search-expansion
+
+                  ALERTMANAGER="$PID:kubescape:StatefulSet:alertmanager"
+                  # Coroot persists second-based values and formats them as
+                  # milliseconds in the UI (0.1s = 100ms, 0.75s = 750ms).
+                  queue_reconciliation reconcile_threshold "$ALERTMANAGER" DnsLatency 0.1 0.75 alertmanager-peer-dns-recovered-latency
 
                   LOG_MESSAGE_LIMIT=1000
                   ERROR_QUERY=$(jq -nr --argjson limit "$LOG_MESSAGE_LIMIT" '
@@ -577,6 +602,19 @@ spec:
                           )] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
+                      cnpg-instance-retention-update-race)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | .message as $s | .attributes as $a | select(
+                            $s=="Retention policy enforcement failed" and
+                            ($a | type)=="object" and
+                            $a["service.name"]=="/k8s/observability/coroot-db" and
+                            ($a.logging_pod | type)=="string" and
+                            ($a.logging_pod | test("^coroot-db-[0-9]+$")) and
+                            $a.error=="Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"coroot-db\": the object has been modified; please apply your changes to the latest version and try again"
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
                       hcloud-csi-reviewed-retries)
                         counts=$(printf '%s' "$entries" | jq -r '
                           . as $all |
@@ -691,6 +729,15 @@ spec:
                   # object and namespace attributes agree; storage or backup
                   # execution failures remain visible.
                   queue_reconciliation reconcile_logs "$PID:cnpg-system:Deployment:cloudnative-pg" cnpg-retention-delete-race 10
+                  # The instance-side retention runnable can delete the oldest
+                  # backup while another controller updates the same
+                  # ObjectStore status. Its optimistic write then conflicts,
+                  # and the five-minute retention loop retries successfully.
+                  # Match only the reviewed Coroot database identity, pod
+                  # shape, ObjectStore name, and resource-version conflict;
+                  # permission, storage, deletion, and mixed failures remain
+                  # visible. Ten events per hour is deliberately finite.
+                  queue_reconciliation reconcile_logs "$PID:observability:DatabaseCluster:coroot-db" cnpg-instance-retention-update-race 10
                   # A newly attached Hetzner volume can take a few seconds to
                   # appear under /dev/disk/by-id. The controller request is
                   # canceled while kubelet retries, then the node publish

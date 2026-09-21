@@ -95,9 +95,10 @@ pass 'bounded concurrent requests fail visible before the Job deadline'
 # every workload's resolver search candidate to that DaemonSet. This exact,
 # finite threshold complements the alert-side exemption without changing the
 # Cilium agent's own resolver configuration (which does not rewrite proxied DNS
-# packets).
+# packets). The current seven-node platform produces about 27,115 expected
+# expansions per hour, so the cap keeps 84% headroom while remaining finite.
 # shellcheck disable=SC2016
-[[ "${script_body}" == *'reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 7500 cilium-dns-search-expansion'* ]] ||
+[[ "${script_body}" == *'reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 50000 cilium-dns-search-expansion'* ]] ||
   fail 'the Cilium DNS proxy aggregation must have a finite app-level threshold'
 pass 'the Cilium DNS proxy aggregation has a narrow application policy'
 
@@ -108,6 +109,23 @@ pass 'the Cilium DNS proxy aggregation has a narrow application policy'
 [[ "${script_body}" == *'reconcile_threshold "$APID" MemoryLeakPercent 10 250 talos-apid-bounded-rpc-sawtooth'* ]] ||
   fail 'the exact Talos apid application must have a finite memory-growth threshold'
 pass 'the Talos apid memory sawtooth has a narrow application policy'
+
+# The two Backstage PostgreSQL instances repeatedly return to a 40-130 MiB
+# weekly band under their 512 MiB limits. After the runtime rollout, cache
+# warmup produced a 40%/h short-window slope without OOM or pressure. Preserve
+# a finite ceiling above that measured slope and scope it to this database.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'reconcile_threshold "$BACKSTAGE_DB" MemoryLeakPercent 10 75 backstage-postgres-cache-warmup'* ]] ||
+  fail 'the exact Backstage database must have a finite cache-warmup threshold'
+pass 'the Backstage PostgreSQL cache warmup has a narrow application policy'
+
+# Coroot stores second-based thresholds even though the UI formats this check in
+# milliseconds. Bind the reconciler to the API contract so a millisecond-shaped
+# fake cannot hide a live global-config refusal.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'reconcile_threshold "$ALERTMANAGER" DnsLatency 0.1 0.75 alertmanager-peer-dns-recovered-latency'* ]] ||
+  fail 'the Alertmanager DNS latency policy must use Coroot second-based API units'
+pass 'the Alertmanager DNS latency policy uses second-based API units'
 
 yq eval -e '.cluster.controllerManager.extraArgs."log-text-split-stream" == "false"' \
   "${talos_patch}" >/dev/null ||
@@ -145,6 +163,7 @@ setup_scenario() {
   local autoscaler_mode="${18:-known}"
   local autosuppressor_mode="${19:-present}"
   local leader_mode="${20:-known}"
+  local cnpg_instance_mode="${21:-known}"
   local concurrency_limit="${COROOT_STUB_CONCURRENCY_LIMIT:-0}"
   local dir="${work_root}/${name}"
   mkdir -p "${dir}/bin"
@@ -167,6 +186,7 @@ setup_scenario() {
   printf '%s' "${autoscaler_mode}" >"${dir}/autoscaler-mode"
   printf '%s' "${autosuppressor_mode}" >"${dir}/autosuppressor-mode"
   printf '%s' "${leader_mode}" >"${dir}/leader-mode"
+  printf '%s' "${cnpg_instance_mode}" >"${dir}/cnpg-instance-mode"
   printf '%s' "${concurrency_limit}" >"${dir}/concurrency-limit"
   printf '0' >"${dir}/active-queries"
   printf '0' >"${dir}/peak-queries"
@@ -358,6 +378,22 @@ case "${url}" in
       else
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"time=\"2026-09-20T01:59:13Z\" level=error msg=\"error encountered while scanning stdout\" backup-storage-location=velero/default cmd=/plugins/velero-plugin-for-aws controller=backup-storage-location error=\"read |0: file already closed\" logSource=\"pkg/plugin/clientmgmt/process/logrus_adapter.go:90\""}]}}'
       fi
+    elif [[ "$url" == *'%3Aobservability%3ADatabaseCluster%3Acoroot-db'* ]]; then
+      if [ "${severity}" = "fatal" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
+      elif [ "$(cat "${dir}/cnpg-instance-mode")" = "known" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"coroot-db\": the object has been modified; please apply your changes to the latest version and try again","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
+      elif [ "$(cat "${dir}/cnpg-instance-mode")" = "wrong-object" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"backstage-db\": the object has been modified; please apply your changes to the latest version and try again","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
+      elif [ "$(cat "${dir}/cnpg-instance-mode")" = "malformed" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":"not-an-object"}]}}'
+      elif [ "$(cat "${dir}/cnpg-instance-mode")" = "mixed" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"coroot-db\": the object has been modified; please apply your changes to the latest version and try again","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}},{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"access denied while deleting retained backup","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
+      elif [ "$(cat "${dir}/cnpg-instance-mode")" = "excess" ]; then
+        jq -cn '{data:{status:"ok",entries:[range(0;11)|{severity:"error",message:"Retention policy enforcement failed",attributes:{error:"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"coroot-db\": the object has been modified; please apply your changes to the latest version and try again",logging_pod:"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
+      else
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"access denied while deleting retained backup","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
+      fi
     elif [[ "$url" == *'%3Acnpg-system%3ADeployment%3Acloudnative-pg'* ]]; then
       if [ "${severity}" = "fatal" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
@@ -458,6 +494,8 @@ case "${url}" in
       jq -cn --arg url "${url}" --argjson body "${payload}" '{url:$url,body:$body}' >>"${dir}/posts.ndjson"
     elif [[ "${url}" == *'/MemoryLeakPercent/'* ]]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":10},null,null]}}'
+    elif [[ "${url}" == *'/DnsLatency/'* ]]; then
+      printf '%s\n' '{"form":{"configs":[{"threshold":0.1},null,null]}}'
     elif [[ "${url}" == *'%3A_%3AUnknown%3Akubelet/inspection/NetworkTCPConnections/config'* ]]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":3}]}}'
     elif [[ "${url}" == *'%3A_%3AUnknown%3Ainit'* ]]; then
@@ -496,6 +534,10 @@ case "${url}" in
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":100}]}}'
     elif [[ "${url}" == *'%3Akubescape%3ADeployment%3Astorage'* ]] &&
       [ "$(cat "${dir}/storage-mode")" != "known" ]; then
+      printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
+    elif [[ "${url}" == *'%3Aobservability%3ADatabaseCluster%3Acoroot-db'* ]] &&
+      [ "$(cat "${dir}/cnpg-instance-mode")" != "known" ] &&
+      [ "$(cat "${dir}/cnpg-instance-mode")" != "excess" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
     elif [[ "${url}" == *'%3Acnpg-system%3ADeployment%3Acloudnative-pg'* ]] &&
       [ "$(cat "${dir}/cnpg-mode")" != "known" ]; then
@@ -573,7 +615,10 @@ jq -s -e '
   any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-cleanup-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 40) and
   any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Aapid/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 250) and
-  any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 7500) and
+  any(.[]; (.url | contains("%3Abackstage%3ADatabaseCluster%3Abackstage-db/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 75) and
+  any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 50000) and
+  any(.[]; (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsLatency/config")) and .body.configs[2].threshold == 0.75) and
+  all(.[]; ((.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsServerErrors/config")) or (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsNxdomainErrors/config"))) | not) and
   any(.[]; (.url | contains("%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Adex%3ADeployment%3Adex/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Ainit/inspection/LogErrors/config")) and .body.configs[2].threshold == 1000) and
@@ -583,6 +628,7 @@ jq -s -e '
   any(.[]; (.url | contains("%3Akube-system%3ADeployment%3Acluster-autoscaler-hetzner-cluster-autoscaler/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater/inspection/LogErrors/config")) and .body.configs[2] == null) and
   any(.[]; (.url | contains("%3Avelero%3ADeployment%3Avelero/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
+  any(.[]; (.url | contains("%3Aobservability%3ADatabaseCluster%3Acoroot-db/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Acnpg-system%3ADeployment%3Acloudnative-pg/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane-rbac-manager/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
@@ -748,6 +794,24 @@ jq -s -e '
 ' "${lifecycle_near_miss_dir}/posts.ndjson" >/dev/null ||
   fail 'a near-miss backup deletion or volume-publish error did not remain visible'
 pass 'backup deletion and volume-publish policies reject unrelated failures'
+
+for cnpg_instance_mode in near-miss wrong-object malformed mixed; do
+  cnpg_instance_near_miss_dir="$(setup_scenario "cnpg-instance-${cnpg_instance_mode}" known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known known present known "${cnpg_instance_mode}")"
+  run_scenario "${cnpg_instance_near_miss_dir}" >/dev/null
+  jq -s -e '
+    any(.[]; (.url | contains("%3Aobservability%3ADatabaseCluster%3Acoroot-db/inspection/LogErrors/config")) and .body.configs[2] == null)
+  ' "${cnpg_instance_near_miss_dir}/posts.ndjson" >/dev/null ||
+    fail "CNPG database retention ${cnpg_instance_mode} evidence did not remain visible"
+done
+pass 'the CNPG database retention policy rejects unrelated, cross-object, malformed, and mixed failures'
+
+cnpg_instance_excess_dir="$(setup_scenario cnpg-instance-excess known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known known present known excess)"
+run_scenario "${cnpg_instance_excess_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Aobservability%3ADatabaseCluster%3Acoroot-db/inspection/LogErrors/config")) and .body.configs[2].threshold == 10)
+' "${cnpg_instance_excess_dir}/posts.ndjson" >/dev/null ||
+  fail 'excess CNPG retention conflicts did not retain the finite ten-event cap'
+pass 'excess CNPG retention conflicts still exceed the finite policy'
 
 truncated_dir="$(setup_scenario truncated known null 'context deadline exceeded' null known truncated)"
 run_scenario "${truncated_dir}" >/dev/null
