@@ -5,7 +5,7 @@ import "strings"
 // publishMatcherSurfaceDocument recognizes only strict subsets of the shared
 // 40-hex signer pattern already covered by the authorization approval. The
 // required approved-revisions guard separately enforces each consumer's exact
-// generated pair. Issuer, workflow, artifact, identity count and all other
+// generated set. Issuer, workflow, artifact, identity count and all other
 // resource fields remain fingerprinted, so regeneration needs no hash refresh.
 func publishMatcherSurfaceDocument(identity resourceIdentity, document map[string]any) map[string]any {
 	if identity.apiVersion != "source.toolkit.fluxcd.io/v1" || identity.kind != "OCIRepository" {
@@ -42,7 +42,7 @@ func publishMatcherSurfaceDocument(identity resourceIdentity, document map[strin
 		return document
 	}
 	ref := strings.TrimSuffix(strings.TrimPrefix(subject, prefix), "$")
-	if !isExactPublishRevisionSet(ref) {
+	if !isExactPublishRevisionSet(ref, maxPublishRevisions(workflow)) {
 		return document
 	}
 
@@ -57,9 +57,20 @@ func publishMatcherSurfaceDocument(identity resourceIdentity, document map[strin
 	return projected
 }
 
-// isExactPublishRevisionSet accepts one concrete SHA or one parenthesized pair;
-// regular expressions, floating refs, and additional alternatives stay exact.
-func isExactPublishRevisionSet(ref string) bool {
+// maxPublishRevisions is the largest approved set a workflow's consumers carry: the
+// applied signer and the default-branch pin, plus the latest released actions revision
+// for publish-app consumers (#3917).
+func maxPublishRevisions(workflow string) int {
+	if workflow == "publish-app" {
+		return 3
+	}
+	return 2
+}
+
+// isExactPublishRevisionSet accepts one concrete SHA or one parenthesized set of at most
+// limit concrete SHAs; regular expressions, floating refs, and additional alternatives
+// stay exact.
+func isExactPublishRevisionSet(ref string, limit int) bool {
 	if exactGitCommit.MatchString(ref) {
 		return true
 	}
@@ -67,7 +78,7 @@ func isExactPublishRevisionSet(ref string) bool {
 		return false
 	}
 	revisions := strings.Split(ref[1:len(ref)-1], "|")
-	if len(revisions) > 2 {
+	if len(revisions) > limit {
 		return false
 	}
 	for _, revision := range revisions {

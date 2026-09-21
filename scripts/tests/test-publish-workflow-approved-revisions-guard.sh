@@ -58,14 +58,6 @@ first_consumer="$(printf '%s\n' "$consumers" | sed -n 1p | cut -f1)"
 first_workflow="$(printf '%s\n' "$consumers" | sed -n 1p | cut -f2)"
 second_consumer='aws'
 second_workflow="$(printf '%s\n' "$consumers" | awk -F'\t' -v c="$second_consumer" '$1 == c {print $2}')"
-TRUSTED_RELEASE_STREAMS='ascoachingogvaner wedding-app'
-
-is_trusted_release_stream() {
-  case " $TRUSTED_RELEASE_STREAMS " in
-    *" $1 "*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
 
 # The artifact name is the repository name except for `.github`, which publishes as
 # `github-config` — the same table the report uses.
@@ -183,6 +175,15 @@ EOF
 # candidate_for <workflow> — the release_candidate_sha column: a commit for publish-app, `-` otherwise.
 candidate_for() { if [ "$1" = publish-app ]; then printf '%s' "$SHA_E"; else printf '-'; fi; }
 
+# set_for <repo> <workflow> — the consumer's canonical generated set, as write_set records it.
+set_for() {
+  if [ "$2" = publish-app ]; then
+    printf '(%s|%s|%s)' "$(signer_for "$1")" "$SHA_B" "$SHA_E"
+  else
+    printf '(%s|%s)' "$(signer_for "$1")" "$SHA_B"
+  fi
+}
+
 # write_set <path> [<omit-repo>] [<extra-row>] — the approved set for every registered consumer.
 write_set() {
   local path="$1" omit="${2:-}" extra="${3:-}" repo workflow
@@ -195,9 +196,9 @@ write_set() {
   [ -z "$extra" ] || printf '%s\n' "$extra" >>"$path"
 }
 
-# build_tree <name> <pattern|pair> — a complete fixture. `pair` means exact generated sets for
-# bounded consumers and the immutable commit pattern for trusted release streams. Generic
-# subjects always remain on the pattern form.
+# build_tree <name> <pattern|pair> — a complete fixture. `pair` means every consumer carries its
+# exact generated set: signer and pin, plus the release candidate for publish-app consumers.
+# Generic subjects always remain on the pattern form.
 build_tree() {
   local name="$1" form="$2" root repo workflow ref
   root="$WORK/$name"
@@ -207,13 +208,7 @@ build_tree() {
     [ -n "$repo" ] || continue
     case "$form" in
       pattern) ref="$PATTERN" ;;
-      pair)
-        if is_trusted_release_stream "$repo"; then
-          ref="$PATTERN"
-        else
-          ref="($(signer_for "$repo")|$SHA_B)"
-        fi
-        ;;
+      pair) ref="$(set_for "$repo" "$workflow")" ;;
       *) printf 'build_tree: unknown form %s\n' "$form" >&2; exit 1 ;;
     esac
     write_consumer "$root" "$repo" "$workflow" "$ref"
@@ -261,7 +256,7 @@ root="$(build_tree off-pattern pattern)"
 expect_pass 'switch off: every consumer on the pattern form passes' "$root" 0
 
 root="$(build_tree off-pair pair)"
-expect_pass 'switch off: bounded consumers use generated pairs and trusted streams use the pattern' "$root" 0
+expect_pass 'switch off: every consumer, application tenants included, uses its generated set' "$root" 0
 
 root="$(build_tree off-pair-reversed pair)"
 write_consumer "$root" "$first_consumer" "$first_workflow" "($SHA_B|$(signer_for "$first_consumer"))"
@@ -271,7 +266,7 @@ expect_pass 'switch off: the pair in the other order is the same set and passes'
 root="$(build_tree off-foreign pattern)"
 write_consumer "$root" "$first_consumer" "$first_workflow" "($(signer_for "$first_consumer")|$SHA_D)"
 expect_refusal 'switch off: an alternation carrying a revision outside the pair is refused by consumer and ref' \
-  "$root" 0 "$first_consumer" "$SHA_D" 'not the generated pair'
+  "$root" 0 "$first_consumer" "$SHA_D" 'not the generated set'
 
 root="$(build_tree off-single-foreign pattern)"
 write_consumer "$root" "$first_consumer" "$first_workflow" "$SHA_D"
@@ -281,7 +276,7 @@ expect_refusal 'switch off: a single concrete revision outside the pair is refus
 root="$(build_tree off-half pattern)"
 write_consumer "$root" "$first_consumer" "$first_workflow" "$(signer_for "$first_consumer")"
 expect_refusal 'switch off: one revision where the pair needs two is refused' \
-  "$root" 0 "$first_consumer" 'not the generated pair'
+  "$root" 0 "$first_consumer" 'not the generated set'
 
 root="$(build_tree off-three pair)"
 write_consumer "$root" "$first_consumer" "$first_workflow" "($(signer_for "$first_consumer")|$SHA_B|$SHA_D)"
@@ -294,12 +289,28 @@ write_consumer "$root" "$first_consumer" "$first_workflow" "($(signer_for "$seco
 expect_refusal "switch off: another consumer's pair on $first_consumer is refused" \
   "$root" 0 "$first_consumer" "$(signer_for "$second_consumer")"
 
-# A concrete pair is still cryptographically narrow, but on a trusted tenant release stream it
-# recreates the platform approval gate this boundary is designed to remove.
-root="$(build_tree release-stream-pinned pair)"
+# Application tenants are held to their generated set like every other consumer (#3917): the
+# release candidate belongs in it, the pattern form is refused under enforcement, and a revision
+# outside the set is refused for the tenant specifically.
+root="$(build_tree tenant-reordered pair)"
+write_consumer "$root" 'wedding-app' 'publish-app' "($SHA_E|$SHA_A|$SHA_B)"
+expect_pass 'a tenant set in another order is the same set and passes' "$root" 1
+root="$(build_tree tenant-no-candidate pair)"
 write_consumer "$root" 'wedding-app' 'publish-app' "($SHA_A|$SHA_B)"
-expect_refusal 'a trusted release stream pinned to a generated pair is refused' \
-  "$root" 1 'wedding-app' 'trusted release stream' "$PATTERN"
+expect_refusal 'a tenant set missing its release candidate is refused' \
+  "$root" 1 'wedding-app' 'not the generated set' "$SHA_E"
+root="$(build_tree tenant-foreign pair)"
+write_consumer "$root" 'ascoachingogvaner' 'publish-app' "($SHA_A|$SHA_B|$SHA_D)"
+expect_refusal 'a tenant revision outside its approved set is refused for that tenant' \
+  "$root" 1 'ascoachingogvaner' "$SHA_D" 'not the generated set'
+root="$(build_tree tenant-pattern pair)"
+write_consumer "$root" 'wedding-app' 'publish-app' "$PATTERN"
+expect_refusal 'switch on: a tenant on the pattern form is refused' \
+  "$root" 1 'wedding-app' 'pattern form'
+root="$(build_tree tenant-ungrouped pair)"
+write_consumer "$root" 'wedding-app' 'publish-app' "$SHA_A|$SHA_B|$SHA_E"
+expect_refusal 'an ungrouped alternation is refused: it would split the anchored subject regex' \
+  "$root" 0 'wedding-app' 'not the generated set'
 
 root="$(build_tree off-tag pair)"
 write_consumer "$root" "$first_consumer" "$first_workflow" 'refs/tags/v.+'
@@ -342,7 +353,7 @@ expect_pass 'signer == pin: the single revision in a group passes' "$root" 1
 root="$(build_tree same-doubled pair)"; same_set "$root"
 write_consumer "$root" "$first_consumer" "$first_workflow" "($SHA_B|$SHA_B)"
 expect_refusal 'signer == pin: a doubled alternation is not the canonical set and is refused' \
-  "$root" 0 "$first_consumer" 'not the generated pair'
+  "$root" 0 "$first_consumer" 'not the generated set'
 root="$(build_tree same-foreign pair)"; same_set "$root"
 write_consumer "$root" "$first_consumer" "$first_workflow" "($SHA_B|$SHA_D)"
 expect_refusal 'signer == pin: an alternation adding a foreign revision is refused' \
@@ -350,7 +361,7 @@ expect_refusal 'signer == pin: an alternation adding a foreign revision is refus
 
 # ── switch ON: the pattern form is refused for a per-consumer subject ────────────────────────
 root="$(build_tree on-pair pair)"
-expect_pass 'switch on: bounded pairs and trusted release streams pass together' "$root" 1
+expect_pass 'switch on: every consumer on its generated set passes' "$root" 1
 
 root="$(build_tree on-pattern pair)"
 write_consumer "$root" "$first_consumer" "$first_workflow" "$PATTERN"

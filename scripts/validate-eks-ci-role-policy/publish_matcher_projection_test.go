@@ -56,10 +56,20 @@ spec:
 			original := strings.ReplaceAll(manifest, "github-config", consumer.name)
 			original = strings.ReplaceAll(original, "publish-manifests", consumer.workflow)
 			baseline := entry(original)
-			for _, ref := range []string{a, "(" + a + ")", "(" + a + "|" + b + ")", "(" + b + "|" + c + ")"} {
+			refs := []string{a, "(" + a + ")", "(" + a + "|" + b + ")", "(" + b + "|" + c + ")"}
+			tooMany := "(" + a + "|" + b + "|" + c + ")"
+			if consumer.workflow == "publish-app" {
+				// An application tenant's set also carries the latest released revision (#3917).
+				refs = append(refs, "("+a+"|"+b+"|"+c+")")
+				tooMany = "(" + a + "|" + b + "|" + c + "|" + strings.Repeat("4", 40) + ")"
+			}
+			for _, ref := range refs {
 				if entry(strings.Replace(original, "[0-9a-f]{40}", ref, 1)) != baseline {
 					t.Errorf("exact signer subset %q moved the approval fingerprint", ref)
 				}
+			}
+			if entry(strings.Replace(original, "[0-9a-f]{40}", tooMany, 1)) == baseline {
+				t.Errorf("a set larger than %s consumers carry (%q) escaped the approval fingerprint", consumer.workflow, tooMany)
 			}
 		})
 	}
