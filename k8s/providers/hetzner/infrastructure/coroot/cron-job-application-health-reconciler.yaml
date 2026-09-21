@@ -358,7 +358,12 @@ spec:
                     error_count=$(printf '%s' "$error_response" | jq -r '(.data.entries // []) | length')
                     fatal_count=$(printf '%s' "$fatal_response" | jq -r '(.data.entries // []) | length')
                     if [ "$error_count" -ge "$LOG_MESSAGE_LIMIT" ] || [ "$fatal_count" -ge "$LOG_MESSAGE_LIMIT" ]; then
-                      log_error "refusing $policy: raw-message response may be truncated for $app"
+                      # Reaching the bounded response cap is an expected
+                      # fail-closed policy outcome, not a reconciler failure.
+                      # The target remains visible through the inherited
+                      # threshold below; keep the reconciler from creating a
+                      # secondary error signal for that deliberate decision.
+                      log_info "refusing $policy: raw-message response may be truncated for $app"
                       reconcile_threshold "$app" LogErrors 0 inherit "$policy-truncated-fail-visible"
                       return
                     fi

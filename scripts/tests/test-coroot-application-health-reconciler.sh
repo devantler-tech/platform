@@ -841,7 +841,12 @@ jq -s -e '
 pass 'excess CNPG retention conflicts still exceed the finite policy'
 
 truncated_dir="$(setup_scenario truncated known null 'context deadline exceeded' null known truncated)"
-run_scenario "${truncated_dir}" >/dev/null
+truncated_output="$(run_scenario "${truncated_dir}" 2>&1)"
+printf '%s\n' "${truncated_output}" | jq -s -e '
+  any(.[]; .level == "info" and (.msg | contains("raw-message response may be truncated"))) and
+  all(.[]; (.level == "error" and (.msg | contains("raw-message response may be truncated"))) | not)
+' >/dev/null ||
+  fail 'a fail-closed truncation outcome self-alerted as a reconciler error'
 jq -s -e '
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-controller-manager/inspection/LogErrors/config")) and .body.configs[2] == null)
 ' "${truncated_dir}/posts.ndjson" >/dev/null ||
