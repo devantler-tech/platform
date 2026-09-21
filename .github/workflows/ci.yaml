@@ -232,6 +232,14 @@ jobs:
           shellcheck scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
           bash scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
 
+      # The release watcher (#3960) dispatches that regeneration when devantler-tech/actions
+      # publishes a release the committed candidate does not yet name. Its test stubs `gh` and
+      # pins that every failed read is UNKNOWN and dispatches nothing.
+      - name: 🔐 Validate the actions release watcher
+        run: |
+          shellcheck scripts/watch-actions-release-candidate.sh scripts/tests/test-watch-actions-release-candidate.sh
+          bash scripts/tests/test-watch-actions-release-candidate.sh
+
       # The authorization gate's verdict and its moved-entry diagnostics are two
       # commands in one step, and a real aggregate mismatch fails BOTH — so a step
       # that stopped at the first never ran the diagnostics on the one failure they
@@ -571,6 +579,7 @@ jobs:
               - 'scripts/tests/test-coroot-application-health-reconciler.sh'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-maintenance-oom-alert.sh'
+              - 'scripts/tests/test-cronjob-failure-alert.sh'
               # That test also asserts the alerting runbook points at the alert's
               # manifest, so a runbook-only edit must still run it.
               - 'docs/dr/alerting.md'
@@ -582,6 +591,9 @@ jobs:
               # still runs the check that covers it.
               - 'scripts/dr-rebuild-supersession-guard.sh'
               - 'scripts/tests/test-dr-rebuild-supersession-guard.sh'
+              # Both halves, for the same reason as the guard above.
+              - 'scripts/cp-recreate-drill-preflight.sh'
+              - 'scripts/tests/test-cp-recreate-drill-preflight.sh'
               # Both halves, for the same reason as the guard above.
               - 'scripts/verify-published-evidence.sh'
               - 'scripts/tests/test-verify-published-evidence.sh'
@@ -614,6 +626,10 @@ jobs:
               # a continue-on-error) still runs the ablated test that refuses each of those.
               - '.github/workflows/regenerate-publish-workflow-approved-revisions.yaml'
               - 'scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh'
+              # The release watcher that dispatches it, and its test — both halves.
+              - '.github/workflows/watch-actions-release.yaml'
+              - 'scripts/watch-actions-release-candidate.sh'
+              - 'scripts/tests/test-watch-actions-release-candidate.sh'
               # The generated set itself. The contract test reads it to derive which
               # consumer repositories the workflow's App token must be scoped to, so a
               # PR that only adds a consumer here — the exact change that would leave
@@ -975,7 +991,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.184.6"
+          KSAIL_VERSION: "7.184.8"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1604,6 +1620,16 @@ jobs:
         # manifest's real script so BackupRepository readiness cannot mask it.
         run: bash scripts/tests/test-velero-maintenance-oom-alert.sh
 
+      - name: 🔁 Validate the reconcile-CronJob failure alert
+        if: needs.changes.outputs.k8s == 'true'
+        # A self-healing CronJob that fails on every tick was visible only as
+        # retained Failed Jobs (#2915). Replays consecutive failures, a single
+        # absorbed failure, a stalled loop and every API failure against the
+        # manifest's real script, under bash and POSIX sh.
+        run: |
+          shellcheck scripts/tests/test-cronjob-failure-alert.sh
+          bash scripts/tests/test-cronjob-failure-alert.sh
+
       - name: 💾 Validate Velero data-mover resources
         if: needs.changes.outputs.k8s == 'true'
         # Pin the short-lived Kopia mover's authored memory ceiling and bind
@@ -1629,6 +1655,16 @@ jobs:
         # and this pins both its decision and the wiring that reaches it — a
         # guard the destructive job does not depend on protects nothing.
         run: bash scripts/tests/test-dr-rebuild-supersession-guard.sh
+
+      - name: 🧯 Validate the control-plane recreate drill preflight
+        if: needs.changes.outputs.k8s == 'true'
+        # The drill deletes a production control-plane node. This pins the
+        # read-only decision that must say ready before it starts: each guard
+        # (target, quorum, backup) refuses on its own fixture, and bad input is
+        # never read as ready.
+        run: |
+          shellcheck scripts/cp-recreate-drill-preflight.sh scripts/tests/test-cp-recreate-drill-preflight.sh
+          bash scripts/tests/test-cp-recreate-drill-preflight.sh
 
       - name: 🔍 Validate the published-evidence gate
         if: needs.changes.outputs.k8s == 'true'
@@ -1876,7 +1912,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.184.6"
+          KSAIL_VERSION: "7.184.8"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2606,7 +2642,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.184.6"
+          KSAIL_VERSION: "7.184.8"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

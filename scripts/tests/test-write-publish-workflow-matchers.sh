@@ -86,26 +86,30 @@ guard >"$WORK/guard.log" 2>&1 || { cat "$WORK/guard.log" >&2; fail 'rewritten tr
 [ "$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "$TREE/k8s/bases/apps/github-config/oci-repository.yaml")" = \
   '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@(1111111111111111111111111111111111111111|2222222222222222222222222222222222222222)$' ] || fail 'github-config did not receive its own exact pair'
 [ "$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "$TREE/k8s/bases/apps/ascoachingogvaner/oci-repository.yaml")" = \
-  '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$' ] || fail 'ascoachingogvaner release stream was pinned to a workflow revision set'
+  '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@(3333333333333333333333333333333333333333|2222222222222222222222222222222222222222)$' ] || fail 'ascoachingogvaner did not receive its set with the candidate deduplicated against its signer'
 [ "$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "$TREE/k8s/bases/apps/aws/oci-repository.yaml")" = \
   '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@1111111111111111111111111111111111111111$' ] || fail 'equal revisions were not deduplicated'
 [ "$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "$TREE/k8s/bases/apps/wedding-app/oci-repository.yaml")" = \
-  '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$' ] || fail 'wedding-app release stream was pinned to a workflow revision set'
+  '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@(1111111111111111111111111111111111111111|2222222222222222222222222222222222222222|3333333333333333333333333333333333333333)$' ] || fail 'wedding-app did not receive its signer, pin and release candidate'
 [ "$(yq -r '.spec.interval' "$TREE/k8s/bases/apps/aws/oci-repository.yaml")" = 5m ] || fail 'unrelated YAML changed'
 grep -Fq '# Preserve this consumer comment.' "$TREE/k8s/bases/apps/aws/oci-repository.yaml" || fail 'consumer comment was lost'
 for file in "${GENERIC_FILES[@]}"; do cmp -s "$ROOT/$file" "$TREE/$file" || fail "generic subject $file changed"; done
 printf 'ok: exact consumer pairs, deduplication, unrelated fields and generic subjects\n'
 
-# Trusted application release streams advance without a platform-side signer repin. A
-# concrete revision pair on either stream reintroduces that approval gate and must fail
-# enforcement even though it still verifies the currently deployed artifact.
-SUBJECT="^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@($A|$B)\$" \
-  yq -i '.spec.verify.matchOIDCIdentity[0].subject = strenv(SUBJECT)' "$TREE/k8s/bases/apps/wedding-app/oci-repository.yaml"
-if guard >"$WORK/guard.log" 2>&1; then fail 'a trusted release stream pinned to a revision pair passed enforcement'; fi
-grep -Fq 'trusted release stream' "$WORK/guard.log" || fail 'release-stream refusal did not name the boundary'
-write_matchers >"$WORK/writer.log" 2>&1 || fail 'writer did not restore the trusted release-stream boundary'
-guard >"$WORK/guard.log" 2>&1 || fail 'restored release-stream boundary did not pass enforcement'
-printf 'ok: trusted release streams refuse per-revision approval gates\n'
+# An application tenant is held to its approved set like every other consumer (#3917). Each of
+# these tenant matchers still verifies the currently deployed artifact, yet each is refused: a set
+# that drops the release candidate, one that adds a revision nobody approved, and an ungrouped
+# alternation, which splits the anchored subject regex. The recognisable shape goes last: the
+# writer refuses to rewrite an existing ref it cannot recognise, so it can only restore from that.
+for bad_ref in "$A|$B|$C" "($A|$B|$C|$D)" "($A|$B)"; do
+  SUBJECT="^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@$bad_ref\$" \
+    yq -i '.spec.verify.matchOIDCIdentity[0].subject = strenv(SUBJECT)' "$TREE/k8s/bases/apps/wedding-app/oci-repository.yaml"
+  if guard >"$WORK/guard.log" 2>&1; then fail "a tenant matcher @$bad_ref passed enforcement"; fi
+  grep -Fq 'not the generated set' "$WORK/guard.log" || fail "tenant refusal for @$bad_ref had the wrong cause"
+done
+write_matchers >"$WORK/writer.log" 2>&1 || fail 'writer did not restore the tenant set'
+guard >"$WORK/guard.log" 2>&1 || fail 'restored tenant set did not pass enforcement'
+printf 'ok: an application tenant refuses out-of-set, incomplete and ungrouped revision lists\n'
 
 before="$(snapshot)"
 write_matchers >"$WORK/writer.log" 2>&1
@@ -116,14 +120,12 @@ printf 'ok: unchanged input is a byte-identical no-op\n'
 awk -F '\t' -v OFS='\t' -v pin="$D" 'NR > 1 {$6=pin} {print}' "$SET" >"$WORK/moved.tsv"
 mv "$WORK/moved.tsv" "$SET"
 if guard >"$WORK/guard.log" 2>&1; then fail 'old matcher unexpectedly accepts a moved set'; fi
-grep -Fq 'not the generated pair' "$WORK/guard.log" || fail 'moved-set refusal had the wrong cause'
-ascoaching_before="$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "$TREE/k8s/bases/apps/ascoachingogvaner/oci-repository.yaml")"
-wedding_before="$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "$TREE/k8s/bases/apps/wedding-app/oci-repository.yaml")"
+grep -Fq 'not the generated set' "$WORK/guard.log" || fail 'moved-set refusal had the wrong cause'
 write_matchers >"$WORK/writer.log" 2>&1
 guard >"$WORK/guard.log" 2>&1 || fail 'pin bump did not converge to a guard-clean tree'
-[ "$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "$TREE/k8s/bases/apps/ascoachingogvaner/oci-repository.yaml")" = "$ascoaching_before" ] || fail 'a pin bump rewrote the ascoachingogvaner release stream'
-[ "$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "$TREE/k8s/bases/apps/wedding-app/oci-repository.yaml")" = "$wedding_before" ] || fail 'a pin bump rewrote the wedding-app release stream'
-printf 'ok: a pin bump rewrites bounded consumers and leaves trusted release streams unchanged\n'
+[ "$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "$TREE/k8s/bases/apps/wedding-app/oci-repository.yaml")" = \
+  '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@(1111111111111111111111111111111111111111|4444444444444444444444444444444444444444|3333333333333333333333333333333333333333)$' ] || fail 'a pin bump did not move the wedding-app set to the new pin'
+printf 'ok: a pin bump rewrites every consumer, application tenants included\n'
 
 fixture
 sed '$d' "$SET" >"$WORK/incomplete.tsv"

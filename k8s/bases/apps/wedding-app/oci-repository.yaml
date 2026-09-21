@@ -16,9 +16,9 @@ spec:
   verify:
     provider: cosign
     matchOIDCIdentity:
-      # Matches the issuer and the shared publish-app.yaml workflow path at a 40-hex
-      # commit: the commit shape, not a reviewed revision. Package write access,
-      # namespace, RBAC, network and admission policy bound the release; the remaining
-      # risk is accepted in devantler-tech/platform#3746.
+      # The subject is written from scripts/publish-workflow-approved-revisions.tsv by
+      # scripts/write-publish-workflow-matchers.sh. It accepts only the approved
+      # publish-app.yaml revisions: the deployed artifact signer, this consumer's
+      # current pin, and the latest actions release candidate.
       - issuer: '^https://token\.actions\.githubusercontent\.com$'
-        subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
+        subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@(759ff9b2526cd1b142b49c5dc1616118a1ef44d9|3c3a6348b3e7aacc995ae49fc60032f95f70a779|6f47d8ca360fa3058f57175d54fa148deac08983)$'

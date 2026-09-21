@@ -70,6 +70,8 @@ resources:
 components:
   # Enable only with BOTH the Coroot and Velero controller bases above:
   # - ../../../../bases/components/coroot-velero-maintenance-oom-alert
+  # Enable only with the Coroot controller base and the Umami namespace:
+  # - ../../../../bases/components/coroot-cronjob-failure-alert
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
   # bases/components/helmrelease-drift-detection.
   - ../../../../bases/components/helmrelease-drift-detection

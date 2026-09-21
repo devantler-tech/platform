@@ -21,6 +21,8 @@
 #   * observability/cnpg-degraded-alert           — alerts on a CNPG cluster degraded past its
 #                                                   grace period (platform)
 #   * observability/coroot-alert-autosuppressor   — re-asserts by-design Coroot alert suppressions (platform)
+#   * observability/cronjob-failure-alert         — alerts on a reconcile CronJob failing on consecutive runs
+#                                                   or no longer finishing (platform)
 #   * observability/coroot-custom-cloud-pricing   — applies Hetzner per-unit pricing to Coroot (platform)
 #   * observability/stranded-volume-attach-alert  — alerts on a pod whose volume has been stuck
 #                                                   attaching for longer than an attach takes (platform)
@@ -49,7 +51,7 @@ spec:
     by Flux after PR review (the review is the approval): Cilium Hubble cert
     rotation, the Kubescape scan schedulers / stale host-data cleanup, Longhorn
     stale-node cleanup, the observability heartbeat / CNPG degraded-cluster alert / stranded-volume-attach
-    alert / Coroot alert-autosuppressor / Coroot cloud-pricing jobs, the OpenBao
+    alert / reconcile-CronJob failure alert / Coroot alert-autosuppressor / Coroot cloud-pricing jobs, the OpenBao
     raft-snapshot backup, and Umami tenant provisioning.
     Namespace-scoped to the infrastructure namespaces that run these, so a CronJob
     in any unexpected namespace still surfaces for review.

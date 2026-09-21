@@ -3061,7 +3061,39 @@ const (
 // This Longhorn engine-upgrade setting establishes aggregate:
 //
 //	cc7a1435ad0cad112bbe70e89dd06c6441007e6ec8e5df2c704bfa641df054e3
-const expectedRenderedSurfaceSHA = "cc7a1435ad0cad112bbe70e89dd06c6441007e6ec8e5df2c704bfa641df054e3"
+//
+// Moved again by the reconcile-CronJob failure alert (#2915, #4011), derived on
+// the merge of exact main 591b807fa875f7c46edb3d9ec25892f3dedb2f0b, whose approved
+// aggregate is cc7a1435 above. A default-off CronJob in the observability
+// namespace alerts when umami/umami-provision-tenants fails on consecutive runs or
+// stops finishing, so it needs to read that one CronJob and its Jobs.
+//
+// GRANTS ADDED, all to the new observability/cronjob-failure-alert ServiceAccount
+// and nothing else:
+//   - Role umami/cronjob-failure-alert: get on cronjobs.batch by resourceName
+//     umami-provision-tenants, and list on jobs.batch in umami. No write verb, no
+//     pods, no logs, no secrets, no wildcard, no cluster-scoped grant.
+//   - RoleBinding umami/cronjob-failure-alert: binds that Role to the single
+//     observability/cronjob-failure-alert subject.
+//
+// CONSERVATION: rendering k8s/providers/hetzner/infrastructure/controllers on
+// this branch and on main 591b807f differs only by five added documents (217 -> 222:
+// the ServiceAccount, Secret, Role, RoleBinding and CronJob above), compared as
+// apiVersion|kind|namespace|name sets in both directions; nothing is removed, and
+// every shared document renders byte-identically. No existing identity, binding,
+// verb, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below is the one CI's required job reported for
+// PR #4012 at 2ba41b00 (rendered on the merge with main, which already carried
+// #3967), and this host's kubectl v1.36.1 (Kustomize v5.8.1) reproduced it on the
+// merged tree; the checksum-verified kubectl v1.36.2 CI renderer is the authority.
+//
+// Previous aggregate: cc7a1435ad0cad112bbe70e89dd06c6441007e6ec8e5df2c704bfa641df054e3.
+//
+// This reconcile-CronJob failure alert establishes aggregate:
+//
+//	8349813fc88630dda72bcc2787eb502ffb90b18c037feb1344a89f2eecbd9f6b
+const expectedRenderedSurfaceSHA = "8349813fc88630dda72bcc2787eb502ffb90b18c037feb1344a89f2eecbd9f6b"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3074,7 +3106,7 @@ const expectedRenderedSurfaceSHA = "cc7a1435ad0cad112bbe70e89dd06c6441007e6ec8e5
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "72466907ce426bce8558ea6a6ada72c4b7031b3e28d0dab42ac4b71a3ffca48f"
+const previousRenderedSurfaceSHA = "cc7a1435ad0cad112bbe70e89dd06c6441007e6ec8e5df2c704bfa641df054e3"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

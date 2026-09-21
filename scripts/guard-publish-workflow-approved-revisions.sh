@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # guard-publish-workflow-approved-revisions.sh — assert that each per-consumer cosign matcher
-# for the shared devantler-tech/actions publish workflows stays inside its declared trust
-# boundary: trusted tenant release streams accept any immutable shared-workflow commit, while
-# infrastructure/configuration consumers pin exactly the generated revision pair.
+# for the shared devantler-tech/actions publish workflows names exactly its generated approved
+# revision set.
 #
 # WHY A SECOND GUARD
 # guard-shared-publish-workflow-pin.sh proves every matcher pins a FIXED revision — the pattern
@@ -10,15 +9,13 @@
 # says nothing about set MEMBERSHIP: a matcher narrowed to a revision nobody approved, or a
 # regeneration that moved the set while a matcher stayed behind, passes it. This guard reads
 # scripts/publish-workflow-approved-revisions.tsv (written by
-# generate-publish-workflow-approved-revisions.sh, #3550). Bounded consumers must name their
-# generated pair and nothing else. Trusted release streams must name the immutable commit
-# pattern and nothing broader, which preserves the issuer/workflow boundary without a release
-# approval gate.
+# generate-publish-workflow-approved-revisions.sh, #3550). Every consumer, application tenants
+# included, must name its approved set and nothing else: the applied signer, the default-branch
+# pin and, for publish-app consumers, the latest released actions revision (#3917).
 #
 # ENFORCEMENT
 # CI and scheduled regeneration set APPROVED_REVISIONS_ENFORCE=1, which refuses the pattern
-# form for bounded infrastructure/configuration consumers. Trusted release streams require
-# that form in every mode so tenant releases never create a platform-side repin.
+# form for every consumer.
 #
 # SCOPE — GENERIC SUBJECTS ARE EXCLUDED BY NAME
 # Three subjects name the shared workflows without belonging to one consumer: the Kyverno
@@ -36,7 +33,7 @@
 # SEAMS (tests substitute these; production leaves them unset)
 #   APPROVED_REVISIONS_FILE      the generated set (default scripts/publish-workflow-approved-revisions.tsv)
 #   PUBLISH_CONSUMER_ROOT        scan root for consumer manifests (default: the repository root)
-#   APPROVED_REVISIONS_ENFORCE   `1` refuses pattern form on bounded consumers (default: off)
+#   APPROVED_REVISIONS_ENFORCE   `1` refuses the pattern form (default: off)
 set -euo pipefail
 
 GUARD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,21 +45,10 @@ for consumer in "${EXPECTED_CONSUMERS[@]}"; do
   record="$(lookup "$observed" "$consumer")"
   [ -n "$record" ] || refuse "no OCIRepository under $SCAN_ROOT is attributed to registered consumer $consumer; the scan, not the tree, is the likely cause"
   IFS=$'\t' read -r file workflow ref <<<"$record"
-  IFS=$'\t' read -r set_workflow signer pin <<<"$(lookup "$approved" "$consumer")"
+  IFS=$'\t' read -r set_workflow signer pin candidate <<<"$(lookup "$approved" "$consumer")"
   [ "$workflow" = "$set_workflow" ] || refuse "$consumer: $file names $workflow but the approved set names $set_workflow"
 
-  if is_trusted_release_stream_consumer "$consumer"; then
-    [ "$ref" = "$PATTERN_REF" ] ||
-      refuse "$consumer: trusted release stream $file pins '@$ref'; use the immutable shared-workflow pattern '@$PATTERN_REF' so tenant releases do not require platform approval"
-    printf 'ok %s %s %s form=trusted-release-stream\n' "$consumer" "$workflow" "$file"
-    continue
-  fi
-
-  if [ "$signer" = "$pin" ]; then
-    accepted="$signer or ($signer)"
-  else
-    accepted="($signer|$pin) or ($pin|$signer)"
-  fi
+  accepted="$(approved_ref "$signer" "$pin" "$candidate") (in any order)"
 
   form=""
   if [ "$ref" = "$PATTERN_REF" ]; then
@@ -70,12 +56,10 @@ for consumer in "${EXPECTED_CONSUMERS[@]}"; do
       refuse "$consumer: $file still carries the pattern form '@$PATTERN_REF' while APPROVED_REVISIONS_ENFORCE=1; narrow it to @$accepted"
     fi
     form="pattern (accepted while the switch is off)"
-  elif [ "$signer" = "$pin" ] && { [ "$ref" = "$signer" ] || [ "$ref" = "($signer)" ]; }; then
-    form="set"
-  elif [ "$signer" != "$pin" ] && { [ "$ref" = "($signer|$pin)" ] || [ "$ref" = "($pin|$signer)" ]; }; then
+  elif ref_matches_approved "$ref" "$signer" "$pin" "$candidate"; then
     form="set"
   else
-    refuse "$consumer: $file pins '@$ref', which is not the generated pair — expected @$accepted (or the pattern form while the switch is off)"
+    refuse "$consumer: $file pins '@$ref', which is not the generated set — expected @$accepted (or the pattern form while the switch is off); run scripts/write-publish-workflow-matchers.sh"
   fi
   printf 'ok %s %s %s form=%s\n' "$consumer" "$workflow" "$file" "$form"
 done
