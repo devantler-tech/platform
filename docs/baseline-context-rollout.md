@@ -69,6 +69,14 @@ desired state can cause repeated writes. Storage managers, CSI components and
 operator-generated workloads are outside the UI canary's ephemeral-volume scope.
 Permission to deploy does not prove those compatibility conditions.
 
+For the Coroot operator's workloads, a narrower `baseline-context-coroot` namespace
+label scopes the same controller rules to Deployments, StatefulSets and DaemonSets
+labelled `app.kubernetes.io/managed-by: coroot-operator`, leaving the namespace's
+Helm and Git workloads alone. No namespace carries it. Activation requires the
+same before-publish and after-reconcile sequence as the UI canary, with a guard
+that reads the six stored templates and fails on an operator that keeps
+rewriting them.
+
 The remaining rollout and its acceptance measurements are tracked in
 [issue #3239](https://github.com/devantler-tech/platform/issues/3239). C-0211 sizing
 depends on a complete measurement of stored controllers and every regular/init

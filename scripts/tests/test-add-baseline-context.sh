@@ -248,6 +248,34 @@ check podlabel-only-deploy-mutated.yaml '.spec.template.spec.securityContext.fsG
 check podlabel-only-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
   null "pod-rule label alone injected seLinuxOptions into a controller"
 
+# COROOT SCOPE (#3990). Behind their own `baseline-context-coroot` namespace label,
+# the controller rules reach only objects the Coroot operator generated. ON state:
+# an operator-generated Deployment and DaemonSet receive both fields, and the
+# DaemonSet keeps its privilege.
+check coroot-owned-deploy-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "Coroot-generated Deployment did not receive fsGroupChangePolicy"
+check coroot-owned-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
+  '{}' "Coroot-generated Deployment container did not retain an empty seLinuxOptions object"
+check coroot-owned-deploy-mutated.yaml '.spec.template.spec.initContainers[0].securityContext.seLinuxOptions' \
+  '{}' "Coroot-generated Deployment initContainer did not retain an empty seLinuxOptions object"
+check coroot-owned-ds-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  OnRootMismatch "Coroot-generated DaemonSet did not receive fsGroupChangePolicy"
+check coroot-owned-ds-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
+  '{}' "Coroot-generated DaemonSet container did not retain an empty seLinuxOptions object"
+check coroot-owned-ds-mutated.yaml '.spec.template.spec.containers[0].securityContext.privileged' \
+  true "Coroot scope changed a privilege field it must not touch"
+
+# OFF state — the scope is the conjunction of both labels. A non-operator workload
+# in the scoped namespace, and an operator workload in an unscoped one, are untouched.
+check coroot-other-deploy-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  null "Coroot scope reached a workload the operator did not generate"
+check coroot-other-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
+  null "Coroot scope injected seLinuxOptions into a workload the operator did not generate"
+check coroot-unscoped-deploy-mutated.yaml '.spec.template.spec.securityContext.fsGroupChangePolicy' \
+  null "Coroot-generated Deployment was mutated without the namespace scope label"
+check coroot-unscoped-deploy-mutated.yaml '.spec.template.spec.containers[0].securityContext.seLinuxOptions' \
+  null "Coroot-generated Deployment had seLinuxOptions injected without the namespace scope label"
+
 # An explicitly empty container object is a complete override. Preserve it while
 # leaving siblings that inherit the pod options untouched.
 check empty-override-mutated.yaml '.spec.containers[0].securityContext.seLinuxOptions' \
@@ -369,6 +397,28 @@ actual_controllers_optin="$(
 if [ "${actual_controllers_optin}" != "${expected_controllers_optin}" ]; then
   echo "::error::baseline-context-controllers opt-in inventory changed: expected '${expected_controllers_optin}', got '${actual_controllers_optin}'"
   echo "::error::a namespace joins the controller rollout only together with its measured post-rollout read-back"
+  fail=1
+fi
+
+# The Coroot scope label is pinned the same way (#3990). Activating it rolls the
+# six operator-generated workloads, so a namespace joins only together with the
+# before-publish and after-reconcile convergence guard for their owner.
+expected_coroot_optin=""
+
+actual_coroot_optin="$(
+  { grep -rl 'pod-security.devantler.tech/baseline-context-coroot' --include='*.yaml' "${repo_root}/k8s" 2>/dev/null || true; } |
+    while IFS= read -r f; do
+      yq -N '
+        select(.kind == "Namespace" and
+               .metadata.labels."pod-security.devantler.tech/baseline-context-coroot" == "enabled") |
+        .metadata.name
+      ' "${f}" 2>/dev/null
+    done | awk 'NF' | LC_ALL=C sort -u | paste -sd, -
+)"
+
+if [ "${actual_coroot_optin}" != "${expected_coroot_optin}" ]; then
+  echo "::error::baseline-context-coroot opt-in inventory changed: expected '${expected_coroot_optin}', got '${actual_coroot_optin}'"
+  echo "::error::a namespace joins the Coroot-scoped rollout only together with its convergence guard"
   fail=1
 fi
 
