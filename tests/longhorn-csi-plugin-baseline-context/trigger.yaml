@@ -1,0 +1,22 @@
+# The rule's trigger. The policy has exactly one target, and Kyverno's CLI fake
+# client rejects the same object appearing as both a trigger and a target, so
+# the regression test evaluates a copy of the policy whose match NAME alone is
+# rewritten to this object. The target list and every patch are evaluated
+# exactly as shipped.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: retrofit-trigger
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: retrofit-trigger
+  template:
+    metadata:
+      labels:
+        app: retrofit-trigger
+    spec:
+      containers:
+        - name: retrofit-trigger
+          image: retrofit-trigger:v1

@@ -1,0 +1,170 @@
+# Prod-only retrofit: supplies the two non-privilege C-0211 fields —
+# fsGroupChangePolicy and container-level seLinuxOptions — to the existing
+# longhorn-csi-plugin DaemonSet (#3918).
+#
+# Why a separate policy at all. The opt-in controller rules in
+# bases/.../add-security-context.yaml match CREATE and UPDATE, so they reach a
+# stored controller spec only when some writer issues a write. Nothing writes
+# this DaemonSet's template: longhorn-manager created it on 2026-08-21, before
+# the longhorn-system opt-in landed on 2026-09-06, and has not written it
+# since. Measured against live prod 2026-09-21, its template carries an empty
+# pod securityContext and no container seLinuxOptions. mutate-existing is the
+# only mechanism that reaches it, and the stored spec is the surface
+# Kubescape scores.
+#
+# Why it is safe. Both fields are inert on this cluster and neither is a
+# privilege field. The full reasoning is in add-security-context.yaml's header
+# and is not repeated here. The patch adds fields and never removes one: the
+# privileged node-driver-registrar and longhorn-csi-plugin containers keep
+# their securityContext exactly, and the liveness-probe container, which has
+# none, gains one carrying only an empty seLinuxOptions. The patch changes the
+# pod-template hash, so the DaemonSet rolls once under its own RollingUpdate
+# strategy (maxUnavailable 1, one node at a time). Restarting the node CSI
+# plugin does not detach volumes: the engines and replicas run in the
+# instance-manager pods, which this policy does not touch, and existing mounts
+# persist across a plugin restart. #3918 names this DaemonSet among the
+# classes that "roll normally". The engine-image DaemonSets and the
+# InstanceManager pods stay on #3918's sequenced work.
+#
+# Why one rule. Two mutate-existing rules targeting the same resourceVersion
+# can race (the sidecar retrofit measured object-modified PolicyErrors), so
+# both fields are JSON Patch foreach entries in one rule, and Kyverno submits
+# one serialized update. remove-existing-longhorn-registrar-prestop.yaml also
+# targets this DaemonSet. It no-ops today because the registrar carries no
+# pre-stop hook, and even when both fire the retry converges, because each
+# patch is guarded by a precondition that turns false once applied.
+#
+# Why the container half is JSON Patch rather than strategic merge. C-0211 is
+# satisfied by an EMPTY seLinuxOptions mapping, and strategic merge drops an
+# empty mapping (measured with kyverno 1.19.1 in
+# add-existing-csi-sidecar-baseline-context.yaml). JSON Patch preserves it.
+#
+# Why the target is named statically. Kyverno checks the background
+# controller's write permission on the target when the policy is admitted, so
+# a static name lets the existing resourceNames-pinned grant
+# kyverno:background-controller:mutate-longhorn-csi-plugin satisfy it. No new
+# RBAC is needed.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: add-existing-longhorn-csi-plugin-baseline-context
+  annotations:
+    policies.kyverno.io/title: Add Baseline Context To Existing Longhorn CSI Plugin (Retrofit)
+    policies.kyverno.io/category: Security
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: DaemonSet
+    policies.kyverno.io/description: >-
+      Retro-applies fsGroupChangePolicy and container-level seLinuxOptions to
+      the longhorn-csi-plugin DaemonSet that predates the longhorn-system
+      baseline-context opt-in. Supplies no privilege, user or group field.
+spec:
+  failurePolicy: Ignore
+  mutateExistingOnPolicyUpdate: true
+  rules:
+    # Default only a missing container object when no pod object is inherited —
+    # Kubernetes replaces the whole pod-level struct with a container override,
+    # even an empty one, so a pod-level seLinuxOptions must never be shadowed.
+    # The first entry of each pair creates an absent container securityContext;
+    # the second adds the leaf to one that already exists, so neither ever
+    # replaces a securityContext that carries other fields.
+    - name: add-existing-longhorn-csi-plugin-baseline-context
+      match:
+        any:
+          - resources:
+              kinds:
+                - apps/v1/DaemonSet
+              names:
+                - longhorn-csi-plugin
+              namespaces:
+                - longhorn-system
+      mutate:
+        targets:
+          - apiVersion: apps/v1
+            kind: DaemonSet
+            name: longhorn-csi-plugin
+            namespace: longhorn-system
+        foreach:
+          # A one-element multi-select list lets the pod-level patches share
+          # this rule with the per-container loops. Create the parent object
+          # only when absent; otherwise add only the missing leaf.
+          - list: "[target]"
+            preconditions:
+              all:
+                - key: "{{ to_string(contains(keys(target.spec.template.spec || `{}`), 'securityContext')) }}"
+                  operator: Equals
+                  value: "false"
+            patchesJson6902: |-
+              - op: add
+                path: /spec/template/spec/securityContext
+                value: {"fsGroupChangePolicy": "OnRootMismatch"}
+          - list: "[target]"
+            preconditions:
+              all:
+                - key: "{{ to_string(contains(keys(target.spec.template.spec || `{}`), 'securityContext')) }}"
+                  operator: Equals
+                  value: "true"
+                - key: "{{ to_string(contains(keys(target.spec.template.spec.securityContext || `{}`), 'fsGroupChangePolicy')) }}"
+                  operator: Equals
+                  value: "false"
+            patchesJson6902: |-
+              - op: add
+                path: /spec/template/spec/securityContext/fsGroupChangePolicy
+                value: OnRootMismatch
+          - list: "target.spec.template.spec.containers"
+            preconditions:
+              all:
+                - key: "{{ to_string(contains(keys(target.spec.template.spec.securityContext || `{}`), 'seLinuxOptions')) }}"
+                  operator: Equals
+                  value: "false"
+                - key: "{{ to_string(contains(keys(element || `{}`), 'securityContext')) }}"
+                  operator: Equals
+                  value: "false"
+            patchesJson6902: |-
+              - op: add
+                path: /spec/template/spec/containers/{{elementIndex}}/securityContext
+                value: {"seLinuxOptions": {}}
+          - list: "target.spec.template.spec.containers"
+            preconditions:
+              all:
+                - key: "{{ to_string(contains(keys(target.spec.template.spec.securityContext || `{}`), 'seLinuxOptions')) }}"
+                  operator: Equals
+                  value: "false"
+                - key: "{{ to_string(contains(keys(element || `{}`), 'securityContext')) }}"
+                  operator: Equals
+                  value: "true"
+                - key: "{{ to_string(contains(keys(element.securityContext || `{}`), 'seLinuxOptions')) }}"
+                  operator: Equals
+                  value: "false"
+            patchesJson6902: |-
+              - op: add
+                path: /spec/template/spec/containers/{{elementIndex}}/securityContext/seLinuxOptions
+                value: {}
+          - list: "target.spec.template.spec.initContainers[]"
+            preconditions:
+              all:
+                - key: "{{ to_string(contains(keys(target.spec.template.spec.securityContext || `{}`), 'seLinuxOptions')) }}"
+                  operator: Equals
+                  value: "false"
+                - key: "{{ to_string(contains(keys(element || `{}`), 'securityContext')) }}"
+                  operator: Equals
+                  value: "false"
+            patchesJson6902: |-
+              - op: add
+                path: /spec/template/spec/initContainers/{{elementIndex}}/securityContext
+                value: {"seLinuxOptions": {}}
+          - list: "target.spec.template.spec.initContainers[]"
+            preconditions:
+              all:
+                - key: "{{ to_string(contains(keys(target.spec.template.spec.securityContext || `{}`), 'seLinuxOptions')) }}"
+                  operator: Equals
+                  value: "false"
+                - key: "{{ to_string(contains(keys(element || `{}`), 'securityContext')) }}"
+                  operator: Equals
+                  value: "true"
+                - key: "{{ to_string(contains(keys(element.securityContext || `{}`), 'seLinuxOptions')) }}"
+                  operator: Equals
+                  value: "false"
+            patchesJson6902: |-
+              - op: add
+                path: /spec/template/spec/initContainers/{{elementIndex}}/securityContext/seLinuxOptions
+                value: {}
