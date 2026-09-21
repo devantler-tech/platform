@@ -1,0 +1,79 @@
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hcloud-claim
+  namespace: observability
+spec:
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: data
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: has-own-class
+  namespace: observability
+spec:
+  priorityClassName: platform-critical
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: data
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-volumes
+  namespace: observability
+spec:
+
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-hcloud
+  namespace: observability
+spec:
+  volumes:
+    - name: scratch
+      ephemeral:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: hcloud
+            accessModes: [ReadWriteOnce]
+            resources:
+              requests:
+                storage: 10Gi
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-default-class
+  namespace: observability
+spec:
+  volumes:
+    - name: scratch
+      ephemeral:
+        volumeClaimTemplate:
+          spec:
+            accessModes: [ReadWriteOnce]
+            resources:
+              requests:
+                storage: 10Gi
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
