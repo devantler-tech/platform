@@ -179,6 +179,15 @@ runs:
       shell: bash
       run: bash scripts/guard-longhorn-ui-baseline-context.sh before-publish
 
+    - name: 🧪 Check the Coroot baseline context
+      id: coroot_baseline
+      # Arms only while the observability namespace declares the
+      # baseline-context-coroot label; a reverted label disarms without
+      # reading the cluster. While armed, every deploy re-proves the six
+      # operator-generated templates, since an operator upgrade can start a loop.
+      shell: bash
+      run: bash scripts/guard-coroot-baseline-context.sh before-publish
+
     - name: 💾 Validate live persistence retirement safety
       # A commit parent is not evidence that its protection reached production:
       # two direct pushes can be waiting behind one manual dispatch. Compare the
@@ -337,6 +346,13 @@ runs:
       # existing unsuccessful-deploy heal restores main through this action.
       shell: bash
       run: bash scripts/guard-longhorn-ui-baseline-context.sh after-reconcile
+
+    - name: 🧪 Verify the Coroot baseline context
+      if: steps.coroot_baseline.outputs.rollout_required == 'true'
+      # Fails the deployment when a template lacks either field, is not ready,
+      # or is rewritten repeatedly by the operator during observation.
+      shell: bash
+      run: bash scripts/guard-coroot-baseline-context.sh after-reconcile
 
     - name: 🧾 Record the successful Longhorn UI canary proof
       if: steps.longhorn_ui_baseline.outputs.rollout_required == 'true'
