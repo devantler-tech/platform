@@ -38,12 +38,15 @@ node() {
   printf '{"metadata": {"name": "%s", "labels": %s}, "status": {"conditions": %s}}' "$1" "${labels}" "${conditions}"
 }
 
-# backup <name> <phase> <completionTimestamp|null> [schedule]
+# backup <name> <phase> <completionTimestamp|null> [schedule] [creationTimestamp]
+# A backup is created before it completes; by default it was created at its
+# completion time (or at 03:00Z on the evaluation day when it has not finished).
 backup() {
-  local completion=null
+  local completion=null created="${5:-${3}}"
   [ "$3" != "null" ] && completion="\"$3\""
-  printf '{"metadata": {"name": "%s", "labels": {"velero.io/schedule-name": "%s"}}, "status": {"phase": "%s", "completionTimestamp": %s}}' \
-    "$1" "${4-velero-daily-full}" "$2" "${completion}"
+  [ "${created}" = "null" ] && created="2026-09-21T03:00:00Z"
+  printf '{"metadata": {"name": "%s", "creationTimestamp": "%s", "labels": {"velero.io/schedule-name": "%s"}}, "status": {"phase": "%s", "completionTimestamp": %s}}' \
+    "$1" "${created}" "${4-velero-daily-full}" "$2" "${completion}"
 }
 
 list() {
@@ -145,6 +148,15 @@ expect_refusal "only two control planes" "quorum: 2 control-plane nodes, expecte
 
 expect_refusal "etcd membership short" "quorum: 2 voting etcd members, expected 3" \
   "${healthy_nodes}" "${healthy_backups}" --target prod-control-plane-4 --etcd-members 2 --etcd-learners 0
+four_control_planes="$(list \
+  "$(node prod-control-plane-2 yes True)" \
+  "$(node prod-control-plane-4 yes True)" \
+  "$(node prod-control-plane-5 yes True)" \
+  "$(node prod-control-plane-6 yes True)")"
+expect_refusal "four control planes" "quorum: 4 control-plane nodes, expected 3" \
+  "${four_control_planes}" "${healthy_backups}" "${defaults[@]}"
+expect_refusal "etcd membership over" "quorum: 4 voting etcd members, expected 3" \
+  "${healthy_nodes}" "${healthy_backups}" --target prod-control-plane-4 --etcd-members 4 --etcd-learners 0
 expect_refusal "etcd learner present" "quorum: 1 etcd learners present" \
   "${healthy_nodes}" "${healthy_backups}" --target prod-control-plane-4 --etcd-members 3 --etcd-learners 1
 
@@ -161,8 +173,25 @@ expect_refusal "newest backup too old" "backup: newest velero-daily-full backup 
   "${healthy_nodes}" "${stale}" "${defaults[@]}"
 
 in_progress_only="$(list "$(backup daily-running InProgress null)")"
-expect_refusal "no completed backup" "backup: no completed backup from schedule velero-daily-full" \
+expect_refusal "only backup still running" "backup: newest velero-daily-full backup daily-running has not finished" \
   "${healthy_nodes}" "${in_progress_only}" "${defaults[@]}"
+
+expect_refusal "no backup from the schedule" "backup: no backup from schedule velero-daily-full" \
+  "${healthy_nodes}" "$(list "$(backup manual Completed 2026-09-21T11:00:00Z adhoc)")" "${defaults[@]}"
+
+# A newer backup still running is the newest backup, even though an older one
+# finished: the drill must not start on the older one while the newer is unproven.
+newer_unfinished="$(list \
+  "$(backup daily-new Completed 2026-09-21T02:40:00Z velero-daily-full 2026-09-21T02:17:00Z)" \
+  "$(backup daily-newer InProgress null velero-daily-full 2026-09-21T11:00:00Z)")"
+expect_refusal "newer backup still in progress" \
+  "backup: newest velero-daily-full backup daily-newer is InProgress, not Completed" \
+  "${healthy_nodes}" "${newer_unfinished}" "${defaults[@]}"
+
+# A valid backup may lack phase and completion while it starts: not ready, not malformed.
+incomplete_valid='{"kind": "List", "items": [{"metadata": {"name": "daily-starting", "creationTimestamp": "2026-09-21T11:30:00Z", "labels": {"velero.io/schedule-name": "velero-daily-full"}}, "status": {}}]}'
+expect_refusal "incomplete but valid backup" "backup: newest velero-daily-full backup daily-starting is Unknown, not Completed" \
+  "${healthy_nodes}" "${incomplete_valid}" "${defaults[@]}"
 
 other_schedule="$(list \
   "$(backup daily-new PartiallyFailed 2026-09-21T02:40:00Z)" \
@@ -189,7 +218,11 @@ expect_input_error "nodes not JSON" "not json" "${healthy_backups}" "${defaults[
 expect_input_error "nodes not a list" '{"kind": "Node", "items": []}' "${healthy_backups}" "${defaults[@]}"
 expect_input_error "backups without items" "${healthy_nodes}" '{}' "${defaults[@]}"
 expect_input_error "malformed completion timestamp" "${healthy_nodes}" \
-  "$(list "$(backup daily-new Completed yesterday)")" "${defaults[@]}"
+  "$(list "$(backup daily-new Completed yesterday velero-daily-full 2026-09-21T02:17:00Z)")" "${defaults[@]}"
+expect_input_error "node item without a name" \
+  "$(list "$(node prod-control-plane-2 yes True)" '{}')" "${healthy_backups}" "${defaults[@]}"
+expect_input_error "backup item without metadata" "${healthy_nodes}" \
+  "$(list "$(backup daily-new Completed 2026-09-21T02:40:00Z)" '{}')" "${defaults[@]}"
 expect_input_error "unknown argument" "${healthy_nodes}" "${healthy_backups}" "${defaults[@]}" --force
 
 printf 'All %d cp-recreate-drill-preflight tests passed.\n' "${pass_count}"

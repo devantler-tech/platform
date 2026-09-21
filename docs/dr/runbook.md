@@ -700,10 +700,17 @@ reports whether the target currently holds the floating IP:
 kubectl get nodes -o json > nodes.json
 kubectl get backups.velero.io -n velero -o json > backups.json
 talosctl --nodes <control-plane-ip> etcd members   # count voting members and learners
+# The floating IP's server, matched to its node through the node's hcloud providerID.
+vip_server="$(hcloud floating-ip describe prod-floating-ip -o json | jq -r '.server // empty')"
+vip_holder="$(jq -r --arg id "hcloud://${vip_server}" \
+  '.items[] | select(.spec.providerID == $id) | .metadata.name' nodes.json)"
 scripts/cp-recreate-drill-preflight.sh --target <node> \
   --nodes nodes.json --backups backups.json \
-  --etcd-members 3 --etcd-learners 0
+  --etcd-members 3 --etcd-learners 0 --vip-holder "${vip_holder}"
 ```
+
+An empty `vip_holder` (the floating IP is unassigned, or no node matches) reports
+`target_is_vip_holder=unknown`; resolve that before a drill meant to test failover.
 
 ### Credential refresh after a full rebuild
 

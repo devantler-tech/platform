@@ -115,6 +115,18 @@ jq -e '(.items | type) == "array"' "${nodes_file}" >/dev/null 2>&1 ||
   die_input "--nodes has no items array"
 jq -e '(.items | type) == "array"' "${backups_file}" >/dev/null 2>&1 ||
   die_input "--backups has no items array"
+# Every Node carries a name. An item without one would silently drop out of both
+# the control-plane count and the target lookup, reading as a smaller cluster
+# rather than as the malformed input it is.
+jq -e '.items | all(type == "object" and (.metadata | type) == "object" and (.metadata.name | type) == "string")' \
+  "${nodes_file}" >/dev/null 2>&1 || die_input "--nodes has an item without metadata.name"
+# Every Backup carries a name and a creation time, which is what orders them.
+# Phase, completion time and schedule label are legitimately absent on an
+# unfinished or unscheduled backup, so they are not required here.
+jq -e '.items | all(type == "object" and (.metadata | type) == "object"
+  and (.metadata.name | type) == "string" and (.metadata.creationTimestamp | type) == "string"
+  and (.status == null or (.status | type) == "object"))' \
+  "${backups_file}" >/dev/null 2>&1 || die_input "--backups has an item without metadata.name or metadata.creationTimestamp"
 
 # One row per control-plane node: "<name> <Ready status>". A node without a
 # Ready condition reports "Unknown", which is not Ready.
@@ -161,25 +173,34 @@ if [ "${etcd_learners}" -ne 0 ]; then
 fi
 
 # backup
+# The newest backup is chosen by creation time, which every backup has from the
+# moment it starts. Choosing among finished backups only would pass over a newer
+# backup still in progress and approve the drill on an older one.
 newest="$(jq -r --arg s "${schedule}" '
   [.items[]
    | select((.metadata.labels // {})["velero.io/schedule-name"] == $s)
-   | select(.status.completionTimestamp != null)]
-  | sort_by(.status.completionTimestamp)
+   | {name: .metadata.name, created: (.metadata.creationTimestamp | fromdateiso8601),
+      phase: (.status.phase // "Unknown"),
+      completed: (.status.completionTimestamp // null | if . == null then "none" else fromdateiso8601 end)}]
+  | sort_by(.created)
   | if length == 0 then "none"
-    else .[-1] | "\(.metadata.name) \(.status.phase // "Unknown") \(.status.completionTimestamp | fromdateiso8601)"
+    else .[-1] | "\(.name) \(.phase) \(.completed)"
     end
-' "${backups_file}")" || die_input "--backups could not be read (malformed completionTimestamp?)"
+' "${backups_file}")" || die_input "--backups could not be read (malformed creationTimestamp or completionTimestamp?)"
 if [ "${newest}" = "none" ]; then
-  reasons+=("backup: no completed backup from schedule ${schedule}")
+  reasons+=("backup: no backup from schedule ${schedule}")
 else
   read -r backup_name backup_phase backup_epoch <<<"${newest}"
   if [ "${backup_phase}" != "Completed" ]; then
     reasons+=("backup: newest ${schedule} backup ${backup_name} is ${backup_phase}, not Completed")
   fi
-  age_seconds=$((now - backup_epoch))
-  if [ "${age_seconds}" -gt $((max_age_hours * 3600)) ]; then
-    reasons+=("backup: newest ${schedule} backup ${backup_name} finished $((age_seconds / 3600))h ago, limit ${max_age_hours}h")
+  if [ "${backup_epoch}" = "none" ]; then
+    reasons+=("backup: newest ${schedule} backup ${backup_name} has not finished")
+  else
+    age_seconds=$((now - backup_epoch))
+    if [ "${age_seconds}" -gt $((max_age_hours * 3600)) ]; then
+      reasons+=("backup: newest ${schedule} backup ${backup_name} finished $((age_seconds / 3600))h ago, limit ${max_age_hours}h")
+    fi
   fi
 fi
 
