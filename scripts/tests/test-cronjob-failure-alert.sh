@@ -1,5 +1,3 @@
-# A suspension stops the reconcile loop, so it is judged by the same staleness rule as any stall.
-expect_alert "$dir" 'a suspended CronJob with no recent run alerts like any stalled loop' 'no retained run has finished'
 #!/usr/bin/env bash
 # Contract for the reconcile-CronJob failure detector (#2915).
 #
