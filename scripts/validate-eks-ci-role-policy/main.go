@@ -2958,7 +2958,33 @@ const (
 // This Longhorn CSI sidecar retrofit establishes aggregate:
 //
 //	719cb0a6ee304bb2aacb24624a1e2528b54b096092e2f9c950c24b7b3b938e1a
-const expectedRenderedSurfaceSHA = "719cb0a6ee304bb2aacb24624a1e2528b54b096092e2f9c950c24b7b3b938e1a"
+//
+// Moved again by the Kubescape storage-write repair in #3955, derived on exact
+// main 543b1daeefb8b7a4faf0057a1bd3b22e6914e088. The kubescape/kubescape
+// HelmRelease raises only openvulnerabilityexchangecontainers.maxObjectSize
+// from the chart's 1,000,000 byte default to 8,000,000 bytes, a finite bound
+// above the observed 6,604,551 byte VEX payload. A HelmRelease is a
+// controller-RBAC emitter, so this values-only change moves the authorization
+// aggregate even though it grants no permission.
+//
+// CONSERVATION: the approval-base diagnostic names exactly one changed entry,
+// helm.toolkit.fluxcd.io/v2 HelmRelease kubescape/kubescape. No ClusterRole,
+// Role, ClusterRoleBinding, RoleBinding or ServiceAccount source changes; no
+// identity, subject, verb, wildcard, AWS identity or permission changes. The
+// pinned storage source patch, publisher workflow, and focused tests are
+// outside the selected authorization overlays.
+//
+// RENDERER PROVENANCE: the checksum-verified kubectl v1.36.2 CI renderer is the
+// authority for the value below. This host's kubectl v1.36.1 renderer produced
+// the same candidate value after the rebase; that is independent corroboration,
+// not approval, and the required CI gate remains fail closed.
+//
+// Previous aggregate: 719cb0a6ee304bb2aacb24624a1e2528b54b096092e2f9c950c24b7b3b938e1a.
+//
+// This Kubescape storage-write repair establishes aggregate:
+//
+//	e20ec310b968fc68a32b45e10b4e961f9e759941ebb5402e99f52900644ea765
+const expectedRenderedSurfaceSHA = "e20ec310b968fc68a32b45e10b4e961f9e759941ebb5402e99f52900644ea765"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2971,7 +2997,7 @@ const expectedRenderedSurfaceSHA = "719cb0a6ee304bb2aacb24624a1e2528b54b096092e2
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "716b62f9ac8ad9a93eef6ac29fba1561928e6e4e00ff66a107fe7d4b504333ec"
+const previousRenderedSurfaceSHA = "719cb0a6ee304bb2aacb24624a1e2528b54b096092e2f9c950c24b7b3b938e1a"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

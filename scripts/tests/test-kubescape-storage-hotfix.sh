@@ -35,8 +35,8 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
   fail 'the workflow image destination drifted'
 # The literal GitHub expression is the contract.
 # shellcheck disable=SC2016
-[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.5-${{ github.sha }}' ]] ||
-  fail 'the workflow image tag must identify the conflict-log-classification revision'
+[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.6-${{ github.sha }}' ]] ||
+  fail 'the workflow image tag must identify the separated connection-lifetime revision'
 
 grep -qF 'repository: kubescape/storage' "${workflow}" ||
   fail 'the workflow must check out the upstream storage source explicitly'
@@ -138,6 +138,17 @@ grep -qF '!apierrors.IsConflict(err)' "${patch_file}" ||
   fail 'expected optimistic-concurrency conflicts must stay below error level'
 grep -qF 'TestShouldLogGuaranteedUpdateError' "${patch_file}" ||
   fail 'the compatibility patch must prove conflict retries are not error-level logs'
+grep -qF 'func (s *StorageImpl) takeConnection(ctx context.Context)' "${patch_file}" ||
+  fail 'pool acquisition and checked-out connection lifetimes must be separated'
+grep -qF 'const connectionLifetime = 65 * time.Second' "${patch_file}" ||
+  fail 'checked-out connections need a finite lifetime above SQLite busy_timeout'
+grep -qF 'poolTimeout+connectionLifetime' "${patch_file}" ||
+  fail 'the retained connection context must include acquisition and checkout budgets'
+grep -qF 'TestCreatePoolAcquireTimeoutDoesNotInterruptCheckedOutConnection' "${patch_file}" ||
+  fail 'the compatibility patch must reproduce the post-checkout interruption'
+if grep -qF 'conn.SetInterrupt' "${patch_file}"; then
+  fail 'the compatibility patch must not manually rebind pooled SQLite interrupts'
+fi
 grep -qF 'diff --git a/pkg/registry/file/sqlite.go b/pkg/registry/file/sqlite.go' "${patch_file}" ||
   fail 'the compatibility patch does not modify SQLite pool setup'
 grep -qF 'diff --git a/pkg/registry/file/sqlite_test.go b/pkg/registry/file/sqlite_test.go' "${patch_file}" ||

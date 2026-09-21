@@ -116,8 +116,8 @@ vex_capacity="$(
     "${kubescape_release}"
 )" || fail 'the VEX queue object-size limit is missing'
 readonly vex_capacity
-[[ "${vex_capacity}" == '1000000' ]] ||
-  fail 'the VEX queue must admit valid records up to one megabyte'
+[[ "${vex_capacity}" == '8000000' ]] ||
+  fail 'the VEX queue must admit the observed 6.605 MB record with finite headroom'
 
 coroot_node_agent_image="$(yq -er '.spec.nodeAgent.image.name' "${coroot}")" ||
   fail 'the Coroot node-agent image pin is missing'

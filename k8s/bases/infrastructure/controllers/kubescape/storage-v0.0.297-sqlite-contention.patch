@@ -1,5 +1,5 @@
 diff --git a/pkg/registry/file/containerprofile_aggregator_test.go b/pkg/registry/file/containerprofile_aggregator_test.go
-index 27fe6a147f8b38fdd4e79da6dbe2f4e23e70fbf9..d714d586fade98701a121df8a759dae3d74fb7a4 100644
+index 27fe6a14..d714d586 100644
 --- a/pkg/registry/file/containerprofile_aggregator_test.go
 +++ b/pkg/registry/file/containerprofile_aggregator_test.go
 @@ -17,13 +17,20 @@ import (
@@ -59,7 +59,7 @@ index 27fe6a147f8b38fdd4e79da6dbe2f4e23e70fbf9..d714d586fade98701a121df8a759dae3
  func (f *fakeStorage) GetStorageImpl() *StorageImpl {
  	return nil
 diff --git a/pkg/registry/file/containerprofile_processor.go b/pkg/registry/file/containerprofile_processor.go
-index db4a8ee109787ad75e0c5333046832ea53322637..610b7cd097d8242bb21b8980c231cf4420f4f4b8 100644
+index db4a8ee1..610b7cd0 100644
 --- a/pkg/registry/file/containerprofile_processor.go
 +++ b/pkg/registry/file/containerprofile_processor.go
 @@ -75,7 +75,7 @@ func NewContainerProfileProcessor(cfg config.Config, cleanupHandler *ResourcesCl
@@ -306,7 +306,7 @@ index db4a8ee109787ad75e0c5333046832ea53322637..610b7cd097d8242bb21b8980c231cf44
  		}
  		// Clear this time series as it is finished
 diff --git a/pkg/registry/file/containerprofile_processor_test.go b/pkg/registry/file/containerprofile_processor_test.go
-index 384d059e98f73e9a97dbceb79912f489f13476e9..8815cbb7db803cf5ab92544fc34215f2473900f5 100644
+index 384d059e..8815cbb7 100644
 --- a/pkg/registry/file/containerprofile_processor_test.go
 +++ b/pkg/registry/file/containerprofile_processor_test.go
 @@ -12,6 +12,7 @@ import (
@@ -414,7 +414,7 @@ index 384d059e98f73e9a97dbceb79912f489f13476e9..8815cbb7db803cf5ab92544fc34215f2
  }
 diff --git a/pkg/registry/file/containerprofile_storage_test.go b/pkg/registry/file/containerprofile_storage_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..76f4c666c0068a18c862026f682e2840eea119c3
+index 00000000..76f4c666
 --- /dev/null
 +++ b/pkg/registry/file/containerprofile_storage_test.go
 @@ -0,0 +1,41 @@
@@ -460,7 +460,7 @@ index 0000000000000000000000000000000000000000..76f4c666c0068a18c862026f682e2840
 +	require.NoError(t, firstErr)
 +}
 diff --git a/pkg/registry/file/sqlite.go b/pkg/registry/file/sqlite.go
-index 3d706533fe9ec5913ea53e4bf43780fd4ec36a70..c219537a8f2f6225b12c311c46db1f0d66a8a0e8 100644
+index 3d706533..c219537a 100644
 --- a/pkg/registry/file/sqlite.go
 +++ b/pkg/registry/file/sqlite.go
 @@ -61,6 +61,14 @@ func NewPool(path string, size int) *sqlitemigration.Pool {
@@ -479,7 +479,7 @@ index 3d706533fe9ec5913ea53e4bf43780fd4ec36a70..c219537a8f2f6225b12c311c46db1f0d
  }
  
 diff --git a/pkg/registry/file/sqlite_test.go b/pkg/registry/file/sqlite_test.go
-index 9a1ba4ed0a45122c16de30876e2e9c536b16d75f..fb1e6a804bfc09570b49bbf72a0c889ebe2c417b 100644
+index 9a1ba4ed..fb1e6a80 100644
 --- a/pkg/registry/file/sqlite_test.go
 +++ b/pkg/registry/file/sqlite_test.go
 @@ -2,15 +2,39 @@ package file
@@ -523,7 +523,7 @@ index 9a1ba4ed0a45122c16de30876e2e9c536b16d75f..fb1e6a804bfc09570b49bbf72a0c889e
  	pod := v1.Pod{
  		ObjectMeta: metav1.ObjectMeta{
 diff --git a/pkg/registry/file/storage.go b/pkg/registry/file/storage.go
-index e472bcb1016c473d95ce2662bc86817f46821b95..3ecce4ace8ca295b5eadfbcc414cfd31afa5b7c8 100644
+index e472bcb1..35b50c66 100644
 --- a/pkg/registry/file/storage.go
 +++ b/pkg/registry/file/storage.go
 @@ -70,6 +70,14 @@ var lockTimeout = 5 * time.Second
@@ -541,7 +541,148 @@ index e472bcb1016c473d95ce2662bc86817f46821b95..3ecce4ace8ca295b5eadfbcc414cfd31
  // newContentionTimeoutError returns a ServerTimeout (HTTP 500, Reason=ServerTimeout) carrying
  // a positive RetryAfterSeconds so the apiserver emits a Retry-After header that client-go's
  // retry logic honors. It is used for both lock acquisition (s.locks.Lock/RLock) and
-@@ -1012,7 +1020,7 @@ func (s *StorageImpl) GuaranteedUpdateWithConn(
+@@ -232,8 +240,58 @@ func IsPayloadFile(path string) bool {
+ 	return strings.HasSuffix(path, GobExt)
+ }
+ 
+-func poolContext() (context.Context, context.CancelFunc) {
+-	return context.WithTimeout(context.Background(), poolTimeout)
++// connectionLifetime is deliberately longer than SQLite's 60-second busy
++// timeout. poolTimeout bounds only how long a request may wait to acquire a
++// pooled connection; once acquired, that short deadline must not interrupt a
++// legitimate writer that is waiting for SQLite's single-writer lock. The
++// context handed to Pool.Take includes both budgets because the pool retains
++// that context for the checked-out connection's entire lifetime.
++const connectionLifetime = 65 * time.Second
++
++type connectionResult struct {
++	conn *sqlite.Conn
++	err  error
++}
++
++func (s *StorageImpl) takeConnection(ctx context.Context) (*sqlite.Conn, func(), error) {
++	lifetimeCtx, cancelLifetime := context.WithTimeout(context.Background(), poolTimeout+connectionLifetime)
++	result := make(chan connectionResult, 1)
++	go func() {
++		conn, err := s.pool.Take(lifetimeCtx)
++		result <- connectionResult{conn: conn, err: err}
++	}()
++
++	timer := time.NewTimer(poolTimeout)
++	defer timer.Stop()
++
++	var takeResult connectionResult
++	select {
++	case takeResult = <-result:
++	case <-ctx.Done():
++		cancelLifetime()
++		takeResult = <-result
++		if takeResult.conn != nil {
++			s.pool.Put(takeResult.conn)
++		}
++		return nil, nil, ctx.Err()
++	case <-timer.C:
++		cancelLifetime()
++		takeResult = <-result
++		if takeResult.conn != nil {
++			s.pool.Put(takeResult.conn)
++		}
++		return nil, nil, context.DeadlineExceeded
++	}
++
++	if takeResult.err != nil {
++		cancelLifetime()
++		return nil, nil, takeResult.err
++	}
++	cleanup := func() {
++		s.pool.Put(takeResult.conn)
++		cancelLifetime()
++	}
++	return takeResult.conn, cleanup, nil
+ }
+ 
+ func (s *StorageImpl) keyFromPath(path string) string {
+@@ -318,13 +376,11 @@ func (s *StorageImpl) saveObject(conn *sqlite.Conn, key string, obj runtime.Obje
+ // in seconds (and is ignored). If no error is returned and out is not nil, out will be
+ // set to the read value from database.
+ func (s *StorageImpl) Create(ctx context.Context, key string, obj, metaOut runtime.Object, _ uint64) error {
+-	poolCtx, cancel := poolContext()
+-	defer cancel()
+-	conn, err := s.pool.Take(poolCtx)
++	conn, cleanup, err := s.takeConnection(ctx)
+ 	if err != nil {
+ 		return newContentionTimeoutError("create", key, err)
+ 	}
+-	defer s.pool.Put(conn)
++	defer cleanup()
+ 	return s.CreateWithConn(ctx, conn, key, obj, metaOut, 0)
+ }
+ 
+@@ -397,13 +453,11 @@ func (s *StorageImpl) CreateWithConn(ctx context.Context, conn *sqlite.Conn, key
+ // current version of the object to avoid read operation from storage to get it.
+ // However, the implementations have to retry in case suggestion is stale.
+ func (s *StorageImpl) Delete(ctx context.Context, key string, metaOut runtime.Object, _ *storage.Preconditions, _ storage.ValidateObjectFunc, _ runtime.Object, _ storage.DeleteOptions) error {
+-	poolCtx, cancel := poolContext()
+-	defer cancel()
+-	conn, err := s.pool.Take(poolCtx)
++	conn, cleanup, err := s.takeConnection(ctx)
+ 	if err != nil {
+ 		return newContentionTimeoutError("delete", key, err)
+ 	}
+-	defer s.pool.Put(conn)
++	defer cleanup()
+ 	return s.DeleteWithConn(ctx, conn, key, metaOut, nil, nil, nil, storage.DeleteOptions{})
+ }
+ 
+@@ -483,13 +537,11 @@ func (s *StorageImpl) Watch(ctx context.Context, key string, opts storage.ListOp
+ // The returned contents may be delayed, but it is guaranteed that they will
+ // match 'opts.ResourceVersion' according 'opts.ResourceVersionMatch'.
+ func (s *StorageImpl) Get(ctx context.Context, key string, opts storage.GetOptions, objPtr runtime.Object) error {
+-	poolCtx, cancel := poolContext()
+-	defer cancel()
+-	conn, err := s.pool.Take(poolCtx)
++	conn, cleanup, err := s.takeConnection(ctx)
+ 	if err != nil {
+ 		return newContentionTimeoutError("get", key, err)
+ 	}
+-	defer s.pool.Put(conn)
++	defer cleanup()
+ 	return s.GetWithConn(ctx, conn, key, opts, objPtr)
+ }
+ 
+@@ -728,13 +780,11 @@ func (s *StorageImpl) migrateObject(ctx context.Context, conn *sqlite.Conn, path
+ // match 'opts.ResourceVersion' according 'opts.ResourceVersionMatch'.
+ // GetList only returns metadata for the objects, not the objects themselves.
+ func (s *StorageImpl) GetList(ctx context.Context, key string, opts storage.ListOptions, listObj runtime.Object) error {
+-	poolCtx, cancel := poolContext()
+-	defer cancel()
+-	conn, err := s.pool.Take(poolCtx)
++	conn, cleanup, err := s.takeConnection(ctx)
+ 	if err != nil {
+ 		return newContentionTimeoutError("list", key, err)
+ 	}
+-	defer s.pool.Put(conn)
++	defer cleanup()
+ 	return s.GetListWithConn(ctx, conn, key, opts, listObj)
+ }
+ 
+@@ -913,13 +963,11 @@ func (s *StorageImpl) getStateFromObject(ctx context.Context, obj runtime.Object
+ func (s *StorageImpl) GuaranteedUpdate(
+ 	ctx context.Context, key string, metaOut runtime.Object, ignoreNotFound bool,
+ 	preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, cachedExistingObject runtime.Object) error {
+-	poolCtx, cancel := poolContext()
+-	defer cancel()
+-	conn, err := s.pool.Take(poolCtx)
++	conn, cleanup, err := s.takeConnection(ctx)
+ 	if err != nil {
+ 		return newContentionTimeoutError("update", key, err)
+ 	}
+-	defer s.pool.Put(conn)
++	defer cleanup()
+ 	return s.GuaranteedUpdateWithConn(ctx, conn, key, metaOut, ignoreNotFound, preconditions, tryUpdate, cachedExistingObject, "")
+ }
+ 
+@@ -1012,7 +1060,7 @@ func (s *StorageImpl) GuaranteedUpdateWithConn(
  		if err != nil {
  			// If our data is already up-to-date, return the error
  			if origStateIsCurrent {
@@ -550,7 +691,7 @@ index e472bcb1016c473d95ce2662bc86817f46821b95..3ecce4ace8ca295b5eadfbcc414cfd31
  					logger.L().Ctx(ctx).Error("GuaranteedUpdate - tryUpdate func failed", helpers.Error(err), helpers.String("key", key))
  				}
  				logger.L().Debug("GuaranteedUpdate - tryUpdate func failed", helpers.Error(err), helpers.String("key", key))
-@@ -1034,10 +1042,10 @@ func (s *StorageImpl) GuaranteedUpdateWithConn(
+@@ -1034,10 +1082,10 @@ func (s *StorageImpl) GuaranteedUpdateWithConn(
  
  			// it turns out our cached data was not stale, return the error
  			if cachedRev == origState.rev {
@@ -564,11 +705,43 @@ index e472bcb1016c473d95ce2662bc86817f46821b95..3ecce4ace8ca295b5eadfbcc414cfd31
  				return cachedUpdateErr
  			}
  
+@@ -1093,13 +1141,11 @@ func (s *StorageImpl) GuaranteedUpdateWithConn(
+ // Count returns number of different entries under the key (generally being path prefix).
+ func (s *StorageImpl) Count(key string) (int64, error) {
+ 	logger.L().Debug("Custom storage count", helpers.String("key", key))
+-	poolCtx, cancel := poolContext()
+-	defer cancel()
+-	conn, err := s.pool.Take(poolCtx)
++	conn, cleanup, err := s.takeConnection(context.Background())
+ 	if err != nil {
+ 		return 0, newContentionTimeoutError("count", key, err)
+ 	}
+-	defer s.pool.Put(conn)
++	defer cleanup()
+ 	return countMetadata(conn, key)
+ }
+ 
+@@ -1221,13 +1267,11 @@ func (s *StorageImpl) appendGobObjectFromFile(ctx context.Context, path string,
+ 			logger.L().Ctx(ctx).Info("appendGobObjectFromFile - external migration successful", helpers.String("path", path))
+ 
+ 			// Write modern format back to disk to finish migration
+-			poolCtx, cancel := poolContext()
+-			defer cancel()
+-			conn, err := s.pool.Take(poolCtx)
++			conn, cleanup, err := s.takeConnection(ctx)
+ 			if err != nil {
+ 				logger.L().Ctx(ctx).Error("appendGobObjectFromFile - failed to take connection for migration save", helpers.Error(err), helpers.String("path", path))
+ 			} else {
+-				defer s.pool.Put(conn)
++				defer cleanup()
+ 				if saveErr := s.saveObject(conn, key, obj, nil, ""); saveErr != nil {
+ 					logger.L().Ctx(ctx).Error("appendGobObjectFromFile - failed to rewrite migrated object", helpers.Error(saveErr), helpers.String("path", path))
+ 				} else {
 diff --git a/pkg/registry/file/storage_test.go b/pkg/registry/file/storage_test.go
-index 69680331a628d8d35ef5e5760bd5965472543edb..2990e74dceceaa924dc1c6c64a3f38c326d31781 100644
+index 69680331..937e882d 100644
 --- a/pkg/registry/file/storage_test.go
 +++ b/pkg/registry/file/storage_test.go
-@@ -21,11 +21,31 @@ import (
+@@ -21,11 +21,69 @@ import (
  	apierrors "k8s.io/apimachinery/pkg/api/errors"
  	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
  	"k8s.io/apimachinery/pkg/runtime"
@@ -576,6 +749,7 @@ index 69680331a628d8d35ef5e5760bd5965472543edb..2990e74dceceaa924dc1c6c64a3f38c3
  	"k8s.io/apiserver/pkg/storage"
  	"k8s.io/utils/ptr"
  	"zombiezen.com/go/sqlite/sqlitemigration"
++	"zombiezen.com/go/sqlite/sqlitex"
  )
  
 +func TestShouldLogGuaranteedUpdateError(t *testing.T) {
@@ -594,6 +768,43 @@ index 69680331a628d8d35ef5e5760bd5965472543edb..2990e74dceceaa924dc1c6c64a3f38c3
 +		t.Run(tt.name, func(t *testing.T) {
 +			assert.Equal(t, tt.want, shouldLogGuaranteedUpdateError(tt.err))
 +		})
++	}
++}
++
++func TestCreatePoolAcquireTimeoutDoesNotInterruptCheckedOutConnection(t *testing.T) {
++	originalPoolTimeout := poolTimeout
++	poolTimeout = 50 * time.Millisecond
++	defer func() { poolTimeout = originalPoolTimeout }()
++
++	pool := NewPool(filepath.Join(t.TempDir(), "acquire-timeout.sq3"), 2)
++	require.NotNil(t, pool)
++	defer func() { require.NoError(t, pool.Close()) }()
++
++	blocker, err := pool.Take(context.Background())
++	require.NoError(t, err)
++	require.NoError(t, sqlitex.Execute(blocker, "BEGIN IMMEDIATE;", nil))
++
++	fs := afero.NewMemMapFs()
++	sch := scheme.Scheme
++	require.NoError(t, softwarecomposition.AddToScheme(sch))
++	s := NewStorageImpl(fs, DefaultStorageRoot, pool, nil, sch)
++	createDone := make(chan error, 1)
++	go func() {
++		createDone <- s.Create(context.Background(),
++			"/spdx.softwarecomposition.kubescape.io/vulnerabilitymanifests/kubescape/example",
++			&v1beta1.VulnerabilityManifest{ObjectMeta: v1.ObjectMeta{Name: "example"}}, nil, 0)
++	}()
++
++	time.Sleep(2 * poolTimeout)
++	require.NoError(t, sqlitex.Execute(blocker, "ROLLBACK;", nil))
++	pool.Put(blocker)
++
++	select {
++	case err := <-createDone:
++		require.NoError(t, err,
++			"the pool acquisition deadline must stop governing a connection after checkout")
++	case <-time.After(5 * time.Second):
++		t.Fatal("Create did not finish after the SQLite writer became available")
 +	}
 +}
 +
