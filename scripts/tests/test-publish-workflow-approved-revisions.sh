@@ -266,6 +266,16 @@ else
   else
     fail 'unreadable-release refusal did not name the consumer or wrote a file'; cat "$WORK/log10"
   fi
+  # A failed read is still the one attempt: later publish-app rows must not retry it.
+  app_rows="$(printf '%s\n' "$consumers" | awk -F'\t' '$2 == "publish-app"' | grep -c .)"
+  down_calls="$(grep -c . "$WORK/release-down.calls" || true)"
+  if [ "$app_rows" -lt 2 ]; then
+    fail "only $app_rows publish-app consumer(s); the single-attempt case would pass vacuously"
+  elif [ "$down_calls" -eq 1 ]; then
+    pass "an unreadable release is attempted once across $app_rows publish-app rows"
+  else
+    fail "an unreadable release was attempted $down_calls time(s) across $app_rows publish-app rows"
+  fi
 
   # Malformed release answers are refused, never parsed on their first line.
   for shape in 'deadbeef' "${SHA_R}\\n${SHA_C}" '-'; do

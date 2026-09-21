@@ -211,7 +211,7 @@ split_observation() {
 
 main() {
   local observer="${APPROVED_REVISION_OBSERVER:-}" pin_resolver="${APPROVED_REVISION_PIN_RESOLVER:-}"
-  local release_resolver="${APPROVED_REVISION_RELEASE_RESOLVER:-}" release_candidate=''
+  local release_resolver="${APPROVED_REVISION_RELEASE_RESOLVER:-}" release_candidate='' release_attempted=0
   local today="${APPROVED_REVISIONS_OBSERVED_ON:-$(date -u +%Y-%m-%d)}"
   is_date "$today" || { refuse "APPROVED_REVISIONS_OBSERVED_ON must be YYYY-MM-DD, got '$today'"; exit 1; }
 
@@ -254,10 +254,12 @@ main() {
       continue
     fi
     # The release candidate is one fact shared by every publish-app row, so it is resolved
-    # once it resolves; a failed read leaves it empty, so each publish-app row retries it and is refused by name.
+    # at most once per run. A failed read is that one attempt too: it leaves the candidate empty, and
+    # every publish-app row is then refused by name without reading the release again.
     local candidate='-'
     if [ "$workflow" = publish-app ]; then
-      if [ -z "$release_candidate" ]; then
+      if [ "$release_attempted" -eq 0 ]; then
+        release_attempted=1
         if [ -n "$release_resolver" ]; then
           release_candidate="$("$release_resolver" "$workflow")" || release_candidate=''
         else
