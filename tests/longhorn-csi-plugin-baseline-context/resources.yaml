@@ -1,0 +1,38 @@
+# The live shape measured against prod 2026-09-21: an EMPTY pod securityContext,
+# two privileged containers that carry a securityContext and one container that
+# carries none. Every existing field must survive the retrofit.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: longhorn-csi-plugin
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: longhorn-csi-plugin
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: longhorn-csi-plugin
+    spec:
+      securityContext: {}
+      containers:
+        - name: node-driver-registrar
+          image: csi-node-driver-registrar:v1
+          securityContext:
+            privileged: true
+        - name: longhorn-liveness-probe
+          image: livenessprobe:v1
+        - name: longhorn-csi-plugin
+          image: longhorn-manager:v1
+          securityContext:
+            allowPrivilegeEscalation: true
+            capabilities:
+              add:
+                - SYS_ADMIN
+            privileged: true

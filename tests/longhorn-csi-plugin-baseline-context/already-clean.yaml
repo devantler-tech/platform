@@ -1,0 +1,33 @@
+# CONVERGENCE: the target after the retrofit has applied once. Every
+# precondition must be false, so a second pass produces no patch at all.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: longhorn-csi-plugin
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: longhorn-csi-plugin
+  template:
+    metadata:
+      labels:
+        app: longhorn-csi-plugin
+    spec:
+      securityContext:
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: node-driver-registrar
+          image: csi-node-driver-registrar:v1
+          securityContext:
+            privileged: true
+            seLinuxOptions: {}
+        - name: longhorn-liveness-probe
+          image: livenessprobe:v1
+          securityContext:
+            seLinuxOptions: {}
+        - name: longhorn-csi-plugin
+          image: longhorn-manager:v1
+          securityContext:
+            privileged: true
+            seLinuxOptions: {}
