@@ -3037,7 +3037,31 @@ const (
 // This Velero node-agent configuration-delivery repair establishes aggregate:
 //
 //	72466907ce426bce8558ea6a6ada72c4b7031b3e28d0dab42ac4b71a3ffca48f
-const expectedRenderedSurfaceSHA = "72466907ce426bce8558ea6a6ada72c4b7031b3e28d0dab42ac4b71a3ffca48f"
+//
+// Moved again by the Longhorn automatic engine upgrade in #3966, derived on the
+// merge of exact main 098d1719d1538e7d4f6dea56dab6cd7e5547bdbc. The
+// longhorn-system/longhorn HelmRelease adds only the
+// defaultSettings.concurrentAutomaticEngineUpgradePerNodeLimit value. A
+// HelmRelease is a controller-RBAC emitter, so this values-only change moves the
+// authorization aggregate even though it grants no permission.
+//
+// CONSERVATION: the approval-base diagnostic against exact main names exactly one
+// changed entry, helm.toolkit.fluxcd.io/v2 HelmRelease longhorn-system/longhorn.
+// No ClusterRole, Role, ClusterRoleBinding, RoleBinding or ServiceAccount source
+// changes; no identity, subject, verb, wildcard, AWS identity or permission
+// changes.
+//
+// RENDERER PROVENANCE: computed on the merged tree with this host's kubectl
+// v1.36.1 (Kustomize v5.8.1) with the version gate lifted for the measurement
+// only; the checksum-verified kubectl v1.36.2 CI renderer is the authority and the
+// required CI gate remains fail closed.
+//
+// Previous aggregate: 72466907ce426bce8558ea6a6ada72c4b7031b3e28d0dab42ac4b71a3ffca48f.
+//
+// This Longhorn engine-upgrade setting establishes aggregate:
+//
+//	cc7a1435ad0cad112bbe70e89dd06c6441007e6ec8e5df2c704bfa641df054e3
+const expectedRenderedSurfaceSHA = "cc7a1435ad0cad112bbe70e89dd06c6441007e6ec8e5df2c704bfa641df054e3"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3050,7 +3074,7 @@ const expectedRenderedSurfaceSHA = "72466907ce426bce8558ea6a6ada72c4b7031b3e28d0
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "2a37133c38553f1beaf721bc81350b6d612ea98c866821d0f36427749b158a04"
+const previousRenderedSurfaceSHA = "72466907ce426bce8558ea6a6ada72c4b7031b3e28d0dab42ac4b71a3ffca48f"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
