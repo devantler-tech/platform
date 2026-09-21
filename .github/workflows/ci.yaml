@@ -577,6 +577,9 @@ jobs:
               - 'scripts/dr-rebuild-supersession-guard.sh'
               - 'scripts/tests/test-dr-rebuild-supersession-guard.sh'
               # Both halves, for the same reason as the guard above.
+              - 'scripts/cp-recreate-drill-preflight.sh'
+              - 'scripts/tests/test-cp-recreate-drill-preflight.sh'
+              # Both halves, for the same reason as the guard above.
               - 'scripts/verify-published-evidence.sh'
               - 'scripts/tests/test-verify-published-evidence.sh'
               # Both halves, for the same reason. This gate runs on the deploy path
@@ -1619,6 +1622,16 @@ jobs:
         # and this pins both its decision and the wiring that reaches it — a
         # guard the destructive job does not depend on protects nothing.
         run: bash scripts/tests/test-dr-rebuild-supersession-guard.sh
+
+      - name: 🧯 Validate the control-plane recreate drill preflight
+        if: needs.changes.outputs.k8s == 'true'
+        # The drill deletes a production control-plane node. This pins the
+        # read-only decision that must say ready before it starts: each guard
+        # (target, quorum, backup) refuses on its own fixture, and bad input is
+        # never read as ready.
+        run: |
+          shellcheck scripts/cp-recreate-drill-preflight.sh scripts/tests/test-cp-recreate-drill-preflight.sh
+          bash scripts/tests/test-cp-recreate-drill-preflight.sh
 
       - name: 🔍 Validate the published-evidence gate
         if: needs.changes.outputs.k8s == 'true'

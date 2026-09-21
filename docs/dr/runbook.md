@@ -688,6 +688,23 @@ itself. A controlled recreate must separately demonstrate continued Kubernetes
 access without a secret refresh, with health and recovery checks recorded for
 that drill.
 
+Start a drill only after
+[`scripts/cp-recreate-drill-preflight.sh`](../../scripts/cp-recreate-drill-preflight.sh)
+reports `ready=true`. It is read-only and checks the target (an existing, Ready
+control-plane node), quorum (three Ready control-plane nodes and three voting
+etcd members with no learners) and the newest `velero-daily-full` backup
+(`Completed` and less than 26 hours old). It prints every failing guard, and it
+reports whether the target currently holds the floating IP:
+
+```bash
+kubectl get nodes -o json > nodes.json
+kubectl get backups.velero.io -n velero -o json > backups.json
+talosctl --nodes <control-plane-ip> etcd members   # count voting members and learners
+scripts/cp-recreate-drill-preflight.sh --target <node> \
+  --nodes nodes.json --backups backups.json \
+  --etcd-members 3 --etcd-learners 0
+```
+
 ### Credential refresh after a full rebuild
 
 After a **full rebuild** (Scenario 4) the API endpoint and Talos PKI change,
