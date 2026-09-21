@@ -77,7 +77,8 @@
 # the raw entry also carries the exact reviewed error and Talos init service
 # attributes; a same-shaped message with another cause remains visible. The
 # other allowlists cover
-# millisecond apiserver client cancellations, bounded response-writer timeouts,
+# microsecond-or-millisecond apiserver client cancellations, bounded
+# response-writer timeouts,
 # exact Kubescape watch restarts, and one read-only audit-parser false positive;
 # stale controller-manager metadata informers until
 # the declarative Talos static-pod refresh lands; Kubernetes CronJob status
@@ -480,7 +481,7 @@ spec:
                              ($s | endswith("logger=\"UnhandledError\""))) or
                             (($s | test("^E[0-9]{4} [0-9:.]+ +1 timeout\\.go:140\\] ")) and
                              ($s | contains("\"Post-timeout activity\"")) and
-                             ($s | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$"))) or
+                             ($s | test(" timeElapsed=\"[0-9.]+(µs|ms)\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$"))) or
                             (($s | failover_shape) and
                              (($s | log_minute) as $minute | ($failover_minutes | index($minute)) != null)) or
                             (($s | test("^E[0-9]{4} [0-9:.]+ +1 controller\\.go:123\\] ")) and

@@ -328,6 +328,8 @@ case "${url}" in
     elif [[ "$url" == *'%3Akube-system%3AStaticPods%3Akube-apiserver'* ]]; then
       if [ "${severity}" = "fatal" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"fatal","message":"{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"1845fc58-1235-49f3-bb89-52dd44151383\",\"stage\":\"RequestReceived\",\"requestURI\":\"/api/v1/namespaces/kubescape/secrets/sh.helm.release.v1.alertmanager.v7\",\"verb\":\"get\",\"user\":{\"username\":\"system:serviceaccount:flux-system:helm-controller\"},\"objectRef\":{\"resource\":\"secrets\",\"namespace\":\"kubescape\",\"name\":\"sh.helm.release.v1.alertmanager.v7\",\"apiVersion\":\"v1\"}}"}]}}'
+      elif [ "$(cat "${dir}/leader-mode")" = "client-get-near-miss" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0921 09:51:29.516317       1 timeout.go:140] \"Post-timeout activity\" logger=\"UnhandledError\" timeElapsed=\"187.703µs\" method=\"POST\" path=\"/apis/spdx.softwarecomposition.kubescape.io/v1beta1/namespaces/longhorn-system/containerprofiles/instancemanager-instance-manager-c210015368cfb1db9feb55fd74623baa-instance-manager-c90d-75ac\" result=null"}]}}'
       elif [ "$(cat "${dir}/leader-mode")" != "known" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0920 23:01:52.432265       1 status.go:71] \"Unhandled Error\" err=\"apiserver received an error that is not an metav1.Status: rpctypes.EtcdError{code:0x7, desc:\\\"permission denied\\\"}: permission denied\" logger=\"UnhandledError\""}]}}'
       else
@@ -337,6 +339,7 @@ case "${url}" in
           {"severity":"error","message":"E0920 01:01:17.167192       1 status.go:71] \"Unhandled Error\" err=\"apiserver received an error that is not an metav1.Status: &errors.errorString{s:\\\"http: Handler timeout\\\"}: http: Handler timeout\" logger=\"UnhandledError\""},
           {"severity":"error","message":"E0920 01:01:17.167224       1 writers.go:136] \"Unhandled Error\" err=\"apiserver was unable to write a fallback JSON response: http: Handler timeout\" logger=\"UnhandledError\""},
           {"severity":"error","message":"E0919 16:32:49.939927       1 timeout.go:140] \"Post-timeout activity\" logger=\"UnhandledError\" timeElapsed=\"2.920993ms\" method=\"GET\" path=\"/apis/batch/v1/namespaces/openbao/jobs/vault-snapshot-init\" result=null"},
+          {"severity":"error","message":"E0921 09:51:29.516317       1 timeout.go:140] \"Post-timeout activity\" logger=\"UnhandledError\" timeElapsed=\"187.703µs\" method=\"GET\" path=\"/apis/spdx.softwarecomposition.kubescape.io/v1beta1/namespaces/longhorn-system/containerprofiles/instancemanager-instance-manager-c210015368cfb1db9feb55fd74623baa-instance-manager-c90d-75ac\" result=null"},
           {"severity":"error","message":"E0919 22:57:04.882632       1 controller.go:123] \"Unhandled Error\" err=\"loading OpenAPI spec for \\\"v1beta1.metrics.k8s.io\\\" failed with: Error, could not get list of group versions for APIService\" logger=\"UnhandledError\""},
           {"severity":"error","message":"E0919 22:56:58.072707       1 wrap.go:53] \"Timeout or abort while handling\" logger=\"UnhandledError\" method=\"GET\" URI=\"/api/v1/namespaces/kube-system/configmaps/tetragon-operator-config\" auditID=\"e422a037-b8da-4b60-8982-52839b17c40a\""},
           {"severity":"error","message":"E0920 01:10:57.256030       1 wrap.go:53] \"Timeout or abort while handling\" logger=\"UnhandledError\" method=\"GET\" URI=\"/apis/spdx.softwarecomposition.kubescape.io/v1beta1/sbomsyfts?watch=true\" auditID=\"ad9ad3fe-66f1-41fd-a686-f6de2d3205fd\""},
@@ -831,6 +834,14 @@ jq -s -e '
 ' "${leader_near_miss_dir}/posts.ndjson" >/dev/null ||
   fail 'a non-timeout or wrong-lock leader-election error did not remain visible'
 pass 'recovered leader-election policies reject unrelated failures'
+
+client_get_near_miss_dir="$(setup_scenario client-get-near-miss known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known known present client-get-near-miss)"
+run_scenario "${client_get_near_miss_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-apiserver/inspection/LogErrors/config")) and .body.configs[2] == null)
+' "${client_get_near_miss_dir}/posts.ndjson" >/dev/null ||
+  fail 'a post-timeout write using the reviewed duration unit did not remain visible'
+pass 'the kube-apiserver client-noise policy rejects non-GET post-timeout activity'
 
 operator_near_miss_dir="$(setup_scenario operator-near-miss known null 'context deadline exceeded' null known complete near-miss)"
 run_scenario "${operator_near_miss_dir}" >/dev/null
