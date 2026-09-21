@@ -115,8 +115,10 @@ spec:
       # enough that a problem shows up on one volume before it reaches others.
       # Scope: Longhorn upgrades only V1 Data Engine volumes this way; V2 volumes
       # and standby disaster-recovery volumes are skipped and must be upgraded
-      # by hand. Every prod volume is V1 and none is a standby (checked
-      # 2026-09-21), so this covers them all today.
+      # by hand. A live upgrade also needs the block-device frontend: an
+      # iSCSI-fronted volume must be detached and upgraded offline. Every prod
+      # volume is V1, uses the block-device frontend and none is a standby
+      # (checked 2026-09-21), so this covers them all today.
       concurrentAutomaticEngineUpgradePerNodeLimit: "1"
 
     persistence:
