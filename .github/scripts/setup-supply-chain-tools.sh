@@ -31,14 +31,20 @@ verify_digest() {
   fi
 }
 
-curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-  "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
-  --output "${download_dir}/cosign"
+# Release downloads retry curl's transient failures (timeouts, 408, 429 and 5xx) a few times,
+# because one momentary error from the release host would otherwise fail the job. Every byte
+# is still checked against the reviewed pin below, and a persistent failure still stops here.
+download() {
+  curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+    --retry 5 --retry-delay 3 "$1" --output "$2"
+}
+
+download "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
+  "${download_dir}/cosign"
 verify_digest cosign "${COSIGN_SHA256}" "${download_dir}/cosign"
 
-curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-  "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
-  --output "${download_dir}/syft.tar.gz"
+download "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+  "${download_dir}/syft.tar.gz"
 verify_digest syft "${SYFT_SHA256}" "${download_dir}/syft.tar.gz"
 
 # Verify both downloads before extracting or installing either tool. Extract
