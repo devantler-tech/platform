@@ -54,15 +54,19 @@ yq eval -e '.spec.schedule == "* * * * *"' "${manifest}" >/dev/null ||
 yq eval -e '
   .spec.concurrencyPolicy == "Forbid" and
   .spec.startingDeadlineSeconds <= 10 and
-  .spec.jobTemplate.spec.activeDeadlineSeconds <= 40 and
-  .spec.jobTemplate.spec.template.spec.terminationGracePeriodSeconds <= 5 and
+  .spec.jobTemplate.spec.activeDeadlineSeconds == 55 and
+  .spec.jobTemplate.spec.template.spec.terminationGracePeriodSeconds == 2 and
   (
-    .spec.startingDeadlineSeconds +
     .spec.jobTemplate.spec.activeDeadlineSeconds +
     .spec.jobTemplate.spec.template.spec.terminationGracePeriodSeconds
   ) < 60
 ' "${manifest}" >/dev/null ||
   fail 'reconciliations must neither overlap nor remain active at the next one-minute evidence pass'
+# startingDeadlineSeconds is the controller's allowance for launching a missed
+# schedule, not runtime added to the preceding Job. Keep the active deadline
+# plus termination grace below the next minute, while giving the bounded
+# four-worker batches fifty seconds for their worst-case query budget plus five
+# seconds for PID lookup, threshold work, and shell scheduling overhead.
 # A failed Coroot request must have enough time to remove the warm override
 # before Kubernetes enforces the Job deadline. Reconciliations are independent
 # per application/check, but the log queries are deliberately expensive. Keep

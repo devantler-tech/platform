@@ -94,8 +94,12 @@ metadata:
 spec:
   schedule: "* * * * *"
   # Never overlap Coroot writes. A run may start at most ten seconds after its
-  # schedule and then has forty seconds plus five seconds of termination grace,
-  # so it is gone before the next one-minute evidence pass.
+  # schedule and has fifty-five seconds plus two seconds of termination grace.
+  # Seventeen two-query log checks require five four-worker batches, whose
+  # worst-case query budget is fifty seconds; five seconds remain for PID and
+  # threshold work. The launch allowance applies only to a missed schedule; it
+  # does not extend the preceding Job, so each run is still gone before the
+  # next one-minute pass.
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 10
   successfulJobsHistoryLimit: 1
@@ -104,14 +108,14 @@ spec:
     spec:
       backoffLimit: 0
       # Bound the complete reconciliation so Forbid cannot skip the next pass.
-      activeDeadlineSeconds: 40
+      activeDeadlineSeconds: 55
       template:
         metadata:
           labels:
             app: coroot-application-health-reconciler
         spec:
           restartPolicy: Never
-          terminationGracePeriodSeconds: 5
+          terminationGracePeriodSeconds: 2
           automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
