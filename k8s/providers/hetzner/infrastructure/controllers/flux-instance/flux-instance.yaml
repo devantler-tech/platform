@@ -60,6 +60,15 @@ spec:
           - op: replace
             path: /spec/replicas
             value: 2
+          # The policy handoff restarts this Deployment, then flux-operator
+          # removes the imperative restartedAt annotation in a cleanup rollout.
+          # Require each replacement to stay Ready across Coroot's observation
+          # interval before retiring an old replica. This preserves two stable
+          # instances during both rollouts instead of hiding the transient risk;
+          # two 30-second stages remain inside the handoff's two-minute timeout.
+          - op: add
+            path: /spec/minReadySeconds
+            value: 30
           - op: add
             path: /spec/template/spec/affinity
             value:
@@ -76,6 +85,9 @@ spec:
       # leader's node fails). Upstream ships replicas: 1, which is why Coroot flags
       # each as "single instance - not resilient to node failure"; bumping these
       # three to 2 clears that.
+      # Each replicated controller also gets the same 30-second readiness floor.
+      # Besides the policy-handoff restart above, this makes every Flux-managed
+      # rollout prove a replacement is stably Ready before an old replica leaves.
       #
       # PATCH BY NAME, and DELIBERATELY DO NOT patch source-controller.
       # source-controller is the one controller that cannot run a ready warm
@@ -111,6 +123,9 @@ spec:
             path: /spec/replicas
             value: 2
           - op: add
+            path: /spec/minReadySeconds
+            value: 30
+          - op: add
             path: /spec/template/spec/affinity
             value:
               podAntiAffinity:
@@ -126,6 +141,9 @@ spec:
           - op: replace
             path: /spec/replicas
             value: 2
+          - op: add
+            path: /spec/minReadySeconds
+            value: 30
           - op: add
             path: /spec/template/spec/affinity
             value:
