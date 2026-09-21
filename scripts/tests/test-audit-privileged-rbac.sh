@@ -69,6 +69,11 @@ if ! yq -o=json '.' "$policy" | jq -e --argjson expected "$expected" '
   (.spec.rules[0].validate.cel | keys) == ["expressions"] and
   (.spec.rules[0].validate.cel.expressions | length) == 1 and
   (.spec.rules[0].validate.cel.expressions[0] | keys) == ["expression", "message"] and
+  # Kubernetes CEL types Role.rules and ClusterRole.rules as lists. has() covers
+  # absence and the type() guard preserves YAML-null fixtures; comparing the typed
+  # list value directly with null is rejected by the live Kyverno policy compiler.
+  (.spec.rules[0].validate.cel.expressions[0].expression |
+    startswith("!has(object.rules) || type(object.rules) == null_type || object.rules.all(rule,")) and
   (.spec.rules[0].preconditions | keys) == ["all"] and
   (.spec.rules[0].preconditions.all | length) == 1 and
   (.spec.rules[0].preconditions.all[0] | keys) == ["key", "operator", "value"] and
