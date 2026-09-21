@@ -1,0 +1,15 @@
+---
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+# Cross-namespace alert bundle for self-healing reconcile CronJobs that can fail
+# forever without anyone noticing (platform#2915). The ServiceAccount, Secret and
+# CronJob run in Coroot's observability namespace; each watched namespace gets
+# its own Role and RoleBinding, so the detector can read only the CronJobs it is
+# told to watch. Enabled by the hetzner provider only, like the Velero
+# maintenance alert, because the Slack webhook is wired only there.
+resources:
+  - service-account-cronjob-failure-alert.yaml
+  - secret-cronjob-failure-alert.yaml
+  - role-cronjob-failure-alert-umami.yaml
+  - role-binding-cronjob-failure-alert-umami.yaml
+  - cron-job-cronjob-failure-alert.yaml

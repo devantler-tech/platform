@@ -567,6 +567,7 @@ jobs:
               - 'scripts/tests/test-coroot-application-health-reconciler.sh'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-maintenance-oom-alert.sh'
+              - 'scripts/tests/test-cronjob-failure-alert.sh'
               # That test also asserts the alerting runbook points at the alert's
               # manifest, so a runbook-only edit must still run it.
               - 'docs/dr/alerting.md'
@@ -1597,6 +1598,16 @@ jobs:
         # Replays an OOMKilled attempt plus a later successful retry against the
         # manifest's real script so BackupRepository readiness cannot mask it.
         run: bash scripts/tests/test-velero-maintenance-oom-alert.sh
+
+      - name: 🔁 Validate the reconcile-CronJob failure alert
+        if: needs.changes.outputs.k8s == 'true'
+        # A self-healing CronJob that fails on every tick was visible only as
+        # retained Failed Jobs (#2915). Replays consecutive failures, a single
+        # absorbed failure, a stalled loop and every API failure against the
+        # manifest's real script, under bash and POSIX sh.
+        run: |
+          shellcheck scripts/tests/test-cronjob-failure-alert.sh
+          bash scripts/tests/test-cronjob-failure-alert.sh
 
       - name: 💾 Validate Velero data-mover resources
         if: needs.changes.outputs.k8s == 'true'
