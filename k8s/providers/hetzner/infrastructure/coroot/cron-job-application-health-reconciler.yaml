@@ -159,7 +159,7 @@ spec:
                   memory: 32Mi
                 limits:
                   cpu: 100m
-                  memory: 64Mi
+                  memory: 128Mi
               command:
                 - /bin/sh
                 - -c
@@ -279,6 +279,24 @@ spec:
                   BACKSTAGE_DB="$PID:backstage:DatabaseCluster:backstage-db"
                   queue_reconciliation reconcile_threshold "$BACKSTAGE_DB" MemoryLeakPercent 10 75 backstage-postgres-cache-warmup
 
+                  RUNTIME="$PID:_:Unknown:runtime"
+                  # Coroot's node agent counts any process marked by the
+                  # kernel OOM tracepoint inside /talos/runtime, not only a
+                  # containerd restart. The reviewed event left the runtime PID
+                  # unchanged while the node stayed Ready without memory
+                  # pressure. Accept one child-process event per hour for this
+                  # exact host application; a second event remains visible.
+                  queue_reconciliation reconcile_threshold "$RUNTIME" MemoryOOM 0 1 talos-runtime-child-process-oom
+
+                  LONGHORN_ENGINE_IMAGE="$PID:longhorn-system:DaemonSet:engine-image-ei-a4d05f02"
+                  # The main engine-image container stayed Ready with an
+                  # unchanged start time while Coroot recorded one OOM event.
+                  # This container sleeps after installing the engine binary;
+                  # its only recurring children are the readiness/liveness
+                  # version probes. Accept that one retained probe-child event
+                  # for this exact image only; a second event remains visible.
+                  queue_reconciliation reconcile_threshold "$LONGHORN_ENGINE_IMAGE" MemoryOOM 0 1 longhorn-engine-image-probe-child-oom
+
                   CILIUM="$PID:kube-system:DaemonSet:cilium"
                   queue_reconciliation reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 50000 cilium-dns-search-expansion
 
@@ -340,7 +358,12 @@ spec:
                     error_count=$(printf '%s' "$error_response" | jq -r '(.data.entries // []) | length')
                     fatal_count=$(printf '%s' "$fatal_response" | jq -r '(.data.entries // []) | length')
                     if [ "$error_count" -ge "$LOG_MESSAGE_LIMIT" ] || [ "$fatal_count" -ge "$LOG_MESSAGE_LIMIT" ]; then
-                      log_error "refusing $policy: raw-message response may be truncated for $app"
+                      # Reaching the bounded response cap is an expected
+                      # fail-closed policy outcome, not a reconciler failure.
+                      # The target remains visible through the inherited
+                      # threshold below; keep the reconciler from creating a
+                      # secondary error signal for that deliberate decision.
+                      log_info "refusing $policy: raw-message response may be truncated for $app"
                       reconcile_threshold "$app" LogErrors 0 inherit "$policy-truncated-fail-visible"
                       return
                     fi

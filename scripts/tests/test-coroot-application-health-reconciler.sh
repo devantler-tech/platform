@@ -52,6 +52,11 @@ fi
 yq eval -e '.spec.schedule == "* * * * *"' "${manifest}" >/dev/null ||
   fail 'raw log evidence must be revalidated every minute'
 yq eval -e '
+  .spec.jobTemplate.spec.template.spec.containers[0].resources.requests.memory == "32Mi" and
+  .spec.jobTemplate.spec.template.spec.containers[0].resources.limits.memory == "128Mi"
+' "${manifest}" >/dev/null ||
+  fail 'the reconciler must retain steady-state efficiency with bounded burst memory headroom'
+yq eval -e '
   .spec.concurrencyPolicy == "Forbid" and
   .spec.startingDeadlineSeconds <= 10 and
   .spec.jobTemplate.spec.activeDeadlineSeconds == 55 and
@@ -126,6 +131,26 @@ pass 'the Backstage PostgreSQL cache warmup has a narrow application policy'
 [[ "${script_body}" == *'reconcile_threshold "$ALERTMANAGER" DnsLatency 0.1 0.75 alertmanager-peer-dns-recovered-latency'* ]] ||
   fail 'the Alertmanager DNS latency policy must use Coroot second-based API units'
 pass 'the Alertmanager DNS latency policy uses second-based API units'
+
+# Coroot's node agent increments the application OOM counter for any process
+# marked as an OOM victim inside the runtime cgroup, even when containerd keeps
+# the same PID and the node has no memory pressure. Accept exactly one such
+# child-process event for the Talos runtime: global zero remains the baseline,
+# and a second event still breaches the finite per-application threshold.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'reconcile_threshold "$RUNTIME" MemoryOOM 0 1 talos-runtime-child-process-oom'* ]] ||
+  fail 'the exact Talos runtime application must allow only one child-process OOM'
+pass 'the Talos runtime OOM policy is exact and finite'
+
+# The Longhorn engine-image container remained Ready with an unchanged
+# container start time while Coroot recorded one OOM event for its cgroup. Its
+# only recurring child processes are the readiness/liveness version probes.
+# Accept that single retained probe-child event only for the exact engine image;
+# the global zero baseline remains intact and a second event still warns.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'reconcile_threshold "$LONGHORN_ENGINE_IMAGE" MemoryOOM 0 1 longhorn-engine-image-probe-child-oom'* ]] ||
+  fail 'the exact Longhorn engine image must allow only one probe-child OOM'
+pass 'the Longhorn engine-image OOM policy is exact and finite'
 
 yq eval -e '.cluster.controllerManager.extraArgs."log-text-split-stream" == "false"' \
   "${talos_patch}" >/dev/null ||
@@ -615,6 +640,8 @@ jq -s -e '
   any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-cleanup-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 40) and
   any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Aapid/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 250) and
+  any(.[]; (.url | contains("%3A_%3AUnknown%3Aruntime/inspection/MemoryOOM/config")) and .body.configs[0].threshold == 0 and .body.configs[2].threshold == 1) and
+  any(.[]; (.url | contains("%3Alonghorn-system%3ADaemonSet%3Aengine-image-ei-a4d05f02/inspection/MemoryOOM/config")) and .body.configs[0].threshold == 0 and .body.configs[2].threshold == 1) and
   any(.[]; (.url | contains("%3Abackstage%3ADatabaseCluster%3Abackstage-db/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 75) and
   any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 50000) and
   any(.[]; (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsLatency/config")) and .body.configs[2].threshold == 0.75) and
@@ -814,7 +841,12 @@ jq -s -e '
 pass 'excess CNPG retention conflicts still exceed the finite policy'
 
 truncated_dir="$(setup_scenario truncated known null 'context deadline exceeded' null known truncated)"
-run_scenario "${truncated_dir}" >/dev/null
+truncated_output="$(run_scenario "${truncated_dir}" 2>&1)"
+printf '%s\n' "${truncated_output}" | jq -s -e '
+  any(.[]; .level == "info" and (.msg | contains("raw-message response may be truncated"))) and
+  all(.[]; (.level == "error" and (.msg | contains("raw-message response may be truncated"))) | not)
+' >/dev/null ||
+  fail 'a fail-closed truncation outcome self-alerted as a reconciler error'
 jq -s -e '
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-controller-manager/inspection/LogErrors/config")) and .body.configs[2] == null)
 ' "${truncated_dir}/posts.ndjson" >/dev/null ||
