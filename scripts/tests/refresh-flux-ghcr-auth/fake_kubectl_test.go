@@ -423,9 +423,12 @@ func fakeFluxPolicyParentObject() map[string]any {
 	metadata := map[string]any{
 		"name":            "flux-system",
 		"namespace":       "flux-system",
-		"uid":             "flux-system-kustomization-uid",
+		"uid":             defaultString(markerContent("flux-policy-parent-uid"), "flux-system-kustomization-uid"),
 		"resourceVersion": defaultString(markerContent("flux-policy-parent-resource-version"), "30"),
 		"generation":      1,
+	}
+	if markerExists("flux-policy-parent-malformed") {
+		metadata["uid"] = ""
 	}
 	if os.Getenv("FAKE_FLUX_POLICY_PARENT_NO_ANNOTATIONS") != "true" || owner != "" {
 		metadata["annotations"] = annotations
@@ -530,6 +533,46 @@ func fakeKubectlGetFluxPolicyFences(args []string, namespace string) int {
 			incrementDecimal(currentResourceVersion),
 		)
 		appendEnvFile("OPERATION_LOG", "flux-operator-parent-reconcile-before-child:flux-system\n")
+	}
+	if os.Getenv("FAKE_FLUX_OPERATOR_RECONCILES_PARENT_BEFORE_CONTROLLER_RESTART") == "true" &&
+		markerExists("flux-policy-parent-suspended") &&
+		markerExists("flux-policy-handoff-suspended") &&
+		!markerExists("flux-controller-restarted") &&
+		!markerExists("flux-operator-parent-reconciled-before-controller-restart") {
+		// The generated root can also be restored after the child fence lands but
+		// before restart_flux_kustomize_controller_for_handoff performs its first
+		// fence proof. This is the exact production race from #3986.
+		touchMarker("flux-operator-parent-reconciled-before-controller-restart")
+		removeMarker("flux-policy-parent-owner")
+		removeMarker("flux-policy-parent-suspended")
+		currentResourceVersion := defaultString(
+			markerContent("flux-policy-parent-resource-version"),
+			"30",
+		)
+		setMarkerContent(
+			"flux-policy-parent-resource-version",
+			incrementDecimal(currentResourceVersion),
+		)
+		appendEnvFile("OPERATION_LOG", "flux-operator-parent-reconcile-before-controller-restart:flux-system\n")
+	}
+	if preRestartState := os.Getenv("FAKE_FLUX_PARENT_PRE_RESTART_STATE"); preRestartState != "" &&
+		markerExists("flux-policy-handoff-suspended") &&
+		!markerExists("flux-controller-restarted") &&
+		!markerExists("flux-parent-pre-restart-state-injected") {
+		touchMarker("flux-parent-pre-restart-state-injected")
+		switch preRestartState {
+		case "foreign-owner":
+			setMarkerContent("flux-policy-parent-owner", "fixture-foreign-transaction")
+		case "replaced":
+			setMarkerContent("flux-policy-parent-uid", "replacement-kustomization-uid")
+		case "malformed":
+			touchMarker("flux-policy-parent-malformed")
+		case "unreadable":
+			return commandFailure(92, "injected Flux policy fence read failure before controller restart")
+		default:
+			return commandFailure(91, "unknown pre-restart parent state %q", preRestartState)
+		}
+		appendEnvFile("OPERATION_LOG", "flux-parent-pre-restart-state:"+preRestartState+"\n")
 	}
 	if markerExists("flux-policy-handoff-suspended") &&
 		os.Getenv("FAKE_FLUX_POLICY_RESOURCE_VERSION_CHURN_AFTER_PAUSE") == "true" {

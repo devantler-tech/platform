@@ -1277,6 +1277,80 @@ func TestFluxParentFenceIsReacquiredWhenOperatorReconcilesBeforeChildFence(t *te
 	}
 }
 
+// The Operator can restore its generated root after the child has been fenced
+// but before the controller restart performs its first fence proof. The child
+// already remains suspended and excluded from reconciliation, so the same exact
+// released-parent state accepted at the adjacent boundaries is safe to reclaim.
+func TestFluxParentFenceIsReacquiredWhenOperatorReconcilesBeforeControllerRestart(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_OPERATOR_RECONCILES_PARENT_BEFORE_CONTROLLER_RESTART": "true",
+		"FAKE_LOG_FLUX_CONTROLLER_RESTART":                               "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	parentPauses := lineIndexes(operations, "flux-policy-parent-pause:flux-system")
+	if len(parentPauses) != 2 {
+		t.Fatalf("parent fence acquisitions = %d, want initial claim plus pre-restart reacquisition", len(parentPauses))
+	}
+	childPause := lineIndex(t, operations, "flux-policy-pause:infrastructure")
+	operatorReconcile := lineIndex(
+		t,
+		operations,
+		"flux-operator-parent-reconcile-before-controller-restart:flux-system",
+	)
+	restart := lineIndex(t, operations, "flux-controller-restart:kustomize-controller")
+	firstPolicyApply := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
+	if parentPauses[0] >= childPause ||
+		childPause >= operatorReconcile ||
+		operatorReconcile >= parentPauses[1] ||
+		parentPauses[1] >= restart ||
+		restart >= firstPolicyApply {
+		t.Fatalf(
+			"unsafe pre-restart Flux operator ordering: parent-pauses=%v child=%d operator=%d restart=%d policy=%d",
+			parentPauses,
+			childPause,
+			operatorReconcile,
+			restart,
+			firstPolicyApply,
+		)
+	}
+}
+
+func TestFluxParentFenceUnsafePreRestartStatesRemainRejected(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		state       string
+		diagnostic  string
+		stateLogged bool
+	}{
+		{name: "foreign owner", state: "foreign-owner", diagnostic: "parent Flux policy fence changed to an unrecognized state", stateLogged: true},
+		{name: "replacement object", state: "replaced", diagnostic: "parent Flux policy fence changed to an unrecognized state", stateLogged: true},
+		{name: "malformed object", state: "malformed", diagnostic: "parent Flux policy fence changed to an unrecognized state", stateLogged: true},
+		{name: "unreadable objects", state: "unreadable", diagnostic: "Could not inspect the Flux policy fences", stateLogged: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, map[string]string{
+				"FAKE_FLUX_PARENT_PRE_RESTART_STATE": tt.state,
+				"FAKE_LOG_FLUX_CONTROLLER_RESTART":   "true",
+			})
+			requireFailureResult(t, result)
+			requireContains(t, result.stdout+result.stderr, tt.diagnostic)
+			operations := readLines(f.operationLog)
+			if tt.stateLogged {
+				requireLine(t, operations, "flux-parent-pre-restart-state:"+tt.state)
+			}
+			requireNoLine(t, operations, "flux-controller-restart:kustomize-controller")
+			requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
+		})
+	}
+}
+
 func TestFluxControllerDeclarativeRolloutStabilizesBeforeHandoffRestart(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
