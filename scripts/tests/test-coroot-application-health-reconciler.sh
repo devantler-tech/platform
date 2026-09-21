@@ -333,6 +333,19 @@ case "${url}" in
           {"severity":"error","message":"E0920 07:58:01.416402       1 controller.go:300] \"Unhandled Error\" err=\"capacity buffer controller error: Operation cannot be fulfilled on capacitybuffers.autoscaling.x-k8s.io \\\"overprovisioning\\\": the object has been modified; please apply your changes to the latest version and try again\" logger=\"UnhandledError\""},
           {"severity":"error","message":"E0920 07:58:01.416472       1 controller.go:250] \"Unhandled Error\" err=\"error syncing namespace \\\"overprovisioning\\\"\" logger=\"UnhandledError\""}
         ]}}'
+      elif [ "$(cat "${dir}/autoscaler-mode")" = "lease-retry" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0921 01:39:10.563549       1 leaderelection.go:445] \"Failed to update lease optimistically, falling back to slow path\" err=\"etcdserver: request timed out, possibly due to previous leader failure\" lock=\"kube-system/cluster-autoscaler\""}]}}'
+      elif [ "$(cat "${dir}/autoscaler-mode")" = "lease-wrong-lock" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0921 01:39:10.563549       1 leaderelection.go:445] \"Failed to update lease optimistically, falling back to slow path\" err=\"etcdserver: request timed out, possibly due to previous leader failure\" lock=\"kube-system/different-lock\""}]}}'
+      elif [ "$(cat "${dir}/autoscaler-mode")" = "lease-permission" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0921 01:39:10.563549       1 leaderelection.go:445] \"Failed to update lease optimistically, falling back to slow path\" err=\"permission denied\" lock=\"kube-system/cluster-autoscaler\""}]}}'
+      elif [ "$(cat "${dir}/autoscaler-mode")" = "lease-mixed" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[
+          {"severity":"error","message":"E0921 01:39:10.563549       1 leaderelection.go:445] \"Failed to update lease optimistically, falling back to slow path\" err=\"etcdserver: request timed out, possibly due to previous leader failure\" lock=\"kube-system/cluster-autoscaler\""},
+          {"severity":"error","message":"E0921 01:39:11.563549       1 leaderelection.go:445] \"Failed to update lease optimistically, falling back to slow path\" err=\"permission denied\" lock=\"kube-system/cluster-autoscaler\""}
+        ]}}'
+      elif [ "$(cat "${dir}/autoscaler-mode")" = "lease-excess" ]; then
+        jq -cn '{data:{status:"ok",entries:[range(0;11)|{severity:"error",message:"E0921 01:39:10.563549       1 leaderelection.go:445] \"Failed to update lease optimistically, falling back to slow path\" err=\"etcdserver: request timed out, possibly due to previous leader failure\" lock=\"kube-system/cluster-autoscaler\""}]}}'
       else
         printf '%s\n' '{"data":{"status":"ok","entries":[
           {"severity":"error","message":"E0920 07:58:01.416402       1 controller.go:300] \"Unhandled Error\" err=\"capacity buffer controller error: Operation cannot be fulfilled on capacitybuffers.autoscaling.x-k8s.io \\\"overprovisioning\\\": the object has been modified; please apply your changes to the latest version and try again\" logger=\"UnhandledError\""},
@@ -469,7 +482,10 @@ case "${url}" in
       [ "$(cat "${dir}/kustomize-mode")" != "known" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
     elif [[ "${url}" == *'%3Akube-system%3ADeployment%3Acluster-autoscaler-hetzner-cluster-autoscaler'* ]] &&
-      [ "$(cat "${dir}/autoscaler-mode")" != "known" ]; then
+      { [ "$(cat "${dir}/autoscaler-mode")" = "near-miss" ] ||
+        [ "$(cat "${dir}/autoscaler-mode")" = "lease-wrong-lock" ] ||
+        [ "$(cat "${dir}/autoscaler-mode")" = "lease-permission" ] ||
+        [ "$(cat "${dir}/autoscaler-mode")" = "lease-mixed" ]; }; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
     elif [[ "${url}" == *'%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater'* ]]; then
       # Reproduce the formerly reconciled finite exemption. The RBAC repair
@@ -651,6 +667,32 @@ jq -s -e '
 ' "${autoscaler_near_miss_dir}/posts.ndjson" >/dev/null ||
   fail 'an uncorrelated CapacityBuffer retry pair did not remain visible'
 pass 'the CapacityBuffer retry policy rejects uncorrelated entries'
+
+autoscaler_lease_dir="$(setup_scenario autoscaler-lease known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known lease-retry)"
+run_scenario "${autoscaler_lease_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Akube-system%3ADeployment%3Acluster-autoscaler-hetzner-cluster-autoscaler/inspection/LogErrors/config")) and .body.configs[2].threshold == 10)
+' "${autoscaler_lease_dir}/posts.ndjson" >/dev/null ||
+  fail 'the exact recovered autoscaler lease retry did not receive the finite threshold'
+pass 'the exact recovered autoscaler lease retry receives the finite policy'
+
+for lease_mode in lease-wrong-lock lease-permission lease-mixed; do
+  autoscaler_lease_near_miss_dir="$(setup_scenario "autoscaler-${lease_mode}" known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known "${lease_mode}")"
+  run_scenario "${autoscaler_lease_near_miss_dir}" >/dev/null
+  jq -s -e '
+    any(.[]; (.url | contains("%3Akube-system%3ADeployment%3Acluster-autoscaler-hetzner-cluster-autoscaler/inspection/LogErrors/config")) and .body.configs[2] == null)
+  ' "${autoscaler_lease_near_miss_dir}/posts.ndjson" >/dev/null ||
+    fail "autoscaler ${lease_mode} evidence did not remain visible"
+done
+pass 'the autoscaler lease policy rejects wrong locks, permission failures, and mixed errors'
+
+autoscaler_lease_excess_dir="$(setup_scenario autoscaler-lease-excess known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known lease-excess)"
+run_scenario "${autoscaler_lease_excess_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Akube-system%3ADeployment%3Acluster-autoscaler-hetzner-cluster-autoscaler/inspection/LogErrors/config")) and .body.configs[2].threshold == 10)
+' "${autoscaler_lease_excess_dir}/posts.ndjson" >/dev/null ||
+  fail 'the exact autoscaler lease retry did not retain the finite ten-event cap'
+pass 'excess recovered autoscaler lease retries still exceed the finite policy'
 
 leader_near_miss_dir="$(setup_scenario leader-near-miss known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known known present near-miss)"
 run_scenario "${leader_near_miss_dir}" >/dev/null

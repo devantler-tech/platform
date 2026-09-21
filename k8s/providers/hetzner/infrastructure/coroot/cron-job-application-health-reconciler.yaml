@@ -500,7 +500,7 @@ spec:
                           ] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
-                      autoscaler-capacity-buffer-conflict)
+                      autoscaler-reviewed-retries)
                         counts=$(printf '%s' "$entries" | jq -r '
                           . as $all |
                           [$all[] | .message as $s | select(
@@ -508,13 +508,21 @@ spec:
                             ($s | endswith(" logger=\"UnhandledError\"")) and
                             (($s | contains("controller.go:300] \"Unhandled Error\" err=\"capacity buffer controller error: Operation cannot be fulfilled on capacitybuffers.autoscaling.x-k8s.io \\\"overprovisioning\\\": the object has been modified; please apply your changes to the latest version and try again\"")) or
                              ($s | contains("controller.go:250] \"Unhandled Error\" err=\"error syncing namespace \\\"overprovisioning\\\"\"")))
-                          )] as $valid |
-                          [$valid | group_by(.message[0:14])[] |
+                          )] as $capacity |
+                          [$capacity | group_by(.message[0:14])[] |
                             select(length==2) |
                             select(([.[] | select(.message | contains("controller.go:300]"))] | length)==1) |
                             select(([.[] | select(.message | contains("controller.go:250]"))] | length)==1) |
                             .[]
-                          ] as $ok | "\($all|length):\($ok|length)"
+                          ] as $capacity_ok |
+                          [$all[] | .message as $s | select(
+                            ($s | test("^E[0-9]{4} [0-9:.]+ +1 leaderelection\\.go:445\\] ")) and
+                            ($s | contains("\"Failed to update lease optimistically, falling back to slow path\"")) and
+                            ($s | contains("err=\"etcdserver: request timed out, possibly due to previous leader failure\"")) and
+                            ($s | test(" lock=\"kube-system/cluster-autoscaler\"\\s*$"))
+                          )] as $lease_ok |
+                          ($capacity_ok + $lease_ok) as $ok |
+                          "\($all|length):\($ok|length)"
                         ')
                         ;;
                       recovered-etcd-leader-election)
@@ -664,7 +672,13 @@ spec:
                   # Require both Flux log records to share the exact reconcile
                   # and Kustomization identity before applying the finite cap.
                   queue_reconciliation reconcile_logs "$PID:flux-system:Deployment:kustomize-controller" flux-kustomize-restart-cancellation 10
-                  queue_reconciliation reconcile_logs "$PID:kube-system:Deployment:cluster-autoscaler-hetzner-cluster-autoscaler" autoscaler-capacity-buffer-conflict 10
+                  # Keep both reviewed autoscaler retry families in one
+                  # all-errors classifier: the correlated CapacityBuffer pair
+                  # and one exact slow-path lease renewal after an etcd leader
+                  # transition. Any mixed or differently shaped error removes
+                  # the override, while more than ten reviewed events still
+                  # breach the deliberately finite Coroot threshold.
+                  queue_reconciliation reconcile_logs "$PID:kube-system:Deployment:cluster-autoscaler-hetzner-cluster-autoscaler" autoscaler-reviewed-retries 10
                   # Event writes are part of the updater's functional contract.
                   # The dedicated RBAC grant fixes the denial at source, so
                   # declaratively retire the former finite exemption and let
