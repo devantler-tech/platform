@@ -125,6 +125,20 @@ run "${healthy_nodes}" "${healthy_backups}" "${defaults[@]}" --max-backup-age-ho
 grep -qx 'ready=true' "${work_dir}/out" || fail "zero-padded age limit: ready=true missing"
 ok "a zero-padded age limit is read as base 10"
 
+# Kubernetes can serialise times with fractional seconds; they must not turn a real backup list into
+# an input error. The newer fractional backup is the one judged.
+run "${healthy_nodes}" "$(list \
+  "$(backup daily-old PartiallyFailed 2026-09-19T02:40:00.123456Z velero-daily-full 2026-09-19T02:00:00.5Z)" \
+  "$(backup daily-new Completed 2026-09-21T02:40:00.000000Z velero-daily-full 2026-09-21T02:00:00.000000Z)")" \
+  "${defaults[@]}" ||
+  fail "fractional-second timestamps must be accepted: $(cat "${work_dir}/out" "${work_dir}/err")"
+grep -qx 'ready=true' "${work_dir}/out" || fail "fractional-second timestamps: ready=true missing"
+expect_refusal "fractional-second newest backup still judged" \
+  "backup: newest velero-daily-full backup daily-new is PartiallyFailed, not Completed" "${healthy_nodes}" \
+  "$(list "$(backup daily-new PartiallyFailed 2026-09-21T02:40:00.25Z velero-daily-full 2026-09-21T02:00:00.25Z)")" \
+  "${defaults[@]}"
+ok "fractional-second timestamps are accepted"
+
 # A zero-padded --now that is invalid octal must not skip the age check:
 # a stale backup is still refused.
 expect_refusal "zero-padded --now still checks backup age" \
@@ -249,5 +263,15 @@ expect_input_error "node item without a name" \
 expect_input_error "backup item without metadata" "${healthy_nodes}" \
   "$(list "$(backup daily-new Completed 2026-09-21T02:40:00Z)" '{}')" "${defaults[@]}"
 expect_input_error "unknown argument" "${healthy_nodes}" "${healthy_backups}" "${defaults[@]}" --force
+
+# This contract only protects the drill while CI runs it: the k8s path filter must list both halves
+# and a workflow step must execute this test, or a later edit could drop either and stay green.
+ci_workflow="${root_dir}/.github/workflows/ci.yaml"
+for wired in "- 'scripts/cp-recreate-drill-preflight.sh'" "- 'scripts/tests/test-cp-recreate-drill-preflight.sh'"; do
+  grep -qF -- "${wired}" "${ci_workflow}" || fail "ci.yaml path filter no longer lists ${wired#- }"
+done
+grep -qE '^[[:space:]]+bash scripts/tests/test-cp-recreate-drill-preflight\.sh$' "${ci_workflow}" ||
+  fail "ci.yaml no longer runs scripts/tests/test-cp-recreate-drill-preflight.sh"
+ok "CI still filters on and runs this contract"
 
 printf 'All %d cp-recreate-drill-preflight tests passed.\n' "${pass_count}"

@@ -179,15 +179,18 @@ if [ "${etcd_learners}" -ne 0 ]; then
 fi
 
 # backup
+# Kubernetes may serialise a time with fractional seconds, which fromdateiso8601
+# rejects; they are dropped first, as refresh-flux-ghcr-auth.sh does. Anything
+# else malformed still fails as an input error.
 # The newest backup is chosen by creation time, which every backup has from the
 # moment it starts. Choosing among finished backups only would pass over a newer
 # backup still in progress and approve the drill on an older one.
 newest="$(jq -r --arg s "${schedule}" '
   [.items[]
    | select((.metadata.labels // {})["velero.io/schedule-name"] == $s)
-   | {name: .metadata.name, created: (.metadata.creationTimestamp | fromdateiso8601),
+   | {name: .metadata.name, created: (.metadata.creationTimestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601),
       phase: (.status.phase // "Unknown"),
-      completed: (.status.completionTimestamp // null | if . == null then "none" else fromdateiso8601 end)}]
+      completed: (.status.completionTimestamp // null | if . == null then "none" else sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 end)}]
   | sort_by(.created)
   | if length == 0 then "none"
     else .[-1] | "\(.name) \(.phase) \(.completed)"
