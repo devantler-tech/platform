@@ -22,10 +22,12 @@
 # longhorn-driver-deployer stay on #3918, which carries the volume-reference
 # and attachment-state sequencing they need.
 #
-# Why two rules. Kyverno requires mutate.targets on every rule once
-# spec.mutateExistingOnPolicyUpdate is set, and a single rule cannot carry both
-# patchStrategicMerge and foreach. The split is the same one
-# remove-existing-longhorn-registrar-prestop.yaml makes.
+# Why one rule. The first production reconciliation proved that two
+# mutate-existing rules targeting the same four resource versions can race:
+# one rule advances the Deployment while the other still holds the old
+# resourceVersion, producing object-modified PolicyErrors. Express both fields
+# as JSON Patch foreach entries in one rule so Kyverno submits one serialized
+# target update instead.
 #
 # Why the container half is JSON Patch rather than strategic merge. C-0211 is
 # satisfied by an EMPTY seLinuxOptions mapping, and strategic merge drops an
@@ -38,9 +40,9 @@
 # a static name lets that check be name-scoped — which is what allows the grant
 # in infrastructure-controllers/longhorn to be resourceNames-pinned to exactly
 # these four rather than a namespace-wide deployments grant. The cost is that
-# each trigger patches all four targets; every rule here is idempotent (the
-# +() anchor and the preconditions both no-op once the field is present), so
-# the extra passes converge without advancing resourceVersion.
+# each trigger evaluates all four targets; every patch here is idempotent and
+# the preconditions no-op once the field is present, so the extra passes
+# converge without advancing resourceVersion.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -59,50 +61,13 @@ spec:
   failurePolicy: Ignore
   mutateExistingOnPolicyUpdate: true
   rules:
-    - name: add-existing-csi-sidecar-fsgroupchangepolicy
-      match:
-        any:
-          - resources:
-              kinds:
-                - apps/v1/Deployment
-              names:
-                - csi-attacher
-                - csi-provisioner
-                - csi-resizer
-                - csi-snapshotter
-              namespaces:
-                - longhorn-system
-      mutate:
-        targets:
-          - apiVersion: apps/v1
-            kind: Deployment
-            name: csi-attacher
-            namespace: longhorn-system
-          - apiVersion: apps/v1
-            kind: Deployment
-            name: csi-provisioner
-            namespace: longhorn-system
-          - apiVersion: apps/v1
-            kind: Deployment
-            name: csi-resizer
-            namespace: longhorn-system
-          - apiVersion: apps/v1
-            kind: Deployment
-            name: csi-snapshotter
-            namespace: longhorn-system
-        patchStrategicMerge:
-          spec:
-            template:
-              spec:
-                securityContext:
-                  +(fsGroupChangePolicy): OnRootMismatch
     # Default only a missing container object when no pod object is inherited —
     # Kubernetes replaces the whole pod-level struct with a container override,
     # even an empty one, so a pod-level seLinuxOptions must never be shadowed.
     # The first entry of each pair creates an absent container securityContext;
     # the second adds the leaf to one that already exists, so neither ever
     # replaces a securityContext that carries other fields.
-    - name: add-existing-csi-sidecar-selinuxoptions
+    - name: add-existing-csi-sidecar-baseline-context
       match:
         any:
           - resources:
@@ -134,6 +99,32 @@ spec:
             name: csi-snapshotter
             namespace: longhorn-system
         foreach:
+          # A one-element multi-select list lets the pod-level patches share
+          # this rule with the per-container loops. Create the parent object
+          # only when absent; otherwise add only the missing leaf.
+          - list: "[target]"
+            preconditions:
+              all:
+                - key: "{{ to_string(contains(keys(target.spec.template.spec || `{}`), 'securityContext')) }}"
+                  operator: Equals
+                  value: "false"
+            patchesJson6902: |-
+              - op: add
+                path: /spec/template/spec/securityContext
+                value: {"fsGroupChangePolicy": "OnRootMismatch"}
+          - list: "[target]"
+            preconditions:
+              all:
+                - key: "{{ to_string(contains(keys(target.spec.template.spec || `{}`), 'securityContext')) }}"
+                  operator: Equals
+                  value: "true"
+                - key: "{{ to_string(contains(keys(target.spec.template.spec.securityContext || `{}`), 'fsGroupChangePolicy')) }}"
+                  operator: Equals
+                  value: "false"
+            patchesJson6902: |-
+              - op: add
+                path: /spec/template/spec/securityContext/fsGroupChangePolicy
+                value: OnRootMismatch
           - list: "target.spec.template.spec.containers"
             preconditions:
               all:

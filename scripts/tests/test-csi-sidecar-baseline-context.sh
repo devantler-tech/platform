@@ -41,35 +41,41 @@ fail() {
   fail 'the retrofit must run against the already-created Deployments'
 [[ "$(yq -r '.spec.failurePolicy' "${policy}")" == 'Ignore' ]] ||
   fail 'the policy must fail open so a Kyverno outage cannot block Longhorn reconciliation'
-[[ "$(yq -r '.spec.rules | length' "${policy}")" == '2' ]] ||
-  fail 'the policy must carry exactly the fsGroupChangePolicy and seLinuxOptions rules'
+[[ "$(yq -r '.spec.rules | length' "${policy}")" == '1' ]] ||
+  fail 'one serialized rule must apply both baseline fields without racing target resource versions'
 
-for index in 0 1; do
-  [[ "$(yq -r ".spec.rules[${index}].match.any | length" "${policy}")" == '1' ]] ||
-    fail "rule ${index} must carry exactly one match block"
-  [[ "$(yq -r ".spec.rules[${index}].match.any[0].resources.kinds | join(\",\")" "${policy}")" == 'apps/v1/Deployment' ]] ||
-    fail "rule ${index} must match only apps/v1 Deployments"
-  [[ "$(yq -r ".spec.rules[${index}].match.any[0].resources.namespaces | join(\",\")" "${policy}")" == 'longhorn-system' ]] ||
-    fail "rule ${index} must match only longhorn-system"
-  [[ "$(yq -r ".spec.rules[${index}].match.any[0].resources.names | sort | join(\",\")" "${policy}")" == "${expected_targets}" ]] ||
-    fail "rule ${index} must match only the four CSI sidecars"
-  [[ "$(yq -r ".spec.rules[${index}].mutate.targets | length" "${policy}")" == '4' ]] ||
-    fail "rule ${index} must declare exactly four targets"
-  [[ "$(yq -r ".spec.rules[${index}].mutate.targets[] | .apiVersion + \"|\" + .kind + \"|\" + .namespace" "${policy}" | sort -u | paste -sd, -)" == 'apps/v1|Deployment|longhorn-system' ]] ||
-    fail "rule ${index} must target only longhorn-system Deployments"
-  [[ "$(yq -r ".spec.rules[${index}].mutate.targets[].name" "${policy}" | sort | paste -sd, -)" == "${expected_targets}" ]] ||
-    fail "rule ${index} must target exactly the four CSI sidecars, statically named"
-done
+[[ "$(yq -r '.spec.rules[0].match.any | length' "${policy}")" == '1' ]] ||
+  fail 'the rule must carry exactly one match block'
+[[ "$(yq -r '.spec.rules[0].match.any[0].resources.kinds | join(",")' "${policy}")" == 'apps/v1/Deployment' ]] ||
+  fail 'the rule must match only apps/v1 Deployments'
+[[ "$(yq -r '.spec.rules[0].match.any[0].resources.namespaces | join(",")' "${policy}")" == 'longhorn-system' ]] ||
+  fail 'the rule must match only longhorn-system'
+[[ "$(yq -r '.spec.rules[0].match.any[0].resources.names | sort | join(",")' "${policy}")" == "${expected_targets}" ]] ||
+  fail 'the rule must match only the four CSI sidecars'
+[[ "$(yq -r '.spec.rules[0].mutate.targets | length' "${policy}")" == '4' ]] ||
+  fail 'the rule must declare exactly four targets'
+[[ "$(yq -r '.spec.rules[0].mutate.targets[] | .apiVersion + "|" + .kind + "|" + .namespace' "${policy}" | sort -u | paste -sd, -)" == 'apps/v1|Deployment|longhorn-system' ]] ||
+  fail 'the rule must target only longhorn-system Deployments'
+[[ "$(yq -r '.spec.rules[0].mutate.targets[].name' "${policy}" | sort | paste -sd, -)" == "${expected_targets}" ]] ||
+  fail 'the rule must target exactly the four CSI sidecars, statically named'
 
 # --- Shape: only the two non-privilege fields, and never a privilege one ----
-[[ "$(yq -o=json -I=0 '.spec.rules[0].mutate.patchStrategicMerge' "${policy}")" == '{"spec":{"template":{"spec":{"securityContext":{"+(fsGroupChangePolicy)":"OnRootMismatch"}}}}}' ]] ||
-  fail 'the pod-level rule must supply only an anchored fsGroupChangePolicy'
+[[ "$(yq -r '.spec.rules[0].name' "${policy}")" == 'add-existing-csi-sidecar-baseline-context' ]] ||
+  fail 'the serialized rule must describe the complete baseline context'
+[[ "$(yq -r '.spec.rules[0].mutate | keys | sort | join(",")' "${policy}")" == 'foreach,targets' ]] ||
+  fail 'the serialized rule must carry only static targets and JSON Patch foreach entries'
 if yq -o=json -I=0 '[.spec.rules[].mutate]' "${policy}" |
   grep -Eq 'runAsUser|runAsGroup|"fsGroup"|privileged|allowPrivilegeEscalation|capabilities'; then
   fail 'the retrofit must never supply a privilege, user or group field'
 fi
-[[ "$(yq -r '.spec.rules[1].mutate.foreach | length' "${policy}")" == '4' ]] ||
-  fail 'the container rule must cover absent and present securityContext for containers and initContainers'
+[[ "$(yq -r '.spec.rules[0].mutate.foreach | length' "${policy}")" == '6' ]] ||
+  fail 'one rule must cover absent and present pod, container, and initContainer securityContext objects'
+[[ "$(yq -r '.spec.rules[0].mutate.foreach[0].list' "${policy}")" == '[target]' ]] ||
+  fail 'the pod-level patch must execute once per target inside the serialized rule'
+[[ "$(yq -r '.spec.rules[0].mutate.foreach[0].patchesJson6902' "${policy}")" == *'/spec/template/spec/securityContext'* ]] ||
+  fail 'the serialized rule must create a missing pod securityContext'
+[[ "$(yq -r '.spec.rules[0].mutate.foreach[1].patchesJson6902' "${policy}")" == *'/spec/template/spec/securityContext/fsGroupChangePolicy'* ]] ||
+  fail 'the serialized rule must add only a missing fsGroupChangePolicy leaf'
 
 # --- Behaviour: RED/GREEN against the measured live shape ------------------
 out_dir="$(mktemp -d)"
@@ -81,11 +87,11 @@ if ! kyverno apply "${policy}" \
   fail 'kyverno apply must evaluate the retrofit policy'
 fi
 
-# `kyverno apply` emits ONE document per (rule x target) mutation that actually
-# produced a change, plus the trigger. A target a rule left alone emits nothing
-# at all, so absence of a document is the proof that nothing was touched — and
-# the positive assertions below are the control that keeps that absence
-# meaningful rather than vacuous.
+# `kyverno apply` emits one document per target mutation that actually produced
+# a change, plus the trigger. A target the rule left alone emits nothing at all,
+# so absence of a document is the proof that nothing was touched — and the
+# positive assertions below are the control that keeps that absence meaningful
+# rather than vacuous.
 docs() {
   yq -r ea "[select(.kind == \"Deployment\" and .metadata.namespace == \"$1\" and .metadata.name == \"$2\")] | length" "${out_dir}"/*.yaml
 }
@@ -95,6 +101,8 @@ any() {
 }
 
 # A bare sidecar gets both fields.
+[[ "$(docs longhorn-system csi-attacher)" == '1' ]] ||
+  fail 'a target needing both fields must produce one combined mutation, not competing writes'
 [[ "$(any longhorn-system csi-attacher '.spec.template.spec.securityContext.fsGroupChangePolicy == "OnRootMismatch"')" == 'true' ]] ||
   fail 'a bare CSI sidecar must receive fsGroupChangePolicy'
 [[ "$(any longhorn-system csi-attacher '(.spec.template.spec.containers[0].securityContext // {} | has("seLinuxOptions"))')" == 'true' ]] ||
