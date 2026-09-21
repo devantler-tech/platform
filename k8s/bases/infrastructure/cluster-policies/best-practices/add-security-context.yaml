@@ -470,6 +470,17 @@ spec:
     # (`spec.template.spec`, and `spec.jobTemplate.spec.template.spec` for
     # CronJobs). `tests/add-baseline-context` pins every state for the
     # controller kinds too.
+    #
+    # A NARROWER SCOPE for the Coroot operator's own workloads (#3990). The
+    # namespace label above reaches every controller in a namespace, but in
+    # observability only six templates are operator-generated — the rest are
+    # Helm or Git manifests that take the source route. Behind a SEPARATE
+    # namespace label, `baseline-context-coroot`, the two rules below also match
+    # Deployments, StatefulSets and DaemonSets carrying
+    # `app.kubernetes.io/managed-by: coroot-operator`, and nothing else. No
+    # namespace carries the label yet; activation is a later change that must
+    # come with the before-publish and after-reconcile convergence guard
+    # docs/baseline-context-rollout.md requires.
     - name: add-baseline-context-optin-controllers
       match:
         any:
@@ -492,6 +503,20 @@ spec:
               namespaceSelector:
                 matchLabels:
                   pod-security.devantler.tech/baseline-context-controllers: enabled
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+              operations:
+                - CREATE
+                - UPDATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context-coroot: enabled
+              selector:
+                matchLabels:
+                  app.kubernetes.io/managed-by: coroot-operator
       mutate:
         patchStrategicMerge:
           spec:
@@ -521,6 +546,20 @@ spec:
               namespaceSelector:
                 matchLabels:
                   pod-security.devantler.tech/baseline-context-controllers: enabled
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+              operations:
+                - CREATE
+                - UPDATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/baseline-context-coroot: enabled
+              selector:
+                matchLabels:
+                  app.kubernetes.io/managed-by: coroot-operator
       mutate:
         foreach:
           - list: "request.object.spec.template.spec.containers"

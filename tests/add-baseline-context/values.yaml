@@ -45,3 +45,10 @@ namespaceSelector:
   - name: kube-system
     labels:
       pod-security.devantler.tech/baseline-context: enabled
+  # The Coroot-scoped controller rules (#3990) are gated by their OWN label.
+  # This namespace carries only that one, so its fixtures prove the scope label
+  # plus the operator's managed-by label is what matches — not the broader
+  # namespace-wide controller label.
+  - name: coroot-scoped
+    labels:
+      pod-security.devantler.tech/baseline-context-coroot: enabled
