@@ -358,6 +358,8 @@ jobs:
               - 'scripts/guard-longhorn-ui-baseline-context.sh'
               - 'scripts/tests/test-guard-coroot-baseline-context.sh'
               - 'scripts/guard-coroot-baseline-context.sh'
+              - 'scripts/tests/test-admit-coroot-baseline-context.sh'
+              - 'scripts/admit-coroot-baseline-context.sh'
               # The fixtures are the other half of that test: a PR touching only
               # resources.yaml, patched-resources.yaml, values.yaml or
               # kyverno-test.yaml would otherwise leave this filter false, so
@@ -1341,6 +1343,8 @@ jobs:
           bash scripts/tests/test-longhorn-ui-baseline-context.sh
           shellcheck scripts/guard-coroot-baseline-context.sh scripts/tests/test-guard-coroot-baseline-context.sh
           bash scripts/tests/test-guard-coroot-baseline-context.sh
+          shellcheck scripts/admit-coroot-baseline-context.sh scripts/tests/test-admit-coroot-baseline-context.sh
+          bash scripts/tests/test-admit-coroot-baseline-context.sh
 
       - name: 🛡️ Validate chart-rendered RBAC
         if: needs.changes.outputs.k8s == 'true'

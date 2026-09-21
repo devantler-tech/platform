@@ -30,3 +30,10 @@ metadata:
     # The rules are CREATE-only, so running pods are unaffected until they are
     # next recreated.
     pod-security.devantler.tech/baseline-context: enabled
+    # The Coroot operator's six templates are outside that rule, which never
+    # reaches controllers. This label lets the Coroot-scoped controller rules add
+    # the same two fields to them (#3990, #4028). Every production deploy writes
+    # any template still lacking a field through admission, waits for its
+    # rollout, then proves the operator is not rewriting the templates in a loop
+    # (docs/baseline-context-rollout.md).
+    pod-security.devantler.tech/baseline-context-coroot: enabled
