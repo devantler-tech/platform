@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Derive bounded-consumer cosign subjects from the generated approved revision set and keep
-# trusted tenant release streams on the immutable shared-workflow commit pattern.
+# Derive every registered consumer's cosign subject from the generated approved revision set.
 # Validate every input and staged result before replacing any consumer manifest.
 # Generic multi-consumer subjects remain unchanged. Unchanged output preserves bytes.
 set -euo pipefail
@@ -9,7 +8,7 @@ WRITER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/publish-workflow-approved-revisions.lib.sh
 source "$WRITER_DIR/publish-workflow-approved-revisions.lib.sh"
 
-readonly FIXED_REF_RE='^([0-9a-f]{40}|\([0-9a-f]{40}\)|\([0-9a-f]{40}\|[0-9a-f]{40}\))$'
+readonly FIXED_REF_RE='^([0-9a-f]{40}|\([0-9a-f]{40}(\|[0-9a-f]{40}){0,2}\))$'
 STAGED="$(mktemp -d "${TMPDIR:-/tmp}/write-publish-workflow-matchers.XXXXXX")"
 trap 'rm -rf "$STAGED"' EXIT
 
@@ -24,7 +23,7 @@ for consumer in "${EXPECTED_CONSUMERS[@]}"; do
   record="$(lookup "$observed" "$consumer")"
   [ -n "$record" ] || refuse "no OCIRepository is attributed to registered consumer $consumer"
   IFS=$'\t' read -r file workflow ref <<<"$record"
-  IFS=$'\t' read -r set_workflow signer pin <<<"$(lookup "$approved" "$consumer")"
+  IFS=$'\t' read -r set_workflow signer pin candidate <<<"$(lookup "$approved" "$consumer")"
   [ "$workflow" = "$set_workflow" ] || refuse "$consumer: $file names $workflow but the approved set names $set_workflow"
   [ "$ref" = "$PATTERN_REF" ] || [[ "$ref" =~ $FIXED_REF_RE ]] ||
     refuse "$consumer: unrecognised existing revision '$ref'; review the source identity before rewriting"
@@ -32,11 +31,7 @@ for consumer in "${EXPECTED_CONSUMERS[@]}"; do
     refuse "$consumer: source manifest must be a writable regular file, not a symlink"
   fi
 
-  desired_ref="$PATTERN_REF"
-  if ! is_trusted_release_stream_consumer "$consumer"; then
-    desired_ref="$signer"
-    [ "$signer" = "$pin" ] || desired_ref="($signer|$pin)"
-  fi
+  desired_ref="$(approved_ref "$signer" "$pin" "$candidate")"
   subject="${SUBJECT_PREFIX}${workflow#publish-}"'\.yaml@'"$desired_ref"'$'
   mkdir -p "$STAGED/$(dirname "$file")"
   # Select the actual OCIRepository document; unrelated documents remain unchanged.

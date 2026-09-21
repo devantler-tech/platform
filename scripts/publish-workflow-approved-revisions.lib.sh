@@ -24,15 +24,12 @@ readonly GENERIC_SUBJECT_FILES=(
   'talos/cluster/verify-first-party-images.yaml'
 )
 
-# Application tenants are trusted to release independently inside the platform-owned
-# boundary: exact GitHub OIDC issuer, exact shared workflow path, and an immutable 40-hex
-# workflow commit. Pinning these streams to the currently observed workflow revisions would
-# make every ordinary tenant release wait for a platform change. Infrastructure/configuration
-# consumers remain tied to their generated revision sets below.
-readonly TRUSTED_RELEASE_STREAM_CONSUMERS=(
-  'ascoachingogvaner'
-  'wedding-app'
-)
+# Every registered consumer, application tenants included, is narrowed to its approved revision
+# set: the revision that signed the running artifact, the revision its default branch pins, and,
+# for publish-app consumers, the latest released devantler-tech/actions revision (#3960). A tenant
+# cannot move its pin ahead of that set: each app tenant runs a required check that refuses a pin
+# the committed approved set does not contain (#3961), so a new shared-workflow revision holds the
+# tenant's dependency PR rather than failing its release.
 
 readonly SUBJECT_PREFIX='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-'
 # Used by both callers after the shared discovery completes.
@@ -63,12 +60,48 @@ lookup() {
   printf '%s\n' "$1" | awk -F'\t' -v k="$2" '$1 "" == k "" { sub(/^[^\t]*\t/, ""); print; exit }'
 }
 
-is_trusted_release_stream_consumer() {
-  local candidate="$1" trusted
-  for trusted in "${TRUSTED_RELEASE_STREAM_CONSUMERS[@]}"; do
-    [ "$candidate" = "$trusted" ] && return 0
+# approved_revisions <signer> <pin> <candidate> → each distinct approved revision on its own line,
+# in signer, pin, candidate order. A `-` candidate (publish-manifests rows) names no revision.
+approved_revisions() {
+  local seen=" " rev
+  for rev in "$@"; do
+    [ "$rev" != '-' ] || continue
+    case "$seen" in *" $rev "*) continue ;; esac
+    seen="$seen$rev "
+    printf '%s\n' "$rev"
   done
-  return 1
+}
+
+# approved_ref <signer> <pin> <candidate> → the canonical matcher ref: the single revision, or a
+# grouped alternation of the distinct revisions in approved_revisions order.
+approved_ref() {
+  local revs
+  revs="$(approved_revisions "$@")"
+  if [ "$(printf '%s\n' "$revs" | grep -c .)" -eq 1 ]; then
+    printf '%s' "$revs"
+  else
+    printf '(%s)' "$(printf '%s\n' "$revs" | paste -sd'|' -)"
+  fi
+}
+
+# ref_matches_approved <ref> <signer> <pin> <candidate> → success when <ref> names exactly the
+# approved revisions, each once, in any order. A single revision may be grouped or bare; several
+# must be grouped, because an ungrouped `a|b` inside the anchored subject splits the whole regex
+# into two alternatives and admits far more than either revision. Anything else fails, including
+# a ref that adds, omits or repeats a revision.
+ref_matches_approved() {
+  local ref="$1" body got want
+  shift
+  case "$ref" in
+    '('*')') body="${ref#\(}"; body="${body%\)}" ;;
+    *'|'*) return 1 ;;
+    *) body="$ref" ;;
+  esac
+  got="$(printf '%s\n' "$body" | tr '|' '\n')"
+  ! grep -qvxE '[0-9a-f]{40}' <<<"$got" || return 1
+  [ "$(printf '%s\n' "$got" | sort | uniq -d)" = "" ] || return 1
+  want="$(approved_revisions "$@" | sort)"
+  [ "$(printf '%s\n' "$got" | sort)" = "$want" ]
 }
 
 # consumer → "workflow<TAB>signer<TAB>pin"
@@ -100,7 +133,7 @@ while IFS= read -r row; do
   fi
   [ -z "$(lookup "$approved" "$consumer")" ] || refuse "approved set names $consumer twice"
   : "$applied_tag" "$applied_digest"
-  approved="${approved}${consumer}"$'\t'"${workflow}"$'\t'"${signer}"$'\t'"${pin}"$'\n'
+  approved="${approved}${consumer}"$'\t'"${workflow}"$'\t'"${signer}"$'\t'"${pin}"$'\t'"${candidate}"$'\n'
 done <"$APPROVED_SET"
 
 # Exactly the registered consumers, both directions: a missing row is a consumer nobody
