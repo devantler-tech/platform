@@ -161,10 +161,6 @@ spec:
                       echo "ERROR: kube API returned HTTP $code reading CronJob ${target}" >&2
                       exit 1
                     fi
-                    if [ "$(jq -r '.spec.suspend // false' /tmp/cronjob.json)" = "true" ]; then
-                      echo "${target}: suspended; not checked."
-                      continue
-                    fi
 
                     code=$(api_get "/apis/batch/v1/namespaces/${ns}/jobs" /tmp/jobs.json)
                     if [ "$code" != "200" ]; then

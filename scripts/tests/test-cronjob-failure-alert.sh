@@ -1,3 +1,5 @@
+# A suspension stops the reconcile loop, so it is judged by the same staleness rule as any stall.
+expect_alert "$dir" 'a suspended CronJob with no recent run alerts like any stalled loop' 'no retained run has finished'
 #!/usr/bin/env bash
 # Contract for the reconcile-CronJob failure detector (#2915).
 #
@@ -261,8 +263,8 @@ printf '{"kind":"Status"}' >"${dir}/cronjob.body"
 expect_alert "$dir" 'a watched CronJob that no longer exists alerts' 'the watched CronJob does not exist'
 dir="$(setup_scenario suspended)"
 cronjob 8640000 true >"${dir}/cronjob.body"
-expect_quiet "$dir" 'a suspended CronJob is skipped by decision, not read as healthy' 'suspended; not checked'
-grep -Fq 'Checked 0 watched' "${dir}/stdout" || fail 'a suspended target was counted as checked'
+# A suspension stops the reconcile loop, so it is judged by the same staleness rule as any stall.
+expect_alert "$dir" 'a suspended CronJob with no recent run alerts like any stalled loop' 'no retained run has finished'
 
 # Silent-zero guards: a broken read fails the Job instead of reporting health.
 dir="$(setup_scenario cronjob-403)"
