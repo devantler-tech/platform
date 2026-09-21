@@ -79,7 +79,11 @@ spec:
                 - |
                   set -eu
                   DRY_RUN="${DRY_RUN:-false}"
-                  kc() { n=0; until kubectl "$@"; do n=$((n+1)); [ "$n" -ge 5 ] && return 1; sleep $((n*2)); done; }
+                  # A single stalled API call must not consume the outer Job
+                  # deadline and erase the pod before the fail-closed path can
+                  # report which inventory was unavailable. Five 20-second
+                  # attempts plus 20 seconds of backoff remain below 300s.
+                  kc() { n=0; until kubectl --request-timeout=20s "$@"; do n=$((n+1)); [ "$n" -ge 5 ] && return 1; sleep $((n*2)); done; }
 
                   resources="
                   cloudproviderinfos.hostdata.kubescape.cloud

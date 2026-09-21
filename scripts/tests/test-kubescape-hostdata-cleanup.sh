@@ -48,6 +48,12 @@ if [ -z "$script_body" ] || [ "$script_body" = 'null' ]; then
   fail 'cleanup script is absent'
 fi
 
+grep -Fq 'kubectl --request-timeout=20s "$@"' <<<"$script_body" ||
+  fail 'cleanup API calls have no bounded request timeout'
+[ "$(yq eval '.spec.jobTemplate.spec.activeDeadlineSeconds' "$manifest")" -gt 120 ] ||
+  fail 'the Job deadline does not exceed one fully retried API-call budget'
+pass 'API calls and the outer Job deadline have nested finite budgets'
+
 [ "$(yq eval '.spec.concurrencyPolicy' "$manifest")" = 'Forbid' ] || fail 'concurrent runs are not forbidden'
 [ "$(yq eval '.spec.jobTemplate.spec.backoffLimit' "$manifest")" = '0' ] || fail 'Job retries must stay with the authored API retry loop'
 [ "$(yq eval '.spec.jobTemplate.spec.template.spec.automountServiceAccountToken' "$manifest")" = 'true' ] || fail 'kubectl Job has no service-account token'
@@ -83,6 +89,9 @@ chmod +x "$work/cleanup.sh"
 cat >"$work/kubectl" <<'STUB'
 #!/bin/sh
 set -eu
+if [ "$1" = '--request-timeout=20s' ]; then
+  shift
+fi
 if [ "$1" = 'get' ] && [ "$2" = 'nodes' ]; then
   case "${MODE:-healthy}" in
     node-empty) exit 0 ;;
