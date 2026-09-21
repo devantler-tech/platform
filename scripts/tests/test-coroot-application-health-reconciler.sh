@@ -95,9 +95,10 @@ pass 'bounded concurrent requests fail visible before the Job deadline'
 # every workload's resolver search candidate to that DaemonSet. This exact,
 # finite threshold complements the alert-side exemption without changing the
 # Cilium agent's own resolver configuration (which does not rewrite proxied DNS
-# packets).
+# packets). The current seven-node platform produces about 27,115 expected
+# expansions per hour, so the cap keeps 84% headroom while remaining finite.
 # shellcheck disable=SC2016
-[[ "${script_body}" == *'reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 7500 cilium-dns-search-expansion'* ]] ||
+[[ "${script_body}" == *'reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 50000 cilium-dns-search-expansion'* ]] ||
   fail 'the Cilium DNS proxy aggregation must have a finite app-level threshold'
 pass 'the Cilium DNS proxy aggregation has a narrow application policy'
 
@@ -108,6 +109,15 @@ pass 'the Cilium DNS proxy aggregation has a narrow application policy'
 [[ "${script_body}" == *'reconcile_threshold "$APID" MemoryLeakPercent 10 250 talos-apid-bounded-rpc-sawtooth'* ]] ||
   fail 'the exact Talos apid application must have a finite memory-growth threshold'
 pass 'the Talos apid memory sawtooth has a narrow application policy'
+
+# The two Backstage PostgreSQL instances repeatedly return to a 40-130 MiB
+# weekly band under their 512 MiB limits. After the runtime rollout, cache
+# warmup produced a 40%/h short-window slope without OOM or pressure. Preserve
+# a finite ceiling above that measured slope and scope it to this database.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'reconcile_threshold "$BACKSTAGE_DB" MemoryLeakPercent 10 75 backstage-postgres-cache-warmup'* ]] ||
+  fail 'the exact Backstage database must have a finite cache-warmup threshold'
+pass 'the Backstage PostgreSQL cache warmup has a narrow application policy'
 
 yq eval -e '.cluster.controllerManager.extraArgs."log-text-split-stream" == "false"' \
   "${talos_patch}" >/dev/null ||
@@ -573,7 +583,8 @@ jq -s -e '
   any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-cleanup-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 40) and
   any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Aapid/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 250) and
-  any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 7500) and
+  any(.[]; (.url | contains("%3Abackstage%3ADatabaseCluster%3Abackstage-db/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 75) and
+  any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 50000) and
   any(.[]; (.url | contains("%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Adex%3ADeployment%3Adex/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Ainit/inspection/LogErrors/config")) and .body.configs[2].threshold == 1000) and
