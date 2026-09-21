@@ -49,6 +49,47 @@ fi
   fail 'the reconciler must validate raw log messages'
 [[ "${script_body}" != *'view:"patterns"'* ]] ||
   fail 'representative Coroot patterns must not stand in for every raw error'
+yq eval -e '.spec.schedule == "* * * * *"' "${manifest}" >/dev/null ||
+  fail 'raw log evidence must be revalidated every minute'
+yq eval -e '
+  .spec.concurrencyPolicy == "Forbid" and
+  .spec.startingDeadlineSeconds <= 10 and
+  .spec.jobTemplate.spec.activeDeadlineSeconds == 55 and
+  .spec.jobTemplate.spec.template.spec.terminationGracePeriodSeconds == 2 and
+  (
+    .spec.jobTemplate.spec.activeDeadlineSeconds +
+    .spec.jobTemplate.spec.template.spec.terminationGracePeriodSeconds
+  ) < 60
+' "${manifest}" >/dev/null ||
+  fail 'reconciliations must neither overlap nor remain active at the next one-minute evidence pass'
+# startingDeadlineSeconds is the controller's allowance for launching a missed
+# schedule, not runtime added to the preceding Job. Keep the active deadline
+# plus termination grace below the next minute, while giving the bounded
+# four-worker batches fifty seconds for their worst-case query budget plus five
+# seconds for PID lookup, threshold work, and shell scheduling overhead.
+# A failed Coroot request must have enough time to remove the warm override
+# before Kubernetes enforces the Job deadline. Reconciliations are independent
+# per application/check, but the log queries are deliberately expensive. Keep
+# a small bounded worker batch so the reconciler cannot overload Coroot and
+# manufacture query failures while still finishing inside the minute.
+[[ "${script_body}" == *'REQUEST_MAX_TIME=5'* ]] ||
+  fail 'every Coroot request must use the reviewed five-second time budget'
+# The literal variable reference is the rendered-script contract.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'--max-time "$REQUEST_MAX_TIME"'* ]] ||
+  fail 'the Coroot curl policy must enforce the reviewed request time budget'
+[[ "${script_body}" != *'--retry '* ]] ||
+  fail 'per-attempt retries would exceed the reviewed fail-visible time budget'
+queued_log_reconciliations="$(grep -c '^                  queue_reconciliation reconcile_logs ' "${manifest}" || true)"
+[ "${queued_log_reconciliations}" -ge 10 ] ||
+  fail 'application log policies must reconcile concurrently inside the Job deadline'
+[[ "${script_body}" == *'wait_reconciliations'* ]] ||
+  fail 'the reconciler must wait for every queued application policy'
+yq eval -e '
+  .spec.jobTemplate.spec.activeDeadlineSeconds > (5 * 6)
+' "${manifest}" >/dev/null ||
+  fail 'the Job deadline must exceed PID lookup plus the longest fail-visible request path'
+pass 'bounded concurrent requests fail visible before the Job deadline'
 
 # The Cilium application owns the cluster-wide DNS proxy, so Coroot attributes
 # every workload's resolver search candidate to that DaemonSet. This exact,
@@ -59,6 +100,14 @@ fi
 [[ "${script_body}" == *'reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 7500 cilium-dns-search-expansion'* ]] ||
   fail 'the Cilium DNS proxy aggregation must have a finite app-level threshold'
 pass 'the Cilium DNS proxy aggregation has a narrow application policy'
+
+# Talos apid is a small host process whose short RPC/allocation bursts create a
+# steep short-window regression while RSS repeatedly returns to baseline.
+# Keep the exception exact and finite; the global threshold stays at ten.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'reconcile_threshold "$APID" MemoryLeakPercent 10 250 talos-apid-bounded-rpc-sawtooth'* ]] ||
+  fail 'the exact Talos apid application must have a finite memory-growth threshold'
+pass 'the Talos apid memory sawtooth has a narrow application policy'
 
 yq eval -e '.cluster.controllerManager.extraArgs."log-text-split-stream" == "false"' \
   "${talos_patch}" >/dev/null ||
@@ -95,6 +144,8 @@ setup_scenario() {
   local kustomize_mode="${17:-known}"
   local autoscaler_mode="${18:-known}"
   local autosuppressor_mode="${19:-present}"
+  local leader_mode="${20:-known}"
+  local concurrency_limit="${COROOT_STUB_CONCURRENCY_LIMIT:-0}"
   local dir="${work_root}/${name}"
   mkdir -p "${dir}/bin"
   printf '%s' "${dex_mode}" >"${dir}/dex-mode"
@@ -115,6 +166,10 @@ setup_scenario() {
   printf '%s' "${kustomize_mode}" >"${dir}/kustomize-mode"
   printf '%s' "${autoscaler_mode}" >"${dir}/autoscaler-mode"
   printf '%s' "${autosuppressor_mode}" >"${dir}/autosuppressor-mode"
+  printf '%s' "${leader_mode}" >"${dir}/leader-mode"
+  printf '%s' "${concurrency_limit}" >"${dir}/concurrency-limit"
+  printf '0' >"${dir}/active-queries"
+  printf '0' >"${dir}/peak-queries"
 
   cat >"${dir}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
@@ -133,11 +188,35 @@ for arg in "$@"; do
   prev="${arg}"
 done
 
+release_query_slot() {
+  [ "$(cat "${dir}/concurrency-limit")" -gt 0 ] || return 0
+  while ! mkdir "${dir}/query-counter-lock" 2>/dev/null; do sleep 0.01; done
+  active="$(cat "${dir}/active-queries")"
+  printf '%s' "$((active - 1))" >"${dir}/active-queries"
+  rmdir "${dir}/query-counter-lock"
+  trap - EXIT
+}
+
+acquire_query_slot() {
+  limit="$(cat "${dir}/concurrency-limit")"
+  [ "${limit}" -gt 0 ] || return 0
+  while ! mkdir "${dir}/query-counter-lock" 2>/dev/null; do sleep 0.01; done
+  active="$(( $(cat "${dir}/active-queries") + 1 ))"
+  printf '%s' "${active}" >"${dir}/active-queries"
+  peak="$(cat "${dir}/peak-queries")"
+  [ "${active}" -le "${peak}" ] || printf '%s' "${active}" >"${dir}/peak-queries"
+  rmdir "${dir}/query-counter-lock"
+  trap release_query_slot EXIT
+  sleep 0.1
+  [ "${active}" -le "${limit}" ] || exit 28
+}
+
 case "${url}" in
   */api/user)
     printf '%s\n' '{"data":{"projects":[{"id":"95rsc5yp","name":"platform"}]}}'
     ;;
   */logs?query=*)
+    acquire_query_slot
     severity="error"
     [[ "${url}" == *'%22value%22%3A%22fatal%22'* ]] && severity="fatal"
     if [[ "$url" == *'%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor'* ]]; then
@@ -194,6 +273,8 @@ case "${url}" in
     elif [[ "$url" == *'%3Akube-system%3AStaticPods%3Akube-apiserver'* ]]; then
       if [ "${severity}" = "fatal" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"fatal","message":"{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"1845fc58-1235-49f3-bb89-52dd44151383\",\"stage\":\"RequestReceived\",\"requestURI\":\"/api/v1/namespaces/kubescape/secrets/sh.helm.release.v1.alertmanager.v7\",\"verb\":\"get\",\"user\":{\"username\":\"system:serviceaccount:flux-system:helm-controller\"},\"objectRef\":{\"resource\":\"secrets\",\"namespace\":\"kubescape\",\"name\":\"sh.helm.release.v1.alertmanager.v7\",\"apiVersion\":\"v1\"}}"}]}}'
+      elif [ "$(cat "${dir}/leader-mode")" != "known" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0920 23:01:52.432265       1 status.go:71] \"Unhandled Error\" err=\"apiserver received an error that is not an metav1.Status: rpctypes.EtcdError{code:0x7, desc:\\\"permission denied\\\"}: permission denied\" logger=\"UnhandledError\""}]}}'
       else
         printf '%s\n' '{"data":{"status":"ok","entries":[
           {"severity":"error","message":"E0919 16:32:49.937385       1 status.go:71] \"Unhandled Error\" err=\"apiserver received an error that is not an metav1.Status: &errors.errorString{s:\\\"context canceled\\\"}: context canceled\" logger=\"UnhandledError\""},
@@ -204,7 +285,11 @@ case "${url}" in
           {"severity":"error","message":"E0919 22:57:04.882632       1 controller.go:123] \"Unhandled Error\" err=\"loading OpenAPI spec for \\\"v1beta1.metrics.k8s.io\\\" failed with: Error, could not get list of group versions for APIService\" logger=\"UnhandledError\""},
           {"severity":"error","message":"E0919 22:56:58.072707       1 wrap.go:53] \"Timeout or abort while handling\" logger=\"UnhandledError\" method=\"GET\" URI=\"/api/v1/namespaces/kube-system/configmaps/tetragon-operator-config\" auditID=\"e422a037-b8da-4b60-8982-52839b17c40a\""},
           {"severity":"error","message":"E0920 01:10:57.256030       1 wrap.go:53] \"Timeout or abort while handling\" logger=\"UnhandledError\" method=\"GET\" URI=\"/apis/spdx.softwarecomposition.kubescape.io/v1beta1/sbomsyfts?watch=true\" auditID=\"ad9ad3fe-66f1-41fd-a686-f6de2d3205fd\""},
-          {"severity":"error","message":"E0920 00:24:30.657865       1 wrap.go:53] \"Timeout or abort while handling\" logger=\"UnhandledError\" method=\"GET\" URI=\"/apis/spdx.softwarecomposition.kubescape.io/v1beta1/containerprofiles?watch=true\" auditID=\"aaa60eeb-ca9d-4258-b1a1-d52481c619fb\""}
+          {"severity":"error","message":"E0920 00:24:30.657865       1 wrap.go:53] \"Timeout or abort while handling\" logger=\"UnhandledError\" method=\"GET\" URI=\"/apis/spdx.softwarecomposition.kubescape.io/v1beta1/containerprofiles?watch=true\" auditID=\"aaa60eeb-ca9d-4258-b1a1-d52481c619fb\""},
+          {"severity":"error","message":"E0920 23:01:52.432265       1 status.go:71] \"Unhandled Error\" err=\"apiserver received an error that is not an metav1.Status: rpctypes.EtcdError{code:0xe, desc:\\\"etcdserver: request timed out, possibly due to previous leader failure\\\"}: etcdserver: request timed out, possibly due to previous leader failure\" logger=\"UnhandledError\""},
+          {"severity":"error","message":"E0920 23:01:50.188069       1 finisher.go:175] \"Unhandled Error\" err=\"FinishRequest: post-timeout activity - time-elapsed: 5.921µs, panicked: false, err: context canceled, panic-reason: <nil>\" logger=\"UnhandledError\""},
+          {"severity":"error","message":"E0920 23:01:50.188111       1 timeout.go:140] \"Post-timeout activity\" logger=\"UnhandledError\" timeElapsed=\"3.356µs\" method=\"PUT\" path=\"/apis/coordination.k8s.io/v1/namespaces/keda/leases/operator.keda.sh\" result=null"},
+          {"severity":"error","message":"E0920 23:01:50.188017       1 wrap.go:53] \"Timeout or abort while handling\" logger=\"UnhandledError\" method=\"PUT\" URI=\"/apis/coordination.k8s.io/v1/namespaces/keda/leases/operator.keda.sh?timeout=5s\" auditID=\"7dc629e4-f106-4c97-a803-9ed0973b438e\""}
         ]}}'
       fi
     elif [[ "$url" == *'%3Akube-system%3AStaticPods%3Akube-controller-manager'* ]]; then
@@ -268,11 +353,54 @@ case "${url}" in
       else
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Reconciler error","attributes":{"Backup.name":"coroot-db-daily-20260820033000","Backup.namespace":"observability","controller":"backup","controllerGroup":"postgresql.cnpg.io","controllerKind":"Backup","error":"terminal error: Backup.postgresql.cnpg.io \"a-different-backup\" not found","name":"coroot-db-daily-20260820033000","namespace":"observability","service.name":"/k8s/cnpg-system/cloudnative-pg"}}]}}'
       fi
+    elif [[ "$url" == *'%3Acrossplane-system%3ADeployment%3Acrossplane-rbac-manager'* ]]; then
+      if [ "${severity}" = "fatal" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
+      elif [ "$(cat "${dir}/leader-mode")" = "known" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Failed to update lease optimistically, falling back to slow path","attributes":{"error":"Put \"https://10.96.0.1:443/apis/coordination.k8s.io/v1/namespaces/crossplane-system/leases/crossplane-leader-election-rbac?timeout=5s\": net/http: request canceled (Client.Timeout exceeded while awaiting headers)","lock":"crossplane-system/crossplane-leader-election-rbac","service.name":"/k8s/crossplane-system/crossplane-rbac-manager"}}]}}'
+      else
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Failed to update lease optimistically, falling back to slow path","attributes":{"error":"permission denied","lock":"crossplane-system/crossplane-leader-election-rbac","service.name":"/k8s/crossplane-system/crossplane-rbac-manager"}}]}}'
+      fi
+    elif [[ "$url" == *'%3Acrossplane-system%3ADeployment%3Acrossplane'* ]]; then
+      if [ "${severity}" = "fatal" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
+      elif [ "$(cat "${dir}/leader-mode")" = "known" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Failed to update lease optimistically, falling back to slow path","attributes":{"error":"etcdserver: request timed out","lock":"crossplane-system/crossplane-leader-election-core","service.name":"/k8s/crossplane-system/crossplane"}}]}}'
+      else
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Failed to update lease optimistically, falling back to slow path","attributes":{"error":"etcdserver: request timed out","lock":"crossplane-system/different-lock","service.name":"/k8s/crossplane-system/crossplane"}}]}}'
+      fi
+    elif [[ "$url" == *'%3Akeda%3ADeployment%3Akeda-operator'* ]]; then
+      if [ "${severity}" = "fatal" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
+      elif [ "$(cat "${dir}/leader-mode")" = "known" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0920 23:01:50.188353       1 leaderelection.go:445] \"Failed to update lease optimistically, falling back to slow path\" err=\"Put \\\"https://10.96.0.1:443/apis/coordination.k8s.io/v1/namespaces/keda/leases/operator.keda.sh?timeout=5s\\\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)\" lock=\"keda/operator.keda.sh\""}]}}'
+      else
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0920 23:01:50.188353       1 leaderelection.go:445] \"Failed to update lease optimistically, falling back to slow path\" err=\"permission denied\" lock=\"keda/operator.keda.sh\""}]}}'
+      fi
+    elif [[ "$url" == *'%3Areloader%3ADeployment%3Areloader-reloader'* ]]; then
+      if [ "${severity}" = "fatal" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
+      elif [ "$(cat "${dir}/leader-mode")" = "known" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0920 23:01:52.195947       1 leaderelection.go:445] \"Failed to update lease optimistically, falling back to slow path\" err=\"etcdserver: request timed out\" lock=\"reloader/stakater-reloader-lock\""}]}}'
+      else
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0920 23:01:52.195947       1 leaderelection.go:445] \"Failed to update lease optimistically, falling back to slow path\" err=\"etcdserver: request timed out\" lock=\"reloader/different-lock\""}]}}'
+      fi
     elif [[ "$url" == *'%3Akube-system%3ADeployment%3Ahcloud-csi-controller'* ]]; then
       if [ "${severity}" = "fatal" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
       elif [ "$(cat "${dir}/csi-controller-mode")" = "known" ]; then
-        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"time=2026-09-20T03:30:15.774Z level=ERROR source=/home/runner/work/csi-driver/csi-driver/internal/app/app.go:321 msg=\"handler failed\" component=grpc-server err=\"rpc error: code = Internal desc = failed to publish volume: Get \\\"https://api.hetzner.cloud/v1/volumes/106045084\\\": context canceled\""}]}}'
+        if [ "$(cat "${dir}/leader-mode")" = "known" ]; then
+          printf '%s\n' '{"data":{"status":"ok","entries":[
+            {"severity":"error","message":"time=2026-09-20T03:30:15.774Z level=ERROR source=/home/runner/work/csi-driver/csi-driver/internal/app/app.go:321 msg=\"handler failed\" component=grpc-server err=\"rpc error: code = Internal desc = failed to publish volume: Get \\\"https://api.hetzner.cloud/v1/volumes/106045084\\\": context canceled\""},
+            {"severity":"error","message":"E0920 23:01:51.648043       1 leaderelection.go:445] \"Failed to update lease optimistically, falling back to slow path\" err=\"etcdserver: request timed out\" lock=\"kube-system/csi-hetzner-cloud\""},
+            {"severity":"error","message":"E0920 23:01:51.661735       1 leaderelection.go:445] \"Failed to update lease optimistically, falling back to slow path\" err=\"etcdserver: request timed out, possibly due to previous leader failure\" lock=\"kube-system/external-attacher-leader-csi-hetzner-cloud\""}
+          ]}}'
+        else
+          printf '%s\n' '{"data":{"status":"ok","entries":[
+            {"severity":"error","message":"time=2026-09-20T03:30:15.774Z level=ERROR source=/home/runner/work/csi-driver/csi-driver/internal/app/app.go:321 msg=\"handler failed\" component=grpc-server err=\"rpc error: code = Internal desc = failed to publish volume: Get \\\"https://api.hetzner.cloud/v1/volumes/106045084\\\": context canceled\""},
+            {"severity":"error","message":"E0920 23:01:51.648043       1 leaderelection.go:445] \"Failed to update lease optimistically, falling back to slow path\" err=\"permission denied\" lock=\"kube-system/csi-hetzner-cloud\""}
+          ]}}'
+        fi
       else
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"time=2026-09-20T03:30:15.774Z level=ERROR source=/home/runner/work/csi-driver/csi-driver/internal/app/app.go:321 msg=\"handler failed\" component=grpc-server err=\"rpc error: code = Internal desc = failed to publish volume: Get \\\"https://api.hetzner.cloud/v1/volumes/106045084\\\": connection reset by peer\""}]}}'
       fi
@@ -356,6 +484,14 @@ case "${url}" in
     elif [[ "${url}" == *'%3Acnpg-system%3ADeployment%3Acloudnative-pg'* ]] &&
       [ "$(cat "${dir}/cnpg-mode")" != "known" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
+    elif { [[ "${url}" == *'%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/LogErrors/config'* ]] ||
+      [[ "${url}" == *'%3Acrossplane-system%3ADeployment%3Acrossplane-rbac-manager/inspection/LogErrors/config'* ]] ||
+      [[ "${url}" == *'%3Akeda%3ADeployment%3Akeda-operator/inspection/LogErrors/config'* ]] ||
+      [[ "${url}" == *'%3Areloader%3ADeployment%3Areloader-reloader/inspection/LogErrors/config'* ]] ||
+      [[ "${url}" == *'%3Akube-system%3ADeployment%3Ahcloud-csi-controller/inspection/LogErrors/config'* ]] ||
+      [[ "${url}" == *'%3Akube-system%3AStaticPods%3Akube-apiserver/inspection/LogErrors/config'* ]]; } &&
+      [ "$(cat "${dir}/leader-mode")" != "known" ]; then
+      printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
     elif [[ "${url}" == *'%3Akube-system%3ADeployment%3Ahcloud-csi-controller'* ]] &&
       [ "$(cat "${dir}/csi-controller-mode")" != "known" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
@@ -400,11 +536,27 @@ known_output="$(run_scenario "${known_dir}")"
 printf '%s\n' "${known_output}" | jq -s -e \
   'length > 0 and all(.[]; .level == "info" and (.msg | type == "string" and length > 0))' \
   >/dev/null || fail 'successful reconciliation must emit structured info JSON'
+
+bounded_dir="$(COROOT_STUB_CONCURRENCY_LIMIT=4 setup_scenario bounded-concurrency known null)"
+bounded_output="$(run_scenario "${bounded_dir}" 2>&1)"
+printf '%s\n' "${bounded_output}" | jq -s -e '
+  length > 0 and all(.[]; .level == "info")
+' >/dev/null || fail 'bounded Coroot capacity produced a synthetic query failure'
+[ "$(cat "${bounded_dir}/peak-queries")" -le 4 ] ||
+  fail 'the reconciler exceeded the reviewed four-query Coroot capacity'
+[[ "${script_body}" == *'MAX_CONCURRENT_RECONCILIATIONS=4'* ]] ||
+  fail 'Coroot reconciliation must use the reviewed four-worker concurrency ceiling'
+# These literal references keep the rendered shell contract reviewable.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'[ "$RECONCILIATION_COUNT" -ge "$MAX_CONCURRENT_RECONCILIATIONS" ]'* ]] ||
+  fail 'the reconciliation queue must drain each bounded worker batch'
+pass 'Coroot log queries respect the bounded worker capacity'
 jq -s -e '
   any(.[]; (.url | contains("%3A_%3AUnknown%3Akubelet/inspection/NetworkTCPConnections/config")) and .body.configs[2] == null) and
   any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-background-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
   any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-cleanup-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 40) and
   any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
+  any(.[]; (.url | contains("%3A_%3AUnknown%3Aapid/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 250) and
   any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 7500) and
   any(.[]; (.url | contains("%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Adex%3ADeployment%3Adex/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
@@ -416,6 +568,10 @@ jq -s -e '
   any(.[]; (.url | contains("%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater/inspection/LogErrors/config")) and .body.configs[2] == null) and
   any(.[]; (.url | contains("%3Avelero%3ADeployment%3Avelero/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Acnpg-system%3ADeployment%3Acloudnative-pg/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
+  any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
+  any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane-rbac-manager/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
+  any(.[]; (.url | contains("%3Akeda%3ADeployment%3Akeda-operator/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
+  any(.[]; (.url | contains("%3Areloader%3ADeployment%3Areloader-reloader/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Akube-system%3ADeployment%3Ahcloud-csi-controller/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Ahcloud-csi-node/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Akubescape%3ADeployment%3Aoperator/inspection/LogErrors/config")) and .body.configs[2].threshold == 100) and
@@ -496,6 +652,19 @@ jq -s -e '
   fail 'an uncorrelated CapacityBuffer retry pair did not remain visible'
 pass 'the CapacityBuffer retry policy rejects uncorrelated entries'
 
+leader_near_miss_dir="$(setup_scenario leader-near-miss known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known known present near-miss)"
+run_scenario "${leader_near_miss_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/LogErrors/config")) and .body.configs[2] == null) and
+  any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane-rbac-manager/inspection/LogErrors/config")) and .body.configs[2] == null) and
+  any(.[]; (.url | contains("%3Akeda%3ADeployment%3Akeda-operator/inspection/LogErrors/config")) and .body.configs[2] == null) and
+  any(.[]; (.url | contains("%3Areloader%3ADeployment%3Areloader-reloader/inspection/LogErrors/config")) and .body.configs[2] == null) and
+  any(.[]; (.url | contains("%3Akube-system%3ADeployment%3Ahcloud-csi-controller/inspection/LogErrors/config")) and .body.configs[2] == null) and
+  any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-apiserver/inspection/LogErrors/config")) and .body.configs[2] == null)
+' "${leader_near_miss_dir}/posts.ndjson" >/dev/null ||
+  fail 'a non-timeout or wrong-lock leader-election error did not remain visible'
+pass 'recovered leader-election policies reject unrelated failures'
+
 operator_near_miss_dir="$(setup_scenario operator-near-miss known null 'context deadline exceeded' null known complete near-miss)"
 run_scenario "${operator_near_miss_dir}" >/dev/null
 jq -s -e '
@@ -561,7 +730,15 @@ pass 'an invalid raw-message response fails closed'
 aged_dir="$(setup_scenario aged none 10)"
 run_scenario "${aged_dir}" >/dev/null
 jq -s -e '
-  any(.[]; (.url | contains("%3Adex%3ADeployment%3Adex/inspection/LogErrors/config")) and .body.configs[2] == null)
+  all(.[]; (.url | contains("%3Adex%3ADeployment%3Adex/inspection/LogErrors/config") | not))
 ' "${aged_dir}/posts.ndjson" >/dev/null ||
-  fail 'an aged-out Dex pattern did not remove its app-level threshold'
-pass 'an aged-out pattern returns to the global zero threshold'
+  fail 'an empty reviewed window removed the warm finite threshold'
+pass 'an empty reviewed window keeps the finite threshold warm'
+
+empty_unset_dir="$(setup_scenario empty-unset none null)"
+run_scenario "${empty_unset_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Adex%3ADeployment%3Adex/inspection/LogErrors/config")) and .body.configs[2].threshold == 10)
+' "${empty_unset_dir}/posts.ndjson" >/dev/null ||
+  fail 'an empty reviewed window did not install the finite threshold'
+pass 'an empty reviewed window installs the finite threshold when absent'
