@@ -124,6 +124,15 @@ pass 'the Talos apid memory sawtooth has a narrow application policy'
   fail 'the exact Backstage database must have a finite cache-warmup threshold'
 pass 'the Backstage PostgreSQL cache warmup has a narrow application policy'
 
+# The Kubescape server performs one authored posture scan at 09:12 UTC. Its
+# working set rises during that scan but remains far below the 1 GiB hard limit,
+# with no OOM or pressure signal. Keep the exception exact and finite so an
+# actual sustained near-tripling still warns.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'reconcile_threshold "$KUBESCAPE" MemoryLeakPercent 10 150 kubescape-daily-scan-working-set'* ]] ||
+  fail 'the exact Kubescape scanner must have a finite post-scan memory threshold'
+pass 'the Kubescape daily scan working set has a narrow application policy'
+
 # Coroot stores second-based thresholds even though the UI formats this check in
 # milliseconds. Bind the reconciler to the API contract so a millisecond-shaped
 # fake cannot hide a live global-config refusal.
@@ -212,6 +221,7 @@ setup_scenario() {
   printf '%s' "${autosuppressor_mode}" >"${dir}/autosuppressor-mode"
   printf '%s' "${leader_mode}" >"${dir}/leader-mode"
   printf '%s' "${cnpg_instance_mode}" >"${dir}/cnpg-instance-mode"
+  printf '%s' 'known' >"${dir}/coroot-mode"
   printf '%s' "${concurrency_limit}" >"${dir}/concurrency-limit"
   printf '0' >"${dir}/active-queries"
   printf '0' >"${dir}/peak-queries"
@@ -318,6 +328,8 @@ case "${url}" in
     elif [[ "$url" == *'%3Akube-system%3AStaticPods%3Akube-apiserver'* ]]; then
       if [ "${severity}" = "fatal" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"fatal","message":"{\"kind\":\"Event\",\"apiVersion\":\"audit.k8s.io/v1\",\"level\":\"Metadata\",\"auditID\":\"1845fc58-1235-49f3-bb89-52dd44151383\",\"stage\":\"RequestReceived\",\"requestURI\":\"/api/v1/namespaces/kubescape/secrets/sh.helm.release.v1.alertmanager.v7\",\"verb\":\"get\",\"user\":{\"username\":\"system:serviceaccount:flux-system:helm-controller\"},\"objectRef\":{\"resource\":\"secrets\",\"namespace\":\"kubescape\",\"name\":\"sh.helm.release.v1.alertmanager.v7\",\"apiVersion\":\"v1\"}}"}]}}'
+      elif [ "$(cat "${dir}/leader-mode")" = "client-get-near-miss" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0921 09:51:29.516317       1 timeout.go:140] \"Post-timeout activity\" logger=\"UnhandledError\" timeElapsed=\"187.703µs\" method=\"POST\" path=\"/apis/spdx.softwarecomposition.kubescape.io/v1beta1/namespaces/longhorn-system/containerprofiles/instancemanager-instance-manager-c210015368cfb1db9feb55fd74623baa-instance-manager-c90d-75ac\" result=null"}]}}'
       elif [ "$(cat "${dir}/leader-mode")" != "known" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0920 23:01:52.432265       1 status.go:71] \"Unhandled Error\" err=\"apiserver received an error that is not an metav1.Status: rpctypes.EtcdError{code:0x7, desc:\\\"permission denied\\\"}: permission denied\" logger=\"UnhandledError\""}]}}'
       else
@@ -327,6 +339,7 @@ case "${url}" in
           {"severity":"error","message":"E0920 01:01:17.167192       1 status.go:71] \"Unhandled Error\" err=\"apiserver received an error that is not an metav1.Status: &errors.errorString{s:\\\"http: Handler timeout\\\"}: http: Handler timeout\" logger=\"UnhandledError\""},
           {"severity":"error","message":"E0920 01:01:17.167224       1 writers.go:136] \"Unhandled Error\" err=\"apiserver was unable to write a fallback JSON response: http: Handler timeout\" logger=\"UnhandledError\""},
           {"severity":"error","message":"E0919 16:32:49.939927       1 timeout.go:140] \"Post-timeout activity\" logger=\"UnhandledError\" timeElapsed=\"2.920993ms\" method=\"GET\" path=\"/apis/batch/v1/namespaces/openbao/jobs/vault-snapshot-init\" result=null"},
+          {"severity":"error","message":"E0921 09:51:29.516317       1 timeout.go:140] \"Post-timeout activity\" logger=\"UnhandledError\" timeElapsed=\"187.703µs\" method=\"GET\" path=\"/apis/spdx.softwarecomposition.kubescape.io/v1beta1/namespaces/longhorn-system/containerprofiles/instancemanager-instance-manager-c210015368cfb1db9feb55fd74623baa-instance-manager-c90d-75ac\" result=null"},
           {"severity":"error","message":"E0919 22:57:04.882632       1 controller.go:123] \"Unhandled Error\" err=\"loading OpenAPI spec for \\\"v1beta1.metrics.k8s.io\\\" failed with: Error, could not get list of group versions for APIService\" logger=\"UnhandledError\""},
           {"severity":"error","message":"E0919 22:56:58.072707       1 wrap.go:53] \"Timeout or abort while handling\" logger=\"UnhandledError\" method=\"GET\" URI=\"/api/v1/namespaces/kube-system/configmaps/tetragon-operator-config\" auditID=\"e422a037-b8da-4b60-8982-52839b17c40a\""},
           {"severity":"error","message":"E0920 01:10:57.256030       1 wrap.go:53] \"Timeout or abort while handling\" logger=\"UnhandledError\" method=\"GET\" URI=\"/apis/spdx.softwarecomposition.kubescape.io/v1beta1/sbomsyfts?watch=true\" auditID=\"ad9ad3fe-66f1-41fd-a686-f6de2d3205fd\""},
@@ -351,10 +364,21 @@ case "${url}" in
         printf '%s\n' '{"data":{"status":"ok","entries":[
           {"severity":"error","message":"E0919 15:54:02.455011       1 reflector.go:227] \"Failed to watch\" err=\"failed to list *v1.PartialObjectMetadata: the server could not find the requested resource\" logger=\"UnhandledError\" reflector=\"k8s.io/client-go/metadata/metadatainformer/informer.go:146\" type=\"*v1.PartialObjectMetadata\""},
           {"severity":"error","message":"E0919 15:54:57.858842       1 replica_set.go:640] \"Unhandled Error\" err=\"sync \\\"flux-system/kustomize-controller-9895f7fb8\\\" failed with read version: 295731570 is not as new as written version: 295731572 for group resource replicasets.apps\" logger=\"UnhandledError\""},
+          {"severity":"error","message":"E0921 09:17:33.450182       1 daemon_controller.go:411] \"Unhandled Error\" err=\"longhorn-system/longhorn-csi-plugin failed with : read version: 299740972 is not as new as written version: 299741152 for group resource daemonsets.apps\" logger=\"UnhandledError\""},
           {"severity":"error","message":"E0919 23:15:11.248729       1 cronjob_controllerv2.go:179] \"Unhandled Error\" err=\"error syncing CronJobController observability/cluster-heartbeat, requeuing: Operation cannot be fulfilled on cronjobs.batch \\\"cluster-heartbeat\\\": the object has been modified; please apply your changes to the latest version and try again\" logger=\"UnhandledError\""}
         ]}}'
+      elif [ "$(cat "${dir}/controller-mode")" = "daemonset-near-miss" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0921 09:17:33.450182       1 daemon_controller.go:411] \"Unhandled Error\" err=\"longhorn-system/different-daemonset failed with : read version: 299740972 is not as new as written version: 299741152 for group resource daemonsets.apps\" logger=\"UnhandledError\""}]}}'
       else
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0919 23:15:11.248729       1 cronjob_controllerv2.go:179] \"Unhandled Error\" err=\"error syncing CronJobController observability/cluster-heartbeat, requeuing: Operation cannot be fulfilled on cronjobs.batch \\\"different-job\\\": the object has been modified; please apply your changes to the latest version and try again\" logger=\"UnhandledError\""}]}}'
+      fi
+    elif [[ "$url" == *'%3Aobservability%3AStatefulSet%3Acoroot-coroot'* ]]; then
+      if [ "${severity}" = "fatal" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
+      elif [ "$(cat "${dir}/coroot-mode")" = "known" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0921 08:55:24.070745       1 json.go:19] failed to encode: write tcp 10.244.21.37:8080->10.244.23.117:44542: write: broken pipe"}]}}'
+      else
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"E0921 08:55:24.070745       1 json.go:19] failed to encode: write tcp 10.244.21.37:8080->10.244.23.117:44542: write: connection reset by peer"}]}}'
       fi
     elif [[ "$url" == *'%3Aflux-system%3ADeployment%3Akustomize-controller'* ]]; then
       if [ "${severity}" = "fatal" ]; then
@@ -489,6 +513,12 @@ case "${url}" in
     elif [[ "$url" == *'%3Akubescape%3ADeployment%3Aoperator'* ]]; then
       if [ "${severity}" = "fatal" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
+      elif [ "$(cat "${dir}/operator-mode")" = "daily-report" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"failed to send daily report","attributes":{"error":"failed to get latest version","service.name":"/k8s/kubescape/operator"}}]}}'
+      elif [ "$(cat "${dir}/operator-mode")" = "daily-report-wrong-error" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"failed to send daily report","attributes":{"error":"failed to submit scan results","service.name":"/k8s/kubescape/operator"}}]}}'
+      elif [ "$(cat "${dir}/operator-mode")" = "daily-report-wrong-service" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"failed to send daily report","attributes":{"error":"failed to get latest version","service.name":"/k8s/kubescape/kubevuln"}}]}}'
       elif [ "$(cat "${dir}/operator-mode")" = "known" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[
           {"severity":"error","message":"error in SBOMWatch","attributes":{"error":"missing WLID","service.name":"/k8s/kubescape/operator"}},
@@ -539,8 +569,12 @@ case "${url}" in
       fi
     elif [[ "${url}" == *'%3Akube-system%3AStaticPods%3Akube-controller-manager'* ]] &&
       { [ "$(cat "${dir}/controller-mode")" = "near-miss" ] ||
+        [ "$(cat "${dir}/controller-mode")" = "daemonset-near-miss" ] ||
         [ "$(cat "${dir}/response-mode")" != "complete" ]; }; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":5000}]}}'
+    elif [[ "${url}" == *'%3Aobservability%3AStatefulSet%3Acoroot-coroot'* ]] &&
+      [ "$(cat "${dir}/coroot-mode")" != "known" ]; then
+      printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
     elif [[ "${url}" == *'%3Aflux-system%3ADeployment%3Akustomize-controller'* ]] &&
       [ "$(cat "${dir}/kustomize-mode")" != "known" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
@@ -555,7 +589,8 @@ case "${url}" in
       # must actively return it to inherited fail-visible behavior.
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
     elif [[ "${url}" == *'%3Akubescape%3ADeployment%3Aoperator'* ]] &&
-      [ "$(cat "${dir}/operator-mode")" != "known" ]; then
+      [ "$(cat "${dir}/operator-mode")" != "known" ] &&
+      [ "$(cat "${dir}/operator-mode")" != "daily-report" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":100}]}}'
     elif [[ "${url}" == *'%3Akubescape%3ADeployment%3Astorage'* ]] &&
       [ "$(cat "${dir}/storage-mode")" != "known" ]; then
@@ -643,6 +678,7 @@ jq -s -e '
   any(.[]; (.url | contains("%3A_%3AUnknown%3Aruntime/inspection/MemoryOOM/config")) and .body.configs[0].threshold == 0 and .body.configs[2].threshold == 1) and
   any(.[]; (.url | contains("%3Alonghorn-system%3ADaemonSet%3Aengine-image-ei-a4d05f02/inspection/MemoryOOM/config")) and .body.configs[0].threshold == 0 and .body.configs[2].threshold == 1) and
   any(.[]; (.url | contains("%3Abackstage%3ADatabaseCluster%3Abackstage-db/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 75) and
+  any(.[]; (.url | contains("%3Akubescape%3ADeployment%3Akubescape/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 150) and
   any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 50000) and
   any(.[]; (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsLatency/config")) and .body.configs[2].threshold == 0.75) and
   all(.[]; ((.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsServerErrors/config")) or (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsNxdomainErrors/config"))) | not) and
@@ -651,6 +687,7 @@ jq -s -e '
   any(.[]; (.url | contains("%3A_%3AUnknown%3Ainit/inspection/LogErrors/config")) and .body.configs[2].threshold == 1000) and
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-apiserver/inspection/LogErrors/config")) and .body.configs[2].threshold == 100) and
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-controller-manager/inspection/LogErrors/config")) and .body.configs[2].threshold == 5000) and
+  any(.[]; (.url | contains("%3Aobservability%3AStatefulSet%3Acoroot-coroot/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Aflux-system%3ADeployment%3Akustomize-controller/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Akube-system%3ADeployment%3Acluster-autoscaler-hetzner-cluster-autoscaler/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater/inspection/LogErrors/config")) and .body.configs[2] == null) and
@@ -725,6 +762,24 @@ jq -s -e '
   fail 'a CronJob conflict whose object name differs from the controller key did not remain visible'
 pass 'the controller retry policy rejects same-shaped name mismatches'
 
+controller_daemonset_near_miss_dir="$(setup_scenario controller-daemonset-near-miss known null)"
+printf '%s' 'daemonset-near-miss' >"${controller_daemonset_near_miss_dir}/controller-mode"
+run_scenario "${controller_daemonset_near_miss_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-controller-manager/inspection/LogErrors/config")) and .body.configs[2] == null)
+' "${controller_daemonset_near_miss_dir}/posts.ndjson" >/dev/null ||
+  fail 'a DaemonSet read-version retry for another workload did not remain visible'
+pass 'the controller retry policy limits DaemonSet collisions to Longhorn CSI'
+
+coroot_near_miss_dir="$(setup_scenario coroot-near-miss known null)"
+printf '%s' 'near-miss' >"${coroot_near_miss_dir}/coroot-mode"
+run_scenario "${coroot_near_miss_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Aobservability%3AStatefulSet%3Acoroot-coroot/inspection/LogErrors/config")) and .body.configs[2] == null)
+' "${coroot_near_miss_dir}/posts.ndjson" >/dev/null ||
+  fail 'a Coroot response-write failure other than the exact broken pipe did not remain visible'
+pass 'the Coroot response-write policy rejects changed socket failures'
+
 kustomize_near_miss_dir="$(setup_scenario kustomize-near-miss known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init near-miss)"
 run_scenario "${kustomize_near_miss_dir}" >/dev/null
 jq -s -e '
@@ -780,6 +835,14 @@ jq -s -e '
   fail 'a non-timeout or wrong-lock leader-election error did not remain visible'
 pass 'recovered leader-election policies reject unrelated failures'
 
+client_get_near_miss_dir="$(setup_scenario client-get-near-miss known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known known present client-get-near-miss)"
+run_scenario "${client_get_near_miss_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-apiserver/inspection/LogErrors/config")) and .body.configs[2] == null)
+' "${client_get_near_miss_dir}/posts.ndjson" >/dev/null ||
+  fail 'a post-timeout write using the reviewed duration unit did not remain visible'
+pass 'the kube-apiserver client-noise policy rejects non-GET post-timeout activity'
+
 operator_near_miss_dir="$(setup_scenario operator-near-miss known null 'context deadline exceeded' null known complete near-miss)"
 run_scenario "${operator_near_miss_dir}" >/dev/null
 jq -s -e '
@@ -787,6 +850,24 @@ jq -s -e '
 ' "${operator_near_miss_dir}/posts.ndjson" >/dev/null ||
   fail 'a missing non-Velero pod did not remain visible'
 pass 'the Kubescape lifecycle policy rejects unrelated missing workloads'
+
+operator_daily_report_dir="$(setup_scenario operator-daily-report known null 'context deadline exceeded' null known complete daily-report)"
+run_scenario "${operator_daily_report_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Akubescape%3ADeployment%3Aoperator/inspection/LogErrors/config")) and .body.configs[2].threshold == 100)
+' "${operator_daily_report_dir}/posts.ndjson" >/dev/null ||
+  fail 'the intentionally blocked Kubescape daily telemetry check did not receive the finite policy'
+pass 'the exact blocked Kubescape daily telemetry failure receives the finite policy'
+
+for operator_daily_report_near_miss in daily-report-wrong-error daily-report-wrong-service; do
+  operator_daily_report_near_miss_dir="$(setup_scenario "operator-${operator_daily_report_near_miss}" known null 'context deadline exceeded' null known complete "${operator_daily_report_near_miss}")"
+  run_scenario "${operator_daily_report_near_miss_dir}" >/dev/null
+  jq -s -e '
+    any(.[]; (.url | contains("%3Akubescape%3ADeployment%3Aoperator/inspection/LogErrors/config")) and .body.configs[2] == null)
+  ' "${operator_daily_report_near_miss_dir}/posts.ndjson" >/dev/null ||
+    fail "the Kubescape ${operator_daily_report_near_miss} near miss did not remain visible"
+done
+pass 'the Kubescape daily telemetry policy rejects changed causes and services'
 
 storage_near_miss_dir="$(setup_scenario storage-near-miss known null 'context deadline exceeded' null known complete known near-miss)"
 run_scenario "${storage_near_miss_dir}" >/dev/null

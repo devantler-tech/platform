@@ -135,7 +135,12 @@ spec:
                         echo "  [dry-run] would delete $resource/$record"
                         continue
                       fi
-                      kc delete "$resource" "$record" --ignore-not-found
+                      # Admission and finalizers own eventual removal. Waiting
+                      # here lets one stuck finalizer consume the complete Job
+                      # deadline and prevents the remaining orphan submissions.
+                      # The next daily inventory verifies whether deletion
+                      # completed and retries the exact object if it did not.
+                      kc delete "$resource" "$record" --ignore-not-found --wait=false
                       removed=$((removed+1))
                     done < "$file"
                   done
