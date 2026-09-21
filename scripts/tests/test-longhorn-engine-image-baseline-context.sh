@@ -65,7 +65,8 @@ if yq -o=json -I=0 '[.spec.rules[].mutate]' "${policy}" |
 fi
 [[ "$(yq -r '.spec.rules[0].mutate.foreach | length' "${policy}")" == '6' ]] ||
   fail 'one rule must cover absent and present pod, container, and initContainer securityContext objects'
-[[ "$(yq -r '[.spec.rules[0].mutate.foreach[].patchesJson6902 | select(test("op: (remove|replace)"))] | length' "${policy}")" == '0' ]] ||
+# Parse every operation rather than matching text, so a quoted "replace" cannot slip past.
+[[ "$(yq -r '[.spec.rules[0].mutate.foreach[].patchesJson6902 | from_yaml | .[].op] | join(",")' "${policy}")" == 'add,add,add,add,add,add' ]] ||
   fail 'the retrofit must only add fields, never remove or replace one'
 
 # --- Behaviour: RED/GREEN against the measured live shape ------------------
