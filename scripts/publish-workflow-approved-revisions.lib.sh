@@ -13,7 +13,7 @@ source "$REPORT"
 readonly APPROVED_SET="${APPROVED_REVISIONS_FILE:-$REPO_ROOT/scripts/publish-workflow-approved-revisions.tsv}"
 readonly SCAN_ROOT="${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}"
 readonly ENFORCE="${APPROVED_REVISIONS_ENFORCE:-0}"
-readonly HEADER=$'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signer_sha\tmain_pin_sha\tobserved_on'
+readonly HEADER=$'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signer_sha\tmain_pin_sha\trelease_candidate_sha\tobserved_on'
 
 # Relative to the scan root. Every entry must exist: a generic subject that moves or is
 # renamed would otherwise become an unattributed subject with no home, and this list is
@@ -74,12 +74,12 @@ is_trusted_release_stream_consumer() {
 # consumer → "workflow<TAB>signer<TAB>pin"
 approved=""
 line_no=1
-while IFS=$'\t' read -r consumer workflow applied_tag applied_digest signer pin observed_on extra; do
+while IFS=$'\t' read -r consumer workflow applied_tag applied_digest signer pin candidate observed_on extra; do
   line_no=$((line_no + 1))
   [ -n "$consumer" ] || continue
   [ "$line_no" -gt 2 ] || [ "$consumer" != 'consumer' ] || continue  # the header
-  [ -z "${extra:-}" ] || refuse "approved set line $line_no has more than seven fields"
-  [ -n "$observed_on" ] || refuse "approved set line $line_no has fewer than seven fields"
+  [ -z "${extra:-}" ] || refuse "approved set line $line_no has more than eight fields"
+  [ -n "$observed_on" ] || refuse "approved set line $line_no has fewer than eight fields"
   plausible_repo "$consumer" || refuse "approved set line $line_no names an implausible consumer '$consumer'"
   case "$workflow" in
     publish-app | publish-manifests) ;;
@@ -87,6 +87,13 @@ while IFS=$'\t' read -r consumer workflow applied_tag applied_digest signer pin 
   esac
   is_sha "$signer" || refuse "approved set line $line_no ($consumer): applied_signer_sha '$signer' is not a 40-hex commit"
   is_sha "$pin" || refuse "approved set line $line_no ($consumer): main_pin_sha '$pin' is not a 40-hex commit"
+  # The release candidate (#3960) is the latest published devantler-tech/actions release, which
+  # only moves publish-app consumers; any other row must say so explicitly with `-`.
+  if [ "$workflow" = publish-app ]; then
+    is_sha "$candidate" || refuse "approved set line $line_no ($consumer): release_candidate_sha '$candidate' is not a 40-hex commit"
+  else
+    [ "$candidate" = '-' ] || refuse "approved set line $line_no ($consumer): release_candidate_sha must be '-' for $workflow, got '$candidate'"
+  fi
   [ -z "$(lookup "$approved" "$consumer")" ] || refuse "approved set names $consumer twice"
   : "$applied_tag" "$applied_digest"
   approved="${approved}${consumer}"$'\t'"${workflow}"$'\t'"${signer}"$'\t'"${pin}"$'\n'

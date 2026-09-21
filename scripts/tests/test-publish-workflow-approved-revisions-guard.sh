@@ -26,6 +26,7 @@ readonly SHA_A='1111111111111111111111111111111111111111'
 readonly SHA_B='2222222222222222222222222222222222222222'
 readonly SHA_C='3333333333333333333333333333333333333333'
 readonly SHA_D='4444444444444444444444444444444444444444'
+readonly SHA_E='5555555555555555555555555555555555555555'  # release candidate (#3960)
 readonly DIGEST='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 readonly GENERIC_KYVERNO='k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml'
 readonly GENERIC_RGD='k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml'
@@ -179,14 +180,17 @@ rules:
 EOF
 }
 
+# candidate_for <workflow> — the release_candidate_sha column: a commit for publish-app, `-` otherwise.
+candidate_for() { if [ "$1" = publish-app ]; then printf '%s' "$SHA_E"; else printf '-'; fi; }
+
 # write_set <path> [<omit-repo>] [<extra-row>] — the approved set for every registered consumer.
 write_set() {
   local path="$1" omit="${2:-}" extra="${3:-}" repo workflow
-  printf 'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signer_sha\tmain_pin_sha\tobserved_on\n' >"$path"
+  printf 'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signer_sha\tmain_pin_sha\trelease_candidate_sha\tobserved_on\n' >"$path"
   while IFS=$'\t' read -r repo workflow; do
     [ -n "$repo" ] || continue
     [ "$repo" = "$omit" ] && continue
-    printf '%s\t%s\t1.0.0\t%s\t%s\t%s\t2026-09-03\n' "$repo" "$workflow" "$DIGEST" "$(signer_for "$repo")" "$SHA_B" >>"$path"
+    printf '%s\t%s\t1.0.0\t%s\t%s\t%s\t%s\t2026-09-03\n' "$repo" "$workflow" "$DIGEST" "$(signer_for "$repo")" "$SHA_B" "$(candidate_for "$workflow")" >>"$path"
   done <<<"$consumers"
   [ -z "$extra" ] || printf '%s\n' "$extra" >>"$path"
 }
@@ -420,29 +424,51 @@ expect_refusal 'an approved set missing a registered consumer is refused by name
   "$root" 0 "$first_consumer" 'no row'
 
 root="$(build_tree set-extra pattern)"
-write_set "$root/scripts/approved.tsv" '' "$(printf 'stranger\tpublish-app\t1.0.0\t%s\t%s\t%s\t2026-09-03' "$DIGEST" "$SHA_A" "$SHA_B")"
+write_set "$root/scripts/approved.tsv" '' "$(printf 'stranger\tpublish-app\t1.0.0\t%s\t%s\t%s\t%s\t2026-09-03' "$DIGEST" "$SHA_A" "$SHA_B" "$SHA_E")"
 expect_refusal 'an approved set naming an unregistered consumer is refused' \
   "$root" 0 'stranger' 'not a registered consumer'
 
 root="$(build_tree set-bad-sha pattern)"
-write_set "$root/scripts/approved.tsv" "$first_consumer" "$(printf '%s\t%s\t1.0.0\t%s\tdeadbeef\t%s\t2026-09-03' "$first_consumer" "$first_workflow" "$DIGEST" "$SHA_B")"
+write_set "$root/scripts/approved.tsv" "$first_consumer" "$(printf '%s\t%s\t1.0.0\t%s\tdeadbeef\t%s\t%s\t2026-09-03' "$first_consumer" "$first_workflow" "$DIGEST" "$SHA_B" "$(candidate_for "$first_workflow")")"
 expect_refusal 'an approved set with a malformed signer sha is refused' \
   "$root" 0 "$first_consumer" 'not a 40-hex commit'
 
 root="$(build_tree set-bad-pin pattern)"
-write_set "$root/scripts/approved.tsv" "$first_consumer" "$(printf '%s\t%s\t1.0.0\t%s\t%s\tdeadbeef\t2026-09-03' "$first_consumer" "$first_workflow" "$DIGEST" "$SHA_A")"
+write_set "$root/scripts/approved.tsv" "$first_consumer" "$(printf '%s\t%s\t1.0.0\t%s\t%s\tdeadbeef\t%s\t2026-09-03' "$first_consumer" "$first_workflow" "$DIGEST" "$SHA_A" "$(candidate_for "$first_workflow")")"
 expect_refusal 'an approved set with a malformed main_pin_sha is refused' \
   "$root" 0 "$first_consumer" 'main_pin_sha'
 
 root="$(build_tree set-duplicate pattern)"
-write_set "$root/scripts/approved.tsv" '' "$(printf '%s\t%s\t1.0.0\t%s\t%s\t%s\t2026-09-03' "$first_consumer" "$first_workflow" "$DIGEST" "$SHA_A" "$SHA_B")"
+write_set "$root/scripts/approved.tsv" '' "$(printf '%s\t%s\t1.0.0\t%s\t%s\t%s\t%s\t2026-09-03' "$first_consumer" "$first_workflow" "$DIGEST" "$SHA_A" "$SHA_B" "$(candidate_for "$first_workflow")")"
 expect_refusal 'an approved set naming a consumer twice is refused' \
   "$root" 0 "$first_consumer" 'twice'
 
 root="$(build_tree set-extra-field pattern)"
-write_set "$root/scripts/approved.tsv" "$first_consumer" "$(printf '%s\t%s\t1.0.0\t%s\t%s\t%s\t2026-09-03\textra' "$first_consumer" "$first_workflow" "$DIGEST" "$SHA_A" "$SHA_B")"
-expect_refusal 'an approved set row with an eighth field is refused' \
-  "$root" 0 'more than seven fields'
+write_set "$root/scripts/approved.tsv" "$first_consumer" "$(printf '%s\t%s\t1.0.0\t%s\t%s\t%s\t%s\t2026-09-03\textra' "$first_consumer" "$first_workflow" "$DIGEST" "$SHA_A" "$SHA_B" "$(candidate_for "$first_workflow")")"
+expect_refusal 'an approved set row with a ninth field is refused' \
+  "$root" 0 'more than eight fields'
+
+# ── the release candidate column (#3960) ─────────────────────────────────────────────────────
+app_consumer="$(printf '%s\n' "$consumers" | awk -F'\t' '$2 == "publish-app" { print $1; exit }')"
+manifests_consumer="$(printf '%s\n' "$consumers" | awk -F'\t' '$2 == "publish-manifests" { print $1; exit }')"
+if [ -z "$app_consumer" ] || [ -z "$manifests_consumer" ]; then
+  fail 'discovery found no publish-app or no publish-manifests consumer; the candidate cases would pass vacuously'
+else
+  root="$(build_tree set-app-no-candidate pattern)"
+  write_set "$root/scripts/approved.tsv" "$app_consumer" "$(printf '%s\tpublish-app\t1.0.0\t%s\t%s\t%s\t-\t2026-09-03' "$app_consumer" "$DIGEST" "$(signer_for "$app_consumer")" "$SHA_B")"
+  expect_refusal 'a publish-app row without a release candidate is refused' \
+    "$root" 0 "$app_consumer" 'release_candidate_sha'
+
+  root="$(build_tree set-manifests-candidate pattern)"
+  write_set "$root/scripts/approved.tsv" "$manifests_consumer" "$(printf '%s\tpublish-manifests\t1.0.0\t%s\t%s\t%s\t%s\t2026-09-03' "$manifests_consumer" "$DIGEST" "$(signer_for "$manifests_consumer")" "$SHA_B" "$SHA_E")"
+  expect_refusal 'a publish-manifests row carrying a release candidate is refused' \
+    "$root" 0 "$manifests_consumer" "must be '-'"
+
+  root="$(build_tree set-seven-field pattern)"
+  write_set "$root/scripts/approved.tsv" "$app_consumer" "$(printf '%s\tpublish-app\t1.0.0\t%s\t%s\t%s\t2026-09-03' "$app_consumer" "$DIGEST" "$(signer_for "$app_consumer")" "$SHA_B")"
+  expect_refusal 'a row in the pre-candidate seven-column shape is refused' \
+    "$root" 0 'fewer than eight fields'
+fi
 
 root="$(build_tree set-bad-header pattern)"
 { printf 'consumer\tworkflow\n'; tail -n +2 "$root/scripts/approved.tsv"; } >"$root/scripts/approved.tmp"
