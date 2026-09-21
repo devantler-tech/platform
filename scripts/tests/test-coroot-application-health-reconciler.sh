@@ -119,6 +119,14 @@ pass 'the Talos apid memory sawtooth has a narrow application policy'
   fail 'the exact Backstage database must have a finite cache-warmup threshold'
 pass 'the Backstage PostgreSQL cache warmup has a narrow application policy'
 
+# Coroot stores second-based thresholds even though the UI formats this check in
+# milliseconds. Bind the reconciler to the API contract so a millisecond-shaped
+# fake cannot hide a live global-config refusal.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'reconcile_threshold "$ALERTMANAGER" DnsLatency 0.1 0.75 alertmanager-peer-dns-recovered-latency'* ]] ||
+  fail 'the Alertmanager DNS latency policy must use Coroot second-based API units'
+pass 'the Alertmanager DNS latency policy uses second-based API units'
+
 yq eval -e '.cluster.controllerManager.extraArgs."log-text-split-stream" == "false"' \
   "${talos_patch}" >/dev/null ||
   fail 'the controller-manager patch must retain GC and force a static-pod refresh'
@@ -487,7 +495,7 @@ case "${url}" in
     elif [[ "${url}" == *'/MemoryLeakPercent/'* ]]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":10},null,null]}}'
     elif [[ "${url}" == *'/DnsLatency/'* ]]; then
-      printf '%s\n' '{"form":{"configs":[{"threshold":100},null,null]}}'
+      printf '%s\n' '{"form":{"configs":[{"threshold":0.1},null,null]}}'
     elif [[ "${url}" == *'%3A_%3AUnknown%3Akubelet/inspection/NetworkTCPConnections/config'* ]]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":3}]}}'
     elif [[ "${url}" == *'%3A_%3AUnknown%3Ainit'* ]]; then
@@ -609,7 +617,7 @@ jq -s -e '
   any(.[]; (.url | contains("%3A_%3AUnknown%3Aapid/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 250) and
   any(.[]; (.url | contains("%3Abackstage%3ADatabaseCluster%3Abackstage-db/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 75) and
   any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 50000) and
-  any(.[]; (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsLatency/config")) and .body.configs[2].threshold == 750) and
+  any(.[]; (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsLatency/config")) and .body.configs[2].threshold == 0.75) and
   all(.[]; ((.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsServerErrors/config")) or (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsNxdomainErrors/config"))) | not) and
   any(.[]; (.url | contains("%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Adex%3ADeployment%3Adex/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and

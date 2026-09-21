@@ -283,7 +283,9 @@ spec:
                   queue_reconciliation reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 50000 cilium-dns-search-expansion
 
                   ALERTMANAGER="$PID:kubescape:StatefulSet:alertmanager"
-                  queue_reconciliation reconcile_threshold "$ALERTMANAGER" DnsLatency 100 750 alertmanager-peer-dns-recovered-latency
+                  # Coroot persists second-based values and formats them as
+                  # milliseconds in the UI (0.1s = 100ms, 0.75s = 750ms).
+                  queue_reconciliation reconcile_threshold "$ALERTMANAGER" DnsLatency 0.1 0.75 alertmanager-peer-dns-recovered-latency
 
                   LOG_MESSAGE_LIMIT=1000
                   ERROR_QUERY=$(jq -nr --argjson limit "$LOG_MESSAGE_LIMIT" '
