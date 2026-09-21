@@ -105,6 +105,21 @@ spec:
       # -> recover loops and noisy Longhorn events. Longhorn caps this setting
       # at 30s.
       engineReplicaTimeout: "30"
+      # Move volumes onto the default engine image after a chart bump, one
+      # engine per node at a time. The chart default (0) leaves every volume on
+      # whichever engine it was created with, so each old engine version keeps
+      # its own engine-image DaemonSet running for as long as one volume uses
+      # it — and Longhorn only removes an engine image once nothing references
+      # it. Healthy attached volumes upgrade live without detaching; detached
+      # volumes upgrade offline. A per-node limit of 1 keeps the rollout slow
+      # enough that a problem shows up on one volume before it reaches others.
+      # Scope: Longhorn upgrades only V1 Data Engine volumes this way; V2 volumes
+      # and standby disaster-recovery volumes are skipped and must be upgraded
+      # by hand. A live upgrade also needs the block-device frontend: an
+      # iSCSI-fronted volume must be detached and upgraded offline. Every prod
+      # volume is V1, uses the block-device frontend and none is a standby
+      # (checked 2026-09-21), so this covers them all today.
+      concurrentAutomaticEngineUpgradePerNodeLimit: "1"
 
     persistence:
       # The chart-managed `longhorn` StorageClass uses volumeBindingMode: Immediate,
