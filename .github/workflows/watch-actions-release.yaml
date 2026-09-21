@@ -1,0 +1,55 @@
+name: Watch Actions Releases
+
+# Keep the approved publish revisions' release candidate current between the daily regenerations
+# (#3960). A tenant's publish-app pin can move within about an hour of a devantler-tech/actions
+# release, but the regeneration that records that release as the candidate runs once a day, so the
+# platform would reject the first release a tenant signs with the new revision.
+#
+# WHY A POLL, NOT A NOTIFICATION. The actions repository could dispatch this repository from its
+# release workflow, but that needs a token there that can write here: a new cross-repository write
+# path. Polling only READS the public actions release and dispatches this repository's own
+# regeneration, so no grant widens. The heavy regeneration (which reads the cluster) still runs only
+# when the candidate has actually moved.
+#
+# WHY GITHUB_TOKEN. The release, its commit and its publish-app.yaml are public reads, and a
+# workflow_dispatch created with GITHUB_TOKEN is one of the events it is allowed to trigger. The
+# regeneration itself mints its own App tokens, exactly as on its daily schedule.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "5,35 * * * *" # Every 30 minutes
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }}"
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: 👀 Dispatch regeneration on a new actions release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # read the committed approved set
+      actions: write # dispatch regenerate-publish-workflow-approved-revisions.yaml
+    steps:
+      - name: 🛡️ Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The committed set on main is what the candidate must be compared with, whatever ref a
+          # manual dispatch came from.
+          ref: main
+
+      - name: 👀 Compare the committed candidate with the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WATCH_DISPATCH: "1"
+        run: ./scripts/watch-actions-release-candidate.sh

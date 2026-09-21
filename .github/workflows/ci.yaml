@@ -232,6 +232,14 @@ jobs:
           shellcheck scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
           bash scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
 
+      # The release watcher (#3960) dispatches that regeneration when devantler-tech/actions
+      # publishes a release the committed candidate does not yet name. Its test stubs `gh` and
+      # pins that every failed read is UNKNOWN and dispatches nothing.
+      - name: 🔐 Validate the actions release watcher
+        run: |
+          shellcheck scripts/watch-actions-release-candidate.sh scripts/tests/test-watch-actions-release-candidate.sh
+          bash scripts/tests/test-watch-actions-release-candidate.sh
+
       # The authorization gate's verdict and its moved-entry diagnostics are two
       # commands in one step, and a real aggregate mismatch fails BOTH — so a step
       # that stopped at the first never ran the diagnostics on the one failure they
@@ -614,6 +622,10 @@ jobs:
               # a continue-on-error) still runs the ablated test that refuses each of those.
               - '.github/workflows/regenerate-publish-workflow-approved-revisions.yaml'
               - 'scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh'
+              # The release watcher that dispatches it, and its test — both halves.
+              - '.github/workflows/watch-actions-release.yaml'
+              - 'scripts/watch-actions-release-candidate.sh'
+              - 'scripts/tests/test-watch-actions-release-candidate.sh'
               # The generated set itself. The contract test reads it to derive which
               # consumer repositories the workflow's App token must be scoped to, so a
               # PR that only adds a consumer here — the exact change that would leave
