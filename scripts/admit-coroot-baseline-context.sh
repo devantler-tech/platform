@@ -23,12 +23,19 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
 fail() { printf '::error::Coroot baseline admission: %s\n' "$1" >&2; exit 1; }
 
+# The reviewed population, identical to guard-coroot-baseline-context.sh. Every
+# read must match it exactly, so no write ever reaches a template outside it.
+expected='["DaemonSet/coroot-node-agent","Deployment/coroot-cluster-agent","Deployment/coroot-prometheus","StatefulSet/coroot-clickhouse-keeper","StatefulSet/coroot-clickhouse-shard-0","StatefulSet/coroot-coroot"]'
+
 read_templates() {
   kubectl --context "${context}" get deployments,statefulsets,daemonsets --namespace observability \
     --selector app.kubernetes.io/managed-by=coroot-operator -o json --request-timeout=20s \
     >"${scratch}/templates.json" || fail 'API read failed'
   jq -e '.items | type == "array" and length > 0' "${scratch}/templates.json" >/dev/null ||
     fail 'API returned no Coroot templates'
+  jq -e --argjson expected "${expected}" \
+    '[.items[] | "\(.kind)/\(.metadata.name)"] | sort == $expected' "${scratch}/templates.json" >/dev/null ||
+    fail 'the Coroot-generated templates differ from the reviewed six'
 }
 # Same object-presence predicate as the guard: pod-level fsGroupChangePolicy,
 # and seLinuxOptions at pod level or on every container and init container.
@@ -49,8 +56,11 @@ fi
 
 # A write returns only after admission ran, so a template still lacking a field
 # was admitted before the policy engine saw the namespace label Flux just
-# applied. Write those again, a bounded number of times.
+# applied. Write those again, a bounded number of times. Every template written
+# in any round is rolled out, including one that only starts lacking a field
+# during a retry.
 cp "${scratch}/targets" "${scratch}/still"
+cp "${scratch}/targets" "${scratch}/written"
 for ((attempt = 1; attempt <= 3; attempt++)); do
   stamp="${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}-${attempt}"
   while IFS= read -r target; do
@@ -62,6 +72,7 @@ for ((attempt = 1; attempt <= 3; attempt++)); do
   read_templates
   lacking >"${scratch}/still"
   [[ -s "${scratch}/still" ]] || break
+  sort -u "${scratch}/written" "${scratch}/still" -o "${scratch}/written"
   if (( attempt < 3 )); then sleep 10; fi
 done
 [[ ! -s "${scratch}/still" ]] ||
@@ -71,4 +82,4 @@ while IFS= read -r target; do
   kubectl --context "${context}" rollout status --namespace observability "${target}" \
     --timeout="${rollout_timeout}" >/dev/null || fail "rollout of ${target} did not finish within ${rollout_timeout}"
   printf 'Rolled out %s\n' "${target}"
-done <"${scratch}/targets"
+done <"${scratch}/written"

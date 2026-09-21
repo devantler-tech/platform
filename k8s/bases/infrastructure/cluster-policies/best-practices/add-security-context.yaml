@@ -404,7 +404,7 @@ spec:
     # touched. Measured 2026-09-03 against live prod after observability and
     # longhorn-system were opted in: 0 of 15 and 0 of 12 stored specs carried
     # either field, while the running pods created since the label did. The
-    # seven Coroot-operator workloads and Longhorn's CSI and manager workloads
+    # six Coroot-operator workloads and Longhorn's CSI and manager workloads
     # cannot take the template route the plain manifests took, because their
     # specs are written by an operator whose CRD exposes no securityContext
     # field (verified against the coroot-operator v1.9.5 CRD). These rules reach

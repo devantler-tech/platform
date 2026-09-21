@@ -86,13 +86,15 @@ them:
    failure is an error, never an empty population.
 2. After Flux reports the released revision Ready,
    `scripts/admit-coroot-baseline-context.sh` writes each template that still
-   lacks a field. The rules act on create and update only, and the operator
+   lacks a field. Every read must return exactly the six reviewed templates,
+   so it fails before writing anything outside them. The rules act on create
+   and update only, and the operator
    writes a template only when its own desired state changes, so the step
    adds one metadata annotation, which sends the object through admission.
    A template written before the policy engine sees the namespace label is
    written again, at most three times in all. It then requires both fields to
    be present and waits up to 15 minutes for
-   each changed template's rollout. A template that already carries both
+   the rollout of every template it wrote in any round. A template that already carries both
    fields gets no write, so a later deploy restarts nothing.
 3. The guard then waits a bounded time for
    all six templates to carry pod-level `fsGroupChangePolicy` and

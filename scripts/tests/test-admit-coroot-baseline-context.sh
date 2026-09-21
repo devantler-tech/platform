@@ -23,6 +23,13 @@ jq '.items |= map(.spec.template.spec.securityContext.fsGroupChangePolicy = "OnR
 jq '.items[4].spec.template.spec.securityContext = {runAsNonRoot: true} |
   .items[4].spec.template.spec.containers[0].securityContext = {}' \
   "${scratch}/hardened.json" >"${scratch}/one-lacking.json"
+# Only coroot-node-agent lacks the fields: a template that stops carrying them mid-retry.
+jq '.items[5].spec.template.spec.securityContext = {runAsNonRoot: true} |
+  .items[5].spec.template.spec.containers[0].securityContext = {}' \
+  "${scratch}/hardened.json" >"${scratch}/agent-lacking.json"
+# A seventh operator template outside the reviewed population.
+jq '.items += [.items[0] | .metadata.name = "coroot-extra"]' \
+  "${scratch}/unhardened.json" >"${scratch}/seven.json"
 
 # Each read returns the next queued fixture (read.N.json), falling back to read.json.
 # Writes and rollouts are logged so the test can assert exactly what was touched.
@@ -93,6 +100,15 @@ queue hardened one-lacking hardened
 check 'only the template lacking a field is written' pass normal
 [[ "$(cat "${scratch}/writes")" == 'statefulset/coroot-coroot' ]] || { echo 'FAIL: wrong write set' >&2; exit 1; }
 [[ "$(cat "${scratch}/rollouts")" == 'statefulset/coroot-coroot --timeout=15m' ]] || { echo 'FAIL: wrong rollout set' >&2; exit 1; }
+
+queue hardened one-lacking agent-lacking hardened
+check 'a template that starts lacking a field during a retry is also rolled out' pass normal
+[[ "$(sort "${scratch}/rollouts" | paste -sd ' ' -)" == 'daemonset/coroot-node-agent --timeout=15m statefulset/coroot-coroot --timeout=15m' ]] ||
+  { echo 'FAIL: a template written during a retry was not rolled out' >&2; exit 1; }
+
+queue seven
+check 'a population other than the reviewed six fails before any write' fail normal 'differ from the reviewed six'
+[[ ! -f "${scratch}/writes" ]] || { echo 'FAIL: wrote to an unreviewed population' >&2; exit 1; }
 
 queue hardened unhardened unhardened hardened
 check 'a write admitted before the label is visible is retried' pass normal
