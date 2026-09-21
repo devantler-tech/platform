@@ -5574,11 +5574,44 @@ restart_flux_kustomize_controller_for_handoff() {
   local pre_handoff_pods_replaced attempt
 
   assert_sync_lease_held || return 1
-  if ! read_flux_policy_fences ||
-    ! flux_policy_handoff_is_owned ||
-    ! flux_policy_parent_is_stable; then
-    echo "::error::The Flux policy fences changed before the kustomize-controller handoff restart."
+  if ! read_flux_policy_fences; then
+    echo "::error::Could not inspect the Flux policy fences before the kustomize-controller handoff restart."
     return 1
+  fi
+  if ! flux_policy_handoff_is_owned; then
+    echo "::error::The Flux child policy fence changed before the kustomize-controller handoff restart."
+    return 1
+  fi
+  # The Flux Operator owns the generated root Kustomization and can restore it
+  # at any point after a transaction-local parent claim. The child is already
+  # suspended and excluded from root reconciliation at this boundary, so the
+  # same exact released-parent transition handled before child acquisition and
+  # after the restart is safe to adopt here too. No policy or credential has
+  # changed yet. Continue to reject every foreign, replaced, or malformed state.
+  if ! flux_policy_parent_is_stable; then
+    if ! flux_policy_parent_is_released; then
+      echo "::error::The parent Flux policy fence changed to an unrecognized state before the kustomize-controller handoff restart."
+      return 1
+    fi
+    flux_policy_parent_acquired=false
+    flux_policy_parent_owner=""
+    flux_policy_parent_uid=""
+    if ! pause_flux_policy_parent; then
+      echo "::error::Could not reacquire the parent Flux policy fence before the kustomize-controller handoff restart."
+      return 1
+    fi
+    if ! read_flux_policy_fences; then
+      echo "::error::Could not inspect the Flux policy fences after reacquiring the parent before the kustomize-controller handoff restart."
+      return 1
+    fi
+    if ! flux_policy_handoff_is_owned; then
+      echo "::error::The Flux child policy fence changed while reacquiring the parent before the kustomize-controller handoff restart."
+      return 1
+    fi
+    if ! flux_policy_parent_is_stable; then
+      echo "::error::The parent Flux policy fence changed after reacquisition before the kustomize-controller handoff restart."
+      return 1
+    fi
   fi
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
