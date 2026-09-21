@@ -120,7 +120,11 @@ spec:
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 10
   successfulJobsHistoryLimit: 1
-  failedJobsHistoryLimit: 3
+  # Coroot and the cluster event stream retain the actual failure evidence.
+  # Keeping failed child objects for this every-minute observer makes Coroot
+  # continuously rediscover a recovered BackoffLimitExceeded state, so the
+  # alert cannot age out after healthy runs resume.
+  failedJobsHistoryLimit: 0
   jobTemplate:
     spec:
       backoffLimit: 0

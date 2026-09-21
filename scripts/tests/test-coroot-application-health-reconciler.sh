@@ -52,6 +52,12 @@ fi
 yq eval -e '.spec.schedule == "* * * * *"' "${manifest}" >/dev/null ||
   fail 'raw log evidence must be revalidated every minute'
 yq eval -e '
+  .spec.failedJobsHistoryLimit == 0 and
+  .spec.successfulJobsHistoryLimit == 1 and
+  .spec.jobTemplate.spec.backoffLimit == 0
+' "${manifest}" >/dev/null ||
+  fail 'stale failed reconciler children must not outlive their observed failure signal'
+yq eval -e '
   .spec.jobTemplate.spec.template.spec.containers[0].resources.requests.memory == "32Mi" and
   .spec.jobTemplate.spec.template.spec.containers[0].resources.limits.memory == "128Mi"
 ' "${manifest}" >/dev/null ||
