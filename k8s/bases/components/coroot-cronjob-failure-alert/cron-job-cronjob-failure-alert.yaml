@@ -1,0 +1,281 @@
+# Alerts when a watched self-healing reconcile CronJob keeps failing, or stops
+# finishing runs at all (platform#2915).
+#
+# umami/umami-provision-tenants re-asserts the Umami tenants every 15 minutes
+# with backoffLimit 0, so a failed run simply waits for the next tick. That is
+# the right retry shape, but it makes the failure silent: the next run usually
+# succeeds, failedJobsHistoryLimit rotates the evidence away, and nothing pages.
+# If the failure stopped being intermittent, the only signal would be Failed Job
+# objects nobody reads — a reconcile loop that has quietly stopped reconciling.
+#
+# ONE FAILURE IS NOT AN ALERT. The loop is designed to absorb a single failed
+# tick (the weekly database-credential rotation produces exactly that), so this
+# fires only when the newest FAILURE_THRESHOLD finished runs ALL failed. A newer
+# success anywhere in that window clears it. successfulJobsHistoryLimit >= 1
+# keeps the newest success, so a retained failure older than it never counts.
+#
+# SILENCE IS NOT HEALTH. A CronJob whose runs never finish — suspended by hand,
+# schedule never firing, controller wedged — produces no Failed Job either, so
+# the newest finished run older than STALE_SECONDS alerts on its own. A watched
+# CronJob that no longer exists alerts too: a watch list naming nothing must not
+# read as "all watched CronJobs are healthy".
+#
+# READ-ONLY BY CONSTRUCTION. Each watched namespace grants this ServiceAccount
+# get on the watched CronJob by name and list on Jobs, nothing else. Any API
+# error fails this Job loudly instead of reporting a silent zero.
+#
+# REPEATS ARE DELIBERATE, as for the other webhook alerts: a loop still failing
+# on the next check alerts again until it recovers.
+#
+# DEFAULT-OFF: the CronJob ships suspended (feature-flag-first delivery). A run
+# can still be started by hand with `kubectl create job --from=cronjob/...` to
+# validate it against prod before `suspend` is flipped in a separate change.
+#
+# Runs in observability to reuse the allow-coroot CiliumNetworkPolicy
+# (endpointSelector: {}), which already permits kube-apiserver,
+# hooks.slack.com:443 and DNS egress. Delivery and secret handling follow
+# cron-job-velero-maintenance-oom-alert.yaml.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cronjob-failure-alert
+  namespace: observability
+  annotations:
+    checkov.io/skip1: "CKV_K8S_38=the detector reads its SA token to read watched CronJobs and their Jobs"
+    # `${FAILURE_THRESHOLD}`, `${STALE_SECONDS}` and `${NOW_EPOCH}` below are
+    # container variables. The parent Kustomization runs Flux substitution,
+    # which would blank them.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  # Feature flag: flip to false only after a manual run has been validated.
+  suspend: true
+  # Every 15 minutes: one watched tick. Two consecutive failures of a */15 loop
+  # surface within ~45 minutes of the first.
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 180
+      template:
+        metadata:
+          labels:
+            app: cronjob-failure-alert
+        spec:
+          restartPolicy: Never
+          serviceAccountName: cronjob-failure-alert
+          automountServiceAccountToken: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: check
+              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              env:
+                # Space-separated namespace/name pairs. Each namespace needs its
+                # own Role and RoleBinding in this component.
+                - name: WATCH
+                  value: "umami/umami-provision-tenants"
+                - name: FAILURE_THRESHOLD
+                  value: "2"
+                # Four missed */15 ticks.
+                - name: STALE_SECONDS
+                  value: "3600"
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  API=https://kubernetes.default.svc
+                  SA=/var/run/secrets/kubernetes.io/serviceaccount
+
+                  WEBHOOK_URL=$(cat /etc/cronjob-failure-alert/url)
+                  if [ "$(printf '%s' "$WEBHOOK_URL" | tr -d '[:cntrl:]')" != "$WEBHOOK_URL" ]; then
+                    echo "ERROR: webhook URL contains control characters" >&2
+                    exit 1
+                  fi
+                  case "$WEBHOOK_URL" in
+                    https://*) ;;
+                    *)
+                      echo "ERROR: webhook URL must use https://" >&2
+                      exit 1
+                      ;;
+                  esac
+                  for v in FAILURE_THRESHOLD STALE_SECONDS; do
+                    eval "val=\${$v}"
+                    case "$val" in
+                      ''|*[!0-9]*|0)
+                        echo "ERROR: $v must be a positive integer" >&2
+                        exit 1
+                        ;;
+                    esac
+                  done
+                  if [ -z "$(printf '%s' "$WATCH" | tr -d ' ')" ]; then
+                    echo "ERROR: WATCH names no CronJob" >&2
+                    exit 1
+                  fi
+                  NOW_EPOCH=${NOW_EPOCH:-$(date -u +%s)}
+                  case "$NOW_EPOCH" in
+                    ''|*[!0-9]*)
+                      echo "ERROR: NOW_EPOCH must be a positive integer" >&2
+                      exit 1
+                      ;;
+                  esac
+
+                  api_get() {
+                    curl -sS -o "$2" -w '%{http_code}' \
+                      --cacert "$SA/ca.crt" \
+                      -H "Authorization: Bearer $(cat "$SA/token")" \
+                      "$API$1"
+                  }
+                  nl=$(printf '\nx'); nl=${nl%x}
+
+                  findings=""
+                  checked=0
+                  for target in $WATCH; do
+                    case "$target" in
+                      */*) ;;
+                      *)
+                        echo "ERROR: WATCH entry '$target' is not namespace/name" >&2
+                        exit 1
+                        ;;
+                    esac
+                    ns=${target%%/*}
+                    name=${target#*/}
+
+                    code=$(api_get "/apis/batch/v1/namespaces/${ns}/cronjobs/${name}" /tmp/cronjob.json)
+                    if [ "$code" = "404" ]; then
+                      findings="${findings}${findings:+$nl}• \`${target}\` — the watched CronJob does not exist"
+                      continue
+                    fi
+                    if [ "$code" != "200" ]; then
+                      echo "ERROR: kube API returned HTTP $code reading CronJob ${target}" >&2
+                      exit 1
+                    fi
+                    if [ "$(jq -r '.spec.suspend // false' /tmp/cronjob.json)" = "true" ]; then
+                      echo "${target}: suspended; not checked."
+                      continue
+                    fi
+
+                    code=$(api_get "/apis/batch/v1/namespaces/${ns}/jobs" /tmp/jobs.json)
+                    if [ "$code" != "200" ]; then
+                      echo "ERROR: kube API returned HTTP $code listing Jobs in ${ns}" >&2
+                      exit 1
+                    fi
+                    if ! jq -e '(.items | type) == "array"' /tmp/jobs.json >/dev/null; then
+                      echo "ERROR: unexpected Job-list response shape for ${ns}" >&2
+                      exit 1
+                    fi
+
+                    # Finished runs of THIS CronJob, newest first. A run is
+                    # finished when its Complete or Failed condition is True;
+                    # it is ordered by the schedule time the controller stamps,
+                    # falling back to creation.
+                    jq -c --arg name "$name" '
+                      def ts: sub("\\.[0-9]+Z$"; "Z") | fromdate;
+                      [ .items[]
+                        | select(any(.metadata.ownerReferences[]?; .kind == "CronJob" and .name == $name))
+                        | (first(.status.conditions[]? | select((.type == "Complete" or .type == "Failed") and .status == "True")) // null) as $c
+                        | select($c != null)
+                        | { job: .metadata.name,
+                            failed: ($c.type == "Failed"),
+                            reason: ($c.reason // ""),
+                            message: ($c.message // ""),
+                            at: ((.metadata.annotations["batch.kubernetes.io/cronjob-scheduled-timestamp"] // .metadata.creationTimestamp) | ts),
+                            finished: (($c.lastTransitionTime // .metadata.creationTimestamp) | ts) } ]
+                      | sort_by(.at) | reverse
+                    ' /tmp/jobs.json > /tmp/runs.json
+                    checked=$((checked + 1))
+
+                    runs=$(jq -r 'length' /tmp/runs.json)
+                    if [ "$runs" = "0" ]; then
+                      created=$(jq -r '.metadata.creationTimestamp | fromdate' /tmp/cronjob.json)
+                      if [ $((NOW_EPOCH - created)) -ge "$STALE_SECONDS" ]; then
+                        findings="${findings}${findings:+$nl}• \`${target}\` — no retained run has finished; the CronJob is older than ${STALE_SECONDS}s"
+                      else
+                        echo "${target}: no finished run yet; younger than ${STALE_SECONDS}s."
+                      fi
+                      continue
+                    fi
+
+                    newest=$(jq -r '.[0].finished' /tmp/runs.json)
+                    if [ $((NOW_EPOCH - newest)) -ge "$STALE_SECONDS" ]; then
+                      findings="${findings}${findings:+$nl}$(jq -r --arg t "$target" --argjson s "$STALE_SECONDS" \
+                        '"• `\($t)` — no run has finished for more than \($s)s; newest finished run `\(.[0].job)` at \(.[0].finished | todate)"' /tmp/runs.json)"
+                      continue
+                    fi
+
+                    streak=$(jq -r --argjson n "$FAILURE_THRESHOLD" '
+                      if length >= $n and all(.[0:$n][]; .failed) then $n else 0 end' /tmp/runs.json)
+                    if [ "$streak" != "0" ]; then
+                      findings="${findings}${findings:+$nl}$(jq -r --arg t "$target" --argjson n "$FAILURE_THRESHOLD" '
+                        "• `\($t)` — the last \($n) runs all failed:" +
+                        ([ .[0:$n][] | "\n  `\(.job)` scheduled \(.at | todate): \(.reason) \(.message | .[0:200])" ] | join(""))' /tmp/runs.json)"
+                      continue
+                    fi
+                    echo "${target}: healthy ($runs finished run(s) retained; newest $(jq -r '.[0] | "\(.job) \(if .failed then "failed" else "succeeded" end)"' /tmp/runs.json))."
+                  done
+
+                  if [ -z "$findings" ]; then
+                    echo "Checked $checked watched CronJob(s); none failing consecutively or stalled."
+                    exit 0
+                  fi
+
+                  echo "Failing or stalled reconcile CronJob(s) detected:"
+                  echo "$findings"
+                  text=$(printf '*Reconcile CronJob failing*\n\n%s\n\n_These loops retry on their own schedule, so one failed run is expected. Repeated failures or no finished run means the loop has stopped reconciling; read the retained Job logs before they rotate away._' "$findings")
+                  jq -n --arg t "$text" '{text: $t}' >/tmp/payload.json
+
+                  case "$WEBHOOK_URL" in
+                    https://example.invalid/*)
+                      echo "No Slack webhook configured; alert not delivered."
+                      exit 0
+                      ;;
+                  esac
+
+                  # Keep the webhook token out of argv.
+                  printf 'url = %s\n' "$WEBHOOK_URL" |
+                    curl -sf --max-time 15 \
+                      --retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused \
+                      -H 'Content-Type: application/json' \
+                      --data @/tmp/payload.json \
+                      --config -
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                seLinuxOptions: {}
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 16Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              volumeMounts:
+                - name: webhook
+                  mountPath: /etc/cronjob-failure-alert
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: webhook
+              secret:
+                secretName: cronjob-failure-alert-webhook
+                defaultMode: 288
+            - name: tmp
+              emptyDir: {}

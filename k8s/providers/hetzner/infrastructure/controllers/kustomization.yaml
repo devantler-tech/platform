@@ -72,6 +72,10 @@ components:
   # the namespace-scoped pod status read. Both controllers are present in this
   # full production composition.
   - ../../../../bases/components/coroot-velero-maintenance-oom-alert
+  # Reconcile-CronJob failure alert (#2915): Coroot's observability namespace
+  # hosts the detector; each watched namespace (umami, owned by the kyverno
+  # controller base) carries its read-only Role.
+  - ../../../../bases/components/coroot-cronjob-failure-alert
   # Platform-wide HelmRelease drift detection (mode: enabled). Restores
   # Helm-rendered resources deleted/mutated out-of-band — the cause of the
   # silently-broken keda external-scaler and homepage Deployments.
