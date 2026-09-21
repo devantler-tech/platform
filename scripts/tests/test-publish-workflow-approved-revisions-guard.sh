@@ -448,6 +448,13 @@ write_set "$root/scripts/approved.tsv" "$first_consumer" "$(printf '%s\t%s\t1.0.
 expect_refusal 'an approved set row with a ninth field is refused' \
   "$root" 0 'more than eight fields'
 
+# A trailing tab is an EMPTY ninth field: a tab-split `read` drops it, so only a count on the
+# raw row can see it.
+root="$(build_tree set-empty-extra-field pattern)"
+write_set "$root/scripts/approved.tsv" "$first_consumer" "$(printf '%s\t%s\t1.0.0\t%s\t%s\t%s\t%s\t2026-09-03\t' "$first_consumer" "$first_workflow" "$DIGEST" "$SHA_A" "$SHA_B" "$(candidate_for "$first_workflow")")"
+expect_refusal 'an approved set row with an empty ninth field is refused' \
+  "$root" 0 'more than eight fields'
+
 # ── the release candidate column (#3960) ─────────────────────────────────────────────────────
 app_consumer="$(printf '%s\n' "$consumers" | awk -F'\t' '$2 == "publish-app" { print $1; exit }')"
 manifests_consumer="$(printf '%s\n' "$consumers" | awk -F'\t' '$2 == "publish-manifests" { print $1; exit }')"

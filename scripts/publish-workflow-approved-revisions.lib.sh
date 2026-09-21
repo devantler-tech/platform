@@ -74,12 +74,16 @@ is_trusted_release_stream_consumer() {
 # consumer → "workflow<TAB>signer<TAB>pin"
 approved=""
 line_no=1
-while IFS=$'\t' read -r consumer workflow applied_tag applied_digest signer pin candidate observed_on extra; do
+while IFS= read -r row; do
   line_no=$((line_no + 1))
+  # Tab is IFS whitespace, so a split `read` merges adjacent tabs and drops a trailing one:
+  # an empty final field would vanish. Count the separators on the raw row instead.
+  tabs="${row//[!$'\t']/}"
+  IFS=$'\t' read -r consumer workflow applied_tag applied_digest signer pin candidate observed_on extra <<<"$row"
   [ -n "$consumer" ] || continue
   [ "$line_no" -gt 2 ] || [ "$consumer" != 'consumer' ] || continue  # the header
-  [ -z "${extra:-}" ] || refuse "approved set line $line_no has more than eight fields"
-  [ -n "$observed_on" ] || refuse "approved set line $line_no has fewer than eight fields"
+  { [ "${#tabs}" -le 7 ] && [ -z "${extra:-}" ]; } || refuse "approved set line $line_no has more than eight fields"
+  { [ "${#tabs}" -eq 7 ] && [ -n "$observed_on" ]; } || refuse "approved set line $line_no has fewer than eight fields"
   plausible_repo "$consumer" || refuse "approved set line $line_no names an implausible consumer '$consumer'"
   case "$workflow" in
     publish-app | publish-manifests) ;;
