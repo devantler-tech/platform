@@ -155,6 +155,7 @@ setup_scenario() {
   local autoscaler_mode="${18:-known}"
   local autosuppressor_mode="${19:-present}"
   local leader_mode="${20:-known}"
+  local cnpg_instance_mode="${21:-known}"
   local concurrency_limit="${COROOT_STUB_CONCURRENCY_LIMIT:-0}"
   local dir="${work_root}/${name}"
   mkdir -p "${dir}/bin"
@@ -177,6 +178,7 @@ setup_scenario() {
   printf '%s' "${autoscaler_mode}" >"${dir}/autoscaler-mode"
   printf '%s' "${autosuppressor_mode}" >"${dir}/autosuppressor-mode"
   printf '%s' "${leader_mode}" >"${dir}/leader-mode"
+  printf '%s' "${cnpg_instance_mode}" >"${dir}/cnpg-instance-mode"
   printf '%s' "${concurrency_limit}" >"${dir}/concurrency-limit"
   printf '0' >"${dir}/active-queries"
   printf '0' >"${dir}/peak-queries"
@@ -368,6 +370,22 @@ case "${url}" in
       else
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"time=\"2026-09-20T01:59:13Z\" level=error msg=\"error encountered while scanning stdout\" backup-storage-location=velero/default cmd=/plugins/velero-plugin-for-aws controller=backup-storage-location error=\"read |0: file already closed\" logSource=\"pkg/plugin/clientmgmt/process/logrus_adapter.go:90\""}]}}'
       fi
+    elif [[ "$url" == *'%3Aobservability%3ADatabaseCluster%3Acoroot-db'* ]]; then
+      if [ "${severity}" = "fatal" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
+      elif [ "$(cat "${dir}/cnpg-instance-mode")" = "known" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"coroot-db\": the object has been modified; please apply your changes to the latest version and try again","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
+      elif [ "$(cat "${dir}/cnpg-instance-mode")" = "wrong-object" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"backstage-db\": the object has been modified; please apply your changes to the latest version and try again","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
+      elif [ "$(cat "${dir}/cnpg-instance-mode")" = "malformed" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":"not-an-object"}]}}'
+      elif [ "$(cat "${dir}/cnpg-instance-mode")" = "mixed" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"coroot-db\": the object has been modified; please apply your changes to the latest version and try again","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}},{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"access denied while deleting retained backup","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
+      elif [ "$(cat "${dir}/cnpg-instance-mode")" = "excess" ]; then
+        jq -cn '{data:{status:"ok",entries:[range(0;11)|{severity:"error",message:"Retention policy enforcement failed",attributes:{error:"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"coroot-db\": the object has been modified; please apply your changes to the latest version and try again",logging_pod:"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
+      else
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"access denied while deleting retained backup","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
+      fi
     elif [[ "$url" == *'%3Acnpg-system%3ADeployment%3Acloudnative-pg'* ]]; then
       if [ "${severity}" = "fatal" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
@@ -507,6 +525,10 @@ case "${url}" in
     elif [[ "${url}" == *'%3Akubescape%3ADeployment%3Astorage'* ]] &&
       [ "$(cat "${dir}/storage-mode")" != "known" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
+    elif [[ "${url}" == *'%3Aobservability%3ADatabaseCluster%3Acoroot-db'* ]] &&
+      [ "$(cat "${dir}/cnpg-instance-mode")" != "known" ] &&
+      [ "$(cat "${dir}/cnpg-instance-mode")" != "excess" ]; then
+      printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
     elif [[ "${url}" == *'%3Acnpg-system%3ADeployment%3Acloudnative-pg'* ]] &&
       [ "$(cat "${dir}/cnpg-mode")" != "known" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
@@ -594,6 +616,7 @@ jq -s -e '
   any(.[]; (.url | contains("%3Akube-system%3ADeployment%3Acluster-autoscaler-hetzner-cluster-autoscaler/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Avertical-pod-autoscaler%3ADeployment%3Avertical-pod-autoscaler-vpa-updater/inspection/LogErrors/config")) and .body.configs[2] == null) and
   any(.[]; (.url | contains("%3Avelero%3ADeployment%3Avelero/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
+  any(.[]; (.url | contains("%3Aobservability%3ADatabaseCluster%3Acoroot-db/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Acnpg-system%3ADeployment%3Acloudnative-pg/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane-rbac-manager/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
@@ -759,6 +782,24 @@ jq -s -e '
 ' "${lifecycle_near_miss_dir}/posts.ndjson" >/dev/null ||
   fail 'a near-miss backup deletion or volume-publish error did not remain visible'
 pass 'backup deletion and volume-publish policies reject unrelated failures'
+
+for cnpg_instance_mode in near-miss wrong-object malformed mixed; do
+  cnpg_instance_near_miss_dir="$(setup_scenario "cnpg-instance-${cnpg_instance_mode}" known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known known present known "${cnpg_instance_mode}")"
+  run_scenario "${cnpg_instance_near_miss_dir}" >/dev/null
+  jq -s -e '
+    any(.[]; (.url | contains("%3Aobservability%3ADatabaseCluster%3Acoroot-db/inspection/LogErrors/config")) and .body.configs[2] == null)
+  ' "${cnpg_instance_near_miss_dir}/posts.ndjson" >/dev/null ||
+    fail "CNPG database retention ${cnpg_instance_mode} evidence did not remain visible"
+done
+pass 'the CNPG database retention policy rejects unrelated, cross-object, malformed, and mixed failures'
+
+cnpg_instance_excess_dir="$(setup_scenario cnpg-instance-excess known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known known present known excess)"
+run_scenario "${cnpg_instance_excess_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Aobservability%3ADatabaseCluster%3Acoroot-db/inspection/LogErrors/config")) and .body.configs[2].threshold == 10)
+' "${cnpg_instance_excess_dir}/posts.ndjson" >/dev/null ||
+  fail 'excess CNPG retention conflicts did not retain the finite ten-event cap'
+pass 'excess CNPG retention conflicts still exceed the finite policy'
 
 truncated_dir="$(setup_scenario truncated known null 'context deadline exceeded' null known truncated)"
 run_scenario "${truncated_dir}" >/dev/null

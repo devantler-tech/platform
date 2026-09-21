@@ -588,6 +588,19 @@ spec:
                           )] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
+                      cnpg-instance-retention-update-race)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | .message as $s | .attributes as $a | select(
+                            $s=="Retention policy enforcement failed" and
+                            ($a | type)=="object" and
+                            $a["service.name"]=="/k8s/observability/coroot-db" and
+                            ($a.logging_pod | type)=="string" and
+                            ($a.logging_pod | test("^coroot-db-[0-9]+$")) and
+                            $a.error=="Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"coroot-db\": the object has been modified; please apply your changes to the latest version and try again"
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
                       hcloud-csi-reviewed-retries)
                         counts=$(printf '%s' "$entries" | jq -r '
                           . as $all |
@@ -702,6 +715,15 @@ spec:
                   # object and namespace attributes agree; storage or backup
                   # execution failures remain visible.
                   queue_reconciliation reconcile_logs "$PID:cnpg-system:Deployment:cloudnative-pg" cnpg-retention-delete-race 10
+                  # The instance-side retention runnable can delete the oldest
+                  # backup while another controller updates the same
+                  # ObjectStore status. Its optimistic write then conflicts,
+                  # and the five-minute retention loop retries successfully.
+                  # Match only the reviewed Coroot database identity, pod
+                  # shape, ObjectStore name, and resource-version conflict;
+                  # permission, storage, deletion, and mixed failures remain
+                  # visible. Ten events per hour is deliberately finite.
+                  queue_reconciliation reconcile_logs "$PID:observability:DatabaseCluster:coroot-db" cnpg-instance-retention-update-race 10
                   # A newly attached Hetzner volume can take a few seconds to
                   # appear under /dev/disk/by-id. The controller request is
                   # canceled while kubelet retries, then the node publish
