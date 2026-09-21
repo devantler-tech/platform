@@ -3010,7 +3010,34 @@ const (
 // This signed Kubescape storage-image deployment establishes aggregate:
 //
 //	2a37133c38553f1beaf721bc81350b6d612ea98c866821d0f36427749b158a04
-const expectedRenderedSurfaceSHA = "2a37133c38553f1beaf721bc81350b6d612ea98c866821d0f36427749b158a04"
+//
+// Moved again by the Velero node-agent configuration-delivery repair in #3973,
+// derived on exact main 18837f883b44fc7cf916ae48830719a6205f9a4f. The
+// velero/velero HelmRelease adds only the Reloader dependency annotation to the
+// node-agent DaemonSet and a content-derived generation label to its pod
+// template. These fields force rollout when node-agent-config changes; they do
+// not alter the node-agent ServiceAccount, security context, volumes, command,
+// or any authorization-bearing resource. A HelmRelease is a controller-RBAC
+// emitter, so these rollout-only values move the aggregate even though they
+// grant no permission.
+//
+// CONSERVATION: the approval-base diagnostic names exactly one changed entry,
+// helm.toolkit.fluxcd.io/v2 HelmRelease velero/velero. No ClusterRole, Role,
+// ClusterRoleBinding, RoleBinding or ServiceAccount source changes; no identity,
+// subject, verb, wildcard, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: reproduced locally with the official kubectl v1.36.2
+// Darwin arm64 binary (Kustomize v5.8.1), whose SHA256 was verified as
+// 4408c85c83fd3a31adaa555bdf3c7a6c81f74b19449a9060ba31ab91926f023d.
+// The approval-base comparison against exact main above names only the
+// velero/velero HelmRelease.
+//
+// Previous aggregate: 2a37133c38553f1beaf721bc81350b6d612ea98c866821d0f36427749b158a04.
+//
+// This Velero node-agent configuration-delivery repair establishes aggregate:
+//
+//	72466907ce426bce8558ea6a6ada72c4b7031b3e28d0dab42ac4b71a3ffca48f
+const expectedRenderedSurfaceSHA = "72466907ce426bce8558ea6a6ada72c4b7031b3e28d0dab42ac4b71a3ffca48f"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3023,7 +3050,7 @@ const expectedRenderedSurfaceSHA = "2a37133c38553f1beaf721bc81350b6d612ea98c8668
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "e20ec310b968fc68a32b45e10b4e961f9e759941ebb5402e99f52900644ea765"
+const previousRenderedSurfaceSHA = "2a37133c38553f1beaf721bc81350b6d612ea98c866821d0f36427749b158a04"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

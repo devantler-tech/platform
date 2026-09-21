@@ -1590,8 +1590,9 @@ jobs:
 
       - name: 💾 Validate Velero data-mover resources
         if: needs.changes.outputs.k8s == 'true'
-        # Pin the short-lived Kopia mover's authored memory ceiling so the
-        # measured index burst cannot regress to the OOM-producing value.
+        # Pin the short-lived Kopia mover's authored memory ceiling and bind
+        # the node-agent pod generation to its external ConfigMap. Otherwise a
+        # correct resource fix can remain unloaded forever on stable workers.
         run: |
           shellcheck scripts/tests/test-velero-data-mover-resources.sh
           bash scripts/tests/test-velero-data-mover-resources.sh

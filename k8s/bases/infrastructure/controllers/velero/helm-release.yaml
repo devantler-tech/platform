@@ -238,6 +238,17 @@ spec:
     # PVCs. Defaults are sane; just confirm rolling update.
     deployNodeAgent: true
     nodeAgent:
+      # Velero reads --node-agent-configmap only when each node-agent starts.
+      # Reload the DaemonSet when the external ConfigMap changes so stable
+      # workers cannot keep spawning data-path pods with stale resources.
+      annotations:
+        configmap.reloader.stakater.com/reload: node-agent-config
+      # This content-derived generation changes the pod template and therefore
+      # also forces the current rollout. The resource-contract test binds it to
+      # config-map.yaml, so a future config edit cannot merge without carrying
+      # an explicit rollout even if Reloader itself is unavailable.
+      podLabels:
+        platform.devantler.tech/node-agent-config-generation: config-3abda55fcd229620
       # C-0211 non-privilege fields for the node-agent DaemonSet's STORED
       # template (#3522). Kyverno's add-baseline-context-optin-* rules supply
       # these at admission, but Kubescape scores the stored spec, so the
