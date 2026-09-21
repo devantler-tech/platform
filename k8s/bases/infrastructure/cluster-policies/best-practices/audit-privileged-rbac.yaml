@@ -89,7 +89,7 @@ spec:
         cel:
           expressions:
             - expression: >-
-                !has(object.rules) || object.rules == null || object.rules.all(rule,
+                !has(object.rules) || type(object.rules) == null_type || object.rules.all(rule,
                   !(has(rule.apiGroups) && has(rule.resources) && (
                     ('*' in rule.apiGroups && '*' in rule.resources && '*' in rule.verbs) ||
                     (('*' in rule.apiGroups || 'rbac.authorization.k8s.io' in rule.apiGroups) &&
