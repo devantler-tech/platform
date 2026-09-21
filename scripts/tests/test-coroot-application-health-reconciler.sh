@@ -64,9 +64,10 @@ yq eval -e '
 ' "${manifest}" >/dev/null ||
   fail 'reconciliations must neither overlap nor remain active at the next one-minute evidence pass'
 # A failed Coroot request must have enough time to remove the warm override
-# before Kubernetes enforces the Job deadline.  Reconciliations are independent
-# per application/check, so queue them concurrently and bound every HTTP call;
-# the longest fatal-query failure path is PID lookup plus five requests.
+# before Kubernetes enforces the Job deadline. Reconciliations are independent
+# per application/check, but the log queries are deliberately expensive. Keep
+# a small bounded worker batch so the reconciler cannot overload Coroot and
+# manufacture query failures while still finishing inside the minute.
 [[ "${script_body}" == *'REQUEST_MAX_TIME=5'* ]] ||
   fail 'every Coroot request must use the reviewed five-second time budget'
 # The literal variable reference is the rendered-script contract.
@@ -140,6 +141,7 @@ setup_scenario() {
   local autoscaler_mode="${18:-known}"
   local autosuppressor_mode="${19:-present}"
   local leader_mode="${20:-known}"
+  local concurrency_limit="${COROOT_STUB_CONCURRENCY_LIMIT:-0}"
   local dir="${work_root}/${name}"
   mkdir -p "${dir}/bin"
   printf '%s' "${dex_mode}" >"${dir}/dex-mode"
@@ -161,6 +163,9 @@ setup_scenario() {
   printf '%s' "${autoscaler_mode}" >"${dir}/autoscaler-mode"
   printf '%s' "${autosuppressor_mode}" >"${dir}/autosuppressor-mode"
   printf '%s' "${leader_mode}" >"${dir}/leader-mode"
+  printf '%s' "${concurrency_limit}" >"${dir}/concurrency-limit"
+  printf '0' >"${dir}/active-queries"
+  printf '0' >"${dir}/peak-queries"
 
   cat >"${dir}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
@@ -179,11 +184,35 @@ for arg in "$@"; do
   prev="${arg}"
 done
 
+release_query_slot() {
+  [ "$(cat "${dir}/concurrency-limit")" -gt 0 ] || return 0
+  while ! mkdir "${dir}/query-counter-lock" 2>/dev/null; do sleep 0.01; done
+  active="$(cat "${dir}/active-queries")"
+  printf '%s' "$((active - 1))" >"${dir}/active-queries"
+  rmdir "${dir}/query-counter-lock"
+  trap - EXIT
+}
+
+acquire_query_slot() {
+  limit="$(cat "${dir}/concurrency-limit")"
+  [ "${limit}" -gt 0 ] || return 0
+  while ! mkdir "${dir}/query-counter-lock" 2>/dev/null; do sleep 0.01; done
+  active="$(( $(cat "${dir}/active-queries") + 1 ))"
+  printf '%s' "${active}" >"${dir}/active-queries"
+  peak="$(cat "${dir}/peak-queries")"
+  [ "${active}" -le "${peak}" ] || printf '%s' "${active}" >"${dir}/peak-queries"
+  rmdir "${dir}/query-counter-lock"
+  trap release_query_slot EXIT
+  sleep 0.1
+  [ "${active}" -le "${limit}" ] || exit 28
+}
+
 case "${url}" in
   */api/user)
     printf '%s\n' '{"data":{"projects":[{"id":"95rsc5yp","name":"platform"}]}}'
     ;;
   */logs?query=*)
+    acquire_query_slot
     severity="error"
     [[ "${url}" == *'%22value%22%3A%22fatal%22'* ]] && severity="fatal"
     if [[ "$url" == *'%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor'* ]]; then
@@ -503,6 +532,21 @@ known_output="$(run_scenario "${known_dir}")"
 printf '%s\n' "${known_output}" | jq -s -e \
   'length > 0 and all(.[]; .level == "info" and (.msg | type == "string" and length > 0))' \
   >/dev/null || fail 'successful reconciliation must emit structured info JSON'
+
+bounded_dir="$(COROOT_STUB_CONCURRENCY_LIMIT=4 setup_scenario bounded-concurrency known null)"
+bounded_output="$(run_scenario "${bounded_dir}" 2>&1)"
+printf '%s\n' "${bounded_output}" | jq -s -e '
+  length > 0 and all(.[]; .level == "info")
+' >/dev/null || fail 'bounded Coroot capacity produced a synthetic query failure'
+[ "$(cat "${bounded_dir}/peak-queries")" -le 4 ] ||
+  fail 'the reconciler exceeded the reviewed four-query Coroot capacity'
+[[ "${script_body}" == *'MAX_CONCURRENT_RECONCILIATIONS=4'* ]] ||
+  fail 'Coroot reconciliation must use the reviewed four-worker concurrency ceiling'
+# These literal references keep the rendered shell contract reviewable.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'[ "$RECONCILIATION_COUNT" -ge "$MAX_CONCURRENT_RECONCILIATIONS" ]'* ]] ||
+  fail 'the reconciliation queue must drain each bounded worker batch'
+pass 'Coroot log queries respect the bounded worker capacity'
 jq -s -e '
   any(.[]; (.url | contains("%3A_%3AUnknown%3Akubelet/inspection/NetworkTCPConnections/config")) and .body.configs[2] == null) and
   any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-background-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and

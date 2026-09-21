@@ -168,10 +168,16 @@ spec:
                   PID=$(coroot_request "$BASE/api/user" | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
                   [ -n "$PID" ] || { log_error "could not resolve platform project id"; exit 1; }
 
+                  MAX_CONCURRENT_RECONCILIATIONS=4
                   RECONCILIATION_PIDS=""
+                  RECONCILIATION_COUNT=0
                   queue_reconciliation() {
                     "$@" &
                     RECONCILIATION_PIDS="$RECONCILIATION_PIDS $!"
+                    RECONCILIATION_COUNT=$((RECONCILIATION_COUNT + 1))
+                    if [ "$RECONCILIATION_COUNT" -ge "$MAX_CONCURRENT_RECONCILIATIONS" ]; then
+                      wait_reconciliations
+                    fi
                   }
                   wait_reconciliations() {
                     failures=0
@@ -180,6 +186,8 @@ spec:
                         failures=$((failures + 1))
                       fi
                     done
+                    RECONCILIATION_PIDS=""
+                    RECONCILIATION_COUNT=0
                     [ "$failures" -eq 0 ] || {
                       log_error "$failures application-health reconciliation(s) failed"
                       exit 1
