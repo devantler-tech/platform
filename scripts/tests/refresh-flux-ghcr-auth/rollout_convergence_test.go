@@ -2,10 +2,14 @@ package refreshfluxghcrauth
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSecondFanoutVerificationBlocksRootCutover(t *testing.T) {
@@ -998,15 +1002,31 @@ func TestFluxParentQuiescenceUsesMeasuredPostPublishBudget(t *testing.T) {
 func TestFluxParentQuiescenceTimeoutReportsConditionAndElapsedWait(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
+	started := time.Now()
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_FLUX_PARENT_RECONCILING_READS_AFTER_PAUSE": "99",
 		"FLUX_GHCR_PARENT_QUIESCE_ATTEMPTS":              "2",
 	})
+	wall := time.Since(started)
 	requireFailureResult(t, result)
 	output := result.stdout + result.stderr
 	requireContains(t, output, "kustomization/flux-system: Reconciling=True Progressing")
-	requireContains(t, output, "after 2 attempts")
-	requireContains(t, output, "elapsed 0s")
+	// The helper measures the wait with bash $SECONDS, which counts whole
+	// seconds, so even a sub-second wait reports 1s when it straddles a
+	// second boundary. Require a real elapsed figure that is bounded by this
+	// run's own wall time, rather than an exact "0s" that flakes on a
+	// loaded runner.
+	match := regexp.MustCompile(`after 2 attempts \(elapsed ([0-9]+)s\)`).FindStringSubmatch(output)
+	if match == nil {
+		t.Fatalf("expected the timeout to report its attempts and elapsed wait, got:\n%s", output)
+	}
+	elapsed, err := strconv.Atoi(match[1])
+	if err != nil {
+		t.Fatalf("elapsed wait %q is not a whole number of seconds: %v", match[1], err)
+	}
+	if bound := int(math.Ceil(wall.Seconds())); elapsed > bound {
+		t.Fatalf("reported elapsed %ds exceeds the %ds the helper actually ran", elapsed, bound)
+	}
 }
 
 func TestFluxPolicyParentQuiescesBeforeSuspension(t *testing.T) {
