@@ -72,10 +72,30 @@ Permission to deploy does not prove those compatibility conditions.
 For the Coroot operator's workloads, a narrower `baseline-context-coroot` namespace
 label scopes the same controller rules to Deployments, StatefulSets and DaemonSets
 labelled `app.kubernetes.io/managed-by: coroot-operator`, leaving the namespace's
-Helm and Git workloads alone. No namespace carries it. Activation requires the
-same before-publish and after-reconcile sequence as the UI canary, with a guard
-that reads the six stored templates and fails on an operator that keeps
-rewriting them.
+Helm and Git workloads alone. No namespace carries it.
+
+`scripts/guard-coroot-baseline-context.sh` is the read-only guard for that label,
+and the production deploy action runs it in both phases:
+
+1. Before publication, it reads the desired `observability` namespace manifest.
+   Without the label it disarms without contacting the cluster, so a label
+   rollback does not depend on the operator's workloads. With the label, it
+   requires the stored population to be exactly the six reviewed templates,
+   each controller-owned by the `Coroot` resource and fully ready. An API
+   failure is an error, never an empty population.
+2. After Flux reports the released revision Ready, it waits a bounded time for
+   all six templates to carry pod-level `fsGroupChangePolicy` and
+   `seLinuxOptions` at pod level or on every container, then observes them
+   three times over 30 seconds. A changed generation or UID, a removed field,
+   lost readiness, or two writes to the same template fail the deployment.
+
+Unlike the UI canary it records no receipt: while the label is declared, every
+deployment re-proves convergence, because an operator upgrade can change its
+desired state without any change in this repository. The disaster-recovery
+rebuild does not run it yet; a fresh ClickHouse needs longer than the guard's
+wait to become ready, so that wiring belongs with activation. Admission applies
+only on a write, so activation also needs one template update per workload after
+the label lands.
 
 The remaining rollout and its acceptance measurements are tracked in
 [issue #3239](https://github.com/devantler-tech/platform/issues/3239). C-0211 sizing
