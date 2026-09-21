@@ -41,6 +41,15 @@
 #     SERVFAIL response. The finite 50,000 cap leaves 84% headroom above that
 #     measured peak; other DNS checks and per-workload NXDOMAIN reports stay at
 #     zero, and a roughly doubled cluster-wide burst remains fail-visible.
+#   * alertmanager DnsLatency = 750ms. Its two Ready, restart-free peers made
+#     19,600 successful requests to each exact headless-service name over the
+#     reviewed week with no SERVFAIL or previously-valid NXDOMAIN response.
+#     One recovered p95 peak reached roughly 550-600ms while CoreDNS remained
+#     replicated, restart-free, and lightly loaded. Seven hundred fifty keeps
+#     a sustained near-second peer-discovery delay visible while avoiding that
+#     brief successful lookup from flapping the application warning. Server
+#     errors, NXDOMAIN checks, other applications, and the global 100ms default
+#     remain unchanged.
 #
 # Log thresholds are even narrower: the override is installed only when EVERY
 # raw ERROR/FATAL message matches the app-specific allowlist below. Coroot's
@@ -103,7 +112,7 @@ spec:
   schedule: "* * * * *"
   # Never overlap Coroot writes. A run may start at most ten seconds after its
   # schedule and has fifty-five seconds plus two seconds of termination grace.
-  # Seventeen two-query log checks require five four-worker batches, whose
+  # Eighteen two-query log checks require five four-worker batches, whose
   # worst-case query budget is fifty seconds; five seconds remain for PID and
   # threshold work. The launch allowance applies only to a missed schedule; it
   # does not extend the preceding Job, so each run is still gone before the
@@ -272,6 +281,9 @@ spec:
 
                   CILIUM="$PID:kube-system:DaemonSet:cilium"
                   queue_reconciliation reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 50000 cilium-dns-search-expansion
+
+                  ALERTMANAGER="$PID:kubescape:StatefulSet:alertmanager"
+                  queue_reconciliation reconcile_threshold "$ALERTMANAGER" DnsLatency 100 750 alertmanager-peer-dns-recovered-latency
 
                   LOG_MESSAGE_LIMIT=1000
                   ERROR_QUERY=$(jq -nr --argjson limit "$LOG_MESSAGE_LIMIT" '

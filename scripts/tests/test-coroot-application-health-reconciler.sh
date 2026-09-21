@@ -607,6 +607,8 @@ jq -s -e '
   any(.[]; (.url | contains("%3A_%3AUnknown%3Aapid/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 250) and
   any(.[]; (.url | contains("%3Abackstage%3ADatabaseCluster%3Abackstage-db/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 75) and
   any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 50000) and
+  any(.[]; (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsLatency/config")) and .body.configs[2].threshold == 750) and
+  all(.[]; ((.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsServerErrors/config")) or (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsNxdomainErrors/config"))) | not) and
   any(.[]; (.url | contains("%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Adex%3ADeployment%3Adex/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Ainit/inspection/LogErrors/config")) and .body.configs[2].threshold == 1000) and
