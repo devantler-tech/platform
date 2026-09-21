@@ -108,6 +108,12 @@ if [ -z "${now}" ]; then
   now="$(date -u +%s)"
 fi
 is_count "${now}" || die_input "--now must be epoch seconds"
+# Read every count as base 10: shell arithmetic takes a leading zero as octal,
+# so "08" would abort the script and "010" would silently mean eight.
+etcd_members=$((10#${etcd_members}))
+etcd_learners=$((10#${etcd_learners}))
+max_age_hours=$((10#${max_age_hours}))
+now=$((10#${now}))
 
 jq -e '.kind == "List" or .kind == "NodeList"' "${nodes_file}" >/dev/null 2>&1 ||
   die_input "--nodes is not a node list"
@@ -198,7 +204,8 @@ else
     reasons+=("backup: newest ${schedule} backup ${backup_name} has not finished")
   else
     age_seconds=$((now - backup_epoch))
-    if [ "${age_seconds}" -gt $((max_age_hours * 3600)) ]; then
+    # The limit is exclusive: a backup exactly max_age_hours old is too old.
+    if [ "${age_seconds}" -ge $((max_age_hours * 3600)) ]; then
       reasons+=("backup: newest ${schedule} backup ${backup_name} finished $((age_seconds / 3600))h ago, limit ${max_age_hours}h")
     fi
   fi

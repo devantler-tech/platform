@@ -699,14 +699,18 @@ reports whether the target currently holds the floating IP:
 ```bash
 kubectl get nodes -o json > nodes.json
 kubectl get backups.velero.io -n velero -o json > backups.json
-talosctl --nodes <control-plane-ip> etcd members   # count voting members and learners
+talosctl --nodes <control-plane-ip> etcd members > etcd-members.txt
+# Count voters and learners from the LEARNER column; never type the healthy values in.
+read -r etcd_voters etcd_learners < <(awk 'NR > 1 && $NF == "false" { v++ }
+  NR > 1 && $NF == "true" { l++ } END { printf "%d %d\n", v, l }' etcd-members.txt)
 # The floating IP's server, matched to its node through the node's hcloud providerID.
 vip_server="$(hcloud floating-ip describe prod-floating-ip -o json | jq -r '.server // empty')"
 vip_holder="$(jq -r --arg id "hcloud://${vip_server}" \
   '.items[] | select(.spec.providerID == $id) | .metadata.name' nodes.json)"
 scripts/cp-recreate-drill-preflight.sh --target <node> \
   --nodes nodes.json --backups backups.json \
-  --etcd-members 3 --etcd-learners 0 --vip-holder "${vip_holder}"
+  --etcd-members "${etcd_voters}" --etcd-learners "${etcd_learners}" \
+  --vip-holder "${vip_holder}"
 ```
 
 An empty `vip_holder` (the floating IP is unassigned, or no node matches) reports

@@ -118,6 +118,19 @@ run "${healthy_nodes}" "${healthy_backups}" "${defaults[@]}" --vip-holder prod-c
 grep -qx 'target_is_vip_holder=false' "${work_dir}/out" || fail "VIP elsewhere not reported"
 ok "VIP holder is reported and does not gate"
 
+# Counts are read as base 10, never octal. "010" is ten hours, which the
+# 9h20m-old healthy backup satisfies (as octal it would be eight and refuse).
+run "${healthy_nodes}" "${healthy_backups}" "${defaults[@]}" --max-backup-age-hours 010 ||
+  fail "a zero-padded age limit must be read as base 10: $(cat "${work_dir}/out" "${work_dir}/err")"
+grep -qx 'ready=true' "${work_dir}/out" || fail "zero-padded age limit: ready=true missing"
+ok "a zero-padded age limit is read as base 10"
+
+# A zero-padded --now that is invalid octal must not skip the age check:
+# a stale backup is still refused.
+expect_refusal "zero-padded --now still checks backup age" \
+  "backup: newest velero-daily-full backup daily-stale finished 33h ago, limit 26h" \
+  "${healthy_nodes}" "$(list "$(backup daily-stale Completed 2026-09-20T02:40:00Z)")" "${defaults[@]}" --now "0${now}"
+
 # target
 expect_refusal "absent target" "target: prod-control-plane-9 is not a node" \
   "${healthy_nodes}" "${healthy_backups}" --target prod-control-plane-9 --etcd-members 3 --etcd-learners 0
@@ -173,6 +186,11 @@ expect_refusal "newest backup too old" "backup: newest velero-daily-full backup 
   "${healthy_nodes}" "${stale}" "${defaults[@]}"
 
 in_progress_only="$(list "$(backup daily-running InProgress null)")"
+# The age limit is exclusive: exactly 26 hours old is too old.
+at_limit="$(list "$(backup daily-at-limit Completed 2026-09-20T10:00:00Z)")"
+expect_refusal "backup exactly at the age limit" "backup: newest velero-daily-full backup daily-at-limit finished 26h ago, limit 26h" \
+  "${healthy_nodes}" "${at_limit}" "${defaults[@]}"
+
 expect_refusal "only backup still running" "backup: newest velero-daily-full backup daily-running has not finished" \
   "${healthy_nodes}" "${in_progress_only}" "${defaults[@]}"
 
@@ -206,6 +224,13 @@ run "${two_control_planes}" "${partially_failed}" --target prod-worker-1 --etcd-
 [ "${status}" -eq 1 ] || fail "multiple failures: expected exit 1, got ${status}"
 [ "$(grep -c '^reason=' "${work_dir}/out")" -eq 4 ] ||
   fail "multiple failures: expected 4 reasons, got: $(cat "${work_dir}/out")"
+for reason in \
+  "target: prod-worker-1 is not a node in the cluster" \
+  "quorum: 2 control-plane nodes, expected 3" \
+  "quorum: 2 voting etcd members, expected 3" \
+  "backup: newest velero-daily-full backup daily-new is PartiallyFailed, not Completed"; do
+  grep -qFx "reason=${reason}" "${work_dir}/out" || fail "multiple failures: missing '${reason}'"
+done
 ok "every failing guard is reported in one run"
 
 # Input errors are exit 2 and never ready.
