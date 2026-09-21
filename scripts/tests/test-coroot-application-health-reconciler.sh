@@ -127,6 +127,16 @@ pass 'the Backstage PostgreSQL cache warmup has a narrow application policy'
   fail 'the Alertmanager DNS latency policy must use Coroot second-based API units'
 pass 'the Alertmanager DNS latency policy uses second-based API units'
 
+# Coroot's node agent increments the application OOM counter for any process
+# marked as an OOM victim inside the runtime cgroup, even when containerd keeps
+# the same PID and the node has no memory pressure. Accept exactly one such
+# child-process event for the Talos runtime: global zero remains the baseline,
+# and a second event still breaches the finite per-application threshold.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'reconcile_threshold "$RUNTIME" MemoryOOM 0 1 talos-runtime-child-process-oom'* ]] ||
+  fail 'the exact Talos runtime application must allow only one child-process OOM'
+pass 'the Talos runtime OOM policy is exact and finite'
+
 yq eval -e '.cluster.controllerManager.extraArgs."log-text-split-stream" == "false"' \
   "${talos_patch}" >/dev/null ||
   fail 'the controller-manager patch must retain GC and force a static-pod refresh'
@@ -615,6 +625,7 @@ jq -s -e '
   any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-cleanup-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 40) and
   any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Aapid/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 250) and
+  any(.[]; (.url | contains("%3A_%3AUnknown%3Aruntime/inspection/MemoryOOM/config")) and .body.configs[0].threshold == 0 and .body.configs[2].threshold == 1) and
   any(.[]; (.url | contains("%3Abackstage%3ADatabaseCluster%3Abackstage-db/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 75) and
   any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 50000) and
   any(.[]; (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsLatency/config")) and .body.configs[2].threshold == 0.75) and
