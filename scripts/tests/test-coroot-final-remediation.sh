@@ -42,6 +42,36 @@ readonly kustomize_controller_patch
   fail 'kustomize-controller must have startup readiness grace and a ten-second graceful pre-stop'
 pass 'expected kustomize-controller restarts have startup and shutdown probe grace'
 
+for controller in kustomize-controller helm-controller notification-controller; do
+  controller_patch="$({
+    CONTROLLER="${controller}" yq -er '
+      .spec.kustomize.patches[] |
+      select(.target.kind == "Deployment" and .target.name == strenv(CONTROLLER)) |
+      .patch
+    ' "${flux_instance}"
+  })" || fail "the ${controller} patch is missing"
+
+  printf '%s\n' "${controller_patch}" | yq -e '
+    ([.[] | select(.op == "add" and .path == "/spec/minReadySeconds" and .value == 30)] | length) == 1 and
+    ([.[] | select(.path == "/spec/replicas" and .value == 2)] | length) == 1 and
+    ([.[] | select(.op == "add" and .path == "/spec/template/spec/affinity") |
+      .value.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[] |
+      select(.topologyKey == "kubernetes.io/hostname") ] | length) == 1
+  ' - >/dev/null ||
+    fail "${controller} must keep two cross-node replicas and require a 30-second readiness floor"
+done
+pass 'each replicated Flux controller has a stable cross-node HA rollout contract'
+
+yq -e '
+  [.spec.kustomize.patches[] |
+   select(.target.kind == "Deployment" and .target.name == "source-controller") |
+   .patch | from_yaml | .[] |
+   select(.path == "/spec/replicas" or .path == "/spec/minReadySeconds")] |
+  length == 0
+' "${flux_instance}" >/dev/null ||
+  fail 'source-controller must remain outside the replica and readiness-floor patches'
+pass 'source-controller remains outside the replicated-controller rollout contract'
+
 cainjector_config="$({
   yq -o=json -I=0 '.spec.values.cainjector.config' "${cert_manager_release}"
 })" || fail 'the cainjector configuration is missing'
