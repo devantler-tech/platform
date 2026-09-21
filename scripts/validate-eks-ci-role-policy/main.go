@@ -3093,7 +3093,38 @@ const (
 // This reconcile-CronJob failure alert establishes aggregate:
 //
 //	8349813fc88630dda72bcc2787eb502ffb90b18c037feb1344a89f2eecbd9f6b
-const expectedRenderedSurfaceSHA = "8349813fc88630dda72bcc2787eb502ffb90b18c037feb1344a89f2eecbd9f6b"
+//
+// Moved again by the Longhorn engine-image baseline-context retrofit (#3918,
+// #4025), derived on the merge of exact main
+// 45acf720daca837dedfda7d622c0f01adae4a8fe, whose approved aggregate is 8349813f
+// above. Approved by the maintainer in an interactive session on 2026-09-21. A
+// Kyverno mutate-existing policy patches the default Longhorn engine-image
+// DaemonSet, so Kyverno's background controller needs to update that one
+// DaemonSet.
+//
+// GRANTS ADDED, all to the existing kyverno/kyverno-background-controller
+// ServiceAccount and nothing else:
+//   - Role longhorn-system/kyverno:background-controller:mutate-longhorn-engine-image:
+//     get, patch and update on daemonsets.apps by resourceName
+//     engine-image-ei-493e04e7 only. No create or delete, no other resource, no
+//     wildcard, no cluster-scoped grant.
+//   - RoleBinding longhorn-system/kyverno:background-controller:mutate-longhorn-engine-image:
+//     binds that Role to the single kyverno/kyverno-background-controller subject.
+//
+// CONSERVATION: the validator's approval-base diagnostic against exact main names
+// exactly these two added entries and nothing moved or removed. No existing
+// identity, binding, verb, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: computed on the merged tree with the checksum-verified
+// kubectl v1.36.2 (Kustomize v5.8.1) that CI pins; the same renderer reproduces
+// 8349813f on main itself (go test passes there).
+//
+// Previous aggregate: 8349813fc88630dda72bcc2787eb502ffb90b18c037feb1344a89f2eecbd9f6b.
+//
+// This Longhorn engine-image baseline-context retrofit establishes aggregate:
+//
+//	f5102c7e56811403094cb887305789a52768361c8e3a8636b4fc254110279f63
+const expectedRenderedSurfaceSHA = "f5102c7e56811403094cb887305789a52768361c8e3a8636b4fc254110279f63"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3106,7 +3137,7 @@ const expectedRenderedSurfaceSHA = "8349813fc88630dda72bcc2787eb502ffb90b18c037f
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "cc7a1435ad0cad112bbe70e89dd06c6441007e6ec8e5df2c704bfa641df054e3"
+const previousRenderedSurfaceSHA = "8349813fc88630dda72bcc2787eb502ffb90b18c037feb1344a89f2eecbd9f6b"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
