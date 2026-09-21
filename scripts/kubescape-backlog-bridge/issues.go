@@ -528,7 +528,7 @@ func renderBody(t theme) string {
 	// entrySurface parses this exact line back and must match surfacePosture or
 	// surfaceCVE literally. Every other field is scanner-derived and sanitized.
 	fmt.Fprintf(&b, "**Surface:** %s\n", t.Kind)
-	fmt.Fprintf(&b, "**Severity:** %s\n", boundField(t.Severity))
+	fmt.Fprintf(&b, "**Severity:** `%s`\n", boundField(t.Severity))
 
 	if t.Kind == string(surfaceCVE) {
 		fmt.Fprintf(&b, "**Occurrences:** %d\n", t.Total)
