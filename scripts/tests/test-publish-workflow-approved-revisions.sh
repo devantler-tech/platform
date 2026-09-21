@@ -25,6 +25,7 @@ readonly REPORT="$REPO_ROOT/scripts/report-publish-workflow-signing-revisions.sh
 readonly SHA_A='1111111111111111111111111111111111111111'
 readonly SHA_B='2222222222222222222222222222222222222222'
 readonly SHA_C='3333333333333333333333333333333333333333'
+readonly SHA_R='4444444444444444444444444444444444444444'  # release candidate (#3960)
 readonly DIGEST_A='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 
 failures=0
@@ -77,6 +78,20 @@ STUB
   chmod +x "$path"
   printf '%s\n' "$path"
 }
+# A stub release resolver: appends one line per call to <name>.calls, then prints <answer>
+# (with `\n` escapes expanded) and exits <status>.
+make_release_resolver() { # <name> <answer> <status>
+  local path="$WORK/release-$1.sh"
+  cat >"$path" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >>"$WORK/release-$1.calls"
+printf '%b\n' '$2'
+exit $3
+STUB
+  chmod +x "$path"
+  printf '%s\n' "$path"
+}
+release_ok="$(make_release_resolver ok "$SHA_R" 0)"
 # Observer table: every consumer answers "<tag> <digest> <signer>", with one optional
 # override "<repo>\t<workflow>\t<answer-with-\\t-escapes>" and one optional omitted repo.
 write_table() { # <path> <override-repo|""> <override-answer> <omit-repo|"">
@@ -93,8 +108,9 @@ write_table() { # <path> <override-repo|""> <override-answer> <omit-repo|"">
   done <<<"$consumers"
 }
 
-run_gen() { # <observer> <pin-resolver> <output-file> <observed-on> <log>
+run_gen() { # <observer> <pin-resolver> <output-file> <observed-on> <log> [<release-resolver>]
   APPROVED_REVISION_OBSERVER="$1" APPROVED_REVISION_PIN_RESOLVER="$2" \
+    APPROVED_REVISION_RELEASE_RESOLVER="${6:-$release_ok}" \
     APPROVED_REVISIONS_FILE="$3" APPROVED_REVISIONS_OBSERVED_ON="$4" "$SCRIPT" >"$5" 2>&1
 }
 
@@ -110,14 +126,16 @@ if run_gen "$observer_full" "$pin_ok" "$out1" 2026-01-01 "$log1"; then
   else
     fail "complete run wrote $rows row(s) for $consumer_count consumer(s)"; cat "$out1"
   fi
-  if head -1 "$out1" | grep -qxF -- $'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signer_sha\tmain_pin_sha\tobserved_on'; then
-    pass 'header names the seven columns'
+  if head -1 "$out1" | grep -qxF -- $'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signer_sha\tmain_pin_sha\trelease_candidate_sha\tobserved_on'; then
+    pass 'header names the eight columns'
   else
     fail "unexpected header: $(head -1 "$out1")"
   fi
   if tail -n +2 "$out1" | awk -F'\t' -v s="$SHA_A" -v p="$SHA_B" -v d="$DIGEST_A" \
-    'NF != 7 || $3 != "1.2.3" || $4 != d || $5 != s || $6 != p || $7 != "2026-01-01" { bad = 1 } END { exit bad }'; then
-    pass 'every row carries tag, digest, signer, pin and date in the expected columns'
+    -v r="$SHA_R" \
+    'NF != 8 || $3 != "1.2.3" || $4 != d || $5 != s || $6 != p || $8 != "2026-01-01" { bad = 1 }
+     $2 == "publish-app" && $7 != r { bad = 1 } $2 != "publish-app" && $7 != "-" { bad = 1 } END { exit bad }'; then
+    pass 'every row carries tag, digest, signer, pin, candidate and date in the expected columns'
   else
     fail 'a row is malformed'; cat "$out1"
   fi
@@ -137,8 +155,8 @@ fi
 moved_table="$WORK/moved.tsv"; write_table "$moved_table" "$first_consumer" "1.2.4\\t${DIGEST_A}\\t${SHA_C}" ''
 observer_moved="$(make_observer "$moved_table" moved)"
 if run_gen "$observer_moved" "$pin_ok" "$out1" 2026-03-03 "$WORK/log3"; then
-  moved_date="$(awk -F'\t' -v c="$first_consumer" -v w="$first_workflow" '$1 == c && $2 == w { print $7 }' "$out1")"
-  kept="$(awk -F'\t' -v c="$first_consumer" 'NR > 1 && $1 != c && $7 != "2026-01-01" { bad = 1 } END { exit bad }' "$out1" && echo yes || echo no)"
+  moved_date="$(awk -F'\t' -v c="$first_consumer" -v w="$first_workflow" '$1 == c && $2 == w { print $8 }' "$out1")"
+  kept="$(awk -F'\t' -v c="$first_consumer" 'NR > 1 && $1 != c && $8 != "2026-01-01" { bad = 1 } END { exit bad }' "$out1" && echo yes || echo no)"
   if [ "$moved_date" = '2026-03-03' ] && [ "$kept" = yes ]; then
     pass 'a moved signer re-stamps only its own row'
   else
@@ -231,6 +249,72 @@ if APPROVED_REVISIONS_OBSERVED_ON=yesterday APPROVED_REVISION_OBSERVER="$observe
   fail 'a non-date APPROVED_REVISIONS_OBSERVED_ON was accepted'
 else
   pass 'a non-date APPROVED_REVISIONS_OBSERVED_ON is refused'
+fi
+
+# --- 9. The release candidate (#3960) ---------------------------------------------------
+app_consumer="$(printf '%s\n' "$consumers" | awk -F'\t' '$2 == "publish-app" { print $1; exit }')"
+if [ -z "$app_consumer" ]; then
+  fail 'discovery found no publish-app consumer; every release-candidate case would pass vacuously'
+else
+  # An unreadable release fails the run by consumer name and writes nothing.
+  release_down="$(make_release_resolver down '' 7)"
+  out10="$WORK/out10.tsv"
+  if run_gen "$observer_full" "$pin_ok" "$out10" 2026-01-01 "$WORK/log10" "$release_down"; then
+    fail 'an unreadable release was accepted'
+  elif [ ! -e "$out10" ] && grep -qF -- "$app_consumer" "$WORK/log10" && grep -qF -- 'release candidate' "$WORK/log10"; then
+    pass 'an unreadable release fails the run naming the consumer, no file written'
+  else
+    fail 'unreadable-release refusal did not name the consumer or wrote a file'; cat "$WORK/log10"
+  fi
+  # A failed read is still the one attempt: later publish-app rows must not retry it.
+  app_rows="$(printf '%s\n' "$consumers" | awk -F'\t' '$2 == "publish-app"' | grep -c .)"
+  down_calls="$(grep -c . "$WORK/release-down.calls" || true)"
+  if [ "$app_rows" -lt 2 ]; then
+    fail "only $app_rows publish-app consumer(s); the single-attempt case would pass vacuously"
+  elif [ "$down_calls" -eq 1 ]; then
+    pass "an unreadable release is attempted once across $app_rows publish-app rows"
+  else
+    fail "an unreadable release was attempted $down_calls time(s) across $app_rows publish-app rows"
+  fi
+
+  # Malformed release answers are refused, never parsed on their first line.
+  for shape in 'deadbeef' "${SHA_R}\\n${SHA_C}" '-'; do
+    release_bad="$(make_release_resolver bad "$shape" 0)"
+    out11="$WORK/out11.tsv"; rm -f "$out11"
+    if run_gen "$observer_full" "$pin_ok" "$out11" 2026-01-01 "$WORK/log11" "$release_bad"; then
+      fail "malformed release answer accepted: $shape"
+    elif [ ! -e "$out11" ]; then
+      pass "malformed release answer refused: $shape"
+    else
+      fail "malformed release answer refused but a file was written: $shape"
+    fi
+  done
+
+  # One shared fact: the release is read once however many publish-app consumers there are.
+  release_once="$(make_release_resolver once "$SHA_R" 0)"
+  out12="$WORK/out12.tsv"
+  if run_gen "$observer_full" "$pin_ok" "$out12" 2026-01-01 "$WORK/log12" "$release_once"; then
+    calls="$(grep -c . "$WORK/release-once.calls" || true)"
+    if [ "$calls" -eq 1 ] && grep -qxF publish-app "$WORK/release-once.calls"; then
+      pass 'the release is resolved once, for the publish-app workflow'
+    else
+      fail "the release resolver ran $calls time(s): $(tr '\n' ' ' <"$WORK/release-once.calls")"
+    fi
+  else
+    fail 'a resolvable release failed the run'; cat "$WORK/log12"
+  fi
+
+  # A new release moves only the publish-app rows, which are re-stamped; the others keep
+  # their date because their tuple did not move.
+  release_new="$(make_release_resolver new "$SHA_C" 0)"
+  if run_gen "$observer_full" "$pin_ok" "$out12" 2026-04-04 "$WORK/log13" "$release_new" &&
+    tail -n +2 "$out12" | awk -F'\t' -v n="$SHA_C" '
+      $2 == "publish-app" && ($7 != n || $8 != "2026-04-04") { bad = 1 }
+      $2 != "publish-app" && ($7 != "-" || $8 != "2026-01-01") { bad = 1 } END { exit bad }'; then
+    pass 'a new release re-stamps only the publish-app rows'
+  else
+    fail 'a new release did not move exactly the publish-app rows'; cat "$out12"
+  fi
 fi
 
 if [ "$failures" -gt 0 ]; then

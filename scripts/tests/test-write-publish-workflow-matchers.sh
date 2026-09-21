@@ -23,8 +23,8 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 fixture() {
   rm -rf "$TREE"
   mkdir -p "$TREE/scripts"
-  printf 'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signer_sha\tmain_pin_sha\tobserved_on\n' >"$SET"
-  local repo workflow package signer pin file
+  printf 'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signer_sha\tmain_pin_sha\trelease_candidate_sha\tobserved_on\n' >"$SET"
+  local repo workflow package signer pin candidate file
   while read -r repo workflow package signer pin; do
     file="$TREE/k8s/bases/apps/$package/oci-repository.yaml"
     mkdir -p "$(dirname "$file")"
@@ -43,8 +43,10 @@ spec:
       - issuer: '^https://token\.actions\.githubusercontent\.com\$'
         subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/$workflow\.yaml@[0-9a-f]{40}\$'
 EOF
-    printf '%s\t%s\t1.0.0\tsha256:%064d\t%s\t%s\t2026-09-05\n' \
-      "$repo" "$workflow" 0 "$signer" "$pin" >>"$SET"
+    candidate='-'
+    [ "$workflow" != publish-app ] || candidate="$C"
+    printf '%s\t%s\t1.0.0\tsha256:%064d\t%s\t%s\t%s\t2026-09-05\n' \
+      "$repo" "$workflow" 0 "$signer" "$pin" "$candidate" >>"$SET"
   done <<EOF
 .github publish-manifests github-config $A $B
 ascoachingogvaner publish-app ascoachingogvaner $C $B

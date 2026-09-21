@@ -23,18 +23,29 @@
 #   pin      â `.jobs[].uses` of the consumer's cd.yaml at its default branch, via the report's
 #              `pin_at_ref`.
 #
+# THE RELEASE CANDIDATE (publish-app rows only, #3960)
+# Application tenants move their pin to a new `devantler-tech/actions` release by dependency
+# bump, often within hours of the release, while this set only learns a pin once it has landed.
+# So each publish-app row also records the commit of the latest published (non-draft,
+# non-prerelease) `actions` release, and a matcher built from the row can accept the revision a
+# tenant is about to move to before it moves. The candidate is derived, never hand-written: a
+# release that cannot be resolved to one commit carrying the shared workflow fails the run like
+# any other unresolved input. Rows for other workflows carry `-`, because that release stream
+# does not move their consumers.
+#
 # FAIL CLOSED, WRITE NOTHING. A consumer that cannot be resolved on either half is named on
 # stderr and the run exits 1 having written NO file: an approved set missing a consumer, or
 # carrying one revision where two are needed, reads exactly like a complete one to whoever
 # narrows the matchers from it.
 #
 # BYTE-IDENTICAL ON UNCHANGED INPUTS. `observed_on` is kept from the existing row whenever a
-# consumer's four-tuple has not moved, so regenerating on the same inputs is a no-op and a
+# consumer's five-tuple (tag, digest, signer, pin, candidate) has not moved, so regenerating on the same inputs is a no-op and a
 # guard can diff the committed file against a fresh run.
 #
 # SEAMS (tests substitute these; production leaves them unset)
 #   APPROVED_REVISION_OBSERVER      <repo> <workflow> â "<applied-tag>\t<sha256:digest>\t<signer-sha>"
 #   APPROVED_REVISION_PIN_RESOLVER  <repo> <workflow> â "<pin-sha>"
+#   APPROVED_REVISION_RELEASE_RESOLVER  <workflow> -> "<release-candidate-sha>"
 #   APPROVED_REVISIONS_FILE         output path (default scripts/publish-workflow-approved-revisions.tsv)
 #   APPROVED_REVISIONS_OBSERVED_ON  YYYY-MM-DD stamped on rows whose tuple changed (default: today, UTC)
 #   PUBLISH_KUBE_CONTEXT            kube context the default observer reads OCIRepositories through
@@ -48,7 +59,7 @@ readonly REPORT="$GEN_DIR/report-publish-workflow-signing-revisions.sh"
 source "$REPORT"
 
 readonly OUTPUT="${APPROVED_REVISIONS_FILE:-$REPO_ROOT/scripts/publish-workflow-approved-revisions.tsv}"
-readonly HEADER=$'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signer_sha\tmain_pin_sha\tobserved_on'
+readonly HEADER=$'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signer_sha\tmain_pin_sha\trelease_candidate_sha\tobserved_on'
 
 refuse() {
   printf 'generate-publish-workflow-approved-revisions: %s\n' "$*" >&2
@@ -166,6 +177,18 @@ default_pin_resolver() {
   pin_at_ref "$repo" "$workflow" "$branch"
 }
 
+# The commit of the latest published `devantler-tech/actions` release, provided that commit
+# carries <workflow>. `releases/latest` already excludes drafts and prereleases.
+default_release_resolver() {
+  local workflow="$1" tag sha blob
+  tag="$(gh_retry api repos/devantler-tech/actions/releases/latest --jq .tag_name)" || return 1
+  plausible_ref "$tag" || return 1
+  sha="$(tag_commit actions "$tag")" || return 1
+  blob="$(gh_retry api "repos/devantler-tech/actions/contents/.github/workflows/${workflow}.yaml?ref=${sha}" --jq .sha)" || return 1
+  is_sha "$blob" || return 1
+  printf '%s\n' "$sha"
+}
+
 # Split "<a>\t<b>\t<c>" into three variables WITHOUT `read`, which collapses an empty middle
 # field (the report documents the measured failure). Sets OBS_TAG OBS_DIGEST OBS_SIGNER and
 # OBS_COUNT.
@@ -188,6 +211,7 @@ split_observation() {
 
 main() {
   local observer="${APPROVED_REVISION_OBSERVER:-}" pin_resolver="${APPROVED_REVISION_PIN_RESOLVER:-}"
+  local release_resolver="${APPROVED_REVISION_RELEASE_RESOLVER:-}" release_candidate='' release_attempted=0
   local today="${APPROVED_REVISIONS_OBSERVED_ON:-$(date -u +%Y-%m-%d)}"
   is_date "$today" || { refuse "APPROVED_REVISIONS_OBSERVED_ON must be YYYY-MM-DD, got '$today'"; exit 1; }
 
@@ -195,12 +219,12 @@ main() {
   consumers="$("$REPORT" --list-consumers)" || { refuse 'consumer discovery failed; see the report above'; exit 1; }
   [ -n "$consumers" ] || { refuse 'consumer discovery returned nothing'; exit 1; }
 
-  # The existing row for one consumer, "<tag>\t<digest>\t<signer>\t<pin>\t<date>" or
+  # The existing row for one consumer, "<tag>\t<digest>\t<signer>\t<pin>\t<candidate>\t<date>" or
   # nothing, so an unchanged tuple keeps its date. A lookup over the file rather than an
   # associative array: this runs under macOS's bash 3.2 as well as CI's bash 5.
   prev_row() { # <consumer> <workflow>
     [ -f "$OUTPUT" ] || return 0
-    awk -F'\t' -v c="$1" -v w="$2" '$1 == c && $2 == w { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7; exit }' "$OUTPUT"
+    awk -F'\t' -v c="$1" -v w="$2" '$1 == c && $2 == w { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 "\t" $8; exit }' "$OUTPUT"
   }
 
   local repo workflow _version answer pin rows='' unresolved=0 examined=0 changed=0
@@ -229,7 +253,28 @@ main() {
       unresolved=$((unresolved + 1))
       continue
     fi
-    local key="$repo	$workflow" tuple="$OBS_TAG	$OBS_DIGEST	$OBS_SIGNER	$pin" observed prev prev_date
+    # The release candidate is one fact shared by every publish-app row, so it is resolved
+    # at most once per run. A failed read is that one attempt too: it leaves the candidate empty, and
+    # every publish-app row is then refused by name without reading the release again.
+    local candidate='-'
+    if [ "$workflow" = publish-app ]; then
+      if [ "$release_attempted" -eq 0 ]; then
+        release_attempted=1
+        if [ -n "$release_resolver" ]; then
+          release_candidate="$("$release_resolver" "$workflow")" || release_candidate=''
+        else
+          release_candidate="$(default_release_resolver "$workflow")" || release_candidate=''
+        fi
+        case "$release_candidate" in *$'\n'*) release_candidate='' ;; esac
+      fi
+      if ! is_sha "${release_candidate:-}"; then
+        refuse "$repo ($workflow): latest devantler-tech/actions release not resolved to one commit carrying $workflow.yaml; refusing to write a set without its release candidate"
+        unresolved=$((unresolved + 1))
+        continue
+      fi
+      candidate="$release_candidate"
+    fi
+    local key="$repo	$workflow" tuple="$OBS_TAG	$OBS_DIGEST	$OBS_SIGNER	$pin	$candidate" observed prev prev_date
     prev="$(prev_row "$repo" "$workflow")"
     prev_date="${prev##*	}"
     if [ -n "$prev" ] && [ "${prev%	*}" = "$tuple" ] && is_date "$prev_date"; then
