@@ -30,7 +30,9 @@ done
 container_path='.spec.jobTemplate.spec.template.spec.containers[0]'
 pod_path='.spec.jobTemplate.spec.template.spec'
 script_body="$(yq eval "${container_path}.command[2]" "$manifest")"
-[ -n "$script_body" ] && [ "$script_body" != null ] || fail 'could not extract detector script'
+if [ -z "$script_body" ] || [ "$script_body" = null ]; then
+  fail 'could not extract detector script'
+fi
 env_value() { yq eval "${container_path}.env[] | select(.name == \"$1\") | .value" "$manifest"; }
 
 # ---- Static contract -------------------------------------------------------
