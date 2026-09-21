@@ -25,16 +25,18 @@ syft_sha=$(sha256sum "${test_root}/fixtures/syft.tar.gz" | cut -d' ' -f1)
 cat >"${test_root}/bin/curl" <<'FAKE_CURL'
 #!/usr/bin/env bash
 set -euo pipefail
-url='' output=''
+url='' output='' retry=0
 while (( $# )); do
   case "$1" in
     -o|--output) output=$2; shift 2 ;;
-    --proto|--proto-redir) shift 2 ;;
+    --retry) retry=$2; shift 2 ;;
+    --proto|--proto-redir|--retry-delay|--retry-max-time) shift 2 ;;
     -*) shift ;;
     *) url=$1; shift ;;
   esac
 done
 printf '%s\n' "${url}" >>"${TEST_ROOT}/downloads"
+printf '%s %s\n' "${retry}" "${url}" >>"${TEST_ROOT}/retries"
 case "${url}" in
   https://github.com/sigstore/cosign/releases/download/v9.9.9/cosign-linux-amd64)
     [[ ${FAIL_DOWNLOAD:-} != cosign ]] || exit 22
@@ -85,7 +87,7 @@ make_variant() {
 }
 
 run_installer() {
-  rm -f "${test_root}/installs" "${test_root}/executed" "${test_root}/downloads" "${test_root}/github-path" "${test_root}/installed/"*
+  rm -f "${test_root}/installs" "${test_root}/executed" "${test_root}/downloads" "${test_root}/retries" "${test_root}/github-path" "${test_root}/installed/"*
   status=0
   output=$(PATH="${test_root}/bin:${test_root}/installed:${PATH}" \
     RUNNER_TEMP="${test_root}/runner" GITHUB_PATH="${test_root}/github-path" \
@@ -107,6 +109,11 @@ cmp "${test_root}/fixtures/cosign" "${test_root}/installed/cosign" || fail 'wron
 cmp "${test_root}/fixtures/syft" "${test_root}/installed/syft" || fail 'wrong syft bytes installed'
 grep -Fxq 'cosign version' "${test_root}/executed" || fail 'verified cosign never ran'
 grep -Fxq 'syft version' "${test_root}/executed" || fail 'verified syft never ran'
+# A transient 5xx from the release host must not fail the job on its first attempt.
+[[ $(wc -l <"${test_root}/retries") -eq 2 ]] || fail 'expected exactly two recorded downloads'
+while read -r count url; do
+  [[ ${count} =~ ^[1-9][0-9]*$ ]] || fail "download does not retry transient failures: ${url}"
+done <"${test_root}/retries"
 if [[ ! -f ${test_root}/github-path ]] || ! grep -Fxq /usr/local/bin "${test_root}/github-path"; then
   fail 'subsequent workflow steps can select an unverified tool earlier on PATH'
 fi
