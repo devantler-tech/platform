@@ -1,0 +1,58 @@
+# NEAR MISS: the same DaemonSet name in another namespace.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: engine-image-ei-493e04e7
+  namespace: tenant-control
+spec:
+  selector:
+    matchLabels:
+      app: engine-image
+  template:
+    metadata:
+      labels:
+        app: engine-image
+    spec:
+      containers:
+        - name: engine-image
+          image: longhorn-engine:v1
+---
+# NEAR MISS: a different engine version's DaemonSet. A new engine version is
+# created after the opt-in, so the CREATE-time rules reach it; this retrofit
+# must never widen to it.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: engine-image-ei-a4d05f02
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: engine-image
+  template:
+    metadata:
+      labels:
+        app: engine-image
+    spec:
+      containers:
+        - name: engine-image
+          image: longhorn-engine:v1
+---
+# NEAR MISS: the csi-plugin DaemonSet has its own retrofit and grant.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: longhorn-csi-plugin
+  namespace: longhorn-system
+spec:
+  selector:
+    matchLabels:
+      app: longhorn-csi-plugin
+  template:
+    metadata:
+      labels:
+        app: longhorn-csi-plugin
+    spec:
+      containers:
+        - name: longhorn-csi-plugin
+          image: longhorn-manager:v1

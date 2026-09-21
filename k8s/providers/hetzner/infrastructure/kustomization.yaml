@@ -59,6 +59,10 @@ resources:
   # Prod-only: the same retrofit for the longhorn-csi-plugin DaemonSet, reusing
   # its existing resourceNames-pinned background-controller grant (#3918).
   - cluster-policies/add-existing-longhorn-csi-plugin-baseline-context.yaml
+  # Prod-only: the same retrofit for the default engine-image DaemonSet, the
+  # last Longhorn controller missing both fields, with its own pinned grant
+  # (#3918).
+  - cluster-policies/add-existing-longhorn-engine-image-baseline-context.yaml
   # Prod-only: a POSITIVE platform.devantler.tech/baseline-worker label on the
   # static workers, so workloads that must never ride an autoscaler node can
   # require it and fail closed (#3287). Admission half + mutate-existing

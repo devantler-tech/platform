@@ -379,6 +379,10 @@ jobs:
               # and the reused pinned grant (#3918).
               - 'tests/longhorn-csi-plugin-baseline-context/**'
               - 'scripts/tests/test-longhorn-csi-plugin-baseline-context.sh'
+              # The same retrofit for the default engine-image DaemonSet, its
+              # fixtures and its own pinned grant (#3918).
+              - 'tests/longhorn-engine-image-baseline-context/**'
+              - 'scripts/tests/test-longhorn-engine-image-baseline-context.sh'
               # The hcloud consumers that require that label (#3287).
               - 'scripts/tests/test-hcloud-baseline-worker-affinity.sh'
               # The admission guard for every hcloud consumer, and its fixtures.
@@ -1330,6 +1334,8 @@ jobs:
           bash scripts/tests/test-csi-sidecar-baseline-context.sh
           shellcheck scripts/tests/test-longhorn-csi-plugin-baseline-context.sh
           bash scripts/tests/test-longhorn-csi-plugin-baseline-context.sh
+          shellcheck scripts/tests/test-longhorn-engine-image-baseline-context.sh
+          bash scripts/tests/test-longhorn-engine-image-baseline-context.sh
           shellcheck scripts/tests/test-hcloud-baseline-worker-affinity.sh
           bash scripts/tests/test-hcloud-baseline-worker-affinity.sh
           shellcheck scripts/guard-longhorn-ui-baseline-context.sh scripts/tests/test-guard-longhorn-ui-baseline-context.sh scripts/tests/test-longhorn-ui-baseline-context.sh
