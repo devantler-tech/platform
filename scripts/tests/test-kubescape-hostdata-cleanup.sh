@@ -135,8 +135,8 @@ pass 'dry-run classifies the stale fixture without mutation'
 
 run_case healthy false "$work/live.out" "$work/live.deletes"
 [ "$(wc -l <"$work/live.deletes" | tr -d ' ')" = '1' ] || fail 'enabled run did not issue exactly one deletion'
-grep -qx 'delete osreleasefiles.hostdata.kubescape.cloud stale-1 --ignore-not-found' "$work/live.deletes" || fail 'enabled run deleted anything beyond the exact stale fixture'
-pass 'enabled run deletes only a resource whose identically named Node is absent'
+grep -qx 'delete osreleasefiles.hostdata.kubescape.cloud stale-1 --ignore-not-found --wait=false' "$work/live.deletes" || fail 'enabled run either waited for finalizers or deleted beyond the exact stale fixture'
+pass 'enabled run submits only the exact stale deletion without waiting on finalizers'
 
 for mode in node-empty node-fail list-fail; do
   : >"$work/${mode}.deletes"

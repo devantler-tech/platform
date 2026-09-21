@@ -28,9 +28,17 @@ spec:
     # External endpoints, pinned by FQDN instead of world:443 so a compromised
     # pod cannot exfiltrate to arbitrary external services:
     # - grype/toolbox-data.anchore.io — kubevuln's Grype vulnerability DB
-    # - api.armosec.io                — Kubescape backend (version check only;
-    #   vestigial under offline mode, kept harmless — its failure mode is a
-    #   skipped version check, not an outage).
+    # - api.armosec.io                — legacy Kubescape backend discovery;
+    #   retained for the chart's supported local-only path.
+    #
+    # The operator's daily version/usage report does NOT use api.armosec.io.
+    # v0.2.169 hard-codes https://version-check.ks-services.co and constructs
+    # the real version-check handler directly, bypassing the helper that honours
+    # KUBESCAPE_SKIP_UPDATE_CHECK. That telemetry endpoint is deliberately NOT
+    # allowed: scans and in-cluster persistence do not need it, while permitting
+    # it would disclose cluster/version metadata. Its exact once-daily blocked
+    # error is classified by the finite Coroot application-health policy; any
+    # changed error shape or higher-volume failure remains visible.
     #   NOTE: report.armo.cloud (ARMO posture-report ingestion) is deliberately
     #   NOT allowed. The scheduled scan runs local-only via scanV1.keepLocal
     #   (see kubescapeScheduler.requestBody in helm-release.yaml), so config-scan

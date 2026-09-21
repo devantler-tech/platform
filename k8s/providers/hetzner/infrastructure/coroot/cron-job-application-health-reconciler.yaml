@@ -26,6 +26,12 @@
 #     seven-day regression, OOM, and pressure checks stayed healthy. Seventy-five
 #     leaves 87% headroom above that measured warmup but still exposes sustained
 #     near-doubling growth, and is scoped only to this database cluster.
+#   * kubescape MemoryLeakPercent = 150. The server performs one authored
+#     posture scan at 09:12 UTC; the reviewed scan raised its short-window slope
+#     to 120%/h while RSS remained 192 MiB under a 1 GiB limit, the scan Job
+#     completed, and OOM and pressure checks stayed healthy. One hundred fifty
+#     covers that bounded daily working set while sustained near-tripling growth
+#     remains visible, scoped only to the scanner Deployment.
 #   * cilium DnsNxdomainErrors = 50000. Cilium's cluster-wide DNS proxy forwards
 #     workload resolver packets unchanged, so Coroot attributes every workload's
 #     search-list candidate to the Cilium DaemonSet application. The original
@@ -89,9 +95,15 @@
 # plugin exit, so only that exact pipe-close race is classified. Kubescape's
 # operator can likewise consume an image SBOM without a workload ID, or a
 # profile for a successfully completed Velero data-mover pod after that pod is
-# deleted. Those expected lifecycle misses are limited to the exact operator
-# service, error attributes, daily-backup pod identity, and a finite count;
-# unrelated missing workloads and every other operator error remain visible.
+# deleted. It also unconditionally posts one daily version report to
+# version-check.ks-services.co. That telemetry endpoint is deliberately absent
+# from the namespace egress allowlist, and operator v0.2.169 bypasses the
+# backend helper's skip-update-check environment gate by constructing the real
+# handler directly. The resulting one-a-day failure is accepted instead of
+# widening egress for non-functional telemetry. These shapes are limited to the
+# exact operator service, error attributes, daily-backup pod identity, and a
+# finite count; unrelated missing workloads, report failures with another
+# cause, and every other operator error remain visible.
 # A recovered etcd leader transition can also produce one or two exact
 # leader-election lease timeouts in several controllers plus the correlated
 # kube-apiserver EtcdError/lease-write timeout trail. Those shapes are accepted
@@ -112,7 +124,7 @@ spec:
   schedule: "* * * * *"
   # Never overlap Coroot writes. A run may start at most ten seconds after its
   # schedule and has fifty-five seconds plus two seconds of termination grace.
-  # Eighteen two-query log checks require five four-worker batches, whose
+  # Nineteen two-query log checks require five four-worker batches, whose
   # worst-case query budget is fifty seconds; five seconds remain for PID and
   # threshold work. The launch allowance applies only to a missed schedule; it
   # does not extend the preceding Job, so each run is still gone before the
@@ -278,6 +290,14 @@ spec:
 
                   BACKSTAGE_DB="$PID:backstage:DatabaseCluster:backstage-db"
                   queue_reconciliation reconcile_threshold "$BACKSTAGE_DB" MemoryLeakPercent 10 75 backstage-postgres-cache-warmup
+
+                  KUBESCAPE="$PID:kubescape:Deployment:kubescape"
+                  # The daily posture scan deliberately loads policy and cluster
+                  # state into this long-running server. Its reviewed post-scan
+                  # 120%/h slope remained at 192 MiB under a 1 GiB limit, with
+                  # no OOM or pressure. Keep a finite ceiling just above that
+                  # measured working-set rise; other memory checks are unchanged.
+                  queue_reconciliation reconcile_threshold "$KUBESCAPE" MemoryLeakPercent 10 150 kubescape-daily-scan-working-set
 
                   RUNTIME="$PID:_:Unknown:runtime"
                   # Coroot's node agent counts any process marked by the
@@ -492,6 +512,9 @@ spec:
                              ($s | contains("\"Unhandled Error\" err=\"sync ")) and
                              ($s | contains(" failed with read version: ")) and
                              ($s | test(" is not as new as written version: [0-9]+ for group resource replicasets\\.apps\" logger=\"UnhandledError\"$"))) or
+                            ($s | test(
+                              "^E[0-9]{4} [0-9:.]+ +1 daemon_controller\\.go:411\\] \"Unhandled Error\" err=\"longhorn-system/longhorn-csi-plugin failed with : read version: [0-9]+ is not as new as written version: [0-9]+ for group resource daemonsets\\.apps\" logger=\"UnhandledError\"$"
+                            )) or
                             ((try ($s | capture(
                               "^E[0-9]{4} [0-9:.]+ +1 cronjob_controllerv2\\.go:179\\] \"Unhandled Error\" err=\"error syncing CronJobController (?<namespace>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)/(?<key>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?), requeuing: "
                             )) catch null) as $retry |
@@ -501,6 +524,16 @@ spec:
                                $retry.key +
                                "\\\": the object has been modified; please apply your changes to the latest version and try again\" logger=\"UnhandledError\""
                              )))
+                          )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      coroot-http-client-disconnect)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | .message as $s | select(
+                            $s | test(
+                              "^E[0-9]{4} [0-9:.]+ +1 json\\.go:19\\] failed to encode: write tcp 10\\.244\\.[0-9]+\\.[0-9]+:8080->10\\.244\\.[0-9]+\\.[0-9]+:[0-9]+: write: broken pipe$"
+                            )
                           )] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
@@ -664,13 +697,15 @@ spec:
                           )] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
-                      kubescape-ephemeral-workload-races)
+                      kubescape-reviewed-operator-errors)
                         counts=$(printf '%s' "$entries" | jq -r '
                           . as $all |
                           [$all[] | . as $entry | .message as $s | .attributes as $a | select(
                             ($a | type)=="object" and
                             ($a["service.name"]=="/k8s/kubescape/operator") and
-                            (($s=="error in SBOMWatch" and $a.error=="missing WLID") or
+                            (($s=="failed to send daily report" and
+                              $a.error=="failed to get latest version") or
+                             ($s=="error in SBOMWatch" and $a.error=="missing WLID") or
                              ($s=="failed loading pod spec" and $a.namespace=="velero" and
                               ($a.wlid | type)=="string" and
                               ($a.error | type)=="string" and
@@ -728,7 +763,19 @@ spec:
                   queue_reconciliation reconcile_logs "$PID:crossplane-system:Deployment:crossplane-rbac-manager" recovered-etcd-leader-election 10
                   queue_reconciliation reconcile_logs "$PID:keda:Deployment:keda-operator" recovered-etcd-leader-election 10
                   queue_reconciliation reconcile_logs "$PID:reloader:Deployment:reloader-reloader" recovered-etcd-leader-election 10
+                  # Kubernetes controller work queues retry optimistic write
+                  # collisions. The reviewed set includes exact ReplicaSet and
+                  # CronJob shapes plus Longhorn CSI's DaemonSet collision
+                  # during a healthy node/plugin update; other DaemonSets stay
+                  # fail-visible even under this finite aggregate cap.
                   queue_reconciliation reconcile_logs "$PID:kube-system:StaticPods:kube-controller-manager" controller-known-safe-retries 5000
+                  # A client can close a Coroot API connection after the server
+                  # has begun JSON encoding. Go reports that exact in-cluster TCP
+                  # broken pipe at error level even though both Coroot replicas
+                  # remain Ready. Accept only the anchored pod-CIDR response-write
+                  # shape; another encode failure or more than ten per hour is
+                  # still visible.
+                  queue_reconciliation reconcile_logs "$PID:observability:StatefulSet:coroot-coroot" coroot-http-client-disconnect 10
                   # A controller restart can cancel one in-flight health check.
                   # Require both Flux log records to share the exact reconcile
                   # and Kustomization identity before applying the finite cap.
@@ -775,10 +822,12 @@ spec:
                   # image-only SBOM stream is dropped after five bounded retries;
                   # Velero's daily data-mover pods can disappear before their
                   # profile event is consumed, after which the operator records
-                  # this miss and completes the scan action successfully. Match
-                  # only those exact lifecycle shapes; any other operator error
-                  # removes the override and becomes visible at global zero.
-                  queue_reconciliation reconcile_logs "$PID:kubescape:Deployment:operator" kubescape-ephemeral-workload-races 100
+                  # this miss and completes the scan action successfully. The
+                  # same classifier covers the exact version-check failure from
+                  # the deliberately blocked daily telemetry call. Match only
+                  # these reviewed shapes; any other operator error removes the
+                  # override and becomes visible at global zero.
+                  queue_reconciliation reconcile_logs "$PID:kubescape:Deployment:operator" kubescape-reviewed-operator-errors 100
                   # The storage cleanup deletes an orphan payload before it
                   # reports the absent legacy metadata sidecar. Only that exact
                   # completed-repair shape is accepted; any I/O failure or
