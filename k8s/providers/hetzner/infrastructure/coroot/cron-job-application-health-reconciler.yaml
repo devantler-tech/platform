@@ -288,6 +288,15 @@ spec:
                   # exact host application; a second event remains visible.
                   queue_reconciliation reconcile_threshold "$RUNTIME" MemoryOOM 0 1 talos-runtime-child-process-oom
 
+                  LONGHORN_ENGINE_IMAGE="$PID:longhorn-system:DaemonSet:engine-image-ei-a4d05f02"
+                  # The main engine-image container stayed Ready with an
+                  # unchanged start time while Coroot recorded one OOM event.
+                  # This container sleeps after installing the engine binary;
+                  # its only recurring children are the readiness/liveness
+                  # version probes. Accept that one retained probe-child event
+                  # for this exact image only; a second event remains visible.
+                  queue_reconciliation reconcile_threshold "$LONGHORN_ENGINE_IMAGE" MemoryOOM 0 1 longhorn-engine-image-probe-child-oom
+
                   CILIUM="$PID:kube-system:DaemonSet:cilium"
                   queue_reconciliation reconcile_threshold "$CILIUM" DnsNxdomainErrors 0 50000 cilium-dns-search-expansion
 

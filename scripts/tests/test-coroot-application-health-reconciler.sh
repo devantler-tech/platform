@@ -137,6 +137,16 @@ pass 'the Alertmanager DNS latency policy uses second-based API units'
   fail 'the exact Talos runtime application must allow only one child-process OOM'
 pass 'the Talos runtime OOM policy is exact and finite'
 
+# The Longhorn engine-image container remained Ready with an unchanged
+# container start time while Coroot recorded one OOM event for its cgroup. Its
+# only recurring child processes are the readiness/liveness version probes.
+# Accept that single retained probe-child event only for the exact engine image;
+# the global zero baseline remains intact and a second event still warns.
+# shellcheck disable=SC2016
+[[ "${script_body}" == *'reconcile_threshold "$LONGHORN_ENGINE_IMAGE" MemoryOOM 0 1 longhorn-engine-image-probe-child-oom'* ]] ||
+  fail 'the exact Longhorn engine image must allow only one probe-child OOM'
+pass 'the Longhorn engine-image OOM policy is exact and finite'
+
 yq eval -e '.cluster.controllerManager.extraArgs."log-text-split-stream" == "false"' \
   "${talos_patch}" >/dev/null ||
   fail 'the controller-manager patch must retain GC and force a static-pod refresh'
@@ -626,6 +636,7 @@ jq -s -e '
   any(.[]; (.url | contains("%3Acrossplane-system%3ADeployment%3Acrossplane/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Aapid/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 250) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Aruntime/inspection/MemoryOOM/config")) and .body.configs[0].threshold == 0 and .body.configs[2].threshold == 1) and
+  any(.[]; (.url | contains("%3Alonghorn-system%3ADaemonSet%3Aengine-image-ei-a4d05f02/inspection/MemoryOOM/config")) and .body.configs[0].threshold == 0 and .body.configs[2].threshold == 1) and
   any(.[]; (.url | contains("%3Abackstage%3ADatabaseCluster%3Abackstage-db/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 75) and
   any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 50000) and
   any(.[]; (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsLatency/config")) and .body.configs[2].threshold == 0.75) and
