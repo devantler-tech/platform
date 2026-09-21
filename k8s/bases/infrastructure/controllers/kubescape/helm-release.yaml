@@ -295,7 +295,7 @@ spec:
         # main-only publisher attaches SBOM/provenance and signs the digest
         # before this pin may advance.
         repository: ghcr.io/devantler-tech/platform-kubescape-storage
-        tag: "v0.0.297-sqlite-contention.5-9d251617d5c9637a9724362a906e2da73ac33bdd@sha256:9018f46109c6e48cdc5ff2c87263d1950882b6bed92845e4337629b0aa0b08db"
+        tag: "v0.0.297-sqlite-contention.6-75f74568e74d6172f0cd5852c98e6d014ac43896@sha256:e3947c98ca99761a5a932a56b91c6e29a91cdcede6125b863eaad6853c66d826"
         pullPolicy: IfNotPresent
     # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
     # to avoid Helm upgrade failures from PVC shrink rejection.

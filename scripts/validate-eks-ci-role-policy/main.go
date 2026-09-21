@@ -2984,7 +2984,33 @@ const (
 // This Kubescape storage-write repair establishes aggregate:
 //
 //	e20ec310b968fc68a32b45e10b4e961f9e759941ebb5402e99f52900644ea765
-const expectedRenderedSurfaceSHA = "e20ec310b968fc68a32b45e10b4e961f9e759941ebb5402e99f52900644ea765"
+//
+// Moved again by deployment of the published Kubescape storage hotfix in
+// #3964, derived on exact main cc126f857055cb8b401b318874fe9fae0dc61d3d.
+// The kubescape/kubescape HelmRelease changes only the storage container image
+// from the previously deployed immutable test build to the signed immutable
+// release produced from #3957. Its command, security context, service account,
+// and all authorization-bearing resources are unchanged. A HelmRelease is a
+// controller-RBAC emitter, so the image pin moves the aggregate even though it
+// grants no permission.
+//
+// CONSERVATION: the approval-base diagnostic names exactly one changed entry,
+// helm.toolkit.fluxcd.io/v2 HelmRelease kubescape/kubescape. No ClusterRole,
+// Role, ClusterRoleBinding, RoleBinding or ServiceAccount source changes; no
+// identity, subject, verb, wildcard, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: reproduced locally with the official kubectl v1.36.2
+// Darwin arm64 binary (Kustomize v5.8.1), whose SHA256 was verified as
+// 4408c85c83fd3a31adaa555bdf3c7a6c81f74b19449a9060ba31ab91926f023d.
+// The approval-base comparison against exact main above names only the
+// kubescape/kubescape HelmRelease.
+//
+// Previous aggregate: e20ec310b968fc68a32b45e10b4e961f9e759941ebb5402e99f52900644ea765.
+//
+// This signed Kubescape storage-image deployment establishes aggregate:
+//
+//	2a37133c38553f1beaf721bc81350b6d612ea98c866821d0f36427749b158a04
+const expectedRenderedSurfaceSHA = "2a37133c38553f1beaf721bc81350b6d612ea98c866821d0f36427749b158a04"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2997,7 +3023,7 @@ const expectedRenderedSurfaceSHA = "e20ec310b968fc68a32b45e10b4e961f9e759941ebb5
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "719cb0a6ee304bb2aacb24624a1e2528b54b096092e2f9c950c24b7b3b938e1a"
+const previousRenderedSurfaceSHA = "e20ec310b968fc68a32b45e10b4e961f9e759941ebb5402e99f52900644ea765"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
