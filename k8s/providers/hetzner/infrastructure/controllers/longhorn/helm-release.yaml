@@ -113,6 +113,10 @@ spec:
       # it. Healthy attached volumes upgrade live without detaching; detached
       # volumes upgrade offline. A per-node limit of 1 keeps the rollout slow
       # enough that a problem shows up on one volume before it reaches others.
+      # Scope: Longhorn upgrades only V1 Data Engine volumes this way; V2 volumes
+      # and standby disaster-recovery volumes are skipped and must be upgraded
+      # by hand. Every prod volume is V1 and none is a standby (checked
+      # 2026-09-21), so this covers them all today.
       concurrentAutomaticEngineUpgradePerNodeLimit: "1"
 
     persistence:
