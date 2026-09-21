@@ -2380,3 +2380,37 @@ func TestWhitespaceOnlyCVEMarkerFailsClosed(t *testing.T) {
 		t.Errorf("want errStrippedList, got %v", err)
 	}
 }
+
+// report is the operator's preview of what -mode write would file, so it must
+// render a theme's title exactly as the write path does: sanitized and bounded
+// by renderTitle. A raw title from a hostile or oversized control key would
+// otherwise preview something the write path never files, and a newline in it
+// would split one report row into two (platform#2924).
+func TestReportRendersTitleThroughTheWritePath(t *testing.T) {
+	key := "C-" + strings.Repeat("x", 700) + "\n@team " + strings.Repeat("y", 700)
+	th := theme{Kind: string(surfacePosture), Key: key, Severity: "high", Components: []string{"app/deployment/api"}, Count: 1}
+
+	var out bytes.Buffer
+	if err := report([]theme{th}, []surface{surfacePosture}, true, 0, &out); err != nil {
+		t.Fatalf("report: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("one theme must render as one report row, got %d: %q", len(lines), out.String())
+	}
+
+	fields := strings.Split(lines[0], "\t")
+	if len(fields) != 6 {
+		t.Fatalf("report row must have 6 tab-separated fields, got %d: %q", len(fields), lines[0])
+	}
+
+	want := renderTitle(th)
+	if fields[4] != want {
+		t.Errorf("report title = %q, want the write path's %q", fields[4], want)
+	}
+
+	if n := len([]rune(fields[4])); n > githubIssueTitleLimit {
+		t.Errorf("report title is %d runes, want at most %d", n, githubIssueTitleLimit)
+	}
+}

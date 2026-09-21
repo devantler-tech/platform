@@ -1534,9 +1534,12 @@ func report(themes []theme, examined []surface, filtered bool, suppressed int, o
 		}
 	}
 
+	// The title goes through renderTitle, exactly as -mode write files it, so
+	// the preview shows the sanitized, bounded title an operator would get — and
+	// a newline in a control key cannot split one row into two.
 	for _, t := range themes {
 		if _, err := fmt.Fprintf(out, "%s\t%s\tseverity=%s\ttotal=%d\t%s\tcomponents=%s\n",
-			t.Fingerprint(), t.Kind, t.Severity, t.Total, t.Title(), strings.Join(t.Components, ",")); err != nil {
+			t.Fingerprint(), t.Kind, t.Severity, t.Total, renderTitle(t), strings.Join(t.Components, ",")); err != nil {
 			return err
 		}
 	}
