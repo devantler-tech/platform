@@ -2984,7 +2984,30 @@ const (
 // This Kubescape storage-write repair establishes aggregate:
 //
 //	e20ec310b968fc68a32b45e10b4e961f9e759941ebb5402e99f52900644ea765
-const expectedRenderedSurfaceSHA = "e20ec310b968fc68a32b45e10b4e961f9e759941ebb5402e99f52900644ea765"
+//
+// Moved again by the Longhorn automatic engine upgrade in #3966, derived on
+// exact main cc126f857055cb8b401b318874fe9fae0dc61d3d. The longhorn-system/
+// longhorn HelmRelease adds only the
+// defaultSettings.concurrentAutomaticEngineUpgradePerNodeLimit value. A
+// HelmRelease is a controller-RBAC emitter, so this values-only change moves
+// the authorization aggregate even though it grants no permission.
+//
+// CONSERVATION: the approval-base diagnostic names exactly one changed entry,
+// helm.toolkit.fluxcd.io/v2 HelmRelease longhorn-system/longhorn. No
+// ClusterRole, Role, ClusterRoleBinding, RoleBinding or ServiceAccount source
+// changes; no identity, subject, verb, wildcard, AWS identity or permission
+// changes.
+//
+// RENDERER PROVENANCE: the checksum-verified kubectl v1.36.2 CI renderer is the
+// authority for the value below (job 106191382042); the required CI gate
+// remains fail closed.
+//
+// Previous aggregate: e20ec310b968fc68a32b45e10b4e961f9e759941ebb5402e99f52900644ea765.
+//
+// This Longhorn engine-upgrade setting establishes aggregate:
+//
+//	f43ae5a8fe34cac77d3b6db0e26591fc6479670d4406549376b4f676edb8d4cb
+const expectedRenderedSurfaceSHA = "f43ae5a8fe34cac77d3b6db0e26591fc6479670d4406549376b4f676edb8d4cb"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -2997,7 +3020,7 @@ const expectedRenderedSurfaceSHA = "e20ec310b968fc68a32b45e10b4e961f9e759941ebb5
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "719cb0a6ee304bb2aacb24624a1e2528b54b096092e2f9c950c24b7b3b938e1a"
+const previousRenderedSurfaceSHA = "e20ec310b968fc68a32b45e10b4e961f9e759941ebb5402e99f52900644ea765"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
