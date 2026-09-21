@@ -486,6 +486,8 @@ case "${url}" in
       jq -cn --arg url "${url}" --argjson body "${payload}" '{url:$url,body:$body}' >>"${dir}/posts.ndjson"
     elif [[ "${url}" == *'/MemoryLeakPercent/'* ]]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":10},null,null]}}'
+    elif [[ "${url}" == *'/DnsLatency/'* ]]; then
+      printf '%s\n' '{"form":{"configs":[{"threshold":100},null,null]}}'
     elif [[ "${url}" == *'%3A_%3AUnknown%3Akubelet/inspection/NetworkTCPConnections/config'* ]]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":3}]}}'
     elif [[ "${url}" == *'%3A_%3AUnknown%3Ainit'* ]]; then
