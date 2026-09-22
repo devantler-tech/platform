@@ -31,7 +31,7 @@ check() { # label expected_exit expected_grep actual_exit output
 }
 
 # --- fixtures --------------------------------------------------------------
-# Three rules in the same shape and ORDER as the real file, so first-match-wins is exercised.
+# Rules in the same shape and ORDER as the real file (an exact name before the catch-all), so first-match-wins is exercised.
 cat >"${work}/rules.yaml" <<'EOF'
 apiVersion: v1alpha1
 kind: ImageVerificationConfig
@@ -44,6 +44,10 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^PROVIDER$
+  - image: ghcr.io/example/exact-agent
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^EXACT$
   - image: ghcr.io/example/*
     keyless:
       issuer: https://token.actions.githubusercontent.com
@@ -93,6 +97,34 @@ check "ksail is held to rule 1, not the catch-all" 0 'ghcr\.io/example/ksail\*' 
 
 ACCEPT_SUBJECTS='^APP$' PROBE_MAP='' run 'ghcr.io/example/ksail:v1'
 check "the catch-all identity does NOT satisfy ksail" 1 'FAIL' "$RC" "$OUT"
+
+# --- 2b. a reference carrying a TAG AND a DIGEST is held to its name's rule --
+# `name:tag@digest` is how an operator pins an image it also labels. Left on, the tag makes an
+# exact-name rule miss and the catch-all identity is applied instead — which is how the Coroot
+# node agent was reported UNKNOWN while the same digest, referenced bare, verified.
+ACCEPT_SUBJECTS='^EXACT$' PROBE_MAP='' run 'ghcr.io/example/exact-agent:v1.2.3-x.1-abc@sha256:aa'
+check "tag+digest is held to the exact-name rule" 0 'PASS.*ghcr\.io/example/exact-agent[[:space:]]' "$RC" "$OUT"
+
+ACCEPT_SUBJECTS='^APP$' PROBE_MAP='exact-agent=200' run 'ghcr.io/example/exact-agent:v1@sha256:aa'
+check "the catch-all identity does NOT satisfy a tag+digest exact-name image" 1 'FAIL' "$RC" "$OUT"
+
+# A registry port is not a tag: the name keeps its host:port and still meets its rule.
+cat >"${work}/rules-port.yaml" <<'EOF'
+apiVersion: v1alpha1
+kind: ImageVerificationConfig
+rules:
+  - image: registry.example:5000/team/agent
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^PORT$
+EOF
+printf '%s\n' 'registry.example:5000/team/agent:v1@sha256:aa' >"${work}/images"
+set +e
+OUT="$(INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" ACCEPT_SUBJECTS='^PORT$' \
+  "$script" --rules "${work}/rules-port.yaml" --images "${work}/images" 2>&1)"
+RC=$?
+set -e
+check "a registry port is not mistaken for a tag" 0 'PASS.*registry\.example:5000/team/agent[[:space:]]' "$RC" "$OUT"
 
 # --- 3. unverifiable + READABLE repository -> FAIL -------------------------
 ACCEPT_SUBJECTS='' PROBE_MAP='wedding-app=200' run 'ghcr.io/example/wedding-app@sha256:aa'
@@ -503,9 +535,9 @@ readonly STUB_BASIC_B64='dTpw'
 mkdir -p "${work}/dockercfg"
 printf '%s' '{"auths":{"ghcr.io":{"username":"u","password":"p"}}}' >"${work}/dockercfg/config.json"
 
-run_default_probe() { # stub_status -> sets RC / OUT / CURL_LOG contents
+run_default_probe() { # stub_status [image] -> sets RC / OUT / CURL_LOG contents
   : >"${work}/curl.log"
-  printf '%s\n' 'ghcr.io/example/wedding-app@sha256:aa' >"${work}/images"
+  printf '%s\n' "${2:-ghcr.io/example/wedding-app@sha256:aa}" >"${work}/images"
   set +e
   OUT="$(PATH="${curlstub}:${PATH}" \
     HOME="${work}/no-such-home" \
@@ -567,6 +599,23 @@ run_default_probe 404
 check "default path: 404 on the manifest -> UNKNOWN (not FAIL)" 1 'UNKNOWN=[1-9]' "$RC" "$OUT"
 if printf '%s\n' "$OUT" | grep -q 'FAIL=[1-9]'; then
   echo "FAIL  default path: 404 was counted as a FAIL"
+  failures=$((failures + 1))
+fi
+
+# The REAL probe reads a tag+digest reference by digest, from the bare repository — the tag in the
+# repository path names a repository the registry does not have, which is the 404 this guards.
+run_default_probe 200 'ghcr.io/example/wedding-app:v1@sha256:aa'
+if grep -q '^ARGV .*/v2/example/wedding-app/manifests/sha256:aa' "${work}/curl.log"; then
+  echo "ok    default path: a tag+digest reference is read by digest from the bare repository"
+else
+  echo "FAIL  default path: the tag+digest manifest read did not target /v2/<name>/manifests/<digest>"
+  grep '^ARGV ' "${work}/curl.log" | sed 's/^/        /' | head -6
+  failures=$((failures + 1))
+fi
+if grep '^ARGV ' "${work}/curl.log" | grep -q 'scope=repository:example/wedding-app:pull'; then
+  echo "ok    default path: the token is scoped to the bare repository"
+else
+  echo "FAIL  default path: the token exchange was scoped to a tagged repository name"
   failures=$((failures + 1))
 fi
 
