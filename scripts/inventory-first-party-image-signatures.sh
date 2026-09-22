@@ -198,6 +198,26 @@ verify_signature() { # ref issuer subjectRegex
   cosign verify --certificate-oidc-issuer "$2" --certificate-identity-regexp "$3" "$1" >/dev/null 2>&1
 }
 
+# Splits the part of a reference after the registry into `<repository>\t<reference>`.
+# A reference can carry a tag AND a digest (`name:tag@sha256:…`), and then the digest is what
+# identifies the image while the tag is only a label. Both must come off the repository: left
+# on, the tag makes the name miss its rule and names a repository the registry does not have.
+# The tag is looked for only in the LAST path component, so a registry port is never read as one.
+split_reference() { # rest-after-registry
+  local rest="$1" name reference="" last
+  name="${rest%%@*}"
+  case "$rest" in *@*) reference="${rest#*@}" ;; esac
+  last="${name##*/}"
+  case "$last" in
+    *:*)
+      [ -n "$reference" ] || reference="${last##*:}"
+      name="${name%:*}"
+      ;;
+  esac
+  [ -n "$reference" ] || reference="latest"
+  printf '%s\t%s' "$name" "$reference"
+}
+
 # Prints the HTTP status of a read of the IMAGE manifest — the discriminator between
 # "no signature" and "cannot look". Prints 000 when the probe itself could not run.
 probe_manifest_status() { # ref
@@ -212,21 +232,10 @@ probe_manifest_status() { # ref
     return 0
     ;;
   esac
-  local rest="${ref#*/}"
-  case "$rest" in
-    *@*)
-      repo="${rest%@*}"
-      reference="${rest##*@}"
-      ;;
-    *:*)
-      repo="${rest%:*}"
-      reference="${rest##*:}"
-      ;;
-    *)
-      repo="$rest"
-      reference="latest"
-      ;;
-  esac
+  local rest="${ref#*/}" parsed
+  parsed="$(split_reference "$rest")"
+  repo="${parsed%%$'\t'*}"
+  reference="${parsed#*$'\t'}"
   command -v curl >/dev/null 2>&1 || {
     echo 000
     return 0
@@ -284,13 +293,10 @@ probe_manifest_status() { # ref
     "https://${registry}/v2/${repo}/manifests/${reference}" 2>/dev/null || echo 000
 }
 
-repository_of() { # strip the tag or digest, so a rule glob matches the NAME
-  local ref="$1" registry="${1%%/*}" rest="${1#*/}"
-  case "$rest" in
-    *@*) rest="${rest%@*}" ;;
-    *:*) rest="${rest%:*}" ;;
-  esac
-  printf '%s/%s' "$registry" "$rest"
+repository_of() { # strip the tag and digest, so a rule glob matches the NAME
+  local registry="${1%%/*}" parsed
+  parsed="$(split_reference "${1#*/}")"
+  printf '%s/%s' "$registry" "${parsed%%$'\t'*}"
 }
 
 matched=0 pass=0 fail=0 unknown=0
