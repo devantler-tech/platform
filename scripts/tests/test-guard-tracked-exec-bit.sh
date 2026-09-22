@@ -88,6 +88,61 @@ expect "RELAX interpreter-invoked 100644 is accepted" 0 "exec-bit guard OK" "$wo
 make_fixture "$work/empty" -x 'echo nothing-to-see'
 expect "VACUOUS no invocation at all refuses to pass" 1 "examined nothing" "$work/empty"
 
+# UNRESOLVABLE RELATIVE INVOCATION (#3688): a step's `working-directory:` (or a
+# `cd` earlier in its run block) changes what a relative path names, so
+# `./fixture-target.sh` run from `scripts` execs the tracked
+# scripts/fixture-target.sh — but its text matches no path the guard models. The
+# anchor satisfies anti-vacuity, so the guard used to report success over a
+# 100644 script the runner genuinely execs. It now fails closed, naming the
+# invocation it could not resolve.
+make_workdir_fixture() {
+  local dir="$1" workdir="$2" invocation="$3"
+  mkdir -p "$dir/scripts/tests" "$dir/.github/workflows"
+  cd "$dir"
+  git init -q .
+  git config user.email t@example.com
+  git config user.name t
+  printf '#!/usr/bin/env bash\necho hi\n' > scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  {
+    printf 'jobs:\n  j:\n    steps:\n'
+    printf '      - working-directory: %s\n' "$workdir"
+    printf '        run: %s\n' "$invocation"
+    printf '      - run: ./scripts/fixture-anchor.sh\n'
+  } > .github/workflows/w.yaml
+  git add -A
+  git update-index --chmod=-x scripts/fixture-target.sh
+  git update-index --chmod=+x scripts/fixture-anchor.sh
+  git -c commit.gpgsign=false commit -qm fixture
+  cd - > /dev/null
+}
+make_workdir_fixture "$work/workdir" scripts './fixture-target.sh'
+expect "WORKDIR relative invocation from a working-directory fails closed" 1 \
+  "cannot resolve './fixture-target.sh'" "$work/workdir"
+
+make_workdir_fixture "$work/workdir-parent" scripts/tests '../fixture-target.sh'
+expect "WORKDIR parent-relative invocation fails closed" 1 \
+  "cannot resolve '../fixture-target.sh'" "$work/workdir-parent"
+
+make_workdir_fixture "$work/workdir-cd" . 'cd scripts && ./fixture-target.sh'
+expect "WORKDIR relative invocation after a cd fails closed" 1 \
+  "cannot resolve './fixture-target.sh'" "$work/workdir-cd"
+
+# ...but only when the path is EXECED. The same relative path handed to an
+# interpreter needs no execute bit, so failing it would be "flag every relative
+# path" — a false positive that fails every PR and merge-group run.
+make_workdir_fixture "$work/workdir-bash" scripts 'bash ./fixture-target.sh'
+expect "WORKDIR relative path handed to an interpreter stays accepted" 0 \
+  "exec-bit guard OK" "$work/workdir-bash"
+
+# ...and only when it could name a tracked script. A relative path matching no
+# tracked *.sh is out of scope exactly as an untracked `./scripts/` path is: it
+# is overwhelmingly a string a test builds — this file carries several — and a
+# genuinely missing script fails loudly on its first run anyway.
+make_workdir_fixture "$work/workdir-untracked" scripts './not-a-tracked-script.sh'
+expect "WORKDIR relative path naming no tracked script is out of scope" 0 \
+  "exec-bit guard OK" "$work/workdir-untracked"
+
 
 # .GITHUB/SCRIPTS COVERAGE: the CI installers live under .github/scripts and are
 # invoked as the command of a run step, with no ./ in front. That surface was

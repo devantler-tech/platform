@@ -119,6 +119,17 @@ fi
 readonly SCRIPT_PATH_RE='(\.github|scripts)/[A-Za-z0-9_./-]+\.sh'
 readonly LEADING_DELIM='(^|[[:space:]|&;(]|(^|[[:space:]|&;(])["'"'"'])'
 readonly TOKEN_RE='[^[:space:]]+'
+# 🔴 A RELATIVE PATH THIS GUARD CANNOT RESOLVE FAILS CLOSED (#3688).
+#
+# `./x.sh` or `../x.sh` names a file relative to wherever the command runs, and a
+# step's `working-directory:` or a `cd` earlier in its run block moves that. From
+# `working-directory: scripts`, `./foo.sh` execs the tracked scripts/foo.sh, yet
+# its text matches no path modelled above, so it produced no occurrence and the
+# guard reported success over a script the runner genuinely execs. Resolving it
+# would mean modelling every way a directory can change; refusing it names the
+# exact invocation instead. Paths already under `./scripts/` or `./.github/` are
+# the modelled form and are judged as before.
+readonly RELATIVE_PATH_RE='\.\.?/[A-Za-z0-9_./-]+\.sh'
 
 scan="$(
   grep -rhE -v '^[[:space:]]*#' --include='*.yaml' --include='*.yml' --include='*.sh' \
@@ -160,10 +171,18 @@ invocations="$(
     awk '!cont { print }
          { cont = ($0 ~ /\\[[:space:]]*$/) }' <<<"$segmented" |
       grep -oE "^[[:space:]]*(${TOKEN_RE}[[:space:]]+)*(\./)?${SCRIPT_PATH_RE}" || true
+    # Any other relative path, extracted in the same two command-position shapes
+    # as a `./scripts/` path, so the classifier below still decides whether it
+    # is execed at all.
+    printf '%s\n' "$segmented" |
+      grep -oE "${LEADING_DELIM}(${TOKEN_RE}[[:space:]]+)*${RELATIVE_PATH_RE}" || true
+    printf '%s\n' "$segmented" |
+      grep -oE "run:[[:space:]]+[\"']?(${TOKEN_RE}[[:space:]]+)*${RELATIVE_PATH_RE}" || true
   }
 )"
 
 direct=""
+unresolved=""
 while IFS= read -r occurrence; do
   [[ -n "$occurrence" ]] || continue
 
@@ -171,7 +190,7 @@ while IFS= read -r occurrence; do
   # command, so it is stripped alongside the leading delimiters.
   prefix="$(
     printf '%s' "$occurrence" |
-      sed -E "s#(\./)?${SCRIPT_PATH_RE}\$##" |
+      sed -E "s#((\./)?${SCRIPT_PATH_RE}|${RELATIVE_PATH_RE})\$##" |
       sed -E 's|^run:||'
   )"
 
@@ -244,12 +263,46 @@ while IFS= read -r occurrence; do
   done
   ((reaches_path == 1)) || continue
 
+  relative="$(printf '%s' "$occurrence" | grep -oE "${RELATIVE_PATH_RE}\$" || true)"
+  if [[ -n "$relative" && ! "$relative" =~ ^\./(scripts|\.github)/ ]]; then
+    unresolved="${unresolved}${relative}"$'\n'
+    continue
+  fi
+
   path="$(printf '%s' "$occurrence" | grep -oE "(\./)?${SCRIPT_PATH_RE}" | sed 's|^\./||')"
   direct="${direct}${path}"$'\n'
 done <<EOF
 $invocations
 EOF
 direct="$(printf '%s' "$direct" | sort -u | grep -v '^$' || true)"
+unresolved="$(printf '%s' "$unresolved" | sort -u | grep -v '^$' || true)"
+
+# A relative path that could not name ANY tracked script is out of scope for the
+# same reason an untracked modelled path is (see the mode lookup below): it is
+# overwhelmingly a string a test constructs, like this guard's own fixtures, and a
+# missing script fails loudly with "no such file" on its first run. Only a path
+# whose trailing components match some tracked *.sh could be execing one.
+tracked_scripts="$(git ls-files -- '*.sh')"
+could_name_tracked_script() {
+  local suffix="$1"
+  while [[ "$suffix" == ./* || "$suffix" == ../* ]]; do
+    suffix="${suffix#./}"
+    suffix="${suffix#../}"
+  done
+  printf '%s\n' "$tracked_scripts" | awk -v s="$suffix" '
+    $0 == s || substr($0, length($0) - length(s)) == "/" s { found = 1 }
+    END { exit !found }
+  '
+}
+
+while IFS= read -r relative; do
+  [[ -n "$relative" ]] || continue
+  could_name_tracked_script "$relative" || continue
+  echo "::error::'$relative' is invoked directly, but this guard cannot resolve '$relative' to a tracked path: a step's working-directory or an earlier cd decides which file it names, so its execute bit goes unchecked. Invoke it from the repository root by its tracked path (./scripts/<name>.sh or ./.github/<path>.sh), or hand it to an interpreter (bash $relative), which needs no execute bit."
+  status=1
+done <<EOF
+$unresolved
+EOF
 
 if [[ -z "$direct" ]]; then
   echo "::error::found no directly-invoked script under .github/ or scripts/; the exec-bit sweep examined nothing, so its result proves nothing"
