@@ -144,7 +144,7 @@ readonly declared_patterns_json
 # name and fail. Pin the context with KUBECTL_CONTEXT instead — the deploy
 # composite pins `--context admin@prod` for the same reason, because the
 # restored kubeconfig's current-context is not guaranteed to be prod.
-# Emits one `<uid>\t<InternalIP>` row per node, sorted, or fails closed.
+# Emits one `<uid>\t<InternalIP>\t<member|departing>` row per node, sorted, or fails closed.
 #
 # Identity is the UID *and* the address, never the address alone. Cluster
 # Autoscaler replaces a worker by deleting the Node object and creating a new
@@ -207,12 +207,13 @@ discover_node_identities() {
   # Sorted so two readings of an unchanged fleet compare equal regardless of the
   # order the API server happened to return them in.
   printf '%s' "${json}" |
-    jq -r '
+    jq -r --arg taint "${departing_taint}" '
       .items[]
       | ((.metadata.uid // "") | tostring) as $uid
+      | (if any((.spec.taints // [])[]; .key == $taint) then "departing" else "member" end) as $role
       | (.status.addresses // [])[]
       | select(.type == "InternalIP" and ((.address // "") | tostring) != "")
-      | "\($uid)\t\(.address)"
+      | "\($uid)\t\(.address)\t\($role)"
     ' 2>/dev/null |
     LC_ALL=C sort ||
     fail_infra 'could not parse the node inventory from kubectl output'
@@ -220,6 +221,37 @@ discover_node_identities() {
 
 node_reachable() {
   "${talosctl_bin}" -n "$1" ls / >/dev/null 2>&1
+}
+
+# Exit status of a sweep that met an unreachable node which is still a member of
+# the fleet as far as the last reading knows. It never leaves the script: the
+# convergence loop turns it into a re-read, and into `fail_infra` when the
+# re-read shows the same fleet.
+readonly exit_unreachable_member=3
+
+# A node the cluster autoscaler has marked for deletion is leaving the fleet. The
+# autoscaler cordons it with this taint before draining it and then deletes the
+# server, so for a short window the node is still listed while its Talos API has
+# already gone. Unreachable in that state is the removal completing, not a node
+# that escaped inspection — so it is reported as skipped rather than failing the
+# whole run. Both conditions are required: a tainted node that still answers is
+# checked like any other, and an unreachable node without the taint still fails.
+readonly departing_taint='ToBeDeletedByClusterAutoscaler'
+departing_nodes=' '
+
+node_is_departing() {
+  [[ "${departing_nodes}" == *" $1 "* ]]
+}
+
+report_unreachable() {
+  local node="$1"
+  if node_is_departing "${node}"; then
+    printf 'SKIP %s: being removed by the cluster autoscaler (%s) and no longer reachable\n' \
+      "${node}" "${departing_taint}"
+    return 0
+  fi
+  printf 'ERROR: cannot reach node %s (talosctl ls / failed)\n' "${node}" >&2
+  exit "${exit_unreachable_member}"
 }
 
 # Built with a read loop rather than `mapfile` so the script and its tests run
@@ -245,12 +277,18 @@ load_discovered_nodes() {
   discovered_identities="$(discover_node_identities)" ||
     fail_infra 'node discovery failed — refusing to report a fleet that was only partly enumerated'
   nodes=()
+  departing_nodes=' '
   inventory_signature="${discovered_identities}"
   while IFS= read -r identity; do
     [[ -n "${identity}" ]] || continue
-    # `<uid>\t<address>` — the address is what talosctl is pointed at; the UID
-    # only ever participates in the identity comparison.
-    nodes+=("${identity#*$'\t'}")
+    # `<uid>\t<address>\t<role>` — the address is what talosctl is pointed at;
+    # the UID only ever participates in the identity comparison. The role is
+    # part of the signature too, so a node being marked for removal mid-sweep
+    # reads as a changed fleet and is re-checked.
+    identity="${identity#*$'\t'}"
+    nodes+=("${identity%%$'\t'*}")
+    [[ "${identity##*$'\t'}" != 'departing' ]] ||
+      departing_nodes="${departing_nodes}${identity%%$'\t'*} "
   done <<<"${discovered_identities}"
 
   # An inventory that comes back EMPTY is an infrastructure fault, never the
@@ -321,8 +359,10 @@ check_node() {
   if [[ "${status}" -ne 0 || -z "${rules}" ]]; then
     # "The node is gone" and "the node answered but this query failed" deserve
     # different diagnoses, and neither is a verdict.
-    node_reachable "${node}" ||
-      fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
+    node_reachable "${node}" || {
+      report_unreachable "${node}"
+      return 0
+    }
     fail_infra "could not read ${rules_type} on ${node} (the node is reachable but the query failed) — refusing to report a node whose verification state was never inspected"
   fi
 
@@ -360,8 +400,10 @@ check_node() {
   status=0
   trustroots="$(get_resource_json "${node}" "${trustroot_type}")" || status=$?
   if [[ "${status}" -ne 0 || -z "${trustroots}" ]]; then
-    node_reachable "${node}" ||
-      fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
+    node_reachable "${node}" || {
+      report_unreachable "${node}"
+      return 0
+    }
     fail_infra "could not read ${trustroot_type} on ${node} (the node is reachable but the query failed) — refusing to report a node whose verification state was never inspected"
   fi
 
@@ -419,11 +461,18 @@ while :; do
   pass_output="$(run_pass "${nodes[@]}")" || pass_status=$?
   # 2 is `fail_infra` from inside the pass: it has already explained itself on
   # stderr, and it is not a verdict, so it is re-raised rather than retried.
-  [[ "${pass_status}" -le 1 ]] || exit "${pass_status}"
+  # An unreachable member is not a verdict either, but it may be a node that
+  # left the fleet mid-sweep, so it is settled by the re-read below.
+  [[ "${pass_status}" -le 1 || "${pass_status}" -eq "${exit_unreachable_member}" ]] ||
+    exit "${pass_status}"
 
   # An explicitly pinned fleet is the caller's claim about what to check, not a
   # snapshot of a moving cluster, so there is nothing to converge on.
-  [[ -z "${nodes_arg}" ]] || break
+  if [[ -n "${nodes_arg}" ]]; then
+    [[ "${pass_status}" -ne "${exit_unreachable_member}" ]] ||
+      fail_infra 'a pinned node could not be reached — refusing to report a fleet that was not checked'
+    break
+  fi
 
   # Re-read the inventory AFTER the pass. The snapshot the pass ran against was
   # taken before it started, and a serial sweep of a real fleet is not
@@ -433,7 +482,13 @@ while :; do
   # are what make the verdict a statement about the fleet that exists now.
   previous_signature="${inventory_signature}"
   load_discovered_nodes
-  [[ "${inventory_signature}" != "${previous_signature}" ]] || break
+  if [[ "${inventory_signature}" == "${previous_signature}" ]]; then
+    # The node that did not answer is still listed, and not marked for
+    # removal: it is a member this run could not inspect.
+    [[ "${pass_status}" -ne "${exit_unreachable_member}" ]] ||
+      fail_infra 'a node still in the fleet could not be reached — refusing to report a fleet that was not checked'
+    break
+  fi
 
   attempt=$((attempt + 1))
   if [[ "${attempt}" -gt "${max_inventory_attempts}" ]]; then
@@ -453,4 +508,11 @@ if [[ "${pass_status}" -ne 0 ]]; then
   exit 1
 fi
 
-printf '\nAll %s node(s) can enforce image verification.\n' "${#nodes[@]}"
+skipped="$(grep -c '^SKIP ' <<<"${pass_output}" || true)"
+checked=$((${#nodes[@]} - skipped))
+# A fleet made entirely of departing nodes was not checked at all.
+[[ "${checked}" -gt 0 ]] ||
+  fail_infra 'every node is being removed by the cluster autoscaler — no node was checked'
+printf '\nAll %s node(s) can enforce image verification.\n' "${checked}"
+[[ "${skipped}" -eq 0 ]] ||
+  printf '%s node(s) skipped: being removed by the cluster autoscaler and no longer reachable.\n' "${skipped}"

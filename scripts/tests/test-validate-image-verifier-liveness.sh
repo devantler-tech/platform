@@ -708,4 +708,112 @@ output="$(run_script 2>&1)" || status=$?
   fail "case 22: an empty inventory must be refused, not reported clean (expected exit 2, got ${status})"
 require_text "${output}" 'no nodes to check' 'case 22: must name the empty inventory as the reason it refuses'
 refute_text "${output}" 'All 0 node(s) can enforce' 'case 22: reported a green verdict for an empty fleet'
+# ===========================================================================
+# Case 23 — a node the cluster autoscaler is REMOVING, and which has already
+# stopped answering, is skipped rather than failing the run.
+#
+# The scheduled run of 2026-09-22 started two seconds after a scale-down began:
+# the node was still listed, its server was already going, and the whole check
+# went red on "cannot reach node". Removal completing is not a node escaping
+# inspection.
+# ===========================================================================
+reset_inventory
+healthy_node 10.0.6.1
+# 10.0.6.2 has no fixture directory: the fake talosctl treats it as unreachable.
+cat >"${fixtures}/nodes.json" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.6.1"}]}},
+ {"metadata":{"name":"autoscale-1","uid":"uid-autoscale-1"},"spec":{"taints":[{"key":"ToBeDeletedByClusterAutoscaler","value":"1758516513","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.6.2"}]}}
+]}
+EOF
+output="$(run_script 2>&1)" || fail 'case 23: a departing, unreachable node must be skipped, not fail the run'
+require_text "${output}" 'SKIP 10.0.6.2: being removed by the cluster autoscaler' 'case 23: names the skipped node and why'
+require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 23: counts only the node it checked'
+require_text "${output}" '1 node(s) skipped' 'case 23: reports the skip in the summary'
+
+# ===========================================================================
+# Case 23a — RED control: the SAME unreachable node WITHOUT the taint is a
+# member this run could not inspect, and still aborts. Differs from case 23 in
+# exactly one field, so the skip above is caused by the removal marker and not
+# by unreachability being tolerated in general.
+# ===========================================================================
+reset_inventory
+healthy_node 10.0.6.3
+# 10.0.6.4 has no fixture directory: the fake talosctl treats it as unreachable.
+cat >"${fixtures}/nodes.json" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.6.3"}]}},
+ {"metadata":{"name":"worker-2","uid":"uid-worker-2"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.6.4"}]}}
+]}
+EOF
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 2 ]] ||
+  fail "case 23a: an unreachable member must abort (expected exit 2, got ${status})"
+require_text "${output}" 'cannot reach node 10.0.6.4' 'case 23a: names the unreachable member'
+require_text "${output}" 'still in the fleet could not be reached' 'case 23a: says the re-read still lists it'
+refute_text "${output}" 'SKIP' 'case 23a: skipped a node that is not being removed'
+
+# ===========================================================================
+# Case 23b — a node that is unreachable because it LEFT between readings is
+# settled by the re-read: the fleet changed, so the run re-checks the fleet that
+# exists now instead of aborting on the one that is gone.
+# ===========================================================================
+reset_inventory
+healthy_node 10.0.6.5
+# 10.0.6.6 has no fixture directory: the fake talosctl treats it as unreachable.
+cat >"${fixtures}/nodes.json.1" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.6.5"}]}},
+ {"metadata":{"name":"autoscale-2","uid":"uid-autoscale-2"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.6.6"}]}}
+]}
+EOF
+cat >"${fixtures}/nodes.json.last" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.6.5"}]}}
+]}
+EOF
+output="$(run_script 2>&1)" || fail 'case 23b: a node that left mid-sweep must be settled by the re-read, not abort'
+require_text "${output}" 're-checking (attempt 2 of 3)' 'case 23b: re-checked the changed fleet'
+require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 23b: the verdict describes the fleet that remains'
+
+# ===========================================================================
+# Case 23c — a node marked for removal that still ANSWERS is checked like any
+# other. The marker never excuses a node that can be inspected.
+# ===========================================================================
+reset_inventory
+healthy_node 10.0.6.7
+write_node 10.0.6.8
+resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
+  write_roots 10.0.6.8
+cat >"${fixtures}/nodes.json" <<'EOF'
+{"items":[
+ {"metadata":{"name":"worker-1","uid":"uid-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"10.0.6.7"}]}},
+ {"metadata":{"name":"autoscale-3","uid":"uid-autoscale-3"},"spec":{"taints":[{"key":"ToBeDeletedByClusterAutoscaler","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.6.8"}]}}
+]}
+EOF
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 1 ]] ||
+  fail "case 23c: a reachable departing node with no rules must still FAIL (expected exit 1, got ${status})"
+require_text "${output}" 'FAIL 10.0.6.8' 'case 23c: inspected the reachable departing node'
+refute_text "${output}" 'SKIP' 'case 23c: skipped a node that still answers'
+
+# ===========================================================================
+# Case 23d — a fleet made ENTIRELY of departing, unreachable nodes checked
+# nothing, and must never read as "All 0 node(s) can enforce".
+# ===========================================================================
+reset_inventory
+# 10.0.6.9 has no fixture directory: the fake talosctl treats it as unreachable.
+cat >"${fixtures}/nodes.json" <<'EOF'
+{"items":[
+ {"metadata":{"name":"autoscale-4","uid":"uid-autoscale-4"},"spec":{"taints":[{"key":"ToBeDeletedByClusterAutoscaler","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.6.9"}]}}
+]}
+EOF
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 2 ]] ||
+  fail "case 23d: a fleet with no checkable node must be refused (expected exit 2, got ${status})"
+refute_text "${output}" 'All 0 node(s)' 'case 23d: reported a green verdict for a fleet it never checked'
+
 printf 'all cases passed\n'
