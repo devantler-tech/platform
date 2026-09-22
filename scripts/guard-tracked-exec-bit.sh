@@ -125,22 +125,77 @@ scan="$(
     -r .github scripts 2>/dev/null || true
 )"
 
-# 🔴 SPLIT AT `&&` / `||` BEFORE EXTRACTING, NOT ONLY WHILE CLASSIFYING.
+# 🔴 SPLIT AT EVERY SEPARATOR BEFORE EXTRACTING, AND ONLY OUTSIDE QUOTES.
 #
-# Resetting the classifier at a separator fixes `echo ready && ./scripts/x.sh`,
-# where the swallowed segment is the harmless one. It does NOT fix the mirror
-# image, `./scripts/a.sh && bash ./scripts/b.sh`: `grep -o` takes the longest
-# leftmost match, so BOTH paths land in one occurrence that ends at b.sh, the
-# classifier judges it by b.sh's `bash` prefix, and a.sh — genuinely execed and
-# possibly 100644 — never becomes an occurrence of its own to judge. Splitting
-# first gives each command its own segment, so each path is extracted in its own
-# command position.
+# A separator ends one command and starts the next, so each segment gets its own
+# line and each path is judged in its own command position. Doing it before
+# extraction matters twice over. `grep -o` takes the longest leftmost match, so
+# in `./scripts/a.sh && bash ./scripts/b.sh` (or with `;` or `|`) both paths
+# would otherwise land in one occurrence judged by b.sh's `bash` prefix, and a.sh —
+# genuinely execed and possibly 100644 — would never be judged at all. And bash
+# needs no whitespace around a separator, so `ready|`, `ready&&` and
+# `ready;scripts/x.sh` are single words that no textual split on whitespace, and
+# no classifier arm, recognises (#3693). One pass here means no later stage has to
+# learn another spelling.
 #
-# Only whitespace-delimited `&&` and `||` are split. `;` and `|` are deliberately
-# NOT, because splitting is the FALSE-POSITIVE direction — every new segment
-# creates a fresh command position — and those two appear inside quoted strings
-# and YAML block scalars far too often to treat as separators textually.
-segmented="$(printf '%s\n' "$scan" | sed -E 's/[[:space:]]+(\&\&|\|\|)[[:space:]]+/\n/g')"
+# The pass is QUOTE-AWARE because splitting is the FALSE-POSITIVE direction:
+# every new segment is a fresh command position, and `;`, `|` and `(` appear
+# inside quoted strings and regexes all over this corpus — this script's own
+# SCRIPT_PATH_RE among them. Text inside single or double quotes, or escaped with
+# a backslash, is never split. Quote state resets at each line, so a quote left
+# open by YAML prose cannot swallow the rest of a file.
+#
+# What splits: `&&`, `||`, `;`, `|`, `|&`, `(`, and a lone `&` (background). What
+# does not: the `&` of a redirection (`2>&1`, `>&2`, `<&3`, `&>file`) and the `|`
+# of `>|`, which are operands of a redirection rather than command boundaries.
+split_separators() {
+  awk '
+    {
+      line = $0; out = ""; quote = ""; n = length(line)
+      for (i = 1; i <= n; i++) {
+        c = substr(line, i, 1)
+        if (quote == "\047") {
+          out = out c
+          if (c == "\047") quote = ""
+          continue
+        }
+        if (c == "\\") {
+          out = out c substr(line, i + 1, 1)
+          i++
+          continue
+        }
+        if (quote == "\"") {
+          out = out c
+          if (c == "\"") quote = ""
+          continue
+        }
+        if (c == "\047" || c == "\"") {
+          quote = c
+          out = out c
+          continue
+        }
+        prev = (i > 1) ? substr(line, i - 1, 1) : ""
+        next_c = substr(line, i + 1, 1)
+        if (c == "&") {
+          if (next_c == "&") { out = out "\n"; i++; continue }
+          if (prev == ">" || prev == "<" || next_c == ">") { out = out c; continue }
+          out = out "\n"
+          continue
+        }
+        if (c == "|") {
+          if (prev == ">") { out = out c; continue }
+          if (next_c == "|" || next_c == "&") i++
+          out = out "\n"
+          continue
+        }
+        if (c == ";" || c == "(") { out = out "\n"; continue }
+        out = out c
+      }
+      print out
+    }
+  '
+}
+segmented="$(printf '%s\n' "$scan" | split_separators)"
 
 invocations="$(
   {
@@ -184,37 +239,23 @@ while IFS= read -r occurrence; do
   # which would have judged all three correctly, never ran on them. Extraction
   # now captures however many words sit in front of the path and every decision
   # is made here, where a form that is not provably still an exec is discarded.
-  # 🔴 `;` BINDS TO THE PRECEDING WORD, SO IT MUST BE TOKENISED, NOT JUST MATCHED.
   #
-  # Bash needs no whitespace before a semicolon, so `echo ready; scripts/x.sh`
-  # yields the prefix word `ready;` — which hits the catch-all and discards the
-  # occurrence, while the `;` arm below never sees it. That is a fail-open: a
-  # directly-execed script tracked 100644 goes unchecked whenever another
-  # invocation satisfies anti-vacuity. Splitting `;` into its own word here lets
-  # the existing separator arm do its job, and does it in the CLASSIFIER rather
-  # than in extraction on purpose — a `;` inside a quoted string still only
-  # yields a stray reset within one occurrence's prefix, where the words around
-  # it are still judged, instead of manufacturing a new command position for the
-  # whole line the way an extraction split would.
-  prefix="${prefix//;/ ; }"
+  # 🔴 NO SEPARATOR REACHES THIS WALK, AND NONE MAY BE RE-SPLIT HERE.
+  #
+  # split_separators has already ended every segment at an unquoted separator, so
+  # a `;`, `|` or `&&` still present in a prefix is QUOTED TEXT: in
+  # `echo "done;" scripts/x.sh` the path is echo's argument. Splitting it again
+  # here would manufacture the command position the quote-aware pass refused to,
+  # and the guard would demand an execute bit on a file nothing execs — a false
+  # positive that fails every PR and merge-group run.
   read -ra prefix_tokens <<<"$prefix"
   reaches_path=1
   saw_wrapper=0
   for token in ${prefix_tokens+"${prefix_tokens[@]}"}; do
     case "$token" in
-      # 🔴 A SEPARATOR RESETS THE WALK; IT DOES NOT MERELY PASS.
-      #
-      # Extraction is greedy, so one occurrence can span several commands
-      # (`echo ready && ./scripts/x.sh`). Judging it by whatever came first
-      # discarded it at `echo` and never reached the `&&` proving a FRESH
-      # command position follows — the guard then reported success over a
-      # script the step genuinely execs. State is therefore per-SEGMENT:
-      # everything before the separator is spent.
-      "&&" | "||" | "|" | ";" | "(")
-        reaches_path=1
-        saw_wrapper=0
-        ;;
-      if | elif | while | until | then | do | else | "!" | "{") # control keyword: likewise
+      # A control keyword introduces a command position rather than taking the
+      # path as an argument: `if ./scripts/x.sh` execs the file.
+      if | elif | while | until | then | do | else | "!" | "{")
         reaches_path=1
         saw_wrapper=0
         ;;
