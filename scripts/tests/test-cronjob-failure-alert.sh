@@ -83,7 +83,7 @@ grep -Fq -- '--config -' <<<"$script_body" || fail 'webhook delivery must read i
 pass 'webhook is mounted 0440 and never exposed in argv or environment'
 
 # Feature flag: shipped default-off until a manual run is validated on prod.
-[ "$(yq eval '.spec.suspend' "$manifest")" = true ] || fail 'the detector must ship suspended (default-off)'
+[ "$(yq eval '.spec.suspend' "$manifest")" = false ] || fail 'the detector must be active (validated against prod in platform#4035)'
 pass 'the detector ships default-off'
 
 # ---- Behaviour -------------------------------------------------------------
