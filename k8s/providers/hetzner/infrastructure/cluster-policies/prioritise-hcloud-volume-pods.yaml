@@ -1,0 +1,110 @@
+# Prod-only: give every Pod that mounts an hcloud volume the
+# hcloud-volume-workload priority, so it can always get a place on a baseline
+# worker.
+#
+# WHY: require-baseline-workers-for-hcloud-volumes pins these Pods to the
+# static baseline workers, while prefer-baseline-nodes steers every other Pod
+# there too. With everything at priority 0, a volume-bound Pod restarted into a
+# full baseline stays Pending: the scheduler will not preempt an equal-priority
+# Pod, and the autoscaler cannot add a baseline worker. On 2026-09-21 a Coroot
+# ClickHouse replica sat Pending with `Insufficient memory` while stateless Pods
+# held the room it needed (platform#4031). One step of priority lets the
+# scheduler preempt a stateless Pod, which then reschedules elsewhere.
+#
+# WHY BOTH FIELDS: the built-in Priority admission plugin runs before webhooks
+# and has already set spec.priority to 0 by the time Kyverno sees the Pod. It
+# runs again after a webhook changes the Pod, and on CREATE it rejects a Pod
+# whose spec.priority differs from the value of its priorityClassName. Setting
+# only the class name would therefore get the Pod refused. The policy sets the
+# matching value too; scripts/tests/test-hcloud-volume-priority.sh fails CI if
+# the two drift apart.
+#
+# WHAT COUNTS AS AN hcloud VOLUME: the same test as
+# require-baseline-workers-for-hcloud-volumes — a claim whose storage class is
+# hcloud (looked up from the API), or a generic ephemeral volume that names
+# hcloud directly.
+#
+# A Pod that already names a priority class keeps it. CREATE only: priority is
+# immutable on a running Pod, so an existing Pending Pod gets the priority only
+# when it is recreated.
+#
+# FAILURE POLICY: Ignore. If Kyverno is down, Pods are created at priority 0 as
+# before rather than refused.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: prioritise-hcloud-volume-pods
+  annotations:
+    # Pod-only, no controller variants, for the same reason as
+    # require-baseline-workers-for-hcloud-volumes: autogen rewrites the claim
+    # lookup's namespace to spec.template.metadata.namespace, which pod
+    # templates never set.
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Prioritise hcloud Volume Pods
+    policies.kyverno.io/category: Scheduling, Storage
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Sets the hcloud-volume-workload priority class, and its matching priority
+      value, on Pods that mount an hcloud volume and name no priority class of
+      their own. Such Pods can only run on the static baseline workers, so they
+      must be able to preempt stateless Pods there rather than stay Pending.
+spec:
+  background: false
+  failurePolicy: Ignore
+  rules:
+    - name: prioritise-hcloud-claims
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              operations:
+                - CREATE
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.priorityClassName || '' }}"
+            operator: Equals
+            value: ""
+          - key: "{{ length(request.object.spec.volumes[?persistentVolumeClaim] || `[]`) }}"
+            operator: GreaterThan
+            value: 0
+      mutate:
+        foreach:
+          - list: request.object.spec.volumes[?persistentVolumeClaim]
+            context:
+              - name: claimStorageClass
+                apiCall:
+                  urlPath: "/api/v1/namespaces/{{ request.object.metadata.namespace }}/persistentvolumeclaims/{{ element.persistentVolumeClaim.claimName }}"
+                  jmesPath: "spec.storageClassName || ''"
+                  default: __lookup-failed__
+            preconditions:
+              all:
+                - key: "{{ claimStorageClass }}"
+                  operator: Equals
+                  value: hcloud
+            patchStrategicMerge:
+              spec:
+                priorityClassName: hcloud-volume-workload
+                priority: 1000
+    - name: prioritise-hcloud-ephemeral-volumes
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              operations:
+                - CREATE
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.priorityClassName || '' }}"
+            operator: Equals
+            value: ""
+          - key: "{{ length(request.object.spec.volumes[?ephemeral.volumeClaimTemplate.spec.storageClassName == 'hcloud'] || `[]`) }}"
+            operator: GreaterThan
+            value: 0
+      mutate:
+        patchStrategicMerge:
+          spec:
+            priorityClassName: hcloud-volume-workload
+            priority: 1000

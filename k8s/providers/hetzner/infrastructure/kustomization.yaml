@@ -70,6 +70,11 @@ resources:
   # on an autoscaler node unnoticed (#3287). Checks the Pod spec only, so it
   # never waits on the label above.
   - cluster-policies/require-baseline-workers-for-hcloud-volumes.yaml
+  # Prod-only: give those same hcloud-volume Pods a priority one step above
+  # normal workloads, so they can preempt a stateless Pod on a full baseline
+  # worker instead of staying Pending (#4031). The PriorityClass lives in the
+  # bootstrap layer so it exists before any Pod names it.
+  - cluster-policies/prioritise-hcloud-volume-pods.yaml
   # Prod-only: reconcile Coroot's node Custom Cloud Pricing to Hetzner rates
   # (Coroot otherwise prices non-AWS/GCP/Azure nodes at the GCP-C4 fallback,
   # ~16x the real bill). Lives in this `infrastructure` layer because it targets

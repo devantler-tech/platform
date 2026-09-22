@@ -1,0 +1,50 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: prioritise-hcloud-volume-pods
+policies:
+  - >-
+    ../../k8s/providers/hetzner/infrastructure/cluster-policies/prioritise-hcloud-volume-pods.yaml
+resources:
+  - resources.yaml
+# Every claim here resolves to storage class hcloud. The sibling
+# longhorn-claim/ fixture proves a non-hcloud claim is left alone.
+variables: values.yaml
+results:
+  # An hcloud claim gets the class AND the matching priority value; the
+  # Priority admission plugin refuses a Pod carrying only one of them.
+  - policy: prioritise-hcloud-volume-pods
+    rule: prioritise-hcloud-claims
+    resources:
+      - observability/hcloud-claim
+    kind: Pod
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: prioritise-hcloud-volume-pods
+    rule: prioritise-hcloud-ephemeral-volumes
+    resources:
+      - observability/ephemeral-hcloud
+    kind: Pod
+    result: pass
+    patchedResources: patched-resources.yaml
+  # A Pod that names its own class keeps it; Pods without an hcloud volume
+  # are not touched.
+  - policy: prioritise-hcloud-volume-pods
+    rule: prioritise-hcloud-claims
+    resources:
+      - observability/has-own-class
+      - observability/no-volumes
+      - observability/ephemeral-hcloud
+      - observability/ephemeral-default-class
+    kind: Pod
+    result: skip
+  - policy: prioritise-hcloud-volume-pods
+    rule: prioritise-hcloud-ephemeral-volumes
+    resources:
+      - observability/hcloud-claim
+      - observability/has-own-class
+      - observability/no-volumes
+      - observability/ephemeral-default-class
+    kind: Pod
+    result: skip

@@ -1313,6 +1313,8 @@ jobs:
         # required; the CLI evaluates the committed ClusterPolicy files offline.
         run: |
           kyverno test ./tests
+          shellcheck scripts/tests/test-hcloud-volume-priority.sh
+          bash scripts/tests/test-hcloud-volume-priority.sh
           shellcheck scripts/tests/test-audit-privileged-rbac.sh
           bash scripts/tests/test-audit-privileged-rbac.sh
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh

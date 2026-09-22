@@ -1,0 +1,20 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: prioritise-hcloud-volume-pods-longhorn-claim
+policies:
+  - >-
+    ../../../k8s/providers/hetzner/infrastructure/cluster-policies/prioritise-hcloud-volume-pods.yaml
+resources:
+  - resources.yaml
+# The claim resolves to the default Longhorn class, which is not pinned to the
+# baseline workers, so the Pod keeps normal priority.
+variables: values.yaml
+results:
+  - policy: prioritise-hcloud-volume-pods
+    rule: prioritise-hcloud-claims
+    resources:
+      - observability/longhorn-claim
+    kind: Pod
+    result: skip

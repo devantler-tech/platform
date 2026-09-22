@@ -1,0 +1,14 @@
+---
+# The Kyverno CLI has no API server, so the claim's storage class lookup is
+# supplied here. Every Pod in resources.yaml mounts at most one claim.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+policies:
+  - name: prioritise-hcloud-volume-pods
+    rules:
+      - name: prioritise-hcloud-claims
+        foreachValues:
+          claimStorageClass:
+            - longhorn

@@ -1,0 +1,27 @@
+# Priority tier for pods that mount an hcloud volume.
+#
+# Such a pod can only run on a static baseline worker, because an hcloud volume
+# attaches to exactly one node and require-baseline-workers-for-hcloud-volumes
+# pins its consumers there. Stateless pods are only nudged toward those same
+# workers (prefer-baseline-nodes), so they can fill them. At equal priority the
+# scheduler cannot make room, and the autoscaler cannot help because its nodes
+# are not baseline workers: a volume-bound pod restarted into a full baseline
+# stays Pending (platform#4031).
+#
+# One step above normal workloads (priority 0) lets the scheduler preempt a
+# stateless pod from a baseline worker. The preempted pod reschedules wherever
+# it fits, scaling an autoscaler node up if needed. Kept far below
+# platform-critical and the system-* classes, so it never outranks platform
+# infrastructure. Assigned by the prioritise-hcloud-volume-pods policy.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: hcloud-volume-workload
+value: 1000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: >-
+  Pods that mount an hcloud volume and so can only run on a static baseline
+  worker. Ranked just above normal workloads so a stateless pod is preempted
+  to make room, and far below platform-critical and the system-* classes.
