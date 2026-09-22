@@ -3124,7 +3124,30 @@ const (
 // This Longhorn engine-image baseline-context retrofit establishes aggregate:
 //
 //	f5102c7e56811403094cb887305789a52768361c8e3a8636b4fc254110279f63
-const expectedRenderedSurfaceSHA = "f5102c7e56811403094cb887305789a52768361c8e3a8636b4fc254110279f63"
+//
+// Moved again by the hostless Slack title fix (#3081, #4052), derived on the
+// merge of exact main a0626878d977149a24df37d3da440b16ea2afdf0, whose approved
+// aggregate is f5102c7e above. The kubescape/alertmanager HelmRelease values
+// change one Slack receiver title template so the host clause renders only when
+// the alert carries a host label. A HelmRelease is a controller-RBAC emitter, so
+// this moves the aggregate even though nothing is granted.
+//
+// CONSERVATION: the required job's approval-base diagnostic against main
+// a0626878 names exactly one changed entry, the kubescape/alertmanager
+// HelmRelease, and nothing added or removed. No ClusterRole, Role,
+// ClusterRoleBinding, RoleBinding or ServiceAccount source changes; no identity,
+// binding, verb, wildcard, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below is the one CI's required job reported for
+// PR #4052 at dad8fecd on the checksum-verified kubectl v1.36.2 renderer (job
+// 106809573713); the local toolchain is refused as unapproved.
+//
+// Previous aggregate: f5102c7e56811403094cb887305789a52768361c8e3a8636b4fc254110279f63.
+//
+// This hostless Slack title fix establishes aggregate:
+//
+//	65fecc82a527f6b5fc9c2154b58d2268d4eb4cfa49bb2ec9dfdfd65789621250
+const expectedRenderedSurfaceSHA = "65fecc82a527f6b5fc9c2154b58d2268d4eb4cfa49bb2ec9dfdfd65789621250"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3137,7 +3160,7 @@ const expectedRenderedSurfaceSHA = "f5102c7e56811403094cb887305789a52768361c8e3a
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "8349813fc88630dda72bcc2787eb502ffb90b18c037feb1344a89f2eecbd9f6b"
+const previousRenderedSurfaceSHA = "f5102c7e56811403094cb887305789a52768361c8e3a8636b4fc254110279f63"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

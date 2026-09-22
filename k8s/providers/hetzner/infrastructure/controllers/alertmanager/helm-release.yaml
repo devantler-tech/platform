@@ -159,7 +159,7 @@ spec:
               # into the webhook URL); set here only for clarity in the UI.
               channel: "#platform-alerts"
               send_resolved: true
-              title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} on {{ .CommonLabels.host }}'
+              title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ with .CommonLabels.host }} on {{ . }}{{ end }}'
               # Render every annotation the node-agent attaches (keys vary by
               # rule), one per line, for each grouped alert.
               text: |-
