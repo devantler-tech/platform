@@ -27,9 +27,8 @@
 # REPEATS ARE DELIBERATE, as for the other webhook alerts: a loop still failing
 # on the next check alerts again until it recovers.
 #
-# DEFAULT-OFF: the CronJob ships suspended (feature-flag-first delivery). A run
-# can still be started by hand with `kubectl create job --from=cronjob/...` to
-# validate it against prod before `suspend` is flipped in a separate change.
+# ACTIVE: the detector was validated read-only against prod before activation
+# (platform#4035). Set `suspend: true` to switch it off again.
 #
 # Runs in observability to reuse the allow-coroot CiliumNetworkPolicy
 # (endpointSelector: {}), which already permits kube-apiserver,
@@ -48,8 +47,8 @@ metadata:
     # which would blank them.
     kustomize.toolkit.fluxcd.io/substitute: disabled
 spec:
-  # Feature flag: flip to false only after a manual run has been validated.
-  suspend: true
+  # Feature flag: true switches the detector off.
+  suspend: false
   # Every 15 minutes: one watched tick. Two consecutive failures of a */15 loop
   # surface within ~45 minutes of the first.
   schedule: "*/15 * * * *"
