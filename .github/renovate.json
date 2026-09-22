@@ -219,7 +219,7 @@
       "automerge": false,
       "addLabels": ["talos"],
       "prBodyNotes": [
-        "**Before merging, complete the pins Renovate cannot derive:**\n\n- [ ] `TALOSCTL_SHA256` in `.github/scripts/setup-talosctl.sh`: the `🧪 Validate Talos Machine Config` setup step prints the value to set once it has matched the download against the release's `sha256sum.txt`.\n- [ ] The Hetzner `iso` snapshot id in `ksail.prod.yaml`.\n- [ ] `kubernetesVersion` in `ksail.prod.yaml`, if this Talos release moves the supported Kubernetes range."
+        "**Before merging, complete the pins Renovate cannot derive:**\n\n- [ ] `TALOSCTL_SHA256` in `.github/scripts/setup-talosctl.sh`: the `🧪 Validate Talos Machine Config` setup step prints the value to set once it has matched the download against the release's `sha256sum.txt`.\n- [ ] The Hetzner `iso` snapshot id in `ksail.prod.yaml`.\n- [ ] `kubernetesVersion` in `ksail.prod.yaml`, if this Talos release moves the supported Kubernetes range.\n- [ ] `expected_talos_version` in `scripts/tests/test-talos-apparmor-lsm.sh`, after confirming this release's kernel still enables the LSM order that test expects."
       ]
     },
     {
