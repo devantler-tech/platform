@@ -1,0 +1,21 @@
+# Kyverno's background controller needs write access for the exact
+# mutate-existing retrofit in add-existing-longhorn-engine-image-baseline-context.yaml
+# (#3918). Keep this namespaced and resourceNames-pinned: a namespace-wide
+# DaemonSet grant would let the controller rewrite every storage-plane pod
+# template in longhorn-system.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kyverno:background-controller:mutate-longhorn-engine-image
+  namespace: longhorn-system
+rules:
+  - apiGroups:
+      - apps
+    resources:
+      - daemonsets
+    resourceNames:
+      - engine-image-ei-493e04e7
+    verbs:
+      - get
+      - patch
+      - update

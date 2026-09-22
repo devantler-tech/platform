@@ -24,6 +24,10 @@ resources:
   # It must precede the ClusterPolicy in the next Flux layer.
   - role-kyverno-mutate-longhorn-csi-plugin.yaml
   - role-binding-kyverno-mutate-longhorn-csi-plugin.yaml
+  # Exact namespaced grant for the engine-image C-0211 retrofit (#3918).
+  # Same layering rule: it must precede the ClusterPolicy in the next layer.
+  - role-kyverno-mutate-longhorn-engine-image.yaml
+  - role-binding-kyverno-mutate-longhorn-engine-image.yaml
   # Exact namespaced grant for the CSI sidecar C-0211 retrofit (#3946).
   # Same layering rule: it must precede the ClusterPolicy in the next layer.
   - role-kyverno-mutate-csi-sidecars.yaml
