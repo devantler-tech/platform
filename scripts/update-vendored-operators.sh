@@ -23,9 +23,11 @@ readonly cert_approver_sha256='44d74b38379d96572c434290732092f577ee4835392b36922
 # tag, and a tag can move; this is what production actually pulls. --render-remotes re-resolves the tag
 # from the registry and refuses to refresh while this constant disagrees with it.
 readonly cert_approver_image_digest='sha256:534e40a0050c34bda2a7bae53aa9c11133704f23dc83fee14f3b45b0f1eabe45'
-# Keep this aligned with CI_CHECKOV_VERSION in megalinter-scan-counts.sh so a
-# local vendor refresh cannot miss a rule that the non-blocking CI scan knows.
-readonly checkov_version='3.3.2'
+# Must equal CI_CHECKOV_VERSION in megalinter-scan-counts.sh, so a local vendor
+# refresh cannot miss a rule that the non-blocking CI scan knows. Every mode,
+# --validate-committed included, refuses to run while the two differ, so a bump
+# of either pin fails CI until the other moves with it.
+readonly checkov_version='3.3.9'
 # CKV2_K8S_6 only understands networking.k8s.io NetworkPolicy. An isolated
 # bundle scan cannot see that cilium-network-policy.yaml protects every CDI
 # endpoint; the full-repository CI scan remains unskipped and owns graph checks.
@@ -60,6 +62,24 @@ require_tool() {
   local tool="$1"
   if ! command -v "${tool}" >/dev/null 2>&1; then
     printf '%s is required to update vendored operators\n' "${tool}" >&2
+    exit 2
+  fi
+}
+
+# The CI pin is read from its source rather than copied here, so a bump there is
+# seen immediately. An unreadable constant fails closed: comparing against an
+# empty value would report a mismatch for the wrong reason, or match nothing.
+require_checkov_pin_matches_ci() {
+  local constants_file="${repo_root}/scripts/megalinter-scan-counts.sh"
+  local ci_checkov_version
+  ci_checkov_version="$(sed -n "s/^readonly CI_CHECKOV_VERSION='\([^']*\)'.*/\1/p" "${constants_file}")"
+  if [ -z "${ci_checkov_version}" ] || [[ "${ci_checkov_version}" == *$'\n'* ]]; then
+    printf 'could not read exactly one CI_CHECKOV_VERSION from scripts/megalinter-scan-counts.sh\n' >&2
+    exit 2
+  fi
+  if [ "${checkov_version}" != "${ci_checkov_version}" ]; then
+    printf 'checkov_version is %s but CI_CHECKOV_VERSION is %s; set checkov_version in scripts/update-vendored-operators.sh to %s, then re-run this updater with that Checkov to re-check the dispositions\n' \
+      "${checkov_version}" "${ci_checkov_version}" "${ci_checkov_version}" >&2
     exit 2
   fi
 }
@@ -265,6 +285,8 @@ install_render_remotes() {
     mv "${resource}" "${render_controllers}/kubelet-serving-cert-approver/"
   done
 }
+
+require_checkov_pin_matches_ci
 
 mode=all
 if [ "$#" -ne 0 ]; then
