@@ -1721,6 +1721,19 @@ func fakeKubectlGetNode(args []string) int {
 		}
 		return 0
 	}
+	// The re-read that follows a refused cordon claim fails, once. The silent
+	// variant exits non-zero without writing stderr, so the caller's diagnostic
+	// file is zero bytes and copying it succeeds while carrying nothing; the
+	// diagnostic variant writes real stderr, whose content must survive.
+	if nodeName == os.Getenv("FAKE_NODE_REREAD_FAILURE_NODE") &&
+		markerExists("claim-failed-"+nodeName) &&
+		!markerExists("node-reread-failed-"+nodeName) {
+		touchMarker("node-reread-failed-" + nodeName)
+		if diagnostic := os.Getenv("FAKE_NODE_REREAD_FAILURE_DIAGNOSTIC"); diagnostic != "" {
+			return commandFailure(92, "%s", diagnostic)
+		}
+		return 92
+	}
 	if nodeName == os.Getenv("FAKE_RECOVERY_ADVANCES_BEFORE_RELEASE_NODE") &&
 		!markerExists("recovery-advanced-before-release-"+nodeName) {
 		var recoveryRecord map[string]any
@@ -2196,6 +2209,7 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		// and the claim must still refuse rather than drain.
 		if nodeName == os.Getenv("FAKE_CLAIM_FAIL_NODE") {
 			setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+			touchMarker("claim-failed-" + nodeName)
 			return commandFailure(56, "resourceVersion test failed")
 		}
 		// An unrelated writer (a kubelet status heartbeat, the cloud
