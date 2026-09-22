@@ -347,6 +347,16 @@ runs:
       shell: bash
       run: bash scripts/guard-longhorn-ui-baseline-context.sh after-reconcile
 
+    - name: 🔏 Admit the Coroot baseline context
+      if: steps.coroot_baseline.outputs.rollout_required == 'true'
+      # The Coroot-scoped rules act on CREATE and UPDATE only, and the operator
+      # writes its templates only when its own desired state changes. A template
+      # still lacking a field gets one metadata-only write so admission adds
+      # both, then its rollout is awaited. Templates that already carry both
+      # fields are left alone, so later deploys restart nothing.
+      shell: bash
+      run: bash scripts/admit-coroot-baseline-context.sh
+
     - name: 🧪 Verify the Coroot baseline context
       if: steps.coroot_baseline.outputs.rollout_required == 'true'
       # Fails the deployment when a template lacks either field, is not ready,

@@ -400,10 +400,11 @@ if [ "${actual_controllers_optin}" != "${expected_controllers_optin}" ]; then
   fail=1
 fi
 
-# The Coroot scope label is pinned the same way (#3990). Activating it rolls the
-# six operator-generated workloads, so a namespace joins only together with the
-# before-publish and after-reconcile convergence guard for their owner.
-expected_coroot_optin=""
+# The Coroot scope label is pinned the same way (#3990). It rolls the six
+# operator-generated workloads, so a namespace joins only together with the
+# admission write and the before-publish and after-reconcile convergence guard
+# for their owner; observability has all three (#4028).
+expected_coroot_optin="observability"
 
 actual_coroot_optin="$(
   { grep -rl 'pod-security.devantler.tech/baseline-context-coroot' --include='*.yaml' "${repo_root}/k8s" 2>/dev/null || true; } |

@@ -72,10 +72,11 @@ Permission to deploy does not prove those compatibility conditions.
 For the Coroot operator's workloads, a narrower `baseline-context-coroot` namespace
 label scopes the same controller rules to Deployments, StatefulSets and DaemonSets
 labelled `app.kubernetes.io/managed-by: coroot-operator`, leaving the namespace's
-Helm and Git workloads alone. No namespace carries it.
+Helm and Git workloads alone. The `observability` namespace carries it.
 
-`scripts/guard-coroot-baseline-context.sh` is the read-only guard for that label,
-and the production deploy action runs it in both phases:
+`scripts/guard-coroot-baseline-context.sh` is the read-only guard for that label.
+The production deploy action runs it in both phases, with one write step between
+them:
 
 1. Before publication, it reads the desired `observability` namespace manifest.
    Without the label it disarms without contacting the cluster, so a label
@@ -83,7 +84,19 @@ and the production deploy action runs it in both phases:
    requires the stored population to be exactly the six reviewed templates,
    each controller-owned by the `Coroot` resource and fully ready. An API
    failure is an error, never an empty population.
-2. After Flux reports the released revision Ready, it waits a bounded time for
+2. After Flux reports the released revision Ready,
+   `scripts/admit-coroot-baseline-context.sh` writes each template that still
+   lacks a field. Every read must return exactly the six reviewed templates,
+   so it fails before writing anything outside them. The rules act on create
+   and update only, and the operator
+   writes a template only when its own desired state changes, so the step
+   adds one metadata annotation, which sends the object through admission.
+   A template written before the policy engine sees the namespace label is
+   written again, at most three times in all. It then requires both fields to
+   be present and waits up to 15 minutes for
+   the rollout of every template it wrote in any round. A template that already carries both
+   fields gets no write, so a later deploy restarts nothing.
+3. The guard then waits a bounded time for
    all six templates to carry pod-level `fsGroupChangePolicy` and
    `seLinuxOptions` at pod level or on every container, then observes them
    three times over 30 seconds. A changed generation or UID, a removed field,
@@ -93,9 +106,8 @@ Unlike the UI canary it records no receipt: while the label is declared, every
 deployment re-proves convergence, because an operator upgrade can change its
 desired state without any change in this repository. The disaster-recovery
 rebuild does not run it yet; a fresh ClickHouse needs longer than the guard's
-wait to become ready, so that wiring belongs with activation. Admission applies
-only on a write, so activation also needs one template update per workload after
-the label lands.
+wait to become ready. On a fresh cluster the label exists before the operator
+creates its templates, so admission applies at creation without a write.
 
 The remaining rollout and its acceptance measurements are tracked in
 [issue #3239](https://github.com/devantler-tech/platform/issues/3239). C-0211 sizing
