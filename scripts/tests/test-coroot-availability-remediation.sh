@@ -5,6 +5,7 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly alertmanager_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/alertmanager/helm-release.yaml"
+readonly umami_release="${root_dir}/k8s/bases/apps/umami/helm-release.yaml"
 readonly kubescape_alert_route="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kubescape/patches/route-runtime-detection-alerts.yaml"
 readonly crossplane_alerter="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/cron-job-crossplane-sync-alerter.yaml"
 readonly dr_runbook="${root_dir}/docs/dr/velero-cnpg.md"
@@ -26,6 +27,16 @@ fail() {
 
 command -v yq >/dev/null || fail 'yq is required'
 command -v kubectl >/dev/null || fail 'kubectl is required'
+
+yq e -e '
+  [.spec.values.topologySpreadConstraints[] |
+    select(.topologyKey == "kubernetes.io/hostname" and
+      .maxSkew == 1 and
+      .whenUnsatisfiable == "DoNotSchedule" and
+      .labelSelector.matchLabels."app.kubernetes.io/instance" == "umami")
+  ] | length == 1
+' "${umami_release}" >/dev/null ||
+  fail 'Umami serving replicas must have a hard hostname spread on the primary pod label'
 
 yq e -e '
   .spec.values.replicaCount == 2 and

@@ -52,9 +52,11 @@ spec:
     # replicas — scaled-object.yaml — but nothing pulled them apart). Set on the
     # SOURCE pod template here because Flagger builds umami-umami-primary by
     # COPYING this template, so the constraint propagates to the primary that
-    # actually serves traffic. ScheduleAnyway (not DoNotSchedule) keeps scheduling
-    # best-effort: on a small/cordoned cluster a replica still lands rather than
-    # going Pending. The labelSelector keys on app.kubernetes.io/instance=umami —
+    # actually serves traffic. A soft ScheduleAnyway constraint still allowed
+    # both primary replicas onto one worker during a rollout (platform#4103).
+    # DoNotSchedule preserves one serving replica if only one worker is usable;
+    # the second waits for another worker instead of giving a false HA signal.
+    # The labelSelector keys on app.kubernetes.io/instance=umami —
     # NOT app.kubernetes.io/name — because Flagger's default --selector-labels
     # rewrites app.kubernetes.io/name to "umami-umami-primary" on the primary
     # while leaving instance=umami intact on the pods (same reason the PDB and the
@@ -62,7 +64,7 @@ spec:
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
-        whenUnsatisfiable: ScheduleAnyway
+        whenUnsatisfiable: DoNotSchedule
         labelSelector:
           matchLabels:
             app.kubernetes.io/instance: umami
