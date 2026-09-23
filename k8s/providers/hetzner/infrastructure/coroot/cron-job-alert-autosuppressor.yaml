@@ -248,7 +248,8 @@ spec:
                 - -c
                 - |
                   set -u
-                  BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
+                  # The terminal DNS root dot prevents ndots:5 search expansion.
+                  BASE="http://coroot-coroot.observability.svc.cluster.local.:8080"
                   log_info() {
                     jq -nc --arg msg "$1" '{level:"info",msg:$msg}'
                   }

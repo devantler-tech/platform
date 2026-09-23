@@ -118,7 +118,8 @@ spec:
                 - -c
                 - |
                   set -u
-                  BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
+                  # The terminal DNS root dot prevents ndots:5 search expansion.
+                  BASE="http://coroot-coroot.observability.svc.cluster.local.:8080"
                   # In-cluster calls from this short-lived pod to coroot can see
                   # transient first-packet or endpoint-readiness failures, so a
                   # single un-retried call intermittently fails (curl exit /

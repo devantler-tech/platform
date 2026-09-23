@@ -179,7 +179,8 @@ spec:
                 - -c
                 - |
                   set -eu
-                  BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
+                  # The terminal DNS root dot prevents ndots:5 search expansion.
+                  BASE="http://coroot-coroot.observability.svc.cluster.local.:8080"
                   REQUEST_MAX_TIME=5
 
                   coroot_request() {
