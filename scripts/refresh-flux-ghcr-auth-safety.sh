@@ -100,7 +100,9 @@ select_talos_node_targets() {
           ([.status.addresses[]
             | select(.type == "InternalIP") | .address][0]),
           (if $can_restore_proof then "proof-only"
-           elif $verified_revision != $revision then "reboot"
+           elif $verified_revision != $revision
+             or ($verified_uid != "" and $verified_uid != $node_uid)
+             then "reboot"
            else "image-only" end),
           $node_uid
         ]

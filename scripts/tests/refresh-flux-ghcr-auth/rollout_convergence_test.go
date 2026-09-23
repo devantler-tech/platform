@@ -287,6 +287,23 @@ func TestImageOnlyProofBindsDurableMarkerToNodeUID(t *testing.T) {
 	}
 }
 
+func TestMismatchedDurableUIDRequiresFencedRuntimeProof(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	current := map[string]string{"FAKE_TALOS_NODES_CURRENT": "true"}
+	requireSuccessResult(t, f.runHelper(validConfig(), nil, current))
+	if err := os.WriteFile(filepath.Join(f.syncStateDir, "talos-proof-uid-10.0.0.2"), []byte("replaced-node-uid"), 0o600); err != nil {
+		t.Fatalf("seed a stale durable UID marker: %v", err)
+	}
+	result := f.runHelperPreservingClusterState(validConfig(), nil, current)
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
+	requireLine(t, operations, "node-drain:prod-worker-1")
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	requireLine(t, operations, "root-patch")
+}
+
 func TestLegacyUIDLessProofRevalidatesEveryNodeWithoutCordon(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
