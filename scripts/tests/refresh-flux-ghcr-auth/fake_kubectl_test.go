@@ -222,7 +222,7 @@ func fakeFluxPolicyChildObject() map[string]any {
 	metadata := map[string]any{
 		"name":            "infrastructure",
 		"namespace":       "flux-system",
-		"uid":             "infrastructure-kustomization-uid",
+		"uid":             defaultString(markerContent("flux-policy-handoff-uid"), "infrastructure-kustomization-uid"),
 		"resourceVersion": defaultString(markerContent("flux-policy-handoff-resource-version"), "20"),
 		"generation":      generation,
 	}
@@ -318,7 +318,7 @@ func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile
 		patch,
 		"test",
 		"/metadata/uid",
-		"infrastructure-kustomization-uid",
+		defaultString(markerContent("flux-policy-handoff-uid"), "infrastructure-kustomization-uid"),
 	) {
 		return commandFailure(56, "Flux policy Kustomization CAS failed")
 	}
@@ -352,6 +352,13 @@ func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile
 					setMarkerContent(
 						"flux-policy-handoff-owner",
 						"fixture-foreign-transaction",
+					)
+				}
+				// The object was deleted and recreated: same name, no owner, a new UID.
+				if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_REPLACED_AFTER_CAS_CHURN") == "true" {
+					setMarkerContent(
+						"flux-policy-handoff-uid",
+						"infrastructure-kustomization-uid-replacement",
 					)
 				}
 				appendEnvFile("OPERATION_LOG", "flux-policy-handoff-cas-churn:infrastructure\n")

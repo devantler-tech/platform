@@ -2831,3 +2831,31 @@ func TestFluxPolicyHandoffDoesNotRetryARejectionThatMovedNothing(t *testing.T) {
 		requireNoLine(t, operations, unexpected)
 	}
 }
+
+// A child deleted and recreated between the CAS and its re-read looks like churn --
+// no owner, a moved resourceVersion -- but it is a different object. The retry must
+// keep the UID it first inspected and refuse the replacement, as the parent does.
+func TestFluxPolicyHandoffRefusesAReplacementChildFoundByTheContentionReRead(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_HANDOFF_CAS_CHURN_REJECTIONS":     "1",
+		"FAKE_FLUX_POLICY_HANDOFF_REPLACED_AFTER_CAS_CHURN": "true",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output,
+		"The Flux image-verification policy owner was replaced during the handoff")
+	operations := readLines(f.operationLog)
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-handoff-cas-churn:infrastructure",
+	); got != 1 {
+		t.Fatalf("CAS rejections = %d, want the single injected one", got)
+	}
+	for _, unexpected := range []string{"flux-policy-pause:infrastructure", "root-patch"} {
+		requireNoLine(t, operations, unexpected)
+	}
+	if pathExists(filepath.Join(f.syncStateDir, "flux-policy-handoff-suspended")) {
+		t.Fatal("the replacement child was suspended")
+	}
+}

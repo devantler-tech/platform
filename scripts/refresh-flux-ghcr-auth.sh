@@ -5990,7 +5990,7 @@ wait_for_flux_policy_handoff_claimable() {
 pause_flux_policy_handoff() {
   local resource_version annotations_present attempt
   local stable_resource_version="" current_resource_version
-  local claim_attempt reread_resource_version
+  local claim_attempt reread_resource_version inspected_uid=""
   local max_claim_attempts="${FLUX_POLICY_HANDOFF_CLAIM_MAX_ATTEMPTS:-5}"
   # Separate stderr sink for the re-read, so a successful re-read cannot truncate
   # the patch rejection that explains why the claim failed.
@@ -6010,6 +6010,14 @@ pause_flux_policy_handoff() {
       "${flux_policy_handoff_state_file}")"
     flux_policy_handoff_uid="$(jq -er '.metadata.uid' \
       "${flux_policy_handoff_state_file}")"
+    # The claim is for the object first inspected. A delete-and-recreate between
+    # attempts looks like churn but is a different object, so refuse it.
+    if [[ -z "${inspected_uid}" ]]; then
+      inspected_uid="${flux_policy_handoff_uid}"
+    elif [[ "${flux_policy_handoff_uid}" != "${inspected_uid}" ]]; then
+      echo "::error::The Flux image-verification policy owner was replaced during the handoff; refusing to fence an object that was not the one inspected."
+      return 1
+    fi
     flux_policy_handoff_owner="${sync_lease_holder}"
     annotations_present="$(jq -r \
       '(.metadata.annotations? | type) == "object"' \
@@ -6068,6 +6076,13 @@ pause_flux_policy_handoff() {
     if flux_policy_handoff_is_owned; then
       flux_policy_handoff_acquired=true
       break
+    fi
+    if [[ "$(jq -r '.metadata.uid // ""' "${flux_policy_handoff_state_file}")" != "${inspected_uid}" ]]; then
+      rm -f "${reread_error_file}"
+      emit_safe_operation_output "flux-policy-handoff-patch" \
+        "${flux_policy_handoff_result_file}"
+      echo "::error::The Flux image-verification policy owner was replaced during the handoff; refusing to fence an object that was not the one inspected."
+      return 1
     fi
 
     # An owner that is not ours is a competing transaction, never contention.
