@@ -28,12 +28,17 @@ if [[ -z "$update_line" || -z "$stability_line" || -z "$readback_line" ]] ||
 fi
 
 tmp_dir=$(mktemp -d)
-trap 'rm -f "$tmp_dir/kubectl" "$tmp_dir/nodes.json" "$tmp_dir/changed.json"; rmdir "$tmp_dir"' EXIT
+trap 'rm -f "$tmp_dir/kubectl" "$tmp_dir/nodes.json" "$tmp_dir/changed.json" "$tmp_dir/first-used"; rmdir "$tmp_dir"' EXIT
 mock_kubectl="$tmp_dir/kubectl"
 cat >"$mock_kubectl" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$*" == "${MOCK_EXPECTED_ARGS:-get nodes -o json}" ]] || exit 64
+[[ "$*" == "${MOCK_EXPECTED_ARGS:---context admin@prod --request-timeout=15s get nodes -o json}" ]] || exit 64
+if [[ -n "${MOCK_FIRST_NODES_FILE:-}" && ! -f "$MOCK_FIRST_USED_MARKER" ]]; then
+  : >"$MOCK_FIRST_USED_MARKER"
+  cat "$MOCK_FIRST_NODES_FILE"
+  exit 0
+fi
 cat "$MOCK_NODES_FILE"
 MOCK
 chmod +x "$mock_kubectl"
@@ -60,13 +65,15 @@ jq -n --arg schematic "$desired_schematic" --arg version "$desired_version" '
 ' >"$tmp_dir/nodes.json"
 
 run_readback() {
-  MOCK_NODES_FILE="$1" KUBECTL_BIN="$mock_kubectl" bash "$readback"
+  MOCK_NODES_FILE="$1" KUBECTL_BIN="$mock_kubectl" \
+    TALOS_READBACK_ATTEMPTS=1 TALOS_READBACK_INTERVAL_SECONDS=0 bash "$readback"
 }
 
 run_readback "$tmp_dir/nodes.json"
 MOCK_NODES_FILE="$tmp_dir/nodes.json" \
-  MOCK_EXPECTED_ARGS='--context oidc@prod get nodes -o json' \
-  KUBE_CONTEXT=oidc@prod KUBECTL_BIN="$mock_kubectl" bash "$readback"
+  MOCK_EXPECTED_ARGS='--context oidc@prod --request-timeout=15s get nodes -o json' \
+  KUBE_CONTEXT=oidc@prod KUBECTL_BIN="$mock_kubectl" \
+  TALOS_READBACK_ATTEMPTS=1 TALOS_READBACK_INTERVAL_SECONDS=0 bash "$readback"
 
 assert_rejected() {
   local description=$1
@@ -91,6 +98,10 @@ assert_rejected 'a stale Talos version'
 jq '.items[0].status.conditions[0].status = "False"' \
   "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
 assert_rejected 'a NotReady node'
+
+MOCK_NODES_FILE="$tmp_dir/nodes.json" MOCK_FIRST_NODES_FILE="$tmp_dir/changed.json" \
+  MOCK_FIRST_USED_MARKER="$tmp_dir/first-used" KUBECTL_BIN="$mock_kubectl" \
+  TALOS_READBACK_ATTEMPTS=2 TALOS_READBACK_INTERVAL_SECONDS=0 bash "$readback"
 
 jq '.items[0].spec.unschedulable = true' \
   "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
