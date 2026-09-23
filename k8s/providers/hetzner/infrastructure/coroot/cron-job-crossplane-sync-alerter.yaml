@@ -122,11 +122,11 @@ spec:
                 - -c
                 - |
                   set -u
-                  PROM="http://coroot-prometheus.observability.svc.cluster.local:9090"
+                  PROM="http://coroot-prometheus.observability.svc.cluster.local.:9090"
                   # Alertmanager HA does not replicate received alerts between
                   # peers, so every alert goes to each StatefulSet pod directly;
                   # the load-balanced Service would reach only one of them.
-                  AM_PEERS="http://alertmanager-0.alertmanager-headless.kubescape.svc.cluster.local:9093 http://alertmanager-1.alertmanager-headless.kubescape.svc.cluster.local:9093"
+                  AM_PEERS="http://alertmanager-0.alertmanager-headless.kubescape.svc.cluster.local.:9093 http://alertmanager-1.alertmanager-headless.kubescape.svc.cluster.local.:9093"
                   KUBE_API="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS}"
                   SA_DIR="/var/run/secrets/kubernetes.io/serviceaccount"
                   CRD_PAGE="/tmp/crossplane-crds.json"
