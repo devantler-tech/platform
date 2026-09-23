@@ -89,11 +89,8 @@ select_talos_node_targets() {
       | ($proved_nodes | any(
           .name == $node_name and .uid == $node_uid
         )) as $can_restore_proof
-      # An older v2 marker with the same revision and image predates the UID
-      # annotation. Keep that already-proved image in place; the next real
-      # image/revision proof stamps the UID. A present UID must always match.
       | select($verified_revision != $revision or $verified_image != $image
-          or ($verified_uid != "" and $verified_uid != $node_uid))
+          or $verified_uid != $node_uid)
       | (.metadata.labels // {}) as $labels
       | [
           (if (($labels | has("node-role.kubernetes.io/control-plane"))

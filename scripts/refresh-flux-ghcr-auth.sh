@@ -4405,8 +4405,7 @@ record_runtime_proof() {
       all(.items[];
         .metadata.annotations[$revision_annotation] == $revision
         and .metadata.annotations[$image_annotation] == $image
-        and ((.metadata.annotations[$uid_annotation] // "") == ""
-          or .metadata.annotations[$uid_annotation] == .metadata.uid))
+        and .metadata.annotations[$uid_annotation] == .metadata.uid)
     ' "${runtime_proof_nodes_file}" >/dev/null; then
     echo "::error::Refusing to record a post-update handoff before every exact Node has current runtime proof."
     return 1

@@ -251,7 +251,7 @@ func TestImageOnlyProofBindsDurableMarkerToNodeUID(t *testing.T) {
 	}
 }
 
-func TestLegacyCurrentProofDoesNotRemoveRunningImageForUIDMigration(t *testing.T) {
+func TestLegacyUIDLessProofRevalidatesEveryNodeWithoutCordon(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
@@ -260,10 +260,17 @@ func TestLegacyCurrentProofDoesNotRemoveRunningImageForUIDMigration(t *testing.T
 	})
 	requireSuccessResult(t, result)
 	operations := readLines(f.operationLog)
+	for _, nodeIP := range []string{"10.0.0.2", "10.0.0.1", "10.0.0.3", "10.0.0.4"} {
+		requireLine(t, operations, "talos-remove:"+nodeIP+":"+ksailTargetImage)
+		requireLine(t, operations, "talos-pull:"+nodeIP+":"+ksailTargetImage)
+		requireLine(t, operations, "talos-revision:"+nodeIP)
+	}
 	for _, operation := range operations {
-		if strings.HasPrefix(operation, "talos-remove:") ||
-			strings.HasPrefix(operation, "talos-pull:") {
-			t.Errorf("legacy current image was unnecessarily mutated: %s", operation)
+		if strings.HasPrefix(operation, "node-claim-cordon:") ||
+			strings.HasPrefix(operation, "node-uncordon:") ||
+			strings.HasPrefix(operation, "node-drain:") ||
+			strings.HasPrefix(operation, "talos-reboot:") {
+			t.Errorf("UID migration changed workload scheduling: %s", operation)
 		}
 	}
 }
