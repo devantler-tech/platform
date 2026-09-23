@@ -3184,11 +3184,12 @@ const (
 // disruption budget and a rollout strategy; it grants no new permissions.
 // Re-approved for Umami serving-replica spread (#4103), against main
 // 0c72b837. The required production-authorization job on the checksum-verified
-// kubectl v1.36.2 renderer (run 35933222615, job 107425089092) reported only
+// kubectl v1.36.2 renderer (run 35934487134, job 107429462757) reported only
 // changed HelmRelease umami/umami, with no added or removed surface entries.
-// The source delta changes the hostname spread constraint and its pod-label
-// selector; no RBAC, service account, AWS identity, or permission is granted.
-const expectedRenderedSurfaceSHA = "82ce0aa168e5783a19dd4e6d45f5a20545c50f0a75479e9d5117d91300982150"
+// The source delta changes the hostname spread constraint, pod-label selector,
+// and minDomains floor; no RBAC, service account, AWS identity, or permission
+// is granted.
+const expectedRenderedSurfaceSHA = "8920ded0ec5970e398b2f24447a7eb0ac492522e6c75b11a15b146e4a35f9d35"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
