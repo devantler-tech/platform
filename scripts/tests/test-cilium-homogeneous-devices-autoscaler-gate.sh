@@ -94,8 +94,32 @@ fixture_root="${tmp_dir}/platform"
 fixture_controllers="${fixture_root}/k8s/providers/hetzner/infrastructure/controllers"
 fixture_component="${fixture_controllers}/cilium/components/homogeneous-devices"
 mkdir -p "${fixture_component}"
-cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" \
-  "${fixture_controllers}/kustomization.yaml"
+
+# The gate-active scenarios need the component REFERENCED, and the live overlay
+# references it only while a rollout is active, so construct that state rather
+# than copying it (platform#3031): drop any active or commented reference, then
+# list exactly one directly after private-nic-devices/ so it wins.
+install_active_controllers_fixture() {
+  local fixture="${fixture_controllers}/kustomization.yaml"
+  local private_line homogeneous_lines
+
+  awk '
+    /^[[:space:]]*(#[[:space:]]*)?-[[:space:]]*cilium\/components\/homogeneous-devices\/?[[:space:]]*(#.*)?$/ { next }
+    { print }
+    /^[[:space:]]*-[[:space:]]*cilium\/components\/private-nic-devices\/?[[:space:]]*(#.*)?$/ {
+      print "  - cilium/components/homogeneous-devices/"
+    }
+  ' "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" >"${fixture}"
+
+  private_line="$(grep -nE '^[[:space:]]*-[[:space:]]*cilium/components/private-nic-devices/?[[:space:]]*(#.*)?$' "${fixture}" | cut -d: -f1 || true)"
+  homogeneous_lines="$(grep -nE '^[[:space:]]*-[[:space:]]*cilium/components/homogeneous-devices/?[[:space:]]*(#.*)?$' "${fixture}" | cut -d: -f1 || true)"
+  [[ -n "${private_line}" && "${private_line}" != *$'\n'* ]] ||
+    fail 'the controllers overlay must reference private-nic-devices/ exactly once'
+  [[ "${homogeneous_lines}" == "$((private_line + 1))" ]] ||
+    fail 'the gate-active fixture must reference homogeneous-devices/ once, directly after private-nic-devices/'
+}
+
+install_active_controllers_fixture
 cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/cilium/components/homogeneous-devices/kustomization.yaml" \
   "${fixture_component}/kustomization.yaml"
 
@@ -324,8 +348,7 @@ run_guard --after-deploy true
   fail 'a reconciled component rollback must restore the owned autoscaler replica count'
 [[ ! -s "${state_dir}/approved-template-sha" ]] ||
   fail 'a reconciled component rollback must clear the approved template hash'
-cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" \
-  "${fixture_controllers}/kustomization.yaml"
+install_active_controllers_fixture
 run_guard --before-publish
 run_guard --after-deploy true
 
