@@ -73,7 +73,8 @@ spec:
 
                   # Double-dollar escapes Flux post-build substitution; the
                   # runtime shell receives the ordinary parameter expansion.
-                  BASE="$${COROOT_BASE_URL:-http://coroot-coroot.observability.svc.cluster.local:8080}"
+                  # The default terminal DNS root dot prevents search expansion.
+                  BASE="$${COROOT_BASE_URL:-http://coroot-coroot.observability.svc.cluster.local.:8080}"
                   ACCEPTANCES_FILE="$${ACCEPTANCES_FILE:-/config/risks.json}"
                   api() {
                     curl -fsS --retry 5 --retry-delay 2 --retry-all-errors \
