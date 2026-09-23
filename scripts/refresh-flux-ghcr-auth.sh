@@ -5921,9 +5921,8 @@ flux_policy_handoff_is_released() {
   ' "${flux_policy_handoff_state_file}" >/dev/null
 }
 
-pause_flux_policy_handoff() {
-  local resource_version attempt annotations_present
-  local stable_resource_version="" current_resource_version
+wait_for_flux_policy_handoff_claimable() {
+  local attempt
 
   # Quiesce the child before changing spec.suspend. Suspending a Kustomization
   # while it is already reconciling can strand Reconciling=True in status: the
@@ -5986,58 +5985,121 @@ pause_flux_policy_handoff() {
     fi
     sleep "${SYNC_INTERVAL}"
   done
+}
 
-  resource_version="$(jq -er '.metadata.resourceVersion' \
-    "${flux_policy_handoff_state_file}")"
-  flux_policy_handoff_uid="$(jq -er '.metadata.uid' \
-    "${flux_policy_handoff_state_file}")"
-  flux_policy_handoff_owner="${sync_lease_holder}"
-  annotations_present="$(jq -r \
-    '(.metadata.annotations? | type) == "object"' \
-    "${flux_policy_handoff_state_file}")"
-  jq -n \
-    --arg resource_version "${resource_version}" \
-    --arg uid "${flux_policy_handoff_uid}" \
-    --arg owner_path "${FLUX_POLICY_HANDOFF_OWNER_JSON_PATH}" \
-    --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
-    --arg owner "${flux_policy_handoff_owner}" \
-    --argjson annotations_present "${annotations_present}" '
-    [
-      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
-      {op: "test", path: "/metadata/uid", value: $uid}
-    ]
-    + (if $annotations_present then [] else
-      [{op: "add", path: "/metadata/annotations", value: {}}]
-    end)
-    + [
-      {op: "add", path: $owner_path, value: $owner},
-      {op: "add", path: $reconcile_path, value: "disabled"},
-      {op: "add", path: "/spec/suspend", value: true}
-    ]
-  ' >"${flux_policy_handoff_patch_file}"
-  if kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace flux-system \
-    patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
-    "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
-    --type=json \
-    --patch-file="${flux_policy_handoff_patch_file}" \
-    -o json \
-    >"${flux_policy_handoff_state_file}" \
-    2>"${flux_policy_handoff_result_file}"; then
-    flux_policy_handoff_acquired=true
-  else
+pause_flux_policy_handoff() {
+  local resource_version annotations_present attempt
+  local stable_resource_version="" current_resource_version
+  local claim_attempt reread_resource_version
+  local max_claim_attempts="${FLUX_POLICY_HANDOFF_CLAIM_MAX_ATTEMPTS:-5}"
+  # Separate stderr sink for the re-read, so a successful re-read cannot truncate
+  # the patch rejection that explains why the claim failed.
+  local reread_error_file="${flux_policy_handoff_result_file}.reread"
+
+  # The child is rewritten by its own controller, so a benign write can move its
+  # resourceVersion between the quiescence read and this CAS. That is contention,
+  # not a conflict, and is retried under the rules the parent fence uses (#3046):
+  # only when the re-read shows the resourceVersion MOVED and nobody else owns the
+  # object, each retry re-proving quiescence and the parent from scratch. Every
+  # other rejection, and every state that is no longer ours to claim, still fails
+  # closed on the first attempt (#3067).
+  for ((claim_attempt = 1; ; claim_attempt++)); do
+    wait_for_flux_policy_handoff_claimable || return 1
+
+    resource_version="$(jq -er '.metadata.resourceVersion' \
+      "${flux_policy_handoff_state_file}")"
+    flux_policy_handoff_uid="$(jq -er '.metadata.uid' \
+      "${flux_policy_handoff_state_file}")"
+    flux_policy_handoff_owner="${sync_lease_holder}"
+    annotations_present="$(jq -r \
+      '(.metadata.annotations? | type) == "object"' \
+      "${flux_policy_handoff_state_file}")"
+    jq -n \
+      --arg resource_version "${resource_version}" \
+      --arg uid "${flux_policy_handoff_uid}" \
+      --arg owner_path "${FLUX_POLICY_HANDOFF_OWNER_JSON_PATH}" \
+      --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
+      --arg owner "${flux_policy_handoff_owner}" \
+      --argjson annotations_present "${annotations_present}" '
+      [
+        {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
+        {op: "test", path: "/metadata/uid", value: $uid}
+      ]
+      + (if $annotations_present then [] else
+        [{op: "add", path: "/metadata/annotations", value: {}}]
+      end)
+      + [
+        {op: "add", path: $owner_path, value: $owner},
+        {op: "add", path: $reconcile_path, value: "disabled"},
+        {op: "add", path: "/spec/suspend", value: true}
+      ]
+    ' >"${flux_policy_handoff_patch_file}"
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+      --type=json \
+      --patch-file="${flux_policy_handoff_patch_file}" \
+      -o json \
+      >"${flux_policy_handoff_state_file}" \
+      2>"${flux_policy_handoff_result_file}"; then
+      flux_policy_handoff_acquired=true
+      break
+    fi
+
+    # A lost patch response is ambiguous: adopt only the exact tuple this
+    # transaction wrote, so EXIT cleanup owns the fence even when kubectl failed.
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       --namespace flux-system \
       get "${FLUX_KUSTOMIZATION_RESOURCE}" \
       "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
-      -o json >"${flux_policy_handoff_state_file}" ||
-      ! flux_policy_handoff_is_owned; then
-      echo "::error::Could not atomically pause or adopt the Flux image-verification policy owner."
+      -o json >"${flux_policy_handoff_state_file}" \
+      2>"${reread_error_file}"; then
+      if [[ ! -s "${reread_error_file}" ]] ||
+        ! cat "${reread_error_file}" \
+        >"${flux_policy_handoff_result_file}" 2>/dev/null; then
+        echo "policy owner re-read failed; its diagnostic could not be read" \
+          >"${flux_policy_handoff_result_file}"
+      fi
+      break
+    fi
+    if flux_policy_handoff_is_owned; then
+      flux_policy_handoff_acquired=true
+      break
+    fi
+
+    # An owner that is not ours is a competing transaction, never contention.
+    if jq -e \
+      --arg annotation "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" '
+      ((.metadata.annotations // {})[$annotation] // "") != ""
+    ' "${flux_policy_handoff_state_file}" >/dev/null; then
+      rm -f "${reread_error_file}"
+      emit_safe_operation_output "flux-policy-handoff-patch" \
+        "${flux_policy_handoff_result_file}"
+      echo "::error::Another transaction already owns the image-verification policy handoff; refusing cluster mutation. Run './scripts/refresh-flux-ghcr-auth.sh --fences' to list every held fence with its liveness evidence and exact release command, and see docs/dr/runbook.md → 'Recover an orphaned GHCR deploy fence'."
       return 1
     fi
-    flux_policy_handoff_acquired=true
+
+    # Only a rejection whose resourceVersion demonstrably moved is contention; one
+    # at an unchanged version was refused on its merits and is not repeated.
+    reread_resource_version="$(jq -r '.metadata.resourceVersion // ""' \
+      "${flux_policy_handoff_state_file}")"
+    if [[ "${reread_resource_version}" == "${resource_version}" ]] ||
+      ((claim_attempt >= max_claim_attempts)) ||
+      [[ -e "${sync_lease_lost_file}" ]]; then
+      break
+    fi
+    sleep "${SYNC_INTERVAL}"
+  done
+
+  rm -f "${reread_error_file}"
+  if [[ "${flux_policy_handoff_acquired}" != "true" ]]; then
+    emit_safe_operation_output "flux-policy-handoff-patch" \
+      "${flux_policy_handoff_result_file}"
+    echo "::error::Could not atomically pause or adopt the Flux image-verification policy owner."
+    return 1
   fi
 
   # Flux explicitly documents that suspension does not stop an execution that
