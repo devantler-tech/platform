@@ -640,6 +640,16 @@ case "$args" in
     bm_ref="${args#*branch=}"
     bm_ref="${bm_ref%%&*}"
     bm_ref="${bm_ref%% *}"
+    if [ -n "${BM_RUNS_RESPONSE_SEQUENCE_FILE:-}" ] && [ "$bm_ref" = "${BM_RUNS_RESPONSE_SEQUENCE_TAG:-}" ]; then
+      bm_calls=0
+      [ ! -f "$BM_RUNS_RESPONSE_SEQUENCE_STATE" ] || bm_calls="$(cat "$BM_RUNS_RESPONSE_SEQUENCE_STATE")"
+      bm_calls=$((bm_calls + 1))
+      printf '%s\n' "$bm_calls" >"$BM_RUNS_RESPONSE_SEQUENCE_STATE"
+      bm_response="$(sed -n "${bm_calls}p" "$BM_RUNS_RESPONSE_SEQUENCE_FILE")"
+      [ -n "$bm_response" ] || exit 73
+      printf '%s\n' "$bm_response"
+      exit 0
+    fi
     # The same failure one lookup later: the runs query itself cannot be answered.
     if [ -n "${BM_RUNS_FAIL_TAG:-}" ] && [ "$bm_ref" = "$BM_RUNS_FAIL_TAG" ]; then
       printf 'API rate limit exceeded\n' >&2
@@ -1507,6 +1517,31 @@ publication_response_case() {
 }
 
 pr_success="$(jq -cn --arg sha "$SHA_C" '{total_count:1,workflow_runs:[{name:"RESPONSE_ONLY_SENTINEL",head_branch:"v2.0.0",path:".github/workflows/cd.yaml",head_sha:$sha,conclusion:"success"}]}')"
+pr_empty='{"total_count":0,"workflow_runs":[]}'
+
+# A complete zero-run response can be transient: the same tag and commit had a
+# successful CD run before and after Platform main's failed report. Confirm that
+# absence once, while keeping a persistently empty answer unpublished.
+publication_sequence_case() {
+  local name="$1" second="$2" expected="$3" classification="$4" rc=0
+  local sequence="$WORK/sequence-$name.jsonl" state="$WORK/sequence-$name.calls"
+  local out="$WORK/sequence-$name.out" err="$WORK/sequence-$name.err"
+  printf '%s\n%s\n' "$pr_empty" "$second" >"$sequence"
+  BM_RUNS_RESPONSE_SEQUENCE_TAG=v2.0.0 BM_RUNS_RESPONSE_SEQUENCE_FILE="$sequence" \
+    BM_RUNS_RESPONSE_SEQUENCE_STATE="$state" PATH="$bm_bin:$PATH" \
+    bash -c 'source "$1"; tag_was_published wedding-app v2.0.0 "$2"' \
+    bash "$SCRIPT" "$SHA_C" >"$out" 2>"$err" || rc=$?
+  local before="$failures"
+  [ "$rc" -eq "$expected" ] || fail "$name classified as $rc, expected $expected"
+  [ ! -s "$out" ] || fail "$name polluted the publication result on stdout"
+  grep -q "classification=$classification" "$err" || fail "$name omitted its publication classification"
+  [ "$(cat "$state")" -eq 2 ] || fail "$name did not make exactly one bounded confirmation read"
+  [ "$failures" -ne "$before" ] || pass "publication response $name confirms transient absence without accepting persistent absence"
+}
+
+publication_sequence_case empty-then-success "$pr_success" 0 published
+publication_sequence_case persistently-empty "$pr_empty" 1 unpublished
+
 publication_response_case success 0 published complete "$pr_success"
 publication_response_case empty 1 unpublished complete '{"total_count":0,"workflow_runs":[],"private":"RESPONSE_ONLY_SENTINEL"}'
 publication_response_case failed 1 unpublished complete "$(jq '.workflow_runs[0].conclusion="failure"' <<<"$pr_success")"
