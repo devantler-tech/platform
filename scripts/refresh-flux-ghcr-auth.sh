@@ -3374,6 +3374,7 @@ revalidate_selected_node_identity_before_mutation() {
 revalidate_image_only_node_guard() {
   local node_name="$1" node_uid="$2" node_ip="$3" node_role="$4"
   local desired_revision="$5" phase="$6"
+  local expected_cordoned="${7:-}"
   local allow_removed=0
 
   assert_sync_lease_held || return 1
@@ -3394,13 +3395,16 @@ revalidate_image_only_node_guard() {
     "${node_ip}" "${node_role}" ||
     ! jq -e \
       --arg revision "${desired_revision}" \
+      --arg expected_cordoned "${expected_cordoned}" \
       --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
       --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
       --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" '
-        .metadata.annotations[$revision_annotation] == $revision
+        (.spec.unschedulable // false) as $cordoned
+        | .metadata.annotations[$revision_annotation] == $revision
         and (.metadata.annotations[$owner_annotation] // "") == ""
         and (.metadata.annotations[$recovery_annotation] // "") == ""
-        and (.spec.unschedulable // false) == false
+        and ($cordoned | type == "boolean")
+        and ($expected_cordoned == "" or $cordoned == ($expected_cordoned == "true"))
         and .metadata.deletionTimestamp == null
         and any(.status.conditions[]?;
           .type == "Ready" and .status == "True")
@@ -3408,7 +3412,7 @@ revalidate_image_only_node_guard() {
           .key != "ToBeDeletedByClusterAutoscaler"
           and .key != "node.kubernetes.io/not-ready"
           and .key != "node.kubernetes.io/unreachable"
-          and .key != "node.kubernetes.io/unschedulable")
+          and (.key != "node.kubernetes.io/unschedulable" or $cordoned))
       ' "${cordon_state_file}" >/dev/null; then
     echo "::error::Image-only target ${node_name} changed identity, credential proof, or scheduling state before ${phase}; refusing to record image proof."
     return 1
@@ -3441,6 +3445,7 @@ write_talos_revision_patch_for_node() {
 process_talos_image_only_target() {
   local desired_revision="$1" operator_image="$2" node_role="$3"
   local node_name="$4" node_ip="$5" node_uid="$6"
+  local initial_cordoned=""
 
   if [[ -f "${bootstrap_cordon_dir}/${node_name}.json" ]]; then
     echo "::error::Image-only target ${node_name} has an unfinished bootstrap fence; refusing unfenced proof."
@@ -3449,6 +3454,7 @@ process_talos_image_only_target() {
   revalidate_image_only_node_guard \
     "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
     "${desired_revision}" "cache removal" || return $?
+  initial_cordoned="$(jq -er '(.spec.unschedulable // false) | tostring' "${cordon_state_file}")" || return 1
   if ! talosctl --nodes "${node_ip}" image remove "${operator_image}" \
     --namespace cri >"${talos_result_file}" 2>&1; then
     if ! talos_image_remove_reports_absent \
@@ -3459,7 +3465,7 @@ process_talos_image_only_target() {
   fi
   revalidate_image_only_node_guard \
     "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
-    "${desired_revision}" "image pull" || return $?
+    "${desired_revision}" "image pull" "${initial_cordoned}" || return $?
   if ! talosctl --nodes "${node_ip}" image pull "${operator_image}" \
     --namespace cri >"${talos_result_file}" 2>&1; then
     echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image; root auth remains unchanged."
@@ -3467,7 +3473,7 @@ process_talos_image_only_target() {
   fi
   revalidate_image_only_node_guard \
     "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
-    "${desired_revision}" "revision marker" || return $?
+    "${desired_revision}" "revision marker" "${initial_cordoned}" || return $?
   write_talos_revision_patch_for_node \
     "${desired_revision}" "${operator_image}" "${node_uid}" || return 1
   if ! talosctl --nodes "${node_ip}" patch machineconfig \
@@ -3478,7 +3484,7 @@ process_talos_image_only_target() {
   fi
   revalidate_image_only_node_guard \
     "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
-    "${desired_revision}" "completion" || return $?
+    "${desired_revision}" "completion" "${initial_cordoned}" || return $?
 }
 
 process_talos_node_target() {

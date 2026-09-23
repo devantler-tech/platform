@@ -1618,7 +1618,8 @@ func fakeInventoryNode(
 	if !omitReady {
 		status["conditions"] = []any{map[string]any{"type": "Ready", "status": "True"}}
 	}
-	cordoned := wordListContains(os.Getenv("FAKE_CORDONED_NODES"), name) || markerExists("cordoned-"+name)
+	cordoned := (wordListContains(os.Getenv("FAKE_CORDONED_NODES"), name) || markerExists("cordoned-"+name)) &&
+		!markerExists("external-uncordon-after-remove-"+name)
 	taints := []any{}
 	if cordoned {
 		taints = append(taints, map[string]any{
@@ -1825,7 +1826,8 @@ func fakeKubectlGetNode(args []string) int {
 	if owner := markerContent("scale-down-owner-" + nodeName); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-scale-down-owner"] = owner
 	}
-	cordoned := wordListContains(os.Getenv("FAKE_CORDONED_NODES"), nodeName) || markerExists("cordoned-"+nodeName)
+	cordoned := (wordListContains(os.Getenv("FAKE_CORDONED_NODES"), nodeName) || markerExists("cordoned-"+nodeName)) &&
+		!markerExists("external-uncordon-after-remove-"+nodeName)
 	if nodeName == os.Getenv("FAKE_EXTERNAL_UNCORDON_AFTER_READY_NODE") && markerExists("ready-"+nodeName) {
 		cordoned = false
 	}

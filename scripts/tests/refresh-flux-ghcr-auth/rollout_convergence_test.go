@@ -213,6 +213,42 @@ func TestFailedImageOnlyPullDoesNotDisruptSchedulingOrPublish(t *testing.T) {
 	}
 }
 
+func TestImageOnlyProofPreservesPreexistingMaintenanceCordon(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":  "true",
+		"FAKE_TALOS_VERIFIED_IMAGE": "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_CORDONED_NODES":       "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "talos-pull:10.0.0.2:"+ksailTargetImage)
+	requireLine(t, operations, "root-patch")
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-worker-1", "node-uncordon:prod-worker-1",
+		"node-drain:prod-worker-1", "talos-reboot:10.0.0.2",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
+func TestImageOnlyProofRejectsExternalUncordonDuringPull(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":                 "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":                "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_CORDONED_NODES":                      "prod-worker-1",
+		"FAKE_EXTERNAL_UNCORDON_AFTER_REMOVE_NODE": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "operator-uncordon-after-remove:prod-worker-1")
+	requireNoLine(t, operations, "talos-pull:10.0.0.2:"+ksailTargetImage)
+	requireNoLine(t, operations, "root-patch")
+}
+
 func TestImageOnlyProofRefusesAutoscalerDeletionCandidate(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

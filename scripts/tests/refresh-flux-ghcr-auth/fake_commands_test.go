@@ -366,6 +366,7 @@ func fakeTalosctl(args []string) int {
 		touchMarker("talos-remove-" + node)
 		if nodeName == os.Getenv("FAKE_EXTERNAL_UNCORDON_AFTER_REMOVE_NODE") {
 			removeMarker("cordoned-" + nodeName)
+			touchMarker("external-uncordon-after-remove-" + nodeName)
 			appendEnvFile("OPERATION_LOG", "operator-uncordon-after-remove:"+nodeName+"\n")
 		}
 		return 0
