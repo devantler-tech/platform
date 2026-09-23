@@ -145,11 +145,34 @@ scan="$(
 # a backslash, is never split. Quote state resets at each line, so a quote left
 # open by YAML prose cannot swallow the rest of a file.
 #
+# 🔴 A QUOTE COUNTS ONLY WHEN IT CLOSES ON THE SAME LINE.
+#
+# The pass sees one line at a time, so it cannot pair a quote whose partner sits
+# on another line: the closing line of a multi-line string, or an apostrophe in
+# prose. Treating such a quote as opening one would hide every separator after it,
+# so in `line"; ./scripts/x.sh` — the last line of a multi-line `echo "…"` — the
+# direct invocation would go unchecked. The whitespace `&&`/`||` split and the
+# classifier's `;`/`|` reset this pass replaced caught exactly that. An unpaired
+# quote is therefore plain text and splitting continues past it: the fail-closed
+# direction, and no more splitting than those lines had before this pass existed.
+#
 # What splits: `&&`, `||`, `;`, `|`, `|&`, `(`, and a lone `&` (background). What
 # does not: the `&` of a redirection (`2>&1`, `>&2`, `<&3`, `&>file`) and the `|`
 # of `>|`, which are operands of a redirection rather than command boundaries.
 split_separators() {
   awk '
+    # 1 when the quote character q at position i has a partner later on the same
+    # line, honouring the same escapes the walk below does: a backslash escapes
+    # the next character inside double quotes and nothing inside single quotes.
+    function closes(line, i, q,    j, m, ch) {
+      m = length(line)
+      for (j = i + 1; j <= m; j++) {
+        ch = substr(line, j, 1)
+        if (q == "\"" && ch == "\\") { j++; continue }
+        if (ch == q) return 1
+      }
+      return 0
+    }
     {
       line = $0; out = ""; quote = ""; n = length(line)
       for (i = 1; i <= n; i++) {
@@ -169,7 +192,7 @@ split_separators() {
           if (c == "\"") quote = ""
           continue
         }
-        if (c == "\047" || c == "\"") {
+        if ((c == "\047" || c == "\"") && closes(line, i, c)) {
           quote = c
           out = out c
           continue

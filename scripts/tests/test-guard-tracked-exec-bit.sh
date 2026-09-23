@@ -526,6 +526,50 @@ make_two_script_fixture "$work/pipe-first" './scripts/fixture-target.sh | bash .
 expect "PIPE-FIRST a direct invocation BEFORE a pipe is still checked" 1 \
   "'scripts/fixture-target.sh' is invoked directly" "$work/pipe-first"
 
+# AN UNPAIRED QUOTE IS TEXT: the guard reads one line at a time, so the closing
+# line of a multi-line string carries a quote with no partner on that line.
+# Reading it as an OPENING quote hid every separator after it, and the direct
+# invocation that follows the string went unchecked. Each line below is the
+# second line of `echo "multi` … `line"`, inside one run block.
+make_multiline_string_fixture() {
+  local dir="$1" closing_line="$2"
+  mkdir -p "$dir/scripts" "$dir/.github/workflows"
+  cd "$dir"
+  git init -q .
+  git config user.email t@example.com
+  git config user.name t
+  printf '#!/usr/bin/env bash\necho hi\n' > scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  {
+    printf 'jobs:\n  j:\n    steps:\n      - run: |\n'
+    printf '          echo "multi\n'
+    printf '          %s\n' "$closing_line"
+    printf '      - run: ./scripts/fixture-anchor.sh\n'
+  } > .github/workflows/w.yaml
+  git add -A
+  git update-index --chmod=-x scripts/fixture-target.sh
+  git update-index --chmod=+x scripts/fixture-anchor.sh
+  git -c commit.gpgsign=false commit -qm fixture
+  cd - > /dev/null
+}
+make_multiline_string_fixture "$work/unpaired-semi" 'line"; ./scripts/fixture-target.sh'
+expect "UNPAIRED a direct invocation after a string's closing quote and ; is rejected" 1 \
+  "is tracked 100644, not 100755" "$work/unpaired-semi"
+
+make_multiline_string_fixture "$work/unpaired-and" 'line" && scripts/fixture-target.sh'
+expect "UNPAIRED a direct invocation after a string's closing quote and && is rejected" 1 \
+  "is tracked 100644, not 100755" "$work/unpaired-and"
+
+make_multiline_string_fixture "$work/unpaired-pipe" 'line"| ./scripts/fixture-target.sh'
+expect "UNPAIRED a direct invocation after a string's closing quote and | is rejected" 1 \
+  "is tracked 100644, not 100755" "$work/unpaired-pipe"
+
+# The interpreter control, so "an unpaired quote is text" cannot become "demand
+# the bit on everything after an unpaired quote".
+make_multiline_string_fixture "$work/unpaired-bash" 'line"; bash ./scripts/fixture-target.sh'
+expect "UNPAIRED an interpreter after a string's closing quote stays accepted" 0 \
+  "exec-bit guard OK" "$work/unpaired-bash"
+
 if ((failures > 0)); then
   echo "::error::$failures exec-bit guard assertion(s) failed"
   exit 1
