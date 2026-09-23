@@ -5,6 +5,7 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly alertmanager_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/alertmanager/helm-release.yaml"
+readonly backstage_release="${root_dir}/k8s/bases/apps/backstage/helm-release.yaml"
 readonly kubescape_alert_route="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kubescape/patches/route-runtime-detection-alerts.yaml"
 readonly crossplane_alerter="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/cron-job-crossplane-sync-alerter.yaml"
 readonly dr_runbook="${root_dir}/docs/dr/velero-cnpg.md"
@@ -26,6 +27,12 @@ fail() {
 
 command -v yq >/dev/null || fail 'yq is required'
 command -v kubectl >/dev/null || fail 'kubectl is required'
+
+yq e -e '
+  .spec.values.backstage.startupProbe.httpGet.path == "/.backstage/health/v1/readiness" and
+  .spec.values.backstage.startupProbe.failureThreshold == 30
+' "${backstage_release}" >/dev/null ||
+  fail 'Backstage must retry startup if backend initialization never reaches readiness'
 
 yq e -e '
   .spec.values.replicaCount == 2 and
