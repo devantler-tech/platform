@@ -3442,6 +3442,8 @@ write_talos_revision_patch_for_node() {
   chmod 600 "${talos_revision_patch_file}"
 }
 
+# process_talos_image_only_target proves the incoming image without changing
+# scheduling when the credential revision is already active on this Node.
 process_talos_image_only_target() {
   local desired_revision="$1" operator_image="$2" node_role="$3"
   local node_name="$4" node_ip="$5" node_uid="$6"
@@ -3487,6 +3489,8 @@ process_talos_image_only_target() {
     "${desired_revision}" "completion" "${initial_cordoned}" || return $?
 }
 
+# process_talos_node_target keeps credential changes on the existing fenced
+# reboot path and delegates image-only drift to its non-disruptive proof.
 process_talos_node_target() {
   local desired_revision="$1"
   local operator_image="$2"

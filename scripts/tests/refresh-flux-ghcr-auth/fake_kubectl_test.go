@@ -1398,6 +1398,8 @@ func validateKubernetesMicroTimes(values ...string) error {
 	return nil
 }
 
+// fakeKubectlGetNodes returns the current inventory, including durable proof
+// markers and autoscaler churn modeled by the fixture.
 func fakeKubectlGetNodes() int {
 	if os.Getenv("FAKE_NODE_DISCOVERY_FAIL") == "true" {
 		return commandFailure(46, "node discovery failed")
@@ -1561,6 +1563,8 @@ func fakeKubectlGetNodes() int {
 	return 0
 }
 
+// fakeInventoryNode builds a Node with the identity and scheduling state used
+// to exercise target selection against a changing cluster inventory.
 func fakeInventoryNode(
 	name string,
 	uid string,
@@ -1694,6 +1698,8 @@ func fakeKubectlGetPods(args []string) int {
 	return 0
 }
 
+// setInventoryProof carries Talos revision, image, and Node-UID markers into
+// the Kubernetes inventory seen by the synchronization script.
 func setInventoryProof(node any, revision, image string) {
 	nodeMap := node.(map[string]any)
 	metadata := nodeMap["metadata"].(map[string]any)
@@ -1710,6 +1716,8 @@ func setInventoryProof(node any, revision, image string) {
 	}
 }
 
+// fakeKubectlGetNode re-reads one selected Node and exposes identity or
+// scheduling changes at the same boundaries as the production script.
 func fakeKubectlGetNode(args []string) int {
 	nodeName := argumentAfter(args, "node")
 	if nodeName == "" {
@@ -1973,6 +1981,8 @@ func fakeNodeName(nodeAddress string) string {
 	return ""
 }
 
+// fakeExpectedNodeUID models a replacement retaining its address after a
+// marker write, so stale durable proof cannot bind the new Node.
 func fakeExpectedNodeUID(nodeName string) string {
 	if nodeName == os.Getenv("FAKE_NODE_REPLACED_AFTER_IMAGE_MARKER") {
 		address, _ := fakeNodeAddress(nodeName)

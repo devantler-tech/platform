@@ -187,6 +187,8 @@ func fakeRuntimeProbeImage(repository string) string {
 	return "ghcr.io/" + repository + "@" + fakeManifestDigest(repository)
 }
 
+// fakeTalosctl records the exact image and UID proof while rejecting unsafe
+// cache, credential, or scheduling operations in the test fixture.
 func fakeTalosctl(args []string) int {
 	node := flagValue(args, "--nodes")
 	if node == "" {

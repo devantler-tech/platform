@@ -168,6 +168,8 @@ func TestStaleRuntimeProofFallsBackToFullVerification(t *testing.T) {
 	requireLine(t, operations, "talos-reboot:10.0.0.2")
 }
 
+// TestMatchingRevisionRevalidatesChangedDeclaredImage requires an uncached
+// image pull even when the credential revision is unchanged.
 func TestMatchingRevisionRevalidatesChangedDeclaredImage(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -197,6 +199,8 @@ func TestMatchingRevisionRevalidatesChangedDeclaredImage(t *testing.T) {
 	requireNotContains(t, strings.Join(operations, "\n"), previousImage)
 }
 
+// TestFailedImageOnlyPullDoesNotDisruptSchedulingOrPublish keeps a failed
+// registry proof from changing scheduling or publishing root credentials.
 func TestFailedImageOnlyPullDoesNotDisruptSchedulingOrPublish(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -213,6 +217,8 @@ func TestFailedImageOnlyPullDoesNotDisruptSchedulingOrPublish(t *testing.T) {
 	}
 }
 
+// TestImageOnlyProofPreservesPreexistingMaintenanceCordon accepts stable
+// operator-owned scheduling intent without taking ownership of it.
 func TestImageOnlyProofPreservesPreexistingMaintenanceCordon(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -233,6 +239,8 @@ func TestImageOnlyProofPreservesPreexistingMaintenanceCordon(t *testing.T) {
 	}
 }
 
+// TestImageOnlyProofRejectsExternalUncordonDuringPull fails closed when
+// scheduling intent changes during the image-only proof.
 func TestImageOnlyProofRejectsExternalUncordonDuringPull(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -249,6 +257,8 @@ func TestImageOnlyProofRejectsExternalUncordonDuringPull(t *testing.T) {
 	requireNoLine(t, operations, "root-patch")
 }
 
+// TestImageOnlyProofRefusesAutoscalerDeletionCandidate prevents a proof from
+// being recorded against a Node already selected for deletion.
 func TestImageOnlyProofRefusesAutoscalerDeletionCandidate(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -269,6 +279,8 @@ func TestImageOnlyProofRefusesAutoscalerDeletionCandidate(t *testing.T) {
 	}
 }
 
+// TestImageOnlyProofBindsDurableMarkerToNodeUID requires persistent proof to
+// identify the exact Kubernetes Node that performed the pull.
 func TestImageOnlyProofBindsDurableMarkerToNodeUID(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -287,6 +299,8 @@ func TestImageOnlyProofBindsDurableMarkerToNodeUID(t *testing.T) {
 	}
 }
 
+// TestMismatchedDurableUIDRequiresFencedRuntimeProof routes a replacement
+// with a stale nonempty UID marker through the credential-reboot fence.
 func TestMismatchedDurableUIDRequiresFencedRuntimeProof(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -304,6 +318,8 @@ func TestMismatchedDurableUIDRequiresFencedRuntimeProof(t *testing.T) {
 	requireLine(t, operations, "root-patch")
 }
 
+// TestLegacyUIDLessProofRevalidatesEveryNodeWithoutCordon migrates old proof
+// markers through uncached pulls without disrupting workload scheduling.
 func TestLegacyUIDLessProofRevalidatesEveryNodeWithoutCordon(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -328,6 +344,8 @@ func TestLegacyUIDLessProofRevalidatesEveryNodeWithoutCordon(t *testing.T) {
 	}
 }
 
+// TestReplacementAfterImageMarkerReprovesReusedAddress requires a second pull
+// when an autoscaler replaces a Node but preserves its name and address.
 func TestReplacementAfterImageMarkerReprovesReusedAddress(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -453,6 +471,8 @@ func TestDeselectionEmptyingTheTargetSetTakesAnotherConvergenceRound(t *testing.
 	}
 }
 
+// TestRemovedNodeAfterMutationStillFailsClosed refuses root cutover when a
+// target disappears after a durable image marker has been written.
 func TestRemovedNodeAfterMutationStillFailsClosed(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
