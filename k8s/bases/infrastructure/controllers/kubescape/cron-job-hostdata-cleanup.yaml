@@ -79,9 +79,9 @@ spec:
                 - |
                   set -eu
                   DRY_RUN="${DRY_RUN:-false}"
-                  # kubectl does not infer its server from a mounted service
-                  # account. Point it at the cluster Service and reference the
-                  # projected token file so token bytes never enter argv or logs.
+                  # The previous run fell back to localhost despite a mounted
+                  # service account. Configure the API explicitly and reference
+                  # the projected token file without copying it into argv/logs.
                   KUBECONFIG="$HOME/kubeconfig"
                   export KUBECONFIG
                   umask 077
