@@ -1563,8 +1563,73 @@ for pr_case in null-runs truncated-full-page; do
   fi
 done
 
+# ---------------------------------------------------------------------------
+# 30. AN INCLUSIVE FLOOR IS A LOWER BOUND, NOT "WHATEVER IS NEWEST". (#3329)
+#     `>=X` was read as fully unbounded, which is right only while some published
+#     release satisfies X. With `>=3.0.0` and a newest tag of 2.5.0 Flux selects
+#     NOTHING, yet the walk returned 2.5.0 and attributed its workflow revision to an
+#     artifact Flux never selected. The same holds when the only release at or above
+#     the floor never published: the walk stepped past it to a release below the floor.
+# ---------------------------------------------------------------------------
+# floor_root <label> <selector>: a copy of the fixture with the selector on wedding-app only.
+floor_root() {
+  local root="$WORK/floor-$1-root" file
+  cp -R "$bm_root" "$root"
+  file="$(grep -rlF 'devantler-tech/wedding-app/' "$root")"
+  sed -i.bak "s|semver: \">=1.0.0\"|semver: \"$2\"|" "$file"
+  rm -f "$file.bak"
+  grep -qF "semver: \"$2\"" "$file" || fail "floor fixture $1 did not write selector $2"
+  printf '%s\n' "$root"
+}
+
+floor_refuses() {
+  # <label> <selector> <git-tags> [unpublished-tag] [registry-tags]
+  local label="$1" selector="$2" tags="$3" unpublished="${4:-}" registry="${5:-$3}" root out
+  root="$(floor_root "$label" "$selector")"
+  out="$WORK/floor-$label.out"
+  if BM_WEDDING_TAGS="$tags" BM_WEDDING_REGISTRY_TAGS="$registry" BM_UNPUBLISHED_TAG="$unpublished" \
+    BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+    PUBLISH_CONSUMER_ROOT="$root" "$SCRIPT" >"$out" 2>&1; then
+    fail "$label: floor $selector resolved to a release below it instead of refusing"
+    return
+  fi
+  grep -qE '^UNRESOLVED +wedding-app' "$out" ||
+    fail "$label: the floored consumer was not the one left unresolved"
+  grep -q 'semver floor' "$out" ||
+    fail "$label: the run failed but not because of the floor; the case is not testing what it claims"
+  grep -qF "$selector" "$out" ||
+    fail "$label: the refusal does not name the selector ($selector), so the cause is not diagnosable"
+  [ "$(grep -c '^UNRESOLVED' "$out" || true)" -eq 1 ] ||
+    fail "$label: expected exactly ONE unresolved consumer (the floored one)"
+  [ "$(grep -c '^IN-SYNC' "$out" || true)" -eq "$expected_insync" ] ||
+    fail "$label: the other consumers did not resolve through the same stub"
+  pass "$label: a floor no published release satisfies refuses by name"
+}
+
+floor_refuses above-every-tag '>=3.0.0' 'v2.5.0\nv1.9.0\n'
+# The release at the floor never published, so it never reached the registry either.
+floor_refuses only-candidate-unpublished '>=3.0.0' 'v3.0.0\nv2.9.0\n' v3.0.0 '2.9.0\n'
+
+# CONTROLS: a floor some published release satisfies resolves exactly as before,
+# including a partial floor Flux coerces (>=2.0 is >=2.0.0) and a floor equal to the
+# newest release. Refusing every `>=` would satisfy the cases above and break every
+# real consumer in this repository.
+for floor_ok in '>=2.0' '>=2.5.0'; do
+  fo_root="$(floor_root "ok-${floor_ok//[^0-9]/}" "$floor_ok")"
+  fo_out="$WORK/floor-ok-${floor_ok//[^0-9]/}.out"
+  if BM_WEDDING_TAGS='v2.5.0\nv1.9.0\n' \
+    BM_SHA_A="$SHA_A" BM_SHA_B="$SHA_B" BM_SHA_C="$SHA_C" BM_VIOLATION_LOG="$WORK/interpolated.log" PATH="$bm_bin:$PATH" \
+    PUBLISH_CONSUMER_ROOT="$fo_root" "$SCRIPT" >"$fo_out" 2>&1; then
+    [ "$(grep -c '^IN-SYNC' "$fo_out" || true)" -eq "$consumer_count" ] ||
+      fail "floor $floor_ok: expected every consumer IN-SYNC"
+    pass "a floor satisfied by the newest published release still resolves: $floor_ok"
+  else
+    fail "floor $floor_ok is satisfied by v2.5.0 but the consumer did not resolve: $(grep '^UNRESOLVED' "$fo_out" || true)"
+  fi
+done
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (29 groups)\n'
+printf '\nPASS: publish-workflow signing-revision report (30 groups)\n'
