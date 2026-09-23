@@ -61,6 +61,9 @@ spec:
     # primary replicas still share one node. Live primary pods carry this name.
     topologySpreadConstraints:
       - maxSkew: 1
+        # With only one eligible worker, the second primary must wait instead
+        # of satisfying skew against that worker alone (Kubernetes defaults to 1).
+        minDomains: 2
         topologyKey: kubernetes.io/hostname
         whenUnsatisfiable: DoNotSchedule
         labelSelector:

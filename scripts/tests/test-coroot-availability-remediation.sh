@@ -34,11 +34,12 @@ yq e -e '
   [.spec.values.topologySpreadConstraints[] |
     select(.topologyKey == "kubernetes.io/hostname" and
       .maxSkew == 1 and
+      .minDomains == 2 and
       .whenUnsatisfiable == "DoNotSchedule" and
       .labelSelector.matchLabels."app.kubernetes.io/name" == "umami-primary")
   ] | length == 1
 ' "${umami_release}" >/dev/null ||
-  fail 'Umami serving replicas must have a hard hostname spread scoped to primary pods'
+  fail 'Umami serving replicas must have a hard two-domain hostname spread scoped to primary pods'
 
 yq e -e '
   .spec.values.backstage.startupProbe.httpGet.path == "/.backstage/health/v1/readiness" and
