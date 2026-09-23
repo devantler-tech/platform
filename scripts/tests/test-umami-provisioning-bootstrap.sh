@@ -268,4 +268,76 @@ job_health_count="$(yq eval '[.spec.healthCheckExprs[] | select(.apiVersion == "
 [[ "${job_health_count}" == 0 ]] ||
   fail 'Flux native Job health takes precedence over CEL overrides; do not install a dead bypass rule'
 
+# Run the provisioner's own request helpers, not a copy of them, against a
+# stubbed Umami on a virtual clock. The weekly database-credential rotation
+# leaves an old server pod answering 500 for about 80 seconds (platform#2915),
+# so a 5xx must be retried through that window and still fail the run after it.
+command -v node >/dev/null 2>&1 || fail 'node is required to exercise the provisioner request helpers'
+PROVISIONER_SCRIPT="${provisioner_script}" node - <<'EOF' || fail 'the provisioner must retry a transient 5xx and still surface one that outlasts its window'
+const script = process.env.PROVISIONER_SCRIPT;
+const start = script.indexOf('const umamiRequestTimeoutMilliseconds');
+const end = script.indexOf('// The bootstrap Job and CronJob are different Kubernetes');
+if (start < 0 || end < start) throw new Error('could not locate the request helpers in the provisioner script');
+const helpers = script.slice(start, end);
+
+const run = async (name, responses, expectStatus, expectCalls, deadlineMs = 1200000, retryServerErrors = true) => {
+  let now = 0;
+  const calls = [];
+  let cancelled = 0;
+  const clock = { now: () => now };
+  const sleep = async (ms) => { now += ms; };
+  // Every stubbed response carries a body, so a discarded 5xx can be seen to be
+  // cancelled and the returned response can be seen to still be readable.
+  const fetch = async () => {
+    const next = responses[Math.min(calls.length, responses.length - 1)];
+    calls.push(now);
+    if (next === 'throw') throw new TypeError('fetch failed');
+    const text = 'body-' + calls.length;
+    const body = new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode(text)); controller.close(); },
+      cancel() { cancelled++; },
+    });
+    return new Response(body, { status: next });
+  };
+  const factory = new Function('Date', 'globalThis', 'sleep', 'umamiProvisioningDeadline', 'provisioningDeadlineExceeded', 'console',
+    helpers + '\nreturn fetchRetry;');
+  const fetchRetry = factory(clock, { fetch }, sleep, deadlineMs,
+    () => Object.assign(new Error('deadline'), { umamiProvisioningDeadlineExceeded: true }), { log() {} });
+  let status;
+  let returnedBody;
+  try {
+    const response = await fetchRetry('http://umami.test/api/teams', {}, retryServerErrors);
+    status = response.status;
+    returnedBody = await response.text();
+  } catch (e) { status = 'threw'; }
+  if (status !== expectStatus) throw new Error(name + ': expected ' + expectStatus + ', got ' + status);
+  if (expectCalls !== undefined && calls.length !== expectCalls) throw new Error(name + ': expected ' + expectCalls + ' calls, got ' + calls.length);
+  if (now > deadlineMs) throw new Error(name + ': retried past the provisioning deadline');
+  if (status !== 'threw' && returnedBody !== 'body-' + calls.length) throw new Error(name + ': the returned response body was not readable');
+  const discardedServerErrors = calls.length - 1 - responses.slice(0, calls.length - 1).filter((r) => r === 'throw').length;
+  if (status !== 'threw' && cancelled !== discardedServerErrors) throw new Error(name + ': ' + cancelled + ' discarded response bodies cancelled, expected ' + discardedServerErrors);
+  return calls;
+};
+
+(async () => {
+  await run('success is returned at once', [200], 200, 1);
+  await run('a client error is not retried', [404], 404, 1);
+  await run('a transient 5xx is retried until it clears', [500, 500, 503, 200], 200, 4);
+  // Longer than the measured ~80s rotation gap, still inside the window.
+  await run('a 5xx lasting over 80 seconds still recovers', Array(21).fill(500).concat([200]), 200, 22);
+  const persistent = await run('a 5xx that outlasts the window is returned', [500], 500);
+  const span = persistent[persistent.length - 1] - persistent[0];
+  if (span < 170000 || span > 180000) throw new Error('5xx retry window spans ' + span + 'ms, expected close to 180s');
+  await run('5xx retries do not use up the network-failure budget', [500, 500, 500, 'throw', 'throw', 'throw', 'throw', 200], 200, 8);
+  await run('network failures still give up after five attempts', ['throw'], 'threw', 5);
+  await run('5xx retries stop at the provisioning deadline', [500], 500, undefined, 12000);
+  await run('a caller that opts out gets the 5xx at once', [500, 200], 500, 1, 1200000, false);
+})().catch((e) => { console.error(e.message); process.exit(1); });
+EOF
+
+# Login opts out: ensureAuth already retries a failed login for about five minutes, and a
+# three-minute window per attempt would hold a real outage until the provisioning deadline.
+grep -Fq "fetchRetry(base + '/api/auth/login', { method: 'POST', headers: H(), body: JSON.stringify({ username: 'admin', password: pw }) }, false)" <<<"${provisioner_script}" ||
+  fail 'login must not stack the 5xx retry window on the authentication retry loop'
+
 printf 'Umami bootstrap is one-shot, immutable, and serialized with the scheduled reconciler.\n'

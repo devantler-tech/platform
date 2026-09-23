@@ -611,6 +611,17 @@ case "$args" in
     # Nothing else about the fixture changes, so a case using it isolates the failure path.
     bm_ctag="${args##*/commits/}"
     bm_ctag="${bm_ctag%% *}"
+    if [ -n "${BM_COMMIT_RESPONSE_SEQUENCE_FILE:-}" ] && [ "$bm_ctag" = "${BM_COMMIT_RESPONSE_SEQUENCE_TAG:-}" ]; then
+      bm_calls=0
+      [ ! -f "$BM_COMMIT_RESPONSE_SEQUENCE_STATE" ] || bm_calls="$(cat "$BM_COMMIT_RESPONSE_SEQUENCE_STATE")"
+      bm_calls=$((bm_calls + 1))
+      printf '%s\n' "$bm_calls" >"$BM_COMMIT_RESPONSE_SEQUENCE_STATE"
+      bm_response="$(sed -n "${bm_calls}p" "$BM_COMMIT_RESPONSE_SEQUENCE_FILE")"
+      [ -n "$bm_response" ] || exit 73
+      [ "$bm_response" != FAIL ] || exit 73
+      printf '%s\n' "$bm_response"
+      exit 0
+    fi
     if [ -n "${BM_COMMIT_FAIL_TAG:-}" ] && [ "$bm_ctag" = "$BM_COMMIT_FAIL_TAG" ]; then
       printf 'API rate limit exceeded\n' >&2
       exit 1
@@ -640,6 +651,16 @@ case "$args" in
     bm_ref="${args#*branch=}"
     bm_ref="${bm_ref%%&*}"
     bm_ref="${bm_ref%% *}"
+    if [ -n "${BM_RUNS_RESPONSE_SEQUENCE_FILE:-}" ] && [ "$bm_ref" = "${BM_RUNS_RESPONSE_SEQUENCE_TAG:-}" ]; then
+      bm_calls=0
+      [ ! -f "$BM_RUNS_RESPONSE_SEQUENCE_STATE" ] || bm_calls="$(cat "$BM_RUNS_RESPONSE_SEQUENCE_STATE")"
+      bm_calls=$((bm_calls + 1))
+      printf '%s\n' "$bm_calls" >"$BM_RUNS_RESPONSE_SEQUENCE_STATE"
+      bm_response="$(sed -n "${bm_calls}p" "$BM_RUNS_RESPONSE_SEQUENCE_FILE")"
+      [ -n "$bm_response" ] || exit 73
+      printf '%s\n' "$bm_response"
+      exit 0
+    fi
     # The same failure one lookup later: the runs query itself cannot be answered.
     if [ -n "${BM_RUNS_FAIL_TAG:-}" ] && [ "$bm_ref" = "$BM_RUNS_FAIL_TAG" ]; then
       printf 'API rate limit exceeded\n' >&2
@@ -1491,7 +1512,7 @@ publication_response_case() {
   local name="$1" expected="$2" classification="$3" response="$4" body="$5" rc=0
   local fixture="$WORK/response-$name.json" out="$WORK/response-$name.out" err="$WORK/response-$name.err"
   printf '%s\n' "$body" >"$fixture"
-  BM_RUNS_RESPONSE_TAG=v2.0.0 BM_RUNS_RESPONSE_FILE="$fixture" PATH="$bm_bin:$PATH" \
+  BM_SHA_C="$SHA_C" BM_RUNS_RESPONSE_TAG=v2.0.0 BM_RUNS_RESPONSE_FILE="$fixture" PATH="$bm_bin:$PATH" \
     bash -c 'source "$1"; tag_was_published wedding-app v2.0.0 "$2"' \
     bash "$SCRIPT" "$SHA_C" >"$out" 2>"$err" || rc=$?
   local before="$failures"
@@ -1507,6 +1528,59 @@ publication_response_case() {
 }
 
 pr_success="$(jq -cn --arg sha "$SHA_C" '{total_count:1,workflow_runs:[{name:"RESPONSE_ONLY_SENTINEL",head_branch:"v2.0.0",path:".github/workflows/cd.yaml",head_sha:$sha,conclusion:"success"}]}')"
+pr_empty='{"total_count":0,"workflow_runs":[]}'
+
+# A complete zero-run response can be transient: the same tag and commit had a
+# successful CD run before and after Platform main's failed report. Confirm that
+# absence once, while keeping a persistently empty answer unpublished.
+publication_sequence_case() {
+  local name="$1" second="$2" expected="$3" classification="$4" rc=0
+  local sequence="$WORK/sequence-$name.jsonl" state="$WORK/sequence-$name.calls"
+  local out="$WORK/sequence-$name.out" err="$WORK/sequence-$name.err"
+  printf '%s\n%s\n' "$pr_empty" "$second" >"$sequence"
+  BM_SHA_C="$SHA_C" BM_RUNS_RESPONSE_SEQUENCE_TAG=v2.0.0 BM_RUNS_RESPONSE_SEQUENCE_FILE="$sequence" \
+    BM_RUNS_RESPONSE_SEQUENCE_STATE="$state" PATH="$bm_bin:$PATH" \
+    bash -c 'source "$1"; tag_was_published wedding-app v2.0.0 "$2"' \
+    bash "$SCRIPT" "$SHA_C" >"$out" 2>"$err" || rc=$?
+  local before="$failures"
+  [ "$rc" -eq "$expected" ] || fail "$name classified as $rc, expected $expected"
+  [ ! -s "$out" ] || fail "$name polluted the publication result on stdout"
+  grep -q "classification=$classification" "$err" || fail "$name omitted its publication classification"
+  [ "$(cat "$state")" -eq 2 ] || fail "$name did not make exactly one bounded confirmation read"
+  [ "$failures" -ne "$before" ] || pass "publication response $name confirms transient absence without accepting persistent absence"
+}
+
+publication_sequence_case empty-then-success "$pr_success" 0 published
+publication_sequence_case persistently-empty "$pr_empty" 1 unpublished
+
+# A tag can move while the empty Actions response is being confirmed. The
+# caller first resolves it to SHA_C, then the final publication result must
+# reject a successful run for SHA_C if the tag now resolves to SHA_B.
+tag_change_during_confirmation_case() {
+  local name="$1" second_commit="$2" expected="$3" classification="$4" rc=0
+  local runs="$WORK/runs-$name.jsonl" run_state="$WORK/runs-$name.calls"
+  local commits="$WORK/commits-$name.txt" commit_state="$WORK/commits-$name.calls"
+  local out="$WORK/tag-change-$name.out" err="$WORK/tag-change-$name.err"
+  printf '%s\n%s\n' "$pr_empty" "$pr_success" >"$runs"
+  printf '%s\n%s\n' "$SHA_C" "$second_commit" >"$commits"
+  BM_SHA_C="$SHA_C" BM_RUNS_RESPONSE_SEQUENCE_TAG=v2.0.0 BM_RUNS_RESPONSE_SEQUENCE_FILE="$runs" \
+    BM_RUNS_RESPONSE_SEQUENCE_STATE="$run_state" \
+    BM_COMMIT_RESPONSE_SEQUENCE_TAG=v2.0.0 BM_COMMIT_RESPONSE_SEQUENCE_FILE="$commits" \
+    BM_COMMIT_RESPONSE_SEQUENCE_STATE="$commit_state" PATH="$bm_bin:$PATH" \
+    bash -c 'source "$1"; resolved="$(tag_commit wedding-app v2.0.0)" || exit 3; tag_was_published wedding-app v2.0.0 "$resolved"' \
+    bash "$SCRIPT" >"$out" 2>"$err" || rc=$?
+  local before="$failures"
+  [ "$rc" -eq "$expected" ] || fail "$name classified as $rc, expected $expected"
+  [ ! -s "$out" ] || fail "$name polluted the publication result on stdout"
+  grep -q "classification=$classification" "$err" || fail "$name omitted its publication classification"
+  [ "$(cat "$run_state")" -eq 2 ] || fail "$name did not confirm the empty Actions response"
+  [ "$(cat "$commit_state")" -ge 2 ] || fail "$name did not re-resolve the tag before accepting publication"
+  [ "$failures" -ne "$before" ] || pass "publication response $name rejects stale tag evidence"
+}
+
+tag_change_during_confirmation_case moved-during-confirmation "$SHA_B" 2 moved-tag
+tag_change_during_confirmation_case tag-resolution-fails FAIL 3 query-unknown
+
 publication_response_case success 0 published complete "$pr_success"
 publication_response_case empty 1 unpublished complete '{"total_count":0,"workflow_runs":[],"private":"RESPONSE_ONLY_SENTINEL"}'
 publication_response_case failed 1 unpublished complete "$(jq '.workflow_runs[0].conclusion="failure"' <<<"$pr_success")"
