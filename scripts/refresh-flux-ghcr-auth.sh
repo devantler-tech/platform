@@ -2429,7 +2429,7 @@ restore_node_schedulability_if_needed() {
       --arg owner "${owner_token}" \
       --arg uid "${initial_node_uid}" \
       --argjson scale_down_guard_owned "${scale_down_guard_owned}" '
-      ($recovery | fromjson?) as $record
+      ($recovery | try fromjson catch null) as $record
       | $record != null
       and (
         ($record.v == 1 and $scale_down_guard_owned == 0)
@@ -2541,7 +2541,7 @@ update_bootstrap_recovery_phase() {
     --arg uid "${initial_node_uid}" \
     --arg revision "${desired_revision}" \
     --arg phase "${expected_phase}" '
-    ($recovery | fromjson?) as $record
+    ($recovery | try fromjson catch null) as $record
     | $record != null
     and (
       ($record.v == 1 and ($record | keys | sort) == ([
@@ -2751,7 +2751,10 @@ reconcile_bootstrap_recovery_journals() {
       .items[]
       | select((.metadata.annotations[$recovery_annotation] // "") != "")
       | . as $node
-      | ($node.metadata.annotations[$recovery_annotation] | fromjson?) as $record
+      # `try/catch null`, never `fromjson?`: the latter yields EMPTY, which drops a
+      # malformed journal from $journals, so the all-or-nothing check below passes
+      # over its valid siblings instead of refusing (#3158).
+      | ($node.metadata.annotations[$recovery_annotation] | try fromjson catch null) as $record
       | {node: $node, record: $record}
     ] as $journals
     | all($journals[];
@@ -2817,7 +2820,7 @@ reconcile_bootstrap_recovery_journals() {
       --arg recovery "${recovery_record}" \
       --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
       --arg node_name "${node_name}" '
-      ($recovery | fromjson?) as $record
+      ($recovery | try fromjson catch null) as $record
       | $record != null
       and (
         ($record.v == 1 and ($record | keys | sort) == ([

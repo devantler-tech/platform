@@ -850,6 +850,50 @@ func TestRecoveryReconciliationKeepsActiveOwnerBatchQuarantined(t *testing.T) {
 	requireNoLine(t, operations, "root-patch")
 }
 
+// An unparseable journal must fail the up-front validation, not vanish from it: `fromjson?`
+// yields no value, so the entry was dropped and the all-or-nothing guard passed over the
+// valid sibling alone (#3158).
+func TestRecoveryReconciliationRefusesUnparseableJournal(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	const owner = "previous-roll-owner"
+	for nodeName, recovery := range map[string]string{
+		"prod-worker-1": encodeJSON(map[string]any{
+			"v":               1,
+			"owner":           owner,
+			"uid":             "prod-worker-1-uid",
+			"desiredRevision": f.expectedRevision(),
+			"wasCordoned":     0,
+			"initialTaints":   []any{},
+			"phase":           "rollback-safe",
+		}),
+		"prod-control-plane-1": `{"v":1,"owner":`,
+	} {
+		for path, contents := range map[string]string{
+			filepath.Join(f.syncStateDir, "cordon-recovery-"+nodeName): recovery,
+			filepath.Join(f.syncStateDir, "cordon-owner-"+nodeName):    owner,
+			filepath.Join(f.syncStateDir, "cordoned-"+nodeName):        "",
+		} {
+			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+				t.Fatalf("seed recovery marker %s: %v", path, err)
+			}
+		}
+	}
+
+	result := f.runHelperPreservingClusterState(validConfig(), nil, nil)
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr,
+		"recovery journal is malformed or does not match its owner/UID; refusing every recovery mutation")
+	operations := readLines(f.operationLog)
+	for _, nodeName := range []string{"prod-worker-1", "prod-control-plane-1"} {
+		requireNoLine(t, operations, "node-uncordon:"+nodeName)
+		if !pathExists(filepath.Join(f.syncStateDir, "cordon-recovery-"+nodeName)) {
+			t.Fatalf("an unparseable sibling journal let %s's recovery journal be released", nodeName)
+		}
+	}
+	requireNoLine(t, operations, "root-patch")
+}
+
 func TestReleaseReadyRecoveryPreservesPreExistingCordonBeforeNewRoll(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
