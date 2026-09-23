@@ -3587,9 +3587,9 @@ process_talos_node_target() {
     fi
   fi
 
-  # Remember scheduling intent before any cordon. Both reboot and image-only
-  # verification exclude new placements while the exact target is removed;
-  # only the reboot path drains existing workloads.
+  # Remember scheduling intent before a credential-change cordon. Image-only
+  # verification returned above without excluding new placements or removing
+  # Kubernetes' CRI image reference.
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     get node "${node_name}" \
@@ -3934,9 +3934,9 @@ process_talos_node_target() {
   fi
 
   if [[ "${node_mode}" != "proof-only" ]]; then
-    # A reboot/readiness wait or even a short image-only cordon can outlive a
-    # replacement, uncordon, taint, or owner change. Rebind identity and the
-    # scheduling guard at the final Talos edge before touching the image cache.
+    # A credential-change reboot/readiness wait can outlive a replacement,
+    # uncordon, taint, or owner change. Rebind identity and the scheduling guard
+    # at the final Talos edge before touching the CRI image cache.
     revalidate_node_scheduling_guard \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \

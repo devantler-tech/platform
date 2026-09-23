@@ -773,13 +773,16 @@ The production deploy closes the bootstrap loop in this order:
    verification. During DR, a read-only `--check-only` pass happens before
    infrastructure creation.
 2. Before changing mutable `latest`, list every Kubernetes Node (including
-   NotReady/autoscaled nodes). For each node whose **verified** ciphertext
-   revision or verified image differs from the declared incoming KSail image,
-   apply the supported Talos `RegistryAuthConfig` in no-reboot mode, workers
-   before control planes; remove that exact target from the Talos CRI cache;
-   pull it again to force a registry round-trip; and only then record both proof
-   markers. A distinct desired revision in the committed Talos configuration
-   refreshes future Cluster Autoscaler templates but never counts as proof.
+   NotReady/autoscaled nodes). A changed **verified** credential revision takes
+   the fenced Talos `RegistryAuthConfig` and reboot path, workers before control
+   planes: remove the exact incoming KSail image from the CRI cache, pull it
+   again for a registry round-trip, then record both proof markers. If that
+   credential proof is current and only the verified image differs, remove and
+   pull a proof copy in Talos containerd's `system` namespace without cordoning
+   or evicting the Kubernetes CRI image; publish the image marker only after a
+   successful registry pull. A distinct desired revision in the committed
+   Talos configuration refreshes future Cluster Autoscaler templates but never
+   counts as proof.
 3. Patch `variables-base`; force-sync
    `seed-ghcr` into OpenBao; force-sync the tenant/Kyverno ExternalSecrets;
    verify every materialised `ghcr-auth` payload matches Git/SOPS; and only then
