@@ -2836,6 +2836,11 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 		touchMarker(markerName + "-annotated")
 		if resource != os.Getenv("FAKE_SYNC_STALL_RESOURCE") {
 			touchMarker(markerName)
+			if resource == "pushsecret/flux-system/seed-ghcr" {
+				// A PushSecret refresh repairs the remote OpenBao value even when
+				// already-materialized Kubernetes consumers still look current.
+				setMarkerContent("vault-seed-value", markerContent("variables-secret-value"))
+			}
 		}
 		fmt.Println(`{"metadata":{"resourceVersion":"2"}}`)
 		return 0

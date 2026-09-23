@@ -70,3 +70,24 @@ func TestPartiallyAppliedNodeConfigStillAcquiresFullFence(t *testing.T) {
 		t.Error("node-level image drift bypassed Talos verification")
 	}
 }
+
+func TestStaleOpenBaoSeedCannotTakeTheNoWritePath(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	current := map[string]string{"FAKE_TALOS_NODES_CURRENT": "true"}
+	requireSuccessResult(t, f.runHelper(validConfig(), nil, current))
+	correctSeed := persistedClusterMarker(t, f, "vault-seed-value")
+	if err := os.WriteFile(filepath.Join(f.syncStateDir, "vault-seed-value"), []byte("stale-after-raft-restore"), 0o600); err != nil {
+		t.Fatalf("model restored OpenBao seed: %v", err)
+	}
+	restarts := persistedClusterMarker(t, f, "flux-controller-restart-count")
+
+	result := f.runHelperPreservingClusterState(validConfig(), nil, current)
+	requireSuccessResult(t, result)
+	if got := persistedClusterMarker(t, f, "vault-seed-value"); got != correctSeed {
+		t.Error("reassert left a stale remote OpenBao seed while Kubernetes consumers appeared current")
+	}
+	if got := persistedClusterMarker(t, f, "flux-controller-restart-count"); got == restarts {
+		t.Error("reassert repaired the remote seed without acquiring the Flux fence")
+	}
+}
