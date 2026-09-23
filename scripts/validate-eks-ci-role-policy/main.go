@@ -3147,7 +3147,17 @@ const (
 // This hostless Slack title fix establishes aggregate:
 //
 //	65fecc82a527f6b5fc9c2154b58d2268d4eb4cfa49bb2ec9dfdfd65789621250
-const expectedRenderedSurfaceSHA = "65fecc82a527f6b5fc9c2154b58d2268d4eb4cfa49bb2ec9dfdfd65789621250"
+// Re-approved for the bounded Cilium rollout (#4064) against main bad3342c.
+// The required production-authorization job on the approved renderer (run
+// 35820382237, job 107051230644) reported exactly ONE changed surface entry:
+// helm.toolkit.fluxcd.io/v2 HelmRelease kube-system/cilium. No entry was added
+// or removed. The source delta changes only spec.values.updateStrategy and
+// spec.values.envoy.updateStrategy from the chart's maxUnavailable=2 defaults
+// to RollingUpdate/maxUnavailable=1. No RBAC, binding, service account, policy,
+// AWS identity, or permission is changed. The prior aggregate is recorded below.
+// The required job reported the new aggregate on checksum-verified kubectl
+// v1.36.2; the local renderer is not used as approval evidence.
+const expectedRenderedSurfaceSHA = "33eb2b3a1201e8c6c304eab0bb65feed702d8244ed96ebb315b90f3901d95792"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3160,7 +3170,7 @@ const expectedRenderedSurfaceSHA = "65fecc82a527f6b5fc9c2154b58d2268d4eb4cfa49bb
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "f5102c7e56811403094cb887305789a52768361c8e3a8636b4fc254110279f63"
+const previousRenderedSurfaceSHA = "65fecc82a527f6b5fc9c2154b58d2268d4eb4cfa49bb2ec9dfdfd65789621250"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
