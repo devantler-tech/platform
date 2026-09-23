@@ -3368,7 +3368,9 @@ revalidate_selected_node_identity_before_mutation() {
 # Image-only drift does not change containerd's credential. Its existing v2
 # runtime proof remains valid; the exact incoming image still needs an uncached
 # registry round-trip before publish. Unlike a credential rotation, removing
-# and re-pulling this image needs neither a reboot nor a scheduling change.
+# and re-pulling a proof copy in containerd's system namespace needs neither a
+# reboot nor a scheduling change, and leaves Kubernetes' CRI image cache intact
+# if the registry becomes unavailable.
 # Keep the global sync Lease and rebind the Node at every Talos edge so an
 # autoscaler replacement or another actor's drain cannot inherit this proof.
 revalidate_image_only_node_guard() {
@@ -3458,7 +3460,7 @@ process_talos_image_only_target() {
     "${desired_revision}" "cache removal" || return $?
   initial_cordoned="$(jq -er '(.spec.unschedulable // false) | tostring' "${cordon_state_file}")" || return 1
   if ! talosctl --nodes "${node_ip}" image remove "${operator_image}" \
-    --namespace cri >"${talos_result_file}" 2>&1; then
+    --namespace system >"${talos_result_file}" 2>&1; then
     if ! talos_image_remove_reports_absent \
       "${talos_result_file}" "${operator_image}"; then
       echo "::error::Talos node ${node_name} could not remove the incoming KSail image for uncached proof."
@@ -3469,7 +3471,7 @@ process_talos_image_only_target() {
     "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
     "${desired_revision}" "image pull" "${initial_cordoned}" || return $?
   if ! talosctl --nodes "${node_ip}" image pull "${operator_image}" \
-    --namespace cri >"${talos_result_file}" 2>&1; then
+    --namespace system >"${talos_result_file}" 2>&1; then
     echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image; root auth remains unchanged."
     return 1
   fi

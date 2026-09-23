@@ -339,8 +339,10 @@ func fakeTalosctl(args []string) int {
 		return 0
 	}
 	if containsSequence(args, "image", "remove") {
-		if !containsAdjacent(args, "--namespace", "cri") {
-			return commandFailure(93, "Talos image remove must use the cri namespace")
+		proofStore := containsAdjacent(args, "--namespace", "system")
+		criStore := containsAdjacent(args, "--namespace", "cri")
+		if !proofStore && !criStore {
+			return commandFailure(93, "Talos image remove must name a containerd namespace")
 		}
 		if markerExists("talos-auth-"+node) && !markerExists("talos-reboot-"+node) {
 			return commandFailure(93, "credential-stale cache mutation")
@@ -351,6 +353,9 @@ func fakeTalosctl(args []string) int {
 		nodeName := fakeNodeName(node)
 		imageOnly := os.Getenv("FAKE_TALOS_NODES_CURRENT") == "true" &&
 			!markerExists("talos-auth-"+node)
+		if !imageOnly && !criStore {
+			return commandFailure(93, "credential rotation must remove from the cri namespace")
+		}
 		if nodeName == "" || (!imageOnly && (!markerExists("cordoned-"+nodeName) ||
 			markerContent("cordon-owner-"+nodeName) == "")) {
 			return commandFailure(93, "Talos image removal lacked an owned Kubernetes cordon")
@@ -365,6 +370,9 @@ func fakeTalosctl(args []string) int {
 		if talosFailure(node, "remove") {
 			return commandFailure(49, "talos remove failed")
 		}
+		if criStore {
+			touchMarker("cri-image-removed-" + node)
+		}
 		touchMarker("talos-remove-" + node)
 		if nodeName == os.Getenv("FAKE_EXTERNAL_UNCORDON_AFTER_REMOVE_NODE") {
 			removeMarker("cordoned-" + nodeName)
@@ -374,8 +382,10 @@ func fakeTalosctl(args []string) int {
 		return 0
 	}
 	if containsSequence(args, "image", "pull") {
-		if !containsAdjacent(args, "--namespace", "cri") {
-			return commandFailure(93, "Talos image pull must use the cri namespace")
+		proofStore := containsAdjacent(args, "--namespace", "system")
+		criStore := containsAdjacent(args, "--namespace", "cri")
+		if !proofStore && !criStore {
+			return commandFailure(93, "Talos image pull must name a containerd namespace")
 		}
 		if markerExists("talos-auth-"+node) && !markerExists("talos-reboot-"+node) {
 			return commandFailure(93, "credential-stale pull")
@@ -389,6 +399,9 @@ func fakeTalosctl(args []string) int {
 		nodeName := fakeNodeName(node)
 		imageOnly := os.Getenv("FAKE_TALOS_NODES_CURRENT") == "true" &&
 			!markerExists("talos-auth-"+node)
+		if !imageOnly && !criStore {
+			return commandFailure(93, "credential rotation must pull into the cri namespace")
+		}
 		if nodeName == "" || (!imageOnly && (!markerExists("cordoned-"+nodeName) ||
 			markerContent("cordon-owner-"+nodeName) == "")) {
 			return commandFailure(93, "Talos image pull lacked an owned Kubernetes cordon")
@@ -398,6 +411,9 @@ func fakeTalosctl(args []string) int {
 		appendTalosOperation(operation)
 		if talosFailure(node, "pull") {
 			return commandFailure(47, "talos pull failed with %s", os.Getenv("EXPECTED_PULL_TOKEN"))
+		}
+		if criStore {
+			removeMarker("cri-image-removed-" + node)
 		}
 		touchMarker("talos-pull-" + node)
 		if nodeName == os.Getenv("FAKE_EXTERNAL_UNCORDON_AFTER_PULL_NODE") {

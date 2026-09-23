@@ -217,6 +217,27 @@ func TestFailedImageOnlyPullDoesNotDisruptSchedulingOrPublish(t *testing.T) {
 	}
 }
 
+// TestFailedImageOnlyProofPreservesCRIImageCache keeps a runnable cached
+// workload image when the registry fails during non-disruptive verification.
+func TestFailedImageOnlyProofPreservesCRIImageCache(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":  "true",
+		"FAKE_TALOS_VERIFIED_IMAGE": "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_TALOS_FAIL_NODE":      "10.0.0.2",
+		"FAKE_TALOS_FAIL_OPERATION": "pull",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "talos-remove:10.0.0.2:"+ksailTargetImage)
+	requireLine(t, operations, "talos-pull:10.0.0.2:"+ksailTargetImage)
+	if pathExists(filepath.Join(f.syncStateDir, "cri-image-removed-10.0.0.2")) {
+		t.Fatal("failed image-only proof evicted the cached CRI image")
+	}
+	requireNoLine(t, operations, "root-patch")
+}
+
 // TestImageOnlyProofPreservesPreexistingMaintenanceCordon accepts stable
 // operator-owned scheduling intent without taking ownership of it.
 func TestImageOnlyProofPreservesPreexistingMaintenanceCordon(t *testing.T) {
