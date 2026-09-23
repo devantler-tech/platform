@@ -16,19 +16,19 @@ fail() {
   exit 1
 }
 
-for tool in kubectl rg yq; do
+for tool in kubectl grep find yq; do
   command -v "${tool}" >/dev/null 2>&1 || fail "${tool} is required"
 done
 
-rg -Fq "'scripts/tests/test-coroot-helper-image-pull-policy.sh'" "${ci_workflow}" ||
+grep -Fq -- "'scripts/tests/test-coroot-helper-image-pull-policy.sh'" "${ci_workflow}" ||
   fail 'a test-only edit must trigger the Kubernetes CI path'
-rg -Fq 'bash scripts/tests/test-coroot-helper-image-pull-policy.sh' "${ci_workflow}" ||
+grep -Fq -- 'bash scripts/tests/test-coroot-helper-image-pull-policy.sh' "${ci_workflow}" ||
   fail 'CI must execute the Coroot helper image policy test'
 
 manifests=()
 while IFS= read -r manifest; do
   manifests+=("${manifest}")
-done < <(rg -l -F --glob '*.yaml' "${image_prefix}" "${root_dir}/k8s")
+done < <(find "${root_dir}/k8s" -type f -name '*.yaml' -exec grep -lF -- "${image_prefix}" {} +)
 [ "${#manifests[@]}" -ge 11 ] ||
   fail 'expected every existing Coroot curl+jq CronJob consumer to remain covered'
 
