@@ -3183,7 +3183,7 @@ const expectedRenderedSurfaceSHA = "13b29142e7385e76732a93a83ece6be1d1cc54bcecef
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "65fecc82a527f6b5fc9c2154b58d2268d4eb4cfa49bb2ec9dfdfd65789621250"
+const previousRenderedSurfaceSHA = "33eb2b3a1201e8c6c304eab0bb65feed702d8244ed96ebb315b90f3901d95792"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
