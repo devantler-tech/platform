@@ -168,6 +168,8 @@ func TestStaleRuntimeProofFallsBackToFullVerification(t *testing.T) {
 	requireLine(t, operations, "talos-reboot:10.0.0.2")
 }
 
+// TestMatchingRevisionRevalidatesChangedDeclaredImage requires an uncached
+// image pull even when the credential revision is unchanged.
 func TestMatchingRevisionRevalidatesChangedDeclaredImage(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -190,12 +192,16 @@ func TestMatchingRevisionRevalidatesChangedDeclaredImage(t *testing.T) {
 		"talos-revision:10.0.0.1",
 	})
 	operationLog := mustRead(f.operationLog)
+	requireNotContains(t, operationLog, "node-claim-cordon:")
+	requireNotContains(t, operationLog, "node-uncordon:")
 	requireNotContains(t, operationLog, "node-drain:")
 	requireNotContains(t, operationLog, "talos-reboot:")
 	requireNotContains(t, strings.Join(operations, "\n"), previousImage)
 }
 
-func TestFailedImageOnlyPullKeepsNodeCordoned(t *testing.T) {
+// TestFailedImageOnlyPullDoesNotDisruptSchedulingOrPublish keeps a failed
+// registry proof from changing scheduling or publishing root credentials.
+func TestFailedImageOnlyPullDoesNotDisruptSchedulingOrPublish(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
@@ -206,10 +212,179 @@ func TestFailedImageOnlyPullKeepsNodeCordoned(t *testing.T) {
 	})
 	requireFailureResult(t, result)
 	operations := readLines(f.operationLog)
-	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
-	for _, unexpected := range []string{"node-drain:prod-worker-1", "node-uncordon:prod-worker-1", "talos-reboot:10.0.0.2", "root-patch"} {
+	for _, unexpected := range []string{"node-claim-cordon:prod-worker-1", "node-drain:prod-worker-1", "node-uncordon:prod-worker-1", "talos-reboot:10.0.0.2", "root-patch"} {
 		requireNoLine(t, operations, unexpected)
 	}
+}
+
+// TestFailedImageOnlyProofPreservesCRIImageCache keeps a runnable cached
+// workload image when the registry fails during non-disruptive verification.
+func TestFailedImageOnlyProofPreservesCRIImageCache(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":  "true",
+		"FAKE_TALOS_VERIFIED_IMAGE": "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_TALOS_FAIL_NODE":      "10.0.0.2",
+		"FAKE_TALOS_FAIL_OPERATION": "pull",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "talos-remove:10.0.0.2:"+ksailTargetImage)
+	requireLine(t, operations, "talos-pull:10.0.0.2:"+ksailTargetImage)
+	if pathExists(filepath.Join(f.syncStateDir, "cri-image-removed-10.0.0.2")) {
+		t.Fatal("failed image-only proof evicted the cached CRI image")
+	}
+	requireNoLine(t, operations, "root-patch")
+}
+
+// TestImageOnlyProofPreservesPreexistingMaintenanceCordon accepts stable
+// operator-owned scheduling intent without taking ownership of it.
+func TestImageOnlyProofPreservesPreexistingMaintenanceCordon(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":  "true",
+		"FAKE_TALOS_VERIFIED_IMAGE": "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_CORDONED_NODES":       "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "talos-pull:10.0.0.2:"+ksailTargetImage)
+	requireLine(t, operations, "root-patch")
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-worker-1", "node-uncordon:prod-worker-1",
+		"node-drain:prod-worker-1", "talos-reboot:10.0.0.2",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
+// TestImageOnlyProofRejectsExternalUncordonDuringPull fails closed when
+// scheduling intent changes during the image-only proof.
+func TestImageOnlyProofRejectsExternalUncordonDuringPull(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":                 "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":                "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_CORDONED_NODES":                      "prod-worker-1",
+		"FAKE_EXTERNAL_UNCORDON_AFTER_REMOVE_NODE": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "operator-uncordon-after-remove:prod-worker-1")
+	requireNoLine(t, operations, "talos-pull:10.0.0.2:"+ksailTargetImage)
+	requireNoLine(t, operations, "root-patch")
+}
+
+// TestImageOnlyProofRefusesAutoscalerDeletionCandidate prevents a proof from
+// being recorded against a Node already selected for deletion.
+func TestImageOnlyProofRefusesAutoscalerDeletionCandidate(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":       "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":      "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_AUTOSCALER_DELETING_NODES": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-worker-1",
+		"talos-remove:10.0.0.2:" + ksailTargetImage,
+		"talos-pull:10.0.0.2:" + ksailTargetImage,
+		"talos-revision:10.0.0.2", "root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
+// TestImageOnlyProofBindsDurableMarkerToNodeUID requires persistent proof to
+// identify the exact Kubernetes Node that performed the pull.
+func TestImageOnlyProofBindsDurableMarkerToNodeUID(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":  "true",
+		"FAKE_TALOS_VERIFIED_IMAGE": "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_AUTOSCALED_NODES":     "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	proofUID, err := os.ReadFile(filepath.Join(f.syncStateDir, "talos-proof-uid-10.0.0.2"))
+	if err != nil {
+		t.Fatalf("read durable Talos proof UID: %v", err)
+	}
+	if string(proofUID) != "prod-worker-1-uid" {
+		t.Errorf("durable proof UID = %q, want prod-worker-1-uid", proofUID)
+	}
+}
+
+// TestMismatchedDurableUIDRequiresFencedRuntimeProof routes a replacement
+// with a stale nonempty UID marker through the credential-reboot fence.
+func TestMismatchedDurableUIDRequiresFencedRuntimeProof(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	current := map[string]string{"FAKE_TALOS_NODES_CURRENT": "true"}
+	requireSuccessResult(t, f.runHelper(validConfig(), nil, current))
+	if err := os.WriteFile(filepath.Join(f.syncStateDir, "talos-proof-uid-10.0.0.2"), []byte("replaced-node-uid"), 0o600); err != nil {
+		t.Fatalf("seed a stale durable UID marker: %v", err)
+	}
+	result := f.runHelperPreservingClusterState(validConfig(), nil, current)
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
+	requireLine(t, operations, "node-drain:prod-worker-1")
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	requireLine(t, operations, "root-patch")
+}
+
+// TestLegacyUIDLessProofRevalidatesEveryNodeWithoutCordon migrates old proof
+// markers through uncached pulls without disrupting workload scheduling.
+func TestLegacyUIDLessProofRevalidatesEveryNodeWithoutCordon(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":      "true",
+		"FAKE_TALOS_LEGACY_UID_MISSING": "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	for _, nodeIP := range []string{"10.0.0.2", "10.0.0.1", "10.0.0.3", "10.0.0.4"} {
+		requireLine(t, operations, "talos-remove:"+nodeIP+":"+ksailTargetImage)
+		requireLine(t, operations, "talos-pull:"+nodeIP+":"+ksailTargetImage)
+		requireLine(t, operations, "talos-revision:"+nodeIP)
+	}
+	for _, operation := range operations {
+		if strings.HasPrefix(operation, "node-claim-cordon:") ||
+			strings.HasPrefix(operation, "node-uncordon:") ||
+			strings.HasPrefix(operation, "node-drain:") ||
+			strings.HasPrefix(operation, "talos-reboot:") {
+			t.Errorf("UID migration changed workload scheduling: %s", operation)
+		}
+	}
+}
+
+// TestReplacementAfterImageMarkerReprovesReusedAddress requires a second pull
+// when an autoscaler replaces a Node but preserves its name and address.
+func TestReplacementAfterImageMarkerReprovesReusedAddress(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	env := map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":              "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":             "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_AUTOSCALED_NODES":                 "prod-worker-1",
+		"FAKE_NODE_REPLACED_AFTER_IMAGE_MARKER": "prod-worker-1",
+	}
+	first := f.runHelper(validConfig(), nil, env)
+	requireFailureResult(t, first)
+	requireNoLine(t, readLines(f.operationLog), "root-patch")
+
+	second := f.runHelperPreservingClusterState(validConfig(), nil, env)
+	requireSuccessResult(t, second)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "talos-pull:10.0.0.2:"+ksailTargetImage)
+	requireLine(t, operations, "root-patch")
 }
 
 // The last image-stale target can disappear while earlier nodes are being
@@ -317,13 +492,15 @@ func TestDeselectionEmptyingTheTargetSetTakesAnotherConvergenceRound(t *testing.
 	}
 }
 
+// TestRemovedNodeAfterMutationStillFailsClosed refuses root cutover when a
+// target disappears after a durable image marker has been written.
 func TestRemovedNodeAfterMutationStillFailsClosed(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
-		"FAKE_TALOS_NODES_CURRENT":         "true",
-		"FAKE_TALOS_VERIFIED_IMAGE":        "ghcr.io/devantler-tech/ksail:v7.166.0",
-		"FAKE_NODE_REMOVED_AFTER_UNCORDON": "prod-worker-1",
+		"FAKE_TALOS_NODES_CURRENT":             "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":            "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_NODE_REMOVED_AFTER_IMAGE_MARKER": "prod-worker-1",
 	})
 	requireFailureResult(t, result)
 	operations := readLines(f.operationLog)

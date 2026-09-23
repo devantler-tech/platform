@@ -3368,6 +3368,134 @@ revalidate_selected_node_identity_before_mutation() {
 # adopts the credential, prove an uncached pull of the declared incoming image,
 # and only then record its non-secret revision+image proof markers so either
 # credential or target changes trigger verification.
+# Image-only drift does not change containerd's credential. Its existing v2
+# runtime proof remains valid; the exact incoming image still needs an uncached
+# registry round-trip before publish. Unlike a credential rotation, removing
+# and re-pulling a proof copy in containerd's system namespace needs neither a
+# reboot nor a scheduling change, and leaves Kubernetes' CRI image cache intact
+# if the registry becomes unavailable.
+# Keep the global sync Lease and rebind the Node at every Talos edge so an
+# autoscaler replacement or another actor's drain cannot inherit this proof.
+revalidate_image_only_node_guard() {
+  local node_name="$1" node_uid="$2" node_ip="$3" node_role="$4"
+  local desired_revision="$5" phase="$6"
+  local expected_cordoned="${7:-}"
+  local allow_removed=0
+
+  assert_sync_lease_held || return 1
+  if [[ "${phase}" == "cache removal" ]]; then
+    allow_removed=1
+  fi
+  revalidate_selected_node_identity_before_mutation \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${allow_removed}" || return $?
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get node "${node_name}" --output json >"${cordon_state_file}"; then
+    echo "::error::Could not re-read image-only target ${node_name} before ${phase}."
+    return 1
+  fi
+  if ! selected_node_identity_is_current \
+    "${cordon_state_file}" "${node_name}" "${node_uid}" \
+    "${node_ip}" "${node_role}" ||
+    ! jq -e \
+      --arg revision "${desired_revision}" \
+      --arg expected_cordoned "${expected_cordoned}" \
+      --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
+      --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
+      --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" '
+        (.spec.unschedulable // false) as $cordoned
+        | .metadata.annotations[$revision_annotation] == $revision
+        and (.metadata.annotations[$owner_annotation] // "") == ""
+        and (.metadata.annotations[$recovery_annotation] // "") == ""
+        and ($cordoned | type == "boolean")
+        and ($expected_cordoned == "" or $cordoned == ($expected_cordoned == "true"))
+        and .metadata.deletionTimestamp == null
+        and any(.status.conditions[]?;
+          .type == "Ready" and .status == "True")
+        and all(.spec.taints[]?;
+          .key != "ToBeDeletedByClusterAutoscaler"
+          and .key != "node.kubernetes.io/not-ready"
+          and .key != "node.kubernetes.io/unreachable"
+          and (.key != "node.kubernetes.io/unschedulable" or $cordoned))
+      ' "${cordon_state_file}" >/dev/null; then
+    echo "::error::Image-only target ${node_name} changed identity, credential proof, or scheduling state before ${phase}; refusing to record image proof."
+    return 1
+  fi
+}
+
+# The machine annotation is durable across a failed transaction. Bind it to
+# the Kubernetes Node UID as well as the revision and image: a replacement can
+# reuse an autoscaled node's name and InternalIP between the final identity
+# read and the Talos patch, but it must not inherit the previous Node's proof.
+write_talos_revision_patch_for_node() {
+  local desired_revision="$1" operator_image="$2" node_uid="$3"
+
+  jq -n \
+    --arg revision "${desired_revision}" \
+    --arg image "${operator_image}" \
+    --arg uid "${node_uid}" \
+    --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
+    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" \
+    --arg uid_annotation "${GHCR_PULL_VERIFIED_NODE_UID_ANNOTATION}" '
+      {machine: {nodeAnnotations: {
+        ($revision_annotation): $revision,
+        ($image_annotation): $image,
+        ($uid_annotation): $uid
+      }}}
+    ' >"${talos_revision_patch_file}" || return 1
+  chmod 600 "${talos_revision_patch_file}"
+}
+
+# process_talos_image_only_target proves the incoming image without changing
+# scheduling when the credential revision is already active on this Node.
+process_talos_image_only_target() {
+  local desired_revision="$1" operator_image="$2" node_role="$3"
+  local node_name="$4" node_ip="$5" node_uid="$6"
+  local initial_cordoned=""
+
+  if [[ -f "${bootstrap_cordon_dir}/${node_name}.json" ]]; then
+    echo "::error::Image-only target ${node_name} has an unfinished bootstrap fence; refusing unfenced proof."
+    return 1
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "cache removal" || return $?
+  initial_cordoned="$(jq -er '(.spec.unschedulable // false) | tostring' "${cordon_state_file}")" || return 1
+  if ! talosctl --nodes "${node_ip}" image remove "${operator_image}" \
+    --namespace system >"${talos_result_file}" 2>&1; then
+    if ! talos_image_remove_reports_absent \
+      "${talos_result_file}" "${operator_image}"; then
+      echo "::error::Talos node ${node_name} could not remove the incoming KSail image for uncached proof."
+      return 1
+    fi
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "image pull" "${initial_cordoned}" || return $?
+  if ! talosctl --nodes "${node_ip}" image pull "${operator_image}" \
+    --namespace system >"${talos_result_file}" 2>&1; then
+    echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image; root auth remains unchanged."
+    return 1
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "revision marker" "${initial_cordoned}" || return $?
+  write_talos_revision_patch_for_node \
+    "${desired_revision}" "${operator_image}" "${node_uid}" || return 1
+  if ! talosctl --nodes "${node_ip}" patch machineconfig \
+    --mode=no-reboot --patch-file="${talos_revision_patch_file}" \
+    >"${talos_result_file}" 2>&1; then
+    echo "::error::Talos node ${node_name} proved the incoming KSail image but could not record the proof marker."
+    return 1
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "completion" "${initial_cordoned}" || return $?
+}
+
+# process_talos_node_target keeps credential changes on the existing fenced
+# reboot path and delegates image-only drift to its non-disruptive proof.
 process_talos_node_target() {
   local desired_revision="$1"
   local operator_image="$2"
@@ -3398,6 +3526,12 @@ process_talos_node_target() {
     "${node_mode}" != "proof-only" ]]; then
     echo "::error::Unknown Talos GHCR synchronization mode '${node_mode}' for ${node_name}."
     return 1
+  fi
+  if [[ "${node_mode}" == "image-only" ]]; then
+    process_talos_image_only_target \
+      "${desired_revision}" "${operator_image}" "${node_role}" \
+      "${node_name}" "${node_ip}" "${node_uid}"
+    return $?
   fi
   # Bootstrap preparation can already own a durable fence on this target.
   # Its recovery remains fail-closed; only an untouched target may be skipped.
@@ -3456,9 +3590,9 @@ process_talos_node_target() {
     fi
   fi
 
-  # Remember scheduling intent before any cordon. Both reboot and image-only
-  # verification exclude new placements while the exact target is removed;
-  # only the reboot path drains existing workloads.
+  # Remember scheduling intent before a credential-change cordon. Image-only
+  # verification returned above without excluding new placements or removing
+  # Kubernetes' CRI image reference.
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     get node "${node_name}" \
@@ -3803,9 +3937,9 @@ process_talos_node_target() {
   fi
 
   if [[ "${node_mode}" != "proof-only" ]]; then
-    # A reboot/readiness wait or even a short image-only cordon can outlive a
-    # replacement, uncordon, taint, or owner change. Rebind identity and the
-    # scheduling guard at the final Talos edge before touching the image cache.
+    # A credential-change reboot/readiness wait can outlive a replacement,
+    # uncordon, taint, or owner change. Rebind identity and the scheduling guard
+    # at the final Talos edge before touching the CRI image cache.
     revalidate_node_scheduling_guard \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
@@ -3876,6 +4010,8 @@ process_talos_node_target() {
   if [[ "${node_mode}" == "proof-only" ]]; then
     reusable_proof_uid="${node_uid}"
   fi
+  write_talos_revision_patch_for_node \
+    "${desired_revision}" "${operator_image}" "${node_uid}" || return 1
   # Test hook consumed by fake talosctl to verify Node binding; Talos ignores it.
   if ! FLUX_GHCR_REUSABLE_PROOF_UID="${reusable_proof_uid}" \
     talosctl \
@@ -4279,10 +4415,12 @@ record_runtime_proof() {
     --arg revision "${desired_revision}" \
     --arg image "${operator_image}" \
     --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
-    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" '
+    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" \
+    --arg uid_annotation "${GHCR_PULL_VERIFIED_NODE_UID_ANNOTATION}" '
       all(.items[];
         .metadata.annotations[$revision_annotation] == $revision
-        and .metadata.annotations[$image_annotation] == $image)
+        and .metadata.annotations[$image_annotation] == $image
+        and .metadata.annotations[$uid_annotation] == .metadata.uid)
     ' "${runtime_proof_nodes_file}" >/dev/null; then
     echo "::error::Refusing to record a post-update handoff before every exact Node has current runtime proof."
     return 1
