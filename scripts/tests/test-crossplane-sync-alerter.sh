@@ -22,6 +22,16 @@ yq -e "${pod_path}.volumes[] | select(.name == \"${scratch_volume}\") | .emptyDi
 yq -e "${pod_path}.containers[] | select(.name == \"alerter\") | .securityContext.readOnlyRootFilesystem == true" \
   "${manifest}" >/dev/null || fail 'scratch storage must not require a writable root filesystem'
 
+# Cluster-local targets must be absolute DNS names. A terminal dot prevents
+# resolver search-path expansion, which Coroot reports as intermittent DNS latency.
+for target in \
+  'http://coroot-prometheus.observability.svc.cluster.local.:9090' \
+  'http://alertmanager-0.alertmanager-headless.kubescape.svc.cluster.local.:9093' \
+  'http://alertmanager-1.alertmanager-headless.kubescape.svc.cluster.local.:9093'; do
+  yq -r '.spec.jobTemplate.spec.template.spec.containers[] | select(.name == "alerter") | .command[2]' \
+    "${manifest}" | grep -Fq "$target" || fail "sensor target is not an absolute cluster DNS name: $target"
+done
+
 yq -r '.spec.jobTemplate.spec.template.spec.containers[] | select(.name == "alerter") | .command[2]' \
   "${manifest}" >"${work_dir}/sensor.sh"
 mkdir -p "${work_dir}/config" "${work_dir}/sa" "${work_dir}/bin"

@@ -724,11 +724,14 @@ jobs:
               - 'talos/**'
               - 'talos-local/**'
               - 'scripts/register-talos-factory-schematic.sh'
+              - 'scripts/verify-talos-schematic-readback.sh'
               - 'scripts/tests/test-talos-factory-schematic-registration.sh'
+              - 'scripts/tests/test-talos-schematic-readback.sh'
               - 'scripts/tests/test-talos-apparmor-lsm.sh'
               - 'ksail.prod.yaml'
               - '.github/scripts/setup-talosctl.sh'
               - 'scripts/validate-talos-kubernetes-compatibility/**'
+              - '.github/actions/deploy-prod/**'
               - 'go.mod'
               - 'go.sum'
               - '.github/workflows/ci.yaml'
@@ -995,7 +998,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.184.19"
+          KSAIL_VERSION: "7.184.20"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1930,7 +1933,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.184.19"
+          KSAIL_VERSION: "7.184.20"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2115,27 +2118,46 @@ jobs:
         # an exception). Ratchet the floor up as genuine gaps close; never
         # lower it.
         #
-        # --format sarif -o writes the findings to a file IN ADDITION to a
-        # human-readable posture table, and the upload step below turns those
-        # findings into Code Scanning alerts.
+        # `--format sarif,json` writes two reports from this one gating run
+        # (#3058): kubescape.sarif, which the upload step below turns into Code
+        # Scanning alerts, and kubescape.sarif.json, which carries the scores
+        # the threshold is judged against. With JSON among the formats the log
+        # also prints the `Overall compliance-score` line, which a SARIF-only
+        # run omits, and the report step below adds the per-framework scores
+        # to the log and the job summary. Re-baseline the floor from those
+        # numbers on a CI run. The SARIF findings are the same set a SARIF-only
+        # run produces (compared locally on 2026-09-23, ksail 7.191.0).
         #
-        # 🔴 That table OMITS the `Overall compliance-score` line — measured on
-        # this repo's own CI run 2026-08-10 and reproduced locally: `--format
-        # json` prints it, `--format sarif` does not. So THIS LOG CANNOT TELL
-        # YOU THE SCORE, which is why the re-baselining note above cannot be
-        # followed from the log alone. #3058 tracks making it visible; until it
-        # lands, bisect the score by re-running with a raised
-        # `--compliance-threshold` and reading the exit code.
-        #
-        # The threshold itself is unaffected by the format and still gates:
-        # ablated 2026-08-10 at thresholds 95/99/100 under `--format sarif`,
-        # giving exit 0/1/1 against a combined score of 97. A silent-pass here
-        # would be the worst failure this step could have, so that ablation is
-        # the check to repeat if the flag or format ever changes.
+        # The threshold must still gate after any change to this step: ablated
+        # 2026-08-10 at thresholds 95/99/100, giving exit 0/1/1 against a
+        # combined score of 97, and again 2026-09-23 with both formats (exit 1
+        # at 100 against 98.7). A silent pass here would be the worst failure
+        # this step could have, so repeat that ablation if the flag or format
+        # ever changes.
         run: |
           go test ./scripts/generate-kubescape-exceptions
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
-          ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
+          ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif,json -o "${RUNNER_TEMP}/kubescape.sarif"
+
+      - name: 📊 Report the Kubescape compliance score
+        # Runs whether the gate above passed or failed, so the log and the job
+        # summary always state the scores the gate judged (#3058). A missing or
+        # unreadable report warns rather than failing: the gate already decided.
+        if: "!cancelled()"
+        run: |
+          report="${RUNNER_TEMP}/kubescape.sarif.json"
+          if scores="$(jq -er '
+              "Combined compliance score: \(.summaryDetails.complianceScore * 100 | round / 100) (floor \(.metadata.scanMetadata.complianceThreshold))",
+              (.summaryDetails.frameworks[] | "\(.name): \(.complianceScore * 100 | round / 100)")
+            ' "${report}" 2>/dev/null)"; then
+            printf '%s\n' "${scores}"
+            {
+              echo '### Kubescape compliance'
+              while IFS= read -r line; do printf -- '- %s\n' "${line}"; done <<<"${scores}"
+            } >>"${GITHUB_STEP_SUMMARY}"
+          else
+            echo "::warning::No readable Kubescape JSON report, so the compliance score cannot be shown."
+          fi
 
       - name: 🌉 Validate the Kubescape backlog bridge
         # The bridge derives themed, fingerprint-deduped backlog entries from
@@ -2355,6 +2377,11 @@ jobs:
         run: |
           shellcheck scripts/register-talos-factory-schematic.sh scripts/tests/test-talos-factory-schematic-registration.sh
           bash scripts/tests/test-talos-factory-schematic-registration.sh
+
+      - name: 🧾 Validate Talos boot-image readback
+        run: |
+          shellcheck scripts/verify-talos-schematic-readback.sh scripts/tests/test-talos-schematic-readback.sh
+          bash scripts/tests/test-talos-schematic-readback.sh
 
       - name: ✅ Render + validate patched machine configs
         run: |
@@ -2660,7 +2687,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.184.19"
+          KSAIL_VERSION: "7.184.20"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
