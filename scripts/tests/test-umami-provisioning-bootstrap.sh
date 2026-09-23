@@ -268,4 +268,53 @@ job_health_count="$(yq eval '[.spec.healthCheckExprs[] | select(.apiVersion == "
 [[ "${job_health_count}" == 0 ]] ||
   fail 'Flux native Job health takes precedence over CEL overrides; do not install a dead bypass rule'
 
+# Run the provisioner's own request helpers, not a copy of them, against a
+# stubbed Umami on a virtual clock. The weekly database-credential rotation
+# leaves an old server pod answering 500 for about 80 seconds (platform#2915),
+# so a 5xx must be retried through that window and still fail the run after it.
+command -v node >/dev/null 2>&1 || fail 'node is required to exercise the provisioner request helpers'
+PROVISIONER_SCRIPT="${provisioner_script}" node - <<'EOF' || fail 'the provisioner must retry a transient 5xx and still surface one that outlasts its window'
+const script = process.env.PROVISIONER_SCRIPT;
+const start = script.indexOf('const umamiRequestTimeoutMilliseconds');
+const end = script.indexOf('// The bootstrap Job and CronJob are different Kubernetes');
+if (start < 0 || end < start) throw new Error('could not locate the request helpers in the provisioner script');
+const helpers = script.slice(start, end);
+
+const run = async (name, responses, expectStatus, expectCalls, deadlineMs = 1200000) => {
+  let now = 0;
+  const calls = [];
+  const clock = { now: () => now };
+  const sleep = async (ms) => { now += ms; };
+  const fetch = async () => {
+    const next = responses[Math.min(calls.length, responses.length - 1)];
+    calls.push(now);
+    if (next === 'throw') throw new TypeError('fetch failed');
+    return new Response(null, { status: next });
+  };
+  const factory = new Function('Date', 'globalThis', 'sleep', 'umamiProvisioningDeadline', 'provisioningDeadlineExceeded', 'console',
+    helpers + '\nreturn fetchRetry;');
+  const fetchRetry = factory(clock, { fetch }, sleep, deadlineMs,
+    () => Object.assign(new Error('deadline'), { umamiProvisioningDeadlineExceeded: true }), { log() {} });
+  let status;
+  try { status = (await fetchRetry('http://umami.test/api/teams', {})).status; }
+  catch (e) { status = 'threw'; }
+  if (status !== expectStatus) throw new Error(name + ': expected ' + expectStatus + ', got ' + status);
+  if (expectCalls !== undefined && calls.length !== expectCalls) throw new Error(name + ': expected ' + expectCalls + ' calls, got ' + calls.length);
+  if (now > deadlineMs) throw new Error(name + ': retried past the provisioning deadline');
+  return calls;
+};
+
+(async () => {
+  await run('success is returned at once', [200], 200, 1);
+  await run('a client error is not retried', [404], 404, 1);
+  await run('a transient 5xx is retried until it clears', [500, 500, 503, 200], 200, 4);
+  const persistent = await run('a 5xx that outlasts the window is returned', [500], 500);
+  const span = persistent[persistent.length - 1] - persistent[0];
+  if (span < 80000 || span > 180000) throw new Error('5xx retry window spans ' + span + 'ms, expected 80s–180s');
+  await run('5xx retries do not use up the network-failure budget', [500, 500, 500, 'throw', 'throw', 'throw', 'throw', 200], 200, 8);
+  await run('network failures still give up after five attempts', ['throw'], 'threw', 5);
+  await run('5xx retries stop at the provisioning deadline', [500], 500, undefined, 12000);
+})().catch((e) => { console.error(e.message); process.exit(1); });
+EOF
+
 printf 'Umami bootstrap is one-shot, immutable, and serialized with the scheduled reconciler.\n'
