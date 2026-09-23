@@ -280,7 +280,7 @@ const end = script.indexOf('// The bootstrap Job and CronJob are different Kuber
 if (start < 0 || end < start) throw new Error('could not locate the request helpers in the provisioner script');
 const helpers = script.slice(start, end);
 
-const run = async (name, responses, expectStatus, expectCalls, deadlineMs = 1200000) => {
+const run = async (name, responses, expectStatus, expectCalls, deadlineMs = 1200000, retryServerErrors = true) => {
   let now = 0;
   const calls = [];
   const clock = { now: () => now };
@@ -296,7 +296,7 @@ const run = async (name, responses, expectStatus, expectCalls, deadlineMs = 1200
   const fetchRetry = factory(clock, { fetch }, sleep, deadlineMs,
     () => Object.assign(new Error('deadline'), { umamiProvisioningDeadlineExceeded: true }), { log() {} });
   let status;
-  try { status = (await fetchRetry('http://umami.test/api/teams', {})).status; }
+  try { status = (await fetchRetry('http://umami.test/api/teams', {}, retryServerErrors)).status; }
   catch (e) { status = 'threw'; }
   if (status !== expectStatus) throw new Error(name + ': expected ' + expectStatus + ', got ' + status);
   if (expectCalls !== undefined && calls.length !== expectCalls) throw new Error(name + ': expected ' + expectCalls + ' calls, got ' + calls.length);
@@ -314,7 +314,13 @@ const run = async (name, responses, expectStatus, expectCalls, deadlineMs = 1200
   await run('5xx retries do not use up the network-failure budget', [500, 500, 500, 'throw', 'throw', 'throw', 'throw', 200], 200, 8);
   await run('network failures still give up after five attempts', ['throw'], 'threw', 5);
   await run('5xx retries stop at the provisioning deadline', [500], 500, undefined, 12000);
+  await run('a caller that opts out gets the 5xx at once', [500, 200], 500, 1, 1200000, false);
 })().catch((e) => { console.error(e.message); process.exit(1); });
 EOF
+
+# Login opts out: ensureAuth already retries a failed login for about five minutes, and a
+# three-minute window per attempt would hold a real outage until the provisioning deadline.
+grep -Fq "fetchRetry(base + '/api/auth/login', { method: 'POST', headers: H(), body: JSON.stringify({ username: 'admin', password: pw }) }, false)" <<<"${provisioner_script}" ||
+  fail 'login must not stack the 5xx retry window on the authentication retry loop'
 
 printf 'Umami bootstrap is one-shot, immutable, and serialized with the scheduled reconciler.\n'
