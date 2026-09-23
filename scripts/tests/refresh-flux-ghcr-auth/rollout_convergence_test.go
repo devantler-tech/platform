@@ -2720,3 +2720,142 @@ func TestFluxParentRereadFailureDiagnosticSurvives(t *testing.T) {
 	requireContains(t, output, "flux-policy-parent-patch: "+diagnostic)
 	requireNotContains(t, output, "its diagnostic could not be read")
 }
+
+// The child policy owner is rewritten by its own controller too, so its fence CAS can
+// be lost to a benign write between the quiescence read and the patch -- observed once
+// in a heal job on 2026-08-10 (#3067). The parent fence already retries that
+// contention; the child must as well, under the same rules.
+func TestFluxPolicyHandoffRetriesWhenChurnBreaksItsCAS(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_HANDOFF_CAS_CHURN_REJECTIONS": "2",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	// The contention must actually have happened, or this test proves nothing.
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-handoff-cas-churn:infrastructure",
+	); got != 2 {
+		t.Fatalf("CAS rejections = %d, want the 2 the fixture injected", got)
+	}
+	requireLine(t, operations, "flux-policy-pause:infrastructure")
+	requireLine(t, operations, "root-patch")
+	for _, marker := range []string{
+		"flux-policy-handoff-owner", "flux-policy-handoff-suspended",
+	} {
+		if pathExists(filepath.Join(f.syncStateDir, marker)) {
+			t.Fatalf("converged handoff left %s behind", marker)
+		}
+	}
+}
+
+// A foreign owner found by the contention re-read is refused on sight, never retried
+// against, and is reported as a competing transaction rather than a failed CAS.
+func TestFluxPolicyHandoffRefusesAForeignOwnerFoundByTheContentionReRead(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_HANDOFF_CAS_CHURN_REJECTIONS":          "5",
+		"FAKE_FLUX_POLICY_HANDOFF_FOREIGN_OWNER_AFTER_CAS_CHURN": "true",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output,
+		"Another transaction already owns the image-verification policy handoff")
+	operations := readLines(f.operationLog)
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-handoff-cas-churn:infrastructure",
+	); got != 1 {
+		t.Fatalf("CAS rejections = %d, want a single refusal on sight", got)
+	}
+	for _, unexpected := range []string{"flux-policy-pause:infrastructure", "root-patch"} {
+		requireNoLine(t, operations, unexpected)
+	}
+	if pathExists(filepath.Join(f.syncStateDir, "flux-policy-handoff-suspended")) {
+		t.Fatal("refused foreign handoff suspended the child anyway")
+	}
+}
+
+func TestFluxPolicyHandoffStillFailsClosedWhenCASRetriesAreExhausted(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_HANDOFF_CAS_CHURN_REJECTIONS": "99",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output,
+		"Could not atomically pause or adopt the Flux image-verification policy owner")
+	// The last rejection's own text reaches the operator through the bounded helper.
+	requireContains(t, output,
+		"flux-policy-handoff-patch: Error from server (Invalid): "+
+			"the server rejected our request due to an error in our request")
+	operations := readLines(f.operationLog)
+	// Bounded at the budget: neither one attempt nor unbounded.
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-handoff-cas-churn:infrastructure",
+	); got != 5 {
+		t.Fatalf("CAS rejections = %d, want the bounded budget of 5", got)
+	}
+	for _, unexpected := range []string{"flux-policy-pause:infrastructure", "root-patch"} {
+		requireNoLine(t, operations, unexpected)
+	}
+	if pathExists(filepath.Join(f.syncStateDir, "flux-policy-handoff-suspended")) {
+		t.Fatal("exhausted retries left the child suspended")
+	}
+}
+
+// Contention is the only rejection worth retrying. A rejection that left the
+// resourceVersion where it was -- a permission denial, a validation error -- was
+// refused on its merits, so the claim fails closed after exactly one attempt.
+func TestFluxPolicyHandoffDoesNotRetryARejectionThatMovedNothing(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_HANDOFF_PATCH_REJECTION": "Error from server (Forbidden): policy handoff permission denied",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output,
+		"Could not atomically pause or adopt the Flux image-verification policy owner")
+	requireContains(t, output,
+		"flux-policy-handoff-patch: Error from server (Forbidden): policy handoff permission denied")
+	operations := readLines(f.operationLog)
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-handoff-patch-rejected",
+	); got != 1 {
+		t.Fatalf("patch attempts = %d, want one unchanged acquisition attempt", got)
+	}
+	for _, unexpected := range []string{"flux-policy-pause:infrastructure", "root-patch"} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
+// A child deleted and recreated between the CAS and its re-read looks like churn --
+// no owner, a moved resourceVersion -- but it is a different object. The retry must
+// keep the UID it first inspected and refuse the replacement, as the parent does.
+func TestFluxPolicyHandoffRefusesAReplacementChildFoundByTheContentionReRead(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_HANDOFF_CAS_CHURN_REJECTIONS":     "1",
+		"FAKE_FLUX_POLICY_HANDOFF_REPLACED_AFTER_CAS_CHURN": "true",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output,
+		"The Flux image-verification policy owner was replaced during the handoff")
+	operations := readLines(f.operationLog)
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-handoff-cas-churn:infrastructure",
+	); got != 1 {
+		t.Fatalf("CAS rejections = %d, want the single injected one", got)
+	}
+	for _, unexpected := range []string{"flux-policy-pause:infrastructure", "root-patch"} {
+		requireNoLine(t, operations, unexpected)
+	}
+	if pathExists(filepath.Join(f.syncStateDir, "flux-policy-handoff-suspended")) {
+		t.Fatal("the replacement child was suspended")
+	}
+}

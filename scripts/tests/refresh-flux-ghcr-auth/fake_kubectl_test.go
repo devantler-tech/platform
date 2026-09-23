@@ -222,7 +222,7 @@ func fakeFluxPolicyChildObject() map[string]any {
 	metadata := map[string]any{
 		"name":            "infrastructure",
 		"namespace":       "flux-system",
-		"uid":             "infrastructure-kustomization-uid",
+		"uid":             defaultString(markerContent("flux-policy-handoff-uid"), "infrastructure-kustomization-uid"),
 		"resourceVersion": defaultString(markerContent("flux-policy-handoff-resource-version"), "20"),
 		"generation":      generation,
 	}
@@ -318,7 +318,7 @@ func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile
 		patch,
 		"test",
 		"/metadata/uid",
-		"infrastructure-kustomization-uid",
+		defaultString(markerContent("flux-policy-handoff-uid"), "infrastructure-kustomization-uid"),
 	) {
 		return commandFailure(56, "Flux policy Kustomization CAS failed")
 	}
@@ -326,6 +326,48 @@ func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile
 	ownerPath := "/metadata/annotations/platform.devantler.tech~1ghcr-policy-handoff-owner"
 	reconcilePath := "/metadata/annotations/kustomize.toolkit.fluxcd.io~1reconcile"
 	if hasPatchOperation(patch, "add", "/spec/suspend", true) {
+		// A rejection on the merits moves nothing, and must never be retried.
+		if rejection := os.Getenv("FAKE_FLUX_POLICY_HANDOFF_PATCH_REJECTION"); rejection != "" {
+			appendEnvFile("OPERATION_LOG", "flux-policy-handoff-patch-rejected\n")
+			return commandFailure(56, "%s", rejection)
+		}
+		// The child's twin of the parent's churn knob (#3067): a benign write moves
+		// the resourceVersion between the script's read and its CAS, so the patch
+		// is rejected against an object that is still claimable. The version MOVES,
+		// which is what separates contention from a rejection on the merits.
+		if budget := parseInt(
+			os.Getenv("FAKE_FLUX_POLICY_HANDOFF_CAS_CHURN_REJECTIONS"), 0,
+		); budget > 0 {
+			fired := parseInt(markerContent("flux-policy-handoff-cas-churn-count"), 0)
+			if fired < budget {
+				setMarkerContent(
+					"flux-policy-handoff-cas-churn-count",
+					strconv.Itoa(fired+1),
+				)
+				setMarkerContent(
+					"flux-policy-handoff-resource-version",
+					incrementDecimal(currentResourceVersion),
+				)
+				if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_FOREIGN_OWNER_AFTER_CAS_CHURN") == "true" {
+					setMarkerContent(
+						"flux-policy-handoff-owner",
+						"fixture-foreign-transaction",
+					)
+				}
+				// The object was deleted and recreated: same name, no owner, a new UID.
+				if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_REPLACED_AFTER_CAS_CHURN") == "true" {
+					setMarkerContent(
+						"flux-policy-handoff-uid",
+						"infrastructure-kustomization-uid-replacement",
+					)
+				}
+				appendEnvFile("OPERATION_LOG", "flux-policy-handoff-cas-churn:infrastructure\n")
+				return commandFailure(
+					56,
+					"Error from server (Invalid): the server rejected our request due to an error in our request",
+				)
+			}
+		}
 		owner := patchValueString(patch, "add", ownerPath)
 		if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
 			owner == "" ||

@@ -1,7 +1,7 @@
 machine:
   install:
     extraKernelArgs:
-      # Preserve Talos v1.13.9's complete upstream CONFIG_LSM order while
+      # Preserve Talos v1.13.10's complete upstream CONFIG_LSM order while
       # explicitly enabling AppArmor. Linux 6.18 no longer reliably supplies an audit
       # subject context when the legacy security=apparmor selector is used;
       # every affected audit record then emits
