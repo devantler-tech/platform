@@ -116,8 +116,8 @@ unlike *dynamic* roles, which mint ephemeral users the app would have to re-fetc
 ### Validation
 
 - `ksail workload validate` and `ksail --config ksail.prod.yaml workload validate` pass. Without
-  KSail, the provider layers listed in the AGENTS.md *Validation* section build; the cluster
-  overlays alone contain only the Flux wiring.
+  KSail, the cluster overlays and the provider layers listed in the AGENTS.md *Validation* section
+  build; the overlays alone contain only the Flux wiring.
 - Manually, with fleetdm opted into the local overlay: fleetdm comes up healthy
   with creds sourced from `database/static-creds/fleet`. (CI validates manifests
   statically only — it no longer runs a cluster.)
