@@ -141,7 +141,7 @@ run_case() {
 if ! run_case healthy true "$work/dry.out" "$work/dry.deletes"; then
   fail 'cleanup did not configure kubectl from the mounted service-account credentials'
 fi
-[ "$("$real_kubectl" --kubeconfig "$work/kubeconfig" config view --raw -o jsonpath='{.clusters[0].cluster.server}')" = 'https://10.0.0.1:443' ] ||
+[ "$(KUBECONFIG="$work/kubeconfig" "$real_kubectl" config view --raw -o jsonpath='{.clusters[0].cluster.server}')" = 'https://10.0.0.1:443' ] ||
   fail 'kubectl cannot read the generated in-cluster kubeconfig'
 pass 'kubectl uses the in-cluster service-account token and CA without copying token bytes'
 [ ! -s "$work/dry.deletes" ] || fail 'dry-run issued a delete'
