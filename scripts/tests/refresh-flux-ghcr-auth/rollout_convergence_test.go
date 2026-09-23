@@ -190,12 +190,14 @@ func TestMatchingRevisionRevalidatesChangedDeclaredImage(t *testing.T) {
 		"talos-revision:10.0.0.1",
 	})
 	operationLog := mustRead(f.operationLog)
+	requireNotContains(t, operationLog, "node-claim-cordon:")
+	requireNotContains(t, operationLog, "node-uncordon:")
 	requireNotContains(t, operationLog, "node-drain:")
 	requireNotContains(t, operationLog, "talos-reboot:")
 	requireNotContains(t, strings.Join(operations, "\n"), previousImage)
 }
 
-func TestFailedImageOnlyPullKeepsNodeCordoned(t *testing.T) {
+func TestFailedImageOnlyPullDoesNotDisruptSchedulingOrPublish(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
@@ -206,8 +208,27 @@ func TestFailedImageOnlyPullKeepsNodeCordoned(t *testing.T) {
 	})
 	requireFailureResult(t, result)
 	operations := readLines(f.operationLog)
-	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
-	for _, unexpected := range []string{"node-drain:prod-worker-1", "node-uncordon:prod-worker-1", "talos-reboot:10.0.0.2", "root-patch"} {
+	for _, unexpected := range []string{"node-claim-cordon:prod-worker-1", "node-drain:prod-worker-1", "node-uncordon:prod-worker-1", "talos-reboot:10.0.0.2", "root-patch"} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
+func TestImageOnlyProofRefusesAutoscalerDeletionCandidate(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":       "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":      "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_AUTOSCALER_DELETING_NODES": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-worker-1",
+		"talos-remove:10.0.0.2:" + ksailTargetImage,
+		"talos-pull:10.0.0.2:" + ksailTargetImage,
+		"talos-revision:10.0.0.2", "root-patch",
+	} {
 		requireNoLine(t, operations, unexpected)
 	}
 }
@@ -321,9 +342,9 @@ func TestRemovedNodeAfterMutationStillFailsClosed(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
-		"FAKE_TALOS_NODES_CURRENT":         "true",
-		"FAKE_TALOS_VERIFIED_IMAGE":        "ghcr.io/devantler-tech/ksail:v7.166.0",
-		"FAKE_NODE_REMOVED_AFTER_UNCORDON": "prod-worker-1",
+		"FAKE_TALOS_NODES_CURRENT":             "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":            "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_NODE_REMOVED_AFTER_IMAGE_MARKER": "prod-worker-1",
 	})
 	requireFailureResult(t, result)
 	operations := readLines(f.operationLog)

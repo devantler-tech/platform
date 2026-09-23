@@ -1697,11 +1697,14 @@ func fakeKubectlGetNode(args []string) int {
 	if nodeName == "" {
 		return commandFailure(91, "node target missing")
 	}
+	imageNodeIP, _ := fakeNodeAddress(nodeName)
+	removedAfterImageMarker := nodeName == os.Getenv("FAKE_NODE_REMOVED_AFTER_IMAGE_MARKER") &&
+		markerExists("talos-revision-"+imageNodeIP)
 	removedAfterQuarantine := nodeName == os.Getenv("FAKE_NODE_REMOVED_AFTER_QUARANTINE") &&
 		(markerExists("cordon-owner-prod-control-plane-3") || markerExists("removed-before-process-"+nodeName))
 	removedAfterClaim := nodeName == os.Getenv("FAKE_AUTOSCALER_REMOVES_AFTER_CLAIM_NODE") &&
 		markerExists("cordon-owner-"+nodeName)
-	if wordListContains(os.Getenv("FAKE_NODE_REMOVED_BEFORE_PROCESS"), nodeName) || removedAfterQuarantine || removedAfterClaim ||
+	if wordListContains(os.Getenv("FAKE_NODE_REMOVED_BEFORE_PROCESS"), nodeName) || removedAfterQuarantine || removedAfterClaim || removedAfterImageMarker ||
 		(nodeName == os.Getenv("FAKE_NODE_REMOVED_AFTER_UNCORDON") && markerExists("uncordoned-"+nodeName)) {
 		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "forbidden" {
 			return commandFailure(1, "Error from server (Forbidden): nodes is forbidden")
@@ -1770,6 +1773,17 @@ func fakeKubectlGetNode(args []string) int {
 		labels["ksail.io/autoscaled"] = "true"
 	}
 	annotations := map[string]any{}
+	if os.Getenv("FAKE_TALOS_NODES_CURRENT") == "true" ||
+		markerExists("talos-revision-"+nodeIP) {
+		annotations["platform.devantler.tech/ghcr-pull-verified-revision-v2"] =
+			os.Getenv("EXPECTED_GHCR_REVISION")
+		verifiedImage := defaultString(os.Getenv("FAKE_TALOS_VERIFIED_IMAGE"),
+			os.Getenv("EXPECTED_KSAIL_TARGET_IMAGE"))
+		if markerExists("talos-revision-" + nodeIP) {
+			verifiedImage = os.Getenv("EXPECTED_KSAIL_TARGET_IMAGE")
+		}
+		annotations["platform.devantler.tech/ghcr-pull-verified-image-v2"] = verifiedImage
+	}
 	if owner := markerContent("cordon-owner-" + nodeName); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-owner"] = owner
 	}

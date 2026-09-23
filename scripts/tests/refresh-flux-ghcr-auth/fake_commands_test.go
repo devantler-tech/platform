@@ -291,8 +291,10 @@ func fakeTalosctl(args []string) int {
 			(!markerExists("talos-remove-"+node) || !markerExists("talos-pull-"+node)) {
 			return commandFailure(93, "revision preceded registry pull proof")
 		}
-		if nodeName == "" || !markerExists("cordoned-"+nodeName) ||
-			markerContent("cordon-owner-"+nodeName) == "" {
+		imageOnly := os.Getenv("FAKE_TALOS_NODES_CURRENT") == "true" &&
+			!markerExists("talos-auth-"+node) && reusableProofUID == ""
+		if nodeName == "" || (!imageOnly && (!markerExists("cordoned-"+nodeName) ||
+			markerContent("cordon-owner-"+nodeName) == "")) {
 			return commandFailure(93, "Talos revision mutation lacked an owned Kubernetes cordon")
 		}
 		if markerContent("cordon-recovery-"+nodeName) != "" &&
@@ -340,8 +342,10 @@ func fakeTalosctl(args []string) int {
 			return commandFailure(93, "image-only cache mutation lacks proof")
 		}
 		nodeName := fakeNodeName(node)
-		if nodeName == "" || !markerExists("cordoned-"+nodeName) ||
-			markerContent("cordon-owner-"+nodeName) == "" {
+		imageOnly := os.Getenv("FAKE_TALOS_NODES_CURRENT") == "true" &&
+			!markerExists("talos-auth-"+node)
+		if nodeName == "" || (!imageOnly && (!markerExists("cordoned-"+nodeName) ||
+			markerContent("cordon-owner-"+nodeName) == "")) {
 			return commandFailure(93, "Talos image removal lacked an owned Kubernetes cordon")
 		}
 		image := argumentAfter(args, "remove")
@@ -375,8 +379,10 @@ func fakeTalosctl(args []string) int {
 			return commandFailure(93, "cached image not removed")
 		}
 		nodeName := fakeNodeName(node)
-		if nodeName == "" || !markerExists("cordoned-"+nodeName) ||
-			markerContent("cordon-owner-"+nodeName) == "" {
+		imageOnly := os.Getenv("FAKE_TALOS_NODES_CURRENT") == "true" &&
+			!markerExists("talos-auth-"+node)
+		if nodeName == "" || (!imageOnly && (!markerExists("cordoned-"+nodeName) ||
+			markerContent("cordon-owner-"+nodeName) == "")) {
 			return commandFailure(93, "Talos image pull lacked an owned Kubernetes cordon")
 		}
 		image := argumentAfter(args, "pull")

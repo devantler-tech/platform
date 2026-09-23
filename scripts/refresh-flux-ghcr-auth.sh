@@ -3365,6 +3365,97 @@ revalidate_selected_node_identity_before_mutation() {
 # adopts the credential, prove an uncached pull of the declared incoming image,
 # and only then record its non-secret revision+image proof markers so either
 # credential or target changes trigger verification.
+# Image-only drift does not change containerd's credential. Its existing v2
+# runtime proof remains valid; the exact incoming image still needs an uncached
+# registry round-trip before publish. Unlike a credential rotation, removing
+# and re-pulling this image needs neither a reboot nor a scheduling change.
+# Keep the global sync Lease and rebind the Node at every Talos edge so an
+# autoscaler replacement or another actor's drain cannot inherit this proof.
+revalidate_image_only_node_guard() {
+  local node_name="$1" node_uid="$2" node_ip="$3" node_role="$4"
+  local desired_revision="$5" phase="$6"
+  local allow_removed=0
+
+  assert_sync_lease_held || return 1
+  if [[ "${phase}" == "cache removal" ]]; then
+    allow_removed=1
+  fi
+  revalidate_selected_node_identity_before_mutation \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${allow_removed}" || return $?
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get node "${node_name}" --output json >"${cordon_state_file}"; then
+    echo "::error::Could not re-read image-only target ${node_name} before ${phase}."
+    return 1
+  fi
+  if ! selected_node_identity_is_current \
+    "${cordon_state_file}" "${node_name}" "${node_uid}" \
+    "${node_ip}" "${node_role}" ||
+    ! jq -e \
+      --arg revision "${desired_revision}" \
+      --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
+      --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
+      --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" '
+        .metadata.annotations[$revision_annotation] == $revision
+        and (.metadata.annotations[$owner_annotation] // "") == ""
+        and (.metadata.annotations[$recovery_annotation] // "") == ""
+        and (.spec.unschedulable // false) == false
+        and .metadata.deletionTimestamp == null
+        and any(.status.conditions[]?;
+          .type == "Ready" and .status == "True")
+        and all(.spec.taints[]?;
+          .key != "ToBeDeletedByClusterAutoscaler"
+          and .key != "node.kubernetes.io/not-ready"
+          and .key != "node.kubernetes.io/unreachable"
+          and .key != "node.kubernetes.io/unschedulable")
+      ' "${cordon_state_file}" >/dev/null; then
+    echo "::error::Image-only target ${node_name} changed identity, credential proof, or scheduling state before ${phase}; refusing to record image proof."
+    return 1
+  fi
+}
+
+process_talos_image_only_target() {
+  local desired_revision="$1" operator_image="$2" node_role="$3"
+  local node_name="$4" node_ip="$5" node_uid="$6"
+
+  if [[ -f "${bootstrap_cordon_dir}/${node_name}.json" ]]; then
+    echo "::error::Image-only target ${node_name} has an unfinished bootstrap fence; refusing unfenced proof."
+    return 1
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "cache removal" || return $?
+  if ! talosctl --nodes "${node_ip}" image remove "${operator_image}" \
+    --namespace cri >"${talos_result_file}" 2>&1; then
+    if ! talos_image_remove_reports_absent \
+      "${talos_result_file}" "${operator_image}"; then
+      echo "::error::Talos node ${node_name} could not remove the incoming KSail image for uncached proof."
+      return 1
+    fi
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "image pull" || return $?
+  if ! talosctl --nodes "${node_ip}" image pull "${operator_image}" \
+    --namespace cri >"${talos_result_file}" 2>&1; then
+    echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image; root auth remains unchanged."
+    return 1
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "revision marker" || return $?
+  if ! talosctl --nodes "${node_ip}" patch machineconfig \
+    --mode=no-reboot --patch-file="${talos_revision_patch_file}" \
+    >"${talos_result_file}" 2>&1; then
+    echo "::error::Talos node ${node_name} proved the incoming KSail image but could not record the proof marker."
+    return 1
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "completion" || return $?
+}
+
 process_talos_node_target() {
   local desired_revision="$1"
   local operator_image="$2"
@@ -3395,6 +3486,12 @@ process_talos_node_target() {
     "${node_mode}" != "proof-only" ]]; then
     echo "::error::Unknown Talos GHCR synchronization mode '${node_mode}' for ${node_name}."
     return 1
+  fi
+  if [[ "${node_mode}" == "image-only" ]]; then
+    process_talos_image_only_target \
+      "${desired_revision}" "${operator_image}" "${node_role}" \
+      "${node_name}" "${node_ip}" "${node_uid}"
+    return $?
   fi
   # Bootstrap preparation can already own a durable fence on this target.
   # Its recovery remains fail-closed; only an untouched target may be skipped.
