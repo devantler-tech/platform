@@ -172,7 +172,7 @@ data:
         "reason": "platform#3812: node-scoped Longhorn instance manager; storage durability comes from cross-node volume replicas"
       },
       {
-        "application_pattern": "^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}$",
+        "application_pattern": "^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}\\z",
         "category": "Availability",
         "type": "single-instance-app",
         "reason": "platform#4117: new instance-manager names are node-scoped after autoscaling; cross-node volume replicas provide storage durability"

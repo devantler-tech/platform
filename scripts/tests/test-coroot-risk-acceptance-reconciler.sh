@@ -48,7 +48,7 @@ jq -e '
     (.reason | startswith("platform#3812: "))
   ) and
   ([.[] | select(has("application_pattern"))] | length == 1) and
-  any(.[]; .application_pattern? == "^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}$" and
+  any(.[]; .application_pattern? == "^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}\\z" and
     .category == "Availability" and .type == "single-instance-app" and
     (.reason | startswith("platform#4117: "))) and
   ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | length) ==
@@ -172,10 +172,15 @@ setup_scenario() {
   elif [ "${mode}" = 'longhorn' ]; then
     jq -n '{data:{risks:[
       {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-9c4995fb1b807430b1d54d466d640e9f",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-9c4995fb1b807430b1d54d466d640e9f\n",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:longhorn-system:Deployment:instance-manager-9c4995fb1b807430b1d54d466d640e9f",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:other:InstanceManager:instance-manager-9c4995fb1b807430b1d54d466d640e9f",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-not-a-hash",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-9c4995fb1b807430b1d54d466d640e9f",key:{category:"Security",type:"single-instance-app"}}
+    ]}}' >"${dir}/risks.json"
+  elif [ "${mode}" = 'retired-pattern' ]; then
+    jq -n '{data:{risks:[
+      {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-9c4995fb1b807430b1d54d466d640e9f",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:"platform#4117: previously accepted"}}
     ]}}' >"${dir}/risks.json"
   else
     jq -n '{data:{risks:[
@@ -261,6 +266,33 @@ if COROOT_BASE_URL='http://coroot.test' ACCEPTANCES_FILE="${broad_file}" \
 fi
 [ ! -s "${broad_dir}/posts.jsonl" ] ||
   fail 'a widened pattern must be rejected before any Coroot mutation'
+
+wrong_type_file="${work_root}/wrong-type-risks.json"
+jq 'map(if has("application_pattern") then .type = "single-node-app" else . end)' \
+  "${acceptances_file}" >"${wrong_type_file}"
+wrong_type_dir="$(setup_scenario wrong-type longhorn)"
+if COROOT_BASE_URL='http://coroot.test' ACCEPTANCES_FILE="${wrong_type_file}" \
+  SCENARIO_DIR="${wrong_type_dir}" PATH="${wrong_type_dir}/bin:${PATH}" \
+  /bin/sh -c "${script_body}" >/dev/null 2>&1; then
+  fail 'changing the reviewed Longhorn risk type must fail closed'
+fi
+[ ! -s "${wrong_type_dir}/posts.jsonl" ] ||
+  fail 'a changed Longhorn risk type must be rejected before any Coroot mutation'
+
+without_pattern_file="${work_root}/without-pattern-risks.json"
+jq 'map(select(has("application_pattern") | not))' \
+  "${acceptances_file}" >"${without_pattern_file}"
+retired_pattern_dir="$(setup_scenario retired-pattern retired-pattern)"
+COROOT_BASE_URL='http://coroot.test' ACCEPTANCES_FILE="${without_pattern_file}" \
+  SCENARIO_DIR="${retired_pattern_dir}" PATH="${retired_pattern_dir}/bin:${PATH}" \
+  /bin/sh -c "${script_body}" >/dev/null ||
+  fail 'removing the reviewed Longhorn pattern must remain reconcilable'
+jq -s -e '
+  length == 1 and
+  .[0].payload.action == "mark_as_active" and
+  (.[0].url | contains("longhorn-system%3AInstanceManager%3Ainstance-manager-9c4995fb1b807430b1d54d466d640e9f"))
+' "${retired_pattern_dir}/posts.jsonl" >/dev/null ||
+  fail 'removing the Longhorn pattern must reactivate its previously dismissed risks'
 
 ambiguous_dir="$(setup_scenario ambiguous ambiguous)"
 if run_scenario "${ambiguous_dir}" >/dev/null 2>&1; then

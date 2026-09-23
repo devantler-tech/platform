@@ -87,7 +87,7 @@ spec:
                     '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
                   [ -n "$PID" ] || { echo "ERROR: could not resolve platform project id" >&2; exit 1; }
 
-                  LONGHORN_INSTANCE_MANAGER_PATTERN='^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}$'
+                  LONGHORN_INSTANCE_MANAGER_PATTERN='^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}\z'
                   jq -e --arg instance_manager_pattern "$LONGHORN_INSTANCE_MANAGER_PATTERN" '
                     type == "array" and
                     all(.[];
@@ -96,13 +96,14 @@ spec:
                         (.reason | startswith("platform#3812: "))) or
                        (has("application_pattern") and (has("application") | not) and
                         .application_pattern == $instance_manager_pattern and
+                        .type == "single-instance-app" and
                         (.reason | startswith("platform#4117: ")))) and
                       .category == "Availability" and
                       (.type as $type |
                         ["single-instance-app", "single-node-app", "single-az-app", "spot-only-app", "unreplicated-database"] |
                         index($type) != null)
                     ) and
-                    ([.[] | select(has("application_pattern"))] | length == 1) and
+                    ([.[] | select(has("application_pattern"))] | length <= 1) and
                     ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | length) ==
                       ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | unique | length)
                   ' "$ACCEPTANCES_FILE" >/dev/null || {
