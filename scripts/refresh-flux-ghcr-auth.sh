@@ -3415,6 +3415,29 @@ revalidate_image_only_node_guard() {
   fi
 }
 
+# The machine annotation is durable across a failed transaction. Bind it to
+# the Kubernetes Node UID as well as the revision and image: a replacement can
+# reuse an autoscaled node's name and InternalIP between the final identity
+# read and the Talos patch, but it must not inherit the previous Node's proof.
+write_talos_revision_patch_for_node() {
+  local desired_revision="$1" operator_image="$2" node_uid="$3"
+
+  jq -n \
+    --arg revision "${desired_revision}" \
+    --arg image "${operator_image}" \
+    --arg uid "${node_uid}" \
+    --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
+    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" \
+    --arg uid_annotation "${GHCR_PULL_VERIFIED_NODE_UID_ANNOTATION}" '
+      {machine: {nodeAnnotations: {
+        ($revision_annotation): $revision,
+        ($image_annotation): $image,
+        ($uid_annotation): $uid
+      }}}
+    ' >"${talos_revision_patch_file}" || return 1
+  chmod 600 "${talos_revision_patch_file}"
+}
+
 process_talos_image_only_target() {
   local desired_revision="$1" operator_image="$2" node_role="$3"
   local node_name="$4" node_ip="$5" node_uid="$6"
@@ -3445,6 +3468,8 @@ process_talos_image_only_target() {
   revalidate_image_only_node_guard \
     "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
     "${desired_revision}" "revision marker" || return $?
+  write_talos_revision_patch_for_node \
+    "${desired_revision}" "${operator_image}" "${node_uid}" || return 1
   if ! talosctl --nodes "${node_ip}" patch machineconfig \
     --mode=no-reboot --patch-file="${talos_revision_patch_file}" \
     >"${talos_result_file}" 2>&1; then
@@ -3970,6 +3995,8 @@ process_talos_node_target() {
   if [[ "${node_mode}" == "proof-only" ]]; then
     reusable_proof_uid="${node_uid}"
   fi
+  write_talos_revision_patch_for_node \
+    "${desired_revision}" "${operator_image}" "${node_uid}" || return 1
   # Test hook consumed by fake talosctl to verify Node binding; Talos ignores it.
   if ! FLUX_GHCR_REUSABLE_PROOF_UID="${reusable_proof_uid}" \
     talosctl \
@@ -4373,10 +4400,13 @@ record_runtime_proof() {
     --arg revision "${desired_revision}" \
     --arg image "${operator_image}" \
     --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
-    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" '
+    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" \
+    --arg uid_annotation "${GHCR_PULL_VERIFIED_NODE_UID_ANNOTATION}" '
       all(.items[];
         .metadata.annotations[$revision_annotation] == $revision
-        and .metadata.annotations[$image_annotation] == $image)
+        and .metadata.annotations[$image_annotation] == $image
+        and ((.metadata.annotations[$uid_annotation] // "") == ""
+          or .metadata.annotations[$uid_annotation] == .metadata.uid))
     ' "${runtime_proof_nodes_file}" >/dev/null; then
     echo "::error::Refusing to record a post-update handoff before every exact Node has current runtime proof."
     return 1

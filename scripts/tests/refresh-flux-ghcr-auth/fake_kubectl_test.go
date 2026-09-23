@@ -1429,6 +1429,10 @@ func fakeKubectlGetNodes() int {
 	image := os.Getenv("EXPECTED_KSAIL_TARGET_IMAGE")
 	verifiedImage := defaultString(os.Getenv("FAKE_TALOS_VERIFIED_IMAGE"), image)
 	workerUID := defaultString(os.Getenv("FAKE_WORKER_UID"), "prod-worker-1-uid")
+	if os.Getenv("FAKE_NODE_REPLACED_AFTER_IMAGE_MARKER") == "prod-worker-1" &&
+		markerExists("talos-revision-10.0.0.2") {
+		workerUID = "prod-worker-1-replacement-uid"
+	}
 	nodes := []any{
 		fakeInventoryNode("prod-worker-1", workerUID, "10.0.0.2", "198.51.100.2", false, revision, "", "", true),
 		fakeInventoryNode("prod-control-plane-1", "prod-control-plane-1-uid", "10.0.0.1", "198.51.100.1", true, revision, "", "", true),
@@ -1580,6 +1584,11 @@ func fakeInventoryNode(
 	}
 	if verifiedRevision != "" {
 		annotations["platform.devantler.tech/ghcr-pull-verified-revision-v2"] = verifiedRevision
+		if os.Getenv("FAKE_TALOS_LEGACY_UID_MISSING") != "true" ||
+			markerExists("talos-proof-uid-"+internalIP) {
+			annotations["platform.devantler.tech/ghcr-pull-verified-node-uid-v2"] =
+				defaultString(markerContent("talos-proof-uid-"+internalIP), uid)
+		}
 	}
 	if verifiedImage != "" {
 		annotations["platform.devantler.tech/ghcr-pull-verified-image-v2"] = verifiedImage
@@ -1688,8 +1697,16 @@ func setInventoryProof(node any, revision, image string) {
 	nodeMap := node.(map[string]any)
 	metadata := nodeMap["metadata"].(map[string]any)
 	annotations := metadata["annotations"].(map[string]any)
+	status := nodeMap["status"].(map[string]any)
+	addresses := status["addresses"].([]any)
+	internalIP := addresses[0].(map[string]any)["address"].(string)
 	annotations["platform.devantler.tech/ghcr-pull-verified-revision-v2"] = revision
 	annotations["platform.devantler.tech/ghcr-pull-verified-image-v2"] = image
+	if os.Getenv("FAKE_TALOS_LEGACY_UID_MISSING") != "true" ||
+		markerExists("talos-proof-uid-"+internalIP) {
+		annotations["platform.devantler.tech/ghcr-pull-verified-node-uid-v2"] =
+			defaultString(markerContent("talos-proof-uid-"+internalIP), metadata["uid"].(string))
+	}
 }
 
 func fakeKubectlGetNode(args []string) int {
@@ -1761,6 +1778,9 @@ func fakeKubectlGetNode(args []string) int {
 		nodeUID = nodeName + "-replacement-uid"
 		nodeIP = "10.0.0.99"
 	}
+	if nodeName == os.Getenv("FAKE_NODE_REPLACED_AFTER_IMAGE_MARKER") && markerExists("talos-revision-"+nodeIP) {
+		nodeUID = nodeName + "-replacement-uid"
+	}
 	if nodeName == os.Getenv("FAKE_NODE_IP_CHANGED_AFTER_DRAIN_NODE") && markerExists("drained-"+nodeName) {
 		nodeIP = "10.0.0.99"
 	}
@@ -1783,6 +1803,11 @@ func fakeKubectlGetNode(args []string) int {
 			verifiedImage = os.Getenv("EXPECTED_KSAIL_TARGET_IMAGE")
 		}
 		annotations["platform.devantler.tech/ghcr-pull-verified-image-v2"] = verifiedImage
+		if os.Getenv("FAKE_TALOS_LEGACY_UID_MISSING") != "true" ||
+			markerExists("talos-proof-uid-"+nodeIP) {
+			annotations["platform.devantler.tech/ghcr-pull-verified-node-uid-v2"] =
+				defaultString(markerContent("talos-proof-uid-"+nodeIP), nodeUID)
+		}
 	}
 	if owner := markerContent("cordon-owner-" + nodeName); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-owner"] = owner
@@ -1947,6 +1972,12 @@ func fakeNodeName(nodeAddress string) string {
 }
 
 func fakeExpectedNodeUID(nodeName string) string {
+	if nodeName == os.Getenv("FAKE_NODE_REPLACED_AFTER_IMAGE_MARKER") {
+		address, _ := fakeNodeAddress(nodeName)
+		if markerExists("talos-revision-" + address) {
+			return nodeName + "-replacement-uid"
+		}
+	}
 	if nodeName == "prod-worker-1" && os.Getenv("FAKE_WORKER_UID") != "" {
 		return os.Getenv("FAKE_WORKER_UID")
 	}

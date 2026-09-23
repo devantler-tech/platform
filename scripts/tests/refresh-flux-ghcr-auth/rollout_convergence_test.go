@@ -233,6 +233,61 @@ func TestImageOnlyProofRefusesAutoscalerDeletionCandidate(t *testing.T) {
 	}
 }
 
+func TestImageOnlyProofBindsDurableMarkerToNodeUID(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":  "true",
+		"FAKE_TALOS_VERIFIED_IMAGE": "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_AUTOSCALED_NODES":     "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	proofUID, err := os.ReadFile(filepath.Join(f.syncStateDir, "talos-proof-uid-10.0.0.2"))
+	if err != nil {
+		t.Fatalf("read durable Talos proof UID: %v", err)
+	}
+	if string(proofUID) != "prod-worker-1-uid" {
+		t.Errorf("durable proof UID = %q, want prod-worker-1-uid", proofUID)
+	}
+}
+
+func TestLegacyCurrentProofDoesNotRemoveRunningImageForUIDMigration(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":      "true",
+		"FAKE_TALOS_LEGACY_UID_MISSING": "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	for _, operation := range operations {
+		if strings.HasPrefix(operation, "talos-remove:") ||
+			strings.HasPrefix(operation, "talos-pull:") {
+			t.Errorf("legacy current image was unnecessarily mutated: %s", operation)
+		}
+	}
+}
+
+func TestReplacementAfterImageMarkerReprovesReusedAddress(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	env := map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":              "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":             "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_AUTOSCALED_NODES":                 "prod-worker-1",
+		"FAKE_NODE_REPLACED_AFTER_IMAGE_MARKER": "prod-worker-1",
+	}
+	first := f.runHelper(validConfig(), nil, env)
+	requireFailureResult(t, first)
+	requireNoLine(t, readLines(f.operationLog), "root-patch")
+
+	second := f.runHelperPreservingClusterState(validConfig(), nil, env)
+	requireSuccessResult(t, second)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "talos-pull:10.0.0.2:"+ksailTargetImage)
+	requireLine(t, operations, "root-patch")
+}
+
 // The last image-stale target can disappear while earlier nodes are being
 // verified. Its absence must not abort the remaining-node convergence, invoke
 // Talos at a stale address, or manufacture a proof for the removed UID.

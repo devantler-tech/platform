@@ -307,11 +307,16 @@ func fakeTalosctl(args []string) int {
 			annotations["platform.devantler.tech/ghcr-pull-verified-image-v2"] != os.Getenv("EXPECTED_KSAIL_TARGET_IMAGE") {
 			return commandFailure(93, "invalid verified pull marker")
 		}
+		proofUID, _ := annotations["platform.devantler.tech/ghcr-pull-verified-node-uid-v2"].(string)
+		if proofUID == "" || proofUID != fakeExpectedNodeUID(nodeName) {
+			return commandFailure(93, "verified pull marker is not bound to the selected Node UID")
+		}
 		appendTalosOperation("talos-revision:" + node)
 		if talosFailure(node, "revision") {
 			return commandFailure(48, "talos revision failed")
 		}
 		touchMarker("talos-revision-" + node)
+		setMarkerContent("talos-proof-uid-"+node, proofUID)
 		if node == "10.0.0.5" && os.Getenv("FAKE_CONSUMER_REVERT_DURING_LATE_NODE_NAMESPACE") != "" {
 			namespace := os.Getenv("FAKE_CONSUMER_REVERT_DURING_LATE_NODE_NAMESPACE")
 			touchMarker("consumer-reverted-" + namespace)
