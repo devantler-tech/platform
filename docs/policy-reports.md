@@ -65,21 +65,13 @@ What operators should expect:
 - A current failure is rewritten by every background scan, so it never reaches
   six hours and its report is never deleted. Old `pass` and `skip` results,
   which mutate rules record once at admission, do not trigger deletion.
-- A report with no recent result is never deleted by the general rule. Background scans skip
+- A report with no recent result is never deleted. Background scans skip
   ReplicaSets and the kube-system, kube-public, kube-node-lease and kyverno
   namespaces, so reports there are written at admission and never refreshed.
   Their old failures may still be real, so they stay visible. If the reports
   controller stops publishing, failures stay in place once its newest result is
   two hours old; in those first two hours a report can still be deleted, and it
   stays missing until the controller recovers and rescans.
-- The one reviewed exception is the obsolete
-  `kube-system/cluster-autoscaler-hetzner-cluster-autoscaler`
-  `validate-replica-floor` failure from #3155. The live policy already exempts
-  that exact stable Deployment name, but the namespace filter prevents a
-  replacement `skip`. The cleanup policy removes it only when it is older than
-  six hours and is the report's sole fail/warn/error result. Any additional
-  failure or lookalike resource keeps its report; the throwaway-cluster proof
-  covers both refusal cases.
 - A result left behind by an `exclude` on a resource that no other rule still
   evaluates is not pruned either. Use a precondition for the exemption (see
   above) so the scan rewrites it as a current `skip`.

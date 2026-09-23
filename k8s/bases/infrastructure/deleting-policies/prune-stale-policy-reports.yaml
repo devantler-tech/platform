@@ -18,8 +18,8 @@
 # carry a stale failing one). Counting those would delete and regenerate
 # hundreds of healthy reports every few hours.
 #
-# A report is normally deleted only when it ALSO holds a result written within
-# the last two scan intervals, which shows the background scan is still visiting it.
+# A report is deleted only when it ALSO holds a result written within the last
+# two scan intervals, which shows the background scan is still visiting it.
 # Some reports are written at admission and never rescanned: the chart's
 # resource filters skip ReplicaSets and the kube-system, kube-public,
 # kube-node-lease and kyverno namespaces in background scans (168 ReplicaSet
@@ -33,14 +33,6 @@
 # controller recovers and its next scan recreates it. A report whose every
 # result is stale therefore stays; a reviewed exclusion is expressed as a
 # precondition instead, which rewrites its result as a current skip (docs/policy-reports.md, #3900).
-#
-# One bounded exception repairs #3155: kube-system is excluded from background
-# scans, so the cluster-autoscaler's June replica-floor failure can never be
-# rewritten even though the current policy explicitly exempts that exact stable
-# Deployment name. Delete that report only when the obsolete
-# validate-replica-floor result is its sole fail/warn/error result. Any new
-# failure, a lookalike name, another namespace or another kind keeps the report.
-# The behavioral proof seeds all three cases before this reaches production.
 #
 # The 6h threshold is six scan intervals, so a scan that is merely late never
 # deletes a current report.
@@ -56,28 +48,14 @@ spec:
         apiVersions: [v1alpha2]
         resources: [policyreports]
   conditions:
-    - name: safe-to-prune
+    - name: has-stale-failing-result
       expression: >-
-        (
-          object.?results.orValue([]).exists(r,
-            has(r.result) && r.result in ['fail', 'warn', 'error'] &&
-            has(r.timestamp) && has(r.timestamp.seconds) &&
-            timestamp(int(r.timestamp.seconds)) < time.now() - duration('6h')) &&
-          object.?results.orValue([]).exists(r,
-            has(r.timestamp) && has(r.timestamp.seconds) &&
-            timestamp(int(r.timestamp.seconds)) >= time.now() - duration('2h'))
-        ) || (
-          has(object.scope) &&
-          has(object.scope.kind) && object.scope.kind == 'Deployment' &&
-          has(object.scope.namespace) && object.scope.namespace == 'kube-system' &&
-          has(object.scope.name) &&
-            object.scope.name == 'cluster-autoscaler-hetzner-cluster-autoscaler' &&
-          object.?results.orValue([]).filter(r,
-            has(r.result) && r.result in ['fail', 'warn', 'error']).size() == 1 &&
-          object.?results.orValue([]).exists(r,
-            has(r.policy) && r.policy == 'validate-replica-floor' &&
-            has(r.rule) && r.rule == 'require-replica-floor' &&
-            has(r.result) && r.result == 'fail' &&
-            has(r.timestamp) && has(r.timestamp.seconds) &&
-            timestamp(int(r.timestamp.seconds)) < time.now() - duration('6h'))
-        )
+        object.?results.orValue([]).exists(r,
+          has(r.result) && r.result in ['fail', 'warn', 'error'] &&
+          has(r.timestamp) && has(r.timestamp.seconds) &&
+          timestamp(int(r.timestamp.seconds)) < time.now() - duration('6h'))
+    - name: still-rescanned
+      expression: >-
+        object.?results.orValue([]).exists(r,
+          has(r.timestamp) && has(r.timestamp.seconds) &&
+          timestamp(int(r.timestamp.seconds)) >= time.now() - duration('2h'))
