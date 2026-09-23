@@ -10,6 +10,7 @@ readonly crossplane_alerter="${root_dir}/k8s/providers/hetzner/infrastructure/co
 readonly dr_runbook="${root_dir}/docs/dr/velero-cnpg.md"
 readonly longhorn_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/longhorn/helm-release.yaml"
 readonly origin_ca_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/origin-ca-issuer/helm-release.yaml"
+readonly simply_dns_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/simply-dns-webhook/helm-release.yaml"
 readonly cluster_issuers_dir="${root_dir}/k8s/providers/hetzner/infrastructure/cluster-issuers"
 readonly prod_variables="${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml"
 readonly replica_floor="${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/validate-replica-floor.yaml"
@@ -26,6 +27,16 @@ fail() {
 
 command -v yq >/dev/null || fail 'yq is required'
 command -v kubectl >/dev/null || fail 'kubectl is required'
+
+yq e -e '
+  .spec.values.replicaCount == 2 and
+  [.spec.values.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[] |
+    select(.topologyKey == "kubernetes.io/hostname" and
+      .labelSelector.matchLabels.app == "simply-dns-webhook" and
+      .labelSelector.matchLabels.release == "simply-dns-webhook")
+  ] | length == 1
+' "${simply_dns_release}" >/dev/null ||
+  fail 'SimplyDNS webhook replicas must be required to run on different nodes'
 
 yq e -e '
   .spec.values.replicaCount == 2 and
