@@ -115,6 +115,9 @@ version, source commit and SHA-256 constants and run it from any directory in th
 pinned release assets, reapplies the reviewed resource-scoped Checkov dispositions with the tested
 `scripts/annotate-vendored-checkov` helper, and runs Checkov before replacing either committed file.
 It requires `curl`, `go`, `sha256sum`, and the Checkov version pinned in the script on the local path.
+That pin must equal `CI_CHECKOV_VERSION` in `scripts/megalinter-scan-counts.sh`, the version CI's scan
+runs. Every mode of the updater, including CI's offline `--validate-committed`, refuses to run while
+the two differ, so bump them in the same PR and re-run the updater on the new Checkov.
 
 This convention deliberately keeps the suppressions narrow: only the named upstream ClusterRole and
 Deployment receive annotations, no Checkov check is disabled repository-wide, and an unrelated new
