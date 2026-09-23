@@ -865,7 +865,11 @@ spec:
                         "cpu","memory","disk_io_load","disk_usage","network","dns","logs"]
                         | map(. as $check | {check:$check,status:($app[$check].status // "unknown")}
                           | select(.status == "critical" or .status == "warning" or .status == "info")))
-                    }] as $all
+                    }] | sort_by([(
+                      if .status == "critical" then 0
+                      elif .status == "warning" then 1
+                      elif .status == "info" then 2
+                      else 3 end), .id]) as $all
                     | {items:$all[:20],omitted:(($all | length) - ($all[:20] | length))}
                   ') || {
                     log_error "could not summarize non-OK Coroot applications"
@@ -902,6 +906,8 @@ spec:
                   ACTIVE_RISKS=$(printf '%s' "$RISKS_RESPONSE" | jq -ce '
                     [(.data.risks // [])[] | select(.severity == "critical" or .severity == "warning")
                       | {application_id,key:{category:.key.category,type:.key.type},severity}]
+                    | sort_by([(if .severity == "critical" then 0 else 1 end),
+                      .application_id,.key.category,.key.type])
                     as $all
                     | {items:$all[:20],omitted:(($all | length) - ($all[:20] | length))}
                   ') || {

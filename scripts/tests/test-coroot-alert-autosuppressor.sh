@@ -289,20 +289,44 @@ if run_scenario "${missing_app_id_dir}" >/dev/null 2>&1; then
 fi
 
 many_risks_dir="$(setup_scenario many-risks false)"
-jq -n '{data:{risks:[range(21) | {
+jq -n '{data:{risks:([range(21) | {
   key:{category:"Availability",type:"single-instance-app"},
   application_id:("95rsc5yp:app:Deployment:risk-" + tostring),
   severity:"warning"
-}]}}' >"${many_risks_dir}/risks.json"
+}] + [{
+  key:{category:"Security",type:"db-internet-exposure"},
+  application_id:"95rsc5yp:app:StatefulSet:critical-last",
+  severity:"critical"
+}])}}' >"${many_risks_dir}/risks.json"
 many_risks_output="$(run_scenario "${many_risks_dir}")"
 printf '%s\n' "${many_risks_output}" | jq -s -e '
   any(.[];
     .msg == "coroot clean-state counters"
     and .coroot_clean_state.risks.warning == 21
+    and .coroot_clean_state.risks.critical == 1
     and (.coroot_active_risks.items | length) == 20
-    and .coroot_active_risks.omitted == 1)
+    and .coroot_active_risks.omitted == 2
+    and .coroot_active_risks.items[0].application_id == "95rsc5yp:app:StatefulSet:critical-last")
 ' >/dev/null ||
-  fail "risk identity output was not bounded without hiding the exact count"
+  fail "risk identity output did not prioritize critical offenders before truncation"
+
+many_apps_dir="$(setup_scenario many-applications false)"
+jq '.data.applications = ([range(21) | {
+  id:("95rsc5yp:app:Deployment:info-" + tostring),status:"info"
+}] + [{id:"95rsc5yp:app:Deployment:critical-last",status:"critical"}])' \
+  "${many_apps_dir}/applications.json" >"${many_apps_dir}/applications-many.json"
+mv "${many_apps_dir}/applications-many.json" "${many_apps_dir}/applications.json"
+many_apps_output="$(run_scenario "${many_apps_dir}")"
+printf '%s\n' "${many_apps_output}" | jq -s -e '
+  any(.[];
+    .msg == "coroot clean-state counters"
+    and .coroot_clean_state.applications.slo_violations == 1
+    and .coroot_clean_state.applications.errors_in_logs == 21
+    and (.coroot_non_ok_applications.items | length) == 20
+    and .coroot_non_ok_applications.omitted == 2
+    and .coroot_non_ok_applications.items[0].id == "95rsc5yp:app:Deployment:critical-last")
+' >/dev/null ||
+  fail "application identity output did not prioritize critical offenders before truncation"
 pass "risk and offender schemas fail closed while diagnostic samples stay bounded"
 
 extra_dir="$(setup_scenario extra true)"
