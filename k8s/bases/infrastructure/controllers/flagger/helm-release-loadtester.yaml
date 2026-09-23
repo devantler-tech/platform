@@ -22,6 +22,20 @@ spec:
   # measure. Used by the onboarded canaries (umami and homepage); see
   # docs/progressive-delivery.md for the onboarding recipe.
   values:
+    # Flagger's canary checks should survive one worker outage. The loadtester
+    # is stateless, so keep a second endpoint on a different node (platform#4104).
+    replicaCount: 2
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: loadtester
+            topologyKey: kubernetes.io/hostname
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+
     # Restricted PSA — the chart ships hardening disabled by default, so set it
     # explicitly at both the pod and container level.
     securityContext:
