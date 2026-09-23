@@ -39,9 +39,16 @@ spec:
     # on ZERO nodes (all agents predated the merge), so the bug it fixed was
     # still dropping cross-node flows (KEDA scaler liveness kills, operator
     # -> scaler i/o timeouts). Agent restarts are designed to be
-    # datapath-non-disruptive (eBPF state persists), and the DS rolls one
-    # node at a time per updateStrategy.
+    # datapath-non-disruptive (eBPF state persists), but the 2026-09-23
+    # v1.20.2 chart rollout coincided with real DNS and service timeouts in
+    # short-lived observability jobs. Bound the agent and Envoy DaemonSets
+    # individually to one unavailable node. This is a permanent Helm value,
+    # not the old operator-stepped rollout/disableWait handoff.
     rollOutCiliumPods: true
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 1
     securityContext:
       capabilities:
         ciliumAgent:
@@ -223,6 +230,10 @@ spec:
     envoy:
       # Restart on config changes (same rationale as rollOutCiliumPods).
       rollOutPods: true
+      updateStrategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxUnavailable: 1
       resources:
         limits:
           cpu: "2"
