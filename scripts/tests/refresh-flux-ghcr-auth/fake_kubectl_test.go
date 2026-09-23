@@ -2852,9 +2852,9 @@ func fakeKubectlGetConsumerSecret(namespace string) int {
 	encoded := ""
 	if mismatch {
 		encoded = base64.StdEncoding.EncodeToString([]byte(`{"auths":{}}`))
-	} else {
+	} else if capture := os.Getenv("VARIABLES_PATCH_CAPTURE"); pathExists(capture) {
 		var patch map[string]any
-		if err := json.Unmarshal([]byte(mustReadCommandFile(os.Getenv("VARIABLES_PATCH_CAPTURE"))), &patch); err != nil {
+		if err := json.Unmarshal([]byte(mustReadCommandFile(capture)), &patch); err != nil {
 			return commandFailure(91, "parse variables-base patch: %v", err)
 		}
 		data, _ := patch["data"].(map[string]any)
@@ -2862,6 +2862,11 @@ func fakeKubectlGetConsumerSecret(namespace string) int {
 		if variablesPatchCount >= 3 {
 			removeMarker(revertedMarker)
 		}
+	} else {
+		// The materialized Secret persists across stage and reassert, while the
+		// per-run patch capture is cleared. Read the fake cluster's persisted
+		// variables-base value when this run did not patch it.
+		encoded = markerContent("variables-secret-value")
 	}
 	fmt.Println(encodeJSON(map[string]any{
 		"data": map[string]any{".dockerconfigjson": encoded},
