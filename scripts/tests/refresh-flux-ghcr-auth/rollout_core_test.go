@@ -409,6 +409,52 @@ func TestConcurrentCordonBeforeAtomicClaimStopsTheRoll(t *testing.T) {
 	}
 }
 
+// A node re-read can fail without writing anything to stderr. The diagnostic
+// file is then zero bytes rather than absent, so copying it succeeds while
+// carrying nothing -- and emit_safe_operation_output skips an empty file. The
+// operator must still be told why the node claim could not be re-verified.
+func TestSilentNodeRereadFailureStillEmitsADiagnostic(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_CLAIM_FAIL_NODE":          "prod-worker-1",
+		"FAKE_NODE_REREAD_FAILURE_NODE": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+
+	if !pathExists(filepath.Join(f.syncStateDir, "node-reread-failed-prod-worker-1")) {
+		t.Fatal("fixture did not fail the node re-read after the refused claim")
+	}
+	output := result.stdout + result.stderr
+	requireContains(t, output, "Could not atomically claim and cordon")
+	requireContains(t, output, "cordon-claim: node re-read failed; its diagnostic could not be read")
+	requireNoLine(t, readLines(f.operationLog), "node-drain:prod-worker-1")
+}
+
+// The empty-diagnostic guard must not swallow a real one: when the failed
+// re-read does write stderr, that text is what the operator needs, not the
+// deterministic fallback.
+func TestNodeRereadFailureDiagnosticSurvives(t *testing.T) {
+	t.Parallel()
+
+	const diagnostic = "Error from server (Forbidden): nodes \"prod-worker-1\" is forbidden"
+
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_CLAIM_FAIL_NODE":                "prod-worker-1",
+		"FAKE_NODE_REREAD_FAILURE_NODE":       "prod-worker-1",
+		"FAKE_NODE_REREAD_FAILURE_DIAGNOSTIC": diagnostic,
+	})
+	requireFailureResult(t, result)
+
+	if !pathExists(filepath.Join(f.syncStateDir, "node-reread-failed-prod-worker-1")) {
+		t.Fatal("fixture did not fail the node re-read after the refused claim")
+	}
+	output := result.stdout + result.stderr
+	requireContains(t, output, "cordon-claim: "+diagnostic)
+	requireNotContains(t, output, "its diagnostic could not be read")
+}
+
 func TestPDBBlockedDrainRestoresOriginalSchedulability(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
