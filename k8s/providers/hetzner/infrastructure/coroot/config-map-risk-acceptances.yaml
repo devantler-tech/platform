@@ -5,7 +5,8 @@
 # id) to one exact risk key and records why adding replicas would cost more or
 # make the workload less safe without improving its declared recovery objective.
 # The reconciler dismisses only these pairs. A newly named workload, a new risk
-# type, or a new application therefore stays active for investigation.
+# type, or a new application therefore stays active for investigation, except
+# for the reviewed node-scoped Longhorn InstanceManager name pattern below.
 #
 # Four initial warnings are deliberately absent: Alertmanager and the Longhorn
 # CSI snapshotter get warm replicas, Origin CA Issuer is disabled, and #3818
@@ -169,6 +170,12 @@ data:
         "category": "Availability",
         "type": "single-instance-app",
         "reason": "platform#3812: node-scoped Longhorn instance manager; storage durability comes from cross-node volume replicas"
+      },
+      {
+        "application_pattern": "^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}$",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#4117: new instance-manager names are node-scoped after autoscaling; cross-node volume replicas provide storage durability"
       },
       {
         "application": "kubescape:Deployment:kubescape",

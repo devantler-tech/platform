@@ -9,6 +9,8 @@
 # remain outside this controller's scope. Application coordinates omit the
 # generated Coroot cluster id and match the remaining namespace/kind/name tuple
 # exactly, preserving the declaration across a project rebuild.
+# The sole generated-name exception is the anchored Longhorn InstanceManager
+# pattern: those processes are one-per-node, so autoscaling changes their hash.
 #
 # The in-cluster service is intentionally credentialless because the Coroot CR
 # sets authAnonymousRole=Admin; the external UI remains behind oauth2-proxy.
@@ -85,19 +87,24 @@ spec:
                     '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
                   [ -n "$PID" ] || { echo "ERROR: could not resolve platform project id" >&2; exit 1; }
 
-                  jq -e '
+                  LONGHORN_INSTANCE_MANAGER_PATTERN='^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}$'
+                  jq -e --arg instance_manager_pattern "$LONGHORN_INSTANCE_MANAGER_PATTERN" '
                     type == "array" and
                     all(.[];
-                      (.application | type == "string") and
-                      (.application | split(":") | length == 3) and
+                      ((has("application") and (has("application_pattern") | not) and
+                        (.application | type == "string" and (split(":") | length == 3)) and
+                        (.reason | startswith("platform#3812: "))) or
+                       (has("application_pattern") and (has("application") | not) and
+                        .application_pattern == $instance_manager_pattern and
+                        (.reason | startswith("platform#4117: ")))) and
                       .category == "Availability" and
                       (.type as $type |
                         ["single-instance-app", "single-node-app", "single-az-app", "spot-only-app", "unreplicated-database"] |
-                        index($type) != null) and
-                      (.reason | startswith("platform#3812: "))
+                        index($type) != null)
                     ) and
-                    ([.[] | [.application, .category, .type] | @tsv] | length) ==
-                      ([.[] | [.application, .category, .type] | @tsv] | unique | length)
+                    ([.[] | select(has("application_pattern"))] | length == 1) and
+                    ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | length) ==
+                      ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | unique | length)
                   ' "$ACCEPTANCES_FILE" >/dev/null || {
                     echo "ERROR: invalid or duplicate risk acceptance declaration" >&2
                     exit 1
@@ -109,13 +116,34 @@ spec:
                     exit 1
                   }
 
+                  # Expand the reviewed generated-name rule against live risks.
+                  # Exact entries win for already reviewed historical names.
+                  EFFECTIVE_ACCEPTANCES=$(printf '%s' "$RISKS" | jq -c \
+                    --slurpfile declared "$ACCEPTANCES_FILE" '
+                      def coordinate: .application_id | split(":") | .[1:] | join(":");
+                      ($declared[0] | map(select(has("application")))) as $exact |
+                      ($declared[0] | map(select(has("application_pattern")))) as $patterns |
+                      [.data.risks[] as $risk | $patterns[] as $pattern |
+                        select(($risk | coordinate | test($pattern.application_pattern)) and
+                          $risk.key.category == $pattern.category and
+                          $risk.key.type == $pattern.type) |
+                        {application:($risk | coordinate), category:$pattern.category,
+                          type:$pattern.type, reason:$pattern.reason}
+                      ] as $generated |
+                      $exact + [$generated[] as $candidate |
+                        select(all($exact[];
+                          .application != $candidate.application or
+                          .category != $candidate.category or .type != $candidate.type)) |
+                        $candidate]
+                    ')
+
                   # Preflight the complete desired/live join before the first
                   # write. Duplicate live identities are ambiguous and must not
                   # let one declaration silently affect multiple clusters.
-                  printf '%s' "$RISKS" | jq -e --slurpfile desired "$ACCEPTANCES_FILE" '
+                  printf '%s' "$RISKS" | jq -e --argjson desired "$EFFECTIVE_ACCEPTANCES" '
                     def coordinate: .application_id | split(":") | .[1:] | join(":");
                     .data.risks as $risks |
-                    all($desired[0][]; . as $declared |
+                    all($desired[]; . as $declared |
                       ([$risks[] | select(
                         coordinate == $declared.application and
                         .key.category == $declared.category and
@@ -147,12 +175,12 @@ spec:
                   # The allowlist is authoritative for Availability dismissal
                   # state. Other risk categories are explicitly out of scope.
                   stale=$(printf '%s' "$RISKS" | jq -c \
-                    --slurpfile desired "$ACCEPTANCES_FILE" '
+                    --argjson desired "$EFFECTIVE_ACCEPTANCES" '
                       def coordinate: .application_id | split(":") | .[1:] | join(":");
                       .data.risks[]
                       | select(.key.category == "Availability" and .dismissal != null)
                       | . as $risk
-                      | select(($desired[0] | any(.[];
+                      | select(($desired | any(.[];
                           .application == ($risk | coordinate) and
                           .category == $risk.key.category and
                           .type == $risk.key.type
@@ -171,7 +199,7 @@ spec:
                     reactivated=$((reactivated + 1))
                   done
 
-                  declared=$(jq -c '.[]' "$ACCEPTANCES_FILE")
+                  declared=$(printf '%s' "$EFFECTIVE_ACCEPTANCES" | jq -c '.[]')
                   dismissed=0
                   unchanged=0
                   absent=0
