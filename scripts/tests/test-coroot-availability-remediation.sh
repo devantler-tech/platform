@@ -42,7 +42,7 @@ yq e -e '
 ' "${kubescape_alert_route}" >/dev/null ||
   fail 'the node-agent must export runtime alerts to every Alertmanager peer'
 
-grep -Fq 'AM_PEERS="http://alertmanager-0.alertmanager-headless.kubescape.svc.cluster.local:9093 http://alertmanager-1.alertmanager-headless.kubescape.svc.cluster.local:9093"' \
+grep -Fq 'AM_PEERS="http://alertmanager-0.alertmanager-headless.kubescape.svc.cluster.local.:9093 http://alertmanager-1.alertmanager-headless.kubescape.svc.cluster.local.:9093"' \
   "${crossplane_alerter}" ||
   fail 'the Crossplane sync alerter must post to every Alertmanager peer'
 if grep -Fq 'alertmanager.kubescape.svc.cluster.local:9093' "${crossplane_alerter}"; then
