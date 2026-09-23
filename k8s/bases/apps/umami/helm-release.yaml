@@ -56,18 +56,16 @@ spec:
     # both primary replicas onto one worker during a rollout (platform#4103).
     # DoNotSchedule preserves one serving replica if only one worker is usable;
     # the second waits for another worker instead of giving a false HA signal.
-    # The labelSelector keys on app.kubernetes.io/instance=umami —
-    # NOT app.kubernetes.io/name — because Flagger's default --selector-labels
-    # rewrites app.kubernetes.io/name to "umami-umami-primary" on the primary
-    # while leaving instance=umami intact on the pods (same reason the PDB and the
-    # Homepage pod-selector key on instance — see canary.yaml / pod-disruption-budget.yaml).
+    # Scope the spread to the serving primary pods. The instance label also
+    # matches canary pods, which could otherwise satisfy the skew while both
+    # primary replicas still share one node. Live primary pods carry this name.
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
         whenUnsatisfiable: DoNotSchedule
         labelSelector:
           matchLabels:
-            app.kubernetes.io/instance: umami
+            app.kubernetes.io/name: umami-primary
     serviceAccount:
       # Umami needs no Kubernetes API access.
       automountServiceAccountToken: false

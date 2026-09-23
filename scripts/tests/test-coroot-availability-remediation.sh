@@ -33,10 +33,10 @@ yq e -e '
     select(.topologyKey == "kubernetes.io/hostname" and
       .maxSkew == 1 and
       .whenUnsatisfiable == "DoNotSchedule" and
-      .labelSelector.matchLabels."app.kubernetes.io/instance" == "umami")
+      .labelSelector.matchLabels."app.kubernetes.io/name" == "umami-primary")
   ] | length == 1
 ' "${umami_release}" >/dev/null ||
-  fail 'Umami serving replicas must have a hard hostname spread on the primary pod label'
+  fail 'Umami serving replicas must have a hard hostname spread scoped to primary pods'
 
 yq e -e '
   .spec.values.replicaCount == 2 and
