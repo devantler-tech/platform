@@ -730,6 +730,7 @@ jobs:
               - 'ksail.prod.yaml'
               - '.github/scripts/setup-talosctl.sh'
               - 'scripts/validate-talos-kubernetes-compatibility/**'
+              - '.github/actions/deploy-prod/**'
               - 'go.mod'
               - 'go.sum'
               - '.github/workflows/ci.yaml'

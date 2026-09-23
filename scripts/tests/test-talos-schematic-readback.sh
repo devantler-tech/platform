@@ -18,6 +18,12 @@ if ! grep -Fq 'scripts/verify-talos-schematic-readback.sh' "$deploy_action" ||
   exit 1
 fi
 
+filters=$(yq -r '.jobs.changes.steps[] | select(.id == "filter") | .with.filters' "$ci_workflow")
+if ! printf '%s\n' "$filters" | yq -e '.talos[] | select(. == ".github/actions/deploy-prod/**")' - >/dev/null; then
+  printf 'changes to the production deploy action must run the Talos readback test in PR CI\n' >&2
+  exit 1
+fi
+
 update_line=$(grep -nF './scripts/run-ksail-prod-with-pull-auth.sh cluster update' "$deploy_action" | cut -d: -f1)
 stability_line=$(grep -nF './scripts/wait-for-prod-api-stability.sh' "$deploy_action" | cut -d: -f1)
 readback_line=$(grep -nF './scripts/verify-talos-schematic-readback.sh' "$deploy_action" | cut -d: -f1)
