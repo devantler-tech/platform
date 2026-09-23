@@ -3157,7 +3157,20 @@ const (
 // AWS identity, or permission is changed. The prior aggregate is recorded below.
 // The required job reported the new aggregate on checksum-verified kubectl
 // v1.36.2; the local renderer is not used as approval evidence.
-const expectedRenderedSurfaceSHA = "33eb2b3a1201e8c6c304eab0bb65feed702d8244ed96ebb315b90f3901d95792"
+//
+// Previous aggregate: 33eb2b3a1201e8c6c304eab0bb65feed702d8244ed96ebb315b90f3901d95792.
+//
+// Re-approved for the Hubble relay and UI C-0211 defaults (#4090), on a branch
+// level with main 4538bf59. The required production-authorization job on the
+// approved renderer (run 35879996914, job 107246839067) reported exactly ONE
+// changed surface entry, helm.toolkit.fluxcd.io/v2 HelmRelease
+// kube-system/cilium, and nothing added or removed. The source delta adds only
+// fsGroupChangePolicy: OnRootMismatch to the hubble-relay and hubble-ui pod
+// security contexts and an empty seLinuxOptions to their containers. No RBAC,
+// binding, service account, policy, AWS identity or permission changes. The
+// required job reported the new aggregate on checksum-verified kubectl v1.36.2;
+// the local renderer is not used as approval evidence.
+const expectedRenderedSurfaceSHA = "13b29142e7385e76732a93a83ece6be1d1cc54bcecef086f38e1a65bd05e94ef"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3170,7 +3183,7 @@ const expectedRenderedSurfaceSHA = "33eb2b3a1201e8c6c304eab0bb65feed702d8244ed96
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "65fecc82a527f6b5fc9c2154b58d2268d4eb4cfa49bb2ec9dfdfd65789621250"
+const previousRenderedSurfaceSHA = "33eb2b3a1201e8c6c304eab0bb65feed702d8244ed96ebb315b90f3901d95792"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
