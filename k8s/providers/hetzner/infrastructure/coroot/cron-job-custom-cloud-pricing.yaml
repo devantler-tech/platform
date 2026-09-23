@@ -85,6 +85,7 @@ spec:
               # de-facto community one, digest-pinned; observability is exempt from
               # disallow-latest-tag. Swappable for any curl+jq image.
               image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true

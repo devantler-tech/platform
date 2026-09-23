@@ -579,6 +579,7 @@ jobs:
               - 'scripts/tests/test-prune-protected-orphan-alert.sh'
               - 'scripts/tests/test-coroot-alert-autosuppressor.sh'
               - 'scripts/tests/test-coroot-application-health-reconciler.sh'
+              - 'scripts/tests/test-coroot-helper-image-pull-policy.sh'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-maintenance-oom-alert.sh'
               - 'scripts/tests/test-cronjob-failure-alert.sh'
@@ -1619,6 +1620,14 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-application-health-reconciler.sh
           bash scripts/tests/test-coroot-application-health-reconciler.sh
+
+      - name: 📦 Validate Coroot helper image caching
+        if: needs.changes.outputs.k8s == 'true'
+        # A pinned digest on a warm node must not depend on Docker Hub token
+        # issuance for every scheduled Coroot maintenance run.
+        run: |
+          shellcheck scripts/tests/test-coroot-helper-image-pull-policy.sh
+          bash scripts/tests/test-coroot-helper-image-pull-policy.sh
 
       - name: 💾 Validate the Velero maintenance OOM alert
         if: needs.changes.outputs.k8s == 'true'

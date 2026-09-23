@@ -106,6 +106,7 @@ spec:
           containers:
             - name: check
               image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              imagePullPolicy: IfNotPresent
               env:
                 # 48h: two full daily scan intervals, so a single missed or slow
                 # run cannot alert. Anything past this means the scan has failed
