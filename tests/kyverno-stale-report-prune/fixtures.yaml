@@ -29,6 +29,47 @@ metadata:
   namespace: prune-test
 data: {}
 ---
+# The chart's default filters keep kube-system out of background scans. The
+# proof seeds PolicyReports for these two real resources after creation so the
+# cleanup policy can prove its one reviewed filtered-namespace exception.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler-hetzner-cluster-autoscaler
+  namespace: kube-system
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: filtered-exempt
+  template:
+    metadata:
+      labels:
+        app: filtered-exempt
+    spec:
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler-lookalike
+  namespace: kube-system
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: filtered-lookalike
+  template:
+    metadata:
+      labels:
+        app: filtered-lookalike
+    spec:
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10
+---
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:

@@ -33,8 +33,10 @@ spec:
                 app: loadtester
             topologyKey: kubernetes.io/hostname
     podDisruptionBudget:
-      enabled: true
-      minAvailable: 1
+      # The chart only renders minAvailable, which reintroduces the drain
+      # deadlock class guarded by validate-pdb-drain-safe. Keep its PDB off and
+      # declare the platform-owned maxUnavailable PDB beside this release.
+      enabled: false
 
     # Restricted PSA — the chart ships hardening disabled by default, so set it
     # explicitly at both the pod and container level.

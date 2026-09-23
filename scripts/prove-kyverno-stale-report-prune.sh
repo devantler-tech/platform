@@ -4,7 +4,10 @@
 # removes a Kyverno result that a name exclusion left stale, that the next scan
 # recreates the report with only its current results, that a report whose
 # results are all current is left alone, and that a report the scan no longer
-# writes any current result to keeps its failures.
+# writes any current result to keeps its failures. It separately proves the one
+# reviewed filtered-namespace exception: the obsolete cluster-autoscaler
+# replica-floor result is deleted only when it is the report's sole failure;
+# an extra failure and a lookalike resource both survive.
 #
 # Requires kubectl, helm and a cluster in the current kubeconfig context with
 # nothing else on it. CI creates one with kind (.github/workflows/prove-kyverno-stale-report-prune.yaml).
@@ -70,6 +73,14 @@ has_results() { # <configmap> <expected sorted policy/rule list>
   [[ "${state#* }" == "$2" ]]
 }
 
+report_exists() { # <namespace> <report name>
+  kubectl -n "$1" get policyreport "$2" >/dev/null 2>&1
+}
+
+report_absent() { # <namespace> <report name>
+  ! report_exists "$1" "$2"
+}
+
 log "installing kyverno chart $chart_version"
 helm repo add kyverno https://kyverno.github.io/kyverno/ >/dev/null
 helm upgrade --install kyverno kyverno/kyverno --version "$chart_version" \
@@ -77,6 +88,60 @@ helm upgrade --install kyverno kyverno/kyverno --version "$chart_version" \
 
 kubectl apply -f "$cleanup_role"
 kubectl apply -f "$dir/fixtures.yaml"
+
+filtered_name=cluster-autoscaler-hetzner-cluster-autoscaler
+lookalike_name=cluster-autoscaler-lookalike
+filtered_uid="$(kubectl -n kube-system get deployment "$filtered_name" -o jsonpath='{.metadata.uid}')"
+lookalike_uid="$(kubectl -n kube-system get deployment "$lookalike_name" -o jsonpath='{.metadata.uid}')"
+[[ -n "$filtered_uid" && -n "$lookalike_uid" ]] || fail "could not resolve the filtered-resource fixture UIDs"
+
+# kube-system is intentionally absent from background scans, so seed the stale
+# reports that production already carries. The exact report starts with an
+# unrelated second failure: the reviewed exception must refuse to delete it.
+cat <<EOF | kubectl apply -f -
+apiVersion: wgpolicyk8s.io/v1alpha2
+kind: PolicyReport
+metadata:
+  name: ${filtered_uid}
+  namespace: kube-system
+scope:
+  apiVersion: apps/v1
+  kind: Deployment
+  name: ${filtered_name}
+  namespace: kube-system
+  uid: ${filtered_uid}
+results:
+  - policy: validate-replica-floor
+    rule: require-replica-floor
+    result: fail
+    source: kyverno
+    timestamp: {seconds: 1, nanos: 0}
+  - policy: unrelated-policy
+    rule: unrelated-rule
+    result: fail
+    source: kyverno
+    timestamp: {seconds: 1, nanos: 0}
+summary: {pass: 0, fail: 2, warn: 0, error: 0, skip: 0}
+---
+apiVersion: wgpolicyk8s.io/v1alpha2
+kind: PolicyReport
+metadata:
+  name: ${lookalike_uid}
+  namespace: kube-system
+scope:
+  apiVersion: apps/v1
+  kind: Deployment
+  name: ${lookalike_name}
+  namespace: kube-system
+  uid: ${lookalike_uid}
+results:
+  - policy: validate-replica-floor
+    rule: require-replica-floor
+    result: fail
+    source: kyverno
+    timestamp: {seconds: 1, nanos: 0}
+summary: {pass: 0, fail: 1, warn: 0, error: 0, skip: 0}
+EOF
 
 both="require-owner-label/owner-label require-team-label/team-label"
 wait_for "both results reported for excluded-later" 600 has_results excluded-later "$both"
@@ -172,5 +237,28 @@ never_after="$(report_state never-rescanned)"
   fail "never-rescanned was deleted although no scan wrote a current result to it ($never_before -> ${never_after%% *})"
 has_results never-rescanned "$both" || fail "never-rescanned lost a failing result"
 log "ok: a report with no current result keeps its failures"
+
+report_exists kube-system "$filtered_uid" ||
+  fail "the filtered exact report was deleted while it still carried an unrelated failure"
+report_exists kube-system "$lookalike_uid" ||
+  fail "the filtered lookalike report was deleted by an over-broad exception"
+log "ok: filtered reports remain while the exact report is ambiguous"
+
+kubectl -n kube-system patch policyreport "$filtered_uid" --type=json -p \
+  '[{"op":"remove","path":"/results/1"},{"op":"replace","path":"/summary/fail","value":1}]' >/dev/null
+wait_for "the sole obsolete autoscaler replica-floor failure to be pruned" 300 \
+  report_absent kube-system "$filtered_uid"
+log "ok: the reviewed filtered-namespace failure was pruned"
+
+# Observe two later cleanup executions before accepting the lookalike's
+# survival; otherwise it may simply not have been evaluated yet.
+run_mark="$(last_run)"
+for cycle in 1 2; do
+  wait_for "filtered-exception cleanup run $cycle" 300 ran_since_mark
+  run_mark="$(last_run)"
+done
+report_exists kube-system "$lookalike_uid" ||
+  fail "the lookalike report was deleted by the filtered-namespace exception"
+log "ok: the lookalike report remains after later cleanup runs"
 
 log "PASS"
