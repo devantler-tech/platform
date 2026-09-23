@@ -429,6 +429,17 @@ runs:
       shell: bash
       run: ./scripts/wait-for-prod-api-stability.sh
 
+    - name: 🧾 Read back the Talos boot image on every node
+      # Kernel arguments are baked into the Image Factory schematic. An
+      # in-place machine-config sync can succeed while old boot images remain
+      # on static nodes, so the release is not healthy until this exact image
+      # and node-health readback passes. The check only reads Kubernetes.
+      if: >-
+        steps.cluster_update.outcome == 'success' &&
+        steps.wait_prod_api_stability.outcome == 'success'
+      shell: bash
+      run: ./scripts/verify-talos-schematic-readback.sh
+
     - name: 📣 Report suppressed machine-config sync
       # The step above is the pipeline's ONLY Talos machine-config sync, and the
       # rollout gate skips it. A skipped step inside a green deploy reads as

@@ -724,11 +724,14 @@ jobs:
               - 'talos/**'
               - 'talos-local/**'
               - 'scripts/register-talos-factory-schematic.sh'
+              - 'scripts/verify-talos-schematic-readback.sh'
               - 'scripts/tests/test-talos-factory-schematic-registration.sh'
+              - 'scripts/tests/test-talos-schematic-readback.sh'
               - 'scripts/tests/test-talos-apparmor-lsm.sh'
               - 'ksail.prod.yaml'
               - '.github/scripts/setup-talosctl.sh'
               - 'scripts/validate-talos-kubernetes-compatibility/**'
+              - '.github/actions/deploy-prod/**'
               - 'go.mod'
               - 'go.sum'
               - '.github/workflows/ci.yaml'
@@ -2355,6 +2358,11 @@ jobs:
         run: |
           shellcheck scripts/register-talos-factory-schematic.sh scripts/tests/test-talos-factory-schematic-registration.sh
           bash scripts/tests/test-talos-factory-schematic-registration.sh
+
+      - name: 🧾 Validate Talos boot-image readback
+        run: |
+          shellcheck scripts/verify-talos-schematic-readback.sh scripts/tests/test-talos-schematic-readback.sh
+          bash scripts/tests/test-talos-schematic-readback.sh
 
       - name: ✅ Render + validate patched machine configs
         run: |
