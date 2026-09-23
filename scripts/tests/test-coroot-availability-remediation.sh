@@ -38,6 +38,14 @@ yq e -e '
 ' "${simply_dns_release}" >/dev/null ||
   fail 'SimplyDNS webhook replicas must be required to run on different nodes'
 
+simply_dns_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "simply-dns-webhook") | .patch' "${simply_dns_release}")"
+printf '%s\n' "${simply_dns_patch}" | yq e -e '
+  .spec.strategy.type == "RollingUpdate" and
+  .spec.strategy.rollingUpdate.maxUnavailable == 1 and
+  .spec.strategy.rollingUpdate.maxSurge == 0
+' - >/dev/null ||
+  fail 'SimplyDNS webhook rollout must not deadlock on two eligible workers'
+
 yq e -e '
   .spec.values.replicaCount == 2 and
   .spec.values.podAntiAffinity == "hard" and
