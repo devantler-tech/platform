@@ -68,3 +68,23 @@ spec:
         memory: 64Mi
       limits:
         memory: 128Mi
+  # With only two eligible workers, required cross-node affinity prevents a
+  # third surge pod from scheduling. Retire one old pod before replacing it;
+  # the remaining replica stays available throughout the rollout.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: flagger-loadtester
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: flagger-loadtester
+              spec:
+                strategy:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxUnavailable: 1
+                    maxSurge: 0

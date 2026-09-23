@@ -46,6 +46,14 @@ yq e -e '
 ' "${loadtester_release}" >/dev/null ||
   fail 'Flagger loadtester must have two cross-node replicas and a drain-safe PDB'
 
+loadtester_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "flagger-loadtester") | .patch' "${loadtester_release}")"
+printf '%s\n' "${loadtester_patch}" | yq e -e '
+  .spec.strategy.type == "RollingUpdate" and
+  .spec.strategy.rollingUpdate.maxUnavailable == 1 and
+  .spec.strategy.rollingUpdate.maxSurge == 0
+' - >/dev/null ||
+  fail 'Flagger loadtester rollout must not deadlock on two eligible workers'
+
 yq e -e '
   .spec.values.replicaCount == 2 and
   .spec.values.podAntiAffinity == "hard" and
