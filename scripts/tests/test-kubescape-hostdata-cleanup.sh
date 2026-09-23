@@ -29,6 +29,9 @@ pass() {
 }
 
 command -v yq >/dev/null 2>&1 || fail 'yq is required'
+command -v kubectl >/dev/null 2>&1 || fail 'kubectl is required'
+real_kubectl="$(command -v kubectl)"
+readonly real_kubectl
 for file in "$manifest" "$role" "$binding" "$service_account"; do
   [ -f "$file" ] || fail "manifest not found: $file"
 done
@@ -89,6 +92,14 @@ chmod +x "$work/cleanup.sh"
 cat >"$work/kubectl" <<'STUB'
 #!/bin/sh
 set -eu
+if [ -z "${KUBECONFIG:-}" ] || [ ! -f "$KUBECONFIG" ]; then
+  echo 'kubectl has no in-cluster kubeconfig and would fall back to localhost:8080' >&2
+  exit 1
+fi
+[ "$(yq eval -r '.clusters[0].cluster.server' "$KUBECONFIG")" = 'https://10.0.0.1:443' ] || exit 1
+[ "$(yq eval -r '.clusters[0].cluster.certificate-authority' "$KUBECONFIG")" = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt' ] || exit 1
+[ "$(yq eval -r '.users[0].user.tokenFile' "$KUBECONFIG")" = '/var/run/secrets/kubernetes.io/serviceaccount/token' ] || exit 1
+[ "$(yq eval -r '.users[0].user.token // ""' "$KUBECONFIG")" = '' ] || exit 1
 if [ "$1" = '--request-timeout=20s' ]; then
   shift
 fi
@@ -124,10 +135,15 @@ chmod +x "$work/kubectl" "$work/sleep"
 run_case() {
   local mode="$1" dry_run="$2" output="$3" deletes="$4"
   : >"$deletes"
-  PATH="$work:$PATH" MODE="$mode" DRY_RUN="$dry_run" DELETE_LOG="$deletes" sh "$work/cleanup.sh" >"$output" 2>&1
+  PATH="$work:$PATH" HOME="$work" KUBERNETES_SERVICE_HOST=10.0.0.1 KUBERNETES_SERVICE_PORT=443 MODE="$mode" DRY_RUN="$dry_run" DELETE_LOG="$deletes" sh "$work/cleanup.sh" >"$output" 2>&1
 }
 
-run_case healthy true "$work/dry.out" "$work/dry.deletes"
+if ! run_case healthy true "$work/dry.out" "$work/dry.deletes"; then
+  fail 'cleanup did not configure kubectl from the mounted service-account credentials'
+fi
+[ "$(KUBECONFIG="$work/kubeconfig" "$real_kubectl" config view --raw -o jsonpath='{.clusters[0].cluster.server}')" = 'https://10.0.0.1:443' ] ||
+  fail 'kubectl cannot read the generated in-cluster kubeconfig'
+pass 'kubectl uses the in-cluster service-account token and CA without copying token bytes'
 [ ! -s "$work/dry.deletes" ] || fail 'dry-run issued a delete'
 grep -q 'ORPHAN osreleasefiles.hostdata.kubescape.cloud/stale-1' "$work/dry.out" || fail 'dry-run did not classify the stale fixture'
 grep -q '\[dry-run\] would delete' "$work/dry.out" || fail 'dry-run did not state its decision'
@@ -140,7 +156,7 @@ pass 'enabled run submits only the exact stale deletion without waiting on final
 
 for mode in node-empty node-fail list-fail; do
   : >"$work/${mode}.deletes"
-  if PATH="$work:$PATH" MODE="$mode" DRY_RUN=false DELETE_LOG="$work/${mode}.deletes" sh "$work/cleanup.sh" >"$work/${mode}.out" 2>&1; then
+  if run_case "$mode" false "$work/${mode}.out" "$work/${mode}.deletes"; then
     fail "$mode inventory fault did not stop the cleanup"
   fi
   [ ! -s "$work/${mode}.deletes" ] || fail "$mode inventory fault allowed a partial deletion"

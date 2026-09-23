@@ -66,6 +66,9 @@ set -euo pipefail
 # not fatal — verified across checkov 3.3.0/3.3.2 (identical FAILED counts, different PASSED) and
 # trivy 0.71.2/0.72.0 (identical) — but a large enough gap can add or retire rules, which would look
 # exactly like backlog movement. Report the gap rather than silently attributing it to a fix.
+#
+# scripts/update-vendored-operators.sh pins the same Checkov version and refuses to run, including in
+# CI's --validate-committed step, while its pin differs from this one. Bump both together.
 readonly CI_CHECKOV_VERSION='3.3.9'
 readonly CI_TRIVY_VERSION='0.73.0'
 

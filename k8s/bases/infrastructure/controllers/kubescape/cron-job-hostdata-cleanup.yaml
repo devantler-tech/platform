@@ -79,6 +79,31 @@ spec:
                 - |
                   set -eu
                   DRY_RUN="${DRY_RUN:-false}"
+                  # The previous run fell back to localhost despite a mounted
+                  # service account. Configure the API explicitly and reference
+                  # the projected token file without copying it into argv/logs.
+                  KUBECONFIG="$HOME/kubeconfig"
+                  export KUBECONFIG
+                  umask 077
+                  cat > "$KUBECONFIG" <<EOF
+                  apiVersion: v1
+                  kind: Config
+                  clusters:
+                  - name: in-cluster
+                    cluster:
+                      server: https://$KUBERNETES_SERVICE_HOST:$KUBERNETES_SERVICE_PORT
+                      certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                  users:
+                  - name: cleanup
+                    user:
+                      tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+                  contexts:
+                  - name: cleanup
+                    context:
+                      cluster: in-cluster
+                      user: cleanup
+                  current-context: cleanup
+                  EOF
                   # A single stalled API call must not consume the outer Job
                   # deadline and erase the pod before the fail-closed path can
                   # report which inventory was unavailable. Five 20-second
