@@ -6,6 +6,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly alertmanager_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/alertmanager/helm-release.yaml"
 readonly backstage_release="${root_dir}/k8s/bases/apps/backstage/helm-release.yaml"
+readonly loadtester_release="${root_dir}/k8s/bases/infrastructure/controllers/flagger/helm-release-loadtester.yaml"
 readonly kubescape_alert_route="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kubescape/patches/route-runtime-detection-alerts.yaml"
 readonly crossplane_alerter="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/cron-job-crossplane-sync-alerter.yaml"
 readonly dr_runbook="${root_dir}/docs/dr/velero-cnpg.md"
@@ -33,6 +34,25 @@ yq e -e '
   .spec.values.backstage.startupProbe.failureThreshold == 30
 ' "${backstage_release}" >/dev/null ||
   fail 'Backstage must retry startup if backend initialization never reaches readiness'
+
+yq e -e '
+  .spec.values.replicaCount == 2 and
+  .spec.values.podDisruptionBudget.enabled == true and
+  .spec.values.podDisruptionBudget.minAvailable == 1 and
+  ([.spec.values.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[] |
+    select(.topologyKey == "kubernetes.io/hostname" and
+      .labelSelector.matchLabels.app == "loadtester")
+  ] | length == 1)
+' "${loadtester_release}" >/dev/null ||
+  fail 'Flagger loadtester must have two cross-node replicas and a drain-safe PDB'
+
+loadtester_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "flagger-loadtester") | .patch' "${loadtester_release}")"
+printf '%s\n' "${loadtester_patch}" | yq e -e '
+  .spec.strategy.type == "RollingUpdate" and
+  .spec.strategy.rollingUpdate.maxUnavailable == 1 and
+  .spec.strategy.rollingUpdate.maxSurge == 0
+' - >/dev/null ||
+  fail 'Flagger loadtester rollout must not deadlock on two eligible workers'
 
 yq e -e '
   .spec.values.replicaCount == 2 and
