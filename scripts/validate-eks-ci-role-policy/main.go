@@ -3186,9 +3186,10 @@ const (
 // 55b16740. The checksum-verified kubectl v1.36.2 approval-base diagnostic
 // reported only changed HelmRelease umami/umami, with no added or removed
 // surface entries. The source delta changes the hostname spread constraint,
-// pod-label selector, two-domain floor, and per-revision matchLabelKeys;
-// no RBAC, service account, AWS identity, or permission is granted.
-const expectedRenderedSurfaceSHA = "78851eecc6fa0dac9b1a79f8181356399390b3c320bdb5be9af153613e5d6281"
+// pod-label selector, two-domain floor, and no-surge replacement strategy;
+// old and new primary pods now share one spread calculation. No RBAC, service
+// account, AWS identity, or permission is granted.
+const expectedRenderedSurfaceSHA = "05c79eeae245a4e8a98d96f4822d75bda3dacd13c864734ec2d7ccbd79098216"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.

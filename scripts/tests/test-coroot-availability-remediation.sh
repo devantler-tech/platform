@@ -37,11 +37,19 @@ yq e -e '
       .minDomains == 2 and
       .whenUnsatisfiable == "DoNotSchedule" and
       .labelSelector.matchLabels."app.kubernetes.io/name" == "umami-primary" and
-      (.matchLabelKeys | length) == 1 and
-      .matchLabelKeys[0] == "pod-template-hash")
+      (.matchLabelKeys // [] | length) == 0)
   ] | length == 1
 ' "${umami_release}" >/dev/null ||
-  fail 'Umami serving replicas need a hard two-domain hostname spread scoped to primary pods and each rollout revision'
+  fail 'Umami serving replicas need a hard two-domain hostname spread across primary rollout revisions'
+
+umami_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "umami-umami") | .patch' "${umami_release}")"
+printf '%s\n' "${umami_patch}" | yq e -e '
+  [.[] | select(.op == "add" and .path == "/spec/strategy" and
+    .value.type == "RollingUpdate" and
+    .value.rollingUpdate.maxSurge == 0 and
+    .value.rollingUpdate.maxUnavailable == 1)] | length == 1
+' - >/dev/null ||
+  fail 'Umami primary rollout must retire one old pod before placing its replacement'
 
 yq e -e '
   .spec.values.backstage.startupProbe.httpGet.path == "/.backstage/health/v1/readiness" and
