@@ -12,7 +12,8 @@
 #      autogen rule the policy never generates fails too;
 #   2. every Excluded row declares `result: skip`, the way a fixture marks a
 #      resource the rule is meant to leave alone;
-#   3. every resource a results entry names produced a row.
+#   3. every resource a results entry names produced a row, and every trigger
+#      of a generated object produced its own.
 #
 # Usage: validate-kyverno-fixture-evaluation.sh [tests-dir]
 # Exit: 0 every fixture evaluates what it declares; 1 a finding or a failing
@@ -221,6 +222,21 @@ for file_marker in "${work}"/section-*.file; do
     .[] as $e | ($e.resources // [])[] as $r
     | select(any($rows[0][]; answers($e; $r)) | not)
     | [$e.policy, ($e.rule // ""), ($e.kind // ""), $r] | @tsv' "${work}/declared.json")
+
+  # Triggers that generate the same fixed-name object share its name, so one row answers the
+  # name match above for all of them while kyverno drops a trigger it never loaded. Each
+  # trigger produces its own row, so the rows for that object must number the triggers.
+  while IFS=$'\t' read -r policy rule name declared got; do
+    finding "${test_file}: ${policy}/${rule} declares ${declared} triggers that generate ${name}, but kyverno ran assertions for only ${got} of them. fix: correct each trigger's name or namespace so it matches a resource the test loads."
+  done < <(jq -r --slurpfile rows "${rows}" '
+    [.[] | select(.generatedResource != null)
+      | {policy, rule: (.rule // ""), name: .generatedName, n: ((.resources // []) | length)}]
+    | group_by([.policy, .rule, .name])[]
+    | {policy: .[0].policy, rule: .[0].rule, name: .[0].name, n: (map(.n) | add)} as $g
+    | ([$rows[0][] | select(.POLICY == $g.policy and (.RULE // "") == $g.rule
+        and (.RESOURCE | split("/") | last) == $g.name)] | length) as $got
+    | select($got > 0 and $got < $g.n)
+    | [$g.policy, $g.rule, $g.name, $g.n, $got] | @tsv' "${work}/declared.json")
 done
 
 if [ "${sections}" -ne "${with_results}" ]; then

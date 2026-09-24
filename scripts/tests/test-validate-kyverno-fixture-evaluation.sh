@@ -117,6 +117,87 @@ if kyverno_passes "generated object named apart from its trigger" "${root}"; the
   expect_pass "generated object named apart from its trigger" "${root}"
 fi
 
+# A generate row names only the object it generates, so the triggers of one entry that all
+# generate the same fixed-name object share its name, and kyverno drops a misspelled one
+# without a row or a failure.
+root="$(copy generated-fixed-name)"
+fixture="${root}/tests/generated-fixed-name"
+mkdir -p "${fixture}"
+cat >"${fixture}/policy.yaml" <<'EOF'
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: generate-fixed-name
+spec:
+  rules:
+    - name: generate-defaults
+      match:
+        any:
+          - resources:
+              kinds: [Deployment]
+      generate:
+        apiVersion: v1
+        kind: ConfigMap
+        name: defaults
+        namespace: "{{request.object.metadata.namespace}}"
+        synchronize: false
+        data:
+          data:
+            key: value
+EOF
+for name in first second; do
+  cat >"${fixture}/${name}.yaml" <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${name}
+  namespace: apps
+spec:
+  selector:
+    matchLabels:
+      app: ${name}
+  template:
+    metadata:
+      labels:
+        app: ${name}
+    spec:
+      containers:
+        - name: app
+          image: nginx
+EOF
+done
+cat >"${fixture}/defaults-expected.yaml" <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: defaults
+  namespace: apps
+data:
+  key: value
+EOF
+cat >"${fixture}/kyverno-test.yaml" <<'EOF'
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: generated-fixed-name
+policies: [policy.yaml]
+resources: [first.yaml, second.yaml]
+results:
+  - policy: generate-fixed-name
+    rule: generate-defaults
+    resources: [apps/first, apps/second]
+    kind: Deployment
+    result: pass
+    generatedResource: defaults-expected.yaml
+EOF
+if kyverno_passes "two triggers of one fixed-name generated object" "${root}"; then
+  expect_pass "two triggers of one fixed-name generated object" "${root}"
+fi
+yq -i '.results[0].resources[1] = "apps/secnod"' "${fixture}/kyverno-test.yaml"
+if kyverno_passes "a misspelled trigger of a fixed-name generated object" "${root}"; then
+  expect_fail "a misspelled trigger of a fixed-name generated object" "${root}" 1 "declares 2 triggers that generate defaults, but kyverno ran assertions for only 1 of them"
+fi
+
 # A fixture whose results were all removed asserts nothing while kyverno stays green.
 root="$(copy no-results)"
 yq -i '.results = []' "${root}/tests/restrict-tenant-issuer-refs/kyverno-test.yaml"
