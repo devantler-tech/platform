@@ -3182,7 +3182,13 @@ const (
 // surface entry, HelmRelease flagger-system/flagger-loadtester, with no added or
 // removed entries. This change sets two replicas, cross-node placement, a
 // disruption budget and a rollout strategy; it grants no new permissions.
-const expectedRenderedSurfaceSHA = "0f278a8d46125c02672d3ced60e4ed95a2f5574aec4b60cb956c15eff0cf6f06"
+// Re-approved for the Flagger loadtester drain-safe rollout (#4123), against main
+// 214ce284. The required production-authorization job on the checksum-verified
+// renderer (run 35959587497, job 107505627737) reported exactly one changed
+// surface entry, HelmRelease flagger-system/flagger-loadtester, and nothing added
+// or removed. Only scheduling and disruption settings change; no RBAC, binding,
+// service account, AWS identity, or permission grant changes.
+const expectedRenderedSurfaceSHA = "6b1318d615d20e35941548f3d3e32efcdd384b46742c5cdec7d3c4de35a8480e"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
