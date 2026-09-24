@@ -3188,14 +3188,21 @@ const (
 // surface entry, HelmRelease flagger-system/flagger-loadtester, and nothing added
 // or removed. Only scheduling and disruption settings change; no RBAC, binding,
 // service account, AWS identity, or permission grant changes.
-// Re-approved for Umami serving-replica spread (#4103), against main
-// fc7e7635. The checksum-verified kubectl v1.36.2 approval-base diagnostic
-// reported only changed HelmRelease umami/umami, with no added or removed
-// surface entries. The source delta changes the hostname spread constraint,
-// pod-label selector, per-revision spread key, two-domain floor, and no-surge
-// replacement strategy. No RBAC, service account, AWS identity, or permission
-// is granted.
-const expectedRenderedSurfaceSHA = "8adfa726b33840d12a49e0a51af438513ba39b12495096da059c59eee7d29bdb"
+// Re-approved for the provider-upjet-github v0.20.0 repin (#2800), against main
+// 784a7032. The required production-authorization job on the checksum-verified
+// renderer (run 36012123698, job 107676500672) reported exactly one changed
+// surface entry, Provider provider-upjet-github, and nothing added or removed.
+// Only the package tag changes; the provider's GitHub-scoped CRDs gain optional
+// fields and one inactive kind, and no binding, service account or AWS identity
+// changes.
+// Re-approved for Umami serving-replica spread (#4103), re-derived against main
+// 588778fc after the repin above. The checksum-verified kubectl v1.36.2
+// approval-base diagnostic reported only changed HelmRelease umami/umami, with
+// no added or removed surface entries. The source delta changes the hostname
+// spread constraint, pod-label selector, per-revision spread key, two-domain
+// floor, and no-surge replacement strategy. No RBAC, service account, AWS
+// identity, or permission is granted.
+const expectedRenderedSurfaceSHA = "0b181eaad493bf2914f5d1fb5dca88d9ae425a4b3cbc24ed9b237b85a4b68d4b"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3208,7 +3215,7 @@ const expectedRenderedSurfaceSHA = "8adfa726b33840d12a49e0a51af438513ba39b124950
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "6b1318d615d20e35941548f3d3e32efcdd384b46742c5cdec7d3c4de35a8480e"
+const previousRenderedSurfaceSHA = "31365f93a584f876aa4a0ba25963d10205103850b82b26f7de3417f2e4ca7eeb"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
