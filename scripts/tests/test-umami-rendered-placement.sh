@@ -43,16 +43,28 @@ yq ea -o=json '[.]' "${scratch}/resources.yaml" | jq -e '
     .spec.strategy.type == "RollingUpdate" and
     .spec.strategy.rollingUpdate.maxSurge == 0 and
     .spec.strategy.rollingUpdate.maxUnavailable == 1 and
+    .spec.template.metadata.labels["app.kubernetes.io/name"] == "umami" and
+    .spec.template.metadata.labels["app.kubernetes.io/instance"] == "umami" and
     ([.spec.template.spec.topologySpreadConstraints[]? | select(
       .topologyKey == "kubernetes.io/hostname" and
       .maxSkew == 1 and
       .minDomains == 2 and
       .whenUnsatisfiable == "DoNotSchedule" and
       .labelSelector.matchLabels["app.kubernetes.io/name"] == "umami-primary" and
-      (.matchLabelKeys // []) == ["pod-template-hash"]
-    )] | length) == 1
+      (has("matchLabelKeys") | not)
+    )] | length) == 1 and
+    ([.spec.template.spec.topologySpreadConstraints[]? | select(
+      .topologyKey == "kubernetes.io/hostname" and
+      .maxSkew == 1 and
+      .minDomains == 2 and
+      .whenUnsatisfiable == "DoNotSchedule" and
+      .labelSelector.matchLabels["app.kubernetes.io/name"] == "umami-primary" and
+      .matchLabelKeys == ["pod-template-hash"]
+    )] | length) == 1 and
+    (.spec.template.spec.topologySpreadConstraints | length) == 2 and
+    ([.spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[]?] | length) == 0
   )] == [true]
-' >/dev/null || fail 'rendered Umami source must spread each primary revision and preserve no-surge rollout'
+' >/dev/null || fail 'rendered Umami source must spread across and within primary revisions without blocking scale-out'
 
 policy="${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/propagate-reloader-to-flagger-primary.yaml"
 yq -o=json '.spec.rules' "${policy}" | jq -e '
@@ -66,4 +78,4 @@ yq -o=json '.spec.rules' "${policy}" | jq -e '
   )] | length == 1
 ' >/dev/null || fail 'Umami primary policy must retrofit no-surge strategy on the existing serving Deployment'
 
-printf 'PASS: rendered Umami source and existing primary keep per-revision spread and no-surge rollout\n'
+printf 'PASS: rendered Umami source and existing primary keep both spread constraints and no-surge rollout\n'

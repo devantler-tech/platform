@@ -76,15 +76,24 @@ spec:
     # label umami-primary from that selector. Flagger rewrites a topology
     # selector only when its value equals the source Deployment name
     # (umami-umami), so this already-primary value stays unchanged.
-    # Count only the incoming ReplicaSet revision. A terminating old pod can
-    # remain in scheduler accounting after the Deployment starts its replacement;
-    # counting it could make two new pods appear balanced until it disappears,
-    # leaving the new revision co-located. The Deployment controller adds
-    # pod-template-hash to every pod in a revision.
+    # Count every serving primary revision. The replacement must account for
+    # the old primary pod that remains while a no-surge rollout replaces its
+    # peer; pod-template-hash would hide that pod from the spread calculation.
     topologySpreadConstraints:
       - maxSkew: 1
         # With only one eligible worker, the second primary must wait instead
         # of satisfying skew against that worker alone (Kubernetes defaults to 1).
+        minDomains: 2
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: umami-primary
+      # A terminating old pod can remain in scheduler accounting. The first
+      # replacement might then land beside the remaining old pod; this second
+      # constraint makes the next replacement use the other worker. Skew 1
+      # still permits KEDA's third replica when only two workers are eligible.
+      - maxSkew: 1
         minDomains: 2
         topologyKey: kubernetes.io/hostname
         whenUnsatisfiable: DoNotSchedule

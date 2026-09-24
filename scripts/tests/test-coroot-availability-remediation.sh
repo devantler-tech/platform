@@ -33,7 +33,15 @@ command -v yq >/dev/null || fail 'yq is required'
 command -v kubectl >/dev/null || fail 'kubectl is required'
 
 yq e -e '
-  [.spec.values.topologySpreadConstraints[] |
+  ([.spec.values.topologySpreadConstraints[] |
+    select(.topologyKey == "kubernetes.io/hostname" and
+      .maxSkew == 1 and
+      .minDomains == 2 and
+      .whenUnsatisfiable == "DoNotSchedule" and
+      .labelSelector.matchLabels."app.kubernetes.io/name" == "umami-primary" and
+      (. | has("matchLabelKeys") | not))
+  ] | length == 1) and
+  ([.spec.values.topologySpreadConstraints[] |
     select(.topologyKey == "kubernetes.io/hostname" and
       .maxSkew == 1 and
       .minDomains == 2 and
@@ -41,9 +49,10 @@ yq e -e '
       .labelSelector.matchLabels."app.kubernetes.io/name" == "umami-primary" and
       .matchLabelKeys[0] == "pod-template-hash" and
       .matchLabelKeys[1] == null)
-  ] | length == 1
+  ] | length == 1) and
+  (.spec.values.topologySpreadConstraints | length == 2)
 ' "${umami_release}" >/dev/null ||
-  fail 'Umami serving replicas need a hard two-domain hostname spread per primary revision'
+  fail 'Umami serving replicas need cross-revision and per-revision hostname spread'
 
 umami_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "umami-umami") | .patch' "${umami_release}")"
 printf '%s\n' "${umami_patch}" | yq e -e '
