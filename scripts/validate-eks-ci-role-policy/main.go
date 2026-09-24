@@ -3182,7 +3182,13 @@ const (
 // surface entry, HelmRelease flagger-system/flagger-loadtester, with no added or
 // removed entries. This change sets two replicas, cross-node placement, a
 // disruption budget and a rollout strategy; it grants no new permissions.
-const expectedRenderedSurfaceSHA = "90b5a033d331527d739a01637fbe1c18939b26f96cb79da5863408680b3d8a90"
+// Re-approved for the Flagger loadtester drain-safe rollout (#4123), against main
+// 214ce284. The required production-authorization job on the checksum-verified
+// renderer (run 35959587497, job 107505627737) reported exactly one changed
+// surface entry, HelmRelease flagger-system/flagger-loadtester, and nothing added
+// or removed. Only scheduling and disruption settings change; no RBAC, binding,
+// service account, AWS identity, or permission grant changes.
+const expectedRenderedSurfaceSHA = "6b1318d615d20e35941548f3d3e32efcdd384b46742c5cdec7d3c4de35a8480e"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3195,7 +3201,7 @@ const expectedRenderedSurfaceSHA = "90b5a033d331527d739a01637fbe1c18939b26f96cb7
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "0e562192134f3baf2deb83184fbce45759519783d1b3adc00d95c79050dda460"
+const previousRenderedSurfaceSHA = "90b5a033d331527d739a01637fbe1c18939b26f96cb79da5863408680b3d8a90"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
