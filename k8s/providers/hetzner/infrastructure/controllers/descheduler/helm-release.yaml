@@ -78,18 +78,19 @@ spec:
             - name: RemoveDuplicates
             - name: HighNodeUtilization
               args:
-                # Consolidation seed: only nearly-empty nodes (< 15% requested
-                # cpu AND memory) are drained toward the rest of the cluster,
-                # so a lingering autoscale-cx* node empties and the Cluster
-                # Autoscaler reclaims it (scaleDownUnneededTime: 10m). The
-                # threshold is deliberately LOW: with the default scheduler
-                # scoring, evicted pods gravitate back to empty-ish nodes
-                # (including the overprovisioning warm spare) — full
-                # Karpenter-style packing needs MostAllocated scoring, tracked
-                # in #2471; raise this threshold when that lands.
+                # Only nearly-empty nodes (< 25% requested cpu AND memory) are
+                # drained toward the rest of the cluster, so a lingering
+                # autoscale-cx* node empties and the Cluster Autoscaler
+                # reclaims it (scaleDownUnneededTime: 10m). The DaemonSets and
+                # Longhorn's per-node instance manager alone request about 19%
+                # cpu and 21% memory of a cx43 node (measured 2026-09-24), so
+                # the threshold must sit above that floor or no node ever
+                # qualifies. Evicted pods land on the busiest node that fits,
+                # not back on the drained one, because kube-scheduler scores
+                # with MostAllocated (talos/cluster/pack-pods-onto-busy-nodes.yaml).
                 thresholds:
-                  cpu: 15
-                  memory: 15
+                  cpu: 25
+                  memory: 25
           plugins:
             deschedule:
               enabled:

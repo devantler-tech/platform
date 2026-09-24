@@ -1,0 +1,36 @@
+# kube-scheduler scoring: prefer the busiest node that still fits (MostAllocated).
+#
+# The descheduler's HighNodeUtilization strategy drains nearly-empty nodes so the
+# Cluster Autoscaler can remove them. Upstream pairs it with MostAllocated
+# scoring: with the default LeastAllocated scoring the scheduler sends evicted
+# pods to the emptiest node, often straight back to the node being drained.
+# MostAllocated sends them to the fullest node that fits instead, so a drained
+# autoscaled node stays empty and is reclaimed.
+#
+# Only the three static workers and autoscaled nodes are affected: control
+# planes keep their NoSchedule taint. Replica spread for HA components still
+# comes from their topologySpreadConstraints and PodDisruptionBudgets, and the
+# descheduler's topology-spread and RemoveDuplicates strategies repair clumping.
+#
+# Talos merges this over its generated KubeSchedulerConfiguration, so the
+# connection settings Talos writes are kept. cluster.* config only takes effect
+# on control-plane nodes, where kube-scheduler runs.
+#
+# Reference: https://kubernetes.io/docs/concepts/scheduling-eviction/resource-bin-packing/
+cluster:
+  scheduler:
+    config:
+      apiVersion: kubescheduler.config.k8s.io/v1
+      kind: KubeSchedulerConfiguration
+      profiles:
+        - schedulerName: default-scheduler
+          pluginConfig:
+            - name: NodeResourcesFit
+              args:
+                scoringStrategy:
+                  type: MostAllocated
+                  resources:
+                    - name: cpu
+                      weight: 1
+                    - name: memory
+                      weight: 1
