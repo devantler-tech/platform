@@ -219,7 +219,7 @@ signer_for_tag() {
       [.workflow_runs[] | select(.head_branch == $t and .path == ".github/workflows/cd.yaml"
         and .head_sha == $s) | (.conclusion // "pending")] | join(",")' 2>/dev/null)" ||
       conclusions='?'
-    refuse "$repo: runs listing for $tag at ${sha:0:12} after $attempts reads: $summary signer_refs=$count conclusions=${conclusions:--}"
+    refuse "$repo: runs listing for $tag at ${sha:0:12} after $attempt read(s): $summary signer_refs=$count conclusions=${conclusions:--}"
     return 1
   fi
   printf '%s\n' "$shas"

@@ -439,10 +439,10 @@ for shape in two-signers moved-run; do
   driver="$(make_signer_driver "$first" "$(runs_fixture ok "$SHA_A" success)")"
   if bash "$driver" >/dev/null 2>"$WORK/signer-$shape.err"; then
     fail "a non-empty $shape listing was re-read until it resolved"
-  elif [ "$(cat "$driver.reads")" = 1 ]; then
+  elif [ "$(cat "$driver.reads")" = 1 ] && grep -q "after 1 read(s):" "$WORK/signer-$shape.err"; then
     pass "a non-empty $shape listing is refused on the first read"
   else
-    fail "a non-empty $shape listing was re-read (reads=$(cat "$driver.reads"))"
+    fail "a non-empty $shape listing was not refused after exactly one read, reported as such (reads=$(cat "$driver.reads"))"
     cat "$WORK/signer-$shape.err" >&2
   fi
 done
@@ -492,7 +492,7 @@ driver="$(make_signer_driver "$(empty_fixture)")"
 if bash "$driver" >/dev/null 2>"$WORK/signer-empty.err"; then
   fail 'a persistently empty listing resolved a signer'
 elif [ "$(cat "$driver.reads")" = 3 ] &&
-  grep -q 'after 3 reads: total_count=0 returned=0' "$WORK/signer-empty.err"; then
+  grep -q 'after 3 read(s): total_count=0 returned=0' "$WORK/signer-empty.err"; then
   pass 'a persistently empty listing is refused after 3 reads'
 else
   fail "a persistently empty listing was not refused after 3 reads (reads=$(cat "$driver.reads"))"
