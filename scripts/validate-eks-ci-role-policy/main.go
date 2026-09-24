@@ -3182,14 +3182,20 @@ const (
 // surface entry, HelmRelease flagger-system/flagger-loadtester, with no added or
 // removed entries. This change sets two replicas, cross-node placement, a
 // disruption budget and a rollout strategy; it grants no new permissions.
+// Re-approved for the Flagger loadtester drain-safe rollout (#4123), against main
+// 214ce284. The required production-authorization job on the checksum-verified
+// renderer (run 35959587497, job 107505627737) reported exactly one changed
+// surface entry, HelmRelease flagger-system/flagger-loadtester, and nothing added
+// or removed. Only scheduling and disruption settings change; no RBAC, binding,
+// service account, AWS identity, or permission grant changes.
 // Re-approved for Umami serving-replica spread (#4103), against main
-// 13d4730b. The checksum-verified kubectl v1.36.2 approval-base diagnostic
+// fc7e7635. The checksum-verified kubectl v1.36.2 approval-base diagnostic
 // reported only changed HelmRelease umami/umami, with no added or removed
 // surface entries. The source delta changes the hostname spread constraint,
 // pod-label selector, per-revision spread key, two-domain floor, and no-surge
 // replacement strategy. No RBAC, service account, AWS identity, or permission
 // is granted.
-const expectedRenderedSurfaceSHA = "7629dba55dbd55c82f198808d79379dacc6f117b57c1a82cd896f75f72f9047a"
+const expectedRenderedSurfaceSHA = "8adfa726b33840d12a49e0a51af438513ba39b12495096da059c59eee7d29bdb"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3202,7 +3208,7 @@ const expectedRenderedSurfaceSHA = "7629dba55dbd55c82f198808d79379dacc6f117b57c1
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "90b5a033d331527d739a01637fbe1c18939b26f96cb79da5863408680b3d8a90"
+const previousRenderedSurfaceSHA = "6b1318d615d20e35941548f3d3e32efcdd384b46742c5cdec7d3c4de35a8480e"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

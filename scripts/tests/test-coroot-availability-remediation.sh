@@ -8,6 +8,7 @@ readonly alertmanager_release="${root_dir}/k8s/providers/hetzner/infrastructure/
 readonly umami_release="${root_dir}/k8s/bases/apps/umami/helm-release.yaml"
 readonly backstage_release="${root_dir}/k8s/bases/apps/backstage/helm-release.yaml"
 readonly loadtester_release="${root_dir}/k8s/bases/infrastructure/controllers/flagger/helm-release-loadtester.yaml"
+readonly loadtester_pdb="${root_dir}/k8s/bases/infrastructure/controllers/flagger/pod-disruption-budget-loadtester.yaml"
 readonly kubescape_alert_route="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kubescape/patches/route-runtime-detection-alerts.yaml"
 readonly crossplane_alerter="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/cron-job-crossplane-sync-alerter.yaml"
 readonly dr_runbook="${root_dir}/docs/dr/velero-cnpg.md"
@@ -61,14 +62,29 @@ yq e -e '
 
 yq e -e '
   .spec.values.replicaCount == 2 and
-  .spec.values.podDisruptionBudget.enabled == true and
-  .spec.values.podDisruptionBudget.minAvailable == 1 and
+  .spec.values.podDisruptionBudget.enabled == false and
   ([.spec.values.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[] |
     select(.topologyKey == "kubernetes.io/hostname" and
       .labelSelector.matchLabels.app == "loadtester")
   ] | length == 1)
 ' "${loadtester_release}" >/dev/null ||
   fail 'Flagger loadtester must have two cross-node replicas and a drain-safe PDB'
+
+# The name must differ from the chart's own flagger-loadtester PDB. Production
+# still carries that Helm-owned object with minAvailable, and Flux applying a
+# same-named maxUnavailable PDB before Helm deletes it would merge both
+# mutually exclusive fields into one invalid object.
+yq e -e '
+  .kind == "PodDisruptionBudget" and
+  .metadata.name == "flagger-loadtester-drain-safe" and
+  .metadata.namespace == "flagger-system" and
+  .spec.maxUnavailable == 1 and
+  (.spec | has("minAvailable") | not) and
+  .spec.selector.matchLabels.app == "loadtester" and
+  .spec.selector.matchLabels."app.kubernetes.io/name" == "loadtester" and
+  (.spec.selector.matchLabels | has("app.kubernetes.io/instance") | not)
+' "${loadtester_pdb}" >/dev/null ||
+  fail 'Flagger loadtester must use a platform-owned maxUnavailable PDB'
 
 loadtester_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "flagger-loadtester") | .patch' "${loadtester_release}")"
 printf '%s\n' "${loadtester_patch}" | yq e -e '
