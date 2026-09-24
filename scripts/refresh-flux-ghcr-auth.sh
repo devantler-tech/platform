@@ -6472,12 +6472,15 @@ ghcr_chain_is_converged_without_writes() {
     and (($candidate[0].spec | type) == "object")
     and ((.spec * $candidate[0].spec) == .spec)
   ' "${converged_policy_file}" >/dev/null 2>&1 || return 1
-  [[ -z "$(kubectl \
+  # A failed read is not absence: check the status before the output.
+  local retired_policy
+  retired_policy="$(kubectl \
     --context "${KUBE_CONTEXT}" \
     get imagevalidatingpolicy.policies.kyverno.io \
     "${RETIRED_IMAGE_VERIFICATION_POLICY}" \
     --ignore-not-found \
-    -o name 2>/dev/null)" ]] || return 1
+    -o name 2>/dev/null)" || return 1
+  [[ -z "${retired_policy}" ]] || return 1
   read_image_verification_webhooks >/dev/null 2>&1 || return 1
   local mutation_required=false
   if image_verification_policy_needs_mutating_webhook; then

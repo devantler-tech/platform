@@ -1142,6 +1142,9 @@ func fakeKubectlGetImageValidatingPolicy(args []string) int {
 		if !containsArg(args, "--ignore-not-found") {
 			return commandFailure(91, "retired image-validating policy lookup must tolerate absence")
 		}
+		if os.Getenv("FAKE_RETIRED_IMAGE_VERIFICATION_POLICY_READ_FAILS") == "true" {
+			return commandFailure(1, "error: the server doesn't have a resource type \"imagevalidatingpolicy\"")
+		}
 		if !markerExists("ivpol-policy-verify-ksail-images-deleted") {
 			fmt.Println("imagevalidatingpolicy.policies.kyverno.io/verify-ksail-images")
 		}

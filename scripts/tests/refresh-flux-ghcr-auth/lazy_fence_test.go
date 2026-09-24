@@ -116,6 +116,9 @@ func TestUnprovedConvergenceTakesTheFullFence(t *testing.T) {
 		}, true},
 		"drifted admission": {map[string]string{"FAKE_IMAGE_VERIFICATION_POLICY_DRIFTED": "true"}, true},
 		"narrowed webhook":  {map[string]string{"FAKE_IMAGE_VERIFICATION_WEBHOOK_SCOPE_NARROWED": "true"}, true},
+		"failed read of the retired policy": {map[string]string{
+			"FAKE_RETIRED_IMAGE_VERIFICATION_POLICY_READ_FAILS": "true",
+		}, true},
 		"lease claimed during the checks": {map[string]string{
 			"FAKE_SYNC_LEASE_CLAIMED_DURING_CONVERGENCE": "true",
 		}, true},
