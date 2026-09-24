@@ -1337,8 +1337,10 @@ jobs:
         # in CI — a policy regression could ship green. No cluster or secrets
         # required; the CLI evaluates the committed ClusterPolicy files offline.
         # kyverno test counts a row whose rule never evaluated the resource
-        # (REASON=Excluded) as passing, so the fixture guard fails a pass/fail
-        # row it never evaluated and a rule name no loaded policy defines.
+        # (REASON=Excluded) as passing and silently drops a declared resource
+        # it never loaded, so the fixture guard fails a pass/fail row it never
+        # evaluated, a rule name no loaded policy defines, and a declared
+        # resource with no row.
         run: |
           kyverno test ./tests
           shellcheck scripts/validate-kyverno-fixture-evaluation.sh scripts/tests/test-validate-kyverno-fixture-evaluation.sh

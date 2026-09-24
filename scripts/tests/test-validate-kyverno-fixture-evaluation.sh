@@ -97,6 +97,14 @@ if kyverno_passes "skip-only rule removed" "${root}" skip-only; then
   expect_fail "skip-only rule removed" "${root}" 1 "names rule certificate-no-cluster-scoped-issuer" skip-only
 fi
 
+# #3392: a results entry naming a resource the test never loads gets no row at all.
+root="$(copy renamed-resource)"
+yq -i '(.results[].resources[] | select(. == "tenant-ns/attack-toservices-foreign-named")) = "tenant-ns/attack-toservices-foreign-renamed"' \
+  "${root}/tests/restrict-tenant-network-policies/kyverno-test.yaml"
+if kyverno_passes "renamed resource" "${root}"; then
+  expect_fail "renamed resource" "${root}" 1 "tenant-ns/attack-toservices-foreign-renamed, but kyverno ran no assertion for it"
+fi
+
 # A fixture whose expectation is wrong still fails through kyverno itself.
 root="$(copy wrong-expectation)"
 yq -i '(.results[] | select(.result == "fail") | .result) = "pass"' \

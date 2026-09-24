@@ -4,11 +4,14 @@
 # `kyverno test` reports a row whose rule never evaluated the resource as
 # REASON=Excluded and counts it as passing whatever the row declared. A rule
 # that matches nothing, or one that was deleted or renamed, therefore leaves
-# the suite green (#3145, #3152). Two checks close that gap:
+# the suite green (#3145, #3152, #3392). A declared resource that does not
+# exist gets no row at all, so it drops out of the run the same way. Three
+# checks close those gaps:
 #   1. every rule a fixture names exists in a policy that fixture loads, so a
 #      deleted or renamed rule fails even where only `skip` rows name it;
 #   2. every Excluded row declares `result: skip`, the way a fixture marks a
-#      resource the rule is meant to leave alone.
+#      resource the rule is meant to leave alone;
+#   3. every resource a results entry names produced a row.
 #
 # Usage: validate-kyverno-fixture-evaluation.sh [tests-dir]
 # Exit: 0 every fixture evaluates what it declares; 1 a finding or a failing
@@ -104,25 +107,41 @@ for file_marker in "${work}"/section-*.file; do
   fi
   yq -o=json '.results' "${test_file}" >"${work}/declared.json"
 
-  while IFS=$'\t' read -r policy rule resource; do
-    # RESOURCE is <apiVersion>/<Kind>/<namespace>/<name>; the namespace is empty for cluster-scoped kinds.
-    name="${resource##*/}"
-    rest="${resource%/*}"
-    namespace="${rest##*/}"
-    rest="${rest%/*}"
-    kind="${rest##*/}"
-    declared="$(jq -r --arg p "${policy}" --arg r "${rule}" --arg k "${kind}" --arg ns "${namespace}" --arg n "${name}" '
-      [ .[]
-        | select(.policy == $p and .rule == $r)
-        | select(.kind == $k or (.kind // "" | endswith("/" + $k)))
-        | select(any(.resources[]?; . == $n or . == ($ns + "/" + $n)))
-        | .result ] | unique | join(",")' "${work}/declared.json")"
+  # Whether a row answers declared entry $e for its resource $r. A row names its resource
+  # <apiVersion>/<Kind>/<namespace>/<name>, with an empty namespace for cluster-scoped kinds;
+  # a generate row names only the generated resource, so it is matched by name.
+  # shellcheck disable=SC2016 # $e and $r are jq variables
+  matcher='
+    def answers($e; $r):
+      .POLICY == $e.policy and (.RULE // "") == ($e.rule // "")
+      and ((.RESOURCE | split("/")) as $parts
+        | if $e.generatedResource != null then $parts[-1] == ($r | split("/") | last)
+          else ($parts | length) >= 4
+            and $parts[-3] == ($e.kind // "" | split("/") | last)
+            and (if ($r | contains("/")) then ($parts[-2] + "/" + $parts[-1]) == $r else $parts[-1] == $r end)
+          end);'
+
+  # Check 2: an Excluded row must be declared `result: skip`.
+  while IFS=$'\t' read -r policy rule resource declared; do
     if [ -z "${declared}" ]; then
       finding "${test_file}: ${policy}/${rule} never evaluated ${resource}, and no row declares an expectation for it. fix: declare result: skip for it if the rule should leave it alone."
-    elif [ "${declared}" != "skip" ]; then
+    else
       finding "${test_file}: ${policy}/${rule} never evaluated ${resource}, which declares result: ${declared} (kyverno reported it Excluded). fix: make the rule's match select this resource, or declare result: skip if the rule should leave it alone."
     fi
-  done < <(jq -r '.[] | select(.REASON == "Excluded") | [.POLICY, .RULE, .RESOURCE] | @tsv' "${rows}")
+  done < <(jq -r --slurpfile declared "${work}/declared.json" "${matcher}"'
+    .[] | select(.REASON == "Excluded") as $row
+    | [ $declared[0][] as $e | ($e.resources // [])[] as $r
+        | select($row | answers($e; $r)) | $e.result ] | unique as $results
+    | select($results != ["skip"])
+    | [$row.POLICY, $row.RULE, $row.RESOURCE, ($results | join(","))] | @tsv' "${rows}")
+
+  # Check 3: a declared resource kyverno never loaded produces no row and no failure.
+  while IFS=$'\t' read -r policy rule kind resource; do
+    finding "${test_file}: ${policy}/${rule} declares ${kind} ${resource}, but kyverno ran no assertion for it. fix: correct the resource name or namespace so it matches a resource the test loads."
+  done < <(jq -r --slurpfile rows "${rows}" "${matcher}"'
+    .[] as $e | ($e.resources // [])[] as $r
+    | select(any($rows[0][]; answers($e; $r)) | not)
+    | [$e.policy, ($e.rule // ""), ($e.kind // ""), $r] | @tsv' "${work}/declared.json")
 done
 
 if [ "${sections}" -ne "${#test_files[@]}" ]; then

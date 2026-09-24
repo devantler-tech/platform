@@ -28,11 +28,12 @@ supported exemption form (workload label, pod-template label, namespace, exact
 name and wildcard primary name) to emit `skip`.
 
 `kyverno test` counts a fixture row as passing when its rule never evaluated
-the resource (`REASON=Excluded`), whatever the row declared. CI therefore runs
+the resource (`REASON=Excluded`), whatever the row declared, and it drops a
+declared resource it never loaded without a row or an error. CI therefore runs
 `scripts/validate-kyverno-fixture-evaluation.sh tests`, which fails when a row
-declaring `pass` or `fail` is Excluded, or when a fixture names a rule that no
-policy it loads defines. Declare a resource the rule should leave alone as
-`result: skip`.
+declaring `pass` or `fail` is Excluded, when a fixture names a rule that no
+policy it loads defines, or when a declared resource produced no row. Declare a
+resource the rule should leave alone as `result: skip`.
 
 ## Safe rollout and verification
 
