@@ -2325,7 +2325,7 @@ jobs:
           persist-credentials: false
 
       - name: 🏷️ Validate naming conventions
-        uses: devantler-tech/actions/validate-naming@be13607c908d9df5e392a8acd5d13fcf358202df # v13.7.0
+        uses: devantler-tech/actions/validate-naming@da153eb43b8333f13094abb151a48dc11e431988 # v13.7.4
         with:
           enabled: "true"
 
