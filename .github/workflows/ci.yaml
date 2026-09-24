@@ -1514,6 +1514,8 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-availability-remediation.sh
           bash scripts/tests/test-coroot-availability-remediation.sh
+          shellcheck scripts/tests/test-umami-rendered-placement.sh
+          bash scripts/tests/test-umami-rendered-placement.sh
           shellcheck scripts/tests/test-coroot-risk-acceptance-reconciler.sh
           bash scripts/tests/test-coroot-risk-acceptance-reconciler.sh
 
