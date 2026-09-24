@@ -13,6 +13,8 @@ readonly bundle_dir="${root_dir}/k8s/bases/components/coroot-cronjob-failure-ale
 readonly manifest="${bundle_dir}/cron-job-cronjob-failure-alert.yaml"
 readonly role="${bundle_dir}/role-cronjob-failure-alert-umami.yaml"
 readonly binding="${bundle_dir}/role-binding-cronjob-failure-alert-umami.yaml"
+readonly kubescape_role="${bundle_dir}/role-cronjob-failure-alert-kubescape.yaml"
+readonly kubescape_binding="${bundle_dir}/role-binding-cronjob-failure-alert-kubescape.yaml"
 readonly kustomization="${bundle_dir}/kustomization.yaml"
 readonly hetzner_kustomization="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
 readonly alerting_doc="${root_dir}/docs/dr/alerting.md"
@@ -52,8 +54,22 @@ env_value() { yq eval "${container_path}.env[] | select(.name == \"$1\") | .valu
   fail 'binding must grant only the detector ServiceAccount'
 pass 'RBAC is get on the one watched CronJob and list on Jobs in umami'
 
+[ "$(env_value WATCH)" = 'umami/umami-provision-tenants:2:3600 kubescape/kubescape-hostdata-cleanup:1:93600' ] ||
+  fail 'watch list must include both the Umami and Kubescape reconcile loops'
+[ "$(yq eval '.metadata.namespace' "$kubescape_role")" = kubescape ] || fail 'Kubescape Role must be namespaced to kubescape'
+[ "$(yq eval '[.rules[] | select(.resources[] == "cronjobs") | .resourceNames[]] | join(",")' "$kubescape_role")" = kubescape-hostdata-cleanup ] ||
+  fail 'the Kubescape CronJob grant must name only the host-data cleanup'
+[ "$(yq eval '[.rules[] | select(.resources[] == "cronjobs") | .verbs[]] | join(",")' "$kubescape_role")" = get ] ||
+  fail 'the Kubescape CronJob grant must be get only'
+[ "$(yq eval '[.rules[] | select(.resources[] == "jobs") | .verbs[]] | join(",")' "$kubescape_role")" = list ] ||
+  fail 'the Kubescape Job grant must be list only'
+[ "$(yq eval '.subjects[0].namespace + "/" + .subjects[0].name' "$kubescape_binding")" = observability/cronjob-failure-alert ] ||
+  fail 'Kubescape binding must grant only the detector ServiceAccount'
+pass 'Kubescape cleanup has the same narrow read-only alert grant'
+
 # Every watched namespace must carry its own grant, or the check fails at 403.
 for target in $(env_value WATCH); do
+  target=${target%%:*}
   ns=${target%%/*}
   grep -Fq "role-cronjob-failure-alert-${ns}.yaml" "$kustomization" ||
     fail "watched namespace ${ns} has no Role in the component"
@@ -137,6 +153,8 @@ if [ -n "$out" ]; then
   case "$url" in
     */apis/batch/v1/namespaces/umami/cronjobs/umami-provision-tenants) key=cronjob ;;
     */apis/batch/v1/namespaces/umami/jobs) key=jobs ;;
+    */apis/batch/v1/namespaces/kubescape/cronjobs/kubescape-hostdata-cleanup) key=cronjob ;;
+    */apis/batch/v1/namespaces/kubescape/jobs) key=jobs ;;
     *) printf '%s\n' "unexpected URL $url" >>"${dir}/unexpected.log"; exit 93 ;;
   esac
   cp "${dir}/${key}.body" "$out"
@@ -158,7 +176,7 @@ run_scenario() { # dir [shell]
   rm -f "${dir}/delivered" "${dir}/tmp/payload.json"
   {
     printf 'export NOW_EPOCH=%s\n' "${NOW_OVERRIDE:-$now_epoch}"
-    printf 'export WATCH=%q\n' "${WATCH_OVERRIDE:-$(env_value WATCH)}"
+    printf 'export WATCH=%q\n' "${WATCH_OVERRIDE:-umami/umami-provision-tenants}"
     printf 'export FAILURE_THRESHOLD=%q\n' "${THRESHOLD_OVERRIDE:-$(env_value FAILURE_THRESHOLD)}"
     printf 'export STALE_SECONDS=%q\n' "$(env_value STALE_SECONDS)"
     printf 'SA_OVERRIDE=%q\n' "${dir}/sa"
@@ -213,6 +231,12 @@ dir="$(setup_scenario consecutive)"
 expect_alert "$dir" 'two consecutive failed runs alert, naming the target and both runs' \
   'umami/umami-provision-tenants' 'the last 2 runs all failed' run-4 run-3 BackoffLimitExceeded
 grep -Fq 'run-2' "${dir}/tmp/payload.json" && fail 'a run outside the failure window was named'
+
+dir="$(setup_scenario kubescape-single-failure)"
+job cleanup-failed Failed 60 kubescape-hostdata-cleanup | job_list >"${dir}/jobs.body"
+WATCH_OVERRIDE='kubescape/kubescape-hostdata-cleanup:1:93600' \
+  expect_alert "$dir" 'the daily Kubescape cleanup alerts on its first failed run' \
+    'kubescape/kubescape-hostdata-cleanup' 'the last 1 runs all failed' cleanup-failed
 
 # Ordering is by schedule time, not list order: the same runs listed oldest
 # first must give the same verdict.

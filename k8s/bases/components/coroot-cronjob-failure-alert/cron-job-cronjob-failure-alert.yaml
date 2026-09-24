@@ -1,12 +1,11 @@
 # Alerts when a watched self-healing reconcile CronJob keeps failing, or stops
 # finishing runs at all (platform#2915).
 #
-# umami/umami-provision-tenants re-asserts the Umami tenants every 15 minutes
-# with backoffLimit 0, so a failed run simply waits for the next tick. That is
-# the right retry shape, but it makes the failure silent: the next run usually
-# succeeds, failedJobsHistoryLimit rotates the evidence away, and nothing pages.
-# If the failure stopped being intermittent, the only signal would be Failed Job
-# objects nobody reads — a reconcile loop that has quietly stopped reconciling.
+# The detector watches reconcile CronJobs with different cadences. Each WATCH
+# token carries its own failure threshold and staleness window as
+# namespace/name:failure-threshold:stale-seconds. Umami absorbs one failed
+# 15-minute tick; the daily Kubescape cleanup alerts on its first failed run and
+# allows 26 hours before a missing completion is stale.
 #
 # ONE FAILURE IS NOT AN ALERT. The loop is designed to absorb a single failed
 # tick (the weekly database-credential rotation produces exactly that), so this
@@ -84,7 +83,7 @@ spec:
                 # Space-separated namespace/name pairs. Each namespace needs its
                 # own Role and RoleBinding in this component.
                 - name: WATCH
-                  value: "umami/umami-provision-tenants"
+                  value: "umami/umami-provision-tenants:2:3600 kubescape/kubescape-hostdata-cleanup:1:93600"
                 - name: FAILURE_THRESHOLD
                   value: "2"
                 # Four missed */15 ticks.
@@ -141,7 +140,30 @@ spec:
 
                   findings=""
                   checked=0
-                  for target in $WATCH; do
+                  for entry in $WATCH; do
+                    target=${entry%%:*}
+                    tuning=${entry#*:}
+                    target_failure_threshold=$FAILURE_THRESHOLD
+                    target_stale_seconds=$STALE_SECONDS
+                    if [ "$tuning" != "$entry" ]; then
+                      case "$tuning" in
+                        *:*) ;;
+                        *)
+                          echo "ERROR: WATCH entry '$entry' needs threshold:stale-seconds" >&2
+                          exit 1
+                          ;;
+                      esac
+                      target_failure_threshold=${tuning%%:*}
+                      target_stale_seconds=${tuning#*:}
+                      for value in "$target_failure_threshold" "$target_stale_seconds"; do
+                        case "$value" in
+                          ''|*[!0-9]*|0)
+                            echo "ERROR: WATCH entry '$entry' has a non-positive tuning value" >&2
+                            exit 1
+                            ;;
+                        esac
+                      done
+                    fi
                     case "$target" in
                       */*) ;;
                       *)
@@ -195,25 +217,25 @@ spec:
                     runs=$(jq -r 'length' /tmp/runs.json)
                     if [ "$runs" = "0" ]; then
                       created=$(jq -r '.metadata.creationTimestamp | fromdate' /tmp/cronjob.json)
-                      if [ $((NOW_EPOCH - created)) -ge "$STALE_SECONDS" ]; then
-                        findings="${findings}${findings:+$nl}• \`${target}\` — no retained run has finished; the CronJob is older than ${STALE_SECONDS}s"
+                      if [ $((NOW_EPOCH - created)) -ge "$target_stale_seconds" ]; then
+                        findings="${findings}${findings:+$nl}• \`${target}\` — no retained run has finished; the CronJob is older than ${target_stale_seconds}s"
                       else
-                        echo "${target}: no finished run yet; younger than ${STALE_SECONDS}s."
+                        echo "${target}: no finished run yet; younger than ${target_stale_seconds}s."
                       fi
                       continue
                     fi
 
                     newest=$(jq -r '.[0].finished' /tmp/runs.json)
-                    if [ $((NOW_EPOCH - newest)) -ge "$STALE_SECONDS" ]; then
-                      findings="${findings}${findings:+$nl}$(jq -r --arg t "$target" --argjson s "$STALE_SECONDS" \
+                    if [ $((NOW_EPOCH - newest)) -ge "$target_stale_seconds" ]; then
+                      findings="${findings}${findings:+$nl}$(jq -r --arg t "$target" --argjson s "$target_stale_seconds" \
                         '"• `\($t)` — no run has finished for more than \($s)s; newest finished run `\(.[0].job)` at \(.[0].finished | todate)"' /tmp/runs.json)"
                       continue
                     fi
 
-                    streak=$(jq -r --argjson n "$FAILURE_THRESHOLD" '
+                    streak=$(jq -r --argjson n "$target_failure_threshold" '
                       if length >= $n and all(.[0:$n][]; .failed) then $n else 0 end' /tmp/runs.json)
                     if [ "$streak" != "0" ]; then
-                      findings="${findings}${findings:+$nl}$(jq -r --arg t "$target" --argjson n "$FAILURE_THRESHOLD" '
+                      findings="${findings}${findings:+$nl}$(jq -r --arg t "$target" --argjson n "$target_failure_threshold" '
                         "• `\($t)` — the last \($n) runs all failed:" +
                         ([ .[0:$n][] | "\n  `\(.job)` scheduled \(.at | todate): \(.reason) \(.message | .[0:200])" ] | join(""))' /tmp/runs.json)"
                       continue
