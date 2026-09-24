@@ -160,6 +160,14 @@ signer_for_tag() {
       refuse "$repo: the Actions runs read for $tag failed after retries; nothing is known about its publication"
       return 1
     }
+    # jq treats empty input as no input and iterates an object's values like an array's, so
+    # both an empty body and a mis-shaped listing would otherwise read as "no signing run".
+    printf '%s' "$runs" | jq -e -s \
+      'length == 1 and (.[0] | type == "object" and (.workflow_runs | type) == "array")' \
+      >/dev/null 2>&1 || {
+      refuse "$repo: the Actions runs listing for $tag is not one object with a workflow_runs array"
+      return 1
+    }
     shas="$(printf '%s' "$runs" | jq -r --arg t "$tag" --arg s "$sha" --arg w "$workflow" '
       [.workflow_runs[]
        | select(.head_branch == $t and .path == ".github/workflows/cd.yaml"

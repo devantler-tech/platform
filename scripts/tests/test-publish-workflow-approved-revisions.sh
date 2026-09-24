@@ -422,6 +422,24 @@ else
   cat "$WORK/signer-late.err" >&2
 fi
 
+# A response that is not one object with a workflow_runs array is unparseable, not "no run":
+# an empty body and an object-shaped workflow_runs both read as nothing to jq's iteration.
+: >"$WORK/runs-zero-byte.json"
+printf '%s\n' "{\"total_count\": 1, \"workflow_runs\": {\"only\": {\"head_branch\": \"v9.9.9\"}}}" \
+  >"$WORK/runs-object-shaped.json"
+for shape in zero-byte object-shaped; do
+  driver="$(make_signer_driver "$WORK/runs-$shape.json")"
+  if bash "$driver" >/dev/null 2>"$WORK/signer-$shape.err"; then
+    fail "a $shape runs response resolved a signer"
+  elif [ "$(cat "$driver.reads")" = 1 ] &&
+    grep -q 'is not one object with a workflow_runs array' "$WORK/signer-$shape.err"; then
+    pass "a $shape runs response is refused as unparseable, without re-reading"
+  else
+    fail "a $shape runs response was not refused as unparseable (reads=$(cat "$driver.reads"))"
+    cat "$WORK/signer-$shape.err" >&2
+  fi
+done
+
 # A listing that stays empty is still refused, after exactly the bounded number of reads.
 driver="$(make_signer_driver "$(empty_fixture)")"
 if bash "$driver" >/dev/null 2>"$WORK/signer-empty.err"; then
