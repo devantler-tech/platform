@@ -2196,12 +2196,15 @@ claim_node_cordon_ownership() {
       --output json \
       >"${state_file}" 2>"${reread_error_file}"; then
       # A failed re-read is now the actionable cause, so it replaces the claim
-      # conflict in the emitted output. The redirection truncates result_file
-      # before cat runs, so a failed copy would leave it EMPTY -- and
-      # emit_safe_operation_output skips an empty file entirely, which is the
-      # very silence this block exists to prevent. Fall back to a deterministic
-      # non-empty line instead of discarding the failure.
-      if ! cat "${reread_error_file}" >"${result_file}" 2>/dev/null; then
+      # conflict in the emitted output. Two things can leave that output empty:
+      # the copy fails, or kubectl exits non-zero having written no stderr, so the
+      # diagnostic file is zero bytes and copying it SUCCEEDS while the redirection
+      # truncates result_file. emit_safe_operation_output skips an empty file
+      # entirely, which is the very silence this block exists to prevent, so an
+      # empty diagnostic counts as a failed copy and falls back to a deterministic
+      # non-empty line.
+      if [[ ! -s "${reread_error_file}" ]] ||
+        ! cat "${reread_error_file}" >"${result_file}" 2>/dev/null; then
         echo "node re-read failed; its diagnostic could not be read" \
           >"${result_file}"
       fi
@@ -2429,7 +2432,7 @@ restore_node_schedulability_if_needed() {
       --arg owner "${owner_token}" \
       --arg uid "${initial_node_uid}" \
       --argjson scale_down_guard_owned "${scale_down_guard_owned}" '
-      ($recovery | fromjson?) as $record
+      ($recovery | try fromjson catch null) as $record
       | $record != null
       and (
         ($record.v == 1 and $scale_down_guard_owned == 0)
@@ -2541,7 +2544,7 @@ update_bootstrap_recovery_phase() {
     --arg uid "${initial_node_uid}" \
     --arg revision "${desired_revision}" \
     --arg phase "${expected_phase}" '
-    ($recovery | fromjson?) as $record
+    ($recovery | try fromjson catch null) as $record
     | $record != null
     and (
       ($record.v == 1 and ($record | keys | sort) == ([
@@ -2751,7 +2754,10 @@ reconcile_bootstrap_recovery_journals() {
       .items[]
       | select((.metadata.annotations[$recovery_annotation] // "") != "")
       | . as $node
-      | ($node.metadata.annotations[$recovery_annotation] | fromjson?) as $record
+      # `try/catch null`, never `fromjson?`: the latter yields EMPTY, which drops a
+      # malformed journal from $journals, so the all-or-nothing check below passes
+      # over its valid siblings instead of refusing (#3158).
+      | ($node.metadata.annotations[$recovery_annotation] | try fromjson catch null) as $record
       | {node: $node, record: $record}
     ] as $journals
     | all($journals[];
@@ -2817,7 +2823,7 @@ reconcile_bootstrap_recovery_journals() {
       --arg recovery "${recovery_record}" \
       --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
       --arg node_name "${node_name}" '
-      ($recovery | fromjson?) as $record
+      ($recovery | try fromjson catch null) as $record
       | $record != null
       and (
         ($record.v == 1 and ($record | keys | sort) == ([
@@ -3362,6 +3368,134 @@ revalidate_selected_node_identity_before_mutation() {
 # adopts the credential, prove an uncached pull of the declared incoming image,
 # and only then record its non-secret revision+image proof markers so either
 # credential or target changes trigger verification.
+# Image-only drift does not change containerd's credential. Its existing v2
+# runtime proof remains valid; the exact incoming image still needs an uncached
+# registry round-trip before publish. Unlike a credential rotation, removing
+# and re-pulling a proof copy in containerd's system namespace needs neither a
+# reboot nor a scheduling change, and leaves Kubernetes' CRI image cache intact
+# if the registry becomes unavailable.
+# Keep the global sync Lease and rebind the Node at every Talos edge so an
+# autoscaler replacement or another actor's drain cannot inherit this proof.
+revalidate_image_only_node_guard() {
+  local node_name="$1" node_uid="$2" node_ip="$3" node_role="$4"
+  local desired_revision="$5" phase="$6"
+  local expected_cordoned="${7:-}"
+  local allow_removed=0
+
+  assert_sync_lease_held || return 1
+  if [[ "${phase}" == "cache removal" ]]; then
+    allow_removed=1
+  fi
+  revalidate_selected_node_identity_before_mutation \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${allow_removed}" || return $?
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get node "${node_name}" --output json >"${cordon_state_file}"; then
+    echo "::error::Could not re-read image-only target ${node_name} before ${phase}."
+    return 1
+  fi
+  if ! selected_node_identity_is_current \
+    "${cordon_state_file}" "${node_name}" "${node_uid}" \
+    "${node_ip}" "${node_role}" ||
+    ! jq -e \
+      --arg revision "${desired_revision}" \
+      --arg expected_cordoned "${expected_cordoned}" \
+      --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
+      --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
+      --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" '
+        (.spec.unschedulable // false) as $cordoned
+        | .metadata.annotations[$revision_annotation] == $revision
+        and (.metadata.annotations[$owner_annotation] // "") == ""
+        and (.metadata.annotations[$recovery_annotation] // "") == ""
+        and ($cordoned | type == "boolean")
+        and ($expected_cordoned == "" or $cordoned == ($expected_cordoned == "true"))
+        and .metadata.deletionTimestamp == null
+        and any(.status.conditions[]?;
+          .type == "Ready" and .status == "True")
+        and all(.spec.taints[]?;
+          .key != "ToBeDeletedByClusterAutoscaler"
+          and .key != "node.kubernetes.io/not-ready"
+          and .key != "node.kubernetes.io/unreachable"
+          and (.key != "node.kubernetes.io/unschedulable" or $cordoned))
+      ' "${cordon_state_file}" >/dev/null; then
+    echo "::error::Image-only target ${node_name} changed identity, credential proof, or scheduling state before ${phase}; refusing to record image proof."
+    return 1
+  fi
+}
+
+# The machine annotation is durable across a failed transaction. Bind it to
+# the Kubernetes Node UID as well as the revision and image: a replacement can
+# reuse an autoscaled node's name and InternalIP between the final identity
+# read and the Talos patch, but it must not inherit the previous Node's proof.
+write_talos_revision_patch_for_node() {
+  local desired_revision="$1" operator_image="$2" node_uid="$3"
+
+  jq -n \
+    --arg revision "${desired_revision}" \
+    --arg image "${operator_image}" \
+    --arg uid "${node_uid}" \
+    --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
+    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" \
+    --arg uid_annotation "${GHCR_PULL_VERIFIED_NODE_UID_ANNOTATION}" '
+      {machine: {nodeAnnotations: {
+        ($revision_annotation): $revision,
+        ($image_annotation): $image,
+        ($uid_annotation): $uid
+      }}}
+    ' >"${talos_revision_patch_file}" || return 1
+  chmod 600 "${talos_revision_patch_file}"
+}
+
+# process_talos_image_only_target proves the incoming image without changing
+# scheduling when the credential revision is already active on this Node.
+process_talos_image_only_target() {
+  local desired_revision="$1" operator_image="$2" node_role="$3"
+  local node_name="$4" node_ip="$5" node_uid="$6"
+  local initial_cordoned=""
+
+  if [[ -f "${bootstrap_cordon_dir}/${node_name}.json" ]]; then
+    echo "::error::Image-only target ${node_name} has an unfinished bootstrap fence; refusing unfenced proof."
+    return 1
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "cache removal" || return $?
+  initial_cordoned="$(jq -er '(.spec.unschedulable // false) | tostring' "${cordon_state_file}")" || return 1
+  if ! talosctl --nodes "${node_ip}" image remove "${operator_image}" \
+    --namespace system >"${talos_result_file}" 2>&1; then
+    if ! talos_image_remove_reports_absent \
+      "${talos_result_file}" "${operator_image}"; then
+      echo "::error::Talos node ${node_name} could not remove the incoming KSail image for uncached proof."
+      return 1
+    fi
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "image pull" "${initial_cordoned}" || return $?
+  if ! talosctl --nodes "${node_ip}" image pull "${operator_image}" \
+    --namespace system >"${talos_result_file}" 2>&1; then
+    echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image; root auth remains unchanged."
+    return 1
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "revision marker" "${initial_cordoned}" || return $?
+  write_talos_revision_patch_for_node \
+    "${desired_revision}" "${operator_image}" "${node_uid}" || return 1
+  if ! talosctl --nodes "${node_ip}" patch machineconfig \
+    --mode=no-reboot --patch-file="${talos_revision_patch_file}" \
+    >"${talos_result_file}" 2>&1; then
+    echo "::error::Talos node ${node_name} proved the incoming KSail image but could not record the proof marker."
+    return 1
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "completion" "${initial_cordoned}" || return $?
+}
+
+# process_talos_node_target keeps credential changes on the existing fenced
+# reboot path and delegates image-only drift to its non-disruptive proof.
 process_talos_node_target() {
   local desired_revision="$1"
   local operator_image="$2"
@@ -3392,6 +3526,12 @@ process_talos_node_target() {
     "${node_mode}" != "proof-only" ]]; then
     echo "::error::Unknown Talos GHCR synchronization mode '${node_mode}' for ${node_name}."
     return 1
+  fi
+  if [[ "${node_mode}" == "image-only" ]]; then
+    process_talos_image_only_target \
+      "${desired_revision}" "${operator_image}" "${node_role}" \
+      "${node_name}" "${node_ip}" "${node_uid}"
+    return $?
   fi
   # Bootstrap preparation can already own a durable fence on this target.
   # Its recovery remains fail-closed; only an untouched target may be skipped.
@@ -3450,9 +3590,9 @@ process_talos_node_target() {
     fi
   fi
 
-  # Remember scheduling intent before any cordon. Both reboot and image-only
-  # verification exclude new placements while the exact target is removed;
-  # only the reboot path drains existing workloads.
+  # Remember scheduling intent before a credential-change cordon. Image-only
+  # verification returned above without excluding new placements or removing
+  # Kubernetes' CRI image reference.
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     get node "${node_name}" \
@@ -3797,9 +3937,9 @@ process_talos_node_target() {
   fi
 
   if [[ "${node_mode}" != "proof-only" ]]; then
-    # A reboot/readiness wait or even a short image-only cordon can outlive a
-    # replacement, uncordon, taint, or owner change. Rebind identity and the
-    # scheduling guard at the final Talos edge before touching the image cache.
+    # A credential-change reboot/readiness wait can outlive a replacement,
+    # uncordon, taint, or owner change. Rebind identity and the scheduling guard
+    # at the final Talos edge before touching the CRI image cache.
     revalidate_node_scheduling_guard \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
@@ -3870,6 +4010,8 @@ process_talos_node_target() {
   if [[ "${node_mode}" == "proof-only" ]]; then
     reusable_proof_uid="${node_uid}"
   fi
+  write_talos_revision_patch_for_node \
+    "${desired_revision}" "${operator_image}" "${node_uid}" || return 1
   # Test hook consumed by fake talosctl to verify Node binding; Talos ignores it.
   if ! FLUX_GHCR_REUSABLE_PROOF_UID="${reusable_proof_uid}" \
     talosctl \
@@ -4273,10 +4415,12 @@ record_runtime_proof() {
     --arg revision "${desired_revision}" \
     --arg image "${operator_image}" \
     --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
-    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" '
+    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" \
+    --arg uid_annotation "${GHCR_PULL_VERIFIED_NODE_UID_ANNOTATION}" '
       all(.items[];
         .metadata.annotations[$revision_annotation] == $revision
-        and .metadata.annotations[$image_annotation] == $image)
+        and .metadata.annotations[$image_annotation] == $image
+        and .metadata.annotations[$uid_annotation] == .metadata.uid)
     ' "${runtime_proof_nodes_file}" >/dev/null; then
     echo "::error::Refusing to record a post-update handoff before every exact Node has current runtime proof."
     return 1
@@ -5777,9 +5921,8 @@ flux_policy_handoff_is_released() {
   ' "${flux_policy_handoff_state_file}" >/dev/null
 }
 
-pause_flux_policy_handoff() {
-  local resource_version attempt annotations_present
-  local stable_resource_version="" current_resource_version
+wait_for_flux_policy_handoff_claimable() {
+  local attempt
 
   # Quiesce the child before changing spec.suspend. Suspending a Kustomization
   # while it is already reconciling can strand Reconciling=True in status: the
@@ -5842,58 +5985,136 @@ pause_flux_policy_handoff() {
     fi
     sleep "${SYNC_INTERVAL}"
   done
+}
 
-  resource_version="$(jq -er '.metadata.resourceVersion' \
-    "${flux_policy_handoff_state_file}")"
-  flux_policy_handoff_uid="$(jq -er '.metadata.uid' \
-    "${flux_policy_handoff_state_file}")"
-  flux_policy_handoff_owner="${sync_lease_holder}"
-  annotations_present="$(jq -r \
-    '(.metadata.annotations? | type) == "object"' \
-    "${flux_policy_handoff_state_file}")"
-  jq -n \
-    --arg resource_version "${resource_version}" \
-    --arg uid "${flux_policy_handoff_uid}" \
-    --arg owner_path "${FLUX_POLICY_HANDOFF_OWNER_JSON_PATH}" \
-    --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
-    --arg owner "${flux_policy_handoff_owner}" \
-    --argjson annotations_present "${annotations_present}" '
-    [
-      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
-      {op: "test", path: "/metadata/uid", value: $uid}
-    ]
-    + (if $annotations_present then [] else
-      [{op: "add", path: "/metadata/annotations", value: {}}]
-    end)
-    + [
-      {op: "add", path: $owner_path, value: $owner},
-      {op: "add", path: $reconcile_path, value: "disabled"},
-      {op: "add", path: "/spec/suspend", value: true}
-    ]
-  ' >"${flux_policy_handoff_patch_file}"
-  if kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace flux-system \
-    patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
-    "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
-    --type=json \
-    --patch-file="${flux_policy_handoff_patch_file}" \
-    -o json \
-    >"${flux_policy_handoff_state_file}" \
-    2>"${flux_policy_handoff_result_file}"; then
-    flux_policy_handoff_acquired=true
-  else
+pause_flux_policy_handoff() {
+  local resource_version annotations_present attempt
+  local stable_resource_version="" current_resource_version
+  local claim_attempt reread_resource_version inspected_uid=""
+  local max_claim_attempts="${FLUX_POLICY_HANDOFF_CLAIM_MAX_ATTEMPTS:-5}"
+  # Separate stderr sink for the re-read, so a successful re-read cannot truncate
+  # the patch rejection that explains why the claim failed.
+  local reread_error_file="${flux_policy_handoff_result_file}.reread"
+
+  # The child is rewritten by its own controller, so a benign write can move its
+  # resourceVersion between the quiescence read and this CAS. That is contention,
+  # not a conflict, and is retried under the rules the parent fence uses (#3046):
+  # only when the re-read shows the resourceVersion MOVED and nobody else owns the
+  # object, each retry re-proving quiescence and the parent from scratch. Every
+  # other rejection, and every state that is no longer ours to claim, still fails
+  # closed on the first attempt (#3067).
+  for ((claim_attempt = 1; ; claim_attempt++)); do
+    wait_for_flux_policy_handoff_claimable || return 1
+
+    resource_version="$(jq -er '.metadata.resourceVersion' \
+      "${flux_policy_handoff_state_file}")"
+    flux_policy_handoff_uid="$(jq -er '.metadata.uid' \
+      "${flux_policy_handoff_state_file}")"
+    # The claim is for the object first inspected. A delete-and-recreate between
+    # attempts looks like churn but is a different object, so refuse it.
+    if [[ -z "${inspected_uid}" ]]; then
+      inspected_uid="${flux_policy_handoff_uid}"
+    elif [[ "${flux_policy_handoff_uid}" != "${inspected_uid}" ]]; then
+      echo "::error::The Flux image-verification policy owner was replaced during the handoff; refusing to fence an object that was not the one inspected."
+      return 1
+    fi
+    flux_policy_handoff_owner="${sync_lease_holder}"
+    annotations_present="$(jq -r \
+      '(.metadata.annotations? | type) == "object"' \
+      "${flux_policy_handoff_state_file}")"
+    jq -n \
+      --arg resource_version "${resource_version}" \
+      --arg uid "${flux_policy_handoff_uid}" \
+      --arg owner_path "${FLUX_POLICY_HANDOFF_OWNER_JSON_PATH}" \
+      --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
+      --arg owner "${flux_policy_handoff_owner}" \
+      --argjson annotations_present "${annotations_present}" '
+      [
+        {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
+        {op: "test", path: "/metadata/uid", value: $uid}
+      ]
+      + (if $annotations_present then [] else
+        [{op: "add", path: "/metadata/annotations", value: {}}]
+      end)
+      + [
+        {op: "add", path: $owner_path, value: $owner},
+        {op: "add", path: $reconcile_path, value: "disabled"},
+        {op: "add", path: "/spec/suspend", value: true}
+      ]
+    ' >"${flux_policy_handoff_patch_file}"
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+      --type=json \
+      --patch-file="${flux_policy_handoff_patch_file}" \
+      -o json \
+      >"${flux_policy_handoff_state_file}" \
+      2>"${flux_policy_handoff_result_file}"; then
+      flux_policy_handoff_acquired=true
+      break
+    fi
+
+    # A lost patch response is ambiguous: adopt only the exact tuple this
+    # transaction wrote, so EXIT cleanup owns the fence even when kubectl failed.
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       --namespace flux-system \
       get "${FLUX_KUSTOMIZATION_RESOURCE}" \
       "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
-      -o json >"${flux_policy_handoff_state_file}" ||
-      ! flux_policy_handoff_is_owned; then
-      echo "::error::Could not atomically pause or adopt the Flux image-verification policy owner."
+      -o json >"${flux_policy_handoff_state_file}" \
+      2>"${reread_error_file}"; then
+      if [[ ! -s "${reread_error_file}" ]] ||
+        ! cat "${reread_error_file}" \
+        >"${flux_policy_handoff_result_file}" 2>/dev/null; then
+        echo "policy owner re-read failed; its diagnostic could not be read" \
+          >"${flux_policy_handoff_result_file}"
+      fi
+      break
+    fi
+    if flux_policy_handoff_is_owned; then
+      flux_policy_handoff_acquired=true
+      break
+    fi
+    if [[ "$(jq -r '.metadata.uid // ""' "${flux_policy_handoff_state_file}")" != "${inspected_uid}" ]]; then
+      rm -f "${reread_error_file}"
+      emit_safe_operation_output "flux-policy-handoff-patch" \
+        "${flux_policy_handoff_result_file}"
+      echo "::error::The Flux image-verification policy owner was replaced during the handoff; refusing to fence an object that was not the one inspected."
       return 1
     fi
-    flux_policy_handoff_acquired=true
+
+    # An owner that is not ours is a competing transaction, never contention.
+    if jq -e \
+      --arg annotation "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" '
+      ((.metadata.annotations // {})[$annotation] // "") != ""
+    ' "${flux_policy_handoff_state_file}" >/dev/null; then
+      rm -f "${reread_error_file}"
+      emit_safe_operation_output "flux-policy-handoff-patch" \
+        "${flux_policy_handoff_result_file}"
+      echo "::error::Another transaction already owns the image-verification policy handoff; refusing cluster mutation. Run './scripts/refresh-flux-ghcr-auth.sh --fences' to list every held fence with its liveness evidence and exact release command, and see docs/dr/runbook.md → 'Recover an orphaned GHCR deploy fence'."
+      return 1
+    fi
+
+    # Only a rejection whose resourceVersion demonstrably moved is contention; one
+    # at an unchanged version was refused on its merits and is not repeated.
+    reread_resource_version="$(jq -r '.metadata.resourceVersion // ""' \
+      "${flux_policy_handoff_state_file}")"
+    if [[ "${reread_resource_version}" == "${resource_version}" ]] ||
+      ((claim_attempt >= max_claim_attempts)) ||
+      [[ -e "${sync_lease_lost_file}" ]]; then
+      break
+    fi
+    sleep "${SYNC_INTERVAL}"
+  done
+
+  rm -f "${reread_error_file}"
+  if [[ "${flux_policy_handoff_acquired}" != "true" ]]; then
+    emit_safe_operation_output "flux-policy-handoff-patch" \
+      "${flux_policy_handoff_result_file}"
+    echo "::error::Could not atomically pause or adopt the Flux image-verification policy owner."
+    return 1
   fi
 
   # Flux explicitly documents that suspension does not stop an execution that

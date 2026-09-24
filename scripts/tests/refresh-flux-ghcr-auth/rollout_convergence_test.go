@@ -168,6 +168,8 @@ func TestStaleRuntimeProofFallsBackToFullVerification(t *testing.T) {
 	requireLine(t, operations, "talos-reboot:10.0.0.2")
 }
 
+// TestMatchingRevisionRevalidatesChangedDeclaredImage requires an uncached
+// image pull even when the credential revision is unchanged.
 func TestMatchingRevisionRevalidatesChangedDeclaredImage(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -190,12 +192,16 @@ func TestMatchingRevisionRevalidatesChangedDeclaredImage(t *testing.T) {
 		"talos-revision:10.0.0.1",
 	})
 	operationLog := mustRead(f.operationLog)
+	requireNotContains(t, operationLog, "node-claim-cordon:")
+	requireNotContains(t, operationLog, "node-uncordon:")
 	requireNotContains(t, operationLog, "node-drain:")
 	requireNotContains(t, operationLog, "talos-reboot:")
 	requireNotContains(t, strings.Join(operations, "\n"), previousImage)
 }
 
-func TestFailedImageOnlyPullKeepsNodeCordoned(t *testing.T) {
+// TestFailedImageOnlyPullDoesNotDisruptSchedulingOrPublish keeps a failed
+// registry proof from changing scheduling or publishing root credentials.
+func TestFailedImageOnlyPullDoesNotDisruptSchedulingOrPublish(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
@@ -206,10 +212,179 @@ func TestFailedImageOnlyPullKeepsNodeCordoned(t *testing.T) {
 	})
 	requireFailureResult(t, result)
 	operations := readLines(f.operationLog)
-	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
-	for _, unexpected := range []string{"node-drain:prod-worker-1", "node-uncordon:prod-worker-1", "talos-reboot:10.0.0.2", "root-patch"} {
+	for _, unexpected := range []string{"node-claim-cordon:prod-worker-1", "node-drain:prod-worker-1", "node-uncordon:prod-worker-1", "talos-reboot:10.0.0.2", "root-patch"} {
 		requireNoLine(t, operations, unexpected)
 	}
+}
+
+// TestFailedImageOnlyProofPreservesCRIImageCache keeps a runnable cached
+// workload image when the registry fails during non-disruptive verification.
+func TestFailedImageOnlyProofPreservesCRIImageCache(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":  "true",
+		"FAKE_TALOS_VERIFIED_IMAGE": "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_TALOS_FAIL_NODE":      "10.0.0.2",
+		"FAKE_TALOS_FAIL_OPERATION": "pull",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "talos-remove:10.0.0.2:"+ksailTargetImage)
+	requireLine(t, operations, "talos-pull:10.0.0.2:"+ksailTargetImage)
+	if pathExists(filepath.Join(f.syncStateDir, "cri-image-removed-10.0.0.2")) {
+		t.Fatal("failed image-only proof evicted the cached CRI image")
+	}
+	requireNoLine(t, operations, "root-patch")
+}
+
+// TestImageOnlyProofPreservesPreexistingMaintenanceCordon accepts stable
+// operator-owned scheduling intent without taking ownership of it.
+func TestImageOnlyProofPreservesPreexistingMaintenanceCordon(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":  "true",
+		"FAKE_TALOS_VERIFIED_IMAGE": "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_CORDONED_NODES":       "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "talos-pull:10.0.0.2:"+ksailTargetImage)
+	requireLine(t, operations, "root-patch")
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-worker-1", "node-uncordon:prod-worker-1",
+		"node-drain:prod-worker-1", "talos-reboot:10.0.0.2",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
+// TestImageOnlyProofRejectsExternalUncordonDuringPull fails closed when
+// scheduling intent changes during the image-only proof.
+func TestImageOnlyProofRejectsExternalUncordonDuringPull(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":                 "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":                "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_CORDONED_NODES":                      "prod-worker-1",
+		"FAKE_EXTERNAL_UNCORDON_AFTER_REMOVE_NODE": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "operator-uncordon-after-remove:prod-worker-1")
+	requireNoLine(t, operations, "talos-pull:10.0.0.2:"+ksailTargetImage)
+	requireNoLine(t, operations, "root-patch")
+}
+
+// TestImageOnlyProofRefusesAutoscalerDeletionCandidate prevents a proof from
+// being recorded against a Node already selected for deletion.
+func TestImageOnlyProofRefusesAutoscalerDeletionCandidate(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":       "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":      "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_AUTOSCALER_DELETING_NODES": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-worker-1",
+		"talos-remove:10.0.0.2:" + ksailTargetImage,
+		"talos-pull:10.0.0.2:" + ksailTargetImage,
+		"talos-revision:10.0.0.2", "root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
+// TestImageOnlyProofBindsDurableMarkerToNodeUID requires persistent proof to
+// identify the exact Kubernetes Node that performed the pull.
+func TestImageOnlyProofBindsDurableMarkerToNodeUID(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":  "true",
+		"FAKE_TALOS_VERIFIED_IMAGE": "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_AUTOSCALED_NODES":     "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	proofUID, err := os.ReadFile(filepath.Join(f.syncStateDir, "talos-proof-uid-10.0.0.2"))
+	if err != nil {
+		t.Fatalf("read durable Talos proof UID: %v", err)
+	}
+	if string(proofUID) != "prod-worker-1-uid" {
+		t.Errorf("durable proof UID = %q, want prod-worker-1-uid", proofUID)
+	}
+}
+
+// TestMismatchedDurableUIDRequiresFencedRuntimeProof routes a replacement
+// with a stale nonempty UID marker through the credential-reboot fence.
+func TestMismatchedDurableUIDRequiresFencedRuntimeProof(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	current := map[string]string{"FAKE_TALOS_NODES_CURRENT": "true"}
+	requireSuccessResult(t, f.runHelper(validConfig(), nil, current))
+	if err := os.WriteFile(filepath.Join(f.syncStateDir, "talos-proof-uid-10.0.0.2"), []byte("replaced-node-uid"), 0o600); err != nil {
+		t.Fatalf("seed a stale durable UID marker: %v", err)
+	}
+	result := f.runHelperPreservingClusterState(validConfig(), nil, current)
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
+	requireLine(t, operations, "node-drain:prod-worker-1")
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	requireLine(t, operations, "root-patch")
+}
+
+// TestLegacyUIDLessProofRevalidatesEveryNodeWithoutCordon migrates old proof
+// markers through uncached pulls without disrupting workload scheduling.
+func TestLegacyUIDLessProofRevalidatesEveryNodeWithoutCordon(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":      "true",
+		"FAKE_TALOS_LEGACY_UID_MISSING": "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	for _, nodeIP := range []string{"10.0.0.2", "10.0.0.1", "10.0.0.3", "10.0.0.4"} {
+		requireLine(t, operations, "talos-remove:"+nodeIP+":"+ksailTargetImage)
+		requireLine(t, operations, "talos-pull:"+nodeIP+":"+ksailTargetImage)
+		requireLine(t, operations, "talos-revision:"+nodeIP)
+	}
+	for _, operation := range operations {
+		if strings.HasPrefix(operation, "node-claim-cordon:") ||
+			strings.HasPrefix(operation, "node-uncordon:") ||
+			strings.HasPrefix(operation, "node-drain:") ||
+			strings.HasPrefix(operation, "talos-reboot:") {
+			t.Errorf("UID migration changed workload scheduling: %s", operation)
+		}
+	}
+}
+
+// TestReplacementAfterImageMarkerReprovesReusedAddress requires a second pull
+// when an autoscaler replaces a Node but preserves its name and address.
+func TestReplacementAfterImageMarkerReprovesReusedAddress(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	env := map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":              "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":             "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_AUTOSCALED_NODES":                 "prod-worker-1",
+		"FAKE_NODE_REPLACED_AFTER_IMAGE_MARKER": "prod-worker-1",
+	}
+	first := f.runHelper(validConfig(), nil, env)
+	requireFailureResult(t, first)
+	requireNoLine(t, readLines(f.operationLog), "root-patch")
+
+	second := f.runHelperPreservingClusterState(validConfig(), nil, env)
+	requireSuccessResult(t, second)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "talos-pull:10.0.0.2:"+ksailTargetImage)
+	requireLine(t, operations, "root-patch")
 }
 
 // The last image-stale target can disappear while earlier nodes are being
@@ -317,13 +492,15 @@ func TestDeselectionEmptyingTheTargetSetTakesAnotherConvergenceRound(t *testing.
 	}
 }
 
+// TestRemovedNodeAfterMutationStillFailsClosed refuses root cutover when a
+// target disappears after a durable image marker has been written.
 func TestRemovedNodeAfterMutationStillFailsClosed(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
-		"FAKE_TALOS_NODES_CURRENT":         "true",
-		"FAKE_TALOS_VERIFIED_IMAGE":        "ghcr.io/devantler-tech/ksail:v7.166.0",
-		"FAKE_NODE_REMOVED_AFTER_UNCORDON": "prod-worker-1",
+		"FAKE_TALOS_NODES_CURRENT":             "true",
+		"FAKE_TALOS_VERIFIED_IMAGE":            "ghcr.io/devantler-tech/ksail:v7.166.0",
+		"FAKE_NODE_REMOVED_AFTER_IMAGE_MARKER": "prod-worker-1",
 	})
 	requireFailureResult(t, result)
 	operations := readLines(f.operationLog)
@@ -845,6 +1022,50 @@ func TestRecoveryReconciliationKeepsActiveOwnerBatchQuarantined(t *testing.T) {
 		if !pathExists(filepath.Join(f.syncStateDir, "cordon-owner-"+nodeName)) ||
 			!pathExists(filepath.Join(f.syncStateDir, "cordon-recovery-"+nodeName)) {
 			t.Fatalf("active owner batch released durable quarantine for %s", nodeName)
+		}
+	}
+	requireNoLine(t, operations, "root-patch")
+}
+
+// An unparseable journal must fail the up-front validation, not vanish from it: `fromjson?`
+// yields no value, so the entry was dropped and the all-or-nothing guard passed over the
+// valid sibling alone (#3158).
+func TestRecoveryReconciliationRefusesUnparseableJournal(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	const owner = "previous-roll-owner"
+	for nodeName, recovery := range map[string]string{
+		"prod-worker-1": encodeJSON(map[string]any{
+			"v":               1,
+			"owner":           owner,
+			"uid":             "prod-worker-1-uid",
+			"desiredRevision": f.expectedRevision(),
+			"wasCordoned":     0,
+			"initialTaints":   []any{},
+			"phase":           "rollback-safe",
+		}),
+		"prod-control-plane-1": `{"v":1,"owner":`,
+	} {
+		for path, contents := range map[string]string{
+			filepath.Join(f.syncStateDir, "cordon-recovery-"+nodeName): recovery,
+			filepath.Join(f.syncStateDir, "cordon-owner-"+nodeName):    owner,
+			filepath.Join(f.syncStateDir, "cordoned-"+nodeName):        "",
+		} {
+			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+				t.Fatalf("seed recovery marker %s: %v", path, err)
+			}
+		}
+	}
+
+	result := f.runHelperPreservingClusterState(validConfig(), nil, nil)
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr,
+		"recovery journal is malformed or does not match its owner/UID; refusing every recovery mutation")
+	operations := readLines(f.operationLog)
+	for _, nodeName := range []string{"prod-worker-1", "prod-control-plane-1"} {
+		requireNoLine(t, operations, "node-uncordon:"+nodeName)
+		if !pathExists(filepath.Join(f.syncStateDir, "cordon-recovery-"+nodeName)) {
+			t.Fatalf("an unparseable sibling journal let %s's recovery journal be released", nodeName)
 		}
 	}
 	requireNoLine(t, operations, "root-patch")
@@ -2498,4 +2719,143 @@ func TestFluxParentRereadFailureDiagnosticSurvives(t *testing.T) {
 	output := result.stdout + result.stderr
 	requireContains(t, output, "flux-policy-parent-patch: "+diagnostic)
 	requireNotContains(t, output, "its diagnostic could not be read")
+}
+
+// The child policy owner is rewritten by its own controller too, so its fence CAS can
+// be lost to a benign write between the quiescence read and the patch -- observed once
+// in a heal job on 2026-08-10 (#3067). The parent fence already retries that
+// contention; the child must as well, under the same rules.
+func TestFluxPolicyHandoffRetriesWhenChurnBreaksItsCAS(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_HANDOFF_CAS_CHURN_REJECTIONS": "2",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	// The contention must actually have happened, or this test proves nothing.
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-handoff-cas-churn:infrastructure",
+	); got != 2 {
+		t.Fatalf("CAS rejections = %d, want the 2 the fixture injected", got)
+	}
+	requireLine(t, operations, "flux-policy-pause:infrastructure")
+	requireLine(t, operations, "root-patch")
+	for _, marker := range []string{
+		"flux-policy-handoff-owner", "flux-policy-handoff-suspended",
+	} {
+		if pathExists(filepath.Join(f.syncStateDir, marker)) {
+			t.Fatalf("converged handoff left %s behind", marker)
+		}
+	}
+}
+
+// A foreign owner found by the contention re-read is refused on sight, never retried
+// against, and is reported as a competing transaction rather than a failed CAS.
+func TestFluxPolicyHandoffRefusesAForeignOwnerFoundByTheContentionReRead(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_HANDOFF_CAS_CHURN_REJECTIONS":          "5",
+		"FAKE_FLUX_POLICY_HANDOFF_FOREIGN_OWNER_AFTER_CAS_CHURN": "true",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output,
+		"Another transaction already owns the image-verification policy handoff")
+	operations := readLines(f.operationLog)
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-handoff-cas-churn:infrastructure",
+	); got != 1 {
+		t.Fatalf("CAS rejections = %d, want a single refusal on sight", got)
+	}
+	for _, unexpected := range []string{"flux-policy-pause:infrastructure", "root-patch"} {
+		requireNoLine(t, operations, unexpected)
+	}
+	if pathExists(filepath.Join(f.syncStateDir, "flux-policy-handoff-suspended")) {
+		t.Fatal("refused foreign handoff suspended the child anyway")
+	}
+}
+
+func TestFluxPolicyHandoffStillFailsClosedWhenCASRetriesAreExhausted(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_HANDOFF_CAS_CHURN_REJECTIONS": "99",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output,
+		"Could not atomically pause or adopt the Flux image-verification policy owner")
+	// The last rejection's own text reaches the operator through the bounded helper.
+	requireContains(t, output,
+		"flux-policy-handoff-patch: Error from server (Invalid): "+
+			"the server rejected our request due to an error in our request")
+	operations := readLines(f.operationLog)
+	// Bounded at the budget: neither one attempt nor unbounded.
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-handoff-cas-churn:infrastructure",
+	); got != 5 {
+		t.Fatalf("CAS rejections = %d, want the bounded budget of 5", got)
+	}
+	for _, unexpected := range []string{"flux-policy-pause:infrastructure", "root-patch"} {
+		requireNoLine(t, operations, unexpected)
+	}
+	if pathExists(filepath.Join(f.syncStateDir, "flux-policy-handoff-suspended")) {
+		t.Fatal("exhausted retries left the child suspended")
+	}
+}
+
+// Contention is the only rejection worth retrying. A rejection that left the
+// resourceVersion where it was -- a permission denial, a validation error -- was
+// refused on its merits, so the claim fails closed after exactly one attempt.
+func TestFluxPolicyHandoffDoesNotRetryARejectionThatMovedNothing(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_HANDOFF_PATCH_REJECTION": "Error from server (Forbidden): policy handoff permission denied",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output,
+		"Could not atomically pause or adopt the Flux image-verification policy owner")
+	requireContains(t, output,
+		"flux-policy-handoff-patch: Error from server (Forbidden): policy handoff permission denied")
+	operations := readLines(f.operationLog)
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-handoff-patch-rejected",
+	); got != 1 {
+		t.Fatalf("patch attempts = %d, want one unchanged acquisition attempt", got)
+	}
+	for _, unexpected := range []string{"flux-policy-pause:infrastructure", "root-patch"} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
+// A child deleted and recreated between the CAS and its re-read looks like churn --
+// no owner, a moved resourceVersion -- but it is a different object. The retry must
+// keep the UID it first inspected and refuse the replacement, as the parent does.
+func TestFluxPolicyHandoffRefusesAReplacementChildFoundByTheContentionReRead(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_HANDOFF_CAS_CHURN_REJECTIONS":     "1",
+		"FAKE_FLUX_POLICY_HANDOFF_REPLACED_AFTER_CAS_CHURN": "true",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output,
+		"The Flux image-verification policy owner was replaced during the handoff")
+	operations := readLines(f.operationLog)
+	if got := strings.Count(
+		strings.Join(operations, "\n"), "flux-policy-handoff-cas-churn:infrastructure",
+	); got != 1 {
+		t.Fatalf("CAS rejections = %d, want the single injected one", got)
+	}
+	for _, unexpected := range []string{"flux-policy-pause:infrastructure", "root-patch"} {
+		requireNoLine(t, operations, unexpected)
+	}
+	if pathExists(filepath.Join(f.syncStateDir, "flux-policy-handoff-suspended")) {
+		t.Fatal("the replacement child was suspended")
+	}
 }

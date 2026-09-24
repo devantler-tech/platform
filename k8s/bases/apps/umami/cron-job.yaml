@@ -276,9 +276,24 @@ spec:
                     };
                     return await globalThis.fetch(u, requestOptions);
                   };
-                  const fetchRetry = async (u, o) => {
-                    for (let i = 0; ; i++) {
-                      try { return await fetchOnce(u, o); }
+                  // A 5xx is retried too, but on its own longer clock. The weekly
+                  // database-credential rotation invalidates the old password at
+                  // once, and an Umami server pod still holding it answers 500
+                  // (Prisma P1000) until the rollout replaces it — about 80s,
+                  // measured on the 2026-09-23 rotation (platform#2915). Every
+                  // fetchRetry caller is a read or a replay-safe write, so asking
+                  // again is safe; the last response is still returned untouched,
+                  // so a 5xx that outlasts the window keeps failing the run. Login opts
+                  // out: ensureAuth already retries a failed login for about five
+                  // minutes, and a window per attempt would stretch a real outage to
+                  // the provisioning deadline and skip the next scheduled run.
+                  const umamiServerErrorRetryWindowMilliseconds = 180000;
+                  const umamiServerErrorRetryIntervalMilliseconds = 5000;
+                  const fetchRetry = async (u, o, retryServerErrors = true) => {
+                    let serverErrorRetryUntil = null;
+                    for (let networkFailures = 0; ;) {
+                      let r;
+                      try { r = await fetchOnce(u, o); }
                       catch (e) {
                         if (e && e.umamiProvisioningDeadlineExceeded) throw e;
                         if (Date.now() >= umamiProvisioningDeadline) {
@@ -286,9 +301,18 @@ spec:
                           deadline.cause = e;
                           throw deadline;
                         }
-                        if (i >= 4) throw e;
-                        await sleep(Math.min(500 * (i + 1), Math.max(1, umamiProvisioningDeadline - Date.now())));
+                        if (networkFailures >= 4) throw e;
+                        networkFailures++;
+                        await sleep(Math.min(500 * networkFailures, Math.max(1, umamiProvisioningDeadline - Date.now())));
+                        continue;
                       }
+                      if (r.status < 500 || !retryServerErrors) return r;
+                      if (serverErrorRetryUntil === null) serverErrorRetryUntil = Date.now() + umamiServerErrorRetryWindowMilliseconds;
+                      const retryUntil = Math.min(serverErrorRetryUntil, umamiProvisioningDeadline);
+                      if (Date.now() + umamiServerErrorRetryIntervalMilliseconds >= retryUntil) return r;
+                      console.log('umami answered HTTP ' + r.status + ' for ' + new URL(u).pathname + '; retrying');
+                      try { await r.body?.cancel(); } catch (e) { /* the response is discarded either way */ }
+                      await sleep(umamiServerErrorRetryIntervalMilliseconds);
                     }
                   };
                   // The bootstrap Job and CronJob are different Kubernetes
@@ -554,7 +578,7 @@ spec:
                   let lastLoginFailure = 'no attempt yet';
                   async function login(pw) {
                     try {
-                      const r = await fetchRetry(base + '/api/auth/login', { method: 'POST', headers: H(), body: JSON.stringify({ username: 'admin', password: pw }) });
+                      const r = await fetchRetry(base + '/api/auth/login', { method: 'POST', headers: H(), body: JSON.stringify({ username: 'admin', password: pw }) }, false);
                       if (r.ok) return (await r.json()).token;
                       lastLoginFailure = r.status === 401
                         ? 'HTTP 401 (credentials rejected)'

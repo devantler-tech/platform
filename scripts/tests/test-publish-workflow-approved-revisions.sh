@@ -317,6 +317,188 @@ else
   fi
 fi
 
+# ── The default signer lookup says WHY it refused (#4127) ─────────────────────────────────
+# The daily run refused `.github` four times on inputs that resolved an hour later or when
+# run locally, and every refusal read the same: "no single successful CD run published <tag>".
+# A failed read, a listing that did not contain the run, and a tag that was genuinely never
+# signed were indistinguishable, so the cause could not be established. These cases drive
+# the real `signer_for_tag` against a stubbed `gh`, in a separate process because sourcing
+# the generator declares read-only names this test also uses.
+#
+# The driver serves its fixtures in order, one per runs read, repeating the last; it counts
+# the reads in "<driver>.reads" so a case can assert how many listings were taken (#4128).
+make_signer_driver() { # <runs-fixture|FAIL>...
+  local path="$WORK/signer-driver-$RANDOM.sh" fixtures="$*"
+  cat >"$path" <<DRIVER
+#!/usr/bin/env bash
+set -euo pipefail
+source "$SCRIPT"
+sleep() { :; }  # both lookups back off between reads; the stubs answer deterministically
+reads_file='$path.reads'
+printf '0' >"\$reads_file"
+tag_reads_file='$path.tag-reads'
+printf '0' >"\$tag_reads_file"
+gh() {
+  case "\$*" in
+    *'/commits/v9.9.9'*)
+      # TAG_SHAS lists the commit the tag resolves to on each read, repeating the last.
+      local m
+      m=\$((\$(cat "\$tag_reads_file") + 1))
+      printf '%s' "\$m" >"\$tag_reads_file"
+      set -- \${TAG_SHAS:-$SHA_A}
+      if [ "\$m" -le "\$#" ]; then printf '%s' "\${!m}"; else printf '%s' "\${!#}"; fi ;;
+    *'/actions/runs'*)
+      local n fixture
+      n=\$((\$(cat "\$reads_file") + 1))
+      printf '%s' "\$n" >"\$reads_file"
+      set -- $fixtures
+      [ "\$n" -le "\$#" ] && fixture="\${!n}" || fixture="\${!#}"
+      [ "\$fixture" != FAIL ] || return 1
+      cat "\$fixture" ;;
+    *) return 1 ;;
+  esac
+}
+signer_for_tag consumer-x publish-manifests v9.9.9
+DRIVER
+  printf '%s\n' "$path"
+}
+
+empty_fixture() {
+  local path="$WORK/runs-empty.json"
+  printf '%s\n' '{"total_count": 0, "workflow_runs": []}' >"$path"
+  printf '%s\n' "$path"
+}
+
+runs_fixture() { # <name> <head_sha> <conclusion>
+  local path="$WORK/runs-$1.json"
+  cat >"$path" <<JSON
+{"total_count": 1, "workflow_runs": [{"head_branch": "v9.9.9", "path": ".github/workflows/cd.yaml",
+  "head_sha": "$2", "conclusion": "$3",
+  "referenced_workflows": [{"path": "devantler-tech/actions/.github/workflows/publish-manifests.yaml@$SHA_B", "sha": "$SHA_B"}]}]}
+JSON
+  printf '%s\n' "$path"
+}
+
+# The resolving case: exactly one successful run at the tag's commit names one signer.
+driver="$(make_signer_driver "$(runs_fixture ok "$SHA_A" success)")"
+if out="$(bash "$driver" 2>"$WORK/signer-ok.err")" && [ "$out" = "$SHA_B" ] && [ ! -s "$WORK/signer-ok.err" ]; then
+  pass 'the signer lookup resolves one successful run at the tag commit, silently'
+else
+  fail "the signer lookup did not resolve a signed tag (out='${out:-}')"; cat "$WORK/signer-ok.err" >&2
+fi
+
+# A failed runs read is named as a failed read, never as a missing run.
+driver="$(make_signer_driver FAIL)"
+if bash "$driver" >/dev/null 2>"$WORK/signer-fail.err"; then
+  fail 'a failed runs read resolved a signer'
+elif grep -q 'runs read for v9.9.9 failed' "$WORK/signer-fail.err" &&
+  ! grep -q 'at_commit=' "$WORK/signer-fail.err"; then
+  pass 'a failed runs read is refused as a failed read'
+else
+  fail 'a failed runs read was not named as one'; cat "$WORK/signer-fail.err" >&2
+fi
+
+# A listing without the matching run prints what it DID contain, so a late or incomplete
+# listing can be told apart from a tag that was never signed.
+driver="$(make_signer_driver "$(runs_fixture moved "$SHA_C" success)")"
+if bash "$driver" >/dev/null 2>"$WORK/signer-miss.err"; then
+  fail 'a run at another commit was attributed as the signer'
+elif grep -q 'total_count=1 returned=1 for_tag=1 cd=1 at_commit=0 successful=0 signer_refs=0' \
+  "$WORK/signer-miss.err"; then
+  pass 'a listing without the matching run is refused with its bounded counts'
+else
+  fail 'a listing without the matching run did not report its counts'; cat "$WORK/signer-miss.err" >&2
+fi
+
+# The counts track the conclusion too: a run at the right commit that did not succeed.
+driver="$(make_signer_driver "$(runs_fixture failed "$SHA_A" failure)")"
+if bash "$driver" >/dev/null 2>"$WORK/signer-concl.err"; then
+  fail 'a failed CD run was attributed as the signer'
+elif grep -q 'at_commit=1 successful=0 signer_refs=0 conclusions=failure' "$WORK/signer-concl.err"; then
+  pass 'a failed CD run at the tag commit is refused with its conclusion'
+else
+  fail 'a failed CD run did not report its conclusion'; cat "$WORK/signer-concl.err" >&2
+fi
+
+# Only an EMPTY listing is read again. A listing that holds runs but not exactly one signer
+# is a definitive answer: re-reading it could let a later partial listing drop the runs that
+# made it ambiguous, so it is refused on the first read.
+two_signers="$WORK/runs-two-signers.json"
+cat >"$two_signers" <<JSON
+{"total_count": 2, "workflow_runs": [
+  {"head_branch": "v9.9.9", "path": ".github/workflows/cd.yaml", "head_sha": "$SHA_A", "conclusion": "success",
+   "referenced_workflows": [{"path": "devantler-tech/actions/.github/workflows/publish-manifests.yaml@$SHA_B", "sha": "$SHA_B"}]},
+  {"head_branch": "v9.9.9", "path": ".github/workflows/cd.yaml", "head_sha": "$SHA_A", "conclusion": "success",
+   "referenced_workflows": [{"path": "devantler-tech/actions/.github/workflows/publish-manifests.yaml@$SHA_C", "sha": "$SHA_C"}]}]}
+JSON
+for shape in two-signers moved-run; do
+  case "$shape" in
+    two-signers) first="$two_signers" ;;
+    moved-run) first="$(runs_fixture moved-once "$SHA_C" success)" ;;
+  esac
+  driver="$(make_signer_driver "$first" "$(runs_fixture ok "$SHA_A" success)")"
+  if bash "$driver" >/dev/null 2>"$WORK/signer-$shape.err"; then
+    fail "a non-empty $shape listing was re-read until it resolved"
+  elif [ "$(cat "$driver.reads")" = 1 ] && grep -q "after 1 read(s):" "$WORK/signer-$shape.err"; then
+    pass "a non-empty $shape listing is refused on the first read"
+  else
+    fail "a non-empty $shape listing was not refused after exactly one read, reported as such (reads=$(cat "$driver.reads"))"
+    cat "$WORK/signer-$shape.err" >&2
+  fi
+done
+
+# A tag that moves while the lookup waits to re-read is refused: the signer found later
+# belongs to the commit the tag pointed at before the wait, not the one it points at now.
+driver="$(make_signer_driver "$(empty_fixture)" "$(runs_fixture ok "$SHA_A" success)")"
+if TAG_SHAS="$SHA_A $SHA_C" bash "$driver" >/dev/null 2>"$WORK/signer-tag-moved.err"; then
+  fail 'a signer was accepted for a tag that moved during the retry wait'
+elif grep -q 'v9.9.9 moved' "$WORK/signer-tag-moved.err"; then
+  pass 'a tag that moved during the retry wait is refused'
+else
+  fail 'a tag that moved during the retry wait was not refused as moved'
+  cat "$WORK/signer-tag-moved.err" >&2
+fi
+
+# A transiently EMPTY listing is read again, and the run it then shows is taken (#4128).
+driver="$(make_signer_driver "$(empty_fixture)" "$(runs_fixture ok "$SHA_A" success)")"
+if out="$(bash "$driver" 2>"$WORK/signer-late.err")" && [ "$out" = "$SHA_B" ] &&
+  [ "$(cat "$driver.reads")" = 2 ] && grep -q 'resolved on read 2 of 3' "$WORK/signer-late.err"; then
+  pass 'a transiently empty listing is re-read and the late run resolves, logged'
+else
+  fail "a transiently empty listing did not recover (out='${out:-}', reads=$(cat "$driver.reads"))"
+  cat "$WORK/signer-late.err" >&2
+fi
+
+# A response that is not one object with a workflow_runs array is unparseable, not "no run":
+# an empty body and an object-shaped workflow_runs both read as nothing to jq's iteration.
+: >"$WORK/runs-zero-byte.json"
+printf '%s\n' "{\"total_count\": 1, \"workflow_runs\": {\"only\": {\"head_branch\": \"v9.9.9\"}}}" \
+  >"$WORK/runs-object-shaped.json"
+for shape in zero-byte object-shaped; do
+  driver="$(make_signer_driver "$WORK/runs-$shape.json")"
+  if bash "$driver" >/dev/null 2>"$WORK/signer-$shape.err"; then
+    fail "a $shape runs response resolved a signer"
+  elif [ "$(cat "$driver.reads")" = 1 ] &&
+    grep -q 'is not one object with a workflow_runs array' "$WORK/signer-$shape.err"; then
+    pass "a $shape runs response is refused as unparseable, without re-reading"
+  else
+    fail "a $shape runs response was not refused as unparseable (reads=$(cat "$driver.reads"))"
+    cat "$WORK/signer-$shape.err" >&2
+  fi
+done
+
+# A listing that stays empty is still refused, after exactly the bounded number of reads.
+driver="$(make_signer_driver "$(empty_fixture)")"
+if bash "$driver" >/dev/null 2>"$WORK/signer-empty.err"; then
+  fail 'a persistently empty listing resolved a signer'
+elif [ "$(cat "$driver.reads")" = 3 ] &&
+  grep -q 'after 3 read(s): total_count=0 returned=0' "$WORK/signer-empty.err"; then
+  pass 'a persistently empty listing is refused after 3 reads'
+else
+  fail "a persistently empty listing was not refused after 3 reads (reads=$(cat "$driver.reads"))"
+  cat "$WORK/signer-empty.err" >&2
+fi
+
 if [ "$failures" -gt 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1

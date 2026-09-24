@@ -66,16 +66,23 @@ JSON
 JSON
   cat >"${dir}/applications.json" <<'JSON'
 {"context":{"alerts":{"critical":2,"warning":3}},"data":{"applications":[
-  {"status":"critical"},
-  {"status":"critical"},
-  {"status":"warning"},
-  {"status":"info"},
-  {"status":"info"},
-  {"status":"info"},
-  {"status":"info"},
-  {"status":"unknown"},
+  {"id":"95rsc5yp:app:Deployment:critical-1","status":"critical"},
+  {"id":"95rsc5yp:app:Deployment:critical-2","status":"critical"},
+  {"id":"95rsc5yp:app:Deployment:warning","status":"warning","memory":{"status":"warning"},"private_payload":"must-not-log-this"},
+  {"id":"95rsc5yp:app:Deployment:log-error-1","status":"info","logs":{"status":"info"}},
+  {"id":"95rsc5yp:app:Deployment:log-error-2","status":"info"},
+  {"id":"95rsc5yp:app:Deployment:log-error-3","status":"info"},
+  {"id":"95rsc5yp:app:Deployment:log-error-4","status":"info"},
+  {"id":"95rsc5yp:app:Deployment:integration","status":"unknown"},
   {"status":"ok"},
   {"status":"ok"}
+]}}
+JSON
+  cat >"${dir}/risks.json" <<'JSON'
+{"data":{"risks":[
+  {"key":{"category":"Security","type":"db-internet-exposure"},"application_id":"95rsc5yp:app:StatefulSet:database","severity":"critical","type":"db-internet-exposure","exposure":{"ips":["must-not-log-this"]}},
+  {"key":{"category":"Availability","type":"single-instance-app"},"application_id":"95rsc5yp:app:Deployment:single","severity":"warning","type":"single-instance-app"},
+  {"key":{"category":"Availability","type":"single-node-app"},"application_id":"95rsc5yp:app:Deployment:dismissed","severity":"ok","dismissal":{"reason":"must-not-log-this"}}
 ]}}
 JSON
 
@@ -103,6 +110,7 @@ done
 case "${url}" in
   */api/user) cat "${dir}/user.json" ;;
   *'/overview/applications') cat "${dir}/applications.json" ;;
+  *'/overview/risks') cat "${dir}/risks.json" ;;
   *'/alerts?include_resolved=true&limit=500') cat "${dir}/history.json" ;;
   *'/alerts?limit=500') cat "${dir}/alerts.json" ;;
   */alerts/suppress)
@@ -152,11 +160,33 @@ printf '%s\n' "${exact_output}" | jq -s -e '
         errors_in_logs: 4,
         integration_required: 1,
         ok: 2
-      }
+      },
+      risks: {critical: 1, warning: 1}
     }
   )
 ' >/dev/null ||
   fail "the autosuppressor did not expose exact Coroot UI counters"
+printf '%s\n' "${exact_output}" | jq -s -e '
+  any(.[];
+    .msg == "coroot clean-state counters"
+    and .coroot_non_ok_applications.omitted == 0
+    and any(.coroot_non_ok_applications.items[];
+      .id == "95rsc5yp:app:Deployment:warning"
+      and .status == "warning"
+      and .signals == [{check:"memory",status:"warning"}])
+    and any(.coroot_non_ok_applications.items[];
+      .id == "95rsc5yp:app:Deployment:log-error-1"
+      and .signals == [{check:"logs",status:"info"}])
+    and .coroot_active_risks.omitted == 0
+    and any(.coroot_active_risks.items[];
+      .application_id == "95rsc5yp:app:StatefulSet:database"
+      and .severity == "critical"
+      and .key == {category:"Security",type:"db-internet-exposure"})
+  )
+' >/dev/null ||
+  fail "non-OK applications and active risk identities were not exposed safely"
+[[ "${exact_output}" != *must-not-log-this* ]] ||
+  fail "diagnostic readback leaked a raw private payload"
 [ -f "${exact_dir}/suppressed.json" ] ||
   fail "the exact kubelet health-probe series were not suppressed"
 jq -e '.ids == ["kubelet-probe-noise"]' "${exact_dir}/suppressed.json" >/dev/null ||
@@ -164,6 +194,7 @@ jq -e '.ids == ["kubelet-probe-noise"]' "${exact_dir}/suppressed.json" >/dev/nul
 pass "exact kubelet scheduler/controller-manager probe noise is suppressed"
 pass "normal autosuppressor lifecycle output is structured as info"
 pass "Coroot alert and application UI counters are emitted as structured evidence"
+pass "Coroot risk counters and bounded offender identities omit raw payloads"
 
 invalid_state_dir="$(setup_scenario invalid-state false)"
 cat >"${invalid_state_dir}/applications.json" <<'JSON'
@@ -218,6 +249,85 @@ printf '%s\n' "${missing_counters_output}" | jq -s -e '
 ' >/dev/null ||
   fail "missing zero-valued alert counters did not match Coroot UI semantics"
 pass "missing counters default to zero while malformed counters fail closed"
+
+malformed_risks_dir="$(setup_scenario malformed-risks false)"
+cat >"${malformed_risks_dir}/risks.json" <<'JSON'
+{"data":{"risks":[{"severity":"unknown"}]}}
+JSON
+if run_scenario "${malformed_risks_dir}" >/dev/null 2>&1; then
+  fail "an unknown Coroot risk severity reported valid clean-state evidence"
+fi
+
+missing_risks_dir="$(setup_scenario missing-risks false)"
+cat >"${missing_risks_dir}/risks.json" <<'JSON'
+{"data":{}}
+JSON
+if run_scenario "${missing_risks_dir}" >/dev/null 2>&1; then
+  fail "a missing Coroot risk array reported valid clean-state evidence"
+fi
+
+null_risks_dir="$(setup_scenario null-risks false)"
+cat >"${null_risks_dir}/risks.json" <<'JSON'
+{"data":{"risks":null}}
+JSON
+null_risks_output="$(run_scenario "${null_risks_dir}")"
+printf '%s\n' "${null_risks_output}" | jq -s -e '
+  any(.[];
+    .msg == "coroot clean-state counters"
+    and .coroot_clean_state.risks == {critical:0,warning:0}
+    and .coroot_active_risks == {items:[],omitted:0})
+' >/dev/null ||
+  fail "Coroot null risks did not match the UI empty-list semantics"
+
+missing_app_id_dir="$(setup_scenario missing-app-id false)"
+jq '(.data.applications[] | select(.status == "warning") | .id) = null' \
+  "${missing_app_id_dir}/applications.json" >"${missing_app_id_dir}/applications-invalid.json"
+mv "${missing_app_id_dir}/applications-invalid.json" \
+  "${missing_app_id_dir}/applications.json"
+if run_scenario "${missing_app_id_dir}" >/dev/null 2>&1; then
+  fail "a non-OK application without an identity reported valid diagnostic evidence"
+fi
+
+many_risks_dir="$(setup_scenario many-risks false)"
+jq -n '{data:{risks:([range(21) | {
+  key:{category:"Availability",type:"single-instance-app"},
+  application_id:("95rsc5yp:app:Deployment:risk-" + tostring),
+  severity:"warning"
+}] + [{
+  key:{category:"Security",type:"db-internet-exposure"},
+  application_id:"95rsc5yp:app:StatefulSet:critical-last",
+  severity:"critical"
+}])}}' >"${many_risks_dir}/risks.json"
+many_risks_output="$(run_scenario "${many_risks_dir}")"
+printf '%s\n' "${many_risks_output}" | jq -s -e '
+  any(.[];
+    .msg == "coroot clean-state counters"
+    and .coroot_clean_state.risks.warning == 21
+    and .coroot_clean_state.risks.critical == 1
+    and (.coroot_active_risks.items | length) == 20
+    and .coroot_active_risks.omitted == 2
+    and .coroot_active_risks.items[0].application_id == "95rsc5yp:app:StatefulSet:critical-last")
+' >/dev/null ||
+  fail "risk identity output did not prioritize critical offenders before truncation"
+
+many_apps_dir="$(setup_scenario many-applications false)"
+jq '.data.applications = ([range(21) | {
+  id:("95rsc5yp:app:Deployment:info-" + tostring),status:"info"
+}] + [{id:"95rsc5yp:app:Deployment:critical-last",status:"critical"}])' \
+  "${many_apps_dir}/applications.json" >"${many_apps_dir}/applications-many.json"
+mv "${many_apps_dir}/applications-many.json" "${many_apps_dir}/applications.json"
+many_apps_output="$(run_scenario "${many_apps_dir}")"
+printf '%s\n' "${many_apps_output}" | jq -s -e '
+  any(.[];
+    .msg == "coroot clean-state counters"
+    and .coroot_clean_state.applications.slo_violations == 1
+    and .coroot_clean_state.applications.errors_in_logs == 21
+    and (.coroot_non_ok_applications.items | length) == 20
+    and .coroot_non_ok_applications.omitted == 2
+    and .coroot_non_ok_applications.items[0].id == "95rsc5yp:app:Deployment:critical-last")
+' >/dev/null ||
+  fail "application identity output did not prioritize critical offenders before truncation"
+pass "risk and offender schemas fail closed while diagnostic samples stay bounded"
 
 extra_dir="$(setup_scenario extra true)"
 run_scenario "${extra_dir}" >/dev/null
