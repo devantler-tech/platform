@@ -3188,7 +3188,14 @@ const (
 // surface entry, HelmRelease flagger-system/flagger-loadtester, and nothing added
 // or removed. Only scheduling and disruption settings change; no RBAC, binding,
 // service account, AWS identity, or permission grant changes.
-const expectedRenderedSurfaceSHA = "6b1318d615d20e35941548f3d3e32efcdd384b46742c5cdec7d3c4de35a8480e"
+// Re-approved for the provider-upjet-github v0.20.0 repin (#2800), against main
+// 784a7032. The required production-authorization job on the checksum-verified
+// renderer (run 36012123698, job 107676500672) reported exactly one changed
+// surface entry, Provider provider-upjet-github, and nothing added or removed.
+// Only the package tag changes; the provider's GitHub-scoped CRDs gain optional
+// fields and one inactive kind, and no binding, service account or AWS identity
+// changes.
+const expectedRenderedSurfaceSHA = "31365f93a584f876aa4a0ba25963d10205103850b82b26f7de3417f2e4ca7eeb"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3201,7 +3208,7 @@ const expectedRenderedSurfaceSHA = "6b1318d615d20e35941548f3d3e32efcdd384b46742c
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "90b5a033d331527d739a01637fbe1c18939b26f96cb79da5863408680b3d8a90"
+const previousRenderedSurfaceSHA = "6b1318d615d20e35941548f3d3e32efcdd384b46742c5cdec7d3c4de35a8480e"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
