@@ -76,7 +76,7 @@ expected_insync=$((consumer_count - 1))
 write_table() { # <path> <special-repo|""> <special-signing> <special-current>
   local table="$1" special="$2" s_sign="$3" s_cur="$4" repo workflow
   : >"$table"
-  while IFS=$'\t' read -r repo workflow _version; do
+  while IFS=$'\t' read -r repo workflow _version _artifact; do
     [ -n "$repo" ] || continue
     if [ -n "$special" ] && [ "$repo" = "$special" ]; then
       printf '%s\t%s\t%s\t%s\n' "$repo" "$workflow" "$s_sign" "$s_cur" >>"$table"
@@ -162,7 +162,7 @@ fi
 swap_root="$WORK/swap"
 mkdir -p "$swap_root"
 i=0
-while IFS=$'\t' read -r repo workflow _version; do
+while IFS=$'\t' read -r repo workflow _version _artifact; do
   [ -n "$repo" ] || continue
   i=$((i + 1))
   # Substitute an impostor for one real consumer, keeping the total identical.
@@ -187,7 +187,7 @@ if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
 PUBLISH_CONSUMER_ROOT="$swap_root" "$SCRIPT" >"$swap_out" 2>&1; then
   fail 'a discovery set of the right SIZE but wrong MEMBERSHIP passed — a consumer can vanish silently'
 else
-  # The set comparison runs in BOTH directions, and the unregistered side fires first here: the
+  # The set comparison runs in BOTH directions, and both are reported here: the
   # impostor is not in EXPECTED_CONSUMERS, which is itself the stronger objection — a consumer this
   # script does not know about is one whose later disappearance it could not notice. Either half
   # naming its cause is a pass; silence is not.
@@ -274,7 +274,7 @@ fi
 extra_root="$WORK/extra"
 mkdir -p "$extra_root"
 j=0
-while IFS=$'\t' read -r repo workflow _version; do
+while IFS=$'\t' read -r repo workflow _version _artifact; do
   [ -n "$repo" ] || continue
   j=$((j + 1))
   # `.github` is the artifact name `github-config` on the wire; emit the OCI name so the
@@ -323,6 +323,98 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 8b–8d. ONE CONSUMER PER DEPLOYED ARTIFACT, NOT PER REPOSITORY (#3327). Two resources
+#    pulling different artifacts from one repository are two consumers. Keyed on the
+#    repository alone they collapsed into one, so a second one went unregistered and the
+#    loss of either left the name present. The fixtures derive each artifact from the
+#    repository, not from the list's artifact field, so they run against either shape.
+# ---------------------------------------------------------------------------
+write_real_consumers() { # <root> <first-consumer-artifact-leaf>
+  local root="$1" leaf="$2" repo workflow _version _artifact oci n=0
+  mkdir -p "$root"
+  while IFS=$'\t' read -r repo workflow _version _artifact; do
+    [ -n "$repo" ] || continue
+    n=$((n + 1))
+    oci="$repo"
+    [ "$repo" = '.github' ] && oci='github-config'
+    if [ "$repo" = "$first_repo" ]; then
+      oci="$oci/$leaf"
+    else
+      oci="$oci/manifests"
+    fi
+    write_consumer "$root/real-$n.yaml" "r$n" "$oci" "$workflow"
+  done <<<"$consumers"
+}
+write_consumer() { # <file> <name> <artifact> <workflow>
+  cat >"$1" <<YAML
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: $2
+spec:
+  ref:
+    semver: ">=1.0.0"
+  url: oci://ghcr.io/devantler-tech/$3
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\\.actions\\.githubusercontent\\.com\$'
+        subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/$4\\.yaml@[0-9a-f]{40}\$'
+YAML
+}
+first_oci="$first_repo"
+[ "$first_repo" = '.github' ] && first_oci='github-config'
+first_repo_workflow="$(printf '%s\n' "$consumers" | head -1 | cut -f2)"
+
+# 8b. A second artifact from a registered repository must itself be registered.
+twin_root="$WORK/twin"
+write_real_consumers "$twin_root" manifests
+write_consumer "$twin_root/twin.yaml" twin "$first_oci/sbom" "$first_repo_workflow"
+twin_out="$WORK/twin.out"
+if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+PUBLISH_CONSUMER_ROOT="$twin_root" "$SCRIPT" >"$twin_out" 2>&1; then
+  fail 'a second artifact from a registered repository was accepted — its later loss could not be noticed'
+else
+  grep -q -- "not registered.*$first_oci/sbom" "$twin_out" ||
+    fail 'the unregistered second artifact is not named'
+  grep -q 'not discovered' "$twin_out" &&
+    fail 'the run reported a MISSING consumer; every registered artifact is present, so the case is not isolating'
+  pass 'a second artifact from one repository is its own consumer and must be registered'
+fi
+
+# 8c. A registered artifact replaced by another from the same repository: the repository is
+#     still present, so only a per-artifact floor notices the registered one vanished.
+swapped_root="$WORK/swapped"
+write_real_consumers "$swapped_root" sbom
+swapped_out="$WORK/swapped.out"
+if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+PUBLISH_CONSUMER_ROOT="$swapped_root" "$SCRIPT" >"$swapped_out" 2>&1; then
+  fail 'a registered artifact vanished while its repository stayed present, and the run passed'
+else
+  grep -q -- "not discovered.*$first_oci/manifests" "$swapped_out" ||
+    fail 'the vanished registered artifact is not named'
+  grep -q -- "not registered.*$first_oci/sbom" "$swapped_out" ||
+    fail 'the artifact that replaced it is not named'
+  pass 'a registered artifact replaced by another from its repository fails and names both'
+fi
+
+# 8d. CONTROL: a base and an overlay declaring the same resource are still one consumer.
+dup_root="$WORK/dup"
+write_real_consumers "$dup_root" manifests
+mkdir -p "$dup_root/overlay"
+write_consumer "$dup_root/overlay/patch.yaml" r1 "$first_oci/manifests" "$first_repo_workflow"
+dup_out="$WORK/dup.out"
+if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+PUBLISH_CONSUMER_ROOT="$dup_root" "$SCRIPT" >"$dup_out" 2>&1; then
+  dup_insync="$(grep -c '^IN-SYNC' "$dup_out" || true)"
+  [ "$dup_insync" -eq "$consumer_count" ] ||
+    fail "a base/overlay pair was counted twice: expected $consumer_count IN-SYNC, got $dup_insync"
+  pass 'a base/overlay pair of one resource still deduplicates to one consumer'
+else
+  fail "a base/overlay pair of one resource failed the run: $(cat "$dup_out")"
+fi
+
+# ---------------------------------------------------------------------------
 # 9. A BOUNDED SEMVER CONSTRAINT MUST REFUSE, NOT GUESS. An unbounded `>=1.0.0` and
 #    "whatever is newest" happen to agree, which is why discarding the constraint looked
 #    harmless. A bounded selector (`~1.4`, `<2.0.0`) does not agree: the newest published
@@ -350,7 +442,7 @@ bounded_case() {
   bc_root="$WORK/bounded-$bc_label"
   mkdir -p "$bc_root"
   k=0
-  while IFS=$'\t' read -r repo workflow _version; do
+  while IFS=$'\t' read -r repo workflow _version _artifact; do
     [ -n "$repo" ] || continue
     k=$((k + 1))
     oci="$repo"
@@ -733,7 +825,7 @@ bm_out="$WORK/buildmeta.out"
 bm_root="$WORK/buildmeta-root"
 mkdir -p "$bm_root"
 k=0
-while IFS=$'\t' read -r repo workflow _version; do
+while IFS=$'\t' read -r repo workflow _version _artifact; do
   [ -n "$repo" ] || continue
   k=$((k + 1))
   oci="$repo"
@@ -946,7 +1038,7 @@ fi
 up_root="$WORK/unpinned"
 mkdir -p "$up_root"
 k=0
-while IFS=$'\t' read -r repo workflow _version; do
+while IFS=$'\t' read -r repo workflow _version _artifact; do
   [ -n "$repo" ] || continue
   k=$((k + 1))
   oci="$repo"
@@ -1093,7 +1185,7 @@ fi
 make_exact_root() { # <dest> <pinned-tag>
   local dest="$1" pin="$2" k=0 repo workflow oci ref_block
   mkdir -p "$dest"
-  while IFS=$'\t' read -r repo workflow _version; do
+  while IFS=$'\t' read -r repo workflow _version _artifact; do
     [ -n "$repo" ] || continue
     k=$((k + 1))
     oci="$repo"
