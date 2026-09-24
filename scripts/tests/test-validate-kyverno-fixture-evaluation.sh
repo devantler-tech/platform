@@ -133,6 +133,17 @@ if kyverno_passes "autogen rule the policy never generates" "${root}"; then
   expect_fail "autogen rule the policy never generates" "${root}" 1 "prioritise-hcloud-volume-pods generates no such rule"
 fi
 
+# Kyverno generates no autogen rule for any rule of a policy where one rule filters by
+# selector or mutates with a JSON patch, as add-security-context does both, even for a base
+# rule that matches plain Pods.
+root="$(copy autogen-policy-filtered)"
+yq -i '.results += [{"policy": "add-security-context", "rule": "autogen-add-baseline-context-optin-namespaces", "kind": "Deployment", "resources": ["observability/operator-deploy"], "result": "skip"}]' \
+  "${root}/tests/add-baseline-context/kyverno-test.yaml"
+if kyverno_passes "autogen rule of a policy that filters by selector" "${root}"; then
+  expect_fail "autogen rule of a policy that filters by selector" "${root}" 1 "a match or exclude filters by name, names, selector"
+  expect_fail "autogen rule of a policy that mutates with a JSON patch" "${root}" 1 "add-security-context gets no autogen rules because a rule mutates with patchesJson6902"
+fi
+
 # A fixture whose expectation is wrong still fails through kyverno itself.
 root="$(copy wrong-expectation)"
 yq -i '(.results[] | select(.result == "fail") | .result) = "pass"' \

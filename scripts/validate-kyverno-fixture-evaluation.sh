@@ -8,7 +8,8 @@
 # exist gets no row at all, so it drops out of the run the same way. Three
 # checks close those gaps:
 #   1. every rule a fixture names exists in a policy that fixture loads, so a
-#      deleted or renamed rule fails even where only `skip` rows name it;
+#      deleted or renamed rule fails even where only `skip` rows name it, and an
+#      autogen rule the policy never generates fails too;
 #   2. every Excluded row declares `result: skip`, the way a fixture marks a
 #      resource the rule is meant to leave alone;
 #   3. every resource a results entry names produced a row.
@@ -62,14 +63,23 @@ for test_file in "${test_files[@]}"; do
       continue
     fi
     yq -r 'select(.metadata.name != null) | .metadata.name' "${dir}/${policy_path}" >>"${work}/policies"
-    # One line per rule: policy, rule, the kinds its match selects, and the controllers
-    # Kyverno generates autogen rules for.
-    # shellcheck disable=SC2016 # $p and $c are yq variables
+    # One line per rule: policy, rule, the kinds its match selects, the controllers Kyverno
+    # generates autogen rules for, and whether the policy disables autogen outright because a
+    # rule generates, mutates with a JSON patch, or filters a match or exclude by name, names,
+    # selector, annotations or Pod mixed with other kinds. Kyverno decides that for the whole
+    # policy, so one such rule disables autogen for every rule in it.
+    # shellcheck disable=SC2016 # $p, $c, $generates, $patches and $filters are yq variables
     yq -r 'select(.kind == "ClusterPolicy" or .kind == "Policy")
       | .metadata.name as $p
       | (.metadata.annotations["pod-policies.kyverno.io/autogen-controllers"] // "'"${default_autogen_controllers}"'") as $c
+      | ([.spec.rules[] | select(.generate != null)] | length > 0) as $generates
+      | ([.spec.rules[] | select(.mutate.patchesJson6902 != null or ((.mutate.foreach // []) | any_c(.patchesJson6902 != null)))] | length > 0) as $patches
+      | ([.spec.rules[] | (.match, .exclude) | select(. != null)
+          | (.resources, ((.any // [])[] | .resources), ((.all // [])[] | .resources)) | select(. != null)
+          | select((.name // "") != "" or ((.names // []) | length) > 0 or .selector != null or .annotations != null
+              or (((.kinds // []) | length) > 1 and ((.kinds // []) | any_c(. == "Pod" or test("/Pod$")))))] | length > 0) as $filters
       | .spec.rules[]
-      | [$p, .name, ([.match.resources.kinds[]?, .match.any[]?.resources.kinds[]?, .match.all[]?.resources.kinds[]?] | join(",")), $c]
+      | [$p, .name, ([.match.resources.kinds[]?, .match.any[]?.resources.kinds[]?, .match.all[]?.resources.kinds[]?] | join(",")), $c, $generates, $patches, $filters]
       | join("|")' "${dir}/${policy_path}" >>"${work}/rules"
   done < <(yq -r '.policies[]' "${test_file}")
 
@@ -99,6 +109,15 @@ for test_file in "${test_files[@]}"; do
         continue
         ;;
     esac
+    IFS='|' read -r generates patches filters <<<"$(printf '%s' "${line}" | cut -d'|' -f5-7)"
+    autogen_off=""
+    [ "${generates}" != true ] || autogen_off="a rule generates resources"
+    [ "${patches}" != true ] || autogen_off="${autogen_off:+${autogen_off}; }a rule mutates with patchesJson6902"
+    [ "${filters}" != true ] || autogen_off="${autogen_off:+${autogen_off}; }a match or exclude filters by name, names, selector, annotations or Pod mixed with other kinds"
+    if [ -n "${autogen_off}" ]; then
+      finding "${test_file}: names rule ${rule}, but ${policy} gets no autogen rules because ${autogen_off}. fix: name the rule the fixture actually exercises."
+      continue
+    fi
     # `autogen-cronjob-*` needs CronJob among the controllers; `autogen-*` needs any other.
     generated=0
     IFS=',' read -ra listed <<<"${controllers}"
