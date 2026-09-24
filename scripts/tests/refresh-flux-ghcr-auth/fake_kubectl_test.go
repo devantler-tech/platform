@@ -552,7 +552,7 @@ func fakeFluxPolicyParentObject() map[string]any {
 		"kind":       "Kustomization",
 		"metadata":   metadata,
 		"spec": map[string]any{
-			"suspend": suspended,
+			"suspend": suspended || os.Getenv("FAKE_FLUX_POLICY_PARENT_SUSPENDED_UNOWNED") == "true",
 		},
 		"status": map[string]any{
 			"observedGeneration": 1,
@@ -1158,17 +1158,28 @@ func fakeKubectlGetSeedProbe(namespace string) int {
 		return commandFailure(44, "externalsecret ghcr-seed-probe not found")
 	}
 	refreshTime := time.Now().UTC().Format(time.RFC3339)
-	if os.Getenv("FAKE_SEED_PROBE_STALE") == "true" {
+	switch {
+	case os.Getenv("FAKE_SEED_PROBE_STALE") == "true":
 		refreshTime = time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
+	case os.Getenv("FAKE_SEED_PROBE_REFRESHED_BEFORE_RUN") == "true":
+		// A recent refresh that never advances while this run waits, like the
+		// one a raft restore leaves behind.
+		if !markerExists("seed-probe-frozen-refresh-time") {
+			setMarkerContent("seed-probe-frozen-refresh-time",
+				time.Now().UTC().Add(-5*time.Second).Format(time.RFC3339))
+		}
+		refreshTime = markerContent("seed-probe-frozen-refresh-time")
 	}
 	ready := "True"
 	if os.Getenv("FAKE_SEED_PROBE_NOT_READY") == "true" {
 		ready = "False"
 	}
 	fmt.Println(encodeJSON(map[string]any{
+		"metadata": map[string]any{"generation": 1},
 		"status": map[string]any{
-			"refreshTime": refreshTime,
-			"conditions":  []any{map[string]any{"type": "Ready", "status": ready}},
+			"refreshTime":           refreshTime,
+			"syncedResourceVersion": "1-fixture",
+			"conditions":            []any{map[string]any{"type": "Ready", "status": ready}},
 		},
 	}))
 	return 0
@@ -1322,6 +1333,19 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 			)
 		}
 		return commandFailure(54, "read: connection reset by peer")
+	}
+	// Another transaction claims and releases the Lease between the first and
+	// second read of a run, which advances its resourceVersion.
+	if os.Getenv("FAKE_SYNC_LEASE_CLAIMED_DURING_CONVERGENCE") == "true" {
+		if !markerExists("convergence-lease-read") {
+			touchMarker("convergence-lease-read")
+		} else if !markerExists("convergence-lease-bumped") {
+			touchMarker("convergence-lease-bumped")
+			setMarkerContent(
+				"sync-lease-resource-version",
+				incrementDecimal(defaultString(markerContent("sync-lease-resource-version"), "10")),
+			)
+		}
 	}
 	holder := markerContent("sync-lease-holder")
 	if !markerExists("sync-lease-holder") {
@@ -3013,6 +3037,10 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 	}
 	if containsSequence(args, "get", kind, name) {
 		markerName := kind + "-" + namespace + "-" + name
+		ready := "True"
+		if resource == os.Getenv("FAKE_UNRECONCILED_FANOUT_RESOURCE") {
+			ready = "False"
+		}
 		refreshTime := "2026-07-13T00:00:00Z"
 		resourceVersion := "1"
 		if markerExists(markerName + "-annotated") {
@@ -3025,10 +3053,11 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 			resourceVersion = "3"
 		}
 		fmt.Println(encodeJSON(map[string]any{
-			"metadata": map[string]any{"resourceVersion": resourceVersion},
+			"metadata": map[string]any{"resourceVersion": resourceVersion, "generation": 1},
 			"status": map[string]any{
-				"refreshTime": refreshTime,
-				"conditions":  []any{map[string]any{"type": "Ready", "status": "True"}},
+				"refreshTime":           refreshTime,
+				"conditions":            []any{map[string]any{"type": "Ready", "status": ready}},
+				"syncedResourceVersion": "1-fixture",
 			},
 		}))
 		return 0

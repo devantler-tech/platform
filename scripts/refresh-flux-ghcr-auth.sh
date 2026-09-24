@@ -143,6 +143,9 @@ readonly SYNC_LEASE_NAME="ghcr-auth-refresh"
 # current, so a no-write reassert requires it to be fresh and equal.
 readonly GHCR_SEED_PROBE_NAME="ghcr-seed-probe"
 readonly GHCR_SEED_PROBE_REFRESH_SECONDS=60
+# How long a no-write run waits for the probe to refresh after it began before
+# falling back to the fenced path.
+readonly GHCR_SEED_PROBE_WAIT_SECONDS="${FLUX_GHCR_SEED_PROBE_WAIT_SECONDS:-$((GHCR_SEED_PROBE_REFRESH_SECONDS * 2 + 30))}"
 readonly SYNC_LEASE_DURATION_SECONDS=120
 readonly SYNC_LEASE_HEARTBEAT_SECONDS="${FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS:-30}"
 readonly SYNC_LEASE_RELEASE_ATTEMPTS=3
@@ -6298,6 +6301,46 @@ patch_variables_base() {
     "${variables_secret_cas_patch_file}"
 }
 
+# Print the synchronization Lease's resourceVersion ("absent" when there is no
+# Lease), failing when it cannot be read or is held. Read-only.
+converged_lease_version() {
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get lease "${SYNC_LEASE_NAME}" \
+    --ignore-not-found \
+    -o json >"${converged_lease_file}" 2>/dev/null || return 1
+  if [[ ! -s "${converged_lease_file}" ]]; then
+    printf 'absent\n'
+    return 0
+  fi
+  jq -er '
+    select((.spec.holderIdentity // "") == "")
+    | .metadata.resourceVersion
+    | select(type == "string" and length > 0)
+  ' "${converged_lease_file}" 2>/dev/null
+}
+
+# Report whether an ExternalSecret is Ready and has reconciled its current
+# generation, so the Secret it owns reflects the current spec. Read-only.
+external_secret_is_reconciled() {
+  local namespace="$1"
+  local name="$2"
+  local state_file="$3"
+
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace "${namespace}" \
+    get externalsecret "${name}" \
+    -o json >"${state_file}" 2>/dev/null &&
+    jq -e '
+      .metadata.generation as $generation
+      | any(.status.conditions[]?; .type == "Ready" and .status == "True")
+      and (($generation | type) == "number")
+      and ((.status.syncedResourceVersion // "") | startswith("\($generation)-"))
+    ' "${state_file}" >/dev/null 2>&1
+}
+
 # Report whether a Secret's data key decodes to exactly the Git/SOPS docker
 # config. Read-only; an unreadable Secret or payload is a mismatch.
 secret_matches_sops_credential() {
@@ -6327,19 +6370,15 @@ secret_matches_sops_credential() {
 # returns non-zero, and the caller then runs today's full fenced transaction
 # unchanged. A failed read can therefore never select the no-write path.
 ghcr_chain_is_converged_without_writes() {
-  local namespace
+  local namespace lease_version started_epoch deadline
 
-  # No transaction may be in flight: its writes could still be landing.
-  kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace flux-system \
-    get lease "${SYNC_LEASE_NAME}" \
-    --ignore-not-found \
-    -o json >"${converged_lease_file}" 2>/dev/null || return 1
-  if [[ -s "${converged_lease_file}" ]]; then
-    jq -e '(.spec.holderIdentity // "") == ""' \
-      "${converged_lease_file}" >/dev/null 2>&1 || return 1
-  fi
+  [[ "${GHCR_SEED_PROBE_WAIT_SECONDS}" =~ ^[0-9]+$ ]] || return 1
+  started_epoch="$(date -u +%s)"
+
+  # No transaction may be in flight: its writes could still be landing. The
+  # Lease is read again at the end, so a transaction that starts while these
+  # reads run also sends this run down the fenced path.
+  lease_version="$(converged_lease_version)" || return 1
 
   # Neither Flux policy fence may be held or left behind by a crashed run.
   read_flux_policy_fences >/dev/null 2>&1 || return 1
@@ -6353,6 +6392,7 @@ ghcr_chain_is_converged_without_writes() {
   jq -e \
     --arg owner_annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" '
     (((.metadata.annotations // {})[$owner_annotation] // "") == "")
+    and ((.spec.suspend // false) == false)
   ' "${flux_policy_parent_state_file}" >/dev/null 2>&1 || return 1
 
   # Root auth and the staged seed source already hold the SOPS credential.
@@ -6377,36 +6417,50 @@ ghcr_chain_is_converged_without_writes() {
     --ignore-not-found \
     -o name 2>/dev/null)" ]] || return 1
   for namespace in "${FANOUT_NAMESPACES[@]}"; do
-    [[ -n "$(kubectl \
-      --context "${KUBE_CONTEXT}" \
-      --namespace "${namespace}" \
-      get externalsecret ghcr-auth \
-      --ignore-not-found \
-      -o name 2>/dev/null)" ]] || return 1
+    # A materialised Secret proves nothing about a consumer whose current spec
+    # has not reconciled, or whose last sync failed: its next sync may differ.
+    external_secret_is_reconciled \
+      "${namespace}" ghcr-auth "${converged_probe_file}" || return 1
     secret_matches_sops_credential \
       "${namespace}" ghcr-auth .dockerconfigjson || return 1
   done
 
-  # OpenBao itself holds the credential: the seed probe refreshed within two
-  # intervals and read back exactly the SOPS value.
-  kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace flux-system \
-    get externalsecret "${GHCR_SEED_PROBE_NAME}" \
-    -o json >"${converged_probe_file}" 2>/dev/null || return 1
-  jq -e --argjson max_age "$((GHCR_SEED_PROBE_REFRESH_SECONDS * 2))" '
-    any(.status.conditions[]?; .type == "Ready" and .status == "True")
-    and ((.status.refreshTime | type) == "string")
-    and ((now - (.status.refreshTime | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601))
-      | . <= $max_age and . >= -30)
-  ' "${converged_probe_file}" >/dev/null 2>&1 || return 1
+  # OpenBao itself holds the credential right now. The seed probe must be
+  # fresh (a broken probe falls through at once) and must have refreshed AFTER
+  # this run began: straight after a raft restore, a refresh from just before
+  # the restore still looks fresh while OpenBao holds the older snapshot.
+  deadline=$((started_epoch + GHCR_SEED_PROBE_WAIT_SECONDS))
+  while :; do
+    external_secret_is_reconciled \
+      flux-system "${GHCR_SEED_PROBE_NAME}" "${converged_probe_file}" || return 1
+    jq -e --argjson max_age "$((GHCR_SEED_PROBE_REFRESH_SECONDS * 2))" '
+      ((.status.refreshTime | type) == "string")
+      and ((now - (.status.refreshTime | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601))
+        | . <= $max_age and . >= -30)
+    ' "${converged_probe_file}" >/dev/null 2>&1 || return 1
+    if jq -e --argjson started "${started_epoch}" '
+      (.status.refreshTime | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) > $started
+    ' "${converged_probe_file}" >/dev/null 2>&1; then
+      break
+    fi
+    (($(date -u +%s) < deadline)) || return 1
+    sleep 2
+  done
   secret_matches_sops_credential \
     flux-system "${GHCR_SEED_PROBE_NAME}" .dockerconfigjson || return 1
 
   # Admission already enforces the candidate policy through exactly one path:
   # applying the candidate merge patch would change nothing, the retired
   # policy is gone, and the webhooks match the exclusive steady state. The
-  # patch comparison tolerates fields the API server defaults.
+  # patch comparison tolerates fields the API server defaults. The candidate
+  # must first be the exact fail-closed policy the fenced path would accept.
+  yq -e \
+    '.apiVersion == "policies.kyverno.io/v1"
+      and .kind == "ImageValidatingPolicy"
+      and .metadata.name == "verify-app-images"
+      and .spec.failurePolicy == "Fail"
+      and .spec.webhookConfiguration.timeoutSeconds == 30' \
+    "${IMAGE_VERIFICATION_POLICY_FILE}" >/dev/null 2>&1 || return 1
   yq -o=json '{"spec": .spec}' "${IMAGE_VERIFICATION_POLICY_FILE}" \
     >"${converged_policy_candidate_file}" 2>/dev/null || return 1
   kubectl \
@@ -6477,6 +6531,9 @@ ghcr_chain_is_converged_without_writes() {
       "${converged_targets_file}" >/dev/null 2>&1 || return 1
     [[ ! -s "${converged_targets_file}" ]] || return 1
   done
+
+  # No transaction claimed the Lease while these reads ran.
+  [[ "$(converged_lease_version)" == "${lease_version}" ]]
 }
 
 if [[ "${allow_incomplete_fanout}" != "true" ]] &&

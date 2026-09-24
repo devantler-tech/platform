@@ -96,35 +96,57 @@ func TestStaleOpenBaoSeedCannotTakeTheNoWritePath(t *testing.T) {
 	}
 }
 
-// Each read-only convergence condition must, on its own, send a no-drift
-// reassert back to the full fenced transaction. A probe that cannot prove what
-// OpenBao holds, or admission that no longer matches the candidate, is not
-// convergence.
+// Each read-only convergence condition must, on its own, keep a no-drift
+// reassert off the no-write path. Where the fenced path can repair the state,
+// it must also have run. A state the fenced path itself refuses (a suspended
+// parent it does not own, an unreconciled consumer it cannot prove) only has to
+// stay off the no-write path.
 func TestUnprovedConvergenceTakesTheFullFence(t *testing.T) {
 	t.Parallel()
-	for name, override := range map[string]string{
-		"stale seed probe":   "FAKE_SEED_PROBE_STALE",
-		"unready seed probe": "FAKE_SEED_PROBE_NOT_READY",
-		"missing seed probe": "FAKE_SEED_PROBE_MISSING",
-		"drifted admission":  "FAKE_IMAGE_VERIFICATION_POLICY_DRIFTED",
-		"narrowed webhook":   "FAKE_IMAGE_VERIFICATION_WEBHOOK_SCOPE_NARROWED",
+	for name, tc := range map[string]struct {
+		env        map[string]string
+		fencedPath bool
+	}{
+		"stale seed probe":   {map[string]string{"FAKE_SEED_PROBE_STALE": "true"}, true},
+		"unready seed probe": {map[string]string{"FAKE_SEED_PROBE_NOT_READY": "true"}, true},
+		"missing seed probe": {map[string]string{"FAKE_SEED_PROBE_MISSING": "true"}, true},
+		"seed probe not refreshed since the run began": {map[string]string{
+			"FAKE_SEED_PROBE_REFRESHED_BEFORE_RUN": "true",
+			"FLUX_GHCR_SEED_PROBE_WAIT_SECONDS":    "3",
+		}, true},
+		"drifted admission": {map[string]string{"FAKE_IMAGE_VERIFICATION_POLICY_DRIFTED": "true"}, true},
+		"narrowed webhook":  {map[string]string{"FAKE_IMAGE_VERIFICATION_WEBHOOK_SCOPE_NARROWED": "true"}, true},
+		"lease claimed during the checks": {map[string]string{
+			"FAKE_SYNC_LEASE_CLAIMED_DURING_CONVERGENCE": "true",
+		}, true},
+		"unreconciled consumer": {map[string]string{
+			"FAKE_UNRECONCILED_FANOUT_RESOURCE": "externalsecret/kyverno/ghcr-auth",
+		}, false},
+		"suspended parent Kustomization": {map[string]string{
+			"FAKE_FLUX_POLICY_PARENT_SUSPENDED_UNOWNED": "true",
+		}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newFixture(t)
-			current := map[string]string{"FAKE_TALOS_NODES_CURRENT": "true"}
-			requireSuccessResult(t, f.runHelper(validConfig(), nil, current))
+			requireSuccessResult(t, f.runHelper(validConfig(), nil, map[string]string{
+				"FAKE_TALOS_NODES_CURRENT": "true",
+			}))
 			restarts := persistedClusterMarker(t, f, "flux-controller-restart-count")
 
-			result := f.runHelperPreservingClusterState(validConfig(), nil, map[string]string{
-				"FAKE_TALOS_NODES_CURRENT": "true",
-				override:                   "true",
-			})
+			overrides := map[string]string{"FAKE_TALOS_NODES_CURRENT": "true"}
+			for key, value := range tc.env {
+				overrides[key] = value
+			}
+			result := f.runHelperPreservingClusterState(validConfig(), nil, overrides)
+			requireNotContains(t, result.stdout, "no fence or write was needed")
+			if !tc.fencedPath {
+				return
+			}
 			requireSuccessResult(t, result)
 			if got := persistedClusterMarker(t, f, "flux-controller-restart-count"); got == restarts {
 				t.Errorf("%s took the no-write path", name)
 			}
-			requireNotContains(t, result.stdout, "no fence or write was needed")
 		})
 	}
 }
