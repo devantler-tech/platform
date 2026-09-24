@@ -3182,7 +3182,7 @@ const (
 // surface entry, HelmRelease flagger-system/flagger-loadtester, with no added or
 // removed entries. This change sets two replicas, cross-node placement, a
 // disruption budget and a rollout strategy; it grants no new permissions.
-const expectedRenderedSurfaceSHA = "0e562192134f3baf2deb83184fbce45759519783d1b3adc00d95c79050dda460"
+const expectedRenderedSurfaceSHA = "90b5a033d331527d739a01637fbe1c18939b26f96cb79da5863408680b3d8a90"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3195,7 +3195,7 @@ const expectedRenderedSurfaceSHA = "0e562192134f3baf2deb83184fbce45759519783d1b3
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "9ef292de64c4101736cff13eaa8b6d2ec03c6267aa3c1abcb41aa5aadf00dd15"
+const previousRenderedSurfaceSHA = "0e562192134f3baf2deb83184fbce45759519783d1b3adc00d95c79050dda460"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
