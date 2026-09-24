@@ -107,6 +107,7 @@ func TestUnprovedConvergenceTakesTheFullFence(t *testing.T) {
 		"unready seed probe": "FAKE_SEED_PROBE_NOT_READY",
 		"missing seed probe": "FAKE_SEED_PROBE_MISSING",
 		"drifted admission":  "FAKE_IMAGE_VERIFICATION_POLICY_DRIFTED",
+		"narrowed webhook":   "FAKE_IMAGE_VERIFICATION_WEBHOOK_SCOPE_NARROWED",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

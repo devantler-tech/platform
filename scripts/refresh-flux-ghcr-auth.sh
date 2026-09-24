@@ -6436,6 +6436,22 @@ ghcr_chain_is_converged_without_writes() {
   image_verification_webhook_set_matches \
     "${image_verification_validating_webhooks_file}" "validate" true true \
     >/dev/null 2>&1 || return 1
+  # The set matcher proves each path, failure policy and timeout, not what the
+  # webhook admits. Skipping the fenced path is only safe when the validating
+  # webhook still intercepts Pod creation, so any narrower rule set falls through.
+  jq -e \
+    --arg expected_path "/ivpol/validate/${IMAGE_VERIFICATION_POLICY}" '
+    [.items[]?.webhooks[]?
+      | select((.clientConfig.service.name // "") == "kyverno-svc"
+          and (.clientConfig.service.namespace // "") == "kyverno"
+          and (.clientConfig.service.path // "") == $expected_path)]
+    | length > 0 and all(.[];
+        any(.rules[]?;
+          ((.apiGroups // []) | any(. == "" or . == "*"))
+          and ((.apiVersions // []) | any(. == "v1" or . == "*"))
+          and ((.resources // []) | any(. == "pods" or . == "*"))
+          and ((.operations // []) | any(. == "CREATE" or . == "*"))))
+  ' "${image_verification_validating_webhooks_file}" >/dev/null 2>&1 || return 1
 
   # Two consecutive clean node inventories, exactly as the full convergence
   # loop requires before cutover: every node carries current runtime proof for

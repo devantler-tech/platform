@@ -1221,6 +1221,10 @@ func fakeKubectlGetImageVerificationWebhooks(operation string) int {
 	}
 	mutationRequired := os.Getenv("FAKE_IMAGE_VERIFICATION_MUTATION_REQUIRED") == "true"
 	if consolidated && (operation != "mutate" || mutationRequired) {
+		resources := []any{"pods"}
+		if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOK_SCOPE_NARROWED") == "true" {
+			resources = []any{"deployments"}
+		}
 		webhooks = append(webhooks, map[string]any{
 			"name": operation + ".verify-app-images.ivpol.kyverno.svc-fail",
 			"clientConfig": map[string]any{
@@ -1230,6 +1234,12 @@ func fakeKubectlGetImageVerificationWebhooks(operation string) int {
 					"path":      "/ivpol/" + operation + "/verify-app-images",
 				},
 			},
+			"rules": []any{map[string]any{
+				"apiGroups":   []any{""},
+				"apiVersions": []any{"v1"},
+				"resources":   resources,
+				"operations":  []any{"CREATE", "UPDATE"},
+			}},
 			"failurePolicy":  failurePolicy,
 			"timeoutSeconds": 30,
 		})
