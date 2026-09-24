@@ -151,7 +151,7 @@ spec:
     # from k8s 1.33) lets VPA -- already 1.6 with updateMode InPlaceOrRecreate
     # -- resize pods, including the kube-system datapath now under auto-vpa, in
     # place instead of evicting them.
-    kubernetesVersion: v1.36.4
+    kubernetesVersion: v1.37.0
     talos:
       # Pin the running Talos version so 'ksail cluster update' does not
       # silently select KSail's default. The Hetzner ISO below is temporary
