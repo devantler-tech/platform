@@ -317,6 +317,85 @@ else
   fi
 fi
 
+# ── The default signer lookup says WHY it refused (#4127) ─────────────────────────────────
+# The daily run refused `.github` four times on inputs that resolved an hour later or when
+# run locally, and every refusal read the same: "no single successful CD run published <tag>".
+# A failed read, a listing that did not contain the run, and a tag that was genuinely never
+# signed were indistinguishable, so the cause could not be established. These cases drive
+# the real `signer_for_tag` against a stubbed `gh`, in a separate process because sourcing
+# the generator declares read-only names this test also uses.
+make_signer_driver() { # <runs-fixture|FAIL>
+  local path="$WORK/signer-driver-$RANDOM.sh"
+  cat >"$path" <<DRIVER
+#!/usr/bin/env bash
+set -euo pipefail
+source "$SCRIPT"
+sleep() { :; }  # gh_retry backs off between attempts; the stub fails deterministically
+gh() {
+  case "\$*" in
+    *'/commits/v9.9.9'*) printf '%s' '$SHA_A' ;;
+    *'/actions/runs'*)
+      [ "$1" != FAIL ] || return 1
+      cat '$1' ;;
+    *) return 1 ;;
+  esac
+}
+signer_for_tag consumer-x publish-manifests v9.9.9
+DRIVER
+  printf '%s\n' "$path"
+}
+
+runs_fixture() { # <name> <head_sha> <conclusion>
+  local path="$WORK/runs-$1.json"
+  cat >"$path" <<JSON
+{"total_count": 1, "workflow_runs": [{"head_branch": "v9.9.9", "path": ".github/workflows/cd.yaml",
+  "head_sha": "$2", "conclusion": "$3",
+  "referenced_workflows": [{"path": "devantler-tech/actions/.github/workflows/publish-manifests.yaml@$SHA_B", "sha": "$SHA_B"}]}]}
+JSON
+  printf '%s\n' "$path"
+}
+
+# The resolving case: exactly one successful run at the tag's commit names one signer.
+driver="$(make_signer_driver "$(runs_fixture ok "$SHA_A" success)")"
+if out="$(bash "$driver" 2>"$WORK/signer-ok.err")" && [ "$out" = "$SHA_B" ] && [ ! -s "$WORK/signer-ok.err" ]; then
+  pass 'the signer lookup resolves one successful run at the tag commit, silently'
+else
+  fail "the signer lookup did not resolve a signed tag (out='${out:-}')"; cat "$WORK/signer-ok.err" >&2
+fi
+
+# A failed runs read is named as a failed read, never as a missing run.
+driver="$(make_signer_driver FAIL)"
+if bash "$driver" >/dev/null 2>"$WORK/signer-fail.err"; then
+  fail 'a failed runs read resolved a signer'
+elif grep -q 'runs read for v9.9.9 failed' "$WORK/signer-fail.err" &&
+  ! grep -q 'at_commit=' "$WORK/signer-fail.err"; then
+  pass 'a failed runs read is refused as a failed read'
+else
+  fail 'a failed runs read was not named as one'; cat "$WORK/signer-fail.err" >&2
+fi
+
+# A listing without the matching run prints what it DID contain, so a late or incomplete
+# listing can be told apart from a tag that was never signed.
+driver="$(make_signer_driver "$(runs_fixture moved "$SHA_C" success)")"
+if bash "$driver" >/dev/null 2>"$WORK/signer-miss.err"; then
+  fail 'a run at another commit was attributed as the signer'
+elif grep -q 'total_count=1 returned=1 for_tag=1 cd=1 at_commit=0 successful=0 signer_refs=0' \
+  "$WORK/signer-miss.err"; then
+  pass 'a listing without the matching run is refused with its bounded counts'
+else
+  fail 'a listing without the matching run did not report its counts'; cat "$WORK/signer-miss.err" >&2
+fi
+
+# The counts track the conclusion too: a run at the right commit that did not succeed.
+driver="$(make_signer_driver "$(runs_fixture failed "$SHA_A" failure)")"
+if bash "$driver" >/dev/null 2>"$WORK/signer-concl.err"; then
+  fail 'a failed CD run was attributed as the signer'
+elif grep -q 'at_commit=1 successful=0 signer_refs=0 conclusions=failure' "$WORK/signer-concl.err"; then
+  pass 'a failed CD run at the tag commit is refused with its conclusion'
+else
+  fail 'a failed CD run did not report its conclusion'; cat "$WORK/signer-concl.err" >&2
+fi
+
 if [ "$failures" -gt 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1

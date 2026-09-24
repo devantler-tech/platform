@@ -137,21 +137,51 @@ git_tag_for_registry_tag() {
 # The shared-workflow revision the consumer's CD run referenced when it published exactly
 # this tag, at the commit the tag resolves to TODAY. A run at another commit is a moved tag
 # and is refused rather than attributed, exactly as `tag_was_published` refuses it.
+#
+# Every refusal says which of three different things happened (#4127): the tag or the runs
+# could not be READ, the listing did not CONTAIN one successful signing run, or it could not
+# be parsed. The daily run once refused on inputs that resolved an hour later, and a single
+# message for all three left the cause unknowable. The counts are bounded integers and run
+# conclusions only; no response body is echoed.
 signer_for_tag() {
-  local repo="$1" workflow="$2" tag="$3" sha runs shas count
-  sha="$(tag_commit "$repo" "$tag")" || return 1
+  local repo="$1" workflow="$2" tag="$3" sha runs shas count summary
+  sha="$(tag_commit "$repo" "$tag")" || {
+    refuse "$repo: $tag did not resolve to a commit (the read failed after retries, or the tag is gone)"
+    return 1
+  }
   runs="$(gh_retry api --method GET "repos/devantler-tech/${repo}/actions/runs" \
-    --raw-field "branch=${tag}" --raw-field event=push --raw-field per_page=100)" || return 1
+    --raw-field "branch=${tag}" --raw-field event=push --raw-field per_page=100)" || {
+    refuse "$repo: the Actions runs read for $tag failed after retries; nothing is known about its publication"
+    return 1
+  }
   shas="$(printf '%s' "$runs" | jq -r --arg t "$tag" --arg s "$sha" --arg w "$workflow" '
     [.workflow_runs[]
      | select(.head_branch == $t and .path == ".github/workflows/cd.yaml"
               and .head_sha == $s and .conclusion == "success")
      | .referenced_workflows[]?
      | select(.path | startswith("devantler-tech/actions/.github/workflows/" + $w + ".yaml@"))
-     | .sha] | unique | .[]' 2>/dev/null)" || return 1
+     | .sha] | unique | .[]' 2>/dev/null)" || {
+    refuse "$repo: the Actions runs listing for $tag was not parseable"
+    return 1
+  }
   count="$(printf '%s' "$shas" | grep -c . || true)"
-  [ "$count" -eq 1 ] || return 1
-  is_sha "$shas" || return 1
+  if [ "$count" -ne 1 ] || ! is_sha "$shas"; then
+    summary="$(printf '%s' "$runs" | jq -r --arg t "$tag" --arg s "$sha" '
+      [.workflow_runs[] | select(.head_branch == $t)] as $b
+      | [$b[] | select(.path == ".github/workflows/cd.yaml")] as $cd
+      | [$cd[] | select(.head_sha == $s)] as $at
+      | "total_count=\(.total_count // "absent") returned=\(.workflow_runs | length)"
+        + " for_tag=\($b | length) cd=\($cd | length) at_commit=\($at | length)"
+        + " successful=\([$at[] | select(.conclusion == "success")] | length)"' 2>/dev/null)" ||
+      summary='counts unavailable'
+    local conclusions
+    conclusions="$(printf '%s' "$runs" | jq -r --arg t "$tag" --arg s "$sha" '
+      [.workflow_runs[] | select(.head_branch == $t and .path == ".github/workflows/cd.yaml"
+        and .head_sha == $s) | (.conclusion // "pending")] | join(",")' 2>/dev/null)" ||
+      conclusions='?'
+    refuse "$repo: runs listing for $tag at ${sha:0:12}: $summary signer_refs=$count conclusions=${conclusions:--}"
+    return 1
+  fi
   printf '%s\n' "$shas"
 }
 
@@ -306,4 +336,8 @@ main() {
   printf '%d consumer(s) examined, %d row(s) re-stamped, written to %s\n' "$examined" "$changed" "$OUTPUT"
 }
 
-main "$@"
+# Sourcing defines the functions without running, as the report does, so a test can drive
+# one resolver against a stubbed `gh`.
+if [ "${BASH_SOURCE[0]:-}" = "$0" ]; then
+  main "$@"
+fi
