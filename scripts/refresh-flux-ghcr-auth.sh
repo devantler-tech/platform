@@ -137,6 +137,12 @@ readonly FLUX_KUSTOMIZE_CONTROLLER_SELECTOR="app=kustomize-controller"
 readonly FLUX_CONTROLLER_RESTART_JSON_PATH="/spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt"
 readonly FLUX_CONTROLLER_ROLLOUT_TIMEOUT="2m"
 readonly SYNC_LEASE_NAME="ghcr-auth-refresh"
+# A GitOps-managed ExternalSecret reads the GHCR seed back from OpenBao through
+# the same store every consumer uses. It is the only read-only way to notice
+# that OpenBao holds a stale seed while every materialised consumer still looks
+# current, so a no-write reassert requires it to be fresh and equal.
+readonly GHCR_SEED_PROBE_NAME="ghcr-seed-probe"
+readonly GHCR_SEED_PROBE_REFRESH_SECONDS=60
 readonly SYNC_LEASE_DURATION_SECONDS=120
 readonly SYNC_LEASE_HEARTBEAT_SECONDS="${FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS:-30}"
 readonly SYNC_LEASE_RELEASE_ATTEMPTS=3
@@ -360,6 +366,14 @@ sync_lease_file="${work_dir}/sync-lease.json"
 sync_lease_manifest_file="${work_dir}/sync-lease-manifest.json"
 sync_lease_patch_file="${work_dir}/sync-lease-patch.json"
 sync_lease_result_file="${work_dir}/sync-lease-result.txt"
+converged_lease_file="${work_dir}/converged-lease.json"
+converged_secret_file="${work_dir}/converged-secret.json"
+converged_decoded_file="${work_dir}/converged-decoded.json"
+converged_probe_file="${work_dir}/converged-seed-probe.json"
+converged_policy_file="${work_dir}/converged-policy.json"
+converged_policy_candidate_file="${work_dir}/converged-policy-candidate.json"
+converged_nodes_file="${work_dir}/converged-nodes.json"
+converged_targets_file="${work_dir}/converged-targets.tsv"
 sync_lease_lost_file="${work_dir}/sync-lease-lost"
 root_secret_state_file="${work_dir}/root-secret-state.json"
 root_secret_cas_patch_file="${work_dir}/root-secret-cas-patch.json"
@@ -6283,6 +6297,178 @@ patch_variables_base() {
     "${variables_secret_state_file}" \
     "${variables_secret_cas_patch_file}"
 }
+
+# Report whether a Secret's data key decodes to exactly the Git/SOPS docker
+# config. Read-only; an unreadable Secret or payload is a mismatch.
+secret_matches_sops_credential() {
+  local namespace="$1"
+  local name="$2"
+  local data_key="$3"
+
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace "${namespace}" \
+    get secret "${name}" \
+    -o json >"${converged_secret_file}" 2>/dev/null &&
+    jq -er --arg key "${data_key}" '.data[$key] | @base64d' \
+      "${converged_secret_file}" 2>/dev/null |
+    jq -S -c . >"${converged_decoded_file}" 2>/dev/null &&
+    cmp -s "${expected_normalized}" "${converged_decoded_file}"
+}
+
+# Decide, without taking any fence or writing anything, whether the whole
+# Git/SOPS -> variables-base -> PushSecret -> OpenBao -> ExternalSecret -> Talos
+# chain already holds the desired credential. A converged reassert then needs no
+# synchronization Lease, no Flux policy pause, no controller restart and no
+# Secret or External Secrets write.
+#
+# This is a fast path only. Every mismatch, missing object, residual fence,
+# unready or stale seed probe, unproved node, and failed or malformed read
+# returns non-zero, and the caller then runs today's full fenced transaction
+# unchanged. A failed read can therefore never select the no-write path.
+ghcr_chain_is_converged_without_writes() {
+  local namespace
+
+  # No transaction may be in flight: its writes could still be landing.
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get lease "${SYNC_LEASE_NAME}" \
+    --ignore-not-found \
+    -o json >"${converged_lease_file}" 2>/dev/null || return 1
+  if [[ -s "${converged_lease_file}" ]]; then
+    jq -e '(.spec.holderIdentity // "") == ""' \
+      "${converged_lease_file}" >/dev/null 2>&1 || return 1
+  fi
+
+  # Neither Flux policy fence may be held or left behind by a crashed run.
+  read_flux_policy_fences >/dev/null 2>&1 || return 1
+  jq -e \
+    --arg owner_annotation "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" \
+    --arg reconcile_annotation "${FLUX_RECONCILE_ANNOTATION}" '
+    (((.metadata.annotations // {})[$owner_annotation] // "") == "")
+    and (((.metadata.annotations // {})[$reconcile_annotation] // "") != "disabled")
+    and ((.spec.suspend // false) == false)
+  ' "${flux_policy_handoff_state_file}" >/dev/null 2>&1 || return 1
+  jq -e \
+    --arg owner_annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" '
+    (((.metadata.annotations // {})[$owner_annotation] // "") == "")
+  ' "${flux_policy_parent_state_file}" >/dev/null 2>&1 || return 1
+
+  # Root auth and the staged seed source already hold the SOPS credential.
+  secret_matches_sops_credential \
+    flux-system ksail-registry-credentials .dockerconfigjson || return 1
+  secret_matches_sops_credential \
+    flux-system variables-base ghcr_dockerconfigjson || return 1
+
+  # The complete fan-out exists and every consumer materialised the credential.
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    api-resources \
+    --api-group=external-secrets.io \
+    -o name >"${fanout_api_resources}" 2>/dev/null || return 1
+  grep -qx 'pushsecrets.external-secrets.io' "${fanout_api_resources}" || return 1
+  grep -qx 'externalsecrets.external-secrets.io' "${fanout_api_resources}" || return 1
+  [[ -n "$(kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get pushsecret seed-ghcr \
+    --ignore-not-found \
+    -o name 2>/dev/null)" ]] || return 1
+  for namespace in "${FANOUT_NAMESPACES[@]}"; do
+    [[ -n "$(kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace "${namespace}" \
+      get externalsecret ghcr-auth \
+      --ignore-not-found \
+      -o name 2>/dev/null)" ]] || return 1
+    secret_matches_sops_credential \
+      "${namespace}" ghcr-auth .dockerconfigjson || return 1
+  done
+
+  # OpenBao itself holds the credential: the seed probe refreshed within two
+  # intervals and read back exactly the SOPS value.
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get externalsecret "${GHCR_SEED_PROBE_NAME}" \
+    -o json >"${converged_probe_file}" 2>/dev/null || return 1
+  jq -e --argjson max_age "$((GHCR_SEED_PROBE_REFRESH_SECONDS * 2))" '
+    any(.status.conditions[]?; .type == "Ready" and .status == "True")
+    and ((.status.refreshTime | type) == "string")
+    and ((now - (.status.refreshTime | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601))
+      | . <= $max_age and . >= -30)
+  ' "${converged_probe_file}" >/dev/null 2>&1 || return 1
+  secret_matches_sops_credential \
+    flux-system "${GHCR_SEED_PROBE_NAME}" .dockerconfigjson || return 1
+
+  # Admission already enforces the candidate policy through exactly one path:
+  # applying the candidate merge patch would change nothing, the retired
+  # policy is gone, and the webhooks match the exclusive steady state. The
+  # patch comparison tolerates fields the API server defaults.
+  yq -o=json '{"spec": .spec}' "${IMAGE_VERIFICATION_POLICY_FILE}" \
+    >"${converged_policy_candidate_file}" 2>/dev/null || return 1
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get imagevalidatingpolicy.policies.kyverno.io \
+    "${IMAGE_VERIFICATION_POLICY}" \
+    -o json >"${converged_policy_file}" 2>/dev/null || return 1
+  jq -e --slurpfile candidate "${converged_policy_candidate_file}" '
+    (.spec | type) == "object"
+    and (($candidate[0].spec | type) == "object")
+    and ((.spec * $candidate[0].spec) == .spec)
+  ' "${converged_policy_file}" >/dev/null 2>&1 || return 1
+  [[ -z "$(kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get imagevalidatingpolicy.policies.kyverno.io \
+    "${RETIRED_IMAGE_VERIFICATION_POLICY}" \
+    --ignore-not-found \
+    -o name 2>/dev/null)" ]] || return 1
+  read_image_verification_webhooks >/dev/null 2>&1 || return 1
+  local mutation_required=false
+  if image_verification_policy_needs_mutating_webhook; then
+    mutation_required=true
+  fi
+  image_verification_webhook_set_matches \
+    "${image_verification_mutating_webhooks_file}" "mutate" true \
+    "${mutation_required}" >/dev/null 2>&1 || return 1
+  image_verification_webhook_set_matches \
+    "${image_verification_validating_webhooks_file}" "validate" true true \
+    >/dev/null 2>&1 || return 1
+
+  # Two consecutive clean node inventories, exactly as the full convergence
+  # loop requires before cutover: every node carries current runtime proof for
+  # this revision and image, and no drain, recovery or scale-down fence remains.
+  for _ in 1 2; do
+    kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get nodes \
+      -o json >"${converged_nodes_file}" 2>/dev/null || return 1
+    validate_talos_node_inventory "${converged_nodes_file}" >/dev/null 2>&1 ||
+      return 1
+    jq -e \
+      --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" \
+      --arg scale_down_owner_annotation "${SCALE_DOWN_GUARD_OWNER_ANNOTATION}" '
+      all(.items[];
+        (((.metadata.annotations // {})[$phase_annotation] // "") == "")
+        and (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == ""))
+    ' "${converged_nodes_file}" >/dev/null 2>&1 || return 1
+    select_talos_node_targets \
+      "${converged_nodes_file}" \
+      "${pull_revision}" \
+      "${KSAIL_OPERATOR_IMAGE}" \
+      "${converged_targets_file}" >/dev/null 2>&1 || return 1
+    [[ ! -s "${converged_targets_file}" ]] || return 1
+  done
+}
+
+if [[ "${allow_incomplete_fanout}" != "true" ]] &&
+  ghcr_chain_is_converged_without_writes; then
+  record_runtime_proof "${pull_revision}" "${KSAIL_OPERATOR_IMAGE}" || exit 1
+  echo "✅ Verified every consumer, the OpenBao seed, admission and every Talos node already hold the Git/SOPS GHCR credential; no fence or write was needed."
+  exit 0
+fi
 
 acquire_sync_lease "${pull_revision}"
 

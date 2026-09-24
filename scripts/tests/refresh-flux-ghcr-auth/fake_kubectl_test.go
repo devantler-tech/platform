@@ -71,6 +71,8 @@ func fakeKubectlImplementation(args []string) int {
 		return fakeKubectlPatchSyncLease(args, namespace, patchFile)
 	case containsArg(args, "create") && manifestFile != "" && fakeManifestKind(manifestFile) == "Lease":
 		return fakeKubectlCreateSyncLease(namespace, manifestFile)
+	case containsSequence(args, "get", "imagevalidatingpolicy.policies.kyverno.io"):
+		return fakeKubectlGetImageValidatingPolicy(args)
 	case containsSequence(args, "delete", "imagevalidatingpolicy.policies.kyverno.io"):
 		return fakeKubectlDeleteRetiredImageValidatingPolicy(args)
 	case containsSequence(args, "patch", "imagevalidatingpolicy.policies.kyverno.io"):
@@ -118,6 +120,13 @@ func fakeKubectlImplementation(args []string) int {
 		return fakeKubectlGetVariablesBase(args)
 	case containsSequence(args, "patch", "secret", "variables-base"):
 		return fakeKubectlPatchVariablesBase(args, patchFile)
+	}
+
+	switch {
+	case containsSequence(args, "get", "externalsecret", "ghcr-seed-probe"):
+		return fakeKubectlGetSeedProbe(namespace)
+	case containsSequence(args, "get", "secret", "ghcr-seed-probe"):
+		return fakeKubectlGetSeedProbeSecret(namespace)
 	}
 
 	kind, name := fanoutResource(args)
@@ -1088,6 +1097,7 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 		return 0
 	}
 	touchMarker("ivpol-policy-verify-app-images")
+	setMarkerContent("ivpol-policy-verify-app-images-spec", encodeJSON(spec))
 	appendEnvFile("OPERATION_LOG", "ivpol-policy-apply:verify-app-images\n")
 	fmt.Println("imagevalidatingpolicy.policies.kyverno.io/verify-app-images serverside-applied")
 	return 0
@@ -1104,6 +1114,74 @@ func fakeKubectlDeleteRetiredImageValidatingPolicy(args []string) int {
 	touchMarker("ivpol-policy-verify-ksail-images-deleted")
 	appendEnvFile("OPERATION_LOG", "ivpol-policy-delete:verify-ksail-images\n")
 	fmt.Println("imagevalidatingpolicy.policies.kyverno.io/verify-ksail-images deleted")
+	return 0
+}
+
+// fakeKubectlGetImageValidatingPolicy models the live image-validating
+// policies. Until a run applies the candidate, the consolidated policy still
+// carries the pre-consolidation spec, so a converged-chain check cannot pass on
+// a fresh cluster. The API server adds a defaulted field, which the check must
+// tolerate. The retired policy exists until a run deletes it.
+func fakeKubectlGetImageValidatingPolicy(args []string) int {
+	switch argumentAfter(args, "imagevalidatingpolicy.policies.kyverno.io") {
+	case "verify-app-images":
+		spec := map[string]any{"webhookConfiguration": map[string]any{"timeoutSeconds": float64(10)}}
+		if stored := markerContent("ivpol-policy-verify-app-images-spec"); stored != "" {
+			if err := json.Unmarshal([]byte(stored), &spec); err != nil {
+				return commandFailure(91, "parse stored image-validating policy spec: %v", err)
+			}
+		}
+		if os.Getenv("FAKE_IMAGE_VERIFICATION_POLICY_DRIFTED") == "true" {
+			spec["failurePolicy"] = "Ignore"
+		}
+		spec["evaluationMode"] = "Kubernetes"
+		fmt.Println(encodeJSON(map[string]any{"spec": spec}))
+		return 0
+	case "verify-ksail-images":
+		if !containsArg(args, "--ignore-not-found") {
+			return commandFailure(91, "retired image-validating policy lookup must tolerate absence")
+		}
+		if !markerExists("ivpol-policy-verify-ksail-images-deleted") {
+			fmt.Println("imagevalidatingpolicy.policies.kyverno.io/verify-ksail-images")
+		}
+		return 0
+	}
+	return commandFailure(91, "unexpected image-validating policy lookup")
+}
+
+// fakeKubectlGetSeedProbe models the ExternalSecret that reads the GHCR seed
+// back from OpenBao. It is Ready and freshly refreshed unless a fixture says
+// otherwise.
+func fakeKubectlGetSeedProbe(namespace string) int {
+	if namespace != "flux-system" || os.Getenv("FAKE_SEED_PROBE_MISSING") == "true" {
+		return commandFailure(44, "externalsecret ghcr-seed-probe not found")
+	}
+	refreshTime := time.Now().UTC().Format(time.RFC3339)
+	if os.Getenv("FAKE_SEED_PROBE_STALE") == "true" {
+		refreshTime = time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
+	}
+	ready := "True"
+	if os.Getenv("FAKE_SEED_PROBE_NOT_READY") == "true" {
+		ready = "False"
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"status": map[string]any{
+			"refreshTime": refreshTime,
+			"conditions":  []any{map[string]any{"type": "Ready", "status": ready}},
+		},
+	}))
+	return 0
+}
+
+// fakeKubectlGetSeedProbeSecret returns what OpenBao currently holds, which is
+// what the probe ExternalSecret materialises.
+func fakeKubectlGetSeedProbeSecret(namespace string) int {
+	if namespace != "flux-system" {
+		return commandFailure(44, "secret ghcr-seed-probe not found")
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"data": map[string]any{".dockerconfigjson": markerContent("vault-seed-value")},
+	}))
 	return 0
 }
 

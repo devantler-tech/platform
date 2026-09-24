@@ -32,10 +32,14 @@ func TestConvergedReassertKeepsFullVerificationWithoutWriting(t *testing.T) {
 	if got := persistedClusterMarker(t, f, "sync-lease-resource-version"); got != leaseVersion {
 		t.Errorf("no-drift reassert acquired the synchronization Lease: %s -> %s", leaseVersion, got)
 	}
-	for _, operation := range readLines(f.operationLog) {
-		switch operation {
-		case "variables-patch", "root-patch", "ivpol-policy-apply:verify-app-images":
-			t.Errorf("no-drift reassert wrote cluster state: %s", operation)
+	// Every write appends to the operation log, so a run that wrote nothing
+	// leaves no log at all.
+	if pathExists(f.operationLog) {
+		for _, operation := range readLines(f.operationLog) {
+			switch operation {
+			case "variables-patch", "root-patch", "ivpol-policy-apply:verify-app-images":
+				t.Errorf("no-drift reassert wrote cluster state: %s", operation)
+			}
 		}
 	}
 	if pathExists(f.fanoutLog) {
@@ -89,5 +93,37 @@ func TestStaleOpenBaoSeedCannotTakeTheNoWritePath(t *testing.T) {
 	}
 	if got := persistedClusterMarker(t, f, "flux-controller-restart-count"); got == restarts {
 		t.Error("reassert repaired the remote seed without acquiring the Flux fence")
+	}
+}
+
+// Each read-only convergence condition must, on its own, send a no-drift
+// reassert back to the full fenced transaction. A probe that cannot prove what
+// OpenBao holds, or admission that no longer matches the candidate, is not
+// convergence.
+func TestUnprovedConvergenceTakesTheFullFence(t *testing.T) {
+	t.Parallel()
+	for name, override := range map[string]string{
+		"stale seed probe":   "FAKE_SEED_PROBE_STALE",
+		"unready seed probe": "FAKE_SEED_PROBE_NOT_READY",
+		"missing seed probe": "FAKE_SEED_PROBE_MISSING",
+		"drifted admission":  "FAKE_IMAGE_VERIFICATION_POLICY_DRIFTED",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			current := map[string]string{"FAKE_TALOS_NODES_CURRENT": "true"}
+			requireSuccessResult(t, f.runHelper(validConfig(), nil, current))
+			restarts := persistedClusterMarker(t, f, "flux-controller-restart-count")
+
+			result := f.runHelperPreservingClusterState(validConfig(), nil, map[string]string{
+				"FAKE_TALOS_NODES_CURRENT": "true",
+				override:                   "true",
+			})
+			requireSuccessResult(t, result)
+			if got := persistedClusterMarker(t, f, "flux-controller-restart-count"); got == restarts {
+				t.Errorf("%s took the no-write path", name)
+			}
+			requireNotContains(t, result.stdout, "no fence or write was needed")
+		})
 	}
 }
