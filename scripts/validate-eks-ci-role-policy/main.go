@@ -3195,7 +3195,14 @@ const (
 // Only the package tag changes; the provider's GitHub-scoped CRDs gain optional
 // fields and one inactive kind, and no binding, service account or AWS identity
 // changes.
-const expectedRenderedSurfaceSHA = "31365f93a584f876aa4a0ba25963d10205103850b82b26f7de3417f2e4ca7eeb"
+// Re-approved for the descheduler consolidation threshold (#2471), against main
+// 1ad8b40c. The required production-authorization job on the checksum-verified
+// renderer (run 36072774980, job 107878075625) reported exactly one changed
+// surface entry, HelmRelease kube-system/descheduler, and nothing added or
+// removed. Only the HighNodeUtilization cpu and memory thresholds under
+// spec.values change; no RBAC, binding, service account, AWS identity, or
+// permission grant changes.
+const expectedRenderedSurfaceSHA = "329033595d09b466032918ff36e8e3816ae533965b99265827401776e165e894"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3208,7 +3215,7 @@ const expectedRenderedSurfaceSHA = "31365f93a584f876aa4a0ba25963d10205103850b82b
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "6b1318d615d20e35941548f3d3e32efcdd384b46742c5cdec7d3c4de35a8480e"
+const previousRenderedSurfaceSHA = "31365f93a584f876aa4a0ba25963d10205103850b82b26f7de3417f2e4ca7eeb"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
