@@ -36,10 +36,12 @@ yq e -e '
       .maxSkew == 1 and
       .minDomains == 2 and
       .whenUnsatisfiable == "DoNotSchedule" and
-      .labelSelector.matchLabels."app.kubernetes.io/name" == "umami-primary")
+      .labelSelector.matchLabels."app.kubernetes.io/name" == "umami-primary" and
+      (.matchLabelKeys | length) == 1 and
+      .matchLabelKeys[0] == "pod-template-hash")
   ] | length == 1
 ' "${umami_release}" >/dev/null ||
-  fail 'Umami serving replicas must have a hard two-domain hostname spread scoped to primary pods'
+  fail 'Umami serving replicas need a hard two-domain hostname spread scoped to primary pods and each rollout revision'
 
 yq e -e '
   .spec.values.backstage.startupProbe.httpGet.path == "/.backstage/health/v1/readiness" and

@@ -63,6 +63,10 @@ spec:
     # label umami-primary from that selector. Flagger rewrites a topology
     # selector only when its value equals the source Deployment name
     # (umami-umami), so this already-primary value stays unchanged.
+    # During a surged rollout, old primary pods must not balance the new
+    # ReplicaSet: otherwise both replacements can end on one worker when an
+    # old pod is deleted. The Deployment controller adds pod-template-hash
+    # to each pod, so count only the incoming revision for each placement.
     topologySpreadConstraints:
       - maxSkew: 1
         # With only one eligible worker, the second primary must wait instead
@@ -73,6 +77,8 @@ spec:
         labelSelector:
           matchLabels:
             app.kubernetes.io/name: umami-primary
+        matchLabelKeys:
+          - pod-template-hash
     serviceAccount:
       # Umami needs no Kubernetes API access.
       automountServiceAccountToken: false
