@@ -95,9 +95,9 @@ release_ok="$(make_release_resolver ok "$SHA_R" 0)"
 # Observer table: every consumer answers "<tag> <digest> <signer>", with one optional
 # override "<repo>\t<workflow>\t<answer-with-\\t-escapes>" and one optional omitted repo.
 write_table() { # <path> <override-repo|""> <override-answer> <omit-repo|"">
-  local path="$1" override="$2" answer="$3" omit="$4" repo workflow _version
+  local path="$1" override="$2" answer="$3" omit="$4" repo workflow _version _artifact
   : >"$path"
-  while IFS=$'\t' read -r repo workflow _version; do
+  while IFS=$'\t' read -r repo workflow _version _artifact; do
     [ -n "$repo" ] || continue
     [ "$repo" = "$omit" ] && continue
     if [ "$repo" = "$override" ]; then
