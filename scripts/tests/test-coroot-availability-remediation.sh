@@ -13,6 +13,7 @@ readonly crossplane_alerter="${root_dir}/k8s/providers/hetzner/infrastructure/co
 readonly dr_runbook="${root_dir}/docs/dr/velero-cnpg.md"
 readonly longhorn_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/longhorn/helm-release.yaml"
 readonly origin_ca_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/origin-ca-issuer/helm-release.yaml"
+readonly simply_dns_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/simply-dns-webhook/helm-release.yaml"
 readonly cluster_issuers_dir="${root_dir}/k8s/providers/hetzner/infrastructure/cluster-issuers"
 readonly prod_variables="${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml"
 readonly replica_floor="${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/validate-replica-floor.yaml"
@@ -65,6 +66,24 @@ printf '%s\n' "${loadtester_patch}" | yq e -e '
   .spec.strategy.rollingUpdate.maxSurge == 0
 ' - >/dev/null ||
   fail 'Flagger loadtester rollout must not deadlock on two eligible workers'
+
+yq e -e '
+  .spec.values.replicaCount == 2 and
+  [.spec.values.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[] |
+    select(.topologyKey == "kubernetes.io/hostname" and
+      .labelSelector.matchLabels.app == "simply-dns-webhook" and
+      .labelSelector.matchLabels.release == "simply-dns-webhook")
+  ] | length == 1
+' "${simply_dns_release}" >/dev/null ||
+  fail 'SimplyDNS webhook replicas must be required to run on different nodes'
+
+simply_dns_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "simply-dns-webhook") | .patch' "${simply_dns_release}")"
+printf '%s\n' "${simply_dns_patch}" | yq e -e '
+  .spec.strategy.type == "RollingUpdate" and
+  .spec.strategy.rollingUpdate.maxUnavailable == 1 and
+  .spec.strategy.rollingUpdate.maxSurge == 0
+' - >/dev/null ||
+  fail 'SimplyDNS webhook rollout must not deadlock on two eligible workers'
 
 yq e -e '
   .spec.values.replicaCount == 2 and
