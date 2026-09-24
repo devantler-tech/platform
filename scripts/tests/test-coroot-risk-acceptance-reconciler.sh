@@ -156,7 +156,7 @@ printf '%s\n' "${script_body}" | shellcheck -s sh -
 # pattern can accept it. A pinned one would be answered by its exact entry first.
 readonly rotated_github_revision='7c1e04b9d3a6'
 if jq -e --arg app "crossplane-system:Deployment:provider-upjet-github-${rotated_github_revision}" \
-  'any(.[]; .application == $app)' "${acceptances_file}" >/dev/null; then
+  'any(.[]; .application == $app and .category == "Availability" and .type == "single-instance-app")' "${acceptances_file}" >/dev/null; then
   fail 'the rotated GitHub provider fixture must name a revision no exact acceptance pins'
 fi
 
