@@ -208,7 +208,7 @@ data:
         "reason": "platform#3812: provider reconciler is off the serving path; a singleton prevents duplicate AWS writes"
       },
       {
-        "application": "crossplane-system:Deployment:provider-upjet-github-2516bc50dd55",
+        "application": "crossplane-system:Deployment:provider-upjet-github-2801aa72907d",
         "category": "Availability",
         "type": "single-instance-app",
         "reason": "platform#3812: provider reconciler is off the serving path; a singleton prevents duplicate GitHub writes"
