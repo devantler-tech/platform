@@ -539,6 +539,10 @@ jobs:
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'scripts/tests/test-cilium-metadata-egress-policy.sh'
+              # Both halves, so editing the guard alone — or its test alone —
+              # still runs the check that covers it.
+              - 'scripts/guard-cilium-clusterwide-default-deny.sh'
+              - 'scripts/tests/test-guard-cilium-clusterwide-default-deny.sh'
               - 'scripts/tests/cnpg-network-policy/**'
               - 'scripts/tests/test-cilium-mutual-auth-policy.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy-regressions.sh'
@@ -1477,6 +1481,19 @@ jobs:
         run: |
           shellcheck scripts/tests/test-cilium-metadata-egress-policy.sh
           bash scripts/tests/test-cilium-metadata-egress-policy.sh
+
+      - name: 🔐 Validate no clusterwide Cilium policy silently default-denies
+        if: needs.changes.outputs.k8s == 'true'
+        # Cilium turns on default-deny for every direction a policy has rules in,
+        # deny rules included, so a deny-only clusterwide policy revokes ALL traffic
+        # in that direction — the mechanism behind the 2026-08-27 DNS outage
+        # (#3404, #3407). The per-policy test above checks one document's shape;
+        # this renders every Flux entrypoint and requires each deny-only direction
+        # of every clusterwide policy to state enableDefaultDeny explicitly (#3408).
+        run: |
+          shellcheck scripts/guard-cilium-clusterwide-default-deny.sh scripts/tests/test-guard-cilium-clusterwide-default-deny.sh
+          bash scripts/guard-cilium-clusterwide-default-deny.sh .
+          bash scripts/tests/test-guard-cilium-clusterwide-default-deny.sh
 
       - name: 🐘 Validate Coroot Postgres scrape policy
         if: needs.changes.outputs.k8s == 'true'
