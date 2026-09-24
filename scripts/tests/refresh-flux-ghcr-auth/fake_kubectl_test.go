@@ -1242,6 +1242,15 @@ func fakeImageVerificationMatchConditions() any {
 	return nil
 }
 
+// fakeImageVerificationRuleScope returns the "*" scope Kyverno generates, or a
+// Cluster scope, which names pods yet never matches a namespaced Pod.
+func fakeImageVerificationRuleScope() string {
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOK_CLUSTER_SCOPED") == "true" {
+		return "Cluster"
+	}
+	return "*"
+}
+
 func fakeKubectlGetImageVerificationWebhooks(operation string) int {
 	stale := os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_STALE") == "true"
 	consolidated := markerExists("ivpol-policy-verify-app-images")
@@ -1295,6 +1304,7 @@ func fakeKubectlGetImageVerificationWebhooks(operation string) int {
 				"apiVersions": []any{"v1"},
 				"resources":   resources,
 				"operations":  []any{"CREATE", "UPDATE"},
+				"scope":       fakeImageVerificationRuleScope(),
 			}},
 			"namespaceSelector": fakeImageVerificationNamespaceSelector(),
 			"objectSelector":    fakeImageVerificationObjectSelector(),

@@ -115,6 +115,7 @@ func TestUnprovedConvergenceTakesTheFullFence(t *testing.T) {
 			"to complete the forced GHCR credential sync.",
 		"suspended parent Kustomization":          "The parent Flux reconciliation is malformed or already suspended.",
 		"narrowed webhook":                        admissionNotIntercepting,
+		"webhook rule scoped to the cluster":      admissionNotIntercepting,
 		"webhook skips a protected namespace":     admissionNotIntercepting,
 		"webhook admits only labelled namespaces": admissionNotIntercepting,
 		"webhook admits only labelled Pods":       admissionNotIntercepting,
@@ -133,6 +134,9 @@ func TestUnprovedConvergenceTakesTheFullFence(t *testing.T) {
 		}, true},
 		"drifted admission": {map[string]string{"FAKE_IMAGE_VERIFICATION_POLICY_DRIFTED": "true"}, true},
 		"narrowed webhook":  {map[string]string{"FAKE_IMAGE_VERIFICATION_WEBHOOK_SCOPE_NARROWED": "true"}, false},
+		"webhook rule scoped to the cluster": {map[string]string{
+			"FAKE_IMAGE_VERIFICATION_WEBHOOK_CLUSTER_SCOPED": "true",
+		}, false},
 		"webhook skips a protected namespace": {map[string]string{
 			"FAKE_IMAGE_VERIFICATION_WEBHOOK_NAMESPACE_EXCLUDED": "true",
 		}, false},

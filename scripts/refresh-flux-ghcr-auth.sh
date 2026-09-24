@@ -1957,9 +1957,10 @@ image_verification_webhook_set_matches() {
 image_verification_webhook_intercepts_pods() {
   # The set matcher proves each path, failure policy and timeout, not what the
   # webhook admits. The consolidated validating webhook must still intercept
-  # every Pod CREATE the policy protects: a rule covering core v1 pods CREATE,
-  # no object selector, no match conditions, and a namespace selector that at
-  # most excludes the namespaces Kyverno itself never admits.
+  # every Pod CREATE the policy protects: a rule covering core v1 pods CREATE
+  # whose scope admits namespaced objects (a Cluster-scoped rule never matches a
+  # Pod), no object selector, no match conditions, and a namespace selector that
+  # at most excludes the namespaces Kyverno itself never admits.
   local webhook_file="$1"
 
   jq -e \
@@ -1979,7 +1980,8 @@ image_verification_webhook_intercepts_pods() {
           ((.apiGroups // []) | any(. == "" or . == "*"))
           and ((.apiVersions // []) | any(. == "v1" or . == "*"))
           and ((.resources // []) | any(. == "pods" or . == "*"))
-          and ((.operations // []) | any(. == "CREATE" or . == "*")))
+          and ((.operations // []) | any(. == "CREATE" or . == "*"))
+          and ((.scope // "*") == "*" or .scope == "Namespaced"))
         and (.objectSelector | empty_selector)
         and ((.matchConditions // []) | length) == 0
         and (
