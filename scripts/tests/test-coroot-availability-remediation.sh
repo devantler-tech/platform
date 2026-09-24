@@ -47,9 +47,13 @@ yq e -e '
 ' "${loadtester_release}" >/dev/null ||
   fail 'Flagger loadtester must have two cross-node replicas and a drain-safe PDB'
 
+# The name must differ from the chart's own flagger-loadtester PDB. Production
+# still carries that Helm-owned object with minAvailable, and Flux applying a
+# same-named maxUnavailable PDB before Helm deletes it would merge both
+# mutually exclusive fields into one invalid object.
 yq e -e '
   .kind == "PodDisruptionBudget" and
-  .metadata.name == "flagger-loadtester" and
+  .metadata.name == "flagger-loadtester-drain-safe" and
   .metadata.namespace == "flagger-system" and
   .spec.maxUnavailable == 1 and
   (.spec | has("minAvailable") | not) and

@@ -1,7 +1,7 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: flagger-loadtester
+  name: flagger-loadtester-drain-safe
   namespace: flagger-system
 spec:
   # The upstream chart only exposes minAvailable. Own the PDB here so the
