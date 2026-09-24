@@ -103,6 +103,15 @@ func TestStaleOpenBaoSeedCannotTakeTheNoWritePath(t *testing.T) {
 // stay off the no-write path.
 func TestUnprovedConvergenceTakesTheFullFence(t *testing.T) {
 	t.Parallel()
+	// The refusal each fenced-path-refused state must print, so an unrelated early
+	// failure (a fixture panic, an unscripted kubectl call) cannot pass for it.
+	refusals := map[string]string{
+		"unreconciled consumer": "Timed out waiting for externalsecret/kyverno/ghcr-auth " +
+			"to complete the forced GHCR credential sync.",
+		"unreconciled seed PushSecret": "Timed out waiting for pushsecret/flux-system/seed-ghcr " +
+			"to complete the forced GHCR credential sync.",
+		"suspended parent Kustomization": "The parent Flux reconciliation is malformed or already suspended.",
+	}
 	for name, tc := range map[string]struct {
 		env        map[string]string
 		fencedPath bool
@@ -147,6 +156,12 @@ func TestUnprovedConvergenceTakesTheFullFence(t *testing.T) {
 			result := f.runHelperPreservingClusterState(validConfig(), nil, overrides)
 			requireNotContains(t, result.stdout, "no fence or write was needed")
 			if !tc.fencedPath {
+				requireFailureResult(t, result)
+				if refusals[name] == "" {
+					t.Fatalf("%s: no expected refusal recorded", name)
+				}
+				requireContains(t, result.stdout, refusals[name])
+				requireNotContains(t, result.stdout+result.stderr, "unexpected kubectl invocation")
 				return
 			}
 			requireSuccessResult(t, result)
