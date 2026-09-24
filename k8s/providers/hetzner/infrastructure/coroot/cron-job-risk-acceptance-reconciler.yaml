@@ -9,8 +9,8 @@
 # remain outside this controller's scope. Application coordinates omit the
 # generated Coroot cluster id and match the remaining namespace/kind/name tuple
 # exactly, preserving the declaration across a project rebuild.
-# The sole generated-name exception is the anchored Longhorn InstanceManager
-# pattern: those processes are one-per-node, so autoscaling changes their hash.
+# The generated-name exceptions are anchored to Longhorn InstanceManagers and
+# GitHub provider revisions, whose reviewed singleton identities can rotate.
 #
 # The in-cluster service is intentionally credentialless because the Coroot CR
 # sets authAnonymousRole=Admin; the external UI remains behind oauth2-proxy.
@@ -88,22 +88,26 @@ spec:
                   [ -n "$PID" ] || { echo "ERROR: could not resolve platform project id" >&2; exit 1; }
 
                   LONGHORN_INSTANCE_MANAGER_PATTERN='^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}\z'
-                  jq -e --arg instance_manager_pattern "$LONGHORN_INSTANCE_MANAGER_PATTERN" '
+                  GITHUB_PROVIDER_PATTERN='^crossplane-system:Deployment:provider-upjet-github-[0-9a-f]{12}\z'
+                  jq -e --arg instance_manager_pattern "$LONGHORN_INSTANCE_MANAGER_PATTERN" \
+                    --arg github_provider_pattern "$GITHUB_PROVIDER_PATTERN" '
                     type == "array" and
                     all(.[];
                       ((has("application") and (has("application_pattern") | not) and
                         (.application | type == "string" and (split(":") | length == 3)) and
                         (.reason | startswith("platform#3812: "))) or
                        (has("application_pattern") and (has("application") | not) and
-                        .application_pattern == $instance_manager_pattern and
                         .type == "single-instance-app" and
-                        (.reason | startswith("platform#4117: ")))) and
+                        ((.application_pattern == $instance_manager_pattern and
+                          (.reason | startswith("platform#4117: "))) or
+                         (.application_pattern == $github_provider_pattern and
+                          (.reason | startswith("platform#4145: ")))))) and
                       .category == "Availability" and
                       (.type as $type |
                         ["single-instance-app", "single-node-app", "single-az-app", "spot-only-app", "unreplicated-database"] |
                         index($type) != null)
                     ) and
-                    ([.[] | select(has("application_pattern"))] | length <= 1) and
+                    ([.[] | select(has("application_pattern"))] | length <= 2) and
                     ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | length) ==
                       ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | unique | length)
                   ' "$ACCEPTANCES_FILE" >/dev/null || {
@@ -117,7 +121,7 @@ spec:
                     exit 1
                   }
 
-                  # Expand the reviewed generated-name rule against live risks.
+                  # Expand the reviewed generated-name rules against live risks.
                   # Exact entries win for already reviewed historical names.
                   EFFECTIVE_ACCEPTANCES=$(printf '%s' "$RISKS" | jq -c \
                     --slurpfile declared "$ACCEPTANCES_FILE" '
