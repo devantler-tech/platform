@@ -160,6 +160,14 @@ spec:
   ingress:
     - fromEntities: [cluster]
   ingressDeny:
-    - fromEntities: [world]'
+    - fromEntities: [world]
+---
+apiVersion: example.com/v1
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: same-kind-other-group
+spec:
+  egressDeny:
+    - anything: true'
 
 printf 'PASS: effective authorization rules reject privilege paths and accept the data-product controller RBAC\n'

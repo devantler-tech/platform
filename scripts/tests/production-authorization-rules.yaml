@@ -83,10 +83,12 @@ rules:
   # chart installs. KSail evaluates this rule against every rendered document,
   # chart children included, so a chart that starts shipping such a policy is
   # refused too (#4139). A deny-only direction must state enableDefaultDeny.
+  # Kinds are unique only within an API group, so only cilium.io kinds match.
   - name: require-explicit-clusterwide-default-deny
     expression: >-
-      !has(object.kind) ||
+      !has(object.kind) || !has(object.apiVersion) ||
       object.kind != 'CiliumClusterwideNetworkPolicy' ||
+      !object.apiVersion.startsWith('cilium.io/') ||
       ((has(object.spec) ? [object.spec] : []) +
        (has(object.specs) ? object.specs : [])).all(s,
         (!has(s.egressDeny) || size(s.egressDeny) == 0 ||
