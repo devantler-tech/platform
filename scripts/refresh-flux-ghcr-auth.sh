@@ -6321,17 +6321,19 @@ converged_lease_version() {
   ' "${converged_lease_file}" 2>/dev/null
 }
 
-# Report whether an ExternalSecret is Ready and has reconciled its current
-# generation, so the Secret it owns reflects the current spec. Read-only.
-external_secret_is_reconciled() {
-  local namespace="$1"
-  local name="$2"
-  local state_file="$3"
+# Report whether an External Secrets object (ExternalSecret or PushSecret) is
+# Ready and has reconciled its current generation, so what it last synced
+# reflects the current spec. Read-only.
+eso_resource_is_reconciled() {
+  local kind="$1"
+  local namespace="$2"
+  local name="$3"
+  local state_file="$4"
 
   kubectl \
     --context "${KUBE_CONTEXT}" \
     --namespace "${namespace}" \
-    get externalsecret "${name}" \
+    get "${kind}" "${name}" \
     -o json >"${state_file}" 2>/dev/null &&
     jq -e '
       .metadata.generation as $generation
@@ -6410,17 +6412,14 @@ ghcr_chain_is_converged_without_writes() {
     -o name >"${fanout_api_resources}" 2>/dev/null || return 1
   grep -qx 'pushsecrets.external-secrets.io' "${fanout_api_resources}" || return 1
   grep -qx 'externalsecrets.external-secrets.io' "${fanout_api_resources}" || return 1
-  [[ -n "$(kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace flux-system \
-    get pushsecret seed-ghcr \
-    --ignore-not-found \
-    -o name 2>/dev/null)" ]] || return 1
+  # A pending PushSecret spec could still overwrite what OpenBao holds.
+  eso_resource_is_reconciled \
+    pushsecret flux-system seed-ghcr "${converged_probe_file}" || return 1
   for namespace in "${FANOUT_NAMESPACES[@]}"; do
     # A materialised Secret proves nothing about a consumer whose current spec
     # has not reconciled, or whose last sync failed: its next sync may differ.
-    external_secret_is_reconciled \
-      "${namespace}" ghcr-auth "${converged_probe_file}" || return 1
+    eso_resource_is_reconciled \
+      externalsecret "${namespace}" ghcr-auth "${converged_probe_file}" || return 1
     secret_matches_sops_credential \
       "${namespace}" ghcr-auth .dockerconfigjson || return 1
   done
@@ -6431,8 +6430,8 @@ ghcr_chain_is_converged_without_writes() {
   # the restore still looks fresh while OpenBao holds the older snapshot.
   deadline=$((started_epoch + GHCR_SEED_PROBE_WAIT_SECONDS))
   while :; do
-    external_secret_is_reconciled \
-      flux-system "${GHCR_SEED_PROBE_NAME}" "${converged_probe_file}" || return 1
+    eso_resource_is_reconciled \
+      externalsecret flux-system "${GHCR_SEED_PROBE_NAME}" "${converged_probe_file}" || return 1
     jq -e --argjson max_age "$((GHCR_SEED_PROBE_REFRESH_SECONDS * 2))" '
       ((.status.refreshTime | type) == "string")
       and ((now - (.status.refreshTime | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601))
@@ -6510,7 +6509,13 @@ ghcr_chain_is_converged_without_writes() {
   # Two consecutive clean node inventories, exactly as the full convergence
   # loop requires before cutover: every node carries current runtime proof for
   # this revision and image, and no drain, recovery or scale-down fence remains.
-  for _ in 1 2; do
+  local inventory
+  for inventory in 1 2; do
+    # Same stabilization window the full convergence loop waits between its
+    # two clean inventories, so a node that registers in between is seen.
+    if ((inventory == 2)); then
+      sleep "${SYNC_INTERVAL}"
+    fi
     kubectl \
       --context "${KUBE_CONTEXT}" \
       get nodes \

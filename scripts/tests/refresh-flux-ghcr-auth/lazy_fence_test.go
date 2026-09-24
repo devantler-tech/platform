@@ -122,6 +122,9 @@ func TestUnprovedConvergenceTakesTheFullFence(t *testing.T) {
 		"unreconciled consumer": {map[string]string{
 			"FAKE_UNRECONCILED_FANOUT_RESOURCE": "externalsecret/kyverno/ghcr-auth",
 		}, false},
+		"unreconciled seed PushSecret": {map[string]string{
+			"FAKE_UNRECONCILED_FANOUT_RESOURCE": "pushsecret/flux-system/seed-ghcr",
+		}, false},
 		"suspended parent Kustomization": {map[string]string{
 			"FAKE_FLUX_POLICY_PARENT_SUSPENDED_UNOWNED": "true",
 		}, false},
