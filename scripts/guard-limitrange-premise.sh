@@ -372,6 +372,44 @@ done <<EOF
 $annotated
 EOF
 
+# glob_walk <prefix> <segment>...: prints the files under <prefix> that the remaining `/`-separated
+# glob segments match. Each ordinary segment is matched by bash's own globbing; a `**` segment spans
+# zero or more directories, as globstar does. Bash 3.2, still macOS's system bash, has no globstar,
+# so one walker serves every version rather than two matchers that could disagree.
+glob_walk() {
+  local prefix="$1" segment="$2" m d
+  shift 2
+  if [ "$segment" = '**' ]; then
+    # A trailing `**` matches every file below, like `**/*`.
+    [ "$#" -gt 0 ] || set -- '*'
+    glob_walk "$prefix" "$@"
+    for d in "$prefix"*/; do
+      # globstar does not descend through a symlinked directory.
+      [ -L "${d%/}" ] || glob_walk "$d" '**' "$@"
+    done
+    return 0
+  fi
+  for m in "$prefix"$segment; do
+    if [ "$#" -eq 0 ]; then
+      [ -f "$m" ] && printf '%s\n' "$m"
+    elif [ -d "$m" ]; then
+      glob_walk "$m/" "$@"
+    fi
+  done
+  return 0
+}
+
+# Files a trivy `paths` glob matches, relative to <dir>, one per line.
+expand_glob() { # <dir> <pattern>
+  (
+    cd "$1" || exit 2
+    shopt -s nullglob
+    IFS=/ read -r -a segments <<<"$2"
+    [ "${#segments[@]}" -gt 0 ] || exit 0
+    glob_walk '' "${segments[@]}"
+  )
+}
+
 # The same premise as a trivy disposition, opted in by an explicit statement marker.
 trivy_marker='[limitrange-premise]'
 # Kinds whose documents carry containers, and so a CPU limit a LimitRange can default.
@@ -397,7 +435,7 @@ else
     while IFS= read -r pattern; do
       [ -n "$pattern" ] || continue
       # Expand the glob the way trivy scopes the entry, relative to the ignore file.
-      matches=$(cd "$tdir" && shopt -s globstar nullglob && for m in $pattern; do [ -f "$m" ] && printf '%s\n' "$m"; done)
+      matches=$(expand_glob "$tdir" "$pattern") || die "could not expand $pattern from $tdir"
       [ -n "$matches" ] ||
         die "$trivyignore entry $id path $pattern matches no file, so its premise cannot be checked"
       while IFS= read -r match; do

@@ -575,6 +575,17 @@ make_trivy_case "$t_glob" trivyglob trivy-globbed kube-system "" \
   "$(premised_entry '      - k8s/providers/*/infrastructure/**/*.yaml')"
 expect 'trivy-glob-paths-are-expanded' 1 "$t_glob/k8s" 'trivy-globbed.yaml (trivy KSV-0011)'
 
+# The same glob resolves where `shopt -s globstar` fails, as it does on bash 3.2 (still the
+# macOS system bash). The exported function stands in for that bash in the guard's process.
+# shellcheck disable=SC2329 # invoked by the guard's process, which imports it via export -f
+shopt() {
+  case " $* " in *' globstar '*) return 1 ;; esac
+  builtin shopt "$@"
+}
+export -f shopt
+expect 'trivy-glob-paths-are-expanded-without-globstar' 1 "$t_glob/k8s" 'trivy-globbed.yaml (trivy KSV-0011)'
+unset -f shopt
+
 # 25. COULD-NOT-CHECK: a premised entry that names no paths covers every file, and a
 # premise holds per namespace.
 t_nopaths="$scratch/t-nopaths"
