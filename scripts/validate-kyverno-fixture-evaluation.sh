@@ -90,15 +90,19 @@ for test_file in "${test_files[@]}"; do
         finding "${test_file}: names policy ${policy}, which no policy file it loads defines. fix: point the row at the policy's current name."
       continue
     fi
-    # Kyverno names the rules it generates for Pod controllers after the rule they come from.
+    # A rule the policy declares is that rule, even when its own name starts with `autogen-`.
+    awk -F'|' -v p="${policy}" -v r="${rule}" '$1 == p && $2 == r { found = 1; exit } END { exit !found }' "${work}/rules" && continue
+    # Otherwise it can only be one Kyverno generates for Pod controllers, which it names after
+    # the rule it comes from.
     base="${rule#autogen-cronjob-}"
     base="${base#autogen-}"
-    line="$(awk -F'|' -v p="${policy}" -v r="${base}" '$1 == p && $2 == r { print; exit }' "${work}/rules")"
+    line=""
+    [ "${base}" = "${rule}" ] ||
+      line="$(awk -F'|' -v p="${policy}" -v r="${base}" '$1 == p && $2 == r { print; exit }' "${work}/rules")"
     if [ -z "${line}" ]; then
       finding "${test_file}: names rule ${rule} of policy ${policy}, which the policies it loads do not define. fix: rename the rows to the rule's current name, or remove them if the rule was removed on purpose."
       continue
     fi
-    [ "${base}" != "${rule}" ] || continue
     # An autogen rule exists only when Kyverno generates it: the base rule matches Pods and
     # the policy's autogen controllers cover that variant.
     kinds="$(printf '%s' "${line}" | cut -d'|' -f3)"

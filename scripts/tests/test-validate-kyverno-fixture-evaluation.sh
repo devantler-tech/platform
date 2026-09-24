@@ -225,6 +225,60 @@ if kyverno_passes "autogen rule of a policy that filters by selector" "${root}";
   expect_fail "autogen rule of a policy that mutates with a JSON patch" "${root}" 1 "add-security-context gets no autogen rules because a rule mutates with patchesJson6902"
 fi
 
+# A policy may itself name a rule `autogen-*`, and kyverno evaluates that rule under its own
+# name, so the name must not be read as a generated rule's.
+root="${work}/literal-autogen-rule"
+fixture="${root}/fixture/literal-autogen-rule"
+mkdir -p "${fixture}"
+cat >"${fixture}/policy.yaml" <<'EOF'
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: literal-autogen-rule
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+spec:
+  validationFailureAction: Enforce
+  rules:
+    - name: autogen-require-team
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+      validate:
+        message: every ConfigMap names its team
+        pattern:
+          metadata:
+            labels:
+              team: "?*"
+EOF
+cat >"${fixture}/labelled.yaml" <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: labelled
+  namespace: apps
+  labels:
+    team: platform
+EOF
+cat >"${fixture}/kyverno-test.yaml" <<'EOF'
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: literal-autogen-rule
+policies: [policy.yaml]
+resources: [labelled.yaml]
+results:
+  - policy: literal-autogen-rule
+    rule: autogen-require-team
+    resources: [apps/labelled]
+    kind: ConfigMap
+    result: pass
+EOF
+if kyverno_passes "a rule the policy itself names autogen-*" "${root}" fixture; then
+  expect_pass "a rule the policy itself names autogen-*" "${root}" fixture
+fi
+
 # A fixture whose expectation is wrong still fails through kyverno itself.
 root="$(copy wrong-expectation)"
 yq -i '(.results[] | select(.result == "fail") | .result) = "pass"' \
