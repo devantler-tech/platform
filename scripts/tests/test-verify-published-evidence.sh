@@ -78,11 +78,54 @@ run_gate() {
     PATH="${dir}:${PATH}" \
       ENFORCE="${enforce}" \
       WORKFLOW_REF="${workflow_ref}" \
+      EVIDENCE_READ_BACKOFF_SECONDS=0 \
       bash "${gate}" "${digest}" 2>&1
   )"
   gate_rc=$?
   set -e
 
+  rm -rf "${dir}"
+}
+
+# run_gate_gh_sequence stubs cosign as passing and gh as failing its first
+# ${1} calls with the message ${2}, then passing. That lets a case choose
+# exactly what the registry said and how many times, and the recorded call count
+# (gh_calls) shows whether the gate retried.
+run_gate_gh_sequence() {
+  local gh_failures="$1" message="$2"
+  local dir
+  dir="$(mktemp -d)"
+
+  cat >"${dir}/cosign" <<EOF
+#!/usr/bin/env bash
+exit 0
+EOF
+
+  cat >"${dir}/gh" <<EOF
+#!/usr/bin/env bash
+count=\$(( \$(cat "${dir}/count" 2>/dev/null || echo 0) + 1 ))
+echo "\${count}" >"${dir}/count"
+if (( count <= ${gh_failures} )); then
+  echo "Error: ${message}" >&2
+  exit 1
+fi
+exit 0
+EOF
+
+  chmod +x "${dir}/cosign" "${dir}/gh"
+
+  set +e
+  gate_output="$(
+    PATH="${dir}:${PATH}" \
+      ENFORCE="true" \
+      WORKFLOW_REF="${workflow_ref}" \
+      EVIDENCE_READ_BACKOFF_SECONDS=0 \
+      bash "${gate}" "${good_digest}" 2>&1
+  )"
+  gate_rc=$?
+  set -e
+
+  gh_calls="$(cat "${dir}/count" 2>/dev/null || echo 0)"
   rm -rf "${dir}"
 }
 
@@ -230,6 +273,81 @@ if [[ "$(grep -c '❌' <<<"${gate_output}")" == "3" ]]; then
   ok "every failing check is reported, not just the first"
 else
   bad "every failing check is reported, not just the first" "${gate_output}"
+fi
+
+# --- A failed READ is retried; a failed VERDICT is not (platform#3089) -----------
+# The observed incident: the SBOM read was denied once, and the same command with
+# the same token passed seconds later. One denial must not fail the gate.
+readonly denied="the provided token was denied access to the requested resource, please check the token's expiration and repository access"
+
+run_gate_gh_sequence 1 "${denied}"
+if [[ "${gate_rc}" == "0" ]] && grep -q "SBOM attestation (read succeeded on attempt 2 of 3)" <<<"${gate_output}"; then
+  ok "a transient denial is retried and the gate passes"
+else
+  bad "a transient denial is retried and the gate passes" "exit ${gate_rc}: ${gate_output}"
+fi
+
+# A read that keeps failing still fails the gate, after exactly the configured
+# attempts per attestation, and is reported as a failed READ rather than as
+# missing evidence.
+run_gate_gh_sequence 99 "${denied}"
+if [[ "${gate_rc}" == "1" && "${gh_calls}" == "6" ]]; then
+  ok "a persistent read failure still fails the gate after 3 attempts per check (${gh_calls} calls)"
+else
+  bad "a persistent read failure still fails the gate after 3 attempts per check" "exit ${gate_rc}, gh calls ${gh_calls}"
+fi
+
+if grep -q "registry read failed on all 3 attempt(s)" <<<"${gate_output}" &&
+  grep -q "could not read the registry" <<<"${gate_output}" &&
+  ! grep -q "evidence absent or invalid" <<<"${gate_output}"; then
+  ok "a persistent read failure is reported as a failed read, not as missing evidence"
+else
+  bad "a persistent read failure is reported as a failed read, not as missing evidence" "${gate_output}"
+fi
+
+# The retry must not be able to hide an absence. Missing evidence is a verdict,
+# so it fails on the first attempt: one call per attestation, no retry. The
+# message carries a digest whose hex contains "429" and "500", so a pattern that
+# matched bare status numbers would misread it as transient.
+readonly absent="no attestations found for oci://ghcr.io/devantler-tech/platform/manifests@sha256:4295000000000000000000000000000000000000000000000000000000000000"
+run_gate_gh_sequence 99 "${absent}"
+if [[ "${gate_rc}" == "1" && "${gh_calls}" == "2" ]]; then
+  ok "missing evidence fails at once and is never retried (${gh_calls} calls)"
+else
+  bad "missing evidence fails at once and is never retried" "exit ${gate_rc}, gh calls ${gh_calls}"
+fi
+
+if grep -q "SBOM attestation — evidence absent or invalid" <<<"${gate_output}" &&
+  ! grep -q "could not read the registry" <<<"${gate_output}"; then
+  ok "missing evidence is reported as absent or invalid, not as a failed read"
+else
+  bad "missing evidence is reported as absent or invalid, not as a failed read" "${gate_output}"
+fi
+
+# The attempt count is validated like ENFORCE: an unusable value must refuse
+# rather than silently become zero attempts, which would skip every check.
+attempts_rejected=0
+for invalid in "0" "" "abc" "-1" "100"; do
+  dir="$(stub_dir 0 0)"
+  set +e
+  PATH="${dir}:${PATH}" ENFORCE="true" WORKFLOW_REF="${workflow_ref}" \
+    EVIDENCE_READ_ATTEMPTS="${invalid}" bash "${gate}" "${good_digest}" >/dev/null 2>&1
+  rc=$?
+  set -e
+  rm -rf "${dir}"
+  # An EMPTY value falls back to the default, so it must PASS here; that is the
+  # control showing the guard does not reject everything.
+  if [[ -z "${invalid}" ]]; then
+    [[ "${rc}" == "0" ]] && attempts_rejected=$((attempts_rejected + 1))
+  else
+    [[ "${rc}" == "2" ]] && attempts_rejected=$((attempts_rejected + 1))
+  fi
+done
+
+if [[ "${attempts_rejected}" == "5" ]]; then
+  ok "an unusable EVIDENCE_READ_ATTEMPTS is refused and an empty one uses the default (5/5)"
+else
+  bad "an unusable EVIDENCE_READ_ATTEMPTS is refused" "only ${attempts_rejected}/5 behaved as expected"
 fi
 
 # --- A malformed digest is refused, in BOTH flag states -----------------------
