@@ -123,6 +123,11 @@ readonly IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS=30
 readonly IMAGE_VERIFICATION_POLICY="verify-app-images"
 readonly RETIRED_IMAGE_VERIFICATION_POLICY="verify-ksail-images"
 readonly IMAGE_VERIFICATION_POLICY_FILE="k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
+# The only namespaces the consolidated validating webhook may leave out. Kyverno's
+# chart defaults exclude them from every generated webhook (its config webhooks
+# namespaceSelector and excludeKyvernoNamespace), and Kyverno never admits Pods
+# there. Any other namespace, object or CEL narrowing drops protected Pods.
+readonly IMAGE_VERIFICATION_WEBHOOK_EXEMPT_NAMESPACES='["kube-system","kyverno"]'
 readonly IMAGE_VERIFICATION_FLUX_KUSTOMIZATION="infrastructure"
 readonly IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION="flux-system"
 readonly FLUX_KUSTOMIZATION_RESOURCE="kustomizations.kustomize.toolkit.fluxcd.io"
@@ -1949,6 +1954,48 @@ image_verification_webhook_set_matches() {
   ' "${webhook_file}" >/dev/null
 }
 
+image_verification_webhook_intercepts_pods() {
+  # The set matcher proves each path, failure policy and timeout, not what the
+  # webhook admits. The consolidated validating webhook must still intercept
+  # every Pod CREATE the policy protects: a rule covering core v1 pods CREATE
+  # whose scope admits namespaced objects (a Cluster-scoped rule never matches a
+  # Pod), no object selector, no match conditions, and a namespace selector that
+  # at most excludes the namespaces Kyverno itself never admits.
+  local webhook_file="$1"
+
+  jq -e \
+    --arg expected_path "/ivpol/validate/${IMAGE_VERIFICATION_POLICY}" \
+    --argjson exempt "${IMAGE_VERIFICATION_WEBHOOK_EXEMPT_NAMESPACES}" '
+    def empty_selector:
+      . == null
+      or (type == "object"
+        and ((.matchLabels // {}) | length) == 0
+        and ((.matchExpressions // []) | length) == 0);
+    [.items[]?.webhooks[]?
+      | select((.clientConfig.service.name // "") == "kyverno-svc"
+          and (.clientConfig.service.namespace // "") == "kyverno"
+          and (.clientConfig.service.path // "") == $expected_path)]
+    | length > 0 and all(.[];
+        any(.rules[]?;
+          ((.apiGroups // []) | any(. == "" or . == "*"))
+          and ((.apiVersions // []) | any(. == "v1" or . == "*"))
+          and ((.resources // []) | any(. == "pods" or . == "*"))
+          and ((.operations // []) | any(. == "CREATE" or . == "*"))
+          and ((.scope // "*") == "*" or .scope == "Namespaced"))
+        and (.objectSelector | empty_selector)
+        and ((.matchConditions // []) | length) == 0
+        and (
+          (.namespaceSelector | empty_selector)
+          or ((.namespaceSelector | type) == "object"
+            and ((.namespaceSelector.matchLabels // {}) | length) == 0
+            and all(.namespaceSelector.matchExpressions[]?;
+              .key == "kubernetes.io/metadata.name"
+              and .operator == "NotIn"
+              and ((.values // []) | length) > 0
+              and all(.values[]; . as $ns | $exempt | index($ns) != null)))))
+  ' "${webhook_file}" >/dev/null 2>&1
+}
+
 image_verification_policy_needs_mutating_webhook() {
   # Kyverno v1.19 moved signature and attestation verification entirely into
   # validation. Its IVPOL mutating webhook now only pins digests, and the API
@@ -1973,7 +2020,9 @@ wait_for_image_verification_webhooks() {
       "${image_verification_mutating_webhooks_file}" "mutate" "${exclusive}" \
       "${mutation_required}" &&
       image_verification_webhook_set_matches \
-        "${image_verification_validating_webhooks_file}" "validate" "${exclusive}" true; then
+        "${image_verification_validating_webhooks_file}" "validate" "${exclusive}" true &&
+      image_verification_webhook_intercepts_pods \
+        "${image_verification_validating_webhooks_file}"; then
       return 0
     fi
     if ((attempt < SYNC_ATTEMPTS)); then
@@ -2044,7 +2093,7 @@ stage_image_verification_webhook_budget() {
   # closes the policy-cache handoff gap: deletion is not evidence that the
   # replacement has become effective.
   if ! wait_for_image_verification_webhooks false; then
-    echo "::error::The consolidated fail-closed image-verification admission webhooks did not become effective before retirement of the existing KSail verifier."
+    echo "::error::The consolidated fail-closed image-verification admission webhooks did not become effective before retirement of the existing KSail verifier; each must be fail-closed and intercept every protected Pod creation."
     return 1
   fi
 
@@ -2063,7 +2112,7 @@ stage_image_verification_webhook_budget() {
   fi
 
   if ! wait_for_image_verification_webhooks true; then
-    echo "::error::The consolidated fail-closed image-verification admission webhooks did not converge to one ${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}s policy path; refusing runtime pull probes."
+    echo "::error::The consolidated fail-closed image-verification admission webhooks did not converge to one ${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}s policy path that intercepts every protected Pod creation; refusing runtime pull probes."
     return 1
   fi
 
@@ -6492,22 +6541,10 @@ ghcr_chain_is_converged_without_writes() {
   image_verification_webhook_set_matches \
     "${image_verification_validating_webhooks_file}" "validate" true true \
     >/dev/null 2>&1 || return 1
-  # The set matcher proves each path, failure policy and timeout, not what the
-  # webhook admits. Skipping the fenced path is only safe when the validating
-  # webhook still intercepts Pod creation, so any narrower rule set falls through.
-  jq -e \
-    --arg expected_path "/ivpol/validate/${IMAGE_VERIFICATION_POLICY}" '
-    [.items[]?.webhooks[]?
-      | select((.clientConfig.service.name // "") == "kyverno-svc"
-          and (.clientConfig.service.namespace // "") == "kyverno"
-          and (.clientConfig.service.path // "") == $expected_path)]
-    | length > 0 and all(.[];
-        any(.rules[]?;
-          ((.apiGroups // []) | any(. == "" or . == "*"))
-          and ((.apiVersions // []) | any(. == "v1" or . == "*"))
-          and ((.resources // []) | any(. == "pods" or . == "*"))
-          and ((.operations // []) | any(. == "CREATE" or . == "*"))))
-  ' "${image_verification_validating_webhooks_file}" >/dev/null 2>&1 || return 1
+  # Skipping the fenced path is only safe when the validating webhook still
+  # intercepts every Pod creation the policy protects.
+  image_verification_webhook_intercepts_pods \
+    "${image_verification_validating_webhooks_file}" || return 1
 
   # Two consecutive clean node inventories, exactly as the full convergence
   # loop requires before cutover: every node carries current runtime proof for
