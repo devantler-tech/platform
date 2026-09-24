@@ -58,8 +58,8 @@ func TestCommittedCertApproverRejectsChangedSourceAndVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Published v0.12.0 source digest, independently checked before vendoring.
-	args := []string{"--validate-annotated", "--resources-dir", dir, "--source-sha256", "44d74b38379d96572c434290732092f577ee4835392b36922a72c406ee406139", "--source-version", "0.12.0"}
+	// Published v0.12.1 source digest, independently checked before vendoring.
+	args := []string{"--validate-annotated", "--resources-dir", dir, "--source-sha256", "4184993a44e1ec7d585d930d2e72298ec70a361ff415c323311d9828103fcb3e", "--source-version", "0.12.1"}
 	if _, stderr, err := runAnnotator(t, "kubelet-serving-cert-approver", "", args...); err != nil {
 		t.Fatalf("exact committed source rejected: %v: %s", err, stderr)
 	}
@@ -67,7 +67,7 @@ func TestCommittedCertApproverRejectsChangedSourceAndVersion(t *testing.T) {
 	if _, _, err := runAnnotator(t, "kubelet-serving-cert-approver", "", args...); err == nil {
 		t.Fatal("version-only update accepted without refreshing the manifest")
 	}
-	args[len(args)-1] = "0.12.0"
+	args[len(args)-1] = "0.12.1"
 	file := filepath.Join(dir, "deployment.yaml")
 	data, err := os.ReadFile(file)
 	if err != nil {
