@@ -58,7 +58,11 @@ spec:
     # the second waits for another worker instead of giving a false HA signal.
     # Scope the spread to the serving primary pods. The instance label also
     # matches canary pods, which could otherwise satisfy the skew while both
-    # primary replicas still share one node. Live primary pods carry this name.
+    # primary replicas still share one node. The chart's source Deployment
+    # selects app.kubernetes.io/name=umami; Flagger derives the primary pod
+    # label umami-primary from that selector. Flagger rewrites a topology
+    # selector only when its value equals the source Deployment name
+    # (umami-umami), so this already-primary value stays unchanged.
     topologySpreadConstraints:
       - maxSkew: 1
         # With only one eligible worker, the second primary must wait instead
