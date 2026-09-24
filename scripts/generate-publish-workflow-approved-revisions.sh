@@ -288,6 +288,9 @@ main() {
   local consumers
   consumers="$("$REPORT" --list-consumers)" || { refuse 'consumer discovery failed; see the report above'; exit 1; }
   [ -n "$consumers" ] || { refuse 'consumer discovery returned nothing'; exit 1; }
+  # One approved row per source repository and workflow: artifacts one repository publishes
+  # share its revision set, so the artifact field is dropped and repeats collapse (#3327).
+  consumers="$(printf '%s\n' "$consumers" | cut -f1-3 | awk '!seen[$0]++')"
 
   # The existing row for one consumer, "<tag>\t<digest>\t<signer>\t<pin>\t<candidate>\t<date>" or
   # nothing, so an unchanged tuple keeps its date. A lookup over the file rather than an
