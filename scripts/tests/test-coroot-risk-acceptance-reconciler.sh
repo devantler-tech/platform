@@ -152,6 +152,14 @@ if [ -z "${script_body}" ] || [ "${script_body}" = 'null' ]; then
 fi
 printf '%s\n' "${script_body}" | shellcheck -s sh -
 
+# A rotated GitHub provider revision that no exact acceptance pins, so only the revision
+# pattern can accept it. A pinned one would be answered by its exact entry first.
+readonly rotated_github_revision='7c1e04b9d3a6'
+if jq -e --arg app "crossplane-system:Deployment:provider-upjet-github-${rotated_github_revision}" \
+  'any(.[]; .application == $app)' "${acceptances_file}" >/dev/null; then
+  fail 'the rotated GitHub provider fixture must name a revision no exact acceptance pins'
+fi
+
 setup_scenario() {
   local name="$1" mode="$2" dir
   local backstage_reason
@@ -182,13 +190,13 @@ setup_scenario() {
       {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-9c4995fb1b807430b1d54d466d640e9f",key:{category:"Security",type:"single-instance-app"}}
     ]}}' >"${dir}/risks.json"
   elif [ "${mode}" = 'github-provider' ]; then
-    jq -n '{data:{risks:[
-      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-2801aa72907d",key:{category:"Availability",type:"single-instance-app"}},
-      {application_id:"95rsc5yp:other:Deployment:provider-upjet-github-2801aa72907d",key:{category:"Availability",type:"single-instance-app"}},
-      {application_id:"95rsc5yp:crossplane-system:StatefulSet:provider-upjet-github-2801aa72907d",key:{category:"Availability",type:"single-instance-app"}},
+    jq -n --arg rev "${rotated_github_revision}" '{data:{risks:[
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:other:Deployment:provider-upjet-github-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:StatefulSet:provider-upjet-github-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-not-a-revision",key:{category:"Availability",type:"single-instance-app"}},
-      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-unifi-2801aa72907d",key:{category:"Availability",type:"single-instance-app"}},
-      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-2801aa72907d",key:{category:"Security",type:"single-instance-app"}}
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-unifi-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-\($rev)",key:{category:"Security",type:"single-instance-app"}}
     ]}}' >"${dir}/risks.json"
   elif [ "${mode}" = 'retired-pattern' ]; then
     jq -n '{data:{risks:[
@@ -269,12 +277,12 @@ jq -s -e '
 
 github_provider_dir="$(setup_scenario github-provider github-provider)"
 run_scenario "${github_provider_dir}" >/dev/null
-jq -s -e '
+jq -s -e --arg rev "${rotated_github_revision}" '
   length == 1 and
   .[0].payload.action == "dismiss" and
   .[0].payload.key == {category:"Availability",type:"single-instance-app"} and
   (.[0].payload.reason | startswith("platform#4145: ")) and
-  (.[0].url | contains("crossplane-system%3ADeployment%3Aprovider-upjet-github-2801aa72907d"))
+  (.[0].url | contains("crossplane-system%3ADeployment%3Aprovider-upjet-github-\($rev)"))
 ' "${github_provider_dir}/posts.jsonl" >/dev/null ||
   fail 'a rotated GitHub provider revision must be accepted without matching lookalikes'
 

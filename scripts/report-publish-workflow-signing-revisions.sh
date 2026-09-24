@@ -53,6 +53,17 @@ readonly EXPECTED_CONSUMERS=(
   'wedding-app'
 )
 
+# The same floor per deployed ARTIFACT (its OCI path under ghcr.io/devantler-tech). A
+# repository can publish more than one artifact, and a floor keyed only on the repository
+# would let one of its consumers vanish while another keeps the name present (#3327).
+# EXPECTED_CONSUMERS stays keyed on the repository, because the approved revision set is.
+readonly EXPECTED_ARTIFACTS=(
+  'ascoachingogvaner/manifests'
+  'aws/manifests'
+  'github-config/manifests'
+  'wedding-app/manifests'
+)
+
 fail() {
   printf 'report-publish-workflow-signing-revisions: %s\n' "$*" >&2
   exit 1
@@ -179,7 +190,7 @@ registry_tag_for_git_tag() {
 # reattributed a consumer — and where a consumer's cd.yaml calls both shared workflows
 # that returns the wrong revision silently.
 discover_consumers() {
-  local root="$1" file url version subjects repo workflow workflows
+  local root="$1" file url version subjects repo workflow workflows artifact
   [ -d "$root" ] || return 0
   while IFS= read -r file; do
     [ -n "$file" ] || continue
@@ -211,7 +222,10 @@ discover_consumers() {
       [ -n "$repo" ] || continue
       repo="$(oci_name_to_repo "$repo")"
       plausible_repo "$repo" || continue
-      printf '%s\t%s\t%s\n' "$repo" "$workflow" "$version"
+      # The artifact names the deployed consumer; the repository only names its source.
+      artifact="${url#oci://ghcr.io/devantler-tech/}"
+      artifact="${artifact%/}"
+      printf '%s\t%s\t%s\t%s\n' "$repo" "$workflow" "$version" "$artifact"
       # 🔴 FLUX RESOLVES `spec.ref` AS digest > semver > tag, AND AN OMITTED `ref` MEANS
       # the mutable `latest` tag. Reading `tag` first inverts that: a document carrying BOTH
       # a tag and a digest (or a tag and a semver) would be attributed to a tag Flux never
@@ -946,46 +960,56 @@ default_resolver() {
   printf '%s\t%s\t%s\n' "$signing" "$current" "$origin"
 }
 
-main() {
-  local root="${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}"
-  local consumers found missing=""
-  consumers="$(discover_consumers "$root")"
-  found="$(printf '%s' "$consumers" | cut -f1 | sort -u)"
-
-  local expected
-  for expected in "${EXPECTED_CONSUMERS[@]}"; do
+# identity_floor <noun> <registry> <found> <expected>...: exits unless the discovered identities
+# are exactly the registered ones.
+#
+# Both directions. Checking only that every EXPECTED name was found accepts an unregistered
+# extra consumer — and that one can later move or change its subject spelling, disappear, and
+# leave every registered name present so the report exits clean. That is exactly the silent
+# disappearance this floor exists to prevent, just one consumer along. Requiring registration
+# makes adding a consumer a deliberate, reviewed act.
+identity_floor() {
+  local noun="$1" registry="$2" found="$3" expected discovered e known missing="" unregistered=""
+  shift 3
+  for expected in "$@"; do
     printf '%s\n' "$found" | grep -qxF -- "$expected" || missing="${missing} ${expected}"
   done
-
-  # Both directions. Checking only that every EXPECTED name was found accepts an unregistered
-  # sixth consumer — and that one can later move or change its subject spelling, disappear, and
-  # leave all five registered names present so the report exits clean. That is exactly the silent
-  # disappearance this floor exists to prevent, just one consumer along. Requiring registration
-  # makes adding a consumer a deliberate, reviewed act.
-  local discovered unregistered=""
   while IFS= read -r discovered; do
     [ -n "$discovered" ] || continue
-    local known=0 e
-    for e in "${EXPECTED_CONSUMERS[@]}"; do
+    known=0
+    for e in "$@"; do
       [ "$e" = "$discovered" ] && known=1 && break
     done
     [ "$known" -eq 1 ] || unregistered="${unregistered} ${discovered}"
   done <<<"$found"
 
   if [ -n "$unregistered" ]; then
-    printf 'discovered consumer(s) not registered in EXPECTED_CONSUMERS:%s\n' "$unregistered" >&2
+    printf 'discovered %s(s) not registered in %s:%s\n' "$noun" "$registry" "$unregistered" >&2
     printf 'A consumer this script does not know about is one it cannot notice the LOSS of later.\n' >&2
-    printf 'Add it to EXPECTED_CONSUMERS so its disappearance would fail this run.\n' >&2
-    exit 1
+    printf 'Add it to %s so its disappearance would fail this run.\n' "$registry" >&2
   fi
 
   if [ -n "$missing" ]; then
-    printf 'expected consumer(s) not discovered:%s\n' "$missing" >&2
+    printf 'expected %s(s) not discovered:%s\n' "$noun" "$missing" >&2
     printf 'The scan, not the repository, is the likely cause: those OCIRepositories may have\n' >&2
     printf 'moved, been renamed, or adopted a subject spelling this pattern does not match.\n' >&2
-    printf 'Verify by hand, then fix the pattern or amend EXPECTED_CONSUMERS with the reason.\n' >&2
-    exit 1
+    printf 'Verify by hand, then fix the pattern or amend %s with the reason.\n' "$registry" >&2
   fi
+  # Both are reported before exiting: a replaced consumer is one of each, and naming only
+  # the newcomer would hide which registered consumer vanished.
+  [ -z "$unregistered$missing" ] || exit 1
+}
+
+main() {
+  local root="${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}"
+  local consumers
+  consumers="$(discover_consumers "$root")"
+
+  # The repository floor first: EXPECTED_CONSUMERS is what the approved revision set is keyed on.
+  identity_floor consumer EXPECTED_CONSUMERS "$(printf '%s' "$consumers" | cut -f1 | sort -u)" \
+    "${EXPECTED_CONSUMERS[@]}"
+  identity_floor artifact EXPECTED_ARTIFACTS "$(printf '%s' "$consumers" | cut -f4 | sort -u)" \
+    "${EXPECTED_ARTIFACTS[@]}"
 
   if [ "${1:-}" = "--list-consumers" ]; then
     printf '%s\n' "$consumers"
@@ -993,7 +1017,7 @@ main() {
   fi
 
   local resolver="${PUBLISH_REVISION_RESOLVER:-}"
-  local repo workflow version answer signing current origin field field_count
+  local repo workflow version _artifact answer signing current origin field field_count
   local diverged=0 unresolved=0 examined=0
   # Scratch for one consumer's refusal diagnostic. A file rather than a process
   # substitution so the capture works under a plain POSIX-ish shell, and so the
@@ -1005,7 +1029,7 @@ main() {
   printf 'Shared publish-workflow revisions, per consumer (#3048)\n'
   printf '%s\n' '-------------------------------------------------------'
 
-  while IFS=$'\t' read -r repo workflow version; do
+  while IFS=$'\t' read -r repo workflow version _artifact; do
     [ -n "$repo" ] || continue
     examined=$((examined + 1))
     # Classify from the manifest first: a bounded range is refused before any resolver is
