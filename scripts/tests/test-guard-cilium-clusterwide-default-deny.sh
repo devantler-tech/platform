@@ -79,6 +79,34 @@ EOF
 )"
 expect 'explicit enableDefaultDeny false passes' 0 '' "$explicit_false"
 
+# A null is pruned by the API server, so Cilium applies its default (true): only a
+# real boolean states the intent.
+null_value="$(fixture null-value <<'EOF'
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata: {name: null-intent}
+spec:
+  endpointSelector: {}
+  enableDefaultDeny: {egress: null}
+  egressDeny:
+    - toCIDR: [169.254.169.254/32]
+EOF
+)"
+expect 'a null enableDefaultDeny direction is refused' 1 'null-intent spec: egressDeny' "$null_value"
+
+string_value="$(fixture string-value <<'EOF'
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata: {name: string-intent}
+spec:
+  endpointSelector: {}
+  enableDefaultDeny: {egress: "false"}
+  egressDeny:
+    - toCIDR: [169.254.169.254/32]
+EOF
+)"
+expect 'a non-boolean enableDefaultDeny direction is refused' 1 'string-intent spec: egressDeny' "$string_value"
+
 explicit_true="$(fixture explicit-true <<'EOF'
 apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
@@ -294,6 +322,24 @@ cp "$pre_3407" "${tree}/k8s/layers/brand-new/policy.yaml"
 expect_tree 'a layer found only through the Flux wiring is checked' 1 \
   'deny-workload-instance-metadata-egress spec: egressDeny' "$tree"
 
+# Kustomize also accepts `kustomization.yml`; a layer using it must be read, not refused.
+tree="${tmp_dir}/tree-yml-layer"
+wire_cluster "$tree" edge ./layers/yml
+mkdir -p "${tree}/k8s/layers/yml"
+printf 'resources:\n  - policy.yaml\n' >"${tree}/k8s/layers/yml/kustomization.yml"
+cp "$pre_3407" "${tree}/k8s/layers/yml/policy.yaml"
+expect_tree 'a layer with kustomization.yml is checked' 1 \
+  'deny-workload-instance-metadata-egress spec: egressDeny' "$tree"
+
+# A cluster directory the guard cannot read must stop the check, never be skipped.
+tree="${tmp_dir}/tree-unreadable-cluster"
+wire_cluster "$tree" edge ./layers/brand-new
+mkdir -p "${tree}/k8s/clusters/other" "${tree}/k8s/layers/brand-new"
+printf 'resources:\n  - policy.yaml\n' >"${tree}/k8s/layers/brand-new/kustomization.yaml"
+cp "$explicit_false" "${tree}/k8s/layers/brand-new/policy.yaml"
+expect_tree 'a cluster directory with no kustomization file is cannot-check' 2 \
+  "cluster overlay 'other' has no kustomization file" "$tree"
+
 tree="${tmp_dir}/tree-no-wiring"
 mkdir -p "${tree}/k8s/clusters/edge"
 printf 'resources: []\n' >"${tree}/k8s/clusters/edge/kustomization.yaml"
@@ -303,7 +349,7 @@ expect_tree 'a cluster that wires no layer is cannot-check' 2 \
 tree="${tmp_dir}/tree-missing-layer"
 wire_cluster "$tree" edge ./layers/gone
 expect_tree 'a wired layer with no kustomization.yaml is cannot-check' 2 \
-  "'layers/gone' has no kustomization.yaml" "$tree"
+  "'layers/gone' has no kustomization file" "$tree"
 
 # GREEN on the real tree: every Flux entrypoint renders and the committed policy passes.
 got=0

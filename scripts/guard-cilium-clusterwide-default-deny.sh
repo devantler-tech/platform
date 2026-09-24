@@ -75,14 +75,20 @@ else
   # the Flux Kustomizations that point at this repository's own OCI source, and
   # their spec.path values are exactly the layers Flux applies. A hard-coded list
   # would keep passing while a new or moved layer went unchecked. A cluster that
-  # renders no such Kustomization, or a path that has no kustomization.yaml, is
+  # renders no such Kustomization, or a path with no kustomization file, is
   # cannot-check, never skipped.
+  # Kustomize accepts any of these three names.
+  has_kustomization() {
+    [ -f "${1}kustomization.yaml" ] || [ -f "${1}kustomization.yml" ] || [ -f "${1}Kustomization" ]
+  }
+
   roots=()
   clusters=0
   for cluster_dir in "${k8s}"/clusters/*/; do
     cluster="$(basename "$cluster_dir")"
     [ "$cluster" = "base" ] && continue
-    [ -f "${cluster_dir}kustomization.yaml" ] || continue
+    has_kustomization "$cluster_dir" ||
+      die "cluster overlay '${cluster}' has no kustomization file — refusing to skip a cluster it cannot read"
     clusters=$((clusters + 1))
     wiring="${tmp_dir}/wiring-${cluster}.yaml"
     kubectl kustomize "$cluster_dir" >"$wiring" 2>"${tmp_dir}/wiring-${cluster}.err" ||
@@ -111,8 +117,8 @@ else
 
   index=0
   for root in "${roots[@]}"; do
-    [ -f "${k8s}/${root}/kustomization.yaml" ] ||
-      die "Flux entrypoint '${root}' has no kustomization.yaml — refusing to report a tree it did not render"
+    has_kustomization "${k8s}/${root}/" ||
+      die "Flux entrypoint '${root}' has no kustomization file — refusing to report a tree it did not render"
     out="${tmp_dir}/render-${index}.yaml"
     kubectl kustomize "${k8s}/${root}" >"$out" 2>"${tmp_dir}/render-${index}.err" ||
       die "rendering '${root}' failed: $(head -c 400 "${tmp_dir}/render-${index}.err")"
@@ -169,8 +175,10 @@ jq_program='
              | ($spec["\($dir)Deny"] // []) as $deny
              | ($spec[$dir] // []) as $allow
              | select(($deny | length) > 0 and ($allow | length) == 0)
-             | select((($spec.enableDefaultDeny // {}) | type) != "object"
-                      or (($spec.enableDefaultDeny // {}) | has($dir) | not))
+             # Only an explicit boolean states intent. A null is pruned by the API server,
+             # so Cilium falls back to its default (true) — exactly the silent case.
+             | select(($spec.enableDefaultDeny // {}) as $edd
+                      | ($edd | type) != "object" or (($edd[$dir] | type) != "boolean"))
              | ["VIOLATION", $name, $at, $dir] | @tsv
            end)
     end
