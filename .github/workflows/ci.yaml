@@ -39,6 +39,14 @@ jobs:
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
+      # A merge-group validator that ci-required-checks enforces but deploy-prod does not
+      # need runs in parallel with the deploy, so prod can receive a revision it rejects (#4148).
+      - name: 🚦 Validate the deploy waits for every merge-group validator
+        run: |
+          shellcheck scripts/guard-deploy-waits-for-merge-group-validators.sh scripts/tests/test-guard-deploy-waits-for-merge-group-validators.sh
+          bash scripts/guard-deploy-waits-for-merge-group-validators.sh .github/workflows/ci.yaml
+          bash scripts/tests/test-guard-deploy-waits-for-merge-group-validators.sh
+
       # Reports whether prod's published artifact is on main, from its signed
       # provenance (#3846). Not wired into any deploy yet; its tests also read
       # this workflow's k8s filter, so a filter it can no longer parse fails here.
@@ -2566,6 +2574,10 @@ jobs:
           bash scripts/guard-floating-image-tags.sh k8s
           bash scripts/tests/test-guard-floating-image-tags.sh
 
+  # Every merge-group validator that ci-required-checks enforces is listed here too.
+  # A required validator the deploy does not wait for runs in parallel with it, so
+  # production can receive a revision that validator then rejects (#4148).
+  # scripts/guard-deploy-waits-for-merge-group-validators.sh enforces this.
   deploy-prod:
     name: 🚀 Deploy to Prod
     needs:
@@ -2574,6 +2586,7 @@ jobs:
         validate-floating-image-tags,
         validate-eks-authorization,
         validate-publication-contract,
+        validate-matcher-efficacy,
         validate-talos,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
