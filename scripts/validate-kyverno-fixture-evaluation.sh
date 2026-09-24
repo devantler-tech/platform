@@ -39,9 +39,21 @@ if [ "${#test_files[@]}" -eq 0 ]; then
   exit 2
 fi
 
-# Check 1: every policy and rule a fixture names exists in what it loads.
+# Kyverno's default set of Pod controllers it generates `autogen-*` rules for.
+default_autogen_controllers="DaemonSet,Deployment,Job,StatefulSet,ReplicaSet,ReplicationController,CronJob"
+
+# Check 1: every fixture declares results, and every policy and rule it names exists in
+# what it loads.
+# kyverno prints no results for a fixture that declares none, so only the others are
+# expected in its output.
+with_results=0
 for test_file in "${test_files[@]}"; do
   dir="$(dirname "${test_file}")"
+  if [ "$(yq '.results // [] | length' "${test_file}")" -eq 0 ]; then
+    finding "${test_file}: declares no results, so it asserts nothing. fix: restore the results the fixture exists to check, or remove the fixture."
+    continue
+  fi
+  with_results=$((with_results + 1))
   : >"${work}/policies"
   : >"${work}/rules"
   while IFS= read -r policy_path; do
@@ -50,9 +62,15 @@ for test_file in "${test_files[@]}"; do
       continue
     fi
     yq -r 'select(.metadata.name != null) | .metadata.name' "${dir}/${policy_path}" >>"${work}/policies"
-    # shellcheck disable=SC2016 # $p is a yq variable
-    yq -r 'select(.kind == "ClusterPolicy" or .kind == "Policy") | .metadata.name as $p | .spec.rules[].name | $p + "|" + .' \
-      "${dir}/${policy_path}" >>"${work}/rules"
+    # One line per rule: policy, rule, the kinds its match selects, and the controllers
+    # Kyverno generates autogen rules for.
+    # shellcheck disable=SC2016 # $p and $c are yq variables
+    yq -r 'select(.kind == "ClusterPolicy" or .kind == "Policy")
+      | .metadata.name as $p
+      | (.metadata.annotations["pod-policies.kyverno.io/autogen-controllers"] // "'"${default_autogen_controllers}"'") as $c
+      | .spec.rules[]
+      | [$p, .name, ([.match.resources.kinds[]?, .match.any[]?.resources.kinds[]?, .match.all[]?.resources.kinds[]?] | join(",")), $c]
+      | join("|")' "${dir}/${policy_path}" >>"${work}/rules"
   done < <(yq -r '.policies[]' "${test_file}")
 
   while IFS=$'\t' read -r policy rule; do
@@ -64,8 +82,36 @@ for test_file in "${test_files[@]}"; do
     # Kyverno names the rules it generates for Pod controllers after the rule they come from.
     base="${rule#autogen-cronjob-}"
     base="${base#autogen-}"
-    grep -qxF -- "${policy}|${base}" "${work}/rules" ||
+    line="$(awk -F'|' -v p="${policy}" -v r="${base}" '$1 == p && $2 == r { print; exit }' "${work}/rules")"
+    if [ -z "${line}" ]; then
       finding "${test_file}: names rule ${rule} of policy ${policy}, which the policies it loads do not define. fix: rename the rows to the rule's current name, or remove them if the rule was removed on purpose."
+      continue
+    fi
+    [ "${base}" != "${rule}" ] || continue
+    # An autogen rule exists only when Kyverno generates it: the base rule matches Pods and
+    # the policy's autogen controllers cover that variant.
+    kinds="$(printf '%s' "${line}" | cut -d'|' -f3)"
+    controllers="$(printf '%s' "${line}" | cut -d'|' -f4)"
+    case ",${kinds}," in
+      *,Pod,* | *,v1/Pod,* | */Pod,*) ;;
+      *)
+        finding "${test_file}: names rule ${rule}, but ${policy}/${base} does not match Pods, so Kyverno generates no ${rule}. fix: name the rule the fixture actually exercises."
+        continue
+        ;;
+    esac
+    # `autogen-cronjob-*` needs CronJob among the controllers; `autogen-*` needs any other.
+    generated=0
+    IFS=',' read -ra listed <<<"${controllers}"
+    for controller in "${listed[@]}"; do
+      case "${rule}:${controller}" in
+        autogen-cronjob-*:CronJob) generated=1 ;;
+        autogen-cronjob-*:*) ;;
+        *:CronJob | *:none | *:) ;;
+        *) generated=1 ;;
+      esac
+    done
+    [ "${generated}" -eq 1 ] ||
+      finding "${test_file}: names rule ${rule}, but ${policy} generates no such rule (autogen-controllers: ${controllers}). fix: name the rule the fixture actually exercises."
   done < <(yq -r '.results[] | [.policy, (.rule // "")] | @tsv' "${test_file}" | sort -u)
 done
 
@@ -105,17 +151,31 @@ for file_marker in "${work}"/section-*.file; do
     echo "::error::could not read kyverno's results for ${test_file}" >&2
     exit 2
   fi
-  yq -o=json '.results' "${test_file}" >"${work}/declared.json"
+  # A generate row names the GENERATED object, not the resource that triggered it, so each
+  # generate entry carries the name its expected generated resource declares.
+  : >"${work}/generated-names"
+  while IFS= read -r generated_file; do
+    name="$(yq -r 'select(.metadata.name != null) | .metadata.name' "$(dirname "${test_file}")/${generated_file}" 2>/dev/null | head -n1)" || name=""
+    if [ -z "${name}" ]; then
+      echo "::error::${test_file}: could not read a name from generatedResource ${generated_file}" >&2
+      exit 2
+    fi
+    printf '%s\t%s\n' "${generated_file}" "${name}" >>"${work}/generated-names"
+  done < <(yq -r '.results[] | .generatedResource // ""' "${test_file}" | sort -u | grep -v '^$' || true)
+  yq -o=json '.results' "${test_file}" |
+    jq --rawfile names "${work}/generated-names" '
+      ($names | split("\n") | map(select(. != "") | split("\t") | {(.[0]): .[1]}) | add // {}) as $n
+      | map(if .generatedResource then .generatedName = $n[.generatedResource] else . end)' >"${work}/declared.json"
 
   # Whether a row answers declared entry $e for its resource $r. A row names its resource
   # <apiVersion>/<Kind>/<namespace>/<name>, with an empty namespace for cluster-scoped kinds;
-  # a generate row names only the generated resource, so it is matched by name.
+  # a generate row names only the generated object, so it is matched by that name.
   # shellcheck disable=SC2016 # $e and $r are jq variables
   matcher='
     def answers($e; $r):
       .POLICY == $e.policy and (.RULE // "") == ($e.rule // "")
       and ((.RESOURCE | split("/")) as $parts
-        | if $e.generatedResource != null then $parts[-1] == ($r | split("/") | last)
+        | if $e.generatedResource != null then $parts[-1] == $e.generatedName
           else ($parts | length) >= 4
             and $parts[-3] == ($e.kind // "" | split("/") | last)
             and (if ($r | contains("/")) then ($parts[-2] + "/" + $parts[-1]) == $r else $parts[-1] == $r end)
@@ -144,9 +204,9 @@ for file_marker in "${work}"/section-*.file; do
     | [$e.policy, ($e.rule // ""), ($e.kind // ""), $r] | @tsv' "${work}/declared.json")
 done
 
-if [ "${sections}" -ne "${#test_files[@]}" ]; then
+if [ "${sections}" -ne "${with_results}" ]; then
   cat "${work}/output"
-  echo "::error::kyverno reported ${sections} test files, expected ${#test_files[@]}" >&2
+  echo "::error::kyverno reported ${sections} test files with results, expected ${with_results}" >&2
   exit 2
 fi
 

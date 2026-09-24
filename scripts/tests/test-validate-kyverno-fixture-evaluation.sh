@@ -105,6 +105,34 @@ if kyverno_passes "renamed resource" "${root}"; then
   expect_fail "renamed resource" "${root}" 1 "tenant-ns/attack-toservices-foreign-renamed, but kyverno ran no assertion for it"
 fi
 
+# A generate row names the object it generates, which need not share its trigger's name.
+root="$(copy generated-name)"
+yq -i '(.spec.rules[] | select(.name == "generate-vpa-for-deployment") | .generate.name) = "{{request.object.metadata.name}}-vpa"' \
+  "${root}/${policies}/auto-vpa.yaml"
+for expected in "${root}"/tests/auto-vpa/deployment-owner-expected.yaml "${root}"/tests/auto-vpa/recreated/*expected*.yaml; do
+  [ "$(yq '.metadata.name' "${expected}")" = "deployment-owner" ] || continue
+  yq -i '.metadata.name = "deployment-owner-vpa"' "${expected}"
+done
+if kyverno_passes "generated object named apart from its trigger" "${root}"; then
+  expect_pass "generated object named apart from its trigger" "${root}"
+fi
+
+# A fixture whose results were all removed asserts nothing while kyverno stays green.
+root="$(copy no-results)"
+yq -i '.results = []' "${root}/tests/restrict-tenant-issuer-refs/kyverno-test.yaml"
+if kyverno_passes "no results" "${root}"; then
+  expect_fail "no results" "${root}" 1 "declares no results"
+fi
+
+# An autogen rule Kyverno never generates (the policy sets autogen-controllers: none) reads
+# as Excluded, so a skip row naming one passes kyverno and the Excluded check alike.
+root="$(copy autogen-disabled)"
+yq -i '.results += [{"policy": "prioritise-hcloud-volume-pods", "rule": "autogen-prioritise-hcloud-claims", "kind": "Pod", "resources": ["observability/no-volumes"], "result": "skip"}]' \
+  "${root}/tests/prioritise-hcloud-volume-pods/kyverno-test.yaml"
+if kyverno_passes "autogen rule the policy never generates" "${root}"; then
+  expect_fail "autogen rule the policy never generates" "${root}" 1 "prioritise-hcloud-volume-pods generates no such rule"
+fi
+
 # A fixture whose expectation is wrong still fails through kyverno itself.
 root="$(copy wrong-expectation)"
 yq -i '(.results[] | select(.result == "fail") | .result) = "pass"' \
