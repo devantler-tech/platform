@@ -6,6 +6,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly node_agent_config="${root_dir}/k8s/bases/infrastructure/controllers/velero/config-map.yaml"
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/velero/helm-release.yaml"
+readonly volume_policy="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/velero/config-map.yaml"
 readonly ci_workflow="${root_dir}/.github/workflows/ci.yaml"
 
 fail() {
@@ -55,5 +56,50 @@ readonly actual_generation
 
 [[ "${actual_generation}" == "${expected_generation}" ]] ||
   fail "the Velero node-agent rollout generation is stale: expected ${expected_generation}, found ${actual_generation}"
+
+hcloud_fsb_rules="$(yq -er '
+  .data["policy.yaml"] | from_yaml |
+  [.volumePolicies[] |
+    select(
+      .conditions.storageClass[0] == "hcloud" and
+      (.conditions.storageClass | length) == 1 and
+      .action.type == "fs-backup"
+    )
+  ] | length
+' "${volume_policy}")" || fail 'the production Velero volume policy is invalid'
+readonly hcloud_fsb_rules
+
+[[ "${hcloud_fsb_rules}" == '1' ]] ||
+  fail "the production Velero policy must contain exactly one hcloud fs-backup rule; found ${hcloud_fsb_rules}"
+
+longhorn_snapshot_rules="$(yq -er '
+  .data["policy.yaml"] | from_yaml |
+  [.volumePolicies[] |
+    select(
+      .conditions.storageClass[0] == "longhorn" and
+      (.conditions.storageClass | length) == 1 and
+      .action.type == "snapshot"
+    )
+  ] | length
+' "${volume_policy}")" || fail 'the production Velero volume policy is invalid'
+readonly longhorn_snapshot_rules
+
+[[ "${longhorn_snapshot_rules}" == '1' ]] ||
+  fail "the production Velero policy must retain exactly one Longhorn snapshot rule; found ${longhorn_snapshot_rules}"
+
+empty_dir_skip_rules="$(yq -er '
+  .data["policy.yaml"] | from_yaml |
+  [.volumePolicies[] |
+    select(
+      .conditions.volumeTypes[0] == "emptyDir" and
+      (.conditions.volumeTypes | length) == 1 and
+      .action.type == "skip"
+    )
+  ] | length
+' "${volume_policy}")" || fail 'the production Velero volume policy is invalid'
+readonly empty_dir_skip_rules
+
+[[ "${empty_dir_skip_rules}" == '1' ]] ||
+  fail "the production Velero policy must retain exactly one emptyDir skip rule; found ${empty_dir_skip_rules}"
 
 printf 'Velero data-mover resource contract is valid.\n'

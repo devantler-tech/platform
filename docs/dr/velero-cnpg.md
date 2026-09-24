@@ -90,10 +90,13 @@ The routing is declarative (by StorageClass), not per-pod annotations:
   skipped.
 - **prod only:** a Velero **Volume Policy** ConfigMap (`velero-volume-policies`,
   referenced by the schedule's `spec.resourcePolicy`) routes `storageClass:
-  [longhorn]` → the `snapshot` action. Volume policies take precedence over the
-  FSB default, so Longhorn PVCs take the CSI path and everything else falls back
-  to FSB. `snapshotMoveData: true` makes the data mover upload the CSI snapshots
-  to R2 (so they are not tied to Longhorn at restore time).
+  [longhorn]` to `snapshot` and `storageClass: [hcloud]` to `fs-backup`.
+  The hcloud rule is explicit because its CSI driver has no snapshot support;
+  relying only on the legacy fallback still allows the CSI PVC action to look
+  for a `VolumeSnapshotClass` and mark the backup `PartiallyFailed` before the
+  file-system backup completes. Unknown storage classes retain the fail-safe
+  FSB fallback. `snapshotMoveData: true` makes the Longhorn data mover upload
+  CSI snapshots to R2 (so they are not tied to Longhorn at restore time).
 - **local/CI:** no Volume Policy and no CSI (the docker `local-path` provider
   cannot snapshot) → every volume uses FSB. That is the same Kopia FSB code path
   prod uses for its hcloud/fallback volumes, so the CI restore drill still
