@@ -63,7 +63,7 @@ spec:
     - toCIDR: [169.254.169.254/32]
 EOF
 )"
-expect 'pre-#3407 policy is refused' 1 'spec 0: egressDeny rules with no egress allow rules' "$pre_3407"
+expect 'pre-#3407 policy is refused' 1 'deny-workload-instance-metadata-egress spec: egressDeny rules with no egress allow rules' "$pre_3407"
 expect 'the refusal says what to do' 1 'egress: false' "$pre_3407"
 
 explicit_false="$(fixture explicit-false <<'EOF'
@@ -145,7 +145,24 @@ specs:
       - toCIDR: [169.254.169.254/32]
 EOF
 )"
-expect 'one unguarded spec among guarded ones is refused by index' 1 'CiliumClusterwideNetworkPolicy/multi spec 1: egressDeny' "$multi_spec"
+expect 'one unguarded spec among guarded ones is refused by index' 1 'CiliumClusterwideNetworkPolicy/multi specs[1]: egressDeny' "$multi_spec"
+
+both_fields="$(fixture both-fields <<'EOF'
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata: {name: both}
+spec:
+  endpointSelector: {}
+  egressDeny:
+    - toCIDR: [169.254.169.254/32]
+specs:
+  - endpointSelector: {}
+    enableDefaultDeny: {egress: false}
+    egressDeny:
+      - toCIDR: [169.254.169.254/32]
+EOF
+)"
+expect 'a deny-only spec beside compliant specs is still checked (Cilium applies both)' 1 'CiliumClusterwideNetworkPolicy/both spec: egressDeny' "$both_fields"
 
 multi_doc="$(fixture multi-doc <<'EOF'
 apiVersion: cilium.io/v2
@@ -166,7 +183,7 @@ spec:
     - toCIDR: [169.254.169.254/32]
 EOF
 )"
-expect 'a bad policy in the second document of a stream is found' 1 'CiliumClusterwideNetworkPolicy/bad spec 0' "$multi_doc"
+expect 'a bad policy in the second document of a stream is found' 1 'CiliumClusterwideNetworkPolicy/bad spec:' "$multi_doc"
 expect 'every rendered file is checked, not just the first' 1 'CiliumClusterwideNetworkPolicy/bad' "$explicit_false" "$multi_doc"
 
 namespaced="$(fixture namespaced <<'EOF'

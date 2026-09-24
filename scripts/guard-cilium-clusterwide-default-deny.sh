@@ -99,7 +99,7 @@ done
 
 # Emits one TSV row per finding:
 #   UNDECIDABLE <policy> <reason>
-#   VIOLATION   <policy> <spec-index> <direction>
+#   VIOLATION   <policy> <spec | specs[i]> <direction>
 #   CHECKED     <policy>
 # shellcheck disable=SC2016  # $name, $api, ... are jq variables; the shell must not expand them.
 jq_program='
@@ -117,18 +117,21 @@ jq_program='
   | if $scope == "other" then empty
     elif $scope == "undecidable" then
       ["UNDECIDABLE", $name, "apiVersion \"\($api | tostring)\" does not name a cilium.io version"] | @tsv
-    elif (has("specs") | not) and (has("spec") | not) then
+    elif ((.spec // null) == null) and ((.specs // null) == null) then
       ["UNDECIDABLE", $name, "no spec or specs"] | @tsv
-    elif has("specs") and ((.specs | type) != "array") then
+    elif (.specs // null) != null and ((.specs | type) != "array") then
       ["UNDECIDABLE", $name, "specs is not a list"] | @tsv
     else
-      (if has("specs") then .specs else [.spec] end) as $specs
+      # Cilium applies the rules in BOTH fields when both are present, so check both and
+      # label each rule by where it lives: `spec`, or `specs[i]`.
+      ((if (.spec // null) != null then [{at: "spec", rule: .spec}] else [] end)
+       + ((.specs // []) | to_entries | map({at: "specs[\(.key)]", rule: .value}))) as $rules
       | (["CHECKED", $name] | @tsv),
-        ($specs | to_entries[]
-         | .key as $i
-         | .value as $spec
+        ($rules[]
+         | .at as $at
+         | .rule as $spec
          | if ($spec | type) != "object" then
-             ["UNDECIDABLE", $name, "spec \($i) is not a mapping"] | @tsv
+             ["UNDECIDABLE", $name, "\($at) is not a mapping"] | @tsv
            else
              ("ingress", "egress") as $dir
              | ($spec["\($dir)Deny"] // []) as $deny
@@ -136,7 +139,7 @@ jq_program='
              | select(($deny | length) > 0 and ($allow | length) == 0)
              | select((($spec.enableDefaultDeny // {}) | type) != "object"
                       or (($spec.enableDefaultDeny // {}) | has($dir) | not))
-             | ["VIOLATION", $name, ($i | tostring), $dir] | @tsv
+             | ["VIOLATION", $name, $at, $dir] | @tsv
            end)
     end
 '
@@ -152,7 +155,7 @@ while IFS=$'\t' read -r kind policy a b; do
     CHECKED) checked=$((checked + 1)) ;;
     VIOLATION)
       violations=$((violations + 1))
-      printf 'VIOLATION CiliumClusterwideNetworkPolicy/%s spec %s: %sDeny rules with no %s allow rules and no enableDefaultDeny.%s\n' \
+      printf 'VIOLATION CiliumClusterwideNetworkPolicy/%s %s: %sDeny rules with no %s allow rules and no enableDefaultDeny.%s\n' \
         "$policy" "$a" "$b" "$b" "$b" >&2
       ;;
     UNDECIDABLE)
