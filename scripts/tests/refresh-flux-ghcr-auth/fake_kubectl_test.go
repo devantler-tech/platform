@@ -36,6 +36,7 @@ func fakeKubectlImplementation(args []string) int {
 	switch {
 	case containsArg(args, "--raw=/readyz"):
 		appendEnvFile("OPERATION_LOG", "api-readyz\n")
+		touchMarker("api-readyz-probed")
 		if markerExists("transient-node-ready-attempt-prod-worker-1") {
 			attemptMarker := "post-reboot-api-ready-attempt"
 			attempt := parseInt(markerContent(attemptMarker), 0) + 1
@@ -1270,8 +1271,10 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid synchronization lease lookup")
 	}
+	// The outage lasts until the script's own API-recovery wait has run, so
+	// every Lease read before recovery fails, however many there are.
 	if os.Getenv("FAKE_TRANSIENT_SYNC_LEASE_API_FAIL_BEFORE_CLAIM") == "true" &&
-		!markerExists("sync-lease-api-unreachable-before-claim") {
+		!markerExists("api-readyz-probed") {
 		touchMarker("sync-lease-api-unreachable-before-claim")
 		return commandFailure(
 			54,
