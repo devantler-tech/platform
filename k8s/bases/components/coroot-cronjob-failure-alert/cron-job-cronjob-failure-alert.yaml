@@ -7,10 +7,10 @@
 # 15-minute tick; the daily Kubescape cleanup alerts on its first failed run and
 # allows 26 hours before a missing completion is stale.
 #
-# ONE FAILURE IS NOT AN ALERT. The loop is designed to absorb a single failed
-# tick (the weekly database-credential rotation produces exactly that), so this
-# fires only when the newest FAILURE_THRESHOLD finished runs ALL failed. A newer
-# success anywhere in that window clears it. successfulJobsHistoryLimit >= 1
+# FAILURE THRESHOLDS ARE PER TARGET. Umami absorbs a single failed tick (the
+# weekly database-credential rotation produces exactly that); the daily
+# Kubescape cleanup alerts on its first failure. A newer success inside a
+# target's threshold window clears its streak. successfulJobsHistoryLimit >= 1
 # keeps the newest success, so a retained failure older than it never counts.
 #
 # SILENCE IS NOT HEALTH. A CronJob whose runs never finish — suspended by hand,
@@ -80,14 +80,15 @@ spec:
               image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
               imagePullPolicy: IfNotPresent
               env:
-                # Space-separated namespace/name pairs. Each namespace needs its
-                # own Role and RoleBinding in this component.
+                # Space-separated namespace/name:failure-threshold:stale-seconds
+                # entries. Each namespace needs its own Role and RoleBinding.
                 - name: WATCH
                   value: "umami/umami-provision-tenants:2:3600 kubescape/kubescape-hostdata-cleanup:1:93600"
                 - name: FAILURE_THRESHOLD
+                  # Default for a WATCH entry without target-specific tuning.
                   value: "2"
-                # Four missed */15 ticks.
                 - name: STALE_SECONDS
+                  # Default: four missed */15 ticks.
                   value: "3600"
               command:
                 - /bin/sh
@@ -250,7 +251,7 @@ spec:
 
                   echo "Failing or stalled reconcile CronJob(s) detected:"
                   echo "$findings"
-                  text=$(printf '*Reconcile CronJob failing*\n\n%s\n\n_These loops retry on their own schedule, so one failed run is expected. Repeated failures or no finished run means the loop has stopped reconciling; read the retained Job logs before they rotate away._' "$findings")
+                  text=$(printf '*Reconcile CronJob failing*\n\n%s\n\n_Each loop has target-specific failure and completion-age limits. A finding means that limit was crossed; read the retained Job logs before they rotate away._' "$findings")
                   jq -n --arg t "$text" '{text: $t}' >/tmp/payload.json
 
                   case "$WEBHOOK_URL" in
