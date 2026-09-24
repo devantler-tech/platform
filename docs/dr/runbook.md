@@ -313,11 +313,13 @@ kubectl cnpg restore <new-cluster-name> \
 >    ```
 >
 > 2. **Restore-side capabilities.** The destination Velero needs the **node-agent**
->    (DaemonSet) to rehydrate Kopia data — both for FSB backups (openbao/hcloud)
->    and for data-mover (Longhorn CSI) backups. For the data-mover backups it
->    also needs `features: EnableCSI`; the target does **not** need Longhorn or
->    any CSI-snapshot support of its own (the data is replayed into a fresh PVC
->    by Kopia, per Velero's CSI snapshot data-movement restore).
+>    (DaemonSet) to rehydrate Kopia data from FSB and Longhorn CSI data-mover
+>    backups. For the data-mover backups it also needs `features: EnableCSI`;
+>    the target does **not** need Longhorn or any CSI-snapshot support of its own
+>    (the data is replayed into a fresh PVC by Kopia). OpenBao's hcloud-backed
+>    raft-snapshot PVC is outside that path: `vault-snapshot-init` restores its
+>    independently mirrored snapshot from R2 as documented in the OpenBao
+>    recovery scenario.
 
 ---
 

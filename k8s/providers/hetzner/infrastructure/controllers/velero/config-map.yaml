@@ -20,16 +20,17 @@ data:
   policy.yaml: |
     version: v1
     volumePolicies:
-      # Hetzner block-storage PVCs -> Kopia file-system backup. hcloud-csi has
-      # no snapshot capability or matching VolumeSnapshotClass, so leaving this
-      # to the legacy fallback still lets Velero's CSI PVC action run first and
-      # marks an otherwise complete backup PartiallyFailed. Make the intended
-      # method explicit so the resource policy wins before that action.
+      # Hetzner block-storage volume data -> skip. The only hcloud PVC is
+      # openbao/vault-snapshots, whose CronJob mirrors every raft snapshot
+      # directly to R2. It is unmounted during Velero's 02:17 window, so FSB
+      # cannot read it; hcloud-csi also has no snapshot capability or matching
+      # VolumeSnapshotClass. The contract test refuses another hcloud PVC until
+      # its backup path is reviewed instead of silently inheriting this skip.
       - conditions:
           storageClass:
             - hcloud
         action:
-          type: fs-backup
+          type: skip
       # Longhorn PVCs → CSI snapshot. The base schedule's snapshotMoveData:true
       # makes Velero's data mover (Kopia, via the node-agent) copy the snapshot
       # to the R2 BackupStorageLocation, so it is restorable on another cluster/
