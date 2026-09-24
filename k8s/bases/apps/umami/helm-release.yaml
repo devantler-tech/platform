@@ -15,6 +15,9 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: umami
+  # Flagger copies the source strategy only when first creating the primary.
+  # The propagate-reloader-to-flagger-primary policy also retrofits an
+  # existing primary so later promotions keep the no-surge rollout.
   postRenderers:
     # Replicas are deliberately NOT pinned here: the KEDA ScaledObject
     # (scaled-object.yaml) owns them through the Canary's autoscalerRef — the
@@ -41,10 +44,9 @@ spec:
               - op: add
                 path: /metadata/annotations/secret.reloader.stakater.com~1reload
                 value: umami-db-rotated
-              # Flagger copies the source strategy only when creating the
-              # primary. The propagate-reloader-to-flagger-primary policy also
-              # retrofits an existing primary. Retire one old pod before
-              # scheduling its replacement while one primary keeps serving.
+              # Flagger copies the source Deployment strategy to the serving
+              # primary. Retire one old pod before scheduling its replacement
+              # while keeping at least one primary serving.
               - op: add
                 path: /spec/strategy
                 value:
