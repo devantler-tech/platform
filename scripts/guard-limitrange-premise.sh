@@ -23,6 +23,14 @@
 # provider that actually ships that file and asserts that the same provider also
 # ships a LimitRange into the annotated resource's namespace.
 #
+# The same premise written as a trivy disposition is checked the same way. A
+# `.trivyignore.yaml` entry opts in by opening its statement with the literal marker
+# `[limitrange-premise]`, and every workload document in every file its `paths` globs
+# match must pass the check above. A marker rather than the annotation's regex: a
+# statement is a paragraph that may discuss LimitRanges without resting on one
+# (KSV-0039's does), so matching its prose would demand a LimitRange for files the
+# premise never covered.
+#
 # WHY REACHABILITY RATHER THAN A RENDER. `kustomize build` is the more direct
 # question, but many roots here pull remote Helm charts and OCI bases, so a
 # render-based guard would need the network and would exit 2 — "could not check" —
@@ -30,7 +38,10 @@
 # statically: it resolves `resources:` and `components:` exactly as the overlay
 # declares them, which is the precise step the bad inference skipped.
 #
-# Usage: guard-limitrange-premise.sh [root]        (default: k8s)
+# Usage: guard-limitrange-premise.sh [root] [trivyignore]
+#        root defaults to k8s; trivyignore defaults to .trivyignore.yaml beside root,
+#        and its `paths` resolve against its own directory. A defaulted trivyignore
+#        that does not exist is reported and skipped; a named one must exist.
 # Exit:  0 every LimitRange-premised suppression is in an overlay that ships one
 #        1 at least one is not (each is named, with the overlay that lacks it)
 #        2 the guard could not check — missing tool, unreadable root, parse failure
@@ -50,6 +61,13 @@ die() {
 command -v yq >/dev/null 2>&1 || die 'yq is required but not on PATH'
 [ -d "$root" ] || die "not a directory: $root"
 [ -d "$root/providers" ] || die "no providers directory under $root"
+
+if [ -n "${2-}" ]; then
+  trivyignore=$2
+  [ -f "$trivyignore" ] || die "trivyignore not found: $trivyignore"
+else
+  trivyignore="$(dirname "$root")/.trivyignore.yaml"
+fi
 
 # Resolve a `resources:`/`components:` entry against the directory of the
 # kustomization that named it. Entries that leave the tree (remote bases, OCI, URLs)
@@ -287,6 +305,41 @@ EOF
 failures=0
 checked=0
 
+# Check one premised suppression: every provider shipping <file> must ship a
+# CPU-defaulting LimitRange into <ns>. <what> names the suppression in messages.
+check_premise() { # <file> <what> <ns>
+  local file=$1 what=$2 ns=$3 shipped_by=0 p name
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    name=$(basename "$p")
+    grep -qxF -- "$file" "$prov_files_dir/$name.files" || continue
+    shipped_by=$((shipped_by + 1))
+    checked=$((checked + 1))
+    if grep -qxF -- "$ns" "$prov_files_dir/$name.ns"; then
+      printf 'ok   %s — provider %s ships a CPU-defaulting LimitRange into %s (%s)\n' "$file" "$name" "$ns" "$what"
+    else
+      printf 'FAIL %s (%s)\n' "$file" "$what" >&2
+      printf '     its suppression rests on a LimitRange applying at admission, but provider\n' >&2
+      printf '     %s ships NO LimitRange supplying a default CPU limit into\n' "$name" >&2
+      printf '     namespace %s. A LimitRange that sets only defaultRequest, only max,\n' "$ns" >&2
+      printf '     or only a memory default does not supply one.\n' >&2
+      printf '     Fix: add (or extend) a Container-type default.cpu in that overlay'"'"'s\n' >&2
+      printf '     limit-ranges base, or drop the suppression and state the limit on the workload.\n' >&2
+      failures=$((failures + 1))
+    fi
+  done <<EOF
+$providers
+EOF
+
+  if [ "$shipped_by" -eq 0 ]; then
+    # An unattributable premised suppression is NOT benign. Either the walk failed
+    # to reach a file that is really shipped, or the suppression is dead code — and
+    # from here those are indistinguishable. Both mean the premise went unchecked,
+    # which is precisely the silent pass this guard exists to refuse.
+    die "$file ($what) carries a LimitRange-premised suppression, but no provider overlay reaches it"
+  fi
+}
+
 while IFS= read -r file; do
   [ -n "$file" ] || continue
   # ONE RECORD PER YAML DOCUMENT, pairing that document's namespace with that document's
@@ -311,43 +364,108 @@ while IFS= read -r file; do
     printf '%s' "$values" | grep -qiE "$premise_re" || continue
     [ -n "$ns" ] ||
       die "$file document $doc carries a LimitRange-premised skip but states no namespace"
-
-    shipped_by=0
-    while IFS= read -r p; do
-      [ -n "$p" ] || continue
-      name=$(basename "$p")
-      grep -qxF -- "$file" "$prov_files_dir/$name.files" || continue
-      shipped_by=$((shipped_by + 1))
-      checked=$((checked + 1))
-      if grep -qxF -- "$ns" "$prov_files_dir/$name.ns"; then
-        printf 'ok   %s — provider %s ships a CPU-defaulting LimitRange into %s\n' "$file" "$name" "$ns"
-      else
-        printf 'FAIL %s\n' "$file" >&2
-        printf '     its skip reason rests on a LimitRange applying at admission, but provider\n' >&2
-        printf '     %s ships NO LimitRange supplying a default CPU limit into\n' "$name" >&2
-        printf '     namespace %s. A LimitRange that sets only defaultRequest, only max,\n' "$ns" >&2
-        printf '     or only a memory default does not supply one.\n' >&2
-        printf '     Fix: add (or extend) a Container-type default.cpu in that overlay'"'"'s\n' >&2
-        printf '     limit-ranges base, or drop the skip and state the limit on the workload.\n' >&2
-        failures=$((failures + 1))
-      fi
-    done <<EOF
-$providers
-EOF
-
-    if [ "$shipped_by" -eq 0 ]; then
-      # An unattributable premised suppression is NOT benign. Either the walk failed
-      # to reach a file that is really shipped, or the suppression is dead code — and
-      # from here those are indistinguishable. Both mean the premise went unchecked,
-      # which is precisely the silent pass this guard exists to refuse.
-      die "$file document $doc carries a LimitRange-premised skip, but no provider overlay reaches it"
-    fi
+    check_premise "$file" "checkov skip, document $doc" "$ns"
   done <<EOF
 $records
 EOF
 done <<EOF
 $annotated
 EOF
+
+# glob_walk <prefix> <segment>...: prints the files under <prefix> that the remaining `/`-separated
+# glob segments match. Each ordinary segment is matched by bash's own globbing; a `**` segment spans
+# zero or more directories, as globstar does. Bash 3.2, still macOS's system bash, has no globstar,
+# so one walker serves every version rather than two matchers that could disagree.
+glob_walk() {
+  local prefix="$1" segment="$2" m d
+  shift 2
+  if [ "$segment" = '**' ]; then
+    # A trailing `**` matches every file below, like `**/*`.
+    [ "$#" -gt 0 ] || set -- '*'
+    glob_walk "$prefix" "$@"
+    for d in "$prefix"*/; do
+      # globstar does not descend through a symlinked directory.
+      [ -L "${d%/}" ] || glob_walk "$d" '**' "$@"
+    done
+    return 0
+  fi
+  for m in "$prefix"$segment; do
+    if [ "$#" -eq 0 ]; then
+      [ -f "$m" ] && printf '%s\n' "$m"
+    elif [ -d "$m" ]; then
+      glob_walk "$m/" "$@"
+    fi
+  done
+  return 0
+}
+
+# Files a trivy `paths` glob matches, relative to <dir>, one per line.
+expand_glob() { # <dir> <pattern>
+  (
+    cd "$1" || exit 2
+    shopt -s nullglob
+    IFS=/ read -r -a segments <<<"$2"
+    [ "${#segments[@]}" -gt 0 ] || exit 0
+    glob_walk '' "${segments[@]}"
+  )
+}
+
+# The same premise as a trivy disposition, opted in by an explicit statement marker.
+trivy_marker='[limitrange-premise]'
+# Kinds whose documents carry containers, and so a CPU limit a LimitRange can default.
+workload_filter='.kind == "Pod" or .kind == "Deployment" or .kind == "StatefulSet" or .kind == "DaemonSet" or .kind == "ReplicaSet" or .kind == "ReplicationController" or .kind == "Job" or .kind == "CronJob"'
+
+if [ ! -f "$trivyignore" ]; then
+  printf 'limitrange premise: no %s beside %s; no trivy disposition checked\n' "$trivyignore" "$root"
+else
+  tdir=$(dirname "$trivyignore")
+  # One line per entry: id, then its paths joined by tabs. `@tsv` escapes a tab or
+  # newline inside a value, so an entry is always one line.
+  # The marker must OPEN the statement: prose that merely names it, as this repository's own
+  # statements do when explaining it, would otherwise opt the entry in.
+  entries=$(yq -r '.misconfigurations // [] | .[] | select((.statement // "") | test("^\\[limitrange-premise\\]")) | [.id] + (.paths // []) | @tsv' \
+    "$trivyignore" 2>/dev/null) || die "could not read $trivyignore"
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    id=${entry%%$'\t'*}
+    [ "$id" != "$entry" ] ||
+      die "$trivyignore entry $id carries $trivy_marker but no paths; a premise holds per namespace, so the entry must name the files it covers"
+    patterns=${entry#*$'\t'}
+    workloads=0
+    while IFS= read -r pattern; do
+      [ -n "$pattern" ] || continue
+      # Expand the glob the way trivy scopes the entry, relative to the ignore file.
+      matches=$(expand_glob "$tdir" "$pattern") || die "could not expand $pattern from $tdir"
+      [ -n "$matches" ] ||
+        die "$trivyignore entry $id path $pattern matches no file, so its premise cannot be checked"
+      while IFS= read -r match; do
+        case $match in *.yaml | *.yml) ;; *) continue ;; esac
+        file=$(canonicalize "$tdir" "$match")
+        namespaces=$(yq -r "select($workload_filter) | (.metadata.namespace // \"\")" "$file" 2>/dev/null) ||
+          die "could not read $file for $trivyignore entry $id"
+        # A file with no workload has no container for the check to fire on, so the entry
+        # suppresses nothing there.
+        [ -n "$namespaces" ] || continue
+        while IFS= read -r ns; do
+          workloads=$((workloads + 1))
+          [ -n "$ns" ] ||
+            die "$file carries a workload without a namespace for $trivyignore entry $id"
+          check_premise "$file" "trivy $id" "$ns"
+        done <<EOF
+$namespaces
+EOF
+      done <<EOF
+$matches
+EOF
+    done <<EOF
+$(printf '%s' "$patterns" | tr '\t' '\n')
+EOF
+    [ "$workloads" -gt 0 ] ||
+      die "$trivyignore entry $id matches no workload, so there is no namespace to check its premise against"
+  done <<EOF
+$entries
+EOF
+fi
 
 if [ "$checked" -eq 0 ]; then
   # No premised suppression anywhere is a legitimately clean tree, but it is also
