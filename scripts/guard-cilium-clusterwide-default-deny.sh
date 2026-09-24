@@ -20,9 +20,12 @@
 # A direction with allow rules is left alone: default-deny there is the ordinary
 # allow-list meaning of the policy, not a side effect.
 #
-# ⚠️ SCOPE: this reads the Kustomize output, which contains a HelmRelease but not
-# the resources its chart installs. A clusterwide policy shipped by a chart is not
-# checked here yet (#4139).
+# SCOPE: this reads the Kustomize output, which contains a HelmRelease but not
+# the resources its chart installs. Chart-rendered clusterwide policies are
+# checked by the `require-explicit-clusterwide-default-deny` rule in
+# scripts/tests/production-authorization-rules.yaml, which `ksail workload
+# validate` evaluates against every rendered document, chart children included
+# (#4139).
 #
 # Usage:
 #   guard-cilium-clusterwide-default-deny.sh <repo-root>
