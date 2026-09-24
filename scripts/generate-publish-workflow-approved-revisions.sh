@@ -149,22 +149,37 @@ signer_for_tag() {
     refuse "$repo: $tag did not resolve to a commit (the read failed after retries, or the tag is gone)"
     return 1
   }
-  runs="$(gh_retry api --method GET "repos/devantler-tech/${repo}/actions/runs" \
-    --raw-field "branch=${tag}" --raw-field event=push --raw-field per_page=100)" || {
-    refuse "$repo: the Actions runs read for $tag failed after retries; nothing is known about its publication"
-    return 1
-  }
-  shas="$(printf '%s' "$runs" | jq -r --arg t "$tag" --arg s "$sha" --arg w "$workflow" '
-    [.workflow_runs[]
-     | select(.head_branch == $t and .path == ".github/workflows/cd.yaml"
-              and .head_sha == $s and .conclusion == "success")
-     | .referenced_workflows[]?
-     | select(.path | startswith("devantler-tech/actions/.github/workflows/" + $w + ".yaml@"))
-     | .sha] | unique | .[]' 2>/dev/null)" || {
-    refuse "$repo: the Actions runs listing for $tag was not parseable"
-    return 1
-  }
-  count="$(printf '%s' "$shas" | grep -c . || true)"
+  # The tag-filtered listing has been observed to come back EMPTY for a tag whose successful
+  # run exists, and to list it again a minute later (#4128). So a listing without exactly one
+  # signer is read again, with backoff, before it counts as absence. Every read applies the
+  # same selection; a signer is only ever taken from a listing that shows exactly one.
+  local attempt=1 attempts=3
+  while :; do
+    runs="$(gh_retry api --method GET "repos/devantler-tech/${repo}/actions/runs" \
+      --raw-field "branch=${tag}" --raw-field event=push --raw-field per_page=100)" || {
+      refuse "$repo: the Actions runs read for $tag failed after retries; nothing is known about its publication"
+      return 1
+    }
+    shas="$(printf '%s' "$runs" | jq -r --arg t "$tag" --arg s "$sha" --arg w "$workflow" '
+      [.workflow_runs[]
+       | select(.head_branch == $t and .path == ".github/workflows/cd.yaml"
+                and .head_sha == $s and .conclusion == "success")
+       | .referenced_workflows[]?
+       | select(.path | startswith("devantler-tech/actions/.github/workflows/" + $w + ".yaml@"))
+       | .sha] | unique | .[]' 2>/dev/null)" || {
+      refuse "$repo: the Actions runs listing for $tag was not parseable"
+      return 1
+    }
+    count="$(printf '%s' "$shas" | grep -c . || true)"
+    if [ "$count" -eq 1 ] && is_sha "$shas"; then
+      # Logged so a recovered transient stays countable instead of silently disappearing.
+      [ "$attempt" -eq 1 ] || refuse "$repo: runs listing for $tag resolved on read $attempt of $attempts"
+      break
+    fi
+    [ "$attempt" -lt "$attempts" ] || break
+    sleep $((attempt * 15))
+    attempt=$((attempt + 1))
+  done
   if [ "$count" -ne 1 ] || ! is_sha "$shas"; then
     summary="$(printf '%s' "$runs" | jq -r --arg t "$tag" --arg s "$sha" '
       [.workflow_runs[] | select(.head_branch == $t)] as $b
@@ -179,7 +194,7 @@ signer_for_tag() {
       [.workflow_runs[] | select(.head_branch == $t and .path == ".github/workflows/cd.yaml"
         and .head_sha == $s) | (.conclusion // "pending")] | join(",")' 2>/dev/null)" ||
       conclusions='?'
-    refuse "$repo: runs listing for $tag at ${sha:0:12}: $summary signer_refs=$count conclusions=${conclusions:--}"
+    refuse "$repo: runs listing for $tag at ${sha:0:12} after $attempts reads: $summary signer_refs=$count conclusions=${conclusions:--}"
     return 1
   fi
   printf '%s\n' "$shas"

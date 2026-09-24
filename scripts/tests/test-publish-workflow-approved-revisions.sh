@@ -324,24 +324,40 @@ fi
 # signed were indistinguishable, so the cause could not be established. These cases drive
 # the real `signer_for_tag` against a stubbed `gh`, in a separate process because sourcing
 # the generator declares read-only names this test also uses.
-make_signer_driver() { # <runs-fixture|FAIL>
-  local path="$WORK/signer-driver-$RANDOM.sh"
+#
+# The driver serves its fixtures in order, one per runs read, repeating the last; it counts
+# the reads in "<driver>.reads" so a case can assert how many listings were taken (#4128).
+make_signer_driver() { # <runs-fixture|FAIL>...
+  local path="$WORK/signer-driver-$RANDOM.sh" fixtures="$*"
   cat >"$path" <<DRIVER
 #!/usr/bin/env bash
 set -euo pipefail
 source "$SCRIPT"
-sleep() { :; }  # gh_retry backs off between attempts; the stub fails deterministically
+sleep() { :; }  # both lookups back off between reads; the stubs answer deterministically
+reads_file='$path.reads'
+printf '0' >"\$reads_file"
 gh() {
   case "\$*" in
     *'/commits/v9.9.9'*) printf '%s' '$SHA_A' ;;
     *'/actions/runs'*)
-      [ "$1" != FAIL ] || return 1
-      cat '$1' ;;
+      local n fixture
+      n=\$((\$(cat "\$reads_file") + 1))
+      printf '%s' "\$n" >"\$reads_file"
+      set -- $fixtures
+      [ "\$n" -le "\$#" ] && fixture="\${!n}" || fixture="\${!#}"
+      [ "\$fixture" != FAIL ] || return 1
+      cat "\$fixture" ;;
     *) return 1 ;;
   esac
 }
 signer_for_tag consumer-x publish-manifests v9.9.9
 DRIVER
+  printf '%s\n' "$path"
+}
+
+empty_fixture() {
+  local path="$WORK/runs-empty.json"
+  printf '%s\n' '{"total_count": 0, "workflow_runs": []}' >"$path"
   printf '%s\n' "$path"
 }
 
@@ -394,6 +410,28 @@ elif grep -q 'at_commit=1 successful=0 signer_refs=0 conclusions=failure' "$WORK
   pass 'a failed CD run at the tag commit is refused with its conclusion'
 else
   fail 'a failed CD run did not report its conclusion'; cat "$WORK/signer-concl.err" >&2
+fi
+
+# A transiently EMPTY listing is read again, and the run it then shows is taken (#4128).
+driver="$(make_signer_driver "$(empty_fixture)" "$(runs_fixture ok "$SHA_A" success)")"
+if out="$(bash "$driver" 2>"$WORK/signer-late.err")" && [ "$out" = "$SHA_B" ] &&
+  [ "$(cat "$driver.reads")" = 2 ] && grep -q 'resolved on read 2 of 3' "$WORK/signer-late.err"; then
+  pass 'a transiently empty listing is re-read and the late run resolves, logged'
+else
+  fail "a transiently empty listing did not recover (out='${out:-}', reads=$(cat "$driver.reads"))"
+  cat "$WORK/signer-late.err" >&2
+fi
+
+# A listing that stays empty is still refused, after exactly the bounded number of reads.
+driver="$(make_signer_driver "$(empty_fixture)")"
+if bash "$driver" >/dev/null 2>"$WORK/signer-empty.err"; then
+  fail 'a persistently empty listing resolved a signer'
+elif [ "$(cat "$driver.reads")" = 3 ] &&
+  grep -q 'after 3 reads: total_count=0 returned=0' "$WORK/signer-empty.err"; then
+  pass 'a persistently empty listing is refused after 3 reads'
+else
+  fail "a persistently empty listing was not refused after 3 reads (reads=$(cat "$driver.reads"))"
+  cat "$WORK/signer-empty.err" >&2
 fi
 
 if [ "$failures" -gt 0 ]; then
