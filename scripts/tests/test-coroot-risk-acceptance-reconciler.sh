@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 # Contract for declarative Coroot risk acceptance. The allowlist is reviewed as
-# GitOps data; the reconciler may dismiss only declared exact pairs or the one
-# anchored node-scoped Longhorn pattern, reactivate every undeclared dismissal,
+# GitOps data; the reconciler may dismiss only declared exact pairs or the two
+# anchored generated-name patterns, reactivate every undeclared dismissal,
 # and correct a declared pair whose reason drifted. Other new risks stay active.
 
 set -euo pipefail
@@ -39,7 +39,7 @@ acceptances_file="${work_root}/risks.json"
 yq e -r '.data."risks.json"' "${acceptances_manifest}" >"${acceptances_file}"
 
 jq -e '
-  type == "array" and length == 38 and
+  type == "array" and length == 39 and
   all(.[] | select(has("application"));
     (.application | type == "string") and
     (.application | split(":") | length == 3) and
@@ -47,14 +47,17 @@ jq -e '
     (.type | IN("single-instance-app", "unreplicated-database")) and
     (.reason | startswith("platform#3812: "))
   ) and
-  ([.[] | select(has("application_pattern"))] | length == 1) and
+  ([.[] | select(has("application_pattern"))] | length == 2) and
   any(.[]; .application_pattern? == "^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}\\z" and
     .category == "Availability" and .type == "single-instance-app" and
     (.reason | startswith("platform#4117: "))) and
+  any(.[]; .application_pattern? == "^crossplane-system:Deployment:provider-upjet-github-[0-9a-f]{12}\\z" and
+    .category == "Availability" and .type == "single-instance-app" and
+    (.reason | startswith("platform#4145: "))) and
   ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | length) ==
     ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | unique | length)
 ' "${acceptances_file}" >/dev/null ||
-  fail 'the availability acceptance allowlist must contain exact entries and one narrow Longhorn pattern'
+  fail 'the availability acceptance allowlist must contain exact entries and two narrow generated-name patterns'
 
 expected_applications=(
   'actual-budget:Deployment:actual-budget-actualbudget'
@@ -178,6 +181,15 @@ setup_scenario() {
       {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-not-a-hash",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-9c4995fb1b807430b1d54d466d640e9f",key:{category:"Security",type:"single-instance-app"}}
     ]}}' >"${dir}/risks.json"
+  elif [ "${mode}" = 'github-provider' ]; then
+    jq -n '{data:{risks:[
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-2801aa72907d",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:other:Deployment:provider-upjet-github-2801aa72907d",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:StatefulSet:provider-upjet-github-2801aa72907d",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-not-a-revision",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-unifi-2801aa72907d",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-2801aa72907d",key:{category:"Security",type:"single-instance-app"}}
+    ]}}' >"${dir}/risks.json"
   elif [ "${mode}" = 'retired-pattern' ]; then
     jq -n '{data:{risks:[
       {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-9c4995fb1b807430b1d54d466d640e9f",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:"platform#4117: previously accepted"}}
@@ -254,6 +266,17 @@ jq -s -e '
   (.[0].url | contains("longhorn-system%3AInstanceManager%3Ainstance-manager-9c4995fb1b807430b1d54d466d640e9f"))
 ' "${longhorn_dir}/posts.jsonl" >/dev/null ||
   fail 'a new node-scoped Longhorn instance manager must be accepted without matching lookalikes'
+
+github_provider_dir="$(setup_scenario github-provider github-provider)"
+run_scenario "${github_provider_dir}" >/dev/null
+jq -s -e '
+  length == 1 and
+  .[0].payload.action == "dismiss" and
+  .[0].payload.key == {category:"Availability",type:"single-instance-app"} and
+  (.[0].payload.reason | startswith("platform#4145: ")) and
+  (.[0].url | contains("crossplane-system%3ADeployment%3Aprovider-upjet-github-2801aa72907d"))
+' "${github_provider_dir}/posts.jsonl" >/dev/null ||
+  fail 'a rotated GitHub provider revision must be accepted without matching lookalikes'
 
 broad_file="${work_root}/broad-risks.json"
 jq 'map(if has("application_pattern") then .application_pattern = ".*" else . end)' \
