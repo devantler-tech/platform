@@ -998,7 +998,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.184.23"
+          KSAIL_VERSION: "7.185.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1935,7 +1935,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.184.23"
+          KSAIL_VERSION: "7.185.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2327,7 +2327,7 @@ jobs:
           persist-credentials: false
 
       - name: 🏷️ Validate naming conventions
-        uses: devantler-tech/actions/validate-naming@be13607c908d9df5e392a8acd5d13fcf358202df # v13.7.0
+        uses: devantler-tech/actions/validate-naming@da153eb43b8333f13094abb151a48dc11e431988 # v13.7.4
         with:
           enabled: "true"
 
@@ -2689,7 +2689,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.184.23"
+          KSAIL_VERSION: "7.185.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2747,7 +2747,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@7a19c1d0f32e5a99a38d0a4106f1b2cbd76c99e4 # v13.6.7
+        uses: devantler-tech/actions/aggregate-job-checks@da153eb43b8333f13094abb151a48dc11e431988 # v13.7.4
         with:
           job-results: >-
             ${{ needs.changes.result }}
