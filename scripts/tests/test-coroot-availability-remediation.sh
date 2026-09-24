@@ -38,10 +38,11 @@ yq e -e '
       .minDomains == 2 and
       .whenUnsatisfiable == "DoNotSchedule" and
       .labelSelector.matchLabels."app.kubernetes.io/name" == "umami-primary" and
-      (.matchLabelKeys // [] | length) == 0)
+      .matchLabelKeys[0] == "pod-template-hash" and
+      .matchLabelKeys[1] == null)
   ] | length == 1
 ' "${umami_release}" >/dev/null ||
-  fail 'Umami serving replicas need a hard two-domain hostname spread across primary rollout revisions'
+  fail 'Umami serving replicas need a hard two-domain hostname spread per primary revision'
 
 umami_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "umami-umami") | .patch' "${umami_release}")"
 printf '%s\n' "${umami_patch}" | yq e -e '

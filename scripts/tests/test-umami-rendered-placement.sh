@@ -49,9 +49,9 @@ yq ea -o=json '[.]' "${scratch}/resources.yaml" | jq -e '
       .minDomains == 2 and
       .whenUnsatisfiable == "DoNotSchedule" and
       .labelSelector.matchLabels["app.kubernetes.io/name"] == "umami-primary" and
-      (.matchLabelKeys // []) == []
+      (.matchLabelKeys // []) == ["pod-template-hash"]
     )] | length) == 1
   )] == [true]
-' >/dev/null || fail 'rendered Umami source must preserve primary spread and no-surge rollout'
+' >/dev/null || fail 'rendered Umami source must spread each primary revision and preserve no-surge rollout'
 
-printf 'PASS: rendered Umami source keeps two-domain primary spread and no-surge rollout\n'
+printf 'PASS: rendered Umami source keeps per-revision primary spread and no-surge rollout\n'

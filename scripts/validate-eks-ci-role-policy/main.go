@@ -3183,13 +3183,13 @@ const (
 // removed entries. This change sets two replicas, cross-node placement, a
 // disruption budget and a rollout strategy; it grants no new permissions.
 // Re-approved for Umami serving-replica spread (#4103), against main
-// 214ce284. The checksum-verified kubectl v1.36.2 approval-base diagnostic
+// 13d4730b. The checksum-verified kubectl v1.36.2 approval-base diagnostic
 // reported only changed HelmRelease umami/umami, with no added or removed
 // surface entries. The source delta changes the hostname spread constraint,
-// pod-label selector, two-domain floor, and no-surge replacement strategy;
-// old and new primary pods now share one spread calculation. No RBAC, service
-// account, AWS identity, or permission is granted.
-const expectedRenderedSurfaceSHA = "a48097a2f685ffccaf71a47f4bcb71b64cebaf54aebca8122aeb76e9dfb04f6b"
+// pod-label selector, per-revision spread key, two-domain floor, and no-surge
+// replacement strategy. No RBAC, service account, AWS identity, or permission
+// is granted.
+const expectedRenderedSurfaceSHA = "7629dba55dbd55c82f198808d79379dacc6f117b57c1a82cd896f75f72f9047a"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.

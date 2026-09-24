@@ -42,9 +42,8 @@ spec:
                 path: /metadata/annotations/secret.reloader.stakater.com~1reload
                 value: umami-db-rotated
               # Flagger copies the source Deployment strategy to the serving
-              # primary. Retire one old pod before scheduling its replacement so
-              # the spread constraint can count both rollout revisions without
-              # deadlocking on a two-worker cluster. Keep one primary serving.
+              # primary. Retire one old pod before scheduling its replacement
+              # while keeping at least one primary serving.
               - op: add
                 path: /spec/strategy
                 value:
@@ -74,9 +73,11 @@ spec:
     # label umami-primary from that selector. Flagger rewrites a topology
     # selector only when its value equals the source Deployment name
     # (umami-umami), so this already-primary value stays unchanged.
-    # Count old and new primary pods together during promotion. The no-surge,
-    # one-unavailable strategy above frees a node before placing each new pod;
-    # excluding the old revision here could put all serving pods on one worker.
+    # Count only the incoming ReplicaSet revision. A terminating old pod can
+    # remain in scheduler accounting after the Deployment starts its replacement;
+    # counting it could make two new pods appear balanced until it disappears,
+    # leaving the new revision co-located. The Deployment controller adds
+    # pod-template-hash to every pod in a revision.
     topologySpreadConstraints:
       - maxSkew: 1
         # With only one eligible worker, the second primary must wait instead
@@ -87,6 +88,8 @@ spec:
         labelSelector:
           matchLabels:
             app.kubernetes.io/name: umami-primary
+        matchLabelKeys:
+          - pod-template-hash
     serviceAccount:
       # Umami needs no Kubernetes API access.
       automountServiceAccountToken: false
