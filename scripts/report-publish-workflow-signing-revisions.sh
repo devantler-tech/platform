@@ -471,11 +471,23 @@ tag_was_published() {
   # Only bounded, escaped identifiers and fixed classifications/counts enter the log.
   # Response bodies, arbitrary fields and parser/API errors never become diagnostics.
   printf -v diagnostic 'publication-evidence repo=%q tag=%q' "${repo:0:128}" "${tag:0:128}"
-  if ! runs="$(gh_retry api --method GET "repos/devantler-tech/${repo}/actions/runs" \
-    --raw-field "branch=${tag}" --raw-field event=push --raw-field per_page=100)"; then
-    printf '%s response=query-failed classification=query-unknown\n' "$diagnostic" >&2
-    return 3
-  fi
+  local attempt
+  for attempt in 1 2; do
+    if ! runs="$(gh_retry api --method GET "repos/devantler-tech/${repo}/actions/runs" \
+      --raw-field "branch=${tag}" --raw-field event=push --raw-field per_page=100)"; then
+      printf '%s response=query-failed classification=query-unknown\n' "$diagnostic" >&2
+      return 3
+    fi
+    # GitHub returned an empty complete list for a tag whose successful run was
+    # visible both before and after that request. Confirm this one narrow absence
+    # once; malformed or incomplete responses still reach the strict parser below.
+    if [ "$attempt" -eq 1 ] && printf '%s' "$runs" |
+      jq -es 'length == 1 and (.[0] | type == "object" and .total_count == 0 and .workflow_runs == [])' >/dev/null 2>&1; then
+      sleep 1
+      continue
+    fi
+    break
+  done
   # A successful HTTP read can still be malformed or incomplete. In a jq|grep condition,
   # parser errors used to mean "unpublished", while .workflow_runs[] also accepted object
   # values as runs. Validate one document and every classification field before selecting.
@@ -505,14 +517,21 @@ tag_was_published() {
     printf '%s response=invalid classification=query-unknown\n' "$diagnostic" >&2
     return 3
   fi
-  local complete total returned matching successful_current successful_other response=complete classification rc
+  local complete total returned matching successful_current successful_other response=complete classification rc current_sha
   IFS=$'\t' read -r complete total returned matching successful_current successful_other <<<"$summary"
   if [ "$complete" != true ]; then
     response=incomplete classification=query-unknown rc=3
-  # `head_sha` binds publication to the tag current commit. Preserve successful current
-  # publication precedence; only a success at another commit is a moved-tag anomaly.
+  # `head_sha` binds publication to the tag commit. A tag can move while an empty
+  # Actions response is being confirmed, so verify it still points at that commit
+  # before accepting a successful run.
   elif [ "$successful_current" -gt 0 ]; then
-    classification=published rc=0
+    if ! current_sha="$(tag_commit "$repo" "$tag")"; then
+      response=tag-commit-failed classification=query-unknown rc=3
+    elif [ "$current_sha" != "$sha" ]; then
+      classification=moved-tag rc=2
+    else
+      classification=published rc=0
+    fi
   elif [ "$successful_other" -gt 0 ]; then
     classification=moved-tag rc=2
   else
