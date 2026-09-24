@@ -86,7 +86,7 @@ expected_applications=(
   'kubescape:Deployment:operator'
   'cnpg-system:Deployment:plugin-barman-cloud'
   'crossplane-system:Deployment:provider-aws-iam-87e81d392ac1'
-  'crossplane-system:Deployment:provider-upjet-github-2516bc50dd55'
+  'crossplane-system:Deployment:provider-upjet-github-2801aa72907d'
   'crossplane-system:Deployment:provider-upjet-unifi-5523eabd691d'
   'flux-system:Deployment:source-controller'
   'kubescape:Deployment:storage'
