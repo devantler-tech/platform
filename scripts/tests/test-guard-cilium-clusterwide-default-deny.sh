@@ -247,6 +247,64 @@ EOF
 )"
 expect 'unparseable YAML is cannot-check' 2 'could not parse' "$broken"
 
+# Repository mode derives its layers from the Flux wiring, so a layer the guard was
+# never told about is still checked. The synthetic tree below wires ONE cluster to a
+# layer path that exists nowhere in the real repository; the pre-#3407 policy there
+# must be refused (1), not missed.
+# expect_tree <name> <expected-exit> <stderr-substring> <tree>
+expect_tree() {
+  local name="$1" want="$2" needle="$3" tree="$4" got=0
+  bash "$guard" "$tree" >"${tmp_dir}/out" 2>"${tmp_dir}/err" || got=$?
+  assertions=$((assertions + 2))
+  if [ "$got" -ne "$want" ]; then
+    failures=$((failures + 1))
+    printf 'FAIL %s: exit %s, want %s\n' "$name" "$got" "$want" >&2
+    sed 's/^/  | /' "${tmp_dir}/err" >&2
+  fi
+  if ! grep -qF -- "$needle" "${tmp_dir}/err"; then
+    failures=$((failures + 1))
+    printf 'FAIL %s: stderr does not contain %s\n' "$name" "$needle" >&2
+    sed 's/^/  | /' "${tmp_dir}/err" >&2
+  fi
+}
+
+# wire_cluster <tree> <cluster> <spec.path>  — a cluster overlay whose only Flux
+# Kustomization points at <spec.path> in this repository's OCI source.
+wire_cluster() {
+  local dir="$1/k8s/clusters/$2"
+  mkdir -p "$dir"
+  printf 'resources:\n  - flux-kustomization.yaml\n' >"${dir}/kustomization.yaml"
+  cat >"${dir}/flux-kustomization.yaml" <<EOF
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: layer, namespace: flux-system}
+spec:
+  interval: 1h
+  path: $3
+  prune: true
+  sourceRef: {kind: OCIRepository, name: flux-system}
+EOF
+}
+
+tree="${tmp_dir}/tree-new-layer"
+wire_cluster "$tree" edge ./layers/brand-new
+mkdir -p "${tree}/k8s/clusters/base" "${tree}/k8s/layers/brand-new"
+printf 'resources:\n  - policy.yaml\n' >"${tree}/k8s/layers/brand-new/kustomization.yaml"
+cp "$pre_3407" "${tree}/k8s/layers/brand-new/policy.yaml"
+expect_tree 'a layer found only through the Flux wiring is checked' 1 \
+  'deny-workload-instance-metadata-egress spec: egressDeny' "$tree"
+
+tree="${tmp_dir}/tree-no-wiring"
+mkdir -p "${tree}/k8s/clusters/edge"
+printf 'resources: []\n' >"${tree}/k8s/clusters/edge/kustomization.yaml"
+expect_tree 'a cluster that wires no layer is cannot-check' 2 \
+  "renders no Flux Kustomization" "$tree"
+
+tree="${tmp_dir}/tree-missing-layer"
+wire_cluster "$tree" edge ./layers/gone
+expect_tree 'a wired layer with no kustomization.yaml is cannot-check' 2 \
+  "'layers/gone' has no kustomization.yaml" "$tree"
+
 # GREEN on the real tree: every Flux entrypoint renders and the committed policy passes.
 got=0
 bash "$guard" "$root_dir" >"${tmp_dir}/out" 2>"${tmp_dir}/err" || got=$?

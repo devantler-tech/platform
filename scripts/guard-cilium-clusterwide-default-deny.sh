@@ -20,6 +20,10 @@
 # A direction with allow rules is left alone: default-deny there is the ordinary
 # allow-list meaning of the policy, not a side effect.
 #
+# ⚠️ SCOPE: this reads the Kustomize output, which contains a HelmRelease but not
+# the resources its chart installs. A clusterwide policy shipped by a chart is not
+# checked here yet (#4139).
+#
 # Usage:
 #   guard-cilium-clusterwide-default-deny.sh <repo-root>
 #       Render every Flux entrypoint under <repo-root>/k8s and check the output.
@@ -66,16 +70,44 @@ else
   k8s="$1/k8s"
   [ -d "$k8s" ] || die "'$k8s' is not a directory"
 
-  # The Flux entrypoints (k8s/clusters/base/*): per provider the infrastructure,
-  # controllers and apps layers, and per cluster the bootstrap layer. A missing
-  # entrypoint is cannot-check, never skipped, so a rename cannot drop a layer.
+  # The Flux entrypoints are DERIVED from the cluster wiring, never listed here:
+  # every cluster overlay under k8s/clusters/ (except the shared `base`) renders
+  # the Flux Kustomizations that point at this repository's own OCI source, and
+  # their spec.path values are exactly the layers Flux applies. A hard-coded list
+  # would keep passing while a new or moved layer went unchecked. A cluster that
+  # renders no such Kustomization, or a path that has no kustomization.yaml, is
+  # cannot-check, never skipped.
   roots=()
-  for provider in docker hetzner; do
-    roots+=("providers/${provider}/infrastructure" "providers/${provider}/infrastructure/controllers" "providers/${provider}/apps")
+  clusters=0
+  for cluster_dir in "${k8s}"/clusters/*/; do
+    cluster="$(basename "$cluster_dir")"
+    [ "$cluster" = "base" ] && continue
+    [ -f "${cluster_dir}kustomization.yaml" ] || continue
+    clusters=$((clusters + 1))
+    wiring="${tmp_dir}/wiring-${cluster}.yaml"
+    kubectl kustomize "$cluster_dir" >"$wiring" 2>"${tmp_dir}/wiring-${cluster}.err" ||
+      die "rendering cluster '${cluster}' failed: $(head -c 400 "${tmp_dir}/wiring-${cluster}.err")"
+    paths="$(yq eval -r '
+        select(.kind == "Kustomization"
+               and (.apiVersion // "" | test("^kustomize\.toolkit\.fluxcd\.io/"))
+               and .spec.sourceRef.kind == "OCIRepository"
+               and .spec.sourceRef.name == "flux-system")
+        | .spec.path' "$wiring" 2>"${tmp_dir}/wiring-${cluster}.err")" ||
+      die "could not read the Flux wiring of cluster '${cluster}': $(head -c 400 "${tmp_dir}/wiring-${cluster}.err")"
+    found=0
+    while IFS= read -r path; do
+      [ -n "$path" ] && [ "$path" != "---" ] || continue
+      case "$path" in
+        null) die "cluster '${cluster}' has a Flux Kustomization with no spec.path" ;;
+      esac
+      path="${path#./}"
+      roots+=("${path%/}")
+      found=$((found + 1))
+    done <<<"$paths"
+    [ "$found" -gt 0 ] ||
+      die "cluster '${cluster}' renders no Flux Kustomization for this repository — refusing to report layers it did not find"
   done
-  for cluster in local prod; do
-    roots+=("clusters/${cluster}/bootstrap")
-  done
+  [ "$clusters" -gt 0 ] || die "no cluster overlay found under '${k8s}/clusters'"
 
   index=0
   for root in "${roots[@]}"; do
