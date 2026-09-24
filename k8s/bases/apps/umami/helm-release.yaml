@@ -41,9 +41,10 @@ spec:
               - op: add
                 path: /metadata/annotations/secret.reloader.stakater.com~1reload
                 value: umami-db-rotated
-              # Flagger copies the source Deployment strategy to the serving
-              # primary. Retire one old pod before scheduling its replacement
-              # while keeping at least one primary serving.
+              # Flagger copies the source strategy only when creating the
+              # primary. The propagate-reloader-to-flagger-primary policy also
+              # retrofits an existing primary. Retire one old pod before
+              # scheduling its replacement while one primary keeps serving.
               - op: add
                 path: /spec/strategy
                 value:

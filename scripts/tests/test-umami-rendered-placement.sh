@@ -54,4 +54,16 @@ yq ea -o=json '[.]' "${scratch}/resources.yaml" | jq -e '
   )] == [true]
 ' >/dev/null || fail 'rendered Umami source must spread each primary revision and preserve no-surge rollout'
 
-printf 'PASS: rendered Umami source keeps per-revision primary spread and no-surge rollout\n'
+policy="${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/propagate-reloader-to-flagger-primary.yaml"
+yq -o=json '.spec.rules' "${policy}" | jq -e '
+  [.[] | select(
+    .match.any == [{"resources": {"kinds": ["Deployment"], "names": ["umami-umami"], "namespaces": ["umami"]}}] and
+    .mutate.mutateExistingOnPolicyUpdate == true and
+    .mutate.targets == [{"apiVersion": "apps/v1", "kind": "Deployment", "name": "umami-umami-primary", "namespace": "umami"}] and
+    .mutate.patchStrategicMerge.spec.strategy == {
+      "type": "RollingUpdate", "rollingUpdate": {"maxSurge": 0, "maxUnavailable": 1}
+    }
+  )] | length == 1
+' >/dev/null || fail 'Umami primary policy must retrofit no-surge strategy on the existing serving Deployment'
+
+printf 'PASS: rendered Umami source and existing primary keep per-revision spread and no-surge rollout\n'
