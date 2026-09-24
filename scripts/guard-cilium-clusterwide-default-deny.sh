@@ -96,8 +96,8 @@ else
       die "could not read the Flux wiring of cluster '${cluster}': $(head -c 400 "${tmp_dir}/wiring-${cluster}.err")"
     found=0
     while IFS= read -r path; do
-      [ -n "$path" ] && [ "$path" != "---" ] || continue
       case "$path" in
+        '' | ---) continue ;;
         null) die "cluster '${cluster}' has a Flux Kustomization with no spec.path" ;;
       esac
       path="${path#./}"
