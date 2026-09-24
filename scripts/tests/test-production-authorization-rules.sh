@@ -119,4 +119,47 @@ rules:
     resources: [leases]
     verbs: [get, list, watch, create, update, patch, delete]'
 
+assert_rejected 'deny-only-clusterwide-egress' 'apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: chart-shipped-deny
+spec:
+  endpointSelector: {}
+  egressDeny:
+    - toCIDR: [169.254.169.254/32]' 'require-explicit-clusterwide-default-deny'
+
+assert_rejected 'deny-only-clusterwide-ingress-in-specs' 'apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: chart-shipped-specs-deny
+specs:
+  - endpointSelector: {}
+    ingress:
+      - fromEntities: [cluster]
+  - endpointSelector: {}
+    ingressDeny:
+      - fromEntities: [world]' 'require-explicit-clusterwide-default-deny'
+
+assert_accepted 'clusterwide-deny-with-explicit-intent' 'apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: subtract-metadata
+spec:
+  endpointSelector: {}
+  enableDefaultDeny:
+    egress: false
+  egressDeny:
+    - toCIDR: [169.254.169.254/32]
+---
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: allow-list-with-deny
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEntities: [cluster]
+  ingressDeny:
+    - fromEntities: [world]'
+
 printf 'PASS: effective authorization rules reject privilege paths and accept the data-product controller RBAC\n'
