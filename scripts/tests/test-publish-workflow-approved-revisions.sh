@@ -336,9 +336,17 @@ source "$SCRIPT"
 sleep() { :; }  # both lookups back off between reads; the stubs answer deterministically
 reads_file='$path.reads'
 printf '0' >"\$reads_file"
+tag_reads_file='$path.tag-reads'
+printf '0' >"\$tag_reads_file"
 gh() {
   case "\$*" in
-    *'/commits/v9.9.9'*) printf '%s' '$SHA_A' ;;
+    *'/commits/v9.9.9'*)
+      # TAG_SHAS lists the commit the tag resolves to on each read, repeating the last.
+      local m
+      m=\$((\$(cat "\$tag_reads_file") + 1))
+      printf '%s' "\$m" >"\$tag_reads_file"
+      set -- \${TAG_SHAS:-$SHA_A}
+      if [ "\$m" -le "\$#" ]; then printf '%s' "\${!m}"; else printf '%s' "\${!#}"; fi ;;
     *'/actions/runs'*)
       local n fixture
       n=\$((\$(cat "\$reads_file") + 1))
@@ -410,6 +418,45 @@ elif grep -q 'at_commit=1 successful=0 signer_refs=0 conclusions=failure' "$WORK
   pass 'a failed CD run at the tag commit is refused with its conclusion'
 else
   fail 'a failed CD run did not report its conclusion'; cat "$WORK/signer-concl.err" >&2
+fi
+
+# Only an EMPTY listing is read again. A listing that holds runs but not exactly one signer
+# is a definitive answer: re-reading it could let a later partial listing drop the runs that
+# made it ambiguous, so it is refused on the first read.
+two_signers="$WORK/runs-two-signers.json"
+cat >"$two_signers" <<JSON
+{"total_count": 2, "workflow_runs": [
+  {"head_branch": "v9.9.9", "path": ".github/workflows/cd.yaml", "head_sha": "$SHA_A", "conclusion": "success",
+   "referenced_workflows": [{"path": "devantler-tech/actions/.github/workflows/publish-manifests.yaml@$SHA_B", "sha": "$SHA_B"}]},
+  {"head_branch": "v9.9.9", "path": ".github/workflows/cd.yaml", "head_sha": "$SHA_A", "conclusion": "success",
+   "referenced_workflows": [{"path": "devantler-tech/actions/.github/workflows/publish-manifests.yaml@$SHA_C", "sha": "$SHA_C"}]}]}
+JSON
+for shape in two-signers moved-run; do
+  case "$shape" in
+    two-signers) first="$two_signers" ;;
+    moved-run) first="$(runs_fixture moved-once "$SHA_C" success)" ;;
+  esac
+  driver="$(make_signer_driver "$first" "$(runs_fixture ok "$SHA_A" success)")"
+  if bash "$driver" >/dev/null 2>"$WORK/signer-$shape.err"; then
+    fail "a non-empty $shape listing was re-read until it resolved"
+  elif [ "$(cat "$driver.reads")" = 1 ]; then
+    pass "a non-empty $shape listing is refused on the first read"
+  else
+    fail "a non-empty $shape listing was re-read (reads=$(cat "$driver.reads"))"
+    cat "$WORK/signer-$shape.err" >&2
+  fi
+done
+
+# A tag that moves while the lookup waits to re-read is refused: the signer found later
+# belongs to the commit the tag pointed at before the wait, not the one it points at now.
+driver="$(make_signer_driver "$(empty_fixture)" "$(runs_fixture ok "$SHA_A" success)")"
+if TAG_SHAS="$SHA_A $SHA_C" bash "$driver" >/dev/null 2>"$WORK/signer-tag-moved.err"; then
+  fail 'a signer was accepted for a tag that moved during the retry wait'
+elif grep -q 'v9.9.9 moved' "$WORK/signer-tag-moved.err"; then
+  pass 'a tag that moved during the retry wait is refused'
+else
+  fail 'a tag that moved during the retry wait was not refused as moved'
+  cat "$WORK/signer-tag-moved.err" >&2
 fi
 
 # A transiently EMPTY listing is read again, and the run it then shows is taken (#4128).

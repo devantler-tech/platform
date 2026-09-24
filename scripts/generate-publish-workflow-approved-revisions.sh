@@ -180,10 +180,27 @@ signer_for_tag() {
     }
     count="$(printf '%s' "$shas" | grep -c . || true)"
     if [ "$count" -eq 1 ] && is_sha "$shas"; then
-      # Logged so a recovered transient stays countable instead of silently disappearing.
-      [ "$attempt" -eq 1 ] || refuse "$repo: runs listing for $tag resolved on read $attempt of $attempts"
+      if [ "$attempt" -gt 1 ]; then
+        # The tag may have moved during the wait, and the signer just found belongs to the
+        # commit resolved before it. Accept it only while the tag still points there.
+        local now
+        now="$(tag_commit "$repo" "$tag")" || {
+          refuse "$repo: $tag could not be re-resolved after its listing was re-read"
+          return 1
+        }
+        if [ "$now" != "$sha" ]; then
+          refuse "$repo: $tag moved from ${sha:0:12} to ${now:0:12} while its listing was re-read"
+          return 1
+        fi
+        # Logged so a recovered transient stays countable instead of silently disappearing.
+        refuse "$repo: runs listing for $tag resolved on read $attempt of $attempts"
+      fi
       break
     fi
+    # Only a listing with no runs at all is re-read. One that holds runs is a definitive
+    # answer: a later partial listing could drop the runs that made it ambiguous.
+    printf '%s' "$runs" | jq -e '.total_count == 0 and (.workflow_runs | length) == 0' \
+      >/dev/null 2>&1 || break
     [ "$attempt" -lt "$attempts" ] || break
     sleep $((attempt * 15))
     attempt=$((attempt + 1))
