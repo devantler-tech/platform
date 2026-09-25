@@ -119,6 +119,22 @@ spec:
           secret: ${dex_client_secret}
           redirectURIs:
             - "https://oauth2-proxy.${domain}/oauth2/callback"
+            # oauth2-proxy's callback on every host it fronts, so it can finish a
+            # login on the host the user started from and return them to the page
+            # they asked for. Dex matches callbacks exactly, so each host needs its
+            # own entry: scripts/tests/test-oauth2-proxy-sso-redirects.sh fails
+            # when an HTTPRoute puts a host behind oauth2-proxy without one, or
+            # when an entry outlives its route.
+            - "https://${domain}/oauth2/callback"
+            - "https://analytics.${domain}/oauth2/callback"
+            - "https://backstage.${domain}/oauth2/callback"
+            - "https://budget.${domain}/oauth2/callback"
+            - "https://crossview.${domain}/oauth2/callback"
+            - "https://hubble.${domain}/oauth2/callback"
+            - "https://ksail.${domain}/oauth2/callback"
+            - "https://observability.${domain}/oauth2/callback"
+            - "https://policy-reporter.${domain}/oauth2/callback"
+            - "https://vault.${domain}/oauth2/callback"
             - "https://headlamp.${domain}/oidc-callback"
             # actual-budget (sync-server) hardcodes its OIDC callback path as
             # /openid/callback (ACTUAL_OPENID_SERVER_HOSTNAME=https://budget.${domain}).
