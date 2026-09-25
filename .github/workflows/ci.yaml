@@ -38,6 +38,8 @@ jobs:
         run: |
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
+          shellcheck scripts/merge-group-evicted.sh scripts/tests/test-merge-group-evicted.sh
+          bash scripts/tests/test-merge-group-evicted.sh
 
       # A merge-group validator that ci-required-checks enforces but deploy-prod does not
       # need runs in parallel with the deploy, so prod can receive a revision it rejects (#4148).
@@ -2667,9 +2669,51 @@ jobs:
           # attempt is proven terminal via the API (#3343).
           recover-orphaned-fence: "true"
 
+  merge-group-queue-membership:
+    name: 🧾 Check the deployed PR is still queued
+    needs: [changes, deploy-prod]
+    # A deploy can SUCCEED after the merge queue has already dropped its PR: the
+    # queue's check timeout can expire while the deploy waits on the prod-deploy
+    # lock behind a heal, and a PR can be dequeued by hand. Prod then runs an
+    # artifact that never reaches `main`, and nothing restores it, because the
+    # heal below only fires on an unsuccessful deploy (#3091). This job waits
+    # until the PR merges or leaves the queue, and hands the answer to the heal;
+    # `CI - Required Checks` does not depend on it, so the wait never holds up the
+    # merge. A PR that left is answered only once the queue has drained: a later
+    # group may already be deployed but unmerged, and restoring main before it
+    # merges would publish main without its change. A failed read
+    # fails this job visibly and writes no answer, so the heal never runs on a
+    # guess. It is not part of the required checks: it gates nothing.
+    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true' && needs.deploy-prod.result == 'success'
+    runs-on: ubuntu-latest
+    # The check polls until the PR merges, or leaves and the queue drains (at most 120
+    # reads, 30s apart).
+    timeout-minutes: 75
+    permissions:
+      contents: read # checkout repository
+      pull-requests: read # read the PR's merge-queue state
+    outputs:
+      evicted: ${{ steps.membership.outputs.evicted }}
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/merge-group-evicted.sh
+          sparse-checkout-cone-mode: false
+
+      - name: 🧾 Read the PR's merge-queue state
+        id: membership
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVICTED_REPOSITORY: ${{ github.repository }}
+          EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          EVICTED_GROUP_CREATED_AT: ${{ github.event.merge_group.head_commit.timestamp }}
+        run: scripts/merge-group-evicted.sh
+
   heal-prod-on-failure:
-    name: 🩹 Heal Prod (restore main after unsuccessful merge-group deploy)
-    needs: [changes, deploy-prod, validate-publication-contract]
+    name: 🩹 Heal Prod (restore main after an unsuccessful or evicted merge-group deploy)
+    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]
     # The deploy above runs on the SPECULATIVE merge ref, before the PR lands on
     # `main`. When it fails the merge group is ejected — but the OCI `latest` tag
     # (and the prod cluster reconciling it) is left pointing at that ejected
@@ -2683,13 +2727,18 @@ jobs:
     # job becomes cancelled. It has ZERO effect on a green merge (skipped) and
     # does NOT relax the gate: deploy-prod's failure still fails `CI - Required
     # Checks` below, so the PR is still ejected. It is intentionally NOT part of
-    # that aggregation — it is best-effort cleanup, not a merge gate.
+    # that aggregation — it is best-effort cleanup, not a merge gate. It also
+    # fires after a SUCCESSFUL deploy whose PR had already left the queue, which
+    # leaves prod on the same unmerged artifact (#3091); the membership job above
+    # decides that case.
     if: >-
       always() &&
       github.event_name == 'merge_group' &&
       needs.changes.outputs.k8s == 'true' &&
       (needs.deploy-prod.result == 'failure' ||
-       needs.deploy-prod.result == 'cancelled')
+       needs.deploy-prod.result == 'cancelled' ||
+       (needs.deploy-prod.result == 'success' &&
+        needs.merge-group-queue-membership.outputs.evicted == 'true'))
     runs-on: ubuntu-latest
     environment: prod
     # Same shared lock as deploy-prod / cd.yaml so the heal can never run against
