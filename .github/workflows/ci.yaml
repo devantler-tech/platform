@@ -2683,6 +2683,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVICTED_REPOSITORY: ${{ github.repository }}
           EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          EVICTED_DEPLOYED_SHA: ${{ github.event.merge_group.head_sha }}
         run: scripts/merge-group-evicted.sh
 
   heal-prod-on-failure:

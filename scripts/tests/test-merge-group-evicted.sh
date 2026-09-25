@@ -16,6 +16,8 @@ assertions=0
 
 sha="$(printf 'c%.0s' {1..40})"
 queue_ref="refs/heads/gh-readonly-queue/main/pr-3084-$sha"
+deployed="$(printf 'd%.0s' {1..40})"
+rebuilt="$(printf 'e%.0s' {1..40})"
 
 mkdir -p "$scratch/bin"
 cat >"$scratch/bin/gh" <<'EOF'
@@ -33,7 +35,7 @@ run_case() {
   : >"$scratch/log"
   : >"$scratch/output"
   if out="$(PATH="$scratch/bin:$PATH" STUB_LOG="$scratch/log" STUB_STATE="$5" STUB_RC="$6" \
-    EVICTED_REPOSITORY=devantler-tech/platform EVICTED_HEAD_REF="$4" GITHUB_OUTPUT="$scratch/output" \
+    EVICTED_REPOSITORY=devantler-tech/platform EVICTED_HEAD_REF="$4" EVICTED_DEPLOYED_SHA="${STUB_DEPLOYED:-$deployed}" GITHUB_OUTPUT="$scratch/output" \
     "$script" 2>&1)"; then rc=0; else rc=$?; fi
   got_output="$(cat "$scratch/output")"
   if [ -n "${7:-}" ]; then
@@ -51,17 +53,21 @@ run_case() {
 }
 
 echo "merge-group-evicted:"
-run_case "still queued is not evicted" 0 "evicted=false" "$queue_ref" "OPEN true" 0 3084
-run_case "already merged is not evicted" 0 "evicted=false" "$queue_ref" "MERGED false" 0 3084
-run_case "open but out of the queue is evicted" 0 "evicted=true" "$queue_ref" "OPEN false" 0 3084
-run_case "closed without merging is evicted" 0 "evicted=true" "$queue_ref" "CLOSED false" 0 3084
+run_case "still queued with the deployed commit is not evicted" 0 "evicted=false" "$queue_ref" "OPEN true $deployed" 0 3084
+run_case "already merged is not evicted" 0 "evicted=false" "$queue_ref" "MERGED false none" 0 3084
+run_case "open but out of the queue is evicted" 0 "evicted=true" "$queue_ref" "OPEN false none" 0 3084
+run_case "closed without merging is evicted" 0 "evicted=true" "$queue_ref" "CLOSED false none" 0 3084
 run_case "failed read writes nothing" 1 "" "$queue_ref" "OPEN false" 1
+run_case "queued under a rebuilt group is evicted" 0 "evicted=true" "$queue_ref" "OPEN true $rebuilt" 0 3084
+run_case "queued without an entry commit writes nothing" 1 "" "$queue_ref" "OPEN true none" 0
+run_case "queued with a short entry commit writes nothing" 1 "" "$queue_ref" "OPEN true abc" 0
 run_case "missing PR writes nothing" 1 "" "$queue_ref" "null null" 0
 run_case "unknown state writes nothing" 1 "" "$queue_ref" "OPEN maybe" 0
 run_case "non-queue ref writes nothing" 1 "" "refs/heads/main" "OPEN false" 0
 run_case "short head sha is refused" 1 "" "refs/heads/gh-readonly-queue/main/pr-3084-abc123" "OPEN false" 0
 run_case "PR number zero is refused" 1 "" "refs/heads/gh-readonly-queue/main/pr-0-$sha" "OPEN false" 0
 run_case "base branch with a slash" 0 "evicted=true" "refs/heads/gh-readonly-queue/release/v1/pr-42-$sha" "OPEN false" 0 42
+STUB_DEPLOYED=abc123 run_case "short deployed commit is refused" 1 "" "$queue_ref" "OPEN true $deployed" 0
 
 echo "merge-group-evicted: $assertions assertions, $failures failed"
 [ "$failures" = 0 ]

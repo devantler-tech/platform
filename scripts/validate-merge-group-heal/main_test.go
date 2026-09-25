@@ -29,10 +29,13 @@ jobs:
     outputs:
       evicted: ${{ steps.membership.outputs.evicted }}
     steps:
+      - name: checkout
+        uses: actions/checkout@example
       - name: read
         id: membership
         env:
           EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          EVICTED_DEPLOYED_SHA: ${{ github.event.merge_group.head_sha }}
         run: scripts/merge-group-evicted.sh
 
   heal-prod-on-failure:
@@ -150,7 +153,33 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			name:        "queue-membership job reads the wrong ref",
 			old:         "          EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
 			replacement: "          EVICTED_HEAD_REF: ${{ github.ref }}",
-			wantError:   "queue-membership job is missing merge-group head ref input",
+			wantError:   "membership step is missing merge-group head ref input",
+		},
+		{
+			name:        "membership step does not pass the deployed commit",
+			old:         "          EVICTED_DEPLOYED_SHA: ${{ github.event.merge_group.head_sha }}",
+			replacement: "          EVICTED_DEPLOYED_SHA: ${{ github.sha }}",
+			wantError:   "membership step is missing deployed merge-group commit input",
+		},
+		{
+			// The output reads steps.membership, so the id on another step leaves
+			// the check's answer unexported even though every line still exists.
+			name:        "membership id moved onto another step",
+			old:         "      - name: checkout\n        uses: actions/checkout@example\n      - name: read\n        id: membership\n",
+			replacement: "      - name: checkout\n        id: membership\n        uses: actions/checkout@example\n      - name: read\n",
+			wantError:   "membership step is missing merge-group head ref input",
+		},
+		{
+			name:        "queue-membership job suppresses failure",
+			old:         "    permissions:\n      pull-requests: read",
+			replacement: "    continue-on-error: true\n    permissions:\n      pull-requests: read",
+			wantError:   "must not suppress a failed check with continue-on-error",
+		},
+		{
+			name:        "membership step suppresses failure",
+			old:         "        run: scripts/merge-group-evicted.sh",
+			replacement: "        continue-on-error: true\n        run: scripts/merge-group-evicted.sh",
+			wantError:   "must not suppress a failed check with continue-on-error",
 		},
 		{
 			name:        "queue-membership job cannot read pull requests",

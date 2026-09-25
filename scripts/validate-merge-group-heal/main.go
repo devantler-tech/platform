@@ -110,17 +110,17 @@ func validateWorkflowContract(workflow string) error {
 }
 
 // validateMembershipJob pins the job that tells the heal whether a successful
-// deploy's PR already left the merge queue (#3091). If it stops running after a
-// successful deploy, stops reading the merge group's own ref, or stops exporting
-// its answer, the heal's evicted branch reads an empty output and silently
-// never fires — the same unmerged artifact left in prod that the heal exists
-// to remove.
+// deploy is still headed for main (#3091). If it stops running after a
+// successful deploy, stops reading the merge group's own ref and commit, stops
+// exporting its answer, or is allowed to fail quietly, the heal's evicted
+// branch reads an empty output and silently never fires — the same unmerged
+// artifact left in prod that the heal exists to remove.
 func validateMembershipJob(workflow string) error {
 	job, ok := extractJob(workflow, "merge-group-queue-membership")
 	if !ok {
 		return errors.New("missing merge-group-queue-membership job")
 	}
-	requirements := []struct {
+	jobRequirements := []struct {
 		line        string
 		description string
 	}{
@@ -135,16 +135,47 @@ func validateMembershipJob(workflow string) error {
 		},
 		{line: "      pull-requests: read # read the PR's merge-queue state", description: "pull-request read permission"},
 		{line: "      evicted: ${{ steps.membership.outputs.evicted }}", description: "evicted output"},
-		{line: "        id: membership", description: "membership step id"},
+	}
+	for _, requirement := range jobRequirements {
+		if !containsExactLine(job, requirement.line) {
+			return fmt.Errorf("queue-membership job is missing %s", requirement.description)
+		}
+	}
+
+	// A failed read must fail the job. continue-on-error at either scope lets it
+	// succeed with no output, which the heal reads as "not evicted".
+	for _, line := range strings.Split(job, "\n") {
+		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), "continue-on-error:") {
+			return errors.New("queue-membership job must not suppress a failed check with continue-on-error")
+		}
+	}
+
+	// The output names the step by id, so the id, its inputs and the command
+	// must belong to ONE step; lines matched anywhere in the job would still
+	// pass after the id moved onto an unrelated step.
+	step, ok := extractStep(job, func(line string) bool {
+		return strings.TrimPrefix(strings.TrimSpace(line), "- ") == "id: membership"
+	})
+	if !ok {
+		return errors.New("queue-membership job is missing membership step id")
+	}
+	stepRequirements := []struct {
+		line        string
+		description string
+	}{
 		{
 			line:        "          EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
 			description: "merge-group head ref input",
 		},
+		{
+			line:        "          EVICTED_DEPLOYED_SHA: ${{ github.event.merge_group.head_sha }}",
+			description: "deployed merge-group commit input",
+		},
 		{line: "        run: scripts/merge-group-evicted.sh", description: "eviction check"},
 	}
-	for _, requirement := range requirements {
-		if !containsExactLine(job, requirement.line) {
-			return fmt.Errorf("queue-membership job is missing %s", requirement.description)
+	for _, requirement := range stepRequirements {
+		if !containsExactLine(step, requirement.line) {
+			return fmt.Errorf("membership step is missing %s", requirement.description)
 		}
 	}
 	return nil
@@ -183,12 +214,20 @@ func extractJob(workflow string, jobKey string) (string, bool) {
 // against the whole job. It walks back from the `uses:` line to the list-item
 // start, because a step may declare `with:` before `uses:`.
 func extractDeployStep(job string) (string, bool) {
+	// A step may write `- uses: …` on the list-item line itself or put `uses:`
+	// on its own line under `- name:`; both spellings are the same step.
+	return extractStep(job, func(line string) bool {
+		return strings.TrimPrefix(strings.TrimSpace(line), "- ") == "uses: "+deployCompositePath
+	})
+}
+
+// extractStep returns the step containing the first line that matches, from
+// its list-item start to the next sibling step.
+func extractStep(job string, matches func(string) bool) (string, bool) {
 	lines := strings.Split(job, "\n")
 	target := -1
 	for i, line := range lines {
-		// A step may write `- uses: …` on the list-item line itself or put `uses:`
-		// on its own line under `- name:`; both spellings are the same step.
-		if strings.TrimPrefix(strings.TrimSpace(line), "- ") == "uses: "+deployCompositePath {
+		if matches(line) {
 			target = i
 			break
 		}
