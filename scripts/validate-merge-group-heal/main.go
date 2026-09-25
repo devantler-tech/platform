@@ -159,6 +159,13 @@ func validateMembershipJob(workflow string) error {
 	if !ok {
 		return errors.New("queue-membership job is missing membership step id")
 	}
+	// A skipped step succeeds with no output, which the heal also reads as
+	// "not evicted", so the step runs whenever its job does.
+	for _, line := range strings.Split(step, "\n") {
+		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), "if:") {
+			return errors.New("membership step must not carry a condition that can skip it")
+		}
+	}
 	stepRequirements := []struct {
 		line        string
 		description string

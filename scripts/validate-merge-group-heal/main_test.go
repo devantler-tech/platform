@@ -175,6 +175,12 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			wantError:   "must not suppress a failed check with continue-on-error",
 		},
 		{
+			name:        "membership step can be skipped",
+			old:         "        run: scripts/merge-group-evicted.sh",
+			replacement: "        if: ${{ false }}\n        run: scripts/merge-group-evicted.sh",
+			wantError:   "membership step must not carry a condition that can skip it",
+		},
+		{
 			name:        "queue-membership job cannot read pull requests",
 			old:         "      pull-requests: read # read the PR's merge-queue state",
 			replacement: "      pull-requests: none",
