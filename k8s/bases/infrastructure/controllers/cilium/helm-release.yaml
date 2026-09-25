@@ -166,6 +166,14 @@ spec:
       replicas: ${cilium_replicas:=2}
       # Restart on cilium-config changes (same rationale as rollOutCiliumPods).
       rollOutPods: true
+      # The GitOps way to restart the operator: change this value. The
+      # operator's Gateway API controller checks for its CRDs once, when a
+      # leader starts, and never retries; if the API server is briefly
+      # unreachable at that moment, the controller does not start and route
+      # changes stop reaching the gateway while every health signal stays
+      # green (#4198). Rolling the operator re-runs the check.
+      podAnnotations:
+        platform.devantler.tech/restart-marker: "2026-09-25-gateway-api-4198"
       # Non-root securityContext for the cilium-OPERATOR only (Kubescape
       # C-0013). The operator-generic image ships no USER, so it runs as root
       # by default; but it is a pure control-plane controller (reads a
