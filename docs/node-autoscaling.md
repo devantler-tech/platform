@@ -157,11 +157,14 @@ single-replica Deployment on a 30-minute descheduling loop. Enabled strategies:
   `RemoveDuplicates` (re-spread replica clumps after node churn).
 - **Consolidation** — `HighNodeUtilization` drains nearly-empty nodes
   (< 15% requested CPU **and** memory) toward the rest of the cluster so the
-  autoscaler can delete them. The threshold is deliberately low: with the
-  default scheduler scoring, evicted pods gravitate back toward empty-ish nodes
-  (including the over-provisioning warm spare), so aggressive packing needs the
-  `MostAllocated` scoring strategy first — tracked in
-  [#2471](https://github.com/devantler-tech/platform/issues/2471).
+  autoscaler can delete them. kube-scheduler scores nodes with `MostAllocated`
+  (`talos/cluster/pack-pods-onto-busy-nodes.yaml`), so evicted pods are more
+  likely to land on a busier node that still fits than back on an empty-ish
+  one. On a cx43, the DaemonSets plus Longhorn's per-node instance manager
+  already request about 19% CPU and 21% memory (measured 2026-09-24), so a cx43
+  never falls below 15%; a cx53's larger capacity puts the same requests at
+  roughly half that. Raising the threshold above the cx43 floor is
+  [#4167](https://github.com/devantler-tech/platform/issues/4167).
 
 Guardrails (all in the `HelmRelease` values):
 

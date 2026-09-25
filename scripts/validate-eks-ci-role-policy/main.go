@@ -3195,14 +3195,30 @@ const (
 // Only the package tag changes; the provider's GitHub-scoped CRDs gain optional
 // fields and one inactive kind, and no binding, service account or AWS identity
 // changes.
-// Re-approved for Umami serving-replica spread (#4103), re-derived against main
-// 588778fc after the repin above. The checksum-verified kubectl v1.36.2
-// approval-base diagnostic reported only changed HelmRelease umami/umami, with
-// no added or removed surface entries. The source delta changes the hostname
-// spread constraint, pod-label selector, per-revision spread key, two-domain
-// floor, and no-surge replacement strategy. No RBAC, service account, AWS
-// identity, or permission is granted.
-const expectedRenderedSurfaceSHA = "0b181eaad493bf2914f5d1fb5dca88d9ae425a4b3cbc24ed9b237b85a4b68d4b"
+// Re-approved for the Kubescape host-data cleanup failure alert (#3739), on a
+// branch level with main 2a59cdeb. The required production-authorization job on
+// the checksum-verified renderer (run 36105983235, job 107979133700) reported
+// exactly two ADDED surface entries and nothing changed or removed:
+// rbac.authorization.k8s.io/v1 Role kubescape/cronjob-failure-alert and its
+// RoleBinding kubescape/cronjob-failure-alert. The Role grants only `get` on the
+// one CronJob named kubescape-hostdata-cleanup and `list` on Jobs in the
+// kubescape namespace (owner-reference filtering needs namespace-wide list); the
+// binding's only subject is ServiceAccount observability/cronjob-failure-alert.
+// No write verb, wildcard, ClusterRole, AWS identity or existing binding
+// changes. The same job reported this identical value at head dfccc588, before
+// nine further main commits were merged in, so those commits did not move the
+// surface.
+// Re-approved for per-host oauth2-proxy login callbacks (#3169), against main
+// 51fa8a65. The required production-authorization job on the checksum-verified
+// renderer (run 36126766319, job 108045299986) reported exactly one changed
+// surface entry, HelmRelease dex/dex, and nothing added or removed. The source
+// delta only adds ten https://<host>/oauth2/callback entries to the Dex
+// public-client redirectURIs, one per host an HTTPRoute sends to oauth2-proxy;
+// Dex accepts them only as login return addresses for that existing client. No
+// RBAC, binding, service account, AWS identity, or permission grant changes.
+//
+// Previous aggregate: f079c67e430ff825a85ca238a86f32b8e96052d740a87bcec624ffa1800ea819.
+const expectedRenderedSurfaceSHA = "e0952cc586d3b5c05c3b5d7b3f1e7a9df2bf43fba21b9065175bd8ebcdee8ac7"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3215,7 +3231,7 @@ const expectedRenderedSurfaceSHA = "0b181eaad493bf2914f5d1fb5dca88d9ae425a4b3cbc
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "31365f93a584f876aa4a0ba25963d10205103850b82b26f7de3417f2e4ca7eeb"
+const previousRenderedSurfaceSHA = "f079c67e430ff825a85ca238a86f32b8e96052d740a87bcec624ffa1800ea819"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

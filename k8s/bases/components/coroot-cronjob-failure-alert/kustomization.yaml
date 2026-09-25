@@ -12,4 +12,6 @@ resources:
   - secret-cronjob-failure-alert.yaml
   - role-cronjob-failure-alert-umami.yaml
   - role-binding-cronjob-failure-alert-umami.yaml
+  - role-cronjob-failure-alert-kubescape.yaml
+  - role-binding-cronjob-failure-alert-kubescape.yaml
   - cron-job-cronjob-failure-alert.yaml

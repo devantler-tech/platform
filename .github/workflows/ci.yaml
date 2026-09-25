@@ -354,6 +354,7 @@ jobs:
               - 'docs/talos-access.md'
               - 'scripts/tests/test-actual-budget-auth-route.sh'
               - 'scripts/tests/test-umami-sso-dashboard-route.sh'
+              - 'scripts/tests/test-oauth2-proxy-sso-redirects.sh'
               - 'scripts/tests/test-umami-tracking-probe.sh'
               - 'scripts/tests/fixtures/umami-curl-stub.sh'
               - 'scripts/verify-umami-tracking.sh'
@@ -1016,7 +1017,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.185.0"
+          KSAIL_VERSION: "7.186.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1370,6 +1371,8 @@ jobs:
           bash scripts/tests/test-actual-budget-auth-route.sh
           shellcheck scripts/tests/test-umami-sso-dashboard-route.sh
           bash scripts/tests/test-umami-sso-dashboard-route.sh
+          shellcheck scripts/tests/test-oauth2-proxy-sso-redirects.sh
+          bash scripts/tests/test-oauth2-proxy-sso-redirects.sh
           shellcheck scripts/tests/test-umami-tracking-probe.sh
           bash scripts/tests/test-umami-tracking-probe.sh
           shellcheck scripts/verify-umami-tracking.sh
@@ -1974,7 +1977,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.185.0"
+          KSAIL_VERSION: "7.186.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2298,7 +2301,7 @@ jobs:
           !cancelled() &&
           steps.normalize-sarif.outputs.sarif == 'ready' &&
           github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: ${{ runner.temp }}/kubescape.sarif
           # Distinguishes these alerts from the CodeQL and zizmor analyses that
@@ -2366,7 +2369,7 @@ jobs:
           persist-credentials: false
 
       - name: 🏷️ Validate naming conventions
-        uses: devantler-tech/actions/validate-naming@da153eb43b8333f13094abb151a48dc11e431988 # v13.7.4
+        uses: devantler-tech/actions/validate-naming@ee4948f9372d00126a24ce30db288294b86568d1 # v13.10.0
         with:
           enabled: "true"
 
@@ -2733,7 +2736,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.185.0"
+          KSAIL_VERSION: "7.186.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
