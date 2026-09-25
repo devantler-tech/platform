@@ -2659,15 +2659,16 @@ jobs:
     # heal below only fires on an unsuccessful deploy (#3091). This job waits
     # until the PR merges or leaves the queue, and hands the answer to the heal;
     # `CI - Required Checks` does not depend on it, so the wait never holds up the
-    # merge. A PR that left while another group is queued is NOT evicted here:
-    # that group replaces this deploy itself, and restoring main could publish
-    # main without its change over its deployment. A failed read
+    # merge. A PR that left is answered only once the queue has drained: a later
+    # group may already be deployed but unmerged, and restoring main before it
+    # merges would publish main without its change. A failed read
     # fails this job visibly and writes no answer, so the heal never runs on a
     # guess. It is not part of the required checks: it gates nothing.
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true' && needs.deploy-prod.result == 'success'
     runs-on: ubuntu-latest
-    # The check polls until the PR merges or leaves the queue (at most 40 reads, 30s apart).
-    timeout-minutes: 30
+    # The check polls until the PR merges, or leaves and the queue drains (at most 120
+    # reads, 30s apart).
+    timeout-minutes: 75
     permissions:
       contents: read # checkout repository
       pull-requests: read # read the PR's merge-queue state

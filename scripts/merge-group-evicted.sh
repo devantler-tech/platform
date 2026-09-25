@@ -20,14 +20,15 @@
 # entry was enqueued before this merge group's commit was created, while an entry for the
 # same PR enqueued after it is a re-enqueue, and this group has left the queue.
 #
-# When the PR has left, it defers to any merge group still queued. The queue builds a later
-# group only once this one has left, and that group's deploy is often already waiting on
-# the prod-deploy lock ahead of the heal. Restoring main then would publish main without
-# that group's change over its deployment, and the change would merge undeployed. A queued
-# group instead replaces this artifact itself: it merges (prod then matches main), or its
-# own failed or evicted deploy is healed. The residual case is a later group that leaves
-# the queue before it deploys; prod then keeps this artifact until the next deploy, which
-# is where it stood before this check existed.
+# When the PR has left, it waits for the queue to DRAIN before answering. A later group is
+# built only once this one has left, and its deploy is often already waiting on the
+# prod-deploy lock ahead of the heal; restoring main while that group is deployed but not yet
+# merged would publish main without its change, and the change would then merge undeployed.
+# Deferring to whatever is queued is not safe either: a docs-only group, or one rejected
+# before it deploys, never replaces this artifact. Once nothing is queued, main already holds
+# every group that merged, so restoring main is correct whatever deployed in between; at worst
+# it redeploys what is already running. A PR that merges after all (a re-enqueue) is not
+# evicted.
 #
 # Writes `evicted=true` or `evicted=false` to $GITHUB_OUTPUT.
 #
@@ -43,7 +44,7 @@ head_ref="${EVICTED_HEAD_REF:?EVICTED_HEAD_REF is required}"
 group_created="${EVICTED_GROUP_CREATED_AT:?EVICTED_GROUP_CREATED_AT is required}"
 output="${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
 poll_seconds="${EVICTED_POLL_SECONDS:-30}"
-max_polls="${EVICTED_MAX_POLLS:-40}"
+max_polls="${EVICTED_MAX_POLLS:-120}"
 
 fail() {
   printf '::error title=Merge-queue state unknown::%s\n' "$1"
@@ -82,6 +83,7 @@ write_answer() {
 }
 
 polls=0
+left=""
 while :; do
   polls=$((polls + 1))
   state="$(gh api graphql -f query="$query" -f owner="$owner" -f name="$name" -F number="$number" -f base="$base" \
@@ -91,7 +93,6 @@ while :; do
   read -r pr_state in_queue enqueued_at queued <<<"$state"
   [[ "$queued" =~ ^[0-9]+$ ]] || fail "unexpected queue state '${state}' for #${number}"
 
-  left=""
   case "$pr_state $in_queue" in
     "MERGED "*)
       write_answer false
@@ -110,20 +111,15 @@ while :; do
     *) fail "unexpected queue state '${state}' for #${number}" ;;
   esac
 
-  if [ -n "$left" ]; then
-    if [ "$queued" -gt 0 ]; then
-      write_answer false
-      printf '::notice title=Deployed PR left the merge queue::#%s left the queue (%s), but %s merge group(s) are queued and will replace this deploy; not restoring main\n' \
-        "$number" "$left" "$queued"
-    else
-      write_answer true
-      printf '::warning title=Deployed PR left the merge queue::#%s deployed successfully but left the queue (%s) and nothing is queued to replace it; restoring main\n' \
-        "$number" "$left"
-    fi
+  # Once left, stay left: a later read only decides whether the queue has drained.
+  if [ -n "$left" ] && [ "$queued" -eq 0 ]; then
+    write_answer true
+    printf '::warning title=Deployed PR left the merge queue::#%s deployed successfully but left the queue (%s); the queue has drained, so restoring main\n' \
+      "$number" "$left"
     exit 0
   fi
 
   [ "$polls" -lt "$max_polls" ] ||
-    fail "#${number} was still queued after ${max_polls} reads; its outcome is unknown"
+    fail "#${number} had not merged, or the queue had not drained, after ${max_polls} reads; its outcome is unknown"
   sleep "$poll_seconds"
 done

@@ -94,14 +94,20 @@ run_case "still queued past the bound writes nothing" 1 "" 5 "$queue_ref" "$crea
   "OPEN true $before 1"
 
 # Finding: after a dequeue and re-enqueue, isInMergeQueue is true for the REPLACEMENT entry.
-# This group has left; the replacement is a queued group that will deploy over it.
-run_case "a re-enqueued PR defers to its replacement group" 0 "evicted=false" 1 "$queue_ref" "$created" 0 \
-  "OPEN true $after 1"
+# This group has left; the answer waits for the replacement's outcome.
+run_case "a re-enqueued PR that then merges is not evicted" 0 "evicted=false" 2 "$queue_ref" "$created" 0 \
+  "OPEN true $after 1" "MERGED false none 0"
+run_case "a re-enqueued PR whose replacement also leaves is evicted" 0 "evicted=true" 2 "$queue_ref" "$created" 0 \
+  "OPEN true $after 1" "OPEN false none 0"
 
 # Finding: a later group's deploy can precede the heal in the prod-deploy queue, and
-# restoring main would publish main without that group's change over its deployment.
-run_case "left with another group queued defers to it" 0 "evicted=false" 1 "$queue_ref" "$created" 0 \
-  "OPEN false none 2"
+# restoring main would publish main without that group's change. Finding: deferring to any
+# queued group is not safe either, because a docs-only group never deploys. So the answer
+# waits until the queue drains, when main holds every group that merged.
+run_case "left with other groups queued waits for the queue to drain" 0 "evicted=true" 3 "$queue_ref" "$created" 0 \
+  "OPEN false none 2" "OPEN false none 1" "OPEN false none 0"
+run_case "left with a queue that never drains writes nothing" 1 "" 5 "$queue_ref" "$created" 0 \
+  "OPEN false none 1"
 run_case "left with nothing queued is evicted" 0 "evicted=true" 1 "$queue_ref" "$created" 0 \
   "OPEN false none 0"
 run_case "closed with nothing queued is evicted" 0 "evicted=true" 1 "$queue_ref" "$created" 0 \
@@ -118,8 +124,8 @@ run_case "short head sha is refused" 1 "" 0 "refs/heads/gh-readonly-queue/main/p
 run_case "PR number zero is refused" 1 "" 0 "refs/heads/gh-readonly-queue/main/pr-0-$sha" "$created" 0 \
   "OPEN false none 0"
 run_case "non-UTC group time is refused" 1 "" 0 "$queue_ref" "2026-09-25T12:00:00+02:00" 0 "OPEN false none 0"
-run_case "+00:00 group time is read as UTC" 0 "evicted=false" 1 "$queue_ref" "2026-09-25T10:00:00+00:00" 0 \
-  "OPEN true $after 1"
+run_case "+00:00 group time is read as UTC" 0 "evicted=true" 2 "$queue_ref" "2026-09-25T10:00:00+00:00" 0 \
+  "OPEN true $after 1" "OPEN false none 0"
 run_case "base branch with a slash" 0 "evicted=true" 1 "refs/heads/gh-readonly-queue/release/v1/pr-42-$sha" \
   "$created" 0 "OPEN false none 0"
 logged "reads the queue of a slashed base branch" "-f base=release/v1"
