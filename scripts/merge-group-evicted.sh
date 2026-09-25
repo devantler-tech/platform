@@ -36,8 +36,9 @@ number="${BASH_REMATCH[1]}"
 
 owner="${repository%%/*}"
 name="${repository#*/}"
-[ -n "$owner" ] && [ -n "$name" ] && [ "$owner" != "$repository" ] ||
+if [[ ! "$repository" =~ ^[^/]+/[^/]+$ ]]; then
   fail "'${repository}' is not an owner/name repository"
+fi
 
 # shellcheck disable=SC2016 # GraphQL variables, not shell expansions.
 query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state isInMergeQueue}}}'
