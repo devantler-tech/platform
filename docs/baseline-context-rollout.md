@@ -109,11 +109,14 @@ rebuild does not run it yet; a fresh ClickHouse needs longer than the guard's
 wait to become ready. On a fresh cluster the label exists before the operator
 creates its templates, so admission applies at creation without a write.
 
-The remaining rollout and its acceptance measurements are tracked in
-[issue #3239](https://github.com/devantler-tech/platform/issues/3239). C-0211 sizing
-depends on a complete measurement of stored controllers and every regular/init
-container, with runtime health evidence. The original 33-workload denominator is
-historical; neither this canary nor a stale scanner verdict completes that target.
+The two universal gaps are closed: every one of the 38 scanned workloads in the
+excluded namespaces carries both fields in its stored spec, measured against live
+prod on 2026-09-25 and recorded with the C-0211 sizing in
+`pod-security-mutations-unscoped.yaml`. What remains is the privilege-adjacent residual
+that keeps C-0211 cluster-wide, tracked in
+[issue #3522](https://github.com/devantler-tech/platform/issues/3522). Re-measure the
+stored controllers and every regular and init container before narrowing it; a scanner
+verdict alone does not show the residual.
 
 The existing namespace inventory test pins the default-off controller rollout.
 Its historical demand for post-rollout evidence inside the activation commit is
