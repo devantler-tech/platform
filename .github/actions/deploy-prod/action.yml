@@ -514,3 +514,21 @@ runs:
         ./scripts/refresh-flux-ghcr-auth.sh
         --reuse-runtime-proof
         "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+
+    - name: 🚦 Verify the gateway applies every HTTPRoute
+      # The Cilium operator can run for hours without its Gateway API
+      # controller, which starts only if a CRD check succeeds when a leader
+      # starts (#4198). Flux, the HelmReleases and the pods all stay healthy
+      # while every route change, and every Flagger traffic shift, silently
+      # stops reaching the gateway. Runs last so it also catches an operator
+      # restart caused by this deploy's own Talos update, and waits a bounded
+      # time for routes the deploy just changed to be applied.
+      if: >-
+        !cancelled() &&
+        steps.wait_flux_revision.outcome == 'success' &&
+        (
+          steps.cluster_update.outcome == 'skipped' ||
+          steps.wait_prod_api_stability.outcome == 'success'
+        )
+      shell: bash
+      run: ./scripts/verify-gateway-routes-applied.sh
