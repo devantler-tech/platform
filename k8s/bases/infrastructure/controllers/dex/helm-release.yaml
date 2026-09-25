@@ -174,10 +174,12 @@ spec:
                 # any app — oauth2-proxy's UIs, Headlamp, OpenBao (UI and CLI)
                 # and kubectl alike. It is kept deliberately as a second layer.
                 # Each sensitive client also enforces the rule itself:
-                # oauth2-proxy's allowed_groups gates every browser UI (the
-                # native-OIDC apps behind it included), OpenBao's oidc role binds
-                # the maintainers group, and the OIDC RBAC bindings name only the
-                # admin. Dex has no per-client group filter to replace it with.
+                # oauth2-proxy's allowed_groups gates the browser UIs routed
+                # through it (the native-OIDC apps behind it included); Headlamp
+                # is routed directly but acts only with the user's own token,
+                # which the OIDC RBAC bindings authorize for the admin alone;
+                # and OpenBao's oidc role binds the maintainers group. Dex has
+                # no per-client group filter to replace it with.
                 # To give a collaborator access, add them to `maintainers`. To
                 # admit non-maintainers anywhere, first re-check that each client
                 # above still enforces its own gate, then drop this list
