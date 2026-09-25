@@ -28,7 +28,7 @@ die() {
   exit 2
 }
 
-[ "$#" -le 2 ] || die "usage: $0 [<kubescape-helm-release> <reviewed-list>]"
+[ "$#" -le 3 ] || die "usage: $0 [<kubescape-helm-release> <reviewed-list> [<k8s-root>]]"
 command -v yq >/dev/null 2>&1 || die "yq is required but not installed"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" ||
@@ -36,9 +36,11 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" ||
 
 helm_release="${1:-$repo_root/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml}"
 reviewed="${2:-$repo_root/scripts/kubescape-unscanned-namespaces.tsv}"
+k8s_root="${3:-$repo_root/k8s}"
 
 [ -f "$helm_release" ] || die "kubescape HelmRelease '$helm_release' not found"
 [ -f "$reviewed" ] || die "reviewed list '$reviewed' not found"
+[ -d "$k8s_root" ] || die "k8s tree '$k8s_root' not found"
 
 # --- input 1: what the operator is told not to scan -------------------------------------
 excluded_raw="$(yq -r '.spec.values.excludeNamespaces' "$helm_release" 2>/dev/null)" ||
@@ -51,8 +53,58 @@ excluded="$(printf '%s\n' "$excluded_raw" | tr ',' '\n' |
 [ -n "$excluded" ] ||
   die "excludeNamespaces in '$helm_release' held no namespace names after splitting on commas"
 
+# --- nothing else may set the scan scope --------------------------------------------------
+# The comparison above reads the base HelmRelease, so it is only the deployed scope while
+# nothing overrides that field. Provider overlays already patch this HelmRelease, and a
+# patch or valuesFrom that sets excludeNamespaces would narrow the deployed scope while this
+# guard kept reading the unchanged base. So the base is the one place the field may be set:
+# any other manifest that sets it, and any valuesFrom on the kubescape HelmRelease, fails.
+base_rel="bases/infrastructure/controllers/kubescape/helm-release.yaml"
+# Every branch ends in `filename + ...`, never a bare string literal: yq evaluates a literal
+# after `select` even when the select matched nothing, so `select(x) | "text"` always prints.
+overrides_expr='
+  (select(tag == "!!map" and .kind == "HelmRelease" and .metadata.name == "kubescape")
+    | select(.spec.values.excludeNamespaces != null)
+    | filename + ": the kubescape HelmRelease sets spec.values.excludeNamespaces"),
+  (select(tag == "!!map" and .kind == "HelmRelease" and .metadata.name == "kubescape")
+    | select(.spec.valuesFrom != null)
+    | filename + ": the kubescape HelmRelease sets spec.valuesFrom"),
+  (select(tag == "!!seq") | .[]
+    | select(((.path // "") | tostring) | test("excludeNamespaces|valuesFrom"))
+    | filename + ": a JSON patch op targets " + .path),
+  (select(tag == "!!map" and .patches != null) | .patches[]
+    | select(((.patch // "") | tostring) | test("excludeNamespaces"))
+    | filename + ": an inline patch sets excludeNamespaces")'
+
+valuesfrom_base="$(yq -r '.spec.valuesFrom // ""' "$helm_release" 2>/dev/null)" ||
+  die "could not read .spec.valuesFrom from '$helm_release'"
+if [ -n "$valuesfrom_base" ]; then
+  printf 'guard-kubescape-scan-scope: %s uses spec.valuesFrom, which can override excludeNamespaces unseen; set values inline\n' \
+    "$helm_release" >&2
+  overrides_found=1
+else
+  overrides_found=0
+fi
+
+manifests="$(cd "$k8s_root" && find . -type f \( -name '*.yaml' -o -name '*.yml' \) ! -path "./$base_rel" | sort)" ||
+  die "could not list manifests under '$k8s_root'"
+[ -n "$manifests" ] || die "no manifests found under '$k8s_root'; refusing to report no overrides"
+
+overrides="$(cd "$k8s_root" && printf '%s\n' "$manifests" | tr '\n' '\0' |
+  xargs -0 yq e "$overrides_expr" 2>/dev/null)" ||
+  die "could not parse every manifest under '$k8s_root' while looking for scan-scope overrides"
+overrides="$(printf '%s\n' "$overrides" | sed '/^---$/d; /^$/d')"
+if [ -n "$overrides" ]; then
+  while IFS= read -r hit; do
+    printf 'guard-kubescape-scan-scope: %s; set the scan scope only in %s\n' "${hit#./}" "$base_rel" >&2
+  done <<EOF
+$overrides
+EOF
+  overrides_found=1
+fi
+
 # --- input 2: the reviewed rows ---------------------------------------------------------
-failures=0
+failures=$overrides_found
 listed=""
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in '' | '#'*) continue ;; esac

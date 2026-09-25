@@ -46,10 +46,10 @@ for f in "${REAL_HR}" "${REAL_TSV}"; do
   }
 done
 
-# expect <name> <want-exit> <want-stderr-substring> <helm-release> <tsv>
+# expect <name> <want-exit> <want-stderr-substring> <helm-release> <tsv> [<k8s-root>]
 expect() {
-  local name="$1" want="$2" needle="$3" hr="$4" tsv="$5" rc=0
-  bash "${GUARD}" "${hr}" "${tsv}" >"${tmp}/out" 2>"${tmp}/err" || rc=$?
+  local name="$1" want="$2" needle="$3" hr="$4" tsv="$5" root="${6:-k8s}" rc=0
+  bash "${GUARD}" "${hr}" "${tsv}" "${root}" >"${tmp}/out" 2>"${tmp}/err" || rc=$?
   if [ "${rc}" -ne "${want}" ]; then
     bad "${name}: exit ${rc}, want ${want} ($(tr '\n' ' ' <"${tmp}/err"))"
     return
@@ -113,6 +113,85 @@ expect "empty reviewed list is UNKNOWN" 2 "no rows in" "${REAL_HR}" "${tmp}/empt
 # Fail closed: missing files.
 expect "missing reviewed list is UNKNOWN" 2 "not found" "${REAL_HR}" "${tmp}/absent.tsv"
 expect "missing HelmRelease is UNKNOWN" 2 "not found" "${tmp}/absent.yaml" "${REAL_TSV}"
+
+# Overrides: the base is the only place the scan scope may be set. Each case copies the real
+# k8s tree and adds ONE override, so the tree itself is known to pass (the first case above).
+fresh_tree() {
+  rm -rf "${tmp}/k8s"
+  cp -R k8s "${tmp}/k8s"
+}
+readonly OVERLAY_DIR="${tmp}/k8s/providers/hetzner/infrastructure/controllers/kubescape/patches"
+
+# A strategic-merge patch that narrows the scope in one provider.
+fresh_tree
+cat >"${OVERLAY_DIR}/narrow-scan-scope.yaml" <<'YAML'
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kubescape
+  namespace: kubescape
+spec:
+  values:
+    excludeNamespaces: "kube-system,velero"
+YAML
+landed "${OVERLAY_DIR}/narrow-scan-scope.yaml" 'excludeNamespaces: "kube-system,velero"'
+expect "overlay patch setting excludeNamespaces fails" 1 "sets spec.values.excludeNamespaces" \
+  "${REAL_HR}" "${REAL_TSV}" "${tmp}/k8s"
+
+# A patch that adds valuesFrom, which can carry excludeNamespaces from a ConfigMap unseen.
+fresh_tree
+cat >"${OVERLAY_DIR}/values-from.yaml" <<'YAML'
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kubescape
+  namespace: kubescape
+spec:
+  valuesFrom:
+    - kind: ConfigMap
+      name: kubescape-values
+YAML
+landed "${OVERLAY_DIR}/values-from.yaml" 'valuesFrom:'
+expect "overlay patch adding valuesFrom fails" 1 "sets spec.valuesFrom" \
+  "${REAL_HR}" "${REAL_TSV}" "${tmp}/k8s"
+
+# A JSON6902 patch file.
+fresh_tree
+cat >"${OVERLAY_DIR}/json-scan-scope.yaml" <<'YAML'
+- op: replace
+  path: /spec/values/excludeNamespaces
+  value: "kube-system"
+YAML
+landed "${OVERLAY_DIR}/json-scan-scope.yaml" '/spec/values/excludeNamespaces'
+expect "JSON6902 op on excludeNamespaces fails" 1 "a JSON patch op targets /spec/values/excludeNamespaces" \
+  "${REAL_HR}" "${REAL_TSV}" "${tmp}/k8s"
+
+# An inline patch in a kustomization.
+fresh_tree
+cat >>"${tmp}/k8s/providers/docker/infrastructure/controllers/kustomization.yaml" <<'YAML'
+  - target:
+      kind: HelmRelease
+      name: kubescape
+    patch: |-
+      - op: replace
+        path: /spec/values/excludeNamespaces
+        value: "kube-system"
+YAML
+landed "${tmp}/k8s/providers/docker/infrastructure/controllers/kustomization.yaml" 'path: /spec/values/excludeNamespaces'
+expect "inline kustomization patch on excludeNamespaces fails" 1 "an inline patch sets excludeNamespaces" \
+  "${REAL_HR}" "${REAL_TSV}" "${tmp}/k8s"
+
+# valuesFrom on the base itself.
+printf '  valuesFrom:\n    - kind: ConfigMap\n      name: kubescape-values\n' | cat "${REAL_HR}" - >"${tmp}/hr-values-from.yaml"
+[ "$(yq -r '.spec.valuesFrom[0].name' "${tmp}/hr-values-from.yaml")" = "kubescape-values" ] || {
+  printf 'FAIL: base valuesFrom fixture did not land under .spec\n' >&2
+  exit 1
+}
+expect "valuesFrom on the base fails" 1 "uses spec.valuesFrom" \
+  "${tmp}/hr-values-from.yaml" "${REAL_TSV}"
+
+# Fail closed: no k8s tree to search.
+expect "missing k8s tree is UNKNOWN" 2 "not found" "${REAL_HR}" "${REAL_TSV}" "${tmp}/absent-k8s"
 
 finished=1
 if [ "${failures}" -ne 0 ]; then

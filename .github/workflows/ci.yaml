@@ -1856,6 +1856,8 @@ jobs:
         # posture score cannot tell that apart from a clean namespace. So the exclusions must
         # match scripts/kubescape-unscanned-namespaces.tsv exactly, each row with a reason,
         # and a namespace can only leave scan coverage through a reviewed change (#3215).
+        # The base HelmRelease is the only place the field may be set: an overlay patch or a
+        # valuesFrom that sets it would narrow the deployed scope while this read the base.
         run: |
           bash scripts/guard-kubescape-scan-scope.sh
           bash scripts/tests/test-guard-kubescape-scan-scope.sh
