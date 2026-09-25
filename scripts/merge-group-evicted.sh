@@ -30,6 +30,11 @@
 # it redeploys what is already running. A PR that merges after all (a re-enqueue) is not
 # evicted.
 #
+# It also runs after a FAILED deploy. That group is ejected, so the answer is normally
+# `evicted=true`, and the heal restores main whatever it says; what matters there is the
+# drain wait, which keeps the heal from overwriting a later group's speculative deploy
+# before that group merges (#2838).
+#
 # Writes `evicted=true` or `evicted=false` to $GITHUB_OUTPUT.
 #
 #   exit 0  the answer was written
