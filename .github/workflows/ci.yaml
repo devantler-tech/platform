@@ -348,6 +348,7 @@ jobs:
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
+              - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
               # The boundary test asserts over these two guides, so a docs-only
               # change to either must trigger it or those assertions can drift.
@@ -1563,6 +1564,8 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-availability-remediation.sh
           bash scripts/tests/test-coroot-availability-remediation.sh
+          shellcheck scripts/tests/test-umami-rendered-placement.sh
+          bash scripts/tests/test-umami-rendered-placement.sh
           shellcheck scripts/tests/test-coroot-risk-acceptance-reconciler.sh
           bash scripts/tests/test-coroot-risk-acceptance-reconciler.sh
 
