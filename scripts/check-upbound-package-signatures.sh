@@ -53,15 +53,37 @@ fi
 
 yq ea -r 'select(.apiVersion == "pkg.crossplane.io/v1" and .kind == "Provider") | .spec.package' \
   "$rendered" >"$scratch/all.txt"
-# A prefix match, so a lookalike registry or organisation never qualifies.
+
+# The providers that run with the platform's AWS CI identity, and the Upbound
+# repository each must come from. A prefix filter alone would skip one that was
+# repointed to another registry and still pass on the other, so each is checked
+# by name: it must be rendered exactly once, from its own repository.
+expected_repository() {
+  case "$1" in
+    provider-aws-iam) echo "${UPBOUND_PREFIX}provider-aws-iam" ;;
+    upbound-provider-family-aws) echo "${UPBOUND_PREFIX}provider-family-aws" ;;
+    *) return 1 ;;
+  esac
+}
+for name in provider-aws-iam upbound-provider-family-aws; do
+  repository="$(expected_repository "$name")"
+  yq ea -r "select(.apiVersion == \"pkg.crossplane.io/v1\" and .kind == \"Provider\" and .metadata.name == \"$name\") | .spec.package" \
+    "$rendered" >"$scratch/named.txt"
+  if [[ "$(wc -l <"$scratch/named.txt" | tr -d ' ')" -ne 1 ]]; then
+    echo "FAIL: expected exactly one rendered Provider named $name" >&2
+    exit 1
+  fi
+  package="$(cat "$scratch/named.txt")"
+  if [[ "$package" != "$repository:"* && "$package" != "$repository@"* ]]; then
+    echo "FAIL: Provider $name must use $repository, but renders $package" >&2
+    exit 1
+  fi
+done
+
+# Every Upbound package is verified. A prefix match, so a lookalike registry or
+# organisation never qualifies.
 { grep -E "^xpkg\\.upbound\\.io/upbound/" "$scratch/all.txt" || [[ $? -eq 1 ]]; } | sort -u >"$scratch/packages.txt"
 count="$(wc -l <"$scratch/packages.txt" | tr -d ' ')"
-# Nothing to check would pass silently, so it is a failure. Upbound providers
-# are rendered today; if they are removed, remove this check with them.
-if [[ "$count" -eq 0 ]]; then
-  echo "UNKNOWN: no $UPBOUND_PREFIX Provider package was rendered — refusing to pass vacuously" >&2
-  exit 1
-fi
 
 # verify IDENTITY PACKAGE: succeed only when PACKAGE carries a keyless
 # signature from IDENTITY, issued by GitHub Actions.

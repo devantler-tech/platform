@@ -13,7 +13,7 @@ cat >"$scratch/rendered.yaml" <<'YAML'
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
-  name: provider-family-aws
+  name: upbound-provider-family-aws
 spec:
   package: xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
 ---
@@ -43,17 +43,24 @@ cat >"$scratch/lookalikes.yaml" <<'YAML'
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
-  name: lookalike-org
+  name: upbound-provider-family-aws
 spec:
   package: xpkg.upbound.io/upbound-evil/provider-family-aws:v2.6.1
 ---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
-  name: lookalike-registry
+  name: provider-aws-iam
 spec:
   package: evil.example/xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
 YAML
+
+# A privileged provider repointed to another registry, beside one that still
+# verifies: the prefix filter alone would skip it and pass on the other.
+sed "s|package: xpkg.upbound.io\/upbound\/provider-aws-iam:v2.6.1|package: ghcr.io\/evil\/provider-aws-iam:v2.6.1|" \
+  "$scratch/rendered.yaml" >"$scratch/repointed.yaml"
+# A privileged provider that is no longer rendered at all.
+yq ea 'select(.metadata.name != "provider-aws-iam")' "$scratch/rendered.yaml" >"$scratch/missing.yaml"
 
 # Fake cosign: `cosign verify --certificate-oidc-issuer I --certificate-identity ID REF`.
 # COSIGN_MODE picks the behaviour; every call is logged so the test can see
@@ -106,8 +113,12 @@ expect 'a verifier that accepts any identity is caught' 1 \
   'verified against a deliberately wrong identity' "$scratch/rendered.yaml" accepts-anything
 expect 'an outage during the negative control is not read as a refusal' 1 \
   'stopped verifying after the negative control' "$scratch/rendered.yaml" outage-after-first
-expect 'nothing to verify fails rather than passes' 1 \
-  'refusing to pass vacuously' "$scratch/lookalikes.yaml"
+expect 'a privileged provider repointed to another registry is refused' 1 \
+  'Provider provider-aws-iam must use xpkg.upbound.io/upbound/provider-aws-iam' "$scratch/repointed.yaml"
+expect 'a privileged provider that is not rendered is refused' 1 \
+  'expected exactly one rendered Provider named provider-aws-iam' "$scratch/missing.yaml"
+expect 'a lookalike registry or organisation is not Upbound' 1 \
+  'must use xpkg.upbound.io/upbound/provider-' "$scratch/lookalikes.yaml"
 
 if [[ "$failures" -ne 0 ]]; then
   echo "$failures case(s) failed" >&2
