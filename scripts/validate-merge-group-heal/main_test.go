@@ -21,8 +21,22 @@ jobs:
         with:
           recover-orphaned-fence: "true"
 
+  merge-group-queue-membership:
+    needs: [changes, deploy-prod]
+    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true' && needs.deploy-prod.result == 'success'
+    permissions:
+      pull-requests: read # read the PR's merge-queue state
+    outputs:
+      evicted: ${{ steps.membership.outputs.evicted }}
+    steps:
+      - name: read
+        id: membership
+        env:
+          EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        run: scripts/merge-group-evicted.sh
+
   heal-prod-on-failure:
-    needs: [changes, deploy-prod, validate-publication-contract]
+    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]
     concurrency:
       group: prod-deploy
       cancel-in-progress: false
@@ -31,7 +45,9 @@ jobs:
       github.event_name == 'merge_group' &&
       needs.changes.outputs.k8s == 'true' &&
       (needs.deploy-prod.result == 'failure' ||
-       needs.deploy-prod.result == 'cancelled')
+       needs.deploy-prod.result == 'cancelled' ||
+       (needs.deploy-prod.result == 'success' &&
+        needs.merge-group-queue-membership.outputs.evicted == 'true'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@example
@@ -70,7 +86,7 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 		},
 		{
 			name:        "missing deploy dependencies",
-			old:         "    needs: [changes, deploy-prod, validate-publication-contract]",
+			old:         "    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]",
 			replacement: "    needs: [changes]",
 			wantError:   "missing deploy dependencies",
 		},
@@ -99,16 +115,54 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			wantError:   "must use an explicit multiline condition",
 		},
 		{
-			name:        "condition includes success",
+			name:        "condition heals every successful deploy",
 			old:         "needs.deploy-prod.result == 'failure'",
 			replacement: "needs.deploy-prod.result == 'success'",
-			wantError:   "must cover exactly failed and cancelled deploys while excluding success",
+			wantError:   "must cover exactly failed, cancelled, and evicted-after-success deploys",
+		},
+		{
+			// Without the evicted branch a successful deploy whose PR already
+			// left the queue keeps its unmerged artifact in prod (#3091).
+			name:        "condition drops the evicted branch",
+			old:         "needs.merge-group-queue-membership.outputs.evicted == 'true'",
+			replacement: "needs.merge-group-queue-membership.outputs.evicted == 'false'",
+			wantError:   "must cover exactly failed, cancelled, and evicted-after-success deploys",
+		},
+		{
+			name:        "missing queue-membership job",
+			old:         "  merge-group-queue-membership:",
+			replacement: "  merge-group-queue-check:",
+			wantError:   "missing merge-group-queue-membership job",
+		},
+		{
+			name:        "queue-membership job runs after an unsuccessful deploy",
+			old:         "needs.deploy-prod.result == 'success'\n",
+			replacement: "needs.deploy-prod.result == 'failure'\n",
+			wantError:   "queue-membership job is missing successful-deploy condition",
+		},
+		{
+			name:        "queue-membership job does not export its answer",
+			old:         "      evicted: ${{ steps.membership.outputs.evicted }}",
+			replacement: "      evicted: ${{ steps.other.outputs.evicted }}",
+			wantError:   "queue-membership job is missing evicted output",
+		},
+		{
+			name:        "queue-membership job reads the wrong ref",
+			old:         "          EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
+			replacement: "          EVICTED_HEAD_REF: ${{ github.ref }}",
+			wantError:   "queue-membership job is missing merge-group head ref input",
+		},
+		{
+			name:        "queue-membership job cannot read pull requests",
+			old:         "      pull-requests: read # read the PR's merge-queue state",
+			replacement: "      pull-requests: none",
+			wantError:   "queue-membership job is missing pull-request read permission",
 		},
 		{
 			name:        "condition drops cancellation",
 			old:         "needs.deploy-prod.result == 'cancelled'",
 			replacement: "needs.deploy-prod.result == 'failure'",
-			wantError:   "must cover exactly failed and cancelled deploys while excluding success",
+			wantError:   "must cover exactly failed, cancelled, and evicted-after-success deploys",
 		},
 		{
 			// The opt-in is what makes the composite's recovery step reachable at
