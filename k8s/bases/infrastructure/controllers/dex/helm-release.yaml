@@ -169,11 +169,20 @@ spec:
             useLoginAsID: false
             orgs:
               - name: devantler-tech
-                # Dex is the authorization boundary for apps that authenticate
-                # natively (for example Actual Budget) instead of routing
-                # through oauth2-proxy's allowed_groups gate. Keep the upstream
-                # GitHub connector narrowed to the same maintainer team so org
-                # members who are not platform maintainers cannot claim or
-                # access sensitive native-OIDC apps.
+                # A LOGIN requirement for every Dex client, not a per-app filter:
+                # an org member outside `maintainers` fails at Dex before reaching
+                # any app — oauth2-proxy's UIs, Headlamp, OpenBao (UI and CLI)
+                # and kubectl alike. It is kept deliberately as a second layer.
+                # Each sensitive client also enforces the rule itself:
+                # oauth2-proxy's allowed_groups gates the browser UIs routed
+                # through it (the native-OIDC apps behind it included); Headlamp
+                # is routed directly but acts only with the user's own token,
+                # which the OIDC RBAC bindings authorize for the admin alone;
+                # and OpenBao's oidc role binds the maintainers group. Dex has
+                # no per-client group filter to replace it with.
+                # To give a collaborator access, add them to `maintainers`. To
+                # admit non-maintainers anywhere, first re-check that each client
+                # above still enforces its own gate, then drop this list
+                # (platform#3187).
                 teams:
                   - maintainers
