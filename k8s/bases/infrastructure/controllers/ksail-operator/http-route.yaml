@@ -29,11 +29,6 @@ spec:
     - ksail.${domain}
   rules:
     - filters:
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://ksail.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
