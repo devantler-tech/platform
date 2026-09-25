@@ -307,6 +307,9 @@ check() {
   fi
   [ -n "${issue_line}" ] ||
     { printf 'VIOLATION A16: the generated pull-request body has no issue line (Fixes #N or the no-issue marker)\n'; return 1; }
+  # Either/or: a body carrying both alternatives (or two issue lines) contradicts itself.
+  [ "$(printf '%s\n' "${body}" | grep -cxE 'Fixes #[0-9]+|No issue: trivial fix\.')" = '1' ] ||
+    { printf 'VIOLATION A16: the generated pull-request body has more than one issue line\n'; return 1; }
   if ! { [ "${why_line}" -lt "${what_line}" ] && [ "${what_line}" -lt "${issue_line}" ]; }; then
     printf 'VIOLATION A16: the generated pull-request body is out of template order (## Why %s, ## What %s, issue line %s)\n' "${why_line}" "${what_line}" "${issue_line}"; return 1
   fi
@@ -400,6 +403,7 @@ ablate A16 'Why heading dropped' '(.jobs.regenerate.steps[] | select(.uses // ""
 ablate A16 'issue line dropped' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("No issue: trivial fix\\.\n"; "")'
 ablate A16 'issue line moved first' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= (sub("No issue: trivial fix\\.\n"; "") | sub("## Why\n"; "No issue: trivial fix.\n\n## Why\n"))'
 ablate A16 'What before Why' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= (sub("## Why\n"; "## TMP\n") | sub("## What\n"; "## Why\n") | sub("## TMP\n"; "## What\n"))'
+ablate A16 'both issue alternatives' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("No issue: trivial fix\\."; "No issue: trivial fix.\nFixes #1")'
 ablate A16 'closed-issue link restored' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("No issue: trivial fix\\."; "Fixes #1\n\nPart of #3308.")'
 
 # Execute the actual change-detection step in a disposable checkout. This proves
@@ -443,4 +447,4 @@ mkdir -p "${checkout}"
   fi
 )
 
-printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 50 ablations + change-detection cases passed\n'
+printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 51 ablations + change-detection cases passed\n'
