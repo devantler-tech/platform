@@ -158,11 +158,12 @@ single-replica Deployment on a 30-minute descheduling loop. Enabled strategies:
 - **Consolidation** — `HighNodeUtilization` drains nearly-empty nodes
   (< 15% requested CPU **and** memory) toward the rest of the cluster so the
   autoscaler can delete them. kube-scheduler scores nodes with `MostAllocated`
-  (`talos/cluster/pack-pods-onto-busy-nodes.yaml`), so evicted pods land on the
-  busiest node that still fits rather than back on an empty-ish one. The 15%
-  threshold is still below what the DaemonSets alone request on a node (about
-  19% CPU and 21% memory), so no node currently qualifies; raising it above
-  that floor is
+  (`talos/cluster/pack-pods-onto-busy-nodes.yaml`), so evicted pods are more
+  likely to land on a busier node that still fits than back on an empty-ish
+  one. On a cx43, the DaemonSets plus Longhorn's per-node instance manager
+  already request about 19% CPU and 21% memory (measured 2026-09-24), so a cx43
+  never falls below 15%; a cx53's larger capacity puts the same requests at
+  roughly half that. Raising the threshold above the cx43 floor is
   [#4167](https://github.com/devantler-tech/platform/issues/4167).
 
 Guardrails (all in the `HelmRelease` values):
