@@ -313,6 +313,11 @@ check() {
   if ! { [ "${why_line}" -lt "${what_line}" ] && [ "${what_line}" -lt "${issue_line}" ]; }; then
     printf 'VIOLATION A16: the generated pull-request body is out of template order (## Why %s, ## What %s, issue line %s)\n' "${why_line}" "${what_line}" "${issue_line}"; return 1
   fi
+  # Headings alone are not the template either: each section needs prose under it.
+  printf '%s\n' "${body}" | sed -n "$((why_line + 1)),$((what_line - 1))p" | grep -q '[^[:space:]]' ||
+    { printf 'VIOLATION A16: the generated pull-request body has an empty ## Why section\n'; return 1; }
+  printf '%s\n' "${body}" | sed -n "$((what_line + 1)),$((issue_line - 1))p" | grep -q '[^[:space:]]' ||
+    { printf 'VIOLATION A16: the generated pull-request body has an empty ## What section\n'; return 1; }
   if printf '%s\n' "${body}" | grep -qE 'Part of #[0-9]+'; then
     printf 'VIOLATION A16: the generated pull-request body links an issue with Part of, which the template does not accept\n'; return 1
   fi
@@ -405,6 +410,8 @@ ablate A16 'issue line moved first' '(.jobs.regenerate.steps[] | select(.uses //
 ablate A16 'What before Why' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= (sub("## Why\n"; "## TMP\n") | sub("## What\n"; "## Why\n") | sub("## TMP\n"; "## What\n"))'
 ablate A16 'both issue alternatives' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("No issue: trivial fix\\."; "No issue: trivial fix.\nFixes #1")'
 ablate A16 'closed-issue link restored' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("No issue: trivial fix\\."; "Fixes #1\n\nPart of #3308.")'
+ablate A16 'Why section emptied' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("(?s)## Why\n.*?## What"; "## Why\n\n## What")'
+ablate A16 'What section emptied' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("(?s)## What\n.*?No issue"; "## What\n\nNo issue")'
 
 # Execute the actual change-detection step in a disposable checkout. This proves
 # that the PR boundary handles each matcher, staged changes, and unrelated paths.
@@ -447,4 +454,4 @@ mkdir -p "${checkout}"
   fi
 )
 
-printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 51 ablations + change-detection cases passed\n'
+printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 53 ablations + change-detection cases passed\n'
