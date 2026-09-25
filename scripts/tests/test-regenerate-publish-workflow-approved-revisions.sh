@@ -291,6 +291,22 @@ check() {
   [ "$(q "$f" ".jobs.regenerate.steps[${guard_idx}].env.APPROVED_REVISIONS_ENFORCE")" = '1' ] ||
     { printf 'VIOLATION A15: the regeneration guard must enforce exact approved revisions\n'; return 1; }
 
+  # A16 — the body follows the pull-request template: `## Why` and `## What`, then an
+  # issue line that is either `Fixes #<n>` or the explicit no-issue marker. The earlier
+  # body linked `Part of #3308`, an issue that had closed, so every run that drove one
+  # of these PRs had to rewrite the body before promotion (platform#4204).
+  local body
+  body="$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.body")"
+  if ! { printf '%s\n' "${body}" | grep -qx '## Why' &&
+    printf '%s\n' "${body}" | grep -qx '## What'; }; then
+    printf 'VIOLATION A16: the generated pull-request body lacks the template headings ## Why / ## What\n'; return 1
+  fi
+  printf '%s\n' "${body}" | grep -qxE 'Fixes #[0-9]+|No issue: trivial fix\.' ||
+    { printf 'VIOLATION A16: the generated pull-request body has no issue line (Fixes #N or the no-issue marker)\n'; return 1; }
+  if printf '%s\n' "${body}" | grep -qE 'Part of #[0-9]+'; then
+    printf 'VIOLATION A16: the generated pull-request body links an issue with Part of, which the template does not accept\n'; return 1
+  fi
+
   printf 'ok\n'
 }
 
@@ -373,6 +389,9 @@ ablate A15 'writer gated off' '(.jobs.regenerate.steps[] | select(.run // "" | c
 ablate A15 'guard enforcement off' '(.jobs.regenerate.steps[] | select(.run // "" | contains("guard-publish-workflow-approved-revisions.sh")) | .env.APPROVED_REVISIONS_ENFORCE) = "0"'
 ablate A8 'consumer matcher omitted' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.add-paths) = "scripts/publish-workflow-approved-revisions.tsv"'
 ablate A9 'writer failure ignored' '(.jobs.regenerate.steps[] | select(.run // "" | contains("write-publish-workflow-matchers.sh")) | .continue-on-error) = true'
+ablate A16 'Why heading dropped' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("## Why\n"; "")'
+ablate A16 'issue line dropped' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("No issue: trivial fix\\.\n"; "")'
+ablate A16 'closed-issue link restored' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("No issue: trivial fix\\."; "Fixes #1\n\nPart of #3308.")'
 
 # Execute the actual change-detection step in a disposable checkout. This proves
 # that the PR boundary handles each matcher, staged changes, and unrelated paths.
@@ -415,4 +434,4 @@ mkdir -p "${checkout}"
   fi
 )
 
-printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 45 ablations + change-detection cases passed\n'
+printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 48 ablations + change-detection cases passed\n'
