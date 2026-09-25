@@ -5,7 +5,10 @@
 # scoring: with the default LeastAllocated scoring the scheduler sends evicted
 # pods to the emptiest node, often straight back to the node being drained.
 # MostAllocated sends them to the fullest node that fits instead, so a drained
-# autoscaled node stays empty and is reclaimed.
+# autoscaled node stays empty and is reclaimed. This must be live before the
+# descheduler's threshold rises (#4167): a deploy publishes manifests before it
+# updates Talos, so both in one change would briefly run the higher threshold
+# against the old scoring.
 #
 # Only the three static workers and autoscaled nodes are affected: control
 # planes keep their NoSchedule taint. Replica spread for HA components still
