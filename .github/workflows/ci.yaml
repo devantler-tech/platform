@@ -181,6 +181,9 @@ jobs:
           shellcheck scripts/check-first-party-package-signatures.sh
           shellcheck scripts/tests/test-check-first-party-package-signatures.sh
           bash scripts/tests/test-check-first-party-package-signatures.sh
+          shellcheck scripts/check-upbound-package-signatures.sh
+          shellcheck scripts/tests/test-check-upbound-package-signatures.sh
+          bash scripts/tests/test-check-upbound-package-signatures.sh
 
       - name: 🔐 Validate the scoped package-access experiment
         # Always run, including workflow-only changes. The real registry proof
@@ -937,6 +940,14 @@ jobs:
           trap 'rm -rf "$DOCKER_CONFIG"' EXIT
           printf '%s' "$REGISTRY_TOKEN" | cosign login ghcr.io -u "$REGISTRY_USER" --password-stdin
           bash scripts/check-first-party-package-signatures.sh
+
+      - name: 🔐 Verify proposed Upbound Crossplane packages
+        # The Upbound AWS providers run with the platform's AWS CI identity.
+        # Each proposed package must carry Upbound's own build signature, and a
+        # wrong identity must be refused on every run (#4189). Their registry
+        # is public, so this needs no credential.
+        timeout-minutes: 10
+        run: bash scripts/check-upbound-package-signatures.sh
 
   validate-eks-authorization:
     name: 🔐 Validate Production Authorization
