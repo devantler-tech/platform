@@ -55,9 +55,8 @@ spec:
     # annotations/labels onto the HTTPRoute it generates (pkg/router/gateway_api.go),
     # so the gethomepage.dev/* annotations the hand-written route used to carry are
     # reproduced here. pod-selector keys on app.kubernetes.io/instance
-    # (NOT /name): Flagger's default --selector-labels (app,name,
-    # app.kubernetes.io/name) rewrites app.kubernetes.io/name to
-    # "umami-umami-primary" on the primary Deployment, while leaving
+    # (NOT /name): Flagger derives app.kubernetes.io/name=umami-primary from
+    # the source Deployment's selector value, while leaving
     # app.kubernetes.io/instance=umami intact on the running pods.
     #
     # The tile stays disabled on this collector-only route so Homepage discovers

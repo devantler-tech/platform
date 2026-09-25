@@ -13,6 +13,9 @@
   "kubernetes": {
     "managerFilePatterns": ["/^k8s/.+\\.ya?ml$/"]
   },
+  "crossplane": {
+    "managerFilePatterns": ["/^k8s/.+\\.ya?ml$/"]
+  },
   "github-actions": {
     "enabled": false
   },
@@ -211,6 +214,21 @@
       "description": "Major versions — automerged. CI (full system-test, kubescape NSA scan, manifest validation) is the trust gate.",
       "matchUpdateTypes": ["major"],
       "automerge": true
+    },
+    {
+      "description": "Crossplane provider packages (the crossplane manager reads each Provider's spec.package). NOT automerged, whatever the update type: every provider is part of the production-authorization surface, so a bump cannot pass CI until its fingerprint is re-approved in scripts/validate-eks-ci-role-policy/main.go, and a provider's revision-hashed service account can stop matching an exact-name carve-out on upgrade. Only first-party ghcr.io/devantler-tech packages are signature-verified; the third-party Upbound and crossplane-contrib packages are not, so review their upstream release before approving.",
+      "matchManagers": ["crossplane"],
+      "automerge": false,
+      "labels": ["security/review-required"]
+    },
+    {
+      "description": "provider-aws-iam depends on provider-family-aws, which ships the ProviderConfig CRD every family member uses, and the two must be pinned to the same release (see provider-aws-iam.yaml), so they move in one PR. Grouping does not force equal versions; scripts/tests/test-crossplane-aws-family-version-parity.sh fails a PR that pins them apart.",
+      "matchManagers": ["crossplane"],
+      "matchPackageNames": [
+        "xpkg.upbound.io/upbound/provider-family-aws",
+        "xpkg.upbound.io/upbound/provider-aws-iam"
+      ],
+      "groupName": "crossplane aws providers"
     },
     {
       "description": "Talos Linux distribution upgrades (tracked by the custom manager above; depName siderolabs/talos). The Go module github.com/siderolabs/talos/pkg/machinery is grouped into the same PR because its version tracks the Talos release line exactly and the repository's Kubernetes/Talos compatibility check reads it, so a Talos bump that arrives without it fails that check. Renovate opens the PR automatically — the same flow as every other dependency, with no Dependency Dashboard approval gate. It is NOT automerged: the custom manager bumps the talos.version pin in ksail.prod.yaml (KSail derives the installer image from it plus the extensions list), but the Hetzner iso snapshot id in ksail.prod.yaml is not a version string and cannot be auto-derived, and a lockstep kubernetesVersion bump may be needed when Talos's supported Kubernetes range moves. CI's system-test also runs off ksail.yaml (docker), so it never boots this prod config. A maintainer completes the iso (and any kubernetesVersion) edit on the open PR, and also sets TALOSCTL_SHA256 in .github/scripts/setup-talosctl.sh: Renovate moves TALOS_VERSION there but cannot compute an asset checksum, so the CI setup step fails closed and, when the served bytes match the release's published sha256sum.txt, prints the exact value to set. prBodyNotes repeats this checklist on every Talos PR. Then merges. automerge:false is placed last so it overrides the broad talos/** and major-update automerge rules above.",

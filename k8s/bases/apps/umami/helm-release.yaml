@@ -15,6 +15,9 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: umami
+  # Flagger copies the source strategy only when first creating the primary.
+  # The propagate-reloader-to-flagger-primary policy also retrofits an
+  # existing primary so later promotions keep the no-surge rollout.
   postRenderers:
     # Replicas are deliberately NOT pinned here: the KEDA ScaledObject
     # (scaled-object.yaml) owns them through the Canary's autoscalerRef — the
@@ -41,6 +44,16 @@ spec:
               - op: add
                 path: /metadata/annotations/secret.reloader.stakater.com~1reload
                 value: umami-db-rotated
+              # Flagger copies the source Deployment strategy to the serving
+              # primary. Retire one old pod before scheduling its replacement
+              # while keeping at least one primary serving.
+              - op: add
+                path: /spec/strategy
+                value:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxSurge: 0
+                    maxUnavailable: 1
   # https://github.com/helmforgedev/charts/blob/main/charts/umami/values.yaml
   values:
     # replicaCount intentionally omitted — replicas are owned by the KEDA
@@ -52,20 +65,38 @@ spec:
     # replicas — scaled-object.yaml — but nothing pulled them apart). Set on the
     # SOURCE pod template here because Flagger builds umami-umami-primary by
     # COPYING this template, so the constraint propagates to the primary that
-    # actually serves traffic. ScheduleAnyway (not DoNotSchedule) keeps scheduling
-    # best-effort: on a small/cordoned cluster a replica still lands rather than
-    # going Pending. The labelSelector keys on app.kubernetes.io/instance=umami —
-    # NOT app.kubernetes.io/name — because Flagger's default --selector-labels
-    # rewrites app.kubernetes.io/name to "umami-umami-primary" on the primary
-    # while leaving instance=umami intact on the pods (same reason the PDB and the
-    # Homepage pod-selector key on instance — see canary.yaml / pod-disruption-budget.yaml).
+    # actually serves traffic. A soft ScheduleAnyway constraint still allowed
+    # both primary replicas onto one worker during a rollout (platform#4103).
+    # DoNotSchedule preserves one serving replica if only one worker is usable;
+    # the second waits for another worker instead of giving a false HA signal.
+    # Scope the spread to the serving primary pods. The instance label also
+    # matches canary pods, which could otherwise satisfy the skew while both
+    # primary replicas still share one node. The chart's source Deployment
+    # selects app.kubernetes.io/name=umami; Flagger derives the primary pod
+    # label umami-primary from that selector. Flagger rewrites a topology
+    # selector only when its value equals the source Deployment name
+    # (umami-umami), so this already-primary value stays unchanged.
+    # Count every serving primary revision, so a no-surge rollout places each
+    # replacement away from the old primary pod that is still serving;
+    # pod-template-hash would hide that pod from the spread calculation. The
+    # scheduler skips terminating pods when it counts, so one constraint covers
+    # every step of the rollout. Kubernetes also rejects a second constraint
+    # with the same topologyKey and whenUnsatisfiable pair. Skew 1 still permits
+    # KEDA's third replica when only two workers are eligible.
     topologySpreadConstraints:
       - maxSkew: 1
+        # With only one eligible worker, the second primary must wait instead
+        # of satisfying skew against that worker alone (Kubernetes defaults to 1).
+        minDomains: 2
+        # Count only nodes Umami can run on. The tainted control planes would
+        # otherwise count as empty nodes, so KEDA's third replica would stay
+        # Pending whenever only two workers can take it.
+        nodeTaintsPolicy: Honor
         topologyKey: kubernetes.io/hostname
-        whenUnsatisfiable: ScheduleAnyway
+        whenUnsatisfiable: DoNotSchedule
         labelSelector:
           matchLabels:
-            app.kubernetes.io/instance: umami
+            app.kubernetes.io/name: umami-primary
     serviceAccount:
       # Umami needs no Kubernetes API access.
       automountServiceAccountToken: false

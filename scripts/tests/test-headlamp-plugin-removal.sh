@@ -18,7 +18,6 @@ readonly auth_proxy_policy="${auth_proxy_dir}/cilium-network-policy.yaml"
 readonly oauth2_proxy_grant="${root_dir}/k8s/bases/infrastructure/controllers/oauth2-proxy/reference-grant.yaml"
 readonly local_hosts="${root_dir}/hosts"
 readonly crossview_origin="https://crossview.\${domain}"
-readonly crossview_redirect="${crossview_origin}/"
 readonly crossview_hostname="crossview.\${domain}"
 readonly crossview_host_rule="Host(\`${crossview_hostname}\`)"
 readonly crossview_callback="https://crossview.\${domain}/api/auth/oidc/callback"
@@ -176,7 +175,6 @@ rendered="$(kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps")" ||
 
 printf '%s\n' "${rendered}" |
   CROSSVIEW_HOSTNAME="${crossview_hostname}" \
-    CROSSVIEW_REDIRECT="${crossview_redirect}" \
     yq ea -e '
     [select(
       .apiVersion == "gateway.networking.k8s.io/v1" and
@@ -190,13 +188,6 @@ printf '%s\n' "${rendered}" |
       .spec.parentRefs[0].sectionName == "https" and
       (.spec.hostnames | length) == 1 and
       .spec.hostnames[0] == strenv(CROSSVIEW_HOSTNAME) and
-      ([.spec.rules[0].filters[] |
-        select(
-          .type == "RequestHeaderModifier" and
-          (.requestHeaderModifier.set | length) == 1 and
-          .requestHeaderModifier.set[0].name == "X-Auth-Request-Redirect" and
-          .requestHeaderModifier.set[0].value == strenv(CROSSVIEW_REDIRECT)
-        )] | length) == 1 and
       .spec.rules[0].backendRefs[0].name == "oauth2-proxy" and
       .spec.rules[0].backendRefs[0].namespace == "oauth2-proxy" and
       .spec.rules[0].backendRefs[0].port == 80 and

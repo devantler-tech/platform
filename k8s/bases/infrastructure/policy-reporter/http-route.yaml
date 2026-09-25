@@ -34,11 +34,6 @@ spec:
     - policy-reporter.${domain}
   rules:
     - filters:
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://policy-reporter.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:

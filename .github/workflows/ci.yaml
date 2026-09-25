@@ -348,6 +348,7 @@ jobs:
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
+              - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
               # The boundary test asserts over these two guides, so a docs-only
               # change to either must trigger it or those assertions can drift.
@@ -705,6 +706,7 @@ jobs:
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-crossplane-provider-name-parity.sh'
               - 'scripts/tests/test-guard-crossplane-provider-name-parity.sh'
+              - 'scripts/tests/test-crossplane-aws-family-version-parity.sh'
               # Both halves, for the same reason as the guards above. This guard
               # also reads scripts/refresh-flux-ghcr-auth.sh, already selected
               # below, and k8s/bases/apps/kustomization.yaml, covered by 'k8s/**'.
@@ -1562,6 +1564,8 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-availability-remediation.sh
           bash scripts/tests/test-coroot-availability-remediation.sh
+          shellcheck scripts/tests/test-umami-rendered-placement.sh
+          bash scripts/tests/test-umami-rendered-placement.sh
           shellcheck scripts/tests/test-coroot-risk-acceptance-reconciler.sh
           bash scripts/tests/test-coroot-risk-acceptance-reconciler.sh
 
@@ -1901,6 +1905,14 @@ jobs:
         run: |
           bash scripts/guard-crossplane-provider-name-parity.sh k8s
           bash scripts/tests/test-guard-crossplane-provider-name-parity.sh
+
+      - name: 🧬 Validate the AWS Crossplane family runs one release
+        if: needs.changes.outputs.k8s == 'true'
+        # provider-aws-iam depends on provider-family-aws and must run its release.
+        # Renovate groups their bumps into one PR, but grouping does not force equal
+        # versions, so a split release would otherwise merge as a version skew.
+        run: |
+          bash scripts/tests/test-crossplane-aws-family-version-parity.sh
 
       - name: 🔗 Validate the GHCR fan-out follows the apps-base component gate
         if: needs.changes.outputs.k8s == 'true'
