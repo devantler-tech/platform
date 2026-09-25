@@ -37,22 +37,14 @@ yq e -e '
     select(.topologyKey == "kubernetes.io/hostname" and
       .maxSkew == 1 and
       .minDomains == 2 and
+      .nodeTaintsPolicy == "Honor" and
       .whenUnsatisfiable == "DoNotSchedule" and
       .labelSelector.matchLabels."app.kubernetes.io/name" == "umami-primary" and
       (. | has("matchLabelKeys") | not))
   ] | length == 1) and
-  ([.spec.values.topologySpreadConstraints[] |
-    select(.topologyKey == "kubernetes.io/hostname" and
-      .maxSkew == 1 and
-      .minDomains == 2 and
-      .whenUnsatisfiable == "DoNotSchedule" and
-      .labelSelector.matchLabels."app.kubernetes.io/name" == "umami-primary" and
-      .matchLabelKeys[0] == "pod-template-hash" and
-      .matchLabelKeys[1] == null)
-  ] | length == 1) and
-  (.spec.values.topologySpreadConstraints | length == 2)
+  (.spec.values.topologySpreadConstraints | length == 1)
 ' "${umami_release}" >/dev/null ||
-  fail 'Umami serving replicas need cross-revision and per-revision hostname spread'
+  fail 'Umami serving replicas need one hostname spread across every primary revision, counting only nodes they can run on'
 
 umami_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "umami-umami") | .patch' "${umami_release}")"
 printf '%s\n' "${umami_patch}" | yq e -e '

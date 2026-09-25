@@ -49,22 +49,22 @@ yq ea -o=json '[.]' "${scratch}/resources.yaml" | jq -e '
       .topologyKey == "kubernetes.io/hostname" and
       .maxSkew == 1 and
       .minDomains == 2 and
+      .nodeTaintsPolicy == "Honor" and
       .whenUnsatisfiable == "DoNotSchedule" and
       .labelSelector.matchLabels["app.kubernetes.io/name"] == "umami-primary" and
       (has("matchLabelKeys") | not)
     )] | length) == 1 and
-    ([.spec.template.spec.topologySpreadConstraints[]? | select(
-      .topologyKey == "kubernetes.io/hostname" and
-      .maxSkew == 1 and
-      .minDomains == 2 and
-      .whenUnsatisfiable == "DoNotSchedule" and
-      .labelSelector.matchLabels["app.kubernetes.io/name"] == "umami-primary" and
-      .matchLabelKeys == ["pod-template-hash"]
-    )] | length) == 1 and
-    (.spec.template.spec.topologySpreadConstraints | length) == 2 and
+    (.spec.template.spec.topologySpreadConstraints | length) == 1 and
     ([.spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[]?] | length) == 0
   )] == [true]
-' >/dev/null || fail 'rendered Umami source must spread across and within primary revisions without blocking scale-out'
+' >/dev/null || fail 'rendered Umami source must spread every primary revision across the nodes it can use without blocking scale-out'
+
+# The API server rejects a pod template whose spread constraints repeat a
+# {topologyKey, whenUnsatisfiable} pair, so check every rendered pod template.
+yq ea -o=json '[.]' "${scratch}/resources.yaml" | jq -e '
+  [.[] | .spec.template.spec.topologySpreadConstraints? // empty
+    | [.[] | [.topologyKey, .whenUnsatisfiable]] | (length == (unique | length))] | all
+' >/dev/null || fail 'rendered pod templates must not repeat a topologyKey and whenUnsatisfiable pair'
 
 policy="${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/propagate-reloader-to-flagger-primary.yaml"
 yq -o=json '.spec.rules' "${policy}" | jq -e '
