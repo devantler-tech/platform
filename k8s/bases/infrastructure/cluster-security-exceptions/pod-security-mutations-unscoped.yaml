@@ -28,7 +28,7 @@
 #   * C-0211 — 35 of 35 scanned workloads read passed with subStatus "w/exceptions",
 #     each carrying appliedIgnoreRules: [pod-security-mutations-unscoped/C-0211]. Against
 #     the stored specs (measured 2026-09-25, below) every workload in the population
-#     passes the two universal gaps while twelve still miss privilege-adjacent fields,
+#     passes the two universal gaps while nineteen still miss privilege-adjacent fields,
 #     and status alone cannot tell those apart: it reads "passed" on all of them.
 #
 # The discriminator is subStatus plus a populated appliedIgnoreRules, never status,
@@ -65,12 +65,14 @@
 # so a `level`-based test would report every workload as failing.
 #
 # C-0211 still cannot be narrowed, because the two universal gaps were never all of
-# it. Twelve of the 38 still miss an effective `runAsGroup` or `runAsNonRoot` (pod
-# level, or set on every container): in longhorn-system the four CSI sidecars, the
-# driver deployer and the longhorn-manager, engine-image and longhorn-csi-plugin
-# DaemonSets; in observability coroot-operator, coroot-node-agent and
-# audit-log-forwarder-agent; and velero/node-agent. flux-system passes both at
-# container level. These are privilege-adjacent fields on workloads
+# it. Nineteen of the 38 still miss a pod-level `fsGroup`, and twelve of those also
+# miss an effective `runAsGroup` or `runAsNonRoot` (pod level, or set on every
+# container): in longhorn-system the four CSI sidecars, the driver deployer and the
+# longhorn-manager, engine-image and longhorn-csi-plugin DaemonSets; in observability
+# coroot-operator, coroot-node-agent and audit-log-forwarder-agent; and
+# velero/node-agent, whose pod runs as root with no `fsGroup`. flux-system passes
+# `runAsGroup` and `runAsNonRoot` at container level, and flux-operator still misses
+# `fsGroup`. These are privilege-adjacent fields on workloads
 # that run with elevated privileges by design, which is why the namespaces are
 # excluded from add-security-context in the first place. Narrowing C-0211 now would
 # surface them with no fix behind them — lowering the score to absorb a gap rather
@@ -81,8 +83,13 @@
 # reach the stored spec, add-baseline-context-optin-controllers* and
 # add-baseline-context-optin-cronjobs*, are gated on the `baseline-context-controllers`
 # label, which is deliberately applied in NO namespace (tests/add-baseline-context pins
-# that empty inventory). The universal gaps closed through template-level changes
-# instead. These counts are prod-only and the local overlay opts in to a different
+# that empty inventory). Most of the universal gaps closed through template-level
+# changes. The exception is the Coroot operator's six generated templates in
+# observability: the namespace's `baseline-context-coroot` label lets the
+# Coroot-scoped controller rules add both fields at admission, and every deploy writes
+# a template still lacking a field and proves the operator converges
+# (docs/baseline-context-rollout.md). Removing that label regresses those six stored
+# specs. These counts are prod-only and the local overlay opts in to a different
 # namespace set, so re-measure rather than inheriting them.
 #
 # node-agent and storage are NOT in that population. Both live in `kubescape`, whose
@@ -113,7 +120,7 @@ spec:
     not contain them and Kubescape scans the stored spec, not the live pod. This
     control remains cluster-wide because narrowing it is blocked on evidence rather
     than on expressiveness: of the 38 scanned workloads the mutation does not reach,
-    12 still miss an effective runAsGroup or runAsNonRoot in their stored spec
+    19 still miss fsGroup, runAsGroup or runAsNonRoot in their stored spec
     (measured 2026-09-25 against live PROD); narrowing is tracked on #3522.
   posture:
     - controlID: C-0211
