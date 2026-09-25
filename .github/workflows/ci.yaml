@@ -2656,14 +2656,18 @@ jobs:
     # queue's check timeout can expire while the deploy waits on the prod-deploy
     # lock behind a heal, and a PR can be dequeued by hand. Prod then runs an
     # artifact that never reaches `main`, and nothing restores it, because the
-    # heal below only fires on an unsuccessful deploy (#3091). This job asks
-    # whether the PR is still on its way to `main` and hands the answer to the
-    # heal. It runs before `CI - Required Checks` lets the queue merge, so a PR
-    # that is still queued or already merged reads as not evicted. A failed read
+    # heal below only fires on an unsuccessful deploy (#3091). This job waits
+    # until the PR merges or leaves the queue, and hands the answer to the heal;
+    # `CI - Required Checks` does not depend on it, so the wait never holds up the
+    # merge. A PR that left while another group is queued is NOT evicted here:
+    # that group replaces this deploy itself, and restoring main could publish
+    # main without its change over its deployment. A failed read
     # fails this job visibly and writes no answer, so the heal never runs on a
     # guess. It is not part of the required checks: it gates nothing.
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true' && needs.deploy-prod.result == 'success'
     runs-on: ubuntu-latest
+    # The check polls until the PR merges or leaves the queue (at most 40 reads, 30s apart).
+    timeout-minutes: 30
     permissions:
       contents: read # checkout repository
       pull-requests: read # read the PR's merge-queue state
@@ -2683,6 +2687,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVICTED_REPOSITORY: ${{ github.repository }}
           EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          EVICTED_GROUP_CREATED_AT: ${{ github.event.merge_group.head_commit.timestamp }}
         run: scripts/merge-group-evicted.sh
 
   heal-prod-on-failure:

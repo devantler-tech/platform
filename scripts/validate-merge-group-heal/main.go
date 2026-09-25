@@ -174,6 +174,10 @@ func validateMembershipJob(workflow string) error {
 			line:        "          EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
 			description: "merge-group head ref input",
 		},
+		{
+			line:        "          EVICTED_GROUP_CREATED_AT: ${{ github.event.merge_group.head_commit.timestamp }}",
+			description: "merge-group creation time input",
+		},
 		{line: "        run: scripts/merge-group-evicted.sh", description: "eviction check"},
 	}
 	for _, requirement := range stepRequirements {

@@ -35,6 +35,7 @@ jobs:
         id: membership
         env:
           EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          EVICTED_GROUP_CREATED_AT: ${{ github.event.merge_group.head_commit.timestamp }}
         run: scripts/merge-group-evicted.sh
 
   heal-prod-on-failure:
@@ -153,6 +154,14 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			old:         "          EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
 			replacement: "          EVICTED_HEAD_REF: ${{ github.ref }}",
 			wantError:   "membership step is missing merge-group head ref input",
+		},
+		{
+			// Without the group's creation time a re-enqueued PR's replacement entry
+			// cannot be told apart from this group's own entry.
+			name:        "queue-membership job reads the wrong creation time",
+			old:         "          EVICTED_GROUP_CREATED_AT: ${{ github.event.merge_group.head_commit.timestamp }}",
+			replacement: "          EVICTED_GROUP_CREATED_AT: ${{ github.event.repository.pushed_at }}",
+			wantError:   "membership step is missing merge-group creation time input",
 		},
 		{
 			// The output reads steps.membership, so the id on another step leaves
