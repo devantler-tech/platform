@@ -3124,7 +3124,78 @@ const (
 // This Longhorn engine-image baseline-context retrofit establishes aggregate:
 //
 //	f5102c7e56811403094cb887305789a52768361c8e3a8636b4fc254110279f63
-const expectedRenderedSurfaceSHA = "f5102c7e56811403094cb887305789a52768361c8e3a8636b4fc254110279f63"
+//
+// Moved again by the hostless Slack title fix (#3081, #4052), derived on the
+// merge of exact main a0626878d977149a24df37d3da440b16ea2afdf0, whose approved
+// aggregate is f5102c7e above. The kubescape/alertmanager HelmRelease values
+// change one Slack receiver title template so the host clause renders only when
+// the alert carries a host label. A HelmRelease is a controller-RBAC emitter, so
+// this moves the aggregate even though nothing is granted.
+//
+// CONSERVATION: the required job's approval-base diagnostic against main
+// a0626878 names exactly one changed entry, the kubescape/alertmanager
+// HelmRelease, and nothing added or removed. No ClusterRole, Role,
+// ClusterRoleBinding, RoleBinding or ServiceAccount source changes; no identity,
+// binding, verb, wildcard, AWS identity or permission changes.
+//
+// RENDERER PROVENANCE: the value below is the one CI's required job reported for
+// PR #4052 at dad8fecd on the checksum-verified kubectl v1.36.2 renderer (job
+// 106809573713); the local toolchain is refused as unapproved.
+//
+// Previous aggregate: f5102c7e56811403094cb887305789a52768361c8e3a8636b4fc254110279f63.
+//
+// This hostless Slack title fix establishes aggregate:
+//
+//	65fecc82a527f6b5fc9c2154b58d2268d4eb4cfa49bb2ec9dfdfd65789621250
+// Re-approved for the bounded Cilium rollout (#4064) against main bad3342c.
+// The required production-authorization job on the approved renderer (run
+// 35820382237, job 107051230644) reported exactly ONE changed surface entry:
+// helm.toolkit.fluxcd.io/v2 HelmRelease kube-system/cilium. No entry was added
+// or removed. The source delta changes only spec.values.updateStrategy and
+// spec.values.envoy.updateStrategy from the chart's maxUnavailable=2 defaults
+// to RollingUpdate/maxUnavailable=1. No RBAC, binding, service account, policy,
+// AWS identity, or permission is changed. The prior aggregate is recorded below.
+// The required job reported the new aggregate on checksum-verified kubectl
+// v1.36.2; the local renderer is not used as approval evidence.
+//
+// Previous aggregate: 33eb2b3a1201e8c6c304eab0bb65feed702d8244ed96ebb315b90f3901d95792.
+//
+// Re-approved for the Hubble relay and UI C-0211 defaults (#4090), on a branch
+// level with main 4538bf59. The required production-authorization job on the
+// approved renderer (run 35879996914, job 107246839067) reported exactly ONE
+// changed surface entry, helm.toolkit.fluxcd.io/v2 HelmRelease
+// kube-system/cilium, and nothing added or removed. The source delta adds only
+// fsGroupChangePolicy: OnRootMismatch to the hubble-relay and hubble-ui pod
+// security contexts and an empty seLinuxOptions to their containers. No RBAC,
+// binding, service account, policy, AWS identity or permission changes. The
+// required job reported the new aggregate on checksum-verified kubectl v1.36.2;
+// the local renderer is not used as approval evidence.
+// Re-approved for Backstage startup recovery (#4111), against main 1be23cb8.
+// The required production-authorization job on the checksum-verified renderer
+// (run 35909694590, job 107347214276) reported exactly one changed surface
+// entry, HelmRelease backstage/backstage, and nothing added or removed. Only
+// the startup probe path changes from liveness to readiness; no RBAC, binding,
+// service account, AWS identity, or permission grant changes.
+// Re-approved for Flagger loadtester availability (#4104), against main
+// d37a1e5c. The required production-authorization job on the checksum-verified
+// renderer (run 35915658912, job 107367445904) reported exactly one changed
+// surface entry, HelmRelease flagger-system/flagger-loadtester, with no added or
+// removed entries. This change sets two replicas, cross-node placement, a
+// disruption budget and a rollout strategy; it grants no new permissions.
+// Re-approved for the Flagger loadtester drain-safe rollout (#4123), against main
+// 214ce284. The required production-authorization job on the checksum-verified
+// renderer (run 35959587497, job 107505627737) reported exactly one changed
+// surface entry, HelmRelease flagger-system/flagger-loadtester, and nothing added
+// or removed. Only scheduling and disruption settings change; no RBAC, binding,
+// service account, AWS identity, or permission grant changes.
+// Re-approved for the provider-upjet-github v0.20.0 repin (#2800), against main
+// 784a7032. The required production-authorization job on the checksum-verified
+// renderer (run 36012123698, job 107676500672) reported exactly one changed
+// surface entry, Provider provider-upjet-github, and nothing added or removed.
+// Only the package tag changes; the provider's GitHub-scoped CRDs gain optional
+// fields and one inactive kind, and no binding, service account or AWS identity
+// changes.
+const expectedRenderedSurfaceSHA = "31365f93a584f876aa4a0ba25963d10205103850b82b26f7de3417f2e4ca7eeb"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3137,7 +3208,7 @@ const expectedRenderedSurfaceSHA = "f5102c7e56811403094cb887305789a52768361c8e3a
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "8349813fc88630dda72bcc2787eb502ffb90b18c037feb1344a89f2eecbd9f6b"
+const previousRenderedSurfaceSHA = "6b1318d615d20e35941548f3d3e32efcdd384b46742c5cdec7d3c4de35a8480e"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

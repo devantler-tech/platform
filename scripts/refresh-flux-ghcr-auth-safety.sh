@@ -6,6 +6,7 @@
 
 readonly GHCR_PULL_VERIFIED_REVISION_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-revision-v2"
 readonly GHCR_PULL_VERIFIED_IMAGE_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-image-v2"
+readonly GHCR_PULL_VERIFIED_NODE_UID_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-node-uid-v2"
 
 # Name the nodes that still hold a drain fence, so a refusal is actionable
 # without a live cluster query. A transaction killed before its EXIT trap
@@ -68,6 +69,7 @@ select_talos_node_targets() {
     --arg image "${operator_image}" \
     --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
     --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" \
+    --arg uid_annotation "${GHCR_PULL_VERIFIED_NODE_UID_ANNOTATION}" \
     --arg owner_annotation "platform.devantler.tech/ghcr-auth-drain-owner" \
     --arg recovery_annotation "platform.devantler.tech/ghcr-auth-drain-recovery" \
     --slurpfile reusable_proof "${reusable_proof_file}" '
@@ -83,10 +85,12 @@ select_talos_node_targets() {
       | (.metadata.annotations[$image_annotation] // "") as $verified_image
       | .metadata.name as $node_name
       | (.metadata.uid // "") as $node_uid
+      | (.metadata.annotations[$uid_annotation] // "") as $verified_uid
       | ($proved_nodes | any(
           .name == $node_name and .uid == $node_uid
         )) as $can_restore_proof
-      | select($verified_revision != $revision or $verified_image != $image)
+      | select($verified_revision != $revision or $verified_image != $image
+          or $verified_uid != $node_uid)
       | (.metadata.labels // {}) as $labels
       | [
           (if (($labels | has("node-role.kubernetes.io/control-plane"))
@@ -96,7 +100,9 @@ select_talos_node_targets() {
           ([.status.addresses[]
             | select(.type == "InternalIP") | .address][0]),
           (if $can_restore_proof then "proof-only"
-           elif $verified_revision != $revision then "reboot"
+           elif $verified_revision != $revision
+             or ($verified_uid != "" and $verified_uid != $node_uid)
+             then "reboot"
            else "image-only" end),
           $node_uid
         ]

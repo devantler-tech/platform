@@ -13,6 +13,6 @@ kind: Provider
 metadata:
   name: provider-upjet-github
 spec:
-  package: ghcr.io/crossplane-contrib/provider-upjet-github:v0.19.1
+  package: ghcr.io/crossplane-contrib/provider-upjet-github:v0.20.0
   runtimeConfigRef:
     name: provider-upjet-github

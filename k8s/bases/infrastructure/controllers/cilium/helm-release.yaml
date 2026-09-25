@@ -21,7 +21,7 @@ spec:
       # platform#1881); rollback = pin back to 1.19.5. The required
       # experimental-channel Gateway API CRDs are already installed by ksail
       # (v1.5.1) and carry the externalAuth field — no CRD change needed here.
-      version: 1.20.1
+      version: 1.20.2
       sourceRef:
         kind: HelmRepository
         name: cilium
@@ -39,9 +39,16 @@ spec:
     # on ZERO nodes (all agents predated the merge), so the bug it fixed was
     # still dropping cross-node flows (KEDA scaler liveness kills, operator
     # -> scaler i/o timeouts). Agent restarts are designed to be
-    # datapath-non-disruptive (eBPF state persists), and the DS rolls one
-    # node at a time per updateStrategy.
+    # datapath-non-disruptive (eBPF state persists), but the 2026-09-23
+    # v1.20.2 chart rollout coincided with real DNS and service timeouts in
+    # short-lived observability jobs. Bound the agent and Envoy DaemonSets
+    # individually to one unavailable node. This is a permanent Helm value,
+    # not the old operator-stepped rollout/disableWait handoff.
     rollOutCiliumPods: true
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 1
     securityContext:
       capabilities:
         ciliumAgent:
@@ -77,6 +84,21 @@ spec:
         enabled: true
         replicas: ${cilium_replicas:=2}
         rollOutPods: true
+        # fsGroupChangePolicy and seLinuxOptions are the two non-privilege C-0211
+        # fields. kube-system is excluded from the cluster-wide add-security-context
+        # mutation, and Kubescape scores the stored workload spec, so the chart values
+        # are the only place to set them (#3239). Helm merges both maps into the
+        # chart's own defaults, so the pinned user, read-only root filesystem, dropped
+        # capabilities and seccomp profile all stay.
+        podSecurityContext:
+          # Inert: the relay mounts only emptyDir, ConfigMap and projected Secret
+          # volumes, and Kubernetes does not apply fsGroupChangePolicy to those
+          # ephemeral volume types.
+          fsGroupChangePolicy: OnRootMismatch
+        securityContext:
+          # An empty object satisfies C-0211 and keeps the runtime's per-container
+          # SELinux/MCS label allocation (#3465).
+          seLinuxOptions: {}
         # Coroot flagged the 2-replica Hubble Relay as co-located on a single
         # node (not resilient to node failure). Soft spread prefers separate
         # nodes; ScheduleAnyway never blocks scheduling. The chart's relay
@@ -113,14 +135,24 @@ spec:
         # it at idle.
         replicas: ${hubble_ui_replicas:=1}
         rollOutPods: true
+        # The same two C-0211 defaults as hubble.relay. In this chart the UI's
+        # pod-level context is `securityContext`, and each container has its own.
+        securityContext:
+          # Inert for the same reason: the UI mounts only ConfigMap and emptyDir
+          # volumes.
+          fsGroupChangePolicy: OnRootMismatch
         # Same reasoning as hubble.relay.resources, for both UI containers.
         frontend:
+          securityContext:
+            seLinuxOptions: {}
           resources:
             requests:
               cpu: 15m
             limits:
               cpu: "2"
         backend:
+          securityContext:
+            seLinuxOptions: {}
           resources:
             requests:
               cpu: 15m
@@ -223,6 +255,10 @@ spec:
     envoy:
       # Restart on config changes (same rationale as rollOutCiliumPods).
       rollOutPods: true
+      updateStrategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxUnavailable: 1
       resources:
         limits:
           cpu: "2"

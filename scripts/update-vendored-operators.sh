@@ -16,16 +16,18 @@ readonly kubevirt_sha256='e9e92c15bca0531bf0b7db2c2dfc83b6b9bdbf1a6f3f96945f67d9
 readonly origin_ca_issuer_commit='e375d9c00a66f47a15fb56457686f8629022b50d'
 readonly clusteroriginissuers_sha256='cf6af6f155cd087a1ab2a4bec68cd014f05be3cf3d0240ad331ee1fe1bec574e'
 readonly originissuers_sha256='d085e763718cf34e675b62f8394e20854237b3997f825d86556659585940b170'
-readonly cert_approver_version='0.12.0'
-readonly cert_approver_commit='b5516301e48f8e50cb18368e457779d01796119b'
-readonly cert_approver_sha256='44d74b38379d96572c434290732092f577ee4835392b36922a72c406ee406139'
+readonly cert_approver_version='0.12.1'
+readonly cert_approver_commit='f72897c68e38185aeca848952d10a094054642ba'
+readonly cert_approver_sha256='4184993a44e1ec7d585d930d2e72298ec70a361ff415c323311d9828103fcb3e'
 # The digest the cert-approver kustomization pins its image to (#3515). The vendored bytes name only a
 # tag, and a tag can move; this is what production actually pulls. --render-remotes re-resolves the tag
 # from the registry and refuses to refresh while this constant disagrees with it.
-readonly cert_approver_image_digest='sha256:534e40a0050c34bda2a7bae53aa9c11133704f23dc83fee14f3b45b0f1eabe45'
-# Keep this aligned with CI_CHECKOV_VERSION in megalinter-scan-counts.sh so a
-# local vendor refresh cannot miss a rule that the non-blocking CI scan knows.
-readonly checkov_version='3.3.2'
+readonly cert_approver_image_digest='sha256:445a8e5584f659701092d2ec8b625da8929dc75fe4d45274333bd9fe6db8fb75'
+# Must equal CI_CHECKOV_VERSION in megalinter-scan-counts.sh, so a local vendor
+# refresh cannot miss a rule that the non-blocking CI scan knows. Every mode,
+# --validate-committed included, refuses to run while the two differ, so a bump
+# of either pin fails CI until the other moves with it.
+readonly checkov_version='3.3.9'
 # CKV2_K8S_6 only understands networking.k8s.io NetworkPolicy. An isolated
 # bundle scan cannot see that cilium-network-policy.yaml protects every CDI
 # endpoint; the full-repository CI scan remains unskipped and owns graph checks.
@@ -60,6 +62,24 @@ require_tool() {
   local tool="$1"
   if ! command -v "${tool}" >/dev/null 2>&1; then
     printf '%s is required to update vendored operators\n' "${tool}" >&2
+    exit 2
+  fi
+}
+
+# The CI pin is read from its source rather than copied here, so a bump there is
+# seen immediately. An unreadable constant fails closed: comparing against an
+# empty value would report a mismatch for the wrong reason, or match nothing.
+require_checkov_pin_matches_ci() {
+  local constants_file="${repo_root}/scripts/megalinter-scan-counts.sh"
+  local ci_checkov_version
+  ci_checkov_version="$(sed -n "s/^readonly CI_CHECKOV_VERSION='\([^']*\)'.*/\1/p" "${constants_file}")"
+  if [ -z "${ci_checkov_version}" ] || [[ "${ci_checkov_version}" == *$'\n'* ]]; then
+    printf 'could not read exactly one CI_CHECKOV_VERSION from scripts/megalinter-scan-counts.sh\n' >&2
+    exit 2
+  fi
+  if [ "${checkov_version}" != "${ci_checkov_version}" ]; then
+    printf 'checkov_version is %s but CI_CHECKOV_VERSION is %s; set checkov_version in scripts/update-vendored-operators.sh to %s, then re-run this updater with that Checkov to re-check the dispositions\n' \
+      "${checkov_version}" "${ci_checkov_version}" "${ci_checkov_version}" >&2
     exit 2
   fi
 }
@@ -265,6 +285,8 @@ install_render_remotes() {
     mv "${resource}" "${render_controllers}/kubelet-serving-cert-approver/"
   done
 }
+
+require_checkov_pin_matches_ci
 
 mode=all
 if [ "$#" -ne 0 ]; then

@@ -32,7 +32,7 @@ spec:
   chart:
     spec:
       chart: alertmanager
-      version: 1.43.1
+      version: 1.43.2
       sourceRef:
         kind: HelmRepository
         name: prometheus-community
@@ -159,7 +159,7 @@ spec:
               # into the webhook URL); set here only for clarity in the UI.
               channel: "#platform-alerts"
               send_resolved: true
-              title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} on {{ .CommonLabels.host }}'
+              title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ with .CommonLabels.host }} on {{ . }}{{ end }}'
               # Render every annotation the node-agent attaches (keys vary by
               # rule), one per line, for each grouped alert.
               text: |-

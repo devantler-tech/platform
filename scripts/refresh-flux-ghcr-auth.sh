@@ -123,6 +123,11 @@ readonly IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS=30
 readonly IMAGE_VERIFICATION_POLICY="verify-app-images"
 readonly RETIRED_IMAGE_VERIFICATION_POLICY="verify-ksail-images"
 readonly IMAGE_VERIFICATION_POLICY_FILE="k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
+# The only namespaces the consolidated validating webhook may leave out. Kyverno's
+# chart defaults exclude them from every generated webhook (its config webhooks
+# namespaceSelector and excludeKyvernoNamespace), and Kyverno never admits Pods
+# there. Any other namespace, object or CEL narrowing drops protected Pods.
+readonly IMAGE_VERIFICATION_WEBHOOK_EXEMPT_NAMESPACES='["kube-system","kyverno"]'
 readonly IMAGE_VERIFICATION_FLUX_KUSTOMIZATION="infrastructure"
 readonly IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION="flux-system"
 readonly FLUX_KUSTOMIZATION_RESOURCE="kustomizations.kustomize.toolkit.fluxcd.io"
@@ -137,6 +142,15 @@ readonly FLUX_KUSTOMIZE_CONTROLLER_SELECTOR="app=kustomize-controller"
 readonly FLUX_CONTROLLER_RESTART_JSON_PATH="/spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt"
 readonly FLUX_CONTROLLER_ROLLOUT_TIMEOUT="2m"
 readonly SYNC_LEASE_NAME="ghcr-auth-refresh"
+# A GitOps-managed ExternalSecret reads the GHCR seed back from OpenBao through
+# the same store every consumer uses. It is the only read-only way to notice
+# that OpenBao holds a stale seed while every materialised consumer still looks
+# current, so a no-write reassert requires it to be fresh and equal.
+readonly GHCR_SEED_PROBE_NAME="ghcr-seed-probe"
+readonly GHCR_SEED_PROBE_REFRESH_SECONDS=60
+# How long a no-write run waits for the probe to refresh after it began before
+# falling back to the fenced path.
+readonly GHCR_SEED_PROBE_WAIT_SECONDS="${FLUX_GHCR_SEED_PROBE_WAIT_SECONDS:-$((GHCR_SEED_PROBE_REFRESH_SECONDS * 2 + 30))}"
 readonly SYNC_LEASE_DURATION_SECONDS=120
 readonly SYNC_LEASE_HEARTBEAT_SECONDS="${FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS:-30}"
 readonly SYNC_LEASE_RELEASE_ATTEMPTS=3
@@ -360,6 +374,14 @@ sync_lease_file="${work_dir}/sync-lease.json"
 sync_lease_manifest_file="${work_dir}/sync-lease-manifest.json"
 sync_lease_patch_file="${work_dir}/sync-lease-patch.json"
 sync_lease_result_file="${work_dir}/sync-lease-result.txt"
+converged_lease_file="${work_dir}/converged-lease.json"
+converged_secret_file="${work_dir}/converged-secret.json"
+converged_decoded_file="${work_dir}/converged-decoded.json"
+converged_probe_file="${work_dir}/converged-seed-probe.json"
+converged_policy_file="${work_dir}/converged-policy.json"
+converged_policy_candidate_file="${work_dir}/converged-policy-candidate.json"
+converged_nodes_file="${work_dir}/converged-nodes.json"
+converged_targets_file="${work_dir}/converged-targets.tsv"
 sync_lease_lost_file="${work_dir}/sync-lease-lost"
 root_secret_state_file="${work_dir}/root-secret-state.json"
 root_secret_cas_patch_file="${work_dir}/root-secret-cas-patch.json"
@@ -1932,6 +1954,48 @@ image_verification_webhook_set_matches() {
   ' "${webhook_file}" >/dev/null
 }
 
+image_verification_webhook_intercepts_pods() {
+  # The set matcher proves each path, failure policy and timeout, not what the
+  # webhook admits. The consolidated validating webhook must still intercept
+  # every Pod CREATE the policy protects: a rule covering core v1 pods CREATE
+  # whose scope admits namespaced objects (a Cluster-scoped rule never matches a
+  # Pod), no object selector, no match conditions, and a namespace selector that
+  # at most excludes the namespaces Kyverno itself never admits.
+  local webhook_file="$1"
+
+  jq -e \
+    --arg expected_path "/ivpol/validate/${IMAGE_VERIFICATION_POLICY}" \
+    --argjson exempt "${IMAGE_VERIFICATION_WEBHOOK_EXEMPT_NAMESPACES}" '
+    def empty_selector:
+      . == null
+      or (type == "object"
+        and ((.matchLabels // {}) | length) == 0
+        and ((.matchExpressions // []) | length) == 0);
+    [.items[]?.webhooks[]?
+      | select((.clientConfig.service.name // "") == "kyverno-svc"
+          and (.clientConfig.service.namespace // "") == "kyverno"
+          and (.clientConfig.service.path // "") == $expected_path)]
+    | length > 0 and all(.[];
+        any(.rules[]?;
+          ((.apiGroups // []) | any(. == "" or . == "*"))
+          and ((.apiVersions // []) | any(. == "v1" or . == "*"))
+          and ((.resources // []) | any(. == "pods" or . == "*"))
+          and ((.operations // []) | any(. == "CREATE" or . == "*"))
+          and ((.scope // "*") == "*" or .scope == "Namespaced"))
+        and (.objectSelector | empty_selector)
+        and ((.matchConditions // []) | length) == 0
+        and (
+          (.namespaceSelector | empty_selector)
+          or ((.namespaceSelector | type) == "object"
+            and ((.namespaceSelector.matchLabels // {}) | length) == 0
+            and all(.namespaceSelector.matchExpressions[]?;
+              .key == "kubernetes.io/metadata.name"
+              and .operator == "NotIn"
+              and ((.values // []) | length) > 0
+              and all(.values[]; . as $ns | $exempt | index($ns) != null)))))
+  ' "${webhook_file}" >/dev/null 2>&1
+}
+
 image_verification_policy_needs_mutating_webhook() {
   # Kyverno v1.19 moved signature and attestation verification entirely into
   # validation. Its IVPOL mutating webhook now only pins digests, and the API
@@ -1956,7 +2020,9 @@ wait_for_image_verification_webhooks() {
       "${image_verification_mutating_webhooks_file}" "mutate" "${exclusive}" \
       "${mutation_required}" &&
       image_verification_webhook_set_matches \
-        "${image_verification_validating_webhooks_file}" "validate" "${exclusive}" true; then
+        "${image_verification_validating_webhooks_file}" "validate" "${exclusive}" true &&
+      image_verification_webhook_intercepts_pods \
+        "${image_verification_validating_webhooks_file}"; then
       return 0
     fi
     if ((attempt < SYNC_ATTEMPTS)); then
@@ -2027,7 +2093,7 @@ stage_image_verification_webhook_budget() {
   # closes the policy-cache handoff gap: deletion is not evidence that the
   # replacement has become effective.
   if ! wait_for_image_verification_webhooks false; then
-    echo "::error::The consolidated fail-closed image-verification admission webhooks did not become effective before retirement of the existing KSail verifier."
+    echo "::error::The consolidated fail-closed image-verification admission webhooks did not become effective before retirement of the existing KSail verifier; each must be fail-closed and intercept every protected Pod creation."
     return 1
   fi
 
@@ -2046,7 +2112,7 @@ stage_image_verification_webhook_budget() {
   fi
 
   if ! wait_for_image_verification_webhooks true; then
-    echo "::error::The consolidated fail-closed image-verification admission webhooks did not converge to one ${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}s policy path; refusing runtime pull probes."
+    echo "::error::The consolidated fail-closed image-verification admission webhooks did not converge to one ${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}s policy path that intercepts every protected Pod creation; refusing runtime pull probes."
     return 1
   fi
 
@@ -2196,12 +2262,15 @@ claim_node_cordon_ownership() {
       --output json \
       >"${state_file}" 2>"${reread_error_file}"; then
       # A failed re-read is now the actionable cause, so it replaces the claim
-      # conflict in the emitted output. The redirection truncates result_file
-      # before cat runs, so a failed copy would leave it EMPTY -- and
-      # emit_safe_operation_output skips an empty file entirely, which is the
-      # very silence this block exists to prevent. Fall back to a deterministic
-      # non-empty line instead of discarding the failure.
-      if ! cat "${reread_error_file}" >"${result_file}" 2>/dev/null; then
+      # conflict in the emitted output. Two things can leave that output empty:
+      # the copy fails, or kubectl exits non-zero having written no stderr, so the
+      # diagnostic file is zero bytes and copying it SUCCEEDS while the redirection
+      # truncates result_file. emit_safe_operation_output skips an empty file
+      # entirely, which is the very silence this block exists to prevent, so an
+      # empty diagnostic counts as a failed copy and falls back to a deterministic
+      # non-empty line.
+      if [[ ! -s "${reread_error_file}" ]] ||
+        ! cat "${reread_error_file}" >"${result_file}" 2>/dev/null; then
         echo "node re-read failed; its diagnostic could not be read" \
           >"${result_file}"
       fi
@@ -2429,7 +2498,7 @@ restore_node_schedulability_if_needed() {
       --arg owner "${owner_token}" \
       --arg uid "${initial_node_uid}" \
       --argjson scale_down_guard_owned "${scale_down_guard_owned}" '
-      ($recovery | fromjson?) as $record
+      ($recovery | try fromjson catch null) as $record
       | $record != null
       and (
         ($record.v == 1 and $scale_down_guard_owned == 0)
@@ -2541,7 +2610,7 @@ update_bootstrap_recovery_phase() {
     --arg uid "${initial_node_uid}" \
     --arg revision "${desired_revision}" \
     --arg phase "${expected_phase}" '
-    ($recovery | fromjson?) as $record
+    ($recovery | try fromjson catch null) as $record
     | $record != null
     and (
       ($record.v == 1 and ($record | keys | sort) == ([
@@ -2751,7 +2820,10 @@ reconcile_bootstrap_recovery_journals() {
       .items[]
       | select((.metadata.annotations[$recovery_annotation] // "") != "")
       | . as $node
-      | ($node.metadata.annotations[$recovery_annotation] | fromjson?) as $record
+      # `try/catch null`, never `fromjson?`: the latter yields EMPTY, which drops a
+      # malformed journal from $journals, so the all-or-nothing check below passes
+      # over its valid siblings instead of refusing (#3158).
+      | ($node.metadata.annotations[$recovery_annotation] | try fromjson catch null) as $record
       | {node: $node, record: $record}
     ] as $journals
     | all($journals[];
@@ -2817,7 +2889,7 @@ reconcile_bootstrap_recovery_journals() {
       --arg recovery "${recovery_record}" \
       --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
       --arg node_name "${node_name}" '
-      ($recovery | fromjson?) as $record
+      ($recovery | try fromjson catch null) as $record
       | $record != null
       and (
         ($record.v == 1 and ($record | keys | sort) == ([
@@ -3362,6 +3434,134 @@ revalidate_selected_node_identity_before_mutation() {
 # adopts the credential, prove an uncached pull of the declared incoming image,
 # and only then record its non-secret revision+image proof markers so either
 # credential or target changes trigger verification.
+# Image-only drift does not change containerd's credential. Its existing v2
+# runtime proof remains valid; the exact incoming image still needs an uncached
+# registry round-trip before publish. Unlike a credential rotation, removing
+# and re-pulling a proof copy in containerd's system namespace needs neither a
+# reboot nor a scheduling change, and leaves Kubernetes' CRI image cache intact
+# if the registry becomes unavailable.
+# Keep the global sync Lease and rebind the Node at every Talos edge so an
+# autoscaler replacement or another actor's drain cannot inherit this proof.
+revalidate_image_only_node_guard() {
+  local node_name="$1" node_uid="$2" node_ip="$3" node_role="$4"
+  local desired_revision="$5" phase="$6"
+  local expected_cordoned="${7:-}"
+  local allow_removed=0
+
+  assert_sync_lease_held || return 1
+  if [[ "${phase}" == "cache removal" ]]; then
+    allow_removed=1
+  fi
+  revalidate_selected_node_identity_before_mutation \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${allow_removed}" || return $?
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get node "${node_name}" --output json >"${cordon_state_file}"; then
+    echo "::error::Could not re-read image-only target ${node_name} before ${phase}."
+    return 1
+  fi
+  if ! selected_node_identity_is_current \
+    "${cordon_state_file}" "${node_name}" "${node_uid}" \
+    "${node_ip}" "${node_role}" ||
+    ! jq -e \
+      --arg revision "${desired_revision}" \
+      --arg expected_cordoned "${expected_cordoned}" \
+      --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
+      --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
+      --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" '
+        (.spec.unschedulable // false) as $cordoned
+        | .metadata.annotations[$revision_annotation] == $revision
+        and (.metadata.annotations[$owner_annotation] // "") == ""
+        and (.metadata.annotations[$recovery_annotation] // "") == ""
+        and ($cordoned | type == "boolean")
+        and ($expected_cordoned == "" or $cordoned == ($expected_cordoned == "true"))
+        and .metadata.deletionTimestamp == null
+        and any(.status.conditions[]?;
+          .type == "Ready" and .status == "True")
+        and all(.spec.taints[]?;
+          .key != "ToBeDeletedByClusterAutoscaler"
+          and .key != "node.kubernetes.io/not-ready"
+          and .key != "node.kubernetes.io/unreachable"
+          and (.key != "node.kubernetes.io/unschedulable" or $cordoned))
+      ' "${cordon_state_file}" >/dev/null; then
+    echo "::error::Image-only target ${node_name} changed identity, credential proof, or scheduling state before ${phase}; refusing to record image proof."
+    return 1
+  fi
+}
+
+# The machine annotation is durable across a failed transaction. Bind it to
+# the Kubernetes Node UID as well as the revision and image: a replacement can
+# reuse an autoscaled node's name and InternalIP between the final identity
+# read and the Talos patch, but it must not inherit the previous Node's proof.
+write_talos_revision_patch_for_node() {
+  local desired_revision="$1" operator_image="$2" node_uid="$3"
+
+  jq -n \
+    --arg revision "${desired_revision}" \
+    --arg image "${operator_image}" \
+    --arg uid "${node_uid}" \
+    --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
+    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" \
+    --arg uid_annotation "${GHCR_PULL_VERIFIED_NODE_UID_ANNOTATION}" '
+      {machine: {nodeAnnotations: {
+        ($revision_annotation): $revision,
+        ($image_annotation): $image,
+        ($uid_annotation): $uid
+      }}}
+    ' >"${talos_revision_patch_file}" || return 1
+  chmod 600 "${talos_revision_patch_file}"
+}
+
+# process_talos_image_only_target proves the incoming image without changing
+# scheduling when the credential revision is already active on this Node.
+process_talos_image_only_target() {
+  local desired_revision="$1" operator_image="$2" node_role="$3"
+  local node_name="$4" node_ip="$5" node_uid="$6"
+  local initial_cordoned=""
+
+  if [[ -f "${bootstrap_cordon_dir}/${node_name}.json" ]]; then
+    echo "::error::Image-only target ${node_name} has an unfinished bootstrap fence; refusing unfenced proof."
+    return 1
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "cache removal" || return $?
+  initial_cordoned="$(jq -er '(.spec.unschedulable // false) | tostring' "${cordon_state_file}")" || return 1
+  if ! talosctl --nodes "${node_ip}" image remove "${operator_image}" \
+    --namespace system >"${talos_result_file}" 2>&1; then
+    if ! talos_image_remove_reports_absent \
+      "${talos_result_file}" "${operator_image}"; then
+      echo "::error::Talos node ${node_name} could not remove the incoming KSail image for uncached proof."
+      return 1
+    fi
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "image pull" "${initial_cordoned}" || return $?
+  if ! talosctl --nodes "${node_ip}" image pull "${operator_image}" \
+    --namespace system >"${talos_result_file}" 2>&1; then
+    echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image; root auth remains unchanged."
+    return 1
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "revision marker" "${initial_cordoned}" || return $?
+  write_talos_revision_patch_for_node \
+    "${desired_revision}" "${operator_image}" "${node_uid}" || return 1
+  if ! talosctl --nodes "${node_ip}" patch machineconfig \
+    --mode=no-reboot --patch-file="${talos_revision_patch_file}" \
+    >"${talos_result_file}" 2>&1; then
+    echo "::error::Talos node ${node_name} proved the incoming KSail image but could not record the proof marker."
+    return 1
+  fi
+  revalidate_image_only_node_guard \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" \
+    "${desired_revision}" "completion" "${initial_cordoned}" || return $?
+}
+
+# process_talos_node_target keeps credential changes on the existing fenced
+# reboot path and delegates image-only drift to its non-disruptive proof.
 process_talos_node_target() {
   local desired_revision="$1"
   local operator_image="$2"
@@ -3392,6 +3592,12 @@ process_talos_node_target() {
     "${node_mode}" != "proof-only" ]]; then
     echo "::error::Unknown Talos GHCR synchronization mode '${node_mode}' for ${node_name}."
     return 1
+  fi
+  if [[ "${node_mode}" == "image-only" ]]; then
+    process_talos_image_only_target \
+      "${desired_revision}" "${operator_image}" "${node_role}" \
+      "${node_name}" "${node_ip}" "${node_uid}"
+    return $?
   fi
   # Bootstrap preparation can already own a durable fence on this target.
   # Its recovery remains fail-closed; only an untouched target may be skipped.
@@ -3450,9 +3656,9 @@ process_talos_node_target() {
     fi
   fi
 
-  # Remember scheduling intent before any cordon. Both reboot and image-only
-  # verification exclude new placements while the exact target is removed;
-  # only the reboot path drains existing workloads.
+  # Remember scheduling intent before a credential-change cordon. Image-only
+  # verification returned above without excluding new placements or removing
+  # Kubernetes' CRI image reference.
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     get node "${node_name}" \
@@ -3797,9 +4003,9 @@ process_talos_node_target() {
   fi
 
   if [[ "${node_mode}" != "proof-only" ]]; then
-    # A reboot/readiness wait or even a short image-only cordon can outlive a
-    # replacement, uncordon, taint, or owner change. Rebind identity and the
-    # scheduling guard at the final Talos edge before touching the image cache.
+    # A credential-change reboot/readiness wait can outlive a replacement,
+    # uncordon, taint, or owner change. Rebind identity and the scheduling guard
+    # at the final Talos edge before touching the CRI image cache.
     revalidate_node_scheduling_guard \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
@@ -3870,6 +4076,8 @@ process_talos_node_target() {
   if [[ "${node_mode}" == "proof-only" ]]; then
     reusable_proof_uid="${node_uid}"
   fi
+  write_talos_revision_patch_for_node \
+    "${desired_revision}" "${operator_image}" "${node_uid}" || return 1
   # Test hook consumed by fake talosctl to verify Node binding; Talos ignores it.
   if ! FLUX_GHCR_REUSABLE_PROOF_UID="${reusable_proof_uid}" \
     talosctl \
@@ -4273,10 +4481,12 @@ record_runtime_proof() {
     --arg revision "${desired_revision}" \
     --arg image "${operator_image}" \
     --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
-    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" '
+    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" \
+    --arg uid_annotation "${GHCR_PULL_VERIFIED_NODE_UID_ANNOTATION}" '
       all(.items[];
         .metadata.annotations[$revision_annotation] == $revision
-        and .metadata.annotations[$image_annotation] == $image)
+        and .metadata.annotations[$image_annotation] == $image
+        and .metadata.annotations[$uid_annotation] == .metadata.uid)
     ' "${runtime_proof_nodes_file}" >/dev/null; then
     echo "::error::Refusing to record a post-update handoff before every exact Node has current runtime proof."
     return 1
@@ -5777,9 +5987,8 @@ flux_policy_handoff_is_released() {
   ' "${flux_policy_handoff_state_file}" >/dev/null
 }
 
-pause_flux_policy_handoff() {
-  local resource_version attempt annotations_present
-  local stable_resource_version="" current_resource_version
+wait_for_flux_policy_handoff_claimable() {
+  local attempt
 
   # Quiesce the child before changing spec.suspend. Suspending a Kustomization
   # while it is already reconciling can strand Reconciling=True in status: the
@@ -5842,58 +6051,136 @@ pause_flux_policy_handoff() {
     fi
     sleep "${SYNC_INTERVAL}"
   done
+}
 
-  resource_version="$(jq -er '.metadata.resourceVersion' \
-    "${flux_policy_handoff_state_file}")"
-  flux_policy_handoff_uid="$(jq -er '.metadata.uid' \
-    "${flux_policy_handoff_state_file}")"
-  flux_policy_handoff_owner="${sync_lease_holder}"
-  annotations_present="$(jq -r \
-    '(.metadata.annotations? | type) == "object"' \
-    "${flux_policy_handoff_state_file}")"
-  jq -n \
-    --arg resource_version "${resource_version}" \
-    --arg uid "${flux_policy_handoff_uid}" \
-    --arg owner_path "${FLUX_POLICY_HANDOFF_OWNER_JSON_PATH}" \
-    --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
-    --arg owner "${flux_policy_handoff_owner}" \
-    --argjson annotations_present "${annotations_present}" '
-    [
-      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
-      {op: "test", path: "/metadata/uid", value: $uid}
-    ]
-    + (if $annotations_present then [] else
-      [{op: "add", path: "/metadata/annotations", value: {}}]
-    end)
-    + [
-      {op: "add", path: $owner_path, value: $owner},
-      {op: "add", path: $reconcile_path, value: "disabled"},
-      {op: "add", path: "/spec/suspend", value: true}
-    ]
-  ' >"${flux_policy_handoff_patch_file}"
-  if kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace flux-system \
-    patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
-    "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
-    --type=json \
-    --patch-file="${flux_policy_handoff_patch_file}" \
-    -o json \
-    >"${flux_policy_handoff_state_file}" \
-    2>"${flux_policy_handoff_result_file}"; then
-    flux_policy_handoff_acquired=true
-  else
+pause_flux_policy_handoff() {
+  local resource_version annotations_present attempt
+  local stable_resource_version="" current_resource_version
+  local claim_attempt reread_resource_version inspected_uid=""
+  local max_claim_attempts="${FLUX_POLICY_HANDOFF_CLAIM_MAX_ATTEMPTS:-5}"
+  # Separate stderr sink for the re-read, so a successful re-read cannot truncate
+  # the patch rejection that explains why the claim failed.
+  local reread_error_file="${flux_policy_handoff_result_file}.reread"
+
+  # The child is rewritten by its own controller, so a benign write can move its
+  # resourceVersion between the quiescence read and this CAS. That is contention,
+  # not a conflict, and is retried under the rules the parent fence uses (#3046):
+  # only when the re-read shows the resourceVersion MOVED and nobody else owns the
+  # object, each retry re-proving quiescence and the parent from scratch. Every
+  # other rejection, and every state that is no longer ours to claim, still fails
+  # closed on the first attempt (#3067).
+  for ((claim_attempt = 1; ; claim_attempt++)); do
+    wait_for_flux_policy_handoff_claimable || return 1
+
+    resource_version="$(jq -er '.metadata.resourceVersion' \
+      "${flux_policy_handoff_state_file}")"
+    flux_policy_handoff_uid="$(jq -er '.metadata.uid' \
+      "${flux_policy_handoff_state_file}")"
+    # The claim is for the object first inspected. A delete-and-recreate between
+    # attempts looks like churn but is a different object, so refuse it.
+    if [[ -z "${inspected_uid}" ]]; then
+      inspected_uid="${flux_policy_handoff_uid}"
+    elif [[ "${flux_policy_handoff_uid}" != "${inspected_uid}" ]]; then
+      echo "::error::The Flux image-verification policy owner was replaced during the handoff; refusing to fence an object that was not the one inspected."
+      return 1
+    fi
+    flux_policy_handoff_owner="${sync_lease_holder}"
+    annotations_present="$(jq -r \
+      '(.metadata.annotations? | type) == "object"' \
+      "${flux_policy_handoff_state_file}")"
+    jq -n \
+      --arg resource_version "${resource_version}" \
+      --arg uid "${flux_policy_handoff_uid}" \
+      --arg owner_path "${FLUX_POLICY_HANDOFF_OWNER_JSON_PATH}" \
+      --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
+      --arg owner "${flux_policy_handoff_owner}" \
+      --argjson annotations_present "${annotations_present}" '
+      [
+        {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
+        {op: "test", path: "/metadata/uid", value: $uid}
+      ]
+      + (if $annotations_present then [] else
+        [{op: "add", path: "/metadata/annotations", value: {}}]
+      end)
+      + [
+        {op: "add", path: $owner_path, value: $owner},
+        {op: "add", path: $reconcile_path, value: "disabled"},
+        {op: "add", path: "/spec/suspend", value: true}
+      ]
+    ' >"${flux_policy_handoff_patch_file}"
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+      --type=json \
+      --patch-file="${flux_policy_handoff_patch_file}" \
+      -o json \
+      >"${flux_policy_handoff_state_file}" \
+      2>"${flux_policy_handoff_result_file}"; then
+      flux_policy_handoff_acquired=true
+      break
+    fi
+
+    # A lost patch response is ambiguous: adopt only the exact tuple this
+    # transaction wrote, so EXIT cleanup owns the fence even when kubectl failed.
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       --namespace flux-system \
       get "${FLUX_KUSTOMIZATION_RESOURCE}" \
       "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
-      -o json >"${flux_policy_handoff_state_file}" ||
-      ! flux_policy_handoff_is_owned; then
-      echo "::error::Could not atomically pause or adopt the Flux image-verification policy owner."
+      -o json >"${flux_policy_handoff_state_file}" \
+      2>"${reread_error_file}"; then
+      if [[ ! -s "${reread_error_file}" ]] ||
+        ! cat "${reread_error_file}" \
+        >"${flux_policy_handoff_result_file}" 2>/dev/null; then
+        echo "policy owner re-read failed; its diagnostic could not be read" \
+          >"${flux_policy_handoff_result_file}"
+      fi
+      break
+    fi
+    if flux_policy_handoff_is_owned; then
+      flux_policy_handoff_acquired=true
+      break
+    fi
+    if [[ "$(jq -r '.metadata.uid // ""' "${flux_policy_handoff_state_file}")" != "${inspected_uid}" ]]; then
+      rm -f "${reread_error_file}"
+      emit_safe_operation_output "flux-policy-handoff-patch" \
+        "${flux_policy_handoff_result_file}"
+      echo "::error::The Flux image-verification policy owner was replaced during the handoff; refusing to fence an object that was not the one inspected."
       return 1
     fi
-    flux_policy_handoff_acquired=true
+
+    # An owner that is not ours is a competing transaction, never contention.
+    if jq -e \
+      --arg annotation "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" '
+      ((.metadata.annotations // {})[$annotation] // "") != ""
+    ' "${flux_policy_handoff_state_file}" >/dev/null; then
+      rm -f "${reread_error_file}"
+      emit_safe_operation_output "flux-policy-handoff-patch" \
+        "${flux_policy_handoff_result_file}"
+      echo "::error::Another transaction already owns the image-verification policy handoff; refusing cluster mutation. Run './scripts/refresh-flux-ghcr-auth.sh --fences' to list every held fence with its liveness evidence and exact release command, and see docs/dr/runbook.md → 'Recover an orphaned GHCR deploy fence'."
+      return 1
+    fi
+
+    # Only a rejection whose resourceVersion demonstrably moved is contention; one
+    # at an unchanged version was refused on its merits and is not repeated.
+    reread_resource_version="$(jq -r '.metadata.resourceVersion // ""' \
+      "${flux_policy_handoff_state_file}")"
+    if [[ "${reread_resource_version}" == "${resource_version}" ]] ||
+      ((claim_attempt >= max_claim_attempts)) ||
+      [[ -e "${sync_lease_lost_file}" ]]; then
+      break
+    fi
+    sleep "${SYNC_INTERVAL}"
+  done
+
+  rm -f "${reread_error_file}"
+  if [[ "${flux_policy_handoff_acquired}" != "true" ]]; then
+    emit_safe_operation_output "flux-policy-handoff-patch" \
+      "${flux_policy_handoff_result_file}"
+    echo "::error::Could not atomically pause or adopt the Flux image-verification policy owner."
+    return 1
   fi
 
   # Flux explicitly documents that suspension does not stop an execution that
@@ -6062,6 +6349,244 @@ patch_variables_base() {
     "${variables_secret_state_file}" \
     "${variables_secret_cas_patch_file}"
 }
+
+# Print the synchronization Lease's resourceVersion ("absent" when there is no
+# Lease), failing when it cannot be read or is held. Read-only.
+converged_lease_version() {
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get lease "${SYNC_LEASE_NAME}" \
+    --ignore-not-found \
+    -o json >"${converged_lease_file}" 2>/dev/null || return 1
+  if [[ ! -s "${converged_lease_file}" ]]; then
+    printf 'absent\n'
+    return 0
+  fi
+  jq -er '
+    select((.spec.holderIdentity // "") == "")
+    | .metadata.resourceVersion
+    | select(type == "string" and length > 0)
+  ' "${converged_lease_file}" 2>/dev/null
+}
+
+# Report whether an External Secrets object (ExternalSecret or PushSecret) is
+# Ready and has reconciled its current generation, so what it last synced
+# reflects the current spec. Read-only.
+eso_resource_is_reconciled() {
+  local kind="$1"
+  local namespace="$2"
+  local name="$3"
+  local state_file="$4"
+
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace "${namespace}" \
+    get "${kind}" "${name}" \
+    -o json >"${state_file}" 2>/dev/null &&
+    jq -e '
+      .metadata.generation as $generation
+      | any(.status.conditions[]?; .type == "Ready" and .status == "True")
+      and (($generation | type) == "number")
+      and ((.status.syncedResourceVersion // "") | startswith("\($generation)-"))
+    ' "${state_file}" >/dev/null 2>&1
+}
+
+# Report whether a Secret's data key decodes to exactly the Git/SOPS docker
+# config. Read-only; an unreadable Secret or payload is a mismatch.
+secret_matches_sops_credential() {
+  local namespace="$1"
+  local name="$2"
+  local data_key="$3"
+
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace "${namespace}" \
+    get secret "${name}" \
+    -o json >"${converged_secret_file}" 2>/dev/null &&
+    jq -er --arg key "${data_key}" '.data[$key] | @base64d' \
+      "${converged_secret_file}" 2>/dev/null |
+    jq -S -c . >"${converged_decoded_file}" 2>/dev/null &&
+    cmp -s "${expected_normalized}" "${converged_decoded_file}"
+}
+
+# Decide, without taking any fence or writing anything, whether the whole
+# Git/SOPS -> variables-base -> PushSecret -> OpenBao -> ExternalSecret -> Talos
+# chain already holds the desired credential. A converged reassert then needs no
+# synchronization Lease, no Flux policy pause, no controller restart and no
+# Secret or External Secrets write.
+#
+# This is a fast path only. Every mismatch, missing object, residual fence,
+# unready or stale seed probe, unproved node, and failed or malformed read
+# returns non-zero, and the caller then runs today's full fenced transaction
+# unchanged. A failed read can therefore never select the no-write path.
+ghcr_chain_is_converged_without_writes() {
+  local namespace lease_version started_epoch deadline
+
+  [[ "${GHCR_SEED_PROBE_WAIT_SECONDS}" =~ ^[0-9]+$ ]] || return 1
+  started_epoch="$(date -u +%s)"
+
+  # No transaction may be in flight: its writes could still be landing. The
+  # Lease is read again at the end, so a transaction that starts while these
+  # reads run also sends this run down the fenced path.
+  lease_version="$(converged_lease_version)" || return 1
+
+  # Neither Flux policy fence may be held or left behind by a crashed run.
+  read_flux_policy_fences >/dev/null 2>&1 || return 1
+  jq -e \
+    --arg owner_annotation "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" \
+    --arg reconcile_annotation "${FLUX_RECONCILE_ANNOTATION}" '
+    (((.metadata.annotations // {})[$owner_annotation] // "") == "")
+    and (((.metadata.annotations // {})[$reconcile_annotation] // "") != "disabled")
+    and ((.spec.suspend // false) == false)
+  ' "${flux_policy_handoff_state_file}" >/dev/null 2>&1 || return 1
+  jq -e \
+    --arg owner_annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" '
+    (((.metadata.annotations // {})[$owner_annotation] // "") == "")
+    and ((.spec.suspend // false) == false)
+  ' "${flux_policy_parent_state_file}" >/dev/null 2>&1 || return 1
+
+  # Root auth and the staged seed source already hold the SOPS credential.
+  secret_matches_sops_credential \
+    flux-system ksail-registry-credentials .dockerconfigjson || return 1
+  secret_matches_sops_credential \
+    flux-system variables-base ghcr_dockerconfigjson || return 1
+
+  # The complete fan-out exists and every consumer materialised the credential.
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    api-resources \
+    --api-group=external-secrets.io \
+    -o name >"${fanout_api_resources}" 2>/dev/null || return 1
+  grep -qx 'pushsecrets.external-secrets.io' "${fanout_api_resources}" || return 1
+  grep -qx 'externalsecrets.external-secrets.io' "${fanout_api_resources}" || return 1
+  # A pending PushSecret spec could still overwrite what OpenBao holds.
+  eso_resource_is_reconciled \
+    pushsecret flux-system seed-ghcr "${converged_probe_file}" || return 1
+  for namespace in "${FANOUT_NAMESPACES[@]}"; do
+    # A materialised Secret proves nothing about a consumer whose current spec
+    # has not reconciled, or whose last sync failed: its next sync may differ.
+    eso_resource_is_reconciled \
+      externalsecret "${namespace}" ghcr-auth "${converged_probe_file}" || return 1
+    secret_matches_sops_credential \
+      "${namespace}" ghcr-auth .dockerconfigjson || return 1
+  done
+
+  # OpenBao itself holds the credential right now. The seed probe must be
+  # fresh (a broken probe falls through at once) and must have refreshed AFTER
+  # this run began: straight after a raft restore, a refresh from just before
+  # the restore still looks fresh while OpenBao holds the older snapshot.
+  deadline=$((started_epoch + GHCR_SEED_PROBE_WAIT_SECONDS))
+  while :; do
+    eso_resource_is_reconciled \
+      externalsecret flux-system "${GHCR_SEED_PROBE_NAME}" "${converged_probe_file}" || return 1
+    jq -e --argjson max_age "$((GHCR_SEED_PROBE_REFRESH_SECONDS * 2))" '
+      ((.status.refreshTime | type) == "string")
+      and ((now - (.status.refreshTime | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601))
+        | . <= $max_age and . >= -30)
+    ' "${converged_probe_file}" >/dev/null 2>&1 || return 1
+    if jq -e --argjson started "${started_epoch}" '
+      (.status.refreshTime | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) > $started
+    ' "${converged_probe_file}" >/dev/null 2>&1; then
+      break
+    fi
+    (($(date -u +%s) < deadline)) || return 1
+    sleep 2
+  done
+  secret_matches_sops_credential \
+    flux-system "${GHCR_SEED_PROBE_NAME}" .dockerconfigjson || return 1
+
+  # Admission already enforces the candidate policy through exactly one path:
+  # applying the candidate merge patch would change nothing, the retired
+  # policy is gone, and the webhooks match the exclusive steady state. The
+  # patch comparison tolerates fields the API server defaults. The candidate
+  # must first be the exact fail-closed policy the fenced path would accept.
+  yq -e \
+    '.apiVersion == "policies.kyverno.io/v1"
+      and .kind == "ImageValidatingPolicy"
+      and .metadata.name == "verify-app-images"
+      and .spec.failurePolicy == "Fail"
+      and .spec.webhookConfiguration.timeoutSeconds == 30' \
+    "${IMAGE_VERIFICATION_POLICY_FILE}" >/dev/null 2>&1 || return 1
+  yq -o=json '{"spec": .spec}' "${IMAGE_VERIFICATION_POLICY_FILE}" \
+    >"${converged_policy_candidate_file}" 2>/dev/null || return 1
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get imagevalidatingpolicy.policies.kyverno.io \
+    "${IMAGE_VERIFICATION_POLICY}" \
+    -o json >"${converged_policy_file}" 2>/dev/null || return 1
+  jq -e --slurpfile candidate "${converged_policy_candidate_file}" '
+    (.spec | type) == "object"
+    and (($candidate[0].spec | type) == "object")
+    and ((.spec * $candidate[0].spec) == .spec)
+  ' "${converged_policy_file}" >/dev/null 2>&1 || return 1
+  # A failed read is not absence: check the status before the output.
+  local retired_policy
+  retired_policy="$(kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get imagevalidatingpolicy.policies.kyverno.io \
+    "${RETIRED_IMAGE_VERIFICATION_POLICY}" \
+    --ignore-not-found \
+    -o name 2>/dev/null)" || return 1
+  [[ -z "${retired_policy}" ]] || return 1
+  read_image_verification_webhooks >/dev/null 2>&1 || return 1
+  local mutation_required=false
+  if image_verification_policy_needs_mutating_webhook; then
+    mutation_required=true
+  fi
+  image_verification_webhook_set_matches \
+    "${image_verification_mutating_webhooks_file}" "mutate" true \
+    "${mutation_required}" >/dev/null 2>&1 || return 1
+  image_verification_webhook_set_matches \
+    "${image_verification_validating_webhooks_file}" "validate" true true \
+    >/dev/null 2>&1 || return 1
+  # Skipping the fenced path is only safe when the validating webhook still
+  # intercepts every Pod creation the policy protects.
+  image_verification_webhook_intercepts_pods \
+    "${image_verification_validating_webhooks_file}" || return 1
+
+  # Two consecutive clean node inventories, exactly as the full convergence
+  # loop requires before cutover: every node carries current runtime proof for
+  # this revision and image, and no drain, recovery or scale-down fence remains.
+  local inventory
+  for inventory in 1 2; do
+    # Same stabilization window the full convergence loop waits between its
+    # two clean inventories, so a node that registers in between is seen.
+    if ((inventory == 2)); then
+      sleep "${SYNC_INTERVAL}"
+    fi
+    kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get nodes \
+      -o json >"${converged_nodes_file}" 2>/dev/null || return 1
+    validate_talos_node_inventory "${converged_nodes_file}" >/dev/null 2>&1 ||
+      return 1
+    jq -e \
+      --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" \
+      --arg scale_down_owner_annotation "${SCALE_DOWN_GUARD_OWNER_ANNOTATION}" '
+      all(.items[];
+        (((.metadata.annotations // {})[$phase_annotation] // "") == "")
+        and (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == ""))
+    ' "${converged_nodes_file}" >/dev/null 2>&1 || return 1
+    select_talos_node_targets \
+      "${converged_nodes_file}" \
+      "${pull_revision}" \
+      "${KSAIL_OPERATOR_IMAGE}" \
+      "${converged_targets_file}" >/dev/null 2>&1 || return 1
+    [[ ! -s "${converged_targets_file}" ]] || return 1
+  done
+
+  # No transaction claimed the Lease while these reads ran.
+  [[ "$(converged_lease_version)" == "${lease_version}" ]]
+}
+
+if [[ "${allow_incomplete_fanout}" != "true" ]] &&
+  ghcr_chain_is_converged_without_writes; then
+  record_runtime_proof "${pull_revision}" "${KSAIL_OPERATOR_IMAGE}" || exit 1
+  echo "✅ Verified every consumer, the OpenBao seed, admission and every Talos node already hold the Git/SOPS GHCR credential; no fence or write was needed."
+  exit 0
+fi
 
 acquire_sync_lease "${pull_revision}"
 

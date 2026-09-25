@@ -36,6 +36,7 @@ func fakeKubectlImplementation(args []string) int {
 	switch {
 	case containsArg(args, "--raw=/readyz"):
 		appendEnvFile("OPERATION_LOG", "api-readyz\n")
+		touchMarker("api-readyz-probed")
 		if markerExists("transient-node-ready-attempt-prod-worker-1") {
 			attemptMarker := "post-reboot-api-ready-attempt"
 			attempt := parseInt(markerContent(attemptMarker), 0) + 1
@@ -71,6 +72,8 @@ func fakeKubectlImplementation(args []string) int {
 		return fakeKubectlPatchSyncLease(args, namespace, patchFile)
 	case containsArg(args, "create") && manifestFile != "" && fakeManifestKind(manifestFile) == "Lease":
 		return fakeKubectlCreateSyncLease(namespace, manifestFile)
+	case containsSequence(args, "get", "imagevalidatingpolicy.policies.kyverno.io"):
+		return fakeKubectlGetImageValidatingPolicy(args)
 	case containsSequence(args, "delete", "imagevalidatingpolicy.policies.kyverno.io"):
 		return fakeKubectlDeleteRetiredImageValidatingPolicy(args)
 	case containsSequence(args, "patch", "imagevalidatingpolicy.policies.kyverno.io"):
@@ -118,6 +121,13 @@ func fakeKubectlImplementation(args []string) int {
 		return fakeKubectlGetVariablesBase(args)
 	case containsSequence(args, "patch", "secret", "variables-base"):
 		return fakeKubectlPatchVariablesBase(args, patchFile)
+	}
+
+	switch {
+	case containsSequence(args, "get", "externalsecret", "ghcr-seed-probe"):
+		return fakeKubectlGetSeedProbe(namespace)
+	case containsSequence(args, "get", "secret", "ghcr-seed-probe"):
+		return fakeKubectlGetSeedProbeSecret(namespace)
 	}
 
 	kind, name := fanoutResource(args)
@@ -222,7 +232,7 @@ func fakeFluxPolicyChildObject() map[string]any {
 	metadata := map[string]any{
 		"name":            "infrastructure",
 		"namespace":       "flux-system",
-		"uid":             "infrastructure-kustomization-uid",
+		"uid":             defaultString(markerContent("flux-policy-handoff-uid"), "infrastructure-kustomization-uid"),
 		"resourceVersion": defaultString(markerContent("flux-policy-handoff-resource-version"), "20"),
 		"generation":      generation,
 	}
@@ -318,7 +328,7 @@ func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile
 		patch,
 		"test",
 		"/metadata/uid",
-		"infrastructure-kustomization-uid",
+		defaultString(markerContent("flux-policy-handoff-uid"), "infrastructure-kustomization-uid"),
 	) {
 		return commandFailure(56, "Flux policy Kustomization CAS failed")
 	}
@@ -326,6 +336,48 @@ func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile
 	ownerPath := "/metadata/annotations/platform.devantler.tech~1ghcr-policy-handoff-owner"
 	reconcilePath := "/metadata/annotations/kustomize.toolkit.fluxcd.io~1reconcile"
 	if hasPatchOperation(patch, "add", "/spec/suspend", true) {
+		// A rejection on the merits moves nothing, and must never be retried.
+		if rejection := os.Getenv("FAKE_FLUX_POLICY_HANDOFF_PATCH_REJECTION"); rejection != "" {
+			appendEnvFile("OPERATION_LOG", "flux-policy-handoff-patch-rejected\n")
+			return commandFailure(56, "%s", rejection)
+		}
+		// The child's twin of the parent's churn knob (#3067): a benign write moves
+		// the resourceVersion between the script's read and its CAS, so the patch
+		// is rejected against an object that is still claimable. The version MOVES,
+		// which is what separates contention from a rejection on the merits.
+		if budget := parseInt(
+			os.Getenv("FAKE_FLUX_POLICY_HANDOFF_CAS_CHURN_REJECTIONS"), 0,
+		); budget > 0 {
+			fired := parseInt(markerContent("flux-policy-handoff-cas-churn-count"), 0)
+			if fired < budget {
+				setMarkerContent(
+					"flux-policy-handoff-cas-churn-count",
+					strconv.Itoa(fired+1),
+				)
+				setMarkerContent(
+					"flux-policy-handoff-resource-version",
+					incrementDecimal(currentResourceVersion),
+				)
+				if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_FOREIGN_OWNER_AFTER_CAS_CHURN") == "true" {
+					setMarkerContent(
+						"flux-policy-handoff-owner",
+						"fixture-foreign-transaction",
+					)
+				}
+				// The object was deleted and recreated: same name, no owner, a new UID.
+				if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_REPLACED_AFTER_CAS_CHURN") == "true" {
+					setMarkerContent(
+						"flux-policy-handoff-uid",
+						"infrastructure-kustomization-uid-replacement",
+					)
+				}
+				appendEnvFile("OPERATION_LOG", "flux-policy-handoff-cas-churn:infrastructure\n")
+				return commandFailure(
+					56,
+					"Error from server (Invalid): the server rejected our request due to an error in our request",
+				)
+			}
+		}
 		owner := patchValueString(patch, "add", ownerPath)
 		if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
 			owner == "" ||
@@ -500,7 +552,7 @@ func fakeFluxPolicyParentObject() map[string]any {
 		"kind":       "Kustomization",
 		"metadata":   metadata,
 		"spec": map[string]any{
-			"suspend": suspended,
+			"suspend": suspended || os.Getenv("FAKE_FLUX_POLICY_PARENT_SUSPENDED_UNOWNED") == "true",
 		},
 		"status": map[string]any{
 			"observedGeneration": 1,
@@ -1046,6 +1098,7 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 		return 0
 	}
 	touchMarker("ivpol-policy-verify-app-images")
+	setMarkerContent("ivpol-policy-verify-app-images-spec", encodeJSON(spec))
 	appendEnvFile("OPERATION_LOG", "ivpol-policy-apply:verify-app-images\n")
 	fmt.Println("imagevalidatingpolicy.policies.kyverno.io/verify-app-images serverside-applied")
 	return 0
@@ -1063,6 +1116,139 @@ func fakeKubectlDeleteRetiredImageValidatingPolicy(args []string) int {
 	appendEnvFile("OPERATION_LOG", "ivpol-policy-delete:verify-ksail-images\n")
 	fmt.Println("imagevalidatingpolicy.policies.kyverno.io/verify-ksail-images deleted")
 	return 0
+}
+
+// fakeKubectlGetImageValidatingPolicy models the live image-validating
+// policies. Until a run applies the candidate, the consolidated policy still
+// carries the pre-consolidation spec, so a converged-chain check cannot pass on
+// a fresh cluster. The API server adds a defaulted field, which the check must
+// tolerate. The retired policy exists until a run deletes it.
+func fakeKubectlGetImageValidatingPolicy(args []string) int {
+	switch argumentAfter(args, "imagevalidatingpolicy.policies.kyverno.io") {
+	case "verify-app-images":
+		spec := map[string]any{"webhookConfiguration": map[string]any{"timeoutSeconds": float64(10)}}
+		if stored := markerContent("ivpol-policy-verify-app-images-spec"); stored != "" {
+			if err := json.Unmarshal([]byte(stored), &spec); err != nil {
+				return commandFailure(91, "parse stored image-validating policy spec: %v", err)
+			}
+		}
+		if os.Getenv("FAKE_IMAGE_VERIFICATION_POLICY_DRIFTED") == "true" {
+			spec["failurePolicy"] = "Ignore"
+		}
+		spec["evaluationMode"] = "Kubernetes"
+		fmt.Println(encodeJSON(map[string]any{"spec": spec}))
+		return 0
+	case "verify-ksail-images":
+		if !containsArg(args, "--ignore-not-found") {
+			return commandFailure(91, "retired image-validating policy lookup must tolerate absence")
+		}
+		if os.Getenv("FAKE_RETIRED_IMAGE_VERIFICATION_POLICY_READ_FAILS") == "true" {
+			return commandFailure(1, "error: the server doesn't have a resource type \"imagevalidatingpolicy\"")
+		}
+		if !markerExists("ivpol-policy-verify-ksail-images-deleted") {
+			fmt.Println("imagevalidatingpolicy.policies.kyverno.io/verify-ksail-images")
+		}
+		return 0
+	}
+	return commandFailure(91, "unexpected image-validating policy lookup")
+}
+
+// fakeKubectlGetSeedProbe models the ExternalSecret that reads the GHCR seed
+// back from OpenBao. It is Ready and freshly refreshed unless a fixture says
+// otherwise.
+func fakeKubectlGetSeedProbe(namespace string) int {
+	if namespace != "flux-system" || os.Getenv("FAKE_SEED_PROBE_MISSING") == "true" {
+		return commandFailure(44, "externalsecret ghcr-seed-probe not found")
+	}
+	refreshTime := time.Now().UTC().Format(time.RFC3339)
+	switch {
+	case os.Getenv("FAKE_SEED_PROBE_STALE") == "true":
+		refreshTime = time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
+	case os.Getenv("FAKE_SEED_PROBE_REFRESHED_BEFORE_RUN") == "true":
+		// A recent refresh that never advances while this run waits, like the
+		// one a raft restore leaves behind.
+		if !markerExists("seed-probe-frozen-refresh-time") {
+			setMarkerContent("seed-probe-frozen-refresh-time",
+				time.Now().UTC().Add(-5*time.Second).Format(time.RFC3339))
+		}
+		refreshTime = markerContent("seed-probe-frozen-refresh-time")
+	}
+	ready := "True"
+	if os.Getenv("FAKE_SEED_PROBE_NOT_READY") == "true" {
+		ready = "False"
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"metadata": map[string]any{"generation": 1},
+		"status": map[string]any{
+			"refreshTime":           refreshTime,
+			"syncedResourceVersion": "1-fixture",
+			"conditions":            []any{map[string]any{"type": "Ready", "status": ready}},
+		},
+	}))
+	return 0
+}
+
+// fakeKubectlGetSeedProbeSecret returns what OpenBao currently holds, which is
+// what the probe ExternalSecret materialises.
+func fakeKubectlGetSeedProbeSecret(namespace string) int {
+	if namespace != "flux-system" {
+		return commandFailure(44, "secret ghcr-seed-probe not found")
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"data": map[string]any{".dockerconfigjson": markerContent("vault-seed-value")},
+	}))
+	return 0
+}
+
+// fakeImageVerificationNamespaceSelector returns the namespace selector Kyverno
+// generates by default (kube-system and kyverno left out), or a narrowed one.
+func fakeImageVerificationNamespaceSelector() map[string]any {
+	excluded := func(namespace string) any {
+		return map[string]any{
+			"key":      "kubernetes.io/metadata.name",
+			"operator": "NotIn",
+			"values":   []any{namespace},
+		}
+	}
+	expressions := []any{excluded("kube-system"), excluded("kyverno")}
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOK_NAMESPACE_EXCLUDED") == "true" {
+		expressions = append(expressions, excluded("wedding-app"))
+	}
+	selector := map[string]any{"matchExpressions": expressions}
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOK_NAMESPACE_LABELLED") == "true" {
+		selector["matchLabels"] = map[string]any{"image-verification": "enabled"}
+	}
+	return selector
+}
+
+// fakeImageVerificationObjectSelector returns the empty object selector Kyverno
+// generates, or one that admits only labelled Pods.
+func fakeImageVerificationObjectSelector() map[string]any {
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOK_OBJECT_SELECTED") == "true" {
+		return map[string]any{"matchLabels": map[string]any{"verify": "true"}}
+	}
+	return map[string]any{}
+}
+
+// fakeImageVerificationMatchConditions returns no match conditions, as Kyverno
+// generates, or a CEL condition that skips some Pods.
+func fakeImageVerificationMatchConditions() any {
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOK_MATCH_CONDITIONED") == "true" {
+		return []any{map[string]any{
+			"name":       "skip-system-pods",
+			"expression": "!object.metadata.name.startsWith('system-')",
+		}}
+	}
+	return nil
+}
+
+// fakeImageVerificationRuleScope returns the "*" scope Kyverno generates, or a
+// Cluster scope, which names pods yet never matches a namespaced Pod.
+func fakeImageVerificationRuleScope() string {
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOK_CLUSTER_SCOPED") == "true" {
+		return "Cluster"
+	}
+	return "*"
 }
 
 func fakeKubectlGetImageVerificationWebhooks(operation string) int {
@@ -1100,6 +1286,10 @@ func fakeKubectlGetImageVerificationWebhooks(operation string) int {
 	}
 	mutationRequired := os.Getenv("FAKE_IMAGE_VERIFICATION_MUTATION_REQUIRED") == "true"
 	if consolidated && (operation != "mutate" || mutationRequired) {
+		resources := []any{"pods"}
+		if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOK_SCOPE_NARROWED") == "true" {
+			resources = []any{"deployments"}
+		}
 		webhooks = append(webhooks, map[string]any{
 			"name": operation + ".verify-app-images.ivpol.kyverno.svc-fail",
 			"clientConfig": map[string]any{
@@ -1109,8 +1299,18 @@ func fakeKubectlGetImageVerificationWebhooks(operation string) int {
 					"path":      "/ivpol/" + operation + "/verify-app-images",
 				},
 			},
-			"failurePolicy":  failurePolicy,
-			"timeoutSeconds": 30,
+			"rules": []any{map[string]any{
+				"apiGroups":   []any{""},
+				"apiVersions": []any{"v1"},
+				"resources":   resources,
+				"operations":  []any{"CREATE", "UPDATE"},
+				"scope":       fakeImageVerificationRuleScope(),
+			}},
+			"namespaceSelector": fakeImageVerificationNamespaceSelector(),
+			"objectSelector":    fakeImageVerificationObjectSelector(),
+			"matchConditions":   fakeImageVerificationMatchConditions(),
+			"failurePolicy":     failurePolicy,
+			"timeoutSeconds":    30,
 		})
 		if operation == "validate" {
 			if markerExists("ivpol-policy-verify-ksail-images-deleted") {
@@ -1150,8 +1350,10 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid synchronization lease lookup")
 	}
+	// The outage lasts until the script's own API-recovery wait has run, so
+	// every Lease read before recovery fails, however many there are.
 	if os.Getenv("FAKE_TRANSIENT_SYNC_LEASE_API_FAIL_BEFORE_CLAIM") == "true" &&
-		!markerExists("sync-lease-api-unreachable-before-claim") {
+		!markerExists("api-readyz-probed") {
 		touchMarker("sync-lease-api-unreachable-before-claim")
 		return commandFailure(
 			54,
@@ -1189,6 +1391,19 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 			)
 		}
 		return commandFailure(54, "read: connection reset by peer")
+	}
+	// Another transaction claims and releases the Lease between the first and
+	// second read of a run, which advances its resourceVersion.
+	if os.Getenv("FAKE_SYNC_LEASE_CLAIMED_DURING_CONVERGENCE") == "true" {
+		if !markerExists("convergence-lease-read") {
+			touchMarker("convergence-lease-read")
+		} else if !markerExists("convergence-lease-bumped") {
+			touchMarker("convergence-lease-bumped")
+			setMarkerContent(
+				"sync-lease-resource-version",
+				incrementDecimal(defaultString(markerContent("sync-lease-resource-version"), "10")),
+			)
+		}
 	}
 	holder := markerContent("sync-lease-holder")
 	if !markerExists("sync-lease-holder") {
@@ -1398,6 +1613,8 @@ func validateKubernetesMicroTimes(values ...string) error {
 	return nil
 }
 
+// fakeKubectlGetNodes returns the current inventory, including durable proof
+// markers and autoscaler churn modeled by the fixture.
 func fakeKubectlGetNodes() int {
 	if os.Getenv("FAKE_NODE_DISCOVERY_FAIL") == "true" {
 		return commandFailure(46, "node discovery failed")
@@ -1429,6 +1646,10 @@ func fakeKubectlGetNodes() int {
 	image := os.Getenv("EXPECTED_KSAIL_TARGET_IMAGE")
 	verifiedImage := defaultString(os.Getenv("FAKE_TALOS_VERIFIED_IMAGE"), image)
 	workerUID := defaultString(os.Getenv("FAKE_WORKER_UID"), "prod-worker-1-uid")
+	if os.Getenv("FAKE_NODE_REPLACED_AFTER_IMAGE_MARKER") == "prod-worker-1" &&
+		markerExists("talos-revision-10.0.0.2") {
+		workerUID = "prod-worker-1-replacement-uid"
+	}
 	nodes := []any{
 		fakeInventoryNode("prod-worker-1", workerUID, "10.0.0.2", "198.51.100.2", false, revision, "", "", true),
 		fakeInventoryNode("prod-control-plane-1", "prod-control-plane-1-uid", "10.0.0.1", "198.51.100.1", true, revision, "", "", true),
@@ -1557,6 +1778,8 @@ func fakeKubectlGetNodes() int {
 	return 0
 }
 
+// fakeInventoryNode builds a Node with the identity and scheduling state used
+// to exercise target selection against a changing cluster inventory.
 func fakeInventoryNode(
 	name string,
 	uid string,
@@ -1580,6 +1803,11 @@ func fakeInventoryNode(
 	}
 	if verifiedRevision != "" {
 		annotations["platform.devantler.tech/ghcr-pull-verified-revision-v2"] = verifiedRevision
+		if os.Getenv("FAKE_TALOS_LEGACY_UID_MISSING") != "true" ||
+			markerExists("talos-proof-uid-"+internalIP) {
+			annotations["platform.devantler.tech/ghcr-pull-verified-node-uid-v2"] =
+				defaultString(markerContent("talos-proof-uid-"+internalIP), uid)
+		}
 	}
 	if verifiedImage != "" {
 		annotations["platform.devantler.tech/ghcr-pull-verified-image-v2"] = verifiedImage
@@ -1609,7 +1837,8 @@ func fakeInventoryNode(
 	if !omitReady {
 		status["conditions"] = []any{map[string]any{"type": "Ready", "status": "True"}}
 	}
-	cordoned := wordListContains(os.Getenv("FAKE_CORDONED_NODES"), name) || markerExists("cordoned-"+name)
+	cordoned := (wordListContains(os.Getenv("FAKE_CORDONED_NODES"), name) || markerExists("cordoned-"+name)) &&
+		!markerExists("external-uncordon-after-remove-"+name)
 	taints := []any{}
 	if cordoned {
 		taints = append(taints, map[string]any{
@@ -1684,24 +1913,39 @@ func fakeKubectlGetPods(args []string) int {
 	return 0
 }
 
+// setInventoryProof carries Talos revision, image, and Node-UID markers into
+// the Kubernetes inventory seen by the synchronization script.
 func setInventoryProof(node any, revision, image string) {
 	nodeMap := node.(map[string]any)
 	metadata := nodeMap["metadata"].(map[string]any)
 	annotations := metadata["annotations"].(map[string]any)
+	status := nodeMap["status"].(map[string]any)
+	addresses := status["addresses"].([]any)
+	internalIP := addresses[0].(map[string]any)["address"].(string)
 	annotations["platform.devantler.tech/ghcr-pull-verified-revision-v2"] = revision
 	annotations["platform.devantler.tech/ghcr-pull-verified-image-v2"] = image
+	if os.Getenv("FAKE_TALOS_LEGACY_UID_MISSING") != "true" ||
+		markerExists("talos-proof-uid-"+internalIP) {
+		annotations["platform.devantler.tech/ghcr-pull-verified-node-uid-v2"] =
+			defaultString(markerContent("talos-proof-uid-"+internalIP), metadata["uid"].(string))
+	}
 }
 
+// fakeKubectlGetNode re-reads one selected Node and exposes identity or
+// scheduling changes at the same boundaries as the production script.
 func fakeKubectlGetNode(args []string) int {
 	nodeName := argumentAfter(args, "node")
 	if nodeName == "" {
 		return commandFailure(91, "node target missing")
 	}
+	imageNodeIP, _ := fakeNodeAddress(nodeName)
+	removedAfterImageMarker := nodeName == os.Getenv("FAKE_NODE_REMOVED_AFTER_IMAGE_MARKER") &&
+		markerExists("talos-revision-"+imageNodeIP)
 	removedAfterQuarantine := nodeName == os.Getenv("FAKE_NODE_REMOVED_AFTER_QUARANTINE") &&
 		(markerExists("cordon-owner-prod-control-plane-3") || markerExists("removed-before-process-"+nodeName))
 	removedAfterClaim := nodeName == os.Getenv("FAKE_AUTOSCALER_REMOVES_AFTER_CLAIM_NODE") &&
 		markerExists("cordon-owner-"+nodeName)
-	if wordListContains(os.Getenv("FAKE_NODE_REMOVED_BEFORE_PROCESS"), nodeName) || removedAfterQuarantine || removedAfterClaim ||
+	if wordListContains(os.Getenv("FAKE_NODE_REMOVED_BEFORE_PROCESS"), nodeName) || removedAfterQuarantine || removedAfterClaim || removedAfterImageMarker ||
 		(nodeName == os.Getenv("FAKE_NODE_REMOVED_AFTER_UNCORDON") && markerExists("uncordoned-"+nodeName)) {
 		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "forbidden" {
 			return commandFailure(1, "Error from server (Forbidden): nodes is forbidden")
@@ -1720,6 +1964,19 @@ func fakeKubectlGetNode(args []string) int {
 			fmt.Print("true")
 		}
 		return 0
+	}
+	// The re-read that follows a refused cordon claim fails, once. The silent
+	// variant exits non-zero without writing stderr, so the caller's diagnostic
+	// file is zero bytes and copying it succeeds while carrying nothing; the
+	// diagnostic variant writes real stderr, whose content must survive.
+	if nodeName == os.Getenv("FAKE_NODE_REREAD_FAILURE_NODE") &&
+		markerExists("claim-failed-"+nodeName) &&
+		!markerExists("node-reread-failed-"+nodeName) {
+		touchMarker("node-reread-failed-" + nodeName)
+		if diagnostic := os.Getenv("FAKE_NODE_REREAD_FAILURE_DIAGNOSTIC"); diagnostic != "" {
+			return commandFailure(92, "%s", diagnostic)
+		}
+		return 92
 	}
 	if nodeName == os.Getenv("FAKE_RECOVERY_ADVANCES_BEFORE_RELEASE_NODE") &&
 		!markerExists("recovery-advanced-before-release-"+nodeName) {
@@ -1758,6 +2015,9 @@ func fakeKubectlGetNode(args []string) int {
 		nodeUID = nodeName + "-replacement-uid"
 		nodeIP = "10.0.0.99"
 	}
+	if nodeName == os.Getenv("FAKE_NODE_REPLACED_AFTER_IMAGE_MARKER") && markerExists("talos-revision-"+nodeIP) {
+		nodeUID = nodeName + "-replacement-uid"
+	}
 	if nodeName == os.Getenv("FAKE_NODE_IP_CHANGED_AFTER_DRAIN_NODE") && markerExists("drained-"+nodeName) {
 		nodeIP = "10.0.0.99"
 	}
@@ -1770,6 +2030,22 @@ func fakeKubectlGetNode(args []string) int {
 		labels["ksail.io/autoscaled"] = "true"
 	}
 	annotations := map[string]any{}
+	if os.Getenv("FAKE_TALOS_NODES_CURRENT") == "true" ||
+		markerExists("talos-revision-"+nodeIP) {
+		annotations["platform.devantler.tech/ghcr-pull-verified-revision-v2"] =
+			os.Getenv("EXPECTED_GHCR_REVISION")
+		verifiedImage := defaultString(os.Getenv("FAKE_TALOS_VERIFIED_IMAGE"),
+			os.Getenv("EXPECTED_KSAIL_TARGET_IMAGE"))
+		if markerExists("talos-revision-" + nodeIP) {
+			verifiedImage = os.Getenv("EXPECTED_KSAIL_TARGET_IMAGE")
+		}
+		annotations["platform.devantler.tech/ghcr-pull-verified-image-v2"] = verifiedImage
+		if os.Getenv("FAKE_TALOS_LEGACY_UID_MISSING") != "true" ||
+			markerExists("talos-proof-uid-"+nodeIP) {
+			annotations["platform.devantler.tech/ghcr-pull-verified-node-uid-v2"] =
+				defaultString(markerContent("talos-proof-uid-"+nodeIP), nodeUID)
+		}
+	}
 	if owner := markerContent("cordon-owner-" + nodeName); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-owner"] = owner
 	}
@@ -1786,7 +2062,8 @@ func fakeKubectlGetNode(args []string) int {
 	if owner := markerContent("scale-down-owner-" + nodeName); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-scale-down-owner"] = owner
 	}
-	cordoned := wordListContains(os.Getenv("FAKE_CORDONED_NODES"), nodeName) || markerExists("cordoned-"+nodeName)
+	cordoned := (wordListContains(os.Getenv("FAKE_CORDONED_NODES"), nodeName) || markerExists("cordoned-"+nodeName)) &&
+		!markerExists("external-uncordon-after-remove-"+nodeName)
 	if nodeName == os.Getenv("FAKE_EXTERNAL_UNCORDON_AFTER_READY_NODE") && markerExists("ready-"+nodeName) {
 		cordoned = false
 	}
@@ -1932,7 +2209,15 @@ func fakeNodeName(nodeAddress string) string {
 	return ""
 }
 
+// fakeExpectedNodeUID models a replacement retaining its address after a
+// marker write, so stale durable proof cannot bind the new Node.
 func fakeExpectedNodeUID(nodeName string) string {
+	if nodeName == os.Getenv("FAKE_NODE_REPLACED_AFTER_IMAGE_MARKER") {
+		address, _ := fakeNodeAddress(nodeName)
+		if markerExists("talos-revision-" + address) {
+			return nodeName + "-replacement-uid"
+		}
+	}
 	if nodeName == "prod-worker-1" && os.Getenv("FAKE_WORKER_UID") != "" {
 		return os.Getenv("FAKE_WORKER_UID")
 	}
@@ -2196,6 +2481,7 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		// and the claim must still refuse rather than drain.
 		if nodeName == os.Getenv("FAKE_CLAIM_FAIL_NODE") {
 			setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+			touchMarker("claim-failed-" + nodeName)
 			return commandFailure(56, "resourceVersion test failed")
 		}
 		// An unrelated writer (a kubelet status heartbeat, the cloud
@@ -2809,6 +3095,10 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 	}
 	if containsSequence(args, "get", kind, name) {
 		markerName := kind + "-" + namespace + "-" + name
+		ready := "True"
+		if resource == os.Getenv("FAKE_UNRECONCILED_FANOUT_RESOURCE") {
+			ready = "False"
+		}
 		refreshTime := "2026-07-13T00:00:00Z"
 		resourceVersion := "1"
 		if markerExists(markerName + "-annotated") {
@@ -2821,10 +3111,11 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 			resourceVersion = "3"
 		}
 		fmt.Println(encodeJSON(map[string]any{
-			"metadata": map[string]any{"resourceVersion": resourceVersion},
+			"metadata": map[string]any{"resourceVersion": resourceVersion, "generation": 1},
 			"status": map[string]any{
-				"refreshTime": refreshTime,
-				"conditions":  []any{map[string]any{"type": "Ready", "status": "True"}},
+				"refreshTime":           refreshTime,
+				"conditions":            []any{map[string]any{"type": "Ready", "status": ready}},
+				"syncedResourceVersion": "1-fixture",
 			},
 		}))
 		return 0
@@ -2836,6 +3127,11 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 		touchMarker(markerName + "-annotated")
 		if resource != os.Getenv("FAKE_SYNC_STALL_RESOURCE") {
 			touchMarker(markerName)
+			if resource == "pushsecret/flux-system/seed-ghcr" {
+				// A PushSecret refresh repairs the remote OpenBao value even when
+				// already-materialized Kubernetes consumers still look current.
+				setMarkerContent("vault-seed-value", markerContent("variables-secret-value"))
+			}
 		}
 		fmt.Println(`{"metadata":{"resourceVersion":"2"}}`)
 		return 0
@@ -2852,9 +3148,9 @@ func fakeKubectlGetConsumerSecret(namespace string) int {
 	encoded := ""
 	if mismatch {
 		encoded = base64.StdEncoding.EncodeToString([]byte(`{"auths":{}}`))
-	} else {
+	} else if capture := os.Getenv("VARIABLES_PATCH_CAPTURE"); pathExists(capture) {
 		var patch map[string]any
-		if err := json.Unmarshal([]byte(mustReadCommandFile(os.Getenv("VARIABLES_PATCH_CAPTURE"))), &patch); err != nil {
+		if err := json.Unmarshal([]byte(mustReadCommandFile(capture)), &patch); err != nil {
 			return commandFailure(91, "parse variables-base patch: %v", err)
 		}
 		data, _ := patch["data"].(map[string]any)
@@ -2862,6 +3158,11 @@ func fakeKubectlGetConsumerSecret(namespace string) int {
 		if variablesPatchCount >= 3 {
 			removeMarker(revertedMarker)
 		}
+	} else {
+		// The materialized Secret persists across stage and reassert, while the
+		// per-run patch capture is cleared. Read the fake cluster's persisted
+		// variables-base value when this run did not patch it.
+		encoded = markerContent("variables-secret-value")
 	}
 	fmt.Println(encodeJSON(map[string]any{
 		"data": map[string]any{".dockerconfigjson": encoded},

@@ -42,7 +42,7 @@ jobs:
       - name: Setup KSail for the existing encrypted pull credential
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.184.13"
+          KSAIL_VERSION: "7.186.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

@@ -85,6 +85,7 @@ spec:
               # de-facto community one, digest-pinned; observability is exempt from
               # disallow-latest-tag. Swappable for any curl+jq image.
               image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -117,7 +118,8 @@ spec:
                 - -c
                 - |
                   set -u
-                  BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
+                  # The terminal DNS root dot prevents ndots:5 search expansion.
+                  BASE="http://coroot-coroot.observability.svc.cluster.local.:8080"
                   # In-cluster calls from this short-lived pod to coroot can see
                   # transient first-packet or endpoint-readiness failures, so a
                   # single un-retried call intermittently fails (curl exit /

@@ -199,15 +199,16 @@ reject_pattern \
 readonly expected_node_port=$'    nodePort:\n      addresses:\n      - 10.0.0.0/16'
 [[ "${production_node_port}" == "${expected_node_port}" ]] ||
   fail 'the public-NIC device set must expose NodePort on only the private node CIDR'
-# The stepped rollout is COMPLETE: every agent runs the widened device set, so
-# the two temporary overrides that made the roll operator-stepped are gone and
-# the DaemonSet is back on the chart's normal rolling update. Pin their ABSENCE
-# rather than deleting these assertions — a silently reintroduced gate would
-# suppress the pipeline's only Talos machine-config sync again, which is the
-# failure that took prod deploys down for fourteen days.
-if extract_top_level_block updateStrategy <<<"${production_release}" >/dev/null 2>&1; then
-  fail 'the released rollout must not pin a top-level update strategy; the chart default applies'
-fi
+# The old operator-stepped rollout handoff is gone. Keep ordinary Helm wait and
+# RollingUpdate, but bound the agent and Envoy DaemonSets to one unavailable
+# node each after the 2026-09-23 upgrade coincided with DNS/service timeouts.
+printf '%s' "${production_release}" | yq e -e '
+  .spec.values.updateStrategy.type == "RollingUpdate" and
+  .spec.values.updateStrategy.rollingUpdate.maxUnavailable == 1 and
+  .spec.values.envoy.updateStrategy.type == "RollingUpdate" and
+  .spec.values.envoy.updateStrategy.rollingUpdate.maxUnavailable == 1
+' - >/dev/null ||
+  fail 'production Cilium agent and Envoy rollouts must each allow only one unavailable pod'
 reject_pattern \
   "${production_upgrade}" \
   '^[[:space:]]*disableWait:' \

@@ -53,6 +53,17 @@ readonly EXPECTED_CONSUMERS=(
   'wedding-app'
 )
 
+# The same floor per deployed ARTIFACT (its OCI path under ghcr.io/devantler-tech). A
+# repository can publish more than one artifact, and a floor keyed only on the repository
+# would let one of its consumers vanish while another keeps the name present (#3327).
+# EXPECTED_CONSUMERS stays keyed on the repository, because the approved revision set is.
+readonly EXPECTED_ARTIFACTS=(
+  'ascoachingogvaner/manifests'
+  'aws/manifests'
+  'github-config/manifests'
+  'wedding-app/manifests'
+)
+
 fail() {
   printf 'report-publish-workflow-signing-revisions: %s\n' "$*" >&2
   exit 1
@@ -179,7 +190,7 @@ registry_tag_for_git_tag() {
 # reattributed a consumer — and where a consumer's cd.yaml calls both shared workflows
 # that returns the wrong revision silently.
 discover_consumers() {
-  local root="$1" file url version subjects repo workflow workflows
+  local root="$1" file url version subjects repo workflow workflows artifact
   [ -d "$root" ] || return 0
   while IFS= read -r file; do
     [ -n "$file" ] || continue
@@ -211,7 +222,10 @@ discover_consumers() {
       [ -n "$repo" ] || continue
       repo="$(oci_name_to_repo "$repo")"
       plausible_repo "$repo" || continue
-      printf '%s\t%s\t%s\n' "$repo" "$workflow" "$version"
+      # The artifact names the deployed consumer; the repository only names its source.
+      artifact="${url#oci://ghcr.io/devantler-tech/}"
+      artifact="${artifact%/}"
+      printf '%s\t%s\t%s\t%s\n' "$repo" "$workflow" "$version" "$artifact"
       # 🔴 FLUX RESOLVES `spec.ref` AS digest > semver > tag, AND AN OMITTED `ref` MEANS
       # the mutable `latest` tag. Reading `tag` first inverts that: a document carrying BOTH
       # a tag and a digest (or a tag and a semver) would be attributed to a tag Flux never
@@ -256,8 +270,8 @@ discover_consumers() {
 # this lived inside the resolver, the only way to reach it was to let the real resolver run,
 # which made the case non-hermetic and it failed in CI for an unrelated reason.
 #
-# Prints the effective version (empty means "newest published"), or fails naming the
-# constraint.
+# Prints the effective version (empty means "newest published", `>=X.Y.Z` means "newest
+# published at or above X.Y.Z"), or fails naming the constraint.
 effective_version() {
   local raw="$1" expr
   case "$raw" in
@@ -334,9 +348,22 @@ effective_version() {
         # One to three numeric components, so a legitimate `>=1.0` is not newly refused.
         # Anything richer (prerelease, build metadata, a second bound) is handled by the
         # arms above or refused here.
+        #
+        # 🔴 AN INCLUSIVE FLOOR IS STILL A BOUND (#3329). Reading it as "newest published"
+        # is right only while some published release satisfies it: with `>=3.0.0` and a
+        # newest tag of 2.5.0 Flux selects nothing, but the walk returned 2.5.0 and
+        # attributed its workflow revision to an artifact Flux never selected. The floor is
+        # therefore carried to `deployed_tag` as `>=X.Y.Z`, padded the way Flux coerces a
+        # partial version, and the walk never considers a release below it.
         '>='*)
           if [[ "$expr" =~ ^\>=[0-9]+(\.[0-9]+){0,2}$ ]]; then
-            printf '%s\n' ''
+            local floor="${expr#>=}"
+            case "$floor" in
+              *.*.*) ;;
+              *.*) floor="${floor}.0" ;;
+              *) floor="${floor}.0.0" ;;
+            esac
+            printf '>=%s\n' "$floor"
             return 0
           fi
           printf 'malformed or unsupported semver constraint "%s" needs Flux-compatible selection, which this script does not implement\n' \
@@ -458,11 +485,23 @@ tag_was_published() {
   # Only bounded, escaped identifiers and fixed classifications/counts enter the log.
   # Response bodies, arbitrary fields and parser/API errors never become diagnostics.
   printf -v diagnostic 'publication-evidence repo=%q tag=%q' "${repo:0:128}" "${tag:0:128}"
-  if ! runs="$(gh_retry api --method GET "repos/devantler-tech/${repo}/actions/runs" \
-    --raw-field "branch=${tag}" --raw-field event=push --raw-field per_page=100)"; then
-    printf '%s response=query-failed classification=query-unknown\n' "$diagnostic" >&2
-    return 3
-  fi
+  local attempt
+  for attempt in 1 2; do
+    if ! runs="$(gh_retry api --method GET "repos/devantler-tech/${repo}/actions/runs" \
+      --raw-field "branch=${tag}" --raw-field event=push --raw-field per_page=100)"; then
+      printf '%s response=query-failed classification=query-unknown\n' "$diagnostic" >&2
+      return 3
+    fi
+    # GitHub returned an empty complete list for a tag whose successful run was
+    # visible both before and after that request. Confirm this one narrow absence
+    # once; malformed or incomplete responses still reach the strict parser below.
+    if [ "$attempt" -eq 1 ] && printf '%s' "$runs" |
+      jq -es 'length == 1 and (.[0] | type == "object" and .total_count == 0 and .workflow_runs == [])' >/dev/null 2>&1; then
+      sleep 1
+      continue
+    fi
+    break
+  done
   # A successful HTTP read can still be malformed or incomplete. In a jq|grep condition,
   # parser errors used to mean "unpublished", while .workflow_runs[] also accepted object
   # values as runs. Validate one document and every classification field before selecting.
@@ -492,14 +531,21 @@ tag_was_published() {
     printf '%s response=invalid classification=query-unknown\n' "$diagnostic" >&2
     return 3
   fi
-  local complete total returned matching successful_current successful_other response=complete classification rc
+  local complete total returned matching successful_current successful_other response=complete classification rc current_sha
   IFS=$'\t' read -r complete total returned matching successful_current successful_other <<<"$summary"
   if [ "$complete" != true ]; then
     response=incomplete classification=query-unknown rc=3
-  # `head_sha` binds publication to the tag current commit. Preserve successful current
-  # publication precedence; only a success at another commit is a moved-tag anomaly.
+  # `head_sha` binds publication to the tag commit. A tag can move while an empty
+  # Actions response is being confirmed, so verify it still points at that commit
+  # before accepting a successful run.
   elif [ "$successful_current" -gt 0 ]; then
-    classification=published rc=0
+    if ! current_sha="$(tag_commit "$repo" "$tag")"; then
+      response=tag-commit-failed classification=query-unknown rc=3
+    elif [ "$current_sha" != "$sha" ]; then
+      classification=moved-tag rc=2
+    else
+      classification=published rc=0
+    fi
   elif [ "$successful_other" -gt 0 ]; then
     classification=moved-tag rc=2
   else
@@ -531,6 +577,15 @@ tag_was_published() {
 # which means reading a cluster; this script reads manifests, git tags and Actions runs only.
 deployed_tag() {
   local repo="$1" version="$2" tags registry_tags registry_package registry_version candidate bare
+  # A `>=X.Y.Z` floor from `effective_version` selects by walking, like an empty version,
+  # but only among releases at or above the floor.
+  local floor=''
+  case "$version" in
+    '>='*)
+      floor="${version#>=}"
+      version=''
+      ;;
+  esac
   # --paginate: the endpoint caps at 100 per page and these repos already carry 50+ tags.
   # Past the cap an un-paginated read returns an arbitrary subset, which either misses a
   # real tag (false UNRESOLVED) or picks the newest of a truncated page (silently wrong).
@@ -677,6 +732,24 @@ deployed_tag() {
         return 1
       fi
     done <<<"$unrankable"
+  fi
+  # Drop every release below the floor before walking. Stepping past an unpublished release
+  # must never reach one the selector excludes, and when nothing satisfies the floor Flux
+  # selects nothing, so there is no deployed artifact to attribute.
+  if [ -n "$floor" ]; then
+    local floored='' floor_candidate
+    while IFS= read -r floor_candidate; do
+      [ -n "$floor_candidate" ] || continue
+      [ "$(printf '%s\n%s\n' "$floor" "$floor_candidate" | sort -V | head -1)" = "$floor" ] ||
+        continue
+      floored="${floored}${floor_candidate}"$'\n'
+    done <<<"$candidates"
+    if [ -z "$floored" ]; then
+      printf 'semver floor ">=%s" is above every published release (newest %s); Flux selects nothing for it, so no deployed artifact can be attributed\n' \
+        "$floor" "$(printf '%s\n' "$candidates" | head -1)" >&2
+      return 1
+    fi
+    candidates="${floored%$'\n'}"
   fi
   local core_re variants variant_count candidate
   while IFS= read -r bare; do
@@ -860,6 +933,10 @@ deployed_tag() {
       break
     done
   done <<<"$candidates"
+  if [ -n "$floor" ]; then
+    printf 'no release at or above semver floor ">=%s" published successfully; releases below the floor are never selected, so none can be attributed\n' \
+      "$floor" >&2
+  fi
   return 1
 }
 
@@ -883,46 +960,56 @@ default_resolver() {
   printf '%s\t%s\t%s\n' "$signing" "$current" "$origin"
 }
 
-main() {
-  local root="${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}"
-  local consumers found missing=""
-  consumers="$(discover_consumers "$root")"
-  found="$(printf '%s' "$consumers" | cut -f1 | sort -u)"
-
-  local expected
-  for expected in "${EXPECTED_CONSUMERS[@]}"; do
+# identity_floor <noun> <registry> <found> <expected>...: exits unless the discovered identities
+# are exactly the registered ones.
+#
+# Both directions. Checking only that every EXPECTED name was found accepts an unregistered
+# extra consumer — and that one can later move or change its subject spelling, disappear, and
+# leave every registered name present so the report exits clean. That is exactly the silent
+# disappearance this floor exists to prevent, just one consumer along. Requiring registration
+# makes adding a consumer a deliberate, reviewed act.
+identity_floor() {
+  local noun="$1" registry="$2" found="$3" expected discovered e known missing="" unregistered=""
+  shift 3
+  for expected in "$@"; do
     printf '%s\n' "$found" | grep -qxF -- "$expected" || missing="${missing} ${expected}"
   done
-
-  # Both directions. Checking only that every EXPECTED name was found accepts an unregistered
-  # sixth consumer — and that one can later move or change its subject spelling, disappear, and
-  # leave all five registered names present so the report exits clean. That is exactly the silent
-  # disappearance this floor exists to prevent, just one consumer along. Requiring registration
-  # makes adding a consumer a deliberate, reviewed act.
-  local discovered unregistered=""
   while IFS= read -r discovered; do
     [ -n "$discovered" ] || continue
-    local known=0 e
-    for e in "${EXPECTED_CONSUMERS[@]}"; do
+    known=0
+    for e in "$@"; do
       [ "$e" = "$discovered" ] && known=1 && break
     done
     [ "$known" -eq 1 ] || unregistered="${unregistered} ${discovered}"
   done <<<"$found"
 
   if [ -n "$unregistered" ]; then
-    printf 'discovered consumer(s) not registered in EXPECTED_CONSUMERS:%s\n' "$unregistered" >&2
+    printf 'discovered %s(s) not registered in %s:%s\n' "$noun" "$registry" "$unregistered" >&2
     printf 'A consumer this script does not know about is one it cannot notice the LOSS of later.\n' >&2
-    printf 'Add it to EXPECTED_CONSUMERS so its disappearance would fail this run.\n' >&2
-    exit 1
+    printf 'Add it to %s so its disappearance would fail this run.\n' "$registry" >&2
   fi
 
   if [ -n "$missing" ]; then
-    printf 'expected consumer(s) not discovered:%s\n' "$missing" >&2
+    printf 'expected %s(s) not discovered:%s\n' "$noun" "$missing" >&2
     printf 'The scan, not the repository, is the likely cause: those OCIRepositories may have\n' >&2
     printf 'moved, been renamed, or adopted a subject spelling this pattern does not match.\n' >&2
-    printf 'Verify by hand, then fix the pattern or amend EXPECTED_CONSUMERS with the reason.\n' >&2
-    exit 1
+    printf 'Verify by hand, then fix the pattern or amend %s with the reason.\n' "$registry" >&2
   fi
+  # Both are reported before exiting: a replaced consumer is one of each, and naming only
+  # the newcomer would hide which registered consumer vanished.
+  [ -z "$unregistered$missing" ] || exit 1
+}
+
+main() {
+  local root="${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}"
+  local consumers
+  consumers="$(discover_consumers "$root")"
+
+  # The repository floor first: EXPECTED_CONSUMERS is what the approved revision set is keyed on.
+  identity_floor consumer EXPECTED_CONSUMERS "$(printf '%s' "$consumers" | cut -f1 | sort -u)" \
+    "${EXPECTED_CONSUMERS[@]}"
+  identity_floor artifact EXPECTED_ARTIFACTS "$(printf '%s' "$consumers" | cut -f4 | sort -u)" \
+    "${EXPECTED_ARTIFACTS[@]}"
 
   if [ "${1:-}" = "--list-consumers" ]; then
     printf '%s\n' "$consumers"
@@ -930,7 +1017,7 @@ main() {
   fi
 
   local resolver="${PUBLISH_REVISION_RESOLVER:-}"
-  local repo workflow version answer signing current origin field field_count
+  local repo workflow version _artifact answer signing current origin field field_count
   local diverged=0 unresolved=0 examined=0
   # Scratch for one consumer's refusal diagnostic. A file rather than a process
   # substitution so the capture works under a plain POSIX-ish shell, and so the
@@ -942,7 +1029,7 @@ main() {
   printf 'Shared publish-workflow revisions, per consumer (#3048)\n'
   printf '%s\n' '-------------------------------------------------------'
 
-  while IFS=$'\t' read -r repo workflow version; do
+  while IFS=$'\t' read -r repo workflow version _artifact; do
     [ -n "$repo" ] || continue
     examined=$((examined + 1))
     # Classify from the manifest first: a bounded range is refused before any resolver is

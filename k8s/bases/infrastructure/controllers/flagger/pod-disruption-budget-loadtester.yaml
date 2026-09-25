@@ -1,0 +1,14 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: flagger-loadtester-drain-safe
+  namespace: flagger-system
+spec:
+  # The upstream chart only exposes minAvailable. Own the PDB here so the
+  # two-replica load generator keeps one endpoint during a drain without
+  # making a future singleton replica floor undrainable (#1880/#1882).
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: loadtester
+      app.kubernetes.io/name: loadtester
