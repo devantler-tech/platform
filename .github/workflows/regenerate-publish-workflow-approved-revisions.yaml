@@ -223,8 +223,9 @@ jobs:
             ## Why
 
             The cluster only trusts releases signed by publishing-workflow revisions it
-            has approved. A consumer's deployed release or workflow pin has moved, so the
-            approved list is out of date and its next release would be rejected.
+            has approved. A consumer's deployed release or workflow pin, or the latest
+            publishing-workflow release candidate, has moved, so the approved list is
+            out of date.
 
             ## What
 

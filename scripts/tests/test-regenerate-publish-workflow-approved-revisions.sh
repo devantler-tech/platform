@@ -295,14 +295,21 @@ check() {
   # issue line that is either `Fixes #<n>` or the explicit no-issue marker. The earlier
   # body linked `Part of #3308`, an issue that had closed, so every run that drove one
   # of these PRs had to rewrite the body before promotion (platform#4204).
-  local body
+  # Presence alone is not the template: the sections must also appear in order
+  # (## Why, then ## What, then the issue line), so compare their first line numbers.
+  local body why_line what_line issue_line
   body="$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.body")"
-  if ! { printf '%s\n' "${body}" | grep -qx '## Why' &&
-    printf '%s\n' "${body}" | grep -qx '## What'; }; then
+  why_line="$(printf '%s\n' "${body}" | grep -nx '## Why' | head -n 1 | cut -d: -f1)"
+  what_line="$(printf '%s\n' "${body}" | grep -nx '## What' | head -n 1 | cut -d: -f1)"
+  issue_line="$(printf '%s\n' "${body}" | grep -nxE 'Fixes #[0-9]+|No issue: trivial fix\.' | head -n 1 | cut -d: -f1)"
+  if [ -z "${why_line}" ] || [ -z "${what_line}" ]; then
     printf 'VIOLATION A16: the generated pull-request body lacks the template headings ## Why / ## What\n'; return 1
   fi
-  printf '%s\n' "${body}" | grep -qxE 'Fixes #[0-9]+|No issue: trivial fix\.' ||
+  [ -n "${issue_line}" ] ||
     { printf 'VIOLATION A16: the generated pull-request body has no issue line (Fixes #N or the no-issue marker)\n'; return 1; }
+  if ! { [ "${why_line}" -lt "${what_line}" ] && [ "${what_line}" -lt "${issue_line}" ]; }; then
+    printf 'VIOLATION A16: the generated pull-request body is out of template order (## Why %s, ## What %s, issue line %s)\n' "${why_line}" "${what_line}" "${issue_line}"; return 1
+  fi
   if printf '%s\n' "${body}" | grep -qE 'Part of #[0-9]+'; then
     printf 'VIOLATION A16: the generated pull-request body links an issue with Part of, which the template does not accept\n'; return 1
   fi
@@ -391,6 +398,8 @@ ablate A8 'consumer matcher omitted' '(.jobs.regenerate.steps[] | select(.uses /
 ablate A9 'writer failure ignored' '(.jobs.regenerate.steps[] | select(.run // "" | contains("write-publish-workflow-matchers.sh")) | .continue-on-error) = true'
 ablate A16 'Why heading dropped' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("## Why\n"; "")'
 ablate A16 'issue line dropped' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("No issue: trivial fix\\.\n"; "")'
+ablate A16 'issue line moved first' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= (sub("No issue: trivial fix\\.\n"; "") | sub("## Why\n"; "No issue: trivial fix.\n\n## Why\n"))'
+ablate A16 'What before Why' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= (sub("## Why\n"; "## TMP\n") | sub("## What\n"; "## Why\n") | sub("## TMP\n"; "## What\n"))'
 ablate A16 'closed-issue link restored' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("No issue: trivial fix\\."; "Fixes #1\n\nPart of #3308.")'
 
 # Execute the actual change-detection step in a disposable checkout. This proves
@@ -434,4 +443,4 @@ mkdir -p "${checkout}"
   fi
 )
 
-printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 48 ablations + change-detection cases passed\n'
+printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 50 ablations + change-detection cases passed\n'
