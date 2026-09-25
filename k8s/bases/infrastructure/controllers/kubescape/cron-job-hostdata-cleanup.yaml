@@ -29,7 +29,9 @@ spec:
       # the script's bounded request retries handle individual API calls.
       backoffLimit: 2
       activeDeadlineSeconds: 900
-      ttlSecondsAfterFinished: 86400
+      # Outlive the failure alert's 26-hour (93600s) completion window, so a
+      # missed daily run is reported as stale only once that window has passed.
+      ttlSecondsAfterFinished: 172800
       template:
         metadata:
           labels:

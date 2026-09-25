@@ -110,15 +110,23 @@ spec:
                       exit 1
                       ;;
                   esac
-                  for v in FAILURE_THRESHOLD STALE_SECONDS; do
-                    eval "val=\${$v}"
-                    case "$val" in
-                      ''|*[!0-9]*|0)
-                        echo "ERROR: $v must be a positive integer" >&2
-                        exit 1
-                        ;;
+                  # A tuning value is a positive decimal integer with no leading
+                  # zero (so `00` is not read as zero) and at most $2 digits, which
+                  # keeps every comparison inside shell and jq integer range.
+                  positive_bounded() {
+                    case "$1" in
+                      ''|*[!0-9]*|0*) return 1 ;;
                     esac
-                  done
+                    [ "${#1}" -le "$2" ]
+                  }
+                  if ! positive_bounded "$FAILURE_THRESHOLD" 2; then
+                    echo "ERROR: FAILURE_THRESHOLD must be a positive integer below 100" >&2
+                    exit 1
+                  fi
+                  if ! positive_bounded "$STALE_SECONDS" 9; then
+                    echo "ERROR: STALE_SECONDS must be a positive integer of at most 9 digits" >&2
+                    exit 1
+                  fi
                   if [ -z "$(printf '%s' "$WATCH" | tr -d ' ')" ]; then
                     echo "ERROR: WATCH names no CronJob" >&2
                     exit 1
@@ -156,14 +164,11 @@ spec:
                       esac
                       target_failure_threshold=${tuning%%:*}
                       target_stale_seconds=${tuning#*:}
-                      for value in "$target_failure_threshold" "$target_stale_seconds"; do
-                        case "$value" in
-                          ''|*[!0-9]*|0)
-                            echo "ERROR: WATCH entry '$entry' has a non-positive tuning value" >&2
-                            exit 1
-                            ;;
-                        esac
-                      done
+                      if ! positive_bounded "$target_failure_threshold" 2 ||
+                        ! positive_bounded "$target_stale_seconds" 9; then
+                        echo "ERROR: WATCH entry '$entry' has an invalid tuning value" >&2
+                        exit 1
+                      fi
                     fi
                     case "$target" in
                       */*) ;;
@@ -182,6 +187,13 @@ spec:
                     fi
                     if [ "$code" != "200" ]; then
                       echo "ERROR: kube API returned HTTP $code reading CronJob ${target}" >&2
+                      exit 1
+                    fi
+                    # A streak longer than the failed runs Kubernetes keeps can
+                    # never be observed, which would silence the alert for good.
+                    retained_failures=$(jq -r '.spec.failedJobsHistoryLimit // 1' /tmp/cronjob.json)
+                    if [ "$target_failure_threshold" -gt "$retained_failures" ]; then
+                      echo "ERROR: ${target} failure threshold ${target_failure_threshold} exceeds its failedJobsHistoryLimit ${retained_failures}" >&2
                       exit 1
                     fi
 

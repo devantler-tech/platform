@@ -124,7 +124,7 @@ job() {
 job_list() { jq -sc '{kind:"JobList", items:.}'; }
 cronjob() { # created-seconds-ago [suspend]
   jq -cn --arg c "$(iso $((now_epoch - $1)))" --argjson s "${2:-false}" \
-    '{kind:"CronJob", metadata:{name:"umami-provision-tenants", creationTimestamp:$c}, spec:{suspend:$s}}'
+    '{kind:"CronJob", metadata:{name:"umami-provision-tenants", creationTimestamp:$c}, spec:{suspend:$s, failedJobsHistoryLimit:3}}'
 }
 
 setup_scenario() {
@@ -304,6 +304,17 @@ dir="$(setup_scenario bad-watch)"
 WATCH_OVERRIDE='umami' expect_error "$dir" 'a malformed watch entry fails' "is not namespace/name"
 dir="$(setup_scenario zero-threshold)"
 THRESHOLD_OVERRIDE=0 expect_error "$dir" 'a zero threshold is refused' 'FAILURE_THRESHOLD must be a positive integer'
+dir="$(setup_scenario padded-zero-threshold)"
+THRESHOLD_OVERRIDE=00 expect_error "$dir" 'a zero-padded zero threshold is refused' 'FAILURE_THRESHOLD must be a positive integer'
+dir="$(setup_scenario padded-zero-tuning)"
+WATCH_OVERRIDE='umami/umami-provision-tenants:2:00' \
+  expect_error "$dir" 'a zero-padded zero stale window is refused' 'has an invalid tuning value'
+dir="$(setup_scenario oversized-tuning)"
+WATCH_OVERRIDE='umami/umami-provision-tenants:2:9999999999999999999' \
+  expect_error "$dir" 'an out-of-range stale window is refused' 'has an invalid tuning value'
+dir="$(setup_scenario unobservable-threshold)"
+WATCH_OVERRIDE='umami/umami-provision-tenants:4:3600' \
+  expect_error "$dir" 'a threshold above the retained failed runs is refused' 'exceeds its failedJobsHistoryLimit 3'
 
 # Delivery: the placeholder host never delivers; a failed delivery fails the Job.
 dir="$(setup_scenario placeholder "$placeholder_webhook")"
