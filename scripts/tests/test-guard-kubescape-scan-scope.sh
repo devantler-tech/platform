@@ -181,6 +181,68 @@ landed "${tmp}/k8s/providers/docker/infrastructure/controllers/kustomization.yam
 expect "inline kustomization patch on excludeNamespaces fails" 1 "an inline patch sets excludeNamespaces" \
   "${REAL_HR}" "${REAL_TSV}" "${tmp}/k8s"
 
+# Kustomize replacements: no override spelling names the field, so only the rendered release
+# shows it. The source ConfigMap is added as a resource the replacement reads from.
+fresh_tree
+readonly HZ_CONTROLLERS="${tmp}/k8s/providers/hetzner/infrastructure/controllers"
+cat >"${HZ_CONTROLLERS}/config-map-scan-scope.yaml" <<'YAML'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scan-scope
+  namespace: kubescape
+data:
+  scope: "kube-system,velero"
+YAML
+cat >>"${HZ_CONTROLLERS}/kustomization.yaml" <<'YAML'
+replacements:
+  - source:
+      kind: ConfigMap
+      name: scan-scope
+      fieldPath: data.scope
+    targets:
+      - select:
+          kind: HelmRelease
+          name: kubescape
+        fieldPaths:
+          - spec.values.excludeNamespaces
+YAML
+yq -i '.resources += ["config-map-scan-scope.yaml"]' "${HZ_CONTROLLERS}/kustomization.yaml"
+[ "$(kubectl kustomize "${HZ_CONTROLLERS}" | yq 'select(.kind == "HelmRelease" and .metadata.name == "kubescape") | .spec.values.excludeNamespaces')" = "kube-system,velero" ] || {
+  printf 'FAIL: replacements fixture did not change the rendered scope\n' >&2
+  exit 1
+}
+expect "kustomize replacement of the scope fails" 1 'renders excludeNamespaces "kube-system,velero"' \
+  "${REAL_HR}" "${REAL_TSV}" "${tmp}/k8s"
+
+# A Flux Kustomization patch applied at reconcile time, which no kustomize build renders.
+fresh_tree
+cat >"${tmp}/k8s/clusters/prod/flux-kustomization-scan-scope.yaml" <<'YAML'
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infrastructure-controllers
+  namespace: flux-system
+spec:
+  patches:
+    - target:
+        kind: HelmRelease
+        name: kubescape
+      patch: |-
+        - op: replace
+          path: /spec/values/excludeNamespaces
+          value: "kube-system"
+YAML
+landed "${tmp}/k8s/clusters/prod/flux-kustomization-scan-scope.yaml" 'path: /spec/values/excludeNamespaces'
+expect "Flux Kustomization patch on the scope fails" 1 "a Flux Kustomization patch touches the scan scope" \
+  "${REAL_HR}" "${REAL_TSV}" "${tmp}/k8s"
+
+# Fail closed: no provider renders the release, so the rendered comparison would be empty.
+fresh_tree
+rm -rf "${tmp}/k8s/providers/hetzner"
+expect "no provider rendering kubescape is UNKNOWN" 2 "renders the kubescape HelmRelease" \
+  "${REAL_HR}" "${REAL_TSV}" "${tmp}/k8s"
+
 # valuesFrom on the base itself.
 printf '  valuesFrom:\n    - kind: ConfigMap\n      name: kubescape-values\n' | cat "${REAL_HR}" - >"${tmp}/hr-values-from.yaml"
 [ "$(yq -r '.spec.valuesFrom[0].name' "${tmp}/hr-values-from.yaml")" = "kubescape-values" ] || {

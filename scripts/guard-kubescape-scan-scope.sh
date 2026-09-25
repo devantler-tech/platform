@@ -74,7 +74,10 @@ overrides_expr='
     | filename + ": a JSON patch op targets " + .path),
   (select(tag == "!!map" and .patches != null) | .patches[]
     | select(((.patch // "") | tostring) | test("excludeNamespaces"))
-    | filename + ": an inline patch sets excludeNamespaces")'
+    | filename + ": an inline patch sets excludeNamespaces"),
+  (select(tag == "!!map" and .kind == "Kustomization" and .spec.patches != null) | .spec.patches[]
+    | select(((.patch // "") | tostring) | test("excludeNamespaces|valuesFrom"))
+    | filename + ": a Flux Kustomization patch touches the scan scope")'
 
 valuesfrom_base="$(yq -r '.spec.valuesFrom // ""' "$helm_release" 2>/dev/null)" ||
   die "could not read .spec.valuesFrom from '$helm_release'"
@@ -102,6 +105,42 @@ $overrides
 EOF
   overrides_found=1
 fi
+
+# --- the rendered provider releases must carry exactly the base scope ---------------------
+# The checks above name the override spellings this repository uses, but Kustomize has more
+# (replacements, components, generators), so the deployed scope is also checked directly:
+# every provider layer is rendered and any kubescape HelmRelease in it must set the same
+# excludeNamespaces as the base, with no valuesFrom. A provider that does not deploy
+# Kubescape renders no release and is not compared; at least one provider must render one,
+# or a moved layout would compare nothing and pass.
+command -v kubectl >/dev/null 2>&1 || die "kubectl is required to render the provider layers"
+rendered_releases=0
+for layer in "$k8s_root"/providers/*/infrastructure/controllers; do
+  [ -f "$layer/kustomization.yaml" ] || continue
+  rendered="$(kubectl kustomize "$layer" 2>/dev/null)" ||
+    die "could not render '$layer'"
+  release="$(printf '%s\n' "$rendered" |
+    yq -o=json -I=0 'select(.kind == "HelmRelease" and .metadata.name == "kubescape") |
+      {"scope": (.spec.values.excludeNamespaces // ""), "valuesFrom": (.spec.valuesFrom != null)}' 2>/dev/null)" ||
+    die "could not read the kubescape HelmRelease rendered from '$layer'"
+  [ -n "$release" ] || continue
+  [ "$(printf '%s\n' "$release" | wc -l | tr -d ' ')" -eq 1 ] ||
+    die "'$layer' renders more than one kubescape HelmRelease"
+  rendered_releases=$((rendered_releases + 1))
+  rendered_scope="$(printf '%s' "$release" | yq -r '.scope')"
+  if [ "$rendered_scope" != "$excluded_raw" ]; then
+    printf 'guard-kubescape-scan-scope: %s renders excludeNamespaces "%s", not the base "%s"; set the scan scope only in %s\n' \
+      "${layer#"$k8s_root"/}" "$rendered_scope" "$excluded_raw" "$base_rel" >&2
+    overrides_found=1
+  fi
+  if [ "$(printf '%s' "$release" | yq -r '.valuesFrom')" = "true" ]; then
+    printf 'guard-kubescape-scan-scope: %s renders a kubescape HelmRelease with valuesFrom; set values inline\n' \
+      "${layer#"$k8s_root"/}" >&2
+    overrides_found=1
+  fi
+done
+[ "$rendered_releases" -gt 0 ] ||
+  die "no provider layer under '$k8s_root/providers' renders the kubescape HelmRelease; refusing to report no overrides"
 
 # --- input 2: the reviewed rows ---------------------------------------------------------
 failures=$overrides_found
