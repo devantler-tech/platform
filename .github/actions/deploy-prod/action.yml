@@ -520,9 +520,11 @@ runs:
       # controller, which starts only if a CRD check succeeds when a leader
       # starts (#4198). Flux, the HelmReleases and the pods all stay healthy
       # while every route change, and every Flagger traffic shift, silently
-      # stops reaching the gateway. Runs last so it also catches an operator
-      # restart caused by this deploy's own Talos update, and waits a bounded
-      # time for routes the deploy just changed to be applied.
+      # stops reaching the gateway. The check waits a bounded time for every
+      # route to be applied, rejects routes the gateway refused or that name a
+      # missing Gateway, and fails when a running operator logged the failed
+      # start. It runs last, so an operator restart caused by this deploy's own
+      # Talos update is covered even when no route changed.
       if: >-
         !cancelled() &&
         steps.wait_flux_revision.outcome == 'success' &&
