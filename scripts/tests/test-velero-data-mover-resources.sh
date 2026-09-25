@@ -75,21 +75,34 @@ readonly hcloud_skip_rules
 [[ "${hcloud_skip_rules}" == '1' ]] ||
   fail "the production Velero policy must contain exactly one labelled hcloud skip rule; found ${hcloud_skip_rules}"
 
-broad_hcloud_skip_rules="$(yq -er '
+hcloud_skip_rule_count="$(yq -er '
   .data["policy.yaml"] | from_yaml |
   [.volumePolicies[] |
     select(
-      .conditions.storageClass[0] == "hcloud" and
-      (.conditions.storageClass | length) == 1 and
       .action.type == "skip" and
-      .conditions.pvcLabels == null
+      ((.conditions.storageClass // []) | contains(["hcloud"]))
     )
   ] | length
 ' "${volume_policy}")" || fail 'the production Velero volume policy is invalid'
-readonly broad_hcloud_skip_rules
+readonly hcloud_skip_rule_count
 
-[[ "${broad_hcloud_skip_rules}" == '0' ]] ||
-  fail "the production Velero policy must not skip every hcloud PVC; found ${broad_hcloud_skip_rules} broad rule(s)"
+[[ "${hcloud_skip_rule_count}" == '1' ]] ||
+  fail "the production Velero policy must contain exactly one hcloud skip rule; found ${hcloud_skip_rule_count}"
+
+unsafe_hcloud_skip_rules="$(yq -er '
+  .data["policy.yaml"] | from_yaml |
+  [.volumePolicies[] |
+    select(
+      .action.type == "skip" and
+      ((.conditions.storageClass // []) | contains(["hcloud"])) and
+      .conditions.pvcLabels."backup.platform.devantler.tech/volume-data" != "independently-mirrored"
+    )
+  ] | length
+' "${volume_policy}")" || fail 'the production Velero volume policy is invalid'
+readonly unsafe_hcloud_skip_rules
+
+[[ "${unsafe_hcloud_skip_rules}" == '0' ]] ||
+  fail "every hcloud skip rule must require the independently mirrored PVC label; found ${unsafe_hcloud_skip_rules} unsafe rule(s)"
 
 rendered_infrastructure="$(mktemp)"
 readonly rendered_infrastructure
