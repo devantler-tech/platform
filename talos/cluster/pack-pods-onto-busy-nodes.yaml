@@ -10,8 +10,10 @@
 # before it updates Talos, so both in one change would briefly run the higher
 # threshold against the old scoring.
 #
-# Only the three static workers and autoscaled nodes are affected: control
-# planes keep their NoSchedule taint. Replica spread for HA components still
+# Ordinary pods land only on the three static workers and autoscaled nodes,
+# because control planes keep their NoSchedule taint. Pods that tolerate that
+# taint can still be placed there, and this scoring ranks the control planes
+# for them like any other node. Replica spread for HA components still
 # comes from their topologySpreadConstraints, and the descheduler's
 # topology-spread and RemoveDuplicates strategies repair clumping.
 #
