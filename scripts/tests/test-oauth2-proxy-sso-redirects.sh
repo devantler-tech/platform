@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Guards the oauth2-proxy login round-trip on every host it fronts.
 #
-# oauth2-proxy finishes a login at /oauth2/callback and Dex only accepts a
+# oauth2-proxy finishes a login at /oauth2/callback on the host the user started
+# from, then returns them to the page they asked for as a path on that host, so
+# it must not be given a fixed redirect_url. Dex only accepts a
 # callback it has registered exactly, so every host an HTTPRoute sends to
 # oauth2-proxy needs `https://<host>/oauth2/callback` on Dex's public-client.
 # Without it, logging in on that host stops at Dex with "Unregistered
@@ -126,6 +128,21 @@ for provider in "${providers[@]}"; do
   [[ -n "${own_hosts}" ]] ||
     fail "${provider}: the oauth2-proxy HelmRelease names no gatewayApi hostname; its own callback host can no longer be derived"
 
+  # oauth2-proxy must finish each login on the host it started from. A fixed
+  # redirect_url brings every login back through one host, where the path
+  # oauth2-proxy returns the user to belongs to no app. The callback it derives
+  # instead is https — the scheme Dex registers — only while cookie_secure is set.
+  o2p="$(yq eval -N 'select(.kind == "HelmRelease" and .metadata.name == "oauth2-proxy" and .metadata.namespace == "oauth2-proxy") | .spec.values' "${rendered}")"
+  o2p_config="$(yq eval -N '.config.configFile // ""' - <<<"${o2p}")"
+  [[ -n "${o2p_config}" ]] ||
+    fail "${provider}: the oauth2-proxy HelmRelease has no config.configFile; its login settings moved, so this test is checking nothing"
+  if grep -Eq '^[[:space:]]*redirect_url[[:space:]]*=' <<<"${o2p_config}" ||
+    grep -Eq 'redirect[-_]url' <<<"$(yq eval -N '.extraArgs // ""' - <<<"${o2p}")"; then
+    fail "${provider}: oauth2-proxy sets a fixed redirect_url, so every login finishes on one host and returns the user to a path on a host that serves no app. Remove it from k8s/bases/infrastructure/controllers/oauth2-proxy/helm-release.yaml; oauth2-proxy then finishes each login on the host it started from"
+  fi
+  grep -Eq '^[[:space:]]*cookie_secure[[:space:]]*=[[:space:]]*true[[:space:]]*$' <<<"${o2p_config}" ||
+    fail "${provider}: oauth2-proxy must set cookie_secure = true: it is what makes the login callback it derives https, the only scheme Dex has registered"
+
   registered="$(yq eval -N 'select(.kind == "HelmRelease" and .metadata.name == "dex" and .metadata.namespace == "dex") | .spec.values.config.staticClients[] | select(.id == "public-client") | .redirectURIs[]' "${rendered}")"
   [[ -n "${registered}" ]] ||
     fail "${provider}: no Dex public-client redirectURIs were rendered; the Dex client moved or was renamed, so this test is checking nothing"
@@ -159,5 +176,5 @@ if ((${#stale[@]} > 0)); then
   fail "Dex still accepts an oauth2-proxy login callback on hosts no HTTPRoute sends to oauth2-proxy. Remove each from the public-client redirectURIs in ${dex_file}: ${stale[*]}"
 fi
 
-printf 'PASS: Dex accepts the oauth2-proxy login callback on all %d hosts it fronts, and on no other host\n' \
+printf 'PASS: oauth2-proxy finishes each login on the host it started from, and Dex accepts that callback on all %d hosts it fronts and on no other\n' \
   "$(grep -c . "${all_hosts}")"

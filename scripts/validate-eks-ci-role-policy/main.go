@@ -3216,16 +3216,18 @@ const (
 // public-client redirectURIs, one per host an HTTPRoute sends to oauth2-proxy;
 // Dex accepts them only as login return addresses for that existing client. No
 // RBAC, binding, service account, AWS identity, or permission grant changes.
-// Re-approved for Umami serving-replica spread (#4103), on a branch level with
-// main 4c72bf97. The required production-authorization job on the
-// checksum-verified renderer (job 108067048534) reported exactly one changed
-// surface entry, HelmRelease umami/umami, and nothing added or removed. The
-// source delta changes only the hostname spread constraint, pod-label selector,
-// per-revision spread key, two-domain floor and no-surge replacement strategy.
-// No RBAC, binding, service account, AWS identity, or permission grant changes.
+// Re-approved for finishing each oauth2-proxy login on its own host (#3169),
+// against main 4c72bf97. The required production-authorization job on the
+// checksum-verified renderer (run 36132658312, job 108065751143) reported
+// exactly one changed surface entry, HelmRelease oauth2-proxy/oauth2-proxy, and
+// nothing added or removed. The source delta only removes the fixed
+// redirect_url from oauth2-proxy's config file, so it derives each login
+// callback from the request's own host; the callbacks it can derive are the
+// ones Dex already accepts. No RBAC, binding, service account, AWS identity, or
+// permission grant changes.
 //
 // Previous aggregate: e0952cc586d3b5c05c3b5d7b3f1e7a9df2bf43fba21b9065175bd8ebcdee8ac7.
-const expectedRenderedSurfaceSHA = "2e12adc77d42c413d9f875393900c1aac8a8b065234463168178f94c9201c673"
+const expectedRenderedSurfaceSHA = "22c0dd2b44149735ae45428b75736092c0249ca3b3c4979c5545046e5a587fc2"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.

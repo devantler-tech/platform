@@ -57,6 +57,9 @@ spec:
     # them from the score alone. The same trap is documented for the `kubescape`
     # namespace in cluster-security-exceptions/pod-security-mutations-unscoped.yaml.
     #
+    # Each namespace here has a row saying why in scripts/kubescape-unscanned-namespaces.tsv,
+    # and CI fails when the two lists differ, so change both together (#3215).
+    #
     # It was undeclared until #3923, so the scope could only be learned by reading
     # a live ConfigMap. Two issues were planned against `kube-system` on the
     # assumption it was scanned (#3239, #3919); it is not, and the exception #3919

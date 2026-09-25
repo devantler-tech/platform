@@ -1,9 +1,9 @@
 # Velero Volume Policy (prod/hetzner only) — routes each PVC to the right backup
-# method by StorageClass. Referenced by name from the daily-full schedule's
+# method by explicit storage attributes. Referenced by name from the daily-full schedule's
 # spec.resourcePolicy (see patches/enable-csi-snapshots.yaml).
 #
 # Why a policy instead of per-pod annotations: it is declarative (by
-# StorageClass, not volume name), and fail-safe — any volume that does NOT match
+# storage contract, not volume name), and fail-safe — any volume that does NOT match
 # a rule falls back to the legacy behaviour, which here is
 # defaultVolumesToFsBackup: true (Kopia FSB). So new/unmatched PVCs are always
 # backed up; nothing is silently skipped.
@@ -20,15 +20,18 @@ data:
   policy.yaml: |
     version: v1
     volumePolicies:
-      # Hetzner block-storage volume data -> skip. The only hcloud PVC is
-      # openbao/vault-snapshots, whose CronJob mirrors every raft snapshot
-      # directly to R2. It is unmounted during Velero's 02:17 window, so FSB
-      # cannot read it; hcloud-csi also has no snapshot capability or matching
-      # VolumeSnapshotClass. The contract test refuses another hcloud PVC until
-      # its backup path is reviewed instead of silently inheriting this skip.
+      # The independently mirrored OpenBao snapshot volume -> skip. Both the
+      # hcloud StorageClass and the explicit PVC label must match, so OpenBao's
+      # controller-created data/audit claims and Coroot's telemetry claims keep
+      # the default FSB path. vault-snapshots is unmounted during Velero's 02:17
+      # window, so FSB cannot read it; its CronJob mirrors every raft snapshot
+      # directly to R2 instead. hcloud-csi has no snapshot capability or
+      # matching VolumeSnapshotClass.
       - conditions:
           storageClass:
             - hcloud
+          pvcLabels:
+            backup.platform.devantler.tech/volume-data: independently-mirrored
         action:
           type: skip
       # Longhorn PVCs → CSI snapshot. The base schedule's snapshotMoveData:true
