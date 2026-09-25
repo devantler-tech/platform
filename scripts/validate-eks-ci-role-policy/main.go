@@ -3208,9 +3208,26 @@ const (
 // changes. The same job reported this identical value at head dfccc588, before
 // nine further main commits were merged in, so those commits did not move the
 // surface.
+// Re-approved for per-host oauth2-proxy login callbacks (#3169), against main
+// 51fa8a65. The required production-authorization job on the checksum-verified
+// renderer (run 36126766319, job 108045299986) reported exactly one changed
+// surface entry, HelmRelease dex/dex, and nothing added or removed. The source
+// delta only adds ten https://<host>/oauth2/callback entries to the Dex
+// public-client redirectURIs, one per host an HTTPRoute sends to oauth2-proxy;
+// Dex accepts them only as login return addresses for that existing client. No
+// RBAC, binding, service account, AWS identity, or permission grant changes.
+// Re-approved for finishing each oauth2-proxy login on its own host (#3169),
+// against main 4c72bf97. The required production-authorization job on the
+// checksum-verified renderer (run 36132658312, job 108065751143) reported
+// exactly one changed surface entry, HelmRelease oauth2-proxy/oauth2-proxy, and
+// nothing added or removed. The source delta only removes the fixed
+// redirect_url from oauth2-proxy's config file, so it derives each login
+// callback from the request's own host; the callbacks it can derive are the
+// ones Dex already accepts. No RBAC, binding, service account, AWS identity, or
+// permission grant changes.
 //
-// Previous aggregate: 31365f93a584f876aa4a0ba25963d10205103850b82b26f7de3417f2e4ca7eeb.
-const expectedRenderedSurfaceSHA = "f079c67e430ff825a85ca238a86f32b8e96052d740a87bcec624ffa1800ea819"
+// Previous aggregate: e0952cc586d3b5c05c3b5d7b3f1e7a9df2bf43fba21b9065175bd8ebcdee8ac7.
+const expectedRenderedSurfaceSHA = "22c0dd2b44149735ae45428b75736092c0249ca3b3c4979c5545046e5a587fc2"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3223,7 +3240,7 @@ const expectedRenderedSurfaceSHA = "f079c67e430ff825a85ca238a86f32b8e96052d740a8
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "31365f93a584f876aa4a0ba25963d10205103850b82b26f7de3417f2e4ca7eeb"
+const previousRenderedSurfaceSHA = "e0952cc586d3b5c05c3b5d7b3f1e7a9df2bf43fba21b9065175bd8ebcdee8ac7"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

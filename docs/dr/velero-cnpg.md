@@ -80,24 +80,25 @@ captured. *How* each volume is captured depends on its storage backend:
 | Storage backend                    | Method                               | Why                                                                                  |
 | ---------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------ |
 | Longhorn (`longhorn` SC)           | CSI snapshot → Kopia data mover → R2  | Crash-consistent; also backs up PVCs of scaled-to-zero apps (no running pod needed).  |
-| hcloud (`hcloud` SC; only `openbao/vault-snapshots`) | Skipped by Velero; the OpenBao CronJob mirrors raft snapshots directly to R2 | The PVC is unmounted during Velero's window, so FSB cannot read it, and Hetzner block storage has no CSI snapshot support. |
+| hcloud + `backup.platform.devantler.tech/volume-data=independently-mirrored` (`openbao/vault-snapshots` only) | Skipped by Velero; the OpenBao CronJob mirrors raft snapshots directly to R2 | The PVC is unmounted during Velero's window, so FSB cannot read it, and Hetzner block storage has no CSI snapshot support. |
+| other hcloud claims (OpenBao data/audit and Coroot telemetry) | File-system backup (Kopia) → R2 | hcloud-csi has no snapshot support; mounted controller-created claims use the fail-safe FSB path. |
 | anything else / new PVCs           | File-system backup (Kopia) → R2       | Fail-safe default.                                                                    |
 
-The routing is declarative (by StorageClass), not per-pod annotations:
+The routing is declarative through storage attributes, not per-pod annotations:
 
 - `defaultVolumesToFsBackup: true` everywhere is the **fail-safe default** — any
   volume not otherwise routed is Kopia-FSB'd, so nothing is ever silently
   skipped.
 - **prod only:** a Velero **Volume Policy** ConfigMap (`velero-volume-policies`,
   referenced by the schedule's `spec.resourcePolicy`) routes `storageClass:
-  [longhorn]` to `snapshot` and `storageClass: [hcloud]` to `skip`. The only
-  hcloud PVC is `openbao/vault-snapshots`; its own CronJob mirrors every raft
-  snapshot directly to R2, and no pod mounts it during Velero's window. A
-  regression check rejects any additional hcloud PVC until its backup method is
-  reviewed, so this narrow skip cannot silently cover new data. Unknown storage
-  classes retain the fail-safe FSB fallback. `snapshotMoveData: true` makes the
-  Longhorn data mover upload CSI snapshots to R2 (so they are not tied to
-  Longhorn at restore time).
+  [longhorn]` to `snapshot`. It skips an hcloud claim only when that PVC also
+  carries `backup.platform.devantler.tech/volume-data=independently-mirrored`.
+  Only `openbao/vault-snapshots` carries the marker; its CronJob mirrors every
+  raft snapshot directly to R2, and no pod mounts it during Velero's window.
+  OpenBao data/audit storage, Coroot telemetry storage, future hcloud claims,
+  and unknown storage classes retain the fail-safe FSB fallback.
+  `snapshotMoveData: true` makes the Longhorn data mover upload CSI snapshots to
+  R2 (so they are not tied to Longhorn at restore time).
 - **local/CI:** no Volume Policy and no CSI (the docker `local-path` provider
   cannot snapshot) → every mounted volume uses FSB, so the CI restore drill
   still regression-tests the production fallback path.
