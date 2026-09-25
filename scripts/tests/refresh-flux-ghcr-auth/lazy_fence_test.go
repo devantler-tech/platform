@@ -103,6 +103,9 @@ func TestStaleOpenBaoSeedCannotTakeTheNoWritePath(t *testing.T) {
 // stay off the no-write path.
 func TestUnprovedConvergenceTakesTheFullFence(t *testing.T) {
 	t.Parallel()
+	// The fenced path refuses a validating webhook that no longer intercepts every
+	// protected Pod creation, even after applying the policy (#4147).
+	const admissionNotIntercepting = "each must be fail-closed and intercept every protected Pod creation."
 	// The refusal each fenced-path-refused state must print, so an unrelated early
 	// failure (a fixture panic, an unscripted kubectl call) cannot pass for it.
 	refusals := map[string]string{
@@ -110,7 +113,13 @@ func TestUnprovedConvergenceTakesTheFullFence(t *testing.T) {
 			"to complete the forced GHCR credential sync.",
 		"unreconciled seed PushSecret": "Timed out waiting for pushsecret/flux-system/seed-ghcr " +
 			"to complete the forced GHCR credential sync.",
-		"suspended parent Kustomization": "The parent Flux reconciliation is malformed or already suspended.",
+		"suspended parent Kustomization":          "The parent Flux reconciliation is malformed or already suspended.",
+		"narrowed webhook":                        admissionNotIntercepting,
+		"webhook rule scoped to the cluster":      admissionNotIntercepting,
+		"webhook skips a protected namespace":     admissionNotIntercepting,
+		"webhook admits only labelled namespaces": admissionNotIntercepting,
+		"webhook admits only labelled Pods":       admissionNotIntercepting,
+		"webhook skips Pods by match condition":   admissionNotIntercepting,
 	}
 	for name, tc := range map[string]struct {
 		env        map[string]string
@@ -124,7 +133,22 @@ func TestUnprovedConvergenceTakesTheFullFence(t *testing.T) {
 			"FLUX_GHCR_SEED_PROBE_WAIT_SECONDS":    "3",
 		}, true},
 		"drifted admission": {map[string]string{"FAKE_IMAGE_VERIFICATION_POLICY_DRIFTED": "true"}, true},
-		"narrowed webhook":  {map[string]string{"FAKE_IMAGE_VERIFICATION_WEBHOOK_SCOPE_NARROWED": "true"}, true},
+		"narrowed webhook":  {map[string]string{"FAKE_IMAGE_VERIFICATION_WEBHOOK_SCOPE_NARROWED": "true"}, false},
+		"webhook rule scoped to the cluster": {map[string]string{
+			"FAKE_IMAGE_VERIFICATION_WEBHOOK_CLUSTER_SCOPED": "true",
+		}, false},
+		"webhook skips a protected namespace": {map[string]string{
+			"FAKE_IMAGE_VERIFICATION_WEBHOOK_NAMESPACE_EXCLUDED": "true",
+		}, false},
+		"webhook admits only labelled namespaces": {map[string]string{
+			"FAKE_IMAGE_VERIFICATION_WEBHOOK_NAMESPACE_LABELLED": "true",
+		}, false},
+		"webhook admits only labelled Pods": {map[string]string{
+			"FAKE_IMAGE_VERIFICATION_WEBHOOK_OBJECT_SELECTED": "true",
+		}, false},
+		"webhook skips Pods by match condition": {map[string]string{
+			"FAKE_IMAGE_VERIFICATION_WEBHOOK_MATCH_CONDITIONED": "true",
+		}, false},
 		"failed read of the retired policy": {map[string]string{
 			"FAKE_RETIRED_IMAGE_VERIFICATION_POLICY_READ_FAILS": "true",
 		}, true},

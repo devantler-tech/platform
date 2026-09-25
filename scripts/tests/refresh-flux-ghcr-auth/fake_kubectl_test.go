@@ -1200,6 +1200,57 @@ func fakeKubectlGetSeedProbeSecret(namespace string) int {
 	return 0
 }
 
+// fakeImageVerificationNamespaceSelector returns the namespace selector Kyverno
+// generates by default (kube-system and kyverno left out), or a narrowed one.
+func fakeImageVerificationNamespaceSelector() map[string]any {
+	excluded := func(namespace string) any {
+		return map[string]any{
+			"key":      "kubernetes.io/metadata.name",
+			"operator": "NotIn",
+			"values":   []any{namespace},
+		}
+	}
+	expressions := []any{excluded("kube-system"), excluded("kyverno")}
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOK_NAMESPACE_EXCLUDED") == "true" {
+		expressions = append(expressions, excluded("wedding-app"))
+	}
+	selector := map[string]any{"matchExpressions": expressions}
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOK_NAMESPACE_LABELLED") == "true" {
+		selector["matchLabels"] = map[string]any{"image-verification": "enabled"}
+	}
+	return selector
+}
+
+// fakeImageVerificationObjectSelector returns the empty object selector Kyverno
+// generates, or one that admits only labelled Pods.
+func fakeImageVerificationObjectSelector() map[string]any {
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOK_OBJECT_SELECTED") == "true" {
+		return map[string]any{"matchLabels": map[string]any{"verify": "true"}}
+	}
+	return map[string]any{}
+}
+
+// fakeImageVerificationMatchConditions returns no match conditions, as Kyverno
+// generates, or a CEL condition that skips some Pods.
+func fakeImageVerificationMatchConditions() any {
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOK_MATCH_CONDITIONED") == "true" {
+		return []any{map[string]any{
+			"name":       "skip-system-pods",
+			"expression": "!object.metadata.name.startsWith('system-')",
+		}}
+	}
+	return nil
+}
+
+// fakeImageVerificationRuleScope returns the "*" scope Kyverno generates, or a
+// Cluster scope, which names pods yet never matches a namespaced Pod.
+func fakeImageVerificationRuleScope() string {
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOK_CLUSTER_SCOPED") == "true" {
+		return "Cluster"
+	}
+	return "*"
+}
+
 func fakeKubectlGetImageVerificationWebhooks(operation string) int {
 	stale := os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_STALE") == "true"
 	consolidated := markerExists("ivpol-policy-verify-app-images")
@@ -1253,9 +1304,13 @@ func fakeKubectlGetImageVerificationWebhooks(operation string) int {
 				"apiVersions": []any{"v1"},
 				"resources":   resources,
 				"operations":  []any{"CREATE", "UPDATE"},
+				"scope":       fakeImageVerificationRuleScope(),
 			}},
-			"failurePolicy":  failurePolicy,
-			"timeoutSeconds": 30,
+			"namespaceSelector": fakeImageVerificationNamespaceSelector(),
+			"objectSelector":    fakeImageVerificationObjectSelector(),
+			"matchConditions":   fakeImageVerificationMatchConditions(),
+			"failurePolicy":     failurePolicy,
+			"timeoutSeconds":    30,
 		})
 		if operation == "validate" {
 			if markerExists("ivpol-policy-verify-ksail-images-deleted") {
