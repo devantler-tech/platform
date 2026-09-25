@@ -746,6 +746,8 @@ jobs:
               - 'scripts/tests/test-use-prod-stable-api-endpoint.sh'
               - 'scripts/tests/test-refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/tests/refresh-flux-ghcr-auth/**'
+              - 'scripts/verify-gateway-routes-applied.sh'
+              - 'scripts/tests/test-verify-gateway-routes-applied.sh'
               - 'docs/dr/runbook.md'
               - '.github/actions/deploy-prod/**'
               - '.github/workflows/dr-rebuild.yaml'
@@ -1158,6 +1160,16 @@ jobs:
           bash scripts/tests/test-wait-for-prod-api-stability.sh
           bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           go test -timeout=20m ./scripts/tests/refresh-flux-ghcr-auth
+
+      - name: 🚦 Validate the gateway route-application check
+        # Local test with a fake kubectl: no cluster access. The deploy runs
+        # this check last, so a gateway that stopped applying routes fails the
+        # deploy instead of going unnoticed (#4198).
+        run: |
+          shellcheck \
+            scripts/verify-gateway-routes-applied.sh \
+            scripts/tests/test-verify-gateway-routes-applied.sh
+          bash scripts/tests/test-verify-gateway-routes-applied.sh
 
       - name: 🧩 Validate embedded JSON blobs
         # ConfigMaps that embed whole JSON documents as block scalars (e.g. the
