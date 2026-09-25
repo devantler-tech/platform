@@ -273,7 +273,7 @@ misconfigurations:
     paths:
       - k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml
     statement: >-
-      The CPU limit is supplied at admission by the kube-system default-limitrange
+      [limitrange-premise] The CPU limit is supplied at admission by the kube-system default-limitrange
       (k8s/bases/bootstrap/limit-ranges/kube-system.yaml, Container-type default.cpu "2"),
       a base resource that applies to both provider overlays; trivy reads the committed spec,
       where an admission-time default is absent. Observable rather than inferred: on the prod
@@ -282,13 +282,13 @@ misconfigurations:
       would be a regression rather than a fix — that LimitRange sets a deliberately generous
       ceiling so the DNS datapath never throttles under burst, and CPU is compressible so a
       limit does not affect scheduling. This is the same premise the file's own
-      checkov.io/skip3 already carries for CKV_K8S_11, which scripts/guard-limitrange-premise.sh
-      checks against each provider's kustomize graph. That guard matches on checkov annotation
-      values, so on its own it vouches for the annotation rather than for this entry. The two are
-      bound by scripts/tests/test-trivyignore-vendored-operator-boundary.sh, which registers this
-      pair in reviewed_admission_pairs and fails unless that guard reports a passing verdict
-      naming this file, so removing the annotation while keeping this entry breaks the build.
-      That test also fails if this entry widens to any path not reviewed for THIS check. The
+      checkov.io/skip3 carries for CKV_K8S_11. The [limitrange-premise] marker opts this entry
+      into scripts/guard-limitrange-premise.sh, which checks it against each provider's
+      kustomize graph and fails when the provider shipping this file ships no CPU-defaulting
+      LimitRange into its namespace. scripts/tests/test-trivyignore-vendored-operator-boundary.sh
+      registers this pair in reviewed_admission_pairs and fails unless that guard reports a
+      passing verdict naming this file, and it also fails if this entry widens to any path not
+      reviewed for THIS check. The
       other premise this entry names — that the Deployment still reserves CPU — is held by
       checkov CKV_K8S_10, which is a hard gate: dropping requests.cpu fails the build there.
   - id: KSV-0018

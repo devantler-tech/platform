@@ -96,7 +96,35 @@ readonly identity="https://github.com/${workflow_ref}"
 readonly ref="${subject_name}@${digest}"
 readonly repo="${GITHUB_REPOSITORY:-devantler-tech/platform}"
 
+# A registry read can fail for a moment and succeed seconds later: platform#3089
+# saw the SBOM check denied while the provenance check, with the same command and
+# token, passed five seconds after it. Failing the gate on that evicts the PR from
+# the merge queue and burns a production deploy cycle. So a read that failed in a
+# transient way is retried a bounded number of times.
+#
+# Only the READ is retried, never the verdict. A tool that reached the registry
+# and found the evidence absent or invalid fails on the first attempt, so a
+# retry can never turn missing evidence into a pass. A read that is still failing
+# when the attempts run out fails the gate too, and says it was the read.
+read_attempts="${EVIDENCE_READ_ATTEMPTS:-3}"
+read_backoff="${EVIDENCE_READ_BACKOFF_SECONDS:-5}"
+if [[ ! "${read_attempts}" =~ ^[1-9][0-9]?$ ]]; then
+  echo "::error::EVIDENCE_READ_ATTEMPTS must be an integer from 1 to 99 (got: '${read_attempts}')" >&2
+  exit 2
+fi
+if [[ ! "${read_backoff}" =~ ^[0-9]{1,3}$ ]]; then
+  echo "::error::EVIDENCE_READ_BACKOFF_SECONDS must be an integer from 0 to 999 (got: '${read_backoff}')" >&2
+  exit 2
+fi
+readonly read_attempts read_backoff
+
+# Failures that mean the read did not complete, as the registry and the tools
+# report them. Anything else — including "no attestations found" and a
+# verification mismatch — is a verdict about the evidence and is not retried.
+readonly transient_read_pattern='denied access to the requested resource|DENIED: denied|UNAUTHORIZED|TOOMANYREQUESTS|Too Many Requests|500 Internal Server Error|502 Bad Gateway|503 Service Unavailable|504 Gateway Time-?out|i/o timeout|TLS handshake timeout|connection reset by peer|connection refused|context deadline exceeded|unexpected EOF|no such host'
+
 failures=0
+read_failures=0
 log_dir="$(mktemp -d)"
 trap 'rm -rf "${log_dir}"' EXIT
 
@@ -107,17 +135,39 @@ trap 'rm -rf "${log_dir}"' EXIT
 check() {
   local label="$1"
   shift
+  local log="${log_dir}/${label}.log"
+  local attempt=1
 
-  if "$@" >"${log_dir}/${label}.log" 2>&1; then
-    echo "  ✅ ${label}"
-    return 0
-  fi
+  while true; do
+    if "$@" >"${log}" 2>&1; then
+      if ((attempt > 1)); then
+        echo "  ✅ ${label} (read succeeded on attempt ${attempt} of ${read_attempts})"
+      else
+        echo "  ✅ ${label}"
+      fi
+      return 0
+    fi
 
-  echo "  ❌ ${label}"
-  sed 's/^/       /' "${log_dir}/${label}.log" >&2
-  failures=$((failures + 1))
+    if ! grep -Eq -- "${transient_read_pattern}" "${log}"; then
+      echo "  ❌ ${label} — evidence absent or invalid"
+      sed 's/^/       /' "${log}" >&2
+      failures=$((failures + 1))
+      return 0
+    fi
 
-  return 0
+    if ((attempt >= read_attempts)); then
+      echo "  ❌ ${label} — registry read failed on all ${read_attempts} attempt(s); this says nothing about whether the evidence exists"
+      sed 's/^/       /' "${log}" >&2
+      failures=$((failures + 1))
+      read_failures=$((read_failures + 1))
+      return 0
+    fi
+
+    echo "  ⚠️ ${label} — registry read failed on attempt ${attempt} of ${read_attempts}; retrying in ${read_backoff}s"
+    sed 's/^/       /' "${log}" >&2
+    attempt=$((attempt + 1))
+    sleep "${read_backoff}"
+  done
 }
 
 echo "Verifying published evidence for ${ref}"
@@ -164,6 +214,15 @@ check "provenance attestation" \
 if [[ "${failures}" == "0" ]]; then
   echo "All published evidence verified against ${digest}."
   exit 0
+fi
+
+# Name which kind of failure happened. A read that never completed is not
+# evidence that the SBOM is missing, and an operator told "the token was denied"
+# goes looking for an expired credential when the likelier cause is a registry
+# blip; a re-queue is the remedy for that, not a credential rotation.
+if ((read_failures > 0)); then
+  echo "::error::${read_failures} of ${failures} failed check(s) could not read the registry after ${read_attempts} attempt(s)." \
+    "That is a failed read, not missing evidence; if the token is valid, re-queue." >&2
 fi
 
 if [[ "${enforce}" == "true" ]]; then

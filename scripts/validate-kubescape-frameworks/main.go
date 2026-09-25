@@ -27,6 +27,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -245,8 +246,12 @@ func frameworkSet(workflow string) ([]string, error) {
 	}
 
 	scalars, err := runScalars(data)
+	var parseErr yamlParseError
+	if errors.As(err, &parseErr) {
+		return nil, fmt.Errorf("%s could not be parsed as YAML; nothing was validated: %w", workflow, parseErr.err)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("%s could not be parsed as YAML; nothing was validated: %w", workflow, err)
+		return nil, fmt.Errorf("%s: %w", workflow, err)
 	}
 
 	var invocations []string
@@ -312,10 +317,17 @@ func effectiveShell(root, job, step *yaml.Node) string {
 	return ""
 }
 
+// yamlParseError marks a workflow that could not be parsed, as distinct from a
+// refusal runScalars reaches after reading it (#3339).
+type yamlParseError struct{ err error }
+
+func (e yamlParseError) Error() string { return e.err.Error() }
+func (e yamlParseError) Unwrap() error { return e.err }
+
 func runScalars(data []byte) ([]string, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, err
+		return nil, yamlParseError{err}
 	}
 	root := &doc
 	if root.Kind == yaml.DocumentNode && len(root.Content) == 1 {
