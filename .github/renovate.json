@@ -216,13 +216,13 @@
       "automerge": true
     },
     {
-      "description": "Crossplane provider packages (the crossplane manager reads each Provider's spec.package). NOT automerged, whatever the update type: every provider is part of the production-authorization surface, so a bump cannot pass CI until its fingerprint is re-approved in scripts/validate-eks-ci-role-policy/main.go, and a provider's revision-hashed service account can stop matching an exact-name carve-out on upgrade. The bump still opens automatically and runs the first-party package signature check like any other change.",
+      "description": "Crossplane provider packages (the crossplane manager reads each Provider's spec.package). NOT automerged, whatever the update type: every provider is part of the production-authorization surface, so a bump cannot pass CI until its fingerprint is re-approved in scripts/validate-eks-ci-role-policy/main.go, and a provider's revision-hashed service account can stop matching an exact-name carve-out on upgrade. Only first-party ghcr.io/devantler-tech packages are signature-verified; the third-party Upbound and crossplane-contrib packages are not, so review their upstream release before approving.",
       "matchManagers": ["crossplane"],
       "automerge": false,
       "labels": ["security/review-required"]
     },
     {
-      "description": "provider-aws-iam depends on provider-family-aws, which ships the ProviderConfig CRD every family member uses, and the two must be pinned to the same release (see provider-aws-iam.yaml), so they move in one PR.",
+      "description": "provider-aws-iam depends on provider-family-aws, which ships the ProviderConfig CRD every family member uses, and the two must be pinned to the same release (see provider-aws-iam.yaml), so they move in one PR. Grouping does not force equal versions; scripts/tests/test-crossplane-aws-family-version-parity.sh fails a PR that pins them apart.",
       "matchManagers": ["crossplane"],
       "matchPackageNames": [
         "xpkg.upbound.io/upbound/provider-family-aws",
