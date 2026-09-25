@@ -27,10 +27,9 @@
 #
 #   * C-0211 — 35 of 35 scanned workloads read passed with subStatus "w/exceptions",
 #     each carrying appliedIgnoreRules: [pod-security-mutations-unscoped/C-0211]. Against
-#     the stored specs (re-measured 2026-09-20, below) twenty-five of the population pass
-#     both universal gaps and fourteen do not, and status alone cannot tell the passers
-#     from the failers: it yields exactly the "0 of N fail" that #3239 states as its
-#     success signal either way.
+#     the stored specs (measured 2026-09-25, below) every workload in the population
+#     passes the two universal gaps while twelve still miss privilege-adjacent fields,
+#     and status alone cannot tell those apart: it reads "passed" on all of them.
 #
 # The discriminator is subStatus plus a populated appliedIgnoreRules, never status,
 # and it does discriminate: on one such workload the same scan carries 53 controls
@@ -48,81 +47,42 @@
 # exception covers it in the excluded namespaces: neither infrastructure-privileged
 # nor the name-scoped kubescape-privileged lists C-0211.
 #
-# Its residual population is every workload in the four excluded namespaces that are
-# actually scanned — flux-system, longhorn-system, observability and velero — all 39
-# of them: 16 Deployments, 8 DaemonSets, 12 CronJobs and 3 StatefulSets. (CronJobs are
-# scanned and carry a verdict; Jobs are not, so the ephemeral backup and heartbeat
-# Jobs in these namespaces are out of scope.) Measured 2026-09-20 against the live
-# PROD stored specs, which is the surface Kubescape reads. Per namespace:
-# flux-system 5, longhorn-system 12, observability 20, velero 2.
+# Its population is every workload in the four excluded namespaces that are actually
+# scanned — flux-system, longhorn-system, observability and velero — 38 of them:
+# 16 Deployments, 6 DaemonSets, 13 CronJobs and 3 StatefulSets. (CronJobs are scanned
+# and carry a verdict; Jobs are not, so the ephemeral backup and heartbeat Jobs in
+# these namespaces are out of scope.) Per namespace: flux-system 5, longhorn-system
+# 10, observability 21, velero 2. Measured 2026-09-25 against the live PROD stored
+# specs, which is the surface Kubescape reads. The population changes as workloads are
+# added and removed, so re-count it rather than adjusting an old total.
 #
-# This supersedes the 2026-09-02 baseline of 35 and the prediction of 34 that followed
-# tofu-controller's removal (#3480). Deployments did fall 17 to 16 exactly as that
-# prediction expected, and flux-system is 5 as it projected — but the population still
-# GREW, because observability's CronJobs went 7 to 12 over the same period. A
-# population sized once and then adjusted for known removals drifts, since the
-# namespaces keep gaining workloads; it has to be re-counted, not decremented.
+# All 38 pass the two universal gaps. Each carries a pod-level
+# `securityContext.fsGroupChangePolicy` (read under `jobTemplate` for the CronJobs),
+# and an effective `seLinuxOptions` object reaches every container, init containers
+# included — "effective" meaning the container's own seLinuxOptions where it sets
+# them and the pod-level object otherwise. The test is object PRESENCE, not a
+# populated `level`: the objects in this population are empty (`seLinuxOptions: {}`),
+# so a `level`-based test would report every workload as failing.
 #
-# "Scanned" here means in the scanner's configured scope. The population's absence
-# from the posture score is NOT reducible to the config scan's own producing gaps
-# (#2933, #3024): this exception suppresses C-0211 whatever the scanner's health, so
-# the score reads clean either way — which is exactly the silent-suppression failure
-# mode #2447 exists to prevent.
+# C-0211 still cannot be narrowed, because the two universal gaps were never all of
+# it. Twelve of the 38 still miss an effective `runAsGroup` or `runAsNonRoot` (pod
+# level, or set on every container): in longhorn-system the four CSI sidecars, the
+# driver deployer and the longhorn-manager, engine-image and longhorn-csi-plugin
+# DaemonSets; in observability coroot-operator, coroot-node-agent and
+# audit-log-forwarder-agent; and velero/node-agent. flux-system passes both at
+# container level. These are privilege-adjacent fields on workloads
+# that run with elevated privileges by design, which is why the namespaces are
+# excluded from add-security-context in the first place. Narrowing C-0211 now would
+# surface them with no fix behind them — lowering the score to absorb a gap rather
+# than closing it — so it stays cluster-wide.
 #
-# Twenty-five of the 39 pass both universal gaps and 14 do not. The pod-level
-# `securityContext.fsGroupChangePolicy` is absent on 14 of 39 (read under
-# `jobTemplate` for the CronJobs), and no effective `seLinuxOptions` object reaches
-# every container on the same 14 — "effective" meaning the container's own
-# seLinuxOptions where it sets them and the pod-level object otherwise. The test is
-# object PRESENCE, not a populated `level`: no workload in this population sets
-# `seLinuxOptions.level` at all, and every one of the 29 objects that do exist is
-# empty (`seLinuxOptions: {}`), so a `level`-based test would report 39 of 39 and
-# hide the split this measurement exists to draw. The presence test is also
-# deliberately generous, since a container-level object actually replaces the pod
-# struct wholesale, so 14 of 39 is a floor rather than an artifact of a strict rule.
-# Both gaps fall on exactly the same 14 workloads, so they remain universal in the
-# sense that matters: no workload closes one without the other. The residual is
-# longhorn-system 8 of 12 and observability 6 of 20; flux-system (0 of 5) and
-# velero (0 of 2) are fully closed. Measured 2026-09-20 against the live PROD
-# stored specs, superseding the 29-of-35 reading of 2026-09-03.
-#
-# Those three are NO LONGER strict subsets of the two universal gaps, and that is a
-# behavioural change rather than bookkeeping: five workloads — flux-system's four
-# controllers and velero/node-agent — now pass both universal gaps while still missing
-# `runAsGroup` and `runAsNonRoot`, and node-agent also misses `fsGroup`. So closing the
-# two universal gaps NO LONGER implies passing C-0211; it removes the reason every
-# workload failed and leaves the privilege-adjacent fields as the remaining cause on
-# the ones already fixed. Narrowing C-0211 today would still surface a population with
-# no fix behind it — lowering the score to absorb a gap rather than closing it — so it
-# stays cluster-wide.
-#
-# The remaining 14 split longhorn-system 8 and observability 6; flux-system and
-# velero contribute none. Both namespaces are already labelled into
-# add-baseline-context-optin-*, but that label gates only the three `kinds: Pod`
-# rules, so they mutate at admission and leave the stored spec Kubescape reads
-# untouched — which is why the opt-in alone moves none of those 14. The rules that
-# DO reach the stored spec are TWO families, both gated on a SECOND label,
-# `baseline-context-controllers`: add-baseline-context-optin-controllers*
-# (Deployment/StatefulSet/DaemonSet on CREATE and UPDATE, Job on CREATE) and
-# add-baseline-context-optin-cronjobs* (CronJob on CREATE and UPDATE). The
-# controller family is the one that reaches this residual: the 14 are 6 Deployments,
-# 5 DaemonSets and 3 StatefulSets, and NO CronJob is among them — all 12 CronJobs
-# already carry both fields in their stored spec. The cronjob family therefore
-# guards against regression here rather than closing anything, a change from the
-# 2026-09-03 reading that put seven CronJobs in the residual and so treated both
-# families as load-bearing for this rollout. That second label is deliberately
-# applied in NO namespace — tests/add-baseline-context pins
-# that empty inventory, and a namespace joins only together with the measured
-# post-rollout read-back its documented flip procedure produces. So the 14 are
-# waiting on that per-namespace rollout, not on a mechanism that cannot reach
-# them. Template-level changes are what moved velero and flux-system, and both are
-# now fully closed on the two universal gaps: flux-operator was flux-system's sole
-# remaining workload in this population under the 2026-09-03 reading, and it fails
-# neither gap today.
-#
-# The per-workload table and the remediation split are on #3217, closed COMPLETED on
-# 2026-08-29 once the sizing was delivered; the remaining remediation is tracked on
-# #3239. These counts are prod-only and the local overlay opts in to a different
+# The per-namespace opt-in labels do not change this. add-baseline-context-optin-*
+# mutates pods at admission and leaves the stored spec untouched. The families that
+# reach the stored spec, add-baseline-context-optin-controllers* and
+# add-baseline-context-optin-cronjobs*, are gated on the `baseline-context-controllers`
+# label, which is deliberately applied in NO namespace (tests/add-baseline-context pins
+# that empty inventory). The universal gaps closed through template-level changes
+# instead. These counts are prod-only and the local overlay opts in to a different
 # namespace set, so re-measure rather than inheriting them.
 #
 # node-agent and storage are NOT in that population. Both live in `kubescape`, whose
@@ -142,7 +102,7 @@ metadata:
     # Cluster-wide, and knowingly wider than its own rationale: in the twelve
     # namespaces "add-security-context" excludes, nothing injects these fields.
     # C-0211 is retained rather than narrowed on an unmeasured guess — sized
-    # 2026-09-20, with the remaining remediation on #3239. C-0013 was narrowed
+    # 2026-09-25, with the narrowing tracked on #3522. C-0013 was narrowed
     # out on 2026-09-09 (#3223) once #3480 removed the one workload that
     # failed it.
     platform.devantler.tech/cluster-wide: declared
@@ -152,9 +112,9 @@ spec:
     runAsGroup and fsGroupChangePolicy at pod admission. The Deployment spec does
     not contain them and Kubescape scans the stored spec, not the live pod. This
     control remains cluster-wide because narrowing it is blocked on evidence rather
-    than on expressiveness: C-0211's residual population is every scanned workload
-    the mutation does not reach, sized at 39 by the 2026-09-20 re-measurement
-    against the live PROD stored specs; remaining remediation on #3239.
+    than on expressiveness: of the 38 scanned workloads the mutation does not reach,
+    12 still miss an effective runAsGroup or runAsNonRoot in their stored spec
+    (measured 2026-09-25 against live PROD); narrowing is tracked on #3522.
   posture:
     - controlID: C-0211
       action: ignore
