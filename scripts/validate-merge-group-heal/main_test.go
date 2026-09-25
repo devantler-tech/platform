@@ -35,7 +35,6 @@ jobs:
         id: membership
         env:
           EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}
-          EVICTED_DEPLOYED_SHA: ${{ github.event.merge_group.head_sha }}
         run: scripts/merge-group-evicted.sh
 
   heal-prod-on-failure:
@@ -154,12 +153,6 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			old:         "          EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
 			replacement: "          EVICTED_HEAD_REF: ${{ github.ref }}",
 			wantError:   "membership step is missing merge-group head ref input",
-		},
-		{
-			name:        "membership step does not pass the deployed commit",
-			old:         "          EVICTED_DEPLOYED_SHA: ${{ github.event.merge_group.head_sha }}",
-			replacement: "          EVICTED_DEPLOYED_SHA: ${{ github.sha }}",
-			wantError:   "membership step is missing deployed merge-group commit input",
 		},
 		{
 			// The output reads steps.membership, so the id on another step leaves

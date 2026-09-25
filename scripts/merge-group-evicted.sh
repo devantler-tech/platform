@@ -9,9 +9,13 @@
 # which of the two happened, so it can restore main in the second case too.
 #
 # It runs right after a successful deploy, before `CI - Required Checks` lets the queue
-# merge, so a PR that is already merged, or still queued with the deployed commit, is on its
-# way to main. A PR still queued under a REBUILT merge group is not: its deployed commit is
-# obsolete, so that counts as evicted too.
+# merge, so a PR that is still queued or already merged is on its way to main.
+#
+# It does not detect a queued PR whose merge group was REBUILT after an earlier entry left.
+# That cannot happen while the queue builds one group at a time (`max_entries_to_build: 1`
+# in the `Require merge queue` ruleset): a later group is only built once the earlier one
+# has merged or left. The queue entry exposes only the PR head, not the generated merge-group
+# commit, so comparing it with the deployed commit would report every normal deploy evicted.
 #
 # Writes `evicted=true` or `evicted=false` to $GITHUB_OUTPUT.
 #
@@ -23,17 +27,12 @@ set -uo pipefail
 
 repository="${EVICTED_REPOSITORY:?EVICTED_REPOSITORY is required}"
 head_ref="${EVICTED_HEAD_REF:?EVICTED_HEAD_REF is required}"
-deployed_sha="${EVICTED_DEPLOYED_SHA:?EVICTED_DEPLOYED_SHA is required}"
 output="${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
 
 fail() {
   printf '::error title=Merge-queue state unknown::%s\n' "$1"
   exit 1
 }
-
-if [[ ! "$deployed_sha" =~ ^[0-9a-f]{40}$ ]]; then
-  fail "'${deployed_sha}' is not the deployed merge-group commit"
-fi
 
 # refs/heads/gh-readonly-queue/<base>/pr-<number>-<head sha>
 if [[ ! "$head_ref" =~ ^refs/heads/gh-readonly-queue/.+/pr-([1-9][0-9]*)-[0-9a-f]{40}$ ]]; then
@@ -48,30 +47,21 @@ if [[ ! "$repository" =~ ^[^/]+/[^/]+$ ]]; then
 fi
 
 # shellcheck disable=SC2016 # GraphQL variables, not shell expansions.
-query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state isInMergeQueue mergeQueueEntry{headCommit{oid}}}}}'
+query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state isInMergeQueue}}}'
 state="$(gh api graphql -f query="$query" -f owner="$owner" -f name="$name" -F number="$number" \
-  --jq '.data.repository.pullRequest | "\(.state) \(.isInMergeQueue) \(.mergeQueueEntry.headCommit.oid // "none")"')" ||
+  --jq '.data.repository.pullRequest | "\(.state) \(.isInMergeQueue)"')" ||
   fail "could not read the queue state of #${number}"
 
-# A queued PR counts only while its entry still builds the commit that was deployed. When an
-# earlier entry leaves the queue, GitHub rebuilds the later groups without it, so a deploy of
-# the old group ships an artifact that no longer matches anything headed for main.
-read -r pr_state queued entry_sha <<<"$state"
-if [ "$pr_state" = MERGED ]; then
-  evicted=false
-elif [ "$pr_state" = OPEN ] && [ "$queued" = true ] && [ "$entry_sha" = "$deployed_sha" ]; then
-  evicted=false
-elif [ "$pr_state" = OPEN ] && [ "$queued" = true ] && [[ "$entry_sha" =~ ^[0-9a-f]{40}$ ]]; then
-  evicted=true
-elif { [ "$pr_state" = OPEN ] && [ "$queued" = false ]; } || [ "$pr_state" = CLOSED ]; then
-  evicted=true
-else
-  fail "unexpected queue state '${state}' for #${number}"
-fi
+case "$state" in
+  "MERGED "*) evicted=false ;;
+  "OPEN true") evicted=false ;;
+  "OPEN false" | "CLOSED "*) evicted=true ;;
+  *) fail "unexpected queue state '${state}' for #${number}" ;;
+esac
 
 printf 'evicted=%s\n' "$evicted" >>"$output" || fail "could not write ${output}"
 if [ "$evicted" = true ]; then
-  printf '::warning title=Deployed PR left the merge queue::#%s deployed successfully but that deploy is no longer headed for main (%s); restoring main\n' \
+  printf '::warning title=Deployed PR left the merge queue::#%s deployed successfully but is no longer queued (%s); restoring main\n' \
     "$number" "$state"
 else
   printf '::notice title=Deployed PR still on its way to main::#%s is %s\n' "$number" "$state"

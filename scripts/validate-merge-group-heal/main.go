@@ -110,8 +110,8 @@ func validateWorkflowContract(workflow string) error {
 }
 
 // validateMembershipJob pins the job that tells the heal whether a successful
-// deploy is still headed for main (#3091). If it stops running after a
-// successful deploy, stops reading the merge group's own ref and commit, stops
+// deploy's PR already left the merge queue (#3091). If it stops running after a
+// successful deploy, stops reading the merge group's own ref, stops
 // exporting its answer, or is allowed to fail quietly, the heal's evicted
 // branch reads an empty output and silently never fires — the same unmerged
 // artifact left in prod that the heal exists to remove.
@@ -166,10 +166,6 @@ func validateMembershipJob(workflow string) error {
 		{
 			line:        "          EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
 			description: "merge-group head ref input",
-		},
-		{
-			line:        "          EVICTED_DEPLOYED_SHA: ${{ github.event.merge_group.head_sha }}",
-			description: "deployed merge-group commit input",
 		},
 		{line: "        run: scripts/merge-group-evicted.sh", description: "eviction check"},
 	}
