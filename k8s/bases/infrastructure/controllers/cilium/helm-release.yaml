@@ -167,9 +167,10 @@ spec:
       # Restart on cilium-config changes (same rationale as rollOutCiliumPods).
       rollOutPods: true
       # The GitOps way to restart the operator: change this value. The
-      # operator's Gateway API controller checks for its CRDs once, when a
-      # leader starts, and never retries; if the API server is briefly
-      # unreachable at that moment, the controller does not start and route
+      # operator's Gateway API controller checks for its CRDs when a leader
+      # starts, retrying for about 30 seconds. If the API server is still
+      # unreachable after that window, the controller does not start, but the
+      # operator keeps running without it, so nothing restarts it: route
       # changes stop reaching the gateway while every health signal stays
       # green (#4198). Rolling the operator re-runs the check.
       podAnnotations:
