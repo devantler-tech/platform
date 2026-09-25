@@ -690,6 +690,11 @@ jobs:
               # covered by 'k8s/**'.
               - 'scripts/guard-baseline-context-optin-scan-scope.sh'
               - 'scripts/tests/test-guard-baseline-context-optin-scan-scope.sh'
+              # Both halves and the reviewed list, for the same reasons. The guard also
+              # reads the kubescape HelmRelease, covered by 'k8s/**'.
+              - 'scripts/guard-kubescape-scan-scope.sh'
+              - 'scripts/tests/test-guard-kubescape-scan-scope.sh'
+              - 'scripts/kubescape-unscanned-namespaces.tsv'
               # Both halves, for the same reason as the guards above. The guard also
               # reads the exception manifest itself, covered by 'k8s/**'.
               - 'scripts/guard-pod-security-exception-documented.sh'
@@ -1844,6 +1849,16 @@ jobs:
         run: |
           bash scripts/guard-baseline-context-optin-scan-scope.sh
           bash scripts/tests/test-guard-baseline-context-optin-scan-scope.sh
+
+      - name: 🗺️ Validate every unscanned namespace is reviewed
+        if: needs.changes.outputs.k8s == 'true'
+        # A namespace in the operator's excludeNamespaces produces no scan result, and the
+        # posture score cannot tell that apart from a clean namespace. So the exclusions must
+        # match scripts/kubescape-unscanned-namespaces.tsv exactly, each row with a reason,
+        # and a namespace can only leave scan coverage through a reviewed change (#3215).
+        run: |
+          bash scripts/guard-kubescape-scan-scope.sh
+          bash scripts/tests/test-guard-kubescape-scan-scope.sh
 
       - name: 🔎 Validate every suppressed control is documented as failing open
         if: needs.changes.outputs.k8s == 'true'
