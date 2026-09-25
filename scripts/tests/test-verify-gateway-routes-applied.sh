@@ -229,6 +229,23 @@ expect_text '::error::Could not evaluate the gateway'
 expect_text 'The connection to the server was refused'
 expect_no_text '✅'
 
+# Output that is not a route list evaluates nothing, so it cannot pass.
+case_name='malformed read'
+dir="$(scenario malformed)"
+printf 'not json\n' >"${dir}/httproutes.json"
+run "${dir}"
+expect_status 1
+expect_text '::error::Could not evaluate the gateway'
+expect_no_text '✅'
+
+case_name='empty read'
+dir="$(scenario empty)"
+: >"${dir}/httproutes.json"
+run "${dir}"
+expect_status 1
+expect_text '::error::Could not evaluate the gateway'
+expect_no_text '✅'
+
 # No Cilium Gateway means this is not the cluster the check was written for.
 case_name='no Cilium gateway'
 dir="$(scenario no-cilium other)"

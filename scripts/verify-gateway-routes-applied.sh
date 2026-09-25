@@ -96,9 +96,13 @@ deadline=$((SECONDS + timeout_seconds))
 lagging=''
 read_error=''
 while :; do
+  checked=''
   if read_lag; then
-    read_error=''
     checked="$(sed -n 's/^checked=//p' "${tmp_dir}/lag.txt")"
+  fi
+  # A read that produced no count evaluated nothing, so it can never pass.
+  if [[ "${checked}" =~ ^[0-9]+$ ]]; then
+    read_error=''
     lagging="$(grep -v '^checked=' "${tmp_dir}/lag.txt" || true)"
     if [[ -z "${lagging}" ]]; then
       echo "✅ The gateway applied all ${checked} HTTPRoute parent attachments at their current generation."
@@ -106,6 +110,7 @@ while :; do
     fi
   else
     read_error="$(head -c 2000 "${tmp_dir}/error.log")"
+    read_error="${read_error:-the route evaluation produced no result}"
   fi
 
   if ((SECONDS >= deadline)); then
