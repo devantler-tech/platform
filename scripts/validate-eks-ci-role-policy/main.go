@@ -3195,7 +3195,22 @@ const (
 // Only the package tag changes; the provider's GitHub-scoped CRDs gain optional
 // fields and one inactive kind, and no binding, service account or AWS identity
 // changes.
-const expectedRenderedSurfaceSHA = "31365f93a584f876aa4a0ba25963d10205103850b82b26f7de3417f2e4ca7eeb"
+// Re-approved for the Kubescape host-data cleanup failure alert (#3739), on a
+// branch level with main 2a59cdeb. The required production-authorization job on
+// the checksum-verified renderer (run 36105983235, job 107979133700) reported
+// exactly two ADDED surface entries and nothing changed or removed:
+// rbac.authorization.k8s.io/v1 Role kubescape/cronjob-failure-alert and its
+// RoleBinding kubescape/cronjob-failure-alert. The Role grants only `get` on the
+// one CronJob named kubescape-hostdata-cleanup and `list` on Jobs in the
+// kubescape namespace (owner-reference filtering needs namespace-wide list); the
+// binding's only subject is ServiceAccount observability/cronjob-failure-alert.
+// No write verb, wildcard, ClusterRole, AWS identity or existing binding
+// changes. The same job reported this identical value at head dfccc588, before
+// nine further main commits were merged in, so those commits did not move the
+// surface.
+//
+// Previous aggregate: 31365f93a584f876aa4a0ba25963d10205103850b82b26f7de3417f2e4ca7eeb.
+const expectedRenderedSurfaceSHA = "f079c67e430ff825a85ca238a86f32b8e96052d740a87bcec624ffa1800ea819"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3208,7 +3223,7 @@ const expectedRenderedSurfaceSHA = "31365f93a584f876aa4a0ba25963d10205103850b82b
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "6b1318d615d20e35941548f3d3e32efcdd384b46742c5cdec7d3c4de35a8480e"
+const previousRenderedSurfaceSHA = "31365f93a584f876aa4a0ba25963d10205103850b82b26f7de3417f2e4ca7eeb"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
