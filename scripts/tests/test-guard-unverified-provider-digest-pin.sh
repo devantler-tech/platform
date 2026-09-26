@@ -120,6 +120,17 @@ check 'a tree with no Crossplane Provider is UNKNOWN, not clean' 2 "$empty" 'ref
 
 check 'a missing root is UNKNOWN' 2 "$scratch/does-not-exist" 'is not a directory'
 
+# A directory the scan cannot enter must fail closed even though a readable
+# sibling still yields a pinned Provider (root would read it anyway, so skip).
+if [ "$(id -u)" != 0 ]; then
+  partial="$scratch/partial"
+  provider "$partial" contrib "ghcr.io/crossplane-contrib/provider-upjet-github:v0.20.0@$digest"
+  provider "$partial/locked" hidden ghcr.io/crossplane-contrib/provider-upjet-github:v0.20.0
+  chmod 000 "$partial/locked"
+  check 'an incomplete scan is UNKNOWN, not clean' 2 "$partial" 'incomplete scan'
+  chmod 755 "$partial/locked"
+fi
+
 check 'the live tree passes' 0 "$repo_root/k8s" 'all digest-pinned'
 
 printf '\n%s assertion(s), %s failure(s)\n' "$assertions" "$failures"

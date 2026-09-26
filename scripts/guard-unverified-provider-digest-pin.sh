@@ -36,7 +36,14 @@ verified_prefixes='ghcr.io/devantler-tech/
 xpkg.upbound.io/upbound/'
 
 list="$(mktemp)"
-trap 'rm -f "$list"' EXIT
+files="$(mktemp)"
+trap 'rm -f "$list" "$list.one" "$files"' EXIT
+
+# Collect the file list first so a traversal error is seen: inside a process
+# substitution find's exit status is lost, and a partial scan that still found a
+# Provider would pass the non-empty check below.
+find "$root" -type f \( -name '*.yaml' -o -name '*.yml' \) -print0 >"$files" ||
+  die "could not scan every manifest under '$root' — refusing to pass over an incomplete scan"
 
 # Emit "<file>\t<name>\t<package>" for every pkg.crossplane.io Provider document.
 while IFS= read -r -d '' file; do
@@ -51,7 +58,7 @@ while IFS= read -r -d '' file; do
     printf '%s\t%s\t%s\n' "$file" "$name" "$pkg" >>"$list"
   done <"$list.one"
   rm -f "$list.one"
-done < <(find "$root" -type f \( -name '*.yaml' -o -name '*.yml' \) -print0)
+done <"$files"
 
 [ -s "$list" ] || die "found no pkg.crossplane.io Provider manifests under '$root' — refusing to pass vacuously"
 
