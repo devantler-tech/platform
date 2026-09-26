@@ -50,13 +50,14 @@
 #
 # Verified live 2026-09-09 per workload, not on the aggregate: all five read C-0013
 # `passed` with an EMPTY subStatus and `appliedIgnoreRules: null` — the
-# discriminator pod-security-mutations-unscoped.yaml documents, since a SUPPRESSED
+# discriminator pod-security-mutations-residual.yaml documents, since a SUPPRESSED
 # control also reads `passed` but carries subStatus "w/exceptions". The stored
 # Deployment specs corroborate it independently of the scanner: flux-operator sets
 # runAsGroup 65532 and the four controllers 65534, each with runAsNonRoot true.
 #
-# C-0211 is NOT narrowed with them: its residual population still has no fix behind
-# it and it stays cluster-wide in pod-security-mutations-unscoped.yaml.
+# C-0211 follows the same namespace scope now that the eleven excluded workloads
+# still needing it are listed by kind and name in pod-security-mutations-residual.yaml.
+# A new excluded-namespace workload therefore receives a real C-0211 verdict.
 #
 # readOnlyRootFilesystem (C-0017) is not exempted here. It is set genuinely in each
 # workload's own spec wherever the app tolerates a read-only root (see the app
@@ -92,8 +93,10 @@ spec:
     false, drop ALL capabilities and seccompProfile at container admission, and
     runAsNonRoot, runAsUser and runAsGroup at pod admission. The Deployment spec
     does not contain them and Kubescape scans the stored spec, not the live pod.
-    The exception is scoped to the namespaces that mutation runs in, so it cannot
-    suppress a control where nothing injects it.
+    C-0211 is included here; its remaining gaps outside those namespaces are
+    scoped to named elevated workloads in pod-security-mutations-residual.
+    The namespace exception cannot suppress a new workload where nothing injects
+    these fields.
     readOnlyRootFilesystem (C-0017) is handled separately — set in-spec per
     workload.
   posture:
@@ -102,4 +105,6 @@ spec:
     - controlID: C-0016
       action: ignore
     - controlID: C-0055
+      action: ignore
+    - controlID: C-0211
       action: ignore

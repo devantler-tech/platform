@@ -825,3 +825,75 @@ func TestGenerateAgainstRealExceptions(t *testing.T) {
 		}
 	}
 }
+
+// TestC0211Scope checks the exceptions consumed by the offline scan. The
+// control must still cover the workloads whose elevated access is intentional,
+// while unrelated workloads in those namespaces regain a real verdict.
+func TestC0211Scope(t *testing.T) {
+	policies, err := generate(filepath.Join("..", "..", defaultDir))
+	if err != nil {
+		t.Fatalf("generate committed exceptions: %v", err)
+	}
+
+	cases := []struct {
+		name         string
+		namespace    string
+		kind         string
+		resourceName string
+		want         bool
+	}{
+		{"ordinary application", "wedding-app", "Deployment", "wedding-app", true},
+		{"CSI attacher", "longhorn-system", "Deployment", "csi-attacher", true},
+		{"CSI provisioner", "longhorn-system", "Deployment", "csi-provisioner", true},
+		{"CSI resizer", "longhorn-system", "Deployment", "csi-resizer", true},
+		{"CSI snapshotter", "longhorn-system", "Deployment", "csi-snapshotter", true},
+		{"longhorn driver deployer", "longhorn-system", "Deployment", "longhorn-driver-deployer", true},
+		{"longhorn manager", "longhorn-system", "DaemonSet", "longhorn-manager", true},
+		{"longhorn CSI plugin", "longhorn-system", "DaemonSet", "longhorn-csi-plugin", true},
+		{"engine image", "longhorn-system", "DaemonSet", "engine-image-ei-493e04e7", true},
+		{"coroot node agent", "observability", "DaemonSet", "coroot-node-agent", true},
+		{"audit log forwarder", "observability", "DaemonSet", "audit-log-forwarder-agent", true},
+		{"velero node agent", "velero", "DaemonSet", "node-agent", true},
+		{"hardened longhorn UI", "longhorn-system", "Deployment", "longhorn-ui", false},
+		{"hardened coroot operator", "observability", "Deployment", "coroot-operator", false},
+		{"hardened flux operator", "flux-system", "Deployment", "flux-operator", false},
+		{"new longhorn workload", "longhorn-system", "Deployment", "new-workload", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			covered := false
+			for _, policy := range policies {
+				isC0211 := false
+				for _, posture := range policy.PosturePolicies {
+					if posture.ControlID == "^C-0211$" {
+						isC0211 = true
+					}
+				}
+				if !isC0211 {
+					continue
+				}
+
+				for _, designator := range policy.Resources {
+					matches := true
+					for attribute, pattern := range designator.Attributes {
+						value := map[string]string{
+							"namespace": tc.namespace,
+							"kind":      tc.kind,
+							"name":      tc.resourceName,
+						}[attribute]
+						ok, matchErr := regexp.MatchString(pattern, value)
+						if matchErr != nil {
+							t.Fatalf("invalid %s pattern %q: %v", attribute, pattern, matchErr)
+						}
+						matches = matches && ok
+					}
+					covered = covered || matches
+				}
+			}
+			if covered != tc.want {
+				t.Errorf("C-0211 suppressed = %t, want %t", covered, tc.want)
+			}
+		})
+	}
+}

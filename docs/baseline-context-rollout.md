@@ -115,12 +115,13 @@ creates its templates, so admission applies at creation without a write.
 
 The two universal gaps are closed: every one of the 38 scanned workloads in the
 excluded namespaces carries both fields in its stored spec, measured against live
-prod on 2026-09-25 and recorded with the C-0211 sizing in
-`pod-security-mutations-unscoped.yaml`. What remains is the privilege-adjacent residual
-that keeps C-0211 cluster-wide, tracked in
-[issue #3522](https://github.com/devantler-tech/platform/issues/3522). Re-measure the
-stored controllers and every regular and init container before narrowing it; a scanner
-verdict alone does not show the residual.
+prod on 2026-09-25. C-0211 is now excepted in the namespaces where the
+admission mutation runs, plus the eleven elevated workloads named in
+`pod-security-mutations-residual.yaml`. Other workloads in excluded namespaces
+retain their C-0211 verdict. The residual and the narrowing are tracked in
+[issue #3522](https://github.com/devantler-tech/platform/issues/3522). Verify
+the live stored templates and scan `subStatus` after deployment; a bare scanner
+`passed` status cannot distinguish a genuine pass from an exception.
 
 The existing namespace inventory test pins the default-off controller rollout.
 Its historical demand for post-rollout evidence inside the activation commit is
