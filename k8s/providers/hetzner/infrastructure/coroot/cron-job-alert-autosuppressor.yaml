@@ -210,6 +210,9 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532
+            # Pod-level group for the volumes this non-root job mounts; the privilege-
+            # adjacent C-0211 field the namespace exclusion leaves unset (#3522).
+            fsGroup: 65532
             seccompProfile:
               type: RuntimeDefault
             # fsGroupChangePolicy and seLinuxOptions are the two non-privilege C-0211
