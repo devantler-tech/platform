@@ -712,7 +712,7 @@ data:
             "controlID": "^C-0211$"
           }
         ],
-        "reason": "Kyverno mutate policy \"add-security-context\" injects runAsNonRoot, runAsUser, runAsGroup and fsGroupChangePolicy at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. This control remains cluster-wide because narrowing it is blocked on evidence rather than on expressiveness: of the 38 scanned workloads the mutation does not reach, 19 still miss fsGroup, runAsGroup or runAsNonRoot in their stored spec (measured 2026-09-25 against live PROD); narrowing is tracked on #3522."
+        "reason": "Kyverno mutate policy \"add-security-context\" injects runAsNonRoot, runAsUser, runAsGroup and fsGroupChangePolicy at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. This control remains cluster-wide because narrowing it is blocked on evidence rather than on expressiveness: of the 38 scanned workloads the mutation does not reach, 12 will still miss fsGroup and runAsGroup or runAsNonRoot in their stored spec once #4214 deploys (14 measured 2026-09-26 against live PROD, two of which #4214 fixes at source); narrowing is tracked on #3522."
       },
       {
         "name": "secret-reader-rbac",
