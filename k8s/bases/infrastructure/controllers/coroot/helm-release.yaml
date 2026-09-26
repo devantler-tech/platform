@@ -45,7 +45,23 @@ spec:
         kind: HelmRepository
         name: coroot
   values:
+    # C-0211 (CIS-5.7.3) also requires a pod-level fsGroup and an effective
+    # runAsGroup (#3522). The operator already runs unprivileged: non-root, all
+    # capabilities dropped, read-only root filesystem, no volumes. So these fields
+    # state its identity rather than change it.
+    #
+    # 65534 is measured, not chosen: ghcr.io/coroot/coroot-operator declares
+    # USER 65534:65534 in its image config (read from the registry 2026-09-26).
+    # With no volumes, fsGroup has no ownership pass to run.
+    #
+    # 🔴 Set runAsUser WITH runAsGroup, never runAsGroup alone. With no runAsUser
+    # resolvable, containerd receives an empty uid and a group ("":65534) and
+    # refuses to build the sandbox. The flux-operator HelmRelease documents the
+    # same trap.
     podSecurityContext:
+      runAsUser: 65534
+      runAsGroup: 65534
+      fsGroup: 65534
       fsGroupChangePolicy: OnRootMismatch
     containerSecurityContext:
       seLinuxOptions: {}
