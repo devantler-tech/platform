@@ -6,6 +6,8 @@ machine:
       # AppArmor must also precede BPF, whose audit-context hook otherwise
       # takes precedence and causes "audit: error in audit_log_subj_ctx".
       # See Linux security/security.c and CachyOS/linux-cachyos#878.
+      # apparmor=1 enables AppArmor explicitly rather than relying on the kernel default.
+      - apparmor=1
       - lsm=yama,apparmor,selinux,loadpin,safesetid,integrity,bpf,lockdown,landlock
     # KSail folds this native Talos declaration into the Image Factory
     # schematic, clears the deprecated rendered extraKernelArgs field, and pins

@@ -37,6 +37,12 @@ check_args() {
     printf '%s: legacy security= must not accompany lsm=\n' "$file" >&2
     return 1
   }
+  # apparmor=0 disables AppArmor whatever lsm= selects, so require exactly one
+  # apparmor= argument and require it to enable AppArmor.
+  jq -e '[.[] | select(startswith("apparmor="))] == ["apparmor=1"]' <<<"$args" >/dev/null || {
+    printf '%s: expected exactly one apparmor= kernel argument, apparmor=1\n' "$file" >&2
+    return 1
+  }
   modules=$(jq '[.[] | select(startswith("lsm="))][0] | ltrimstr("lsm=") | split(",")' <<<"$args")
   jq -e --arg expected "$expected_modules" 'sort == ($expected | split(","))' <<<"$modules" >/dev/null || {
     printf '%s: preserve every Talos LSM exactly once\n' "$file" >&2
