@@ -3246,16 +3246,16 @@ const (
 // nothing added or removed. The source delta only appends the digest of the
 // already-approved v0.20.0 package to its reference, so the same bytes run. No
 // RBAC, binding, service account, AWS identity, or permission grant changes.
-// Re-approved for setting a pod-level fsGroup on flux-operator and longhorn-ui
-// (#4214), against main 322d63e3. The required production-authorization job on
-// the checksum-verified renderer (run 36247912116, job 108420905807) reported exactly
-// two changed surface entries, HelmRelease flux-system/flux-operator and
-// HelmRelease longhorn-system/longhorn, and nothing added or removed. The source
-// delta only adds fsGroup 65532 and 486, each the group its pod already runs as.
+// Re-approved for stating runAsUser, runAsGroup and fsGroup 65534 on the
+// coroot-operator pod (#4217), against main dfee0e2b. The required
+// production-authorization job on the checksum-verified renderer (run 36259184337,
+// job 108452111239) reported exactly one changed surface entry, HelmRelease
+// observability/coroot-operator, and nothing added or removed. The source delta only
+// adds the user and group the operator image already declares (USER 65534:65534).
 // No RBAC, binding, service account, AWS identity, or permission grant changes.
 //
-// Previous aggregate: f9998a12f55dbee70fa132e536d7de5137420c4a5560054c3de98fb4f8621fef.
-const expectedRenderedSurfaceSHA = "5ab157d087c2bd9431e35fa16e4de9897bdb538ff3aab63014d418ba5933344b"
+// Previous aggregate: 5ab157d087c2bd9431e35fa16e4de9897bdb538ff3aab63014d418ba5933344b.
+const expectedRenderedSurfaceSHA = "c64aa3b73ee2cf67d319cba1f97822e3797fe76a49d6b87ef140cc718624f8a7"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3268,7 +3268,7 @@ const expectedRenderedSurfaceSHA = "5ab157d087c2bd9431e35fa16e4de9897bdb538ff3aa
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "f9998a12f55dbee70fa132e536d7de5137420c4a5560054c3de98fb4f8621fef"
+const previousRenderedSurfaceSHA = "5ab157d087c2bd9431e35fa16e4de9897bdb538ff3aab63014d418ba5933344b"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
