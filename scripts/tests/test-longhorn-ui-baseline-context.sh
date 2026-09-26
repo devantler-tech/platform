@@ -33,6 +33,7 @@ helm template longhorn "${scratch}/${chart_name}-${chart_version}.tgz" \
 yq -o=json '(.spec.postRenderers[].kustomize.patches[] |
   select(.target.kind == "Deployment" and .target.name == "longhorn-ui").patch) |=
   (from_yaml | del(.spec.template.spec.securityContext.fsGroupChangePolicy) |
+   del(.spec.template.spec.securityContext.fsGroup) |
    del(.spec.template.spec.containers[].securityContext.seLinuxOptions) | to_yaml)' \
   "${scratch}/on.json" >"${scratch}/off.json"
 
@@ -58,13 +59,14 @@ render on
 # passing because Kustomize tolerates unmatched patch targets.
 jq -e '[.[] | select(.kind == "Deployment" and .metadata.name == "longhorn-ui") |
   .spec.template.spec.securityContext.fsGroupChangePolicy == "OnRootMismatch" and
-  .spec.template.spec.securityContext.fsGroup == null and
+  .spec.template.spec.securityContext.fsGroup == 486 and
   ([.spec.template.spec.containers[] | .securityContext.seLinuxOptions] == [{}]) and
   ([.spec.template.spec.volumes[] | has("emptyDir")] | all)] == [true]' \
   "${scratch}/on-resources.json" >/dev/null || fail 'UI canary defaults or ephemeral storage contract missing'
 chart_defaults_absent() {
   jq -e '[.[] | select(.kind == "Deployment" and .metadata.name == "longhorn-ui") |
     .spec.template.spec.securityContext.fsGroupChangePolicy == null and
+    .spec.template.spec.securityContext.fsGroup == null and
     .spec.template.spec.securityContext.seLinuxOptions == null and
     ([.spec.template.spec.containers[] | .securityContext.seLinuxOptions] == [null])] == [true]' \
     "$1" >/dev/null
@@ -84,10 +86,11 @@ fi
 
 jq -S 'map(if .kind == "Deployment" and .metadata.name == "longhorn-ui" then
     del(.spec.template.spec.securityContext.fsGroupChangePolicy) |
+    del(.spec.template.spec.securityContext.fsGroup) |
     del(.spec.template.spec.containers[].securityContext.seLinuxOptions)
   else . end)' "${scratch}/on-resources.json" >"${scratch}/normalized.json"
 cmp "${scratch}/off-resources.json" "${scratch}/normalized.json" ||
-  fail 'canary changes resources beyond the two UI defaults, including storage controllers or existing hardening'
+  fail 'canary changes resources beyond the three UI defaults, including storage controllers or existing hardening'
 
 cp "${scratch}/off.json" "${scratch}/rollback.json"
 render rollback
@@ -101,4 +104,4 @@ if jq -e '[.[] | select(.kind == "Deployment" and .metadata.name == "longhorn-ui
   fail 'negative control accepted a release without the canary'
 fi
 
-printf 'PASS: exact Longhorn chart changes only the two UI defaults; disabled state and rollback preserve every resource\n'
+printf 'PASS: exact Longhorn chart changes only the three UI defaults; disabled state and rollback preserve every resource\n'

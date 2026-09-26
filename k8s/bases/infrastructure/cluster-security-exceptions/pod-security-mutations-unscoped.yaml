@@ -27,9 +27,10 @@
 #
 #   * C-0211 — 35 of 35 scanned workloads read passed with subStatus "w/exceptions",
 #     each carrying appliedIgnoreRules: [pod-security-mutations-unscoped/C-0211]. Against
-#     the stored specs (measured 2026-09-25, below) every workload in the population
-#     passes the two universal gaps while nineteen still miss privilege-adjacent fields,
-#     and status alone cannot tell those apart: it reads "passed" on all of them.
+#     the stored specs (measured 2026-09-26, below) every workload in the population
+#     passes the two universal gaps while fourteen still miss a pod-level `fsGroup`,
+#     twelve of them together with other privilege-adjacent fields, and status alone
+#     cannot tell those apart: it reads "passed" on all of them.
 #
 # The discriminator is subStatus plus a populated appliedIgnoreRules, never status,
 # and it does discriminate: on one such workload the same scan carries 53 controls
@@ -65,18 +66,21 @@
 # so a `level`-based test would report every workload as failing.
 #
 # C-0211 still cannot be narrowed, because the two universal gaps were never all of
-# it. Nineteen of the 38 still miss a pod-level `fsGroup`, and twelve of those also
-# miss an effective `runAsGroup` or `runAsNonRoot` (pod level, or set on every
-# container): in longhorn-system the four CSI sidecars, the driver deployer and the
-# longhorn-manager, engine-image and longhorn-csi-plugin DaemonSets; in observability
-# coroot-operator, coroot-node-agent and audit-log-forwarder-agent; and
-# velero/node-agent, whose pod runs as root with no `fsGroup`. flux-system passes
-# `runAsGroup` and `runAsNonRoot` at container level, and flux-operator still misses
-# `fsGroup`. These are privilege-adjacent fields on workloads
-# that run with elevated privileges by design, which is why the namespaces are
-# excluded from add-security-context in the first place. Narrowing C-0211 now would
-# surface them with no fix behind them — lowering the score to absorb a gap rather
-# than closing it — so it stays cluster-wide.
+# it. Twelve of the 38 still miss a pod-level `fsGroup`, and all twelve also miss an
+# effective `runAsGroup` or `runAsNonRoot` (pod level, or set on every container): in
+# longhorn-system the four CSI sidecars, the driver deployer and the longhorn-manager,
+# engine-image and longhorn-csi-plugin DaemonSets; in observability coroot-operator,
+# coroot-node-agent and audit-log-forwarder-agent; and velero/node-agent, whose pod
+# runs as root with no `fsGroup`. The seven non-root workloads that lacked only
+# `fsGroup` set it at source: five CronJobs (#4212), flux-operator and longhorn-ui
+# (#4214). Measured 2026-09-26 against the live PROD stored specs: 14 missed
+# `fsGroup` before #4214 deployed, the twelve above plus those two.
+#
+# The twelve are privilege-adjacent gaps on workloads that run with elevated
+# privileges by design, which is why the namespaces are excluded from
+# add-security-context in the first place. Narrowing C-0211 now would surface them
+# with no fix behind them — lowering the score to absorb a gap rather than closing
+# it — so it stays cluster-wide.
 #
 # The per-namespace opt-in labels do not change this. add-baseline-context-optin-*
 # mutates pods at admission and leaves the stored spec untouched. The families that
@@ -120,8 +124,9 @@ spec:
     not contain them and Kubescape scans the stored spec, not the live pod. This
     control remains cluster-wide because narrowing it is blocked on evidence rather
     than on expressiveness: of the 38 scanned workloads the mutation does not reach,
-    19 still miss fsGroup, runAsGroup or runAsNonRoot in their stored spec
-    (measured 2026-09-25 against live PROD); narrowing is tracked on #3522.
+    12 will still miss fsGroup and runAsGroup or runAsNonRoot in their stored
+    spec once #4214 deploys (14 measured 2026-09-26 against live PROD, two of which
+    #4214 fixes at source); narrowing is tracked on #3522.
   posture:
     - controlID: C-0211
       action: ignore
