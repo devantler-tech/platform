@@ -10,8 +10,9 @@ production credentials remain read-only.
 The Longhorn HelmRelease supplies `fsGroupChangePolicy: OnRootMismatch` and an
 empty container `seLinuxOptions` object through its existing `longhorn-ui`
 post-renderer. The empty object leaves SELinux/MCS label selection to the runtime.
-The UI has no `fsGroup` and uses only `emptyDir` volumes, so the ownership policy
-has no effect on mounted data. Its existing numeric identity, dropped capabilities,
+It also sets `fsGroup: 486`, the group the UI already runs as, because C-0211
+requires a pod-level `fsGroup` (#4214). The UI uses only `emptyDir` volumes, so
+neither field changes ownership of any mounted data. Its existing numeric identity, dropped capabilities,
 seccomp profile, replica count and volumes remain unchanged.
 
 The real pinned chart test exercises the defaults present and absent, proves
@@ -28,7 +29,7 @@ handle the evidence in deployment order:
    disarms before reading the workload; a successfully proven deployment does
    not freeze the UI's initial replica count or identity on later chart changes.
 2. An existing canary must be Helm-owned, fully ready, non-root, have no init
-   containers, and use only ephemeral volumes without an `fsGroup`. API failure is an error, never an
+   containers, and use only ephemeral volumes, with no `fsGroup` or the UI's own group 486. API failure is an error, never an
    empty population. A reachable API reporting an uninstalled UI allows the
    initial installation but still requires the next step.
 3. After Flux reports the released revision Ready, the guard reads the stored

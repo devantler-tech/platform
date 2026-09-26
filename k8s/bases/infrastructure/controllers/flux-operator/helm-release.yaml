@@ -67,8 +67,8 @@ spec:
   #   (#3522). The pod's only volumes are an emptyDir and the projected
   #   service-account token — no PVC, no hostPath — so the ownership pass it enables
   #   touches nothing but those.
-  # - fsGroupChangePolicy OnRootMismatch skips that pass when ownership already
-  #   matches.
+  # - fsGroupChangePolicy is declared because C-0211 requires it. It has no effect on
+  #   the emptyDir or projected volumes this pod uses.
   # - Empty seLinuxOptions satisfies C-0211 while leaving SELinux type and MCS
   #   categories to the runtime. It is a no-op on this AppArmor cluster.
   #

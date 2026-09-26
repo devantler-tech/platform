@@ -27,9 +27,10 @@
 #
 #   * C-0211 — 35 of 35 scanned workloads read passed with subStatus "w/exceptions",
 #     each carrying appliedIgnoreRules: [pod-security-mutations-unscoped/C-0211]. Against
-#     the stored specs (measured 2026-09-25, below) every workload in the population
-#     passes the two universal gaps while nineteen still miss privilege-adjacent fields,
-#     and status alone cannot tell those apart: it reads "passed" on all of them.
+#     the stored specs (measured 2026-09-26, below) every workload in the population
+#     passes the two universal gaps while fourteen still miss a pod-level `fsGroup`,
+#     twelve of them together with other privilege-adjacent fields, and status alone
+#     cannot tell those apart: it reads "passed" on all of them.
 #
 # The discriminator is subStatus plus a populated appliedIgnoreRules, never status,
 # and it does discriminate: on one such workload the same scan carries 53 controls

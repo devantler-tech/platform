@@ -88,6 +88,11 @@ jq 'del(.metadata.annotations["pod-security.devantler.tech/longhorn-ui-baseline-
 check 'lost proof safely requires revalidation' before-publish pass normal
 grep -qx 'rollout_required=true' "${scratch}/outputs"
 
+# fsGroup 486 is the UI's own group, set at source for C-0211 (#4214). It stays inside the
+# reviewed scope, while any other value is still rejected by the mutation loop below.
+jq '.spec.template.spec.securityContext.fsGroup=486' "${scratch}/hardened.json" >"${scratch}/input.json"
+check 'the UI group as fsGroup stays in the reviewed scope' after-reconcile pass normal
+
 for mutation in '.metadata.uid="replacement-uid"' \
   '.metadata.resourceVersion="701" | .spec.template.spec.containers[0].securityContext.runAsUser=500'; do
   jq "${mutation}" "${scratch}/hardened.json" >"${scratch}/changed.json"
