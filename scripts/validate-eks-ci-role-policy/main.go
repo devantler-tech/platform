@@ -3246,9 +3246,16 @@ const (
 // nothing added or removed. The source delta only appends the digest of the
 // already-approved v0.20.0 package to its reference, so the same bytes run. No
 // RBAC, binding, service account, AWS identity, or permission grant changes.
+// Re-approved for setting a pod-level fsGroup on flux-operator and longhorn-ui
+// (#4214), against main 322d63e3. The required production-authorization job on
+// the checksum-verified renderer (run 36247912116, job 108420905807) reported exactly
+// two changed surface entries, HelmRelease flux-system/flux-operator and
+// HelmRelease longhorn-system/longhorn, and nothing added or removed. The source
+// delta only adds fsGroup 65532 and 486, each the group its pod already runs as.
+// No RBAC, binding, service account, AWS identity, or permission grant changes.
 //
-// Previous aggregate: a15685acc84997abb7f6df229d006413a0ec4d7a3cf75ccdaf3b77dad504c423.
-const expectedRenderedSurfaceSHA = "f9998a12f55dbee70fa132e536d7de5137420c4a5560054c3de98fb4f8621fef"
+// Previous aggregate: f9998a12f55dbee70fa132e536d7de5137420c4a5560054c3de98fb4f8621fef.
+const expectedRenderedSurfaceSHA = "5ab157d087c2bd9431e35fa16e4de9897bdb538ff3aab63014d418ba5933344b"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3261,7 +3268,7 @@ const expectedRenderedSurfaceSHA = "f9998a12f55dbee70fa132e536d7de5137420c4a5560
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "a15685acc84997abb7f6df229d006413a0ec4d7a3cf75ccdaf3b77dad504c423"
+const previousRenderedSurfaceSHA = "f9998a12f55dbee70fa132e536d7de5137420c4a5560054c3de98fb4f8621fef"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
