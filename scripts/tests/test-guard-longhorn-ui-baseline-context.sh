@@ -66,6 +66,7 @@ check 'post-deploy absence is failure' after-reconcile fail absent
 check 'healthy old template is not rollout evidence' after-reconcile fail normal
 
 jq '.spec.template.spec.securityContext.fsGroupChangePolicy="OnRootMismatch" |
+  .spec.template.spec.securityContext.fsGroup=486 |
   .spec.template.spec.containers[0].securityContext.seLinuxOptions={}' \
   "${scratch}/deployment.json" >"${scratch}/hardened.json"
 cp "${scratch}/hardened.json" "${scratch}/input.json"
@@ -88,10 +89,12 @@ jq 'del(.metadata.annotations["pod-security.devantler.tech/longhorn-ui-baseline-
 check 'lost proof safely requires revalidation' before-publish pass normal
 grep -qx 'rollout_required=true' "${scratch}/outputs"
 
-# fsGroup 486 is the UI's own group, set at source for C-0211 (#4214). It stays inside the
-# reviewed scope, while any other value is still rejected by the mutation loop below.
-jq '.spec.template.spec.securityContext.fsGroup=486' "${scratch}/hardened.json" >"${scratch}/input.json"
-check 'the UI group as fsGroup stays in the reviewed scope' after-reconcile pass normal
+# fsGroup 486 is set at source for C-0211 (#4214). A rollout that leaves the stored template
+# without it is not accepted, while the pre-rollout live UI without it still is (the
+# "healthy unmodified UI is an eligible canary" case above). Any other value is rejected
+# by the mutation loop below.
+jq 'del(.spec.template.spec.securityContext.fsGroup)' "${scratch}/hardened.json" >"${scratch}/input.json"
+check 'a rollout without the UI group as fsGroup is not accepted' after-reconcile fail normal
 
 for mutation in '.metadata.uid="replacement-uid"' \
   '.metadata.resourceVersion="701" | .spec.template.spec.containers[0].securityContext.runAsUser=500'; do
