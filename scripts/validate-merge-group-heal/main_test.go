@@ -23,7 +23,7 @@ jobs:
 
   merge-group-queue-membership:
     needs: [changes, deploy-prod]
-    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true' && needs.deploy-prod.result == 'success'
+    if: always() && github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true' && (needs.deploy-prod.result == 'success' || needs.deploy-prod.result == 'failure' || needs.deploy-prod.result == 'cancelled')
     permissions:
       pull-requests: read # read the PR's merge-queue state
     outputs:
@@ -119,8 +119,8 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 		},
 		{
 			name:        "condition heals every successful deploy",
-			old:         "needs.deploy-prod.result == 'failure'",
-			replacement: "needs.deploy-prod.result == 'success'",
+			old:         "      (needs.deploy-prod.result == 'failure' ||",
+			replacement: "      (needs.deploy-prod.result == 'success' ||",
 			wantError:   "must cover exactly failed, cancelled, and evicted-after-success deploys",
 		},
 		{
@@ -138,10 +138,26 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			wantError:   "missing merge-group-queue-membership job",
 		},
 		{
-			name:        "queue-membership job runs after an unsuccessful deploy",
-			old:         "needs.deploy-prod.result == 'success'\n",
-			replacement: "needs.deploy-prod.result == 'failure'\n",
-			wantError:   "queue-membership job is missing successful-deploy condition",
+			name:        "queue-membership job runs only after a successful deploy",
+			old:         " && (needs.deploy-prod.result == 'success' || needs.deploy-prod.result == 'failure' || needs.deploy-prod.result == 'cancelled')\n",
+			replacement: " && needs.deploy-prod.result == 'success'\n",
+			wantError:   "queue-membership job is missing every-deploy-outcome condition",
+		},
+		{
+			// Without the drain wait after a failed deploy, the heal can overwrite a
+			// later group's speculative deploy that then merges undeployed (#2838).
+			name:        "queue-membership job skips a cancelled deploy",
+			old:         " || needs.deploy-prod.result == 'cancelled')\n",
+			replacement: ")\n",
+			wantError:   "queue-membership job is missing every-deploy-outcome condition",
+		},
+		{
+			// Without always() a failed deploy skips the job before the condition
+			// is evaluated, so the heal is never held back.
+			name:        "queue-membership job without always()",
+			old:         "    if: always() && github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true' && (",
+			replacement: "    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true' && (",
+			wantError:   "queue-membership job is missing every-deploy-outcome condition",
 		},
 		{
 			name:        "queue-membership job does not export its answer",
@@ -197,8 +213,8 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 		},
 		{
 			name:        "condition drops cancellation",
-			old:         "needs.deploy-prod.result == 'cancelled'",
-			replacement: "needs.deploy-prod.result == 'failure'",
+			old:         "       needs.deploy-prod.result == 'cancelled' ||",
+			replacement: "       needs.deploy-prod.result == 'failure' ||",
 			wantError:   "must cover exactly failed, cancelled, and evicted-after-success deploys",
 		},
 		{

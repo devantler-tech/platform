@@ -115,6 +115,12 @@ func validateWorkflowContract(workflow string) error {
 // exporting its answer, or is allowed to fail quietly, the heal's evicted
 // branch reads an empty output and silently never fires — the same unmerged
 // artifact left in prod that the heal exists to remove.
+//
+// It must also run after a failed or cancelled deploy. There its answer is not
+// read; its wait for the queue to drain is what holds the heal back until every
+// later merge group has either merged or left. Without that wait the heal can
+// overwrite a later group's speculative deploy with an older main, and that
+// group then merges with nothing re-deploying it (#2838).
 func validateMembershipJob(workflow string) error {
 	job, ok := extractJob(workflow, "merge-group-queue-membership")
 	if !ok {
@@ -129,9 +135,12 @@ func validateMembershipJob(workflow string) error {
 			description: "deploy dependency",
 		},
 		{
-			line: "    if: github.event_name == 'merge_group' && " +
-				"needs.changes.outputs.k8s == 'true' && needs.deploy-prod.result == 'success'",
-			description: "successful-deploy condition",
+			line: "    if: always() && github.event_name == 'merge_group' && " +
+				"needs.changes.outputs.k8s == 'true' && " +
+				"(needs.deploy-prod.result == 'success' || " +
+				"needs.deploy-prod.result == 'failure' || " +
+				"needs.deploy-prod.result == 'cancelled')",
+			description: "every-deploy-outcome condition",
 		},
 		{line: "      pull-requests: read # read the PR's merge-queue state", description: "pull-request read permission"},
 		{line: "      evicted: ${{ steps.membership.outputs.evicted }}", description: "evicted output"},

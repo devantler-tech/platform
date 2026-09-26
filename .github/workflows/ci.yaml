@@ -2731,7 +2731,15 @@ jobs:
     # merges would publish main without its change. A failed read
     # fails this job visibly and writes no answer, so the heal never runs on a
     # guess. It is not part of the required checks: it gates nothing.
-    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true' && needs.deploy-prod.result == 'success'
+    #
+    # It also runs after a FAILED or CANCELLED deploy, where the heal ignores its
+    # answer and uses only its wait. The failed group is ejected, and the next
+    # group can deploy speculatively before the heal takes the lock; healing
+    # straight away would then overwrite that group with an older main, and once
+    # it merged nothing would re-deploy it (#2838). Waiting until the queue has
+    # drained means main already holds every group that merged. If this job fails
+    # or times out, the heal still runs, as it did before this wait existed.
+    if: always() && github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true' && (needs.deploy-prod.result == 'success' || needs.deploy-prod.result == 'failure' || needs.deploy-prod.result == 'cancelled')
     runs-on: ubuntu-latest
     # The check polls until the PR merges, or leaves and the queue drains (at most 120
     # reads, 30s apart).
@@ -2777,7 +2785,9 @@ jobs:
     # that aggregation — it is best-effort cleanup, not a merge gate. It also
     # fires after a SUCCESSFUL deploy whose PR had already left the queue, which
     # leaves prod on the same unmerged artifact (#3091); the membership job above
-    # decides that case.
+    # decides that case. After an unsuccessful deploy the heal still waits for
+    # that job, whose queue-drain wait keeps it from overwriting a later group's
+    # speculative deploy (#2838).
     if: >-
       always() &&
       github.event_name == 'merge_group' &&
