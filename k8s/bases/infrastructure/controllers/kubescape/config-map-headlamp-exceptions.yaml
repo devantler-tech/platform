@@ -689,12 +689,15 @@ data:
           },
           {
             "controlID": "^C-0055$"
+          },
+          {
+            "controlID": "^C-0211$"
           }
         ],
-        "reason": "Kyverno mutate policy \"add-security-context\" injects allowPrivilegeEscalation: false, drop ALL capabilities and seccompProfile at container admission, and runAsNonRoot, runAsUser and runAsGroup at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. The exception is scoped to the namespaces that mutation runs in, so it cannot suppress a control where nothing injects it. readOnlyRootFilesystem (C-0017) is handled separately — set in-spec per workload."
+        "reason": "Kyverno mutate policy \"add-security-context\" injects allowPrivilegeEscalation: false, drop ALL capabilities and seccompProfile at container admission, and runAsNonRoot, runAsUser and runAsGroup at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. C-0211 is included here; its remaining gaps outside those namespaces are scoped to named elevated workloads in pod-security-mutations-residual. The namespace exception cannot suppress a new workload where nothing injects these fields. readOnlyRootFilesystem (C-0017) is handled separately — set in-spec per workload."
       },
       {
-        "name": "pod-security-mutations-unscoped",
+        "name": "pod-security-mutations-residual",
         "policyType": "postureExceptionPolicy",
         "actions": [
           "disable"
@@ -703,7 +706,78 @@ data:
           {
             "designatorType": "Attributes",
             "attributes": {
-              "kind": ".*"
+              "kind": "^Deployment$",
+              "name": "^csi-attacher$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Deployment$",
+              "name": "^csi-provisioner$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Deployment$",
+              "name": "^csi-resizer$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Deployment$",
+              "name": "^csi-snapshotter$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Deployment$",
+              "name": "^longhorn-driver-deployer$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^DaemonSet$",
+              "name": "^engine-image-ei-[0-9a-f]+$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^DaemonSet$",
+              "name": "^longhorn-csi-plugin$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^DaemonSet$",
+              "name": "^longhorn-manager$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^DaemonSet$",
+              "name": "^audit-log-forwarder-agent$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^DaemonSet$",
+              "name": "^coroot-node-agent$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^DaemonSet$",
+              "name": "^node-agent$"
             }
           }
         ],
@@ -712,7 +786,7 @@ data:
             "controlID": "^C-0211$"
           }
         ],
-        "reason": "Kyverno mutate policy \"add-security-context\" injects runAsNonRoot, runAsUser, runAsGroup and fsGroupChangePolicy at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. This control remains cluster-wide because narrowing it is blocked on evidence rather than on expressiveness: of the 38 scanned workloads the mutation does not reach, 11 will still miss fsGroup and runAsGroup or runAsNonRoot in their stored spec once #4217 deploys (12 measured 2026-09-26 against live PROD after #4214, one of which #4217 fixes at source); narrowing is tracked on #3522."
+        "reason": "C-0211's privilege-adjacent fields remain absent from eleven elevated storage, observability and backup workload templates. These exact workloads are excepted while other workloads regain a real C-0211 verdict."
       },
       {
         "name": "secret-reader-rbac",

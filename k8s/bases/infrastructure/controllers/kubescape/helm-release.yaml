@@ -55,7 +55,7 @@ spec:
     # is NOT the same as passing. A posture score that omits a namespace reads
     # exactly like one where that namespace is clean, and nothing distinguishes
     # them from the score alone. The same trap is documented for the `kubescape`
-    # namespace in cluster-security-exceptions/pod-security-mutations-unscoped.yaml.
+    # namespace in cluster-security-exceptions/pod-security-mutations-residual.yaml.
     #
     # Each namespace here has a row saying why in scripts/kubescape-unscanned-namespaces.tsv,
     # and CI fails when the two lists differ, so change both together (#3215).
