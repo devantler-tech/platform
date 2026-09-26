@@ -3239,9 +3239,16 @@ const (
 // and nothing added or removed. The source delta only adds a restart-marker
 // pod annotation to the operator, which rolls its Deployment. No RBAC, binding,
 // service account, AWS identity, or permission grant changes.
+// Re-approved for pinning the unsigned provider-upjet-github package by digest
+// (#4189), against main 85c7ffc1. The required production-authorization job on
+// the checksum-verified renderer (run 36241768108, job 108403918797) reported
+// exactly one changed surface entry, Provider provider-upjet-github, and
+// nothing added or removed. The source delta only appends the digest of the
+// already-approved v0.20.0 package to its reference, so the same bytes run. No
+// RBAC, binding, service account, AWS identity, or permission grant changes.
 //
-// Previous aggregate: fda9a8345ce54ce6edd3a8ff4155690e3daef3cf2f0be5f4e614c89d78b403be.
-const expectedRenderedSurfaceSHA = "a15685acc84997abb7f6df229d006413a0ec4d7a3cf75ccdaf3b77dad504c423"
+// Previous aggregate: a15685acc84997abb7f6df229d006413a0ec4d7a3cf75ccdaf3b77dad504c423.
+const expectedRenderedSurfaceSHA = "f9998a12f55dbee70fa132e536d7de5137420c4a5560054c3de98fb4f8621fef"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3254,7 +3261,7 @@ const expectedRenderedSurfaceSHA = "a15685acc84997abb7f6df229d006413a0ec4d7a3cf7
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "fda9a8345ce54ce6edd3a8ff4155690e3daef3cf2f0be5f4e614c89d78b403be"
+const previousRenderedSurfaceSHA = "a15685acc84997abb7f6df229d006413a0ec4d7a3cf75ccdaf3b77dad504c423"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
