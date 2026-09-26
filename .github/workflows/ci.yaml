@@ -589,6 +589,10 @@ jobs:
               # alone — still runs the check that covers it.
               - 'scripts/restart-uncapped-talos-coredns.sh'
               - 'scripts/tests/test-restart-uncapped-talos-coredns.sh'
+              # Both halves, so editing the root-source verify reassert alone —
+              # or its test alone — still runs the check that covers it.
+              - 'scripts/reassert-flux-root-verify.sh'
+              - 'scripts/tests/test-reassert-flux-root-verify.sh'
               # The values it checks live under k8s/**; this entry makes an edit to
               # the test alone run it too.
               - 'scripts/tests/test-kube-system-addon-cpu-limits.sh'
@@ -1617,6 +1621,14 @@ jobs:
         # restarts CoreDNS only when a running pod is uncapped, restarts nothing
         # else, and fails closed on any input it cannot read.
         run: bash scripts/tests/test-restart-uncapped-talos-coredns.sh
+
+      - name: 🛡️ Validate the deploy repairs a bad root-source verify
+        if: needs.changes.outputs.k8s == 'true'
+        # The root source's cosign matcher is delivered through that same source,
+        # so only an out-of-band repair can replace a bad live value (#3014). Pin
+        # that the deploy repairs it through the FluxInstance, writes nothing on a
+        # healthy cluster, and fails closed on anything it cannot read.
+        run: bash scripts/tests/test-reassert-flux-root-verify.sh
 
       - name: 🧢 Validate kube-system add-ons declare their CPU limit
         if: needs.changes.outputs.k8s == 'true'
