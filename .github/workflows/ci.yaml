@@ -595,6 +595,7 @@ jobs:
               - 'scripts/tests/test-coroot-cost-convergence.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
               - 'scripts/tests/test-crossplane-sync-alerter.sh'
+              - 'scripts/tests/test-stranded-autoscaler-node-alerter.sh'
               - 'scripts/tests/test-crossplane-egress-policy.sh'
               - 'scripts/tests/crossplane-egress-policy-rules.yaml'
               - 'scripts/tests/test-coroot-alert-remediation.sh'
@@ -1657,6 +1658,12 @@ jobs:
       - name: 📡 Validate Crossplane sync alert delivery
         if: needs.changes.outputs.k8s == 'true'
         run: bash scripts/tests/test-crossplane-sync-alerter.sh
+
+      - name: 🖥️ Validate the stranded autoscaler node alert
+        if: needs.changes.outputs.k8s == 'true'
+        # Its declared pools must equal ksail.prod.yaml's, so removing a pool
+        # cannot leave that pool's nodes unreported (#3178).
+        run: bash scripts/tests/test-stranded-autoscaler-node-alerter.sh
 
       - name: 🩺 Validate the CNPG degraded-cluster alert
         if: needs.changes.outputs.k8s == 'true'
