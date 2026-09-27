@@ -240,4 +240,27 @@ grep -qF -- "- 'scripts/tests/test-reassert-flux-root-verify.sh'" "${ci_workflow
 grep -qF -- 'run: bash scripts/tests/test-reassert-flux-root-verify.sh' "${ci_workflow}" ||
   fail 'ci.yaml must run this test'
 
+# The merge queue deploys its speculative revision to production. The PR-only
+# validate job cannot establish that the repair test passed for that revision.
+ci_jobs="$(yq -o=json -I=0 '.jobs' "${ci_workflow}")"
+readonly ci_jobs
+jq -e '
+  .["validate-root-verify-merge-group"] as $gate
+  | $gate != null
+  and ($gate.if == "github.event_name == '\''merge_group'\'' && needs.changes.outputs.k8s == '\''true'\''")
+  and (($gate["continue-on-error"] // false) == false)
+  and (($gate.needs | if type == "array" then . else [.] end) | index("changes") != null)
+  and any($gate.steps[];
+      (.run // "") == "bash scripts/tests/test-reassert-flux-root-verify.sh"
+      and (has("if") | not)
+      and ((.["continue-on-error"] // false) == false))
+  and ((.["deploy-prod"].needs | if type == "array" then . else [.] end)
+      | index("validate-root-verify-merge-group") != null)
+  and ((.["ci-required-checks"].needs | if type == "array" then . else [.] end)
+      | index("validate-root-verify-merge-group") != null)
+  and any(.["ci-required-checks"].steps[];
+      (.["with"]["job-results"] // "") | contains("needs.validate-root-verify-merge-group.result"))
+' <<<"${ci_jobs}" >/dev/null ||
+  fail 'merge-group production deploy must wait for the root-source repair test and report its result'
+
 printf 'reassert-flux-root-verify: all cases passed\n'

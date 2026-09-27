@@ -2580,6 +2580,26 @@ jobs:
           validate_overlay talos cloud          # prod (Hetzner)
           validate_overlay talos-local container # local Docker test-bed
 
+  validate-root-verify-merge-group:
+    name: 🛡️ Validate Root Source Repair (merge group)
+    needs: [changes]
+    # Production deploys the speculative merge-group revision, so the PR-only
+    # repair test cannot gate the revision that reaches the cluster.
+    if: >-
+      github.event_name == 'merge_group' &&
+      needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🛡️ Validate the root source repair before deployment
+        run: bash scripts/tests/test-reassert-flux-root-verify.sh
+
   validate-rgd-templates-merge-group:
     name: 🔬 Validate Nested RGD Workload Templates (merge group)
     needs: [changes]
@@ -2682,6 +2702,7 @@ jobs:
         validate-publication-contract,
         validate-matcher-efficacy,
         validate-talos,
+        validate-root-verify-merge-group,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
       ]
@@ -2908,6 +2929,7 @@ jobs:
         validate-floating-image-tags,
         naming,
         validate-talos,
+        validate-root-verify-merge-group,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
         deploy-prod,
@@ -2927,6 +2949,7 @@ jobs:
             ${{ needs.validate-floating-image-tags.result }}
             ${{ needs.naming.result }}
             ${{ needs.validate-talos.result }}
+            ${{ needs.validate-root-verify-merge-group.result }}
             ${{ needs.validate-rgd-templates-merge-group.result }}
             ${{ needs.validate-ghcr-fanout-merge-group.result }}
             ${{ needs.deploy-prod.result }}
