@@ -45,6 +45,17 @@ yq -e '.metadata.annotations."kustomize.toolkit.fluxcd.io/substitute" == "disabl
   fail 'Flux substitution would blank the pod environment variables the script reads'
 yq -e "${container} | .securityContext.readOnlyRootFilesystem == true" "${manifest}" >/dev/null ||
   fail 'the sensor must not need a writable root filesystem'
+# curl restarts --max-time on every retry, so only --retry-max-time bounds a call.
+script_body="$(yq -r "${container} | .command[2]" "${manifest}")"
+curl_calls="$(grep -c 'curl -sS' <<<"${script_body}")"
+bounded_calls="$(grep -c 'curl -sS.*--retry-max-time\|--max-time [0-9]* --retry-max-time' <<<"${script_body}")"
+[ "${curl_calls}" -ge 2 ] && [ "${curl_calls}" = "${bounded_calls}" ] ||
+  fail "every curl call must bound its whole retry sequence (${bounded_calls} of ${curl_calls})"
+[ "$(yq -r '.spec.jobTemplate.spec.activeDeadlineSeconds' "${manifest}")" -ge 120 ] ||
+  fail 'the Job deadline must cover the node read and both Alertmanager peers'
+grep -Fq 'observability/stranded-autoscaler-node-alerter:' \
+  "${root_dir}/k8s/bases/components/coroot-cronjob-failure-alert/cron-job-cronjob-failure-alert.yaml" ||
+  fail 'the sensor must be on the CronJob failure detector watch list, or a broken sensor reads as a clean cluster'
 
 # ---- Behaviour -------------------------------------------------------------
 yq -r "${container} | .command[2]" "${manifest}" >"${work_dir}/sensor.sh"
@@ -60,7 +71,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) output="$2"; shift 2 ;;
     -d) payload="$2"; shift 2 ;;
-    -w|--cacert|-H|-X|--retry|--retry-delay|--max-time) shift 2 ;;
+    -w|--cacert|-H|-X|--retry|--retry-delay|--max-time|--retry-max-time) shift 2 ;;
     http*) url="$1"; shift ;;
     *) shift ;;
   esac

@@ -23,8 +23,16 @@
 # NO SILENT ZERO. Every read either succeeds with a complete, well-formed node
 # list or fails the Job. A list with no nodes, a continuation token (a truncated
 # page), or a missing control-plane node is a broken read, never "nothing
-# stranded". The reconcile-CronJob failure alert reports a Job that keeps
-# failing.
+# stranded". This CronJob is on the `cronjob-failure-alert` watch list
+# (bases/components/coroot-cronjob-failure-alert), which alerts in Slack when
+# two runs in a row fail or no run has finished for an hour, so a broken sensor
+# is reported rather than read as a clean cluster.
+#
+# TIME BUDGET. Every curl call caps both each attempt (--max-time) and its whole
+# retry sequence (--retry-max-time), because curl restarts --max-time on each
+# retry. Worst case is about 45s for the node read and 30s per Alertmanager
+# peer, well inside the 180s Job deadline, so one unreachable peer cannot use up
+# the time the healthy peer needs.
 #
 # DELIVERY follows cron-job-crossplane-sync-alerter.yaml: POST to every
 # Alertmanager peer's v2 API, which fans out to Slack. Each alert carries an
@@ -60,7 +68,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
-      activeDeadlineSeconds: 120
+      activeDeadlineSeconds: 180
       template:
         metadata:
           labels:
@@ -142,7 +150,7 @@ spec:
                   # One bounded page. A continuation token means the list was
                   # cut short, which is a failed read, not a complete answer.
                   code=$(curl -sS --retry 3 --retry-delay 2 --retry-all-errors \
-                    --max-time 30 -o "$NODES" -w '%{http_code}' \
+                    --max-time 15 --retry-max-time 30 -o "$NODES" -w '%{http_code}' \
                     --cacert "$SA_DIR/ca.crt" \
                     -H "Authorization: Bearer $(cat "$SA_DIR/token")" \
                     "$KUBE_API/api/v1/nodes?limit=500")
@@ -203,7 +211,7 @@ spec:
                   # when no peer accepted the alerts.
                   delivered=0
                   for am in $AM_PEERS; do
-                    if curl -sS --retry 3 --retry-delay 2 --retry-all-errors --max-time 30 \
+                    if curl -sS --retry 3 --retry-delay 2 --retry-all-errors --max-time 10 --retry-max-time 20 \
                          --fail -X POST -H 'Content-Type: application/json' \
                          -d "$alerts" "$am/api/v2/alerts" >/dev/null; then
                       delivered=$((delivered + 1))

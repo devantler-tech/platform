@@ -3256,15 +3256,21 @@ const (
 // Re-approved for alerting on autoscaler nodes whose pool no longer exists
 // (#3178), against main 09cc547c. The required production-authorization job on
 // the checksum-verified renderer (run 36342799866, job 108686595911) reported
-// exactly two added surface entries and nothing changed or removed:
+// two added surface entries and nothing changed or removed:
 // ClusterRole stranded-autoscaler-node-alerter and its ClusterRoleBinding. The
 // role grants only `list` on core `nodes`; the binding names only the new
 // observability/stranded-autoscaler-node-alerter ServiceAccount. No EKS CI
 // subject, AWS service account, AWS role, boundary, policy, Secret access or
-// write verb moves.
+// write verb moves. Codex review then asked for the sensor to be watched by
+// cronjob-failure-alert, which adds a Role and RoleBinding in observability:
+// `get` on the one CronJob by name and `list` on Jobs, bound only to
+// observability/cronjob-failure-alert, the same shape as its umami and
+// kubescape grants. The value below covers all four additions; the local
+// kubectl v1.36.1 renderer produced it and the required hosted job at this
+// head reproduces it.
 //
 // Previous aggregate: c64aa3b73ee2cf67d319cba1f97822e3797fe76a49d6b87ef140cc718624f8a7.
-const expectedRenderedSurfaceSHA = "c2bec52be493059940e48c3d80471e453e8506d5af3e57e4486c120ce836bfe8"
+const expectedRenderedSurfaceSHA = "94c2794e05d25973e550fdbddb6865bb5c7af0b58e8f8624b2f94e7040afe681"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.

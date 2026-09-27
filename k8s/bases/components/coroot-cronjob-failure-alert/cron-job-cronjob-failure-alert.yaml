@@ -5,7 +5,10 @@
 # token carries its own failure threshold and staleness window as
 # namespace/name:failure-threshold:stale-seconds. Umami absorbs one failed
 # 15-minute tick; the daily Kubescape cleanup alerts on its first failed run and
-# allows 26 hours before a missing completion is stale.
+# allows 26 hours before a missing completion is stale. The 15-minute
+# stranded-autoscaler-node alerter (hetzner overlay) uses Umami's thresholds: a
+# sensor that cannot read nodes or deliver alerts must not look like a clean
+# cluster.
 #
 # FAILURE THRESHOLDS ARE PER TARGET. Umami absorbs a single failed tick (the
 # weekly database-credential rotation produces exactly that); the daily
@@ -83,7 +86,7 @@ spec:
                 # Space-separated namespace/name:failure-threshold:stale-seconds
                 # entries. Each namespace needs its own Role and RoleBinding.
                 - name: WATCH
-                  value: "umami/umami-provision-tenants:2:3600 kubescape/kubescape-hostdata-cleanup:1:93600"
+                  value: "umami/umami-provision-tenants:2:3600 kubescape/kubescape-hostdata-cleanup:1:93600 observability/stranded-autoscaler-node-alerter:2:3600"
                 - name: FAILURE_THRESHOLD
                   # Default for a WATCH entry without target-specific tuning.
                   value: "2"
