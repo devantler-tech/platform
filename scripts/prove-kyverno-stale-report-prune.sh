@@ -27,6 +27,7 @@ log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 fail() {
   log "FAIL: $*"
   kubectl get policyreports -n "$ns" -o yaml || true
+  kubectl get policyreports -n kube-system -o yaml || true
   kubectl get deletingpolicies.policies.kyverno.io -o yaml || true
   kubectl -n kyverno logs deploy/kyverno-cleanup-controller --tail=200 || true
   kubectl -n kyverno logs deploy/kyverno-reports-controller --tail=100 || true
@@ -69,6 +70,18 @@ has_results() { # <configmap> <expected sorted policy/rule list>
   state="$(report_state "$1")"
   [[ "${state#* }" == "$2" ]]
 }
+
+# The proof installs the chart with its own values file, so it proves production only while
+# the settings that decide what Kyverno evaluates match production's. Refuse to run otherwise.
+helm_release="$root/k8s/bases/infrastructure/controllers/kyverno/helm-release.yaml"
+for key in '.features.backgroundScan.skipResourceFilters' '.config'; do
+  prod_value="$(yq -o=json ".spec.values$key" "$helm_release" | jq -cS .)" ||
+    fail "could not read $key from $helm_release"
+  proof_value="$(yq -o=json "$key" "$dir/values.yaml" | jq -cS .)" ||
+    fail "could not read $key from $dir/values.yaml"
+  [[ -n "$prod_value" && "$prod_value" != null && "$prod_value" == "$proof_value" ]] ||
+    fail "$key differs between production and the proof's values.yaml; align them first"
+done
 
 log "installing kyverno chart $chart_version"
 helm repo add kyverno https://kyverno.github.io/kyverno/ >/dev/null
@@ -172,5 +185,39 @@ never_after="$(report_state never-rescanned)"
   fail "never-rescanned was deleted although no scan wrote a current result to it ($never_before -> ${never_after%% *})"
 has_results never-rescanned "$both" || fail "never-rescanned lost a failing result"
 log "ok: a report with no current result keeps its failures"
+
+# --- #3155: reports in the namespaces Kyverno never evaluates -------------------
+unevaluated_namespaces=(kube-system kube-public kube-node-lease kyverno)
+log "checking that Kyverno writes no report in ${unevaluated_namespaces[*]}"
+kubectl apply -f "$dir/unevaluated-namespace-fixtures.yaml"
+probe_uids=()
+for probe_ns in "${unevaluated_namespaces[@]}"; do
+  uid="$(kubectl -n "$probe_ns" get configmap unevaluated-probe -o jsonpath='{.metadata.uid}')"
+  [[ -n "$uid" ]] || fail "could not read the $probe_ns probe's uid"
+  probe_uids+=("$uid")
+done
+# Positive control: the same policy must report on the same ConfigMap in an ordinary
+# namespace, or four absent reports would prove only that the policy never ran.
+control_reported() {
+  local uid
+  uid="$(kubectl -n unevaluated-control get configmap unevaluated-probe -o jsonpath='{.metadata.uid}')" || return 1
+  kubectl -n unevaluated-control get policyreport "$uid" -o json 2>/dev/null |
+    jq -e 'any(.results[]?; .policy == "require-owner-label-unevaluated" and .rule == "owner-label")' >/dev/null
+}
+wait_for "the unevaluated-namespace policy to report on its control" 600 control_reported
+# Two completed scans after the probes exist, proven by prune-test results advancing.
+for cycle in 1 2; do
+  owner_before="$(result_timestamp excluded-later require-owner-label owner-label)"
+  wait_for "background scan $cycle after the probes were created" 600 scan_ran
+done
+for i in "${!unevaluated_namespaces[@]}"; do
+  probe_ns="${unevaluated_namespaces[$i]}"
+  # A failed read is not an absence: only a successful, empty lookup proves no report.
+  found="$(kubectl -n "$probe_ns" get policyreport "${probe_uids[$i]}" --ignore-not-found -o name)" ||
+    fail "could not read policy reports in $probe_ns"
+  [[ -z "$found" ]] ||
+    fail "Kyverno wrote a report for a $probe_ns resource, so docs/policy-reports.md no longer describes it"
+done
+log "ok: a resource a policy matches gets no report in ${unevaluated_namespaces[*]} after two completed scans"
 
 log "PASS"

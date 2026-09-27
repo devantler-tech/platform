@@ -1,0 +1,66 @@
+# #3155: a policy that matches a ConfigMap in each namespace the chart's resource
+# filters exclude, and one such ConfigMap per namespace. The filters exclude these
+# namespaces from admission and, with skipResourceFilters: false, from background
+# scans, so no report may ever be written for any of them. The proof checks that
+# before docs/policy-reports.md relies on it. unevaluated-control is the positive
+# control: an ordinary namespace where the same policy must produce a report.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-owner-label-unevaluated
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: owner-label
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+              namespaces: [kube-system, kube-public, kube-node-lease, kyverno, unevaluated-control]
+      validate:
+        message: owner label required
+        pattern:
+          metadata:
+            labels:
+              owner: "?*"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unevaluated-probe
+  namespace: kube-system
+data: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unevaluated-probe
+  namespace: kube-public
+data: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unevaluated-probe
+  namespace: kube-node-lease
+data: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unevaluated-probe
+  namespace: kyverno
+data: {}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: unevaluated-control
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unevaluated-probe
+  namespace: unevaluated-control
+data: {}
