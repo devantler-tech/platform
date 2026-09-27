@@ -26,6 +26,8 @@
 #   * observability/coroot-custom-cloud-pricing   — applies Hetzner per-unit pricing to Coroot (platform)
 #   * observability/stranded-volume-attach-alert  — alerts on a pod whose volume has been stuck
 #                                                   attaching for longer than an attach takes (platform)
+#   * observability/stranded-autoscaler-node-alerter — alerts on an autoscaler node whose pool is
+#                                                   no longer declared, prod only (platform)
 #   * openbao/vault-snapshot                      — OpenBao raft-snapshot backup (platform)
 #   * umami/umami-provision-tenants               — provisions Umami tenant websites (platform)
 # The fleetdm namespace is pre-listed too: the app is disabled on prod today (its
@@ -50,7 +52,7 @@ spec:
     All CronJobs on this cluster are GitOps-managed platform components delivered
     by Flux after PR review (the review is the approval): Cilium Hubble cert
     rotation, the Kubescape scan schedulers / stale host-data cleanup, Longhorn
-    stale-node cleanup, the observability heartbeat / CNPG degraded-cluster alert / stranded-volume-attach
+    stale-node cleanup, the observability heartbeat / CNPG degraded-cluster alert / stranded-volume-attach alert / stranded-autoscaler-node
     alert / reconcile-CronJob failure alert / Coroot alert-autosuppressor / Coroot cloud-pricing jobs, the OpenBao
     raft-snapshot backup, and Umami tenant provisioning.
     Namespace-scoped to the infrastructure namespaces that run these, so a CronJob
