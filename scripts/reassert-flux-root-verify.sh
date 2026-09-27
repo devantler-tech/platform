@@ -73,11 +73,15 @@ command -v yq >/dev/null 2>&1 || die 'yq is required but not on PATH'
 [[ -r "${declared_file}" ]] || die "cannot read ${declared_file}"
 
 # Prints the canonical JSON of the single /spec/verify value a JSON6902 patch
-# (YAML text on stdin) sets. Fails unless there is exactly one such operation.
+# (YAML text on stdin) sets. Nested operations can change that value after the
+# root operation, so they make the live patch ambiguous and trigger replacement.
 verify_of_patch() {
   local ops
-  ops="$(yq -o=json '[.[] | select(.path == "/spec/verify")]')" || return 1
-  jq -e -S -c 'if length == 1 and (.[0].op == "add" or .[0].op == "replace") and (.[0].value | type) == "object"
+  ops="$(yq -o=json '.')" || return 1
+  jq -e -S -c '
+    if type != "array" then error("expected a JSON6902 operation list") else . end
+    | [.[] | select(.path == "/spec/verify" or ((.path // "") | startswith("/spec/verify/")))]
+    | if length == 1 and .[0].path == "/spec/verify" and (.[0].op == "add" or .[0].op == "replace") and (.[0].value | type) == "object"
     then .[0].value else error("expected exactly one add/replace of an object at /spec/verify") end' <<<"${ops}"
 }
 

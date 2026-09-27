@@ -62,6 +62,12 @@ case "${args}" in
   if [[ "${OPERATOR_RENDERS:-1}" == "1" ]]; then
     patch="$(jq -r "[.spec.kustomize.patches[] | select(${filter}) | .patch][0]" "${STATE_DIR}/fi.json")"
     verify="$(yq -o=json '[.[] | select(.path == "/spec/verify") | .value][0]' <<<"${patch}")"
+    # Model JSON6902 append operations after the root operation too. Flux
+    # applies both, even when the repair script only inspects the root value.
+    nested="$(yq -o=json '[.[] | select(.path == "/spec/verify/matchOIDCIdentity/-")]' <<<"${patch}")"
+    verify="$(jq -c --argjson ops "${nested}" 'reduce $ops[] as $op (.;
+      if $op.op == "add" then .matchOIDCIdentity += [$op.value]
+      else error("unexpected nested operation") end)' <<<"${verify}")"
     jq --argjson v "${verify}" '.spec.verify = $v' "${STATE_DIR}/src.json" >"${STATE_DIR}/src.next"
     mv "${STATE_DIR}/src.next" "${STATE_DIR}/src.json"
   fi
@@ -170,6 +176,24 @@ if grep -v -- '^--context admin@prod -n flux-system ' "${case_dir}/calls" | grep
   fail 'every kubectl call must pass --context admin@prod -n flux-system'
 fi
 
+# A second JSON6902 operation can append a matcher after the declared root
+# value. A root-only comparison sees the correct root and misses the bad append.
+nested_patch="$(jq -r "[.spec.kustomize.patches[] | select(${filter}) | .patch][0]" <<<"${healthy_fi}")
+- op: add
+  path: /spec/verify/matchOIDCIdentity/-
+  value:
+    issuer: '^https://token.actions.githubusercontent.com$'
+    subject: '^unexpected$'"
+nested_verify="$(jq '.matchOIDCIdentity += [{issuer: "^https://token.actions.githubusercontent.com$", subject: "^unexpected$"}]' <<<"${declared_verify}")"
+run_case nested_matcher "$(with_source_patch "${nested_patch}")" "$(src_with "${nested_verify}")"
+expect_status nested_matcher 0
+[[ "$(source_verify)" == "$(canonical "${declared_verify}")" ]] ||
+  fail 'nested_matcher: must replace a patch that appends to the declared verify'
+grep -qF ' patch fluxinstance ' "${case_dir}/calls" ||
+  fail 'nested_matcher: must replace the FluxInstance patch before reconciling'
+grep -qF 'annotate ocirepository flux-system' "${case_dir}/calls" ||
+  fail 'nested_matcher: must ask the repaired root source to fetch'
+
 # 4. The repair targets the right entry when the source patch is not the first one.
 reordered="$(jq '.spec.kustomize.patches |= ([.[] | select(.target.kind != "OCIRepository")] + [.[] | select(.target.kind == "OCIRepository")])' <<<"${bad_fi}")"
 run_case reordered "${reordered}" "$(src_with "${bad_verify}")"
@@ -222,6 +246,12 @@ yq '(.spec.kustomize.patches[] | select(.target.kind == "OCIRepository") | .patc
 run_case declared_ambiguous "${bad_fi}" "$(src_with "${bad_verify}")" FLUX_INSTANCE_FILE="${two_ops_file}"
 expect_status declared_ambiguous 2
 expect_no_write declared_ambiguous
+
+nested_declared_file="${tmp_dir}/nested-declared.json"
+with_source_patch "${nested_patch}" >"${nested_declared_file}"
+run_case declared_nested "${bad_fi}" "$(src_with "${bad_verify}")" FLUX_INSTANCE_FILE="${nested_declared_file}"
+expect_status declared_nested 2
+expect_no_write declared_nested
 
 # 13. Wiring: the deploy runs it after publishing and before reconciling, on every deploy.
 #     No `if:`, so a green deploy cannot have skipped it without the step itself failing.
