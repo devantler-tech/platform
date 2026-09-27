@@ -1,11 +1,12 @@
-# #3155: a policy that matches a kube-system ConfigMap, and that ConfigMap. The
-# chart's resource filters exclude kube-system from admission and, with
-# skipResourceFilters: false, from background scans, so no report may ever be
-# written for it. The proof checks that before relying on it.
+# #3155: a policy that matches a ConfigMap in each namespace the chart's resource
+# filters exclude, and one such ConfigMap per namespace. The filters exclude these
+# namespaces from admission and, with skipResourceFilters: false, from background
+# scans, so no report may ever be written for any of them. The proof checks that
+# before docs/policy-reports.md relies on it.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: require-owner-label-kube-system
+  name: require-owner-label-unevaluated
 spec:
   validationFailureAction: Audit
   background: true
@@ -15,7 +16,7 @@ spec:
         any:
           - resources:
               kinds: [ConfigMap]
-              namespaces: [kube-system]
+              namespaces: [kube-system, kube-public, kube-node-lease, kyverno]
       validate:
         message: owner label required
         pattern:
@@ -28,4 +29,25 @@ kind: ConfigMap
 metadata:
   name: unevaluated-probe
   namespace: kube-system
+data: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unevaluated-probe
+  namespace: kube-public
+data: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unevaluated-probe
+  namespace: kube-node-lease
+data: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unevaluated-probe
+  namespace: kyverno
 data: {}

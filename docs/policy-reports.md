@@ -97,10 +97,13 @@ A `DeletingPolicy` cannot clear those reports either: Kyverno's cleanup
 controller skips the same namespaces. A policy matching them runs on schedule and
 deletes nothing there, while the same condition deletes a matching report in an
 ordinary namespace. So a stale result in one of these namespaces stays until
-Kyverno covers the namespace again (#4228), which rewrites its reports. The
-proof in `scripts/prove-kyverno-stale-report-prune.sh` checks that a kube-system
-resource a policy matches really gets no report, so this section fails loudly if
-a chart change starts evaluating the namespace.
+Kyverno covers the namespace again (#4228). Even then, coverage rewrites only a
+result that a current rule still evaluates for a resource that still exists; a
+report for a deleted resource, or a result from a removed or renamed rule, needs
+separate clean-up. The proof in `scripts/prove-kyverno-stale-report-prune.sh`
+refuses to run unless its Kyverno settings match production's, then checks that
+a resource a policy matches gets no report in any of the four namespaces, so this
+section fails loudly if a settings or chart change starts evaluating one.
 
 An empty report list in these namespaces means they are not covered by Kyverno
 at all, not that they are compliant.
