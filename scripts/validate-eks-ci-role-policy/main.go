@@ -3253,9 +3253,18 @@ const (
 // observability/coroot-operator, and nothing added or removed. The source delta only
 // adds the user and group the operator image already declares (USER 65534:65534).
 // No RBAC, binding, service account, AWS identity, or permission grant changes.
+// Re-approved for alerting on autoscaler nodes whose pool no longer exists
+// (#3178), against main 09cc547c. The required production-authorization job on
+// the checksum-verified renderer (run 36342799866, job 108686595911) reported
+// exactly two added surface entries and nothing changed or removed:
+// ClusterRole stranded-autoscaler-node-alerter and its ClusterRoleBinding. The
+// role grants only `list` on core `nodes`; the binding names only the new
+// observability/stranded-autoscaler-node-alerter ServiceAccount. No EKS CI
+// subject, AWS service account, AWS role, boundary, policy, Secret access or
+// write verb moves.
 //
-// Previous aggregate: 5ab157d087c2bd9431e35fa16e4de9897bdb538ff3aab63014d418ba5933344b.
-const expectedRenderedSurfaceSHA = "c64aa3b73ee2cf67d319cba1f97822e3797fe76a49d6b87ef140cc718624f8a7"
+// Previous aggregate: c64aa3b73ee2cf67d319cba1f97822e3797fe76a49d6b87ef140cc718624f8a7.
+const expectedRenderedSurfaceSHA = "c2bec52be493059940e48c3d80471e453e8506d5af3e57e4486c120ce836bfe8"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3268,7 +3277,7 @@ const expectedRenderedSurfaceSHA = "c64aa3b73ee2cf67d319cba1f97822e3797fe76a49d6
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "5ab157d087c2bd9431e35fa16e4de9897bdb538ff3aab63014d418ba5933344b"
+const previousRenderedSurfaceSHA = "c64aa3b73ee2cf67d319cba1f97822e3797fe76a49d6b87ef140cc718624f8a7"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
