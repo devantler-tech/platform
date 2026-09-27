@@ -2,7 +2,8 @@
 # filters exclude, and one such ConfigMap per namespace. The filters exclude these
 # namespaces from admission and, with skipResourceFilters: false, from background
 # scans, so no report may ever be written for any of them. The proof checks that
-# before docs/policy-reports.md relies on it.
+# before docs/policy-reports.md relies on it. unevaluated-control is the positive
+# control: an ordinary namespace where the same policy must produce a report.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -16,7 +17,7 @@ spec:
         any:
           - resources:
               kinds: [ConfigMap]
-              namespaces: [kube-system, kube-public, kube-node-lease, kyverno]
+              namespaces: [kube-system, kube-public, kube-node-lease, kyverno, unevaluated-control]
       validate:
         message: owner label required
         pattern:
@@ -50,4 +51,16 @@ kind: ConfigMap
 metadata:
   name: unevaluated-probe
   namespace: kyverno
+data: {}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: unevaluated-control
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unevaluated-probe
+  namespace: unevaluated-control
 data: {}

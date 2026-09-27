@@ -196,6 +196,15 @@ for probe_ns in "${unevaluated_namespaces[@]}"; do
   [[ -n "$uid" ]] || fail "could not read the $probe_ns probe's uid"
   probe_uids+=("$uid")
 done
+# Positive control: the same policy must report on the same ConfigMap in an ordinary
+# namespace, or four absent reports would prove only that the policy never ran.
+control_reported() {
+  local uid
+  uid="$(kubectl -n unevaluated-control get configmap unevaluated-probe -o jsonpath='{.metadata.uid}')" || return 1
+  kubectl -n unevaluated-control get policyreport "$uid" -o json 2>/dev/null |
+    jq -e 'any(.results[]?; .policy == "require-owner-label-unevaluated" and .rule == "owner-label")' >/dev/null
+}
+wait_for "the unevaluated-namespace policy to report on its control" 600 control_reported
 # Two completed scans after the probes exist, proven by prune-test results advancing.
 for cycle in 1 2; do
   owner_before="$(result_timestamp excluded-later require-owner-label owner-label)"
