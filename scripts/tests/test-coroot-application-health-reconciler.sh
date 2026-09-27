@@ -39,6 +39,15 @@ fi
 # shellcheck disable=SC2016
 [[ "${script_body}" != *'${'* ]] ||
   fail 'the reconciler contains a Flux-consumable shell expansion'
+# Every Coroot API caller must use an absolute Service name. Otherwise the
+# pod resolver applies ndots:5 search suffixes before the intended DNS name.
+for coroot_job in application-health-reconciler alert-autosuppressor \
+  custom-cloud-pricing risk-acceptance-reconciler; do
+  coroot_script="$(yq eval '.spec.jobTemplate.spec.template.spec.containers[0].command[2]' \
+    "${root_dir}/k8s/providers/hetzner/infrastructure/coroot/cron-job-${coroot_job}.yaml")"
+  [[ "${coroot_script}" == *'http://coroot-coroot.observability.svc.cluster.local.:8080'* ]] ||
+    fail "${coroot_job} must use an absolute Coroot Service name"
+done
 # The embedded script must contain this literal variable reference.
 # shellcheck disable=SC2016
 [[ "${script_body}" == *'reconcile_threshold "$KUBELET" NetworkTCPConnections 0 inherit kubelet-probe-source-fixed'* ]] ||
@@ -242,6 +251,13 @@ for arg in "$@"; do
   case "${arg}" in http://*) url="${arg}" ;; esac
   prev="${arg}"
 done
+# A terminal DNS root dot keeps the in-cluster Service name absolute even
+# when Kubernetes configures ndots:5 and namespace search suffixes. Fail the
+# behavioral fixture if any request reintroduces search-expanded lookups.
+case "${url}" in
+  http://coroot-coroot.observability.svc.cluster.local.:8080/*) ;;
+  *) printf 'non-absolute Coroot service URL: %s\n' "${url}" >&2; exit 64 ;;
+esac
 
 release_query_slot() {
   [ "$(cat "${dir}/concurrency-limit")" -gt 0 ] || return 0

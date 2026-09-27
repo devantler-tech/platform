@@ -5,7 +5,7 @@ root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 config="$root_dir/talos/cluster/enable-apparmor.yaml"
 cluster_config="$root_dir/ksail.prod.yaml"
 ci_workflow="$root_dir/.github/workflows/ci.yaml"
-expected_talos_version='v1.13.9'
+expected_talos_version='v1.13.10'
 expected='lsm=yama,selinux,loadpin,safesetid,integrity,bpf,apparmor,lockdown,landlock'
 
 if ! grep -Fq "'scripts/tests/test-talos-apparmor-lsm.sh'" "$ci_workflow" ||

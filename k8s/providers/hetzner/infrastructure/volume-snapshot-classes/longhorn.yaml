@@ -1,8 +1,9 @@
 # Longhorn CSI VolumeSnapshotClass for Velero CSI backups with data movement.
 #
 # Only Longhorn volumes use this. Hetzner block storage (hcloud-csi) advertises
-# no CSI snapshot capability, so openbao (deliberately on hcloud) is backed up
-# by Velero file-system backup instead — see the openbao hetzner patch.
+# no CSI snapshot capability. The only hcloud PVC holds OpenBao raft snapshots
+# that its own CronJob mirrors directly to R2, so Velero skips that volume data
+# instead — see the volume policy and OpenBao backup manifests.
 #
 # LAYER PLACEMENT — this lives in the `infrastructure` Flux Kustomization, NOT
 # next to the snapshot-controller HelmRelease in `infrastructure/controllers/`.

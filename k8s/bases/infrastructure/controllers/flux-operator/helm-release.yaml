@@ -61,16 +61,19 @@ spec:
   # flux-operator and tofu-controller. tofu-controller is retired and pending removal
   # in #3480, so flux-operator is the namespace's last workload needing this.
   #
-  # Both fields are inert here, which is the point rather than a caveat — this changes
-  # a declared posture without changing how the operator runs:
-  # - fsGroupChangePolicy governs the kubelet's volume ownership pass, which runs only
-  #   when a pod sets fsGroup. This pod sets none, and its only volumes are an emptyDir
-  #   and the projected service-account token — no PVC, no hostPath.
+  # These fields change a declared posture without changing how the operator runs:
+  # - fsGroup is 65532, the group the operator already runs as (see above), so it
+  #   adds no group the process lacks. C-0211 also requires a pod-level fsGroup
+  #   (#3522). The pod's only volumes are an emptyDir and the projected
+  #   service-account token — no PVC, no hostPath — so the ownership pass it enables
+  #   touches nothing but those.
+  # - fsGroupChangePolicy is declared because C-0211 requires it. It has no effect on
+  #   the emptyDir or projected volumes this pod uses.
   # - Empty seLinuxOptions satisfies C-0211 while leaving SELinux type and MCS
   #   categories to the runtime. It is a no-op on this AppArmor cluster.
   #
-  # Neither carries the runAsGroup-without-runAsUser coupling documented above, so
-  # neither can stop the sandbox building.
+  # None carries the runAsGroup-without-runAsUser coupling documented above, so none
+  # can stop the sandbox building.
   #
   # 🔴 The two fields need DIFFERENT patch kinds, because the chart renders their
   # parents differently. Verified by rendering flux-operator 0.50.0 with this
@@ -120,4 +123,5 @@ spec:
                 template:
                   spec:
                     securityContext:
+                      fsGroup: 65532
                       fsGroupChangePolicy: OnRootMismatch

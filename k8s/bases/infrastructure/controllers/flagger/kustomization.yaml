@@ -8,3 +8,4 @@ resources:
   - helm-release-loadtester.yaml
   - cilium-network-policy.yaml
   - pod-disruption-budget.yaml
+  - pod-disruption-budget-loadtester.yaml

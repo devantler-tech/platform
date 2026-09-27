@@ -1601,6 +1601,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
         validate-floating-image-tags,
         validate-eks-authorization,
         validate-publication-contract,
+        validate-matcher-efficacy,
         validate-talos,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
@@ -1610,11 +1611,12 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
         changes,
         validate-floating-image-tags,
         validate-eks-authorization,
+        validate-matcher-efficacy,
         validate-talos,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
       ]`
-		healNeeds = "    needs: [changes, deploy-prod, validate-publication-contract]"
+		healNeeds = "    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]"
 	)
 
 	for name, arm := range map[string]struct {
@@ -1692,7 +1694,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		},
 		"heal-prod-on-failure no longer requires the gate job": {
 			func(s string) string {
-				return strings.Replace(s, healNeeds, "    needs: [changes, deploy-prod]", 1)
+				return strings.Replace(s, healNeeds, "    needs: [changes, deploy-prod, merge-group-queue-membership]", 1)
 			},
 			"does not require validate-publication-contract",
 		},

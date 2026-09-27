@@ -37,5 +37,5 @@ resources:
 # from the registry on every refresh.
 images:
   - name: ghcr.io/alex1989hu/kubelet-serving-cert-approver
-    newTag: 0.12.0
-    digest: sha256:534e40a0050c34bda2a7bae53aa9c11133704f23dc83fee14f3b45b0f1eabe45
+    newTag: 0.12.1
+    digest: sha256:445a8e5584f659701092d2ec8b625da8929dc75fe4d45274333bd9fe6db8fb75

@@ -33,12 +33,12 @@ trap 'rm -rf "$scratch"' EXIT
 failures=0
 assertions=0
 
-run_guard() { # <root>
+run_guard() { # <root> [<trivyignore>]
   # Capture the status with `if` rather than toggling `set -e`: this file runs under
   # `set -uo pipefail` with NO errexit, so `set -e` here would ENABLE a mode the script
   # never had and let a later setup failure kill the run instead of being reported
   # through the assertion summary.
-  if GUARD_OUT="$("$guard" "$1" 2>&1)"; then
+  if GUARD_OUT="$("$guard" "$@" 2>&1)"; then
     GUARD_RC=0
   else
     GUARD_RC=$?
@@ -119,10 +119,10 @@ spec:
 YAML
 }
 
-expect() { # <case> <expected-rc> <root> [<needle>]
+expect() { # <case> <expected-rc> <root> [<needle>] [<trivyignore>]
   local case_name=$1 want=$2 root=$3 needle=${4-}
   assertions=$((assertions + 1))
-  run_guard "$root"
+  run_guard "$root" ${5+"$5"}
   if [ "$GUARD_RC" -ne "$want" ]; then
     printf 'FAIL %s: expected exit %s, got %s\n%s\n' "$case_name" "$want" "$GUARD_RC" "$GUARD_OUT" >&2
     failures=$((failures + 1))
@@ -502,5 +502,110 @@ spec:
         cpu: "2"
 YAML
 expect 'other-providers-bootstrap-limitrange-does-not-shield' 1 "$xprov" 'lonely-dns'
+
+# --- 21-28. THE SAME PREMISE AS A TRIVY DISPOSITION (#3272) -------------------
+# A `.trivyignore.yaml` entry opts in with the `[limitrange-premise]` statement marker. Each
+# fixture here is a repository root holding k8s/ and the ignore file beside it, and its
+# workload carries NO checkov annotation, so only the trivy entry can make the guard check it.
+make_trivy_case() { # <case-root> <provider> <workload-basename> <namespace> <extra-resource> <entries-yaml>
+  local case_root=$1 prov=$2 base=$3 ns=$4 extra=$5 entries=$6 root="$1/k8s"
+  make_layer_roots "$root"
+  mkdir -p "$root/providers/$prov/infrastructure"
+  {
+    printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n'
+    printf '  - %s.yaml\n' "$base"
+    [ -n "$extra" ] && printf '  - %s\n' "$extra"
+  } >"$root/providers/$prov/infrastructure/kustomization.yaml"
+  cat >"$root/providers/$prov/infrastructure/$base.yaml" <<YAML
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $base
+  namespace: $ns
+spec:
+  replicas: 1
+YAML
+  printf 'misconfigurations:\n%s\n' "$entries" >"$case_root/.trivyignore.yaml"
+}
+
+premised_entry() { # <paths-yaml-lines>
+  printf '  - id: KSV-0011\n'
+  [ -n "$1" ] && printf '    paths:\n%s\n' "$1"
+  printf '    statement: >-\n      [limitrange-premise] The kube-system default-limitrange supplies the CPU limit at admission.\n'
+}
+
+# 21. THE DEFECT: a premised trivy entry in an overlay that ships no LimitRange. Before the
+# guard read .trivyignore.yaml this tree passed with nothing checked.
+t_missing="$scratch/t-missing"
+make_trivy_case "$t_missing" trivymiss trivy-unshielded kube-system "" \
+  "$(premised_entry '      - k8s/providers/trivymiss/infrastructure/trivy-unshielded.yaml')"
+make_limitrange_base "$t_missing/k8s" kube-system # present in the tree, but NOT referenced
+expect 'trivy-premise-without-limitrange-fails' 1 "$t_missing/k8s" '(trivy KSV-0011)'
+
+# 22. THE FIX: the overlay references the LimitRange base.
+t_shipped="$scratch/t-shipped"
+make_trivy_case "$t_shipped" trivyship trivy-shielded kube-system "../../../bases/limit-ranges/" \
+  "$(premised_entry '      - k8s/providers/trivyship/infrastructure/trivy-shielded.yaml')"
+make_limitrange_base "$t_shipped/k8s" kube-system
+expect 'trivy-premise-with-limitrange-passes' 0 "$t_shipped/k8s" 'trivy-shielded.yaml — provider trivyship'
+
+# 23. NEGATIVE CONTROL: KSV-0039's statement discusses LimitRanges without resting on one,
+# and its paths are unscoped. Without the marker it is not premise-bearing, so the tree is
+# clean with nothing checked rather than demanding a LimitRange for every file.
+t_ksv0039="$scratch/t-ksv0039"
+make_trivy_case "$t_ksv0039" trivyprose trivy-prose kube-system "" "$(
+  printf '  - id: KSV-0039\n    statement: >-\n'
+  printf '      LimitRange is namespace-scoped but this check evaluates each file independently, including\n'
+  printf '      resources that cannot carry a LimitRange and the LimitRange manifests themselves.\n'
+)"
+expect 'trivy-ksv0039-prose-is-not-premise-bearing' 0 "$t_ksv0039/k8s" 'no suppression'
+
+# The marker only counts where it OPENS the statement: prose that names it, the way a
+# statement explaining the marker does, must not opt the entry in.
+t_named="$scratch/t-named"
+make_trivy_case "$t_named" trivynamed trivy-named kube-system "" "$(
+  printf '  - id: KSV-0011\n    paths:\n      - k8s/providers/trivynamed/infrastructure/trivy-named.yaml\n'
+  printf '    statement: >-\n      Accepted upstream default. The [limitrange-premise] marker is not used here.\n'
+)"
+expect 'trivy-marker-named-in-prose-is-not-premise-bearing' 0 "$t_named/k8s" 'no suppression'
+
+# 24. A GLOB is expanded the way trivy scopes the entry, not read as a literal path.
+t_glob="$scratch/t-glob"
+make_trivy_case "$t_glob" trivyglob trivy-globbed kube-system "" \
+  "$(premised_entry '      - k8s/providers/*/infrastructure/**/*.yaml')"
+expect 'trivy-glob-paths-are-expanded' 1 "$t_glob/k8s" 'trivy-globbed.yaml (trivy KSV-0011)'
+
+# The same glob resolves where `shopt -s globstar` fails, as it does on bash 3.2 (still the
+# macOS system bash). The exported function stands in for that bash in the guard's process.
+# shellcheck disable=SC2329 # invoked by the guard's process, which imports it via export -f
+shopt() {
+  case " $* " in *' globstar '*) return 1 ;; esac
+  builtin shopt "$@"
+}
+export -f shopt
+expect 'trivy-glob-paths-are-expanded-without-globstar' 1 "$t_glob/k8s" 'trivy-globbed.yaml (trivy KSV-0011)'
+unset -f shopt
+
+# 25. COULD-NOT-CHECK: a premised entry that names no paths covers every file, and a
+# premise holds per namespace.
+t_nopaths="$scratch/t-nopaths"
+make_trivy_case "$t_nopaths" trivynopaths trivy-everywhere kube-system "" "$(premised_entry '')"
+expect 'trivy-premise-without-paths-is-exit-2' 2 "$t_nopaths/k8s" 'no paths'
+
+# 26. COULD-NOT-CHECK: a path that matches no file leaves the premise unchecked.
+t_nomatch="$scratch/t-nomatch"
+make_trivy_case "$t_nomatch" trivynomatch trivy-present kube-system "" \
+  "$(premised_entry '      - k8s/providers/trivynomatch/infrastructure/renamed.yaml')"
+expect 'trivy-premise-path-matching-nothing-is-exit-2' 2 "$t_nomatch/k8s" 'matches no file'
+
+# 27. COULD-NOT-CHECK: an entry whose paths reach no workload has no namespace to check.
+t_noworkload="$scratch/t-noworkload"
+make_trivy_case "$t_noworkload" trivynowl trivy-unused kube-system "" \
+  "$(premised_entry '      - k8s/providers/trivynowl/infrastructure/kustomization.yaml')"
+expect 'trivy-premise-reaching-no-workload-is-exit-2' 2 "$t_noworkload/k8s" 'matches no workload'
+
+# 28. COULD-NOT-CHECK: an ignore file named explicitly must exist.
+expect 'named-trivyignore-missing-is-exit-2' 2 "$t_shipped/k8s" 'trivyignore not found' "$scratch/no-such.yaml"
+
 printf '\n%d assertion(s), %d failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ] || exit 1

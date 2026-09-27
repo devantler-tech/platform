@@ -66,7 +66,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.184.19"
+        KSAIL_VERSION: "7.186.1"
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-ksail.sh
@@ -440,6 +440,17 @@ runs:
       shell: bash
       run: ./scripts/wait-for-prod-api-stability.sh
 
+    - name: 🧾 Read back the Talos boot image on every node
+      # Kernel arguments are baked into the Image Factory schematic. An
+      # in-place machine-config sync can succeed while old boot images remain
+      # on static nodes, so the release is not healthy until this exact image
+      # and node-health readback passes. The check only reads Kubernetes.
+      if: >-
+        steps.cluster_update.outcome == 'success' &&
+        steps.wait_prod_api_stability.outcome == 'success'
+      shell: bash
+      run: ./scripts/verify-talos-schematic-readback.sh
+
     - name: 📣 Report suppressed machine-config sync
       # The step above is the pipeline's ONLY Talos machine-config sync, and the
       # rollout gate skips it. A skipped step inside a green deploy reads as
@@ -514,3 +525,23 @@ runs:
         ./scripts/refresh-flux-ghcr-auth.sh
         --reuse-runtime-proof
         "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+
+    - name: 🚦 Verify the gateway applies every HTTPRoute
+      # The Cilium operator can run for hours without its Gateway API
+      # controller, which starts only if a CRD check succeeds when a leader
+      # starts (#4198). Flux, the HelmReleases and the pods all stay healthy
+      # while every route change, and every Flagger traffic shift, silently
+      # stops reaching the gateway. The check waits a bounded time for every
+      # route to be applied, rejects routes the gateway refused or that name a
+      # missing Gateway, and fails when a running operator logged the failed
+      # start. It runs last, so an operator restart caused by this deploy's own
+      # Talos update is covered even when no route changed.
+      if: >-
+        !cancelled() &&
+        steps.wait_flux_revision.outcome == 'success' &&
+        (
+          steps.cluster_update.outcome == 'skipped' ||
+          steps.wait_prod_api_stability.outcome == 'success'
+        )
+      shell: bash
+      run: ./scripts/verify-gateway-routes-applied.sh

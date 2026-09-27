@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 # Contract for declarative Coroot risk acceptance. The allowlist is reviewed as
-# GitOps data; the reconciler may dismiss only those exact application/risk-key
-# pairs, reactivate every undeclared dismissal, and correct a declared pair whose
-# reason drifted. Newly discovered active risks remain untouched.
+# GitOps data; the reconciler may dismiss only declared exact pairs or the two
+# anchored generated-name patterns, reactivate every undeclared dismissal,
+# and correct a declared pair whose reason drifted. Other new risks stay active.
 
 set -euo pipefail
 
@@ -39,18 +39,25 @@ acceptances_file="${work_root}/risks.json"
 yq e -r '.data."risks.json"' "${acceptances_manifest}" >"${acceptances_file}"
 
 jq -e '
-  type == "array" and length == 37 and
-  all(.[ ];
+  type == "array" and length == 39 and
+  all(.[] | select(has("application"));
     (.application | type == "string") and
     (.application | split(":") | length == 3) and
     .category == "Availability" and
     (.type | IN("single-instance-app", "unreplicated-database")) and
     (.reason | startswith("platform#3812: "))
   ) and
-  ([.[] | [.application, .category, .type] | @tsv] | length) ==
-    ([.[] | [.application, .category, .type] | @tsv] | unique | length)
+  ([.[] | select(has("application_pattern"))] | length == 2) and
+  any(.[]; .application_pattern? == "^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}\\z" and
+    .category == "Availability" and .type == "single-instance-app" and
+    (.reason | startswith("platform#4117: "))) and
+  any(.[]; .application_pattern? == "^crossplane-system:Deployment:provider-upjet-github-[0-9a-f]{12}\\z" and
+    .category == "Availability" and .type == "single-instance-app" and
+    (.reason | startswith("platform#4145: "))) and
+  ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | length) ==
+    ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | unique | length)
 ' "${acceptances_file}" >/dev/null ||
-  fail 'the availability acceptance allowlist must contain 37 unique, reasoned entries'
+  fail 'the availability acceptance allowlist must contain exact entries and two narrow generated-name patterns'
 
 expected_applications=(
   'actual-budget:Deployment:actual-budget-actualbudget'
@@ -82,7 +89,7 @@ expected_applications=(
   'kubescape:Deployment:operator'
   'cnpg-system:Deployment:plugin-barman-cloud'
   'crossplane-system:Deployment:provider-aws-iam-87e81d392ac1'
-  'crossplane-system:Deployment:provider-upjet-github-2516bc50dd55'
+  'crossplane-system:Deployment:provider-upjet-github-2801aa72907d'
   'crossplane-system:Deployment:provider-upjet-unifi-5523eabd691d'
   'flux-system:Deployment:source-controller'
   'kubescape:Deployment:storage'
@@ -123,7 +130,7 @@ fi
 
 for prohibited in alertmanager csi-snapshotter origin-ca-issuer; do
   if jq -e --arg prohibited "${prohibited}" \
-    'any(.[]; .application | contains($prohibited))' "${acceptances_file}" >/dev/null; then
+    'any(.[]; (.application // .application_pattern) | contains($prohibited))' "${acceptances_file}" >/dev/null; then
     fail "${prohibited} must be fixed or held, not dismissed"
   fi
 done
@@ -145,6 +152,14 @@ if [ -z "${script_body}" ] || [ "${script_body}" = 'null' ]; then
 fi
 printf '%s\n' "${script_body}" | shellcheck -s sh -
 
+# A rotated GitHub provider revision that no exact acceptance pins, so only the revision
+# pattern can accept it. A pinned one would be answered by its exact entry first.
+readonly rotated_github_revision='7c1e04b9d3a6'
+if jq -e --arg app "crossplane-system:Deployment:provider-upjet-github-${rotated_github_revision}" \
+  'any(.[]; .application == $app and .category == "Availability" and .type == "single-instance-app")' "${acceptances_file}" >/dev/null; then
+  fail 'the rotated GitHub provider fixture must name a revision no exact acceptance pins'
+fi
+
 setup_scenario() {
   local name="$1" mode="$2" dir
   local backstage_reason
@@ -164,6 +179,28 @@ setup_scenario() {
   elif [ "${mode}" = 'drift' ]; then
     jq -n '{data:{risks:[
       {application_id:"95rsc5yp:actual-budget:Deployment:actual-budget-actualbudget",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:"manual operator decision"}}
+    ]}}' >"${dir}/risks.json"
+  elif [ "${mode}" = 'longhorn' ]; then
+    jq -n '{data:{risks:[
+      {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-9c4995fb1b807430b1d54d466d640e9f",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-9c4995fb1b807430b1d54d466d640e9f\n",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:longhorn-system:Deployment:instance-manager-9c4995fb1b807430b1d54d466d640e9f",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:other:InstanceManager:instance-manager-9c4995fb1b807430b1d54d466d640e9f",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-not-a-hash",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-9c4995fb1b807430b1d54d466d640e9f",key:{category:"Security",type:"single-instance-app"}}
+    ]}}' >"${dir}/risks.json"
+  elif [ "${mode}" = 'github-provider' ]; then
+    jq -n --arg rev "${rotated_github_revision}" '{data:{risks:[
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:other:Deployment:provider-upjet-github-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:StatefulSet:provider-upjet-github-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-not-a-revision",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-unifi-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-\($rev)",key:{category:"Security",type:"single-instance-app"}}
+    ]}}' >"${dir}/risks.json"
+  elif [ "${mode}" = 'retired-pattern' ]; then
+    jq -n '{data:{risks:[
+      {application_id:"95rsc5yp:longhorn-system:InstanceManager:instance-manager-9c4995fb1b807430b1d54d466d640e9f",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:"platform#4117: previously accepted"}}
     ]}}' >"${dir}/risks.json"
   else
     jq -n '{data:{risks:[
@@ -227,6 +264,67 @@ jq -s -e --arg reason "${actual_reason}" '
 ' "${drift_dir}/posts.jsonl" >/dev/null ||
   fail 'a drifted dismissal reason must converge to the declared reason'
 
+longhorn_dir="$(setup_scenario longhorn longhorn)"
+run_scenario "${longhorn_dir}" >/dev/null
+jq -s -e '
+  length == 1 and
+  .[0].payload.action == "dismiss" and
+  .[0].payload.key == {category:"Availability",type:"single-instance-app"} and
+  (.[0].payload.reason | startswith("platform#4117: ")) and
+  (.[0].url | contains("longhorn-system%3AInstanceManager%3Ainstance-manager-9c4995fb1b807430b1d54d466d640e9f"))
+' "${longhorn_dir}/posts.jsonl" >/dev/null ||
+  fail 'a new node-scoped Longhorn instance manager must be accepted without matching lookalikes'
+
+github_provider_dir="$(setup_scenario github-provider github-provider)"
+run_scenario "${github_provider_dir}" >/dev/null
+jq -s -e --arg rev "${rotated_github_revision}" '
+  length == 1 and
+  .[0].payload.action == "dismiss" and
+  .[0].payload.key == {category:"Availability",type:"single-instance-app"} and
+  (.[0].payload.reason | startswith("platform#4145: ")) and
+  (.[0].url | contains("crossplane-system%3ADeployment%3Aprovider-upjet-github-\($rev)"))
+' "${github_provider_dir}/posts.jsonl" >/dev/null ||
+  fail 'a rotated GitHub provider revision must be accepted without matching lookalikes'
+
+broad_file="${work_root}/broad-risks.json"
+jq 'map(if has("application_pattern") then .application_pattern = ".*" else . end)' \
+  "${acceptances_file}" >"${broad_file}"
+broad_dir="$(setup_scenario broad longhorn)"
+if COROOT_BASE_URL='http://coroot.test' ACCEPTANCES_FILE="${broad_file}" \
+  SCENARIO_DIR="${broad_dir}" PATH="${broad_dir}/bin:${PATH}" \
+  /bin/sh -c "${script_body}" >/dev/null 2>&1; then
+  fail 'widening the reviewed Longhorn name pattern must fail closed'
+fi
+[ ! -s "${broad_dir}/posts.jsonl" ] ||
+  fail 'a widened pattern must be rejected before any Coroot mutation'
+
+wrong_type_file="${work_root}/wrong-type-risks.json"
+jq 'map(if has("application_pattern") then .type = "single-node-app" else . end)' \
+  "${acceptances_file}" >"${wrong_type_file}"
+wrong_type_dir="$(setup_scenario wrong-type longhorn)"
+if COROOT_BASE_URL='http://coroot.test' ACCEPTANCES_FILE="${wrong_type_file}" \
+  SCENARIO_DIR="${wrong_type_dir}" PATH="${wrong_type_dir}/bin:${PATH}" \
+  /bin/sh -c "${script_body}" >/dev/null 2>&1; then
+  fail 'changing the reviewed Longhorn risk type must fail closed'
+fi
+[ ! -s "${wrong_type_dir}/posts.jsonl" ] ||
+  fail 'a changed Longhorn risk type must be rejected before any Coroot mutation'
+
+without_pattern_file="${work_root}/without-pattern-risks.json"
+jq 'map(select(has("application_pattern") | not))' \
+  "${acceptances_file}" >"${without_pattern_file}"
+retired_pattern_dir="$(setup_scenario retired-pattern retired-pattern)"
+COROOT_BASE_URL='http://coroot.test' ACCEPTANCES_FILE="${without_pattern_file}" \
+  SCENARIO_DIR="${retired_pattern_dir}" PATH="${retired_pattern_dir}/bin:${PATH}" \
+  /bin/sh -c "${script_body}" >/dev/null ||
+  fail 'removing the reviewed Longhorn pattern must remain reconcilable'
+jq -s -e '
+  length == 1 and
+  .[0].payload.action == "mark_as_active" and
+  (.[0].url | contains("longhorn-system%3AInstanceManager%3Ainstance-manager-9c4995fb1b807430b1d54d466d640e9f"))
+' "${retired_pattern_dir}/posts.jsonl" >/dev/null ||
+  fail 'removing the Longhorn pattern must reactivate its previously dismissed risks'
+
 ambiguous_dir="$(setup_scenario ambiguous ambiguous)"
 if run_scenario "${ambiguous_dir}" >/dev/null 2>&1; then
   fail 'an ambiguous live application identity must fail closed'
@@ -234,4 +332,4 @@ fi
 [ ! -s "${ambiguous_dir}/posts.jsonl" ] ||
   fail 'the ambiguity preflight must complete before any Coroot mutation'
 
-printf 'PASS: Coroot risk dismissals are reconciled exclusively from the reviewed GitOps allowlist\n'
+printf 'PASS: Coroot risk dismissals follow the reviewed exact and narrow generated-name allowlist\n'

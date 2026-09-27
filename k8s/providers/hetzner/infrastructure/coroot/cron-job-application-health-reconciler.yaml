@@ -150,6 +150,9 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532
+            # Pod-level group for the volumes this non-root job mounts; the privilege-
+            # adjacent C-0211 field the namespace exclusion leaves unset (#3522).
+            fsGroup: 65532
             seccompProfile:
               type: RuntimeDefault
             fsGroupChangePolicy: OnRootMismatch
@@ -179,7 +182,8 @@ spec:
                 - -c
                 - |
                   set -eu
-                  BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
+                  # The terminal DNS root dot prevents ndots:5 search expansion.
+                  BASE="http://coroot-coroot.observability.svc.cluster.local.:8080"
                   REQUEST_MAX_TIME=5
 
                   coroot_request() {

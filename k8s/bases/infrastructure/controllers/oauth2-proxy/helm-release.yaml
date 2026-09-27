@@ -129,7 +129,14 @@ spec:
         # (the redirect allowlist) keeps both forms intentionally.
         cookie_domains = ["${domain}"]
         whitelist_domains = ["${domain}", ".${domain}"]
-        redirect_url = "https://oauth2-proxy.${domain}/oauth2/callback"
+        # No redirect_url, deliberately: oauth2-proxy then finishes each login at
+        # /oauth2/callback on the host the user started from (https, because
+        # cookie_secure is set), and returns them to the page they asked for as a
+        # path on that same host. A fixed callback host would bring every login
+        # back through one host, where that path belongs to no app. Dex accepts
+        # these callbacks because every fronted host is registered on its
+        # public-client, which scripts/tests/test-oauth2-proxy-sso-redirects.sh
+        # enforces.
         upstreams = [ "http://auth-proxy.oauth2-proxy.svc.cluster.local:80" ]
         # upstream_timeout — max time to await upstream response headers
         # (default 30s). Kept generous (90s) so a slow first render from one of

@@ -195,8 +195,9 @@ spec:
     # re-verified. The gate is the backstop; this comment is the instruction.
     #
     # The three writable paths (/var/cache/nginx, /var/config/nginx, /var/run) are
-    # chart-provided emptyDirs and world-writable, so no fsGroup is needed, and
-    # nginx listens on 8000, so dropping ALL capabilities costs no bind privilege.
+    # chart-provided emptyDirs and world-writable, so the UI needs no fsGroup to
+    # run; the one set below exists for C-0211 and names its own group. nginx
+    # listens on 8000, so dropping ALL capabilities costs no bind privilege.
     # readOnlyRootFilesystem is deliberately NOT set: the ui entrypoint renders its
     # nginx config at start-up, so that is a separate (C-0017) question with real
     # breakage risk rather than something to bundle into a non-root change.
@@ -214,8 +215,10 @@ spec:
                 template:
                   spec:
                     securityContext:
-                      # Source-owned C-0211 canary: the UI uses only emptyDir
-                      # volumes and sets no fsGroup, so this changes no ownership.
+                      # C-0211 requires a pod-level fsGroup (#3522). 486 is the
+                      # group the UI already runs as, and its only volumes are
+                      # the chart's emptyDirs, so this grants no new access.
+                      fsGroup: 486
                       fsGroupChangePolicy: OnRootMismatch
                       runAsNonRoot: true
                       runAsUser: 499

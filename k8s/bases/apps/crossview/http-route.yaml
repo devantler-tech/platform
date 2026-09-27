@@ -26,11 +26,6 @@ spec:
     - crossview.${domain}
   rules:
     - filters:
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://crossview.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:

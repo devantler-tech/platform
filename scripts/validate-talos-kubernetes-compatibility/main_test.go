@@ -20,7 +20,7 @@ func fixture(t *testing.T, body string) string {
 
 func TestVersionPairings(t *testing.T) {
 	for _, tc := range []struct{ name, talos, kubernetes, diagnostic string }{
-		{"current production", "v1.13.9", "v1.36.4", ""},
+		{"current production", "v1.13.10", "v1.36.4", ""},
 		{"in-range patch bump", "v1.13.9", "v1.36.5", ""},
 		{"rejected PR 3534", "v1.13.9", "v1.37.0", "too new"},
 		{"too old", "v1.13.9", "v1.30.0", "too old"},

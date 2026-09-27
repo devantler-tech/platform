@@ -3,7 +3,8 @@
 //
 // The heal job restores main after a merge-group deploy fails, and it needs
 // five things to be true to work at all: it must fire on a failed or cancelled
-// merge-group deploy that actually touched k8s and on nothing else; it must
+// merge-group deploy that actually touched k8s, or on a successful one whose
+// PR had already left the queue (#3091), and on nothing else; it must
 // hold the shared prod-deploy lock; that lock must not be preemptible, or the
 // heal is cancelled by the next deploy midway through; it must check out
 // main, or it restores the wrong revision; and it must opt in to orphaned-fence
@@ -27,7 +28,9 @@ const expectedHealCondition = "always() && " +
 	"github.event_name == 'merge_group' && " +
 	"needs.changes.outputs.k8s == 'true' && " +
 	"(needs.deploy-prod.result == 'failure' || " +
-	"needs.deploy-prod.result == 'cancelled')"
+	"needs.deploy-prod.result == 'cancelled' || " +
+	"(needs.deploy-prod.result == 'success' && " +
+	"needs.merge-group-queue-membership.outputs.evicted == 'true'))"
 
 // The deploy-prod composite recovers an orphaned GHCR fence only when a call
 // site opts in — the input is default-off. This exact line is what makes that
@@ -53,7 +56,7 @@ func validateWorkflowContract(workflow string) error {
 		// here so the two contracts cannot drift into asserting different
 		// dependency sets over the same job.
 		{
-			line:        "    needs: [changes, deploy-prod, validate-publication-contract]",
+			line:        "    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]",
 			description: "deploy dependencies",
 		},
 		{line: "      group: prod-deploy", description: "shared production lock"},
@@ -72,8 +75,12 @@ func validateWorkflowContract(workflow string) error {
 	}
 	if strings.Join(strings.Fields(condition), " ") != expectedHealCondition {
 		return errors.New(
-			"heal condition must cover exactly failed and cancelled deploys while excluding success",
+			"heal condition must cover exactly failed, cancelled, and evicted-after-success deploys",
 		)
+	}
+
+	if err := validateMembershipJob(workflow); err != nil {
+		return err
 	}
 
 	// Both jobs reach the same composite, and the opt-in is checked against the
@@ -99,6 +106,85 @@ func validateWorkflowContract(workflow string) error {
 		}
 	}
 
+	return nil
+}
+
+// validateMembershipJob pins the job that tells the heal whether a successful
+// deploy's PR already left the merge queue (#3091). If it stops running after a
+// successful deploy, stops reading the merge group's own ref, stops
+// exporting its answer, or is allowed to fail quietly, the heal's evicted
+// branch reads an empty output and silently never fires — the same unmerged
+// artifact left in prod that the heal exists to remove.
+func validateMembershipJob(workflow string) error {
+	job, ok := extractJob(workflow, "merge-group-queue-membership")
+	if !ok {
+		return errors.New("missing merge-group-queue-membership job")
+	}
+	jobRequirements := []struct {
+		line        string
+		description string
+	}{
+		{
+			line:        "    needs: [changes, deploy-prod]",
+			description: "deploy dependency",
+		},
+		{
+			line: "    if: github.event_name == 'merge_group' && " +
+				"needs.changes.outputs.k8s == 'true' && needs.deploy-prod.result == 'success'",
+			description: "successful-deploy condition",
+		},
+		{line: "      pull-requests: read # read the PR's merge-queue state", description: "pull-request read permission"},
+		{line: "      evicted: ${{ steps.membership.outputs.evicted }}", description: "evicted output"},
+	}
+	for _, requirement := range jobRequirements {
+		if !containsExactLine(job, requirement.line) {
+			return fmt.Errorf("queue-membership job is missing %s", requirement.description)
+		}
+	}
+
+	// A failed read must fail the job. continue-on-error at either scope lets it
+	// succeed with no output, which the heal reads as "not evicted".
+	for _, line := range strings.Split(job, "\n") {
+		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), "continue-on-error:") {
+			return errors.New("queue-membership job must not suppress a failed check with continue-on-error")
+		}
+	}
+
+	// The output names the step by id, so the id, its inputs and the command
+	// must belong to ONE step; lines matched anywhere in the job would still
+	// pass after the id moved onto an unrelated step.
+	step, ok := extractStep(job, func(line string) bool {
+		return strings.TrimPrefix(strings.TrimSpace(line), "- ") == "id: membership"
+	})
+	if !ok {
+		return errors.New("queue-membership job is missing membership step id")
+	}
+	// A skipped step succeeds with no output, which the heal also reads as
+	// "not evicted", so the step runs whenever its job does.
+	for _, line := range strings.Split(step, "\n") {
+		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), "if:") {
+			return errors.New("membership step must not carry a condition that can skip it")
+		}
+	}
+	stepRequirements := []struct {
+		line        string
+		description string
+	}{
+		{
+			line:        "          EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
+			description: "merge-group head ref input",
+		},
+		{
+			line:        "          EVICTED_GROUP_CREATED_AT: ${{ github.event.merge_group.head_commit.timestamp }}",
+			description: "merge-group creation time input",
+		},
+		{line: "        run: scripts/merge-group-evicted.sh", description: "eviction check"},
+	}
+	for _, requirement := range stepRequirements {
+		if !containsExactLine(step, requirement.line) {
+			return fmt.Errorf("membership step is missing %s", requirement.description)
+		}
+	}
 	return nil
 }
 
@@ -135,12 +221,20 @@ func extractJob(workflow string, jobKey string) (string, bool) {
 // against the whole job. It walks back from the `uses:` line to the list-item
 // start, because a step may declare `with:` before `uses:`.
 func extractDeployStep(job string) (string, bool) {
+	// A step may write `- uses: …` on the list-item line itself or put `uses:`
+	// on its own line under `- name:`; both spellings are the same step.
+	return extractStep(job, func(line string) bool {
+		return strings.TrimPrefix(strings.TrimSpace(line), "- ") == "uses: "+deployCompositePath
+	})
+}
+
+// extractStep returns the step containing the first line that matches, from
+// its list-item start to the next sibling step.
+func extractStep(job string, matches func(string) bool) (string, bool) {
 	lines := strings.Split(job, "\n")
 	target := -1
 	for i, line := range lines {
-		// A step may write `- uses: …` on the list-item line itself or put `uses:`
-		// on its own line under `- name:`; both spellings are the same step.
-		if strings.TrimPrefix(strings.TrimSpace(line), "- ") == "uses: "+deployCompositePath {
+		if matches(line) {
 			target = i
 			break
 		}

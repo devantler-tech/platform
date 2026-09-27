@@ -263,11 +263,43 @@ func TestReadsRunScalarStructurally(t *testing.T) {
 	}
 }
 
-// Unparseable YAML must fail closed, never be treated as "no findings".
+// Unparseable YAML must fail closed, never be treated as "no findings", and say
+// that it could not be parsed.
 func TestFailsClosedOnUnparseableYAML(t *testing.T) {
 	path := writeTemp(t, "jobs: [unclosed\n")
-	if _, err := frameworkSet(path); err == nil {
+	_, err := frameworkSet(path)
+	if err == nil {
 		t.Fatal("expected FAIL CLOSED on unparseable YAML")
+	}
+	if !strings.Contains(err.Error(), "could not be parsed as YAML") {
+		t.Errorf("a parse failure must report itself as one; got %v", err)
+	}
+}
+
+// A refusal the guard reaches AFTER reading the workflow is not a parse failure.
+// Calling it one sends the reader looking for a syntax error that does not exist,
+// and buries the fix the refusal names (#3339).
+func TestRefusalIsNotReportedAsAParseFailure(t *testing.T) {
+	for name, workflow := range map[string]string{
+		"conditional step": "jobs:\n  validate:\n    steps:\n" +
+			"      - if: ${{ false }}\n        run: " + goodScan + "\n",
+		"constant-false job": "jobs:\n  validate:\n    if: ${{ false }}\n    steps:\n" +
+			"      - run: " + goodScan + "\n",
+		"non-executing shell": "jobs:\n  validate:\n    steps:\n" +
+			"      - run: " + goodScan + "\n        shell: cat {0}\n",
+	} {
+		path := writeTemp(t, workflow)
+		_, err := frameworkSet(path)
+		if err == nil {
+			t.Errorf("%s: expected a refusal", name)
+			continue
+		}
+		if strings.Contains(err.Error(), "could not be parsed") {
+			t.Errorf("%s: refusal reported as a parse failure: %v", name, err)
+		}
+		if !strings.HasPrefix(err.Error(), path+": ") {
+			t.Errorf("%s: refusal must name the workflow it refused; got %v", name, err)
+		}
 	}
 }
 

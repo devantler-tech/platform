@@ -38,6 +38,16 @@ jobs:
         run: |
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
+          shellcheck scripts/merge-group-evicted.sh scripts/tests/test-merge-group-evicted.sh
+          bash scripts/tests/test-merge-group-evicted.sh
+
+      # A merge-group validator that ci-required-checks enforces but deploy-prod does not
+      # need runs in parallel with the deploy, so prod can receive a revision it rejects (#4148).
+      - name: 🚦 Validate the deploy waits for every merge-group validator
+        run: |
+          shellcheck scripts/guard-deploy-waits-for-merge-group-validators.sh scripts/tests/test-guard-deploy-waits-for-merge-group-validators.sh
+          bash scripts/guard-deploy-waits-for-merge-group-validators.sh .github/workflows/ci.yaml
+          bash scripts/tests/test-guard-deploy-waits-for-merge-group-validators.sh
 
       # Reports whether prod's published artifact is on main, from its signed
       # provenance (#3846). Not wired into any deploy yet; its tests also read
@@ -171,6 +181,9 @@ jobs:
           shellcheck scripts/check-first-party-package-signatures.sh
           shellcheck scripts/tests/test-check-first-party-package-signatures.sh
           bash scripts/tests/test-check-first-party-package-signatures.sh
+          shellcheck scripts/check-upbound-package-signatures.sh
+          shellcheck scripts/tests/test-check-upbound-package-signatures.sh
+          bash scripts/tests/test-check-upbound-package-signatures.sh
 
       - name: 🔐 Validate the scoped package-access experiment
         # Always run, including workflow-only changes. The real registry proof
@@ -338,6 +351,7 @@ jobs:
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
+              - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
               # The boundary test asserts over these two guides, so a docs-only
               # change to either must trigger it or those assertions can drift.
@@ -345,6 +359,7 @@ jobs:
               - 'docs/talos-access.md'
               - 'scripts/tests/test-actual-budget-auth-route.sh'
               - 'scripts/tests/test-umami-sso-dashboard-route.sh'
+              - 'scripts/tests/test-oauth2-proxy-sso-redirects.sh'
               - 'scripts/tests/test-umami-tracking-probe.sh'
               - 'scripts/tests/fixtures/umami-curl-stub.sh'
               - 'scripts/verify-umami-tracking.sh'
@@ -359,6 +374,11 @@ jobs:
               - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/validate-kyverno-fixture-evaluation.sh'
+              - 'scripts/tests/test-validate-kyverno-fixture-evaluation.sh'
+              # Every kyverno fixture, so a change to one alone still runs kyverno test
+              # and the fixture guard.
+              - 'tests/**'
               - 'scripts/tests/test-restrict-tenant-network-policies.sh'
               - 'scripts/tests/test-add-baseline-context.sh'
               - 'scripts/tests/test-longhorn-ui-baseline-context.sh'
@@ -539,6 +559,10 @@ jobs:
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'scripts/tests/test-cilium-metadata-egress-policy.sh'
+              # Both halves, so editing the guard alone — or its test alone —
+              # still runs the check that covers it.
+              - 'scripts/guard-cilium-clusterwide-default-deny.sh'
+              - 'scripts/tests/test-guard-cilium-clusterwide-default-deny.sh'
               - 'scripts/tests/cnpg-network-policy/**'
               - 'scripts/tests/test-cilium-mutual-auth-policy.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy-regressions.sh'
@@ -677,6 +701,11 @@ jobs:
               # covered by 'k8s/**'.
               - 'scripts/guard-baseline-context-optin-scan-scope.sh'
               - 'scripts/tests/test-guard-baseline-context-optin-scan-scope.sh'
+              # Both halves and the reviewed list, for the same reasons. The guard also
+              # reads the kubescape HelmRelease, covered by 'k8s/**'.
+              - 'scripts/guard-kubescape-scan-scope.sh'
+              - 'scripts/tests/test-guard-kubescape-scan-scope.sh'
+              - 'scripts/kubescape-unscanned-namespaces.tsv'
               # Both halves, for the same reason as the guards above. The guard also
               # reads the exception manifest itself, covered by 'k8s/**'.
               - 'scripts/guard-pod-security-exception-documented.sh'
@@ -684,6 +713,10 @@ jobs:
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-crossplane-provider-name-parity.sh'
               - 'scripts/tests/test-guard-crossplane-provider-name-parity.sh'
+              - 'scripts/tests/test-crossplane-aws-family-version-parity.sh'
+              # Both halves, for the same reason as the guards above.
+              - 'scripts/guard-unverified-provider-digest-pin.sh'
+              - 'scripts/tests/test-guard-unverified-provider-digest-pin.sh'
               # Both halves, for the same reason as the guards above. This guard
               # also reads scripts/refresh-flux-ghcr-auth.sh, already selected
               # below, and k8s/bases/apps/kustomization.yaml, covered by 'k8s/**'.
@@ -720,6 +753,8 @@ jobs:
               - 'scripts/tests/test-use-prod-stable-api-endpoint.sh'
               - 'scripts/tests/test-refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/tests/refresh-flux-ghcr-auth/**'
+              - 'scripts/verify-gateway-routes-applied.sh'
+              - 'scripts/tests/test-verify-gateway-routes-applied.sh'
               - 'docs/dr/runbook.md'
               - '.github/actions/deploy-prod/**'
               - '.github/workflows/dr-rebuild.yaml'
@@ -728,11 +763,14 @@ jobs:
               - 'talos/**'
               - 'talos-local/**'
               - 'scripts/register-talos-factory-schematic.sh'
+              - 'scripts/verify-talos-schematic-readback.sh'
               - 'scripts/tests/test-talos-factory-schematic-registration.sh'
+              - 'scripts/tests/test-talos-schematic-readback.sh'
               - 'scripts/tests/test-talos-apparmor-lsm.sh'
               - 'ksail.prod.yaml'
               - '.github/scripts/setup-talosctl.sh'
               - 'scripts/validate-talos-kubernetes-compatibility/**'
+              - '.github/actions/deploy-prod/**'
               - 'go.mod'
               - 'go.sum'
               - '.github/workflows/ci.yaml'
@@ -914,6 +952,14 @@ jobs:
           printf '%s' "$REGISTRY_TOKEN" | cosign login ghcr.io -u "$REGISTRY_USER" --password-stdin
           bash scripts/check-first-party-package-signatures.sh
 
+      - name: 🔐 Verify proposed Upbound Crossplane packages
+        # The Upbound AWS providers run with the platform's AWS CI identity.
+        # Each proposed package must carry Upbound's own build signature, and a
+        # wrong identity must be refused on every run (#4189). Their registry
+        # is public, so this needs no credential.
+        timeout-minutes: 10
+        run: bash scripts/check-upbound-package-signatures.sh
+
   validate-eks-authorization:
     name: 🔐 Validate Production Authorization
     needs: [changes]
@@ -999,7 +1045,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.184.19"
+          KSAIL_VERSION: "7.186.1"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1121,6 +1167,16 @@ jobs:
           bash scripts/tests/test-wait-for-prod-api-stability.sh
           bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           go test -timeout=20m ./scripts/tests/refresh-flux-ghcr-auth
+
+      - name: 🚦 Validate the gateway route-application check
+        # Local test with a fake kubectl: no cluster access. The deploy runs
+        # this check last, so a gateway that stopped applying routes fails the
+        # deploy instead of going unnoticed (#4198).
+        run: |
+          shellcheck \
+            scripts/verify-gateway-routes-applied.sh \
+            scripts/tests/test-verify-gateway-routes-applied.sh
+          bash scripts/tests/test-verify-gateway-routes-applied.sh
 
       - name: 🧩 Validate embedded JSON blobs
         # ConfigMaps that embed whole JSON documents as block scalars (e.g. the
@@ -1323,8 +1379,16 @@ jobs:
         # executed them, so tests/validate-replica-floor had never actually run
         # in CI — a policy regression could ship green. No cluster or secrets
         # required; the CLI evaluates the committed ClusterPolicy files offline.
+        # kyverno test counts a row whose rule never evaluated the resource
+        # (REASON=Excluded) as passing and silently drops a declared resource
+        # it never loaded, so the fixture guard fails a pass/fail row it never
+        # evaluated, a rule name no loaded policy defines, and a declared
+        # resource with no row.
         run: |
           kyverno test ./tests
+          shellcheck scripts/validate-kyverno-fixture-evaluation.sh scripts/tests/test-validate-kyverno-fixture-evaluation.sh
+          bash scripts/tests/test-validate-kyverno-fixture-evaluation.sh
+          bash scripts/validate-kyverno-fixture-evaluation.sh tests
           shellcheck scripts/tests/test-hcloud-volume-priority.sh
           bash scripts/tests/test-hcloud-volume-priority.sh
           shellcheck scripts/tests/test-audit-privileged-rbac.sh
@@ -1345,6 +1409,8 @@ jobs:
           bash scripts/tests/test-actual-budget-auth-route.sh
           shellcheck scripts/tests/test-umami-sso-dashboard-route.sh
           bash scripts/tests/test-umami-sso-dashboard-route.sh
+          shellcheck scripts/tests/test-oauth2-proxy-sso-redirects.sh
+          bash scripts/tests/test-oauth2-proxy-sso-redirects.sh
           shellcheck scripts/tests/test-umami-tracking-probe.sh
           bash scripts/tests/test-umami-tracking-probe.sh
           shellcheck scripts/verify-umami-tracking.sh
@@ -1479,6 +1545,19 @@ jobs:
           shellcheck scripts/tests/test-cilium-metadata-egress-policy.sh
           bash scripts/tests/test-cilium-metadata-egress-policy.sh
 
+      - name: 🔐 Validate no clusterwide Cilium policy silently default-denies
+        if: needs.changes.outputs.k8s == 'true'
+        # Cilium turns on default-deny for every direction a policy has rules in,
+        # deny rules included, so a deny-only clusterwide policy revokes ALL traffic
+        # in that direction — the mechanism behind the 2026-08-27 DNS outage
+        # (#3404, #3407). The per-policy test above checks one document's shape;
+        # this renders every Flux entrypoint and requires each deny-only direction
+        # of every clusterwide policy to state enableDefaultDeny explicitly (#3408).
+        run: |
+          shellcheck scripts/guard-cilium-clusterwide-default-deny.sh scripts/tests/test-guard-cilium-clusterwide-default-deny.sh
+          bash scripts/guard-cilium-clusterwide-default-deny.sh .
+          bash scripts/tests/test-guard-cilium-clusterwide-default-deny.sh
+
       - name: 🐘 Validate Coroot Postgres scrape policy
         if: needs.changes.outputs.k8s == 'true'
         # Schema validation cannot detect a valid selector that matches no pod.
@@ -1515,6 +1594,8 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-availability-remediation.sh
           bash scripts/tests/test-coroot-availability-remediation.sh
+          shellcheck scripts/tests/test-umami-rendered-placement.sh
+          bash scripts/tests/test-umami-rendered-placement.sh
           shellcheck scripts/tests/test-coroot-risk-acceptance-reconciler.sh
           bash scripts/tests/test-coroot-risk-acceptance-reconciler.sh
 
@@ -1816,6 +1897,18 @@ jobs:
           bash scripts/guard-baseline-context-optin-scan-scope.sh
           bash scripts/tests/test-guard-baseline-context-optin-scan-scope.sh
 
+      - name: 🗺️ Validate every unscanned namespace is reviewed
+        if: needs.changes.outputs.k8s == 'true'
+        # A namespace in the operator's excludeNamespaces produces no scan result, and the
+        # posture score cannot tell that apart from a clean namespace. So the exclusions must
+        # match scripts/kubescape-unscanned-namespaces.tsv exactly, each row with a reason,
+        # and a namespace can only leave scan coverage through a reviewed change (#3215).
+        # The base HelmRelease is the only place the field may be set: an overlay patch or a
+        # valuesFrom that sets it would narrow the deployed scope while this read the base.
+        run: |
+          bash scripts/guard-kubescape-scan-scope.sh
+          bash scripts/tests/test-guard-kubescape-scan-scope.sh
+
       - name: 🔎 Validate every suppressed control is documented as failing open
         if: needs.changes.outputs.k8s == 'true'
         # A control added under spec.posture that the file's fail-open warning does
@@ -1850,6 +1943,23 @@ jobs:
         run: |
           bash scripts/guard-crossplane-provider-name-parity.sh k8s
           bash scripts/tests/test-guard-crossplane-provider-name-parity.sh
+
+      - name: 📌 Validate unverified Crossplane providers are digest-pinned
+        if: needs.changes.outputs.k8s == 'true'
+        # Only first-party and Upbound provider packages have a signature check.
+        # Any other publisher's package must be pinned by digest, so the bytes that
+        # were reviewed are the bytes the cluster installs (#4189).
+        run: |
+          bash scripts/guard-unverified-provider-digest-pin.sh k8s
+          bash scripts/tests/test-guard-unverified-provider-digest-pin.sh
+
+      - name: 🧬 Validate the AWS Crossplane family runs one release
+        if: needs.changes.outputs.k8s == 'true'
+        # provider-aws-iam depends on provider-family-aws and must run its release.
+        # Renovate groups their bumps into one PR, but grouping does not force equal
+        # versions, so a split release would otherwise merge as a version skew.
+        run: |
+          bash scripts/tests/test-crossplane-aws-family-version-parity.sh
 
       - name: 🔗 Validate the GHCR fan-out follows the apps-base component gate
         if: needs.changes.outputs.k8s == 'true'
@@ -1942,7 +2052,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.184.19"
+          KSAIL_VERSION: "7.186.1"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2127,27 +2237,46 @@ jobs:
         # an exception). Ratchet the floor up as genuine gaps close; never
         # lower it.
         #
-        # --format sarif -o writes the findings to a file IN ADDITION to a
-        # human-readable posture table, and the upload step below turns those
-        # findings into Code Scanning alerts.
+        # `--format sarif,json` writes two reports from this one gating run
+        # (#3058): kubescape.sarif, which the upload step below turns into Code
+        # Scanning alerts, and kubescape.sarif.json, which carries the scores
+        # the threshold is judged against. With JSON among the formats the log
+        # also prints the `Overall compliance-score` line, which a SARIF-only
+        # run omits, and the report step below adds the per-framework scores
+        # to the log and the job summary. Re-baseline the floor from those
+        # numbers on a CI run. The SARIF findings are the same set a SARIF-only
+        # run produces (compared locally on 2026-09-23, ksail 7.191.0).
         #
-        # 🔴 That table OMITS the `Overall compliance-score` line — measured on
-        # this repo's own CI run 2026-08-10 and reproduced locally: `--format
-        # json` prints it, `--format sarif` does not. So THIS LOG CANNOT TELL
-        # YOU THE SCORE, which is why the re-baselining note above cannot be
-        # followed from the log alone. #3058 tracks making it visible; until it
-        # lands, bisect the score by re-running with a raised
-        # `--compliance-threshold` and reading the exit code.
-        #
-        # The threshold itself is unaffected by the format and still gates:
-        # ablated 2026-08-10 at thresholds 95/99/100 under `--format sarif`,
-        # giving exit 0/1/1 against a combined score of 97. A silent-pass here
-        # would be the worst failure this step could have, so that ablation is
-        # the check to repeat if the flag or format ever changes.
+        # The threshold must still gate after any change to this step: ablated
+        # 2026-08-10 at thresholds 95/99/100, giving exit 0/1/1 against a
+        # combined score of 97, and again 2026-09-23 with both formats (exit 1
+        # at 100 against 98.7). A silent pass here would be the worst failure
+        # this step could have, so repeat that ablation if the flag or format
+        # ever changes.
         run: |
           go test ./scripts/generate-kubescape-exceptions
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
-          ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
+          ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif,json -o "${RUNNER_TEMP}/kubescape.sarif"
+
+      - name: 📊 Report the Kubescape compliance score
+        # Runs whether the gate above passed or failed, so the log and the job
+        # summary always state the scores the gate judged (#3058). A missing or
+        # unreadable report warns rather than failing: the gate already decided.
+        if: "!cancelled()"
+        run: |
+          report="${RUNNER_TEMP}/kubescape.sarif.json"
+          if scores="$(jq -er '
+              "Combined compliance score: \(.summaryDetails.complianceScore * 100 | round / 100) (floor \(.metadata.scanMetadata.complianceThreshold))",
+              (.summaryDetails.frameworks[] | "\(.name): \(.complianceScore * 100 | round / 100)")
+            ' "${report}" 2>/dev/null)"; then
+            printf '%s\n' "${scores}"
+            {
+              echo '### Kubescape compliance'
+              while IFS= read -r line; do printf -- '- %s\n' "${line}"; done <<<"${scores}"
+            } >>"${GITHUB_STEP_SUMMARY}"
+          else
+            echo "::warning::No readable Kubescape JSON report, so the compliance score cannot be shown."
+          fi
 
       - name: 🌉 Validate the Kubescape backlog bridge
         # The bridge derives themed, fingerprint-deduped backlog entries from
@@ -2247,7 +2376,7 @@ jobs:
           !cancelled() &&
           steps.normalize-sarif.outputs.sarif == 'ready' &&
           github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: ${{ runner.temp }}/kubescape.sarif
           # Distinguishes these alerts from the CodeQL and zizmor analyses that
@@ -2315,7 +2444,7 @@ jobs:
           persist-credentials: false
 
       - name: 🏷️ Validate naming conventions
-        uses: devantler-tech/actions/validate-naming@be13607c908d9df5e392a8acd5d13fcf358202df # v13.7.0
+        uses: devantler-tech/actions/validate-naming@ee4948f9372d00126a24ce30db288294b86568d1 # v13.10.0
         with:
           enabled: "true"
 
@@ -2367,6 +2496,11 @@ jobs:
         run: |
           shellcheck scripts/register-talos-factory-schematic.sh scripts/tests/test-talos-factory-schematic-registration.sh
           bash scripts/tests/test-talos-factory-schematic-registration.sh
+
+      - name: 🧾 Validate Talos boot-image readback
+        run: |
+          shellcheck scripts/verify-talos-schematic-readback.sh scripts/tests/test-talos-schematic-readback.sh
+          bash scripts/tests/test-talos-schematic-readback.sh
 
       - name: ✅ Render + validate patched machine configs
         run: |
@@ -2534,6 +2668,10 @@ jobs:
           bash scripts/guard-floating-image-tags.sh k8s
           bash scripts/tests/test-guard-floating-image-tags.sh
 
+  # Every merge-group validator that ci-required-checks enforces is listed here too.
+  # A required validator the deploy does not wait for runs in parallel with it, so
+  # production can receive a revision that validator then rejects (#4148).
+  # scripts/guard-deploy-waits-for-merge-group-validators.sh enforces this.
   deploy-prod:
     name: 🚀 Deploy to Prod
     needs:
@@ -2542,6 +2680,7 @@ jobs:
         validate-floating-image-tags,
         validate-eks-authorization,
         validate-publication-contract,
+        validate-matcher-efficacy,
         validate-talos,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
@@ -2589,9 +2728,51 @@ jobs:
           # attempt is proven terminal via the API (#3343).
           recover-orphaned-fence: "true"
 
+  merge-group-queue-membership:
+    name: 🧾 Check the deployed PR is still queued
+    needs: [changes, deploy-prod]
+    # A deploy can SUCCEED after the merge queue has already dropped its PR: the
+    # queue's check timeout can expire while the deploy waits on the prod-deploy
+    # lock behind a heal, and a PR can be dequeued by hand. Prod then runs an
+    # artifact that never reaches `main`, and nothing restores it, because the
+    # heal below only fires on an unsuccessful deploy (#3091). This job waits
+    # until the PR merges or leaves the queue, and hands the answer to the heal;
+    # `CI - Required Checks` does not depend on it, so the wait never holds up the
+    # merge. A PR that left is answered only once the queue has drained: a later
+    # group may already be deployed but unmerged, and restoring main before it
+    # merges would publish main without its change. A failed read
+    # fails this job visibly and writes no answer, so the heal never runs on a
+    # guess. It is not part of the required checks: it gates nothing.
+    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true' && needs.deploy-prod.result == 'success'
+    runs-on: ubuntu-latest
+    # The check polls until the PR merges, or leaves and the queue drains (at most 120
+    # reads, 30s apart).
+    timeout-minutes: 75
+    permissions:
+      contents: read # checkout repository
+      pull-requests: read # read the PR's merge-queue state
+    outputs:
+      evicted: ${{ steps.membership.outputs.evicted }}
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/merge-group-evicted.sh
+          sparse-checkout-cone-mode: false
+
+      - name: 🧾 Read the PR's merge-queue state
+        id: membership
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVICTED_REPOSITORY: ${{ github.repository }}
+          EVICTED_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          EVICTED_GROUP_CREATED_AT: ${{ github.event.merge_group.head_commit.timestamp }}
+        run: scripts/merge-group-evicted.sh
+
   heal-prod-on-failure:
-    name: 🩹 Heal Prod (restore main after unsuccessful merge-group deploy)
-    needs: [changes, deploy-prod, validate-publication-contract]
+    name: 🩹 Heal Prod (restore main after an unsuccessful or evicted merge-group deploy)
+    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]
     # The deploy above runs on the SPECULATIVE merge ref, before the PR lands on
     # `main`. When it fails the merge group is ejected — but the OCI `latest` tag
     # (and the prod cluster reconciling it) is left pointing at that ejected
@@ -2605,13 +2786,18 @@ jobs:
     # job becomes cancelled. It has ZERO effect on a green merge (skipped) and
     # does NOT relax the gate: deploy-prod's failure still fails `CI - Required
     # Checks` below, so the PR is still ejected. It is intentionally NOT part of
-    # that aggregation — it is best-effort cleanup, not a merge gate.
+    # that aggregation — it is best-effort cleanup, not a merge gate. It also
+    # fires after a SUCCESSFUL deploy whose PR had already left the queue, which
+    # leaves prod on the same unmerged artifact (#3091); the membership job above
+    # decides that case.
     if: >-
       always() &&
       github.event_name == 'merge_group' &&
       needs.changes.outputs.k8s == 'true' &&
       (needs.deploy-prod.result == 'failure' ||
-       needs.deploy-prod.result == 'cancelled')
+       needs.deploy-prod.result == 'cancelled' ||
+       (needs.deploy-prod.result == 'success' &&
+        needs.merge-group-queue-membership.outputs.evicted == 'true'))
     runs-on: ubuntu-latest
     environment: prod
     # Same shared lock as deploy-prod / cd.yaml so the heal can never run against
@@ -2672,7 +2858,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.184.19"
+          KSAIL_VERSION: "7.186.1"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2730,7 +2916,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@7a19c1d0f32e5a99a38d0a4106f1b2cbd76c99e4 # v13.6.7
+        uses: devantler-tech/actions/aggregate-job-checks@da153eb43b8333f13094abb151a48dc11e431988 # v13.7.4
         with:
           job-results: >-
             ${{ needs.changes.result }}

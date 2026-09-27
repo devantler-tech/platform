@@ -53,12 +53,17 @@ fi
 
 grep -Fq 'kubectl --request-timeout=20s "$@"' <<<"$script_body" ||
   fail 'cleanup API calls have no bounded request timeout'
-[ "$(yq eval '.spec.jobTemplate.spec.activeDeadlineSeconds' "$manifest")" -gt 120 ] ||
-  fail 'the Job deadline does not exceed one fully retried API-call budget'
-pass 'API calls and the outer Job deadline have nested finite budgets'
+[ "$(yq eval '.spec.jobTemplate.spec.activeDeadlineSeconds' "$manifest")" = '900' ] ||
+  fail 'the Job deadline must preserve the measured 98s production run with recovery margin'
+# shellcheck disable=SC2016 # literal Flux-escaped shell default
+escaped_dry_run='DRY_RUN="$${DRY_RUN:-false}"'
+readonly escaped_dry_run
+grep -Fq "$escaped_dry_run" "$manifest" ||
+  fail 'the DRY_RUN default is not escaped from Flux post-build substitution'
+pass 'API calls, Flux-safe dry-run control, and the outer Job deadline have finite budgets'
 
 [ "$(yq eval '.spec.concurrencyPolicy' "$manifest")" = 'Forbid' ] || fail 'concurrent runs are not forbidden'
-[ "$(yq eval '.spec.jobTemplate.spec.backoffLimit' "$manifest")" = '0' ] || fail 'Job retries must stay with the authored API retry loop'
+[ "$(yq eval '.spec.jobTemplate.spec.backoffLimit' "$manifest")" = '2' ] || fail 'the Job must retry two pod-level failures within the daily run'
 [ "$(yq eval '.spec.jobTemplate.spec.template.spec.automountServiceAccountToken' "$manifest")" = 'true' ] || fail 'kubectl Job has no service-account token'
 [ "$(yq eval "${container}.securityContext.readOnlyRootFilesystem" "$manifest")" = 'true' ] || fail 'cleanup filesystem is writable'
 [ "$(yq eval "${container}.securityContext.allowPrivilegeEscalation" "$manifest")" = 'false' ] || fail 'cleanup permits privilege escalation'

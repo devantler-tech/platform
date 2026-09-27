@@ -3170,7 +3170,92 @@ const (
 // binding, service account, policy, AWS identity or permission changes. The
 // required job reported the new aggregate on checksum-verified kubectl v1.36.2;
 // the local renderer is not used as approval evidence.
-const expectedRenderedSurfaceSHA = "13b29142e7385e76732a93a83ece6be1d1cc54bcecef086f38e1a65bd05e94ef"
+// Re-approved for Backstage startup recovery (#4111), against main 1be23cb8.
+// The required production-authorization job on the checksum-verified renderer
+// (run 35909694590, job 107347214276) reported exactly one changed surface
+// entry, HelmRelease backstage/backstage, and nothing added or removed. Only
+// the startup probe path changes from liveness to readiness; no RBAC, binding,
+// service account, AWS identity, or permission grant changes.
+// Re-approved for Flagger loadtester availability (#4104), against main
+// d37a1e5c. The required production-authorization job on the checksum-verified
+// renderer (run 35915658912, job 107367445904) reported exactly one changed
+// surface entry, HelmRelease flagger-system/flagger-loadtester, with no added or
+// removed entries. This change sets two replicas, cross-node placement, a
+// disruption budget and a rollout strategy; it grants no new permissions.
+// Re-approved for the Flagger loadtester drain-safe rollout (#4123), against main
+// 214ce284. The required production-authorization job on the checksum-verified
+// renderer (run 35959587497, job 107505627737) reported exactly one changed
+// surface entry, HelmRelease flagger-system/flagger-loadtester, and nothing added
+// or removed. Only scheduling and disruption settings change; no RBAC, binding,
+// service account, AWS identity, or permission grant changes.
+// Re-approved for the provider-upjet-github v0.20.0 repin (#2800), against main
+// 784a7032. The required production-authorization job on the checksum-verified
+// renderer (run 36012123698, job 107676500672) reported exactly one changed
+// surface entry, Provider provider-upjet-github, and nothing added or removed.
+// Only the package tag changes; the provider's GitHub-scoped CRDs gain optional
+// fields and one inactive kind, and no binding, service account or AWS identity
+// changes.
+// Re-approved for the Kubescape host-data cleanup failure alert (#3739), on a
+// branch level with main 2a59cdeb. The required production-authorization job on
+// the checksum-verified renderer (run 36105983235, job 107979133700) reported
+// exactly two ADDED surface entries and nothing changed or removed:
+// rbac.authorization.k8s.io/v1 Role kubescape/cronjob-failure-alert and its
+// RoleBinding kubescape/cronjob-failure-alert. The Role grants only `get` on the
+// one CronJob named kubescape-hostdata-cleanup and `list` on Jobs in the
+// kubescape namespace (owner-reference filtering needs namespace-wide list); the
+// binding's only subject is ServiceAccount observability/cronjob-failure-alert.
+// No write verb, wildcard, ClusterRole, AWS identity or existing binding
+// changes. The same job reported this identical value at head dfccc588, before
+// nine further main commits were merged in, so those commits did not move the
+// surface.
+// Re-approved for per-host oauth2-proxy login callbacks (#3169), against main
+// 51fa8a65. The required production-authorization job on the checksum-verified
+// renderer (run 36126766319, job 108045299986) reported exactly one changed
+// surface entry, HelmRelease dex/dex, and nothing added or removed. The source
+// delta only adds ten https://<host>/oauth2/callback entries to the Dex
+// public-client redirectURIs, one per host an HTTPRoute sends to oauth2-proxy;
+// Dex accepts them only as login return addresses for that existing client. No
+// RBAC, binding, service account, AWS identity, or permission grant changes.
+// Re-approved for finishing each oauth2-proxy login on its own host (#3169),
+// against main 4c72bf97. The required production-authorization job on the
+// checksum-verified renderer (run 36132658312, job 108065751143) reported
+// exactly one changed surface entry, HelmRelease oauth2-proxy/oauth2-proxy, and
+// nothing added or removed. The source delta only removes the fixed
+// redirect_url from oauth2-proxy's config file, so it derives each login
+// callback from the request's own host; the callbacks it can derive are the
+// ones Dex already accepts. No RBAC, binding, service account, AWS identity, or
+// permission grant changes.
+// Re-approved for Umami serving-replica spread (#4103), against main 9eed5255.
+// The required production-authorization job on the checksum-verified renderer
+// (run 36153992630, job 108135115630) reported exactly one changed surface
+// entry, HelmRelease umami/umami, and nothing added or removed. The source delta
+// changes only the hostname spread constraint, pod-label selector, per-revision
+// spread key, two-domain floor and no-surge replacement strategy. No RBAC,
+// binding, service account, AWS identity, or permission grant changes.
+// Re-approved for rolling the Cilium operator so its Gateway API controller
+// starts (#4198), against main 1327c5e7. The required production-authorization
+// job on the checksum-verified renderer (run 36170927591, job 108193648481)
+// reported exactly one changed surface entry, HelmRelease kube-system/cilium,
+// and nothing added or removed. The source delta only adds a restart-marker
+// pod annotation to the operator, which rolls its Deployment. No RBAC, binding,
+// service account, AWS identity, or permission grant changes.
+// Re-approved for pinning the unsigned provider-upjet-github package by digest
+// (#4189), against main 85c7ffc1. The required production-authorization job on
+// the checksum-verified renderer (run 36241768108, job 108403918797) reported
+// exactly one changed surface entry, Provider provider-upjet-github, and
+// nothing added or removed. The source delta only appends the digest of the
+// already-approved v0.20.0 package to its reference, so the same bytes run. No
+// RBAC, binding, service account, AWS identity, or permission grant changes.
+// Re-approved for stating runAsUser, runAsGroup and fsGroup 65534 on the
+// coroot-operator pod (#4217), against main dfee0e2b. The required
+// production-authorization job on the checksum-verified renderer (run 36259184337,
+// job 108452111239) reported exactly one changed surface entry, HelmRelease
+// observability/coroot-operator, and nothing added or removed. The source delta only
+// adds the user and group the operator image already declares (USER 65534:65534).
+// No RBAC, binding, service account, AWS identity, or permission grant changes.
+//
+// Previous aggregate: 5ab157d087c2bd9431e35fa16e4de9897bdb538ff3aab63014d418ba5933344b.
+const expectedRenderedSurfaceSHA = "c64aa3b73ee2cf67d319cba1f97822e3797fe76a49d6b87ef140cc718624f8a7"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3183,7 +3268,7 @@ const expectedRenderedSurfaceSHA = "13b29142e7385e76732a93a83ece6be1d1cc54bcecef
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "33eb2b3a1201e8c6c304eab0bb65feed702d8244ed96ebb315b90f3901d95792"
+const previousRenderedSurfaceSHA = "5ab157d087c2bd9431e35fa16e4de9897bdb538ff3aab63014d418ba5933344b"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

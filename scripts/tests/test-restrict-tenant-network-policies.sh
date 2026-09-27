@@ -77,7 +77,17 @@ apply "${tests}/node-group-resources.yaml" "${tests}/values.yaml" "${tests}/user
 expect_summary "pass: 48, fail: 16, warn: 0, error: 0, skip: 0" \
   "tenant node/provider selectors must remain forbidden"
 
-# 7. Static action guard. Every count above is a RULE result; none of them says
+# 7. The day-one policy platform-tenant-template ships must stay admissible
+#    under the tenant's own identity. Tightening this boundary has made a freshly
+#    generated tenant inadmissible three times, each found only by the
+#    template's scheduled run (#3652); this makes the next one fail here. Four
+#    rules evaluate it, and none may refuse it.
+apply "${tests}/tenant-scaffold/resources.yaml" \
+  "${tests}/tenant-scaffold/values.yaml" "${tests}/tenant-scaffold/user-info.yaml"
+expect_summary "pass: 4, fail: 0, warn: 0, error: 0, skip: 0" \
+  "the platform-tenant-template scaffold must be admissible on day one"
+
+# 8. Static action guard. Every count above is a RULE result; none of them says
 #    what admission actually does on a violation. Enforcement lives in each
 #    rule's own `failureAction`, because the deprecated top-level
 #    spec.validationFailureAction defaults an action-less rule to Audit — which

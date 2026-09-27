@@ -74,3 +74,33 @@ rules:
       a new cluster-admin binding is not part of the reviewed production
       authorization contract
     severity: error
+
+  # Cilium turns on default-deny for every direction a policy has rules in, and
+  # deny rules count, so a clusterwide policy with only deny rules in a direction
+  # revokes ALL of that traffic from every endpoint it selects (the 2026-08-27
+  # outage, #3404/#3407). scripts/guard-cilium-clusterwide-default-deny.sh checks
+  # this on the Kustomize output, which holds a HelmRelease but not what its
+  # chart installs. KSail evaluates this rule against every rendered document,
+  # chart children included, so a chart that starts shipping such a policy is
+  # refused too (#4139). A deny-only direction must state enableDefaultDeny.
+  # Kinds are unique only within an API group, so only cilium.io kinds match.
+  # The intent must be a boolean: a null is pruned and Cilium then defaults to deny.
+  - name: require-explicit-clusterwide-default-deny
+    expression: >-
+      !has(object.kind) || !has(object.apiVersion) ||
+      object.kind != 'CiliumClusterwideNetworkPolicy' ||
+      !object.apiVersion.startsWith('cilium.io/') ||
+      ((has(object.spec) ? [object.spec] : []) +
+       (has(object.specs) ? object.specs : [])).all(s,
+        (!has(s.egressDeny) || size(s.egressDeny) == 0 ||
+         (has(s.egress) && size(s.egress) > 0) ||
+         (has(s.enableDefaultDeny) && has(s.enableDefaultDeny.egress) &&
+          type(s.enableDefaultDeny.egress) == bool)) &&
+        (!has(s.ingressDeny) || size(s.ingressDeny) == 0 ||
+         (has(s.ingress) && size(s.ingress) > 0) ||
+         (has(s.enableDefaultDeny) && has(s.enableDefaultDeny.ingress) &&
+          type(s.enableDefaultDeny.ingress) == bool)))
+    message: >-
+      a clusterwide Cilium policy with only deny rules in a direction must set
+      enableDefaultDeny for that direction, or it revokes all of that traffic
+    severity: error

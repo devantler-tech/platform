@@ -113,13 +113,15 @@ stays quiet by design, exactly as the old Alertmanager did.
   Its cross-namespace Role is limited to `list` on pods in `velero`.
 - **A reconcile CronJob that keeps failing, or stops finishing, alerts.**
   `umami/umami-provision-tenants` retries on its own 15-minute schedule, so one
-  failed run is expected and absorbed, but a loop failing on every tick used to
-  be visible only as retained `Failed` Jobs (#2915).
+  failed run is expected and absorbed, while the daily
+  `kubescape/kubescape-hostdata-cleanup` alerts on its first failed run. The
+  latter uses a 26-hour completion-age window so its daily cadence does not read
+  as stale between healthy runs (#3739).
   `bases/components/coroot-cronjob-failure-alert/cron-job-cronjob-failure-alert.yaml`
-  alerts when the newest two finished runs of a watched CronJob both failed, when
-  no run has finished for an hour, or when a watched CronJob no longer exists.
-  Each watched namespace grants it `get` on that CronJob and `list` on Jobs, and
-  nothing else. It ships suspended until a manual run is validated on prod.
+  carries a per-target failure threshold and completion-age window, and also
+  alerts when a watched CronJob no longer exists. Each watched namespace grants
+  it `get` on that CronJob and `list` on Jobs, and nothing else. The detector is
+  active after its read-only production validation.
 - **A stranded volume attach alerts within about fifteen minutes.** On
   2026-07-01 one hcloud volume that stayed attached to a departed node took all
   prod delivery down for nine hours: the rescheduled `openbao-0` logged

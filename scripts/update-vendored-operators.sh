@@ -16,13 +16,13 @@ readonly kubevirt_sha256='e9e92c15bca0531bf0b7db2c2dfc83b6b9bdbf1a6f3f96945f67d9
 readonly origin_ca_issuer_commit='e375d9c00a66f47a15fb56457686f8629022b50d'
 readonly clusteroriginissuers_sha256='cf6af6f155cd087a1ab2a4bec68cd014f05be3cf3d0240ad331ee1fe1bec574e'
 readonly originissuers_sha256='d085e763718cf34e675b62f8394e20854237b3997f825d86556659585940b170'
-readonly cert_approver_version='0.12.0'
-readonly cert_approver_commit='b5516301e48f8e50cb18368e457779d01796119b'
-readonly cert_approver_sha256='44d74b38379d96572c434290732092f577ee4835392b36922a72c406ee406139'
+readonly cert_approver_version='0.12.1'
+readonly cert_approver_commit='f72897c68e38185aeca848952d10a094054642ba'
+readonly cert_approver_sha256='4184993a44e1ec7d585d930d2e72298ec70a361ff415c323311d9828103fcb3e'
 # The digest the cert-approver kustomization pins its image to (#3515). The vendored bytes name only a
 # tag, and a tag can move; this is what production actually pulls. --render-remotes re-resolves the tag
 # from the registry and refuses to refresh while this constant disagrees with it.
-readonly cert_approver_image_digest='sha256:534e40a0050c34bda2a7bae53aa9c11133704f23dc83fee14f3b45b0f1eabe45'
+readonly cert_approver_image_digest='sha256:445a8e5584f659701092d2ec8b625da8929dc75fe4d45274333bd9fe6db8fb75'
 # Must equal CI_CHECKOV_VERSION in megalinter-scan-counts.sh, so a local vendor
 # refresh cannot miss a rule that the non-blocking CI scan knows. Every mode,
 # --validate-committed included, refuses to run while the two differ, so a bump

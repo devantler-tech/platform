@@ -5,11 +5,16 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly alertmanager_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/alertmanager/helm-release.yaml"
+readonly umami_release="${root_dir}/k8s/bases/apps/umami/helm-release.yaml"
+readonly backstage_release="${root_dir}/k8s/bases/apps/backstage/helm-release.yaml"
+readonly loadtester_release="${root_dir}/k8s/bases/infrastructure/controllers/flagger/helm-release-loadtester.yaml"
+readonly loadtester_pdb="${root_dir}/k8s/bases/infrastructure/controllers/flagger/pod-disruption-budget-loadtester.yaml"
 readonly kubescape_alert_route="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kubescape/patches/route-runtime-detection-alerts.yaml"
 readonly crossplane_alerter="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/cron-job-crossplane-sync-alerter.yaml"
 readonly dr_runbook="${root_dir}/docs/dr/velero-cnpg.md"
 readonly longhorn_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/longhorn/helm-release.yaml"
 readonly origin_ca_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/origin-ca-issuer/helm-release.yaml"
+readonly simply_dns_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/simply-dns-webhook/helm-release.yaml"
 readonly cluster_issuers_dir="${root_dir}/k8s/providers/hetzner/infrastructure/cluster-issuers"
 readonly prod_variables="${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml"
 readonly replica_floor="${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/validate-replica-floor.yaml"
@@ -28,6 +33,87 @@ command -v yq >/dev/null || fail 'yq is required'
 command -v kubectl >/dev/null || fail 'kubectl is required'
 
 yq e -e '
+  ([.spec.values.topologySpreadConstraints[] |
+    select(.topologyKey == "kubernetes.io/hostname" and
+      .maxSkew == 1 and
+      .minDomains == 2 and
+      .nodeTaintsPolicy == "Honor" and
+      .whenUnsatisfiable == "DoNotSchedule" and
+      .labelSelector.matchLabels."app.kubernetes.io/name" == "umami-primary" and
+      (. | has("matchLabelKeys") | not))
+  ] | length == 1) and
+  (.spec.values.topologySpreadConstraints | length == 1)
+' "${umami_release}" >/dev/null ||
+  fail 'Umami serving replicas need one hostname spread across every primary revision, counting only nodes they can run on'
+
+umami_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "umami-umami") | .patch' "${umami_release}")"
+printf '%s\n' "${umami_patch}" | yq e -e '
+  [.[] | select(.op == "add" and .path == "/spec/strategy" and
+    .value.type == "RollingUpdate" and
+    .value.rollingUpdate.maxSurge == 0 and
+    .value.rollingUpdate.maxUnavailable == 1)] | length == 1
+' - >/dev/null ||
+  fail 'Umami primary rollout must retire one old pod before placing its replacement'
+
+yq e -e '
+  .spec.values.backstage.startupProbe.httpGet.path == "/.backstage/health/v1/readiness" and
+  .spec.values.backstage.startupProbe.failureThreshold == 30
+' "${backstage_release}" >/dev/null ||
+  fail 'Backstage must retry startup if backend initialization never reaches readiness'
+
+yq e -e '
+  .spec.values.replicaCount == 2 and
+  .spec.values.podDisruptionBudget.enabled == false and
+  ([.spec.values.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[] |
+    select(.topologyKey == "kubernetes.io/hostname" and
+      .labelSelector.matchLabels.app == "loadtester")
+  ] | length == 1)
+' "${loadtester_release}" >/dev/null ||
+  fail 'Flagger loadtester must have two cross-node replicas and a drain-safe PDB'
+
+# The name must differ from the chart's own flagger-loadtester PDB. Production
+# still carries that Helm-owned object with minAvailable, and Flux applying a
+# same-named maxUnavailable PDB before Helm deletes it would merge both
+# mutually exclusive fields into one invalid object.
+yq e -e '
+  .kind == "PodDisruptionBudget" and
+  .metadata.name == "flagger-loadtester-drain-safe" and
+  .metadata.namespace == "flagger-system" and
+  .spec.maxUnavailable == 1 and
+  (.spec | has("minAvailable") | not) and
+  .spec.selector.matchLabels.app == "loadtester" and
+  .spec.selector.matchLabels."app.kubernetes.io/name" == "loadtester" and
+  (.spec.selector.matchLabels | has("app.kubernetes.io/instance") | not)
+' "${loadtester_pdb}" >/dev/null ||
+  fail 'Flagger loadtester must use a platform-owned maxUnavailable PDB'
+
+loadtester_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "flagger-loadtester") | .patch' "${loadtester_release}")"
+printf '%s\n' "${loadtester_patch}" | yq e -e '
+  .spec.strategy.type == "RollingUpdate" and
+  .spec.strategy.rollingUpdate.maxUnavailable == 1 and
+  .spec.strategy.rollingUpdate.maxSurge == 0
+' - >/dev/null ||
+  fail 'Flagger loadtester rollout must not deadlock on two eligible workers'
+
+yq e -e '
+  .spec.values.replicaCount == 2 and
+  [.spec.values.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[] |
+    select(.topologyKey == "kubernetes.io/hostname" and
+      .labelSelector.matchLabels.app == "simply-dns-webhook" and
+      .labelSelector.matchLabels.release == "simply-dns-webhook")
+  ] | length == 1
+' "${simply_dns_release}" >/dev/null ||
+  fail 'SimplyDNS webhook replicas must be required to run on different nodes'
+
+simply_dns_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "simply-dns-webhook") | .patch' "${simply_dns_release}")"
+printf '%s\n' "${simply_dns_patch}" | yq e -e '
+  .spec.strategy.type == "RollingUpdate" and
+  .spec.strategy.rollingUpdate.maxUnavailable == 1 and
+  .spec.strategy.rollingUpdate.maxSurge == 0
+' - >/dev/null ||
+  fail 'SimplyDNS webhook rollout must not deadlock on two eligible workers'
+
+yq e -e '
   .spec.values.replicaCount == 2 and
   .spec.values.podAntiAffinity == "hard" and
   .spec.values.podDisruptionBudget.maxUnavailable == 1
@@ -42,7 +128,7 @@ yq e -e '
 ' "${kubescape_alert_route}" >/dev/null ||
   fail 'the node-agent must export runtime alerts to every Alertmanager peer'
 
-grep -Fq 'AM_PEERS="http://alertmanager-0.alertmanager-headless.kubescape.svc.cluster.local:9093 http://alertmanager-1.alertmanager-headless.kubescape.svc.cluster.local:9093"' \
+grep -Fq 'AM_PEERS="http://alertmanager-0.alertmanager-headless.kubescape.svc.cluster.local.:9093 http://alertmanager-1.alertmanager-headless.kubescape.svc.cluster.local.:9093"' \
   "${crossplane_alerter}" ||
   fail 'the Crossplane sync alerter must post to every Alertmanager peer'
 if grep -Fq 'alertmanager.kubescape.svc.cluster.local:9093' "${crossplane_alerter}"; then

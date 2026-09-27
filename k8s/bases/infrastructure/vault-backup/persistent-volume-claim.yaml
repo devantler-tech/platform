@@ -14,6 +14,12 @@ kind: PersistentVolumeClaim
 metadata:
   name: vault-snapshots
   namespace: openbao
+  labels:
+    # This claim is the sole volume-data opt-out in production. Velero combines
+    # this marker with storageClass=hcloud before skipping it; other hcloud
+    # claims keep the file-system-backup fallback. The snapshot CronJob mirrors
+    # every raft snapshot directly to the separate R2 prefix.
+    backup.platform.devantler.tech/volume-data: independently-mirrored
   annotations:
     # Flux must never retire durable storage as part of a speculative
     # merge-group deploy. Removal requires this protection to have reached

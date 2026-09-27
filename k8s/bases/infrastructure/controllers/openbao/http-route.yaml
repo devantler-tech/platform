@@ -36,11 +36,6 @@ spec:
         # svc/openbao-active 8200:8200`, or `kubectl -n openbao exec openbao-0`.
         # The localhost:8250 entry in the oidc role's allowed_redirect_uris
         # (vault-config/job.yaml) stays valid over that port-forward.
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://vault.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:

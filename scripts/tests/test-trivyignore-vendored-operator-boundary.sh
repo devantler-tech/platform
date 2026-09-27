@@ -97,11 +97,10 @@ readonly reviewed_workload_pairs=(
 # `default.cpu` LimitRange into that namespace. It reports `ok ... provider docker ships a
 # CPU-defaulting LimitRange into kube-system` for this pair today.
 #
-# That guard matches on `checkov.io/skipN` annotation values, so on its own it vouches for the
-# file's CKV_K8S_11 skip rather than for the trivy entry below. The admission-premise section near
-# the end of this file binds the two by requiring a passing verdict naming this pair's own file, so
-# removing the annotation while keeping the entry fails the build instead of quietly leaving the
-# pair unpremised.
+# That guard checks a trivy entry only when its statement carries the `[limitrange-premise]`
+# marker. The admission-premise section near the end of this file requires a passing verdict for
+# this pair's own file AND check id, so dropping the marker fails the build instead of quietly
+# leaving the pair unpremised.
 readonly reviewed_admission_pairs=(
   # The kube-system default-limitrange supplies the CPU limit at admission; trivy reads the
   # committed spec, where an admission-time default is absent (#2787).
@@ -289,11 +288,10 @@ fi
 # ------------------------------------------------------ admission premise --
 # Every reviewed_admission_pairs entry rests on "a namespace-scoped LimitRange supplies this field
 # at admission, and trivy reading one stored file cannot see it". scripts/guard-limitrange-premise.sh
-# is what checks that claim against the kustomize graph, but it matches on `checkov.io/skipN`
-# annotation values, so by itself it vouches for a file's CHECKOV skip and never for the trivy entry
-# beside it. Requiring a passing verdict naming the pair's own file is what binds the two: remove the
-# annotation while keeping the trivy entry and the guard stops reporting that file, which fails here
-# instead of leaving the entry resting on a premise nothing checks.
+# checks that claim against the kustomize graph for a trivy entry carrying the `[limitrange-premise]`
+# marker, and reports it as `(trivy <check>)`. Requiring that verdict for the pair's own file and
+# check id is what binds the reviewed pair to its entry: drop the marker and the guard stops
+# reporting it, which fails here instead of leaving the entry resting on a premise nothing checks.
 premise_guard="$repo_root/scripts/guard-limitrange-premise.sh"
 if [ ! -x "$premise_guard" ]; then
   printf 'ADMISSION PREMISE UNCHECKABLE: %s is missing or not executable\n' "$premise_guard" >&2
@@ -326,10 +324,21 @@ else
   else
     for ap in ${reviewed_admission_pairs[@]+"${reviewed_admission_pairs[@]}"}; do
       ap_path="${ap#*:}"
-      # The guard prints `ok   <file> — provider <name> ships …`. The trailing space is load-bearing:
-      # without it a path that is a prefix of a longer reported one would satisfy this.
-      printf '%s\n' "$premise_out" | grep -qF -- "ok   $ap_path " && continue
-      printf 'UNPREMISED ADMISSION SKIP: %s is dispositioned as an admission verdict, but guard-limitrange-premise.sh reports no passing LimitRange premise for %s, so the trivy entry rests on a premise nothing checks\n' "$ap" "$ap_path" >&2
+      ap_check="${ap%%:*}"
+      # The guard prints `ok   <file> — provider <name> ships … (trivy <check>)`. The trailing space
+      # after the path is load-bearing: without it a path that is a prefix of a longer reported one
+      # would satisfy this. The check id binds the verdict to the trivy entry, not to a checkov skip
+      # on the same file.
+      verdict=0
+      while IFS= read -r line; do
+        case $line in "ok   $ap_path "*"(trivy $ap_check)")
+          verdict=1
+          break
+          ;;
+        esac
+      done <<<"$premise_out"
+      [ "$verdict" -eq 1 ] && continue
+      printf 'UNPREMISED ADMISSION SKIP: %s is dispositioned as an admission verdict, but guard-limitrange-premise.sh reports no passing LimitRange premise for its trivy entry, so the entry rests on a premise nothing checks. fix: put [limitrange-premise] in the entry'"'"'s statement\n' "$ap" >&2
       status=1
     done
   fi

@@ -1,0 +1,20 @@
+# Cluster-internal TCP reachable from the node CIDR and the pod CIDR on worker
+# nodes. Pairs with cluster/block-ingress-by-default.yaml.
+#   Hubble peer service 4244, node-exporter 9100 (Prometheus scraping),
+#   kubelet 10250
+#
+# Keep the rule COUNT low — add ports to this rule when the subnet set
+# matches, don't add new rules (see the ENOBUFS note in
+# ../control-planes/allow-public-ingress.yaml).
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: worker-internal-nodepod-ingress
+portSelector:
+  ports:
+    - 4244
+    - 9100
+    - 10250
+  protocol: tcp
+ingress:
+  - subnet: 10.0.0.0/16
+  - subnet: 10.244.0.0/16

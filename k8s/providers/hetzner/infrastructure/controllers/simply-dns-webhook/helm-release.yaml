@@ -29,6 +29,16 @@ spec:
     # pattern) because this controller is hetzner/prod-only with no other
     # environment to tune it for.
     replicaCount: 2
+    # The chart supports affinity directly. Match its app/release pod labels so
+    # a worker failure cannot take down both DNS-01 solver replicas.
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app: simply-dns-webhook
+                release: simply-dns-webhook
     # Don't override groupName: the chart's challenge-management ClusterRole
     # hardcodes this group, so a custom one breaks the solver's RBAC.
     groupName: com.github.runnerm.cert-manager-simply-webhook
@@ -58,6 +68,13 @@ spec:
               metadata:
                 name: simply-dns-webhook
               spec:
+                # Hard anti-affinity leaves no room for a surge pod when only
+                # two workers are eligible. Replace one pod at a time instead.
+                strategy:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxUnavailable: 1
+                    maxSurge: 0
                 template:
                   spec:
                     securityContext:

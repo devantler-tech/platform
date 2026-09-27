@@ -15,7 +15,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 readonly GUARD='scripts/guard-pod-security-exception-documented.sh'
-readonly REAL='k8s/bases/infrastructure/cluster-security-exceptions/pod-security-mutations-unscoped.yaml'
+readonly REAL='k8s/bases/infrastructure/cluster-security-exceptions/pod-security-mutations-residual.yaml'
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -51,9 +51,9 @@ expect 'current tree passes' 0 "${REAL}"
 
 # --- AC1: a suppressed control absent from the block ----------------------------
 f="${tmp}/undocumented.yaml"
-sed 's/^      action: ignore$/      action: ignore/' "${REAL}" >"${f}"
-# Append a third control that is named nowhere in the file.
-printf '    - controlID: C-0999\n      action: ignore\n' >>"${f}"
+# Add a control under posture, not at the end of the document: the residual
+# policy now has a match.resources block after posture.
+yq '.spec.posture += [{"controlID": "C-0999", "action": "ignore"}]' "${REAL}" >"${f}"
 grep -q 'C-0999' "${f}" || bad 'fixture build: C-0999 was not added'
 expect 'a control absent from the block fails' 1 "${f}"
 # Capture, then match. Under `pipefail` a `guard | grep` pipeline reports the GUARD's

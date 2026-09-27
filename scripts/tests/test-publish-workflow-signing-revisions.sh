@@ -76,7 +76,7 @@ expected_insync=$((consumer_count - 1))
 write_table() { # <path> <special-repo|""> <special-signing> <special-current>
   local table="$1" special="$2" s_sign="$3" s_cur="$4" repo workflow
   : >"$table"
-  while IFS=$'\t' read -r repo workflow _version; do
+  while IFS=$'\t' read -r repo workflow _version _artifact; do
     [ -n "$repo" ] || continue
     if [ -n "$special" ] && [ "$repo" = "$special" ]; then
       printf '%s\t%s\t%s\t%s\n' "$repo" "$workflow" "$s_sign" "$s_cur" >>"$table"
@@ -162,7 +162,7 @@ fi
 swap_root="$WORK/swap"
 mkdir -p "$swap_root"
 i=0
-while IFS=$'\t' read -r repo workflow _version; do
+while IFS=$'\t' read -r repo workflow _version _artifact; do
   [ -n "$repo" ] || continue
   i=$((i + 1))
   # Substitute an impostor for one real consumer, keeping the total identical.
@@ -187,7 +187,7 @@ if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
 PUBLISH_CONSUMER_ROOT="$swap_root" "$SCRIPT" >"$swap_out" 2>&1; then
   fail 'a discovery set of the right SIZE but wrong MEMBERSHIP passed — a consumer can vanish silently'
 else
-  # The set comparison runs in BOTH directions, and the unregistered side fires first here: the
+  # The set comparison runs in BOTH directions, and both are reported here: the
   # impostor is not in EXPECTED_CONSUMERS, which is itself the stronger objection — a consumer this
   # script does not know about is one whose later disappearance it could not notice. Either half
   # naming its cause is a pass; silence is not.
@@ -274,7 +274,7 @@ fi
 extra_root="$WORK/extra"
 mkdir -p "$extra_root"
 j=0
-while IFS=$'\t' read -r repo workflow _version; do
+while IFS=$'\t' read -r repo workflow _version _artifact; do
   [ -n "$repo" ] || continue
   j=$((j + 1))
   # `.github` is the artifact name `github-config` on the wire; emit the OCI name so the
@@ -323,6 +323,98 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 8b–8d. ONE CONSUMER PER DEPLOYED ARTIFACT, NOT PER REPOSITORY (#3327). Two resources
+#    pulling different artifacts from one repository are two consumers. Keyed on the
+#    repository alone they collapsed into one, so a second one went unregistered and the
+#    loss of either left the name present. The fixtures derive each artifact from the
+#    repository, not from the list's artifact field, so they run against either shape.
+# ---------------------------------------------------------------------------
+write_real_consumers() { # <root> <first-consumer-artifact-leaf>
+  local root="$1" leaf="$2" repo workflow _version _artifact oci n=0
+  mkdir -p "$root"
+  while IFS=$'\t' read -r repo workflow _version _artifact; do
+    [ -n "$repo" ] || continue
+    n=$((n + 1))
+    oci="$repo"
+    [ "$repo" = '.github' ] && oci='github-config'
+    if [ "$repo" = "$first_repo" ]; then
+      oci="$oci/$leaf"
+    else
+      oci="$oci/manifests"
+    fi
+    write_consumer "$root/real-$n.yaml" "r$n" "$oci" "$workflow"
+  done <<<"$consumers"
+}
+write_consumer() { # <file> <name> <artifact> <workflow>
+  cat >"$1" <<YAML
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: $2
+spec:
+  ref:
+    semver: ">=1.0.0"
+  url: oci://ghcr.io/devantler-tech/$3
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\\.actions\\.githubusercontent\\.com\$'
+        subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/$4\\.yaml@[0-9a-f]{40}\$'
+YAML
+}
+first_oci="$first_repo"
+[ "$first_repo" = '.github' ] && first_oci='github-config'
+first_repo_workflow="$(printf '%s\n' "$consumers" | head -1 | cut -f2)"
+
+# 8b. A second artifact from a registered repository must itself be registered.
+twin_root="$WORK/twin"
+write_real_consumers "$twin_root" manifests
+write_consumer "$twin_root/twin.yaml" twin "$first_oci/sbom" "$first_repo_workflow"
+twin_out="$WORK/twin.out"
+if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+PUBLISH_CONSUMER_ROOT="$twin_root" "$SCRIPT" >"$twin_out" 2>&1; then
+  fail 'a second artifact from a registered repository was accepted — its later loss could not be noticed'
+else
+  grep -q -- "not registered.*$first_oci/sbom" "$twin_out" ||
+    fail 'the unregistered second artifact is not named'
+  grep -q 'not discovered' "$twin_out" &&
+    fail 'the run reported a MISSING consumer; every registered artifact is present, so the case is not isolating'
+  pass 'a second artifact from one repository is its own consumer and must be registered'
+fi
+
+# 8c. A registered artifact replaced by another from the same repository: the repository is
+#     still present, so only a per-artifact floor notices the registered one vanished.
+swapped_root="$WORK/swapped"
+write_real_consumers "$swapped_root" sbom
+swapped_out="$WORK/swapped.out"
+if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+PUBLISH_CONSUMER_ROOT="$swapped_root" "$SCRIPT" >"$swapped_out" 2>&1; then
+  fail 'a registered artifact vanished while its repository stayed present, and the run passed'
+else
+  grep -q -- "not discovered.*$first_oci/manifests" "$swapped_out" ||
+    fail 'the vanished registered artifact is not named'
+  grep -q -- "not registered.*$first_oci/sbom" "$swapped_out" ||
+    fail 'the artifact that replaced it is not named'
+  pass 'a registered artifact replaced by another from its repository fails and names both'
+fi
+
+# 8d. CONTROL: a base and an overlay declaring the same resource are still one consumer.
+dup_root="$WORK/dup"
+write_real_consumers "$dup_root" manifests
+mkdir -p "$dup_root/overlay"
+write_consumer "$dup_root/overlay/patch.yaml" r1 "$first_oci/manifests" "$first_repo_workflow"
+dup_out="$WORK/dup.out"
+if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+PUBLISH_CONSUMER_ROOT="$dup_root" "$SCRIPT" >"$dup_out" 2>&1; then
+  dup_insync="$(grep -c '^IN-SYNC' "$dup_out" || true)"
+  [ "$dup_insync" -eq "$consumer_count" ] ||
+    fail "a base/overlay pair was counted twice: expected $consumer_count IN-SYNC, got $dup_insync"
+  pass 'a base/overlay pair of one resource still deduplicates to one consumer'
+else
+  fail "a base/overlay pair of one resource failed the run: $(cat "$dup_out")"
+fi
+
+# ---------------------------------------------------------------------------
 # 9. A BOUNDED SEMVER CONSTRAINT MUST REFUSE, NOT GUESS. An unbounded `>=1.0.0` and
 #    "whatever is newest" happen to agree, which is why discarding the constraint looked
 #    harmless. A bounded selector (`~1.4`, `<2.0.0`) does not agree: the newest published
@@ -350,7 +442,7 @@ bounded_case() {
   bc_root="$WORK/bounded-$bc_label"
   mkdir -p "$bc_root"
   k=0
-  while IFS=$'\t' read -r repo workflow _version; do
+  while IFS=$'\t' read -r repo workflow _version _artifact; do
     [ -n "$repo" ] || continue
     k=$((k + 1))
     oci="$repo"
@@ -611,6 +703,17 @@ case "$args" in
     # Nothing else about the fixture changes, so a case using it isolates the failure path.
     bm_ctag="${args##*/commits/}"
     bm_ctag="${bm_ctag%% *}"
+    if [ -n "${BM_COMMIT_RESPONSE_SEQUENCE_FILE:-}" ] && [ "$bm_ctag" = "${BM_COMMIT_RESPONSE_SEQUENCE_TAG:-}" ]; then
+      bm_calls=0
+      [ ! -f "$BM_COMMIT_RESPONSE_SEQUENCE_STATE" ] || bm_calls="$(cat "$BM_COMMIT_RESPONSE_SEQUENCE_STATE")"
+      bm_calls=$((bm_calls + 1))
+      printf '%s\n' "$bm_calls" >"$BM_COMMIT_RESPONSE_SEQUENCE_STATE"
+      bm_response="$(sed -n "${bm_calls}p" "$BM_COMMIT_RESPONSE_SEQUENCE_FILE")"
+      [ -n "$bm_response" ] || exit 73
+      [ "$bm_response" != FAIL ] || exit 73
+      printf '%s\n' "$bm_response"
+      exit 0
+    fi
     if [ -n "${BM_COMMIT_FAIL_TAG:-}" ] && [ "$bm_ctag" = "$BM_COMMIT_FAIL_TAG" ]; then
       printf 'API rate limit exceeded\n' >&2
       exit 1
@@ -640,6 +743,16 @@ case "$args" in
     bm_ref="${args#*branch=}"
     bm_ref="${bm_ref%%&*}"
     bm_ref="${bm_ref%% *}"
+    if [ -n "${BM_RUNS_RESPONSE_SEQUENCE_FILE:-}" ] && [ "$bm_ref" = "${BM_RUNS_RESPONSE_SEQUENCE_TAG:-}" ]; then
+      bm_calls=0
+      [ ! -f "$BM_RUNS_RESPONSE_SEQUENCE_STATE" ] || bm_calls="$(cat "$BM_RUNS_RESPONSE_SEQUENCE_STATE")"
+      bm_calls=$((bm_calls + 1))
+      printf '%s\n' "$bm_calls" >"$BM_RUNS_RESPONSE_SEQUENCE_STATE"
+      bm_response="$(sed -n "${bm_calls}p" "$BM_RUNS_RESPONSE_SEQUENCE_FILE")"
+      [ -n "$bm_response" ] || exit 73
+      printf '%s\n' "$bm_response"
+      exit 0
+    fi
     # The same failure one lookup later: the runs query itself cannot be answered.
     if [ -n "${BM_RUNS_FAIL_TAG:-}" ] && [ "$bm_ref" = "$BM_RUNS_FAIL_TAG" ]; then
       printf 'API rate limit exceeded\n' >&2
@@ -712,7 +825,7 @@ bm_out="$WORK/buildmeta.out"
 bm_root="$WORK/buildmeta-root"
 mkdir -p "$bm_root"
 k=0
-while IFS=$'\t' read -r repo workflow _version; do
+while IFS=$'\t' read -r repo workflow _version _artifact; do
   [ -n "$repo" ] || continue
   k=$((k + 1))
   oci="$repo"
@@ -925,7 +1038,7 @@ fi
 up_root="$WORK/unpinned"
 mkdir -p "$up_root"
 k=0
-while IFS=$'\t' read -r repo workflow _version; do
+while IFS=$'\t' read -r repo workflow _version _artifact; do
   [ -n "$repo" ] || continue
   k=$((k + 1))
   oci="$repo"
@@ -1072,7 +1185,7 @@ fi
 make_exact_root() { # <dest> <pinned-tag>
   local dest="$1" pin="$2" k=0 repo workflow oci ref_block
   mkdir -p "$dest"
-  while IFS=$'\t' read -r repo workflow _version; do
+  while IFS=$'\t' read -r repo workflow _version _artifact; do
     [ -n "$repo" ] || continue
     k=$((k + 1))
     oci="$repo"
@@ -1491,7 +1604,7 @@ publication_response_case() {
   local name="$1" expected="$2" classification="$3" response="$4" body="$5" rc=0
   local fixture="$WORK/response-$name.json" out="$WORK/response-$name.out" err="$WORK/response-$name.err"
   printf '%s\n' "$body" >"$fixture"
-  BM_RUNS_RESPONSE_TAG=v2.0.0 BM_RUNS_RESPONSE_FILE="$fixture" PATH="$bm_bin:$PATH" \
+  BM_SHA_C="$SHA_C" BM_RUNS_RESPONSE_TAG=v2.0.0 BM_RUNS_RESPONSE_FILE="$fixture" PATH="$bm_bin:$PATH" \
     bash -c 'source "$1"; tag_was_published wedding-app v2.0.0 "$2"' \
     bash "$SCRIPT" "$SHA_C" >"$out" 2>"$err" || rc=$?
   local before="$failures"
@@ -1507,6 +1620,59 @@ publication_response_case() {
 }
 
 pr_success="$(jq -cn --arg sha "$SHA_C" '{total_count:1,workflow_runs:[{name:"RESPONSE_ONLY_SENTINEL",head_branch:"v2.0.0",path:".github/workflows/cd.yaml",head_sha:$sha,conclusion:"success"}]}')"
+pr_empty='{"total_count":0,"workflow_runs":[]}'
+
+# A complete zero-run response can be transient: the same tag and commit had a
+# successful CD run before and after Platform main's failed report. Confirm that
+# absence once, while keeping a persistently empty answer unpublished.
+publication_sequence_case() {
+  local name="$1" second="$2" expected="$3" classification="$4" rc=0
+  local sequence="$WORK/sequence-$name.jsonl" state="$WORK/sequence-$name.calls"
+  local out="$WORK/sequence-$name.out" err="$WORK/sequence-$name.err"
+  printf '%s\n%s\n' "$pr_empty" "$second" >"$sequence"
+  BM_SHA_C="$SHA_C" BM_RUNS_RESPONSE_SEQUENCE_TAG=v2.0.0 BM_RUNS_RESPONSE_SEQUENCE_FILE="$sequence" \
+    BM_RUNS_RESPONSE_SEQUENCE_STATE="$state" PATH="$bm_bin:$PATH" \
+    bash -c 'source "$1"; tag_was_published wedding-app v2.0.0 "$2"' \
+    bash "$SCRIPT" "$SHA_C" >"$out" 2>"$err" || rc=$?
+  local before="$failures"
+  [ "$rc" -eq "$expected" ] || fail "$name classified as $rc, expected $expected"
+  [ ! -s "$out" ] || fail "$name polluted the publication result on stdout"
+  grep -q "classification=$classification" "$err" || fail "$name omitted its publication classification"
+  [ "$(cat "$state")" -eq 2 ] || fail "$name did not make exactly one bounded confirmation read"
+  [ "$failures" -ne "$before" ] || pass "publication response $name confirms transient absence without accepting persistent absence"
+}
+
+publication_sequence_case empty-then-success "$pr_success" 0 published
+publication_sequence_case persistently-empty "$pr_empty" 1 unpublished
+
+# A tag can move while the empty Actions response is being confirmed. The
+# caller first resolves it to SHA_C, then the final publication result must
+# reject a successful run for SHA_C if the tag now resolves to SHA_B.
+tag_change_during_confirmation_case() {
+  local name="$1" second_commit="$2" expected="$3" classification="$4" rc=0
+  local runs="$WORK/runs-$name.jsonl" run_state="$WORK/runs-$name.calls"
+  local commits="$WORK/commits-$name.txt" commit_state="$WORK/commits-$name.calls"
+  local out="$WORK/tag-change-$name.out" err="$WORK/tag-change-$name.err"
+  printf '%s\n%s\n' "$pr_empty" "$pr_success" >"$runs"
+  printf '%s\n%s\n' "$SHA_C" "$second_commit" >"$commits"
+  BM_SHA_C="$SHA_C" BM_RUNS_RESPONSE_SEQUENCE_TAG=v2.0.0 BM_RUNS_RESPONSE_SEQUENCE_FILE="$runs" \
+    BM_RUNS_RESPONSE_SEQUENCE_STATE="$run_state" \
+    BM_COMMIT_RESPONSE_SEQUENCE_TAG=v2.0.0 BM_COMMIT_RESPONSE_SEQUENCE_FILE="$commits" \
+    BM_COMMIT_RESPONSE_SEQUENCE_STATE="$commit_state" PATH="$bm_bin:$PATH" \
+    bash -c 'source "$1"; resolved="$(tag_commit wedding-app v2.0.0)" || exit 3; tag_was_published wedding-app v2.0.0 "$resolved"' \
+    bash "$SCRIPT" >"$out" 2>"$err" || rc=$?
+  local before="$failures"
+  [ "$rc" -eq "$expected" ] || fail "$name classified as $rc, expected $expected"
+  [ ! -s "$out" ] || fail "$name polluted the publication result on stdout"
+  grep -q "classification=$classification" "$err" || fail "$name omitted its publication classification"
+  [ "$(cat "$run_state")" -eq 2 ] || fail "$name did not confirm the empty Actions response"
+  [ "$(cat "$commit_state")" -ge 2 ] || fail "$name did not re-resolve the tag before accepting publication"
+  [ "$failures" -ne "$before" ] || pass "publication response $name rejects stale tag evidence"
+}
+
+tag_change_during_confirmation_case moved-during-confirmation "$SHA_B" 2 moved-tag
+tag_change_during_confirmation_case tag-resolution-fails FAIL 3 query-unknown
+
 publication_response_case success 0 published complete "$pr_success"
 publication_response_case empty 1 unpublished complete '{"total_count":0,"workflow_runs":[],"private":"RESPONSE_ONLY_SENTINEL"}'
 publication_response_case failed 1 unpublished complete "$(jq '.workflow_runs[0].conclusion="failure"' <<<"$pr_success")"

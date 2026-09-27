@@ -7,7 +7,7 @@ spec:
   # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue #1880).
   # Umami is a Flagger target like homepage: the selector keys on
   # app.kubernetes.io/instance (NOT /name) because Flagger's default
-  # --selector-labels rewrites app.kubernetes.io/name to "umami-umami-primary"
+  # --selector-labels derives app.kubernetes.io/name=umami-primary
   # on the primary Deployment, while instance=umami stays intact on the running
   # pods (see canary.yaml). The disruption controller sums the scales of every
   # controller this selector matches (umami-umami-primary + the scaled-to-0
