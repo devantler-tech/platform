@@ -1,0 +1,31 @@
+# #3155: a policy that matches a kube-system ConfigMap, and that ConfigMap. The
+# chart's resource filters exclude kube-system from admission and, with
+# skipResourceFilters: false, from background scans, so no report may ever be
+# written for it. The proof checks that before relying on it.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-owner-label-kube-system
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: owner-label
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+              namespaces: [kube-system]
+      validate:
+        message: owner label required
+        pattern:
+          metadata:
+            labels:
+              owner: "?*"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unevaluated-probe
+  namespace: kube-system
+data: {}

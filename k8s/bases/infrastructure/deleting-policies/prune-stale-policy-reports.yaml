@@ -21,9 +21,10 @@
 # A report is deleted only when it ALSO holds a result written within the last
 # two scan intervals, which shows the background scan is still visiting it.
 # Some reports are written at admission and never rescanned: the chart's
-# resource filters skip ReplicaSets and the kube-system, kube-public,
-# kube-node-lease and kyverno namespaces in background scans (168 ReplicaSet
-# reports on prod on 2026-09-19). A failing result there is old because nothing
+# resource filters skip ReplicaSets in background scans (168 ReplicaSet
+# reports on prod on 2026-09-19). (The kube-system, kube-public, kube-node-lease
+# and kyverno namespaces are skipped at admission too, so nothing writes there;
+# prune-unscanned-namespace-policy-reports handles those.) A failing result there is old because nothing
 # re-checks it, not because the violation is gone, and deleting it would hide a
 # live violation that no scan brings back. The same guard bounds what a reports
 # controller that stops publishing can lose (#3760): once its newest result is

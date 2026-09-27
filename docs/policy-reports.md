@@ -73,10 +73,9 @@ What operators should expect:
 - A current failure is rewritten by every background scan, so it never reaches
   six hours and its report is never deleted. Old `pass` and `skip` results,
   which mutate rules record once at admission, do not trigger deletion.
-- A report with no recent result is never deleted. Background scans skip
-  ReplicaSets and the kube-system, kube-public, kube-node-lease and kyverno
-  namespaces, so reports there are written at admission and never refreshed.
-  Their old failures may still be real, so they stay visible. If the reports
+- A report with no recent result is never deleted by this policy. Background
+  scans skip ReplicaSets, so their reports are written at admission and never
+  refreshed; their old failures may still be real, so they stay visible. If the reports
   controller stops publishing, failures stay in place once its newest result is
   two hours old; in those first two hours a report can still be deleted, and it
   stays missing until the controller recovers and rescans.
@@ -84,6 +83,26 @@ What operators should expect:
   evaluates is not pruned either. Use a precondition for the exemption (see
   above) so the scan rewrites it as a current `skip`.
 - Cluster-scoped `ClusterPolicyReport` objects are not covered.
+
+## Namespaces Kyverno does not evaluate
+
+The chart's default resource filters exclude the kube-system, kube-public,
+kube-node-lease and kyverno namespaces from admission, and the reports controller
+honours the same filters in background scans (`skipResourceFilters: false`). So
+Kyverno neither admits nor scans anything there, and no report in those
+namespaces is ever created or rewritten. Any report found there predates the
+filters and shows a past result, not a current one.
+
+The `prune-unscanned-namespace-policy-reports` `DeletingPolicy` runs every hour
+at minute 47 and deletes a PolicyReport in one of those namespaces once none of
+its results is less than 24 hours old. A report that is being written again, for
+example because those namespaces are scanned in future, is never deleted. The
+proof in `scripts/prove-kyverno-stale-report-prune.sh` first checks that a
+kube-system resource a policy matches really gets no report, then that only the
+day-old report is deleted.
+
+An empty report list in these namespaces means they are not covered by Kyverno
+at all, not that they are compliant.
 
 Manual whole-report deletion, direct result patches and controller restarts are
 still not recovery mechanisms for this platform. If a stale failure survives
