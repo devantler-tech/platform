@@ -566,6 +566,14 @@ anything. It should print one `--nodes=` line per configured pool.
 Any `autoscale-<type>-*` node whose `<type>` has no matching `--nodes=` group is
 stranded.
 
+You should not have to find one by hand. The `observability/stranded-autoscaler-node-alerter`
+CronJob checks every 15 minutes and raises a `StrandedAutoscalerNode` alert in Slack, naming the
+node and its pool, for as long as such a node exists. It compares node names with its own copy of
+the pool list, and CI fails when that copy differs from the `pools` in `ksail.prod.yaml`, so adding
+or removing a pool means updating `DECLARED_POOLS` in
+`k8s/providers/hetzner/infrastructure/coroot/cron-job-stranded-autoscaler-node-alerter.yaml` in the
+same change.
+
 #### Pre-flight — check these before draining anything
 
 `hcloud server delete` neither cordons nor drains the node, and it does not wait
