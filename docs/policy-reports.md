@@ -93,13 +93,14 @@ Kyverno neither admits nor scans anything there, and no report in those
 namespaces is ever created or rewritten. Any report found there predates the
 filters and shows a past result, not a current one.
 
-The `prune-unscanned-namespace-policy-reports` `DeletingPolicy` runs every hour
-at minute 47 and deletes a PolicyReport in one of those namespaces once none of
-its results is less than 24 hours old. A report that is being written again, for
-example because those namespaces are scanned in future, is never deleted. The
-proof in `scripts/prove-kyverno-stale-report-prune.sh` first checks that a
-kube-system resource a policy matches really gets no report, then that only the
-day-old report is deleted.
+A `DeletingPolicy` cannot clear those reports either: Kyverno's cleanup
+controller skips the same namespaces. A policy matching them runs on schedule and
+deletes nothing there, while the same condition deletes a matching report in an
+ordinary namespace. So a stale result in one of these namespaces stays until
+Kyverno covers the namespace again (#4228), which rewrites its reports. The
+proof in `scripts/prove-kyverno-stale-report-prune.sh` checks that a kube-system
+resource a policy matches really gets no report, so this section fails loudly if
+a chart change starts evaluating the namespace.
 
 An empty report list in these namespaces means they are not covered by Kyverno
 at all, not that they are compliant.

@@ -1,9 +1,8 @@
 # Lets the Kyverno cleanup controller read and delete namespaced policy
-# reports, which the prune-stale-policy-reports (#2573) and
-# prune-unscanned-namespace-policy-reports (#3155) DeletingPolicies require.
-# The label aggregates this role into the cleanup controller's chart-managed
-# ClusterRole. Scoped to policyreports only, the one resource those policies
-# match; cluster-scoped reports are not granted.
+# reports, which the prune-stale-policy-reports DeletingPolicy requires
+# (#2573). The label aggregates this role into the cleanup controller's
+# chart-managed ClusterRole. Scoped to policyreports only, the one resource
+# that policy matches; cluster-scoped reports are not granted.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

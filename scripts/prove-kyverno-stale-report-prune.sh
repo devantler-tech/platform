@@ -185,76 +185,8 @@ for cycle in 1 2; do
   wait_for "background scan $cycle after the kube-system probe was created" 600 scan_ran
 done
 if kubectl -n kube-system get policyreport "$probe_uid" >/dev/null 2>&1; then
-  fail "Kyverno wrote a report for a kube-system resource, so that namespace is evaluated and must not be pruned"
+  fail "Kyverno wrote a report for a kube-system resource, so docs/policy-reports.md no longer describes it"
 fi
 log "ok: a kube-system resource a policy matches gets no report after two completed scans"
-
-# Kyverno cannot write one there, so the reports stand in for those production still
-# holds from before #2134: one untouched for two days, one written an hour ago.
-fossil_report() { # <name> <age-seconds> [namespace]
-  local ts=$(($(date +%s) - $2))
-  kubectl apply -f - <<EOF
-apiVersion: wgpolicyk8s.io/v1alpha2
-kind: PolicyReport
-metadata:
-  name: $1
-  namespace: ${3:-kube-system}
-scope:
-  apiVersion: v1
-  kind: ConfigMap
-  name: unevaluated-probe
-  namespace: kube-system
-  uid: $probe_uid
-results:
-  - policy: require-owner-label-kube-system
-    rule: owner-label
-    result: fail
-    source: kyverno
-    timestamp:
-      seconds: $ts
-      nanos: 0
-EOF
-}
-fossil_report unevaluated-fossil 172800
-fossil_report unevaluated-recent 3600
-# Positive control: the same day-old report in the test namespace, which the proof adds
-# to the policy's list. If it goes and the kube-system one stays, the cleanup controller
-# itself skips kube-system, and the policy cannot work there.
-fossil_report control-fossil 172800 "$ns"
-report_exists() { kubectl -n "${2:-kube-system}" get policyreport "$1" >/dev/null 2>&1; }
-owner_before="$(result_timestamp excluded-later require-owner-label owner-label)"
-wait_for "a background scan after the kube-system reports were written" 600 scan_ran
-if ! report_exists unevaluated-fossil || ! report_exists unevaluated-recent || ! report_exists control-fossil "$ns"; then
-  fail "Kyverno removed a kube-system report on its own, so this proof cannot attribute a deletion to the policy"
-fi
-
-unevaluated_policy="$root/k8s/bases/infrastructure/deleting-policies/prune-unscanned-namespace-policy-reports.yaml"
-log "applying the unevaluated-namespace deleting policy (every minute, production windows)"
-grep -qF "'kube-system', " "$unevaluated_policy" || fail "the policy no longer lists 'kube-system', first; update this substitution"
-sed -e 's#schedule: ".*"#schedule: "* * * * *"#' -e "s#'kube-system', #'kube-system', '$ns', #" "$unevaluated_policy" |
-  kubectl apply -f -
-control_gone() { ! report_exists control-fossil "$ns"; }
-wait_for "the day-old control report in $ns deleted" 300 control_gone
-fossil_gone() { ! report_exists unevaluated-fossil; }
-wait_for "the day-old kube-system report deleted" 300 fossil_gone
-unevaluated_last_run() {
-  kubectl get deletingpolicies.policies.kyverno.io prune-unscanned-namespace-policy-reports \
-    -o jsonpath='{.status.lastExecutionTime}' 2>/dev/null || true
-}
-run_mark="$(unevaluated_last_run)"
-[[ -n "$run_mark" ]] || fail "the unevaluated-namespace policy reports no lastExecutionTime"
-unevaluated_ran_since_mark() {
-  local now
-  now="$(unevaluated_last_run)"
-  [[ -n "$now" && "$now" > "$run_mark" ]]
-}
-for cycle in 1 2; do
-  wait_for "unevaluated-namespace cleanup run $cycle after the fossil was deleted" 300 unevaluated_ran_since_mark
-  run_mark="$(unevaluated_last_run)"
-done
-report_exists unevaluated-recent ||
-  fail "a kube-system report written within the last day was deleted"
-has_results always-current "$both" || fail "the unevaluated-namespace policy touched a report outside its namespaces"
-log "ok: only the kube-system report nothing had written for a day was deleted"
 
 log "PASS"
