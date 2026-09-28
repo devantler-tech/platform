@@ -193,6 +193,10 @@ log "ok: a report with no current result keeps its failures"
 covered_namespaces=(kube-system kube-public kube-node-lease)
 unevaluated_namespaces=(kyverno)
 log "checking that Kyverno reports in ${covered_namespaces[*]} and not in ${unevaluated_namespaces[*]}"
+# Only a result written after the probes exist counts: a report surviving an earlier
+# run on a reused cluster must not satisfy the check. The kind cluster shares the
+# runner's clock, so the local time is a valid lower bound for result timestamps.
+probes_applied_at="$(date +%s)"
 kubectl apply -f "$dir/unevaluated-namespace-fixtures.yaml"
 probe_uid() { # <namespace>
   kubectl -n "$1" get configmap unevaluated-probe -o jsonpath='{.metadata.uid}'
@@ -202,7 +206,9 @@ probe_reported() { # <namespace>
   uid="$(probe_uid "$1")" || return 1
   [[ -n "$uid" ]] || return 1
   kubectl -n "$1" get policyreport "$uid" -o json 2>/dev/null |
-    jq -e 'any(.results[]?; .policy == "require-owner-label-unevaluated" and .rule == "owner-label")' >/dev/null
+    jq -e --argjson since "$probes_applied_at" \
+      'any(.results[]?; .policy == "require-owner-label-unevaluated" and .rule == "owner-label"
+        and (.timestamp.seconds // 0) >= $since)' >/dev/null
 }
 # Positive control: the same policy must report on the same ConfigMap in an ordinary
 # namespace, or an absent report in kyverno would prove only that the policy never ran.
