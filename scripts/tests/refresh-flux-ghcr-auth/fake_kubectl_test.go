@@ -1747,6 +1747,12 @@ func fakeKubectlGetNodes() int {
 	remaining := nodes[:0]
 	for _, node := range nodes {
 		name := node.(map[string]any)["metadata"].(map[string]any)["name"].(string)
+		// The autoscaler finished deleting the node the bridge deselected: it has
+		// left the inventory, with no replacement.
+		if name == os.Getenv("FAKE_AUTOSCALER_DELETING_THEN_REMOVED_NODE") &&
+			markerExists("autoscaler-deleted-"+name) {
+			continue
+		}
 		if markerExists("removed-before-process-" + name) {
 			if name == os.Getenv("FAKE_AUTOSCALER_REMOVES_AFTER_CLAIM_NODE") {
 				appendEnvFile("OPERATION_LOG", "node-removal-inventory:"+name+"\n")
@@ -1945,7 +1951,9 @@ func fakeKubectlGetNode(args []string) int {
 		(markerExists("cordon-owner-prod-control-plane-3") || markerExists("removed-before-process-"+nodeName))
 	removedAfterClaim := nodeName == os.Getenv("FAKE_AUTOSCALER_REMOVES_AFTER_CLAIM_NODE") &&
 		markerExists("cordon-owner-"+nodeName)
-	if wordListContains(os.Getenv("FAKE_NODE_REMOVED_BEFORE_PROCESS"), nodeName) || removedAfterQuarantine || removedAfterClaim || removedAfterImageMarker ||
+	removedAfterAutoscalerDeletion := nodeName == os.Getenv("FAKE_AUTOSCALER_DELETING_THEN_REMOVED_NODE") &&
+		markerExists("autoscaler-deleted-"+nodeName)
+	if wordListContains(os.Getenv("FAKE_NODE_REMOVED_BEFORE_PROCESS"), nodeName) || removedAfterQuarantine || removedAfterClaim || removedAfterImageMarker || removedAfterAutoscalerDeletion ||
 		(nodeName == os.Getenv("FAKE_NODE_REMOVED_AFTER_UNCORDON") && markerExists("uncordoned-"+nodeName)) {
 		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "forbidden" {
 			return commandFailure(1, "Error from server (Forbidden): nodes is forbidden")
@@ -2062,6 +2070,10 @@ func fakeKubectlGetNode(args []string) int {
 	if owner := markerContent("scale-down-owner-" + nodeName); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-scale-down-owner"] = owner
 	}
+	// A leftover bridge scale-down owner the current transaction does not hold.
+	if wordListContains(os.Getenv("FAKE_STALE_SCALE_DOWN_OWNER_NODES"), nodeName) {
+		annotations["platform.devantler.tech/ghcr-auth-scale-down-owner"] = "stale-owner"
+	}
 	cordoned := (wordListContains(os.Getenv("FAKE_CORDONED_NODES"), nodeName) || markerExists("cordoned-"+nodeName)) &&
 		!markerExists("external-uncordon-after-remove-"+nodeName)
 	if nodeName == os.Getenv("FAKE_EXTERNAL_UNCORDON_AFTER_READY_NODE") && markerExists("ready-"+nodeName) {
@@ -2079,6 +2091,18 @@ func fakeKubectlGetNode(args []string) int {
 			"key":    "ToBeDeletedByClusterAutoscaler",
 			"effect": "NoSchedule",
 		})
+	}
+	// The autoscaler is deleting this node. The first scheduling read that is not an
+	// --ignore-not-found identity probe is the one the claim inspects; the node is
+	// gone from every later read, as it is once the cloud deletion completes.
+	if nodeName == os.Getenv("FAKE_AUTOSCALER_DELETING_THEN_REMOVED_NODE") {
+		taints = append(taints, map[string]any{
+			"key":    "ToBeDeletedByClusterAutoscaler",
+			"effect": "NoSchedule",
+		})
+		if !containsArg(args, "--ignore-not-found") {
+			touchMarker("autoscaler-deleted-" + nodeName)
+		}
 	}
 	if wordListContains(os.Getenv("FAKE_AUTOSCALER_DELETING_NODES"), nodeName) {
 		taints = append(taints, map[string]any{

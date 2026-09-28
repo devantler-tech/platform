@@ -2241,6 +2241,15 @@ claim_node_cordon_ownership() {
   ' "${state_file}")"
 
   while :; do
+    # Nothing is held yet at this point: every earlier attempt was an atomic
+    # test-guarded patch that was refused. A node Cluster Autoscaler is already
+    # removing is therefore deselected (exit 2) rather than failing the deploy;
+    # the caller decides whether its path may deselect. Every other unsafe state
+    # still fails closed below.
+    if autoscaled_node_is_being_deleted_unowned "${state_file}"; then
+      rm -f "${reread_error_file}"
+      return 2
+    fi
     if ! autoscaled_node_claim_is_safe "${state_file}"; then
       echo "::error::Refusing to synchronize ${node_name}: the autoscaled node is already unschedulable, marked for deletion, or carries ambiguous scale-down ownership."
       return 1
@@ -2275,6 +2284,11 @@ claim_node_cordon_ownership() {
           >"${result_file}"
       fi
       break
+    fi
+
+    if autoscaled_node_is_being_deleted_unowned "${state_file}"; then
+      attempt=$((attempt + 1))
+      continue
     fi
 
     if ! node_claim_preconditions_still_hold \
@@ -3232,10 +3246,13 @@ prepare_runtime_bootstrap_roll() {
       return 1
     fi
     assert_sync_lease_held || return 1
+    # Bootstrap preparation stays fail-closed even for a node the autoscaler is
+    # removing (exit 2): the seed and quarantine plan were computed over it.
     if ! claim_node_cordon_ownership \
       "${node_name}" "${owner_token}" \
       "${cordon_state_file}" "${drain_result_file}" \
       "${recovery_record}" "${was_cordoned}" "${initial_taints}"; then
+      echo "::error::Refusing bootstrap preparation: Talos node ${node_name} could not be claimed."
       return 1
     fi
     assert_sync_lease_held || return 1
@@ -3583,6 +3600,7 @@ process_talos_node_target() {
   local reusable_proof_uid=""
   local identity_result=0 allow_removed=1
   local selected_node_autoscaled=0 guard_result=0
+  local claim_result=0
   local scale_down_guard_owned=0
 
   assert_sync_lease_held || return 1
@@ -3771,10 +3789,17 @@ process_talos_node_target() {
     fi
     cordon_owner_token="${desired_revision:0:16}-$(fence_run_segment)-$$-${RANDOM}"
     assert_sync_lease_held || return 1
+    claim_result=0
     claim_node_cordon_ownership \
       "${node_name}" "${cordon_owner_token}" \
       "${cordon_state_file}" "${drain_result_file}" \
-      "" "${was_cordoned}" "${initial_node_taints}" || return 1
+      "" "${was_cordoned}" "${initial_node_taints}" || claim_result=$?
+    if ((claim_result == 2)); then
+      echo "::notice::Talos node ${node_name} is being removed by Cluster Autoscaler before it was claimed; deselected without mutation or verification credit."
+      return 2
+    elif ((claim_result != 0)); then
+      return 1
+    fi
   fi
 
   # A node resourceVersion fences only the claim itself. Renew after the claim
@@ -4292,8 +4317,11 @@ sync_talos_registry_auth() {
         if ((consecutive_clean_inventories >= 2)); then
           if ((deselected_any_node == 1 && processed_any_node == 0)); then
             # Autoscaled nodes are removed routinely, so a target vanishing is
-            # churn rather than a failed rollout -- and each removal was proved
-            # against a fresh unambiguous inventory before it was deselected.
+            # churn rather than a failed rollout -- and each deselection was either
+            # a removal proved against a fresh unambiguous inventory or a node
+            # Cluster Autoscaler was already deleting; the latter stays selected
+            # (so this branch is unreachable) until it has actually left the
+            # inventory.
             # Nothing was verified in this pass, though, so it must not stand in
             # for the mutation-free pass root cutover requires: report it
             # distinctly and let the caller converge again. The caller's bounded
