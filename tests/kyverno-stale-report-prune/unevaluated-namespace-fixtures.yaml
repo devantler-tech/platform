@@ -1,9 +1,10 @@
-# #3155: a policy that matches a ConfigMap in each namespace the chart's resource
-# filters exclude, and one such ConfigMap per namespace. The filters exclude these
-# namespaces from admission and, with skipResourceFilters: false, from background
-# scans, so no report may ever be written for any of them. The proof checks that
-# before docs/policy-reports.md relies on it. unevaluated-control is the positive
-# control: an ordinary namespace where the same policy must produce a report.
+# #3155, #4234: a policy that matches a ConfigMap in each system namespace, and one
+# such ConfigMap per namespace. kube-system, kube-public and kube-node-lease are
+# dropped from the resource filters, so each must get a report. kyverno stays in
+# the filters, which background scans honour (skipResourceFilters: false), so it
+# must get none. The proof checks both before docs/policy-reports.md relies on
+# them. unevaluated-control is the positive control: an ordinary namespace where
+# the same policy must produce a report.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:

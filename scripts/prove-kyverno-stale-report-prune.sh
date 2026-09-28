@@ -186,25 +186,36 @@ never_after="$(report_state never-rescanned)"
 has_results never-rescanned "$both" || fail "never-rescanned lost a failing result"
 log "ok: a report with no current result keeps its failures"
 
-# --- #3155: reports in the namespaces Kyverno never evaluates -------------------
-unevaluated_namespaces=(kube-system kube-public kube-node-lease kyverno)
-log "checking that Kyverno writes no report in ${unevaluated_namespaces[*]}"
+# --- #3155, #4234: which system namespaces Kyverno evaluates --------------------
+# The three Kubernetes system namespaces are dropped from the resource filters, so a
+# policy matching a resource there must get a report. Kyverno's own namespace stays
+# filtered, so a matching resource there must get none.
+covered_namespaces=(kube-system kube-public kube-node-lease)
+unevaluated_namespaces=(kyverno)
+log "checking that Kyverno reports in ${covered_namespaces[*]} and not in ${unevaluated_namespaces[*]}"
 kubectl apply -f "$dir/unevaluated-namespace-fixtures.yaml"
-probe_uids=()
-for probe_ns in "${unevaluated_namespaces[@]}"; do
-  uid="$(kubectl -n "$probe_ns" get configmap unevaluated-probe -o jsonpath='{.metadata.uid}')"
-  [[ -n "$uid" ]] || fail "could not read the $probe_ns probe's uid"
-  probe_uids+=("$uid")
-done
-# Positive control: the same policy must report on the same ConfigMap in an ordinary
-# namespace, or four absent reports would prove only that the policy never ran.
-control_reported() {
+probe_uid() { # <namespace>
+  kubectl -n "$1" get configmap unevaluated-probe -o jsonpath='{.metadata.uid}'
+}
+probe_reported() { # <namespace>
   local uid
-  uid="$(kubectl -n unevaluated-control get configmap unevaluated-probe -o jsonpath='{.metadata.uid}')" || return 1
-  kubectl -n unevaluated-control get policyreport "$uid" -o json 2>/dev/null |
+  uid="$(probe_uid "$1")" || return 1
+  [[ -n "$uid" ]] || return 1
+  kubectl -n "$1" get policyreport "$uid" -o json 2>/dev/null |
     jq -e 'any(.results[]?; .policy == "require-owner-label-unevaluated" and .rule == "owner-label")' >/dev/null
 }
-wait_for "the unevaluated-namespace policy to report on its control" 600 control_reported
+# Positive control: the same policy must report on the same ConfigMap in an ordinary
+# namespace, or an absent report in kyverno would prove only that the policy never ran.
+wait_for "the probe policy to report on its control" 600 probe_reported unevaluated-control
+for probe_ns in "${covered_namespaces[@]}"; do
+  wait_for "the probe policy to report in $probe_ns" 600 probe_reported "$probe_ns"
+done
+unevaluated_uids=()
+for probe_ns in "${unevaluated_namespaces[@]}"; do
+  uid="$(probe_uid "$probe_ns")"
+  [[ -n "$uid" ]] || fail "could not read the $probe_ns probe's uid"
+  unevaluated_uids+=("$uid")
+done
 # Two completed scans after the probes exist, proven by prune-test results advancing.
 for cycle in 1 2; do
   owner_before="$(result_timestamp excluded-later require-owner-label owner-label)"
@@ -213,11 +224,11 @@ done
 for i in "${!unevaluated_namespaces[@]}"; do
   probe_ns="${unevaluated_namespaces[$i]}"
   # A failed read is not an absence: only a successful, empty lookup proves no report.
-  found="$(kubectl -n "$probe_ns" get policyreport "${probe_uids[$i]}" --ignore-not-found -o name)" ||
+  found="$(kubectl -n "$probe_ns" get policyreport "${unevaluated_uids[$i]}" --ignore-not-found -o name)" ||
     fail "could not read policy reports in $probe_ns"
   [[ -z "$found" ]] ||
     fail "Kyverno wrote a report for a $probe_ns resource, so docs/policy-reports.md no longer describes it"
 done
-log "ok: a resource a policy matches gets no report in ${unevaluated_namespaces[*]} after two completed scans"
+log "ok: Kyverno reports in ${covered_namespaces[*]} and writes nothing in ${unevaluated_namespaces[*]} after two completed scans"
 
 log "PASS"
