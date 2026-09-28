@@ -280,6 +280,7 @@ jobs:
   # route the way around that gate.
   validate-ghcr-fanout-component-gate:
     name: 🔗 Validate GHCR Fan-out Component Gate
+    needs: [validate-root-verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
@@ -295,6 +296,23 @@ jobs:
           shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
           bash scripts/guard-ghcr-fanout-component-gate.sh
           bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+
+  # A manual dispatch can deploy a direct main push without a merge-group
+  # revision. Validate the root-source recovery path on that exact revision.
+  # The fan-out gate depends on this job, and deploy-prod depends on fan-out.
+  validate-root-verify:
+    name: 🛡️ Validate Root Source Repair
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🛡️ Validate the root source repair before deployment
+        run: bash scripts/tests/test-reassert-flux-root-verify.sh
 
   deploy-prod:
     name: 🚀 Deploy to Production

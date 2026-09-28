@@ -14,6 +14,7 @@ readonly script="${root_dir}/scripts/reassert-flux-root-verify.sh"
 readonly declared_file="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml"
 readonly deploy_action="${root_dir}/.github/actions/deploy-prod/action.yml"
 readonly ci_workflow="${root_dir}/.github/workflows/ci.yaml"
+readonly cd_workflow="${root_dir}/.github/workflows/cd.yaml"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -175,6 +176,9 @@ awk '/ patch fluxinstance /{p=NR} / annotate fluxinstance /{a=NR} / annotate oci
 if grep -v -- '^--context admin@prod -n flux-system ' "${case_dir}/calls" | grep -q .; then
   fail 'every kubectl call must pass --context admin@prod -n flux-system'
 fi
+if grep -v -- '--request-timeout=10s' "${case_dir}/calls" | grep -q .; then
+  fail 'every production kubectl request must have a bounded timeout'
+fi
 
 # A second JSON6902 operation can append a matcher after the declared root
 # value. A root-only comparison sees the correct root and misses the bad append.
@@ -193,6 +197,36 @@ grep -qF ' patch fluxinstance ' "${case_dir}/calls" ||
   fail 'nested_matcher: must replace the FluxInstance patch before reconciling'
 grep -qF 'annotate ocirepository flux-system' "${case_dir}/calls" ||
   fail 'nested_matcher: must ask the repaired root source to fetch'
+
+# An operation on an ancestor replaces the verify set by the root operation.
+# The live patch must be replaced even when its first /spec/verify value is current.
+ancestor_patch="$(jq -r "[.spec.kustomize.patches[] | select(${filter}) | .patch][0]" <<<"${healthy_fi}")
+- op: remove
+  path: /spec"
+run_case ancestor_mutation "$(with_source_patch "${ancestor_patch}")" "$(src_with "${bad_verify}")"
+expect_status ancestor_mutation 0
+grep -qF ' patch fluxinstance ' "${case_dir}/calls" ||
+  fail 'ancestor_mutation: must replace a patch that later removes /spec'
+
+# The full patch text is declared state. An extra operation outside verify
+# still changes the source when flux-operator applies the live patch.
+extra_operation="$(jq -r "[.spec.kustomize.patches[] | select(${filter}) | .patch][0]" <<<"${healthy_fi}")
+- op: remove
+  path: /metadata/labels"
+run_case extra_operation "$(with_source_patch "${extra_operation}")" "$(src_with "${bad_verify}")"
+expect_status extra_operation 0
+grep -qF ' patch fluxinstance ' "${case_dir}/calls" ||
+  fail 'extra_operation: must replace a patch with undeclared operations'
+
+# The operator matches the complete target, including namespace and selectors.
+# Replacing only the patch text leaves a mistargeted live entry ineffective.
+wrong_target="$(jq "(.spec.kustomize.patches[] | select(${filter}) | .target.namespace) = \"other\"" <<<"${bad_fi}")"
+run_case wrong_target "${wrong_target}" "$(src_with "${bad_verify}")"
+expect_status wrong_target 0
+declared_target="$(jq -c "[.spec.kustomize.patches[] | select(${filter}) | .target][0]" <<<"${healthy_fi}")"
+jq -e --argjson target "${declared_target}" "[.spec.kustomize.patches[] | select(${filter}) | .target][0] == \$target" \
+  "${case_dir}/fi.json" >/dev/null ||
+  fail 'wrong_target: must restore the complete declared patch target'
 
 # 4. The repair targets the right entry when the source patch is not the first one.
 reordered="$(jq '.spec.kustomize.patches |= ([.[] | select(.target.kind != "OCIRepository")] + [.[] | select(.target.kind == "OCIRepository")])' <<<"${bad_fi}")"
@@ -292,5 +326,20 @@ jq -e '
       (.["with"]["job-results"] // "") | contains("needs.validate-root-verify-merge-group.result"))
 ' <<<"${ci_jobs}" >/dev/null ||
   fail 'merge-group production deploy must wait for the root-source repair test and report its result'
+
+cd_jobs="$(yq -o=json -I=0 '.jobs' "${cd_workflow}")"
+readonly cd_jobs
+jq -e '
+  .["validate-root-verify"] as $gate
+  | $gate != null
+  and (($gate["continue-on-error"] // false) == false)
+  and any($gate.steps[];
+      (.run // "") | contains("bash scripts/tests/test-reassert-flux-root-verify.sh"))
+  and ((.["validate-ghcr-fanout-component-gate"].needs | if type == "array" then . else [.] end)
+      | index("validate-root-verify") != null)
+  and ((.["deploy-prod"].needs | if type == "array" then . else [.] end)
+      | index("validate-ghcr-fanout-component-gate") != null)
+' <<<"${cd_jobs}" >/dev/null ||
+  fail 'manual CD deploy must wait for the root-source repair test'
 
 printf 'reassert-flux-root-verify: all cases passed\n'

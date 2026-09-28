@@ -65,7 +65,7 @@ summary() {
 }
 
 kubectl_prod() {
-  "${kubectl_bin}" --context admin@prod -n "${namespace}" "$@"
+  "${kubectl_bin}" --context admin@prod -n "${namespace}" --request-timeout=10s "$@"
 }
 
 command -v jq >/dev/null 2>&1 || die 'jq is required but not on PATH'
@@ -80,18 +80,22 @@ verify_of_patch() {
   ops="$(yq -o=json '.')" || return 1
   jq -e -S -c '
     if type != "array" then error("expected a JSON6902 operation list") else . end
-    | [.[] | select(.path == "/spec/verify" or ((.path // "") | startswith("/spec/verify/")))]
+    | [.[] | select((.path // "") as $p
+        | $p == "/spec/verify"
+          or ($p | startswith("/spec/verify/"))
+          or ("/spec/verify" | startswith($p + "/")))]
     | if length == 1 and .[0].path == "/spec/verify" and (.[0].op == "add" or .[0].op == "replace") and (.[0].value | type) == "object"
     then .[0].value else error("expected exactly one add/replace of an object at /spec/verify") end' <<<"${ops}"
 }
 
 readonly source_patch_filter='.target.kind == "OCIRepository" and .target.name == "flux-system"'
 
-declared_patches="$(yq -o=json '[.spec.kustomize.patches[] | select('"${source_patch_filter}"') | .patch]' "${declared_file}")" ||
+declared_patches="$(yq -o=json '[.spec.kustomize.patches[] | select('"${source_patch_filter}"')]' "${declared_file}")" ||
   die "could not parse ${declared_file}"
 [[ "$(jq 'length' <<<"${declared_patches}")" -eq 1 ]] ||
   die "${declared_file} must declare exactly one OCIRepository/flux-system patch"
-declared_patch="$(jq -r '.[0]' <<<"${declared_patches}")"
+declared_patch="$(jq -r '.[0].patch' <<<"${declared_patches}")"
+declared_target="$(jq -S -c '.[0].target' <<<"${declared_patches}")"
 declared_verify="$(verify_of_patch <<<"${declared_patch}")" ||
   die "the declared OCIRepository/flux-system patch does not set exactly one /spec/verify object"
 
@@ -102,6 +106,7 @@ indices="$(jq -c '[.spec.kustomize.patches // [] | to_entries[] | select(.value 
   die "live FluxInstance ${namespace}/${instance} must carry exactly one OCIRepository/flux-system patch"
 index="$(jq '.[0]' <<<"${indices}")"
 live_patch="$(jq -r --argjson i "${index}" '.spec.kustomize.patches[$i].patch // ""' <<<"${instance_json}")"
+live_target="$(jq -S -c --argjson i "${index}" '.spec.kustomize.patches[$i].target' <<<"${instance_json}")"
 # An unparseable live patch is the bad state this exists to repair, not a reason to stop.
 live_instance_verify="$(verify_of_patch <<<"${live_patch}" 2>/dev/null || printf 'unparseable')"
 
@@ -113,17 +118,17 @@ source_verify() {
 
 live_source_verify="$(source_verify)" || die "could not read OCIRepository ${namespace}/${source_name}"
 
-if [[ "${live_instance_verify}" == "${declared_verify}" && "${live_source_verify}" == "${declared_verify}" ]]; then
+if [[ "${live_patch}" == "${declared_patch}" && "${live_target}" == "${declared_target}" && "${live_source_verify}" == "${declared_verify}" ]]; then
   summary 'CURRENT — the FluxInstance and the root source already carry the declared verify; nothing written.'
   exit 0
 fi
 
-if [[ "${live_instance_verify}" != "${declared_verify}" ]]; then
-  printf 'FluxInstance %s/%s declares a different root-source verify than this commit; replacing that patch entry.\n' \
+if [[ "${live_patch}" != "${declared_patch}" || "${live_instance_verify}" != "${declared_verify}" || "${live_target}" != "${declared_target}" ]]; then
+  printf 'FluxInstance %s/%s has a different root-source patch than this commit; replacing that patch entry.\n' \
     "${namespace}" "${instance}"
-  json_patch="$(jq -n -c --argjson i "${index}" --arg patch "${declared_patch}" '[
-    {op: "test", path: "/spec/kustomize/patches/\($i)/target/kind", value: "OCIRepository"},
-    {op: "test", path: "/spec/kustomize/patches/\($i)/target/name", value: "flux-system"},
+  json_patch="$(jq -n -c --argjson i "${index}" --argjson live "${live_target}" --argjson declared "${declared_target}" --arg patch "${declared_patch}" '[
+    {op: "test", path: "/spec/kustomize/patches/\($i)/target", value: $live},
+    {op: "replace", path: "/spec/kustomize/patches/\($i)/target", value: $declared},
     {op: "replace", path: "/spec/kustomize/patches/\($i)/patch", value: $patch}
   ]')"
   kubectl_prod patch fluxinstance "${instance}" --type=json \
