@@ -3225,9 +3225,59 @@ const (
 // callback from the request's own host; the callbacks it can derive are the
 // ones Dex already accepts. No RBAC, binding, service account, AWS identity, or
 // permission grant changes.
+// Re-approved for Umami serving-replica spread (#4103), against main 9eed5255.
+// The required production-authorization job on the checksum-verified renderer
+// (run 36153992630, job 108135115630) reported exactly one changed surface
+// entry, HelmRelease umami/umami, and nothing added or removed. The source delta
+// changes only the hostname spread constraint, pod-label selector, per-revision
+// spread key, two-domain floor and no-surge replacement strategy. No RBAC,
+// binding, service account, AWS identity, or permission grant changes.
+// Re-approved for rolling the Cilium operator so its Gateway API controller
+// starts (#4198), against main 1327c5e7. The required production-authorization
+// job on the checksum-verified renderer (run 36170927591, job 108193648481)
+// reported exactly one changed surface entry, HelmRelease kube-system/cilium,
+// and nothing added or removed. The source delta only adds a restart-marker
+// pod annotation to the operator, which rolls its Deployment. No RBAC, binding,
+// service account, AWS identity, or permission grant changes.
+// Re-approved for pinning the unsigned provider-upjet-github package by digest
+// (#4189), against main 85c7ffc1. The required production-authorization job on
+// the checksum-verified renderer (run 36241768108, job 108403918797) reported
+// exactly one changed surface entry, Provider provider-upjet-github, and
+// nothing added or removed. The source delta only appends the digest of the
+// already-approved v0.20.0 package to its reference, so the same bytes run. No
+// RBAC, binding, service account, AWS identity, or permission grant changes.
+// Re-approved for stating runAsUser, runAsGroup and fsGroup 65534 on the
+// coroot-operator pod (#4217), against main dfee0e2b. The required
+// production-authorization job on the checksum-verified renderer (run 36259184337,
+// job 108452111239) reported exactly one changed surface entry, HelmRelease
+// observability/coroot-operator, and nothing added or removed. The source delta only
+// adds the user and group the operator image already declares (USER 65534:65534).
+// No RBAC, binding, service account, AWS identity, or permission grant changes.
+// Re-approved for alerting on autoscaler nodes whose pool no longer exists
+// (#3178), against main 09cc547c. The required production-authorization job on
+// the checksum-verified renderer (run 36342799866, job 108686595911) reported
+// two added surface entries and nothing changed or removed:
+// ClusterRole stranded-autoscaler-node-alerter and its ClusterRoleBinding. The
+// role grants only `list` on core `nodes`; the binding names only the new
+// observability/stranded-autoscaler-node-alerter ServiceAccount. No EKS CI
+// subject, AWS service account, AWS role, boundary, policy, Secret access or
+// write verb moves. Codex review then asked for the sensor to be watched by
+// cronjob-failure-alert, which adds a Role and RoleBinding in observability:
+// `get` on the one CronJob by name and `list` on Jobs, bound only to
+// observability/cronjob-failure-alert, the same shape as its umami and
+// kubescape grants. The value below covers all four additions; the local
+// kubectl v1.36.1 renderer produced it and the required hosted job at this
+// head reproduces it.
+// Re-approved for scanning kube-system, kube-public and kube-node-lease in
+// Kyverno's background scans again (#4234), against main d44b8607. The required
+// production-authorization job on the checksum-verified renderer (run
+// 36388268083, job 108819006362) reported exactly one changed surface entry,
+// HelmRelease kyverno/kyverno, and nothing added or removed. The source delta
+// only removes three namespace entries from the chart's resource filters. No
+// RBAC, binding, service account, AWS identity, or permission grant changes.
 //
-// Previous aggregate: e0952cc586d3b5c05c3b5d7b3f1e7a9df2bf43fba21b9065175bd8ebcdee8ac7.
-const expectedRenderedSurfaceSHA = "22c0dd2b44149735ae45428b75736092c0249ca3b3c4979c5545046e5a587fc2"
+// Previous aggregate: 94c2794e05d25973e550fdbddb6865bb5c7af0b58e8f8624b2f94e7040afe681.
+const expectedRenderedSurfaceSHA = "e5d7a55bd08deafd3f6439635321c19af45822343b69aa677198f7a49f133fbc"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3240,7 +3290,7 @@ const expectedRenderedSurfaceSHA = "22c0dd2b44149735ae45428b75736092c0249ca3b3c4
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "e0952cc586d3b5c05c3b5d7b3f1e7a9df2bf43fba21b9065175bd8ebcdee8ac7"
+const previousRenderedSurfaceSHA = "94c2794e05d25973e550fdbddb6865bb5c7af0b58e8f8624b2f94e7040afe681"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

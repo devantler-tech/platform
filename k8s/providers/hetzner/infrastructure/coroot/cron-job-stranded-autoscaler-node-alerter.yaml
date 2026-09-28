@@ -1,0 +1,230 @@
+# Alerts on an autoscaler node whose pool no longer exists.
+#
+# WHY THIS EXISTS
+#
+# Removing a pool from `ksail.prod.yaml` does not delete the servers already
+# running in it. The cluster autoscaler only considers nodes inside one of its
+# configured node groups, so a node whose pool is gone is invisible to
+# scale-down: it keeps running, keeps being billed, keeps counting against
+# `maxNodesTotal`, and is never rolled. Two `autoscale-cx33-*` nodes survived
+# that way for 47 days and used two of the three autoscaler slots (#3178).
+# Nothing reported them; they were found by reading the autoscaler status by
+# hand.
+#
+# WHAT IT CHECKS
+#
+# KSail names every autoscaler node `<pool>-<16 hex>`, and every pool name
+# starts with `autoscale-`. A node whose name starts with `autoscale-` but whose
+# `<pool>` is not in DECLARED_POOLS is stranded. DECLARED_POOLS mirrors the
+# `pools` list in `ksail.prod.yaml`; scripts/tests/test-stranded-autoscaler-node-alerter.sh
+# fails CI when the two differ, so removing a pool there without updating this
+# list (or the other way round) cannot merge.
+#
+# NO SILENT ZERO. Every read either succeeds with a complete, well-formed node
+# list or fails the Job. A list with no nodes, a continuation token (a truncated
+# page), or a missing control-plane node is a broken read, never "nothing
+# stranded". This CronJob is on the `cronjob-failure-alert` watch list
+# (bases/components/coroot-cronjob-failure-alert), which alerts in Slack when
+# two runs in a row fail or no run has finished for an hour, so a broken sensor
+# is reported rather than read as a clean cluster.
+#
+# TIME BUDGET. Every curl call caps both each attempt (--max-time) and its whole
+# retry sequence (--retry-max-time), because curl restarts --max-time on each
+# retry. Worst case is about 45s for the node read and 30s per Alertmanager
+# peer, well inside the 180s Job deadline, so one unreachable peer cannot use up
+# the time the healthy peer needs.
+#
+# DELIVERY follows cron-job-crossplane-sync-alerter.yaml: POST to every
+# Alertmanager peer's v2 API, which fans out to Slack. Each alert carries an
+# `endsAt` of three missed runs, so it self-resolves once the node is gone and a
+# broken Job degrades to "the alert resolves", never to a stuck alert.
+#
+# READ-ONLY BY CONSTRUCTION. The ClusterRole grants `list` on nodes and nothing
+# else. This never cordons, drains or deletes; the removal procedure is
+# docs/dr/runbook.md, "Stranded autoscaler nodes on a LIVE cluster".
+#
+# PROD-ONLY: autoscaler pools and Alertmanager exist only in the hetzner
+# overlay, so this lives here, not in the base.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: stranded-autoscaler-node-alerter
+  namespace: observability
+  annotations:
+    checkov.io/skip1: "CKV_K8S_38=the alerter reads its SA token to list nodes through the API server"
+    # KUBERNETES_SERVICE_HOST/PORT_HTTPS and DECLARED_POOLS below are pod
+    # environment variables, not Flux inputs. The infrastructure Kustomization
+    # runs post-build substitution, which would otherwise blank them. This
+    # resource has no Flux substitutions of its own.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  # A stranded node costs money by the day, not by the minute, so a 15-minute
+  # cadence is plenty. It must stay well under the 45-minute endsAt below.
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 180
+      template:
+        metadata:
+          labels:
+            app: stranded-autoscaler-node-alerter
+        spec:
+          restartPolicy: Never
+          serviceAccountName: stranded-autoscaler-node-alerter
+          # Required for the node list. The dedicated role grants nothing else.
+          automountServiceAccountToken: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+            # The two non-privilege C-0211 fields the cluster-wide
+            # add-security-context mutation cannot supply in observability
+            # (#3239). Values match add-security-context.yaml.
+            fsGroupChangePolicy: OnRootMismatch
+          containers:
+            - name: alerter
+              # curl + jq, digest-pinned (same image as the other alerters).
+              # observability is exempt from disallow-latest-tag.
+              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              imagePullPolicy: IfNotPresent
+              env:
+                # Space-separated, and kept equal to the `pools[].name` list in
+                # ksail.prod.yaml by scripts/tests/test-stranded-autoscaler-node-alerter.sh.
+                - name: DECLARED_POOLS
+                  value: "autoscale-cx43 autoscale-cx53"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                # CIS-5.7.3 (C-0211); a documented no-op on this AppArmor cluster.
+                seLinuxOptions: {}
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 32Mi
+                  ephemeral-storage: 8Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+                  ephemeral-storage: 16Mi
+              volumeMounts:
+                - name: scratch
+                  mountPath: /tmp
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  # Alertmanager HA does not replicate received alerts between
+                  # peers, so every alert goes to each StatefulSet pod directly.
+                  AM_PEERS="http://alertmanager-0.alertmanager-headless.kubescape.svc.cluster.local.:9093 http://alertmanager-1.alertmanager-headless.kubescape.svc.cluster.local.:9093"
+                  KUBE_API="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS}"
+                  SA_DIR="/var/run/secrets/kubernetes.io/serviceaccount"
+                  NODES="/tmp/nodes.json"
+
+                  if [ -z "$(printf '%s' "$DECLARED_POOLS" | tr -d ' ')" ]; then
+                    echo "ERROR: DECLARED_POOLS is empty; every autoscaler node would read as stranded"
+                    exit 1
+                  fi
+
+                  # endsAt = three missed runs. jq formats it: BusyBox date has
+                  # no relative offsets, and only `+%s` is portable.
+                  ENDS=$(jq -nr --argjson t "$(date -u +%s)" '($t + 2700) | todate')
+                  case "$ENDS" in
+                    ????-??-??T??:??:??Z) ;;
+                    *) echo "ERROR: could not compute endsAt (got '$ENDS')"; exit 1 ;;
+                  esac
+
+                  # One bounded page. A continuation token means the list was
+                  # cut short, which is a failed read, not a complete answer.
+                  code=$(curl -sS --retry 3 --retry-delay 2 --retry-all-errors \
+                    --max-time 15 --retry-max-time 30 -o "$NODES" -w '%{http_code}' \
+                    --cacert "$SA_DIR/ca.crt" \
+                    -H "Authorization: Bearer $(cat "$SA_DIR/token")" \
+                    "$KUBE_API/api/v1/nodes?limit=500")
+                  if [ "$code" != "200" ]; then
+                    echo "ERROR: kube API returned HTTP $code listing nodes"
+                    exit 1
+                  fi
+                  if ! jq -e '.kind == "NodeList" and ((.items | type) == "array")' "$NODES" >/dev/null; then
+                    echo "ERROR: unexpected response shape listing nodes"
+                    exit 1
+                  fi
+                  if [ -n "$(jq -r '.metadata.continue // ""' "$NODES")" ]; then
+                    echo "ERROR: node list is paginated beyond one page; refusing a partial answer"
+                    exit 1
+                  fi
+                  total=$(jq -r '.items | length' "$NODES")
+                  control=$(jq -r '[.items[] | select(.metadata.labels | has("node-role.kubernetes.io/control-plane"))] | length' "$NODES")
+                  if [ "$total" -eq 0 ] || [ "$control" -eq 0 ]; then
+                    echo "ERROR: node list has $total node(s) and $control control plane(s); that is not a real cluster read"
+                    exit 1
+                  fi
+
+                  # A node is stranded when its name has the autoscaler prefix
+                  # and its pool (the name without the trailing -<hex> suffix)
+                  # is not declared. A name that does not have the <pool>-<hex>
+                  # shape at all is reported too: KSail did not create it the
+                  # way this check understands, so it deserves a look.
+                  alerts=$(jq -c --arg pools "$DECLARED_POOLS" --arg e "$ENDS" '
+                    ($pools | split(" ") | map(select(. != ""))) as $declared
+                    | [ .items[]
+                        | .metadata.name as $n
+                        | select($n | startswith("autoscale-"))
+                        | ($n | capture("^(?<pool>autoscale-.+)-(?<id>[0-9a-f]+)$") // {pool: ""}) as $m
+                        | select(any($declared[]; . == $m.pool) | not)
+                        | {
+                            labels: {
+                              alertname: "StrandedAutoscalerNode",
+                              severity: "warning",
+                              node: $n,
+                              pool: (if $m.pool == "" then "unparsed" else $m.pool end)
+                            },
+                            annotations: {
+                              summary: "Autoscaler node \($n) belongs to no configured pool",
+                              description: "Pool \(if $m.pool == "" then "(name does not match <pool>-<hex>)" else $m.pool end) is not among the pools declared in ksail.prod.yaml (\($declared | join(", "))). The cluster autoscaler never scales down a node outside its node groups, so this server keeps running, keeps being billed and keeps using the maxNodesTotal budget until someone removes it. Created \(.metadata.creationTimestamp).",
+                              runbook: "docs/dr/runbook.md: Stranded autoscaler nodes on a LIVE cluster (drain, move Longhorn replicas, then delete the server)."
+                            },
+                            endsAt: $e
+                          } ]' "$NODES")
+
+                  n=$(printf '%s' "$alerts" | jq -r 'length')
+                  if [ "$n" -eq 0 ]; then
+                    echo "checked $total node(s); every autoscaler node belongs to a declared pool ($DECLARED_POOLS)"
+                    exit 0
+                  fi
+                  printf '%s' "$alerts" | jq -r '.[] | "stranded: \(.labels.node) (pool \(.labels.pool))"'
+
+                  # --fail makes a rejected POST observable; the Job fails only
+                  # when no peer accepted the alerts.
+                  delivered=0
+                  for am in $AM_PEERS; do
+                    if curl -sS --retry 3 --retry-delay 2 --retry-all-errors --max-time 10 --retry-max-time 20 \
+                         --fail -X POST -H 'Content-Type: application/json' \
+                         -d "$alerts" "$am/api/v2/alerts" >/dev/null; then
+                      delivered=$((delivered + 1))
+                    else
+                      echo "WARN: $am rejected the POST"
+                    fi
+                  done
+                  if [ "$delivered" -eq 0 ]; then
+                    echo "ERROR: no alertmanager peer accepted the POST; $n alert(s) NOT delivered"
+                    exit 1
+                  fi
+                  echo "posted $n alert(s) to $delivered alertmanager peer(s)"
+          volumes:
+            - name: scratch
+              emptyDir:
+                sizeLimit: 8Mi

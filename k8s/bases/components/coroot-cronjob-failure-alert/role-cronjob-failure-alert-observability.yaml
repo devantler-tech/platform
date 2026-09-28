@@ -1,0 +1,26 @@
+# Lets the detector read the stranded-autoscaler-node-alerter CronJob (hetzner
+# overlay) and the Jobs it created, so a sensor that keeps failing is reported
+# instead of reading as a clean cluster. Read-only and resource-name scoped where
+# Kubernetes supports it; Jobs require namespace-wide list for owner-reference
+# filtering.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cronjob-failure-alert
+  namespace: observability
+rules:
+  - apiGroups:
+      - batch
+    resources:
+      - cronjobs
+    resourceNames:
+      - stranded-autoscaler-node-alerter
+    verbs:
+      - get
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - list

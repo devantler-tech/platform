@@ -1,6 +1,6 @@
 # Devantler Tech Platform ☸️⛴️
 
-<img width="1063" height="1106" alt="image" src="https://github.com/user-attachments/assets/3ab015f0-ab07-4c39-b861-c69517e0d222" />
+<img width="989" height="957" alt="image" src="https://github.com/user-attachments/assets/c405c79a-8abf-4407-ae84-dd0acf58cc24" />
 
 My personal Kubernetes platform, in the open. Everything the cluster runs is described as files in
 this repository, and changes go live by being merged here rather than by anyone running commands

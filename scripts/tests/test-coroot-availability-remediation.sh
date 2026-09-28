@@ -5,6 +5,7 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly alertmanager_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/alertmanager/helm-release.yaml"
+readonly umami_release="${root_dir}/k8s/bases/apps/umami/helm-release.yaml"
 readonly backstage_release="${root_dir}/k8s/bases/apps/backstage/helm-release.yaml"
 readonly loadtester_release="${root_dir}/k8s/bases/infrastructure/controllers/flagger/helm-release-loadtester.yaml"
 readonly loadtester_pdb="${root_dir}/k8s/bases/infrastructure/controllers/flagger/pod-disruption-budget-loadtester.yaml"
@@ -30,6 +31,29 @@ fail() {
 
 command -v yq >/dev/null || fail 'yq is required'
 command -v kubectl >/dev/null || fail 'kubectl is required'
+
+yq e -e '
+  ([.spec.values.topologySpreadConstraints[] |
+    select(.topologyKey == "kubernetes.io/hostname" and
+      .maxSkew == 1 and
+      .minDomains == 2 and
+      .nodeTaintsPolicy == "Honor" and
+      .whenUnsatisfiable == "DoNotSchedule" and
+      .labelSelector.matchLabels."app.kubernetes.io/name" == "umami-primary" and
+      (. | has("matchLabelKeys") | not))
+  ] | length == 1) and
+  (.spec.values.topologySpreadConstraints | length == 1)
+' "${umami_release}" >/dev/null ||
+  fail 'Umami serving replicas need one hostname spread across every primary revision, counting only nodes they can run on'
+
+umami_patch="$(yq e -r '.spec.postRenderers[].kustomize.patches[] | select(.target.kind == "Deployment" and .target.name == "umami-umami") | .patch' "${umami_release}")"
+printf '%s\n' "${umami_patch}" | yq e -e '
+  [.[] | select(.op == "add" and .path == "/spec/strategy" and
+    .value.type == "RollingUpdate" and
+    .value.rollingUpdate.maxSurge == 0 and
+    .value.rollingUpdate.maxUnavailable == 1)] | length == 1
+' - >/dev/null ||
+  fail 'Umami primary rollout must retire one old pod before placing its replacement'
 
 yq e -e '
   .spec.values.backstage.startupProbe.httpGet.path == "/.backstage/health/v1/readiness" and

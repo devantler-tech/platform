@@ -2,8 +2,9 @@
 # Guards the oauth2-proxy login round-trip on every host it fronts.
 #
 # oauth2-proxy finishes a login at /oauth2/callback on the host the user started
-# from, then returns them to the page they asked for as a path on that host, so
-# it must not be given a fixed redirect_url. Dex only accepts a
+# from, then returns them to the page they asked for as a path on that host. So
+# oauth2-proxy must not be given a fixed redirect_url, and no route may replace
+# that page with a fixed X-Auth-Request-Redirect. Dex only accepts a
 # callback it has registered exactly, so every host an HTTPRoute sends to
 # oauth2-proxy needs `https://<host>/oauth2/callback` on Dex's public-client.
 # Without it, logging in on that host stops at Dex with "Unregistered
@@ -117,6 +118,12 @@ for provider in "${providers[@]}"; do
   [[ -z "${unnamed}" ]] ||
     fail "${provider}: these HTTPRoutes send traffic to oauth2-proxy without naming a hostname, so their login callback cannot be checked: ${unnamed//$'\n'/, }"
 
+  # oauth2-proxy prefers an X-Auth-Request-Redirect header over the page the
+  # user asked for, so a route that sets one sends every login to that one URL.
+  fixed="$(yq eval -N "${fronted_routes} | select([.spec.rules[]?.filters[]? | select(.type == \"RequestHeaderModifier\") | ((.requestHeaderModifier.set // []) + (.requestHeaderModifier.add // []))[] | select(.name | downcase == \"x-auth-request-redirect\")] | length > 0) | .metadata.namespace + \"/\" + .metadata.name" "${rendered}")"
+  [[ -z "${fixed}" ]] ||
+    fail "${provider}: these HTTPRoutes send every login through oauth2-proxy to one fixed URL, dropping the page the user asked for. Remove their X-Auth-Request-Redirect header: ${fixed//$'\n'/, }"
+
   hosts="$(hosts_of "${rendered}")"
   if [[ "${provider}" == hetzner && -z "${hosts}" ]]; then
     fail 'the production overlays put no host behind oauth2-proxy; either the SSO wiring changed shape or this test stopped seeing it'
@@ -176,5 +183,5 @@ if ((${#stale[@]} > 0)); then
   fail "Dex still accepts an oauth2-proxy login callback on hosts no HTTPRoute sends to oauth2-proxy. Remove each from the public-client redirectURIs in ${dex_file}: ${stale[*]}"
 fi
 
-printf 'PASS: oauth2-proxy finishes each login on the host it started from, and Dex accepts that callback on all %d hosts it fronts and on no other\n' \
+printf 'PASS: a login through oauth2-proxy returns to the page it started from on all %d hosts it fronts, and Dex accepts no other oauth2-proxy callback\n' \
   "$(grep -c . "${all_hosts}")"

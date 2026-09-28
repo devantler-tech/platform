@@ -27,11 +27,6 @@ spec:
     # Backstage OIDC (a custom image + a Dex static client) is the follow-up in
     # docs/backstage.md.
     - filters:
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://backstage.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:

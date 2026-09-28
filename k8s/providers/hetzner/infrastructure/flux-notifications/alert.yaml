@@ -174,4 +174,5 @@ spec:
     - kind: HelmRelease
       name: "*"
       namespace: whoami
-  summary: "Flux reconciliation error — prod platform"
+  eventMetadata:
+    summary: "Flux reconciliation error — prod platform"

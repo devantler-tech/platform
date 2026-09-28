@@ -111,7 +111,9 @@ spec:
         # the cx33 pool in #2420 stranded two live cx33 nodes for 47 days exactly
         # this way (#3178). When removing a pool, drain and delete its nodes in
         # the same change: docs/dr/runbook.md → "Stranded autoscaler nodes on a
-        # LIVE cluster".
+        # LIVE cluster". Keep DECLARED_POOLS in the stranded-autoscaler-node-
+        # alerter CronJob equal to this list; CI fails until they match, and the
+        # CronJob alerts on any autoscaler node whose pool is not in it.
         pools:
           - name: autoscale-cx43
             serverType: cx43

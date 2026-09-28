@@ -104,6 +104,13 @@ resources:
   - coroot/service-account-crossplane-sync-alerter.yaml
   - coroot/cluster-role-crossplane-sync-alerter.yaml
   - coroot/cluster-role-binding-crossplane-sync-alerter.yaml
+  # Prod-only: alerts through Alertmanager when an autoscaler node belongs to a
+  # pool ksail.prod.yaml no longer declares, since the autoscaler never scales
+  # such a node down (#3178). See the file header.
+  - coroot/cron-job-stranded-autoscaler-node-alerter.yaml
+  - coroot/service-account-stranded-autoscaler-node-alerter.yaml
+  - coroot/cluster-role-stranded-autoscaler-node-alerter.yaml
+  - coroot/cluster-role-binding-stranded-autoscaler-node-alerter.yaml
   # Prod-only: the CloudNativePG datastore + backup wiring that lets the Coroot
   # SERVER run HA (replicas: 2 — set in the coroot-patch below). The operator
   # only honours replicas > 1 when spec.postgres is set, so this Postgres is the
@@ -154,8 +161,8 @@ resources:
   # predated #5277; the old balloon-pod buffer was already removed in #2087.)
   - overprovisioning/
   # Prod-only: static VerticalPodAutoscalers for kube-system + kyverno. auto-vpa
-  # (Kyverno) can't reach these namespaces (global resourceFilters), so VPA is
-  # supplied as plain manifests here. Pairs with the LimitRange memory-seed
+  # (Kyverno) excludes these namespaces explicitly, so VPA is supplied as plain
+  # manifests here. Pairs with the LimitRange memory-seed
   # patches below — together VPA right-sizes requests down while keeping a
   # generous, no-OOM burst limit. See vertical-pod-autoscalers/kustomization.yaml.
   - vertical-pod-autoscalers/

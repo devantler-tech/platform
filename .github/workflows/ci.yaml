@@ -181,6 +181,9 @@ jobs:
           shellcheck scripts/check-first-party-package-signatures.sh
           shellcheck scripts/tests/test-check-first-party-package-signatures.sh
           bash scripts/tests/test-check-first-party-package-signatures.sh
+          shellcheck scripts/check-upbound-package-signatures.sh
+          shellcheck scripts/tests/test-check-upbound-package-signatures.sh
+          bash scripts/tests/test-check-upbound-package-signatures.sh
 
       - name: 🔐 Validate the scoped package-access experiment
         # Always run, including workflow-only changes. The real registry proof
@@ -348,6 +351,7 @@ jobs:
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
+              - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
               # The boundary test asserts over these two guides, so a docs-only
               # change to either must trigger it or those assertions can drift.
@@ -591,6 +595,7 @@ jobs:
               - 'scripts/tests/test-coroot-cost-convergence.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
               - 'scripts/tests/test-crossplane-sync-alerter.sh'
+              - 'scripts/tests/test-stranded-autoscaler-node-alerter.sh'
               - 'scripts/tests/test-crossplane-egress-policy.sh'
               - 'scripts/tests/crossplane-egress-policy-rules.yaml'
               - 'scripts/tests/test-coroot-alert-remediation.sh'
@@ -705,6 +710,10 @@ jobs:
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-crossplane-provider-name-parity.sh'
               - 'scripts/tests/test-guard-crossplane-provider-name-parity.sh'
+              - 'scripts/tests/test-crossplane-aws-family-version-parity.sh'
+              # Both halves, for the same reason as the guards above.
+              - 'scripts/guard-unverified-provider-digest-pin.sh'
+              - 'scripts/tests/test-guard-unverified-provider-digest-pin.sh'
               # Both halves, for the same reason as the guards above. This guard
               # also reads scripts/refresh-flux-ghcr-auth.sh, already selected
               # below, and k8s/bases/apps/kustomization.yaml, covered by 'k8s/**'.
@@ -741,6 +750,8 @@ jobs:
               - 'scripts/tests/test-use-prod-stable-api-endpoint.sh'
               - 'scripts/tests/test-refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/tests/refresh-flux-ghcr-auth/**'
+              - 'scripts/verify-gateway-routes-applied.sh'
+              - 'scripts/tests/test-verify-gateway-routes-applied.sh'
               - 'docs/dr/runbook.md'
               - '.github/actions/deploy-prod/**'
               - '.github/workflows/dr-rebuild.yaml'
@@ -938,6 +949,14 @@ jobs:
           printf '%s' "$REGISTRY_TOKEN" | cosign login ghcr.io -u "$REGISTRY_USER" --password-stdin
           bash scripts/check-first-party-package-signatures.sh
 
+      - name: 🔐 Verify proposed Upbound Crossplane packages
+        # The Upbound AWS providers run with the platform's AWS CI identity.
+        # Each proposed package must carry Upbound's own build signature, and a
+        # wrong identity must be refused on every run (#4189). Their registry
+        # is public, so this needs no credential.
+        timeout-minutes: 10
+        run: bash scripts/check-upbound-package-signatures.sh
+
   validate-eks-authorization:
     name: 🔐 Validate Production Authorization
     needs: [changes]
@@ -1023,7 +1042,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.186.0"
+          KSAIL_VERSION: "7.186.2"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1145,6 +1164,16 @@ jobs:
           bash scripts/tests/test-wait-for-prod-api-stability.sh
           bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           go test -timeout=20m ./scripts/tests/refresh-flux-ghcr-auth
+
+      - name: 🚦 Validate the gateway route-application check
+        # Local test with a fake kubectl: no cluster access. The deploy runs
+        # this check last, so a gateway that stopped applying routes fails the
+        # deploy instead of going unnoticed (#4198).
+        run: |
+          shellcheck \
+            scripts/verify-gateway-routes-applied.sh \
+            scripts/tests/test-verify-gateway-routes-applied.sh
+          bash scripts/tests/test-verify-gateway-routes-applied.sh
 
       - name: 🧩 Validate embedded JSON blobs
         # ConfigMaps that embed whole JSON documents as block scalars (e.g. the
@@ -1562,6 +1591,8 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-availability-remediation.sh
           bash scripts/tests/test-coroot-availability-remediation.sh
+          shellcheck scripts/tests/test-umami-rendered-placement.sh
+          bash scripts/tests/test-umami-rendered-placement.sh
           shellcheck scripts/tests/test-coroot-risk-acceptance-reconciler.sh
           bash scripts/tests/test-coroot-risk-acceptance-reconciler.sh
 
@@ -1627,6 +1658,12 @@ jobs:
       - name: 📡 Validate Crossplane sync alert delivery
         if: needs.changes.outputs.k8s == 'true'
         run: bash scripts/tests/test-crossplane-sync-alerter.sh
+
+      - name: 🖥️ Validate the stranded autoscaler node alert
+        if: needs.changes.outputs.k8s == 'true'
+        # Its declared pools must equal ksail.prod.yaml's, so removing a pool
+        # cannot leave that pool's nodes unreported (#3178).
+        run: bash scripts/tests/test-stranded-autoscaler-node-alerter.sh
 
       - name: 🩺 Validate the CNPG degraded-cluster alert
         if: needs.changes.outputs.k8s == 'true'
@@ -1902,6 +1939,23 @@ jobs:
           bash scripts/guard-crossplane-provider-name-parity.sh k8s
           bash scripts/tests/test-guard-crossplane-provider-name-parity.sh
 
+      - name: 📌 Validate unverified Crossplane providers are digest-pinned
+        if: needs.changes.outputs.k8s == 'true'
+        # Only first-party and Upbound provider packages have a signature check.
+        # Any other publisher's package must be pinned by digest, so the bytes that
+        # were reviewed are the bytes the cluster installs (#4189).
+        run: |
+          bash scripts/guard-unverified-provider-digest-pin.sh k8s
+          bash scripts/tests/test-guard-unverified-provider-digest-pin.sh
+
+      - name: 🧬 Validate the AWS Crossplane family runs one release
+        if: needs.changes.outputs.k8s == 'true'
+        # provider-aws-iam depends on provider-family-aws and must run its release.
+        # Renovate groups their bumps into one PR, but grouping does not force equal
+        # versions, so a split release would otherwise merge as a version skew.
+        run: |
+          bash scripts/tests/test-crossplane-aws-family-version-parity.sh
+
       - name: 🔗 Validate the GHCR fan-out follows the apps-base component gate
         if: needs.changes.outputs.k8s == 'true'
         # An app that pulls private first-party images is declared twice: enabled
@@ -1993,7 +2047,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.186.0"
+          KSAIL_VERSION: "7.186.2"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2799,7 +2853,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.186.0"
+          KSAIL_VERSION: "7.186.2"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
