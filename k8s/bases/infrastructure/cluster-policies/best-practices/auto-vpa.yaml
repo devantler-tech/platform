@@ -1,11 +1,10 @@
 # TODO: Upstream `auto-vpa.yaml` to Kyverno policies repository.
 #
 # Every rule EXCLUDES the system namespaces (kube-system, kube-public,
-# kube-node-lease, kyverno) explicitly. Kyverno's GLOBAL resourceFilters
-# (`[*/*,kube-system,*]`, `[*/*,kyverno,*]`, ... in the kyverno ConfigMap)
-# exclude them from all Kyverno processing today, but #4228 may drop those
-# filter entries to restore background-scan coverage there, and this policy
-# must not start generating VPAs in them when it does: prod's static VPAs
+# kube-node-lease, kyverno) explicitly. Kyverno's GLOBAL resourceFilters no
+# longer exclude kube-system, kube-public or kube-node-lease (#4234: background
+# scans cover them again), and only `[*/*,kyverno,*]` remains, so this policy
+# must not generate VPAs in them on its own filters: prod's static VPAs
 # below carry the SAME names, so a generated one (synchronize: true) would
 # fight Flux over each object.
 # Because VPA right-sizing IS wanted for those controllers (cilium, cilium-envoy,

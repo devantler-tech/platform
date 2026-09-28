@@ -46,9 +46,11 @@ spec:
       backgroundScan:
         # Honor config.resourceFilters during background scans (chart default is
         # true = filters skipped = report-per-resource for everything). With this
-        # false, the chart's default filters (Event, ReplicaSet, Node,
-        # EphemeralReport, kube-system/public/node-lease, ...) plus the additions
-        # below actually suppress background-scan reports for those kinds.
+        # false, the chart's default filters (Event, ReplicaSet, EphemeralReport,
+        # the kyverno namespace, ...) plus the additions below actually suppress
+        # background-scan reports for those kinds; the entries dropped under
+        # resourceFiltersExclude below (Node, and the three Kubernetes system
+        # namespaces) are scanned.
         skipResourceFilters: false
     config:
       # Additive (chart `concat`s this onto its ~80-entry default resourceFilters

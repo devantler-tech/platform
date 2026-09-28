@@ -213,8 +213,23 @@ probe_reported() { # <namespace>
 # Positive control: the same policy must report on the same ConfigMap in an ordinary
 # namespace, or an absent report in kyverno would prove only that the policy never ran.
 wait_for "the probe policy to report on its control" 600 probe_reported unevaluated-control
+probe_timestamp() { # <namespace>: unix seconds of the probe result, or nothing
+  local uid
+  uid="$(probe_uid "$1")" || return 0
+  kubectl -n "$1" get policyreport "$uid" -o json 2>/dev/null |
+    jq -r 'first(.results[]? | select(.policy == "require-owner-label-unevaluated" and .rule == "owner-label") | .timestamp.seconds) // empty' ||
+    true
+}
+# A first report in kube-public or kube-node-lease can come from admission, which
+# evaluates the Audit rule when the probe is applied. Record each first timestamp
+# and require it to advance after completed background scans below, so only a
+# background scan can satisfy the check.
+covered_first=()
 for probe_ns in "${covered_namespaces[@]}"; do
   wait_for "the probe policy to report in $probe_ns" 600 probe_reported "$probe_ns"
+  ts="$(probe_timestamp "$probe_ns")"
+  [[ -n "$ts" ]] || fail "could not read the $probe_ns probe result timestamp"
+  covered_first+=("$ts")
 done
 unevaluated_uids=()
 for probe_ns in "${unevaluated_namespaces[@]}"; do
@@ -226,6 +241,14 @@ done
 for cycle in 1 2; do
   owner_before="$(result_timestamp excluded-later require-owner-label owner-label)"
   wait_for "background scan $cycle after the probes were created" 600 scan_ran
+done
+covered_rescanned() { # <index>
+  local ts
+  ts="$(probe_timestamp "${covered_namespaces[$1]}")"
+  [[ -n "$ts" ]] && ((ts > covered_first[$1]))
+}
+for i in "${!covered_namespaces[@]}"; do
+  wait_for "a background scan to rewrite the ${covered_namespaces[$i]} probe result" 600 covered_rescanned "$i"
 done
 for i in "${!unevaluated_namespaces[@]}"; do
   probe_ns="${unevaluated_namespaces[$i]}"
