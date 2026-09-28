@@ -2245,8 +2245,10 @@ claim_node_cordon_ownership() {
     # test-guarded patch that was refused. A node Cluster Autoscaler is already
     # removing is therefore deselected (exit 2) rather than failing the deploy;
     # the caller decides whether its path may deselect. Every other unsafe state
-    # still fails closed below.
-    if autoscaled_node_is_being_deleted_unowned "${state_file}"; then
+    # still fails closed below, and so does a replacement node that reuses the
+    # name: only the selected identity may be deselected.
+    if [[ "$(jq -r '.metadata.uid // ""' "${state_file}")" == "${initial_node_uid}" ]] &&
+      autoscaled_node_is_being_deleted_unowned "${state_file}"; then
       rm -f "${reread_error_file}"
       return 2
     fi
@@ -2286,7 +2288,8 @@ claim_node_cordon_ownership() {
       break
     fi
 
-    if autoscaled_node_is_being_deleted_unowned "${state_file}"; then
+    if [[ "$(jq -r '.metadata.uid // ""' "${state_file}")" == "${initial_node_uid}" ]] &&
+      autoscaled_node_is_being_deleted_unowned "${state_file}"; then
       attempt=$((attempt + 1))
       continue
     fi
