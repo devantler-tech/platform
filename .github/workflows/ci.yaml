@@ -2855,6 +2855,11 @@ jobs:
           ref: main
           persist-credentials: false
 
+      - name: 🛡️ Validate the root source repair on main
+        # The merge-group gate tested a speculative checkout; main may have
+        # advanced before this heal publishes and reconciles its own checkout.
+        run: bash scripts/tests/test-reassert-flux-root-verify.sh
+
       # Signer approval is enforced first by the deploy action from this main
       # checkout, so recovery uses the policy version of the revision it restores.
       - name: ⚙️ Setup Go for version compatibility validation

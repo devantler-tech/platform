@@ -339,6 +339,22 @@ jq -e '
 ' <<<"${ci_jobs}" >/dev/null ||
   fail 'merge-group production deploy must wait for the root-source repair test and report its result'
 
+# The heal publishes the current main checkout, which can advance after the
+# speculative merge-group revision passed its own validation.
+jq -e '
+  .["heal-prod-on-failure"].steps as $steps
+  | [$steps | to_entries[] | select(.value.name == "📑 Checkout main") | .key][0] as $checkout
+  | [$steps | to_entries[] | select(.value.name == "🛡️ Validate the root source repair on main") | .key][0] as $test
+  | [$steps | to_entries[] | select(.value.name == "🩹 Re-deploy main to Production") | .key][0] as $deploy
+  | $checkout != null and $test != null and $deploy != null
+    and $checkout < $test and $test < $deploy
+    and $steps[$checkout].with.ref == "main"
+    and $steps[$test].run == "bash scripts/tests/test-reassert-flux-root-verify.sh"
+    and ($steps[$test] | has("if") | not)
+    and (($steps[$test]["continue-on-error"] // false) == false)
+' <<<"${ci_jobs}" >/dev/null ||
+  fail 'heal must validate root source repair on its main checkout before redeployment'
+
 cd_jobs="$(yq -o=json -I=0 '.jobs' "${cd_workflow}")"
 readonly cd_jobs
 jq -e '
