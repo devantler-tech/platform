@@ -217,8 +217,8 @@ autoscaled_node_claim_is_safe() {
 # nothing of ours needs releasing and rebooting it would be pointless. The
 # advisory DeletionCandidateOfClusterAutoscaler marker is NOT deletion. Any
 # bridge ownership marker keeps the node on the fail-closed path, as does every
-# other unsafe state autoscaled_node_claim_is_safe rejects (a plain cordon,
-# ambiguous scale-down ownership).
+# other unsafe state autoscaled_node_claim_is_safe rejects (a cordon by any
+# actor, an ambiguous scale-down-disabled value).
 autoscaled_node_is_being_deleted_unowned() {
   local state_file="$1"
 
@@ -229,9 +229,14 @@ autoscaled_node_is_being_deleted_unowned() {
     "platform.devantler.tech/ghcr-auth-drain-recovery" \
     --arg phase_annotation \
     "platform.devantler.tech/ghcr-auth-drain-phase" \
+    --arg scale_down_annotation \
+    "cluster-autoscaler.kubernetes.io/scale-down-disabled" \
     --arg scale_down_owner_annotation \
     "platform.devantler.tech/ghcr-auth-scale-down-owner" '
     ((.metadata.labels // {})["ksail.io/autoscaled"] // "") == "true"
+    and ((.spec.unschedulable // false) == false)
+    and (((.metadata.annotations // {}) | has($scale_down_annotation) | not)
+      or ((.metadata.annotations // {})[$scale_down_annotation] == "true"))
     and (.metadata.deletionTimestamp != null
       or any(.spec.taints[]?; .key == "ToBeDeletedByClusterAutoscaler"))
     and (((.metadata.annotations // {})[$drain_owner_annotation] // "") == "")

@@ -623,6 +623,30 @@ func TestAutoscaledNodeBeingDeletedWithBridgeOwnerStillFailsClosed(t *testing.T)
 	}
 }
 
+// A deleting node that another actor has also cordoned stays on the fail-closed
+// path: deselection needs an otherwise schedulable, unambiguous node.
+func TestAutoscaledNodeBeingDeletedAndCordonedStillFailsClosed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALED_NODES":          "prod-worker-1",
+		"FAKE_AUTOSCALER_DELETING_NODES": "prod-worker-1",
+		"FAKE_CORDONED_NODES":            "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "autoscaled node is already unschedulable")
+	requireNotContains(t, result.stdout+result.stderr, "being removed by Cluster Autoscaler before it was claimed")
+	operations := readLines(f.operationLog)
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-worker-1",
+		"talos-auth:10.0.0.2",
+		"talos-reboot:10.0.0.2",
+		"root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
 func TestAutoscaledNodeClaimOwnsAndReleasesScaleDownGuard(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
