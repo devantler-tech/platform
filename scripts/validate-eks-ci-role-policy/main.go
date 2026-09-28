@@ -3268,9 +3268,16 @@ const (
 // kubescape grants. The value below covers all four additions; the local
 // kubectl v1.36.1 renderer produced it and the required hosted job at this
 // head reproduces it.
+// Re-approved for scanning kube-system, kube-public and kube-node-lease in
+// Kyverno's background scans again (#4234), against main d44b8607. The required
+// production-authorization job on the checksum-verified renderer (run
+// 36388268083, job 108819006362) reported exactly one changed surface entry,
+// HelmRelease kyverno/kyverno, and nothing added or removed. The source delta
+// only removes three namespace entries from the chart's resource filters. No
+// RBAC, binding, service account, AWS identity, or permission grant changes.
 //
-// Previous aggregate: c64aa3b73ee2cf67d319cba1f97822e3797fe76a49d6b87ef140cc718624f8a7.
-const expectedRenderedSurfaceSHA = "94c2794e05d25973e550fdbddb6865bb5c7af0b58e8f8624b2f94e7040afe681"
+// Previous aggregate: 94c2794e05d25973e550fdbddb6865bb5c7af0b58e8f8624b2f94e7040afe681.
+const expectedRenderedSurfaceSHA = "e5d7a55bd08deafd3f6439635321c19af45822343b69aa677198f7a49f133fbc"
 
 // previousRenderedSurfaceSHA is the aggregate the approval above supersedes, in
 // machine-readable form. It is the base the approval was computed against.
@@ -3283,7 +3290,7 @@ const expectedRenderedSurfaceSHA = "94c2794e05d25973e550fdbddb6865bb5c7af0b58e8f
 // review as a plausible-looking constant. A change that does not move the
 // surface leaves both constants untouched. Reverting a re-approval is itself a
 // re-approval: restore the older aggregate and record the current one here.
-const previousRenderedSurfaceSHA = "c64aa3b73ee2cf67d319cba1f97822e3797fe76a49d6b87ef140cc718624f8a7"
+const previousRenderedSurfaceSHA = "94c2794e05d25973e550fdbddb6865bb5c7af0b58e8f8624b2f94e7040afe681"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
