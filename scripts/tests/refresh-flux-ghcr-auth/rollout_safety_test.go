@@ -547,7 +547,11 @@ func TestAutoscaledNodeAlreadyCordonedIsRejectedBeforeTalosMutation(t *testing.T
 	}
 }
 
-func TestAutoscaledNodeAlreadyMarkedForDeletionIsRejectedBeforeTalosMutation(t *testing.T) {
+// A node Cluster Autoscaler is deleting is deselected at claim time rather than
+// failing the deploy (#3186) — but a deselected node that never actually leaves
+// the inventory keeps being selected, so the pass never counts as clean and the
+// bounded convergence loop still fails closed with root auth unchanged.
+func TestAutoscaledNodeStuckInDeletionIsDeselectedButNeverConverges(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
@@ -555,7 +559,83 @@ func TestAutoscaledNodeAlreadyMarkedForDeletionIsRejectedBeforeTalosMutation(t *
 		"FAKE_AUTOSCALER_DELETING_NODES": "prod-worker-1",
 	})
 	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "being removed by Cluster Autoscaler before it was claimed")
+	requireContains(t, result.stdout+result.stderr, "did not converge")
+	operations := readLines(f.operationLog)
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-worker-1",
+		"talos-auth:10.0.0.2",
+		"talos-reboot:10.0.0.2",
+		"root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
+// #3186: a node selected into the target set and then marked for deletion by
+// Cluster Autoscaler before its turn is deselected without being claimed,
+// mutated or credited, and the deploy completes against the remaining nodes once
+// the autoscaler has removed it.
+func TestAutoscaledNodeBeingDeletedAtClaimIsDeselectedAndDeployCompletes(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALED_NODES":                      "prod-worker-1",
+		"FAKE_AUTOSCALER_DELETING_THEN_REMOVED_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "being removed by Cluster Autoscaler before it was claimed")
+	operations := readLines(f.operationLog)
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-worker-1",
+		"node-scale-down-guard:prod-worker-1",
+		"node-drain:prod-worker-1",
+		"talos-auth:10.0.0.2",
+		"talos-reboot:10.0.0.2",
+		"talos-revision:10.0.0.2",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+	requireLine(t, operations, "root-patch")
+}
+
+// Deselection is only for a node on which nothing of the bridge's is held: a
+// deleting node that still carries a bridge scale-down owner fails closed.
+func TestAutoscaledNodeBeingDeletedWithBridgeOwnerStillFailsClosed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALED_NODES":             "prod-worker-1",
+		"FAKE_AUTOSCALER_DELETING_NODES":    "prod-worker-1",
+		"FAKE_STALE_SCALE_DOWN_OWNER_NODES": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
 	requireContains(t, result.stdout+result.stderr, "marked for deletion")
+	requireNotContains(t, result.stdout+result.stderr, "being removed by Cluster Autoscaler before it was claimed")
+	operations := readLines(f.operationLog)
+	for _, unexpected := range []string{
+		"node-claim-cordon:prod-worker-1",
+		"talos-auth:10.0.0.2",
+		"talos-reboot:10.0.0.2",
+		"root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+}
+
+// A deleting node that another actor has also cordoned stays on the fail-closed
+// path: deselection needs an otherwise schedulable, unambiguous node.
+func TestAutoscaledNodeBeingDeletedAndCordonedStillFailsClosed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALED_NODES":          "prod-worker-1",
+		"FAKE_AUTOSCALER_DELETING_NODES": "prod-worker-1",
+		"FAKE_CORDONED_NODES":            "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "autoscaled node is already unschedulable")
+	requireNotContains(t, result.stdout+result.stderr, "being removed by Cluster Autoscaler before it was claimed")
 	operations := readLines(f.operationLog)
 	for _, unexpected := range []string{
 		"node-claim-cordon:prod-worker-1",

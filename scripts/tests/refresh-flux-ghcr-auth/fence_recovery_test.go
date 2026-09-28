@@ -314,7 +314,7 @@ func TestFenceReportSweepsCordonOwnerNotOnlyTheRecoveryJournal(t *testing.T) {
 
 	// The ordinary path really does claim ownership with an empty journal —
 	// if that ever stops being true this test should be revisited, not deleted.
-	requireContains(t, script, `      "" "${was_cordoned}" "${initial_node_taints}" || return 1`)
+	requireContains(t, script, `      "" "${was_cordoned}" "${initial_node_taints}" || claim_result=$?`)
 }
 
 // The runbook tells an operator each printed release command is CAS-guarded,
