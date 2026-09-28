@@ -44,10 +44,12 @@ removing a contributor, or changing its rules, fails CI with a diff until the
 baseline is re-recorded with `UPDATE_BASELINE=1` and reviewed. ClusterRoles that an
 operator creates at runtime are not covered.
 
-Kyverno's own resource filters skip `kube-system`, `kube-public`,
-`kube-node-lease`, `kyverno` and Kyverno's controller roles for every policy. A
-privileged grant created there is not evaluated, so this policy does not cover
-those namespaces.
+Kyverno's own resource filters skip the `kyverno` namespace and Kyverno's
+controller roles for every policy. A privileged grant created there is not
+evaluated, so this policy does not cover them. Background scans do cover
+`kube-system`, `kube-public` and `kube-node-lease` (#4234); admission never sees
+`kube-system`, because the webhooks skip it, so a grant there is reported by the
+next background scan rather than at creation.
 
 Impersonation is checked against its actual Kubernetes resources: users, groups
 and service accounts in the core API group, plus UIDs and user-extra subresources

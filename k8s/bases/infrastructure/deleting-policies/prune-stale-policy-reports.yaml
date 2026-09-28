@@ -22,10 +22,11 @@
 # two scan intervals, which shows the background scan is still visiting it.
 # Some reports are written at admission and never rescanned: the chart's
 # resource filters skip ReplicaSets in background scans (168 ReplicaSet
-# reports on prod on 2026-09-19). (The kube-system, kube-public, kube-node-lease
-# and kyverno namespaces are skipped at admission and by this cleanup controller
-# too; see docs/policy-reports.md.) A failing result there is old because nothing
-# re-checks it, not because the violation is gone, and deleting it would hide a
+# reports on prod on 2026-09-19). (The kyverno namespace is skipped at admission,
+# by background scans and by this cleanup controller too; kube-system, kube-public
+# and kube-node-lease are scanned; see docs/policy-reports.md.) A failing result
+# on a ReplicaSet is old because nothing re-checks it, not because the
+# violation is gone, and deleting it would hide a
 # live violation that no scan brings back. The same guard bounds what a reports
 # controller that stops publishing can lose (#3760): once its newest result is
 # two hours old, failures freeze in place instead of being deleted. Inside those

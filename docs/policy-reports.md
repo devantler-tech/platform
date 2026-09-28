@@ -84,29 +84,39 @@ What operators should expect:
   above) so the scan rewrites it as a current `skip`.
 - Cluster-scoped `ClusterPolicyReport` objects are not covered.
 
-## Namespaces Kyverno does not evaluate
+## System namespaces
 
-The chart's default resource filters exclude the kube-system, kube-public,
-kube-node-lease and kyverno namespaces from admission, and the reports controller
-honours the same filters in background scans (`skipResourceFilters: false`). So
-Kyverno neither admits nor scans anything there, and no report in those
-namespaces is ever created or rewritten. Any report found there predates the
-filters and shows a past result, not a current one.
+Background scans honour Kyverno's resource filters (`skipResourceFilters: false`),
+so the filters decide which namespaces get reports:
 
-A `DeletingPolicy` cannot clear those reports either: Kyverno's cleanup
-controller skips the same namespaces. A policy matching them runs on schedule and
-deletes nothing there, while the same condition deletes a matching report in an
-ordinary namespace. So a stale result in one of these namespaces stays until
-Kyverno covers the namespace again (#4228). Even then, coverage rewrites only a
-result that a current rule still evaluates for a resource that still exists; a
-report for a deleted resource, or a result from a removed or renamed rule, needs
-separate clean-up. The proof in `scripts/prove-kyverno-stale-report-prune.sh`
-refuses to run unless its Kyverno settings match production's, then checks that
-a resource a policy matches gets no report in any of the four namespaces, so this
-section fails loudly if a settings or chart change starts evaluating one.
+- **kube-system, kube-public and kube-node-lease are scanned.** The platform drops
+  them from the chart's default filters (#4234), so a policy that matches a
+  resource there gets a current report, as in any other namespace. Admission there
+  is unchanged in effect: the webhooks never send kube-system objects to Kyverno,
+  and kube-public and kube-node-lease hold only ConfigMaps and node Leases, which no
+  enforcing rule matches. Every policy that generates or changes existing resources
+  excludes these three namespaces by name, so Kyverno creates and edits nothing
+  there.
+- **kyverno is not evaluated.** It stays in the filters, because two generate
+  policies do not exclude it and would otherwise create a default-deny network
+  policy and a LimitRange in Kyverno's own namespace. No report there is ever
+  created or rewritten; any report found there predates the filters and shows a
+  past result, not a current one.
 
-An empty report list in these namespaces means they are not covered by Kyverno
-at all, not that they are compliant.
+A `DeletingPolicy` cannot clear reports in the kyverno namespace either: Kyverno's
+cleanup controller skips the namespaces the filters exclude. A policy matching them
+runs on schedule and deletes nothing there, while the same condition deletes a
+matching report in an ordinary namespace. In the three scanned namespaces, a scan
+rewrites only a result that a current rule still evaluates for a resource that
+still exists; a report for a deleted resource, or a result from a removed or
+renamed rule, needs separate clean-up. The proof in
+`scripts/prove-kyverno-stale-report-prune.sh` refuses to run unless its Kyverno
+settings match production's, then checks that a resource a policy matches gets a
+report in each of the three scanned namespaces and none in kyverno, so this section
+fails loudly if a settings or chart change moves either boundary.
+
+An empty report list in the kyverno namespace means it is not covered by Kyverno
+at all, not that it is compliant.
 
 Manual whole-report deletion, direct result patches and controller restarts are
 still not recovery mechanisms for this platform. If a stale failure survives

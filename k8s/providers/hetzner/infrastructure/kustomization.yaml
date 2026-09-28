@@ -161,8 +161,8 @@ resources:
   # predated #5277; the old balloon-pod buffer was already removed in #2087.)
   - overprovisioning/
   # Prod-only: static VerticalPodAutoscalers for kube-system + kyverno. auto-vpa
-  # (Kyverno) can't reach these namespaces (global resourceFilters), so VPA is
-  # supplied as plain manifests here. Pairs with the LimitRange memory-seed
+  # (Kyverno) excludes these namespaces explicitly, so VPA is supplied as plain
+  # manifests here. Pairs with the LimitRange memory-seed
   # patches below — together VPA right-sizes requests down while keeping a
   # generous, no-OOM burst limit. See vertical-pod-autoscalers/kustomization.yaml.
   - vertical-pod-autoscalers/
