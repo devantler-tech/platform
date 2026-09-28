@@ -15,3 +15,6 @@ config:
     - "[ClusterBackgroundScanReport,*,*]"
   resourceFiltersExclude:
     - "[Node,*,*]"
+    - "[*/*,kube-system,*]"
+    - "[*/*,kube-public,*]"
+    - "[*/*,kube-node-lease,*]"

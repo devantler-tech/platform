@@ -21,13 +21,25 @@
 #   * observability/cnpg-degraded-alert           — alerts on a CNPG cluster degraded past its
 #                                                   grace period (platform)
 #   * observability/coroot-alert-autosuppressor   — re-asserts by-design Coroot alert suppressions (platform)
+#   * observability/coroot-application-health-reconciler — re-applies the reviewed Coroot per-application
+#                                                   health thresholds (platform)
+#   * observability/coroot-custom-cloud-pricing   — applies Hetzner per-unit pricing to Coroot (platform)
+#   * observability/coroot-risk-acceptance-reconciler — re-applies the reviewed Coroot availability-risk
+#                                                   allowlist (platform)
 #   * observability/cronjob-failure-alert         — alerts on a reconcile CronJob failing on consecutive runs
 #                                                   or no longer finishing (platform)
-#   * observability/coroot-custom-cloud-pricing   — applies Hetzner per-unit pricing to Coroot (platform)
-#   * observability/stranded-volume-attach-alert  — alerts on a pod whose volume has been stuck
-#                                                   attaching for longer than an attach takes (platform)
+#   * observability/crossplane-sync-alerter       — alerts on a Crossplane managed resource that reports
+#                                                   Ready but has stopped syncing (platform)
+#   * observability/posture-staleness-alert       — alerts when Kubescape's configuration-scan data
+#                                                   stops updating (platform)
+#   * observability/prune-protected-orphan-alert  — reports prune-protected resources a retirement left
+#                                                   running (platform)
 #   * observability/stranded-autoscaler-node-alerter — alerts on an autoscaler node whose pool is
 #                                                   no longer declared, prod only (platform)
+#   * observability/stranded-volume-attach-alert  — alerts on a pod whose volume has been stuck
+#                                                   attaching for longer than an attach takes (platform)
+#   * observability/velero-maintenance-oom-alert  — alerts on an out-of-memory-killed Velero repository
+#                                                   maintenance run, even after a retry succeeds (platform)
 #   * openbao/vault-snapshot                      — OpenBao raft-snapshot backup (platform)
 #   * umami/umami-provision-tenants               — provisions Umami tenant websites (platform)
 # The fleetdm namespace is pre-listed too: the app is disabled on prod today (its
@@ -52,8 +64,11 @@ spec:
     All CronJobs on this cluster are GitOps-managed platform components delivered
     by Flux after PR review (the review is the approval): Cilium Hubble cert
     rotation, the Kubescape scan schedulers / stale host-data cleanup, Longhorn
-    stale-node cleanup, the observability heartbeat / CNPG degraded-cluster alert / stranded-volume-attach alert / stranded-autoscaler-node
-    alert / reconcile-CronJob failure alert / Coroot alert-autosuppressor / Coroot cloud-pricing jobs, the OpenBao
+    stale-node cleanup, the observability heartbeat / alerting jobs (CNPG degraded
+    cluster, stranded volume attach, stranded autoscaler node, reconcile-CronJob
+    failure, Crossplane sync, posture-scan staleness, prune-protected orphans,
+    Velero maintenance OOM) / Coroot reconcilers (alert autosuppression, cloud
+    pricing, application health, risk acceptance), the OpenBao
     raft-snapshot backup, and Umami tenant provisioning.
     Namespace-scoped to the infrastructure namespaces that run these, so a CronJob
     in any unexpected namespace still surfaces for review.

@@ -46,9 +46,11 @@ spec:
       backgroundScan:
         # Honor config.resourceFilters during background scans (chart default is
         # true = filters skipped = report-per-resource for everything). With this
-        # false, the chart's default filters (Event, ReplicaSet, Node,
-        # EphemeralReport, kube-system/public/node-lease, ...) plus the additions
-        # below actually suppress background-scan reports for those kinds.
+        # false, the chart's default filters (Event, ReplicaSet, EphemeralReport,
+        # the kyverno namespace, ...) plus the additions below actually suppress
+        # background-scan reports for those kinds; the entries dropped under
+        # resourceFiltersExclude below (Node, and the three Kubernetes system
+        # namespaces) are scanned.
         skipResourceFilters: false
     config:
       # Additive (chart `concat`s this onto its ~80-entry default resourceFilters
@@ -82,8 +84,23 @@ spec:
       # so a Kyverno outage never blocks Node registration). Node traffic stays
       # small — kubelet heartbeats go to the `nodes/status` subresource, and the
       # subresource filter `[Node/?*,*,*]` is untouched.
+      #
+      # The three Kubernetes system namespaces are dropped too, so background
+      # scans report on them again (#4234): without this, no Kyverno policy has
+      # evaluated anything in them since background scans started honouring the
+      # filters. Admission there is unchanged in effect: the webhooks'
+      # namespaceSelector still skips kube-system, and kube-public and
+      # kube-node-lease hold only ConfigMaps and node Leases (Leases stay filtered
+      # above). Every generate or mutate-existing policy excludes these three
+      # namespaces explicitly, so nothing is created or changed in them.
+      # `[*/*,kyverno,*]` stays: add-default-deny and add-default-limitrange do not
+      # exclude kyverno, so dropping it would generate a default-deny policy in
+      # Kyverno's own namespace and a LimitRange colliding with the Flux-owned one.
       resourceFiltersExclude:
         - "[Node,*,*]"
+        - "[*/*,kube-system,*]"
+        - "[*/*,kube-public,*]"
+        - "[*/*,kube-node-lease,*]"
     # Restricted PSS baseline: kyverno's mutation policies exclude the kyverno namespace,
     # so we must set pod-level seccompProfile + runAsNonRoot via chart values.
     admissionController:
