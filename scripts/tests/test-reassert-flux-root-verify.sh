@@ -57,7 +57,8 @@ case "${args}" in
         elif $op.op == "replace" then (if getpath($p) == null then error("replace of a missing path") else setpath($p; $op.value) end)
         else error("unexpected op \($op.op)") end)' \
     "${STATE_DIR}/fi.json" >"${STATE_DIR}/fi.next" || { printf 'patch rejected\n' >&2; exit 1; }
-  mv "${STATE_DIR}/fi.next" "${STATE_DIR}/fi.json"
+  # A spec write moves the generation, as the API server does.
+  jq '.metadata.generation = ((.metadata.generation // 1) + 1)' "${STATE_DIR}/fi.next" >"${STATE_DIR}/fi.json"
   ;;
 *"annotate fluxinstance flux --overwrite reconcile.fluxcd.io/requestedAt="*)
   if [[ "${OPERATOR_RENDERS:-1}" == "1" ]]; then
@@ -71,6 +72,9 @@ case "${args}" in
       else error("unexpected nested operation") end)' <<<"${verify}")"
     jq --argjson v "${verify}" '.spec.verify = $v' "${STATE_DIR}/src.json" >"${STATE_DIR}/src.next"
     mv "${STATE_DIR}/src.next" "${STATE_DIR}/src.json"
+    jq '.status.conditions = [{type: "Ready", status: "True", observedGeneration: (.metadata.generation // 1)}]' \
+      "${STATE_DIR}/fi.json" >"${STATE_DIR}/fi.next"
+    mv "${STATE_DIR}/fi.next" "${STATE_DIR}/fi.json"
   fi
   ;;
 *"annotate ocirepository flux-system --overwrite reconcile.fluxcd.io/requestedAt="*) ;;
@@ -253,6 +257,14 @@ run_case no_render "${bad_fi}" "$(src_with "${bad_verify}")" OPERATOR_RENDERS=0
 expect_status no_render 1
 grep -qF 'REPAIR INCOMPLETE' "${case_dir}/summary" || fail 'no_render: must record REPAIR INCOMPLETE'
 grep -qF 'annotate ocirepository' "${case_dir}/calls" && fail 'no_render: must not ask a stale source to fetch'
+
+# 7b. The source already carries the declared verify but the FluxInstance patch was stale.
+#     Until flux-operator reconciles the patched generation, the repair is not proven.
+run_case unreconciled_instance "${bad_fi}" "$(src_with "${declared_verify}")" OPERATOR_RENDERS=0
+expect_status unreconciled_instance 1
+grep -qF 'REPAIR INCOMPLETE' "${case_dir}/summary" || fail 'unreconciled_instance: must record REPAIR INCOMPLETE'
+grep -qF 'annotate ocirepository' "${case_dir}/calls" &&
+  fail 'unreconciled_instance: must not ask the source to fetch before the patch is rendered'
 
 # 8–11. Unreadable or ambiguous live state fails closed, without writing.
 run_case fi_unreadable "${bad_fi}" "$(src_with "${bad_verify}")" FI_FAIL=1

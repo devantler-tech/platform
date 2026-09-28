@@ -123,6 +123,7 @@ if [[ "${live_patch}" == "${declared_patch}" && "${live_target}" == "${declared_
   exit 0
 fi
 
+patched_generation=''
 if [[ "${live_patch}" != "${declared_patch}" || "${live_instance_verify}" != "${declared_verify}" || "${live_target}" != "${declared_target}" ]]; then
   printf 'FluxInstance %s/%s has a different root-source patch than this commit; replacing that patch entry.\n' \
     "${namespace}" "${instance}"
@@ -134,7 +135,20 @@ if [[ "${live_patch}" != "${declared_patch}" || "${live_instance_verify}" != "${
   kubectl_prod patch fluxinstance "${instance}" --type=json \
     --field-manager=kustomize-controller -p "${json_patch}" >/dev/null ||
     die "could not patch FluxInstance ${namespace}/${instance}"
+  # The source can already carry the declared verify while the operator still applies the
+  # old patch, so a repaired FluxInstance counts only once it is Ready at this generation.
+  patched_generation="$(kubectl_prod get fluxinstance "${instance}" -o json | jq -er '.metadata.generation')" ||
+    die "could not read the generation of the patched FluxInstance ${namespace}/${instance}"
 fi
+
+# instance_rendered -> true once flux-operator has reconciled the patched generation (or
+# nothing was patched), false while it has not.
+instance_rendered() {
+  [[ -z "${patched_generation}" ]] && { printf 'true'; return 0; }
+  kubectl_prod get fluxinstance "${instance}" -o json |
+    jq -r --argjson g "${patched_generation}" \
+      'any(.status.conditions[]?; .type == "Ready" and .status == "True" and (.observedGeneration // -1) >= $g)'
+}
 
 requested_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 kubectl_prod annotate fluxinstance "${instance}" --overwrite \
@@ -143,8 +157,9 @@ kubectl_prod annotate fluxinstance "${instance}" --overwrite \
 
 deadline=$((SECONDS + render_timeout))
 while :; do
+  rendered="$(instance_rendered)" || die "could not re-read FluxInstance ${namespace}/${instance}"
   live_source_verify="$(source_verify)" || die "could not re-read OCIRepository ${namespace}/${source_name}"
-  [[ "${live_source_verify}" == "${declared_verify}" ]] && break
+  [[ "${rendered}" == true && "${live_source_verify}" == "${declared_verify}" ]] && break
   if ((SECONDS >= deadline)); then
     printf 'reassert-flux-root-verify: flux-operator did not re-render OCIRepository %s/%s within %ss\n' \
       "${namespace}" "${source_name}" "${render_timeout}" >&2
