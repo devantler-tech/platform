@@ -1,9 +1,13 @@
 # TODO: Upstream `auto-vpa.yaml` to Kyverno policies repository.
 #
-# kube-system is intentionally NOT excluded by THIS policy's match rules — but
-# be aware Kyverno's GLOBAL resourceFilters (`[*/*,kube-system,*]` and
-# `[*/*,kyverno,*]` in the kyverno ConfigMap) exclude kube-system and kyverno
-# from ALL Kyverno processing, so THIS policy never generates a VPA there.
+# Every rule EXCLUDES the system namespaces (kube-system, kube-public,
+# kube-node-lease, kyverno) explicitly. Kyverno's GLOBAL resourceFilters
+# (`[*/*,kube-system,*]`, `[*/*,kyverno,*]`, ... in the kyverno ConfigMap)
+# exclude them from all Kyverno processing today, but #4228 may drop those
+# filter entries to restore background-scan coverage there, and this policy
+# must not start generating VPAs in them when it does: prod's static VPAs
+# below carry the SAME names, so a generated one (synchronize: true) would
+# fight Flux over each object.
 # Because VPA right-sizing IS wanted for those controllers (cilium, cilium-envoy,
 # spire-agent, coredns, metrics-server, hubble, hcloud ccm/csi, tetragon,
 # cluster-autoscaler, the kyverno controllers), prod ships equivalent STATIC VPAs
@@ -39,9 +43,9 @@ metadata:
     policies.kyverno.io/subject: Deployment,StatefulSet,DaemonSet
     policies.kyverno.io/description: >-
       Generates a VerticalPodAutoscaler for every Deployment, StatefulSet,
-      and DaemonSet in every namespace, including kube-system, so the
-      cluster's control-plane add-ons and datapath controllers are
-      right-sized to observed usage too. VPA controls both CPU and memory
+      and DaemonSet outside the system namespaces (kube-system,
+      kube-public, kube-node-lease, kyverno), whose controllers prod
+      right-sizes with static VPAs instead. VPA controls both CPU and memory
       to ensure workloads do not over-request resources. KEDA-managed
       workloads use HTTP request rate (not CPU) for horizontal scaling,
       so VPA CPU management does not conflict.
@@ -52,6 +56,14 @@ spec:
         resources:
           kinds:
             - Deployment
+      # See the header: these namespaces get static VPAs of the same names in prod.
+      exclude:
+        resources:
+          namespaces:
+            - kube-system
+            - kube-public
+            - kube-node-lease
+            - kyverno
       generate:
         apiVersion: autoscaling.k8s.io/v1
         kind: VerticalPodAutoscaler
@@ -120,6 +132,14 @@ spec:
         resources:
           kinds:
             - StatefulSet
+      # See the header: these namespaces get static VPAs of the same names in prod.
+      exclude:
+        resources:
+          namespaces:
+            - kube-system
+            - kube-public
+            - kube-node-lease
+            - kyverno
       generate:
         apiVersion: autoscaling.k8s.io/v1
         kind: VerticalPodAutoscaler
@@ -194,6 +214,14 @@ spec:
         resources:
           kinds:
             - DaemonSet
+      # See the header: these namespaces get static VPAs of the same names in prod.
+      exclude:
+        resources:
+          namespaces:
+            - kube-system
+            - kube-public
+            - kube-node-lease
+            - kyverno
       generate:
         apiVersion: autoscaling.k8s.io/v1
         kind: VerticalPodAutoscaler
