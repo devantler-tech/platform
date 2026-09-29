@@ -971,32 +971,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # The approval-base step reads the validator on the first parent, which
-          # is the commit this PR merge ref or merge-group commit merges onto.
-          fetch-depth: 2
 
       - name: ⚙️ Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
-
-      - name: 🔐 Validate authorization approval base
-        # A re-approval of the rendered-surface fingerprint records the aggregate
-        # it supersedes. Two concurrent re-approvals from one base each describe a
-        # tree without the other's delta, and a resolved conflict in that constant
-        # looks correct (#3740). Compare the record with the approval on the base
-        # so a stale one fails naming the aggregate to re-derive against.
-        # HEAD^1 is that base because the PR merge ref's first parent is main and
-        # the merge queue SQUASHes each entry onto a single parent. Switching the
-        # queue to REBASE would make HEAD^1 the PR's own previous commit; revisit
-        # this step if the queue's merge method changes.
-        run: |
-          set -euo pipefail
-          base_source="$RUNNER_TEMP/approval-base-main.go"
-          git show HEAD^1:scripts/validate-eks-ci-role-policy/main.go > "$base_source"
-          go run ./scripts/validate-eks-ci-role-policy approval-base \
-            "$base_source" scripts/validate-eks-ci-role-policy/main.go
 
       - name: ⚙️ Install pinned kubectl renderer
         shell: bash
@@ -1015,27 +995,22 @@ jobs:
 
       - name: 🔐 Validate static production authorization controls
         # The Go validator pins the EKS CI role and the authored authorization
-        # graph before either a PR or merge-group commit may proceed.
-        # The HEAD^1 checkout is diagnostic only: on an unapproved aggregate the
-        # validator names the surface entries that differ from it. Without it the
-        # verdict is identical and the moved entries are reported as unknown.
+        # graph before either a PR or merge-group commit may proceed. The rendered
+        # surface is approved entry by entry in
+        # scripts/validate-eks-ci-role-policy/approved-surface.txt, so two PRs that
+        # move different documents merge without a conflict and the merge-group
+        # run validates their combination (#3182).
         # Both commands run unconditionally, and the step fails if either did.
         # They are independent outputs over the same surface: `go test` is the
-        # verdict, `go run` is the only caller of the moved-entry diagnostics. A
-        # real aggregate mismatch fails BOTH, so short-circuiting on the first
-        # left the one failure that most needs explaining with no entry names at
-        # all (#3879). Covered by scripts/tests/test-authorization-gate-diagnostics.sh.
+        # verdict, `go run` prints the exact ledger lines to approve. A real
+        # surface mismatch fails BOTH, so short-circuiting on the first left the
+        # one failure that most needs explaining unexplained (#3879). Covered by
+        # scripts/tests/test-authorization-gate-diagnostics.sh.
         run: |
           set -euo pipefail
           status=0
           go test ./scripts/validate-eks-ci-role-policy || status=1
-          base_root="$RUNNER_TEMP/approval-base-tree"
-          if git worktree add --detach "$base_root" HEAD^1; then
-            go run ./scripts/validate-eks-ci-role-policy . "$base_root" || status=1
-          else
-            echo "::warning::approval base checkout failed; an aggregate mismatch will not name moved entries"
-            go run ./scripts/validate-eks-ci-role-policy . || status=1
-          fi
+          go run ./scripts/validate-eks-ci-role-policy . || status=1
           exit "$status"
 
       - name: ⚙️ Setup KSail for effective authorization validation
