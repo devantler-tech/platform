@@ -158,10 +158,10 @@ run_pod() {
       "${MIRROR_POD_RUNTIME_IMAGE}" /mirror/mirror.sh >"${dir}/out" 2>"${dir}/err" || pod_rc=$?
   else
     PATH="${bin}:${PATH}" FAKE_MC="${dir}/mc" CREDENTIALS_DIR="${dir}/credentials" \
-    WORK_DIR="${dir}/work" COLLECT_TIMEOUT=0 \
-    ENDPOINT="${ENDPOINT_OVERRIDE:-https://abc123.r2.cloudflarestorage.com}" \
-    SOURCE_BUCKET=platform-backups SOURCE_PREFIX=cnpg/wedding-db \
-    DESTINATION_BUCKET=wedding-db-backups DESTINATION_PREFIX=cnpg/wedding-db \
+      WORK_DIR="${dir}/work" COLLECT_TIMEOUT=0 \
+      ENDPOINT="${ENDPOINT_OVERRIDE:-https://abc123.r2.cloudflarestorage.com}" \
+      SOURCE_BUCKET=platform-backups SOURCE_PREFIX=cnpg/wedding-db \
+      DESTINATION_BUCKET=wedding-db-backups DESTINATION_PREFIX=cnpg/wedding-db \
       sh "${pod_script}" >"${dir}/out" 2>"${dir}/err" || pod_rc=$?
   fi
   pod_out="$(cat "${dir}/out")"

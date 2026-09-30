@@ -23,7 +23,7 @@ read_image() {
 mc_image="$(read_image mc_image)"
 tools_image="$(read_image tools_image)"
 for ref in "${mc_image}" "${tools_image}"; do
-  [[ "${ref}" =~ ^[a-z0-9./:_-]+@sha256:[a-f0-9]{64}$ ]] || {
+  [[ "${ref}" =~ ^[A-Za-z0-9./:_-]+@sha256:[a-f0-9]{64}$ ]] || {
     printf 'FAIL: runtime image must have exactly one pinned digest\n' >&2
     exit 1
   }
