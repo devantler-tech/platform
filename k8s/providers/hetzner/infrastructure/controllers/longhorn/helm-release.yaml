@@ -190,7 +190,7 @@ spec:
     #
     # It does NOT go unnoticed, though. This HelmRelease is a member of the pinned
     # EKS authorization surface (document 217 of the rendered membership), so any
-    # chart bump moves the aggregate fingerprint and reds that gate, forcing a
+    # chart bump moves its approved-surface entry and reds that gate, forcing a
     # re-approval — which is exactly the checkpoint where this patch gets
     # re-verified. The gate is the backstop; this comment is the instruction.
     #

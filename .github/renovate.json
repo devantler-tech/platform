@@ -279,7 +279,6 @@
     }
   ],
   "ignorePaths": [
-    "k8s/bases/infrastructure/cluster-policies/samples",
     "k8s/providers/hetzner/infrastructure/controllers/kubelet-serving-cert-approver/deployment.yaml"
   ]
 }
