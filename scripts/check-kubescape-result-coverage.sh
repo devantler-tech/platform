@@ -71,6 +71,9 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "${vuln_max_age_days}" in '' | *[!0-9]*) die "--vuln-max-age-days must be a whole number" ;; esac
+# Bash treats a leading zero as octal in arithmetic expansion. Normalize accepted digit strings
+# explicitly so values such as 08 remain decimal input rather than bypassing the usage exit path.
+vuln_max_age_days=$((10#${vuln_max_age_days}))
 case "${now}" in *[!0-9]*) die "--now must be epoch seconds" ;; esac
 command -v jq >/dev/null 2>&1 || die "jq is required but not installed"
 [ -f "${reviewed}" ] || die "reviewed unscanned-namespace list not found: ${reviewed}"
@@ -230,13 +233,21 @@ bad_runtime_start_times="$(jq -r --argjson unscanned "${unscanned}" --argjson no
 # authoritative. A corrupt label must not let an object in one namespace satisfy another.
 bad_posture_identities="$(jq -r '
   [ .items[]
-    | .metadata.labels["kubescape.io/workload-namespace"] as $label_namespace
-    | select(($label_namespace // "") != (.metadata.namespace // ""))
-    | "\(.metadata.namespace // "<missing>")/\(.metadata.name) label=\($label_namespace // "<missing>")"
+    | .metadata.labels as $labels
+    | $labels["kubescape.io/workload-kind"] as $kind
+    | $labels["kubescape.io/workload-namespace"] as $label_namespace
+    | $labels["kubescape.io/workload-name"] as $name
+    | select(
+        ($kind | type) != "string" or $kind == "" or
+        ($label_namespace | type) != "string" or $label_namespace == "" or
+        ($name | type) != "string" or $name == "" or
+        $label_namespace != (.metadata.namespace // ""))
+    | "\(.metadata.namespace // "<missing>")/\(.metadata.name) " +
+      "kind=\($kind // "<missing>") namespace=\($label_namespace // "<missing>") name=\($name // "<missing>")"
   ] | unique | join(", ")
 ' "${work}/posture.json")" || die "could not validate posture result identities"
 [ -z "${bad_posture_identities}" ] ||
-  die "posture result identity disagrees with metadata namespace: ${bad_posture_identities}"
+  die "posture result identity is incomplete or disagrees with metadata namespace: ${bad_posture_identities}"
 
 # A label-derived workload identity must be unique. Letting jq's object merge pick the last result
 # makes list order decide whether an empty duplicate is visible.

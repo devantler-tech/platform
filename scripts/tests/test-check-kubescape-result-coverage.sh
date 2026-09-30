@@ -121,6 +121,15 @@ expect "unscanned namespace and Job pods are out of scope" 0 \
   "COVERAGE vulnerability expected=1 current=1" "${base}"
 expect "one runtime pair is expected" 0 "COVERAGE runtime expected=1 current=1" "${base}"
 
+rc=0
+bash "${CHECK}" --from-dir "${base}" --now "${NOW}" --vuln-max-age-days 08 \
+  >"${tmp}/out" 2>&1 || rc=$?
+if [ "${rc}" -eq 0 ]; then
+  ok "a zero-padded vulnerability age is normalized as decimal"
+else
+  bad "a zero-padded vulnerability age is normalized as decimal: exit ${rc} ($(tr '\n' ' ' <"${tmp}/out"))"
+fi
+
 # The implicit freshness clock belongs after input collection. A scan written while live reads are
 # in progress must not look future-dated merely because the checker froze wall time before reading.
 clock_bin="${tmp}/clock-bin"
@@ -157,7 +166,15 @@ expect "a posture result with no controls fails" 1 "EMPTY posture CronJob/app/ni
 d="$(variant posture-namespace-mismatch posture.json '
   (.items[] | select(.metadata.name == "deployment-web") | .metadata.namespace) = "other"')"
 expect "a posture result whose label namespace disagrees with metadata is UNKNOWN" 2 \
-  "posture result identity disagrees with metadata namespace" "${d}"
+  "posture result identity is incomplete or disagrees with metadata namespace" "${d}"
+
+d="$(variant posture-identity-missing workloads.json '
+  (.items[] | select(.kind == "Deployment" and .metadata.namespace == "app") | .metadata.name) = "null"')"
+jq 'del(.items[0].metadata.labels["kubescape.io/workload-name"])' \
+  "${base}/posture.json" >"${d}/posture.json"
+jq '{items: [.items[] | del(.spec)]}' "${d}/posture.json" >"${d}/posture-list.json"
+expect "a posture result with an incomplete label identity is UNKNOWN" 2 \
+  "posture result identity is incomplete or disagrees with metadata namespace" "${d}"
 
 d="$(variant posture-duplicate posture.json '
   .items[0].spec.controls = null |
