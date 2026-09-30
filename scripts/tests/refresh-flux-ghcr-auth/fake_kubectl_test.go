@@ -1017,16 +1017,17 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	spec, _ := patch["spec"].(map[string]any)
 	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
 	attestors, _ := spec["attestors"].([]any)
-	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 6 {
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 7 {
 		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
 	}
 	storageAttestorValid := false
 	kubescapeNodeAgentAttestorValid := false
 	corootNodeAgentAttestorValid := false
+	warZoneAttestorValid := false
 	for _, rawAttestor := range attestors {
 		attestor, _ := rawAttestor.(map[string]any)
 		name, _ := attestor["name"].(string)
-		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" {
+		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishwarzone" {
 			continue
 		}
 		cosign, _ := attestor["cosign"].(map[string]any)
@@ -1045,6 +1046,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			kubescapeNodeAgentAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-node-agent-hotfix\\.yaml@refs/heads/main$"
 		case "publishcorootnodeagent":
 			corootNodeAgentAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-coroot-node-agent-hotfix\\.yaml@refs/heads/main$"
+		case "publishwarzone":
+			warZoneAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/world-at-ruin/\\.github/workflows/server-cd\\.yaml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
 		}
 	}
 	validations, _ := spec["validations"].([]any)
@@ -1054,10 +1057,15 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	dedicatedRoutesKubescapeNodeAgent := false
 	genericExcludesCorootNodeAgent := false
 	dedicatedRoutesCorootNodeAgent := false
+	genericExcludesWarZone := false
+	dedicatedRoutesWarZone := false
 	for _, rawValidation := range validations {
 		validation, _ := rawValidation.(map[string]any)
 		expression, _ := validation["expression"].(string)
 		if strings.Contains(expression, "attestors.publishapp") {
+			genericExcludesWarZone = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/world-at-ruin/zone'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone@')")
 			genericExcludesStorage = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-kubescape-storage'") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:')") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@')")
@@ -1083,8 +1091,14 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:')") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@')")
 		}
+		if strings.Contains(expression, "attestors.publishwarzone") {
+			dedicatedRoutesWarZone = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/world-at-ruin/zone'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone@')")
+		}
 	}
 	if !storageAttestorValid || !kubescapeNodeAgentAttestorValid || !corootNodeAgentAttestorValid ||
+		!warZoneAttestorValid || !genericExcludesWarZone || !dedicatedRoutesWarZone ||
 		!genericExcludesStorage || !genericExcludesKubescapeNodeAgent || !genericExcludesCorootNodeAgent ||
 		!dedicatedRoutesStorage || !dedicatedRoutesKubescapeNodeAgent || !dedicatedRoutesCorootNodeAgent {
 		return commandFailure(91, "consolidated image-validating policy patch omitted a compatibility publisher identity or exact repository routing")

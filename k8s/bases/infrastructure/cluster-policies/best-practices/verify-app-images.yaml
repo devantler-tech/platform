@@ -104,6 +104,14 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-coroot-node-agent-hotfix\.yaml@refs/heads/main$
+    # The private scripted zone trial has its own repository-owned release
+    # workflow. This attestor is used only for that exact image repository.
+    - name: publishwarzone
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/world-at-ruin/\.github/workflows/server-cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$
     # Crossplane provider packages (provider-upjet-*): the crossplane-contrib
     # reusable publish workflow they use cannot sign, so each provider repo
     # attaches the keyless signature in its own publish-provider-package.yml
@@ -160,6 +168,9 @@ spec:
         .filter(image, image.startsWith('ghcr.io/devantler-tech/') &&
           !image.startsWith('ghcr.io/devantler-tech/ksail') &&
           !image.startsWith('ghcr.io/devantler-tech/provider-upjet-') &&
+          image != 'ghcr.io/devantler-tech/world-at-ruin/zone' &&
+          !image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone:') &&
+          !image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone@') &&
           image != 'ghcr.io/devantler-tech/platform-kubescape-storage' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@') &&
@@ -175,6 +186,17 @@ spec:
         first-party app image is not signed by the publish-app release
         pipeline (keyless cosign, actions publish-app.yaml identity, pinned by
         commit SHA — a release tag is not accepted)
+    - expression: >-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/world-at-ruin/zone' ||
+          image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone:') ||
+          image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishwarzone]))
+        .all(e, e > 0)
+      message: >-
+        World at Ruin zone image is not signed by its server-cd stable release
+        workflow; other first-party images retain their existing signer.
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,

@@ -35,6 +35,9 @@ trap cleanup EXIT
 readonly fake_bin="${work_dir}/bin"
 readonly fixtures="${work_dir}/fixtures"
 mkdir -p "${fake_bin}" "${fixtures}"
+GOWORK=off GOFLAGS="" go -C "${root_dir}" test ./scripts/validate-image-verification-policy
+GOWORK=off GOFLAGS="" go -C "${root_dir}" build -mod=readonly -trimpath \
+  -o "${fake_bin}/policy-checker" ./scripts/validate-image-verification-policy
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -158,7 +161,14 @@ readonly provider_pattern='ghcr.io/devantler-tech/provider-upjet-*'
 readonly storage_pattern='ghcr.io/devantler-tech/platform-kubescape-storage'
 readonly kubescape_node_agent_pattern='ghcr.io/devantler-tech/platform-kubescape-node-agent'
 readonly coroot_node_agent_pattern='ghcr.io/devantler-tech/platform-coroot-node-agent'
+readonly zone_pattern='ghcr.io/devantler-tech/world-at-ruin/zone'
 readonly app_pattern='ghcr.io/devantler-tech/*'
+fixture_rules_json="$(yq -o=json '.rules' "${root_dir}/talos/cluster/verify-first-party-images.yaml" | jq '
+  map({imagePattern: .image, skip: (.skip // false), deny: (.deny // false),
+    keylessVerifier: (.keyless // null), publicKeyVerifier: (.publicKey // null)}
+    | with_entries(select(.value != null)))
+')"
+readonly fixture_rules_json
 
 write_node() {
   mkdir -p "${fixtures}/$1/resources"
@@ -170,7 +180,9 @@ resource_obj() {
   local id="$1" phase="$2" owner="$3" type="$4" image_pattern="${5:-}"
   local spec='{}'
   if [[ -n "${image_pattern}" ]]; then
-    spec="{\"imagePattern\":\"${image_pattern}\"}"
+    spec="$(printf '%s' "${fixture_rules_json}" | jq -c --arg pattern "${image_pattern}" '
+      (map(select(.imagePattern == $pattern))[0] // .[0]) | .imagePattern = $pattern
+    ')"
   fi
   cat <<EOF
 {
@@ -205,7 +217,8 @@ write_healthy_rules() {
     resource_obj 0002 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${storage_pattern}"
     resource_obj 0003 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kubescape_node_agent_pattern}"
     resource_obj 0004 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
-    resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
+    resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
+    resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
   } | write_rules "${node}"
 }
 
@@ -221,6 +234,7 @@ healthy_node() {
 run_script() {
   env PATH="${fake_bin}:${PATH}" FIXTURES="${fixtures}" \
     TALOSCTL="${fake_bin}/talosctl" KUBECTL="${fake_bin}/kubectl" \
+    IMAGE_POLICY_CHECKER="${fake_bin}/policy-checker" \
     "$@" bash "${script}"
 }
 
@@ -230,8 +244,18 @@ run_script() {
 healthy_node good
 output="$(run_script TALOS_NODES=good 2>&1)" || fail "case 1: expected exit 0 for a node that can enforce"
 require_text "${output}" 'OK   good' 'case 1: reports the healthy node'
-require_text "${output}" '6 rule(s) in phase running' 'case 1: counts every declared running rule'
+require_text "${output}" '7 rule(s) in phase running' 'case 1: counts every declared running rule'
+require_text "${output}" 'with exact declared decisions' 'case 1: confirms complete rule decisions were compared'
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 1: reports the summary'
+
+# Exercise the workflow's normal build path rather than only an injected
+# compiled helper, and refuse an unavailable comparator before inspecting nodes.
+output="$(run_script TALOS_NODES=good IMAGE_POLICY_CHECKER= 2>&1)" || fail 'normal helper build must inspect a healthy node'
+require_text "${output}" 'with exact declared decisions' 'normal helper build must compare decisions'
+status=0
+output="$(run_script TALOS_NODES=good IMAGE_POLICY_CHECKER="${work_dir}/missing-checker" 2>&1)" || status=$?
+[[ "${status}" -eq 2 ]] || fail 'unavailable comparator must refuse an uninspected verdict'
+refute_text "${output}" 'OK   good' 'unavailable comparator must never report a node healthy'
 
 # ===========================================================================
 # Case 1a — RED: SOME declared rules materialised and are running, but the
@@ -262,7 +286,8 @@ write_node driftrules
   resource_obj 0002 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${storage_pattern}"
   resource_obj 0003 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kubescape_node_agent_pattern}"
   resource_obj 0004 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
-  resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
+  resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
+  resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
 } | write_rules driftrules
 resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
   write_roots driftrules
@@ -271,6 +296,57 @@ output="$(run_script TALOS_NODES=driftrules 2>&1)" || status=$?
 [[ "${status}" -eq 1 ]] || fail 'case 1b: a runtime rule pattern that differs from the declaration MUST fail'
 require_text "${output}" 'FAIL driftrules' 'case 1b: names the node with policy drift'
 require_text "${output}" 'declared rule set' 'case 1b: names the drifted policy'
+
+# A previously healthy six-rule fleet cannot clear activation of the new zone.
+# The existing app catch-all is present, but uses the wrong signer for this image.
+healthy_node oldzonepolicy
+old_rules="${fixtures}/oldzonepolicy/resources/${rules_type}"
+jq -s 'map(select(.spec.imagePattern != "ghcr.io/devantler-tech/world-at-ruin/zone"))[]' \
+  "${old_rules}" >"${work_dir}/old-rules.json"
+mv "${work_dir}/old-rules.json" "${old_rules}"
+status=0
+output="$(run_script TALOS_NODES=oldzonepolicy 2>&1)" || status=$?
+[[ "${status}" -eq 1 ]] || fail 'case 1c: a node missing the exact zone rule MUST block activation'
+require_text "${output}" 'declared rule set' 'case 1c: names the missing zone policy'
+
+# Patterns, order, phase and trust material all remain healthy while only the
+# installed signer or action differs. A pattern-only checker silently passes.
+assert_rule_drift() {
+  local description="$1" mutation="$2" expected_status="$3" output status=0
+  healthy_node signerdrift
+  jq -s "map(if .spec.imagePattern == \"${zone_pattern}\" then (${mutation}) else . end)[]" \
+    "${fixtures}/signerdrift/resources/${rules_type}" >"${work_dir}/changed-rules.json"
+  mv "${work_dir}/changed-rules.json" "${fixtures}/signerdrift/resources/${rules_type}"
+  output="$(run_script TALOS_NODES=signerdrift 2>&1)" || status=$?
+  [[ "${status}" -eq "${expected_status}" ]] || fail "signer policy ${description}: expected ${expected_status}, got ${status}"
+  refute_text "${output}" 'untrusted.example.invalid' 'signer comparison must not print raw issuer data'
+  refute_text "${output}" 'sensitive-stale-subject' 'signer comparison must not print raw subject data'
+}
+assert_rule_drift 'stale issuer' '.spec.keylessVerifier.issuer = "https://untrusted.example.invalid"' 1
+assert_rule_drift 'stale regex' '.spec.keylessVerifier.subjectRegex = "sensitive-stale-subject"' 1
+assert_rule_drift 'stale exact subject' '.spec.keylessVerifier.subject = "sensitive-stale-subject"' 1
+assert_rule_drift 'verification skipped' '.spec.skip = true' 1
+assert_rule_drift 'deny action substituted' '.spec.deny = true' 1
+assert_rule_drift 'unexpected public-key verifier' '.spec.publicKeyVerifier = {certificate: "unexpected-certificate"}' 1
+assert_rule_drift 'missing issuer' 'del(.spec.keylessVerifier.issuer)' 2
+assert_rule_drift 'missing matcher' 'del(.spec.keylessVerifier.subjectRegex)' 2
+assert_rule_drift 'missing decision' 'del(.spec.keylessVerifier)' 2
+assert_rule_drift 'missing skip flag' 'del(.spec.skip)' 2
+assert_rule_drift 'null deny flag' '.spec.deny = null' 2
+assert_rule_drift 'wrong flag type' '.spec.skip = "false"' 2
+assert_rule_drift 'unknown decision field' '.spec.unknownVerifier = {}' 2
+
+# The complete comparison covers every running rule, including the existing
+# catch-all, rather than checking only the newly installed zone signer.
+healthy_node catchalldrift
+jq -s --arg pattern "${app_pattern}" \
+  'map(if .spec.imagePattern == $pattern then .spec.keylessVerifier.issuer = "https://untrusted.example.invalid" else . end)[]' \
+  "${fixtures}/catchalldrift/resources/${rules_type}" >"${work_dir}/changed-rules.json"
+mv "${work_dir}/changed-rules.json" "${fixtures}/catchalldrift/resources/${rules_type}"
+status=0
+output="$(run_script TALOS_NODES=catchalldrift 2>&1)" || status=$?
+[[ "${status}" -eq 1 ]] || fail 'stale existing catch-all signer must fail'
+refute_text "${output}" 'untrusted.example.invalid' 'existing signer drift must not print raw identity'
 
 # ===========================================================================
 # Case 2 — RED: the node holds NO ImageVerificationRules at all. The declared

@@ -345,6 +345,27 @@ func TestTokenSuccessWithoutRegistryReadAccessPreventsClusterPatch(t *testing.T)
 	requireWrapperPathExists(t, f.kubectlCalled, false)
 }
 
+func TestWorldZonePackageDenialPreventsClusterPatch(t *testing.T) {
+	for _, target := range []struct{ repository, tag string }{
+		{"devantler-tech/world-at-ruin/zone", "v0.114.0"},
+		{"devantler-tech/world-at-ruin/zone-manifests", "0.114.0"},
+	} {
+		t.Run(target.repository, func(t *testing.T) {
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), []string{"--check-only"}, map[string]string{
+				"FAKE_CURL_DENY_REPOSITORY": target.repository,
+			})
+			if result.exitCode == 0 {
+				t.Fatal("a private zone package without read permission was accepted")
+			}
+			requireWrapperPathExists(t, f.kubectlCalled, false)
+			if !strings.Contains(mustReadFile(f.registryReadLog), target.repository+":"+target.tag) {
+				t.Fatal("the declared zone package was not actually read")
+			}
+		})
+	}
+}
+
 func TestClusterPatchFailureIsNotHidden(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_KUBECTL_FAIL": "true"})
