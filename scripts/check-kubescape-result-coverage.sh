@@ -154,6 +154,23 @@ unscanned="$(awk -F'\t' '/^[[:space:]]*#/ || NF == 0 { next } { print $1 }' "${r
   jq -R . | jq -sc .)" || die "could not parse ${reviewed}"
 [ "$(jq 'length' <<<"${unscanned}")" -gt 0 ] || die "${reviewed} lists no namespaces"
 
+# An unidentified running image cannot simply disappear from the expected set. If at least one
+# other image has a digest, silently dropping this container would make the coverage denominator
+# smaller and could turn a real gap into a clean result.
+unknown_images="$(jq -r --argjson unscanned "${unscanned}" '
+  [ .items[]
+    | .metadata.namespace as $ns
+    | select($unscanned | index($ns) == null)
+    | select(.status.phase == "Running")
+    | select(any(.metadata.ownerReferences[]?; .kind == "Job") | not)
+    | . as $pod
+    | .status.containerStatuses[]?
+    | select((.imageID // "") | test("sha256:[0-9a-f]{64}") | not)
+    | "\($pod.metadata.namespace)/\($pod.metadata.name) container=\(.name)"
+  ] | unique | join(", ")
+' "${work}/pods.json")" || die "could not validate running image identities"
+[ -z "${unknown_images}" ] || die "running image identity has no SHA-256 digest: ${unknown_images}"
+
 jq -n -r \
   --argjson unscanned "${unscanned}" \
   --argjson now "${now}" \

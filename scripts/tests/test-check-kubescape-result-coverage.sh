@@ -132,6 +132,12 @@ d="$(variant vuln-other vulnerability.json ".items[0].metadata.annotations[\"kub
 expect "a vulnerability result for another image leaves the running image missing" 1 \
   "MISSING vulnerability registry.test/web:1 ${DIGEST_WEB}" "${d}"
 
+d="$(variant vuln-image-identity-unknown pods.json '.items[0].status.containerStatuses += [
+  {name: "sidecar", image: "registry.test/sidecar:1", imageID: "containerd://not-a-digest"}
+]')"
+expect "a running image without a SHA-256 identity is UNKNOWN" 2 \
+  "running image identity has no SHA-256 digest: app/web-5d8f-x container=sidecar" "${d}"
+
 d="$(variant vuln-stale vulnerability.json ".items[0].metadata.annotations[\"kubescape.io/timestamp\"] = \"$((NOW - 8 * 86400))\"")"
 expect "a vulnerability result older than seven days is stale" 1 "STALE vulnerability registry.test/web:1" "${d}"
 
