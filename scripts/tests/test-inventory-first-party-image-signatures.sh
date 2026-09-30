@@ -252,7 +252,7 @@ RC=$?
 set -e
 check "an unreadable rules file -> exit 2" 2 'not readable' "$RC" "$OUT"
 
-# --- 11. the REAL rules file parses, and keeps its six ordered rules -------
+# --- 11. the REAL rules file parses, and keeps its seven ordered rules ------
 # Guards the shape this script reads from drifting without anyone noticing: the catch-all must stay
 # LAST, or ksail, provider packages, and the compatibility images get held to the app
 # identity and go ImagePullBackOff.
@@ -261,22 +261,22 @@ real="${repo_root}/talos/cluster/verify-first-party-images.yaml"
 real_globs="$(yq -r '.rules[].image' "$real")"
 real_count="$(printf '%s\n' "$real_globs" | grep -c .)"
 real_last="$(printf '%s\n' "$real_globs" | grep . | tail -1)"
-real_compatibility_rules="$(printf '%s\n' "$real_globs" | grep . | tail -4 | head -3)"
+real_compatibility_rules="$(printf '%s\n' "$real_globs" | grep . | tail -5 | head -3)"
 expected_compatibility_rules="$(printf '%s\n' \
   'ghcr.io/devantler-tech/platform-kubescape-storage' \
   'ghcr.io/devantler-tech/platform-kubescape-node-agent' \
   'ghcr.io/devantler-tech/platform-coroot-node-agent')"
-if [ "$real_count" -ne 6 ]; then
-  echo "FAIL  the real rules file has ${real_count} rules, expected 6"
+if [ "$real_count" -ne 7 ]; then
+  echo "FAIL  the real rules file has ${real_count} rules, expected 7"
   failures=$((failures + 1))
 elif [ "$real_compatibility_rules" != "$expected_compatibility_rules" ]; then
-  echo "FAIL  the three dedicated compatibility rules are not immediately before the catch-all"
+  echo "FAIL  the three dedicated compatibility rules must precede the exact zone rule and catch-all"
   failures=$((failures + 1))
 elif [ "$real_last" != 'ghcr.io/devantler-tech/*' ]; then
   echo "FAIL  the catch-all is not the last rule (${real_last})"
   failures=$((failures + 1))
 else
-  echo "ok    real rules: six rules, three dedicated compatibility rules before catch-all"
+  echo "ok    real rules: seven rules, dedicated compatibility and zone rules before catch-all"
 fi
 
 # The real file must also satisfy the completeness gate the fixtures exercise.

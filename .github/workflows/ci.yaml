@@ -357,6 +357,7 @@ jobs:
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
+              - 'scripts/tests/test-world-zone-signatures.sh'
               # The boundary test asserts over these two guides, so a docs-only
               # change to either must trigger it or those assertions can drift.
               - 'docs/oidc-kubectl.md'
@@ -457,6 +458,7 @@ jobs:
               # contract: the checker's whole value is failing loudly, so a
               # change to either must re-run both.
               - 'scripts/validate-image-verifier-liveness.sh'
+              - 'scripts/validate-image-verification-policy/**'
               - 'scripts/tests/test-validate-image-verifier-liveness.sh'
               # Stages exact admission and pull-time signer routes before the
               # compatibility-image workloads consume them.
@@ -1316,6 +1318,12 @@ jobs:
         # Daily Kubernetes/Talos access must stay read-only, while the root
         # credentials remain explicit break-glass artifacts.
         run: bash scripts/tests/test-human-api-access-boundary.sh
+
+      - name: 🕹️ Validate the zone release signer boundary
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-world-zone-signatures.sh
+          bash scripts/tests/test-world-zone-signatures.sh
 
       - name: 🧩 Validate Headlamp plugin removal
         if: needs.changes.outputs.k8s == 'true'
