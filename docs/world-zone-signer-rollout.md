@@ -14,7 +14,9 @@ with the old host signer policy and prevent the later machine config sync.
 
 Activation needs evidence from the delivered revision: the deploy's Talos machine
 config update ran successfully, and `validate-image-verifier-liveness.sh` found the
-exact zone rule and running trust material across a stable, complete node inventory.
+exact ordered rules, including their signer issuer and subject, and running trust
+material across a stable, complete node inventory. A running rule with a stale or
+missing signer identity does not clear the gate.
 A skipped update, an unreachable node or repository validation alone does not clear
 this gate. Retain node details in private operator evidence. The workflow
 `validate-image-verifier-liveness.yaml` can supply the read-only fleet check after
