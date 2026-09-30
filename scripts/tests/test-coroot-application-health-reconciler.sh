@@ -235,6 +235,9 @@ setup_scenario() {
   printf '%s' "${concurrency_limit}" >"${dir}/concurrency-limit"
   printf '0' >"${dir}/active-queries"
   printf '0' >"${dir}/peak-queries"
+  printf '%s' '192.0.2.10' >"${dir}/service-address"
+  : >"${dir}/dns-requests"
+  : >"${dir}/cached-requests"
 
   cat >"${dir}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
@@ -244,11 +247,13 @@ url=""
 payload=""
 method="GET"
 write_out=""
+resolve=""
 prev=""
 for arg in "$@"; do
   [ "${prev}" = "-d" ] && payload="${arg}"
   [ "${prev}" = "-X" ] && method="${arg}"
   { [ "${prev}" = "-w" ] || [ "${prev}" = "--write-out" ]; } && write_out="${arg}"
+  [ "${prev}" = "--resolve" ] && resolve="${arg}"
   case "${arg}" in http://*) url="${arg}" ;; esac
   prev="${arg}"
 done
@@ -259,6 +264,18 @@ case "${url}" in
   http://coroot-coroot.observability.svc.cluster.local.:8080/*) ;;
   *) printf 'non-absolute Coroot service URL: %s\n' "${url}" >&2; exit 64 ;;
 esac
+address="$(cat "${dir}/service-address")"
+if [ -z "${resolve}" ]; then
+  printf '%s\n' "${url}" >>"${dir}/dns-requests"
+  [ "${address}" != "dns-failure" ] || exit 6
+else
+  case "${address}" in *:*) address="[${address}]" ;; esac
+  [ "${resolve}" = "coroot-coroot.observability.svc.cluster.local.:8080:${address}" ] || {
+    printf 'wrong cached service address: %s\n' "${resolve}" >&2
+    exit 64
+  }
+  printf '%s\n' "${url}" >>"${dir}/cached-requests"
+fi
 
 release_query_slot() {
   [ "$(cat "${dir}/concurrency-limit")" -gt 0 ] || return 0
@@ -286,6 +303,7 @@ acquire_query_slot() {
 case "${url}" in
   */api/user)
     printf '%s\n' '{"data":{"projects":[{"id":"95rsc5yp","name":"platform"}]}}'
+    [[ "${write_out}" != *'%{remote_ip}'* ]] || printf '\n%s' "${address}"
     ;;
   */logs?query=*)
     acquire_query_slot
@@ -694,6 +712,33 @@ pass 'an absent Coroot log stream is a clean no-policy target'
 
 known_dir="$(setup_scenario known known null)"
 known_output="$(run_scenario "${known_dir}")"
+[ "$(wc -l <"${known_dir}/dns-requests" | tr -d ' ')" -eq 1 ] ||
+  fail 'one reconciliation must resolve the Coroot service only once'
+[ "$(wc -l <"${known_dir}/cached-requests" | tr -d ' ')" -gt 20 ] ||
+  fail 'ordinary API reads and policy writes must reuse the resolved service address'
+[ "$(wc -l <"${absent_log_stream_dir}/dns-requests" | tr -d ' ')" -eq 1 ] ||
+  fail 'HTTP status probes must also reuse the resolved service address'
+pass 'one job-scoped DNS lookup serves every API request and status probe'
+
+ipv6_dir="$(setup_scenario service-ipv6 known null)"
+printf '%s' '2001:db8::10' >"${ipv6_dir}/service-address"
+run_scenario "${ipv6_dir}" >/dev/null
+[ "$(wc -l <"${ipv6_dir}/dns-requests" | tr -d ' ')" -eq 1 ] ||
+  fail 'an IPv6 service address must also be cached within one run'
+pass 'IPv6 service addresses use curl bracket syntax'
+
+for invalid_address in '' 'not-an-address' 'dns-failure'; do
+  invalid_dir="$(setup_scenario invalid-service-address known null)"
+  printf '%s' "${invalid_address}" >"${invalid_dir}/service-address"
+  if run_scenario "${invalid_dir}" >"${invalid_dir}/output" 2>&1; then
+    fail 'failed DNS or an unusable address must stop reconciliation'
+  fi
+  [ ! -s "${invalid_dir}/posts.ndjson" ] ||
+    fail 'failed service initialization must never mutate policy'
+  [ ! -s "${invalid_dir}/cached-requests" ] ||
+    fail 'an unusable address must never reach a policy request'
+done
+pass 'service initialization failures stop before policy reads or writes'
 printf '%s\n' "${known_output}" | jq -s -e \
   'length > 0 and all(.[]; .level == "info" and (.msg | type == "string" and length > 0))' \
   >/dev/null || fail 'successful reconciliation must emit structured info JSON'
