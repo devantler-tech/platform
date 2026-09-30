@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Deploys main through the CD workflow after the convergence report reads BEHIND (#3869).
+# Deploys main through the CD workflow after the convergence report reads BEHIND (#3869),
+# or DIVERGED with an idle merge queue (restore-stranded-prod.yaml, #4186).
 #
 # The caller holds the prod-deploy lock, so no other observer can decide at the same
 # time. Two rules keep a burst of pushes from stacking redundant deploys:
@@ -21,6 +22,7 @@ repository="${REDEPLOY_REPOSITORY:?REDEPLOY_REPOSITORY is required}"
 main_ref="${REDEPLOY_MAIN_REF:-origin/main}"
 attempts="${REDEPLOY_POLL_ATTEMPTS:-30}"
 interval="${REDEPLOY_POLL_INTERVAL:-2}"
+reason="${REDEPLOY_REASON:-prod is behind}"
 
 fail() {
   printf '::error title=Redeploy of main not confirmed::%s\n' "$1"
@@ -53,7 +55,7 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
       NF && !($1 in seen) { found = 1 }
       END { exit !found }
     ' <<<"$after"; then
-    printf '::notice title=Redeploying main::dispatched CD because prod is behind %s\n' "$tip"
+    printf '::notice title=Redeploying main::dispatched CD on %s because %s\n' "$tip" "$reason"
     exit 0
   fi
   sleep "$interval"
