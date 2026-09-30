@@ -40,7 +40,7 @@ violation() {
   [ "$(yq "${job}.concurrency.queue" "$file")" = max ] || { echo lock-queue; return; }
   gate="$(yq "${job}.steps | to_entries | map(select(.value.id == \"gate\")) | .[0].key // -1" "$file")"
   report="$(yq "${job}.steps | to_entries | map(select(.value.id == \"report\")) | .[0].key // -1" "$file")"
-  [ "$gate" -ge 0 ] && [ "$report" -gt "$gate" ] || { echo gate-before-report; return; }
+  if [ "$gate" -lt 0 ] || [ "$report" -le "$gate" ]; then echo gate-before-report; return; fi
   [ "$(yq "${job}.steps[${gate}].run" "$file")" = ./scripts/prod-stranded-gate.sh ] || { echo gate-script; return; }
   [ "$(yq "${job}.steps[${report}].if" "$file")" = "steps.gate.outputs.stranded == 'true'" ] ||
     { echo report-gated; return; }
