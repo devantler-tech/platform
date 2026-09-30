@@ -56,7 +56,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|ksail-operator|ksail-operator 5d624b379a44
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|cilium 85f8921a21247c3418d60c57ce884eadef241a17fe280d9d430eadad9a148208
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|descheduler 88a50b676fd7f8c5780e684b5d39385ca58f2bde1de9ba34d0ac7f3d5044e968
+helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|descheduler 40d41e62d48b7db3706d544a94b25a75e497d7f11ca6efec1376774c8085de13
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|hcloud-cloud-controller-manager 44695dc94a10137a0769581ead688fd7beef90503deb99146716635440ab5c6c
 
