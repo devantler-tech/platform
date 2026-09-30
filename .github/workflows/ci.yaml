@@ -64,6 +64,10 @@ jobs:
           bash scripts/tests/test-report-prod-convergence.sh
           shellcheck scripts/redeploy-main-when-behind.sh scripts/tests/test-redeploy-main-when-behind.sh
           bash scripts/tests/test-redeploy-main-when-behind.sh
+          shellcheck scripts/prod-stranded-gate.sh scripts/tests/test-prod-stranded-gate.sh
+          bash scripts/tests/test-prod-stranded-gate.sh
+          shellcheck scripts/tests/test-restore-stranded-prod-workflow.sh
+          bash scripts/tests/test-restore-stranded-prod-workflow.sh
 
       # The Wedding backup catalogue must be proven complete before the database
       # switches to its dedicated bucket, and continuous after it. The evaluator's
