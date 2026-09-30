@@ -73,7 +73,12 @@ func run() error {
 			_, _ = server.WriteTo(reply, peer)
 		}
 	}()
-	for _, resolver := range []string{"go", "libc"} {
+	for _, resolver := range []struct{ name, family, database string }{
+		{name: "go-ipv4", family: "ip4"},
+		{name: "go-dual-stack", family: "ip"},
+		{name: "libc-ipv4", database: "ahostsv4"},
+		{name: "libc-dual-stack", database: "ahosts"},
+	} {
 		for _, name := range []string{
 			"coroot-clickhouse.observability",
 			"coroot-clickhouse-shard-0-0.coroot-clickhouse-headless.observability",
@@ -85,8 +90,8 @@ func run() error {
 			queries = nil
 			mu.Unlock()
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if resolver == "go" {
-				addresses, lookupErr := (&net.Resolver{PreferGo: true}).LookupIP(ctx, "ip4", name)
+			if resolver.family != "" {
+				addresses, lookupErr := (&net.Resolver{PreferGo: true}).LookupIP(ctx, resolver.family, name)
 				if lookupErr != nil || len(addresses) != 1 || addresses[0].String() != "192.0.2.1" {
 					cancel()
 					return fmt.Errorf("go lookup %s: addresses=%v err=%v", name, addresses, lookupErr)
@@ -94,7 +99,7 @@ func run() error {
 			} else {
 				// The isolated container has only loopback; do not let AI_ADDRCONFIG
 				// suppress IPv4 before libc attempts the DNS lookup under test.
-				output, lookupErr := exec.CommandContext(ctx, "getent", "--no-addrconfig", "ahostsv4", name).CombinedOutput()
+				output, lookupErr := exec.CommandContext(ctx, "getent", "--no-addrconfig", resolver.database, name).CombinedOutput()
 				if lookupErr != nil || !strings.HasPrefix(string(output), "192.0.2.1") {
 					cancel()
 					return fmt.Errorf("libc lookup %s: output=%q err=%v", name, output, lookupErr)
@@ -105,18 +110,20 @@ func run() error {
 			observed := append([]string(nil), queries...)
 			mu.Unlock()
 			if len(observed) == 0 {
-				return fmt.Errorf("%s lookup %s sent no DNS query", resolver, name)
+				return fmt.Errorf("%s lookup %s sent no DNS query", resolver.name, name)
 			}
 			for _, query := range observed {
 				if !strings.HasSuffix(query, ".cluster.local.") && query != "telemetry.eu.example.com." {
-					return fmt.Errorf("%s relative service lookup escaped cluster search domains: %s (queries=%v)", resolver, query, observed)
+					return fmt.Errorf("%s relative service lookup escaped cluster search domains: %s (queries=%v)", resolver.name, query, observed)
 				}
 			}
 			absolute := strings.TrimSuffix(name, ".") + "."
-			if strings.Count(name, ".") >= 3 && (len(observed) != 1 || observed[0] != absolute) {
-				return fmt.Errorf("%s expanded an absolute name: %v", resolver, observed)
+			for _, query := range observed {
+				if strings.Count(name, ".") >= 3 && query != absolute {
+					return fmt.Errorf("%s expanded an absolute name: %v", resolver.name, observed)
+				}
 			}
-			fmt.Printf("PASS %s %s: %v\n", resolver, name, observed)
+			fmt.Printf("PASS %s %s: %v\n", resolver.name, name, observed)
 		}
 	}
 	return nil
