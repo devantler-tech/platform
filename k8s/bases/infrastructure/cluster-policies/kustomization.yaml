@@ -30,10 +30,13 @@ resources:
   - flux/helm-release-enable-tests.yaml
   - flux/helm-release-install-crds.yaml
   - flux/helm-release-remediation-retries.yaml
-  # Upstream kyverno/policies (synced via reusable-workflows, patched below)
-  - samples/best-practices/add-ns-quota/add-ns-quota.yaml
-  - samples/other/create-pod-antiaffinity/create-pod-antiaffinity.yaml
-  - samples/other/spread-pods-across-topology/spread-pods-across-topology.yaml
+  # Adopted from upstream kyverno/policies (Apache-2.0) and owned here since
+  # platform#4257: the upstream paths stopped resolving, so the nightly sync was
+  # retired. The upstream files are kept verbatim; the platform changes stay in
+  # the patches below so they remain easy to review.
+  - best-practices/add-ns-quota.yaml
+  - best-practices/create-pod-antiaffinity.yaml
+  - best-practices/spread-pods-across-topology.yaml
 patches:
   # --- add-ns-quota: exclude system namespaces, set generateExisting, tune resource values ---
   - target:
