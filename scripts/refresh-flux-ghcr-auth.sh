@@ -212,6 +212,7 @@ readonly -a FANOUT_NAMESPACES=(
   # "data-product-controller"
   "wedding-app"
   "ascoachingogvaner"
+  "world-at-ruin"
   "kyverno"
 )
 

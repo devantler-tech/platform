@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Asserts that the GHCR fan-out requirement follows the apps-base component gate.
+# Asserts that the GHCR fan-out requirement follows each app's production gate.
 #
 # An app that pulls private first-party images declares its own ghcr-auth
 # ExternalSecret, and scripts/refresh-flux-ghcr-auth.sh lists its namespace in
@@ -22,9 +22,9 @@
 #
 # The invariant, scoped to apps only:
 #
-#   an app under k8s/bases/apps/ that DECLARES a ghcr-auth ExternalSecret is
-#   present in FANOUT_NAMESPACES if and only if it is enabled (uncommented) in
-#   k8s/bases/apps/kustomization.yaml
+#   an app under k8s/bases/apps/ or k8s/providers/hetzner/apps/ that DECLARES a
+#   ghcr-auth ExternalSecret is present in FANOUT_NAMESPACES if and only if it
+#   is enabled in its owning apps kustomization.yaml.
 #
 # FANOUT_NAMESPACES also carries infrastructure namespaces that are not apps at
 # all (kyverno's ghcr-auth comes from
@@ -56,6 +56,8 @@ die() { printf '%s\n' "$1" >&2; exit 2; }
 
 apps_dir="$repo_root/k8s/bases/apps"
 apps_kustomization="$apps_dir/kustomization.yaml"
+prod_apps_dir="$repo_root/k8s/providers/hetzner/apps"
+prod_apps_kustomization="$prod_apps_dir/kustomization.yaml"
 fanout_script="$repo_root/scripts/refresh-flux-ghcr-auth.sh"
 
 [ -d "$apps_dir" ] || die "guard: no apps base at $apps_dir"
@@ -69,7 +71,8 @@ command -v yq >/dev/null 2>&1 || die "guard: yq is required"
 # the secret without declaring the ExternalSecret, so a plain grep would report
 # apps whose credential is declared elsewhere.
 ghcr_apps=()
-for app_path in "$apps_dir"/*/; do
+ghcr_gates=()
+for app_path in "$apps_dir"/*/ "$prod_apps_dir"/*/; do
   [ -d "$app_path" ] || continue
   app="$(basename "$app_path")"
   declares=""
@@ -81,7 +84,18 @@ for app_path in "$apps_dir"/*/; do
       break
     fi
   done < <(find "$app_path" -type f \( -name '*.yaml' -o -name '*.yml' \) 2>/dev/null)
-  [ -n "$declares" ] && ghcr_apps+=("$app")
+  if [ -n "$declares" ]; then
+    if ((${#ghcr_apps[@]} > 0)); then
+      case " ${ghcr_apps[*]} " in
+        *" $app "*) die "guard: $app declares ghcr-auth in more than one application root" ;;
+      esac
+    fi
+    ghcr_apps+=("$app")
+    case "$app_path" in
+      "$prod_apps_dir"/*) ghcr_gates+=("$prod_apps_kustomization") ;;
+      *) ghcr_gates+=("$apps_kustomization") ;;
+    esac
+  fi
 done
 
 ((${#ghcr_apps[@]} > 0)) ||
@@ -96,7 +110,20 @@ enabled_list="$(yq -N -r '.resources[]' "$apps_kustomization" 2>/dev/null)" ||
   die "guard: $apps_kustomization declares no resources — refusing to report parity"
 
 is_enabled() { # <app>
-  printf '%s\n' "$enabled_list" | grep -qxF -- "$1/"
+  local index selected_list
+  for index in "${!ghcr_apps[@]}"; do
+    [ "${ghcr_apps[$index]}" = "$1" ] || continue
+    if [ "${ghcr_gates[$index]}" = "$apps_kustomization" ]; then
+      selected_list="$enabled_list"
+    else
+      selected_list="$(yq -N -r '.resources[]' "${ghcr_gates[$index]}" 2>/dev/null)" ||
+        die "guard: could not parse prod app gate ${ghcr_gates[$index]}"
+      [ -n "$selected_list" ] || die "guard: prod app gate is empty"
+    fi
+    printf '%s\n' "$selected_list" | grep -qxF -- "$1/"
+    return
+  done
+  die "guard: no component gate for $1"
 }
 
 # --- the declared fan-out namespaces ----------------------------------------
@@ -143,7 +170,7 @@ printf 'fan-out namespaces: %s\n' "$(printf '%s' "$fanout_list" | tr '\n' ' ')"
 for app in "${ghcr_apps[@]}"; do
   if is_enabled "$app"; then
     if is_listed "$app"; then
-      printf '  ok   %s — enabled in the apps base and listed in FANOUT_NAMESPACES\n' "$app"
+      printf '  ok   %s — enabled in its app layer and listed in FANOUT_NAMESPACES\n' "$app"
     else
       printf '  FAIL %s is ENABLED in %s but MISSING from FANOUT_NAMESPACES in %s; its running consumer pull credential would never be proven.\n' \
         "$app" "k8s/bases/apps/kustomization.yaml" "scripts/refresh-flux-ghcr-auth.sh"
@@ -155,7 +182,7 @@ for app in "${ghcr_apps[@]}"; do
         "$app" "k8s/bases/apps/kustomization.yaml" "scripts/refresh-flux-ghcr-auth.sh"
       drift=1
     else
-      printf '  ok   %s — staged off in the apps base and absent from FANOUT_NAMESPACES\n' "$app"
+      printf '  ok   %s — staged off in its app layer and absent from FANOUT_NAMESPACES\n' "$app"
     fi
   fi
 done

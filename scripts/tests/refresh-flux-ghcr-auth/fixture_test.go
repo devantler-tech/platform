@@ -48,6 +48,7 @@ type fixture struct {
 	outputPathLog                string
 	registryReadLog              string
 	fanoutLog                    string
+	consumerSecretReadLog        string
 	talosLog                     string
 	talosPatchPathLog            string
 	operationLog                 string
@@ -161,6 +162,7 @@ func newFixture(t *testing.T) *fixture {
 		outputPathLog:                filepath.Join(workspace, "ksail-output-path"),
 		registryReadLog:              filepath.Join(workspace, "registry-reads"),
 		fanoutLog:                    filepath.Join(workspace, "fanout-log"),
+		consumerSecretReadLog:        filepath.Join(workspace, "consumer-secret-read-log"),
 		talosLog:                     filepath.Join(workspace, "talos-log"),
 		talosPatchPathLog:            filepath.Join(workspace, "talos-patch-path"),
 		operationLog:                 filepath.Join(workspace, "operation-log"),
@@ -373,6 +375,7 @@ func (f *fixture) baseEnvironment() map[string]string {
 	env["KSAIL_OUTPUT_PATH_LOG"] = f.outputPathLog
 	env["REGISTRY_READ_LOG"] = f.registryReadLog
 	env["FANOUT_LOG"] = f.fanoutLog
+	env["CONSUMER_SECRET_READ_LOG"] = f.consumerSecretReadLog
 	env["TALOS_LOG"] = f.talosLog
 	env["TALOS_PATCH_PATH_LOG"] = f.talosPatchPathLog
 	env["OPERATION_LOG"] = f.operationLog
@@ -410,6 +413,7 @@ func (f *fixture) clearRunStatePreservingCluster(helper, preserveClusterState bo
 			f.kubectlCalled,
 			f.registryReadLog,
 			f.fanoutLog,
+			f.consumerSecretReadLog,
 			f.talosLog,
 			f.talosPatchPathLog,
 			f.operationLog,

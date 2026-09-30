@@ -24,3 +24,4 @@ resources:
   - upstream-chart-defaults.yaml
   - vpa-managed-resources.yaml
   - wildcard-rbac.yaml
+  - world-at-ruin-trial-operator.yaml

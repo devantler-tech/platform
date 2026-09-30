@@ -1020,6 +1020,7 @@ func TestUnreadyNodeAfterRebootStopsTheRoll(t *testing.T) {
 		"fanout:pushsecret/flux-system/seed-ghcr",
 		"fanout:externalsecret/wedding-app/ghcr-auth",
 		"fanout:externalsecret/ascoachingogvaner/ghcr-auth",
+		"fanout:externalsecret/world-at-ruin/ghcr-auth",
 		"fanout:externalsecret/kyverno/ghcr-auth",
 		"node-claim-cordon:prod-worker-1",
 		"node-fence-phase:prod-worker-1",
@@ -1069,6 +1070,7 @@ func TestTalosFailureAfterSafeFanoutKeepsRootAuthUnchanged(t *testing.T) {
 				"pushsecret/flux-system/seed-ghcr",
 				"externalsecret/wedding-app/ghcr-auth",
 				"externalsecret/ascoachingogvaner/ghcr-auth",
+				"externalsecret/world-at-ruin/ghcr-auth",
 				"externalsecret/kyverno/ghcr-auth",
 			})
 			operations := readLines(f.operationLog)

@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - service-account.yaml
+  - role-binding.yaml
+  - network-policy.yaml
+  - resource-quota.yaml
+  - limit-range.yaml
+  - external-secret.yaml
+  - secret-store.yaml
+  - certificate.yaml
+  - oci-repository.yaml
+  - flux-kustomization.yaml
+  - role-operator.yaml
+  - role-binding-operator.yaml

@@ -403,6 +403,7 @@ func TestPartialBootstrapRepairsRootWithoutForcingMissingFanout(t *testing.T) {
 		"pushsecret/flux-system/seed-ghcr",
 		"externalsecret/wedding-app/ghcr-auth",
 		"externalsecret/ascoachingogvaner/ghcr-auth",
+		"externalsecret/world-at-ruin/ghcr-auth",
 		"externalsecret/kyverno/ghcr-auth",
 	}
 	for _, resource := range missingResources {
