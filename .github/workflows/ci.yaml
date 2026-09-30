@@ -571,6 +571,7 @@ jobs:
               - 'scripts/tests/test-crossview-postgres-durable-storage.sh'
               - 'scripts/tests/test-coroot-api-key-contract.sh'
               - 'scripts/tests/test-coroot-availability-remediation.sh'
+              - 'scripts/tests/test-descheduler-availability.sh'
               - 'scripts/tests/test-coroot-risk-acceptance-reconciler.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
@@ -589,6 +590,10 @@ jobs:
               # alone — still runs the check that covers it.
               - 'scripts/restart-uncapped-talos-coredns.sh'
               - 'scripts/tests/test-restart-uncapped-talos-coredns.sh'
+              # Both halves, so editing the root-source verify reassert alone —
+              # or its test alone — still runs the check that covers it.
+              - 'scripts/reassert-flux-root-verify.sh'
+              - 'scripts/tests/test-reassert-flux-root-verify.sh'
               # The values it checks live under k8s/**; this entry makes an edit to
               # the test alone run it too.
               - 'scripts/tests/test-kube-system-addon-cpu-limits.sh'
@@ -1017,7 +1022,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.192.2"
+          KSAIL_VERSION: "7.192.6"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1566,6 +1571,8 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-availability-remediation.sh
           bash scripts/tests/test-coroot-availability-remediation.sh
+          shellcheck scripts/tests/test-descheduler-availability.sh
+          bash scripts/tests/test-descheduler-availability.sh
           shellcheck scripts/tests/test-umami-rendered-placement.sh
           bash scripts/tests/test-umami-rendered-placement.sh
           shellcheck scripts/tests/test-coroot-risk-acceptance-reconciler.sh
@@ -1596,6 +1603,14 @@ jobs:
         # restarts CoreDNS only when a running pod is uncapped, restarts nothing
         # else, and fails closed on any input it cannot read.
         run: bash scripts/tests/test-restart-uncapped-talos-coredns.sh
+
+      - name: 🛡️ Validate the deploy repairs a bad root-source verify
+        if: needs.changes.outputs.k8s == 'true'
+        # The root source's cosign matcher is delivered through that same source,
+        # so only an out-of-band repair can replace a bad live value (#3014). Pin
+        # that the deploy repairs it through the FluxInstance, writes nothing on a
+        # healthy cluster, and fails closed on anything it cannot read.
+        run: bash scripts/tests/test-reassert-flux-root-verify.sh
 
       - name: 🧢 Validate kube-system add-ons declare their CPU limit
         if: needs.changes.outputs.k8s == 'true'
@@ -2022,7 +2037,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.192.2"
+          KSAIL_VERSION: "7.192.6"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2550,6 +2565,26 @@ jobs:
           validate_overlay talos cloud          # prod (Hetzner)
           validate_overlay talos-local container # local Docker test-bed
 
+  validate-root-verify-merge-group:
+    name: 🛡️ Validate Root Source Repair (merge group)
+    needs: [changes]
+    # Production deploys the speculative merge-group revision, so the PR-only
+    # repair test cannot gate the revision that reaches the cluster.
+    if: >-
+      github.event_name == 'merge_group' &&
+      needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🛡️ Validate the root source repair before deployment
+        run: bash scripts/tests/test-reassert-flux-root-verify.sh
+
   validate-rgd-templates-merge-group:
     name: 🔬 Validate Nested RGD Workload Templates (merge group)
     needs: [changes]
@@ -2652,6 +2687,7 @@ jobs:
         validate-publication-contract,
         validate-matcher-efficacy,
         validate-talos,
+        validate-root-verify-merge-group,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
       ]
@@ -2797,6 +2833,20 @@ jobs:
           ref: main
           persist-credentials: false
 
+      - name: 🛡️ Validate the root source repair on main
+        # The merge-group gate tested a speculative checkout; main may have
+        # advanced before this heal publishes and reconciles its own checkout.
+        # During this PR's own merge-group run, main still predates the repair
+        # test. Keep that one legacy heal path working; after the test lands, a
+        # missing or failing test remains a hard stop.
+        shell: bash
+        run: |
+          if [[ ! -f scripts/tests/test-reassert-flux-root-verify.sh ]]; then
+            echo '- Root source repair: main predates the root-source repair; continuing the legacy heal path.' >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          bash scripts/tests/test-reassert-flux-root-verify.sh
+
       # Signer approval is enforced first by the deploy action from this main
       # checkout, so recovery uses the policy version of the revision it restores.
       - name: ⚙️ Setup Go for version compatibility validation
@@ -2828,7 +2878,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.192.2"
+          KSAIL_VERSION: "7.192.6"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2878,6 +2928,7 @@ jobs:
         validate-floating-image-tags,
         naming,
         validate-talos,
+        validate-root-verify-merge-group,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
         deploy-prod,
@@ -2897,6 +2948,7 @@ jobs:
             ${{ needs.validate-floating-image-tags.result }}
             ${{ needs.naming.result }}
             ${{ needs.validate-talos.result }}
+            ${{ needs.validate-root-verify-merge-group.result }}
             ${{ needs.validate-rgd-templates-merge-group.result }}
             ${{ needs.validate-ghcr-fanout-merge-group.result }}
             ${{ needs.deploy-prod.result }}

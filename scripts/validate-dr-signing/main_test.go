@@ -1603,6 +1603,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
         validate-publication-contract,
         validate-matcher-efficacy,
         validate-talos,
+        validate-root-verify-merge-group,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
       ]`
@@ -1613,6 +1614,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
         validate-eks-authorization,
         validate-matcher-efficacy,
         validate-talos,
+        validate-root-verify-merge-group,
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
       ]`
