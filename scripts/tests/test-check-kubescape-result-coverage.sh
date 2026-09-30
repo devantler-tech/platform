@@ -159,6 +159,14 @@ d="$(variant posture-namespace-mismatch posture.json '
 expect "a posture result whose label namespace disagrees with metadata is UNKNOWN" 2 \
   "posture result identity disagrees with metadata namespace" "${d}"
 
+d="$(variant posture-duplicate posture.json '
+  .items[0].spec.controls = null |
+  .items += [(.items[0] | .metadata.name = "deployment-web-duplicate" |
+    .spec.controls = {"C-0001": {}})]')"
+jq '{items: [.items[] | del(.spec)]}' "${d}/posture.json" >"${d}/posture-list.json"
+expect "duplicate posture identities are UNKNOWN instead of last-write-wins" 2 \
+  "duplicate posture result identity" "${d}"
+
 d="$(variant namespace-snapshot-race workloads.json '
   .items += [{kind: "Deployment", metadata: {namespace: "late", name: "late-web"}}]')"
 expect "a workload observed after the namespace snapshot remains in scope" 1 \
@@ -180,6 +188,11 @@ d="$(variant vuln-regular-status-missing pods.json '
   .items[0].spec.containers += [{name: "sidecar"}]')"
 expect "a configured regular container without a status is UNKNOWN" 2 \
   "running pod is missing long-lived container status: app/web-5d8f-x container=sidecar" "${d}"
+
+d="$(variant vuln-overlong-digest pods.json ".items[0].status.containerStatuses[0].imageID =
+  \"registry.test/web@${DIGEST_WEB}a\"")"
+expect "an overlong hexadecimal image identity is UNKNOWN" 2 \
+  "running image identity has no SHA-256 digest: app/web-5d8f-x container=web" "${d}"
 
 d="$(variant vuln-init-sidecar-status-missing pods.json '
   .items[0].spec.initContainers = [{name: "sidecar-init", restartPolicy: "Always"}]')"
@@ -240,6 +253,13 @@ d="$(variant runtime-period-malformed profiles.json '
 expect "a present malformed runtime learning period is UNKNOWN" 2 \
   "runtime result has malformed learning period" "${d}"
 
+d="$(variant runtime-start-future pods.json "
+  .items[0].status.startTime = \"$(date -u -r $((NOW + 3600)) +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d @$((NOW + 3600)) +%Y-%m-%dT%H:%M:%SZ)\"")"
+jq '.items[0].metadata.annotations["kubescape.io/status"] = "ready"' \
+  "${base}/profiles.json" >"${d}/profiles.json"
+expect "a future runtime start time is UNKNOWN instead of pending" 2 \
+  "running managed pod has an invalid or future start time" "${d}"
+
 d="$(variant runtime-pending pods.json "(.items[0].status.startTime) = \"$(date -u -r $((NOW - 3600)) +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d @$((NOW - 3600)) +%Y-%m-%dT%H:%M:%SZ)\"")"
 jq '.items[0].metadata.annotations["kubescape.io/status"] = "ready"' "${base}/profiles.json" >"${d}/profiles.json"
 expect "a profile inside its learning period is pending, not a failure" 0 "PENDING runtime app/replicaset-web-5d8f applicationprofile" "${d}"
@@ -261,6 +281,14 @@ expect "an empty expected set is UNKNOWN" 2 "the expected set is empty" "${d}"
 d="${tmp}/missing-file"
 rm -rf "${d}" && cp -R "${base}" "${d}" && rm "${d}/profiles.json"
 expect "a missing input file is UNKNOWN" 2 "--from-dir is missing profiles.json" "${d}"
+
+rc=0
+bash "${CHECK}" --now >"${tmp}/out" 2>&1 || rc=$?
+if [ "${rc}" -eq 2 ] && grep -qF -- "--now needs a value" "${tmp}/out"; then
+  ok "an option without its value is a usage UNKNOWN"
+else
+  bad "an option without its value is a usage UNKNOWN: exit ${rc} ($(tr '\n' ' ' <"${tmp}/out"))"
+fi
 
 finished=1
 if [ "${failures}" -ne 0 ]; then

@@ -55,13 +55,17 @@ now=''
 vuln_max_age_days=7
 reviewed="${repo_root}/scripts/kubescape-unscanned-namespaces.tsv"
 
+need_value() {
+  [ "$#" -ge 2 ] && [ -n "${2-}" ] || die "$1 needs a value"
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
-  --context) context="${2:?--context needs a value}" && shift 2 ;;
-  --from-dir) from_dir="${2:?--from-dir needs a value}" && shift 2 ;;
-  --now) now="${2:?--now needs a value}" && shift 2 ;;
-  --vuln-max-age-days) vuln_max_age_days="${2:?--vuln-max-age-days needs a value}" && shift 2 ;;
-  --reviewed-list) reviewed="${2:?--reviewed-list needs a value}" && shift 2 ;;
+  --context) need_value "$@" && context="$2" && shift 2 ;;
+  --from-dir) need_value "$@" && from_dir="$2" && shift 2 ;;
+  --now) need_value "$@" && now="$2" && shift 2 ;;
+  --vuln-max-age-days) need_value "$@" && vuln_max_age_days="$2" && shift 2 ;;
+  --reviewed-list) need_value "$@" && reviewed="$2" && shift 2 ;;
   *) die "unknown argument: $1" ;;
   esac
 done
@@ -202,6 +206,26 @@ missing_runtime_revisions="$(jq -r --argjson unscanned "${unscanned}" '
 [ -z "${missing_runtime_revisions}" ] ||
   die "running managed pod has no controller revision: ${missing_runtime_revisions}"
 
+# A future or malformed pod start time makes an incomplete runtime result look PENDING until the
+# skewed time plus the learning period has elapsed. Runtime age is trustworthy only when its
+# selected start is no later than the post-read evaluation clock.
+bad_runtime_start_times="$(jq -r --argjson unscanned "${unscanned}" --argjson now "${now}" '
+  [ .items[]
+    | .metadata.namespace as $ns
+    | select($unscanned | index($ns) == null)
+    | select(.status.phase == "Running")
+    | . as $pod
+    | (.metadata.ownerReferences // [] | map(select(.controller == true)) | first) as $owner
+    | select($owner.kind | IN("ReplicaSet", "StatefulSet", "DaemonSet"))
+    | (.status.startTime // .metadata.creationTimestamp) as $raw
+    | ($raw | if type == "string" then (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601?) else null end) as $at
+    | select($at == null or $at > $now)
+    | "\($pod.metadata.namespace)/\($pod.metadata.name) start=\($raw // "<missing>")"
+  ] | unique | join(", ")
+' "${work}/pods.json")" || die "could not validate runtime start times"
+[ -z "${bad_runtime_start_times}" ] ||
+  die "running managed pod has an invalid or future start time: ${bad_runtime_start_times}"
+
 # The namespace label is part of a posture result's identity, but Kubernetes namespace scope is
 # authoritative. A corrupt label must not let an object in one namespace satisfy another.
 bad_posture_identities="$(jq -r '
@@ -213,6 +237,17 @@ bad_posture_identities="$(jq -r '
 ' "${work}/posture.json")" || die "could not validate posture result identities"
 [ -z "${bad_posture_identities}" ] ||
   die "posture result identity disagrees with metadata namespace: ${bad_posture_identities}"
+
+# A label-derived workload identity must be unique. Letting jq's object merge pick the last result
+# makes list order decide whether an empty duplicate is visible.
+duplicate_posture_identities="$(jq -r '
+  [ .items[]
+    | .metadata.labels as $labels
+    | "\($labels["kubescape.io/workload-kind"])/\($labels["kubescape.io/workload-namespace"])/\($labels["kubescape.io/workload-name"])"
+  ] | group_by(.) | map(select(length > 1) | .[0]) | join(", ")
+' "${work}/posture.json")" || die "could not validate posture result uniqueness"
+[ -z "${duplicate_posture_identities}" ] ||
+  die "duplicate posture result identity: ${duplicate_posture_identities}"
 
 # A future scan time makes age negative and would otherwise look permanently current until the
 # wall clock catches up. Missing and malformed times are equally unusable as freshness evidence.
@@ -261,7 +296,7 @@ unknown_images="$(jq -r --argjson unscanned "${unscanned}" '
     | select(any(.metadata.ownerReferences[]?; .kind == "Job") | not)
     | . as $pod
     | long_lived_statuses[]
-    | select((.imageID // "") | test("sha256:[0-9a-f]{64}") | not)
+    | select((.imageID // "") | test("sha256:[0-9a-f]{64}$") | not)
     | "\($pod.metadata.namespace)/\($pod.metadata.name) container=\(.name)"
   ] | unique | join(", ")
 ' "${work}/pods.json")" || die "could not validate running image identities"
@@ -281,7 +316,7 @@ jq -n -r \
   -f /dev/stdin >"${work}/report" <<'JQ' || die "evaluating the captured objects failed"
 def in_scope: .metadata.namespace as $ns | $unscanned | index($ns) == null;
 def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
-def digest: capture("(?<d>sha256:[0-9a-f]{64})").d // null;
+def digest: capture("(?<d>sha256:[0-9a-f]{64})$").d // null;
 def long_lived_statuses:
   [ .status.containerStatuses[]? ] +
   [ . as $pod
