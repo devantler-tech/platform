@@ -388,6 +388,7 @@ require_text "${manifest}" 'medium: Memory' 'the mc credential config lives in m
 require_text "${manifest}" 'value: /mc-config' 'mc is pointed at the memory-backed config directory'
 require_text "${manifest}" 'initContainers:' 'the minimal mc image receives its required shell tools'
 require_text "${manifest}" 'name: install-tools' 'tools are installed before the copy starts'
+require_text "${manifest}" 'busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8' 'the toolbox is statically linked and digest-pinned'
 require_text "${manifest}" 'command: ["/tools/sh", "/mirror/mirror.sh"]' 'the copy runs with the supplied shell'
 require_text "${manifest}" 'fsGroup: 65532' 'the unprivileged pod can write its temporary volumes'
 require_text "${manifest}" 'mountPath: /tools' 'the runtime tools are available to the copy'

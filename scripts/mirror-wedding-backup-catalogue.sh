@@ -56,9 +56,9 @@ readonly plugin='barman-cloud.cloudnative-pg.io'
 readonly ready_marker='==== LISTINGS READY ===='
 # Official client release; the old quay.io/minio/mc path now refuses pulls.
 readonly mc_image='quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f'
-# mc's minimal image has no sed/awk. Supply a static toolbox from the same
-# pinned BusyBox already used by the platform, without modifying the client.
-readonly tools_image='docker.io/library/busybox:1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e'
+# mc's minimal image has no sed/awk. Use the statically linked musl variant:
+# the default BusyBox depends on a newer glibc than the client image provides.
+readonly tools_image='docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8'
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly root_dir
