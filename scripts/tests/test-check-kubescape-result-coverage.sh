@@ -121,6 +121,31 @@ expect "unscanned namespace and Job pods are out of scope" 0 \
   "COVERAGE vulnerability expected=1 current=1" "${base}"
 expect "one runtime pair is expected" 0 "COVERAGE runtime expected=1 current=1" "${base}"
 
+# The implicit freshness clock belongs after input collection. A scan written while live reads are
+# in progress must not look future-dated merely because the checker froze wall time before reading.
+clock_bin="${tmp}/clock-bin"
+clock_marker="${tmp}/clock-called"
+real_cp="$(command -v cp)"
+mkdir -p "${clock_bin}"
+cat >"${clock_bin}/date" <<EOF
+#!/usr/bin/env bash
+: >"${clock_marker}"
+printf '%s\n' '${NOW}'
+EOF
+cat >"${clock_bin}/cp" <<EOF
+#!/usr/bin/env bash
+[ ! -e "${clock_marker}" ] || exit 42
+exec '${real_cp}' "\$@"
+EOF
+chmod +x "${clock_bin}/date" "${clock_bin}/cp"
+rc=0
+PATH="${clock_bin}:${PATH}" bash "${CHECK}" --from-dir "${base}" >"${tmp}/out" 2>&1 || rc=$?
+if [ "${rc}" -eq 0 ]; then
+  ok "the implicit freshness clock is captured after input collection"
+else
+  bad "the implicit freshness clock is captured after input collection: exit ${rc} ($(tr '\n' ' ' <"${tmp}/out"))"
+fi
+
 # Negative controls: one expected result removed, per surface.
 d="$(variant posture-missing posture.json '.items |= map(select(.metadata.name != "deployment-web"))')"
 jq '{items: [.items[] | del(.spec)]}' "${d}/posture.json" >"${d}/posture-list.json"

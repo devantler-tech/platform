@@ -67,7 +67,6 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "${vuln_max_age_days}" in '' | *[!0-9]*) die "--vuln-max-age-days must be a whole number" ;; esac
-[ -z "${now}" ] && now="$(date +%s)"
 case "${now}" in *[!0-9]*) die "--now must be epoch seconds" ;; esac
 command -v jq >/dev/null 2>&1 || die "jq is required but not installed"
 [ -f "${reviewed}" ] || die "reviewed unscanned-namespace list not found: ${reviewed}"
@@ -134,6 +133,14 @@ else
       die "could not merge posture objects read from ${batch[0]}"
     fi
   done <"${work}/batches"
+fi
+
+# A live collection can overlap a new vulnerability result. Freeze the implicit evaluation time
+# only after every read finishes so a result created during collection cannot look future-dated.
+# Tests pass --now explicitly and retain their deterministic clock.
+if [ -z "${now}" ]; then
+  now="$(date +%s)" || die "could not read the evaluation time"
+  case "${now}" in '' | *[!0-9]*) die "the evaluation time is not epoch seconds" ;; esac
 fi
 
 for name in ${INPUTS}; do
