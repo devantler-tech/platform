@@ -380,7 +380,7 @@ require_text "${wrapper_out}" 'CONVERGED' 'the verdict is stated'
 manifest="$(cat "${dir}/applied.yaml")"
 require_text "${manifest}" 'secretName: wedding-db-backup-r2' 'the pod mounts the source credential'
 require_text "${manifest}" 'secretName: wedding-db-backup-r2-dedicated' 'the pod mounts the destination credential'
-require_text "${manifest}" '@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952' 'the mc image is digest-pinned'
+require_text "${manifest}" '@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f' 'the reachable official mc image is digest-pinned'
 require_text "${manifest}" 'value: "https://abc123.r2.cloudflarestorage.com"' 'the endpoint is substituted literally'
 require_text "${manifest}" 'automountServiceAccountToken: false' 'the pod gets no Kubernetes API token'
 require_text "${manifest}" 'readOnlyRootFilesystem: true' 'the pod root filesystem is read-only'

@@ -54,8 +54,8 @@ readonly source_store='wedding-db'
 readonly destination_store='wedding-db-dedicated'
 readonly plugin='barman-cloud.cloudnative-pg.io'
 readonly ready_marker='==== LISTINGS READY ===='
-# Same digest-pinned client the DR rebuild uses to read R2.
-readonly mc_image='quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952'
+# Official client release; the old quay.io/minio/mc path now refuses pulls.
+readonly mc_image='quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f'
 # mc's minimal image has no sed/awk. Supply a static toolbox from the same
 # pinned BusyBox already used by the platform, without modifying the client.
 readonly tools_image='docker.io/library/busybox:1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e'
