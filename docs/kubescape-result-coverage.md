@@ -80,7 +80,12 @@ scripts/check-kubescape-result-coverage.sh --context <kube-context>
 It prints one `MISSING`, `STALE`, `PARTIAL` or `EMPTY` line per failure, `PENDING` and `ORPHAN`
 lines for information, and one `COVERAGE` line per surface. It exits `0` when every expected
 object has a current result, `1` when any is missing or stale, and `2` when it cannot check. An
-empty read of any input, or posture objects that read back short, is `2`, never a pass.
+empty read of any input, or posture objects that read back short, is `2`, never a pass. The same
+fail-closed result applies when a running pod lacks a configured container status or controller
+revision, a posture result's namespace label disagrees with its Kubernetes namespace, a scan time
+is invalid or in the future, or a present runtime learning period is malformed. Workloads and pods
+are classified directly against the reviewed exclusion list, so an object observed after the
+earlier Namespace read remains in scope.
 
 The aggregated storage API returns `.spec` as null on a LIST, which reads exactly like "no
 controls". So the check lists the posture objects, then reads the workload-kind ones back by name

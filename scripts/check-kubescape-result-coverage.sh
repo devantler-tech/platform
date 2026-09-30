@@ -154,6 +154,86 @@ unscanned="$(awk -F'\t' '/^[[:space:]]*#/ || NF == 0 { next } { print $1 }' "${r
   jq -R . | jq -sc .)" || die "could not parse ${reviewed}"
 [ "$(jq 'length' <<<"${unscanned}")" -gt 0 ] || die "${reviewed} lists no namespaces"
 
+# A pod can be Running before every configured regular container has appeared in
+# containerStatuses. Treating only the statuses that happen to exist as the expected set would
+# make that container, and its image, disappear from the coverage denominator.
+missing_container_statuses="$(jq -r --argjson unscanned "${unscanned}" '
+  [ .items[]
+    | .metadata.namespace as $ns
+    | select($unscanned | index($ns) == null)
+    | select(.status.phase == "Running")
+    | select(any(.metadata.ownerReferences[]?; .kind == "Job") | not)
+    | . as $pod
+    | [ .status.containerStatuses[]?.name ] as $regular
+    | [ .status.initContainerStatuses[]?.name ] as $init
+    | ( .spec.containers[]?
+        | select(.name as $name | $regular | index($name) == null)
+        | "\($pod.metadata.namespace)/\($pod.metadata.name) container=\(.name)" ),
+      ( .spec.initContainers[]?
+        | select(.restartPolicy == "Always")
+        | select(.name as $name | $init | index($name) == null)
+        | "\($pod.metadata.namespace)/\($pod.metadata.name) init-sidecar=\(.name)" )
+  ] | unique | join(", ")
+' "${work}/pods.json")" || die "could not validate running container statuses"
+[ -z "${missing_container_statuses}" ] ||
+  die "running pod is missing long-lived container status: ${missing_container_statuses}"
+
+# StatefulSet and DaemonSet runtime objects are keyed by controller-revision-hash. Omitting a
+# pod whose label is briefly missing would make the runtime expected set look complete.
+missing_runtime_revisions="$(jq -r --argjson unscanned "${unscanned}" '
+  [ .items[]
+    | .metadata.namespace as $ns
+    | select($unscanned | index($ns) == null)
+    | select(.status.phase == "Running")
+    | . as $pod
+    | (.metadata.ownerReferences // [] | map(select(.controller == true)) | first) as $owner
+    | select($owner.kind == "StatefulSet" or $owner.kind == "DaemonSet")
+    | select((.metadata.labels["controller-revision-hash"] // "") == "")
+    | "\($pod.metadata.namespace)/\($pod.metadata.name) controller=\($owner.kind)/\($owner.name)"
+  ] | unique | join(", ")
+' "${work}/pods.json")" || die "could not validate runtime revision identities"
+[ -z "${missing_runtime_revisions}" ] ||
+  die "running managed pod has no controller revision: ${missing_runtime_revisions}"
+
+# The namespace label is part of a posture result's identity, but Kubernetes namespace scope is
+# authoritative. A corrupt label must not let an object in one namespace satisfy another.
+bad_posture_identities="$(jq -r '
+  [ .items[]
+    | .metadata.labels["kubescape.io/workload-namespace"] as $label_namespace
+    | select(($label_namespace // "") != (.metadata.namespace // ""))
+    | "\(.metadata.namespace // "<missing>")/\(.metadata.name) label=\($label_namespace // "<missing>")"
+  ] | unique | join(", ")
+' "${work}/posture.json")" || die "could not validate posture result identities"
+[ -z "${bad_posture_identities}" ] ||
+  die "posture result identity disagrees with metadata namespace: ${bad_posture_identities}"
+
+# A future scan time makes age negative and would otherwise look permanently current until the
+# wall clock catches up. Missing and malformed times are equally unusable as freshness evidence.
+bad_vulnerability_times="$(jq -r --argjson now "${now}" '
+  [ .items[]
+    | .metadata.annotations["kubescape.io/timestamp"] as $raw
+    | ($raw | tonumber?) as $at
+    | select($at == null or $at < 0 or $at > $now)
+    | "\(.metadata.namespace)/\(.metadata.name) timestamp=\($raw // "<missing>")"
+  ] | unique | join(", ")
+' "${work}/vulnerability.json")" || die "could not validate vulnerability timestamps"
+[ -z "${bad_vulnerability_times}" ] ||
+  die "vulnerability result timestamp is invalid or in the future: ${bad_vulnerability_times}"
+
+# Only an absent learning-period label defaults to 24h. A present value outside the supported
+# number-plus-s/m/h format is corrupt input, not permission to silently substitute the default.
+bad_learning_periods="$(jq -r -s '
+  [ .[].items[]
+    | .metadata.labels["kubescape.io/learning-period"] as $period
+    | select($period != null)
+    | select(($period | type) != "string" or ($period | test("^[0-9]+[smh]$") | not))
+    | "\(.metadata.namespace)/\(.metadata.name)=\($period)"
+  ] | unique | join(", ")
+' "${work}/profiles.json" "${work}/neighborhoods.json")" ||
+  die "could not validate runtime learning periods"
+[ -z "${bad_learning_periods}" ] ||
+  die "runtime result has malformed learning period: ${bad_learning_periods}"
+
 # An unidentified running image cannot simply disappear from the expected set. If at least one
 # other image has a digest, silently dropping this container would make the coverage denominator
 # smaller and could turn a real gap into a clean result.
@@ -192,8 +272,7 @@ jq -n -r \
   --slurpfile profiles "${work}/profiles.json" \
   --slurpfile neighborhoods "${work}/neighborhoods.json" \
   -f /dev/stdin >"${work}/report" <<'JQ' || die "evaluating the captured objects failed"
-def scanned: [$namespaces[0].items[].metadata.name] - $unscanned;
-def in_scope: .metadata.namespace as $ns | scanned | index($ns) != null;
+def in_scope: .metadata.namespace as $ns | $unscanned | index($ns) == null;
 def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 def digest: capture("(?<d>sha256:[0-9a-f]{64})").d // null;
 def long_lived_statuses:

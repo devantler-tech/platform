@@ -57,14 +57,17 @@ jq -n --arg web "registry.test/web@${DIGEST_WEB}" --arg job "registry.test/job@$
   --arg dns "registry.test/dns@${DIGEST_DNS}" '{items: [
     {metadata: {namespace: "app", name: "web-5d8f-x", creationTimestamp: "2026-01-01T00:00:00Z",
        ownerReferences: [{kind: "ReplicaSet", name: "web-5d8f", controller: true}]},
+     spec: {containers: [{name: "web"}]},
      status: {phase: "Running", startTime: "2026-01-01T00:00:00Z",
        containerStatuses: [{name: "web", image: "registry.test/web:1", imageID: $web}]}},
     {metadata: {namespace: "app", name: "nightly-1-y", creationTimestamp: "2026-01-01T00:00:00Z",
        ownerReferences: [{kind: "Job", name: "nightly-1", controller: true}]},
+     spec: {containers: [{name: "job"}]},
      status: {phase: "Running", startTime: "2026-01-01T00:00:00Z",
        containerStatuses: [{name: "job", image: "registry.test/job:1", imageID: $job}]}},
     {metadata: {namespace: "kube-system", name: "coredns-z", creationTimestamp: "2026-01-01T00:00:00Z",
        ownerReferences: [{kind: "ReplicaSet", name: "coredns-1", controller: true}]},
+     spec: {containers: [{name: "dns"}]},
      status: {phase: "Running", startTime: "2026-01-01T00:00:00Z",
        containerStatuses: [{name: "dns", image: "registry.test/dns:1", imageID: $dns}]}}]}' \
   >"${base}/pods.json"
@@ -126,6 +129,16 @@ expect "a removed posture result fails" 1 "MISSING posture Deployment/app/web" "
 d="$(variant posture-empty posture.json '(.items[] | select(.metadata.name == "cronjob-nightly") | .spec.controls) = null')"
 expect "a posture result with no controls fails" 1 "EMPTY posture CronJob/app/nightly" "${d}"
 
+d="$(variant posture-namespace-mismatch posture.json '
+  (.items[] | select(.metadata.name == "deployment-web") | .metadata.namespace) = "other"')"
+expect "a posture result whose label namespace disagrees with metadata is UNKNOWN" 2 \
+  "posture result identity disagrees with metadata namespace" "${d}"
+
+d="$(variant namespace-snapshot-race workloads.json '
+  .items += [{kind: "Deployment", metadata: {namespace: "late", name: "late-web"}}]')"
+expect "a workload observed after the namespace snapshot remains in scope" 1 \
+  "MISSING posture Deployment/late/late-web" "${d}"
+
 d="$(variant vuln-missing vulnerability.json '.items = []')"
 expect "a removed vulnerability result is UNKNOWN when it empties the read" 2 "vulnerability read back empty" "${d}"
 d="$(variant vuln-other vulnerability.json ".items[0].metadata.annotations[\"kubescape.io/image-id\"] = \"registry.test/other@sha256:$(printf 'd%.0s' $(seq 64))\"")"
@@ -137,6 +150,16 @@ d="$(variant vuln-image-identity-unknown pods.json '.items[0].status.containerSt
 ]')"
 expect "a running image without a SHA-256 identity is UNKNOWN" 2 \
   "running image identity has no SHA-256 digest: app/web-5d8f-x container=sidecar" "${d}"
+
+d="$(variant vuln-regular-status-missing pods.json '
+  .items[0].spec.containers += [{name: "sidecar"}]')"
+expect "a configured regular container without a status is UNKNOWN" 2 \
+  "running pod is missing long-lived container status: app/web-5d8f-x container=sidecar" "${d}"
+
+d="$(variant vuln-init-sidecar-status-missing pods.json '
+  .items[0].spec.initContainers = [{name: "sidecar-init", restartPolicy: "Always"}]')"
+expect "a configured init sidecar without a status is UNKNOWN" 2 \
+  "running pod is missing long-lived container status: app/web-5d8f-x init-sidecar=sidecar-init" "${d}"
 
 d="$(variant vuln-init-sidecar-identity-unknown pods.json '
   .items[0].spec.initContainers = [{name: "sidecar-init", restartPolicy: "Always"}] |
@@ -168,14 +191,29 @@ expect "a running one-shot init container stays outside the long-lived expected 
 d="$(variant vuln-stale vulnerability.json ".items[0].metadata.annotations[\"kubescape.io/timestamp\"] = \"$((NOW - 8 * 86400))\"")"
 expect "a vulnerability result older than seven days is stale" 1 "STALE vulnerability registry.test/web:1" "${d}"
 
+d="$(variant vuln-future vulnerability.json ".items[0].metadata.annotations[\"kubescape.io/timestamp\"] = \"$((NOW + 3600))\"")"
+expect "a vulnerability result timestamped in the future is UNKNOWN" 2 \
+  "vulnerability result timestamp is invalid or in the future" "${d}"
+
 d="$(variant runtime-missing neighborhoods.json '.items[0].metadata.name = "replicaset-web-other"')"
 expect "a missing half of the runtime pair fails" 1 "MISSING runtime app/replicaset-web-5d8f networkneighborhood" "${d}"
+
+d="$(variant runtime-revision-missing pods.json '
+  .items[0].metadata.ownerReferences[0] = {kind: "StatefulSet", name: "web", controller: true}')"
+expect "a managed runtime pod without its revision label is UNKNOWN" 2 \
+  "running managed pod has no controller revision" "${d}"
 
 d="$(variant runtime-partial profiles.json '.items[0].metadata.annotations["kubescape.io/completion"] = "partial"')"
 expect "a partial runtime profile fails" 1 "PARTIAL runtime app/replicaset-web-5d8f applicationprofile" "${d}"
 
 d="$(variant runtime-stale profiles.json '.items[0].metadata.annotations["kubescape.io/status"] = "ready"')"
 expect "a profile still learning past its period is stale" 1 "STALE runtime app/replicaset-web-5d8f applicationprofile status=ready" "${d}"
+
+d="$(variant runtime-period-malformed profiles.json '
+  .items[0].metadata.annotations["kubescape.io/status"] = "ready" |
+  .items[0].metadata.labels["kubescape.io/learning-period"] = "tomorrow"')"
+expect "a present malformed runtime learning period is UNKNOWN" 2 \
+  "runtime result has malformed learning period" "${d}"
 
 d="$(variant runtime-pending pods.json "(.items[0].status.startTime) = \"$(date -u -r $((NOW - 3600)) +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d @$((NOW - 3600)) +%Y-%m-%dT%H:%M:%SZ)\"")"
 jq '.items[0].metadata.annotations["kubescape.io/status"] = "ready"' "${base}/profiles.json" >"${d}/profiles.json"
@@ -191,7 +229,8 @@ expect "posture objects read back short is UNKNOWN" 2 "2 listed but 1 read back 
 d="$(variant not-a-list pods.json '{}')"
 expect "a malformed input is UNKNOWN" 2 "pods.json is not a Kubernetes List" "${d}"
 
-d="$(variant all-unscanned namespaces.json '.items |= map(select(.metadata.name == "kube-system"))')"
+d="$(variant all-unscanned workloads.json '.items[].metadata.namespace = "kube-system"')"
+jq '.items[].metadata.namespace = "kube-system"' "${base}/pods.json" >"${d}/pods.json"
 expect "an empty expected set is UNKNOWN" 2 "the expected set is empty" "${d}"
 
 d="${tmp}/missing-file"
