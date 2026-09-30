@@ -1018,6 +1018,7 @@ func TestUnreadyNodeAfterRebootStopsTheRoll(t *testing.T) {
 		"flux-policy-pause:infrastructure",
 		"variables-patch",
 		"fanout:pushsecret/flux-system/seed-ghcr",
+		"fanout:externalsecret/data-product-controller/ghcr-auth",
 		"fanout:externalsecret/wedding-app/ghcr-auth",
 		"fanout:externalsecret/ascoachingogvaner/ghcr-auth",
 		"fanout:externalsecret/kyverno/ghcr-auth",
@@ -1067,6 +1068,7 @@ func TestTalosFailureAfterSafeFanoutKeepsRootAuthUnchanged(t *testing.T) {
 			}
 			requireLinesEqual(t, readLines(f.fanoutLog), []string{
 				"pushsecret/flux-system/seed-ghcr",
+				"externalsecret/data-product-controller/ghcr-auth",
 				"externalsecret/wedding-app/ghcr-auth",
 				"externalsecret/ascoachingogvaner/ghcr-auth",
 				"externalsecret/kyverno/ghcr-auth",
