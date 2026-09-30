@@ -163,6 +163,11 @@ expect "a removed posture result fails" 1 "MISSING posture Deployment/app/web" "
 d="$(variant posture-empty posture.json '(.items[] | select(.metadata.name == "cronjob-nightly") | .spec.controls) = null')"
 expect "a posture result with no controls fails" 1 "EMPTY posture CronJob/app/nightly" "${d}"
 
+d="$(variant posture-controls-not-object posture.json '
+  (.items[] | select(.metadata.name == "deployment-web") | .spec.controls) = ["C-0001"]')"
+expect "a posture result with non-object controls is UNKNOWN" 2 \
+  "posture result has non-object controls" "${d}"
+
 d="$(variant posture-namespace-mismatch posture.json '
   (.items[] | select(.metadata.name == "deployment-web") | .metadata.namespace) = "other"')"
 expect "a posture result whose label namespace disagrees with metadata is UNKNOWN" 2 \
@@ -232,6 +237,15 @@ d="$(variant vuln-init-sidecar-missing pods.json ".items[0].spec.initContainers 
    state: {running: {startedAt: \"2026-01-01T00:00:00Z\"}}}
 ]")"
 expect "a running init sidecar joins the vulnerability expected set" 1 \
+  "MISSING vulnerability registry.test/sidecar-init:1 ${DIGEST_JOB}" "${d}"
+
+d="$(variant vuln-restarting-init-sidecar-missing pods.json ".items[0].spec.initContainers = [
+  {name: \"sidecar-init\", restartPolicy: \"Always\"}
+] | .items[0].status.initContainerStatuses = [
+  {name: \"sidecar-init\", image: \"registry.test/sidecar-init:1\", imageID: \"registry.test/sidecar-init@${DIGEST_JOB}\",
+   state: {waiting: {reason: \"CrashLoopBackOff\"}}}
+]")"
+expect "a restarting init sidecar stays in the vulnerability expected set" 1 \
   "MISSING vulnerability registry.test/sidecar-init:1 ${DIGEST_JOB}" "${d}"
 
 d="$(variant vuln-one-shot-init-ignored pods.json '

@@ -249,6 +249,18 @@ bad_posture_identities="$(jq -r '
 [ -z "${bad_posture_identities}" ] ||
   die "posture result identity is incomplete or disagrees with metadata namespace: ${bad_posture_identities}"
 
+# Kubescape publishes controls as an object keyed by control ID. jq's length also accepts arrays
+# and strings, so validate the collection type before a malformed nonempty value can look current.
+bad_posture_controls="$(jq -r '
+  [ .items[]
+    | .spec.controls as $controls
+    | select($controls != null and ($controls | type) != "object")
+    | "\(.metadata.namespace)/\(.metadata.name) type=\($controls | type)"
+  ] | unique | join(", ")
+' "${work}/posture.json")" || die "could not validate posture control collections"
+[ -z "${bad_posture_controls}" ] ||
+  die "posture result has non-object controls: ${bad_posture_controls}"
+
 # A label-derived workload identity must be unique. Letting jq's object merge pick the last result
 # makes list order decide whether an empty duplicate is visible.
 duplicate_posture_identities="$(jq -r '
@@ -295,7 +307,6 @@ unknown_images="$(jq -r --argjson unscanned "${unscanned}" '
     [ .status.containerStatuses[]? ] +
     [ . as $pod
       | .status.initContainerStatuses[]?
-      | select(.state.running != null)
       | . as $status
       | select(any($pod.spec.initContainers[]?;
           .name == $status.name and .restartPolicy == "Always")) ] +
@@ -332,7 +343,6 @@ def long_lived_statuses:
   [ .status.containerStatuses[]? ] +
   [ . as $pod
     | .status.initContainerStatuses[]?
-    | select(.state.running != null)
     | . as $status
     | select(any($pod.spec.initContainers[]?;
         .name == $status.name and .restartPolicy == "Always")) ] +
