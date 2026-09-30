@@ -10,3 +10,6 @@ resources:
   - pod-disruption-budget-harbour.yaml
   - network-policy.yaml
   - cilium-network-policy.yaml
+  - cilium-network-policy-harbour.yaml
+  - http-route-registry.yaml
+  - http-route-harbour.yaml

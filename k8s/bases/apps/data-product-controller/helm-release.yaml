@@ -26,6 +26,24 @@ spec:
       pullPolicy: IfNotPresent
     registryUI:
       enabled: true
+    uiContract:
+      enabled: false
+    engineProviders:
+      enabled: false
+    provisionedSources:
+      enabled: false
+    httpSource:
+      enabled: false
+    composition:
+      enabled: false
+    dcatCatalog:
+      enabled: false
+    connectorReadiness:
+      enabled: false
+    contractReadiness:
+      enabled: false
+    contractProbe:
+      enabled: false
     route:
       enabled: true
       host: data-products.${domain}
@@ -95,29 +113,49 @@ spec:
               kind: HTTPRoute
               name: data-product-controller
             patch: |
-              - op: add
-                path: /metadata/annotations
-                value:
-                  gethomepage.dev/enabled: "true"
-                  gethomepage.dev/name: Data Products
-                  gethomepage.dev/description: Discover and explore composable data products.
-                  gethomepage.dev/group: Analytics
-                  gethomepage.dev/icon: mdi-database-search
-                  gethomepage.dev/href: https://data-products.${domain}
-                  gethomepage.dev/pod-selector: app.kubernetes.io/component=controller
-              - op: add
-                path: /spec/rules/0/filters/-
-                value:
-                  type: ResponseHeaderModifier
-                  responseHeaderModifier:
-                    set:
-                      - name: Strict-Transport-Security
-                        value: max-age=63072000; includeSubDomains; preload
-              - op: add
-                path: /spec/rules/1/filters
-                value:
-                  - type: ResponseHeaderModifier
-                    responseHeaderModifier:
-                      set:
-                        - name: Strict-Transport-Security
-                          value: max-age=63072000; includeSubDomains; preload
+              $patch: delete
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                name: data-product-controller
+                namespace: data-product-controller
+          # Standard NetworkPolicy allows are additive with Cilium's rules.
+          # Replace the chart's broad allows with component-scoped platform rules.
+          - target:
+              kind: NetworkPolicy
+              name: data-product-controller
+            patch: |
+              $patch: delete
+              apiVersion: networking.k8s.io/v1
+              kind: NetworkPolicy
+              metadata:
+                name: data-product-controller
+                namespace: data-product-controller
+          - target:
+              kind: NetworkPolicy
+              name: data-product-controller-harbour
+            patch: |
+              $patch: delete
+              apiVersion: networking.k8s.io/v1
+              kind: NetworkPolicy
+              metadata:
+                name: data-product-controller-harbour
+                namespace: data-product-controller
+          # Helm owns registration after CRD installation, keeping clean rebuilds
+          # independent of a pre-existing DataProduct API.
+          - target:
+              kind: DataProduct
+              name: harbour-observations
+            patch: |
+              - op: replace
+                path: /spec/id
+                value: https://harbour-data.${domain}
+              - op: replace
+                path: /spec/outputs/0/url
+                value: https://harbour-data.${domain}/api/observations
+              - op: replace
+                path: /spec/outputs/0/contractUrl
+                value: https://harbour-data.${domain}/openapi.json
+              - op: replace
+                path: /spec/ui/url
+                value: https://harbour-data.${domain}/ui

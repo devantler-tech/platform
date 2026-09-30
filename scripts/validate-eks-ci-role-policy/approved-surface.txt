@@ -32,7 +32,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane 8faec319d400c
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|crossview|crossview 4e1e58c881413b308d488a91e732cdc7cb5fa43dfc8e92b51ab6ebb50e4d7a54
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex 6203b30876fa3f497f9bc0ecdfab7b7375188b76846edd4ea572cade52b07bb5
+helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex c839c42b7d866fafaa98a1b65a1e58b6cd399d7580646de3bf6755a87c02b55b
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns fa298f48bf949ef686f4203506d8219b3d139e75acab6cef31f5ff17943a89d5
 

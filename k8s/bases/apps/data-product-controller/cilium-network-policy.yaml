@@ -7,21 +7,28 @@ spec:
   endpointSelector:
     matchLabels:
       k8s:app.kubernetes.io/name: data-product-controller
+      k8s:app.kubernetes.io/instance: data-product-controller
+      k8s:app.kubernetes.io/component: controller
   ingress:
-    # Public registry, descriptor API, product UI, contract, and query traffic
-    # arrive through the shared Cilium Gateway.
-    - fromEntities:
-        - ingress
+    # Registry and descriptor metadata are available only after SSO.
+    - fromEndpoints:
+        - matchLabels:
+            app: auth-proxy
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
       toPorts:
         - ports:
             - port: "8082"
-              protocol: TCP
-            - port: "8080"
               protocol: TCP
   egress:
     # The controller watches DataProducts and coordinates leader election.
     - toEntities:
         - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
     # Keep DNS available for controller-runtime and future standard-contract
     # integrations without allowing arbitrary data-plane egress.
     - toEndpoints:

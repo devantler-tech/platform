@@ -3239,3 +3239,20 @@ RBAC, binding, service account, AWS identity, or permission grant changes.
 
 Previous aggregate: 94c2794e05d25973e550fdbddb6865bb5c7af0b58e8f8624b2f94e7040afe681.
 ```
+
+## 2026-09-30 — Data product registry SSO callback
+
+The data product trial (#3475) adds exactly one callback to Dex's existing
+public client: `https://data-products.${domain}/oauth2/callback`. The registry's
+HTTPRoute uses the existing maintainer-team oauth2-proxy gate, with a scoped
+backend grant and authenticated upstream. The independently served fixed-data
+Harbour sample has no SSO callback.
+
+The checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer measured exactly
+one changed authorization entry against base `fb32db8e`: HelmRelease dex/dex.
+No entry was added or removed. Its approved fingerprint moves from
+`6203b30876fa3f497f9bc0ecdfab7b7375188b76846edd4ea572cade52b07bb5` to
+`c839c42b7d866fafaa98a1b65a1e58b6cd399d7580646de3bf6755a87c02b55b`.
+The source delta is the callback alone; no RBAC, IAM, service account, or
+permission grant changes. The authorization command passes with this one
+entry re-approved; its negative controls remain intact.

@@ -650,17 +650,28 @@ yq ea -o=json '[.]' "${render_dir}/resources.yaml" | jq -e '
     ["ServiceAccount", "data-product-controller"],
     ["Role", "data-product-controller-leader-election"],
     ["RoleBinding", "data-product-controller-leader-election"],
-    ["NetworkPolicy", "data-product-controller"],
-    ["NetworkPolicy", "data-product-controller-harbour"],
     ["Service", "data-product-controller"],
     ["Service", "data-product-controller-harbour"],
     ["Deployment", "data-product-controller"],
     ["Deployment", "data-product-controller-harbour"],
-    ["DataProduct", "harbour-observations"],
-    ["HTTPRoute", "data-product-controller"]
+    ["DataProduct", "harbour-observations"]
   ] | sort)
 ' >/dev/null || {
   printf 'FAIL: pinned chart child inventory is incomplete or unreviewed\n' >&2
+  exit 1
+}
+
+# Product endpoints remain outside the registry's SSO origin and use root paths
+# matching the sample server's independently published OpenAPI contract.
+yq ea -o=json '[.]' "${render_dir}/resources.yaml" | jq -e '
+  [.[] | select(.kind == "DataProduct" and .metadata.name == "harbour-observations") | (
+    .spec.id == "https://harbour-data.${domain}" and
+    .spec.outputs[0].url == "https://harbour-data.${domain}/api/observations" and
+    .spec.outputs[0].contractUrl == "https://harbour-data.${domain}/openapi.json" and
+    .spec.ui.url == "https://harbour-data.${domain}/ui"
+  )] == [true]
+' >/dev/null || {
+  printf 'FAIL: rendered sample descriptor must use independently served root endpoints\n' >&2
   exit 1
 }
 
