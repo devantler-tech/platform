@@ -714,6 +714,10 @@ jobs:
               - 'scripts/guard-kubescape-scan-scope.sh'
               - 'scripts/tests/test-guard-kubescape-scan-scope.sh'
               - 'scripts/kubescape-unscanned-namespaces.tsv'
+              # The live result-coverage check (#4262). Only its fixture test runs in CI, since CI
+              # has no cluster; it also reads the reviewed list above.
+              - 'scripts/check-kubescape-result-coverage.sh'
+              - 'scripts/tests/test-check-kubescape-result-coverage.sh'
               # Both halves, for the same reason as the guards above. The guard also
               # reads the exception manifest itself, covered by 'k8s/**'.
               - 'scripts/guard-pod-security-exception-documented.sh'
@@ -1899,6 +1903,14 @@ jobs:
         run: |
           bash scripts/guard-kubescape-scan-scope.sh
           bash scripts/tests/test-guard-kubescape-scan-scope.sh
+
+      - name: 🧮 Test the Kubescape result-coverage check
+        if: needs.changes.outputs.k8s == 'true'
+        # The check compares live Kubescape results against the objects that should have one
+        # and fails on a missing or stale result (#4262). It needs a cluster, so CI runs only
+        # its fixture test, including the negative control: one expected result removed from a
+        # passing set must fail, and an empty or short read must be UNKNOWN, never clean.
+        run: bash scripts/tests/test-check-kubescape-result-coverage.sh
 
       - name: 🔎 Validate every suppressed control is documented as failing open
         if: needs.changes.outputs.k8s == 'true'
