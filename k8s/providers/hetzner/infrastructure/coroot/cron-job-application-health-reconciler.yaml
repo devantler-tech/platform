@@ -125,7 +125,7 @@ spec:
   schedule: "* * * * *"
   # Never overlap Coroot writes. A run may start at most ten seconds after its
   # schedule and has fifty-five seconds plus two seconds of termination grace.
-  # Nineteen two-query log checks require five four-worker batches, whose
+  # Twenty two-query log checks require five four-worker batches, whose
   # worst-case query budget is fifty seconds; five seconds remain for PID and
   # threshold work. The launch allowance applies only to a missed schedule; it
   # does not extend the preceding Job, so each run is still gone before the
@@ -412,6 +412,21 @@ spec:
                             ($s | contains("err=\"Invalid client_id")) and
                             ($s | test(" request_id=[0-9a-f-]{36}$"))
                           )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      stale-oauth2-proxy-cancellation)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | .message as $s |
+                            (try ($s | capture(
+                              "^\\[(?<timestamp>[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})\\] \\[error_page\\.go:91\\] Error proxying to upstream server: context canceled$"
+                            )) catch null) as $match |
+                            select(
+                              $match != null and
+                              ((try ($match.timestamp | strptime("%Y/%m/%d %H:%M:%S") | mktime) catch null) as $logged_at |
+                               $logged_at != null and $logged_at < (now - 3600))
+                            )
+                          ] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
                       talos-runtime)
@@ -759,6 +774,13 @@ spec:
 
                   queue_reconciliation reconcile_logs "$PID:observability:CronJob:coroot-alert-autosuppressor" autosuppressor-lifecycle 10
                   queue_reconciliation reconcile_logs "$PID:dex:Deployment:dex" dex-invalid-client 10
+                  # Coroot can retain one old oauth2-proxy cancellation in the
+                  # selected last-hour view after the originating Pod is gone.
+                  # Accept only the exact current-version message when its own
+                  # timestamp proves it is older than that window. A fresh or
+                  # malformed cancellation, any other error, a mixed set, or
+                  # more than ten retained entries stays fail-visible.
+                  queue_reconciliation reconcile_logs "$PID:oauth2-proxy:Deployment:oauth2-proxy" stale-oauth2-proxy-cancellation 10
                   queue_reconciliation reconcile_logs "$PID:_:Unknown:init" talos-runtime 1000
                   queue_reconciliation reconcile_logs "$PID:kube-system:StaticPods:kube-apiserver" apiserver-client-noise 100
                   # A single recovered etcd leader transition can make the
