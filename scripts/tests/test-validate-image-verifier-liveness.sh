@@ -158,6 +158,7 @@ readonly provider_pattern='ghcr.io/devantler-tech/provider-upjet-*'
 readonly storage_pattern='ghcr.io/devantler-tech/platform-kubescape-storage'
 readonly kubescape_node_agent_pattern='ghcr.io/devantler-tech/platform-kubescape-node-agent'
 readonly coroot_node_agent_pattern='ghcr.io/devantler-tech/platform-coroot-node-agent'
+readonly zone_pattern='ghcr.io/devantler-tech/world-at-ruin/zone'
 readonly app_pattern='ghcr.io/devantler-tech/*'
 
 write_node() {
@@ -205,7 +206,8 @@ write_healthy_rules() {
     resource_obj 0002 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${storage_pattern}"
     resource_obj 0003 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kubescape_node_agent_pattern}"
     resource_obj 0004 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
-    resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
+    resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
+    resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
   } | write_rules "${node}"
 }
 
@@ -230,7 +232,7 @@ run_script() {
 healthy_node good
 output="$(run_script TALOS_NODES=good 2>&1)" || fail "case 1: expected exit 0 for a node that can enforce"
 require_text "${output}" 'OK   good' 'case 1: reports the healthy node'
-require_text "${output}" '6 rule(s) in phase running' 'case 1: counts every declared running rule'
+require_text "${output}" '7 rule(s) in phase running' 'case 1: counts every declared running rule'
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 1: reports the summary'
 
 # ===========================================================================
@@ -262,7 +264,8 @@ write_node driftrules
   resource_obj 0002 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${storage_pattern}"
   resource_obj 0003 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kubescape_node_agent_pattern}"
   resource_obj 0004 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
-  resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
+  resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
+  resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
 } | write_rules driftrules
 resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
   write_roots driftrules
@@ -271,6 +274,18 @@ output="$(run_script TALOS_NODES=driftrules 2>&1)" || status=$?
 [[ "${status}" -eq 1 ]] || fail 'case 1b: a runtime rule pattern that differs from the declaration MUST fail'
 require_text "${output}" 'FAIL driftrules' 'case 1b: names the node with policy drift'
 require_text "${output}" 'declared rule set' 'case 1b: names the drifted policy'
+
+# A previously healthy six-rule fleet cannot clear activation of the new zone.
+# The existing app catch-all is present, but uses the wrong signer for this image.
+healthy_node oldzonepolicy
+old_rules="${fixtures}/oldzonepolicy/resources/${rules_type}"
+jq -s 'map(select(.spec.imagePattern != "ghcr.io/devantler-tech/world-at-ruin/zone"))[]' \
+  "${old_rules}" >"${work_dir}/old-rules.json"
+mv "${work_dir}/old-rules.json" "${old_rules}"
+status=0
+output="$(run_script TALOS_NODES=oldzonepolicy 2>&1)" || status=$?
+[[ "${status}" -eq 1 ]] || fail 'case 1c: a node missing the exact zone rule MUST block activation'
+require_text "${output}" 'declared rule set' 'case 1c: names the missing zone policy'
 
 # ===========================================================================
 # Case 2 — RED: the node holds NO ImageVerificationRules at all. The declared
