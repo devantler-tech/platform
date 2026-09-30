@@ -187,7 +187,8 @@ spec:
                   REQUEST_MAX_TIME=5
 
                   coroot_request() {
-                    curl -fsS --max-time "$REQUEST_MAX_TIME" "$@"
+                    curl -fsS --noproxy '*' --resolve "$COROOT_RESOLVE" \
+                      --max-time "$REQUEST_MAX_TIME" "$@"
                   }
 
                   log_info() {
@@ -201,10 +202,30 @@ spec:
                   }
                   http_status() {
                     curl -sS --output /dev/null --write-out '%{http_code}' \
+                      --noproxy '*' --resolve "$COROOT_RESOLVE" \
                       --max-time "$REQUEST_MAX_TIME" "$1" 2>/dev/null || true
                   }
 
-                  PID=$(coroot_request "$BASE/api/user" | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
+                  # Each curl process otherwise starts with an empty DNS cache.
+                  # Resolve the ClusterIP once through the project lookup and
+                  # share it only within this bounded Job. The next run resolves
+                  # anew; failed initialization cannot reach any policy writes.
+                  if ! project_response=$(curl -fsS --noproxy '*' \
+                    --max-time "$REQUEST_MAX_TIME" --write-out '\n%{remote_ip}' "$BASE/api/user"); then
+                    log_error "could not resolve or contact Coroot service"
+                    exit 1
+                  fi
+                  coroot_address=$(printf '%s\n' "$project_response" | tail -n 1)
+                  case "$coroot_address" in
+                    ''|*[!0-9a-fA-F:.]*)
+                      log_error "Coroot service lookup returned an unusable address"
+                      exit 1 ;;
+                    *:*) coroot_address="[$coroot_address]" ;;
+                    *.*) ;;
+                    *) log_error "Coroot service lookup returned an unusable address"; exit 1 ;;
+                  esac
+                  COROOT_RESOLVE="coroot-coroot.observability.svc.cluster.local.:8080:$coroot_address"
+                  PID=$(printf '%s\n' "$project_response" | sed '$d' | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
                   [ -n "$PID" ] || { log_error "could not resolve platform project id"; exit 1; }
 
                   MAX_CONCURRENT_RECONCILIATIONS=4
