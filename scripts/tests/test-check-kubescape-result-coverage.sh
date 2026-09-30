@@ -130,6 +130,15 @@ else
   bad "a zero-padded vulnerability age is normalized as decimal: exit ${rc} ($(tr '\n' ' ' <"${tmp}/out"))"
 fi
 
+rc=0
+bash "${CHECK}" --from-dir "${base}" --now "${NOW}" \
+  --vuln-max-age-days 9223372036854775807 >"${tmp}/out" 2>&1 || rc=$?
+if [ "${rc}" -eq 2 ] && grep -qF -- "--vuln-max-age-days exceeds the safe range" "${tmp}/out"; then
+  ok "an age that would overflow seconds is a usage UNKNOWN"
+else
+  bad "an age that would overflow seconds is a usage UNKNOWN: exit ${rc} ($(tr '\n' ' ' <"${tmp}/out"))"
+fi
+
 # The implicit freshness clock belongs after input collection. A scan written while live reads are
 # in progress must not look future-dated merely because the checker froze wall time before reading.
 clock_bin="${tmp}/clock-bin"
@@ -246,6 +255,22 @@ d="$(variant vuln-restarting-init-sidecar-missing pods.json ".items[0].spec.init
    state: {waiting: {reason: \"CrashLoopBackOff\"}}}
 ]")"
 expect "a restarting init sidecar stays in the vulnerability expected set" 1 \
+  "MISSING vulnerability registry.test/sidecar-init:1 ${DIGEST_JOB}" "${d}"
+
+d="$(variant vuln-pending-running-init-sidecar-missing pods.json ".items += [(.items[0] |
+  .metadata.name = \"pending-with-sidecar\" |
+  .metadata.ownerReferences[0].name = \"pending-with-sidecar-5d8f\" |
+  .status.phase = \"Pending\" |
+  .status.containerStatuses = [] |
+  .spec.initContainers = [
+    {name: \"sidecar-init\", restartPolicy: \"Always\"},
+    {name: \"setup\"}
+  ] | .status.initContainerStatuses = [
+    {name: \"sidecar-init\", image: \"registry.test/sidecar-init:1\", imageID: \"registry.test/sidecar-init@${DIGEST_JOB}\",
+     state: {running: {startedAt: \"2026-01-01T00:00:00Z\"}}},
+    {name: \"setup\", state: {waiting: {reason: \"PodInitializing\"}}}
+  ])]")"
+expect "a running init sidecar in a Pending pod joins the vulnerability expected set" 1 \
   "MISSING vulnerability registry.test/sidecar-init:1 ${DIGEST_JOB}" "${d}"
 
 d="$(variant vuln-one-shot-init-ignored pods.json '

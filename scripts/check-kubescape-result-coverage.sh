@@ -71,9 +71,17 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "${vuln_max_age_days}" in '' | *[!0-9]*) die "--vuln-max-age-days must be a whole number" ;; esac
-# Bash treats a leading zero as octal in arithmetic expansion. Normalize accepted digit strings
-# explicitly so values such as 08 remain decimal input rather than bypassing the usage exit path.
-vuln_max_age_days=$((10#${vuln_max_age_days}))
+# Normalize leading zeroes without arithmetic: Bash treats them as octal, and an arbitrarily long
+# digit string can overflow before the later days-to-seconds multiplication is reached.
+leading_zeros="${vuln_max_age_days%%[!0]*}"
+vuln_max_age_days="${vuln_max_age_days#"${leading_zeros}"}"
+[ -n "${vuln_max_age_days}" ] || vuln_max_age_days=0
+readonly MAX_SAFE_VULN_AGE_DAYS=106751991167300 # floor(INT64_MAX / 86400)
+if [ "${#vuln_max_age_days}" -gt "${#MAX_SAFE_VULN_AGE_DAYS}" ] ||
+  { [ "${#vuln_max_age_days}" -eq "${#MAX_SAFE_VULN_AGE_DAYS}" ] &&
+    [ "${vuln_max_age_days}" -gt "${MAX_SAFE_VULN_AGE_DAYS}" ]; }; then
+  die "--vuln-max-age-days exceeds the safe range"
+fi
 case "${now}" in *[!0-9]*) die "--now must be epoch seconds" ;; esac
 command -v jq >/dev/null 2>&1 || die "jq is required but not installed"
 [ -f "${reviewed}" ] || die "reviewed unscanned-namespace list not found: ${reviewed}"
@@ -303,18 +311,22 @@ bad_learning_periods="$(jq -r -s '
 # other image has a digest, silently dropping this container would make the coverage denominator
 # smaller and could turn a real gap into a clean result.
 unknown_images="$(jq -r --argjson unscanned "${unscanned}" '
-  def long_lived_statuses:
-    [ .status.containerStatuses[]? ] +
+  def restartable_init_statuses:
     [ . as $pod
       | .status.initContainerStatuses[]?
       | . as $status
       | select(any($pod.spec.initContainers[]?;
-          .name == $status.name and .restartPolicy == "Always")) ] +
-    [ .status.ephemeralContainerStatuses[]? | select(.state.running != null) ];
+          .name == $status.name and .restartPolicy == "Always")) ];
+  def long_lived_statuses:
+    if .status.phase == "Running" then
+      [ .status.containerStatuses[]? ] + restartable_init_statuses +
+      [ .status.ephemeralContainerStatuses[]? | select(.state.running != null) ]
+    elif .status.phase == "Pending" then
+      [ restartable_init_statuses[] | select(.state.running != null) ]
+    else [] end;
   [ .items[]
     | .metadata.namespace as $ns
     | select($unscanned | index($ns) == null)
-    | select(.status.phase == "Running")
     | select(any(.metadata.ownerReferences[]?; .kind == "Job") | not)
     | . as $pod
     | long_lived_statuses[]
@@ -339,14 +351,19 @@ jq -n -r \
 def in_scope: .metadata.namespace as $ns | $unscanned | index($ns) == null;
 def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 def digest: capture("(?<d>sha256:[0-9a-f]{64})$").d // null;
-def long_lived_statuses:
-  [ .status.containerStatuses[]? ] +
+def restartable_init_statuses:
   [ . as $pod
     | .status.initContainerStatuses[]?
     | . as $status
     | select(any($pod.spec.initContainers[]?;
-        .name == $status.name and .restartPolicy == "Always")) ] +
-  [ .status.ephemeralContainerStatuses[]? | select(.state.running != null) ];
+        .name == $status.name and .restartPolicy == "Always")) ];
+def long_lived_statuses:
+  if .status.phase == "Running" then
+    [ .status.containerStatuses[]? ] + restartable_init_statuses +
+    [ .status.ephemeralContainerStatuses[]? | select(.state.running != null) ]
+  elif .status.phase == "Pending" then
+    [ restartable_init_statuses[] | select(.state.running != null) ]
+  else [] end;
 
 # ---- posture --------------------------------------------------------------------------------
 ( [ $workloads[0].items[] | select(in_scope)
@@ -364,7 +381,7 @@ def long_lived_statuses:
   "COVERAGE posture expected=\($want | length) current=\($want | length - ($missing + $empty | length)) missing=\($missing | length) empty=\($empty | length) orphan=\($orphan | length)",
 
 # ---- vulnerability --------------------------------------------------------------------------
-( [ $pods[0].items[] | select(in_scope) | select(.status.phase == "Running")
+( [ $pods[0].items[] | select(in_scope)
     | select(any(.metadata.ownerReferences[]?; .kind == "Job") | not)
     | long_lived_statuses[] | { digest: (.imageID | digest), image: .image } ]
   | map(select(.digest != null)) | unique_by(.digest) ) as $images
