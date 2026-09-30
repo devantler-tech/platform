@@ -81,6 +81,9 @@ spec:
     - kind: Kustomization
       name: "*"
       namespace: wedding-app
+    - kind: Kustomization
+      name: "*"
+      namespace: world-at-ruin
     - kind: HelmRelease
       name: "*"
       namespace: actual-budget
