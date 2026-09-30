@@ -11,6 +11,13 @@ readonly rules_path="${root_dir}/scripts/tests/isolated-chart-namespace-rules.ya
 readonly prod_rules_path="${root_dir}/scripts/tests/production-authorization-rules.yaml"
 readonly component_path="${root_dir}/k8s/bases/apps/data-product-controller"
 
+for tool in helm jq kubectl ksail yq; do
+  command -v "${tool}" >/dev/null || {
+    printf 'FAIL: %s is required\n' "${tool}" >&2
+    exit 1
+  }
+done
+
 test_root="$(mktemp -d /tmp/isolated-chart-namespace-rules.XXXXXX)"
 readonly test_root
 cleanup() {
@@ -527,6 +534,31 @@ metadata:
   namespace: data-product-controller
 webhooks: []'
 
+# The chart installs only its own namespaced description API. A same-name CRD
+# must not introduce a cluster-scoped product or an external conversion hook.
+reviewed_crd='apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: dataproducts.data.devantler.tech
+spec:
+  group: data.devantler.tech
+  scope: Namespaced
+  names:
+    kind: DataProduct
+    plural: dataproducts
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object'
+assert_accepted 'reviewed-product-crd' "${reviewed_crd}"
+assert_rejected 'cluster-scoped-product-crd' "${reviewed_crd/Namespaced/Cluster}"
+assert_rejected 'conversion-webhook-product-crd' "${reviewed_crd}
+  conversion:
+    strategy: Webhook"
+
 # A namespaced kind the reviewed render does not produce is refused by the same
 # allowlist. This is the control proving the clause above is a KIND test and not
 # a cluster-scope test: nothing about a ConfigMap escapes the namespace, and it
@@ -571,32 +603,93 @@ metadata:
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest'
 
-# This is the enabled control: KSail resolves the immutable OCI digest from the
-# staged-off component, Helm-renders that exact artifact, and evaluates every
-# child under the same rule without adding the component to the deploy overlay.
-if ! output="$(
-  ksail --config "${root_dir}/ksail.prod.yaml" workload validate "${component_path}" \
-    --rules "${rules_path}" 2>&1
-)"; then
-  printf 'FAIL: the pinned data-product-controller chart failed namespace validation\n' >&2
-  printf '%s\n' "${output}" >&2
+# Fetch and render explicitly: KSail can report success after skipping a failed
+# Helm render. An immutable artifact fetch or a Flux post-render failure must
+# stop this check, rather than validate only the authored HelmRelease.
+release="${component_path}/helm-release.yaml"
+source="${component_path}/oci-repository.yaml"
+url="$(yq -r '.spec.url' "${source}")"
+digest="$(yq -r '.spec.ref.digest' "${source}")"
+[[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+  printf 'FAIL: chart source must carry an immutable sha256 digest\n' >&2
+  exit 1
+}
+render_dir="${test_root}/render"
+mkdir -p "${render_dir}"
+# This chart is public. Keep the check independent of host credential helpers.
+printf '{"auths":{}}\n' >"${test_root}/registry.json"
+helm pull "${url}@${digest}" --registry-config "${test_root}/registry.json" \
+  --destination "${render_dir}"
+charts=("${render_dir}"/*.tgz)
+[[ "${#charts[@]}" == 1 && -f "${charts[0]}" ]] || {
+  printf 'FAIL: immutable chart fetch must produce exactly one archive\n' >&2
+  exit 1
+}
+release_name="$(yq -r '.spec.releaseName // .metadata.name' "${release}")"
+yq -o=json '.spec.values' "${release}" >"${render_dir}/values.json"
+helm template "${release_name}" "${charts[0]}" --namespace data-product-controller \
+  --include-crds --values "${render_dir}/values.json" >"${render_dir}/resources.yaml"
+
+renderer_count="$(yq '.spec.postRenderers | length' "${release}")"
+for ((index = 0; index < renderer_count; index++)); do
+  yq -o=json ".spec.postRenderers[${index}].kustomize" "${release}" >"${render_dir}/renderer.json"
+  jq -n --slurpfile renderer "${render_dir}/renderer.json" \
+    '{apiVersion: "kustomize.config.k8s.io/v1beta1", kind: "Kustomization",
+      resources: ["resources.yaml"]} + $renderer[0]' >"${render_dir}/kustomization.yaml"
+  kubectl kustomize "${render_dir}" >"${render_dir}/next.yaml"
+  mv "${render_dir}/next.yaml" "${render_dir}/resources.yaml"
+done
+
+# Literal inventory prevents an empty render, CRD omission, or a lost workload
+# from masquerading as containment. New chart kinds require explicit review.
+yq ea -o=json '[.]' "${render_dir}/resources.yaml" | jq -e '
+  [.[] | [.kind, .metadata.name]] | sort == ([
+    ["CustomResourceDefinition", "dataproducts.data.devantler.tech"],
+    ["ClusterRole", "data-product-controller"],
+    ["ClusterRoleBinding", "data-product-controller"],
+    ["ServiceAccount", "data-product-controller"],
+    ["Role", "data-product-controller-leader-election"],
+    ["RoleBinding", "data-product-controller-leader-election"],
+    ["NetworkPolicy", "data-product-controller"],
+    ["NetworkPolicy", "data-product-controller-harbour"],
+    ["Service", "data-product-controller"],
+    ["Service", "data-product-controller-harbour"],
+    ["Deployment", "data-product-controller"],
+    ["Deployment", "data-product-controller-harbour"],
+    ["DataProduct", "harbour-observations"],
+    ["HTTPRoute", "data-product-controller"]
+  ] | sort)
+' >/dev/null || {
+  printf 'FAIL: pinned chart child inventory is incomplete or unreviewed\n' >&2
+  exit 1
+}
+
+# Check both the authored component and the final chart children, including
+# CRDs and patches, against the same two suites used by production CI.
+kubectl kustomize "${component_path}" >"${test_root}/authored.yaml"
+for path in "${test_root}/authored.yaml" "${render_dir}/resources.yaml"; do
+  for suite in "${rules_path}" "${prod_rules_path}"; do
+    if ! output="$(ksail --config "${root_dir}/ksail.prod.yaml" workload validate "${path}" \
+      --skip-helm-render --rules "${suite}" 2>&1)"; then
+      printf 'FAIL: %s failed %s\n%s\n' "${path}" "${suite}" "${output}" >&2
+      exit 1
+    fi
+  done
+done
+
+# Mutate an actual post-rendered child, not a handwritten fixture. The same
+# namespace rule must refuse it by name, then accept the unchanged render.
+yq 'select(.kind == "Deployment" and .metadata.name == "data-product-controller") |
+  .metadata.namespace = "foreign-namespace"' "${render_dir}/resources.yaml" \
+  >"${test_root}/foreign-rendered-child.yaml"
+if output="$(run_fixture "${test_root}/foreign-rendered-child.yaml")"; then
+  printf 'FAIL: an actual rendered child escaped its namespace\n%s\n' "${output}" >&2
   exit 1
 fi
-
-# Second control, against the repository's PRODUCTION authorization rule suite
-# rather than this file's bespoke namespace rule. While the component is staged
-# off, it is absent from every deploy overlay, so cluster admission never
-# evaluates it and the namespace rule above would otherwise be the ONLY control
-# standing over these manifests. Rendering the same pinned artifact through the
-# production suite means the staged-off chart is held to the same authorization
-# controls as everything that is actually deployed.
-if ! output="$(
-  ksail --config "${root_dir}/ksail.prod.yaml" workload validate "${component_path}" \
-    --rules "${prod_rules_path}" 2>&1
-)"; then
-  printf 'FAIL: the pinned data-product-controller chart failed production authorization validation\n' >&2
-  printf '%s\n' "${output}" >&2
+printf '%s\n' "${output}" | grep -qF \
+  'rule "restrict-data-product-controller-rendered-child-namespaces"' || {
+  printf 'FAIL: actual child rejection did not identify the namespace rule\n%s\n' "${output}" >&2
   exit 1
-fi
-
-printf 'PASS: isolated chart children are namespace-local, and the exact pinned chart renders cleanly under both the namespace rule and the production authorization suite\n'
+}
+run_fixture "${render_dir}/resources.yaml" >"${test_root}/restored.log"
+printf 'PASS: immutable chart inventory and Flux patches pass both suites; actual foreign child is rejected by the namespace rule\n'
