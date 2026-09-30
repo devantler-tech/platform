@@ -160,7 +160,12 @@ unscanned="$(awk -F'\t' '/^[[:space:]]*#/ || NF == 0 { next } { print $1 }' "${r
 unknown_images="$(jq -r --argjson unscanned "${unscanned}" '
   def long_lived_statuses:
     [ .status.containerStatuses[]? ] +
-    [ .status.initContainerStatuses[]? | select(.state.running != null) ] +
+    [ . as $pod
+      | .status.initContainerStatuses[]?
+      | select(.state.running != null)
+      | . as $status
+      | select(any($pod.spec.initContainers[]?;
+          .name == $status.name and .restartPolicy == "Always")) ] +
     [ .status.ephemeralContainerStatuses[]? | select(.state.running != null) ];
   [ .items[]
     | .metadata.namespace as $ns
@@ -193,7 +198,12 @@ def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 def digest: capture("(?<d>sha256:[0-9a-f]{64})").d // null;
 def long_lived_statuses:
   [ .status.containerStatuses[]? ] +
-  [ .status.initContainerStatuses[]? | select(.state.running != null) ] +
+  [ . as $pod
+    | .status.initContainerStatuses[]?
+    | select(.state.running != null)
+    | . as $status
+    | select(any($pod.spec.initContainers[]?;
+        .name == $status.name and .restartPolicy == "Always")) ] +
   [ .status.ephemeralContainerStatuses[]? | select(.state.running != null) ];
 
 # ---- posture --------------------------------------------------------------------------------
