@@ -650,17 +650,67 @@ yq ea -o=json '[.]' "${render_dir}/resources.yaml" | jq -e '
     ["ServiceAccount", "data-product-controller"],
     ["Role", "data-product-controller-leader-election"],
     ["RoleBinding", "data-product-controller-leader-election"],
-    ["NetworkPolicy", "data-product-controller"],
-    ["NetworkPolicy", "data-product-controller-harbour"],
     ["Service", "data-product-controller"],
     ["Service", "data-product-controller-harbour"],
     ["Deployment", "data-product-controller"],
     ["Deployment", "data-product-controller-harbour"],
-    ["DataProduct", "harbour-observations"],
-    ["HTTPRoute", "data-product-controller"]
+    ["DataProduct", "harbour-observations"]
   ] | sort)
 ' >/dev/null || {
   printf 'FAIL: pinned chart child inventory is incomplete or unreviewed\n' >&2
+  exit 1
+}
+
+# Product endpoints remain outside the registry's SSO origin and use root paths
+# matching the sample server's independently published OpenAPI contract.
+yq ea -o=json '[.]' "${render_dir}/resources.yaml" | jq -e '
+  [.[] | select(.kind == "DataProduct" and .metadata.name == "harbour-observations") | (
+    .spec.id == "https://harbour-data.${domain}" and
+    .spec.outputs[0].url == "https://harbour-data.${domain}/api/observations" and
+    .spec.outputs[0].contractUrl == "https://harbour-data.${domain}/openapi.json" and
+    .spec.ui.url == "https://harbour-data.${domain}/ui"
+  )] == [true]
+' >/dev/null || {
+  printf 'FAIL: rendered sample descriptor must use independently served root endpoints\n' >&2
+  exit 1
+}
+
+# Evaluate the actual Deployment children with the policy that admits them in
+# production. Pod-level security defaults alone do not satisfy its container
+# pattern, so namespace containment and Kubernetes schema checks are insufficient.
+if ! kyverno apply \
+  "${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/validate-pod-security.yaml" \
+  --resource "${render_dir}/resources.yaml" --detailed-results \
+  >"${test_root}/pod-security.log" 2>&1; then
+  cat "${test_root}/pod-security.log" >&2
+  printf 'FAIL: actual chart workloads violate production pod security\n' >&2
+  exit 1
+fi
+# This exact summary format is a contract with the shared pinned Kyverno CLI
+# from .github/scripts/kyverno-version.sh. Review the assertion when upgrading
+# that CLI; unknown formats must not silently count unevaluated rules as green.
+grep -qF 'pass: 6, fail: 0, warn: 0, error: 0, skip: 0' "${test_root}/pod-security.log" || {
+  cat "${test_root}/pod-security.log" >&2
+  printf 'FAIL: all three pod-security rules must evaluate both actual Deployments\n' >&2
+  exit 1
+}
+
+# Removing the container assertion from a real rendered child must fail the
+# named admission rule, even though its Pod still declares runAsNonRoot=true.
+yq 'select(.kind == "Deployment" and .metadata.name == "data-product-controller") |
+  del(.spec.template.spec.containers[0].securityContext.runAsNonRoot)' \
+  "${render_dir}/resources.yaml" >"${test_root}/pod-only-security.yaml"
+if kyverno apply \
+  "${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/validate-pod-security.yaml" \
+  --resource "${test_root}/pod-only-security.yaml" --detailed-results \
+  >"${test_root}/pod-only-security.log" 2>&1; then
+  printf 'FAIL: a real chart workload lost its required container security assertion\n' >&2
+  exit 1
+fi
+grep -qF 'autogen-validate-container-security failed at path /spec/template/spec/containers/0/securityContext/runAsNonRoot/' \
+  "${test_root}/pod-only-security.log" || {
+  cat "${test_root}/pod-only-security.log" >&2
+  printf 'FAIL: container security rejection did not identify the production admission rule\n' >&2
   exit 1
 }
 

@@ -130,6 +130,7 @@ spec:
             - "https://backstage.${domain}/oauth2/callback"
             - "https://budget.${domain}/oauth2/callback"
             - "https://crossview.${domain}/oauth2/callback"
+            - "https://data-products.${domain}/oauth2/callback"
             - "https://hubble.${domain}/oauth2/callback"
             - "https://ksail.${domain}/oauth2/callback"
             - "https://observability.${domain}/oauth2/callback"
