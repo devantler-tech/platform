@@ -7,9 +7,9 @@
 #
 #   posture        every Deployment, StatefulSet, DaemonSet and CronJob in a scanned namespace
 #                  has a workloadconfigurationscan that carries control results.
-#   vulnerability  every image a long-lived container is running (keyed by image digest, not by
-#                  container count) has a vulnerabilitymanifestsummary scanned within
-#                  --vuln-max-age-days.
+#   vulnerability  every image a long-lived regular container, init sidecar, or ephemeral
+#                  container is running (keyed by image digest, not by container count) has a
+#                  vulnerabilitymanifestsummary scanned within --vuln-max-age-days.
 #   runtime        every running ReplicaSet, StatefulSet revision and DaemonSet revision has BOTH
 #                  an applicationprofile and a networkneighborhood, each `completed/complete`.
 #                  A profile still learning inside its learning period is PENDING, not a failure.
@@ -158,13 +158,17 @@ unscanned="$(awk -F'\t' '/^[[:space:]]*#/ || NF == 0 { next } { print $1 }' "${r
 # other image has a digest, silently dropping this container would make the coverage denominator
 # smaller and could turn a real gap into a clean result.
 unknown_images="$(jq -r --argjson unscanned "${unscanned}" '
+  def long_lived_statuses:
+    [ .status.containerStatuses[]? ] +
+    [ .status.initContainerStatuses[]? | select(.state.running != null) ] +
+    [ .status.ephemeralContainerStatuses[]? | select(.state.running != null) ];
   [ .items[]
     | .metadata.namespace as $ns
     | select($unscanned | index($ns) == null)
     | select(.status.phase == "Running")
     | select(any(.metadata.ownerReferences[]?; .kind == "Job") | not)
     | . as $pod
-    | .status.containerStatuses[]?
+    | long_lived_statuses[]
     | select((.imageID // "") | test("sha256:[0-9a-f]{64}") | not)
     | "\($pod.metadata.namespace)/\($pod.metadata.name) container=\(.name)"
   ] | unique | join(", ")
@@ -187,6 +191,10 @@ def scanned: [$namespaces[0].items[].metadata.name] - $unscanned;
 def in_scope: .metadata.namespace as $ns | scanned | index($ns) != null;
 def epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 def digest: capture("(?<d>sha256:[0-9a-f]{64})").d // null;
+def long_lived_statuses:
+  [ .status.containerStatuses[]? ] +
+  [ .status.initContainerStatuses[]? | select(.state.running != null) ] +
+  [ .status.ephemeralContainerStatuses[]? | select(.state.running != null) ];
 
 # ---- posture --------------------------------------------------------------------------------
 ( [ $workloads[0].items[] | select(in_scope)
@@ -206,7 +214,7 @@ def digest: capture("(?<d>sha256:[0-9a-f]{64})").d // null;
 # ---- vulnerability --------------------------------------------------------------------------
 ( [ $pods[0].items[] | select(in_scope) | select(.status.phase == "Running")
     | select(any(.metadata.ownerReferences[]?; .kind == "Job") | not)
-    | .status.containerStatuses[]? | { digest: (.imageID | digest), image: .image } ]
+    | long_lived_statuses[] | { digest: (.imageID | digest), image: .image } ]
   | map(select(.digest != null)) | unique_by(.digest) ) as $images
 | ( [ $vulnerability[0].items[] | .metadata.annotations as $a
       | { digest: (($a["kubescape.io/image-id"] // "") | digest),

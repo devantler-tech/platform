@@ -138,6 +138,20 @@ d="$(variant vuln-image-identity-unknown pods.json '.items[0].status.containerSt
 expect "a running image without a SHA-256 identity is UNKNOWN" 2 \
   "running image identity has no SHA-256 digest: app/web-5d8f-x container=sidecar" "${d}"
 
+d="$(variant vuln-init-sidecar-identity-unknown pods.json '.items[0].status.initContainerStatuses = [
+  {name: "sidecar-init", image: "registry.test/sidecar-init:1", imageID: "containerd://not-a-digest",
+   state: {running: {startedAt: "2026-01-01T00:00:00Z"}}}
+]')"
+expect "a running init sidecar without a SHA-256 identity is UNKNOWN" 2 \
+  "running image identity has no SHA-256 digest: app/web-5d8f-x container=sidecar-init" "${d}"
+
+d="$(variant vuln-init-sidecar-missing pods.json ".items[0].status.initContainerStatuses = [
+  {name: \"sidecar-init\", image: \"registry.test/sidecar-init:1\", imageID: \"registry.test/sidecar-init@${DIGEST_JOB}\",
+   state: {running: {startedAt: \"2026-01-01T00:00:00Z\"}}}
+]")"
+expect "a running init sidecar joins the vulnerability expected set" 1 \
+  "MISSING vulnerability registry.test/sidecar-init:1 ${DIGEST_JOB}" "${d}"
+
 d="$(variant vuln-stale vulnerability.json ".items[0].metadata.annotations[\"kubescape.io/timestamp\"] = \"$((NOW - 8 * 86400))\"")"
 expect "a vulnerability result older than seven days is stale" 1 "STALE vulnerability registry.test/web:1" "${d}"
 

@@ -19,7 +19,7 @@ reviewed change. The check does not keep a second exclusion list.
 | Surface | Expected object | Result object | Missing | Stale |
 | --- | --- | --- | --- | --- |
 | Posture | every Deployment, StatefulSet, DaemonSet and CronJob | a `workloadconfigurationscan` for that workload, carrying control results | no result, or a result with no controls | not observable (see below) |
-| Vulnerability | every image a long-lived container is running, keyed by image digest | a `vulnerabilitymanifestsummary` for that digest | no result for the digest | scanned more than 7 days ago |
+| Vulnerability | every image a long-lived regular container, init sidecar or ephemeral container is running, keyed by image digest | a `vulnerabilitymanifestsummary` for that digest | no result for the digest | scanned more than 7 days ago |
 | Runtime | every running ReplicaSet, StatefulSet revision and DaemonSet revision | an `applicationprofile` **and** a `networkneighborhood`, both `completed/complete` | either half absent | still learning after its learning period |
 
 Why each set is drawn where it is:
@@ -32,11 +32,12 @@ Why each set is drawn where it is:
   operator scans CronJobs, not the Jobs they create.
 - **Vulnerability is keyed by image digest.** Ten replicas of one image need one scan, and two
   containers pinned to the same digest share it. Counting containers inflates the denominator
-  and makes coverage depend on replica counts. A long-lived container is any running container
-  whose pod is not owned by a Job; that includes operator-managed pods such as CloudNativePG
-  instances, which run for as long as a Deployment's pods do. If any such container has no
-  SHA-256 image identity, the check returns `UNKNOWN`; it never drops an unidentified image from
-  the expected set.
+  and makes coverage depend on replica counts. A long-lived container is a regular container, a
+  running init sidecar, or a running ephemeral container whose pod is not owned by a Job; that
+  includes operator-managed pods such as CloudNativePG instances, which run for as long as a
+  Deployment's pods do. Completed one-shot init containers are outside the live expected set. If
+  any included container has no SHA-256 image identity, the check returns `UNKNOWN`; it never drops
+  an unidentified image from the expected set.
 - **Runtime expects the pair.** The node agent needs both profiles to judge a container's
   behaviour, so one half on its own is a gap. A `partial` completion means the agent started
   watching after the container did, so the profile does not describe the whole container; the
@@ -94,7 +95,7 @@ one expected result removed from a passing set must fail.
 | Surface | Expected | Current | Failing |
 | --- | --- | --- | --- |
 | Posture | 96 | 96 | 0 |
-| Vulnerability | 76 | 55 | 7 missing, 14 stale |
-| Runtime | 77 | 70 | 3 (2 missing pair halves, 4 partial profiles), plus 8 profiles still learning |
+| Vulnerability | 77 | 55 | 8 missing, 14 stale |
+| Runtime | 77 | 70 | 2 (one missing pair and one partial pair), plus 10 profiles still learning |
 
 The remaining vulnerability and runtime gaps are the work of #4263 and #4264.
