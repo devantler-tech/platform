@@ -75,6 +75,11 @@ spec:
               kind: Deployment
               name: data-product-controller
             patch: |
+              # Platform admission requires this on each container as well as
+              # the Pod-level default supplied by the portable chart.
+              - op: add
+                path: /spec/template/spec/containers/0/securityContext/runAsNonRoot
+                value: true
               - op: add
                 path: /spec/template/spec/imagePullSecrets
                 value:
@@ -94,6 +99,9 @@ spec:
               kind: Deployment
               name: data-product-controller-harbour
             patch: |
+              - op: add
+                path: /spec/template/spec/containers/0/securityContext/runAsNonRoot
+                value: true
               - op: add
                 path: /spec/template/spec/imagePullSecrets
                 value:

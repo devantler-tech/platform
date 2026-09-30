@@ -78,4 +78,38 @@ readonly expected_router="Host(\`data-products.\${domain}\`)|data-products"
   jq -e '[.[] | select(.kind == "NetworkPolicy" and .metadata.namespace == "data-product-controller")
     | .spec] == [{"podSelector":{},"policyTypes":["Ingress","Egress"]}]' \
     "${scratch}/apps.json" >/dev/null || fail "${provider}: namespace default-deny must stay active"
-printf 'PASS: registry routes through SSO; independent public sample removes credentials; component policies remain narrow\n'
+# Recovery executes the candidate workflow after checking out main. A main
+# predating this trial has neither the active app nor this test; an active app
+# must never use a missing test as permission to skip its validation.
+yq -r '.jobs."heal-prod-on-failure".steps[] |
+  select(.name == "🧪 Validate the data product trial before recovery deploy") | .run' \
+  "${root_dir}/.github/workflows/ci.yaml" >"${scratch}/recovery-step.sh"
+[[ -s "${scratch}/recovery-step.sh" ]] || fail 'recovery trial validation step is missing'
+legacy="${scratch}/legacy-main"
+mkdir -p "${legacy}/k8s/bases/apps/wedding-app" "${legacy}/k8s/bases/apps/data-product-controller" "${legacy}/scripts"
+cp "${root_dir}/scripts/guard-ghcr-fanout-component-gate.sh" "${legacy}/scripts/"
+printf 'resources:\n  - wedding-app/\n' >"${legacy}/k8s/bases/apps/kustomization.yaml"
+printf 'kind: ExternalSecret\nmetadata:\n  name: ghcr-auth\n' \
+  >"${legacy}/k8s/bases/apps/wedding-app/external-secret.yaml"
+cp "${legacy}/k8s/bases/apps/wedding-app/external-secret.yaml" \
+  "${legacy}/k8s/bases/apps/data-product-controller/external-secret.yaml"
+printf 'readonly -a FANOUT_NAMESPACES=(\n  "wedding-app"\n  "kyverno"\n)\n' \
+  >"${legacy}/scripts/refresh-flux-ghcr-auth.sh"
+if ! (cd "${legacy}" && bash -euo pipefail "${scratch}/recovery-step.sh") \
+  >"${scratch}/legacy-recovery.log" 2>&1; then
+  cat "${scratch}/legacy-recovery.log" >&2
+  fail 'main without the trial must recover without a candidate-only test file'
+fi
+yq -i '.resources += ["data-product-controller/"]' "${legacy}/k8s/bases/apps/kustomization.yaml"
+if (cd "${legacy}" && bash -euo pipefail "${scratch}/recovery-step.sh") \
+  >"${scratch}/active-recovery.log" 2>&1; then
+  fail 'active trial must not recover without its required validation file'
+fi
+grep -qF 'test-data-product-controller-trial.sh' "${scratch}/active-recovery.log" ||
+  fail 'active recovery must fail for the missing trial validation file'
+printf 'resources: [unterminated\n' >"${legacy}/k8s/bases/apps/kustomization.yaml"
+if (cd "${legacy}" && bash -euo pipefail "${scratch}/recovery-step.sh") \
+  >"${scratch}/invalid-recovery.log" 2>&1; then
+  fail 'an unreadable app gate must not permit recovery validation to be skipped'
+fi
+printf 'PASS: registry SSO, credential-free sample, component policies and checkout-aware recovery validation\n'

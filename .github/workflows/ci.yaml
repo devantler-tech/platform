@@ -1037,11 +1037,19 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
+      - name: ⚖️ Read Kyverno CLI version for chart admission
+        id: chart-kyverno-version
+        run: bash .github/scripts/kyverno-version.sh
+
+      - name: ⚖️ Install Kyverno CLI for chart admission
+        uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
+        with:
+          release: ${{ steps.chart-kyverno-version.outputs.release }}
+
       - name: 🔐 Validate isolated chart child namespaces
-        # The data-product-controller component remains outside the deploy
-        # overlay. Render its immutable chart explicitly so every child with a
-        # namespace is proven local before the isolated-chart exemption can be
-        # relied on by this PR or speculative merge-group revision.
+        # Render the immutable chart explicitly so its actual children satisfy
+        # both namespace containment and production workload admission before
+        # this PR or speculative merge-group revision can deploy it.
         timeout-minutes: 10
         run: |
           shellcheck scripts/tests/test-isolated-chart-namespace-rules.sh
@@ -2905,6 +2913,15 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
+      - name: ⚖️ Read Kyverno CLI version for recovery chart admission
+        id: chart-kyverno-version
+        run: bash .github/scripts/kyverno-version.sh
+
+      - name: ⚖️ Install Kyverno CLI for recovery chart admission
+        uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
+        with:
+          release: ${{ steps.chart-kyverno-version.outputs.release }}
+
       - name: 🔐 Validate isolated chart child namespaces on main
         # Same reason as the RGD scan above, for the other gate this job's
         # publish depends on. `validate-eks-authorization` rendered the chart on
@@ -2919,9 +2936,25 @@ jobs:
           bash scripts/tests/test-isolated-chart-namespace-rules.sh
 
       - name: 🧪 Validate the data product trial before recovery deploy
+        # This job checks out main, which may predate the candidate's new test.
+        # Require it whenever that checkout activates the trial; otherwise
+        # prove the inactive app and credential fan-out gates still agree.
         run: |
-          shellcheck scripts/tests/test-data-product-controller-trial.sh
-          bash scripts/tests/test-data-product-controller-trial.sh
+          trial_active="$(yq -r '[.resources[] | select(. == "data-product-controller/")] | length' k8s/bases/apps/kustomization.yaml)"
+          case "$trial_active" in
+            1)
+              shellcheck scripts/tests/test-data-product-controller-trial.sh
+              bash scripts/tests/test-data-product-controller-trial.sh
+              ;;
+            0)
+              bash scripts/guard-ghcr-fanout-component-gate.sh
+              echo 'Main has no active data product trial; its credential gate is consistent.'
+              ;;
+            *)
+              echo 'Cannot establish the data product trial gate on main.' >&2
+              exit 1
+              ;;
+          esac
 
       - name: 🩹 Re-deploy main to Production
         # Reuse the shared deploy composite (push → sign → attest → reconcile →
