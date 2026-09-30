@@ -603,6 +603,8 @@ jobs:
               - 'scripts/tests/test-crossplane-egress-policy.sh'
               - 'scripts/tests/crossplane-egress-policy-rules.yaml'
               - 'scripts/tests/test-coroot-alert-remediation.sh'
+              - 'scripts/tests/test-coroot-dns-resolution.sh'
+              - 'scripts/tests/fixtures/coroot-dns-probe/**'
               - 'scripts/tests/test-coroot-final-remediation.sh'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               - 'scripts/tests/test-stranded-volume-attach-alert.sh'
@@ -2154,6 +2156,8 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-alert-remediation.sh
           bash scripts/tests/test-coroot-alert-remediation.sh
+          shellcheck scripts/tests/test-coroot-dns-resolution.sh
+          bash scripts/tests/test-coroot-dns-resolution.sh
           shellcheck scripts/tests/test-coroot-final-remediation.sh
           bash scripts/tests/test-coroot-final-remediation.sh
 
