@@ -1259,7 +1259,56 @@ func cloneStringAnyMap(source map[string]any) map[string]any {
 	return clone
 }
 
-// authorizationSurfaceDocument normalizes immutable Helm dependency pins,
+// normalizedPinnedContainerImage keeps the repository and explicit tag as
+// reviewed policy while replacing only an immutable SHA-256 digest. Requiring
+// a tag means floating, substituted, and digest-only shapes remain exact.
+func normalizedPinnedContainerImage(image string) (string, bool) {
+	delimiter := strings.LastIndex(image, "@")
+	if delimiter <= 0 || !exactSHA256Digest.MatchString(image[delimiter+1:]) {
+		return "", false
+	}
+	reference := image[:delimiter]
+	lastSlash := strings.LastIndex(reference, "/")
+	lastColon := strings.LastIndex(reference, ":")
+	if lastColon <= lastSlash || lastColon == len(reference)-1 || strings.Contains(reference, "${") {
+		return "", false
+	}
+	return reference + "@sha256:<exact-digest>", true
+}
+
+// normalizePinnedContainerImages recursively projects only map fields named
+// image. Helm-rendered manifests remain validated and scanned by the required
+// manifest job, while routine digest refreshes do not move this authorization
+// fingerprint when the repository and tag are unchanged.
+func normalizePinnedContainerImages(value any) any {
+	switch typedValue := value.(type) {
+	case map[string]any:
+		projected := cloneStringAnyMap(typedValue)
+		for key, item := range projected {
+			if key == "image" {
+				if image, ok := item.(string); ok {
+					if normalized, pinned := normalizedPinnedContainerImage(image); pinned {
+						projected[key] = normalized
+						continue
+					}
+				}
+			}
+			projected[key] = normalizePinnedContainerImages(item)
+		}
+		return projected
+	case []any:
+		projected := make([]any, len(typedValue))
+		for index, item := range typedValue {
+			projected[index] = normalizePinnedContainerImages(item)
+		}
+		return projected
+	default:
+		return value
+	}
+}
+
+// authorizationSurfaceDocument normalizes immutable Helm dependency pins and
+// exact container image digests beneath Helm values,
 // strict signer subsets handled by the required approved-revisions guard, and
 // the uninterpretable ciphertext of SOPS-encrypted substitution sources.
 // Identity, source, values, post-renderers, substitutions and policy stay exact.
@@ -1303,6 +1352,9 @@ func authorizationSurfaceDocument(
 	projectedChartSpec["version"] = "<exact-semver>"
 	projectedChart["spec"] = projectedChartSpec
 	projectedSpec["chart"] = projectedChart
+	if values, ok := spec["values"].(map[string]any); ok {
+		projectedSpec["values"] = normalizePinnedContainerImages(values)
+	}
 	projected["spec"] = projectedSpec
 	return projected
 }
