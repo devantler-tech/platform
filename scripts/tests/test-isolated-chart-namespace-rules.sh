@@ -686,6 +686,9 @@ if ! kyverno apply \
   printf 'FAIL: actual chart workloads violate production pod security\n' >&2
   exit 1
 fi
+# This exact summary format is a contract with the shared pinned Kyverno CLI
+# from .github/scripts/kyverno-version.sh. Review the assertion when upgrading
+# that CLI; unknown formats must not silently count unevaluated rules as green.
 grep -qF 'pass: 6, fail: 0, warn: 0, error: 0, skip: 0' "${test_root}/pod-security.log" || {
   cat "${test_root}/pod-security.log" >&2
   printf 'FAIL: all three pod-security rules must evaluate both actual Deployments\n' >&2
