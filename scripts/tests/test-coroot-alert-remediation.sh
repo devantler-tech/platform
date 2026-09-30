@@ -245,8 +245,8 @@ readonly rollout_annotation
 rollout_token="$(yq -er ".spec.podAnnotations.\"${rollout_annotation}\"" "${coroot}")" ||
   fail 'the Coroot server DNS-policy rollout token is missing'
 readonly rollout_token
-[[ "${rollout_token}" == '2026-09-15-ndots-1' ]] ||
-  fail 'the Coroot server must retain the first DNS-policy rollout token'
+[[ "${rollout_token}" == '2026-09-30-ndots-3' ]] ||
+  fail 'the Coroot server must roll after the ndots:3 policy is Ready'
 
 for component_path in \
   nodeAgent \
@@ -264,15 +264,15 @@ cluster_agent_rollout_token="$(
   yq -er ".spec.clusterAgent.podAnnotations.\"${rollout_annotation}\"" "${coroot}"
 )" || fail 'the clusterAgent DNS-policy rollout token is missing'
 readonly cluster_agent_rollout_token
-[[ "${cluster_agent_rollout_token}" == '2026-09-15-ndots-2' ]] ||
-  fail 'the clusterAgent must use the post-policy rollout token'
+[[ "${cluster_agent_rollout_token}" == "${rollout_token}" ]] ||
+  fail 'the clusterAgent must use the same post-policy rollout token as the server'
 
 database_rollout_token="$(
   yq -er ".spec.inheritedMetadata.annotations.\"${rollout_annotation}\"" "${coroot_db}"
 )" || fail 'the Coroot database DNS-policy rollout token is missing'
 readonly database_rollout_token
-[[ "${database_rollout_token}" == "${rollout_token}" ]] ||
-  fail 'the Coroot database DNS-policy rollout token must match every Coroot component'
+[[ "${database_rollout_token}" == '2026-09-15-ndots-1' ]] ||
+  fail 'the Coroot database must retain its existing ndots:1 rollout token'
 
 database_restart_request="$(
   yq -er '.metadata.annotations."kubectl.kubernetes.io/restartedAt"' "${coroot_db}"
