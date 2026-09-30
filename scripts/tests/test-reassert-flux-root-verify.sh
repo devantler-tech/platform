@@ -320,6 +320,44 @@ grep -qF -- 'run: bash scripts/tests/test-reassert-flux-root-verify.sh' "${ci_wo
 # validate job cannot establish that the repair test passed for that revision.
 ci_jobs="$(yq -o=json -I=0 '.jobs' "${ci_workflow}")"
 readonly ci_jobs
+
+# A failing speculative deploy heals from the CURRENT main checkout. During this
+# PR's own merge-group run, that checkout predates the repair script and its test;
+# the compatibility branch must therefore let the legacy heal continue, while a
+# revision that carries the test must still run it and propagate its failure.
+heal_root_step="$(jq -r '
+  .["heal-prod-on-failure"].steps[]
+  | select(.name == "🛡️ Validate the root source repair on main")
+  | .run // empty
+' <<<"${ci_jobs}")"
+[[ -n "${heal_root_step}" ]] || fail 'heal must declare the root-source repair validation step'
+
+legacy_checkout="${tmp_dir}/legacy-heal-checkout"
+mkdir -p "${legacy_checkout}"
+legacy_status=0
+legacy_output="$(
+  cd "${legacy_checkout}"
+  GITHUB_STEP_SUMMARY="${legacy_checkout}/summary" bash -euo pipefail -c "${heal_root_step}" 2>&1
+)" || legacy_status=$?
+[[ "${legacy_status}" -eq 0 ]] ||
+  fail "legacy heal checkout: missing repair test must not abort recovery (exit ${legacy_status}): ${legacy_output}"
+grep -qF 'predates the root-source repair' "${legacy_checkout}/summary" ||
+  fail 'legacy heal checkout: the skipped repair test must be visible in the job summary'
+
+current_checkout="${tmp_dir}/current-heal-checkout"
+mkdir -p "${current_checkout}/scripts/tests"
+printf 'printf ran >%q\nexit 23\n' "${current_checkout}/repair-test-ran" \
+  >"${current_checkout}/scripts/tests/test-reassert-flux-root-verify.sh"
+current_status=0
+current_output="$(
+  cd "${current_checkout}"
+  GITHUB_STEP_SUMMARY="${current_checkout}/summary" bash -euo pipefail -c "${heal_root_step}" 2>&1
+)" || current_status=$?
+[[ -f "${current_checkout}/repair-test-ran" ]] ||
+  fail 'current heal checkout: the present repair test was not executed'
+[[ "${current_status}" -eq 23 ]] ||
+  fail "current heal checkout: repair-test failure must abort recovery (exit ${current_status}): ${current_output}"
+
 jq -e '
   .["validate-root-verify-merge-group"] as $gate
   | $gate != null
@@ -349,7 +387,8 @@ jq -e '
   | $checkout != null and $test != null and $deploy != null
     and $checkout < $test and $test < $deploy
     and $steps[$checkout].with.ref == "main"
-    and $steps[$test].run == "bash scripts/tests/test-reassert-flux-root-verify.sh"
+    and $steps[$test].shell == "bash"
+    and ($steps[$test].run | contains("bash scripts/tests/test-reassert-flux-root-verify.sh"))
     and ($steps[$test] | has("if") | not)
     and (($steps[$test]["continue-on-error"] // false) == false)
 ' <<<"${ci_jobs}" >/dev/null ||
