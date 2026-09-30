@@ -69,8 +69,8 @@ refute_text() {
 # Every failure writes the endpoint host to stderr, so redaction is exercised.
 # ---------------------------------------------------------------------------
 cat >"${bin}/mc" <<'FAKE'
-#!/usr/bin/env bash
-set -uo pipefail
+#!/bin/sh
+set -u
 f="${FAKE_MC}"
 leak() {
   printf 'mc: <ERROR> request to https://abc123.r2.cloudflarestorage.com/x failed\n' >&2
@@ -85,19 +85,19 @@ case "$1" in
     count_file="${f}/ls-count-${target}"
     n=$(( $(cat "${count_file}" 2>/dev/null || echo 0) + 1 ))
     printf '%s' "${n}" >"${count_file}"
-    if [[ -e "${f}/ls-${target}-rc" ]]; then leak; exit "$(cat "${f}/ls-${target}-rc")"; fi
-    if [[ -e "${f}/ls-${target}-${n}" ]]; then cat "${f}/ls-${target}-${n}"; else cat "${f}/ls-${target}"; fi
+    if [ -e "${f}/ls-${target}-rc" ]; then leak; exit "$(cat "${f}/ls-${target}-rc")"; fi
+    if [ -e "${f}/ls-${target}-${n}" ]; then cat "${f}/ls-${target}-${n}"; else cat "${f}/ls-${target}"; fi
     exit 0
     ;;
   cat)
     printf '%s\n' "$2" >>"${f}/catted"
-    if [[ -e "${f}/cat-rc" ]]; then leak; exit "$(cat "${f}/cat-rc")"; fi
+    if [ -e "${f}/cat-rc" ]; then leak; exit "$(cat "${f}/cat-rc")"; fi
     printf 'bytes of %s' "${2##*/}"
     exit 0
     ;;
   mirror)
     printf '%s\n' "$*" >>"${f}/mirror.args"
-    if [[ -e "${f}/mirror-rc" ]]; then leak; exit "$(cat "${f}/mirror-rc")"; fi
+    if [ -e "${f}/mirror-rc" ]; then leak; exit "$(cat "${f}/mirror-rc")"; fi
     exit 0
     ;;
 esac
@@ -142,12 +142,28 @@ new_pod_case() {
 run_pod() {
   local dir="$1"
   pod_rc=0
-  PATH="${bin}:${PATH}" FAKE_MC="${dir}/mc" CREDENTIALS_DIR="${dir}/credentials" \
+  if [[ -n "${MIRROR_POD_RUNTIME_IMAGE:-}" ]]; then
+    # Synthetic fixtures only. Make the mounted fixtures writable by the real
+    # non-root pod user; production obtains that access through fsGroup.
+    chmod -R a+rwX "${dir}"
+    docker run --rm --network none --read-only --user 65532:65532 \
+      --cap-drop ALL --security-opt no-new-privileges \
+      --entrypoint /tools/sh \
+      -v "${bin}:/fake-bin:ro" -v "${dir}:${dir}" -v "${pod_script}:/mirror/mirror.sh:ro" \
+      -e PATH=/fake-bin:/tools:/usr/local/bin:/usr/bin:/bin -e "FAKE_MC=${dir}/mc" \
+      -e "CREDENTIALS_DIR=${dir}/credentials" -e "WORK_DIR=${dir}/work" -e COLLECT_TIMEOUT=0 \
+      -e "ENDPOINT=${ENDPOINT_OVERRIDE:-https://abc123.r2.cloudflarestorage.com}" \
+      -e SOURCE_BUCKET=platform-backups -e SOURCE_PREFIX=cnpg/wedding-db \
+      -e DESTINATION_BUCKET=wedding-db-backups -e DESTINATION_PREFIX=cnpg/wedding-db \
+      "${MIRROR_POD_RUNTIME_IMAGE}" /mirror/mirror.sh >"${dir}/out" 2>"${dir}/err" || pod_rc=$?
+  else
+    PATH="${bin}:${PATH}" FAKE_MC="${dir}/mc" CREDENTIALS_DIR="${dir}/credentials" \
     WORK_DIR="${dir}/work" COLLECT_TIMEOUT=0 \
     ENDPOINT="${ENDPOINT_OVERRIDE:-https://abc123.r2.cloudflarestorage.com}" \
     SOURCE_BUCKET=platform-backups SOURCE_PREFIX=cnpg/wedding-db \
     DESTINATION_BUCKET=wedding-db-backups DESTINATION_PREFIX=cnpg/wedding-db \
-    sh "${pod_script}" >"${dir}/out" 2>"${dir}/err" || pod_rc=$?
+      sh "${pod_script}" >"${dir}/out" 2>"${dir}/err" || pod_rc=$?
+  fi
   pod_out="$(cat "${dir}/out")"
   pod_err="$(cat "${dir}/err")"
   pod_files="$(cat "${dir}/work/source-before" "${dir}/work/source-after" "${dir}/work/destination" 2>/dev/null || true)"
@@ -370,6 +386,11 @@ require_text "${manifest}" 'automountServiceAccountToken: false' 'the pod gets n
 require_text "${manifest}" 'readOnlyRootFilesystem: true' 'the pod root filesystem is read-only'
 require_text "${manifest}" 'medium: Memory' 'the mc credential config lives in memory'
 require_text "${manifest}" 'value: /mc-config' 'mc is pointed at the memory-backed config directory'
+require_text "${manifest}" 'initContainers:' 'the minimal mc image receives its required shell tools'
+require_text "${manifest}" 'name: install-tools' 'tools are installed before the copy starts'
+require_text "${manifest}" 'command: ["/tools/sh", "/mirror/mirror.sh"]' 'the copy runs with the supplied shell'
+require_text "${manifest}" 'fsGroup: 65532' 'the unprivileged pod can write its temporary volumes'
+require_text "${manifest}" 'mountPath: /tools' 'the runtime tools are available to the copy'
 require_text "${wrapper_out}" 'catch-up' 'the verdict says the cutover still needs a catch-up'
 refute_text "${manifest}" '__' 'every manifest placeholder is substituted'
 require_text "$(cat "${dir}/deleted")" 'pod wedding-backup-mirror-42-1' 'the pod is removed afterwards'

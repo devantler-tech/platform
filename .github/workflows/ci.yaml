@@ -85,8 +85,9 @@ jobs:
       # two cannot drift apart on the listing format.
       - name: 💒 Validate Wedding backup mirror copy
         run: |
-          shellcheck scripts/mirror-wedding-backup-catalogue.sh scripts/mirror-wedding-backup-catalogue-pod.sh scripts/tests/test-mirror-wedding-backup-catalogue.sh
+          shellcheck scripts/mirror-wedding-backup-catalogue.sh scripts/mirror-wedding-backup-catalogue-pod.sh scripts/tests/test-mirror-wedding-backup-catalogue.sh scripts/tests/test-mirror-wedding-backup-runtime.sh
           bash scripts/tests/test-mirror-wedding-backup-catalogue.sh
+          bash scripts/tests/test-mirror-wedding-backup-runtime.sh
 
       - name: 💾 Validate two-stage PVC retirement
         # A merge-group artifact is speculative, but a PVC deletion is not: its
