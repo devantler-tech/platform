@@ -30,7 +30,21 @@ spec:
     # (../../vertical-pod-autoscalers/descheduler.yaml) to observe/right-size.
     kind: Deployment
     deschedulingInterval: 30m
-    replicas: 1
+    # A standby survives a node drain; only the lease holder may evict pods.
+    replicas: 2
+    leaderElection:
+      enabled: true
+      resourceLock: leases
+      resourceName: descheduler
+      resourceNamespace: kube-system
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: descheduler
+                app.kubernetes.io/instance: descheduler
     # C-0211 baseline context, supplied through the chart's own values because
     # kube-system is excluded from the add-security-context mutation (#3239).
     # Both fields are inert here and neither relaxes the chart's hardening,
