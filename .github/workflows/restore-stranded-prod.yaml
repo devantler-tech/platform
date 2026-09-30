@@ -1,0 +1,87 @@
+name: Restore Stranded Prod
+
+# Production can keep an artifact that never reached main (#4186): a heal decided outside
+# the prod-deploy lock and then overtaken, a queue that stayed busy past the eviction poll,
+# a cancelled heal, or a group amended to drop its manifest change and re-enqueued. The
+# convergence report in validate-main.yaml reads such a prod as DIVERGED, but it runs only
+# on a push to main (an eviction pushes nothing) and deliberately does not redeploy on
+# DIVERGED, because a queued group that has deployed but not merged reads the same.
+#
+# This workflow judges the END STATE instead of each path that can reach it: under the
+# prod-deploy lock, a DIVERGED prod with an empty merge queue and no unfinished merge-group
+# run can only be stranded, so it redeploys main through the manual CD workflow, which
+# carries every production gate. Any failed read redeploys nothing and fails the run.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "40 * * * *" # Hourly
+
+permissions: {}
+
+jobs:
+  restore-stranded-prod:
+    name: 🧭 Restore Stranded Prod
+    runs-on: ubuntu-latest
+    # Shared with every deploy, heal and convergence observer, so the gate, the report and
+    # the dispatch happen while nothing can promote `:latest`. queue: max keeps a scheduled
+    # run from replacing a deploy that is already waiting (see cd.yaml).
+    concurrency:
+      group: prod-deploy
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read # checkout repository history for the ancestry check
+      packages: read # read the private manifests artifact and its attestations from GHCR
+      actions: write # list merge-group and CD runs, and dispatch CD on main when stranded
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history plus every branch: the resolver needs main's ancestry and the
+          # commit of any queued merge group whose artifact `:latest` may already name.
+          fetch-depth: 0
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # Read BEFORE main and `:latest`: with the lock held nothing can promote `:latest`,
+      # and a group can only merge from a queue this read found empty.
+      - name: 🚦 Check the merge queue is idle
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STRANDED_REPOSITORY: ${{ github.repository }}
+        run: ./scripts/prod-stranded-gate.sh
+
+      # A group may have merged between the checkout and the gate; read main again so the
+      # report never judges prod against a main that is already stale.
+      - name: 🔄 Refresh main
+        if: steps.gate.outputs.stranded == 'true'
+        run: git fetch --quiet --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: 🔑 Log in to GHCR (read-only)
+        if: steps.gate.outputs.stranded == 'true'
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "${REGISTRY_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: 🧭 Report production convergence
+        id: report
+        if: steps.gate.outputs.stranded == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/report-prod-convergence.sh
+
+      # BEHIND is redeployed by validate-main.yaml on the push that caused it; this only
+      # handles the DIVERGED case that no push will ever answer.
+      - name: 🔁 Redeploy main when prod is stranded
+        if: steps.gate.outputs.stranded == 'true' && steps.report.outputs.verdict == 'DIVERGED'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REDEPLOY_REPOSITORY: ${{ github.repository }}
+          REDEPLOY_REASON: prod is stranded on an artifact main does not contain
+        run: ./scripts/redeploy-main-when-behind.sh

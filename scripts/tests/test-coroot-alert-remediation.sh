@@ -152,9 +152,10 @@ resolver_policy_count="$(
           (.match.any[0].resources.namespaces | length) == 1 and
           .match.any[0].resources.namespaces[0] == "observability" and
           (.mutate.patchStrategicMerge.spec.dnsConfig.options | length) == 1 and
-          .mutate.patchStrategicMerge.spec.dnsConfig.options[0].name == "ndots" and
-          .mutate.patchStrategicMerge.spec.dnsConfig.options[0].value == "1"
+          .mutate.patchStrategicMerge.spec.dnsConfig.options[0].name == "ndots"
         )] | length) == 2 and
+      .spec.rules[0].mutate.patchStrategicMerge.spec.dnsConfig.options[0].value == "3" and
+      .spec.rules[1].mutate.patchStrategicMerge.spec.dnsConfig.options[0].value == "1" and
       .spec.rules[0].match.any[0].resources.selector.matchLabels."app.kubernetes.io/part-of" == "coroot" and
       .spec.rules[0].match.any[0].resources.selector.matchLabels."app.kubernetes.io/managed-by" == "coroot-operator" and
       (.spec.rules[0].match.any[0].resources.selector.matchLabels | length) == 2 and
@@ -165,7 +166,7 @@ resolver_policy_count="$(
 )"
 readonly resolver_policy_count
 [[ "${resolver_policy_count}" == '1' ]] ||
-  fail 'the resolver policy must set ndots:1 only when Coroot and its CNPG database pods are created'
+  fail 'the resolver policy must scope ndots:3 to Coroot and preserve ndots:1 for CNPG on creation'
 
 apply_resolver_policy() {
   local labels="$1"
@@ -190,8 +191,8 @@ apply_resolver_policy() {
 coroot_mutation="$(apply_resolver_policy $'    app.kubernetes.io/part-of: coroot\n    app.kubernetes.io/managed-by: coroot-operator')" ||
   fail 'the Coroot resolver mutation could not be evaluated'
 readonly coroot_mutation
-[[ "${coroot_mutation}" == *'dnsConfig:'* && "${coroot_mutation}" == *'value: "1"'* ]] ||
-  fail 'the Coroot selector must produce an effective ndots:1 Pod mutation'
+[[ "${coroot_mutation}" == *'dnsConfig:'* && "${coroot_mutation}" == *'value: "3"'* ]] ||
+  fail 'the Coroot selector must produce an effective ndots:3 Pod mutation'
 
 database_mutation="$(apply_resolver_policy '    cnpg.io/cluster: coroot-db')" ||
   fail 'the Coroot database resolver mutation could not be evaluated'
@@ -229,7 +230,7 @@ authored_options_mutation="$(
 )" || fail 'the authored resolver-options case could not be evaluated'
 readonly authored_options_mutation
 [[ "${authored_options_mutation}" == *'single-request-reopen'* &&
-  "${authored_options_mutation}" != *'value: "1"'* &&
+  "${authored_options_mutation}" != *'name: ndots'* &&
   "${authored_options_mutation}" == *'pass: 0'* ]] ||
   fail 'the resolver mutation must preserve an explicitly authored DNS options list'
 
@@ -244,8 +245,8 @@ readonly rollout_annotation
 rollout_token="$(yq -er ".spec.podAnnotations.\"${rollout_annotation}\"" "${coroot}")" ||
   fail 'the Coroot server DNS-policy rollout token is missing'
 readonly rollout_token
-[[ "${rollout_token}" == '2026-09-15-ndots-1' ]] ||
-  fail 'the Coroot server must retain the first DNS-policy rollout token'
+[[ "${rollout_token}" == '2026-09-30-ndots-3' ]] ||
+  fail 'the Coroot server must roll after the ndots:3 policy is Ready'
 
 for component_path in \
   nodeAgent \
@@ -263,15 +264,15 @@ cluster_agent_rollout_token="$(
   yq -er ".spec.clusterAgent.podAnnotations.\"${rollout_annotation}\"" "${coroot}"
 )" || fail 'the clusterAgent DNS-policy rollout token is missing'
 readonly cluster_agent_rollout_token
-[[ "${cluster_agent_rollout_token}" == '2026-09-15-ndots-2' ]] ||
-  fail 'the clusterAgent must use the post-policy rollout token'
+[[ "${cluster_agent_rollout_token}" == "${rollout_token}" ]] ||
+  fail 'the clusterAgent must use the same post-policy rollout token as the server'
 
 database_rollout_token="$(
   yq -er ".spec.inheritedMetadata.annotations.\"${rollout_annotation}\"" "${coroot_db}"
 )" || fail 'the Coroot database DNS-policy rollout token is missing'
 readonly database_rollout_token
-[[ "${database_rollout_token}" == "${rollout_token}" ]] ||
-  fail 'the Coroot database DNS-policy rollout token must match every Coroot component'
+[[ "${database_rollout_token}" == '2026-09-15-ndots-1' ]] ||
+  fail 'the Coroot database must retain its existing ndots:1 rollout token'
 
 database_restart_request="$(
   yq -er '.metadata.annotations."kubectl.kubernetes.io/restartedAt"' "${coroot_db}"

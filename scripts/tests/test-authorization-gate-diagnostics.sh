@@ -6,18 +6,17 @@
 # step runs two independent commands over the same surface:
 #
 #   * `go test ./scripts/validate-eks-ci-role-policy` — the verdict. On an
-#     unapproved aggregate TestValidateAuthorizationAcceptsCommittedPolicy
-#     t.Fatalf's with the bare fingerprint.
-#   * `go run ./scripts/validate-eks-ci-role-policy . "$base_root"` — the
-#     diagnostics. This is the ONLY caller of surfaceMismatchReport, the code
-#     #3836 added to name the surface entries that moved.
+#     unapproved surface TestValidateAuthorizationAcceptsCommittedPolicy
+#     fails inside the test log.
+#   * `go run ./scripts/validate-eks-ci-role-policy .` — the diagnostics: on an
+#     unapproved surface it prints the exact approved-surface.txt lines to
+#     change (#3182; before that, the surface entries that moved, #3836).
 #
-# A real aggregate mismatch fails BOTH. So a step that short-circuits on the
+# A real surface mismatch fails BOTH. So a step that short-circuits on the
 # first command never reaches the second, and the failure that most needs an
-# explanation is the one reported with no entry names at all — measured on
-# #3878 (CI run 35257229458, job 105324573289): the approval base checked out
-# fine, `go test` failed with `a4781e58…`, and zero moved-entry lines were
-# emitted.
+# explanation is the one reported without its diagnostics — measured on
+# #3878 (CI run 35257229458, job 105324573289): `go test` failed with the bare
+# aggregate `a4781e58…`, and zero moved-entry lines were emitted.
 #
 # The step's script is EXECUTED here against stub `go` and `git` binaries rather
 # than pattern-matched, so the assertions are about behaviour: which commands
@@ -33,7 +32,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly job='validate-eks-authorization'
 readonly step='🔐 Validate static production authorization controls'
-readonly diagnostic_line='changed helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|hcloud-csi'
+readonly diagnostic_line='+ helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|hcloud-csi'
 
 work_dir="$(mktemp -d)"
 readonly work_dir
@@ -74,8 +73,7 @@ step_shell_flags() {
 }
 
 # make_stubs builds a PATH directory whose `go` records each invocation and
-# exits with the caller's chosen status, and whose `git` always succeeds so the
-# approval-base branch is taken.
+# exits with the caller's chosen status, and whose `git` always succeeds.
 #
 #   $1 work root   $2 `go test` exit status   $3 `go run` exit status
 make_stubs() {
@@ -190,12 +188,7 @@ for workflow_name in ci cd; do
   grep -q 'validate-eks-ci-role-policy' "${script}" ||
     fail "${workflow_name}.yaml: the extracted step does not invoke the authorization validator"
 
-  # ci.yaml checks out the approval base, so its diagnostics name the entries.
-  if grep -q 'approval-base-tree' "${script}"; then
-    assert_gate_behaviour "${workflow_name}.yaml" "${script}" "${shell_flags}" diagnostics
-  else
-    assert_gate_behaviour "${workflow_name}.yaml" "${script}" "${shell_flags}"
-  fi
+  assert_gate_behaviour "${workflow_name}.yaml" "${script}" "${shell_flags}" diagnostics
 done
 
 # ABLATION. The short-circuiting form this fix replaces must fail Case A, and
@@ -205,12 +198,7 @@ ablation="${work_dir}/ablation-step.sh"
 cat >"${ablation}" <<'EOF'
 set -euo pipefail
 go test ./scripts/validate-eks-ci-role-policy
-base_root="$RUNNER_TEMP/approval-base-tree"
-if git worktree add --detach "$base_root" HEAD^1; then
-  go run ./scripts/validate-eks-ci-role-policy . "$base_root"
-else
-  go run ./scripts/validate-eks-ci-role-policy .
-fi
+go run ./scripts/validate-eks-ci-role-policy .
 EOF
 ablation_result="$(run_step "${ablation}" 1 1 '-e')"
 case " $(field "${ablation_result}" 2) " in

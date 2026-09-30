@@ -66,7 +66,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.189.0"
+        KSAIL_VERSION: "7.192.9"
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-ksail.sh
@@ -279,6 +279,17 @@ runs:
       # complete consumer fan-out was staged before the mutable tag moved.
       shell: bash
       run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
+
+    - name: 🛡️ Reassert the root source verification
+      id: reassert_flux_root_verify
+      # The root source's cosign matcher is delivered through that same source,
+      # so a bad live value can never be replaced by a deploy (#3014). Repair it
+      # from this commit's declared value, through the FluxInstance flux-operator
+      # renders it from, after the new artifact is published so the source can
+      # verify and fetch it. A healthy cluster takes no write. Never skipped: a
+      # green deploy therefore always ran it, and the step summary says what it did.
+      shell: bash
+      run: ./scripts/reassert-flux-root-verify.sh
 
     - name: 🔁 Trigger Flux reconciliation
       id: reconcile

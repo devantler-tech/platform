@@ -1,0 +1,399 @@
+# Approved rendered authorization surface, one entry per selected document (platform#3182).
+#
+# Each entry is `<apiVersion>|<kind>|<namespace>|<name> <sha256>`, where the digest covers the
+# document's complete surface entry: its identity and its canonical rendered JSON. The validator
+# requires the rendered surface to equal this list exactly (same entries, same multiplicity), so an
+# added, removed, duplicated or changed document fails exactly as the old single aggregate did.
+#
+# To approve a change, apply the "-" and "+" lines the failing validator prints, keep the entries
+# sorted byte by byte with exactly one blank line between them, and put the evidence for each
+# moved entry in the pull request. The blank lines are what let two pull requests that approve
+# different documents, even neighbouring ones, merge without a conflict; the merge queue then
+# validates the combined render. Evidence for approvals made before this file existed is in
+# approved-surface-history.md.
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|actual-budget|actual-budget adc009b64f2a9da1427f0c9b80f6ea2490607a8b55ceb6e139f73de92399d5da
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|backstage|backstage 5ff19be19e3525e641b0a7a22e2a7047e1fbda16ef9ca7b4fa731ce3a61e686a
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|cert-manager 6e91f980ce0c37a8bfa4671319b170384cffd1781e4778d84f57710a97754ca1
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|origin-ca-issuer 2175d9359951ebca2b5de568d9f15d41ce93771f63bfc71a69f71b90f21d6f03
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|simply-dns-webhook 3a11b2e2963993a7a160c92c3933cc954925d85c66334aed294e2df761e772b4
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|trust-manager 6a835c24da86d1b76ae4c4da5f91e3defbe6218f4934811d4db7627a7fbef795
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|cloudnative-pg 46ab199a2eabe76e64ee7f020cc81fe9f3d94ffc3fe97dcbec0a1279f8a4b6d1
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|plugin-barman-cloud 74682cb45ae481b09a5094419372f311f12cb4b727601c269dd396191f19283d
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane 8faec319d400ced8ebc0341fa5496bcd9e578b02cd7b456b7d0beee9334c5d68
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|crossview|crossview 4e1e58c881413b308d488a91e732cdc7cb5fa43dfc8e92b51ab6ebb50e4d7a54
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex 6203b30876fa3f497f9bc0ecdfab7b7375188b76846edd4ea572cade52b07bb5
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns fa298f48bf949ef686f4203506d8219b3d139e75acab6cef31f5ff17943a89d5
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|external-secrets|external-secrets 8f35691cdbe76b4011798a5adba69e8fc77415acf56aa0187e460015d8608087
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|flagger-system|flagger 20a08560f34093f486a6407f8eb60861f136ce900add1297b61725925def83ea
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|flagger-system|flagger-loadtester d4d9e08b1b2348810221dc75df394bd7736578db0b2907321a0ad4926545d612
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|flux-system|flux-operator 5e9a57403fee7708ee3d15fc3287835f6a9e95330a1865be663976bf0b7a7397
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|headlamp|headlamp 100bb5c807a1c3872174bacba83f8ff27b549259b217e79c2937c0cf6d3d9d6d
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|homepage|homepage b39d4e86d3e1aa3d30bdd01c1324e8d5218a1337d184567b98329438cea056fe
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|keda|keda 667d9298b1ca426e4c3ea1b623ead7d0e3edca07ec1f00819881b19408a880dd
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|kro-system|kro 78750f70953cdfaf2d2758a5328021ad76b5a0bbcd3c4a14f4045fa5a82b6c78
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|ksail-operator|ksail-operator 5d624b379a44416a8058a8a8cf57588a2a642201878c5ccf4cda03ded9185480
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|cilium e56bb694c251d8f859edc76d005e3508e622ef2f3ba8d7e56ce722de9affbcf9
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|descheduler 40d41e62d48b7db3706d544a94b25a75e497d7f11ca6efec1376774c8085de13
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|hcloud-cloud-controller-manager 44695dc94a10137a0769581ead688fd7beef90503deb99146716635440ab5c6c
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|hcloud-csi 4e7c6e1940d1ebbe449cc1dbfde6c4b88d8d7d7bf2b20cc1649f9407ee8f7d93
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|metrics-server 85bf0a38ed8cbb3db7cd353ce4e1c867983ffcc7ef1016250ae19f6a0209f8f0
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|snapshot-controller cb09ae779db06a3817f8ed3fde65bba42fe0c2194acdc010c6d809a770882769
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 8cc1b89c7760cbd9f65a142774e1a31ea91f76a35014dbdd39b792da4a9e5ba4
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager 4ee4b8a2fc512253c45182114812f6b5ccf3b33492091169ac1f5a9bf5610e21
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 199c39221ecee136c20155aaa8e8cf1f93c1f870eb9e9f021b88560084f781cf
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 3a6ac464cd62f30e69068309e14d7d7409cd0ff395c4fbac735d514e0b8616a8
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn 3b00dfb0ee8e35df0eae516c3e6213cf0641438173b09ea4b8adc93a0d77153e
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|oauth2-proxy|oauth2-proxy d16150bb9a7d264f002fd3cb8d82d459a368d6428207e23fd0b8479e4194f60d
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|observability|audit-log-forwarder 49f6267c3f99814d688e1e77d0665ad2c142f07c6e5b6af3f424902393c4b311
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|observability|coroot-operator a6c5d6dfdec7648afce4f0c833eb2945ca35f97a00d8046d473d7fa0a6faded2
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-operator da38c30c19aea0c3e099bb86cda46d89ab6301ff5898b4fad8f020812f8ad800
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao c17dae50d7f4c73727cc21fa25aab6af110c35327dc1abb49329d75f3945ff2f
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter f92d67d39b5638fa931d19f4015ee490d6c98043e00a01319f4ef1a5fc64bc29
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|reloader|reloader 177bc2a47ba87335ce284b71f54a5430565f0df26a46f3ddf74a33f0a5ade937
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|umami|umami d9c53df5c36b9f1ae8664c38eb97f9d50a9ee6381c371b5074af1d9205fc970d
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|velero|velero 21f4717ff517de7a6da880ba580179b246c1baa7a62d2fcebdb5ad0a00e18c38
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|vertical-pod-autoscaler|vertical-pod-autoscaler f7fc1201beae0d8d4745dbba45c672d5eeb4c3949c5613b1aff7affa20579423
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|whoami|whoami daa7d5894e48ee981cc577597042cb89a089818efd700c41997d2b23034f2b7c
+
+iam.aws.m.upbound.io/v1beta1|Policy|aws|eks-ci-smoke-boundary d2066f1187d62c5b76ef5648194da3da995654d238e22c6c27e931bbb352a8e4
+
+iam.aws.m.upbound.io/v1beta1|Role|aws|eks-ci bcb863bac5f1cf5f3d482df7da16104bb79363ced42bb8ba6ae57c0e592a85f0
+
+kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 7b4d7416659c7d3b208d35089626438dd9ee16df784857a9c83322d20c23334a
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|ascoachingogvaner|ascoachingogvaner 66e4abc40b745483e006985894d5a66c3ad806effb9b532b02bc929a58b892f4
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|aws|aws 88fe1a404c036bfe73b4eda38a33ac31f4546573c9daaebebaae173c23844cba
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|apps 6ae44604b2e403bb15470af9afa767c20d46277d5446cf98226f8439af132c72
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|bootstrap 1eb5bf573d09b51326f13e513f1db266d7d7eba7b95eb7e60b32b37731318e3f
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 9bcbbc41e702c9d8f204747e927f856ade73b61ae45818abc8d84c9b99538967
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers e2c18185ed7c0082c075000dbcd7f9eb8354b7566823a6a32554fb1c3e00d937
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|github-config|github-config 72a37b4f3edda8d7f432f5d5afc456e8bfef0061eecab0cdac31e829a5ab5d31
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|unifi|unifi bcf9f876e3b42bc411bcdf17262887cb082fdaea80fb593f02fa59b91c5059b7
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|wedding-app|wedding-app 6044713ed6d6efbd7cb6380ad773423a345cf4cb692c2b1400c4e4b9da4c76a5
+
+kyverno.io/v1|ClusterPolicy||helm-release-enable-tests b901c17066f33c909b144581a8fc6303bb47ee923f13f2b8b0d18d4f7a9f2f46
+
+kyverno.io/v1|ClusterPolicy||helm-release-install-crds e4c29179bab5e1dfa761a7f77df91e8114c97f6f651055b06b310708f6c497f6
+
+kyverno.io/v1|ClusterPolicy||helm-release-remediation-retries 7b66f9deebbae96d866d80a780f251ab2a5fd8427337f4f215a6ca709af70d6b
+
+pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-aws-iam 48e8bcc2257a1affdbdf936c4b871becc6f0fdc02bb40e27665d265f00c465b3
+
+pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-family-aws 064adcc0f15a96fc4015b549214fd9edf1686f73b930a41ba1a5cd4b581d049d
+
+pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-upjet-github 7494260fa757d465dcee4e61028ad683fe1f108f82f65d4fe83439179668c3a5
+
+pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-upjet-unifi 29887f0decdc69b37f1263887b53d8fb85e244278d8362476f6a44b50c9c1a9d
+
+pkg.crossplane.io/v1|Provider||provider-aws-iam 7d9a3d15123702b07c8c2e5e270094784290336fc327ca784987a4515e927e00
+
+pkg.crossplane.io/v1|Provider||provider-upjet-github 4f11a8519c6713e95c23cefaa758af3a4a949436477a482b6684f838c1372555
+
+pkg.crossplane.io/v1|Provider||provider-upjet-unifi 6a57c47bd3aaf2c3ea3e0e8b7fa0b7e396272b257fa9bd6451cc544dab6675dd
+
+pkg.crossplane.io/v1|Provider||upbound-provider-family-aws c89a11cb1a5c88ebdb77a8c3c6e18ea8214bd5c9c898e184a8119abab07b8edb
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||ascoachingogvaner-external-dns 2aac6fc040557b155131fdc2ad9261f6ad2b337835915d7dcb50a3704e032478
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||cnpg-degraded-alert 51487655b693fe18c5d7196d0042e4bc8345a15b0ea3afe03216e69d37905940
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-sync-alerter 2ff039b4399f755bb15112771e2586ac05d68b113313824972720f4a6e156147
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-sync-exporter 89816b5cc430d16ae2fef6695022844c8658573eb5af90178ec8195c9601f1b1
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossview-cluster-reader bde9567eae5bc7a65684c0d641caf549802b897b5d8432b1ae9b47198ce519a3
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossview-view dbad690056de832fe5645d8de1c46f56f28ae2b6d445ab8c3b6eaa73dba9e0c9
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||headlamp-cluster-reader a28f0fa0f4acdf218d12ed885232b294a919d70eb869e415d712f9e5faf16f1c
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubelet-serving-cert-approver 8597dac440c89e95680106666300851328ac807fb9a0c58164b70b099c8c35b7
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubescape-hostdata-cleanup a54d4b680698a141195ec9c93b1b41f0e7d77614596eceb12083dafe8fca9328
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubescape-security-exceptions-reader 5477884d858618e5676bd4a8774014d2764031f4ac306954ac44ab10797499eb
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||longhorn-stale-node-cleanup 32a8c8df2b6fa88abf3dcf22f679009058edb8699a7ff84ae78712fd10b748e6
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||oidc-cluster-reader 34201cedeaffda9421ea61847cf168d050e501b5080477f9721f4779c37f3678
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||oidc-view f50a71214959c7ec60ed893a98512b78e1f56094def24bfd726d8f35fbd06919
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||posture-staleness-alert 1f2375a74fbe04a0b7fc079de84bdef31800d0066a9009336ee27a7a1e4134bb
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||prune-protected-orphan-alert b8da9b103a152ca3b93cd418e30cdfe0f022bc79fd274b26184661d37ba38567
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||stranded-autoscaler-node-alerter 9ef0e6485f7932a0a2b6280717c8cf252a38e5159a466d299068ec2e44018402
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||stranded-volume-attach-alert bc524f2fa40174671bba225581c6eb1104007fb5189fbc3f1fe4d2f1990c267a
+
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||vpa-updater-event-writer 8ef30122cf0855be6427ad4fda8272c0a7509678f2e538e193be4c25a7197a7f
+
+rbac.authorization.k8s.io/v1|ClusterRole||cert-manager-tenant-edit 7b6c10de4ae32f1d5e081040eae7d6834987c306ee68df85190e518c8e14f2da
+
+rbac.authorization.k8s.io/v1|ClusterRole||certificates:kubelet-serving-cert-approver 136fc62aa10600aa94d15d1f6bb3fb0a7732765460ba0c70b886bcc4a5db0c27
+
+rbac.authorization.k8s.io/v1|ClusterRole||cilium-tenant-edit c19d0d98692a1a6b918bc78646df10924b2050d10142be92fa65540977f5417f
+
+rbac.authorization.k8s.io/v1|ClusterRole||cluster-reader 20e4b8161fb84aacd02d314fe8da03fe2aa726d7f01e8ba927b3c24c0304eb2b
+
+rbac.authorization.k8s.io/v1|ClusterRole||cnpg-degraded-alert 42c958c00b28103b38a39a68780018e23dd665fcf53bfb7e409aafd956338482
+
+rbac.authorization.k8s.io/v1|ClusterRole||cnpg-tenant-edit 942ba69a066888eb7a82444a29f3917aa8c836c0bb800cee159e4e3bda4e3974
+
+rbac.authorization.k8s.io/v1|ClusterRole||crossplane-sync-alerter faf47ab2d737acd58c26bbf7aa3b46f23e5b22fc52aed6acd0fcf7f434fc431f
+
+rbac.authorization.k8s.io/v1|ClusterRole||crossplane-sync-exporter c5ac1bfb045dc79b4c507c79e9cb8529fe448d4a9554057b5e175634ab143c39
+
+rbac.authorization.k8s.io/v1|ClusterRole||events:kubelet-serving-cert-approver 89efaa35b7428e392e7562ac0500ad4352ea56a2b3f8228772c6edc2ef09f84f
+
+rbac.authorization.k8s.io/v1|ClusterRole||external-secrets-tenant-edit 0880321fd06f7e5b537b71469bd99185c64b0813c0c17632415a1ef6a5d3cbb6
+
+rbac.authorization.k8s.io/v1|ClusterRole||gateway-tenant-edit deb3a7675f72c5c79c121092b933ae775a4a30fc71278e6f843a1e3d4d35d98c
+
+rbac.authorization.k8s.io/v1|ClusterRole||kro-tenant-rgd 412caf635a5fc723cffab8c0c6f123164d808393cf4917b0df50d30ce363dbcc
+
+rbac.authorization.k8s.io/v1|ClusterRole||kubescape-hostdata-cleanup b047f9796da7c8c6d7fa9ae09d559c701219e6ce308c2cc1a5fe155649c52f6f
+
+rbac.authorization.k8s.io/v1|ClusterRole||kubescape-security-exceptions-reader 3d85c7c184381722aef7fa31b93af90827111aab2e26af2b3d6cc4adc56d19da
+
+rbac.authorization.k8s.io/v1|ClusterRole||longhorn-stale-node-cleanup dbe01ecf21a1b493056dcca2d29870eb4464db6a83dbe93fcb229d8053061af2
+
+rbac.authorization.k8s.io/v1|ClusterRole||posture-staleness-alert d0f17ccc32dde7f43179bb5b5274fe0195d0f0b5b64e9ab750c1192145932846
+
+rbac.authorization.k8s.io/v1|ClusterRole||prune-protected-orphan-alert 4df12f6f78d4be6d87c58bce02e9272156f78d1bb07e1c7855e9f5f6b741e71d
+
+rbac.authorization.k8s.io/v1|ClusterRole||stranded-autoscaler-node-alerter 707d8299b06b63336772cfc7e038f5b1208653ff343906c5800ca5e478dee996
+
+rbac.authorization.k8s.io/v1|ClusterRole||stranded-volume-attach-alert aada4635dbe3bdff437a2be0cf847261ab955f30670d955c6c56239dd74d7eea
+
+rbac.authorization.k8s.io/v1|ClusterRole||tenant-base-edit c71cd4cb9ecbdd2d75179970ad289b723cf3a8cf3a0ca4ffb3ae2320ebec572b
+
+rbac.authorization.k8s.io/v1|ClusterRole||tenant-edit df435321c9a1b43809a54fee74e16eca54520822eb0f0b9b5c4650e1e67aae32
+
+rbac.authorization.k8s.io/v1|ClusterRole||tenant-external-dns 3444b92f4b08e11aceec869a3293de45c301b3dd573b94c35dade53a66d30b0d
+
+rbac.authorization.k8s.io/v1|ClusterRole||tenant-external-dns-global 24084ed6f902f4d13382e23378fca9f5d99513aba3f7468b67ac82a3102386e9
+
+rbac.authorization.k8s.io/v1|ClusterRole||vpa-updater-event-writer 3879241a89e481edb6edef4a634d689ca6cbf648cf0f18ecaa74304e9542e52f
+
+rbac.authorization.k8s.io/v1|RoleBinding|ascoachingogvaner|ascoachingogvaner cb7ca7497e2f066851a9354b75f38962fea1e588598d96dde786f7043576a08d
+
+rbac.authorization.k8s.io/v1|RoleBinding|ascoachingogvaner|ascoachingogvaner-external-dns bd51e723eadb52df8b583fc8931be70ecade6863d8d2821ecad5f128c8bf6888
+
+rbac.authorization.k8s.io/v1|RoleBinding|aws|aws-managed-resources 876e05322100f78b490b870ba8733b26daa0f93b65b8fdd77d559e9de94588c1
+
+rbac.authorization.k8s.io/v1|RoleBinding|default|events:kubelet-serving-cert-approver 420a3e2f5bb524138bf1a7ee8f953d738a70d03c6f5567541ec03fd093a042f4
+
+rbac.authorization.k8s.io/v1|RoleBinding|github-config|github-config-managed-resources 149f5d805afc668821f5d25d1d5e9b05f5ef79d3e69929a8999faddb1078d417
+
+rbac.authorization.k8s.io/v1|RoleBinding|kube-system|ascoachingogvaner-external-dns 2eff515ebdab80cc259b97acf6d67ef92567d34e440455a70db54c5d34fe943d
+
+rbac.authorization.k8s.io/v1|RoleBinding|kubelet-serving-cert-approver|leader-election:kubelet-serving-cert-approver 201ab2011ebe2d40121e0d5c3dab5f0a07eb9683e83d02067e592b99f27aa6d8
+
+rbac.authorization.k8s.io/v1|RoleBinding|kubescape|cronjob-failure-alert 9ba3fcabb476d2388a1842de22e88d0973ec3f91fba944a2761e9f8d1bc182d6
+
+rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|kyverno:background-controller:mutate-csi-sidecars dd8caae38ace5ea6508922dd7339e02f16929aa18efa186f47337c03048625d9
+
+rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|kyverno:background-controller:mutate-longhorn-csi-plugin 44de07bfbc98b39e8a3fe56e39ad53c5b08d45eb5d1a10d9f4d5187af514cca7
+
+rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|kyverno:background-controller:mutate-longhorn-engine-image 637161df9b737dda2a009f1b564f1de4deb7be4be0b255d244bf9fe530ba8e51
+
+rbac.authorization.k8s.io/v1|RoleBinding|longhorn-system|longhorn-stale-node-cleanup ce45dfbeb6424059cfe43597e510f23fae3261da823fac750a2d2870d7ec67ab
+
+rbac.authorization.k8s.io/v1|RoleBinding|observability|cronjob-failure-alert 7a272a9eb6665aeab8e4630828da64b5549432ea01a537b0ccf5308a0059ddc1
+
+rbac.authorization.k8s.io/v1|RoleBinding|observability|prune-protected-orphan-alert 926689d400d2a8cee64373e78a23fe15c1b9abb792a32c4122a3b06273a024c0
+
+rbac.authorization.k8s.io/v1|RoleBinding|openbao|vault-config 73bf84c061f045e4bb57309ed8223a3934932262f69aa15baa749c55de07da96
+
+rbac.authorization.k8s.io/v1|RoleBinding|umami|cronjob-failure-alert c95ff2b4457c46397cd91acb105ad010f12cb6ec6ef4c3aad62410d158de9e33
+
+rbac.authorization.k8s.io/v1|RoleBinding|umami|kyverno:background-controller:mutate-umami-primary a6f3fb55bd604d18cd496ab6f30a6ca13b56ca5960bb89a7917ed4beb71b901d
+
+rbac.authorization.k8s.io/v1|RoleBinding|umami|umami-provision-tenants 71f15c759d66790554ea61594fc15278c929ce508d7dd0908fae977f5726ffb8
+
+rbac.authorization.k8s.io/v1|RoleBinding|unifi|unifi-managed-resources 687dcfcb7f55dca881bd90e422e44d5de0425c8f7b13df2ae77674289809f669
+
+rbac.authorization.k8s.io/v1|RoleBinding|velero|velero-maintenance-oom-alert b8776cd54a95c03ab6bc6c44903ac1fb908c55c95e2095b3aca37e8cc15a4035
+
+rbac.authorization.k8s.io/v1|RoleBinding|vertical-pod-autoscaler|vpa-leader-election ef85293ff74c0fa5f092bc19cce23eb92db440a5602f288531c6d98cee29afac
+
+rbac.authorization.k8s.io/v1|RoleBinding|wedding-app|wedding-app 8fb1f3e7ae50e8f3d35d14b5d707fee91001cab754f2c70fa5befbeba13fddd6
+
+rbac.authorization.k8s.io/v1|Role|aws|aws-managed-resources bcbd97adfa055719ff19364d7341e4952fcb0566f1c1ba16d073b6f1ae4108b0
+
+rbac.authorization.k8s.io/v1|Role|github-config|github-config-managed-resources acb7434cc52dd53923f047d301c10d0e85ebfe5bb8c3ef8de67de24817e3e6b0
+
+rbac.authorization.k8s.io/v1|Role|kubelet-serving-cert-approver|leader-election:kubelet-serving-cert-approver b73fcea5da2f0aad8552ff6a168372a6d47e9f4fb967c7df741ba89708240c73
+
+rbac.authorization.k8s.io/v1|Role|kubescape|cronjob-failure-alert 0af4e3cf510c76adfb56a232ee84b752f8cf873c403a742ebe631842bd15fc84
+
+rbac.authorization.k8s.io/v1|Role|longhorn-system|kyverno:background-controller:mutate-csi-sidecars de61ebdb8aba68dd660bc5b26a10d1a2bf10ab0fa1ef6f9ee6ea62fcdd0b223b
+
+rbac.authorization.k8s.io/v1|Role|longhorn-system|kyverno:background-controller:mutate-longhorn-csi-plugin 9e635e79563a874e390db6fabb175b613e02f0580df83bfa01d2e23263005f1d
+
+rbac.authorization.k8s.io/v1|Role|longhorn-system|kyverno:background-controller:mutate-longhorn-engine-image 7f608d46c536199ef293835c61d68573518420f18fa52a56553aef8cb0e96991
+
+rbac.authorization.k8s.io/v1|Role|longhorn-system|longhorn-stale-node-cleanup bb761c018fb1648ee65a6ffe72e770e3cdf125b40a8774f11369f303beb85d50
+
+rbac.authorization.k8s.io/v1|Role|observability|cronjob-failure-alert 3b244783f53c17c55abfbae0a09973d244d258dbfbfdc8aa816539ae02bf4e6c
+
+rbac.authorization.k8s.io/v1|Role|observability|prune-protected-orphan-alert 7a815989a665e8c9d5f6434e51f3dde0e6e9116e05f195f1e56ed34cd7b3b1c2
+
+rbac.authorization.k8s.io/v1|Role|openbao|vault-config f4a498f0733d0dc497233995191721730dc419e176321e4a43b499b5af536cfc
+
+rbac.authorization.k8s.io/v1|Role|umami|cronjob-failure-alert 013941d8ee4be81bb4238f14f2b8c2f3d49636519e220b9448958e1988d9111c
+
+rbac.authorization.k8s.io/v1|Role|umami|kyverno:background-controller:mutate-umami-primary 51e383126fabafae868295f537f3fae2f34c49faa26d932391bfae80f256bed9
+
+rbac.authorization.k8s.io/v1|Role|umami|umami-provision-tenants acd94d4b7b034d6feafb4a9a32a7f57b88421bb9e21f6304fb6f0b5ba3e96662
+
+rbac.authorization.k8s.io/v1|Role|unifi|unifi-managed-resources 437740d30cde427a100aaf0ae38667db1a2fefab4d3d4eb2cfc01fdeb56fcd6d
+
+rbac.authorization.k8s.io/v1|Role|velero|velero-maintenance-oom-alert 062076b82e1a6bb9af4b6f647f2d297cbe683e70792b05f1f34c1ed881a7981f
+
+rbac.authorization.k8s.io/v1|Role|vertical-pod-autoscaler|vpa-leader-election 5b0a336b0836708cfb00e2ab8f28d273f062a986fa4e583f9694114f930bedfa
+
+source.toolkit.fluxcd.io/v1|GitRepository|unifi|unifi 58cb863c65fbca54948d10a53dcb6dd98b28cfb5a5299dee40604b588e8852c0
+
+source.toolkit.fluxcd.io/v1|HelmRepository|actual-budget|actual-budget c77db6e8054359ae32168d3d10940f55c80cb482865df218fc866da00fdc165b
+
+source.toolkit.fluxcd.io/v1|HelmRepository|backstage|backstage d18c530f277fafe7d715efd4130640fc87e35cd0df73911dc4d72ab37b853c6a
+
+source.toolkit.fluxcd.io/v1|HelmRepository|cert-manager|cert-manager cd18284871c3da7ea497aa40db0f158c71504a0c3a41cae9e5927c3b97a1305b
+
+source.toolkit.fluxcd.io/v1|HelmRepository|cert-manager|origin-ca-issuer 6a189c65edc56d8cbe73703227b0e79fce47dd5b099e969e20f19e64d2301d40
+
+source.toolkit.fluxcd.io/v1|HelmRepository|cert-manager|simply-dns-webhook 3284e8d2cb2478e73ccbe1c8b293227fbc859938b9ebf797050f03a975810d64
+
+source.toolkit.fluxcd.io/v1|HelmRepository|cnpg-system|cloudnative-pg 2ca8952aaa7cb74110e7c6a4568406045bb00cd589ef16003025dc12eb791e61
+
+source.toolkit.fluxcd.io/v1|HelmRepository|crossplane-system|crossplane f47ce87b7611344b0d38ff450e6f789a60711bd657a2ff063253c5fcbd30e754
+
+source.toolkit.fluxcd.io/v1|HelmRepository|crossview|crossview 1eb08548cbf839307f56880f8ad2c1df8db9cc5c4743a8a5433fef9f27ccb6b3
+
+source.toolkit.fluxcd.io/v1|HelmRepository|dex|dex d251b34144fb4d376b47526e24b3520a1cc696159aa72f1a8c06fa67aadbda7f
+
+source.toolkit.fluxcd.io/v1|HelmRepository|external-dns|external-dns 81022de05d792a296ac5ce122fd92258c7cd7ac85ce62aa703aa12fdb0ac1326
+
+source.toolkit.fluxcd.io/v1|HelmRepository|external-secrets|external-secrets 1b37d24bf9b45fca6d06fa353858c4364e2e1fc5c526e066a4121a9c914c8386
+
+source.toolkit.fluxcd.io/v1|HelmRepository|flagger-system|flagger c486c0ac9521f94c378ab3b1b331a1c8b11b2e4852d5ba6c1829daec8e877fb9
+
+source.toolkit.fluxcd.io/v1|HelmRepository|flux-system|flux-operator 99f0d5000edd5d45b011ed96d6598f15b2f9e9f7e091f7b90a0340068a386aa5
+
+source.toolkit.fluxcd.io/v1|HelmRepository|headlamp|headlamp 2fb5eb66c735ba1560c74be0f5831119c4a58dabe877cf66e2d3cdf6344c189f
+
+source.toolkit.fluxcd.io/v1|HelmRepository|homepage|homepage e25c48737b2a31c672d8c299530858cf8bfa3e9a3b3157a204207d9806fc34fb
+
+source.toolkit.fluxcd.io/v1|HelmRepository|keda|keda 0ac84176333ac006ba8e534c1403ea7e7a8f5052860c87bb788eb55c3cfc331c
+
+source.toolkit.fluxcd.io/v1|HelmRepository|kro-system|kro b3ed8af79f9f1c020563aa8bd439a1144862155f24bd183da6a68b8c3d3b1ad0
+
+source.toolkit.fluxcd.io/v1|HelmRepository|ksail-operator|ksail-operator 9c09cb25e8a6f2ec27f4d59376a7a6bd35840a054f96b052a0ab0f577436523f
+
+source.toolkit.fluxcd.io/v1|HelmRepository|kube-system|cilium f35184ba46c66023f433529f9e87bc4513351856c822e5e5550356e313457552
+
+source.toolkit.fluxcd.io/v1|HelmRepository|kube-system|descheduler 1f900af9d94ebb6ff01e0f3e04cc69024cb379f9ee368c61a3c9b774fc6a1442
+
+source.toolkit.fluxcd.io/v1|HelmRepository|kube-system|hcloud 15284232c48241bb2530323817a10a1bf90d3ba08089489924404e3e30ae8a11
+
+source.toolkit.fluxcd.io/v1|HelmRepository|kube-system|metrics-server 123e87cb7ab1d37066fbe1c6fd9708e373815cc2dfe08fd2f5bfa04da246d4ca
+
+source.toolkit.fluxcd.io/v1|HelmRepository|kube-system|piraeus 359ddaa2683909fd184ad93b54b9466be9747cf0e12551b7a04149661e4a04de
+
+source.toolkit.fluxcd.io/v1|HelmRepository|kubescape|kubescape e1762938838a574ea03bba777a96fd8f8769027c41781dd600e34b861762d96b
+
+source.toolkit.fluxcd.io/v1|HelmRepository|kubescape|prometheus-community 1979ae7da2b82058069485830edeeea73a7eb6199f012673330f3bc08d030510
+
+source.toolkit.fluxcd.io/v1|HelmRepository|kyverno|kyverno c553f230e543e385410f783c317d744d6aa8ed191369f6ccd961ec6cc67b4c46
+
+source.toolkit.fluxcd.io/v1|HelmRepository|longhorn-system|longhorn ee0b8681bbe15a63cf4947dda3b36e36dc270d089386353908afb5cd81368a65
+
+source.toolkit.fluxcd.io/v1|HelmRepository|oauth2-proxy|oauth2-proxy efe578dc41c0a43e42deac0de85afc6956aae1dfeb03e557685e28949a6e835e
+
+source.toolkit.fluxcd.io/v1|HelmRepository|observability|coroot 1fd11d289f96dc54d0c2d0bb0bf3ae00d3f628948da13e35c7a9eb9412415979
+
+source.toolkit.fluxcd.io/v1|HelmRepository|observability|open-telemetry 60ecdd93c86bdef19d4c33e6a42006d9737b1d2c5d5863ee00257721f8739b6a
+
+source.toolkit.fluxcd.io/v1|HelmRepository|open-feature-operator-system|open-feature-operator 115a2f6679c69d046a1120ffb873238bbf0c16bd851a24c63c122d3c90b39ee3
+
+source.toolkit.fluxcd.io/v1|HelmRepository|openbao|openbao b508e5c41550708440235415a34dda33e6578ea389efaa3d5b50484b0c60ac00
+
+source.toolkit.fluxcd.io/v1|HelmRepository|policy-reporter|policy-reporter a533fe32e13738290e15c121b90470bc8ab66f127061ca6769a98fdd008b2b6c
+
+source.toolkit.fluxcd.io/v1|HelmRepository|reloader|reloader 183a019e79a4b5c7e2da1bb18119a892080bd25284ff8867794595551ce447a4
+
+source.toolkit.fluxcd.io/v1|HelmRepository|umami|umami ca5626705a569e5e728e26714300d39f07eb8c2e5a007a7b24eb08d20f54f786
+
+source.toolkit.fluxcd.io/v1|HelmRepository|velero|vmware-tanzu c4f7f1772afa82eebb5c8b823f41e9280d964e2b9008f070c753861a8bd0eae4
+
+source.toolkit.fluxcd.io/v1|HelmRepository|vertical-pod-autoscaler|vertical-pod-autoscaler 8a3838c20823f33a9ba171c6d8d889dbb6bac5fa68564ba78df4e4460156eb96
+
+source.toolkit.fluxcd.io/v1|HelmRepository|whoami|whoami 28dc88b5a5e69a086e4f7fb87be34d1b8a0cc20a13b21706aaf534a8e5d80cf8
+
+source.toolkit.fluxcd.io/v1|OCIRepository|ascoachingogvaner|ascoachingogvaner e7717c1d618e5d2dd1f3ab32d589ac06205d040e867f33db22ab9651bcb105bc
+
+source.toolkit.fluxcd.io/v1|OCIRepository|aws|aws f900dbd1860a7494381bb0fe0bd044ebedeaa1570bc9a230b7879e2b4d752163
+
+source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config 56d973136e535da94263547ab49101420a05e55f301e3f4c9c3f191354da7365
+
+source.toolkit.fluxcd.io/v1|OCIRepository|wedding-app|wedding-app fe21870783af3f34cdae7bb34af577609fa452a9ea01b1ba886137712c600ad7
+
+v1|ConfigMap|flux-system|variables-base 3ad340acc55739177ebb22a26bf2c20116c66a818a77793646c4fd54b4c3c8b1
+
+v1|ConfigMap|flux-system|variables-cluster e44f686f8632152eb22ee50f48dd608a69a8b2718ba420350808d12d78ddd755
+
+v1|Secret|flux-system|variables-cluster b53a3d75045944cb02a60934626a5820b448f5954828a721524bafcfbe7fff6a

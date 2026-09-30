@@ -231,6 +231,7 @@ setup_scenario() {
   printf '%s' "${leader_mode}" >"${dir}/leader-mode"
   printf '%s' "${cnpg_instance_mode}" >"${dir}/cnpg-instance-mode"
   printf '%s' 'known' >"${dir}/coroot-mode"
+  printf '%s' 'stale' >"${dir}/oauth2-mode"
   printf '%s' "${concurrency_limit}" >"${dir}/concurrency-limit"
   printf '0' >"${dir}/active-queries"
   printf '0' >"${dir}/peak-queries"
@@ -307,6 +308,28 @@ case "${url}" in
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"time=2026-09-19T16:24:05.370Z level=ERROR msg=\"failed to parse authorization request\" err=\"Invalid client_id (\\\"\\\").\" request_id=af4e2eb0-e04b-41cc-93f0-a5f8f808e2ef"}]}}'
       elif [ "$(cat "${dir}/dex-mode")" = "unknown" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"database connection refused"}]}}'
+      fi
+    elif [[ "$url" == *'%3Aoauth2-proxy%3ADeployment%3Aoauth2-proxy'* ]]; then
+      if [ "${severity}" = "fatal" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":null}}'
+      else
+        case "$(cat "${dir}/oauth2-mode")" in
+          stale)
+            printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"[2026/09/25 16:33:47] [error_page.go:91] Error proxying to upstream server: context canceled"}]}}'
+            ;;
+          fresh)
+            jq -cn '{data:{status:"ok",entries:[{severity:"error",message:((now | strftime("[%Y/%m/%d %H:%M:%S]")) + " [error_page.go:91] Error proxying to upstream server: context canceled")} ]}}'
+            ;;
+          malformed)
+            printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"[not-a-time] [error_page.go:91] Error proxying to upstream server: context canceled"}]}}'
+            ;;
+          mixed)
+            printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"[2026/09/25 16:33:47] [error_page.go:91] Error proxying to upstream server: context canceled"},{"severity":"error","message":"[2026/09/25 16:33:48] [error_page.go:91] Error proxying to upstream server: connection refused"}]}}'
+            ;;
+          excess)
+            jq -cn '{data:{status:"ok",entries:[range(0;11) | {severity:"error",message:"[2026/09/25 16:33:47] [error_page.go:91] Error proxying to upstream server: context canceled"}]}}'
+            ;;
+        esac
       fi
     elif [[ "$url" == *'%3A_%3AUnknown%3Ainit'* ]]; then
       if [ "${severity}" = "fatal" ]; then
@@ -632,6 +655,10 @@ case "${url}" in
     elif [[ "${url}" == *'%3Akube-system%3ADaemonSet%3Ahcloud-csi-node'* ]] &&
       [ "$(cat "${dir}/csi-node-mode")" != "known" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
+    elif [[ "${url}" == *'%3Aoauth2-proxy%3ADeployment%3Aoauth2-proxy'* ]] &&
+      [ "$(cat "${dir}/oauth2-mode")" != "stale" ] &&
+      [ "$(cat "${dir}/oauth2-mode")" != "excess" ]; then
+      printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
     else
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,null]}}'
     fi
@@ -700,6 +727,7 @@ jq -s -e '
   all(.[]; ((.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsServerErrors/config")) or (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsNxdomainErrors/config"))) | not) and
   any(.[]; (.url | contains("%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Adex%3ADeployment%3Adex/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
+  any(.[]; (.url | contains("%3Aoauth2-proxy%3ADeployment%3Aoauth2-proxy/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Ainit/inspection/LogErrors/config")) and .body.configs[2].threshold == 1000) and
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-apiserver/inspection/LogErrors/config")) and .body.configs[2].threshold == 100) and
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-controller-manager/inspection/LogErrors/config")) and .body.configs[2].threshold == 5000) and
@@ -721,6 +749,26 @@ jq -s -e '
 ' "${known_dir}/posts.ndjson" >/dev/null ||
   fail 'reviewed evidence did not produce the exact app-level policies'
 pass 'reviewed application-health signals receive narrow app-level policies'
+
+for oauth2_mode in fresh malformed mixed; do
+  oauth2_near_miss_dir="$(setup_scenario "oauth2-${oauth2_mode}" known null)"
+  printf '%s' "${oauth2_mode}" >"${oauth2_near_miss_dir}/oauth2-mode"
+  run_scenario "${oauth2_near_miss_dir}" >/dev/null
+  jq -s -e '
+    any(.[]; (.url | contains("%3Aoauth2-proxy%3ADeployment%3Aoauth2-proxy/inspection/LogErrors/config")) and .body.configs[2] == null)
+  ' "${oauth2_near_miss_dir}/posts.ndjson" >/dev/null ||
+    fail "oauth2-proxy ${oauth2_mode} cancellation evidence did not remain visible"
+done
+pass 'the oauth2-proxy stale-entry policy rejects fresh, malformed, and mixed errors'
+
+oauth2_excess_dir="$(setup_scenario oauth2-excess known null)"
+printf '%s' 'excess' >"${oauth2_excess_dir}/oauth2-mode"
+run_scenario "${oauth2_excess_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Aoauth2-proxy%3ADeployment%3Aoauth2-proxy/inspection/LogErrors/config")) and .body.configs[2].threshold == 10)
+' "${oauth2_excess_dir}/posts.ndjson" >/dev/null ||
+  fail 'stale oauth2-proxy cancellations did not retain the finite ten-event cap'
+pass 'excess stale oauth2-proxy cancellations still exceed the finite policy'
 
 unknown_dir="$(setup_scenario unknown unknown 1)"
 run_scenario "${unknown_dir}" >/dev/null
