@@ -183,6 +183,15 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
+      - name: ⚖️ Read Kyverno CLI version for chart admission
+        id: chart-kyverno-version
+        run: bash .github/scripts/kyverno-version.sh
+
+      - name: ⚖️ Install Kyverno CLI for chart admission
+        uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
+        with:
+          release: ${{ steps.chart-kyverno-version.outputs.release }}
+
       - name: 🔐 Validate isolated chart child namespaces
         # Manual recovery deploys may not bypass the rendered namespace proof
         # simply because the staged component is absent from the deploy overlay.
