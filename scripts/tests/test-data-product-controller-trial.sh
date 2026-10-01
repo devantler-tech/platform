@@ -20,7 +20,7 @@ yq ea -o=json '[.]' "${scratch}/apps.yaml" >"${scratch}/apps.json"
 yq ea -o=json '[.]' "${scratch}/controllers.yaml" >"${scratch}/controllers.json"
 
 jq -e '[.[] | select(.kind == "HelmRelease" and .metadata.namespace == "data-product-controller")
-  | (.spec.values.registryUI.enabled == true and .spec.values.demoProduct.enabled == true
+  | ((.spec.values | has("registryUI") | not) and .spec.values.demoProduct.enabled == true
      and .spec.values.uiContract.enabled == true
      and .spec.values.uiAppearance.enabled == true
      and .spec.values.demoProduct.publicBaseURL == "https://harbour-data.${domain}"
@@ -29,7 +29,7 @@ jq -e '[.[] | select(.kind == "HelmRelease" and .metadata.namespace == "data-pro
            .spec.values.dcatCatalog.enabled, .spec.values.connectorReadiness.enabled,
            .spec.values.contractReadiness.enabled, .spec.values.contractProbe.enabled]
           | all(. == false)))] == [true]' \
-	"${scratch}/apps.json" >/dev/null || fail "${provider}: the trial must enable only registry, sample and appearance contracts with the exact sample publication URL"
+	"${scratch}/apps.json" >/dev/null || fail "${provider}: the trial must omit the retired registry setting and enable only sample and appearance contracts with the exact sample publication URL"
 
 jq -e '[.[] | select(.kind == "HTTPRoute" and .spec.hostnames == ["data-products.${domain}"])] as $routes |
   ($routes | length) == 1 and

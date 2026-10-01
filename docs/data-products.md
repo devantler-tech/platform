@@ -12,8 +12,11 @@ The sample route removes cookies and authorization headers before forwarding.
 It contains synthetic observations and requires no data-source credentials.
 
 The release pins both the signed chart and controller image by immutable digest.
-Registry UI and the sample are enabled. Provisioning, engine providers, connectors,
-composition, contract probing, and the optional UI contract are disabled. The trial
+The registry workspace is standard behavior and the sample is enabled. Portable UI
+status, resize and appearance grants are active for the publisher-approved registry
+origin, so System, Light and Dark appearance can reach the sandboxed sample without
+resetting its query. Provisioning, engine providers, connectors, composition, DCAT
+publication and contract probing remain disabled. The trial
 has no database or persistent data volume. New capabilities and releases go through
 reviewed GitOps changes before activation.
 

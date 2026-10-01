@@ -687,17 +687,23 @@ image_digest="$(yq -r '.spec.values.image.digest' "${release}")"
 	printf 'FAIL: trial image must carry an immutable sha256 digest\n' >&2
 	exit 1
 }
-# appearance_contract_matches checks the complete rendered contract, gates,
-# publication endpoints, approved host and admission rule in its JSON file.
-appearance_contract_matches() {
+# trial_contract_matches checks the standard registry listener and complete
+# rendered presentation contract, publication endpoints, host and admission rule.
+trial_contract_matches() {
 	jq -e --arg image "ghcr.io/devantler-tech/data-product-controller@${image_digest}" \
 		--arg cel_rule "self.apiVersion != 'data-product-ui/v1' || !self.capabilities.exists(c, c == 'appearance')" '
       ([.[] | select(.kind == "Deployment") | .metadata.name] | sort) ==
         ["data-product-controller", "data-product-controller-harbour"] and
       [.[] | select(.kind == "Deployment") | .spec.template.spec.containers[0] |
         (.image == $image and
+         ([.env[]? | select(.name == "REGISTRY_UI_ENABLED")] == []) and
          ([.env[] | select(.name == "UI_CONTRACT_ENABLED") | .value] == ["true"]) and
          ([.env[] | select(.name == "UI_APPEARANCE_ENABLED") | .value] == ["true"]))] == [true,true] and
+      [.[] | select(.kind == "Service" and .metadata.name == "data-product-controller") |
+        (.spec.selector["app.kubernetes.io/component"] == "controller" and
+         [.spec.ports[] | select(.name == "http") | [.port,.targetPort]] == [[80,"registry"]])] == [true] and
+      [.[] | select(.kind == "Deployment" and .metadata.name == "data-product-controller") |
+        [.spec.template.spec.containers[0].ports[] | select(.name == "registry") | .containerPort]] == [[8082]] and
       [.[] | select(.kind == "Deployment" and .metadata.name == "data-product-controller-harbour") |
         .spec.template.spec.containers[0].env |
         ([.[] | select(.name == "PUBLIC_BASE_URL") | .value] == ["https://harbour-data.${domain}"] and
@@ -715,15 +721,25 @@ appearance_contract_matches() {
          ."x-kubernetes-validations" == [{message:"Appearance requires data-product-ui/v2",rule:$cel_rule}])] == [true]
     ' "$1" >/dev/null
 }
-appearance_contract_matches "${render_dir}/resources.json" || {
-	printf 'FAIL: rendered trial must enact both appearance gates, immutable images and the bounded approved-origin contract\n' >&2
+trial_contract_matches "${render_dir}/resources.json" || {
+	printf 'FAIL: rendered trial must serve the default registry and enact both appearance gates, immutable images and the bounded approved-origin contract\n' >&2
 	exit 1
 }
 
 # Negative controls operate on the actual signed chart children and prove that a
-# lost gate, publication mismatch, inappropriate host or disabled admission rule fails this assertion.
-for broken in gate publication origin admission; do
+# lost listener, retired flag, lost gate, publication mismatch, inappropriate host
+# or disabled admission rule fails this assertion.
+for broken in listener service retired-flag gate publication origin admission; do
 	case "${broken}" in
+	listener) jq 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller" then
+      (.spec.template.spec.containers[0].ports[] | select(.name == "registry") | .containerPort) = 8083
+      else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+	service) jq 'map(if .kind == "Service" and .metadata.name == "data-product-controller" then
+      (.spec.ports[] | select(.name == "http") | .targetPort) = "wrong-port"
+      else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+	retired-flag) jq 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller" then
+      .spec.template.spec.containers[0].env += [{name:"REGISTRY_UI_ENABLED",value:"false"}]
+      else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
 	admission) jq 'map(if .kind == "CustomResourceDefinition" and .metadata.name == "dataproducts.data.devantler.tech" then
       (.spec.versions[] | select(.name == "v1alpha1") |
        .schema.openAPIV3Schema.properties.spec.properties.ui.properties.contract."x-kubernetes-validations"[].rule) = "true"
@@ -738,8 +754,8 @@ for broken in gate publication origin admission; do
       .spec.ui.contract.hostOrigins = ["https://harbour-data.${domain}"] else . end)' \
 		"${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
 	esac
-	if appearance_contract_matches "${test_root}/appearance-${broken}.json"; then
-		printf 'FAIL: actual trial render accepted broken appearance %s\n' "${broken}" >&2
+	if trial_contract_matches "${test_root}/appearance-${broken}.json"; then
+		printf 'FAIL: actual trial render accepted broken workspace contract %s\n' "${broken}" >&2
 		exit 1
 	fi
 done
