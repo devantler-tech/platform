@@ -120,7 +120,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|github-config|github-config 72a37b4
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|unifi|unifi bcf9f876e3b42bc411bcdf17262887cb082fdaea80fb593f02fa59b91c5059b7
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|wedding-app|wedding-app 6044713ed6d6efbd7cb6380ad773423a345cf4cb692c2b1400c4e4b9da4c76a5
+kustomize.toolkit.fluxcd.io/v1|Kustomization|wedding-app|wedding-app 1b680e05b65c96f2f91d709e8dd838dea064b15a132fcab2520606c9467241fe
 
 kyverno.io/v1|ClusterPolicy||helm-release-enable-tests b901c17066f33c909b144581a8fc6303bb47ee923f13f2b8b0d18d4f7a9f2f46
 

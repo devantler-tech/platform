@@ -364,11 +364,12 @@ Choose the credential by bucket before editing it:
   `k8s/clusters/prod/bootstrap/secret-wedding-db-backup-r2.enc.yaml` and the
   `seed-wedding-db-backup-r2` PushSecret.
 
-They are independent identities, but the consumer boundary changes only after
-the cutover. During staging, Wedding remains a shared-token consumer alongside
-Umami and Coroot, so a `platform-backups` rotation must verify all three
-databases and Velero before revocation. Rotating the dedicated Wedding token
-does not affect those shared consumers.
+They are independent identities. Wedding archives through its dedicated token;
+Umami, Coroot, and Velero use the shared platform token. Wedding retains shared
+recovery access until a dedicated-only isolated restore and access-denial proof
+permit its retirement. Rotating the dedicated Wedding token does not affect the
+shared consumers. A shared-token rotation must preserve that recovery access
+as well as verify the active shared consumers before revocation.
 
 ```bash
 set -euo pipefail
@@ -434,24 +435,31 @@ gh run view "$run_id" --repo devantler-tech/platform --log |
   grep -F '"projectionEqual":true' |
   grep -F '"liveSourceStable":true'
 
-# 6. During the initial Wedding staging phase, the staged ObjectStore remains
-#    inactive. The verifier requires the live Cluster to keep using `wedding-db`
-#    and the shared catalog while `wedding-db-dedicated` points at the new bucket.
-#    Stop here: the controlled cutover first mirrors the existing base backups
-#    and WAL history, then changes the Cluster reference in a separate review.
-#    After the reference change it MUST run `Mirror Wedding Backup Catalogue`
-#    in `catch-up` mode with the recorded switch time, and is not complete until
-#    that pass reports CAUGHT UP (see velero-cnpg.md).
-#    Do not revoke the shared credential during staging.
+# 6. For wedding-db-backups, dispatch Verify Wedding Backup Cutover on main
+#    with confirm=verify-wedding-backup-cutover. Bind its run to the main SHA
+#    as above and require backupCompleted=true and clusterStable=true.
+#    Record the backup ID and endWal receipt, then inspect the dedicated
+#    catalogue for that completed backup and advancing WAL. A completed CNPG
+#    Backup alone is not proof that the bucket contains a usable catalogue.
+#
+#    During archive cutover, also run Mirror Wedding Backup Catalogue in
+#    catch-up mode with the recorded switch time and require CAUGHT UP.
+#    Require destinationNewestBaseBackup to equal the active server name
+#    followed by / and the fresh Backup receipt's backup ID. This excludes
+#    info-only and empty archives as well as backups from older servers.
+#    The shared catalogue must be quiescent, and the dedicated archive must
+#    continue from its last WAL segment without a gap (see velero-cnpg.md).
+#    Retain shared recovery access until the dedicated-only restore and
+#    denial gates complete; those gates do not retire other platform users.
+#    Do not revoke the shared credential as part of archive cutover.
 
-# For a platform-backups credential rotation, Wedding remains a shared-token
-# consumer alongside Umami and Coroot during staging. Observe a new successful
-# Velero backup plus new backups and WAL archives from all three databases
-# before revocation.
+# For a platform-backups credential rotation, observe a new successful Velero
+# backup plus new backups and WAL archives from Umami and Coroot, and verify
+# Wedding's retained shared recovery access before revocation.
 kubectl -n velero get backups.velero.io -w
 
 # 7. Revoke the old token only after the checks for its active bucket succeed.
-#    A queued workflow, an inactive staged store, an old backup, or a healthy
+#    A queued workflow, an old backup, or a healthy
 #    unrelated consumer is not sufficient evidence.
 ```
 

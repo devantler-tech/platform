@@ -32,7 +32,8 @@ for(const [label,change] of [
  ['stale digest',d=>d.apps.status.lastAppliedRevision='latest@sha256:'+ 'f'.repeat(64)],
  ['unverified source',d=>d.source.status.conditions.pop()],
  ['wrong mapping',d=>d.projection.spec.data[0].remoteRef.property='secret_access_key'],
- ['early active cutover',d=>{
+ ['shared archive regression',d=>d.cluster.spec.plugins[0].parameters.barmanObjectName='wedding-db'],
+ ['shared store overwritten',d=>{
    d.active.spec.configuration.destinationPath='s3://wedding-db-backups/cnpg/wedding-db';
    for(const credential of Object.values(d.active.spec.configuration.s3Credentials))credential.name='wedding-db-backup-r2-dedicated';
  }],

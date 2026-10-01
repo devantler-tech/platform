@@ -323,14 +323,18 @@ func EvaluateParity(runStart time.Time, before, after, destination []Object) (Su
 // CatchUpSummary is the non-secret evidence a successful catch-up reports.
 // Converged is true only when the dedicated store holds a segment archived after
 // the switch that continues the shared catalogue's WAL sequence without a gap.
+// DestinationNewestBaseBackup identifies a complete backup only within the
+// active server's directory, allowing a fresh Backup receipt to be checked
+// against actual catalogue objects rather than controller status alone.
 type CatchUpSummary struct {
-	ServerName         string `json:"serverName"`
-	SourceObjects      int    `json:"sourceObjects"`
-	MatchedObjects     int    `json:"matchedObjects"`
-	PostSwitchObjects  int    `json:"postSwitchObjects"`
-	Converged          bool   `json:"converged"`
-	SourceNewestWAL    string `json:"sourceNewestWal"`
-	FirstPostSwitchWAL string `json:"firstPostSwitchWal"`
+	DestinationNewestBaseBackup string `json:"destinationNewestBaseBackup"`
+	ServerName                  string `json:"serverName"`
+	SourceObjects               int    `json:"sourceObjects"`
+	MatchedObjects              int    `json:"matchedObjects"`
+	PostSwitchObjects           int    `json:"postSwitchObjects"`
+	Converged                   bool   `json:"converged"`
+	SourceNewestWAL             string `json:"sourceNewestWal"`
+	FirstPostSwitchWAL          string `json:"firstPostSwitchWal"`
 }
 
 // serverNamePattern accepts a Barman server directory name: one path segment.
@@ -438,6 +442,12 @@ func EvaluateCatchUp(switchTime time.Time, serverName string, before, after, des
 			serverSource[key] = object
 		}
 	}
+	serverDestination := make(map[string]Object, len(destinationIndex))
+	for key, object := range destinationIndex {
+		if strings.HasPrefix(key, serverPrefix) {
+			serverDestination[key] = object
+		}
+	}
 	if newestBaseBackup(serverSource) == "" {
 		return CatchUpSummary{}, fmt.Errorf("%w: no complete base backup under %s", ErrNoBaseBackup, serverName)
 	}
@@ -464,12 +474,13 @@ func EvaluateCatchUp(switchTime time.Time, serverName string, before, after, des
 		}
 	}
 	summary := CatchUpSummary{
-		ServerName:         serverName,
-		SourceObjects:      len(beforeIndex),
-		MatchedObjects:     matched,
-		PostSwitchObjects:  postSwitch,
-		SourceNewestWAL:    sourceWAL,
-		FirstPostSwitchWAL: first,
+		DestinationNewestBaseBackup: newestBaseBackup(serverDestination),
+		ServerName:                  serverName,
+		SourceObjects:               len(beforeIndex),
+		MatchedObjects:              matched,
+		PostSwitchObjects:           postSwitch,
+		SourceNewestWAL:             sourceWAL,
+		FirstPostSwitchWAL:          first,
 	}
 	if first == "" {
 		return summary, nil
