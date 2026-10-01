@@ -145,7 +145,33 @@ spec:
             optional: true
         - name: mc-config
           emptyDir: {}
+        - name: fetch-tools
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Mi
       initContainers:
+        # The minimal mc image needs static tools for snapshot-name selection.
+        - name: install-fetch-tools
+          image: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+          command: ["/bin/sh", "-ec", "cp /bin/busybox /tools/busybox; /tools/busybox --install -s /tools"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 10m
+              memory: 8Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+          volumeMounts:
+            - name: fetch-tools
+              mountPath: /tools
         # --- 0. Fetch newest snapshot from the off-cluster mirror (best-effort) ---
         # Pulls ONLY the newest raft snapshot from R2/MinIO into the shared
         # `snapshots` emptyDir so the vault-init container's DR auto-restore can
@@ -155,7 +181,7 @@ spec:
         # abort with its existing "no snapshot available" guidance -- so a missing
         # Secret or an R2 hiccup must NEVER fail this Job.
         - name: fetch-snapshot
-          image: quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952
+          image: quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -168,6 +194,8 @@ spec:
           env:
             - name: MC_CONFIG_DIR
               value: /tmp/.mc
+            - name: PATH
+              value: /tools:/usr/local/bin:/usr/bin:/bin
           resources:
             requests:
               cpu: 10m
@@ -184,8 +212,11 @@ spec:
               readOnly: true
             - name: mc-config
               mountPath: /tmp/.mc
+            - name: fetch-tools
+              mountPath: /tools
+              readOnly: true
           command:
-            - /bin/sh
+            - /tools/sh
             - -ec
             - |
               if [ ! -f /r2/access_key_id ]; then
