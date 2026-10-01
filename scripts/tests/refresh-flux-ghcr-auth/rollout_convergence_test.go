@@ -2859,3 +2859,120 @@ func TestFluxPolicyHandoffRefusesAReplacementChildFoundByTheContentionReRead(t *
 		t.Fatal("the replacement child was suspended")
 	}
 }
+
+// healthCheckStageMessage is the Reconciling and Healthy message
+// kustomize-controller writes, in one status patch, when a reconcile reaches its
+// health-check stage. Apply has finished by then.
+const (
+	fixtureFluxRevision     = "latest@sha256:fixture"
+	healthCheckStageMessage = "Running health checks for revision " + fixtureFluxRevision + " with a timeout of 20m0s"
+)
+
+// A Kustomization that keeps reconciling only because a workload it applied is
+// unhealthy has no apply in flight, so it must not hold the release path (#3100).
+func TestFluxChildWaitingOnHealthChecksDoesNotBlockPolicyHandoff(t *testing.T) {
+	t.Parallel()
+	cases := map[string]map[string]string{
+		"health check running": {
+			"FAKE_FLUX_POLICY_RECONCILING":         "true",
+			"FAKE_FLUX_POLICY_RECONCILING_REASON":  "Progressing",
+			"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": healthCheckStageMessage,
+			"FAKE_FLUX_POLICY_HEALTHY_STATUS":      "Unknown",
+			"FAKE_FLUX_POLICY_HEALTHY_REASON":      "Progressing",
+			"FAKE_FLUX_POLICY_HEALTHY_MESSAGE":     healthCheckStageMessage,
+		},
+		"retrying after a failed health check": {
+			"FAKE_FLUX_POLICY_RECONCILING":         "true",
+			"FAKE_FLUX_POLICY_RECONCILING_REASON":  "ProgressingWithRetry",
+			"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": healthCheckStageMessage,
+			"FAKE_FLUX_POLICY_HEALTHY_STATUS":      "False",
+			"FAKE_FLUX_POLICY_HEALTHY_REASON":      "HealthCheckFailed",
+			"FAKE_FLUX_POLICY_HEALTHY_MESSAGE":     "timeout waiting for: [Cluster/observability/coroot-db status: 'InProgress']",
+			"FAKE_FLUX_POLICY_CHILD_UNHEALTHY":     "timeout waiting for: [Cluster/observability/coroot-db status: 'InProgress']",
+		},
+	}
+	for name, env := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env["FAKE_FLUX_POLICY_LAST_ATTEMPTED_REVISION"] = fixtureFluxRevision
+			env["FAKE_LOG_FLUX_CONTROLLER_RESTART"] = "true"
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, env)
+			requireSuccessResult(t, result)
+			operations := readLines(f.operationLog)
+			pause := lineIndex(t, operations, "flux-policy-pause:infrastructure")
+			restart := lineIndex(t, operations, "flux-controller-restart:kustomize-controller")
+			policy := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
+			resume := lineIndex(t, operations, "flux-policy-resume:infrastructure")
+			// The controller is still replaced before any policy write, and the owner
+			// is released afterwards, so the narrowed gate strands nothing.
+			if pause >= restart || restart >= policy || policy >= resume {
+				t.Fatalf(
+					"unsafe handoff ordering: pause=%d restart=%d policy=%d resume=%d",
+					pause, restart, policy, resume,
+				)
+			}
+		})
+	}
+}
+
+// Every state that can still be applying, or that the gate cannot positively
+// place in the health-check stage, keeps the handoff refused.
+func TestFluxChildNotProvablyPastApplyBlocksPolicyHandoff(t *testing.T) {
+	t.Parallel()
+	healthCheckRunning := map[string]string{
+		"FAKE_FLUX_POLICY_HEALTHY_STATUS":  "Unknown",
+		"FAKE_FLUX_POLICY_HEALTHY_REASON":  "Progressing",
+		"FAKE_FLUX_POLICY_HEALTHY_MESSAGE": healthCheckStageMessage,
+	}
+	cases := map[string]map[string]string{
+		// A controller restarted mid-health-check leaves Healthy behind while the
+		// next attempt applies; the Reconciling message names the apply stage.
+		"applying with a stale Healthy condition": {
+			"FAKE_FLUX_POLICY_RECONCILING_REASON":  "Progressing",
+			"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": "Detecting drift for revision " + fixtureFluxRevision + " with a timeout of 20m0s",
+		},
+		"health-check message for another revision": {
+			"FAKE_FLUX_POLICY_RECONCILING_REASON":  "Progressing",
+			"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": "Running health checks for revision latest@sha256:older with a timeout of 20m0s",
+		},
+		"health-check stage without a Healthy condition": {
+			"FAKE_FLUX_POLICY_RECONCILING_REASON":  "Progressing",
+			"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": healthCheckStageMessage,
+			"FAKE_FLUX_POLICY_HEALTHY_STATUS":      "",
+		},
+		"retrying after a failed apply": {
+			"FAKE_FLUX_POLICY_RECONCILING_REASON":  "ProgressingWithRetry",
+			"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": "Detecting drift for revision " + fixtureFluxRevision + " with a timeout of 20m0s",
+			"FAKE_FLUX_POLICY_HEALTHY_STATUS":      "False",
+			"FAKE_FLUX_POLICY_HEALTHY_REASON":      "HealthCheckFailed",
+		},
+	}
+	for name, overrides := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env := map[string]string{
+				"FAKE_FLUX_POLICY_RECONCILING":             "true",
+				"FAKE_FLUX_POLICY_LAST_ATTEMPTED_REVISION": fixtureFluxRevision,
+			}
+			for key, value := range healthCheckRunning {
+				env[key] = value
+			}
+			for key, value := range overrides {
+				env[key] = value
+			}
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, env)
+			requireFailureResult(t, result)
+			requireContains(
+				t,
+				result.stdout+result.stderr,
+				"did not quiesce before the image-verification policy handoff",
+			)
+			operations := readLines(f.operationLog)
+			requireNoLine(t, operations, "flux-policy-pause:infrastructure")
+			requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
+			requireLine(t, operations, "flux-policy-parent-resume:flux-system")
+		})
+	}
+}
