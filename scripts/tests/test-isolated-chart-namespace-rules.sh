@@ -12,56 +12,60 @@ readonly prod_rules_path="${root_dir}/scripts/tests/production-authorization-rul
 readonly component_path="${root_dir}/k8s/bases/apps/data-product-controller"
 
 for tool in helm jq kubectl ksail yq; do
-  command -v "${tool}" >/dev/null || {
-    printf 'FAIL: %s is required\n' "${tool}" >&2
-    exit 1
-  }
+	command -v "${tool}" >/dev/null || {
+		printf 'FAIL: %s is required\n' "${tool}" >&2
+		exit 1
+	}
 done
 
 test_root="$(mktemp -d /tmp/isolated-chart-namespace-rules.XXXXXX)"
 readonly test_root
+# cleanup removes the temporary fixtures created by this invocation.
 cleanup() {
-  rm -rf "${test_root}"
+	rm -rf "${test_root}"
 }
 trap cleanup EXIT
 
+# run_fixture validates one authored fixture against the isolated-chart rules.
 run_fixture() {
-  local path="$1"
-  ksail --config "${root_dir}/ksail.prod.yaml" workload validate "${path}" \
-    --skip-helm-render \
-    --rules "${rules_path}" 2>&1
+	local path="$1"
+	ksail --config "${root_dir}/ksail.prod.yaml" workload validate "${path}" \
+		--skip-helm-render \
+		--rules "${rules_path}" 2>&1
 }
 
+# assert_accepted requires a namespace-local fixture to pass validation.
 assert_accepted() {
-  local name="$1"
-  local manifest="$2"
-  local path="${test_root}/${name}.yaml"
-  local output
-  printf '%s\n' "${manifest}" >"${path}"
-  if ! output="$(run_fixture "${path}")"; then
-    printf 'FAIL: namespace-local fixture %s was rejected\n' "${name}" >&2
-    printf '%s\n' "${output}" >&2
-    exit 1
-  fi
+	local name="$1"
+	local manifest="$2"
+	local path="${test_root}/${name}.yaml"
+	local output
+	printf '%s\n' "${manifest}" >"${path}"
+	if ! output="$(run_fixture "${path}")"; then
+		printf 'FAIL: namespace-local fixture %s was rejected\n' "${name}" >&2
+		printf '%s\n' "${output}" >&2
+		exit 1
+	fi
 }
 
+# assert_rejected requires the rendered-child namespace rule to reject a fixture.
 assert_rejected() {
-  local name="$1"
-  local manifest="$2"
-  local path="${test_root}/${name}.yaml"
-  local output
-  printf '%s\n' "${manifest}" >"${path}"
-  if output="$(run_fixture "${path}")"; then
-    printf 'FAIL: foreign-namespace fixture %s passed isolated-chart validation\n' "${name}" >&2
-    printf '%s\n' "${output}" >&2
-    exit 1
-  fi
-  if ! printf '%s\n' "${output}" | grep -qF \
-    'rule "restrict-data-product-controller-rendered-child-namespaces"'; then
-    printf 'FAIL: fixture %s was refused, but not by the rendered-child namespace rule\n' "${name}" >&2
-    printf '%s\n' "${output}" >&2
-    exit 1
-  fi
+	local name="$1"
+	local manifest="$2"
+	local path="${test_root}/${name}.yaml"
+	local output
+	printf '%s\n' "${manifest}" >"${path}"
+	if output="$(run_fixture "${path}")"; then
+		printf 'FAIL: foreign-namespace fixture %s passed isolated-chart validation\n' "${name}" >&2
+		printf '%s\n' "${output}" >&2
+		exit 1
+	fi
+	if ! printf '%s\n' "${output}" | grep -qF \
+		'rule "restrict-data-product-controller-rendered-child-namespaces"'; then
+		printf 'FAIL: fixture %s was refused, but not by the rendered-child namespace rule\n' "${name}" >&2
+		printf '%s\n' "${output}" >&2
+		exit 1
+	fi
 }
 
 assert_accepted 'namespace-local-deployment' 'apiVersion: apps/v1
@@ -488,7 +492,6 @@ spec:
                 value:
                   - name: ghcr-auth'
 
-
 # Negative control: INLINE values are the mechanism the reviewed chart actually
 # uses, and this render can see them, so the clause above must not refuse them.
 # Without this control a blanket refusal of value configuration would satisfy
@@ -611,33 +614,33 @@ source="${component_path}/oci-repository.yaml"
 url="$(yq -r '.spec.url' "${source}")"
 digest="$(yq -r '.spec.ref.digest' "${source}")"
 [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || {
-  printf 'FAIL: chart source must carry an immutable sha256 digest\n' >&2
-  exit 1
+	printf 'FAIL: chart source must carry an immutable sha256 digest\n' >&2
+	exit 1
 }
 render_dir="${test_root}/render"
 mkdir -p "${render_dir}"
 # This chart is public. Keep the check independent of host credential helpers.
 printf '{"auths":{}}\n' >"${test_root}/registry.json"
 helm pull "${url}@${digest}" --registry-config "${test_root}/registry.json" \
-  --destination "${render_dir}"
+	--destination "${render_dir}"
 charts=("${render_dir}"/*.tgz)
 [[ "${#charts[@]}" == 1 && -f "${charts[0]}" ]] || {
-  printf 'FAIL: immutable chart fetch must produce exactly one archive\n' >&2
-  exit 1
+	printf 'FAIL: immutable chart fetch must produce exactly one archive\n' >&2
+	exit 1
 }
 release_name="$(yq -r '.spec.releaseName // .metadata.name' "${release}")"
 yq -o=json '.spec.values' "${release}" >"${render_dir}/values.json"
 helm template "${release_name}" "${charts[0]}" --namespace data-product-controller \
-  --include-crds --values "${render_dir}/values.json" >"${render_dir}/resources.yaml"
+	--include-crds --values "${render_dir}/values.json" >"${render_dir}/resources.yaml"
 
 renderer_count="$(yq '.spec.postRenderers | length' "${release}")"
 for ((index = 0; index < renderer_count; index++)); do
-  yq -o=json ".spec.postRenderers[${index}].kustomize" "${release}" >"${render_dir}/renderer.json"
-  jq -n --slurpfile renderer "${render_dir}/renderer.json" \
-    '{apiVersion: "kustomize.config.k8s.io/v1beta1", kind: "Kustomization",
+	yq -o=json ".spec.postRenderers[${index}].kustomize" "${release}" >"${render_dir}/renderer.json"
+	jq -n --slurpfile renderer "${render_dir}/renderer.json" \
+		'{apiVersion: "kustomize.config.k8s.io/v1beta1", kind: "Kustomization",
       resources: ["resources.yaml"]} + $renderer[0]' >"${render_dir}/kustomization.yaml"
-  kubectl kustomize "${render_dir}" >"${render_dir}/next.yaml"
-  mv "${render_dir}/next.yaml" "${render_dir}/resources.yaml"
+	kubectl kustomize "${render_dir}" >"${render_dir}/next.yaml"
+	mv "${render_dir}/next.yaml" "${render_dir}/resources.yaml"
 done
 
 # Literal inventory prevents an empty render, CRD omission, or a lost workload
@@ -657,8 +660,8 @@ yq ea -o=json '[.]' "${render_dir}/resources.yaml" | jq -e '
     ["DataProduct", "harbour-observations"]
   ] | sort)
 ' >/dev/null || {
-  printf 'FAIL: pinned chart child inventory is incomplete or unreviewed\n' >&2
-  exit 1
+	printf 'FAIL: pinned chart child inventory is incomplete or unreviewed\n' >&2
+	exit 1
 }
 
 # Product endpoints remain outside the registry's SSO origin and use root paths
@@ -671,75 +674,141 @@ yq ea -o=json '[.]' "${render_dir}/resources.yaml" | jq -e '
     .spec.ui.url == "https://harbour-data.${domain}/ui"
   )] == [true]
 ' >/dev/null || {
-  printf 'FAIL: rendered sample descriptor must use independently served root endpoints\n' >&2
-  exit 1
+	printf 'FAIL: rendered sample descriptor must use independently served root endpoints\n' >&2
+	exit 1
 }
+
+# Both independent workloads must enact the bounded contract, rather than merely
+# accepting values that an older chart ignores. The sample owns its publication
+# URL; only the authenticated registry origin may supply cosmetic hints.
+yq ea -o=json '[.]' "${render_dir}/resources.yaml" >"${render_dir}/resources.json"
+image_digest="$(yq -r '.spec.values.image.digest' "${release}")"
+[[ "${image_digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+	printf 'FAIL: trial image must carry an immutable sha256 digest\n' >&2
+	exit 1
+}
+# appearance_contract_matches checks the complete rendered contract, gates,
+# publication endpoints, approved host and admission rule in its JSON file.
+appearance_contract_matches() {
+	jq -e --arg image "ghcr.io/devantler-tech/data-product-controller@${image_digest}" \
+		--arg cel_rule "self.apiVersion != 'data-product-ui/v1' || !self.capabilities.exists(c, c == 'appearance')" '
+      ([.[] | select(.kind == "Deployment") | .metadata.name] | sort) ==
+        ["data-product-controller", "data-product-controller-harbour"] and
+      [.[] | select(.kind == "Deployment") | .spec.template.spec.containers[0] |
+        (.image == $image and
+         ([.env[] | select(.name == "UI_CONTRACT_ENABLED") | .value] == ["true"]) and
+         ([.env[] | select(.name == "UI_APPEARANCE_ENABLED") | .value] == ["true"]))] == [true,true] and
+      [.[] | select(.kind == "Deployment" and .metadata.name == "data-product-controller-harbour") |
+        .spec.template.spec.containers[0].env |
+        ([.[] | select(.name == "PUBLIC_BASE_URL") | .value] == ["https://harbour-data.${domain}"] and
+         [.[] | select(.name == "UI_HOST_ORIGINS") | .value] == ["https://data-products.${domain}"])] == [true] and
+      [.[] | select(.kind == "DataProduct" and .metadata.name == "harbour-observations") |
+        .spec.ui.contract == {"apiVersion":"data-product-ui/v2",
+          "hostOrigins":["https://data-products.${domain}"],
+          "capabilities":["status","resize","appearance"]}] == [true] and
+      [.[] | select(.kind == "CustomResourceDefinition" and .metadata.name == "dataproducts.data.devantler.tech") |
+        .spec.versions[] | select(.name == "v1alpha1") |
+        .schema.openAPIV3Schema.properties.spec.properties.ui.properties.contract |
+        (.properties.apiVersion.enum == ["data-product-ui/v1","data-product-ui/v2"] and
+         .properties.capabilities.items.enum == ["status","resize","appearance"] and
+         .properties.capabilities.maxItems == 3 and
+         ."x-kubernetes-validations" == [{message:"Appearance requires data-product-ui/v2",rule:$cel_rule}])] == [true]
+    ' "$1" >/dev/null
+}
+appearance_contract_matches "${render_dir}/resources.json" || {
+	printf 'FAIL: rendered trial must enact both appearance gates, immutable images and the bounded approved-origin contract\n' >&2
+	exit 1
+}
+
+# Negative controls operate on the actual signed chart children and prove that a
+# lost gate, publication mismatch, inappropriate host or disabled admission rule fails this assertion.
+for broken in gate publication origin admission; do
+	case "${broken}" in
+	admission) jq 'map(if .kind == "CustomResourceDefinition" and .metadata.name == "dataproducts.data.devantler.tech" then
+      (.spec.versions[] | select(.name == "v1alpha1") |
+       .schema.openAPIV3Schema.properties.spec.properties.ui.properties.contract."x-kubernetes-validations"[].rule) = "true"
+      else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+	gate) jq 'map(if .kind == "Deployment" then
+      (.spec.template.spec.containers[0].env[] | select(.name == "UI_APPEARANCE_ENABLED") | .value) = "false"
+      else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+	publication) jq 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller-harbour" then
+      (.spec.template.spec.containers[0].env[] | select(.name == "PUBLIC_BASE_URL") | .value) = "https://data-products.${domain}"
+      else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+	origin) jq 'map(if .kind == "DataProduct" then
+      .spec.ui.contract.hostOrigins = ["https://harbour-data.${domain}"] else . end)' \
+		"${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+	esac
+	if appearance_contract_matches "${test_root}/appearance-${broken}.json"; then
+		printf 'FAIL: actual trial render accepted broken appearance %s\n' "${broken}" >&2
+		exit 1
+	fi
+done
 
 # Evaluate the actual Deployment children with the policy that admits them in
 # production. Pod-level security defaults alone do not satisfy its container
 # pattern, so namespace containment and Kubernetes schema checks are insufficient.
 if ! kyverno apply \
-  "${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/validate-pod-security.yaml" \
-  --resource "${render_dir}/resources.yaml" --detailed-results \
-  >"${test_root}/pod-security.log" 2>&1; then
-  cat "${test_root}/pod-security.log" >&2
-  printf 'FAIL: actual chart workloads violate production pod security\n' >&2
-  exit 1
+	"${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/validate-pod-security.yaml" \
+	--resource "${render_dir}/resources.yaml" --detailed-results \
+	>"${test_root}/pod-security.log" 2>&1; then
+	cat "${test_root}/pod-security.log" >&2
+	printf 'FAIL: actual chart workloads violate production pod security\n' >&2
+	exit 1
 fi
 # This exact summary format is a contract with the shared pinned Kyverno CLI
 # from .github/scripts/kyverno-version.sh. Review the assertion when upgrading
 # that CLI; unknown formats must not silently count unevaluated rules as green.
 grep -qF 'pass: 6, fail: 0, warn: 0, error: 0, skip: 0' "${test_root}/pod-security.log" || {
-  cat "${test_root}/pod-security.log" >&2
-  printf 'FAIL: all three pod-security rules must evaluate both actual Deployments\n' >&2
-  exit 1
+	cat "${test_root}/pod-security.log" >&2
+	printf 'FAIL: all three pod-security rules must evaluate both actual Deployments\n' >&2
+	exit 1
 }
 
 # Removing the container assertion from a real rendered child must fail the
 # named admission rule, even though its Pod still declares runAsNonRoot=true.
 yq 'select(.kind == "Deployment" and .metadata.name == "data-product-controller") |
   del(.spec.template.spec.containers[0].securityContext.runAsNonRoot)' \
-  "${render_dir}/resources.yaml" >"${test_root}/pod-only-security.yaml"
+	"${render_dir}/resources.yaml" >"${test_root}/pod-only-security.yaml"
 if kyverno apply \
-  "${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/validate-pod-security.yaml" \
-  --resource "${test_root}/pod-only-security.yaml" --detailed-results \
-  >"${test_root}/pod-only-security.log" 2>&1; then
-  printf 'FAIL: a real chart workload lost its required container security assertion\n' >&2
-  exit 1
+	"${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/validate-pod-security.yaml" \
+	--resource "${test_root}/pod-only-security.yaml" --detailed-results \
+	>"${test_root}/pod-only-security.log" 2>&1; then
+	printf 'FAIL: a real chart workload lost its required container security assertion\n' >&2
+	exit 1
 fi
 grep -qF 'autogen-validate-container-security failed at path /spec/template/spec/containers/0/securityContext/runAsNonRoot/' \
-  "${test_root}/pod-only-security.log" || {
-  cat "${test_root}/pod-only-security.log" >&2
-  printf 'FAIL: container security rejection did not identify the production admission rule\n' >&2
-  exit 1
+	"${test_root}/pod-only-security.log" || {
+	cat "${test_root}/pod-only-security.log" >&2
+	printf 'FAIL: container security rejection did not identify the production admission rule\n' >&2
+	exit 1
 }
 
 # Check both the authored component and the final chart children, including
 # CRDs and patches, against the same two suites used by production CI.
 kubectl kustomize "${component_path}" >"${test_root}/authored.yaml"
 for path in "${test_root}/authored.yaml" "${render_dir}/resources.yaml"; do
-  for suite in "${rules_path}" "${prod_rules_path}"; do
-    if ! output="$(ksail --config "${root_dir}/ksail.prod.yaml" workload validate "${path}" \
-      --skip-helm-render --rules "${suite}" 2>&1)"; then
-      printf 'FAIL: %s failed %s\n%s\n' "${path}" "${suite}" "${output}" >&2
-      exit 1
-    fi
-  done
+	for suite in "${rules_path}" "${prod_rules_path}"; do
+		if ! output="$(ksail --config "${root_dir}/ksail.prod.yaml" workload validate "${path}" \
+			--skip-helm-render --rules "${suite}" 2>&1)"; then
+			printf 'FAIL: %s failed %s\n%s\n' "${path}" "${suite}" "${output}" >&2
+			exit 1
+		fi
+	done
 done
 
 # Mutate an actual post-rendered child, not a handwritten fixture. The same
 # namespace rule must refuse it by name, then accept the unchanged render.
 yq 'select(.kind == "Deployment" and .metadata.name == "data-product-controller") |
   .metadata.namespace = "foreign-namespace"' "${render_dir}/resources.yaml" \
-  >"${test_root}/foreign-rendered-child.yaml"
+	>"${test_root}/foreign-rendered-child.yaml"
 if output="$(run_fixture "${test_root}/foreign-rendered-child.yaml")"; then
-  printf 'FAIL: an actual rendered child escaped its namespace\n%s\n' "${output}" >&2
-  exit 1
+	printf 'FAIL: an actual rendered child escaped its namespace\n%s\n' "${output}" >&2
+	exit 1
 fi
 printf '%s\n' "${output}" | grep -qF \
-  'rule "restrict-data-product-controller-rendered-child-namespaces"' || {
-  printf 'FAIL: actual child rejection did not identify the namespace rule\n%s\n' "${output}" >&2
-  exit 1
+	'rule "restrict-data-product-controller-rendered-child-namespaces"' || {
+	printf 'FAIL: actual child rejection did not identify the namespace rule\n%s\n' "${output}" >&2
+	exit 1
 }
 run_fixture "${render_dir}/resources.yaml" >"${test_root}/restored.log"
 printf 'PASS: immutable chart inventory and Flux patches pass both suites; actual foreign child is rejected by the namespace rule\n'
