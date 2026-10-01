@@ -137,8 +137,12 @@ func TestInitialParentReclaimRefusesDeniedPatchForeignOwnerAndLostLease(t *testi
 			requireNoLine(t, operations, "flux-policy-pause:infrastructure")
 			requireNoLine(t, operations, "root-patch")
 			requireNoLine(t, operations, "variables-patch")
-			if rejected := lineIndexes(operations, "flux-parent-reclaim-rejected"); len(rejected) > 1 {
-				t.Fatalf("non-contention rejection retried %d times", len(rejected))
+			wantRejections := 1
+			if scenario == "lease-stolen" {
+				wantRejections = 0
+			}
+			if rejected := lineIndexes(operations, "flux-parent-reclaim-rejected"); len(rejected) != wantRejections {
+				t.Fatalf("reclaim rejections = %d, want %d for %s", len(rejected), wantRejections, scenario)
 			}
 		})
 	}

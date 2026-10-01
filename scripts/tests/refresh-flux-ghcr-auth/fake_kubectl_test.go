@@ -584,25 +584,26 @@ func fakeFluxPolicyParentObject() map[string]any {
 			appendEnvFile("OPERATION_LOG", "flux-policy-parent-stable:flux-system\n")
 		}
 	}
-	object := map[string]any{
-		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
-		"kind":       "Kustomization",
-		"metadata":   metadata,
-		"spec": map[string]any{
-			"suspend": suspended || os.Getenv("FAKE_FLUX_POLICY_PARENT_SUSPENDED_UNOWNED") == "true",
-		},
-		"status": map[string]any{
-			"observedGeneration": 1,
-			"conditions":         conditions,
-		},
+	spec := map[string]any{
+		"suspend": suspended || os.Getenv("FAKE_FLUX_POLICY_PARENT_SUSPENDED_UNOWNED") == "true",
+	}
+	status := map[string]any{
+		"observedGeneration": 1,
+		"conditions":         conditions,
 	}
 	switch markerContent("flux-parent-snapshot-malformation") {
 	case "malformed-conditions":
-		object["status"].(map[string]any)["conditions"] = map[string]any{"Ready": "True"}
+		status["conditions"] = map[string]any{"Ready": "True"}
 	case "malformed-suspension":
-		object["spec"].(map[string]any)["suspend"] = "true"
+		spec["suspend"] = "true"
 	}
-	return object
+	return map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata":   metadata,
+		"spec":       spec,
+		"status":     status,
+	}
 }
 
 func fakeKubectlGetFluxPolicyFences(args []string, namespace string) int {

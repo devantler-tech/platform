@@ -5630,8 +5630,10 @@ pause_flux_policy_parent() {
         assert_sync_lease_held || return 1
         reclaims=$((reclaims + 1))
         echo "::warning::Observed the original parent Flux object in its released state; reacquiring its policy handoff (${reclaims}/${max_attempts}) within the remaining observation budget."
-        # A lost API response may have applied the patch. Preserve cleanup
-        # intent; it still requires the original UID/owner/suspend CAS tuple.
+        # A lost reclaim response may have applied the patch, so cleanup stays
+        # armed. resume_flux_policy_parent uses the original UID/owner/suspend
+        # CAS tuple; if the patch did not apply, it adopts only the exact
+        # released state after its guarded release fails.
         flux_policy_parent_acquired=true
         if claim_flux_policy_parent_once; then
           failed_claim_resource_version=""
