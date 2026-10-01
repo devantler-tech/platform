@@ -1274,6 +1274,28 @@ data:
         "reason": "Infrastructure controllers and platform middleware need Kubernetes API access via SA tokens. This includes GitOps controllers, policy engines, certificate managers, autoscalers, monitoring, cluster dashboards (headlamp), service discovery (homepage), device management (fleetdm), identity providers (dex), auth proxies (oauth2-proxy), and config watchers (reloader). The platform uses RBAC to restrict what each SA can do."
       },
       {
+        "name": "umami-db-rotation-service-account-token",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "disable"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^CronJob$",
+              "name": "^umami-db-rotation$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0034$"
+          }
+        ],
+        "reason": "The Umami database-login rotation CronJob needs its service-account token to authenticate to OpenBao's Kubernetes auth method. Its OpenBao role permits only reading the two login colours' rotation metadata and rotating them, and the ServiceAccount holds no Kubernetes RBAC."
+      },
+      {
         "name": "umami-provisioning-service-account-token",
         "policyType": "postureExceptionPolicy",
         "actions": [
