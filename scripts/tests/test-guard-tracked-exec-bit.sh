@@ -325,6 +325,8 @@ timeout 10 bash ./scripts/fixture-target.sh
 timeout 10 shellcheck ./scripts/fixture-target.sh
 sudo -u root bash scripts/fixture-target.sh
 nice -n 5 printf ./scripts/fixture-target.sh
+flock ./scripts/fixture-target.sh true
+sudo -u ./scripts/fixture-target.sh true
 EOF
 
 # A BARE `-` IS THE YAML SEQUENCE MARKER, NOT A COMMAND: an UNQUOTED paths-filter

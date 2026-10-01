@@ -383,6 +383,9 @@ while IFS= read -r occurrence; do
     esac
   done
   ((reaches_path == 1)) || continue
+  # A path still owed to the wrapper is its operand, not its command:
+  # `flock scripts/x.sh cmd` uses the file as a lock and never execs it.
+  ((skip_value == 0 && positionals == 0)) || continue
 
   relative="$(printf '%s' "$occurrence" | grep -oE "${RELATIVE_PATH_RE}\$" || true)"
   if [[ -n "$relative" && ! "$relative" =~ ^\./(scripts|\.github)/ ]]; then
