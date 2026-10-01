@@ -115,13 +115,12 @@ spec:
   # password at once, so a single rotated login left old pods failing with
   # 28P01 until the rollout replaced them (~80s every week). The app logs in as
   # `umami_blue` or `umami_green` — whichever OpenBao rotated most recently
-  # (external-secret-db-rotated.yaml) — and the weekly umami-db-rotation
+  # (external-secret-db-active.yaml) — and the weekly umami-db-rotation
   # CronJob only rotates the OTHER, idle colour, so old pods keep a valid
   # password until they are replaced. Both are members of `umami`, and
   # OpenBao's rotation statement sets `SET role = 'umami'` on them, so
   # objects stay owned by `umami`. Each colour is enforced from its own
-  # OpenBao-synced Secret, exactly like `umami`, whose Secret is now
-  # umami-db-owner because umami-db-rotated carries the active colour.
+  # OpenBao-synced Secret, exactly like `umami`, which keeps umami-db-rotated.
   # The colours were created without a passwordSecret first (#4324): CNPG
   # refuses to CREATE a managed role whose passwordSecret does not exist yet.
   # `umami` keeps LOGIN and its rotating password until the cut-over is
@@ -132,7 +131,7 @@ spec:
         ensure: present
         login: true
         passwordSecret:
-          name: umami-db-owner
+          name: umami-db-rotated
       - name: umami_blue
         ensure: present
         login: true

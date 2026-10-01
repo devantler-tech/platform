@@ -30,22 +30,25 @@ spec:
               kind: Deployment
               name: umami-umami
             patch: |
-              # OpenBao rotates the umami DB password out of band (7-day static
-              # role), refreshed into the umami-db-rotated Secret. The app reads it
-              # into DATABASE_URL at startup, so a running pod keeps a stale
-              # password after a rotation and crashes with Prisma P1000 until
-              # restarted. Stakater Reloader restarts a workload when a Secret it
-              # is annotated for changes. The live workload is the Flagger primary
-              # (umami-umami-primary); Flagger does NOT carry this annotation onto
-              # the primary (it freezes/filters primary metadata at creation —
-              # fluxcd/flagger#1032), so the propagate-reloader-to-flagger-primary
-              # ClusterPolicy copies it across. The annotation here also keeps the
-              # canary source itself reloadable.
+              # OpenBao rotates the umami DB logins out of band (the weekly
+              # blue/green umami-db-rotation CronJob, #4107), and the active
+              # colour is projected into the umami-db-active Secret. The app reads
+              # it into DATABASE_URL at startup, so a running pod keeps its colour
+              # until restarted. Stakater Reloader restarts a workload when a
+              # Secret it is annotated for changes. The live workload is the
+              # Flagger primary (umami-umami-primary); Flagger does NOT carry this
+              # annotation onto the primary (it freezes/filters primary metadata
+              # at creation — fluxcd/flagger#1032), so the
+              # propagate-reloader-to-flagger-primary ClusterPolicy copies it
+              # across. The annotation here also keeps the canary source itself
+              # reloadable. Until the canary promotes, the copied annotation sits
+              # on a primary whose old spec still reads umami-db-rotated, so any
+              # reload it triggers restarts that primary with valid credentials.
               - op: add
                 path: /metadata/annotations/secret.reloader.stakater.com~1reload
-                value: umami-db-rotated
+                value: umami-db-active
               # The DB login alternates between `umami_blue` and `umami_green`
-              # (#4107), so the username must come from the umami-db-rotated
+              # (#4107), so the username must come from the umami-db-active
               # Secret, not a fixed value. The chart builds
               #   DATABASE_URL=postgresql://<database.external.username>:$(DATABASE_PASSWORD)@…
               # and Kubernetes only expands $(VAR) references to variables
@@ -59,7 +62,7 @@ spec:
                   name: DATABASE_USERNAME
                   valueFrom:
                     secretKeyRef:
-                      name: umami-db-rotated
+                      name: umami-db-active
                       key: username
               # Flagger copies the source Deployment strategy to the serving
               # primary. Retire one old pod before scheduling its replacement
@@ -154,10 +157,10 @@ spec:
       enabled: false
     database:
       # External-PostgreSQL path pointed at the CloudNativePG cluster in
-      # postgres-cluster.yaml. The password is OWNED AND ROTATED by OpenBao's
-      # Database secrets engine (7-day static role — see vault-config), surfaced
-      # by external-secret-db-rotated.yaml as the `umami-db-rotated` Secret
-      # (not CNPG's static umami-db-app). Mirrors the fleetdm MySQL rotation.
+      # postgres-cluster.yaml. The login is OWNED AND ROTATED by OpenBao's
+      # Database secrets engine (blue/green static roles — see vault-config and
+      # the umami-db-rotation CronJob), surfaced by external-secret-db-active.yaml
+      # as the `umami-db-active` Secret (not CNPG's static umami-db-app).
       external:
         host: umami-db-rw.umami.svc.cluster.local
         port: "5432"
@@ -165,7 +168,7 @@ spec:
         # Expanded by Kubernetes from the DATABASE_USERNAME env var the
         # postRenderer above inserts (the active blue/green colour, #4107).
         username: $(DATABASE_USERNAME)
-        existingSecret: umami-db-rotated  # checkov:skip=CKV_SECRET_6:names an existing Secret; the value lives in OpenBao
+        existingSecret: umami-db-active  # checkov:skip=CKV_SECRET_6:names an existing Secret; the value lives in OpenBao
         existingSecretPasswordKey: password
     service:
       # Service port 80 -> container port 3000 (named `http`).
