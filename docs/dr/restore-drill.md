@@ -1,5 +1,40 @@
 # DR restore drill
 
+## Dedicated Wedding credential bootstrap proof
+
+Dispatch **Verify Wedding Backup Bootstrap** from `main` with
+`confirm=verify-wedding-backup-bootstrap`. This manual workflow uses the protected
+production environment and deployment lock. It creates no cluster, cloud resource
+or persistent storage. It reads no production backup Secret or application data.
+
+The proof starts an empty, non-dev OpenBao server and an ephemeral MinIO server
+in a restricted namespace. It generates new credentials in memory, initializes
+OpenBao, installs a token policy limited to the dedicated fixture path, and revokes
+the initialization root token. It adapts the repository's dedicated PushSecret and
+ExternalSecret to a namespaced fixture SecretStore and a five-second refresh.
+The production mappings and one-hour refresh are validated before adaptation.
+The existing External Secrets controller seeds the empty KV and projects the
+credentials. A temporary network policy permits that controller to reach only
+this run's OpenBao endpoint and is owned by the fixture namespace.
+
+The program deletes only the fixture KV metadata and the controller-owned projected
+Secret, using a Kubernetes UID precondition. It requires a new projected Secret UID,
+an advanced PushSecret refresh time and the unchanged bootstrap source UID, without
+forcing synchronization. A probe mounts only the projected Secret and writes and
+reads a unique sentinel at the dedicated ObjectStore's bucket and prefix in MinIO.
+
+Success requires `emptyOpenBaoSeedVerified`, `periodicReseedVerified`,
+`projectedCredentialStorageVerified` and `cleanupVerified`, bound to the source SHA.
+Both the program and a separate `always()` step remove the owned controller policy
+and namespace; cleanup failure fails the proof. Never force-delete a stuck fixture
+or reuse its run ID. Inspect finalizers and dispatch a fresh run after resolving it.
+
+This proves credential delivery and repair against empty storage. The fixture
+adapts the endpoint, token authentication, namespace and refresh period; it does
+not prove production Kubernetes authentication, a full platform rebuild, Cloudflare
+permissions, or a CNPG backup and restore against MinIO. Those remain separate
+bootstrap and archive-retirement acceptance gates.
+
 ## Dedicated Wedding database proof
 
 Dispatch **Verify Wedding Dedicated Restore** from `main` with
