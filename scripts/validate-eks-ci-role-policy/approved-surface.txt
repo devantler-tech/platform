@@ -274,7 +274,7 @@ rbac.authorization.k8s.io/v1|RoleBinding|vertical-pod-autoscaler|vpa-leader-elec
 
 rbac.authorization.k8s.io/v1|RoleBinding|wedding-app|wedding-app 8fb1f3e7ae50e8f3d35d14b5d707fee91001cab754f2c70fa5befbeba13fddd6
 
-rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin 416a37d35371d99c131e351e7eead23fb262fe6aa8fbf35699bda6b1b5ae3da1
+rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin 593fd95bd84af8840c71270227cabdf8137cba9c58d844b5ca2db3406d4632a2
 
 rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin-zone-trial-operator b14714377d4a5317c7d829bc1b378ecea44ed82f2b1fff32d4c923f9ee4809d6
 

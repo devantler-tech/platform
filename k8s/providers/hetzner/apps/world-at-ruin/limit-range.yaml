@@ -3,6 +3,8 @@ kind: LimitRange
 metadata:
   name: zone-trial
   namespace: world-at-ruin
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   limits:
     - type: Container

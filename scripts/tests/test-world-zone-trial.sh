@@ -40,6 +40,22 @@ check_budget() {
   ' "$1" >/dev/null 2>&1 || { printf 'VIOLATION B1: trial resource budget differs\n'; return 1; }
 }
 
+# Require the four host budget/cleanup controls to survive interrupted tenant
+# finalization in rendered input $1. The operator exec grant remains removable.
+check_retirement() {
+  jq -e '
+    [.[] | select(.metadata.namespace == "world-at-ruin" and
+      (.kind | IN("ResourceQuota", "LimitRange", "ServiceAccount", "RoleBinding", "Role"))) |
+      select(.metadata.annotations."kustomize.toolkit.fluxcd.io/prune" == "disabled") |
+      {kind:.kind,name:.metadata.name}] | sort_by(.kind,.name) == [
+        {kind:"LimitRange",name:"zone-trial"},
+        {kind:"ResourceQuota",name:"zone-trial"},
+        {kind:"RoleBinding",name:"world-at-ruin"},
+        {kind:"ServiceAccount",name:"world-at-ruin"}
+      ]
+  ' "$1" >/dev/null 2>&1 || { printf 'VIOLATION L1: retained budget or cleanup authority differs\n'; return 1; }
+}
+
 # Require namespace-wide host isolation in rendered input $1, including retention
 # during tenant removal or rollback; return 1 for any policy or pruning drift.
 check_isolation() {
@@ -152,6 +168,7 @@ yq -N -r 'select(.kind == "Job" and .metadata.name == "vault-config") |
   "${work}/vault.yaml" >"${work}/vault.sh"
 sh -n "${work}/vault.sh" || fail 'the rendered vault-config command must parse'
 check_budget "${work}/trial.json" || fail 'the trial budget control failed'
+check_retirement "${work}/trial.json" || fail 'the trial retirement control failed'
 check_isolation "${work}/trial.json" || fail 'the trial isolation control failed'
 check_public_registry "${work}/trial.json" || fail 'the trial must not receive a registry credential'
 check_exception "${work}/exception.json" || fail 'the trial exception control failed'
@@ -189,6 +206,9 @@ ablate_json check_budget B1 "${work}/trial.json" 'map(if .kind == "ResourceQuota
 ablate_json check_budget B1 "${work}/trial.json" 'map(if .kind == "ResourceQuota" then .spec.hard.persistentvolumeclaims = "1" else . end)'
 ablate_json check_budget B1 "${work}/trial.json" 'map(if .kind == "ResourceQuota" then .spec.hard."services.loadbalancers" = "1" else . end)'
 ablate_json check_budget B1 "${work}/trial.json" 'map(if .kind == "LimitRange" then .spec.limits[0].default.memory = "512Mi" else . end)'
+for kind in ResourceQuota LimitRange ServiceAccount RoleBinding; do
+  ablate_json check_retirement L1 "${work}/trial.json" "map(if .kind == \"${kind}\" and .metadata.name != \"world-at-ruin-zone-trial-operator\" then del(.metadata.annotations.\"kustomize.toolkit.fluxcd.io/prune\") else . end)"
+done
 ablate_json check_isolation N1 "${work}/trial.json" 'map(if .kind == "NetworkPolicy" then del(.metadata.annotations."kustomize.toolkit.fluxcd.io/prune") else . end)'
 ablate_json check_isolation N1 "${work}/trial.json" 'map(if .kind == "NetworkPolicy" then .spec.ingress = [{}] else . end)'
 ablate_json check_isolation N1 "${work}/trial.json" 'map(if .kind == "NetworkPolicy" then .spec.podSelector = {matchLabels:{trial:"selected-only"}} else . end)'
@@ -206,13 +226,15 @@ ablate_vault check_vault_role V2 's/bound_service_account_names=world-at-ruin/bo
 ablate_vault check_vault_role V2 's/bound_service_account_namespaces=world-at-ruin/bound_service_account_namespaces=*/'
 ablate_vault check_vault_role V2 's/policies=app-world-at-ruin/policies=app-world-at-ruin,vault-admin/'
 ablate_vault check_vault_role V2 '/bound_service_account_namespaces=world-at-ruin/d'
-printf 'PASS: trial budget, retained isolation, public registry, exact exception and Vault bounds; 6 controls + %d ablations\n' "${ablations}"
-
 kubectl kustomize "${root}/k8s/providers/hetzner/apps" >"${work}/prod.yaml"
 kubectl kustomize "${root}/k8s/providers/docker/apps" >"${work}/local.yaml"
 yq -o=json -I=0 eval-all '.' "${work}/prod.yaml" | jq -s '.' >"${work}/prod.json"
 check_isolation "${work}/prod.json" || fail 'the applied prod layer must retain the host isolation policy'
 jq '[.[] | select(.metadata.name == "world-at-ruin" or .metadata.namespace == "world-at-ruin")]' "${work}/prod.json" >"${work}/prod-trial.json"
+check_retirement "${work}/prod-trial.json" || fail 'the applied prod layer must retain budget and cleanup authority'
+for kind in ResourceQuota LimitRange ServiceAccount RoleBinding; do
+  ablate_json check_retirement L1 "${work}/prod-trial.json" "map(if .kind == \"${kind}\" and .metadata.name != \"world-at-ruin-zone-trial-operator\" then del(.metadata.annotations.\"kustomize.toolkit.fluxcd.io/prune\") else . end)"
+done
 check_public_registry "${work}/prod-trial.json" || fail 'the applied prod layer must not supply a registry credential'
 if sed -n '/^readonly -a FANOUT_NAMESPACES=(/,/^)/p' "${root}/scripts/refresh-flux-ghcr-auth.sh" | grep -qF '"world-at-ruin"'; then
   fail 'a public-package trial must not participate in registry credential fanout'
@@ -227,4 +249,5 @@ artifact_filter="$(yq -r '.spec.ref.semverFilter' "${trial}/oci-repository.yaml"
 [[ '0.115.1' =~ ${artifact_filter} && ! '0.115.1-rc.1' =~ ${artifact_filter} ]] || fail 'the actual unprefixed stable manifest tags must pass discovery'
 [[ "$(yq -r '.spec.ref.semver' "${trial}/oci-repository.yaml")" == '>=0.115.1' ]] || fail 'packages with the tenant-owned standard NetworkPolicy must remain excluded'
 
+printf 'PASS: trial budget, retained cleanup, isolation, public registry, exact exception and Vault bounds; 7 controls + %d ablations\n' "${ablations}"
 printf 'PASS: private prod-only zone trial, scoped operator grant and stable release signer boundaries\n'

@@ -60,8 +60,16 @@ the trial through the existing platform workload and log views.
 
 Removing the prod app-layer reference stops delivery. Namespace pruning remains
 disabled by the platform's persistence-safety component. The host's namespace-wide
-default-deny policy also disables pruning, so tenant removal or rollback cannot
-remove isolation while its pods are still terminating. Retiring the trial
-namespace, retained host policy or generated credentials requires explicit cleanup
-after every workload and pod has been removed. The trial establishes deployment and replication evidence;
-it does not activate the production Agones/Nakama handoff.
+default-deny policy, ResourceQuota and LimitRange also disable pruning. Isolation
+and admission budgets therefore remain enforced while workloads terminate. The
+tenant ServiceAccount and tenant-edit RoleBinding disable pruning as well, so
+Flux retains its cleanup authority during interrupted or repeated finalization.
+The operator exec/port-forward Role and binding remain eligible for removal.
+
+Retirement has two stages: remove the prod reference, then verify that the tenant
+Kustomization, its managed workload controllers and every pod are absent. A
+Kustomization deletion timeout is not evidence that all workloads have terminated.
+Only after those direct absence checks may explicit cleanup remove the retained
+host controls, tenant identity, generated credentials and namespace. The trial
+establishes deployment and replication evidence; it does not activate the
+production Agones/Nakama handoff.
