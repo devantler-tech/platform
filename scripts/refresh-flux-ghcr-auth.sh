@@ -5353,11 +5353,87 @@ wait_for_flux_policy_parent_quiescence_before_claim() {
   return 1
 }
 
+# One CAS, shared by initial acquisition and bounded post-claim recovery. The
+# caller must prove an ownerless, unsuspended snapshot of the original UID.
+claim_flux_policy_parent_once() {
+  local resource_version annotations_present
+  if [[ "${sync_lease_acquired}" != "true" ||
+    -z "${sync_lease_holder}" || -e "${sync_lease_lost_file}" ]]; then
+    echo "::error::The GHCR synchronization transaction is not locally active; refusing to fence Flux reconciliation."
+    return 1
+  fi
+  resource_version="$(jq -er '.metadata.resourceVersion' \
+    "${flux_policy_parent_state_file}")" || return 1
+  annotations_present="$(jq -r \
+    '(.metadata.annotations? | type) == "object"' \
+    "${flux_policy_parent_state_file}")" || return 1
+  jq -n \
+    --arg resource_version "${resource_version}" \
+    --arg uid "${flux_policy_parent_uid}" \
+    --arg owner_path "${FLUX_POLICY_PARENT_OWNER_JSON_PATH}" \
+    --arg owner "${flux_policy_parent_owner}" \
+    --argjson annotations_present "${annotations_present}" '
+    [
+      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
+      {op: "test", path: "/metadata/uid", value: $uid}
+    ]
+    + (if $annotations_present then [] else
+      [{op: "add", path: "/metadata/annotations", value: {}}]
+    end)
+    + [
+      {op: "add", path: $owner_path, value: $owner},
+      {op: "add", path: "/spec/suspend", value: true}
+    ]
+  ' >"${flux_policy_parent_patch_file}" || return 1
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
+    "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
+    --type=json \
+    --patch-file="${flux_policy_parent_patch_file}" \
+    -o json \
+    >"${flux_policy_parent_state_file}" \
+    2>"${flux_policy_parent_result_file}"
+}
+
+flux_policy_parent_snapshot_is_well_formed() {
+  jq -e --arg annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" '
+    .kind == "Kustomization"
+    and (.metadata.uid | type == "string" and length > 0)
+    and (.metadata.resourceVersion | type == "string" and length > 0)
+    and ((.metadata.annotations // {}) | type == "object")
+    and (if ((.metadata.annotations // {}) | has($annotation)) then
+      (.metadata.annotations[$annotation] | type == "string") else true end)
+    and (.spec | type == "object")
+    and (if (.spec | has("suspend")) then
+      (.spec.suspend | type == "boolean") else true end)
+    and (.status.conditions | type == "array")
+    and all(.status.conditions[]?;
+      type == "object" and (.type | type == "string")
+      and (.status == "True" or .status == "False" or .status == "Unknown"))
+  ' "${flux_policy_parent_state_file}" >/dev/null 2>&1
+}
+
+# Fixed labels and booleans explain the failed tuple without exposing identities.
+report_flux_policy_parent_ownership() {
+  jq -r --arg uid "${flux_policy_parent_uid}" \
+    --arg annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" \
+    --arg owner "${flux_policy_parent_owner}" '
+    "Parent handoff observation: uidMatch=\(.metadata.uid == $uid)"
+    + " ownerMatch=\(((.metadata.annotations // {})[$annotation] // "") == $owner)"
+    + " ownerPresent=\(((.metadata.annotations // {})[$annotation] // "") != "")"
+    + " suspended=\(.spec.suspend == true)"
+    + " reconciling=\(any(.status.conditions[]?; .type == "Reconciling" and .status == "True"))"
+  ' "${flux_policy_parent_state_file}" 2>/dev/null || true
+}
+
 pause_flux_policy_parent() {
-  local resource_version attempt annotations_present wait_status
+  local resource_version attempt wait_status
   local max_attempts="${FLUX_POLICY_PARENT_CLAIM_MAX_ATTEMPTS:-5}"
   local reread_resource_version
   local wait_started_at
+  local reclaims=0 failed_claim_resource_version="" last_observation="reconciling"
   # The re-read below needs its own stderr sink. Pointed at the result file it would
   # succeed, write nothing, and truncate the rejection that explains why the fence was
   # refused — leaving a bare refusal with no cause in exactly the case that matters
@@ -5438,37 +5514,7 @@ pause_flux_policy_parent() {
   while :; do
     resource_version="$(jq -er '.metadata.resourceVersion' \
       "${flux_policy_parent_state_file}")"
-    annotations_present="$(jq -r \
-      '(.metadata.annotations? | type) == "object"' \
-      "${flux_policy_parent_state_file}")"
-    jq -n \
-      --arg resource_version "${resource_version}" \
-      --arg uid "${flux_policy_parent_uid}" \
-      --arg owner_path "${FLUX_POLICY_PARENT_OWNER_JSON_PATH}" \
-      --arg owner "${flux_policy_parent_owner}" \
-      --argjson annotations_present "${annotations_present}" '
-      [
-        {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
-        {op: "test", path: "/metadata/uid", value: $uid}
-      ]
-      + (if $annotations_present then [] else
-        [{op: "add", path: "/metadata/annotations", value: {}}]
-      end)
-      + [
-        {op: "add", path: $owner_path, value: $owner},
-        {op: "add", path: "/spec/suspend", value: true}
-      ]
-    ' >"${flux_policy_parent_patch_file}"
-    if kubectl \
-      --context "${KUBE_CONTEXT}" \
-      --namespace flux-system \
-      patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
-      "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
-      --type=json \
-      --patch-file="${flux_policy_parent_patch_file}" \
-      -o json \
-      >"${flux_policy_parent_state_file}" \
-      2>"${flux_policy_parent_result_file}"; then
+    if claim_flux_policy_parent_once; then
       flux_policy_parent_acquired=true
       break
     fi
@@ -5546,21 +5592,71 @@ pause_flux_policy_parent() {
   wait_started_at="${SECONDS}"
   for ((attempt = 1; attempt <= PARENT_QUIESCE_ATTEMPTS; attempt++)); do
     sleep "${SYNC_INTERVAL}"
-    if kubectl \
+    if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       --namespace flux-system \
       get "${FLUX_KUSTOMIZATION_RESOURCE}" \
       "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
-      -o json >"${flux_policy_parent_state_file}" &&
-      flux_policy_parent_is_stable; then
-      return 0
+      -o json >"${flux_policy_parent_state_file}" \
+      2>"${reread_error_file}"; then
+      emit_safe_operation_output "flux-policy-parent-observe" "${reread_error_file}"
+      echo "::error::Could not inspect the parent Flux reconciliation after claiming; refusing child, policy and credential mutation."
+      return 1
+    fi
+    if ! flux_policy_parent_snapshot_is_well_formed; then
+      echo "::error::The parent Flux policy fence changed to an unsafe state after claiming (malformed snapshot); refusing further mutation."
+      return 1
+    fi
+    if flux_policy_parent_is_owned; then
+      flux_policy_parent_acquired=true
+      failed_claim_resource_version=""
+      last_observation="reconciling"
+      flux_policy_parent_is_quiescent && return 0
+    elif flux_policy_parent_is_released; then
+      # Keep the ORIGINAL UID and owner. Re-enter neither pause nor the preclaim
+      # wait: every new observation/reclaim consumes this same finite budget.
+      flux_policy_parent_acquired=false
+      last_observation="released"
+      reread_resource_version="$(jq -er '.metadata.resourceVersion' \
+        "${flux_policy_parent_state_file}")"
+      if [[ -n "${failed_claim_resource_version}" &&
+        "${failed_claim_resource_version}" == "${reread_resource_version}" ]]; then
+        emit_safe_operation_output "flux-policy-parent-reclaim" "${flux_policy_parent_result_file}"
+        echo "::error::Could not atomically reacquire the parent Flux policy handoff; the rejected snapshot did not change."
+        return 1
+      fi
+      if ((attempt < PARENT_QUIESCE_ATTEMPTS && reclaims < max_attempts)) &&
+        flux_policy_parent_is_quiescent; then
+        assert_sync_lease_held || return 1
+        reclaims=$((reclaims + 1))
+        echo "::warning::Observed the original parent Flux object in its released state; reacquiring its policy handoff (${reclaims}/${max_attempts}) within the remaining observation budget."
+        # A lost reclaim response may have applied the patch, so cleanup stays
+        # armed. resume_flux_policy_parent uses the original UID/owner/suspend
+        # CAS tuple; if the patch did not apply, it adopts only the exact
+        # released state after its guarded release fails.
+        flux_policy_parent_acquired=true
+        if claim_flux_policy_parent_once; then
+          failed_claim_resource_version=""
+        else
+          failed_claim_resource_version="${reread_resource_version}"
+        fi
+      fi
+    else
+      report_flux_policy_parent_ownership
+      echo "::error::The parent Flux policy fence changed to an unsafe state after claiming; refusing further mutation."
+      return 1
     fi
   done
 
+  report_flux_policy_parent_ownership
   flux_policy_report_conditions \
     "${flux_policy_parent_state_file}" \
     "kustomization/${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}"
-  echo "::error::The parent Flux reconciliation did not quiesce before the image-verification policy handoff after ${PARENT_QUIESCE_ATTEMPTS} attempts (elapsed $((SECONDS - wait_started_at))s)."
+  if [[ "${last_observation}" == "released" ]]; then
+    echo "::error::The parent Flux policy handoff observation budget was exhausted after ${PARENT_QUIESCE_ATTEMPTS} attempts (elapsed $((SECONDS - wait_started_at))s); ownership was released and could not be re-proved."
+  else
+    echo "::error::The parent Flux reconciliation did not quiesce before the image-verification policy handoff after ${PARENT_QUIESCE_ATTEMPTS} attempts (elapsed $((SECONDS - wait_started_at))s)."
+  fi
   return 1
 }
 
