@@ -3,9 +3,9 @@
 # honest.
 #
 # WHY THIS EXISTS
-# The Job runs four containers. Two are openbao and set `runAsUser: 100`, which is that image's own
+# The Job runs five containers. Two are openbao and set `runAsUser: 100`, which is that image's own
 # baked identity (`openbao:x:100:1000` in its /etc/passwd, verified against the pinned digest). The
-# other two — minio/mc and alpine/k8s — bake no such identity, so the Job deliberately sets
+# other three — the MinIO client, BusyBox tool installer and alpine/k8s — bake no such identity, so the Job deliberately sets
 # runAsUser PER CONTAINER and leaves them on the pod's high 65532 default. The same reasoning is
 # already written into this Job's resource-scoped `checkov.io/skip2` annotation.
 #
