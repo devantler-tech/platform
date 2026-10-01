@@ -87,7 +87,7 @@ captured. *How* each volume is captured depends on its storage backend:
 | ---------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------ |
 | Longhorn (`longhorn` SC)           | CSI snapshot → Kopia data mover → R2  | Crash-consistent; also backs up PVCs of scaled-to-zero apps (no running pod needed).  |
 | hcloud + `backup.platform.devantler.tech/volume-data=independently-mirrored` (`openbao/vault-snapshots` only) | Skipped by Velero; the OpenBao CronJob mirrors raft snapshots directly to R2 | The PVC is unmounted during Velero's window, so FSB cannot read it, and Hetzner block storage has no CSI snapshot support. |
-| other hcloud claims (OpenBao data/audit and Coroot telemetry) | File-system backup (Kopia) → R2 | hcloud-csi has no snapshot support; mounted controller-created claims use the fail-safe FSB path. |
+| other hcloud claims (OpenBao data/audit and Coroot telemetry) | File-system backup (Kopia) → R2 | hcloud-csi has no snapshot support; mounted controller-created claims use the fail-safe FSB path. The copy is file-level and taken while ClickHouse runs, so Coroot telemetry restores best-effort only ([#3673](https://github.com/devantler-tech/platform/issues/3673)). |
 | anything else / new PVCs           | File-system backup (Kopia) → R2       | Fail-safe default.                                                                    |
 
 The routing is declarative through storage attributes, not per-pod annotations:
