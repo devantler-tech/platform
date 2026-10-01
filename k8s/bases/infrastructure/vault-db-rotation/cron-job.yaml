@@ -7,8 +7,8 @@
 # umami-db-rotated ExternalSecret picks it) — and this job rotates only the
 # OTHER, older colour. That colour becomes active, the app rolls onto it, and
 # pods still on the previous colour keep a valid password until next week's
-# run rotates it. (Phase 1 of #4107 lands this job before the app switches to
-# the colours, so its first runs rotate logins nothing uses yet.)
+# run rotates it. (Step 2 of #4107 lands this job before the app switches to
+# the colours in step 3, so its first runs rotate logins nothing uses yet.)
 #
 # Guard: the job refuses to rotate when the active colour was rotated less
 # than 24h ago. A second run straight after the first (a manual trigger, a
