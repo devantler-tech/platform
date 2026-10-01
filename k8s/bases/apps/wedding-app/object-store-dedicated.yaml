@@ -1,7 +1,5 @@
-# Inactive destination for the staged Wedding-specific archive. This makes the
-# reviewed target configuration available before any Cluster starts writing
-# here. A later cutover mirrors and verifies the existing catalog, then changes
-# the Cluster's barmanObjectName from `wedding-db` to `wedding-db-dedicated`.
+# Active Wedding archive. The platform's production tenant overlay selects
+# this ObjectStore and preserves the mirrored database server identity.
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:

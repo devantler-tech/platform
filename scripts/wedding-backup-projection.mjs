@@ -48,6 +48,7 @@ function pair(bootstrap, projected) {
   check(equal(source.access_key_id, result.access_key_id) && equal(source.secret_access_key, result.secret_access_key));
   return result;
 }
+/** Verify controller readiness, credential projection wiring and the dedicated archive reference before reading either Secret. */
 function validateControllers(d, options) {
   ready(d.source, true);
   check(d.source.spec.url === 'oci://ghcr.io/devantler-tech/platform/manifests' && d.source.spec.ref?.tag === 'latest' && d.source.spec.verify?.provider === 'cosign');
@@ -82,7 +83,7 @@ function validateControllers(d, options) {
   check(Array.isArray(plugins));
   const barman = plugins.filter(plugin => plugin.name === 'barman-cloud.cloudnative-pg.io');
   check(barman.length === 1 && barman[0].enabled === true && barman[0].isWALArchiver === true);
-  check(barman[0].parameters?.barmanObjectName === 'wedding-db');
+  check(barman[0].parameters?.barmanObjectName === 'wedding-db-dedicated');
   check(barman[0].parameters.serverName === 'wedding-db-20260909');
 }
 async function snapshot(options, deps) {
