@@ -4,11 +4,11 @@
 # emptyDir storage -- backups themselves are throw-away here; what
 # matters is that the backup/restore flow runs end-to-end.
 #
-# The bitnami/minio chart was replaced with a hand-rolled Deployment
-# using the official minio/minio image because the bitnami image
-# 2025.7.23 ships strict SigV4 credential validation ("Credential
-# access key has length X, should be 32") that rejects Velero's
-# regular S3 calls.
+# The archived community build is temporary and receives no security updates.
+# It serves disposable test storage only; production backups use Cloudflare R2.
+# Replacement: https://github.com/devantler-tech/platform/issues/4326.
+# Keep the 2025.4.22 release: the later 2025.7.23 build rejects Velero's
+# ordinary S3 access keys with strict 32-character SigV4 validation.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -31,17 +31,9 @@ spec:
       # minio is a pure S3 server and never calls the Kubernetes API, so it has
       # no use for a mounted ServiceAccount token (kubescape C-0034).
       automountServiceAccountToken: false
-      # UID 65532 rather than a low one (checkov CKV_K8S_40). The minio image
-      # declares no `User`, so it would run as root unedited, and its
-      # /etc/passwd has no entry for the UID this ran under before — the server
-      # is already running unmapped. Its entrypoint only switches user when
-      # MINIO_USERNAME *and* MINIO_GROUPNAME are set; neither is, so it takes
-      # the plain `exec` branch and never looks the UID up.
-      #
-      # What makes `/data` writable is `fsGroup` == `runAsGroup`, not the UID:
-      # the kubelet chowns the emptyDir to that GID and grants it write. The
-      # two are raised together for that reason — moving one alone would be the
-      # change that breaks this.
+      # Invoke the server binary directly, without the distribution's setup
+      # wrapper. fsGroup makes the data and temporary emptyDirs writable by the
+      # high unprivileged UID even though the image declares UID 1001.
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -51,12 +43,16 @@ spec:
           type: RuntimeDefault
       containers:
         - name: minio
-          image: quay.io/minio/minio:RELEASE.2025-04-08T15-41-24Z@sha256:8834ae47a2de3509b83e0e70da9369c24bbbc22de42f2a2eddc530eee88acd1b
+          image: docker.io/bitnamilegacy/minio:2025.4.22-debian-12-r1@sha256:d7cd0e172c4cc0870f4bdc3142018e2a37be9acf04d68f386600daad427e0cab
+          command:
+            - /opt/bitnami/minio/bin/minio
           args:
             - server
             - /data
             - --console-address
             - :9001
+            - --certs-dir
+            - /tmp/certs
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
@@ -100,11 +96,15 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: tmp
+              mountPath: /tmp
             - name: root-credentials
               mountPath: /etc/minio-credentials
               readOnly: true
       volumes:
         - name: data
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}
         - name: root-credentials
           secret:
