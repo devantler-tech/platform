@@ -20,11 +20,13 @@ done
 
 test_root="$(mktemp -d /tmp/isolated-chart-namespace-rules.XXXXXX)"
 readonly test_root
+# cleanup removes the temporary fixtures created by this invocation.
 cleanup() {
 	rm -rf "${test_root}"
 }
 trap cleanup EXIT
 
+# run_fixture validates one authored fixture against the isolated-chart rules.
 run_fixture() {
 	local path="$1"
 	ksail --config "${root_dir}/ksail.prod.yaml" workload validate "${path}" \
@@ -32,6 +34,7 @@ run_fixture() {
 		--rules "${rules_path}" 2>&1
 }
 
+# assert_accepted requires a namespace-local fixture to pass validation.
 assert_accepted() {
 	local name="$1"
 	local manifest="$2"
@@ -45,6 +48,7 @@ assert_accepted() {
 	fi
 }
 
+# assert_rejected requires the rendered-child namespace rule to reject a fixture.
 assert_rejected() {
 	local name="$1"
 	local manifest="$2"
@@ -683,6 +687,8 @@ image_digest="$(yq -r '.spec.values.image.digest' "${release}")"
 	printf 'FAIL: trial image must carry an immutable sha256 digest\n' >&2
 	exit 1
 }
+# appearance_contract_matches checks the complete rendered contract, gates,
+# publication endpoints, approved host and admission rule in its JSON file.
 appearance_contract_matches() {
 	jq -e --arg image "ghcr.io/devantler-tech/data-product-controller@${image_digest}" \
 		--arg cel_rule "self.apiVersion != 'data-product-ui/v1' || !self.capabilities.exists(c, c == 'appearance')" '

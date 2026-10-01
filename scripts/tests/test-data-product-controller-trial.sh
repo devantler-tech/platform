@@ -5,6 +5,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
+# fail prints the violated trial invariant and stops the test.
 fail() {
 	printf 'FAIL: %s\n' "$1" >&2
 	exit 1
