@@ -1,0 +1,19 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-data-product-controller-harbour
+  namespace: data-product-controller
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s:app.kubernetes.io/name: data-product-controller
+      k8s:app.kubernetes.io/instance: data-product-controller
+      k8s:app.kubernetes.io/component: harbour-product
+  ingress:
+    # Independently served fixed sample data; no registry metadata or credentials.
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
