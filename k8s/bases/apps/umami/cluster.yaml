@@ -110,6 +110,23 @@ spec:
   # carries `cnpg.io/reload` so rotations are picked up promptly. Attributes
   # mirror the initdb owner (LOGIN + CNPG defaults), so no other role attribute
   # changes.
+  #
+  # Blue/green login colours (#4107), PHASE 1 of 2. Rotating a static role
+  # revokes its old password at once, so the single rotated login leaves old
+  # pods failing with 28P01 until the rollout replaces them (~80s every week).
+  # The app will log in as `umami_blue` or `umami_green` — whichever OpenBao
+  # rotated most recently — while the weekly umami-db-rotation CronJob only
+  # rotates the OTHER, idle colour, so old pods keep a valid password. Both are
+  # members of `umami`, and OpenBao's rotation statement sets
+  # `SET role = 'umami'` on them, so objects stay owned by `umami`.
+  #
+  # They carry NO passwordSecret yet, on purpose: CNPG refuses to CREATE a
+  # managed role whose passwordSecret does not exist, OpenBao cannot create the
+  # static role (which writes that Secret's source) until the PostgreSQL role
+  # exists, so declaring both at once deadlocks. Phase 2 adds each colour's
+  # passwordSecret (umami-db-blue / umami-db-green, already synced here) and
+  # switches the app; until then nothing logs in as a colour, so CNPG
+  # re-applying a NULL password on a promotion cannot break anything.
   managed:
     roles:
       - name: umami
@@ -117,6 +134,16 @@ spec:
         login: true
         passwordSecret:
           name: umami-db-rotated
+      - name: umami_blue
+        ensure: present
+        login: true
+        inRoles:
+          - umami
+      - name: umami_green
+        ensure: present
+        login: true
+        inRoles:
+          - umami
   resources:
     requests:
       cpu: 50m

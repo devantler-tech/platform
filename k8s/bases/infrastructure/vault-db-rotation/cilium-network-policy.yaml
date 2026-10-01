@@ -1,0 +1,31 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-umami-db-rotation
+  namespace: openbao
+spec:
+  endpointSelector:
+    matchLabels:
+      app: umami-db-rotation
+  egress:
+    # OpenBao API for Kubernetes auth login, static-role reads and rotation.
+    # OpenBao itself talks to PostgreSQL; this pod never does.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: openbao
+            app.kubernetes.io/name: openbao
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

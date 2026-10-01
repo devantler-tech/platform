@@ -1,0 +1,146 @@
+# Weekly blue/green rotation of Umami's database login (#4107).
+#
+# Rotating an OpenBao static role revokes its old password at once, so a single
+# rotated login left every old Umami pod answering 500 (28P01 / Prisma P1000)
+# for ~80s until Reloader replaced it. The app logs in as `umami_blue` or
+# `umami_green` — whichever was rotated most recently (the app's
+# umami-db-rotated ExternalSecret picks it) — and this job rotates only the
+# OTHER, older colour. That colour becomes active, the app rolls onto it, and
+# pods still on the previous colour keep a valid password until next week's
+# run rotates it. (Phase 1 of #4107 lands this job before the app switches to
+# the colours, so its first runs rotate logins nothing uses yet.)
+#
+# Guard: the job refuses to rotate when the active colour was rotated less
+# than 24h ago. A second run straight after the first (a manual trigger, a
+# retry) would otherwise rotate the colour pods are still rolling off — the
+# exact outage this job exists to remove.
+#
+# The colours' own rotation_period (504h, vault-config) is only a backstop: it
+# never fires while this job runs, and still bounds a credential's life if it
+# stops. Prod-only in practice — Umami is excluded from the local overlay, and
+# the local overlay does not pull this folder.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: umami-db-rotation
+  namespace: openbao
+  annotations:
+    checkov.io/skip1: "CKV_K8S_38=the rotate container reads its SA JWT to log in via OpenBao Kubernetes auth"
+spec:
+  # Wednesday 03:00 UTC — the day the single-login rotation used to fire, moved
+  # into a quiet hour.
+  schedule: "0 3 * * 3"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # A failed rotate is retried by the next weekly run, not in a loop: a
+      # retry that lands after a partial success is what the 24h guard blocks.
+      backoffLimit: 0
+      # The bao calls have no client-side timeout; never let a hung run block
+      # every later run under concurrencyPolicy: Forbid.
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            app: umami-db-rotation
+        spec:
+          serviceAccountName: umami-db-rotator
+          restartPolicy: Never
+          securityContext:
+            runAsUser: 65532
+            runAsGroup: 65532
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: rotate
+              image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: RuntimeDefault
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              env:
+                # openbao-active = unsealed Raft leader only.
+                - name: BAO_ADDR
+                  value: http://openbao-active.openbao.svc.cluster.local:8200
+                # The CLI writes nothing it needs to keep; point HOME at a
+                # path that exists on the read-only root filesystem.
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              # Flux substitutes ${...} in manifests, so the script uses only
+              # unbraced $VAR references.
+              command:
+                - /bin/sh
+                - -euc
+                - |
+                  JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                  BAO_TOKEN=$(bao write -field=token auth/kubernetes/login \
+                    role=umami-db-rotator jwt="$JWT")
+                  export BAO_TOKEN
+
+                  # last_vault_rotation is RFC 3339 from the same server, so the
+                  # first 19 characters (to the second, UTC) order lexically.
+                  last_rotation() {
+                    bao read -field=last_vault_rotation "database/static-roles/umami-$1" | cut -c1-19
+                  }
+                  BLUE=$(last_rotation blue)
+                  GREEN=$(last_rotation green)
+                  # Fail closed: an empty read is not "never rotated".
+                  [ -n "$BLUE" ] && [ -n "$GREEN" ] || {
+                    echo "ERROR: could not read both colours' last rotation (blue='$BLUE' green='$GREEN')" >&2
+                    exit 1
+                  }
+                  echo "last rotation: blue=$BLUE green=$GREEN"
+
+                  # The OLDER colour is idle. On a tie the ExternalSecret treats
+                  # blue as active, so green is idle.
+                  OLDEST=$(printf '%s\n%s\n' "$BLUE" "$GREEN" | sort | head -n 1)
+                  if [ "$BLUE" = "$GREEN" ]; then
+                    IDLE=green; ACTIVE_AT=$BLUE
+                  elif [ "$OLDEST" = "$BLUE" ]; then
+                    IDLE=blue; ACTIVE_AT=$GREEN
+                  else
+                    IDLE=green; ACTIVE_AT=$BLUE
+                  fi
+
+                  CUTOFF=$(date -u -d "@$(( $(date -u +%s) - 86400 ))" +%Y-%m-%dT%H:%M:%S)
+                  if [ "$(printf '%s\n%s\n' "$ACTIVE_AT" "$CUTOFF" | sort | tail -n 1)" = "$ACTIVE_AT" ] \
+                    && [ "$ACTIVE_AT" != "$CUTOFF" ]; then
+                    echo "ERROR: the active colour was rotated at $ACTIVE_AT, less than 24h ago;" >&2
+                    echo "rotating $IDLE now could revoke the login pods are still rolling off." >&2
+                    exit 1
+                  fi
+
+                  echo "rotating idle colour: $IDLE"
+                  bao write -f "database/rotate-role/umami-$IDLE"
+
+                  # Positive evidence the rotation landed: the idle colour must
+                  # now be the newest.
+                  AFTER=$(last_rotation "$IDLE")
+                  [ "$(printf '%s\n%s\n' "$AFTER" "$ACTIVE_AT" | sort | tail -n 1)" = "$AFTER" ] \
+                    && [ "$AFTER" != "$ACTIVE_AT" ] || {
+                    echo "ERROR: umami-$IDLE last rotation is still $AFTER (active $ACTIVE_AT)" >&2
+                    exit 1
+                  }
+                  echo "umami-$IDLE rotated at $AFTER and is now the active colour."
+          volumes:
+            - name: tmp
+              emptyDir: {}
