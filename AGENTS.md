@@ -496,6 +496,14 @@ These conventions guide the autonomous **Agentic Engineer** — and any agentic 
 
 **Merge queue — `main` IS gated by a GitHub merge queue** (`Require merge queue` ruleset). Merge mechanics differ from non-queue repos: `gh pr merge --auto` *enqueues* (don't pass `--squash` — the queue sets the strategy), and `autoMergeRequest` stays `null` even while a PR is queued, so a queued PR can look un-queued in JSON. A queued PR runs the **`merge_group`** event of `ci.yaml`, whose `deploy-prod` job **deploys to the real prod cluster** — so a `merge_group` failure **evicts the PR from the queue**. **Root-cause a stall/kick-out before re-queuing** (per the monorepo contract *Merge policy → Merge-queue repos*): a PR that "was queued" but didn't merge has usually failed its `merge_group` run — pull it (`gh run list --event merge_group --json headBranch,conclusion` → `pr-<n>` → `gh run view --log-failed`) and diagnose. The `deploy-prod` step's inline tenant provisioning can still expose a real platform fault during the gating verify; when that happens, re-queuing just re-hits it — advance the root-cause fix rather than looping the PR. Only a genuine one-off transient (runner OOM, network) warrants a clean re-queue.
 
+**Tell a timeout eviction from a failed-check eviction before diagnosing the run.** They look the same on the PR, and a timeout can follow a `merge_group` run that later ends `success`. The PR timeline records which one it was:
+
+```sh
+gh api graphql -f query='{repository(owner:"devantler-tech",name:"platform"){pullRequest(number:<n>){timelineItems(itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT],last:10){nodes{... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}'
+```
+
+`failed_checks` means a required check failed, so diagnose the `merge_group` run as above. `checks_timed_out` means no result arrived within the queue's check-response timeout. That timeout is 90 minutes and is managed in `devantler-tech/.github` (`deploy/repository-rulesets/require-merge-queue-on-platform.yaml`). For a timeout, look for what kept the run waiting, such as the `prod-deploy` concurrency lock or a runner queue, rather than a deploy fault. `manual` means someone removed the PR from the queue, and `merged` is a normal merge.
+
 🔴 **`BLOCKED` on a fully green head can mean an UNSATISFIED REQUIRED WORKFLOW — and nothing on the
 PR says so.** ⚠️ **Rule out the ordinary blockers first**, or you will move the head without touching
 the actual cause: `BLOCKED` on a green head is also what an unresolved review conversation, a missing
