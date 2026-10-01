@@ -332,6 +332,7 @@ jobs:
           node --test tests/wedding-backup-staging/*.test.mjs
           shellcheck scripts/verify-wedding-backup-cutover.sh scripts/tests/test-verify-wedding-backup-cutover.sh
           bash scripts/tests/test-verify-wedding-backup-cutover.sh
+          go test ./scripts/verify-wedding-dedicated-restore
           node --test tests/wedding-db-incident-recovery/*.test.mjs
 
       - name: 🔍 Filter paths

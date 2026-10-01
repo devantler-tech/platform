@@ -1,5 +1,40 @@
 # DR restore drill
 
+## Dedicated Wedding database proof
+
+Dispatch **Verify Wedding Dedicated Restore** from `main` with
+`confirm=verify-wedding-dedicated-restore`. It shares the production deployment
+lock and first takes a fresh online backup through the active dedicated archive.
+The database keeps serving guests throughout the proof.
+
+The job creates a separate temporary namespace with a one-instance CloudNativePG
+Cluster. It copies only the dedicated backup credential without printing it,
+restores the exact fresh backup through the Barman Cloud plugin, and enables no
+WAL archiver on the restored Cluster. A Cilium deny rule excludes the application
+namespace; a live probe proves local database access works, DNS resolves the
+production database, and that database does not answer from the restore pod.
+The recovery configuration follows the plugin's documented
+[object-store recovery](https://cloudnative-pg.io/plugin-barman-cloud/docs/usage/#restoring-a-cluster).
+
+The comparison reads aggregate pair, guest, answer and room-booking counts plus
+the newest data timestamp. Pair and guest counts must match both live snapshots.
+Answer and booking counts must fall within the two observed live snapshots, and
+the recovered timestamp may lag the first snapshot by at most five minutes for
+recent writes. No guest names, codes, answers or notes appear in the receipt.
+If writes change the comparison outside these bounds, dispatch a fresh run.
+
+Both the program and an `always()` workflow step remove the run-owned namespace.
+Deletion is fenced by its UID, and success requires the namespace and all its
+backing PersistentVolumes to disappear. A cleanup failure fails the proof. Never
+force-cancel the job or force-delete a stuck namespace; investigate its finalizers.
+
+Require `dedicatedRestoreVerified`, `productionClusterStable` and
+`cleanupVerified` to be true in a successful production run, bound to its source
+SHA. This demonstrates dedicated archive recovery. Retiring shared access still
+requires the separate destination access-denial and bootstrap acceptance gates.
+
+## Velero namespace drill
+
 > **No longer runs in CI.** CI no longer boots a cluster — the local Docker
 > cluster is a thin manual test-bed, not a prod stand-in — so this drill is now
 > a **manual** procedure. Run it locally (after opting Velero + MinIO into the
