@@ -595,6 +595,7 @@ jobs:
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh'
+              - 'scripts/tests/test-cilium-ebpf-host-routing-activation.sh'
               - 'scripts/guard-cilium-homogeneous-device-rollout.sh'
               # Both halves, so editing the reporter alone — or its test alone —
               # still runs the check that covers it.
@@ -1634,6 +1635,7 @@ jobs:
           bash scripts/tests/test-cilium-homogeneous-devices-activation.sh
           bash scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh
           bash scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh
+          bash scripts/tests/test-cilium-ebpf-host-routing-activation.sh
 
       - name: 🔁 Validate the deploy tolerates a control-plane restart
         if: needs.changes.outputs.k8s == 'true'

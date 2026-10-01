@@ -130,10 +130,15 @@ require_text \
   "${opt_in_release}" \
   $'bandwidthManager:\n      bbr: true\n      bbrHostNamespaceOnly: true\n      enabled: true' \
   'the opt-in render must enable host-namespace-only BBR'
+# BPF masquerading is owned by the separately activated ebpf-host-routing/
+# component (#4260), so the full render carries it either way. What must hold
+# is that THIS component never sets it itself.
+bbr_component="$(<"${controllers_dir}/cilium/components/bandwidth-manager-bbr/kustomization.yaml")" ||
+  fail 'the BBR component file is unreadable'
 reject_text \
-  "${opt_in_release}" \
-  $'bpf:\n      masquerade: true' \
-  'the opt-in render must not enable BPF masquerading'
+  "${bbr_component}" \
+  'masquerade:' \
+  'the BBR component must not set BPF masquerading itself'
 require_text \
   "${opt_in_release}" \
   $'encryption:\n      enabled: true\n      nodeEncryption: false' \

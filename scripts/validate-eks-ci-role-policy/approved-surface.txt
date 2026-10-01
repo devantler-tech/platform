@@ -54,7 +54,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kro-system|kro 78750f70953cdfaf2d2758a5328
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|ksail-operator|ksail-operator 5d624b379a44416a8058a8a8cf57588a2a642201878c5ccf4cda03ded9185480
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|cilium e56bb694c251d8f859edc76d005e3508e622ef2f3ba8d7e56ce722de9affbcf9
+helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|cilium 7b1a93c61cca43e79ceed6b7cb91a1c3d638dc8791fe7e0aa106181e3ced83b9
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|descheduler 40d41e62d48b7db3706d544a94b25a75e497d7f11ca6efec1376774c8085de13
 
