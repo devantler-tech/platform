@@ -122,7 +122,7 @@ spec:
   # objects stay owned by `umami`. Each colour is enforced from its own
   # OpenBao-synced Secret, exactly like `umami`, whose Secret is now
   # umami-db-owner because umami-db-rotated carries the active colour.
-  # The colours were created without a passwordSecret first (phase 1): CNPG
+  # The colours were created without a passwordSecret first (#4324): CNPG
   # refuses to CREATE a managed role whose passwordSecret does not exist yet.
   # `umami` keeps LOGIN and its rotating password until the cut-over is
   # verified live; retiring it is the last step on #4107.

@@ -1345,8 +1345,12 @@ spec:
                       rotation_statements="ALTER ROLE \"{{name}}\" WITH PASSWORD '{{password}}'; ALTER ROLE \"{{name}}\" SET role = 'umami';"; then
                       echo "umami-$COLOUR static role created."
                     else
-                      # The login role is created by CNPG (apps layer); until it
-                      # exists the initial rotation fails. Retried next pass.
+                      # The login role is created by CNPG in the apps layer,
+                      # which reconciles AFTER this Job, and this Job re-runs
+                      # only when its spec changes. So the roles ship in their
+                      # own earlier deploy (#4324) and already exist when this
+                      # runs; a DR rebuild restores these static roles from the
+                      # raft snapshot instead.
                       echo "umami_$COLOUR PostgreSQL role not ready yet -- skipping umami-$COLOUR."
                     fi
                   done
