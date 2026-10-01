@@ -459,6 +459,43 @@ func fakeKubectlGetFluxPolicyParent(args []string, namespace string) int {
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid parent Flux Kustomization lookup")
 	}
+	if state := os.Getenv("FAKE_FLUX_PARENT_INITIAL_POST_CLAIM_STATE"); state != "" &&
+		markerExists("flux-policy-parent-patch-returned") &&
+		!markerExists("flux-policy-handoff-suspended") {
+		readCount := parseInt(markerContent("flux-parent-initial-post-claim-reads"), 0) + 1
+		setMarkerContent("flux-parent-initial-post-claim-reads", strconv.Itoa(readCount))
+		budget := parseInt(os.Getenv("FAKE_FLUX_PARENT_INITIAL_RELEASE_COUNT"), 1)
+		if fired := parseInt(markerContent("flux-parent-initial-post-claim-injections"), 0); fired < budget {
+			setMarkerContent("flux-parent-initial-post-claim-injections", strconv.Itoa(fired+1))
+			appendEnvFile("OPERATION_LOG", "flux-parent-initial-post-claim:"+state+"\n")
+			switch state {
+			case "released":
+				removeMarker("flux-policy-parent-owner")
+				removeMarker("flux-policy-parent-suspended")
+				if os.Getenv("FAKE_FLUX_PARENT_LEASE_STOLEN_ON_INITIAL_RELEASE") == "true" {
+					setMarkerContent("sync-lease-holder", "fixture-successor-transaction")
+				}
+			case "foreign-owner":
+				setMarkerContent("flux-policy-parent-owner", "fixture-foreign-transaction")
+			case "replaced":
+				setMarkerContent("flux-policy-parent-uid", "replacement-kustomization-uid")
+			case "malformed":
+				touchMarker("flux-policy-parent-malformed")
+			case "malformed-conditions", "malformed-suspension":
+				setMarkerContent("flux-parent-snapshot-malformation", state)
+			case "ownerless-suspended":
+				removeMarker("flux-policy-parent-owner")
+			case "unsuspended-owned":
+				removeMarker("flux-policy-parent-suspended")
+			case "unreadable":
+				return commandFailure(92, "injected initial parent snapshot read failure")
+			default:
+				return commandFailure(91, "unknown initial post-claim state %q", state)
+			}
+			setMarkerContent("flux-policy-parent-resource-version", incrementDecimal(defaultString(
+				markerContent("flux-policy-parent-resource-version"), "30")))
+		}
+	}
 	fmt.Println(encodeJSON(fakeFluxPolicyParentObject()))
 	return 0
 }
@@ -547,7 +584,7 @@ func fakeFluxPolicyParentObject() map[string]any {
 			appendEnvFile("OPERATION_LOG", "flux-policy-parent-stable:flux-system\n")
 		}
 	}
-	return map[string]any{
+	object := map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   metadata,
@@ -559,6 +596,13 @@ func fakeFluxPolicyParentObject() map[string]any {
 			"conditions":         conditions,
 		},
 	}
+	switch markerContent("flux-parent-snapshot-malformation") {
+	case "malformed-conditions":
+		object["status"].(map[string]any)["conditions"] = map[string]any{"Ready": "True"}
+	case "malformed-suspension":
+		object["spec"].(map[string]any)["suspend"] = "true"
+	}
+	return object
 }
 
 func fakeKubectlGetFluxPolicyFences(args []string, namespace string) int {
@@ -665,12 +709,28 @@ func fakeKubectlPatchFluxPolicyParent(args []string, namespace, patchFile string
 		patch,
 		"test",
 		"/metadata/uid",
-		"flux-system-kustomization-uid",
+		defaultString(markerContent("flux-policy-parent-uid"), "flux-system-kustomization-uid"),
 	) {
 		return commandFailure(56, "parent Flux Kustomization UID test failed")
 	}
 	ownerPath := "/metadata/annotations/platform.devantler.tech~1ghcr-policy-parent-owner"
 	if hasPatchOperation(patch, "add", "/spec/suspend", true) {
+		if markerExists("flux-parent-initial-post-claim-injections") &&
+			!markerExists("flux-parent-reclaim-rejection-fired") {
+			switch os.Getenv("FAKE_FLUX_PARENT_RECLAIM_PATCH_STATE") {
+			case "denied":
+				appendEnvFile("OPERATION_LOG", "flux-parent-reclaim-rejected\n")
+				return commandFailure(56, "Forbidden: injected parent reclaim denial")
+			case "churn", "foreign-owner-on-churn":
+				touchMarker("flux-parent-reclaim-rejection-fired")
+				setMarkerContent("flux-policy-parent-resource-version", incrementDecimal(currentResourceVersion))
+				if os.Getenv("FAKE_FLUX_PARENT_RECLAIM_PATCH_STATE") == "foreign-owner-on-churn" {
+					setMarkerContent("flux-policy-parent-owner", "fixture-foreign-transaction")
+				}
+				appendEnvFile("OPERATION_LOG", "flux-parent-reclaim-rejected\n")
+				return commandFailure(56, "Conflict: parent resourceVersion changed")
+			}
+		}
 		if rejection := os.Getenv("FAKE_FLUX_POLICY_PARENT_PATCH_REJECTION"); rejection != "" {
 			appendEnvFile("OPERATION_LOG", "flux-policy-parent-patch-rejected\n")
 			return commandFailure(56, "%s", rejection)
@@ -722,12 +782,21 @@ func fakeKubectlPatchFluxPolicyParent(args []string, namespace, patchFile string
 			incrementDecimal(currentResourceVersion),
 		)
 		appendEnvFile("OPERATION_LOG", "flux-policy-parent-pause:flux-system\n")
+		if markerExists("flux-parent-initial-post-claim-injections") &&
+			os.Getenv("FAKE_FLUX_PARENT_RECLAIM_PATCH_STATE") == "response-lost" &&
+			!markerExists("flux-parent-reclaim-response-lost") {
+			touchMarker("flux-parent-reclaim-response-lost")
+			return commandFailure(54, "connection reset after parent reclaim applied")
+		}
 		if os.Getenv("FAKE_FLUX_POLICY_PARENT_PATCH_RESPONSE_LOST") == "true" &&
 			!markerExists("flux-policy-parent-patch-response-lost") {
 			touchMarker("flux-policy-parent-patch-response-lost")
 			return commandFailure(54, "connection reset after parent Flux handoff patch")
 		}
-		return fakeKubectlGetFluxPolicyKustomization(
+		// The patch response precedes the first independent post-claim read.
+		// Do not inject a concurrent state change into the response itself.
+		removeMarker("flux-policy-parent-patch-returned")
+		status := fakeKubectlGetFluxPolicyKustomization(
 			[]string{
 				"get",
 				"kustomizations.kustomize.toolkit.fluxcd.io",
@@ -737,6 +806,8 @@ func fakeKubectlPatchFluxPolicyParent(args []string, namespace, patchFile string
 			},
 			namespace,
 		)
+		touchMarker("flux-policy-parent-patch-returned")
+		return status
 	}
 
 	currentOwner := markerContent("flux-policy-parent-owner")
