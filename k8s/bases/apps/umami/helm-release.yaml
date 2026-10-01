@@ -44,6 +44,23 @@ spec:
               - op: add
                 path: /metadata/annotations/secret.reloader.stakater.com~1reload
                 value: umami-db-rotated
+              # The DB login alternates between `umami_blue` and `umami_green`
+              # (#4107), so the username must come from the umami-db-rotated
+              # Secret, not a fixed value. The chart builds
+              #   DATABASE_URL=postgresql://<database.external.username>:$(DATABASE_PASSWORD)@…
+              # and Kubernetes only expands $(VAR) references to variables
+              # declared EARLIER in the list, so DATABASE_USERNAME is inserted
+              # first (the chart's extraEnv lands after DATABASE_URL and would
+              # never expand). database.external.username below is the
+              # matching $(DATABASE_USERNAME) reference.
+              - op: add
+                path: /spec/template/spec/containers/0/env/0
+                value:
+                  name: DATABASE_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: umami-db-rotated
+                      key: username
               # Flagger copies the source Deployment strategy to the serving
               # primary. Retire one old pod before scheduling its replacement
               # while keeping at least one primary serving.
@@ -145,7 +162,9 @@ spec:
         host: umami-db-rw.umami.svc.cluster.local
         port: "5432"
         name: umami
-        username: umami
+        # Expanded by Kubernetes from the DATABASE_USERNAME env var the
+        # postRenderer above inserts (the active blue/green colour, #4107).
+        username: $(DATABASE_USERNAME)
         existingSecret: umami-db-rotated  # checkov:skip=CKV_SECRET_6:names an existing Secret; the value lives in OpenBao
         existingSecretPasswordKey: password
     service:
