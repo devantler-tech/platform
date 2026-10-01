@@ -216,8 +216,14 @@ flapping).
 There is no remote-write or SaaS mirror. The persistent Coroot, Prometheus and
 ClickHouse volumes live in the `coroot` namespace, which Velero's `daily-full`
 schedule backs up to R2 every day (`includedNamespaces: ["*"]`, Kopia
-fs-backup). Restore is the standard Velero flow in [runbook.md](./runbook.md);
-backups are filesystem-level and crash-consistent, fine for a 24 h RPO.
+fs-backup). Restore is the standard Velero flow in [runbook.md](./runbook.md).
+
+These copies are taken file by file while the databases run, not from a
+point-in-time snapshot. ClickHouse merges and drops data parts during that
+traversal, so a restored ClickHouse volume can miss parts or hold an
+inconsistent set: treat logs, traces and profiles as best-effort after a
+restore, not as a dependable recovery source. A native ClickHouse backup path is
+tracked in [#3673](https://github.com/devantler-tech/platform/issues/3673).
 
 ## Per-environment setup
 
