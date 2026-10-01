@@ -10,6 +10,10 @@
 #   vulnerability  every image a long-lived regular container, init sidecar, or ephemeral
 #                  container is running (keyed by image digest, not by container count) has a
 #                  vulnerabilitymanifestsummary scanned within --vuln-max-age-days.
+#                  Every listed summary must also agree with its stored object: a summary whose
+#                  listed (metadata-row) resourceVersion differs from the stored one is SPLIT,
+#                  and the storage server refuses every later update of it, so it can only go
+#                  stale (#4263).
 #   runtime        every running ReplicaSet, StatefulSet revision and DaemonSet revision has BOTH
 #                  an applicationprofile and a networkneighborhood, each `completed/complete`.
 #                  A profile still learning inside its learning period is PENDING, not a failure.
@@ -31,12 +35,12 @@
 # --from-dir evaluates previously captured JSON instead of reading a cluster (used by the tests);
 # the directory holds the files named in INPUTS below, each a Kubernetes `List`.
 #
-# Output: one line per problem on stdout (MISSING / STALE / PARTIAL / EMPTY), PENDING and ORPHAN
-# lines for information, then one COVERAGE line per surface.
+# Output: one line per problem on stdout (MISSING / STALE / SPLIT / PARTIAL / EMPTY), PENDING and
+# ORPHAN lines for information, then one COVERAGE line per surface.
 #
 # Exit codes:
 #   0  every expected object has a current result
-#   1  at least one result is missing or stale; each is named
+#   1  at least one result is missing, stale or split; each is named
 #   2  cannot check: bad usage, a failed or empty read, or unparseable input
 
 set -uo pipefail
@@ -92,9 +96,10 @@ command -v jq >/dev/null 2>&1 || die "jq is required but not installed"
 # posture.json         workloadconfigurationscans, each read back BY NAME (spec intact)
 # posture-list.json    kubectl get workloadconfigurationscans -A  (names only; spec is stripped)
 # vulnerability.json   kubectl get vulnerabilitymanifestsummaries -A
+# vulnerability-stored.json  the same summaries, each read back BY NAME (stored object)
 # profiles.json        kubectl get applicationprofiles -A
 # neighborhoods.json   kubectl get networkneighborhoods -A
-readonly INPUTS='namespaces workloads pods posture-list posture vulnerability profiles neighborhoods'
+readonly INPUTS='namespaces workloads pods posture-list posture vulnerability vulnerability-stored profiles neighborhoods'
 
 # Only workload kinds carry a posture result the expected set can ask for; the other ~2500 stored
 # objects (Secrets, RBAC, Services, ...) are never read back, which keeps a live run to a few calls.
@@ -129,25 +134,33 @@ else
   fetch profiles applicationprofiles -A
   fetch neighborhoods networkneighborhoods -A
 
-  # A LIST of this aggregated API returns `.spec.controls` as null on every object, which reads
-  # exactly like "no control results". A GET naming several objects keeps the spec, so read the
-  # posture objects of the workload kinds back by name, one namespace and at most 50 names per call.
-  printf '{"items":[]}\n' >"${work}/posture.json"
-  jq -r "${POSTURE_KINDS} | [.metadata.namespace, .metadata.name] | @tsv" "${work}/posture-list.json" |
-    sort | awk -F'\t' '
-      $1 != ns || n == 50 { if (line != "") print line; ns = $1; n = 0; line = $1 }
-      { line = line "\t" $2; n++ }
-      END { if (line != "") print line }' >"${work}/batches" ||
-    die "could not group posture objects for reading by name"
-  while IFS=$'\t' read -r -a batch; do
-    [ "${#batch[@]}" -ge 2 ] || continue
-    kc -n "${batch[0]}" get workloadconfigurationscans "${batch[@]:1}" -o json >"${work}/batch.json" \
-      2>"${work}/batch.err" || die "reading posture objects in ${batch[0]} failed: $(head -c 300 "${work}/batch.err")"
-    if ! jq -s '{items: (.[0].items + (.[1].items // [.[1]]))}' "${work}/posture.json" "${work}/batch.json" \
-      >"${work}/posture.next" || ! mv "${work}/posture.next" "${work}/posture.json"; then
-      die "could not merge posture objects read from ${batch[0]}"
-    fi
-  done <"${work}/batches"
+  # A LIST of this aggregated API is served from each object's metadata row: it returns
+  # `.spec.controls` as null on every posture object, which reads exactly like "no control
+  # results", and it cannot show whether that row still agrees with the stored object. A GET naming
+  # several objects reads the stored objects, so read back by name, one namespace and at most 50
+  # names per call.
+  # read_back_by_name <resource> <list-input> <output-input> <jq-selector>
+  read_back_by_name() {
+    local resource="$1" list="$2" out="$3" selector="$4"
+    printf '{"items":[]}\n' >"${work}/${out}.json"
+    jq -r "${selector} | [.metadata.namespace, .metadata.name] | @tsv" "${work}/${list}.json" |
+      sort | awk -F'\t' '
+        $1 != ns || n == 50 { if (line != "") print line; ns = $1; n = 0; line = $1 }
+        { line = line "\t" $2; n++ }
+        END { if (line != "") print line }' >"${work}/batches" ||
+      die "could not group ${out} objects for reading by name"
+    while IFS=$'\t' read -r -a batch; do
+      [ "${#batch[@]}" -ge 2 ] || continue
+      kc -n "${batch[0]}" get "${resource}" "${batch[@]:1}" -o json >"${work}/batch.json" \
+        2>"${work}/batch.err" || die "reading ${out} objects in ${batch[0]} failed: $(head -c 300 "${work}/batch.err")"
+      if ! jq -s '{items: (.[0].items + (.[1].items // [.[1]]))}' "${work}/${out}.json" "${work}/batch.json" \
+        >"${work}/${out}.next" || ! mv "${work}/${out}.next" "${work}/${out}.json"; then
+        die "could not merge ${out} objects read from ${batch[0]}"
+      fi
+    done <"${work}/batches"
+  }
+  read_back_by_name workloadconfigurationscans posture-list posture "${POSTURE_KINDS}"
+  read_back_by_name vulnerabilitymanifestsummaries vulnerability vulnerability-stored '.items[]'
 fi
 
 # A live collection can overlap a new vulnerability result. Freeze the implicit evaluation time
@@ -170,6 +183,17 @@ listed="$(jq "[${POSTURE_KINDS}] | length" "${work}/posture-list.json")"
 read_back="$(jq '.items | length' "${work}/posture.json")"
 [ "${listed}" = "${read_back}" ] ||
   die "posture objects: ${listed} listed but ${read_back} read back by name"
+listed="$(jq '.items | length' "${work}/vulnerability.json")"
+read_back="$(jq '.items | length' "${work}/vulnerability-stored.json")"
+[ "${listed}" = "${read_back}" ] ||
+  die "vulnerability summaries: ${listed} listed but ${read_back} read back by name"
+# A split is judged by comparing two versions, so an object without one cannot be judged.
+unversioned="$(jq -r -s '
+  [ .[].items[] | select((.metadata.resourceVersion // "") == "")
+    | "\(.metadata.namespace)/\(.metadata.name)" ] | unique | join(", ")
+' "${work}/vulnerability.json" "${work}/vulnerability-stored.json")" ||
+  die "could not validate vulnerability summary versions"
+[ -z "${unversioned}" ] || die "vulnerability summary has no resourceVersion: ${unversioned}"
 
 # The reviewed list: one `<namespace><TAB><reason>` row per unscanned namespace, `#` comments.
 unscanned="$(awk -F'\t' '/^[[:space:]]*#/ || NF == 0 { next } { print $1 }' "${reviewed}" |
@@ -345,6 +369,7 @@ jq -n -r \
   --slurpfile pods "${work}/pods.json" \
   --slurpfile posture "${work}/posture.json" \
   --slurpfile vulnerability "${work}/vulnerability.json" \
+  --slurpfile vulnerability_stored "${work}/vulnerability-stored.json" \
   --slurpfile profiles "${work}/profiles.json" \
   --slurpfile neighborhoods "${work}/neighborhoods.json" \
   -f /dev/stdin >"${work}/report" <<'JQ' || die "evaluating the captured objects failed"
@@ -392,8 +417,14 @@ def long_lived_statuses:
 | ( [ $images[] | select($scanned_at[.digest] == null) | "MISSING vulnerability \(.image) \(.digest)" ] ) as $missing
 | ( [ $images[] | select($scanned_at[.digest] != null and ($now - $scanned_at[.digest]) > $vuln_max_age)
       | "STALE vulnerability \(.image) \(.digest) scanned \($scanned_at[.digest] | todate)" ] ) as $stale
-| ($missing + $stale)[],
-  "COVERAGE vulnerability expected=\($images | length) current=\($images | length - ($missing + $stale | length)) missing=\($missing | length) stale=\($stale | length)",
+| ( $vulnerability_stored[0].items
+    | map({ ("\(.metadata.namespace)/\(.metadata.name)"): .metadata.resourceVersion }) | add // {} ) as $stored_version
+| ( [ $vulnerability[0].items[] | "\(.metadata.namespace)/\(.metadata.name)" as $k
+      | select($stored_version[$k] != .metadata.resourceVersion)
+      | "SPLIT vulnerability \($k) listed=\(.metadata.resourceVersion) stored=\($stored_version[$k] // "absent")" ]
+  | unique ) as $split
+| ($missing + $stale + $split)[],
+  "COVERAGE vulnerability expected=\($images | length) current=\($images | length - ($missing + $stale | length)) missing=\($missing | length) stale=\($stale | length) split=\($split | length)",
 
 # ---- runtime --------------------------------------------------------------------------------
 ( [ $pods[0].items[] | select(in_scope) | select(.status.phase == "Running")
@@ -435,7 +466,7 @@ for surface in posture vulnerability runtime; do
   line="$(grep "^COVERAGE ${surface} " "${work}/report")" || die "no ${surface} result was computed"
   case "${line}" in *' expected=0 '*) die "${surface}: the expected set is empty; that is UNKNOWN, never clean" ;; esac
 done
-if grep -qE '^(MISSING|STALE|PARTIAL|EMPTY) ' "${work}/report"; then
+if grep -qE '^(MISSING|STALE|SPLIT|PARTIAL|EMPTY) ' "${work}/report"; then
   exit 1
 fi
 exit 0
