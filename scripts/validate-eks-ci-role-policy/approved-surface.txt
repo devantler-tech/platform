@@ -90,7 +90,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter f92d67d39b
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|reloader|reloader 177bc2a47ba87335ce284b71f54a5430565f0df26a46f3ddf74a33f0a5ade937
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|umami|umami d9c53df5c36b9f1ae8664c38eb97f9d50a9ee6381c371b5074af1d9205fc970d
+helm.toolkit.fluxcd.io/v2|HelmRelease|umami|umami 48aba6bd6e4a546aedfb74464daca5f158eda44f09e8c84aeb0433d278fa0cbd
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|velero|velero 21f4717ff517de7a6da880ba580179b246c1baa7a62d2fcebdb5ad0a00e18c38
 
