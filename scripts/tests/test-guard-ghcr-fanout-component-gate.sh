@@ -186,10 +186,12 @@ assert_rc 'an enabled prod-only tenant is recognized' 0 "$GUARD_RC"
 write_fanout "$root" base-shop kyverno
 run_guard "$root"
 assert_rc 'an enabled prod-only tenant must be in fan-out' 1 "$GUARD_RC"
+assert_contains 'enabled tenant diagnostic identifies its provider gate' "ENABLED in $root/k8s/providers/hetzner/apps/kustomization.yaml"
 sed -i.bak 's/  - private-zone\//  # - private-zone\//' "$root/k8s/providers/hetzner/apps/kustomization.yaml"
 write_fanout "$root" base-shop private-zone kyverno
 run_guard "$root"
 assert_rc 'a prod-only tenant staged off must not require fan-out' 1 "$GUARD_RC"
+assert_contains 'disabled tenant diagnostic identifies its provider gate' "COMMENTED OUT of $root/k8s/providers/hetzner/apps/kustomization.yaml"
 rm "$root/k8s/providers/hetzner/apps/kustomization.yaml"
 run_guard "$root"
 assert_rc 'a missing prod-only tenant gate is unknown' 2 "$GUARD_RC"

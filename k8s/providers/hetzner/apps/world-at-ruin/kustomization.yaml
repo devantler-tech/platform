@@ -7,7 +7,6 @@ resources:
   - network-policy.yaml
   - resource-quota.yaml
   - limit-range.yaml
-  - external-secret.yaml
   - secret-store.yaml
   - certificate.yaml
   - oci-repository.yaml

@@ -7,11 +7,15 @@ database, persistent volume, player account or progression integration.
 
 World at Ruin owns the zone image and tenant manifests. Flux accepts stable
 release artifacts signed by that repository's `server-cd.yaml`; both Kyverno
-admission and Talos pulls verify the same exact image repository and signing
+admission and Talos pulls verify the same image repository and signing
 identity. Other application images retain their existing publisher boundary.
 
 The platform owns the namespace, its default-deny network policy, resource budget,
-shared registry pull secret, tenant identity and OpenBao policy. Tenant artifacts
+tenant identity and OpenBao policy. The game image and manifests are public
+packages: the tenant receives no registry credential and does not join the
+shared pull-credential fanout. Flux verifies the artifact signature on its
+anonymous pull; Kyverno and Talos retain their platform-owned verifier credentials.
+Tenant artifacts
 do not create standard NetworkPolicies; the reconciliation identity can only read
 those platform-owned policies. The tenant seeds and reads its admission key
 through its namespaced `world-at-ruin` SecretStore, confined to
@@ -31,7 +35,8 @@ The tunnel binds to localhost. The launcher uses exec to run `/zone -mint-token`
 inside the zone container, captures its short-lived bearer token privately and
 never prints the token or underlying admission secret. Kubernetes RBAC cannot
 restrict an exec grant to one command: this operator can execute any available
-command in these trial containers. Retire the operator Role and binding before
+command in these trial containers, including reading their mounted TLS and
+admission material. Retire the operator Role and binding before
 adding production credentials, real player data or authoritative persistence.
 
 The client verifies the public certificate chain and the issued server hostname
@@ -46,7 +51,7 @@ tenant and namespace fanout disabled, then prove the exact rule is running on ev
 Talos node. The ordinary deploy waits for Flux before syncing Talos machine config;
 enabling the tenant in that first delivery could block its image pull and prevent
 the machine config sync. A second reviewed change enables the tenant and its
-matching pull-credential fanout together. That deploy establishes the namespace,
+anonymous package pulls. That deploy establishes the namespace,
 certificate, secrets and Flux tenant; no manual apply is necessary.
 Verify the tenant's exact artifact and image digest, Ready certificate,
 ExternalSecrets and Deployment, then prove invalid admission is rejected and the

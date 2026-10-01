@@ -1021,7 +1021,6 @@ func TestUnreadyNodeAfterRebootStopsTheRoll(t *testing.T) {
 		"fanout:externalsecret/data-product-controller/ghcr-auth",
 		"fanout:externalsecret/wedding-app/ghcr-auth",
 		"fanout:externalsecret/ascoachingogvaner/ghcr-auth",
-		"fanout:externalsecret/world-at-ruin/ghcr-auth",
 		"fanout:externalsecret/kyverno/ghcr-auth",
 		"node-claim-cordon:prod-worker-1",
 		"node-fence-phase:prod-worker-1",
@@ -1072,7 +1071,6 @@ func TestTalosFailureAfterSafeFanoutKeepsRootAuthUnchanged(t *testing.T) {
 				"externalsecret/data-product-controller/ghcr-auth",
 				"externalsecret/wedding-app/ghcr-auth",
 				"externalsecret/ascoachingogvaner/ghcr-auth",
-				"externalsecret/world-at-ruin/ghcr-auth",
 				"externalsecret/kyverno/ghcr-auth",
 			})
 			operations := readLines(f.operationLog)

@@ -3178,16 +3178,13 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 }
 
 func fakeKubectlGetConsumerSecret(namespace string) int {
-	appendEnvFile("CONSUMER_SECRET_READ_LOG", namespace+"/ghcr-auth\n")
 	variablesPatchCount := parseInt(markerContent("variables-patch-count"), 0)
 	revertedMarker := "consumer-reverted-" + namespace
 	mismatch := namespace == os.Getenv("FAKE_CONSUMER_MISMATCH_NAMESPACE") ||
 		(namespace == os.Getenv("FAKE_CONSUMER_MISMATCH_ON_SECOND_PASS_NAMESPACE") && variablesPatchCount >= 2) ||
 		(markerExists(revertedMarker) && variablesPatchCount < 3)
 	encoded := ""
-	if namespace == os.Getenv("FAKE_CONSUMER_CONFIG_NAMESPACE") {
-		encoded = base64.StdEncoding.EncodeToString([]byte(os.Getenv("FAKE_CONSUMER_DOCKERCONFIGJSON")))
-	} else if mismatch {
+	if mismatch {
 		encoded = base64.StdEncoding.EncodeToString([]byte(`{"auths":{}}`))
 	} else if capture := os.Getenv("VARIABLES_PATCH_CAPTURE"); pathExists(capture) {
 		var patch map[string]any

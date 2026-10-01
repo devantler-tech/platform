@@ -55,7 +55,11 @@ func TestWorldAtRuinTrialApprovalRejectsRemovalAndPrivilegeChanges(t *testing.T)
 		{
 			name: "operator can read Secrets", key: operatorRole, wantDeltas: 2,
 			mutate: func(document map[string]any) {
-				document["rules"] = append(document["rules"].([]any), map[string]any{
+				rules, ok := document["rules"].([]any)
+				if !ok {
+					t.Fatal("operator Role fixture has no rules list")
+				}
+				document["rules"] = append(rules, map[string]any{
 					"apiGroups": []any{""}, "resources": []any{"secrets"}, "verbs": []any{"get"},
 				})
 			},
@@ -63,7 +67,15 @@ func TestWorldAtRuinTrialApprovalRejectsRemovalAndPrivilegeChanges(t *testing.T)
 		{
 			name: "different operator substitution", key: operatorBinding, wantDeltas: 2,
 			mutate: func(document map[string]any) {
-				document["subjects"].([]any)[0].(map[string]any)["name"] = "oidc:${another_admin_email}"
+				subjects, ok := document["subjects"].([]any)
+				if !ok || len(subjects) != 1 {
+					t.Fatal("operator binding fixture has no unique subject")
+				}
+				subject, ok := subjects[0].(map[string]any)
+				if !ok {
+					t.Fatal("operator binding fixture subject is not a mapping")
+				}
+				subject["name"] = "oidc:${another_admin_email}"
 			},
 		},
 	} {

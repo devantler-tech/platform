@@ -10,8 +10,6 @@ spec:
     # Earlier packages include a standard NetworkPolicy that tenant-edit cannot apply.
     semver: ">=0.115.1"
     semverFilter: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
-  secretRef:
-    name: ghcr-auth
   verify:
     provider: cosign
     matchOIDCIdentity:

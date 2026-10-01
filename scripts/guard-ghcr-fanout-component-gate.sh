@@ -109,6 +109,9 @@ enabled_list="$(yq -N -r '.resources[]' "$apps_kustomization" 2>/dev/null)" ||
 [ -n "$enabled_list" ] ||
   die "guard: $apps_kustomization declares no resources — refusing to report parity"
 
+# Resolve $1 against the resource list in its own base or provider app layer.
+# Return success only for an active entry; an unknown app or unavailable provider
+# gate terminates with status 2 instead of claiming that the app is staged off.
 is_enabled() { # <app>
   local index selected_list
   for index in "${!ghcr_apps[@]}"; do
@@ -167,19 +170,20 @@ drift=0
 printf 'ghcr-auth apps: %s\n' "${ghcr_apps[*]}"
 printf 'fan-out namespaces: %s\n' "$(printf '%s' "$fanout_list" | tr '\n' ' ')"
 
-for app in "${ghcr_apps[@]}"; do
+for index in "${!ghcr_apps[@]}"; do
+  app="${ghcr_apps[$index]}"
   if is_enabled "$app"; then
     if is_listed "$app"; then
       printf '  ok   %s — enabled in its app layer and listed in FANOUT_NAMESPACES\n' "$app"
     else
       printf '  FAIL %s is ENABLED in %s but MISSING from FANOUT_NAMESPACES in %s; its running consumer pull credential would never be proven.\n' \
-        "$app" "k8s/bases/apps/kustomization.yaml" "scripts/refresh-flux-ghcr-auth.sh"
+        "$app" "${ghcr_gates[$index]}" "scripts/refresh-flux-ghcr-auth.sh"
       drift=1
     fi
   else
     if is_listed "$app"; then
       printf '  FAIL %s is COMMENTED OUT of %s but still listed in FANOUT_NAMESPACES in %s; the post-reconcile reassertion cannot ever find its ExternalSecret and every prod deploy would fail.\n' \
-        "$app" "k8s/bases/apps/kustomization.yaml" "scripts/refresh-flux-ghcr-auth.sh"
+        "$app" "${ghcr_gates[$index]}" "scripts/refresh-flux-ghcr-auth.sh"
       drift=1
     else
       printf '  ok   %s — staged off in its app layer and absent from FANOUT_NAMESPACES\n' "$app"
@@ -195,12 +199,12 @@ while IFS= read -r ns; do
   listed_is_app=0
   for app in "${ghcr_apps[@]}"; do [ "$app" = "$ns" ] && listed_is_app=1 && break; done
   ((listed_is_app)) && continue
-  printf '  FAIL %s is in FANOUT_NAMESPACES but declares no ghcr-auth ExternalSecret under k8s/bases/apps/ and is not a declared non-app namespace.\n' "$ns"
+  printf '  FAIL %s is in FANOUT_NAMESPACES but declares no ghcr-auth ExternalSecret under the base or prod app roots and is not a declared non-app namespace.\n' "$ns"
   drift=1
 done <<<"$fanout_list"
 
 if ((drift)); then
-  printf '\nThe apps-base component gate and the GHCR fan-out requirement disagree.\n' >&2
+  printf '\nThe application component gates and the GHCR fan-out requirement disagree.\n' >&2
   exit 1
 fi
 printf '\nThe GHCR fan-out requirement follows the apps-base component gate.\n'

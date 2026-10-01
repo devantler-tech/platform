@@ -404,7 +404,6 @@ func TestPartialBootstrapRepairsRootWithoutForcingMissingFanout(t *testing.T) {
 		"externalsecret/data-product-controller/ghcr-auth",
 		"externalsecret/wedding-app/ghcr-auth",
 		"externalsecret/ascoachingogvaner/ghcr-auth",
-		"externalsecret/world-at-ruin/ghcr-auth",
 		"externalsecret/kyverno/ghcr-auth",
 	}
 	for _, resource := range missingResources {
