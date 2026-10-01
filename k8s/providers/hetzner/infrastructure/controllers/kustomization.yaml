@@ -116,6 +116,10 @@ components:
   # node, and Hubble for unexpected drops. bandwidth-manager-bbr's host-only
   # guard may be lifted only after this has soaked.
   # Rollback = re-comment (every node rolls back under the rolling update).
+  # CI then also needs scripts/tests/test-cilium-ebpf-host-routing-activation.sh
+  # reverted, and the kube-system/cilium HelmRelease line in
+  # scripts/validate-eks-ci-role-policy/approved-surface.txt set back to
+  # e56bb694c251d8f859edc76d005e3508e622ef2f3ba8d7e56ce722de9affbcf9.
   - cilium/components/ebpf-host-routing/
 patches:
   - path: openbao/patches/store-data-on-hcloud.yaml
