@@ -11,7 +11,7 @@ description: >-
 
 inputs:
   verify-wedding-backup-staging:
-    description: Compare the staged dedicated wedding backup credential during an opted-in manual deployment.
+    description: Verify the dedicated Wedding backup credential and active archive during an opted-in manual deployment.
     required: false
     default: "false"
   sops-age-key:
@@ -330,7 +330,7 @@ runs:
         PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
       run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
 
-    - name: Verify staged wedding backup credential
+    - name: Verify dedicated Wedding backup credential and active archive
       id: verify_wedding_backup_staging
       shell: bash
       env:

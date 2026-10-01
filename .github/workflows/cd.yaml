@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       verify-wedding-backup-staging:
-        description: Verify the staged dedicated wedding backup credential after deployment
+        description: Verify the Wedding backup credential and active dedicated archive after deployment
         required: false
         type: boolean
         default: false

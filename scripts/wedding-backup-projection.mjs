@@ -82,7 +82,7 @@ function validateControllers(d, options) {
   check(Array.isArray(plugins));
   const barman = plugins.filter(plugin => plugin.name === 'barman-cloud.cloudnative-pg.io');
   check(barman.length === 1 && barman[0].enabled === true && barman[0].isWALArchiver === true);
-  check(barman[0].parameters?.barmanObjectName === 'wedding-db');
+  check(barman[0].parameters?.barmanObjectName === 'wedding-db-dedicated');
   check(barman[0].parameters.serverName === 'wedding-db-20260909');
 }
 async function snapshot(options, deps) {
