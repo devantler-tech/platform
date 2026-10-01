@@ -121,6 +121,24 @@ func TestProductionRecipeRefusesCredentialAndDestinationDrift(t *testing.T) {
 	}
 }
 
+func TestFixtureAcceptsPinnedCommunityServerAndRefusesForeignOrUnpinnedImages(t *testing.T) {
+	r := recipeForTest(t)
+	c := at(r.minio, "spec", "template", "spec", "containers").([]any)[0].(map[string]any)
+	c["image"] = "docker.io/bitnamilegacy/minio:2025.4.22-debian-12-r1@sha256:d7cd0e172c4cc0870f4bdc3142018e2a37be9acf04d68f386600daad427e0cab"
+	if _, err := fixture("1234", r, "fixtureAccess123456", "fixturePassword1234567890"); err != nil {
+		t.Fatal("pinned community server cannot be used for the disposable fixture")
+	}
+	for _, image := range []string{
+		"docker.io/bitnamilegacy/minio:latest",
+		"docker.io/foreign/minio:2025.4.22-debian-12-r1@sha256:d7cd0e172c4cc0870f4bdc3142018e2a37be9acf04d68f386600daad427e0cab",
+	} {
+		c["image"] = image
+		if validateRecipe(r) == nil {
+			t.Fatal("unreviewed server image accepted")
+		}
+	}
+}
+
 func TestFixturePreservesProductionMappingsAndNeverUsesProductionCredentials(t *testing.T) {
 	r := recipeForTest(t)
 	before := cloneForTest(r.push)

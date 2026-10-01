@@ -34,7 +34,8 @@ const ownerKey = "platform.devantler.tech/bootstrap-proof-run"
 const dedicatedPath = "apps/wedding-app/backup/r2"
 const projectedSecret = "wedding-db-backup-r2-dedicated"
 const baoImage = "quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806"
-const mcImage = "quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952"
+const mcImage = "quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f"
+const toolsImage = "docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8"
 
 var digits = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 var uuid = regexp.MustCompile(`^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`)
@@ -111,7 +112,7 @@ func validateRecipe(r recipe) error {
 		return refused
 	}
 	c, ok := containers[0].(map[string]any)
-	if !ok || !regexp.MustCompile(`^quay\.io/minio/minio:RELEASE\.[0-9TZ.-]+@sha256:[a-f0-9]{64}$`).MatchString(str(c, "image")) {
+	if !ok || !regexp.MustCompile(`^docker\.io/bitnamilegacy/minio:[0-9.]+-debian-12-r[0-9]+@sha256:[a-f0-9]{64}$`).MatchString(str(c, "image")) {
 		return refused
 	}
 	if !reflect.DeepEqual(at(c, "env"), []any{object{"name": "MINIO_ROOT_USER_FILE", "value": "/etc/minio-credentials/rootUser"}, object{"name": "MINIO_ROOT_PASSWORD_FILE", "value": "/etc/minio-credentials/rootPassword"}}) {
