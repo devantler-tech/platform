@@ -290,6 +290,45 @@ expect "PREFIX wrapper option before bare path is rejected" 1 "is tracked 100644
 make_fixture "$work/envinterp" -x 'env FOO=1 bash scripts/fixture-target.sh' anchor
 expect "PREFIX env assignment + interpreter is accepted" 0 "exec-bit guard OK" "$work/envinterp"
 
+# A WRAPPER'S OWN ARGUMENTS ARE NOT THE COMMAND (#3692). Each of these execs the
+# file, but the word between the wrapper and the path (a duration, a niceness, a
+# user, a lock file) used to be read as a command taking the path as its argument,
+# so every one of them passed over a 100644 file.
+i=0
+while IFS= read -r invocation; do
+  i=$((i + 1))
+  make_fixture "$work/wraparg-$i" -x "$invocation" anchor
+  expect "WRAPARG '$invocation' is rejected" 1 "is tracked 100644, not 100755" "$work/wraparg-$i"
+done <<'EOF'
+timeout 10 scripts/fixture-target.sh
+timeout -k 5 10 ./scripts/fixture-target.sh
+timeout --signal KILL 10 ./scripts/fixture-target.sh
+nice -n 5 ./scripts/fixture-target.sh
+sudo -u root scripts/fixture-target.sh
+stdbuf -oL ./scripts/fixture-target.sh
+setsid ./scripts/fixture-target.sh
+ionice -c 3 ./scripts/fixture-target.sh
+flock /tmp/lock ./scripts/fixture-target.sh
+env -u FOO ./scripts/fixture-target.sh
+EOF
+
+# ...and skipping a wrapper's arguments must not turn the NEXT word into a skipped
+# one. After the duration, user or niceness, a word is the command again, so an
+# interpreter or any other command still takes the path as its argument.
+i=0
+while IFS= read -r invocation; do
+  i=$((i + 1))
+  make_fixture "$work/wrapctl-$i" -x "$invocation" anchor
+  expect "WRAPARG '$invocation' stays accepted" 0 "exec-bit guard OK" "$work/wrapctl-$i"
+done <<'EOF'
+timeout 10 bash ./scripts/fixture-target.sh
+timeout 10 shellcheck ./scripts/fixture-target.sh
+sudo -u root bash scripts/fixture-target.sh
+nice -n 5 printf ./scripts/fixture-target.sh
+flock ./scripts/fixture-target.sh true
+sudo -u ./scripts/fixture-target.sh true
+EOF
+
 # A BARE `-` IS THE YAML SEQUENCE MARKER, NOT A COMMAND: an UNQUOTED paths-filter
 # entry is a list item, and the widened extraction now reaches it where the quoted
 # form above is excluded by its quote. Only an option to a wrapper already accepted
