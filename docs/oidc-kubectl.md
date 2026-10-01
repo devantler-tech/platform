@@ -153,6 +153,13 @@ purpose) and any write/exec verb (`create`/`update`/`delete`, `pods/exec`,
 `pods/portforward`). The `cluster-reader` ClusterRole is defined in
 `k8s/bases/infrastructure/cluster-roles/cluster-reader.yaml`.
 
+The private [World at Ruin zone trial](./world-at-ruin-trial.md) has one explicit
+namespace-scoped exception for the configured administrator: a dedicated Role
+allows `pods/portforward` and `pods/exec` only in `world-at-ruin`, for the localhost
+tunnel and short-lived admission-token helper. It adds no Secret API access or
+workload writes and does not modify either global reader binding. Retire this
+trial exception before introducing production game credentials or player data.
+
 To grant read-only access to additional users, add more subjects to both
 bindings (or switch the subject to a Dex group such as
 `oidc:devantler-tech:platform`).

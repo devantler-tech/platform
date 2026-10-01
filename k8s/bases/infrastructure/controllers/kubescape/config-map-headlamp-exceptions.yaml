@@ -1404,5 +1404,34 @@ data:
           }
         ],
         "reason": "Flux GitOps controllers and Velero legitimately require cluster-admin / wildcard RBAC by design: arbitrary-manifest reconciliation (Flux) and cluster-wide backup/restore (Velero). The specific bindings are matched by kind+name so C-0187 still catches any new wildcard or cluster-admin grant."
+      },
+      {
+        "name": "world-at-ruin-trial-operator",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "disable"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^world-at-ruin-zone-trial-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^world-at-ruin-zone-trial-operator$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0002$"
+          }
+        ],
+        "reason": "The configured administrator's private scripted zone trial intentionally grants namespaced exec to run its short-lived admission-token helper while retaining the global reader roles and withholding Secret API access. RBAC cannot constrain exec to one command. The uniquely named trial Role and binding are retired before production credentials or player data are added."
       }
     ]

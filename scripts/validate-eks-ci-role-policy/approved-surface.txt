@@ -122,6 +122,8 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|unifi|unifi bcf9f876e3b42bc411bcdf1
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|wedding-app|wedding-app 1b680e05b65c96f2f91d709e8dd838dea064b15a132fcab2520606c9467241fe
 
+kustomize.toolkit.fluxcd.io/v1|Kustomization|world-at-ruin|world-at-ruin 9c3f8221e384c5bb93de6056be60f16f69de3b08898efc4f3760944f225d15b2
+
 kyverno.io/v1|ClusterPolicy||helm-release-enable-tests b901c17066f33c909b144581a8fc6303bb47ee923f13f2b8b0d18d4f7a9f2f46
 
 kyverno.io/v1|ClusterPolicy||helm-release-install-crds e4c29179bab5e1dfa761a7f77df91e8114c97f6f651055b06b310708f6c497f6
@@ -272,6 +274,10 @@ rbac.authorization.k8s.io/v1|RoleBinding|vertical-pod-autoscaler|vpa-leader-elec
 
 rbac.authorization.k8s.io/v1|RoleBinding|wedding-app|wedding-app 8fb1f3e7ae50e8f3d35d14b5d707fee91001cab754f2c70fa5befbeba13fddd6
 
+rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin 593fd95bd84af8840c71270227cabdf8137cba9c58d844b5ca2db3406d4632a2
+
+rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin-zone-trial-operator b14714377d4a5317c7d829bc1b378ecea44ed82f2b1fff32d4c923f9ee4809d6
+
 rbac.authorization.k8s.io/v1|Role|aws|aws-managed-resources bcbd97adfa055719ff19364d7341e4952fcb0566f1c1ba16d073b6f1ae4108b0
 
 rbac.authorization.k8s.io/v1|Role|github-config|github-config-managed-resources acb7434cc52dd53923f047d301c10d0e85ebfe5bb8c3ef8de67de24817e3e6b0
@@ -305,6 +311,8 @@ rbac.authorization.k8s.io/v1|Role|unifi|unifi-managed-resources 437740d30cde427a
 rbac.authorization.k8s.io/v1|Role|velero|velero-maintenance-oom-alert 062076b82e1a6bb9af4b6f647f2d297cbe683e70792b05f1f34c1ed881a7981f
 
 rbac.authorization.k8s.io/v1|Role|vertical-pod-autoscaler|vpa-leader-election 5b0a336b0836708cfb00e2ab8f28d273f062a986fa4e583f9694114f930bedfa
+
+rbac.authorization.k8s.io/v1|Role|world-at-ruin|world-at-ruin-zone-trial-operator 8ce73bb023e62877deee82fde80f040bac3dfe45e5992da386d32a6788ff4099
 
 source.toolkit.fluxcd.io/v1|GitRepository|unifi|unifi 58cb863c65fbca54948d10a53dcb6dd98b28cfb5a5299dee40604b588e8852c0
 
@@ -391,6 +399,8 @@ source.toolkit.fluxcd.io/v1|OCIRepository|aws|aws f900dbd1860a7494381bb0fe0bd044
 source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config 56d973136e535da94263547ab49101420a05e55f301e3f4c9c3f191354da7365
 
 source.toolkit.fluxcd.io/v1|OCIRepository|wedding-app|wedding-app fe21870783af3f34cdae7bb34af577609fa452a9ea01b1ba886137712c600ad7
+
+source.toolkit.fluxcd.io/v1|OCIRepository|world-at-ruin|world-at-ruin e85c1133b6517811831886b22ea6686b98781494c3cd5c1b4d3a4e8ffd6e4714
 
 v1|ConfigMap|flux-system|variables-base 3ad340acc55739177ebb22a26bf2c20116c66a818a77793646c4fd54b4c3c8b1
 

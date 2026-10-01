@@ -161,6 +161,41 @@ assert_rc 'parity holds' 0 "$GUARD_RC"
 assert_contains 'reports the staged-off app as correctly absent' 'bravo-staged — staged off'
 
 # --- case 2: staged off but still listed (the shipped regression) -----------
+printf 'case: prod-only tenant follows its provider gate\n'
+root="$(make_root prod-only)"
+add_app "$root" base-shop yes
+write_kustomization "$root" base-shop
+mkdir -p "$root/k8s/providers/hetzner/apps/private-zone"
+cat >"$root/k8s/providers/hetzner/apps/private-zone/external-secret.yaml" <<'YAML'
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: ghcr-auth
+  namespace: private-zone
+YAML
+cat >"$root/k8s/providers/hetzner/apps/kustomization.yaml" <<'YAML'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../bases/apps/
+  - private-zone/
+YAML
+write_fanout "$root" base-shop private-zone kyverno
+run_guard "$root"
+assert_rc 'an enabled prod-only tenant is recognized' 0 "$GUARD_RC"
+write_fanout "$root" base-shop kyverno
+run_guard "$root"
+assert_rc 'an enabled prod-only tenant must be in fan-out' 1 "$GUARD_RC"
+assert_contains 'enabled tenant diagnostic identifies its provider gate' "ENABLED in $root/k8s/providers/hetzner/apps/kustomization.yaml"
+sed -i.bak 's/  - private-zone\//  # - private-zone\//' "$root/k8s/providers/hetzner/apps/kustomization.yaml"
+write_fanout "$root" base-shop private-zone kyverno
+run_guard "$root"
+assert_rc 'a prod-only tenant staged off must not require fan-out' 1 "$GUARD_RC"
+assert_contains 'disabled tenant diagnostic identifies its provider gate' "COMMENTED OUT of $root/k8s/providers/hetzner/apps/kustomization.yaml"
+rm "$root/k8s/providers/hetzner/apps/kustomization.yaml"
+run_guard "$root"
+assert_rc 'a missing prod-only tenant gate is unknown' 2 "$GUARD_RC"
+
 printf 'case: staged off but still listed\n'
 root="$(make_root staged-but-listed)"
 add_app "$root" charlie-ghost yes

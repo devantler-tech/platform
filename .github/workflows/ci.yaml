@@ -362,6 +362,8 @@ jobs:
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
               - 'scripts/tests/test-world-zone-signatures.sh'
+              - 'scripts/tests/test-world-zone-trial.sh'
+              - 'docs/world-at-ruin-trial.md'
               # The boundary test asserts over these two guides, so a docs-only
               # change to either must trigger it or those assertions can drift.
               - 'docs/oidc-kubectl.md'
@@ -1328,6 +1330,12 @@ jobs:
         run: |
           shellcheck scripts/tests/test-world-zone-signatures.sh
           bash scripts/tests/test-world-zone-signatures.sh
+
+      - name: 🕹️ Validate the private zone trial boundaries
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-world-zone-trial.sh
+          bash scripts/tests/test-world-zone-trial.sh
 
       - name: 🧩 Validate Headlamp plugin removal
         if: needs.changes.outputs.k8s == 'true'

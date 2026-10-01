@@ -780,6 +780,16 @@ spec:
               }
               POLICY
 
+              # The private zone trial seeds and reads only its own admission key.
+              bao policy write app-world-at-ruin - <<'POLICY'
+              path "secret/data/apps/world-at-ruin/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/world-at-ruin/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              POLICY
+
               bao policy write app-umami-readonly - <<'POLICY'
               path "secret/data/apps/umami/*" {
                 capabilities = ["read"]
@@ -1084,6 +1094,12 @@ spec:
                 bound_service_account_names=wedding-app \
                 bound_service_account_namespaces=wedding-app \
                 policies=app-wedding-app \
+                ttl=1h
+
+              bao write auth/kubernetes/role/app-world-at-ruin \
+                bound_service_account_names=world-at-ruin \
+                bound_service_account_namespaces=world-at-ruin \
+                policies=app-world-at-ruin \
                 ttl=1h
 
               # Dedicated tenant role for ascoachingogvaner — same shape as
