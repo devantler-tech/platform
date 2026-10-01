@@ -27,7 +27,9 @@ spec:
     registryUI:
       enabled: true
     uiContract:
-      enabled: false
+      enabled: true
+    uiAppearance:
+      enabled: true
     engineProviders:
       enabled: false
     provisionedSources:
@@ -61,6 +63,7 @@ spec:
           memory: 128Mi
     demoProduct:
       enabled: true
+      publicBaseURL: https://harbour-data.${domain}
       replicas: 2
       resources:
         requests:
