@@ -3,6 +3,10 @@ kind: NetworkPolicy
 metadata:
   name: default-deny
   namespace: world-at-ruin
+  annotations:
+    # Retain isolation while tenant pruning terminates its workloads. Remove this
+    # host policy only during explicit namespace cleanup after all pods are gone.
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   podSelector: {}
   policyTypes:

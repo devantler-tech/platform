@@ -54,7 +54,9 @@ released client consumes the zone stream over the verified TLS tunnel. Observe
 the trial through the existing platform workload and log views.
 
 Removing the prod app-layer reference stops delivery. Namespace pruning remains
-disabled by the platform's persistence-safety component; retiring the trial
-namespace or generated credentials requires explicit cleanup after workloads
-have been removed. The trial establishes deployment and replication evidence;
+disabled by the platform's persistence-safety component. The host's namespace-wide
+default-deny policy also disables pruning, so tenant removal or rollback cannot
+remove isolation while its pods are still terminating. Retiring the trial
+namespace, retained host policy or generated credentials requires explicit cleanup
+after every workload and pod has been removed. The trial establishes deployment and replication evidence;
 it does not activate the production Agones/Nakama handoff.

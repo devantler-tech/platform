@@ -40,6 +40,19 @@ check_budget() {
   ' "$1" >/dev/null 2>&1 || { printf 'VIOLATION B1: trial resource budget differs\n'; return 1; }
 }
 
+# Require namespace-wide host isolation in rendered input $1, including retention
+# during tenant removal or rollback; return 1 for any policy or pruning drift.
+check_isolation() {
+  jq -e '
+    [.[] | select(.kind == "NetworkPolicy" and .metadata.namespace == "world-at-ruin") |
+      {name:.metadata.name, namespace:.metadata.namespace, spec:.spec,
+       prune:.metadata.annotations."kustomize.toolkit.fluxcd.io/prune"}] == [{
+        name:"default-deny", namespace:"world-at-ruin",
+        spec:{podSelector:{},policyTypes:["Ingress","Egress"]}, prune:"disabled"
+      }]
+  ' "$1" >/dev/null 2>&1 || { printf 'VIOLATION N1: retained namespace isolation differs\n'; return 1; }
+}
+
 # Inspect the exception JSON in $1; return 1 unless its identities and control are exact.
 check_exception() {
   jq -e '
@@ -128,6 +141,7 @@ yq -N -r 'select(.kind == "Job" and .metadata.name == "vault-config") |
   "${work}/vault.yaml" >"${work}/vault.sh"
 sh -n "${work}/vault.sh" || fail 'the rendered vault-config command must parse'
 check_budget "${work}/trial.json" || fail 'the trial budget control failed'
+check_isolation "${work}/trial.json" || fail 'the trial isolation control failed'
 check_exception "${work}/exception.json" || fail 'the trial exception control failed'
 check_vault_policy "${work}/vault.sh" || fail 'the trial Vault policy control failed'
 check_vault_role "${work}/vault.sh" || fail 'the trial Vault role control failed'
@@ -163,6 +177,10 @@ ablate_json check_budget B1 "${work}/trial.json" 'map(if .kind == "ResourceQuota
 ablate_json check_budget B1 "${work}/trial.json" 'map(if .kind == "ResourceQuota" then .spec.hard.persistentvolumeclaims = "1" else . end)'
 ablate_json check_budget B1 "${work}/trial.json" 'map(if .kind == "ResourceQuota" then .spec.hard."services.loadbalancers" = "1" else . end)'
 ablate_json check_budget B1 "${work}/trial.json" 'map(if .kind == "LimitRange" then .spec.limits[0].default.memory = "512Mi" else . end)'
+ablate_json check_isolation N1 "${work}/trial.json" 'map(if .kind == "NetworkPolicy" then del(.metadata.annotations."kustomize.toolkit.fluxcd.io/prune") else . end)'
+ablate_json check_isolation N1 "${work}/trial.json" 'map(if .kind == "NetworkPolicy" then .spec.ingress = [{}] else . end)'
+ablate_json check_isolation N1 "${work}/trial.json" 'map(if .kind == "NetworkPolicy" then .spec.podSelector = {matchLabels:{trial:"selected-only"}} else . end)'
+ablate_json check_isolation N1 "${work}/trial.json" 'map(select(.kind != "NetworkPolicy"))'
 ablate_json check_exception C1 "${work}/exception.json" '.spec.match.resources[0].name = ".*"'
 ablate_json check_exception C1 "${work}/exception.json" '.spec.posture += [{controlID:"C-0015",action:"ignore"}]'
 ablate_json check_exception C1 "${work}/exception.json" 'del(.spec.match)'
@@ -173,10 +191,12 @@ ablate_vault check_vault_role V2 's/bound_service_account_names=world-at-ruin/bo
 ablate_vault check_vault_role V2 's/bound_service_account_namespaces=world-at-ruin/bound_service_account_namespaces=*/'
 ablate_vault check_vault_role V2 's/policies=app-world-at-ruin/policies=app-world-at-ruin,vault-admin/'
 ablate_vault check_vault_role V2 '/bound_service_account_namespaces=world-at-ruin/d'
-printf 'PASS: trial budget, exact exception and Vault bounds; 4 controls + %d ablations\n' "${ablations}"
+printf 'PASS: trial budget, retained isolation, exact exception and Vault bounds; 5 controls + %d ablations\n' "${ablations}"
 
 kubectl kustomize "${root}/k8s/providers/hetzner/apps" >"${work}/prod.yaml"
 kubectl kustomize "${root}/k8s/providers/docker/apps" >"${work}/local.yaml"
+yq -o=json -I=0 eval-all '.' "${work}/prod.yaml" | jq -s '.' >"${work}/prod.json"
+check_isolation "${work}/prod.json" || fail 'the applied prod layer must retain the host isolation policy'
 [[ "$(yq -N -r 'select(.kind == "Namespace" and .metadata.name == "world-at-ruin") | .metadata.name' "${work}/prod.yaml")" == "world-at-ruin" ]] || fail 'the trial must be present in the prod app layer'
 [[ -z "$(yq -N -r 'select(.metadata.name == "world-at-ruin" or .metadata.namespace == "world-at-ruin") | .kind' "${work}/local.yaml")" ]] || fail 'the trial must remain prod-only'
 
