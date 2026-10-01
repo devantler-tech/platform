@@ -751,9 +751,35 @@ spec:
               # Read the OpenBao-rotated PostgreSQL credential for the umami app
               # user (Database secrets engine static role). Consumed by ESO via
               # the VaultDynamicSecret generator in the umami namespace.
+              # umami-blue / umami-green are the two login colours the
+              # umami-db-rotation CronJob alternates between (#4107).
               bao policy write app-umami-db-readonly - <<'POLICY'
               path "database/static-creds/umami" {
                 capabilities = ["read"]
+              }
+              path "database/static-creds/umami-blue" {
+                capabilities = ["read"]
+              }
+              path "database/static-creds/umami-green" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              # The umami-db-rotation CronJob (openbao namespace) reads each
+              # colour's static-role METADATA (last_vault_rotation, never the
+              # password) and rotates the idle colour. No static-creds read.
+              bao policy write umami-db-rotator - <<'POLICY'
+              path "database/static-roles/umami-blue" {
+                capabilities = ["read"]
+              }
+              path "database/static-roles/umami-green" {
+                capabilities = ["read"]
+              }
+              path "database/rotate-role/umami-blue" {
+                capabilities = ["update"]
+              }
+              path "database/rotate-role/umami-green" {
+                capabilities = ["update"]
               }
               POLICY
 
@@ -1121,6 +1147,13 @@ spec:
                 policies=vault-snapshot-readonly \
                 ttl=15m
 
+              # Weekly umami blue/green credential rotation (#4107).
+              bao write auth/kubernetes/role/umami-db-rotator \
+                bound_service_account_names=umami-db-rotator \
+                bound_service_account_namespaces=openbao \
+                policies=umami-db-rotator \
+                ttl=15m
+
               # --- 6. Enable OIDC auth (Dex) ---
               if ! bao auth list -format=json | grep -q '"oidc/"'; then
                 echo "Enabling OIDC auth method..."
@@ -1271,7 +1304,7 @@ spec:
                 echo "Configuring umami PostgreSQL database connection..."
                 if bao write database/config/umami-postgres \
                   plugin_name=postgresql-database-plugin \
-                  allowed_roles="umami" \
+                  allowed_roles="umami,umami-blue,umami-green" \
                   connection_url="postgresql://{{username}}:{{password}}@umami-db-rw.umami.svc.cluster.local:5432/umami?sslmode=require" \
                   username="postgres" \
                   password="$UMAMI_DB_SUPER" 2>/dev/null; then
@@ -1289,6 +1322,38 @@ spec:
                   else
                     echo "umami PostgreSQL static role already exists."
                   fi
+
+                  # Blue/green login colours (#4107). Rotating a static role
+                  # revokes its old password at once, so the app logs in as
+                  # whichever colour was rotated most recently while the other
+                  # colour stays valid for old pods; the umami-db-rotation
+                  # CronJob rotates only the idle (older) colour. Both are
+                  # NOLOGIN-owner `umami` members created by CNPG
+                  # (cluster.yaml), and every rotation also re-asserts
+                  # `SET role = 'umami'` so Prisma migrations keep creating
+                  # objects owned by `umami`. OpenBao requires a rotation_period;
+                  # 504h (21 days) is a BACKSTOP that never fires while the
+                  # weekly CronJob runs (each colour is rotated every 14 days)
+                  # and still bounds a credential's life if the CronJob stops.
+                  for COLOUR in blue green; do
+                    if bao read "database/static-roles/umami-$COLOUR" >/dev/null 2>&1; then
+                      echo "umami-$COLOUR static role already exists."
+                    elif bao write "database/static-roles/umami-$COLOUR" \
+                      db_name=umami-postgres \
+                      username="umami_$COLOUR" \
+                      rotation_period="${umami_db_colour_backstop_period:=504h}" \
+                      rotation_statements="ALTER ROLE \"{{name}}\" WITH PASSWORD '{{password}}'; ALTER ROLE \"{{name}}\" SET role = 'umami';"; then
+                      echo "umami-$COLOUR static role created."
+                    else
+                      # The login role is created by CNPG in the apps layer,
+                      # which reconciles AFTER this Job, and this Job re-runs
+                      # only when its spec changes. So the roles ship in their
+                      # own earlier deploy (#4324) and already exist when this
+                      # runs; a DR rebuild restores these static roles from the
+                      # raft snapshot instead.
+                      echo "umami_$COLOUR PostgreSQL role not ready yet -- skipping umami-$COLOUR."
+                    fi
+                  done
                 else
                   echo "umami PostgreSQL not reachable yet -- skipping DB role config."
                   echo "It will be configured on the next vault-config reconciliation."

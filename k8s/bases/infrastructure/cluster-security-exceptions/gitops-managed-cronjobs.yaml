@@ -41,6 +41,7 @@
 #   * observability/velero-maintenance-oom-alert  — alerts on an out-of-memory-killed Velero repository
 #                                                   maintenance run, even after a retry succeeds (platform)
 #   * openbao/vault-snapshot                      — OpenBao raft-snapshot backup (platform)
+#   * openbao/umami-db-rotation                   — weekly blue/green rotation of Umami's DB login (platform)
 #   * umami/umami-provision-tenants               — provisions Umami tenant websites (platform)
 # The fleetdm namespace is pre-listed too: the app is disabled on prod today (its
 # namespace does not exist), but its Helm chart ships a `fleet-vulnprocessing`
@@ -69,7 +70,8 @@ spec:
     failure, Crossplane sync, posture-scan staleness, prune-protected orphans,
     Velero maintenance OOM) / Coroot reconcilers (alert autosuppression, cloud
     pricing, application health, risk acceptance), the OpenBao
-    raft-snapshot backup, and Umami tenant provisioning.
+    raft-snapshot backup, the Umami database-login rotation, and Umami tenant
+    provisioning.
     Namespace-scoped to the infrastructure namespaces that run these, so a CronJob
     in any unexpected namespace still surfaces for review.
   posture:
