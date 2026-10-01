@@ -54,8 +54,11 @@ readonly source_store='wedding-db'
 readonly destination_store='wedding-db-dedicated'
 readonly plugin='barman-cloud.cloudnative-pg.io'
 readonly ready_marker='==== LISTINGS READY ===='
-# Same digest-pinned client the DR rebuild uses to read R2.
-readonly mc_image='quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952'
+# Official client release; the old quay.io/minio/mc path now refuses pulls.
+readonly mc_image='quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f'
+# mc's minimal image has no sed/awk. Use the statically linked musl variant:
+# the default BusyBox depends on a newer glibc than the client image provides.
+readonly tools_image='docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8'
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly root_dir
@@ -265,9 +268,13 @@ spec:
     runAsNonRoot: true
     runAsUser: 65532
     runAsGroup: 65532
+    fsGroup: 65532
     seccompProfile:
       type: RuntimeDefault
   volumes:
+    - name: tools
+      emptyDir:
+        sizeLimit: 8Mi
     - name: script
       configMap:
         name: __NAME__
@@ -296,10 +303,32 @@ spec:
       emptyDir:
         medium: Memory
         sizeLimit: 1Mi
+  initContainers:
+    - name: install-tools
+      image: __TOOLS_IMAGE__
+      command:
+        - /bin/sh
+        - -ec
+        - cp /bin/busybox /tools/busybox; /tools/busybox --install -s /tools
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: 10m
+          memory: 8Mi
+        limits:
+          cpu: 100m
+          memory: 32Mi
+      volumeMounts:
+        - name: tools
+          mountPath: /tools
   containers:
     - name: mirror
       image: __IMAGE__
-      command: ["/bin/sh", "/mirror/mirror.sh"]
+      command: ["/tools/sh", "/mirror/mirror.sh"]
       securityContext:
         runAsNonRoot: true
         allowPrivilegeEscalation: false
@@ -307,6 +336,8 @@ spec:
         capabilities:
           drop: ["ALL"]
       env:
+        - name: PATH
+          value: /tools:/usr/local/bin:/usr/bin:/bin
         - name: ENDPOINT
           value: "__ENDPOINT__"
         - name: SOURCE_BUCKET
@@ -328,6 +359,9 @@ spec:
         limits:
           memory: 1Gi
       volumeMounts:
+        - name: tools
+          mountPath: /tools
+          readOnly: true
         - name: script
           mountPath: /mirror
           readOnly: true
@@ -345,6 +379,7 @@ MANIFEST
 )"
 manifest="${manifest//__NAME__/${name}}"
 manifest="${manifest//__IMAGE__/${mc_image}}"
+manifest="${manifest//__TOOLS_IMAGE__/${tools_image}}"
 manifest="${manifest//__SOURCE_SECRET__/${source_secret}}"
 manifest="${manifest//__DESTINATION_SECRET__/${destination_secret}}"
 manifest="${manifest//__ENDPOINT__/${source_endpoint}}"
