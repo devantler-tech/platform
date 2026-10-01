@@ -4,6 +4,31 @@
 # - Mutation injects defaults for empty fields (conditional anchors)
 # - This policy blocks explicitly insecure overrides at admission
 #
+# DELIBERATE ASYMMETRY — validated at the controller, mutated only at the pod
+# (#3160). Kyverno autogenerates this policy's rules for Deployment,
+# StatefulSet, DaemonSet, Job and CronJob pod templates, while
+# add-security-context matches Pod with CREATE only and generates no autogen
+# rules (except its opt-in controller counterparts). So a controller template
+# is VALIDATED as stored but NEVER MUTATED: the mutation fills empty fields in
+# the pods the controller creates, not in the template this policy checks.
+# The consequence for authors: a manifest in this repository must declare
+# every field validated here explicitly in its pod template (including
+# container-level runAsNonRoot, see umami's CronJob). Relying on the mutation
+# works only while Kyverno's default allowExistingViolations grandfathers a
+# live object that is equally non-compliant, and it wedges the Kustomization
+# the moment the live object becomes compliant (the 2026-08-15 merge-queue
+# wedge in #3160).
+# Why keep the split rather than close it:
+# - Autogen stays ON here so a non-compliant template is refused when Flux
+#   applies it, loudly, on the Kustomization. Validating only Pods would admit
+#   the controller and fail its pods inside the ReplicaSet/Job, where nothing
+#   reports the denial to the GitOps pipeline.
+# - Autogen stays OFF on the mutation because the mutate rules are CREATE-only
+#   for pod-spec immutability (see add-security-context), and mutating a stored
+#   template changes its hash and rolls the workload at whatever moment its
+#   owner next writes it. That is only done per namespace, behind the
+#   baseline-context-controllers opt-in.
+#
 # Addresses kubescape controls: C-0013, C-0016, C-0055, C-0057
 #
 # NOTE: readOnlyRootFilesystem is NOT validated because several charts

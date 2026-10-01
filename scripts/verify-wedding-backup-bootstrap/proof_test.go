@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -71,7 +72,16 @@ func TestProbeConsumesOnlyTheControllerProjectedSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	volumes := at(p, "spec", "volumes").([]any)
-	if len(volumes) != 2 || str(volumes[0].(map[string]any), "secret", "secretName") != projectedSecret {
+	secrets := 0
+	for _, v := range volumes {
+		if name := str(v.(map[string]any), "secret", "secretName"); name != "" {
+			secrets++
+			if name != projectedSecret {
+				t.Fatal("probe mounts a credential outside the controller projection")
+			}
+		}
+	}
+	if secrets != 1 {
 		t.Fatal("probe bypasses ESO")
 	}
 	encoded, _ := json.Marshal(p)
@@ -79,6 +89,41 @@ func TestProbeConsumesOnlyTheControllerProjectedSecret(t *testing.T) {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("probe contains %s", forbidden)
 		}
+	}
+}
+
+// The official client contains cat, but no cmp or self-contained shell tools.
+// A bare client Pod starts yet fails only after it has uploaded the sentinel.
+func TestProbeHasExecutableUtilitiesWithoutWritingTheClientFilesystem(t *testing.T) {
+	p, err := probePod("1234", recipeForTest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := at(p, "spec", "containers").([]any)[0].(map[string]any)
+	command := at(c, "command").([]any)
+	if command[0] != "/tools/sh" {
+		t.Fatal("probe relies on utilities absent from the client image")
+	}
+	init, _ := at(p, "spec", "initContainers").([]any)
+	if len(init) != 1 {
+		t.Fatal("probe has no utility installer")
+	}
+	i := init[0].(map[string]any)
+	if !reflect.DeepEqual(at(i, "volumeMounts"), []any{object{"name": "tools", "mountPath": "/tools"}}) {
+		t.Fatal("installer cannot populate the probe's tools")
+	}
+	if !strings.HasPrefix(str(i, "image"), "docker.io/library/busybox:") || !strings.Contains(str(i, "image"), "-musl@sha256:") {
+		t.Fatal("tools require a pinned static binary compatible with the client")
+	}
+	found := false
+	for _, v := range at(p, "spec", "volumes").([]any) {
+		o := v.(map[string]any)
+		if str(o, "name") == "tools" {
+			found = str(o, "emptyDir", "medium") == "Memory"
+		}
+	}
+	if !found || at(c, "securityContext", "readOnlyRootFilesystem") != true {
+		t.Fatal("utility installation changed the read-only client boundary")
 	}
 }
 
