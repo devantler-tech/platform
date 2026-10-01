@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -61,6 +62,36 @@ func TestDedicatedSourceAndIsolation(t *testing.T) {
 	selectors := deny["toEndpoints"].([]any)
 	if selectors[0].(map[string]any)["matchLabels"].(map[string]any)["k8s:io.kubernetes.pod.namespace"] != "wedding-app" {
 		t.Fatal("production database traffic must be denied")
+	}
+}
+
+// A cold Cilium node must learn the backup endpoint through the DNS proxy.
+// DNS interception is limited to kube-dns; HTTPS remains limited to R2.
+func TestRestoreBackupDNSInterception(t *testing.T) {
+	c, s, b := fixture(t)
+	source, err := validateSource(c, s, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(resources("12345", source)[1])
+	policy := obj(t, string(encoded))
+	var dns, https object
+	for _, entry := range value(policy, "spec", "egress").([]any) {
+		rule := entry.(map[string]any)
+		if value(rule, "toEndpoints") != nil {
+			dns = rule
+		}
+		if value(rule, "toFQDNs") != nil {
+			https = rule
+		}
+	}
+	wantDNS := obj(t, `{"toEndpoints":[{"matchLabels":{"k8s:io.kubernetes.pod.namespace":"kube-system","k8s-app":"kube-dns"}}],"toPorts":[{"ports":[{"port":"53","protocol":"UDP"},{"port":"53","protocol":"TCP"}],"rules":{"dns":[{"matchPattern":"*"}]}}]}`)
+	if !reflect.DeepEqual(dns, wantDNS) {
+		t.Fatal("restore DNS must intercept UDP and TCP only through kube-dns")
+	}
+	wantHTTPS := obj(t, `{"toFQDNs":[{"matchName":"00000000000000000000000000000000.r2.cloudflarestorage.com"}],"toPorts":[{"ports":[{"port":"443","protocol":"TCP"}]}]}`)
+	if !reflect.DeepEqual(https, wantHTTPS) {
+		t.Fatal("backup access must remain limited to the dedicated R2 endpoint over HTTPS")
 	}
 }
 

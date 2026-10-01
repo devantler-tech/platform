@@ -114,7 +114,12 @@ func resources(run string, s source) []object {
 		{"apiVersion": "cilium.io/v2", "kind": "CiliumNetworkPolicy", "metadata": metadata("restore-isolation", ns, run), "spec": object{
 			"endpointSelector": object{}, "ingress": []any{},
 			"egressDeny": []any{object{"toEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": "wedding-app"}}}}},
-			"egress":     []any{object{"toEntities": []any{"kube-apiserver"}}, object{"toFQDNs": []any{object{"matchName": s.Host}}, "toPorts": []any{object{"ports": []any{object{"port": "443", "protocol": "TCP"}}}}}},
+			"egress": []any{
+				object{"toEntities": []any{"kube-apiserver"}},
+				// Intercept DNS on cold nodes so Cilium can learn the R2 IPs.
+				object{"toEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": "kube-system", "k8s-app": "kube-dns"}}}, "toPorts": []any{object{"ports": []any{object{"port": "53", "protocol": "UDP"}, object{"port": "53", "protocol": "TCP"}}, "rules": object{"dns": []any{object{"matchPattern": "*"}}}}}},
+				object{"toFQDNs": []any{object{"matchName": s.Host}}, "toPorts": []any{object{"ports": []any{object{"port": "443", "protocol": "TCP"}}}}},
+			},
 		}},
 		{"apiVersion": "barmancloud.cnpg.io/v1", "kind": "ObjectStore", "metadata": metadata("dedicated-restore", ns, run), "spec": object{"configuration": object{"destinationPath": "s3://wedding-db-backups/cnpg/wedding-db", "endpointURL": "https://" + s.Host, "s3Credentials": refs, "wal": object{"compression": "gzip"}, "data": object{"compression": "gzip"}}}},
 		{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "metadata": metadata("restore", ns, run), "spec": object{
