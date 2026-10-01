@@ -48,6 +48,7 @@ function pair(bootstrap, projected) {
   check(equal(source.access_key_id, result.access_key_id) && equal(source.secret_access_key, result.secret_access_key));
   return result;
 }
+/** Verify controller readiness, credential projection wiring and the dedicated archive reference before reading either Secret. */
 function validateControllers(d, options) {
   ready(d.source, true);
   check(d.source.spec.url === 'oci://ghcr.io/devantler-tech/platform/manifests' && d.source.spec.ref?.tag === 'latest' && d.source.spec.verify?.provider === 'cosign');

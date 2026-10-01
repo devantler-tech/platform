@@ -444,6 +444,9 @@ gh run view "$run_id" --repo devantler-tech/platform --log |
 #
 #    During archive cutover, also run Mirror Wedding Backup Catalogue in
 #    catch-up mode with the recorded switch time and require CAUGHT UP.
+#    Require destinationNewestBaseBackup to equal the active server name
+#    followed by / and the fresh Backup receipt's backup ID. This excludes
+#    info-only and empty archives as well as backups from older servers.
 #    The shared catalogue must be quiescent, and the dedicated archive must
 #    continue from its last WAL segment without a gap (see velero-cnpg.md).
 #    Retain shared recovery access until the dedicated-only restore and
