@@ -35,6 +35,9 @@ spec:
             app: vault-snapshot
             k8s:io.kubernetes.pod.namespace: openbao
         - matchLabels:
+            app: umami-db-rotation
+            k8s:io.kubernetes.pod.namespace: openbao
+        - matchLabels:
             k8s:io.kubernetes.pod.namespace: external-secrets
         - matchLabels:
             app: auth-proxy
