@@ -15,7 +15,7 @@ resources:
   # the devantler-tech/aws repo sync lands in a follow-up increment. Hetzner-only
   # because Crossplane (and the provider packages) are prod-only.
   - aws/
-  # Owner-only scripted zone trial; registry fanout is enabled with this resource.
+  # Owner-only scripted zone trial; public packages need no registry credential fanout.
   - world-at-ruin/
   # Default-off disposable proof for user namespaces + Longhorn idmapped mounts
   # (platform#2599). Activate in a short-lived PR by uncommenting this resource,
