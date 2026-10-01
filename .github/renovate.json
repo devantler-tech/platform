@@ -147,6 +147,12 @@
   },
   "packageRules": [
     {
+      "description": "Coroot operator chart 0.10.3 contains an invalid service-account API-key CEL expression and Kubernetes rejects its CRD upgrade (#4338). Exclude only this broken chart; retain normal updates for corrected releases.",
+      "matchDatasources": ["helm"],
+      "matchPackageNames": ["coroot-operator"],
+      "allowedVersions": "!/^0\\.10\\.3$/"
+    },
+    {
       "description": "flux-operator is tracked by the dedicated regex customManager above (the built-in `flux` manager stalled on it). Disable the `flux` manager for this chart so the two managers cannot open duplicate PRs if the flux manager later resumes.",
       "matchManagers": ["flux"],
       "matchPackageNames": [
