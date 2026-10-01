@@ -259,6 +259,41 @@ invocations="$(
   }
 )"
 
+# 🔴 A WRAPPER'S OWN ARGUMENTS ARE NOT THE COMMAND IT RUNS (#3692).
+#
+# `timeout 10 ./scripts/x.sh`, `nice -n 5 ./scripts/x.sh` and
+# `sudo -u root scripts/x.sh` all exec the file. Read word by word, though, `10`,
+# `5` and `root` look like a command that takes the path as an argument, so each
+# of these was discarded and the bit went unchecked. A wrapper therefore declares
+# what it consumes before the command: how many leading positional words it takes
+# (timeout's duration, flock's lock file), and which of its options take their
+# value as the NEXT word. Only those words are skipped; any other word after a
+# wrapper is still the command, and the path is still its argument.
+wrapper_positionals() {
+  case "$1" in
+    timeout | flock) echo 1 ;;
+    *) echo 0 ;;
+  esac
+}
+
+# 0 when option $2 of wrapper $1 takes its value as the next word. A value attached
+# to the option (`-oL`, `--signal=KILL`) is part of the same word and needs no skip.
+wrapper_option_takes_value() {
+  case "$1:$2" in
+    sudo:-u | sudo:-g | sudo:-C | sudo:-D | sudo:-h | sudo:-p | sudo:-r | sudo:-t | sudo:-T | sudo:-U) return 0 ;;
+    sudo:--user | sudo:--group | sudo:--chdir | sudo:--host | sudo:--prompt | sudo:--other-user) return 0 ;;
+    timeout:-k | timeout:-s | timeout:--kill-after | timeout:--signal) return 0 ;;
+    nice:-n | nice:--adjustment) return 0 ;;
+    env:-u | env:-C | env:-S | env:--unset | env:--chdir | env:--split-string) return 0 ;;
+    ionice:-c | ionice:-n | ionice:--class | ionice:--classdata) return 0 ;;
+    stdbuf:-i | stdbuf:-o | stdbuf:-e | stdbuf:--input | stdbuf:--output | stdbuf:--error) return 0 ;;
+    flock:-w | flock:-E | flock:--timeout | flock:--conflict-exit-code) return 0 ;;
+    xargs:-a | xargs:-d | xargs:-E | xargs:-I | xargs:-L | xargs:-n | xargs:-P | xargs:-s) return 0 ;;
+    exec:-a | time:-f | time:-o) return 0 ;;
+  esac
+  return 1
+}
+
 direct=""
 unresolved=""
 while IFS= read -r occurrence; do
@@ -293,13 +328,22 @@ while IFS= read -r occurrence; do
   read -ra prefix_tokens <<<"$prefix"
   reaches_path=1
   saw_wrapper=0
+  wrapper=""
+  skip_value=0
+  positionals=0
   for token in ${prefix_tokens+"${prefix_tokens[@]}"}; do
+    if ((skip_value == 1)); then
+      skip_value=0
+      continue
+    fi
     case "$token" in
       # A control keyword introduces a command position rather than taking the
       # path as an argument: `if ./scripts/x.sh` execs the file.
       if | elif | while | until | then | do | else | "!" | "{")
         reaches_path=1
         saw_wrapper=0
+        wrapper=""
+        positionals=0
         ;;
       # A quote is TRANSPARENT — never a reset. It marks a command position in
       # `run: "./scripts/x.sh"`, but in `foo "./scripts/x.sh"` the path is an
@@ -311,17 +355,30 @@ while IFS= read -r occurrence; do
         # entry — a path filter, not a command.
         if ((saw_wrapper == 0)); then
           reaches_path=0
+        elif wrapper_option_takes_value "$wrapper" "$token"; then
+          skip_value=1
         fi
         ;;
-      *=*) ;;                                                     # NAME=value: an environment assignment is transparent
-      sudo | exec | time | env | command | nohup | xargs)          # a wrapper that still execs the file
+      # NAME=value: an environment assignment is transparent.
+      *=*) ;;
+      # A wrapper that still execs the file.
+      sudo | exec | time | env | command | nohup | xargs | timeout | nice | stdbuf | setsid | ionice | flock)
         saw_wrapper=1
+        wrapper="$token"
+        positionals="$(wrapper_positionals "$token")"
         ;;
-      bash | sh | zsh | dash | ksh | source | .)                   # handed to an interpreter
+      # Handed to an interpreter.
+      bash | sh | zsh | dash | ksh | source | .)
         reaches_path=0
         ;;
-      *)                                                           # an argument to some other command, which does not exec it
-        reaches_path=0
+      *)
+        if ((positionals > 0)); then
+          # The wrapper's own leading argument.
+          positionals=$((positionals - 1))
+        else
+          # An argument to some other command, which does not exec it.
+          reaches_path=0
+        fi
         ;;
     esac
   done
