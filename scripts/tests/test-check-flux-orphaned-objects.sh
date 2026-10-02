@@ -435,8 +435,8 @@ expect_reads 2
 expect_text '✅ Nothing stayed outside every inventory across both reads among all Flux-applied objects: the 1 finding(s) on the first read had cleared by the second'
 expect_summary '(1 cleared on re-read)'
 
-# An object that first appears outside every inventory on the second read is
-# not confirmed; it is reported, but it does not fail the check.
+# An object that first appears outside every inventory on the second read has
+# not settled. Earlier cleared findings cannot establish a clean final read.
 case_name='finding only on the second read'
 dir="$(scenario second-only)"
 obj v1 ConfigMap web early uid-early flux-system/apps kustomize-controller | add_objects "${dir}"
@@ -444,9 +444,12 @@ cp "${dir}/kustomizations.json" "${dir}/kustomizations.2.json"
 record "${dir}/kustomizations.2.json" 'web_early__ConfigMap'
 obj v1 ConfigMap web late uid-late flux-system/apps kustomize-controller | add_objects "${dir}" 2
 run "${dir}"
-expect_status 0
+expect_status 2
 expect_text 'not confirmed'
 expect_line '  ConfigMap web/late (claims=flux-system/apps created=2026-08-30T14:17:34Z prune=-)'
+expect_text 'the final read contains findings that have not settled.'
+expect_no_text '✅ Nothing stayed outside every inventory'
+expect_summary 'UNKNOWN'
 
 # An object claimed by a Kustomization that no longer exists is an orphan.
 case_name='claiming Kustomization deleted'

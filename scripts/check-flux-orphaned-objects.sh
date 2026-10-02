@@ -427,11 +427,13 @@ if [[ -s "${tmp_dir}/unjudged.txt" ]]; then
   unknown "the inventories could not be trusted to judge every recent object."
 fi
 
+if [[ -s "${tmp_dir}/unconfirmed-new.txt" ]]; then
+  echo "The second read found these for the first time, so they are not confirmed and cannot establish a clean result:"
+  print_findings "${tmp_dir}/unconfirmed-new.txt"
+  : >"${tmp_dir}/error.log"
+  unknown "the final read contains findings that have not settled."
+fi
 cleared="$(grep -Ec '^(orphan|unjudged|stale) ' "${first}/findings.txt")"
 echo "✅ Nothing stayed outside every inventory across both reads among $(scope): the ${cleared} finding(s) on the first read had cleared by the second (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${second}"))."
-if [[ -s "${tmp_dir}/unconfirmed-new.txt" ]]; then
-  echo "The second read found these for the first time, so they are not confirmed and are expected to be a reconcile in progress:"
-  print_findings "${tmp_dir}/unconfirmed-new.txt"
-fi
 summary "- Flux orphaned objects: none confirmed among $(scope) — ${checked} Flux-applied objects, ${kustomizations} Kustomizations (${cleared} cleared on re-read)."
 exit 0
