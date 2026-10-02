@@ -289,9 +289,11 @@ jobs:
       # that stopped at the first never ran the diagnostics on the one failure they
       # exist to explain (#3879). That is a property of the STEP's shape, which no
       # script it calls can enforce, so the test executes the step against stub
-      # binaries and ablates each assertion. Unconditional for the same reason as
-      # the steps above: its subjects are ci.yaml and cd.yaml themselves, which sit
-      # outside the k8s paths.
+      # binaries and ablates each assertion. It also refuses an `if:` or a tolerated
+      # failure on that step, which would let the gate run without deciding
+      # anything — the Go coverage guards cannot read this compound step (#4361).
+      # Unconditional for the same reason as the steps above: its subjects are
+      # ci.yaml and cd.yaml themselves, which sit outside the k8s paths.
       - name: 🔐 Validate the authorization gate reports its diagnostics
         run: |
           shellcheck scripts/tests/test-authorization-gate-diagnostics.sh

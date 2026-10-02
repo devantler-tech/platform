@@ -24,6 +24,11 @@
 # short-circuiting form the fix replaces; a check that cannot fail is not a
 # check.
 #
+# The same step must also be able to stop its job: no `if:` and no tolerated
+# failure on it (#4361). The Go coverage guards enforce that on the gate steps
+# they can read, but this compound step is outside their line grammar, so it is
+# asserted here and each disarm is ablated on a copy of ci.yaml.
+#
 # yq (mikefarah v4) reads the YAML. No network, no secrets, no Go toolchain.
 # Bash 3.2 compatible.
 set -euo pipefail
@@ -70,6 +75,48 @@ step_shell_flags() {
     '') printf -- '-e' ;;
     *) printf -- '-e' ;;
   esac
+}
+
+# step_disarm prints why the step cannot stop its job, or nothing when it can.
+# A step-level `if:` can skip the gate on the very run it was meant to judge,
+# and a tolerated failure (`continue-on-error` true, or an expression whose value
+# is unknowable here) turns a red gate into a green step (#4361). The Go
+# coverage guards reject both on the steps they read, but this step is a
+# compound script their line grammar deliberately refuses, so it is pinned here,
+# where it is already extracted.
+#
+# The condition is read by PRESENCE, never through `//`: yq's alternative
+# operator treats a boolean `false` as absent, so `if: false` — the plainest
+# way to switch the gate off — read as "no condition" and passed (measured on
+# the first draft of this check). For the tolerance that same folding is wanted:
+# an absent key and an explicit `false` are both the default, under which the
+# step fails its job.
+#
+# Each read is folded to ONE answer across every step carrying the gate's name, so
+# a second step with that name cannot split the result into lines that compare
+# unequal to the single value tested below.
+step_disarm() {
+  local workflow="$1" selector has_condition condition='' tolerance
+  selector=".jobs[\"${job}\"].steps[] | select(.name == \"${step}\")"
+  # A failed read is UNKNOWN: command substitution does not inherit errexit, so an
+  # unchecked yq error would yield an empty answer that reads as "no disarm".
+  if ! has_condition="$(yq -r "[${selector} | has(\"if\")] | any" "${workflow}" 2>&1)" ||
+    ! tolerance="$(yq -r "[${selector} | .[\"continue-on-error\"] // false | tostring | select(. != \"false\")] | join(\", \")" "${workflow}" 2>&1)"; then
+    printf 'could not read the gate step in %s, so whether it is disarmed is UNKNOWN\n' "${workflow##*/}"
+    return 0
+  fi
+  if [ "${has_condition}" = "true" ]; then
+    condition="$(yq -r "[${selector} | select(has(\"if\")) | .if | tostring] | join(\", \")" "${workflow}")"
+  elif [ "${has_condition}" != "false" ]; then
+    printf 'could not read the gate step in %s, so whether it is disarmed is UNKNOWN\n' "${workflow##*/}"
+    return 0
+  fi
+  if [ "${has_condition}" = "true" ]; then
+    printf 'the gate step carries if: %s, so it can be skipped on the run it was meant to judge\n' "${condition}"
+  fi
+  if [ -n "${tolerance}" ]; then
+    printf 'the gate step carries continue-on-error: %s, so a failing gate leaves the step green\n' "${tolerance}"
+  fi
 }
 
 # make_stubs builds a PATH directory whose `go` records each invocation and
@@ -187,6 +234,10 @@ for workflow_name in ci cd; do
   fi
   grep -q 'validate-eks-ci-role-policy' "${script}" ||
     fail "${workflow_name}.yaml: the extracted step does not invoke the authorization validator"
+  while IFS= read -r disarm; do
+    [ -n "${disarm}" ] || continue
+    fail "${workflow_name}.yaml: ${disarm}"
+  done <<<"$(step_disarm "${workflow}")"
 
   assert_gate_behaviour "${workflow_name}.yaml" "${script}" "${shell_flags}" diagnostics
 done
@@ -210,10 +261,80 @@ esac
 [ "$(field "${ablation_result}" 1)" != "0" ] ||
   fail "ABLATION: the short-circuiting step exited 0, so Case B's control is not exercised"
 
+# ABLATION. Each disarm is written into a copy of ci.yaml's real step, asserted
+# applied (the copy must differ from ci.yaml), and must be reported naming that
+# disarm; the default spelled out must not be. A check that passes on a disarmed
+# step proves nothing.
+#   $1 label   $2 yq update applied to the step   $3 expected fragment ('' = none)
+assert_disarm_reported() {
+  local label="$1" edit="$2" want="$3" disarmed found
+  disarmed="${work_dir}/disarmed-${label}.yaml"
+  cp "${root_dir}/.github/workflows/ci.yaml" "${disarmed}"
+  yq -i "(.jobs[\"${job}\"].steps[] | select(.name == \"${step}\")) |= (${edit})" "${disarmed}"
+  if cmp -s "${disarmed}" "${root_dir}/.github/workflows/ci.yaml"; then
+    fail "ABLATION ${label}: the edit was not applied to the copy of ci.yaml, so this control proves nothing"
+    return 0
+  fi
+  found="$(step_disarm "${disarmed}")"
+  if [ -z "${want}" ]; then
+    [ -z "${found}" ] ||
+      fail "ABLATION ${label}: an explicit default was reported as a disarm: ${found}"
+    return 0
+  fi
+  case "${found}" in
+    *"${want}"*) : ;;
+    *) fail "ABLATION ${label}: a disarmed gate step was not reported (got: '${found}')" ;;
+  esac
+}
+
+assert_disarm_reported condition '.if = "github.event_name == '"'"'push'"'"'"' \
+  "carries if: github.event_name == 'push'"
+# A BOOLEAN false, the value yq's `//` mistakes for an absent key.
+assert_disarm_reported boolean-condition '.if = false' 'carries if: false'
+assert_disarm_reported tolerated '.["continue-on-error"] = true' 'carries continue-on-error: true'
+# shellcheck disable=SC2016 # A literal Actions expression: the shell must not expand it.
+assert_disarm_reported expression '.["continue-on-error"] = "${{ inputs.skip-gate }}"' \
+  'carries continue-on-error: ${{ inputs.skip-gate }}'
+assert_disarm_reported default '.["continue-on-error"] = false' ''
+
+# A SECOND step carrying the gate's name, disarmed, beside an untouched first:
+# every read must fold both into one answer rather than split into two lines.
+# Written out rather than derived with a yq update: a self-referencing `+=`
+# evaluates differently across yq releases (measured: it produced this case
+# locally and not on the CI runner), and the fixture must not depend on that.
+duplicated="${work_dir}/disarmed-duplicate.yaml"
+cat >"${duplicated}" <<EOF
+jobs:
+  ${job}:
+    steps:
+      - name: ${step}
+        run: go run ./scripts/validate-eks-ci-role-policy .
+      - name: ${step}
+        if: false
+        run: go run ./scripts/validate-eks-ci-role-policy .
+EOF
+if [ "$(yq -r "[.jobs[\"${job}\"].steps[] | select(.name == \"${step}\")] | length" "${duplicated}")" != "2" ]; then
+  fail 'ABLATION duplicate: the fixture does not hold two gate steps, so this control proves nothing'
+else
+  case "$(step_disarm "${duplicated}")" in
+    *'carries if: false'*) : ;;
+    *) fail "ABLATION duplicate: a disarmed second step with the gate's name was not reported (got: '$(step_disarm "${duplicated}")')" ;;
+  esac
+fi
+
+# An unreadable workflow is UNKNOWN, never "no disarm": a yq failure inside the
+# reads must surface as a finding rather than an empty answer.
+unreadable="${work_dir}/disarmed-unreadable.yaml"
+printf 'jobs: [unclosed\n' >"${unreadable}"
+case "$(step_disarm "${unreadable}")" in
+  *'could not read'*) : ;;
+  *) fail "ABLATION unreadable: a workflow yq cannot parse read as carrying no disarm" ;;
+esac
+
 if [ "${failures}" -ne 0 ]; then
   printf '%s: %d assertion(s) failed\n' "$(basename "$0")" "${failures}" >&2
   exit 1
 fi
 
-printf '%s: authorization gate reports its verdict AND its diagnostics in ci.yaml and cd.yaml\n' \
+printf '%s: authorization gate reports its verdict AND its diagnostics in ci.yaml and cd.yaml, with no condition or tolerated failure on the step\n' \
   "$(basename "$0")"
