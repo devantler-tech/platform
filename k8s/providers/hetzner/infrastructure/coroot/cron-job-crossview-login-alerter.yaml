@@ -1,4 +1,5 @@
-# Alerts when Crossview's login cannot work because its database has no schema.
+# Alerts when Crossview's login cannot work because the app cannot find its
+# users in its database: the schema is gone, or the database is unreachable.
 #
 # WHY THIS EXISTS
 #
@@ -14,13 +15,17 @@
 #
 # `GET /api/auth/check` is unauthenticated and answers 200 in both states, so
 # no HTTP probe can tell them apart. Its body can: a bootstrapped Crossview
-# always has the admin it seeds at startup, so `"hasAdmin":true` is healthy and
-# `"hasAdmin":false` is the empty schema showing through.
+# always has the admin it seeds at startup, so `"hasAdmin":true` is healthy.
+# `"hasAdmin":false` means the app could not read its users table: the empty
+# schema showing through, as in the outage, or a database it cannot reach. Every
+# sign-in fails in both cases, so both alert; the runbook says how to tell them
+# apart, because only the first needs the app rolled.
 #
 # NO FLAPPING. One `hasAdmin:true` read ends the run healthy. An alert needs
-# every one of SAMPLES reads, SAMPLE_INTERVAL_SECONDS apart, to answer false, so
-# a database briefly restarting under a healthy app does not page. The broken
-# state is persistent: it lasts until the app restarts.
+# every one of SAMPLES reads, SAMPLE_INTERVAL_SECONDS apart, to answer false: six
+# minutes, longer than a planned database restart takes to detach, reattach and
+# start its volume, so routine maintenance does not page. A lost schema is
+# persistent: it lasts until the app restarts.
 #
 # NO SILENT ZERO. A read that is not a 200 with a boolean `hasAdmin` is not an
 # answer, so a run that never gets a definitive one fails the Job instead of
@@ -31,8 +36,8 @@
 #
 # DELIVERY follows cron-job-stranded-autoscaler-node-alerter.yaml: POST to every
 # Alertmanager peer's v2 API, which fans out to Slack. The alert carries an
-# `endsAt` of three missed runs, so it resolves once Crossview has its schema
-# back and a broken Job degrades to "the alert resolves", never a stuck alert.
+# `endsAt` of three missed runs, so it resolves once Crossview can read its users
+# again and a broken Job degrades to "the alert resolves", never a stuck alert.
 #
 # READ-ONLY BY CONSTRUCTION. It reads one public endpoint and needs no
 # Kubernetes API access, so no ServiceAccount token is mounted. Restoring login
@@ -55,7 +60,7 @@ metadata:
     kustomize.toolkit.fluxcd.io/substitute: disabled
 spec:
   # Every 15 minutes: an outage that took six days to notice now surfaces within
-  # about twenty. Must stay well under the 45-minute endsAt below.
+  # about twenty-five. Must stay well under the 45-minute endsAt below.
   schedule: "*/15 * * * *"
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 60
@@ -66,9 +71,11 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
-      # Worst case: SAMPLES reads of at most 30s each, (SAMPLES - 1) waits and
-      # 20s per Alertmanager peer: 3*30 + 2*60 + 2*20 = 250s.
-      activeDeadlineSeconds: 360
+      # Worst case: --retry-max-time only stops NEW attempts, so a read can take
+      # its 30s retry budget plus one more 10s attempt (40s), and a delivery 20s
+      # plus 10s (30s) per Alertmanager peer. SAMPLES reads, (SAMPLES - 1) waits
+      # and two peers: 4*40 + 3*120 + 2*30 = 580s.
+      activeDeadlineSeconds: 720
       template:
         metadata:
           labels:
@@ -94,11 +101,12 @@ spec:
               image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
               imagePullPolicy: IfNotPresent
               env:
-                # Every read must answer hasAdmin=false before the alert fires.
+                # Every read must answer hasAdmin=false before the alert fires:
+                # four reads two minutes apart span six minutes.
                 - name: SAMPLES
-                  value: "3"
+                  value: "4"
                 - name: SAMPLE_INTERVAL_SECONDS
-                  value: "60"
+                  value: "120"
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -180,7 +188,7 @@ spec:
                       else "unrecognised" end' "$BODY" 2>/dev/null) || verdict="unrecognised"
                     case "$verdict" in
                       bootstrapped)
-                        echo "sample ${sample}/${SAMPLES}: hasAdmin=true; Crossview's login schema is bootstrapped"
+                        echo "sample ${sample}/${SAMPLES}: hasAdmin=true; Crossview can read its users"
                         exit 0
                         ;;
                       missing)
@@ -202,18 +210,18 @@ spec:
                   alerts=$(jq -cn --arg e "$ENDS" --arg observed "$observed" \
                     --arg n "$SAMPLES" --arg s "$SAMPLE_INTERVAL_SECONDS" '[{
                       labels: {
-                        alertname: "CrossviewLoginSchemaMissing",
+                        alertname: "CrossviewLoginBroken",
                         severity: "warning",
                         namespace: "crossview"
                       },
                       annotations: {
-                        summary: "Crossview has no admin user, so its login schema is missing and every sign-in fails",
-                        description: "GET /api/auth/check answered \($observed) on all \($n) reads, \($s)s apart. A bootstrapped Crossview always has the break-glass admin it creates at its own startup, so hasAdmin=false means the database it is using has no users table: OIDC sign-in fails while the pod stays Ready, because its probe (/api/health) never touches the database.",
-                        runbook: "Roll the crossview Deployment so the app re-runs its one-shot schema bootstrap: bump the platform.devantler.tech/db-bootstrap value in providers/hetzner/apps/crossview/patches/enable-durable-storage.yaml. Then find out why the database came back empty (crossview-postgres-pvc). The alert resolves on its own once a read answers hasAdmin=true."
+                        summary: "Crossview cannot read its users, so every sign-in fails",
+                        description: "GET /api/auth/check answered \($observed) on all \($n) reads, \($s)s apart. A bootstrapped Crossview always has the break-glass admin it creates at its own startup, so hasAdmin=false means the app cannot read its users table: its database has lost the schema, or the app cannot reach it. OIDC sign-in fails either way while the pod stays Ready, because its probe (/api/health) never touches the database.",
+                        runbook: "First check the crossview-postgres Deployment in the crossview namespace. If it is not Ready, fix the database: the app reconnects on its own once it is back with its data. If it is Ready, the schema is gone: roll the app so it re-runs its one-shot schema bootstrap by bumping the platform.devantler.tech/db-bootstrap value in providers/hetzner/apps/crossview/patches/enable-durable-storage.yaml, then find out why the database came back empty (crossview-postgres-pvc). The alert resolves on its own once a read answers hasAdmin=true."
                       },
                       endsAt: $e
                     }]')
-                  echo "Crossview's login schema is missing; alerting"
+                  echo "Crossview cannot read its users; alerting"
 
                   # --fail makes a rejected POST observable; the Job fails only
                   # when no peer accepted the alert.

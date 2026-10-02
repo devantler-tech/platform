@@ -105,12 +105,14 @@ grep -Fq -- '--max-time 10 --retry-max-time 20' <<<"${script_body}" ||
 samples="$(env_value SAMPLES)"
 interval="$(env_value SAMPLE_INTERVAL_SECONDS)"
 deadline="$(yq -r '.spec.jobTemplate.spec.activeDeadlineSeconds' "${manifest}")"
-worst=$((samples * 30 + (samples - 1) * interval + 2 * 20))
+# --retry-max-time stops only NEW attempts, so one call can run its retry budget
+# plus one more --max-time attempt: 30+10 per read, 20+10 per Alertmanager peer.
+worst=$((samples * 40 + (samples - 1) * interval + 2 * 30))
 [ "${deadline}" -gt "${worst}" ] || fail "the Job deadline (${deadline}s) must cover the worst case (${worst}s)"
 # One healthy read ends a run; a page needs every read over this window false,
-# so a database that restarts for a minute or two under a healthy app is quiet.
-[ "${samples}" -ge 3 ] && [ $(((samples - 1) * interval)) -ge 120 ] ||
-  fail 'an alert must need at least three false reads spanning two minutes'
+# so a planned database restart (volume detach, reattach, start) is quiet.
+[ "${samples}" -ge 3 ] && [ $(((samples - 1) * interval)) -ge 300 ] ||
+  fail 'an alert must need at least three false reads spanning five minutes'
 pass "the deadline covers the worst case (${worst}s of ${deadline}s) and the alert needs a sustained answer"
 
 watch_entry="$(yq -r '.spec.jobTemplate.spec.template.spec.containers[0].env[] | select(.name == "WATCH") | .value' "${watcher}" |
@@ -212,9 +214,9 @@ for ((i = 1; i < samples; i++)); do expected_sleeps="${expected_sleeps}${interva
 for peer in 0 1; do
   jq -e --arg observed '{"authMode":"session","hasAdmin":false,"hasUsers":false}' '
     length == 1 and
-    .[0].labels == {alertname: "CrossviewLoginSchemaMissing", severity: "warning", namespace: "crossview"} and
+    .[0].labels == {alertname: "CrossviewLoginBroken", severity: "warning", namespace: "crossview"} and
     (.[0].annotations.description | contains($observed)) and
-    (.[0].annotations.runbook | contains("platform.devantler.tech/db-bootstrap")) and
+    (.[0].annotations.runbook | contains("crossview-postgres") and contains("platform.devantler.tech/db-bootstrap")) and
     (.[0].endsAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
   ' "${case_dir}/alerts-${peer}.json" >/dev/null || fail "alertmanager-${peer} must receive the schema alert"
 done

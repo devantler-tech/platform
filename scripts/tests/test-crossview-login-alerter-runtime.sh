@@ -10,12 +10,20 @@
 #      answers 200 while the schema is gone, and the sensor alerts;
 #   3. the app restarted: it re-runs its schema bootstrap and the sensor is
 #      healthy again, so restarting is what restores login;
-#   4. the database stopped: the sensor never reports health.
+#   4. the database stopped: the sensor never reports health;
+#   5. the same database started again with its data: the app recovers without a
+#      restart, which is why the runbook checks the database before rolling.
 #
 # Images, configuration and the Service contract come from rendering the pinned
 # chart with the production values, so a chart bump re-proves the sensor against
-# the new app. Every container runs on an internal Docker network with no route
-# out; only the image pulls use the network. Requires docker.
+# the new app. The HelmRelease post-renderers are not applied: they harden the
+# containers and gate the app's init container on markers that the database's
+# init hook writes into any fresh data directory, which
+# test-crossview-postgres-durable-storage.sh and
+# test-crossview-coroot-postgres-integration.sh pin. What is reproduced here is
+# the app's own bootstrap, which is what the outage and its fix turn on. Every
+# container runs on an internal Docker network with no route out; only the image
+# pulls use the network. Requires docker.
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -28,10 +36,11 @@ readonly suffix="$$"
 readonly net="crossview-login-${suffix}"
 readonly db="crossview-db-${suffix}"
 readonly app="crossview-app-${suffix}"
+readonly probe="crossview-probe-${suffix}"
 
 # shellcheck disable=SC2317,SC2329 # Invoked by EXIT.
 cleanup() {
-  docker rm -f "${app}" "${db}" >/dev/null 2>&1 || true
+  docker rm -f "${app}" "${db}" "${probe}" >/dev/null 2>&1 || true
   docker network rm "${net}" >/dev/null 2>&1 || true
   rm -rf "${work_dir}"
 }
@@ -177,10 +186,10 @@ run_sensor() {
 }
 alerted() { ls "${work_dir}"/capture/alerts-*.json >/dev/null 2>&1; }
 
-# One request from inside the network, through the sensor image's own curl.
+# One request from inside the network, through the sensor image's own curl in a
+# long-lived helper container.
 app_get() {
-  docker run --rm --network "${net}" --entrypoint "${real_curl}" "${sensor_image}" \
-    -sS --max-time 5 -o /dev/stdout -w '\n%{http_code}' \
+  docker exec "${probe}" "${real_curl}" -sS --max-time 5 -o /dev/stdout -w '\n%{http_code}' \
     "http://crossview-service.crossview.svc.cluster.local.:${container_port}$1" 2>/dev/null || true
 }
 wait_for_app() {
@@ -207,6 +216,8 @@ db_query() {
 users_table() { db_query "SELECT to_regclass('public.users') IS NOT NULL"; }
 
 docker network create --internal "${net}" >/dev/null
+docker run -d --name "${probe}" --network "${net}" --user 65532:65532 \
+  --entrypoint /bin/sh "${sensor_image}" -c 'sleep 3600' >/dev/null
 start_db
 # As in production: non-root, read-only root, only the chart's /app/logs writable.
 docker run -d --name "${app}" --network "${net}" \
@@ -244,9 +255,9 @@ printf '2. schema gone: /api/health -> %s, /api/auth/check -> %s\n' \
 run_sensor
 [ "${sensor_status}" = 0 ] || fail 'the sensor must deliver its alert'
 alerted || fail 'an empty database under a running app must alert'
-jq -e 'length == 1 and .[0].labels.alertname == "CrossviewLoginSchemaMissing"
+jq -e 'length == 1 and .[0].labels.alertname == "CrossviewLoginBroken"
   and (.[0].annotations.description | contains("\"hasAdmin\":false"))' \
-  "${work_dir}/capture/alerts-0.json" >/dev/null || fail 'the alert must name the missing schema'
+  "${work_dir}/capture/alerts-0.json" >/dev/null || fail 'the alert must carry the answer that triggered it'
 pass 'an empty database alerts while /api/health stays green'
 
 # 3. Restarting the app re-runs its bootstrap.
@@ -257,7 +268,9 @@ printf '3. restarted: /api/auth/check -> %s\n' "$(app_get /api/auth/check | head
 expect_healthy 'a restarted Crossview must read as healthy again'
 pass 'restarting the app restores the schema and clears the signal'
 
-# 4. A database the app cannot reach is never health.
+# 4. A database the app cannot reach is never health. Sign-in fails here too,
+# so either verdict that is not health is a signal: an alert, or a failed Job
+# that the CronJob failure detector reports.
 docker stop "${db}" >/dev/null
 printf '4. database stopped: /api/auth/check -> %s\n' "$(app_get /api/auth/check | tr '\n' ' ')"
 run_sensor
@@ -267,6 +280,26 @@ fi
 if grep -q 'hasAdmin=true' "${work_dir}/sensor.log"; then
   fail 'an unreachable database reported hasAdmin=true'
 fi
+if alerted; then
+  printf '   -> the sensor alerted\n'
+else
+  printf '   -> the sensor failed the Job (exit %s)\n' "${sensor_status}"
+fi
 pass 'an unreachable database does not read as healthy'
+
+# 5. The database comes back with its data: no restart is needed.
+docker start "${db}" >/dev/null
+for _ in $(seq 1 60); do
+  db_query 'SELECT 1' >/dev/null 2>&1 && break
+  sleep 2
+done
+[ "$(users_table)" = t ] || fail 'the restarted database must still hold the schema'
+for _ in $(seq 1 30); do
+  app_get /api/auth/check | head -n 1 | grep -q '"hasAdmin":true' && break
+  sleep 2
+done
+printf '5. database back: /api/auth/check -> %s\n' "$(app_get /api/auth/check | head -n 1)"
+expect_healthy 'the app must recover on its own once its database is back with its data'
+pass 'a database that returns with its data needs no app restart'
 
 printf 'PASS: the Crossview login sensor detects the #3315 outage on the real app\n'

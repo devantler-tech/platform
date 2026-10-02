@@ -142,12 +142,15 @@ stays quiet by design, exactly as the old Alertmanager did.
   database (#3315).
   `providers/hetzner/infrastructure/coroot/cron-job-crossview-login-alerter.yaml`
   reads the unauthenticated `/api/auth/check` every 15 minutes. A bootstrapped
-  Crossview always has the admin it creates at startup, so three reads a minute
-  apart that all answer `"hasAdmin":false` post `CrossviewLoginSchemaMissing`
+  Crossview always has the admin it creates at startup, so four reads two
+  minutes apart that all answer `"hasAdmin":false` post `CrossviewLoginBroken`
   through the Alertmanager to Slack. One `true` read ends the run healthy, and a
   run that never gets a clear answer fails, which the CronJob failure detector
-  above reports. The fix is to roll the app so it re-runs its schema bootstrap;
-  the alert's runbook annotation names the annotation to bump.
+  above reports. The same answer comes back when the app cannot reach its
+  database, so the alert's runbook checks the database first: a database that
+  returns with its data needs nothing else, while a lost schema needs the app
+  rolled so it re-runs its bootstrap, and the runbook names the annotation to
+  bump.
 - **kube-apiserver audit logs are searchable in Coroot again.** Coroot's
   node-agent ingests container logs/traces, not host audit-log files, so the
   previous alloy-audit → Loki pipeline was removed with the migration. The
