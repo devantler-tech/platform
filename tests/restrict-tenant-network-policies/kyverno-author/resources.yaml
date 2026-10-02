@@ -11,8 +11,10 @@ metadata:
   namespace: tenant-ns
 spec:
   endpointSelector: {}
-  ingress: []
-  egress: []
+  ingress:
+    - {}
+  egress:
+    - {}
   enableDefaultDeny:
     ingress: true
     egress: true

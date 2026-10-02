@@ -47,15 +47,20 @@ expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 0" \
 
 # 3. CONTROL for 2: the identical bodies, in the identical namespace, submitted
 #    by the TENANT. Only the applying identity differs. Without this the zero
-#    above is indistinguishable from the policy simply not matching. Both bodies
-#    fail the reserved-name rule; allow-dns ALSO fails the egress rule, because
-#    it reaches CoreDNS by naming kube-system through the namespace label, and
-#    allow-cnpg-operator ALSO fails the ingress rule for naming cnpg-system — the
-#    cross-namespace selector a tenant is refused (#3399, #3655). The generated floor
-#    is exempt from that only through its applying identity, which is the point.
+#    above is indistinguishable from the policy simply not matching. All three
+#    bodies fail the reserved-name rule; allow-dns ALSO fails the egress rule,
+#    because it reaches CoreDNS by naming kube-system through the namespace
+#    label, and allow-cnpg-operator ALSO fails the ingress rule for naming
+#    cnpg-system — the cross-namespace selector a tenant is refused (#3399,
+#    #3655). default-deny ALSO fails both the ingress and the egress rule: its
+#    one empty rule per direction names no source or destination, which those
+#    rules refuse because a sourceless rule WITH toPorts allows every peer on
+#    that port. Without toPorts, as here, Cilium allows nothing (#3501), so the
+#    refusal is conservative, not a hole. The generated floor is exempt from all
+#    of that only through its applying identity, which is the point.
 apply "${tests}/kyverno-author/resources.yaml" \
   "${tests}/kyverno-author/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 10, fail: 5, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 8, fail: 7, warn: 0, error: 0, skip: 0" \
   "control: a tenant must NOT be able to author the reserved generated names"
 
 # 4. Carve-out: platform-authored policies applied by flux-system's
