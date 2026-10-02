@@ -943,7 +943,7 @@ jobs:
           if ! cosign verify \
             --certificate-oidc-issuer-regexp "${ISSUER}" \
             --certificate-identity-regexp "${SUBJECT}" \
-            "${ARTIFACT}" > /dev/null 2> "${COSIGN_LOG}"; then
+            "${ARTIFACT}" 2>&1 > /dev/null | tee "${COSIGN_LOG}" >&2; then
             FAILURE_CLASS="$(cosign_failure_class "${COSIGN_LOG}")"
             if [ "${FAILURE_CLASS}" = "rejected" ]; then
               echo "::error::the cosign matcher in the manifests does not verify ${ARTIFACT}."
@@ -951,7 +951,6 @@ jobs:
             else
               cosign_report_no_verdict "${FAILURE_CLASS}" "${ARTIFACT}" "${COSIGN_LOG}"
             fi
-            cat "${COSIGN_LOG}"
             exit 1
           fi
           echo "the configured matcher verifies the artifact"

@@ -9,8 +9,9 @@
 #
 # Two halves:
 #   classifier  every fixture under fixtures/cosign-verify-failures/ is classified, and its filename
-#               prefix is the expected class. The fixtures are cosign's real shapes, taken from the
-#               source of the versions this repository runs, not invented to suit the patterns.
+#               prefix is the expected class. Fixtures include existing captured cosign error
+#               shapes and representative transport and negative boundary cases.
+#               They validate diagnostics, not cosign's internal service/fallback behavior.
 #   ci step     the matcher-efficacy step is lifted out of ci.yaml and executed with `go` and
 #               `cosign` stubbed on PATH, because that step — not the library — is where #3545
 #               fired. Asserting the library alone would pass while the step still printed the old
@@ -179,9 +180,11 @@ readonly good_json
 # run_step executes the lifted step the way the runner does (bash -e -o pipefail) from the
 # repository root, with cosign answering the POSITIVE checks with <positive_code> and <fixture> on
 # stderr. The negative control's wrong subject is always refused, as a real cosign would.
-run_step() { # positive_code fixture
-  local positive_code="$1" fixture="$2" dir
+run_step() { # positive_codes fixture [step]
+  local positive_codes="$1" fixture="$2" selected_step="${3-${step_script}}" dir
   dir="$(mktemp -d "${work}/stub.XXXXXX")"
+  printf '%s\n' "${positive_codes}" >"${dir}/positive_codes"
+  printf '0\n' >"${dir}/positive_calls"
 
   cat >"${dir}/go" <<EOF
 #!/usr/bin/env bash
@@ -200,10 +203,18 @@ if printf '%s' "\$*" | grep -q 'NOT-A-REAL-REPO'; then
   cat '${fixtures}/rejected-bundle-identity.log' >&2
   exit 1
 fi
-if [ '${positive_code}' != 0 ]; then
+n=\$(cat '${dir}/positive_calls')
+n=\$((n + 1))
+echo "\${n}" >'${dir}/positive_calls'
+read -r -a codes <'${dir}/positive_codes'
+idx=\$((n - 1))
+if [ "\${idx}" -ge "\${#codes[@]}" ]; then
+  idx=\$((\${#codes[@]} - 1))
+fi
+if [ "\${codes[\${idx}]}" != 0 ] || [ "\${n}" = 1 ]; then
   cat '${fixture}' >&2
 fi
-exit ${positive_code}
+exit "\${codes[\${idx}]}"
 EOF
   chmod +x "${dir}/go" "${dir}/cosign"
 
@@ -211,9 +222,10 @@ EOF
   step_output="$(cd "${root_dir}" && PATH="${dir}:${PATH}" \
     ARTIFACT=ghcr.io/devantler-tech/platform/manifests:latest \
     REGISTRY_USER=stub REGISTRY_TOKEN=stub \
-    bash --noprofile --norc -e -o pipefail "${step_script}" 2>&1)"
+    bash --noprofile --norc -e -o pipefail "${selected_step}" 2>&1)"
   step_rc=$?
   set -e
+  step_positive_calls="$(cat "${dir}/positive_calls")"
 }
 
 run_step 0 /dev/null
@@ -226,8 +238,9 @@ fi
 # NEGATIVE CONTROL for the wording: a genuine identity mismatch keeps the original finding, in both
 # signature formats, and still fails.
 for fixture in rejected-legacy-identity rejected-bundle-identity; do
-  run_step 12 "${fixtures}/${fixture}.log"
+  run_step '12 0' "${fixtures}/${fixture}.log"
   if [[ "${step_rc}" != "0" ]] &&
+    [[ "${step_positive_calls}" = 1 ]] &&
     printf '%s' "${step_output}" | grep -q "::error::the cosign matcher in the manifests ${matcher_finding} " &&
     printf '%s' "${step_output}" | grep -q '::error::a matcher that matches nothing is inert'; then
     ok "a genuine rejection (${fixture}) keeps the matcher finding and fails"
@@ -239,25 +252,50 @@ done
 # THE DEFECT: an outage, a refused credential and a server error each fail WITHOUT the finding.
 for fixture in infrastructure-dial-timeout infrastructure-dns infrastructure-unauthorized \
   infrastructure-denied infrastructure-server-error infrastructure-tag-not-found; do
-  run_step 1 "${fixtures}/${fixture}.log"
+  run_step '1 0' "${fixtures}/${fixture}.log"
   if [[ "${step_rc}" == "0" ]]; then
     bad "${fixture} fails the step" "exit 0: ${step_output}"
   elif printf '%s' "${step_output}" | grep -q "${matcher_finding}"; then
     bad "${fixture} is not reported as a matcher finding" "output: ${step_output}"
   elif ! printf '%s' "${step_output}" | grep -q '::error::cosign reported: '; then
     bad "${fixture} names cosign's underlying error" "output: ${step_output}"
+  elif [[ "${step_positive_calls}" != 1 ]]; then
+    bad "${fixture} stops at the first failed verification" "positive calls: ${step_positive_calls}"
   else
     ok "${fixture} fails as infrastructure, naming cosign's error, without the matcher finding"
   fi
 done
 
-run_step 1 "${fixtures}/unrecognised-unknown-shape.log"
+run_step '1 0' "${fixtures}/unrecognised-unknown-shape.log"
 if [[ "${step_rc}" != "0" ]] &&
   ! printf '%s' "${step_output}" | grep -q "${matcher_finding}" &&
   printf '%s' "${step_output}" | grep -q 'cannot say whether the matcher refused'; then
   ok "an unrecognised failure fails without claiming a verdict either way"
 else
   bad "an unrecognised failure fails without claiming a verdict either way" "exit ${step_rc}: ${step_output}"
+fi
+
+# The first verification must stop even if the later liveness check would succeed.
+# Removing that one exit used to survive these tests because every call failed.
+ablated_step="${work}/step-without-first-exit.sh"
+awk '/FAILURE_CLASS=/{first_failure=1} first_failure && /^[[:space:]]*exit 1$/{first_failure=0; next} {print}' \
+  "${step_script}" >"${ablated_step}"
+run_step '1 0' "${fixtures}/infrastructure-dial-timeout.log" "${ablated_step}"
+if [[ "${step_rc}" = 0 && "${step_positive_calls}" = 2 ]]; then
+  ok "the first-failure fixture detects removal of its stopping exit"
+else
+  bad "the first-failure fixture detects removal of its stopping exit" "exit ${step_rc}, positive calls ${step_positive_calls}: ${step_output}"
+fi
+
+# Successful verification can still warn about a fallback. Preserve the first
+# call's diagnostic even though the later successful check is quiet.
+success_warning="${work}/success-warning.log"
+printf '%s\n' 'verification succeeded with a trusted-root fallback warning' >"${success_warning}"
+run_step '0 0' "${success_warning}"
+if [[ "${step_rc}" = 0 ]] && printf '%s' "${step_output}" | grep -qF 'trusted-root fallback warning'; then
+  ok "the first successful verification retains its stderr warning"
+else
+  bad "the first successful verification retains its stderr warning" "exit ${step_rc}: ${step_output}"
 fi
 
 # cosign's raw output still reaches the log on every failure path.

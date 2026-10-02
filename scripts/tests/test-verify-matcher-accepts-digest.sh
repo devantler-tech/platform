@@ -95,8 +95,11 @@ idx=\$((n - 1))
 if [ "\${idx}" -ge "\${#codes[@]}" ]; then
   idx=\$(( \${#codes[@]} - 1 ))
 fi
-if [ "\${codes[\${idx}]}" != 0 ] && [ -n '${positive_output}' ]; then
+if { [ "\${codes[\${idx}]}" != 0 ] || [ "\${n}" = 1 ]; } && [ -n '${positive_output}' ]; then
   cat '${positive_output}' >&2
+fi
+if [ "\${codes[\${idx}]}" != 0 ]; then
+  echo 'cosign stdout diagnostic witness'
 fi
 exit "\${codes[\${idx}]}"
 EOF
@@ -120,6 +123,7 @@ run_gate() {
   gate_rc=$?
   set -e
   gate_argv="$(cat "${dir}/argv" 2>/dev/null || true)"
+  gate_positive_calls="$(cat "${dir}/positive_calls")"
 
   rm -rf "${dir}"
 }
@@ -215,8 +219,9 @@ readonly matcher_finding="::error::the cosign matcher in the manifests does not 
 # NEGATIVE CONTROL for the wording: a genuine rejection, in either signature
 # format, keeps the original finding word for word.
 for fixture in rejected-legacy-identity rejected-bundle-identity; do
-  run_gate "12" 1 "${good_json}" "${good_digest}" "" "${cosign_fixtures}/${fixture}.log"
+  run_gate '12 0' 1 "${good_json}" "${good_digest}" "" "${cosign_fixtures}/${fixture}.log"
   if refused && printf '%s' "${gate_output}" | grep -qF "${matcher_finding} ghcr.io/" &&
+    [[ "${gate_positive_calls}" = 1 ]] &&
     printf '%s' "${gate_output}" | grep -qF '::error::stopping GitOps delivery until a human intervenes (#3005, #3006).'; then
     ok "a genuine rejection (${fixture}) keeps the matcher finding and stops promotion"
   else
@@ -229,13 +234,15 @@ done
 # reference: each stops promotion, quotes cosign's error, and is not a finding.
 for fixture in infrastructure-dial-timeout infrastructure-dns infrastructure-unauthorized \
   infrastructure-denied infrastructure-server-error infrastructure-tag-not-found; do
-  run_gate "1" 1 "${good_json}" "${good_digest}" "" "${cosign_fixtures}/${fixture}.log"
+  run_gate '1 0' 1 "${good_json}" "${good_digest}" "" "${cosign_fixtures}/${fixture}.log"
   if ! refused; then
     bad "${fixture} stops promotion" "exit ${gate_rc}: ${gate_output}"
   elif printf '%s' "${gate_output}" | grep -qF "${matcher_finding}"; then
     bad "${fixture} is not reported as a matcher finding" "output: ${gate_output}"
   elif ! printf '%s' "${gate_output}" | grep -q '::error::cosign reported: Error: '; then
     bad "${fixture} names cosign's underlying error" "output: ${gate_output}"
+  elif [[ "${gate_positive_calls}" != 1 ]]; then
+    bad "${fixture} stops at the first failed verification" "positive calls: ${gate_positive_calls}"
   else
     ok "${fixture} stops promotion as infrastructure, without the matcher finding"
   fi
@@ -251,7 +258,26 @@ else
     "exit ${gate_rc}: ${gate_output}"
 fi
 
+# The first successful cosign call may warn even when the final call is quiet.
+# Losing that output would hide a real fallback from the operator.
+success_warning="$(mktemp)"
+printf '%s\n' 'verification succeeded with a trusted-root fallback warning' >"${success_warning}"
+run_gate '0 0' 1 "${good_json}" "${good_digest}" '' "${success_warning}"
+rm -f "${success_warning}"
+if [[ "${gate_rc}" = 0 ]] && printf '%s' "${gate_output}" | grep -qF 'trusted-root fallback warning'; then
+  ok "the first successful verification retains its stderr warning"
+else
+  bad "the first successful verification retains its stderr warning" "exit ${gate_rc}: ${gate_output}"
+fi
+
 # --- Non-vacuity --------------------------------------------------------------
+run_gate '1 0' 1 "${good_json}" "${good_digest}" '' "${cosign_fixtures}/infrastructure-dial-timeout.log"
+if refused && printf '%s' "${gate_output}" | grep -qF 'cosign stdout diagnostic witness'; then
+  ok "failed verification preserves diagnostics from stdout as well as stderr"
+else
+  bad "failed verification preserves diagnostics from stdout as well as stderr" "exit ${gate_rc}: ${gate_output}"
+fi
+
 run_gate "0 0" 0 "${good_json}"
 if refused; then
   ok "a negative control that ACCEPTS a wrong subject fails the gate"

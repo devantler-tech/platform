@@ -16,10 +16,13 @@
 # be used to pass, skip or retry a verification into success: cosign's error text is not a stable
 # interface, and a verdict that hung on it would open the moment the text moved.
 #
-# 🔴 "rejected" NEEDS POSITIVE EVIDENCE, AND AN OUTAGE OUTRANKS IT.
+# 🔴 "rejected" NEEDS POSITIVE EVIDENCE; A REPORTED OUTAGE OUTRANKS IT.
 # It is reported only when cosign's output carries an identity-mismatch shape and NO transport or
 # registry failure. When both appear — several signatures, one refused and one never read — the
-# unread one might have matched, so the run proves nothing about the matcher and says so. Anything
+# unread one might have matched, so the run proves nothing about the matcher and says so. A
+# bundle verifier may suppress a failed lookup or use fallback trust material; absent output
+# does not prove every dependency was reachable. The classifier diagnoses the reported failure,
+# never service health or the completeness of cosign's internal attempts. Anything
 # unrecognised (an empty log, a crash, a shape a newer cosign prints) is "unrecognised", which
 # callers word as "no conclusion either way". A cosign upgrade that rewords its errors therefore
 # degrades the diagnosis to an honest "unknown" — never to a false matcher finding, never to a pass.
@@ -57,7 +60,7 @@ cosign_rejection_pattern() {
 # The registry codes are matched WITH their ": " separator, so a word like DENIED appearing inside a
 # certificate subject cannot turn a genuine rejection into an outage.
 cosign_infrastructure_pattern() {
-  printf '%s' 'i/o timeout|TLS handshake timeout|context deadline exceeded|Client\.Timeout exceeded|connection refused|connection reset by peer|no such host|server misbehaving|network is unreachable|no route to host|unexpected EOF|http2: client connection lost|(UNAUTHORIZED|DENIED|TOOMANYREQUESTS|UNAVAILABLE|MANIFEST_UNKNOWN|NAME_UNKNOWN|BLOB_UNKNOWN): |unexpected status code [0-9]{3}|image tag not found'
+  printf '%s' 'i/o timeout|TLS handshake timeout|context deadline exceeded|Client\.Timeout exceeded|Client\.Timeout or context cancellation while reading body|connection refused|connection reset by peer|no such host|server misbehaving|network is unreachable|no route to host|unexpected EOF|(^|[[:space:]:])EOF$|http2: client connection lost|(UNAUTHORIZED|DENIED|TOOMANYREQUESTS|UNAVAILABLE|MANIFEST_UNKNOWN|NAME_UNKNOWN|BLOB_UNKNOWN): |unexpected status code [0-9]{3}|http status code: [0-9]{3}|image tag not found'
 }
 
 # Print the class of the failure recorded in <log>: rejected, infrastructure or unrecognised.
