@@ -105,11 +105,12 @@ for provider in "${providers[@]}"; do
   : >"${rendered}"
   for layer in "${layers[@]}"; do
     dir="${repo_root}/k8s/providers/${provider}/${layer}"
-    {
-      kubectl kustomize "${dir}"
-      printf '\n---\n'
-    } >>"${rendered}" 2>"${workdir}/render.err" ||
+    # Check the build on its own: grouped with the separator, the group's
+    # status would be printf's, and a layer that failed to build would be
+    # read as one with no routes.
+    kubectl kustomize "${dir}" >>"${rendered}" 2>"${workdir}/render.err" ||
       fail "k8s/providers/${provider}/${layer} failed to build: $(tail -5 "${workdir}/render.err")"
+    printf '\n---\n' >>"${rendered}"
   done
 
   # A route that names no hostname inherits the listener's, so this test cannot
