@@ -12,6 +12,13 @@ fail() {
   exit 1
 }
 
+resolve_replica_placeholder() {
+  OPENBAO_REPLICA_PLACEHOLDER="\${openbao_replicas:=1}" OPENBAO_CANARY_REPLICAS="$2" yq -i '
+    (.server.replicas | select(. == strenv(OPENBAO_REPLICA_PLACEHOLDER))) = env(OPENBAO_CANARY_REPLICAS) |
+    (.server.ha.replicas | select(. == strenv(OPENBAO_REPLICA_PLACEHOLDER))) = env(OPENBAO_CANARY_REPLICAS)
+  ' "$1"
+}
+
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure/controllers" |
   yq ea 'select(.kind == "HelmRelease" and .metadata.name == "openbao")' - >"${scratch}/release.yaml"
 readonly release="${scratch}/release.yaml"
@@ -35,8 +42,11 @@ replicas="$(yq -er '.data.openbao_replicas' "${root_dir}/k8s/clusters/prod/boots
 readonly replicas
 [[ "${replicas}" == '3' ]] || fail 'the OpenBao canary requires revalidation when replica count changes'
 yq '.spec.values' "${release}" >"${scratch}/values.yaml"
+# Substitute only the configured Flux placeholder; literal effective values must
+# remain visible to the rendered replica-count guard rather than being overridden.
+resolve_replica_placeholder "${scratch}/values.yaml" "${replicas}"
 helm template openbao "${archive}" --namespace openbao --values "${scratch}/values.yaml" \
-  --set "server.replicas=${replicas}" --set "server.ha.replicas=${replicas}" >"${scratch}/rendered.yaml"
+  >"${scratch}/rendered.yaml"
 
 # Apply the actual Flux post-renderer patches, not just their declared values.
 yq -o=json '.spec.postRenderers' "${release}" | jq -e '
@@ -74,8 +84,8 @@ after="$(yq -o=json -I=0 '.spec | del(.updateStrategy)' "${statefulset}" | jq -c
 # Local/default installations keep the chart's deliberate OnDelete behavior.
 yq '.spec.values' "${root_dir}/k8s/bases/infrastructure/controllers/openbao/helm-release.yaml" >"${scratch}/base-values.yaml"
 # Resolve the base's ${openbao_replicas:=1} Flux default for Helm's integer schema.
-helm template openbao "${archive}" --namespace openbao --values "${scratch}/base-values.yaml" \
-  --set server.replicas=1 --set server.ha.replicas=1 |
+resolve_replica_placeholder "${scratch}/base-values.yaml" 1
+helm template openbao "${archive}" --namespace openbao --values "${scratch}/base-values.yaml" |
   yq ea -e 'select(.kind == "StatefulSet" and .metadata.name == "openbao") |
     .spec.updateStrategy.type == "OnDelete"' - >/dev/null ||
   fail 'the staged production rollout must not enable local/default automatic replacement'
