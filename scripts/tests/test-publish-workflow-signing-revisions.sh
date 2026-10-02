@@ -186,6 +186,29 @@ else
   fi
 fi
 
+# 3c. The scan's grep could not read part of the tree (exit 2). A file it failed to read is
+#     never selected, so its consumers would leave the set without any refusal. Injected with
+#     a shim rather than a permission bit, so it holds when the suite runs as root.
+grep_shim="$WORK/grep-shim"
+mkdir -p "$grep_shim"
+real_grep="$(command -v grep)"
+cat >"$grep_shim/grep" <<SHIM
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  [ "\$arg" = '-rlE' ] && { "$real_grep" "\$@"; exit 2; }
+done
+exec "$real_grep" "\$@"
+SHIM
+chmod +x "$grep_shim/grep"
+grep_err_out="$WORK/grep-error.out"
+if PATH="$grep_shim:$PATH" PUBLISH_CONSUMER_ROOT="$unparsable_root" "$SCRIPT" --list-consumers >"$grep_err_out" 2>&1; then
+  fail "a scan whose grep could not read the tree reported a complete consumer set: $(cat "$grep_err_out")"
+elif ! grep -q 'could not scan .* (grep exit 2)' "$grep_err_out"; then
+  fail "the run failed, but not by naming the unreadable scan: $(cat "$grep_err_out")"
+else
+  pass 'a scan whose grep could not read the tree fails discovery instead of dropping files'
+fi
+
 # ---------------------------------------------------------------------------
 # 4. RIGHT SIZE, WRONG MEMBERSHIP. This is why the floor is an identity check and not a
 #    count: one real consumer dropping out while any other file drops in leaves the total

@@ -184,15 +184,25 @@ registry_tag_for_git_tag() {
 # in a file this scan never opens. `guard-consumer-discovery-conservation.sh` applies the same
 # `consumer_rows` to the production render and fails when the two sets differ (#3332).
 #
-# Fails when a selected file cannot be parsed: it carries a shared-workflow subject, so its
-# consumers are UNKNOWN, and dropping it would report the rest as the whole set.
+# Fails when the scan cannot read the tree or a selected file: its consumers are UNKNOWN, and
+# dropping them would report the rest as the whole set. A second argument of `with-subject`
+# appends each consumer's cosign subjects as a fifth column (see `consumer_rows`).
 discover_consumers() {
-  local root="$1" file files rows found=''
+  local root="$1" mode="${2:-}" file files rows found='' rc=0
   [ -d "$root" ] || return 0
-  files="$(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' "$root" 2>/dev/null | sort -u || true)"
+  # grep exits 1 when NOTHING matches, which is an answer, and 2 when it could not read
+  # something, which is not: a file it failed to read is never selected, so its consumers
+  # would leave the set without any of the refusals below.
+  files="$(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' "$root")" || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    printf 'could not scan %s for consumer manifests (grep exit %s), so the consumers it holds are UNKNOWN\n' \
+      "$root" "$rc" >&2
+    return 1
+  fi
+  files="$(printf '%s\n' "$files" | sed '/^$/d' | sort -u)"
   while IFS= read -r file; do
     [ -n "$file" ] || continue
-    rows="$(consumer_rows "$file")" || return 1
+    rows="$(consumer_rows "$file" "$mode")" || return 1
     found="$found$rows"$'\n'
   done <<<"$files"
   printf '%s' "$found" | sed '/^$/d' | sort -u
@@ -215,9 +225,15 @@ discover_consumers() {
 # 🔴 A FILE yq CANNOT PARSE IS NOT A FILE WITH NO CONSUMERS. The extraction used to end in
 # `|| true`, so a parse failure read as zero rows and the file's consumers silently left the
 # set. It now fails, naming the file; documents that parse but hold no consumer still yield
-# nothing.
+# nothing. So does a consumer this function cannot attribute (two shared workflows named, or
+# a repository that is empty or fails `plausible_repo`): skipping it dropped a deployed
+# consumer from every set built here, identically, where no comparison could notice.
+#
+# `with-subject` as the second argument appends the document's cosign subjects as a fifth
+# column. The conservation guard compares on it, so a patched signer constraint is a
+# divergence; the report's own four-column rows are unchanged.
 consumer_rows() {
-  local file="$1" rows url version subjects repo workflow workflows artifact
+  local file="$1" mode="${2:-}" rows url version subjects repo workflow workflows artifact
   # The prose about each field lives OUTSIDE the single-quoted yq program deliberately: a
   # backtick inside it reads as a command substitution to shellcheck (SC2016), so it is in
   # the comment block at the end of the loop below.
@@ -249,19 +265,27 @@ consumer_rows() {
       grep -oE 'publish-(app|manifests)\\?\.yaml@' | sed 's/\\\{0,1\}\.yaml@$//' | sort -u || true)"
     [ -n "$workflows" ] || continue
     if [ "$(printf '%s\n' "$workflows" | grep -c .)" -ne 1 ]; then
-      printf 'ambiguous: %s names more than one shared publish workflow\n' "$url" >&2
-      continue
+      printf 'ambiguous: %s in %s names more than one shared publish workflow, so its attribution is UNKNOWN\n' \
+        "$url" "$file" >&2
+      return 1
     fi
     workflow="$workflows"
     repo="${url#oci://ghcr.io/devantler-tech/}"
     repo="${repo%%/*}"
-    [ -n "$repo" ] || continue
-    repo="$(oci_name_to_repo "$repo")"
-    plausible_repo "$repo" || continue
+    [ -n "$repo" ] && repo="$(oci_name_to_repo "$repo")"
+    if [ -z "$repo" ] || ! plausible_repo "$repo"; then
+      printf 'unattributable: %s in %s names no plausible source repository, so its attribution is UNKNOWN\n' \
+        "$url" "$file" >&2
+      return 1
+    fi
     # The artifact names the deployed consumer; the repository only names its source.
     artifact="${url#oci://ghcr.io/devantler-tech/}"
     artifact="${artifact%/}"
-    printf '%s\t%s\t%s\t%s\n' "$repo" "$workflow" "$version" "$artifact"
+    if [ "$mode" = 'with-subject' ]; then
+      printf '%s\t%s\t%s\t%s\t%s\n' "$repo" "$workflow" "$version" "$artifact" "$subjects"
+    else
+      printf '%s\t%s\t%s\t%s\n' "$repo" "$workflow" "$version" "$artifact"
+    fi
     # 🔴 FLUX RESOLVES `spec.ref` AS digest > semver > tag, AND AN OMITTED `ref` MEANS
     # the mutable `latest` tag. Reading `tag` first inverts that: a document carrying BOTH
     # a tag and a digest (or a tag and a semver) would be attributed to a tag Flux never

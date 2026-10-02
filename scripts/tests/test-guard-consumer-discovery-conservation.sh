@@ -553,5 +553,118 @@ printf '  - tenant.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
 expect_refusal 'an instance of a consumer-templating RGD is refused' "$root" \
   'production renders 1 Tenant instance(s)'
 
+# (f) A v1beta2 Flux-side patch field: the same post-build rewrite under its older name.
+root="$(fixture flux-v1beta2-patches)"
+cat >>"$root/k8s/clusters/prod/flux-kustomizations.yaml" <<'YAML'
+  patchesStrategicMerge:
+    - apiVersion: source.toolkit.fluxcd.io/v1
+      kind: OCIRepository
+      metadata:
+        name: beta
+        namespace: beta
+      spec:
+        ref:
+          tag: 9.9.9
+YAML
+expect_refusal 'a v1beta2 Flux-side patch on a production root is refused' "$root" \
+  'production Flux Kustomization infrastructure carries' 'spec.patchesStrategicMerge'
+
+# (g) An OCIRepository template inside a document that is not a kro RGD: the objects it
+#     generates exist only in the cluster.
+root="$(fixture resourceset)"
+cat >"$root/k8s/providers/prod/apps/resource-set.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: tenants
+  namespace: flux-system
+spec:
+  resources:
+    - apiVersion: source.toolkit.fluxcd.io/v1
+      kind: OCIRepository
+      metadata:
+        name: theta
+      spec:
+        url: oci://ghcr.io/devantler-tech/theta/manifests
+        ref:
+          semver: ">=1.0.0"
+YAML
+printf '  - resource-set.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+expect_refusal 'an OCIRepository template outside a kro RGD is refused' "$root" \
+  'holds ResourceSet flux-system/tenants, which carries an OCIRepository template'
+
+# (h) An RGD whose template subject is itself templated, with an instance: it names no
+#     shared workflow literally, so a subject filter would have waved its instances through.
+root="$(fixture rgd-templated-subject)"
+# shellcheck disable=SC2016 # A literal kro expression: the shell must not expand it.
+sed -i.bak 's#publish-app\\.yaml@\[0-9a-f\]{40}#${schema.spec.workflow}#' \
+  "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
+rm -f "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml.bak"
+if grep -q 'publish-app' "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"; then
+  fail 'rgd-templated-subject: the subject was not templated, so this case proves nothing'
+fi
+cat >"$root/k8s/providers/prod/apps/tenant.yaml" <<'YAML'
+apiVersion: kro.run/v1alpha1
+kind: Tenant
+metadata:
+  name: iota
+spec:
+  name: iota
+YAML
+printf '  - tenant.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+expect_refusal 'an instance of an RGD with a templated subject is refused' "$root" \
+  'production renders 1 Tenant instance(s)'
+
+# (i) An RGD that templates an OCIRepository but names no schema kind: its instances
+#     cannot be counted, so it cannot be judged.
+root="$(fixture rgd-no-kind)"
+sed -i.bak '/^    kind: Tenant$/d' "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
+rm -f "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml.bak"
+expect_refusal 'an RGD templating an OCIRepository with no schema kind is refused' "$root" \
+  'names no schema kind'
+
+# ---------------------------------------------------------------------------
+# 9. THE COMPARED IDENTITY includes the subject, and the overlay is a consumer source.
+# ---------------------------------------------------------------------------
+# (a) An overlay that widens a consumer's signer constraint: every other field is equal.
+root="$(fixture patched-subject)"
+cat >"$root/k8s/providers/prod/apps/kustomization.yaml" <<'YAML'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../bases/apps/alpha
+  - ../../../bases/apps/beta
+patches:
+  - target:
+      kind: OCIRepository
+      name: beta
+    patch: |-
+      - op: replace
+        path: /spec/verify/matchOIDCIdentity/0/subject
+        value: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@.*$'
+YAML
+expect_refusal 'a subject an overlay patches is reported on both sides' "$root" \
+  'workflow=publish-manifests ref=1.2.3 subject=^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@[0-9a-f]{40}$' \
+  'workflow=publish-manifests ref=1.2.3 subject=^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@.*$'
+
+# (b) A consumer the overlay itself applies is rendered, not reported as missing.
+root="$(fixture overlay-consumer)"
+sed 's#devantler-tech/beta/manifests#devantler-tech/kappa/manifests#; s#name: beta#name: kappa#; s#namespace: beta#namespace: kappa#' \
+  "$root/k8s/bases/apps/beta/oci-repository.yaml" >"$root/k8s/clusters/prod/kappa.yaml"
+printf '  - kappa.yaml\n' >>"$root/k8s/clusters/prod/kustomization.yaml"
+expect_pass "a consumer the overlay itself applies counts as rendered" "$root" \
+  '3 consumer(s) found by the file scan match the production render exactly'
+
+# (c) A consumer whose attribution is ambiguous (both shared workflows named) is UNKNOWN
+#     on the side that cannot attribute it, never silently dropped from both.
+root="$(fixture ambiguous)"
+sed -i.bak 's#workflows/publish-manifests\\.yaml@#workflows/publish-app\\.yaml@x|publish-manifests\\.yaml@#' \
+  "$root/k8s/bases/apps/beta/oci-repository.yaml"
+rm -f "$root/k8s/bases/apps/beta/oci-repository.yaml.bak"
+grep -q 'publish-app.*publish-manifests' "$root/k8s/bases/apps/beta/oci-repository.yaml" ||
+  fail 'ambiguous: the subject does not name both workflows, so this case proves nothing'
+expect_refusal 'an ambiguous consumer in production is refused, not dropped' "$root" \
+  'ambiguous:' 'rendered set is UNKNOWN'
+
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]
