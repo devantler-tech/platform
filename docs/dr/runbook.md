@@ -893,6 +893,13 @@ Node fences remain a manual or full-bridge recovery because Talos machine-config
 writes expose no fencing token and need the bridge's revision and scheduling
 proofs.
 
+Full-bridge cleanup treats a successfully confirmed deleted Node as having no
+scheduling fence left to release. It confirms absence through the Kubernetes
+API, including after a failed release patch. A denied or failed read, malformed
+response, replacement Node, or changed fence owner cannot authorize release.
+This cleanup result does not prove rollout convergence: losing a target still
+blocks the root cutover until the bridge's convergence checks pass.
+
 A held policy fence is the more serious of the two: the deploy fails loudly, but
 the suspended Kustomization silently stops GitOps reconciliation for that layer
 until it is released.

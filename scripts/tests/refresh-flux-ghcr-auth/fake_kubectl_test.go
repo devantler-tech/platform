@@ -2053,13 +2053,21 @@ func fakeKubectlGetNode(args []string) int {
 		markerExists("cordon-owner-"+nodeName)
 	removedAfterAutoscalerDeletion := nodeName == os.Getenv("FAKE_AUTOSCALER_DELETING_THEN_REMOVED_NODE") &&
 		markerExists("autoscaler-deleted-"+nodeName)
-	if wordListContains(os.Getenv("FAKE_NODE_REMOVED_BEFORE_PROCESS"), nodeName) || removedAfterQuarantine || removedAfterClaim || removedAfterImageMarker || removedAfterAutoscalerDeletion ||
+	if wordListContains(os.Getenv("FAKE_NODE_REMOVED_BEFORE_PROCESS"), nodeName) || markerExists("node-deleted-before-release-"+nodeName) || removedAfterQuarantine || removedAfterClaim || removedAfterImageMarker || removedAfterAutoscalerDeletion ||
 		(nodeName == os.Getenv("FAKE_NODE_REMOVED_AFTER_UNCORDON") && markerExists("uncordoned-"+nodeName)) {
 		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "forbidden" {
 			return commandFailure(1, "Error from server (Forbidden): nodes is forbidden")
 		}
 		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "not-found-error" {
 			return commandFailure(1, "Error from server (NotFound): nodes not found")
+		}
+		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "partial-failure" {
+			fmt.Print(`{"kind":"Node"}`)
+			return commandFailure(92, "connection interrupted after a partial response")
+		}
+		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "malformed-success" {
+			fmt.Print("{")
+			return 0
 		}
 		touchMarker("removed-before-process-" + nodeName)
 		if containsArg(args, "--ignore-not-found") {
@@ -2703,6 +2711,17 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		touchMarker("resource-version-advanced-before-release-" + nodeName)
 		appendEnvFile("OPERATION_LOG", "concurrent-node-resource-version:"+nodeName+"\n")
 		return commandFailure(56, "resourceVersion test failed during cordon release")
+	}
+	if nodeName == os.Getenv("FAKE_NODE_REMOVED_BEFORE_RELEASE_PATCH_NODE") {
+		attempt := parseInt(markerContent("node-release-attempt-"+nodeName), 0) + 1
+		setMarkerContent("node-release-attempt-"+nodeName, fmt.Sprint(attempt))
+		if attempt < parseInt(os.Getenv("FAKE_NODE_RELEASE_DELETE_ATTEMPT"), 1) {
+			setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+			return commandFailure(56, "resourceVersion test failed after unrelated node write")
+		}
+		touchMarker("node-deleted-before-release-" + nodeName)
+		appendEnvFile("OPERATION_LOG", "node-deleted-before-release:"+nodeName+"\n")
+		return commandFailure(1, "Error from server (NotFound): nodes not found")
 	}
 	if nodeName == os.Getenv("FAKE_UNCORDON_FAIL_NODE") || markerContent("cordon-owner-"+nodeName) != expectedOwner {
 		return commandFailure(56, "cordon ownership changed; refusing to uncordon")
