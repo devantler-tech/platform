@@ -661,6 +661,12 @@ jobs:
               # change to the last check standing between a bad matcher and prod.
               - 'scripts/verify-matcher-accepts-digest.sh'
               - 'scripts/tests/test-verify-matcher-accepts-digest.sh'
+              # The gate words its failures through this classifier (#3545), so an
+              # edit to it, its own test, or the cosign output fixtures both tests
+              # read must still run the gate's test.
+              - 'scripts/cosign-failure-lib.sh'
+              - 'scripts/tests/test-cosign-failure-lib.sh'
+              - 'scripts/tests/fixtures/cosign-verify-failures/**'
               # The pin guard itself runs unconditionally in the validate job, so
               # only its TEST is selected here. Both halves are listed anyway: a PR
               # that edits the guard must also run the test that pins its ablations,
@@ -874,6 +880,16 @@ jobs:
       - name: 🔏 Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
+      - name: 🔏 Test the cosign failure classifier
+        # The check below words its failure by WHY cosign failed (#3545). This
+        # pins that a genuine identity mismatch keeps the matcher finding, and
+        # that an outage, a refused credential or a server error never borrows
+        # it — at the classifier and through the check step itself, with cosign
+        # stubbed. No registry, network or credential is involved.
+        run: |
+          shellcheck -x scripts/cosign-failure-lib.sh scripts/tests/test-cosign-failure-lib.sh
+          bash scripts/tests/test-cosign-failure-lib.sh
+
       - name: 🔏 Check the configured matcher verifies the real artifact
         # 🔴 THE PATTERNS ARE NEVER SPELLED HERE. They are printed out of the
         # manifests we deploy and handed straight to cosign, so this tests the
@@ -914,12 +930,28 @@ jobs:
 
           # THE CHECK. Fails when the deployed matcher would not verify the
           # artifact it guards — which is #3005, caught before the deploy.
+          #
+          # Every failure fails the job; only the WORDING depends on why cosign
+          # failed. The matcher finding is reserved for output showing cosign
+          # read the signature and refused its identity. A ghcr.io timeout used
+          # to be reported as the matcher failing to verify (#3545), so an
+          # outage, a refused credential or an unrecognised failure is now named
+          # as what it is.
+          source scripts/cosign-failure-lib.sh
+          COSIGN_LOG="$(mktemp)"
+          trap 'rm -f "${COSIGN_LOG}"' EXIT
           if ! cosign verify \
             --certificate-oidc-issuer-regexp "${ISSUER}" \
             --certificate-identity-regexp "${SUBJECT}" \
-            "${ARTIFACT}" > /dev/null; then
-            echo "::error::the cosign matcher in the manifests does not verify ${ARTIFACT}."
-            echo "::error::a matcher that matches nothing is inert: present, green, and enforcing nothing."
+            "${ARTIFACT}" > /dev/null 2> "${COSIGN_LOG}"; then
+            FAILURE_CLASS="$(cosign_failure_class "${COSIGN_LOG}")"
+            if [ "${FAILURE_CLASS}" = "rejected" ]; then
+              echo "::error::the cosign matcher in the manifests does not verify ${ARTIFACT}."
+              echo "::error::a matcher that matches nothing is inert: present, green, and enforcing nothing."
+            else
+              cosign_report_no_verdict "${FAILURE_CLASS}" "${ARTIFACT}" "${COSIGN_LOG}"
+            fi
+            cat "${COSIGN_LOG}"
             exit 1
           fi
           echo "the configured matcher verifies the artifact"
@@ -1830,7 +1862,8 @@ jobs:
         # cannot see a change to the publishing identity itself (#3289). This pins
         # the gate that asks it of the staged digest instead, including its negative
         # control and the liveness sandwich that stops an outage being counted as a
-        # refusal, plus the wiring that puts it before the promotion.
+        # refusal, the wording that keeps an outage from being reported as a matcher
+        # finding (#3545), plus the wiring that puts it before the promotion.
         run: bash scripts/tests/test-verify-matcher-accepts-digest.sh
 
       - name: 🔐 Validate the shared-publish-workflow pin guard

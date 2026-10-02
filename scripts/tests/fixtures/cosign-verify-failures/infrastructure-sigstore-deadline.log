@@ -1,0 +1,2 @@
+Error: setting trusted material: updating local metadata and targets: Get "https://tuf-repo-cdn.sigstore.dev/timestamp.json": context deadline exceeded
+error during command execution: setting trusted material: updating local metadata and targets: Get "https://tuf-repo-cdn.sigstore.dev/timestamp.json": context deadline exceeded

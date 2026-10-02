@@ -59,10 +59,14 @@ refused() {
 # positive check after the control, and "0 1" is an outage arriving exactly
 # there. The last value repeats if the gate calls more often than expected.
 #
+# A positive call that FAILS prints positive_output (a fixture of cosign's real
+# output) on stderr, because the gate words its failure by what cosign said
+# (#3545): an exit code alone cannot tell a refused identity from an outage.
+#
 # Every invocation appends its argv, so what the gate actually asked is
 # observable rather than inferred from an exit code.
 stub_dir() {
-  local positive_codes="$1" negative_code="$2" go_json="$3" go_stderr="${4-}"
+  local positive_codes="$1" negative_code="$2" go_json="$3" go_stderr="${4-}" positive_output="${5-}"
   local dir
   dir="$(mktemp -d)"
 
@@ -91,6 +95,9 @@ idx=\$((n - 1))
 if [ "\${idx}" -ge "\${#codes[@]}" ]; then
   idx=\$(( \${#codes[@]} - 1 ))
 fi
+if [ "\${codes[\${idx}]}" != 0 ] && [ -n '${positive_output}' ]; then
+  cat '${positive_output}' >&2
+fi
 exit "\${codes[\${idx}]}"
 EOF
 
@@ -104,9 +111,9 @@ EOF
 # digest is one of the inputs under test; :- would substitute the good one and
 # silently turn that case into a duplicate of the happy path.
 run_gate() {
-  local positive_codes="$1" negative_code="$2" go_json="$3" digest="${4-${good_digest}}" go_stderr="${5-}"
+  local positive_codes="$1" negative_code="$2" go_json="$3" digest="${4-${good_digest}}" go_stderr="${5-}" positive_output="${6-}"
   local dir
-  dir="$(stub_dir "${positive_codes}" "${negative_code}" "${go_json}" "${go_stderr}")"
+  dir="$(stub_dir "${positive_codes}" "${negative_code}" "${go_json}" "${go_stderr}" "${positive_output}")"
 
   set +e
   gate_output="$(cd "${root_dir}" && PATH="${dir}:${PATH}" bash "${gate}" "${digest}" 2>&1)"
@@ -194,6 +201,54 @@ if refused; then
   ok "a matcher that does NOT accept the staged digest stops promotion"
 else
   bad "a matcher that does NOT accept the staged digest stops promotion" "exit 0: ${gate_output}"
+fi
+
+# --- The failure names its own cause (#3545) ----------------------------------
+# Every failure below must STOP promotion; what differs is only what the gate
+# says. The matcher finding is reserved for cosign having read the signature and
+# refused its identity. An outage, a refused credential or a registry error says
+# nothing about the matcher, and reporting one as a matcher finding sends the
+# reader to the regex and the signing identity when neither was involved.
+readonly cosign_fixtures="${root_dir}/scripts/tests/fixtures/cosign-verify-failures"
+readonly matcher_finding="::error::the cosign matcher in the manifests does not verify"
+
+# NEGATIVE CONTROL for the wording: a genuine rejection, in either signature
+# format, keeps the original finding word for word.
+for fixture in rejected-legacy-identity rejected-bundle-identity; do
+  run_gate "12" 1 "${good_json}" "${good_digest}" "" "${cosign_fixtures}/${fixture}.log"
+  if refused && printf '%s' "${gate_output}" | grep -qF "${matcher_finding} ghcr.io/" &&
+    printf '%s' "${gate_output}" | grep -qF '::error::stopping GitOps delivery until a human intervenes (#3005, #3006).'; then
+    ok "a genuine rejection (${fixture}) keeps the matcher finding and stops promotion"
+  else
+    bad "a genuine rejection (${fixture}) keeps the matcher finding and stops promotion" \
+      "exit ${gate_rc}: ${gate_output}"
+  fi
+done
+
+# An i/o timeout (the #3545 evidence), DNS, 401, 403, 5xx and a missing
+# reference: each stops promotion, quotes cosign's error, and is not a finding.
+for fixture in infrastructure-dial-timeout infrastructure-dns infrastructure-unauthorized \
+  infrastructure-denied infrastructure-server-error infrastructure-tag-not-found; do
+  run_gate "1" 1 "${good_json}" "${good_digest}" "" "${cosign_fixtures}/${fixture}.log"
+  if ! refused; then
+    bad "${fixture} stops promotion" "exit ${gate_rc}: ${gate_output}"
+  elif printf '%s' "${gate_output}" | grep -qF "${matcher_finding}"; then
+    bad "${fixture} is not reported as a matcher finding" "output: ${gate_output}"
+  elif ! printf '%s' "${gate_output}" | grep -q '::error::cosign reported: Error: '; then
+    bad "${fixture} names cosign's underlying error" "output: ${gate_output}"
+  else
+    ok "${fixture} stops promotion as infrastructure, without the matcher finding"
+  fi
+done
+
+# No recognisable output at all is not evidence of a rejection either.
+run_gate "1" 1 "${good_json}"
+if refused && ! printf '%s' "${gate_output}" | grep -qF "${matcher_finding}" &&
+  printf '%s' "${gate_output}" | grep -q 'cannot say whether the matcher refused'; then
+  ok "a failure with no recognisable output stops promotion without claiming a verdict"
+else
+  bad "a failure with no recognisable output stops promotion without claiming a verdict" \
+    "exit ${gate_rc}: ${gate_output}"
 fi
 
 # --- Non-vacuity --------------------------------------------------------------
