@@ -460,8 +460,9 @@ if [[ -n "${DENIAL_POD_RUNTIME_IMAGE:-}" ]]; then
   # Each access must actually have been put to the destination, so the refusal
   # is the destination's and not something the client decided on its own.
   # Every mc process also asks for the bucket location, so only a list-type=2
-  # query is the listing itself.
-  grep -Eq '^GET /platform-backups/\?(.*&)?list-type=2(&|$)' "${real}/requests" || fail 'the pinned mc never asked the stub for the listing'
+  # query for the shared catalogue prefix is the listing itself.
+  listings="$(grep -E '^GET /platform-backups/\?(.*&)?list-type=2(&|$)' "${real}/requests" || true)"
+  grep -Eq '[?&]prefix=cnpg%2Fwedding-db%2F(&|$)' <<<"${listings}" || fail 'the pinned mc never asked the stub for the listing'
   grep -Eq "^(GET|HEAD) /${reference_path}(\\?.*)?\$" "${real}/requests" || fail 'the pinned mc never asked the stub for the object'
   grep -Eq "^PUT /${write_path}(\\?.*)?\$" "${real}/requests" || fail 'the pinned mc never sent the probe object to the stub'
 
@@ -577,7 +578,8 @@ require_text "$(cat "${CASE}/deleted")" 'pod wedding-backup-denial-4242-1' 'the 
 require_text "$(cat "${CASE}/deleted")" 'configmap wedding-backup-denial-4242-1' 'the script ConfigMap is removed'
 
 # The runner names a stalled run's probe object with the pod's own prefix.
-[[ "$(grep "^readonly probe_prefix=" "${runner}")" == "$(grep "^readonly probe_prefix=" "${pod_script}")" ]] ||
+prefix_line="$(grep "^readonly probe_prefix=" "${runner}")" || prefix_line=''
+[[ -n "${prefix_line}" && "${prefix_line}" == "$(grep "^readonly probe_prefix=" "${pod_script}")" ]] ||
   fail 'the runner and the pod script must name the same probe prefix'
 
 # The denial pod runs in the images the mirror runtime test exercises.

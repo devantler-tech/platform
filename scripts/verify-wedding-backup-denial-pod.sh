@@ -74,6 +74,7 @@ probe_key="${probe_prefix}/${PROBE_ID}"
 redact() {
   sed -e 's#https\{0,1\}://[^/ "`]*#<endpoint>#g' -e "s#${host}#<endpoint>#g" \
     -e 's/[0-9a-fA-F]\{32,\}/<hex>/g' \
+    -e 's/<hex>\.[0-9.:]*/<hex><ip>/g' \
     -e 's/[0-9]\{1,3\}\(\.[0-9]\{1,3\}\)\{3\}\(:[0-9]\{1,5\}\)\{0,1\}/<ip>/g' "$1" | tail -n 5 | sed -e 's/^/denial-pod:   /' >&2
 }
 
