@@ -64,6 +64,8 @@ func fakeKubectlImplementation(args []string) int {
 	case containsSequence(args, "get", "pods") &&
 		flagValue(args, "--selector") == "app=kustomize-controller":
 		return fakeKubectlGetFluxControllerPods(namespace)
+	case containsSequence(args, "get", "events"):
+		return fakeKubectlGetFluxControllerEvents(args, namespace)
 	case containsSequence(args, "get", "namespace"):
 		return fakeKubectlGetNamespace(args)
 	case containsSequence(args, "get", "lease"):
@@ -925,6 +927,9 @@ func fakeKubectlPatchFluxControllerDeployment(args []string, namespace, patchFil
 			"kustomize-controller-deployment-uid",
 		) || restartToken == "" {
 		return commandFailure(56, "invalid or conflicting kustomize-controller restart")
+	}
+	if os.Getenv("FAKE_FLUX_CONTROLLER_RESTART_REJECTED") == "true" {
+		return commandFailure(57, "admission webhook denied the restart from 10.0.0.9")
 	}
 	setMarkerContent("flux-controller-restart-token", restartToken)
 	setMarkerContent("flux-controller-restart-count", strconv.Itoa(restartCount+1))
@@ -3358,5 +3363,35 @@ func fakeKubectlGetNamespaceWorkloads(args []string, namespace string) int {
 		metadata, _ := pod["metadata"].(map[string]any)
 		fmt.Printf("pod/%s\n", metadata["name"])
 	}
+	return 0
+}
+
+// fakeKubectlGetFluxControllerEvents serves the Pod events the handoff diagnostics read
+// (#4178). One event belongs to a kustomize-controller Pod and names a Pod address, which
+// the diagnostics must mask; the other belongs to an unrelated Pod and must be filtered out.
+func fakeKubectlGetFluxControllerEvents(args []string, namespace string) int {
+	if namespace != "flux-system" || flagValue(args, "--field-selector") != "involvedObject.kind=Pod" {
+		return commandFailure(91, "invalid kustomize-controller event lookup")
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "List",
+		"items": []any{
+			map[string]any{
+				"type":           "Warning",
+				"reason":         "Unhealthy",
+				"lastTimestamp":  "2026-09-25T13:44:10Z",
+				"message":        `Readiness probe failed: Get "http://10.244.1.5:9440/readyz": connection refused`,
+				"involvedObject": map[string]any{"kind": "Pod", "name": "kustomize-controller-0"},
+			},
+			map[string]any{
+				"type":           "Normal",
+				"reason":         "Pulled",
+				"lastTimestamp":  "2026-09-25T13:44:11Z",
+				"message":        "unrelated-pod-event",
+				"involvedObject": map[string]any{"kind": "Pod", "name": "source-controller-0"},
+			},
+		},
+	}))
 	return 0
 }

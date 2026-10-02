@@ -359,6 +359,7 @@ flux_controller_restart_patch_file="${work_dir}/flux-controller-restart-patch.js
 flux_controller_result_file="${work_dir}/flux-controller-result.txt"
 flux_controller_pods_before_file="${work_dir}/flux-controller-pods-before.json"
 flux_controller_pods_after_file="${work_dir}/flux-controller-pods-after.json"
+flux_controller_diagnostics_file="${work_dir}/flux-controller-diagnostics.json"
 recovery_nodes_file="${work_dir}/recovery-nodes.json"
 recovery_node_file="${work_dir}/recovery-node.json"
 recovery_targets_file="${work_dir}/recovery-targets.jsonl"
@@ -5942,6 +5943,81 @@ wait_for_flux_controller_handoff_baseline() {
   return 1
 }
 
+# Masks IPv4 addresses and IPv6 addresses (bracketed, compressed with `::`, or of five or more
+# groups, so a clock time such as 12:34:56 is left alone). Diagnostics go to a public CI log, and
+# probe failures, scheduler messages and kubectl errors can name Pod, node or API server addresses
+# that this repository never publishes.
+mask_cluster_addresses() {
+  sed -E \
+    -e 's/[0-9]{1,3}(\.[0-9]{1,3}){3}/<address>/g' \
+    -e 's/\[[0-9A-Fa-f:]*:[0-9A-Fa-f:]*\]/[<address>]/g' \
+    -e 's/[0-9A-Fa-f:]*([0-9A-Fa-f]::|::[0-9A-Fa-f])[0-9A-Fa-f:]*/<address>/g' \
+    -e 's/([0-9A-Fa-f]{1,4}:){4,7}[0-9A-Fa-f]{1,4}/<address>/g'
+}
+
+# Explains a failed kustomize-controller policy handoff restart or rollout (#4178). The failure
+# used to print one line and nothing else, so a scheduling, image-pull, readiness or disruption
+# problem could not be told apart from a regression, and the only recovery was to re-queue on
+# trust. This prints the captured kubectl output, each controller Pod's phase, conditions and
+# container waiting or terminated reasons, and the most recent events for those Pods. Every read
+# is best effort: a diagnostic that cannot be gathered says so and never changes the outcome.
+print_flux_controller_handoff_diagnostics() {
+  echo "::group::kustomize-controller handoff diagnostics"
+  echo "kubectl output:"
+  if [[ -s "${flux_controller_result_file}" ]]; then
+    mask_cluster_addresses <"${flux_controller_result_file}"
+  else
+    echo "  (none captured)"
+  fi
+  echo "kustomize-controller Pods:"
+  if kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get pods \
+    --selector "${FLUX_KUSTOMIZE_CONTROLLER_SELECTOR}" \
+    -o json >"${flux_controller_diagnostics_file}" 2>/dev/null; then
+    jq -r '
+      .items[]
+      | "  \(.metadata.name): phase=\(.status.phase // "unknown")",
+        (.status.conditions // [] | .[]
+          | "    condition \(.type)=\(.status)"
+            + (if .reason then " reason=\(.reason)" else "" end)
+            + (if .message then " message=\(.message)" else "" end)),
+        ((.status.containerStatuses // []) + (.status.initContainerStatuses // []) | .[]
+          | if .state.waiting then
+              "    container \(.name): waiting \(.state.waiting.reason // "unknown")"
+                + (if .state.waiting.message then " message=\(.state.waiting.message)" else "" end)
+            elif .state.terminated then
+              # A terminated message can carry the tail of the container log, so print the
+              # reason and exit code only.
+              "    container \(.name): terminated \(.state.terminated.reason // "unknown")"
+                + " exitCode=\(.state.terminated.exitCode // "unknown")"
+            else empty end)
+    ' "${flux_controller_diagnostics_file}" 2>/dev/null | mask_cluster_addresses ||
+      echo "  (could not read the Pods)"
+  else
+    echo "  (could not read the Pods)"
+  fi
+  echo "Recent events for those Pods:"
+  if kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get events \
+    --field-selector involvedObject.kind=Pod \
+    -o json >"${flux_controller_diagnostics_file}" 2>/dev/null; then
+    jq -r --arg prefix "${FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT}-" '
+      [.items[] | select(.involvedObject.name | startswith($prefix))]
+      | sort_by(.lastTimestamp // .eventTime // .metadata.creationTimestamp // "")
+      | .[-10:][]
+      | "  \(.lastTimestamp // .eventTime // "-") \(.type) \(.reason) \(.involvedObject.name): \(.message // "")"
+    ' "${flux_controller_diagnostics_file}" 2>/dev/null | mask_cluster_addresses ||
+      echo "  (could not read the events)"
+  else
+    echo "  (could not read the events)"
+  fi
+  echo "::endgroup::"
+}
+
 restart_flux_kustomize_controller_for_handoff() {
   local resource_version deployment_uid replicas annotations_present
   local restart_token
@@ -6051,6 +6127,7 @@ restart_flux_kustomize_controller_for_handoff() {
         .metadata.uid == $uid
         and ((.spec.template.metadata.annotations // {})["kubectl.kubernetes.io/restartedAt"] == $restart)
       ' "${flux_controller_deployment_state_file}" >/dev/null; then
+      print_flux_controller_handoff_diagnostics
       echo "::error::Could not atomically restart or adopt the kustomize-controller policy handoff rollout."
       return 1
     fi
@@ -6062,6 +6139,7 @@ restart_flux_kustomize_controller_for_handoff() {
     "deployment.apps/${FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT}" \
     --timeout="${FLUX_CONTROLLER_ROLLOUT_TIMEOUT}" \
     >"${flux_controller_result_file}" 2>&1; then
+    print_flux_controller_handoff_diagnostics
     echo "::error::kustomize-controller did not complete the policy handoff restart."
     return 1
   fi
