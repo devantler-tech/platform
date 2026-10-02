@@ -54,7 +54,7 @@ printf '{"identities":[{"name":"fixture","credentials":[{"accessKey":"%s","secre
 unset access password
 exec /usr/bin/weed -logtostderr=true server -dir=/data -filer -s3 \
   -ip=127.0.0.1 -ip.bind=127.0.0.1 -s3.ip.bind=0.0.0.0 \
-  -s3.port=9000 -s3.config=/tmp/s3.json -s3.iam=false \
+  -s3.port=9000 -s3.port.grpc=19000 -s3.config=/tmp/s3.json -s3.iam=false \
   -s3.port.iceberg=0 -s3.port.lance=0 -master.telemetry=false \
   -master.volumeSizeLimitMB=64 -volume.max=4
 `
