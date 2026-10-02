@@ -77,8 +77,17 @@ if ! kyverno apply "${policy}" --resource "${work}/namespace.yaml" -o "${work}/g
   cat "${work}/apply.log" >&2
   exit 1
 fi
-generated="$(cat "${work}"/generated/*.yaml 2>/dev/null | yq -o=json -I=0 \
-  'select(.kind == "CiliumNetworkPolicy" and .metadata.name == "default-deny" and .metadata.namespace == "probe") | .spec')"
+shopt -s nullglob
+generated_files=("${work}"/generated/*.yaml)
+shopt -u nullglob
+if [ "${#generated_files[@]}" -eq 0 ]; then
+  printf 'FAIL: kyverno apply wrote no generated resources:\n' >&2
+  cat "${work}/apply.log" >&2
+  exit 1
+fi
+generated="$(yq -o=json -I=0 \
+  'select(.kind == "CiliumNetworkPolicy" and .metadata.name == "default-deny" and .metadata.namespace == "probe") | .spec' \
+  "${generated_files[@]}")"
 [ "$(printf '%s\n' "${generated}" | grep -c .)" -eq 1 ] || {
   printf 'FAIL: expected exactly one generated default-deny CiliumNetworkPolicy, got:\n%s\n' "${generated}" >&2
   exit 1
