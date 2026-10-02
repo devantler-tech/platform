@@ -76,7 +76,9 @@ fail() {
 [[ "$#" -eq 1 && "$1" == '--confirm' ]] ||
   fail 'refusing to run: use --confirm. The proof attempts a write to a production bucket that must be refused. Nothing has been touched.'
 
-run_id="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
+# A local run is named by its start time, so it never shares a name with an
+# earlier run's pod.
+run_id="${GITHUB_RUN_ID:-local$(date +%s)}-${GITHUB_RUN_ATTEMPT:-1}"
 [[ "${run_id}" =~ ^[a-z0-9-]{1,40}$ ]] || fail 'the run identifier is not a valid name fragment'
 name="wedding-backup-denial-${run_id}"
 readonly name run_id
@@ -283,7 +285,9 @@ manifest="${manifest//__DEDICATED_BUCKET__/${dedicated_bucket}}"
 manifest="${manifest//__PREFIX__/${catalogue_prefix}}"
 manifest="${manifest//__PROBE_ID__/${run_id}}"
 
-printf '%s\n' "${manifest}" | kube apply -f - >/dev/null || fail 'could not start the denial proof pod'
+# create, never apply: an earlier pod with this name must not have its old
+# phase and log read as this run's result.
+printf '%s\n' "${manifest}" | kube create -f - >/dev/null || fail 'could not start the denial proof pod'
 
 phase=''
 for ((attempt = 0; attempt < poll_limit; attempt++)); do

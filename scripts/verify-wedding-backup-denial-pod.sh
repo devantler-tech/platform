@@ -14,18 +14,22 @@
 #      it. The refused targets therefore exist, so a mistyped bucket or an empty
 #      prefix cannot pass as a denial.
 #   3. With the dedicated credential, listing the shared catalogue, reading that
-#      object and writing a probe object to the shared bucket are each refused
-#      with the S3 error code AccessDenied. All three are attempted and reported.
-#      A success means the isolation is broken. Any other error is not evidence
-#      of denial, so it fails the proof as unproven.
+#      object and writing a probe object to the shared bucket are each refused.
+#      All three are attempted and reported. An access counts as refused only
+#      when mc exits non-zero, reports S3's AccessDenied, and left no trace: no
+#      listed entry, no local copy of the object, and no probe object in the
+#      shared bucket when the shared credential lists it afterwards. A trace or a
+#      successful exit means the isolation is broken. Any other error is not
+#      evidence of denial, so it fails the proof as unproven.
 #
 # WHAT IT NEVER DOES. It never prints a credential or the account-specific
 # endpoint host, and it writes nothing except the probe object the dedicated
-# credential must be refused. If that write is accepted anyway, the shared
-# credential removes the probe object before the proof fails.
+# credential must be refused. If that write lands anyway, the shared credential
+# removes the probe object before the proof fails.
 #
 # OUTPUT. On success, one receipt line followed by `==== DENIAL OBSERVED ====`.
-# Every refusal is a `denial-pod: ` line on stderr and a non-zero exit.
+# Every refusal, with redacted client output where it helps, is a `denial-pod: `
+# line on stderr, and the script exits non-zero.
 
 set -eu
 
@@ -45,10 +49,11 @@ done
 : "${DEDICATED_PREFIX:?DEDICATED_PREFIX is required}"
 : "${PROBE_ID:?PROBE_ID is required}"
 
-case "${ENDPOINT}" in
-  https://*) ;;
-  *) fail "the R2 endpoint must be https" ;;
-esac
+printf '%s' "${ENDPOINT}" | grep -Eq '^https://[a-z0-9][a-z0-9.-]*$' ||
+  fail "the R2 endpoint must be an https URL with a bare host"
+for bucket in "${SHARED_BUCKET}" "${DEDICATED_BUCKET}"; do
+  printf '%s' "${bucket}" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || fail "a bucket name is not valid"
+done
 [ "${SHARED_BUCKET}" != "${DEDICATED_BUCKET}" ] ||
   fail "the shared and dedicated destinations are the same bucket"
 printf '%s' "${PROBE_ID}" | grep -Eq '^[a-z0-9-]{1,40}$' || fail "the probe id is not a valid name fragment"
@@ -58,10 +63,16 @@ work="${WORK_DIR:-/tmp/denial}"
 mkdir -p "${work}"
 export MC_CONFIG_DIR="${MC_CONFIG_DIR:-${work}/.mc}"
 mc_err="${work}/mc.err"
+host="${ENDPOINT#https://}"
+readonly probe_prefix='wedding-backup-denial-probe'
+probe_key="${probe_prefix}/${PROBE_ID}"
 
-# redact prints the last lines of an mc log without the endpoint host.
+# redact prints the last lines of an mc log as `denial-pod: ` lines, without the
+# endpoint host (with or without its scheme) or any long hex token such as an
+# access key ID or request ID.
 redact() {
-  sed -e 's#https://[^/ "]*#<endpoint>#g' "$1" | tail -n 5 >&2
+  sed -e 's#https\{0,1\}://[^/ "`]*#<endpoint>#g' -e "s#${host}#<endpoint>#g" \
+    -e 's/[0-9a-fA-F]\{32,\}/<hex>/g' "$1" | tail -n 5 | sed -e 's/^/denial-pod:   /' >&2
 }
 
 shared_id="$(cat "${credentials}/shared/ACCESS_KEY_ID")"
@@ -118,55 +129,110 @@ esac
 printf '%s' "${reference}" | grep -Eq '^[A-Za-z0-9._/-]+$' ||
   fail "the shared catalogue named an unusable object key"
 
-# 3. Each access with the dedicated credential must be refused as AccessDenied.
-#
-# verdict <log> <exit-status> prints denied, granted or unproven. A success
-# record wins over everything, because an accepted operation is a broken
-# isolation whatever else the client printed.
-verdict() {
-  if has_success "$1"; then
-    printf 'granted'
-  elif grep -Eq '"Code": ?"AccessDenied"' "$1"; then
-    printf 'denied'
-  elif [ "$2" = 0 ]; then
-    printf 'granted'
+# probe_state prints present, absent or unknown: whether the shared credential
+# sees the probe prefix at the top level of the shared bucket. The top level is
+# never empty (the shared catalogue lives there), so an empty or failed listing
+# is unknown rather than absent.
+probe_state() {
+  if ! mc ls --json "shared/${SHARED_BUCKET}/" >"${work}/top-level" 2>"${mc_err}" </dev/null ||
+    has_error "${work}/top-level" || ! has_success "${work}/top-level"; then
+    printf unknown
+  elif grep -Fq "\"key\":\"${probe_prefix}/\"" "${work}/top-level"; then
+    printf present
   else
-    printf 'unproven'
+    printf absent
   fi
 }
 
-# attempt <name> <command...> runs one access and records its verdict in
-# <work>/<name>.verdict. The command's output is kept only in <work>/<name>.log.
+# The write is judged by whether its object appears, so the prefix must be
+# absent before it. A leftover can only come from an earlier accepted write.
+case "$(probe_state)" in
+  absent) ;;
+  present) fail "the shared bucket already holds ${probe_prefix}/ from an earlier run; inspect and remove it before proving again" ;;
+  *)
+    redact "${mc_err}"
+    fail "the shared credential cannot list the shared bucket, so the write would be unobserved"
+    ;;
+esac
+
+# 3. Each access with the dedicated credential must be refused.
+
+# denial_reported <log> succeeds when mc reported S3's AccessDenied: as the
+# error code itself, or as its insufficient-permissions error for a path in the
+# shared bucket.
+denial_reported() {
+  if grep -Eq '"Code": ?"AccessDenied"' "$1"; then
+    return 0
+  fi
+  grep -E "Insufficient permissions to access this path.*/${SHARED_BUCKET}/" "$1" >/dev/null
+}
+
+# attempt <name> <command...> runs one access and records its exit status in
+# <work>/<name>.status. Its output stays in <work>/<name>.log.
 attempt() {
   name="$1"
   shift
   status=0
   "$@" >"${work}/${name}.log" 2>&1 </dev/null || status=$?
-  verdict "${work}/${name}.log" "${status}" >"${work}/${name}.verdict"
+  printf '%s' "${status}" >"${work}/${name}.status"
 }
 
-# codes <log> lists the S3 error codes the client reported, for the operator.
-codes() {
-  grep -Eo '"Code": ?"[A-Za-z]+"' "$1" | sed -e 's/.*"\([A-Za-z]*\)"$/\1/' | sort -u | tr '\n' ' '
+# refusal <name> prints granted, denied or unproven for an access that left no
+# trace. A successful exit is an accepted access whatever else mc printed.
+refusal() {
+  if [ "$(cat "${work}/$1.status")" = 0 ]; then
+    printf granted
+  elif denial_reported "${work}/$1.log"; then
+    printf denied
+  else
+    printf unproven
+  fi
 }
 
 attempt list mc ls --json "dedicated/${SHARED_BUCKET}/${SHARED_PREFIX}/"
+# A listed entry is shared catalogue content the dedicated credential could see.
+if has_success "${work}/list.log"; then
+  printf granted >"${work}/list.verdict"
+else
+  refusal list >"${work}/list.verdict"
+fi
+
 attempt read mc cp --json "dedicated/${SHARED_BUCKET}/${SHARED_PREFIX}/${reference}" "${work}/read-probe"
-# The read must never leave shared backup content behind in the pod.
-rm -f "${work}/read-probe"
-probe_key="wedding-backup-denial-probe/${PROBE_ID}"
+# A local copy is shared backup content the dedicated credential could read. It
+# never stays in the pod.
+if [ -e "${work}/read-probe" ]; then
+  rm -f "${work}/read-probe"
+  printf granted >"${work}/read.verdict"
+else
+  refusal read >"${work}/read.verdict"
+fi
+
 printf 'Wedding backup denial probe %s\n' "${PROBE_ID}" >"${work}/write-probe"
 attempt write mc cp --json "${work}/write-probe" "dedicated/${SHARED_BUCKET}/${probe_key}"
+# The shared credential, which owns the bucket, decides whether the write landed.
+case "$(probe_state)" in
+  absent) refusal write >"${work}/write.verdict" ;;
+  present) printf granted >"${work}/write.verdict" ;;
+  *)
+    redact "${mc_err}"
+    printf 'denial-pod: the shared credential cannot list the shared bucket after the write, so its outcome is unobserved\n' >&2
+    printf unobserved >"${work}/write.verdict"
+    ;;
+esac
 
 if [ "$(cat "${work}/write.verdict")" != denied ]; then
-  # An accepted write must not stay in the shared bucket. Removing it uses the
-  # shared credential, which owns that bucket.
+  # A landed write must not stay in the shared bucket.
   if ! mc rm --json "shared/${SHARED_BUCKET}/${probe_key}" >/dev/null 2>"${mc_err}" </dev/null; then
     redact "${mc_err}"
     printf 'denial-pod: could not remove %s/%s, which may not exist; check the shared bucket by hand\n' \
       "${SHARED_BUCKET}" "${probe_key}" >&2
   fi
 fi
+
+# codes <log> lists the S3 error codes mc reported, for the operator.
+codes() {
+  grep -Eo '"Code": ?"[A-Za-z]+"' "$1" | sed -e 's/.*"\([A-Za-z]*\)"$/\1/' | sort -u | tr '\n' ' '
+}
 
 failed=false
 for name in list read write; do
@@ -177,15 +243,16 @@ for name in list read write; do
         "${name}" >&2
       failed=true
       ;;
+    unobserved) failed=true ;;
     *)
-      printf 'denial-pod: the %s refusal is unproven: the client reported [ %s] rather than AccessDenied\n' \
-        "${name}" "$(codes "${work}/${name}.log")" >&2
+      printf 'denial-pod: the %s refusal is unproven: mc exited %s and reported [ %s] rather than AccessDenied\n' \
+        "${name}" "$(cat "${work}/${name}.status")" "$(codes "${work}/${name}.log")" >&2
       redact "${work}/${name}.log"
       failed=true
       ;;
   esac
 done
-[ "${failed}" = false ] || fail "the shared destination did not refuse every access with AccessDenied"
+[ "${failed}" = false ] || fail "the shared destination did not refuse every access"
 
 printf '{"dedicatedCatalogueReachable":true,"sharedCatalogueReferenced":true,"listDenied":true,"readDenied":true,"writeDenied":true}\n'
 printf '==== DENIAL OBSERVED ====\n'

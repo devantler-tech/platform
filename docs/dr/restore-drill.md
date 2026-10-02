@@ -93,10 +93,14 @@ the endpoint host. Inside it:
    `platform-backups`. Each must be refused with the S3 error code
    `AccessDenied`.
 
-All three accesses are attempted and reported. An accepted access is reported as
-broken isolation, and an accepted write is removed with the shared credential
-before the run fails. Any other error, such as a timeout or `NoSuchBucket`, is
-reported as unproven rather than counted as a refusal.
+All three accesses are attempted and reported. An access counts as refused only
+when the client exits with an error, reports `AccessDenied`, and leaves no trace:
+no listed entry, no local copy of the object, and no probe object when the
+shared credential lists the bucket after the write (it must also be absent
+before it). A trace or a successful exit is reported as broken isolation, and a
+probe object that landed is removed with the shared credential before the run
+fails. Any other error, such as a timeout or `NoSuchBucket`, is reported as
+unproven rather than counted as a refusal.
 
 Require the receipt with `dedicatedCatalogueReachable`,
 `sharedCatalogueReferenced`, `listDenied`, `readDenied` and `writeDenied` all

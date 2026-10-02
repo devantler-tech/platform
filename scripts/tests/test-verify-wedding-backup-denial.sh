@@ -41,7 +41,10 @@ readonly probe_id='4242-1'
 # ---------------------------------------------------------------------------
 # Fake mc. Every access by the dedicated alias to the shared bucket is answered
 # from <case>/mc/<list|read|write>.out and .rc, which default to R2's refusal.
-# Every failure also names the endpoint host, so redaction is exercised.
+# A write lands (and shows in the shared bucket's top level) when it succeeds or
+# when <case>/mc/write-lands exists; a read leaves a local copy when it succeeds
+# or when <case>/mc/read-lands exists. Every failure also names the endpoint
+# host, with and without its scheme, so redaction is exercised.
 # ---------------------------------------------------------------------------
 cat >"${bin}/mc" <<'FAKE'
 #!/bin/sh
@@ -49,7 +52,7 @@ set -u
 f="${FAKE_MC}"
 printf '%s\n' "$*" >>"${f}/calls"
 leak() {
-  printf 'mc: <ERROR> request to https://abc123.r2.cloudflarestorage.com/x failed\n' >&2
+  printf 'mc: <ERROR> request to https://abc123.r2.cloudflarestorage.com/x failed: lookup abc123.r2.cloudflarestorage.com: no such host\n' >&2
 }
 # answer <name>: replay a scripted access result.
 answer() {
@@ -57,6 +60,19 @@ answer() {
   rc="$(cat "${f}/$1.rc")"
   if [ "${rc}" != 0 ]; then leak; fi
   exit "${rc}"
+}
+# top_level: the shared bucket's top level, listed by the shared credential.
+top_level() {
+  n=$(( $(cat "${f}/top-count" 2>/dev/null || echo 0) + 1 ))
+  printf '%s' "${n}" >"${f}/top-count"
+  if [ -e "${f}/top-fails-from" ] && [ "${n}" -ge "$(cat "${f}/top-fails-from")" ]; then leak; exit 1; fi
+  for key in cnpg/ velero/; do
+    printf '{"status":"success","type":"folder","lastModified":"2026-09-01T00:00:00Z","size":0,"key":"%s","etag":"","url":"https://abc123.r2.cloudflarestorage.com"}\n' "${key}"
+  done
+  if [ -e "${f}/landed" ]; then
+    printf '{"status":"success","type":"folder","lastModified":"2026-09-01T00:00:00Z","size":0,"key":"wedding-backup-denial-probe/","etag":"","url":"https://abc123.r2.cloudflarestorage.com"}\n'
+  fi
+  exit 0
 }
 last=''
 for arg in "$@"; do last="${arg}"; done
@@ -67,6 +83,7 @@ case "$1" in
     ;;
   ls)
     case "${last}" in
+      shared/platform-backups/) top_level ;;
       dedicated/platform-backups/*) answer list ;;
       dedicated/*) answer own ;;
       shared/*) answer reference ;;
@@ -75,16 +92,21 @@ case "$1" in
   cp)
     case "$3" in
       dedicated/*)
-        if [ "$(cat "${f}/read.rc")" = 0 ]; then printf 'shared backup bytes' >"$4"; fi
+        if [ "$(cat "${f}/read.rc")" = 0 ] || [ -e "${f}/read-lands" ]; then printf 'shared backup bytes' >"$4"; fi
         answer read
         ;;
     esac
     case "$4" in
-      dedicated/*) answer write ;;
+      dedicated/*)
+        if [ "$(cat "${f}/write.rc")" = 0 ] || [ -e "${f}/write-lands" ]; then : >"${f}/landed"; fi
+        answer write
+        ;;
     esac
     ;;
   rm)
     printf '%s\n' "${last}" >>"${f}/removed"
+    if [ -e "${f}/rm.rc" ]; then leak; exit "$(cat "${f}/rm.rc")"; fi
+    rm -f "${f}/landed"
     exit 0
     ;;
 esac
@@ -183,6 +205,8 @@ require_text "${pod_calls}" 'ls --json --recursive shared/platform-backups/cnpg/
 require_text "${pod_calls}" 'ls --json dedicated/platform-backups/cnpg/wedding-db/' 'the list is attempted with the dedicated credential'
 require_text "${pod_calls}" "cp --json dedicated/${reference_path} " 'the read targets an object the shared listing named'
 require_text "${pod_calls}" "dedicated/${write_path}" 'the write targets the run-owned probe key'
+[[ "$(grep -c '^ls --json shared/platform-backups/$' <<<"${pod_calls}")" -eq 2 ]] ||
+  fail 'the shared credential observes the bucket before and after the write'
 [[ ! -e "${dir}/mc/removed" ]] || fail 'nothing is removed when every access is refused'
 [[ "$(grep -c '^ls --json dedicated/wedding-db-backups' <<<"${pod_calls}")" -eq 1 ]] || fail 'the own catalogue is listed once'
 
@@ -279,16 +303,88 @@ dir="$(new_pod_case write-unproven)"
 other_error NoSuchBucket >"${dir}/mc/write.out"
 run_pod "${dir}"
 [[ "${pod_rc}" -ne 0 ]] || fail 'a refusal other than AccessDenied must fail the proof'
-require_text "${pod_err}" 'the write refusal is unproven: the client reported [ NoSuchBucket ]' 'an unproven refusal names the code the client reported'
+require_text "${pod_err}" 'the write refusal is unproven: mc exited 1 and reported [ NoSuchBucket ]' 'an unproven refusal names the code mc reported'
+require_text "${pod_err}" 'denial-pod:   ' 'an unproven refusal shows the operator the redacted client output'
+require_text "${pod_err}" '<endpoint>' 'the client output is redacted rather than dropped'
 refute_text "${pod_err}${pod_out}" "${host}" 'the endpoint host is never printed'
 [[ "$(cat "${dir}/mc/removed" 2>/dev/null)" == "shared/${write_path}" ]] || fail 'an unproven write is cleaned up in case it landed'
 
 dir="$(new_pod_case list-unproven)"
-printf 'mc: <ERROR> Unable to list folder. dial tcp: lookup https://%s: i/o timeout\n' "${host}" >"${dir}/mc/list.out"
+printf 'mc: <ERROR> Unable to list folder. dial tcp: lookup %s on 10.96.0.10:53: i/o timeout\n' "${host}" >"${dir}/mc/list.out"
 run_pod "${dir}"
 [[ "${pod_rc}" -ne 0 ]] || fail 'a network failure must not pass as a refusal'
 require_text "${pod_err}" 'the list refusal is unproven' 'a network failure is reported as unproven'
+refute_text "${pod_err}${pod_out}" "${host}" 'a bare endpoint host is never printed either'
+
+# A successful exit is an accepted access, whatever else mc printed.
+dir="$(new_pod_case list-exit0-with-denial)"
+printf '0' >"${dir}/mc/list.rc"
+run_pod "${dir}"
+[[ "${pod_rc}" -ne 0 ]] || fail 'AccessDenied text with a successful exit must not pass as a refusal'
+require_text "${pod_err}" 'allowed to list' 'a successful exit is reported as an accepted list'
+
+# A read is judged by whether shared content reached the pod.
+dir="$(new_pod_case read-copied-despite-refusal)"
+: >"${dir}/mc/read-lands"
+run_pod "${dir}"
+[[ "${pod_rc}" -ne 0 ]] || fail 'a read that left a local copy must fail the proof'
+require_text "${pod_err}" 'allowed to read' 'a local copy is reported as an accepted read'
+[[ ! -e "${dir}/work/read-probe" ]] || fail 'the local copy of shared content is removed'
+
+# A write is judged by whether its object appears in the shared bucket.
+dir="$(new_pod_case write-landed-despite-refusal)"
+: >"${dir}/mc/write-lands"
+run_pod "${dir}"
+[[ "${pod_rc}" -ne 0 ]] || fail 'a write that landed must fail the proof whatever mc reported'
+require_text "${pod_err}" 'allowed to write' 'a landed write is reported as broken isolation'
+[[ "$(cat "${dir}/mc/removed" 2>/dev/null)" == "shared/${write_path}" ]] || fail 'a landed write is removed through the shared credential'
+refute_text "${pod_out}" 'DENIAL OBSERVED' 'no receipt after a landed write'
+
+dir="$(new_pod_case cleanup-fails)"
+printf '0' >"${dir}/mc/write.rc"
+printf '1' >"${dir}/mc/rm.rc"
+run_pod "${dir}"
+[[ "${pod_rc}" -ne 0 ]] || fail 'a landed write must fail the proof'
+require_text "${pod_err}" "could not remove platform-backups/wedding-backup-denial-probe/${probe_id}" 'a failed cleanup tells the operator what to remove'
 refute_text "${pod_err}${pod_out}" "${host}" 'the endpoint host is never printed'
+
+# The write can only be judged against a probe prefix that was absent before it.
+dir="$(new_pod_case stale-probe)"
+: >"${dir}/mc/landed"
+run_pod "${dir}"
+[[ "${pod_rc}" -ne 0 ]] || fail 'a leftover probe prefix must fail the proof'
+require_text "${pod_err}" 'already holds wedding-backup-denial-probe/' 'a leftover probe prefix names itself'
+refute_text "${pod_calls}" "dedicated/${write_path}" 'no write is attempted over a leftover probe prefix'
+
+dir="$(new_pod_case top-level-unreadable)"
+printf '1' >"${dir}/mc/top-fails-from"
+run_pod "${dir}"
+[[ "${pod_rc}" -ne 0 ]] || fail 'an unlistable shared bucket must fail the proof'
+require_text "${pod_err}" 'the write would be unobserved' 'an unobservable write names its reason'
+refute_text "${pod_calls}" "dedicated/platform-backups" 'no access is attempted when the write cannot be observed'
+
+dir="$(new_pod_case write-unobserved)"
+printf '2' >"${dir}/mc/top-fails-from"
+run_pod "${dir}"
+[[ "${pod_rc}" -ne 0 ]] || fail 'a write whose outcome cannot be observed must fail the proof'
+require_text "${pod_err}" 'after the write, so its outcome is unobserved' 'an unobserved write names its reason'
+[[ "$(cat "${dir}/mc/removed" 2>/dev/null)" == "shared/${write_path}" ]] || fail 'an unobserved write is cleaned up in case it landed'
+
+# mc may report S3's AccessDenied as its own insufficient-permissions error for
+# the remote path; one for a local path is not a refusal by the destination.
+dir="$(new_pod_case write-insufficient-permissions)"
+# shellcheck disable=SC2016 # the backticks are literal mc output
+printf '{\n "status": "error",\n "error": {\n  "message": "Failed to copy.",\n  "cause": {\n   "message": "Insufficient permissions to access this path `https://%s/%s`",\n   "error": {\n    "Path": "https://%s/%s"\n   }\n  },\n  "type": "error"\n }\n}\n' \
+  "${host}" "${write_path}" "${host}" "${write_path}" >"${dir}/mc/write.out"
+run_pod "${dir}"
+[[ "${pod_rc}" -eq 0 ]] || fail "mc's insufficient-permissions error for the shared path is a refusal (rc ${pod_rc}): ${pod_err}"
+
+dir="$(new_pod_case read-local-permissions)"
+# shellcheck disable=SC2016 # the backticks are literal mc output
+printf '{\n "status": "error",\n "error": {\n  "message": "Failed to copy.",\n  "cause": {\n   "message": "Insufficient permissions to access this path `/work/read-probe`"\n  },\n  "type": "error"\n }\n}\n' >"${dir}/mc/read.out"
+run_pod "${dir}"
+[[ "${pod_rc}" -ne 0 ]] || fail 'a local permission error must not pass as a refusal'
+require_text "${pod_err}" 'the read refusal is unproven' 'a local permission error is reported as unproven'
 
 dir="$(new_pod_case http)"
 ENDPOINT_OVERRIDE="http://${host}" run_pod "${dir}"
@@ -299,6 +395,57 @@ dir="$(new_pod_case same-bucket)"
 SHARED_OVERRIDE=wedding-db-backups run_pod "${dir}"
 [[ "${pod_rc}" -ne 0 ]] || fail 'one bucket on both sides must be refused'
 require_text "${pod_err}" 'are the same bucket' 'one bucket on both sides names its reason'
+
+# The pinned mc client against a destination that refuses every request the way
+# R2 refuses a bucket-scoped token. Its real output for the three accesses must
+# classify as refusals, so the classifier does not rest on hand-written fixtures.
+# Runs only with the runtime image, which CI builds.
+if [[ -n "${DENIAL_POD_RUNTIME_IMAGE:-}" ]]; then
+  real="${work_dir}/real-mc"
+  mkdir -p "${real}"
+  (cd "${root_dir}" && CGO_ENABLED=0 GOOS=linux go build -o "${real}/s3-access-denied-stub" ./scripts/tests/s3-access-denied-stub)
+  chmod -R a+rwX "${real}"
+  real_rc=0
+  # shellcheck disable=SC2016 # expanded by the container's shell
+  docker run --rm --network none --read-only --user 65532:65532 \
+    --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp:rw,size=8m \
+    --entrypoint /tools/sh -v "${real}:${real}" -e "OUT=${real}" -e MC_CONFIG_DIR=/tmp/mc \
+    -e 'MC_HOST_dedicated=http://REFUSEDBYSTUB:refused-by-stub-secret@127.0.0.1:9000' \
+    "${DENIAL_POD_RUNTIME_IMAGE}" -c '
+      "${OUT}/s3-access-denied-stub" 127.0.0.1:9000 "${OUT}/ready" 2>"${OUT}/stub.err" &
+      i=0
+      while [ ! -e "${OUT}/ready" ]; do
+        i=$((i + 1))
+        [ "${i}" -le 20 ] || exit 70
+        sleep 1
+      done
+      run() {
+        name="$1"
+        shift
+        rc=0
+        "$@" >"${OUT}/${name}.out" 2>&1 </dev/null || rc=$?
+        printf "%s" "${rc}" >"${OUT}/${name}.rc"
+      }
+      run list mc ls --json dedicated/platform-backups/cnpg/wedding-db/
+      run read mc cp --json dedicated/platform-backups/cnpg/wedding-db/wedding-db/wals/0000000100000000/000000010000000000000042.gz /tmp/read-probe
+      printf probe >/tmp/write-probe
+      run write mc cp --json /tmp/write-probe dedicated/platform-backups/wedding-backup-denial-probe/4242-1
+      [ ! -e /tmp/read-probe ] || exit 71
+    ' || real_rc=$?
+  for name in list read write; do
+    printf '  pinned mc %s against the refusing stub (exit %s):\n' "${name}" "$(cat "${real}/${name}.rc" 2>/dev/null || printf 'none')"
+    sed 's/^/    /' "${real}/${name}.out" 2>/dev/null || true
+  done
+  [[ "${real_rc}" -eq 0 ]] || fail "the pinned mc could not be run against the refusing stub (exit ${real_rc})"
+
+  dir="$(new_pod_case real-mc-refusal)"
+  for name in list read write; do
+    cp "${real}/${name}.out" "${dir}/mc/${name}.out"
+    cp "${real}/${name}.rc" "${dir}/mc/${name}.rc"
+  done
+  run_pod "${dir}"
+  [[ "${pod_rc}" -eq 0 ]] || fail "the pinned mc's own report of an AccessDenied refusal must pass the proof (rc ${pod_rc}): ${pod_err}"
+fi
 
 # The passing pod output feeds the runner below.
 dir="$(new_pod_case for-runner)"
@@ -323,7 +470,9 @@ case "$1 $2" in
   'get clusters.postgresql.cnpg.io') cat "${CASE}/cluster.json" ;;
   'get objectstores.barmancloud.cnpg.io') cat "${CASE}/store-$3.json" ;;
   'create configmap') cp "${4#--from-file=denial.sh=}" "${CASE}/staged.sh" ;;
-  'apply -f') cat >"${CASE}/manifest.yaml" ;;
+  'create -f')
+    if [[ -e "${CASE}/pod-exists" ]]; then printf 'Error from server (AlreadyExists)\n' >&2; exit 1; fi
+    cat >"${CASE}/manifest.yaml" ;;
   'get pod') cat "${CASE}/phase" ;;
   'logs pod/'*) cat "${CASE}/pod.log" ;;
   'delete pod' | 'delete configmap') printf '%s %s\n' "$2" "$3" >>"${CASE}/deleted" ;;
@@ -464,6 +613,24 @@ new_case trailing
 run_runner --confirm
 [[ "${run_rc}" -ne 0 ]] || fail 'output after the marker must fail the proof'
 
+# An earlier pod with the same name must never stand in for this run's result.
+new_case pod-exists
+: >"${CASE}/pod-exists"
+printf 'Succeeded' >"${CASE}/phase"
+run_runner --confirm
+[[ "${run_rc}" -ne 0 ]] || fail 'an existing pod with the run name must be refused'
+require_text "${run_err}" 'could not start the denial proof pod' 'an existing pod names the reason'
+refute_text "${run_calls}" 'logs pod/' 'an existing pod is never read as the result'
+refute_text "${run_calls}" 'get pod ' 'an existing pod phase is never read as the result'
+
+new_case local-run
+run_rc=0
+PATH="${bin}:${PATH}" DENIAL_POLL_INTERVAL=0 DENIAL_POLL_LIMIT=3 \
+  env -u GITHUB_RUN_ID -u GITHUB_RUN_ATTEMPT bash "${runner}" --confirm >"${CASE}/out" 2>"${CASE}/err" || run_rc=$?
+[[ "${run_rc}" -eq 0 ]] || fail "a local run must work without a workflow run id (rc ${run_rc}): $(cat "${CASE}/err")"
+grep -Eq '^create configmap wedding-backup-denial-local[0-9]+-1 ' "${CASE}/calls" ||
+  fail 'a local run is named by its start time'
+
 new_case never-finishes
 printf 'Running' >"${CASE}/phase"
 run_runner --confirm
@@ -494,5 +661,8 @@ require_text "${guard}" "!= 'verify-wedding-backup-denial'" 'the first step requ
 refute_text "$(yq -r '.jobs.denial.steps[].run // ""' "${workflow}")" '${{' 'no expression is expanded inside a run script'
 [[ "$(yq -r '.jobs.denial.steps[-1].run' "${workflow}")" == './scripts/verify-wedding-backup-denial.sh --confirm' ]] ||
   fail 'the workflow runs the reviewed proof'
+# shellcheck disable=SC2016 # the literal GitHub expression is what is required
+[[ "$(yq -r '.jobs.denial.steps[] | select(.uses // "" | test("^actions/checkout@")) | .with.ref + " " + (.with."persist-credentials" | tostring)' "${workflow}")" == '${{ github.sha }} false' ]] ||
+  fail 'the proof checks out the dispatched commit and keeps no git credential'
 
 printf 'PASS: Wedding backup denial proof\n'
