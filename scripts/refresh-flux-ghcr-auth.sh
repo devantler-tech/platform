@@ -5713,10 +5713,53 @@ flux_policy_handoff_is_owned() {
   ' "${flux_policy_handoff_state_file}" >/dev/null
 }
 
+# The owner is quiescent when no apply can be in flight. Reconciling=True alone
+# does not mean that: the owner health-gates every workload it applies, so one
+# degraded workload keeps it Reconciling indefinitely after its apply finished
+# (#3100). kustomize-controller (v1.8.x, internal/controller) runs a reconcile as
+# fetch -> build -> drift/apply -> prune -> health check, and only the health
+# check stage writes Healthy=Unknown/Progressing, in the same status patch that
+# sets the Reconciling message to "Running health checks for revision <rev> ...".
+# A failed health check then leaves Healthy and Ready HealthCheckFailed and
+# finalizeStatus only relabels Reconciling as ProgressingWithRetry. The next
+# attempt's first patch rewrites the Reconciling message ("Fetching manifests"),
+# so any apply-stage reconcile, including one after a controller restart that
+# left a stale Healthy condition, fails these checks. Note lastAppliedRevision
+# cannot discriminate: it is written only after health checks pass. Anything
+# else, including an unknown future controller wording, stays not quiescent.
+# Suspension does not stop an execution that already started either way;
+# restart_flux_kustomize_controller_for_handoff still replaces the controller.
 flux_policy_handoff_is_quiescent() {
   jq -e '
-    any(.status.conditions[]?;
-      .type == "Reconciling" and .status == "True") | not
+    def only($type):
+      [.status.conditions[]? | select(.type == $type)]
+      | if length == 1 then .[0] else null end;
+    [.status.conditions[]?
+      | select(.type == "Reconciling" and .status == "True")] as $reconciling
+    | if ($reconciling | length) == 0 then true
+      elif ($reconciling | length) > 1 then false
+      else
+        $reconciling[0] as $r
+        | only("Healthy") as $healthy
+        | only("Ready") as $ready
+        | (.status.lastAttemptedRevision // "") as $revision
+        | ($revision | type == "string" and length > 0)
+        and (($r.message // "")
+          | startswith("Running health checks for revision \($revision) "))
+        and $healthy != null
+        and (
+          ($r.reason == "Progressing"
+            and $healthy.status == "Unknown"
+            and $healthy.reason == "Progressing"
+            and $healthy.message == $r.message)
+          or ($r.reason == "ProgressingWithRetry"
+            and $healthy.status == "False"
+            and $healthy.reason == "HealthCheckFailed"
+            and $ready != null
+            and $ready.status == "False"
+            and $ready.reason == "HealthCheckFailed")
+        )
+      end
   ' "${flux_policy_handoff_state_file}" >/dev/null
 }
 

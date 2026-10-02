@@ -294,15 +294,29 @@ func fakeFluxPolicyChildObject() map[string]any {
 		}
 		conditions = append(conditions, reconcilingCondition)
 	}
+	// A Healthy condition models the controller's health-check stage: present only
+	// when a test asks for it, so every other test keeps the conditions it had.
+	if healthyStatus := os.Getenv("FAKE_FLUX_POLICY_HEALTHY_STATUS"); healthyStatus != "" {
+		conditions = append(conditions, map[string]any{
+			"type":    "Healthy",
+			"status":  healthyStatus,
+			"reason":  os.Getenv("FAKE_FLUX_POLICY_HEALTHY_REASON"),
+			"message": os.Getenv("FAKE_FLUX_POLICY_HEALTHY_MESSAGE"),
+		})
+	}
+	status := map[string]any{
+		"observedGeneration": 13,
+		"conditions":         conditions,
+	}
+	if revision := os.Getenv("FAKE_FLUX_POLICY_LAST_ATTEMPTED_REVISION"); revision != "" {
+		status["lastAttemptedRevision"] = revision
+	}
 	return map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   metadata,
 		"spec":       spec,
-		"status": map[string]any{
-			"observedGeneration": 13,
-			"conditions":         conditions,
-		},
+		"status":     status,
 	}
 }
 
