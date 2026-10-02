@@ -111,8 +111,8 @@ resources:
   - coroot/service-account-stranded-autoscaler-node-alerter.yaml
   - coroot/cluster-role-stranded-autoscaler-node-alerter.yaml
   - coroot/cluster-role-binding-stranded-autoscaler-node-alerter.yaml
-  # Prod-only: alerts through Alertmanager when Crossview answers that it has no
-  # admin user, which means its database lost its schema and every sign-in fails
+  # Prod-only: alerts through Alertmanager when Crossview cannot read its admin
+  # or any other user: the schema is missing or the database is unreachable,
   # while its probe stays green (#3315). See the file header.
   - coroot/cron-job-crossview-login-alerter.yaml
   # Prod-only: the CloudNativePG datastore + backup wiring that lets the Coroot

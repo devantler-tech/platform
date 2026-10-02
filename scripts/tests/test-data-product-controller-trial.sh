@@ -103,6 +103,11 @@ printf 'kind: ExternalSecret\nmetadata:\n  name: ghcr-auth\n' \
 	>"${legacy}/k8s/bases/apps/wedding-app/external-secret.yaml"
 cp "${legacy}/k8s/bases/apps/wedding-app/external-secret.yaml" \
 	"${legacy}/k8s/bases/apps/data-product-controller/external-secret.yaml"
+# The fan-out guard counts only what an app's own kustomization deploys, as a
+# real app directory always has one.
+for app in wedding-app data-product-controller; do
+	printf 'resources:\n  - external-secret.yaml\n' >"${legacy}/k8s/bases/apps/${app}/kustomization.yaml"
+done
 printf 'readonly -a FANOUT_NAMESPACES=(\n  "wedding-app"\n  "kyverno"\n)\n' \
 	>"${legacy}/scripts/refresh-flux-ghcr-auth.sh"
 if ! (cd "${legacy}" && bash -euo pipefail "${scratch}/recovery-step.sh") \

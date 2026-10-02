@@ -366,10 +366,11 @@ Choose the credential by bucket before editing it:
 
 They are independent identities. Wedding archives through its dedicated token;
 Umami, Coroot, and Velero use the shared platform token. Wedding retains shared
-recovery access until a dedicated-only isolated restore and access-denial proof
-permit its retirement. Rotating the dedicated Wedding token does not affect the
-shared consumers. A shared-token rotation must preserve that recovery access
-as well as verify the active shared consumers before revocation.
+recovery access until a dedicated-only isolated restore and the
+`Verify Wedding Backup Denial` access-denial proof permit its retirement.
+Rotating the dedicated Wedding token does not affect the shared consumers. A
+shared-token rotation must preserve that recovery access as well as verify the
+active shared consumers before revocation.
 
 ```bash
 set -euo pipefail
@@ -453,12 +454,20 @@ gh run view "$run_id" --repo devantler-tech/platform --log |
 #    denial gates complete; those gates do not retire other platform users.
 #    Do not revoke the shared credential as part of archive cutover.
 
+# 7. For wedding-db-backups, dispatch Verify Wedding Backup Denial on main
+#    with confirm=verify-wedding-backup-denial. Bind its run to the main SHA
+#    as above and require DENIAL OBSERVED: the new token reaches its own
+#    catalogue, and platform-backups refuses its list, read and write with
+#    AccessDenied. Any other result means the new token is scoped wrongly or
+#    the refusal is unproven, so keep the old token active and mint a token
+#    scoped only to wedding-db-backups.
+
 # For a platform-backups credential rotation, observe a new successful Velero
 # backup plus new backups and WAL archives from Umami and Coroot, and verify
 # Wedding's retained shared recovery access before revocation.
 kubectl -n velero get backups.velero.io -w
 
-# 7. Revoke the old token only after the checks for its active bucket succeed.
+# 8. Revoke the old token only after the checks for its active bucket succeed.
 #    A queued workflow, an old backup, or a healthy
 #    unrelated consumer is not sufficient evidence.
 ```

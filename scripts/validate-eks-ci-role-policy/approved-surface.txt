@@ -70,7 +70,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 8cc1b89c7760cbd9f65a1
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager 4ee4b8a2fc512253c45182114812f6b5ccf3b33492091169ac1f5a9bf5610e21
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 199c39221ecee136c20155aaa8e8cf1f93c1f870eb9e9f021b88560084f781cf
+helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape ac042dabaebb79fc3ca9e19b1bafba76d8e1c49bc3db0e6b0bb72ea0c97efad4
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 3a6ac464cd62f30e69068309e14d7d7409cd0ff395c4fbac735d514e0b8616a8
 
@@ -84,7 +84,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|observability|coroot-operator a6c5d6dfdec7
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-operator da38c30c19aea0c3e099bb86cda46d89ab6301ff5898b4fad8f020812f8ad800
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao c17dae50d7f4c73727cc21fa25aab6af110c35327dc1abb49329d75f3945ff2f
+helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao 068ad0ebbbc391a567ad211c7254130c0b949de8bec7a27f87fcab8ac034b452
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter f92d67d39b5638fa931d19f4015ee490d6c98043e00a01319f4ef1a5fc64bc29
 

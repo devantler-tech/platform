@@ -148,10 +148,11 @@ stays quiet by design, exactly as the old Alertmanager did.
   either `true` ends the run healthy, and a
   run that never gets a clear answer fails, which the CronJob failure detector
   above reports. The same answer comes back when the app cannot reach its
-  database, so the alert's runbook checks the database first: a database that
-  returns with its data needs nothing else, while a lost schema needs the app
-  rolled so it re-runs its bootstrap, and the runbook names the annotation to
-  bump.
+  database, so the alert's runbook checks the database and the app's database
+  errors first: a Ready database alone does not prove schema loss. A database
+  that returns with its data needs nothing else, while confirmed schema loss
+  needs the app rolled so it re-runs its bootstrap, and the runbook names the
+  annotation to bump.
 - **kube-apiserver audit logs are searchable in Coroot again.** Coroot's
   node-agent ingests container logs/traces, not host audit-log files, so the
   previous alloy-audit → Loki pipeline was removed with the migration. The
