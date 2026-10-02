@@ -120,6 +120,21 @@ metadata:
 YAML
       ;;
   esac
+  write_app_kustomization "$root/k8s/bases/apps/$app"
+}
+
+# write_app_kustomization <app-dir> — deploys every manifest in the directory,
+# as each real app's own kustomization does. The guard counts only what this
+# references, so a fixture without it would be refused as unknown.
+write_app_kustomization() {
+  local dir="$1" manifest
+  {
+    printf -- 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n'
+    for manifest in "$dir"/*.yaml; do
+      [ "$(basename "$manifest")" = kustomization.yaml ] && continue
+      printf -- '  - %s\n' "$(basename "$manifest")"
+    done
+  } >"$dir/kustomization.yaml"
 }
 
 # write_kustomization <root> <enabled-app>...   (apps not listed are staged off)
@@ -173,6 +188,7 @@ metadata:
   name: ghcr-auth
   namespace: private-zone
 YAML
+write_app_kustomization "$root/k8s/providers/hetzner/apps/private-zone"
 cat >"$root/k8s/providers/hetzner/apps/kustomization.yaml" <<'YAML'
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -318,6 +334,75 @@ else
   printf '  ok   refuses rather than claiming parity\n'
 fi
 assert_contains 'says it could not parse it' 'cannot parse'
+
+# --- case 9b: a declaration on disk that the app does not deploy ------------
+# Kustomize deploys what an app's kustomization references, not what sits in
+# its directory. An enabled, listed app that keeps its ExternalSecret file but
+# drops it from `.resources` never creates the credential, so the post-reconcile
+# reassertion fails every deploy — while a file-presence inventory reads parity
+# (platform#3499).
+printf 'case: a ghcr-auth declaration the app kustomization does not deploy\n'
+root="$(make_root unreachable-declaration)"
+add_app "$root" lima-dropped yes
+add_app "$root" lima-neighbour no
+write_kustomization "$root" lima-dropped lima-neighbour
+write_fanout "$root" lima-dropped kyverno
+run_guard "$root"
+assert_rc 'premise: the app is in parity while its declaration is deployed' 0 "$GUARD_RC"
+sed -i.bak '/external-secret.yaml/d' "$root/k8s/bases/apps/lima-dropped/kustomization.yaml"
+# Premise: the file is still on disk and no longer referenced.
+assertions=$((assertions + 1))
+if [ -f "$root/k8s/bases/apps/lima-dropped/external-secret.yaml" ] &&
+  ! grep -qF -- 'external-secret.yaml' "$root/k8s/bases/apps/lima-dropped/kustomization.yaml"; then
+  printf '  ok   premise: the declaration is on disk but not in .resources\n'
+else
+  printf '  FAIL premise: the ablation was not applied\n'
+  failures=$((failures + 1))
+fi
+run_guard "$root"
+assert_rc 'an undeployed declaration is drift' 1 "$GUARD_RC"
+assert_contains 'names the app and the undeployed manifest' \
+  'lima-dropped: k8s/bases/apps/lima-dropped/external-secret.yaml declares a ghcr-auth ExternalSecret that its kustomization does not deploy'
+
+printf 'case: a declaration reached through a nested directory is deployed\n'
+root="$(make_root nested-declaration)"
+add_app "$root" mike-nested no
+mkdir -p "$root/k8s/bases/apps/mike-nested/credentials"
+declaration="$root/k8s/bases/apps/mike-nested/credentials/external-secret.yaml"
+cat >"$declaration" <<'YAML'
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: ghcr-auth
+  namespace: mike-nested
+YAML
+write_app_kustomization "$root/k8s/bases/apps/mike-nested/credentials"
+printf -- '  - credentials/\n' >>"$root/k8s/bases/apps/mike-nested/kustomization.yaml"
+write_kustomization "$root" mike-nested
+write_fanout "$root" mike-nested kyverno
+run_guard "$root"
+assert_rc 'a nested, referenced declaration counts' 0 "$GUARD_RC"
+assert_contains 'treats it as an enabled consumer' 'ok   mike-nested — enabled'
+
+printf 'case: an app with no kustomization is unknown\n'
+root="$(make_root no-app-kustomization)"
+add_app "$root" november-bare yes
+rm "$root/k8s/bases/apps/november-bare/kustomization.yaml"
+write_kustomization "$root" november-bare
+write_fanout "$root" november-bare kyverno
+run_guard "$root"
+assert_rc 'an app whose deployment cannot be read is UNKNOWN' 2 "$GUARD_RC"
+assert_contains 'says what it could not read' 'has no kustomization'
+
+printf 'case: an app kustomization naming a missing file is unknown\n'
+root="$(make_root dangling-reference)"
+add_app "$root" oscar-dangling yes
+printf -- '  - removed.yaml\n' >>"$root/k8s/bases/apps/oscar-dangling/kustomization.yaml"
+write_kustomization "$root" oscar-dangling
+write_fanout "$root" oscar-dangling kyverno
+run_guard "$root"
+assert_rc 'an unresolvable reference is UNKNOWN, never an undeployed declaration' 2 "$GUARD_RC"
+assert_contains 'names the missing reference' 'references removed.yaml, which does not exist'
 
 # --- case 10: the merge-group guard is wired into the REQUIRED check --------
 # Gating deploy-prod is necessary but NOT sufficient. When this guard fails,
