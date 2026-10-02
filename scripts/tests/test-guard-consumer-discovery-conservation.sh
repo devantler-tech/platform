@@ -907,5 +907,210 @@ yq -i '.spec.postBuild.substitute.SOURCE_KIND = "OCIRepository"' "$root/k8s/clus
 expect_refusal 'a nested source kind cannot hide an unrendered platform layer' "$root" \
   'source is decided by Flux substitution' 'consumers are UNKNOWN'
 
+# A root's targetNamespace rewrites the source identity after the local build. An
+# apparently unrelated OCIRepository can therefore replace the platform source.
+root="$(fixture target-namespace-source-override)"
+yq -i 'select(.metadata.name == "apps").spec.targetNamespace = "flux-system"' \
+  "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+cat >"$root/k8s/providers/prod/apps/platform-source.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: flux-system
+  namespace: elsewhere
+spec:
+  url: oci://ghcr.io/devantler-tech/another/manifests
+YAML
+printf '  - platform-source.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+expect_refusal 'targetNamespace cannot hide a platform source override' "$root" \
+  'production Flux Kustomization apps carries' 'spec.targetNamespace'
+
+root="$(fixture empty-target-namespace)"
+yq -i '.spec.targetNamespace = ""' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+expect_pass 'an empty targetNamespace makes no unseen namespace transform' "$root" '2 consumer(s)'
+
+# Post-build substitutions can give a top-level source the generated source's identity.
+# This applies even when it has no shared-workflow subject and contributes no consumer row.
+for field in name namespace; do
+  root="$(fixture "substituted-platform-source-$field")"
+  cat >"$root/k8s/providers/prod/apps/platform-source.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  url: oci://ghcr.io/devantler-tech/another/manifests
+YAML
+  # shellcheck disable=SC2016 # The fixture supplies Flux's literal substitution value.
+  FIELD="$field" yq -i '.metadata[strenv(FIELD)] = "${PLATFORM_SOURCE_IDENTITY}"' \
+    "$root/k8s/providers/prod/apps/platform-source.yaml"
+  printf '  - platform-source.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  yq -i '.spec.postBuild.substitute.PLATFORM_SOURCE_IDENTITY = "flux-system"' \
+    "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+  expect_refusal "a substituted platform source $field is refused before attribution" "$root" \
+    'source identity is decided by Flux substitution' 'consumers are UNKNOWN'
+done
+
+# The same artifact URL is insufficient if Flux selects a different layer or excludes
+# files. Explicit empty/null selection fields are also not part of the generated contract.
+for selection in ignore layer-selector empty-ignore null-ignore empty-layer-selector null-layer-selector; do
+  root="$(fixture "source-content-$selection")"
+  cat >"$root/k8s/providers/prod/apps/platform-source.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  url: oci://ghcr.io/devantler-tech/platform/manifests
+YAML
+  case "$selection" in
+    ignore) yq -i '.spec.ignore = "/*\n!/providers/prod/apps"' "$root/k8s/providers/prod/apps/platform-source.yaml" ;;
+    layer-selector) yq -i '.spec.layerSelector = {"mediaType": "application/vnd.example.other.layer.v1.tar+gzip", "operation": "copy"}' "$root/k8s/providers/prod/apps/platform-source.yaml" ;;
+    empty-ignore) yq -i '.spec.ignore = ""' "$root/k8s/providers/prod/apps/platform-source.yaml" ;;
+    null-ignore) yq -i '.spec.ignore = null' "$root/k8s/providers/prod/apps/platform-source.yaml" ;;
+    empty-layer-selector) yq -i '.spec.layerSelector = {}' "$root/k8s/providers/prod/apps/platform-source.yaml" ;;
+    null-layer-selector) yq -i '.spec.layerSelector = null' "$root/k8s/providers/prod/apps/platform-source.yaml" ;;
+  esac
+  printf '  - platform-source.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_refusal "a platform source with $selection cannot attest the checkout contents" "$root" \
+    'platform source content selection' 'consumers are UNKNOWN'
+done
+
+# An API version chosen after discovery can hide a nested platform-source root, just
+# like a substituted kind. Its actual consumer uses .yml, so the raw scan misses it too.
+root="$(fixture substituted-nested-api-version)"
+mkdir -p "$root/k8s/providers/prod/hidden"
+cp "$root/k8s/bases/apps/beta/oci-repository.yaml" "$root/k8s/providers/prod/hidden/hidden.yml"
+yq -i '.metadata.name = "hidden" | .spec.url = "oci://ghcr.io/devantler-tech/hidden/manifests"' \
+  "$root/k8s/providers/prod/hidden/hidden.yml"
+printf 'resources:\n  - hidden.yml\n' >"$root/k8s/providers/prod/hidden/kustomization.yaml"
+cat >"$root/k8s/providers/prod/apps/nested.yml" <<'YAML'
+apiVersion: ${NESTED_API_VERSION}
+kind: Kustomization
+metadata:
+  name: hidden
+  namespace: flux-system
+spec:
+  interval: 1m
+  path: providers/prod/hidden
+  prune: true
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
+YAML
+printf '  - nested.yml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+yq -i '.spec.postBuild.substitute.NESTED_API_VERSION = "kustomize.toolkit.fluxcd.io/v1"' \
+  "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+expect_refusal 'a substituted API version cannot hide a nested platform-source root' "$root" \
+  'apiVersion is decided by substitution' 'consumers are UNKNOWN'
+
+root="$(fixture substituted-consumer-api-version)"
+# shellcheck disable=SC2016 # Flux supplies this API version after discovery.
+yq -i '.apiVersion = "${SOURCE_API_VERSION}"' "$root/k8s/bases/apps/alpha/oci-repository.yaml"
+yq -i '.spec.postBuild.substitute.SOURCE_API_VERSION = "source.toolkit.fluxcd.io/v1"' \
+  "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+expect_refusal 'a substituted consumer API version is refused before classification' "$root" \
+  'apiVersion is decided by substitution' 'consumers are UNKNOWN'
+
+root="$(fixture substituted-template-api-version)"
+# shellcheck disable=SC2016 # Object-template type must also remain literal.
+yq -i '.spec.resources[0].template.apiVersion = "${SOURCE_API_VERSION}"' \
+  "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
+expect_refusal 'a substituted template API version cannot hide its object type' "$root" \
+  'apiVersion is decided by substitution' 'consumers are UNKNOWN'
+
+# A substituted instance identity can hide the generated source's owning declaration too.
+for field in name namespace; do
+  root="$(fixture "substituted-platform-instance-$field")"
+  cat >"$root/k8s/providers/prod/infrastructure/flux-instance.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  sync:
+    kind: OCIRepository
+    url: oci://ghcr.io/devantler-tech/another/manifests
+    ref: latest
+    path: clusters/prod
+YAML
+  # shellcheck disable=SC2016 # Flux decides this owning identity after discovery.
+  FIELD="$field" yq -i '.metadata[strenv(FIELD)] = "${PLATFORM_INSTANCE_IDENTITY}"' \
+    "$root/k8s/providers/prod/infrastructure/flux-instance.yaml"
+  printf '  - flux-instance.yaml\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  expect_refusal "a substituted platform instance $field cannot hide the source owner" "$root" \
+    'source identity is decided by Flux substitution' 'consumers are UNKNOWN'
+done
+
+root="$(fixture tenant-source-content-selector)"
+yq -i '.spec.layerSelector = {"mediaType": "application/vnd.example.tenant.layer.v1.tar+gzip"} |
+  .spec.ignore = "/*.md"' "$root/k8s/bases/apps/alpha/oci-repository.yaml"
+expect_pass 'content selection on a tenant source does not override the platform source' "$root" '2 consumer(s)'
+
+# A namespace omitted from static output is not proof that this source cannot become
+# flux-system/flux-system. Explicit empty namespace is equally ambiguous.
+for namespace in omitted empty; do
+  root="$(fixture "platform-source-namespace-$namespace")"
+  cat >"$root/k8s/providers/prod/apps/platform-source.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: flux-system
+spec:
+  url: oci://ghcr.io/devantler-tech/another/manifests
+YAML
+  if [ "$namespace" = empty ]; then
+    yq -i '.metadata.namespace = ""' "$root/k8s/providers/prod/apps/platform-source.yaml"
+  fi
+  printf '  - platform-source.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_refusal "a platform source override with $namespace namespace is refused" "$root" \
+    'platform source override' 'consumers are UNKNOWN'
+  yq -i '.spec.url = "oci://ghcr.io/devantler-tech/platform/manifests" | .spec.ignore = "/*"' \
+    "$root/k8s/providers/prod/apps/platform-source.yaml"
+  expect_refusal "platform content selection with $namespace namespace is refused" "$root" \
+    'platform source content selection' 'consumers are UNKNOWN'
+done
+
+root="$(fixture tenant-source-same-name)"
+cat >"$root/k8s/providers/prod/apps/tenant-source.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: flux-system
+  namespace: tenant
+spec:
+  url: oci://ghcr.io/devantler-tech/tenant/manifests
+  ignore: '/*.md'
+YAML
+printf '  - tenant-source.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+expect_pass 'a source explicitly in another tenant namespace keeps its own content contract' "$root" '2 consumer(s)'
+
+# New attestation readers must reject a failed parse even after all its output was emitted.
+for boundary in api-version identity content; do
+  root="$(fixture "partial-$boundary-reader")"
+  mkdir "$WORK/partial-$boundary-bin"
+  cat >"$WORK/partial-$boundary-bin/yq" <<'SH'
+#!/usr/bin/env bash
+"$REAL_YQ" "$@" || exit $?
+case "$PARTIAL_BOUNDARY:$*" in
+  api-version:*'(.apiVersion // "" | tostring)'*) exit 2 ;;
+  identity:*'select(.kind == "OCIRepository" or .kind == "FluxInstance")'*) exit 2 ;;
+  content:*'has("layerSelector")'*) exit 2 ;;
+esac
+SH
+  chmod +x "$WORK/partial-$boundary-bin/yq"
+  case "$boundary" in
+    api-version) want='could not read object API versions' ;;
+    identity) want='could not read source identities' ;;
+    content) want='could not read platform source content selection' ;;
+  esac
+  REAL_YQ="$real_yq" PARTIAL_BOUNDARY="$boundary" PATH="$WORK/partial-$boundary-bin:$PATH" \
+    expect_refusal "partial $boundary-reader output is not an attestation" "$root" \
+      "$want" 'consumers are UNKNOWN'
+done
+
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

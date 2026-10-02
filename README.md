@@ -108,12 +108,17 @@ layers to the platform artifact configured in `ksail.prod.yaml` and the generate
 `OCIRepository/flux-system/flux-system` source. Agreeing references to a different source, or
 declarations that redirect that source, are unknown and fail the check. FluxInstance source
 patches are supported only when their operations preserve the source identity and artifact
-(verification and ref fields).
+(verification and ref fields). Explicit source content selectors (`ignore` and `layerSelector`)
+are refused because the same URL can produce a different tree. A production root's non-empty
+`targetNamespace` is also an unseen Flux transform and is refused.
 
 Flux [substitutes the final YAML after the build](https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-variable-substitution),
-so a variable in an object or template kind can hide an OCI consumer from literal discovery.
-The check refuses those kinds and consumer URL, ref or signer-subject variables; ordinary
+so a variable in an object or template kind or API version can hide an OCI consumer from literal discovery.
+The check refuses those object types, top-level source name/namespace variables, and consumer URL,
+ref or signer-subject variables; ordinary
 variables in workload fields, ConfigMap data and registry credentials remain supported. A
+same-named source with an omitted or empty namespace is checked as a possible platform source;
+an explicit different tenant namespace keeps its own source contract. A
 failed reader or render is unknown even when it produced partial output. Tenant artifacts
 and Helm chart output remain outside this repository's static comparison.
 

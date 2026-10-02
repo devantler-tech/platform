@@ -36,19 +36,21 @@
 #
 # WHAT A STATIC RENDER CANNOT SEE IS REFUSED, NEVER ASSUMED EQUAL
 #   - a Flux-side transform on a production root (`spec.patches`, `spec.components`,
-#     `spec.namePrefix`, `spec.nameSuffix`, and the v1beta2 `spec.patchesStrategicMerge` and
+#     `spec.namePrefix`, `spec.nameSuffix`, `spec.targetNamespace`, and the v1beta2 `spec.patchesStrategicMerge` and
 #     `spec.patchesJson6902`): kustomize-controller applies it after the build, so
 #     `kubectl kustomize` does not show what Flux applies;
 #   - production roots whose sole source is not the KSail-generated platform artifact:
 #     agreeing source references do not prove this checkout holds their manifests;
 #   - a rendered declaration or FluxInstance sync/patch that could redirect that generated
-#     source to another artifact;
+#     source to another artifact or change its content selection (`ignore`/`layerSelector`);
 #   - a nested Flux Kustomization that applies another path from that same source: only the
 #     overlay's roots are rendered, so that layer would go unseen;
 #   - an OCIRepository whose URL, ref or subject carries `${`: Flux post-build substitution
 #     decides it at apply time;
-#   - a document or object template whose kind carries `${`: substitution can turn it into
+#   - a document or object template whose kind or apiVersion carries `${`: substitution can turn it into
 #     an OCIRepository (or another production root) after discovery has already omitted it;
+#   - a top-level OCIRepository or FluxInstance whose name/namespace carries `${`: it can
+#     become the generated platform source identity only after the override check;
 #   - an OCIRepository TEMPLATE (a nested mapping with a `spec`, not a `sourceRef`) inside any
 #     rendered document: a controller creates that object inside the cluster, so neither the
 #     scan nor any render has a document for it. A kro ResourceGraphDefinition is admitted
@@ -122,28 +124,58 @@ done <<<"$artifact_contract"
 [ "$artifact_contract" = $'true\ttrue\ttrue\ttrue\ttrue\ttrue' ] ||
   refuse 'the KSail production artifact contract does not bind k8s/clusters/prod to the platform OCI artifact through Flux, so the platform source is UNKNOWN'
 
-# Flux substitutes the final YAML after kustomize build, including kind. Selectors for
+# Flux substitutes the final YAML after kustomize build, including kind and apiVersion. Selectors for
 # literal OCIRepository/Kustomization kinds cannot see a document whose type is decided
 # later. Refuse that uncertainty before selecting either roots or consumers. Ordinary
 # variables in ConfigMap data, workload fields and template names are still allowed.
-refuse_substituted_kinds() {
-  local file="$1" label="$2" kinds
+refuse_substituted_object_types() {
+  local file="$1" label="$2" kinds api_versions
   if ! kinds="$(yq -N -r '.. | select(type == "!!map" and (has("apiVersion") or has("spec")))
       | (.kind // "" | tostring) | select(test("\\$\\{"))' "$file" 2>"$work/yq.err")"; then
     refuse "could not read object kinds in the render of $label, so its consumers are UNKNOWN"
   fi
   [ -z "$kinds" ] || refuse "production render $label holds a document or object template whose kind is decided by substitution, so its consumers are UNKNOWN; spell object kinds literally"
+  if ! api_versions="$(yq -N -r '.. | select(type == "!!map" and (has("apiVersion") or has("spec")))
+      | (.apiVersion // "" | tostring) | select(test("\\$\\{"))' "$file" 2>"$work/yq.err")"; then
+    refuse "could not read object API versions in the render of $label, so its consumers are UNKNOWN"
+  fi
+  [ -z "$api_versions" ] || refuse "production render $label holds a document or object template whose apiVersion is decided by substitution, so its consumers are UNKNOWN; spell object API versions literally"
 }
 
 refuse_source_overrides() {
   local file="$1" label="$2" checks check
-  if ! checks="$(yq -N -r 'select(.kind == "OCIRepository" and .metadata.name == "flux-system" and .metadata.namespace == "flux-system")
+  # These top-level identities can become the generated source or its owning instance
+  # after Flux substitution. Uninstantiated RGD template names remain handled below.
+  if ! checks="$(yq -N -r 'select(.kind == "OCIRepository" or .kind == "FluxInstance")
+      | ([(.metadata.name // ""), (.metadata.namespace // "")] | join(" ") | test("\\$\\{"))' "$file" 2>"$work/yq.err")"; then
+    refuse "could not read source identities in the render of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r check; do
+    [ -z "$check" ] || [ "$check" = false ] ||
+      refuse "production render $label holds an OCIRepository or FluxInstance whose source identity is decided by Flux substitution, so its consumers are UNKNOWN; spell source names and namespaces literally"
+  done <<<"$checks"
+  # An omitted/empty namespace cannot establish that this same-named source is
+  # outside flux-system. Check every potentially canonical identity conservatively.
+  if ! checks="$(yq -N -r 'select(.kind == "OCIRepository" and .metadata.name == "flux-system"
+      and ((.metadata.namespace // "") == "" or .metadata.namespace == "flux-system"))
       | (.spec.url == "oci://ghcr.io/devantler-tech/platform/manifests")' "$file" 2>"$work/yq.err")"; then
     refuse "could not read platform source declarations in the render of $label, so its consumers are UNKNOWN"
   fi
   while IFS= read -r check; do
     [ -z "$check" ] || [ "$check" = true ] ||
       refuse "production render $label holds a platform source override outside the configured artifact, so its consumers are UNKNOWN"
+  done <<<"$checks"
+  # The generated source extracts its default layer with the default file exclusions.
+  # URL equality does not attest that tree when a declaration changes source contents.
+  # Presence is refused even for empty/null fields rather than inferring equivalence.
+  if ! checks="$(yq -N -r 'select(.kind == "OCIRepository" and .metadata.name == "flux-system"
+      and ((.metadata.namespace // "") == "" or .metadata.namespace == "flux-system"))
+      | ((.spec | has("ignore")) or (.spec | has("layerSelector")))' "$file" 2>"$work/yq.err")"; then
+    refuse "could not read platform source content selection in the render of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r check; do
+    [ -z "$check" ] || [ "$check" = false ] ||
+      refuse "production render $label changes platform source content selection with spec.ignore or spec.layerSelector, so its consumers are UNKNOWN"
   done <<<"$checks"
   if ! checks="$(yq -N -r 'select(.kind == "FluxInstance" and .metadata.name == "flux" and .metadata.namespace == "flux-system" and .spec.sync != null)
       | (.spec.sync.kind == "OCIRepository" and .spec.sync.url == "oci://ghcr.io/devantler-tech/platform/manifests"
@@ -178,7 +210,7 @@ readonly FLUX_KUSTOMIZATION='select(.kind == "Kustomization" and ((.apiVersion /
 if ! kubectl kustomize "$OVERLAY" >"$work/overlay.yaml" 2>"$work/overlay.err"; then
   refuse "could not render k8s/$OVERLAY_LABEL, so the production roots are UNKNOWN: $(tr '\n' ' ' <"$work/overlay.err")"
 fi
-refuse_substituted_kinds "$work/overlay.yaml" "$OVERLAY_LABEL"
+refuse_substituted_object_types "$work/overlay.yaml" "$OVERLAY_LABEL"
 if ! yq -N -r "$FLUX_KUSTOMIZATION"' | [
     (.metadata.name // ""),
     (.spec.path // ""),
@@ -187,7 +219,8 @@ if ! yq -N -r "$FLUX_KUSTOMIZATION"' | [
     (.spec.sourceRef.name // ""),
     ((((.spec.patches // []) | length) + ((.spec.components // []) | length)
       + ((.spec.patchesStrategicMerge // []) | length) + ((.spec.patchesJson6902 // []) | length)
-      + ((.spec.namePrefix // "") | length) + ((.spec.nameSuffix // "") | length)) | tostring)
+      + ((.spec.namePrefix // "") | length) + ((.spec.nameSuffix // "") | length)
+      + ((.spec.targetNamespace // "") | length)) | tostring)
   ] | map(sub("^$", "-")) | join("	")' "$work/overlay.yaml" >"$work/overlay.rows" 2>"$work/overlay.rows.err"; then
   refuse "could not read the production overlay's render: $(tr '\n' ' ' <"$work/overlay.rows.err")"
 fi
@@ -200,7 +233,7 @@ while IFS=$'\t' read -r name path kind ns source transforms; do
   [ -n "$name" ] || continue
   [ "$path" != '-' ] || refuse "production Flux Kustomization $name names no spec.path"
   if [ "$transforms" != '0' ]; then
-    refuse "production Flux Kustomization $name carries spec.patches, spec.components, spec.patchesStrategicMerge, spec.patchesJson6902, spec.namePrefix or spec.nameSuffix; Flux applies those after the build, so a static render does not show what it applies"
+    refuse "production Flux Kustomization $name carries spec.patches, spec.components, spec.patchesStrategicMerge, spec.patchesJson6902, spec.namePrefix, spec.nameSuffix or spec.targetNamespace; Flux applies those after the build, so a static render does not show what it applies"
   fi
   # Each path is relative to the root of ITS source. This tree is one source; a second one
   # would make some path relative to an artifact nobody here can render.
@@ -235,7 +268,7 @@ while IFS= read -r root; do
   if ! kubectl kustomize "$dir" >"$file" 2>"$work/root.err"; then
     refuse "could not render production root $root, so its consumers are UNKNOWN: $(tr '\n' ' ' <"$work/root.err")"
   fi
-  refuse_substituted_kinds "$file" "$root"
+  refuse_substituted_object_types "$file" "$root"
   sources="$sources$file	$root
 "
   root_labels="${root_labels:+$root_labels, }$root"
