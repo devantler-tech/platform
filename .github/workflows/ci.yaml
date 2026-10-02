@@ -98,6 +98,17 @@ jobs:
           bash scripts/tests/test-mirror-wedding-backup-catalogue.sh
           bash scripts/tests/test-mirror-wedding-backup-runtime.sh
 
+      # Shared Wedding backup access is retired on this proof's word, so it must
+      # pass only on an AccessDenied for every access, after a positive control
+      # and against an object the shared credential showed exists. These cases
+      # keep an accepted access, a wrong bucket or a network failure from passing
+      # as isolation. The runtime test above also runs them in the pinned images and
+      # feeds the pinned mc's own output for a refused request through the proof.
+      - name: 💒 Validate Wedding backup denial proof
+        run: |
+          shellcheck scripts/verify-wedding-backup-denial.sh scripts/verify-wedding-backup-denial-pod.sh scripts/tests/test-verify-wedding-backup-denial.sh
+          bash scripts/tests/test-verify-wedding-backup-denial.sh
+
       - name: 💾 Validate two-stage PVC retirement
         # A merge-group artifact is speculative, but a PVC deletion is not: its
         # deletionTimestamp survives queue eviction and main cannot undo it.
