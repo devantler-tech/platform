@@ -568,6 +568,7 @@ cat <<'EOF' | release
       targetPath: annotations.token
   values:
     annotations:
+      token: inline-must-not-win
       inline: kept
   postRenderers:
     - kustomize:
@@ -583,7 +584,92 @@ cat <<'EOF' | release
                 value: kept
 EOF
 run_guard "$TREE"
-assert_rc 'a valuesFrom targetPath renders a placeholder beneath spec.values' 0
+assert_rc 'a valuesFrom targetPath overwrites inline values and preserves its siblings' 0
+
+# A patch relying on the inline value must fail, not receive a clean verdict
+# from a chart render Flux would never produce. targetPath wins over inline
+# values even though a whole valuesFrom document would merge beneath them.
+new_tree
+cat <<'EOF' | release
+  valuesFrom:
+    - kind: ConfigMap
+      name: operator
+      valuesKey: token
+      targetPath: annotations.token
+  values:
+    annotations:
+      token: inline-must-not-win
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+            patch: |
+              - op: test
+                path: /spec/template/metadata/annotations/token
+                value: inline-must-not-win
+EOF
+run_guard "$TREE"
+assert_rc 'a post-renderer that depends on the overwritten inline value fails' 1
+assert_contains 'the overwrite fails the actual JSON test' 'test failed'
+
+new_tree
+cat <<'EOF' | release
+  valuesFrom:
+    - kind: Secret
+      name: operator
+      valuesKey: first
+      targetPath: annotations.first
+    - kind: ConfigMap
+      name: operator
+      valuesKey: second
+      targetPath: annotations.second
+  values:
+    annotations:
+      first: inline-first
+      second: inline-second
+      untouched: kept
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+            patch: |
+              - op: test
+                path: /spec/template/metadata/annotations/first
+                value: placeholder
+              - op: test
+                path: /spec/template/metadata/annotations/second
+                value: placeholder
+              - op: test
+                path: /spec/template/metadata/annotations/untouched
+                value: kept
+EOF
+run_guard "$TREE"
+assert_rc 'multiple targetPath references override inline values without dropping siblings' 0
+
+# Reference order matters: setting an object path after a scalar target cannot
+# be represented by the placeholder render. Do not turn that failed observation
+# into a clean verdict by merging the inline object over both references.
+new_tree
+cat <<'EOF' | release
+  valuesFrom:
+    - kind: Secret
+      name: operator
+      valuesKey: whole
+      targetPath: annotations
+    - kind: Secret
+      name: operator
+      valuesKey: token
+      targetPath: annotations.token
+  values:
+    annotations:
+      token: inline-must-not-win
+EOF
+pr_3580 >>"$TREE/k8s/controllers/test/helm-release.yaml"
+run_guard "$TREE"
+assert_rc 'an unrepresentable targetPath reference sequence is UNKNOWN, never clean' 2
+assert_contains 'the reference assembly failure is named' 'cannot assemble its values'
 
 new_tree
 cat >"$TREE/k8s/controllers/test/helm-repository.yaml" <<'EOF'

@@ -386,13 +386,15 @@ check_release() { # <record> <work>
   jq -e '((.release.spec.chart.spec.valuesFiles // []) | length == 0) and (.release.spec.chart.spec.valuesFile == null)' \
     "$record" >/dev/null || die "$label: spec.chart.spec.valuesFiles is not rendered by this guard"
 
-  # Flux merges valuesFrom first and spec.values over it. A Secret or ConfigMap value bound to a
-  # targetPath renders as a placeholder; a whole values document cannot be stood in for.
+  # A targetPath reference overwrites inline values in Flux. Start with spec.values, then apply
+  # each targetPath in reference order. A Secret or ConfigMap value renders as a placeholder;
+  # a whole values document cannot be stood in for.
   jq -e '(.release.spec.valuesFrom // []) | all(.[]; (.targetPath // "") | test("^[A-Za-z0-9_-]+([.][A-Za-z0-9_-]+)*$"))' \
     "$record" >/dev/null ||
     die "$label: a spec.valuesFrom entry has no plain dotted targetPath, so the values it merges cannot be stood in for"
-  jq 'reduce ((.release.spec.valuesFrom // [])[] | .targetPath | split(".")) as $p ({}; setpath($p; "placeholder"))
-      * (.release.spec.values // {})' "$record" >"$work/values.json" || die "$label: cannot assemble its values"
+  jq '(.release.spec.values // {}) as $inline
+      | reduce ((.release.spec.valuesFrom // [])[] | .targetPath | split(".")) as $p
+          ($inline; setpath($p; "placeholder"))' "$record" >"$work/values.json" || die "$label: cannot assemble its values"
 
   # The chart reference, as `helm pull` arguments, or the reason it cannot be pulled anonymously.
   pull="$(jq -c '
