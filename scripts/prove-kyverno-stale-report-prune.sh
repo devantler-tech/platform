@@ -4,7 +4,8 @@
 # removes a Kyverno result that a name exclusion left stale, that the next scan
 # recreates the report with only its current results, that a report whose
 # results are all current is left alone, and that a report the scan no longer
-# writes any current result to keeps its failures.
+# writes any current result to keeps its failures. Also proves that a policy
+# precondition exemption replaces an existing failure with a fresh skip.
 #
 # Requires kubectl, helm and a cluster in the current kubeconfig context with
 # nothing else on it. CI creates one with kind (.github/workflows/prove-kyverno-stale-report-prune.yaml).
@@ -258,6 +259,53 @@ for i in "${!unevaluated_namespaces[@]}"; do
   [[ -z "$found" ]] ||
     fail "Kyverno wrote a report for a $probe_ns resource, so docs/policy-reports.md no longer describes it"
 done
+
+# --- #3155: a policy exemption must replace an existing stored failure ---------
+# Leave every ConfigMap untouched: only changing the policy may cause this
+# transition. Bind the result to both immutable UIDs so deleting a report or
+# recreating the workload cannot accidentally satisfy the proof.
+assert_probe_result="$dir/assert-probe-result.sh"
+exemption_namespaces=(kube-system unevaluated-control kube-public kube-node-lease)
+exemption_resources=()
+exemption_reports=()
+exemption_timestamps=()
+for probe_ns in "${exemption_namespaces[@]}"; do
+  uid="$(probe_uid "$probe_ns")" || fail "could not read the $probe_ns probe uid"
+  snapshot="$(kubectl -n "$probe_ns" get policyreport "$uid" -o json)" ||
+    fail "could not read the $probe_ns probe report before the exemption"
+  report_uid="$(jq -er '.metadata.uid' <<<"$snapshot")" ||
+    fail "could not read the $probe_ns report uid"
+  bash "$assert_probe_result" "$uid" "$report_uid" "$probes_applied_at" fail <<<"$snapshot" ||
+    fail "$probe_ns did not have one fresh failure before the exemption"
+  before="$(jq -er '.results[] | select(.policy == "require-owner-label-unevaluated" and .rule == "owner-label") | .timestamp.seconds' <<<"$snapshot")"
+  exemption_resources+=("$uid")
+  exemption_reports+=("$report_uid")
+  exemption_timestamps+=("$before")
+done
+log "exempting only kube-system/unevaluated-probe through the policy precondition"
+kubectl patch clusterpolicy require-owner-label-unevaluated --type=json -p \
+  '[{"op":"add","path":"/spec/rules/0/preconditions","value":{"all":[{"key":"{{ request.namespace }}/{{ request.object.metadata.name }}","operator":"NotEquals","value":"kube-system/unevaluated-probe"}]}}]'
+exemption_not_before="$(date +%s)"
+
+exemption_result_refreshed() { # <index> <expected result>
+  local index="$1" verdict="$2" snapshot since current_uid
+  current_uid="$(probe_uid "${exemption_namespaces[$index]}")" || return 1
+  [[ "$current_uid" == "${exemption_resources[$index]}" ]] || return 1
+  snapshot="$(kubectl -n "${exemption_namespaces[$index]}" get policyreport "${exemption_resources[$index]}" -o json)" || return 1
+  since=$((exemption_timestamps[index] + 1))
+  # Controls must refresh after the patch and the target skip was observed.
+  ((since > exemption_not_before)) || since=$((exemption_not_before + 1))
+  bash "$assert_probe_result" "${exemption_resources[$index]}" "${exemption_reports[$index]}" \
+    "$since" "$verdict" <<<"$snapshot"
+}
+wait_for "the same kube-system report to replace fail with a fresh skip" 600 \
+  exemption_result_refreshed 0 skip
+exemption_not_before="$(date +%s)"
+for i in 1 2 3; do
+  wait_for "the unexempted ${exemption_namespaces[$i]} control to retain a fresh failure" 600 \
+    exemption_result_refreshed "$i" fail
+done
+log "ok: policy-only exemption replaced the failure in place; all three controls still fail"
 log "ok: Kyverno reports in ${covered_namespaces[*]} and writes nothing in ${unevaluated_namespaces[*]} after two completed scans"
 
 log "PASS"
