@@ -77,10 +77,16 @@ jq --slurpfile variables "${work_dir}/variables.json" '.spec.values | walk(
     capture("^\\$\\{(?<name>[a-z_]+):=(?<fallback>[0-9]+)\\}$") |
     ($variables[0][.name] // .fallback) | tonumber
   else . end)' "${work_dir}/release.json" >"${work_dir}/values.json"
-helm template crossview "${work_dir}"/crossview-*.tgz --namespace crossview \
-  --values "${work_dir}/values.json" 2>/dev/null | yq ea -o=json '[.]' >"${work_dir}/chart.json"
+if ! helm template crossview "${work_dir}"/crossview-*.tgz --namespace crossview \
+  --values "${work_dir}/values.json" >"${work_dir}/chart.yaml" 2>"${work_dir}/helm.err"; then
+  cat "${work_dir}/helm.err" >&2
+  fail 'the pinned chart must render with the production values'
+fi
+yq ea -o=json '[.]' "${work_dir}/chart.yaml" >"${work_dir}/chart.json"
 
-pick() { jq -e "$1" "${work_dir}/chart.json"; }
+# A missing piece of the chart contract names itself instead of ending the step
+# silently through set -e.
+pick() { jq -e "$1" "${work_dir}/chart.json" || fail "the rendered chart has no match for: $1"; }
 app_container="$(pick '[.[] | select(.kind == "Deployment" and .metadata.name == "crossview")
   | .spec.template.spec.containers[] | select(.name == "crossview")] | first')"
 db_container="$(pick '[.[] | select(.kind == "Deployment" and .metadata.name == "crossview-postgres")
@@ -233,7 +239,7 @@ expect_healthy() {
   if [ "${sensor_status}" != 0 ] || alerted; then
     fail "$1"
   fi
-  grep -q 'hasAdmin=true' "${work_dir}/sensor.log" || fail 'the healthy verdict must come from hasAdmin=true'
+  grep -q 'can read its users' "${work_dir}/sensor.log" || fail 'the healthy verdict must be explicit'
 }
 
 # 1. Bootstrapped.
@@ -278,8 +284,8 @@ run_sensor
 if [ "${sensor_status}" = 0 ] && ! alerted; then
   fail 'an unreachable database must not read as healthy'
 fi
-if grep -q 'hasAdmin=true' "${work_dir}/sensor.log"; then
-  fail 'an unreachable database reported hasAdmin=true'
+if grep -q 'can read its users' "${work_dir}/sensor.log"; then
+  fail 'an unreachable database reported readable users'
 fi
 if alerted; then
   printf '   -> the sensor alerted\n'

@@ -15,20 +15,21 @@
 #
 # `GET /api/auth/check` is unauthenticated and answers 200 in both states, so
 # no HTTP probe can tell them apart. Its body can: a bootstrapped Crossview
-# always has the admin it seeds at startup, so `"hasAdmin":true` is healthy.
-# `"hasAdmin":false` means the app could not read its users table: the empty
-# schema showing through, as in the outage, or a database it cannot reach. Every
-# sign-in fails in both cases, so both alert; the runbook says how to tell them
-# apart, because only the first needs the app rolled.
+# always has the admin it seeds at startup, so `"hasAdmin":true` or
+# `"hasUsers":true` shows the app can read its users table and is healthy.
+# Both `false` means it cannot: the empty schema showing through, as in the
+# outage, or a database it cannot reach. Every sign-in fails in both cases, so
+# both alert; the runbook says how to tell them apart, because only the first
+# needs the app rolled.
 #
-# NO FLAPPING. One `hasAdmin:true` read ends the run healthy. An alert needs
-# every one of SAMPLES reads, SAMPLE_INTERVAL_SECONDS apart, to answer false: six
+# NO FLAPPING. One healthy read ends the run. An alert needs every one of
+# SAMPLES reads, SAMPLE_INTERVAL_SECONDS apart, to answer both false: six
 # minutes, longer than a planned database restart takes to detach, reattach and
 # start its volume, so routine maintenance does not page. A lost schema is
 # persistent: it lasts until the app restarts.
 #
-# NO SILENT ZERO. A read that is not a 200 with a boolean `hasAdmin` is not an
-# answer, so a run that never gets a definitive one fails the Job instead of
+# NO SILENT ZERO. A read that is not a 200 with boolean `hasAdmin` and
+# `hasUsers` is not an answer, so a run that never gets a definitive one fails the Job instead of
 # reporting health. This CronJob is on the `cronjob-failure-alert` watch list
 # (bases/components/coroot-cronjob-failure-alert), which alerts in Slack when two
 # runs in a row fail or no run has finished for an hour. That also covers an
@@ -101,8 +102,8 @@ spec:
               image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
               imagePullPolicy: IfNotPresent
               env:
-                # Every read must answer hasAdmin=false before the alert fires:
-                # four reads two minutes apart span six minutes.
+                # Every read must answer that no user is readable before the
+                # alert fires: four reads two minutes apart span six minutes.
                 - name: SAMPLES
                   value: "4"
                 - name: SAMPLE_INTERVAL_SECONDS
@@ -153,14 +154,6 @@ spec:
                     exit 1
                   fi
 
-                  # endsAt = three missed runs. jq formats it: BusyBox date has
-                  # no relative offsets, and only `+%s` is portable.
-                  ENDS=$(jq -nr --argjson t "$(date -u +%s)" '($t + 2700) | todate')
-                  case "$ENDS" in
-                    ????-??-??T??:??:??Z) ;;
-                    *) echo "ERROR: could not compute endsAt (got '$ENDS')"; exit 1 ;;
-                  esac
-
                   missing=0
                   sample=0
                   observed=""
@@ -179,33 +172,45 @@ spec:
                       echo "sample ${sample}/${SAMPLES}: no answer (HTTP ${code}) from ${CHECK_URL}"
                       continue
                     fi
-                    # Only a boolean hasAdmin is an answer. Anything else means
-                    # the endpoint's contract changed, which must not read as
-                    # health.
+                    # Only boolean hasAdmin and hasUsers are an answer. Anything
+                    # else means the endpoint's contract changed, which must not
+                    # read as health. Either one true proves the users table is
+                    # readable, so a deleted break-glass admin alone never pages.
                     verdict=$(jq -r '
                       if type == "object" and (.hasAdmin | type) == "boolean"
-                      then (if .hasAdmin then "bootstrapped" else "missing" end)
+                        and (.hasUsers | type) == "boolean"
+                      then (if .hasAdmin or .hasUsers then "readable" else "missing" end)
                       else "unrecognised" end' "$BODY" 2>/dev/null) || verdict="unrecognised"
                     case "$verdict" in
-                      bootstrapped)
-                        echo "sample ${sample}/${SAMPLES}: hasAdmin=true; Crossview can read its users"
+                      readable)
+                        echo "sample ${sample}/${SAMPLES}: $(jq -c '{hasAdmin, hasUsers}' "$BODY"); Crossview can read its users"
                         exit 0
                         ;;
                       missing)
                         missing=$((missing + 1))
                         observed=$(jq -c '{authMode, hasAdmin, hasUsers}' "$BODY")
-                        echo "sample ${sample}/${SAMPLES}: hasAdmin=false ${observed}"
+                        echo "sample ${sample}/${SAMPLES}: no readable user ${observed}"
                         ;;
                       *)
-                        echo "sample ${sample}/${SAMPLES}: HTTP 200 without a boolean hasAdmin"
+                        echo "sample ${sample}/${SAMPLES}: HTTP 200 without boolean hasAdmin and hasUsers"
                         ;;
                     esac
                   done
 
                   if [ "$missing" -ne "$SAMPLES" ]; then
-                    echo "ERROR: ${missing} of ${SAMPLES} reads answered hasAdmin=false and none answered true; that is neither healthy nor a confirmed outage"
+                    echo "ERROR: ${missing} of ${SAMPLES} reads found no readable user and none found one; that is neither healthy nor a confirmed outage"
                     exit 1
                   fi
+
+                  # endsAt = three missed runs after this POST. jq formats it:
+                  # BusyBox date has no relative offsets, and only `+%s` is
+                  # portable. Computed after sampling, so the hold-over is not
+                  # shortened by the time the reads took.
+                  ENDS=$(jq -nr --argjson t "$(date -u +%s)" '($t + 2700) | todate')
+                  case "$ENDS" in
+                    ????-??-??T??:??:??Z) ;;
+                    *) echo "ERROR: could not compute endsAt (got '$ENDS')"; exit 1 ;;
+                  esac
 
                   alerts=$(jq -cn --arg e "$ENDS" --arg observed "$observed" \
                     --arg n "$SAMPLES" --arg s "$SAMPLE_INTERVAL_SECONDS" '[{
@@ -216,8 +221,8 @@ spec:
                       },
                       annotations: {
                         summary: "Crossview cannot read its users, so every sign-in fails",
-                        description: "GET /api/auth/check answered \($observed) on all \($n) reads, \($s)s apart. A bootstrapped Crossview always has the break-glass admin it creates at its own startup, so hasAdmin=false means the app cannot read its users table: its database has lost the schema, or the app cannot reach it. OIDC sign-in fails either way while the pod stays Ready, because its probe (/api/health) never touches the database.",
-                        runbook: "First check the crossview-postgres Deployment in the crossview namespace. If it is not Ready, fix the database: the app reconnects on its own once it is back with its data. If it is Ready, the schema is gone: roll the app so it re-runs its one-shot schema bootstrap by bumping the platform.devantler.tech/db-bootstrap value in providers/hetzner/apps/crossview/patches/enable-durable-storage.yaml, then find out why the database came back empty (crossview-postgres-pvc). The alert resolves on its own once a read answers hasAdmin=true."
+                        description: "GET /api/auth/check answered \($observed) on all \($n) reads, \($s)s apart. A bootstrapped Crossview always has the break-glass admin it creates at its own startup, so no admin and no users means the app cannot read its users table: its database has lost the schema, or the app cannot reach it. OIDC sign-in fails either way while the pod stays Ready, because its probe (/api/health) never touches the database.",
+                        runbook: "First check the crossview-postgres Deployment in the crossview namespace. If it is not Ready, fix the database: the app reconnects on its own once it is back with its data. If it is Ready, the schema is gone: roll the app so it re-runs its one-shot schema bootstrap by bumping the platform.devantler.tech/db-bootstrap value in providers/hetzner/apps/crossview/patches/enable-durable-storage.yaml, then find out why the database came back empty (crossview-postgres-pvc). The alert resolves on its own once a read finds a user again."
                       },
                       endsAt: $e
                     }]')

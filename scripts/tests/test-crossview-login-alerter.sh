@@ -199,10 +199,10 @@ no_alert() { ! ls "${case_dir}"/alerts-*.json >/dev/null 2>&1 || fail "$1 must n
 new_case healthy
 run_case
 [ "${result}" = 0 ] || fail 'a bootstrapped Crossview must pass'
-[ "$(reads)" = 1 ] || fail 'one hasAdmin=true read must end the run'
+[ "$(reads)" = 1 ] || fail 'one healthy read must end the run'
 [ ! -e "${case_dir}/sleeps" ] || fail 'a healthy run must not wait'
 no_alert 'a bootstrapped Crossview'
-grep -q 'hasAdmin=true' "${case_dir}/output.log" || fail 'a healthy verdict must be explicit'
+grep -q 'can read its users' "${case_dir}/output.log" || fail 'a healthy verdict must be explicit'
 pass 'a bootstrapped Crossview is healthy after one read'
 
 new_case schema-missing
@@ -232,16 +232,27 @@ run_case
 [ "${result}" = 0 ] || fail 'a database blip under a healthy app must pass'
 [ "$(reads)" = 2 ] || fail 'the first healthy read must end the run'
 no_alert 'a single false read'
-pass 'a single hasAdmin=false read does not page'
+pass 'a single read without users does not page'
+
+# The users table is readable even when the break-glass admin was removed, so
+# sign-in works and nothing pages.
+new_case admin-removed
+answer default 200 '{"authMode":"session","authenticated":false,"hasAdmin":false,"hasUsers":true}'
+run_case
+[ "${result}" = 0 ] || fail 'readable users without the admin must pass'
+[ "$(reads)" = 1 ] || fail 'a readable users table must end the run'
+no_alert 'a removed admin with readable users'
+pass 'a removed admin alone does not page'
 
 # No answer is never health and never a confirmed outage: the Job fails, and the
 # CronJob failure detector reports a sensor that keeps failing.
-for problem in refused unavailable no-field string-field not-json mixed; do
+for problem in refused unavailable no-field no-users-field string-field not-json mixed; do
   new_case "${problem}"
   case "${problem}" in
     refused) answer default refused ;;
     unavailable) answer default 503 '{"error":"unavailable"}' ;;
     no-field) answer default 200 '{"authMode":"session","authenticated":false}' ;;
+    no-users-field) answer default 200 '{"authMode":"session","authenticated":false,"hasAdmin":false}' ;;
     string-field) answer default 200 '{"authMode":"session","hasAdmin":"true","hasUsers":true}' ;;
     not-json) answer default 200 '<html>sign in</html>' ;;
     mixed)
@@ -253,7 +264,7 @@ for problem in refused unavailable no-field string-field not-json mixed; do
   [ "${result}" != 0 ] || fail "${problem} must fail the Job instead of reporting a verdict"
   [ "$(reads)" = "${samples}" ] || fail "${problem} must still take every sample"
   no_alert "${problem}"
-  ! grep -q 'hasAdmin=true' "${case_dir}/output.log" || fail "${problem} reported health"
+  ! grep -q 'can read its users' "${case_dir}/output.log" || fail "${problem} reported health"
 done
 pass 'refusals, error statuses and unrecognised bodies fail the Job without a verdict'
 

@@ -143,8 +143,9 @@ stays quiet by design, exactly as the old Alertmanager did.
   `providers/hetzner/infrastructure/coroot/cron-job-crossview-login-alerter.yaml`
   reads the unauthenticated `/api/auth/check` every 15 minutes. A bootstrapped
   Crossview always has the admin it creates at startup, so four reads two
-  minutes apart that all answer `"hasAdmin":false` post `CrossviewLoginBroken`
-  through the Alertmanager to Slack. One `true` read ends the run healthy, and a
+  minutes apart that all answer `"hasAdmin":false` and `"hasUsers":false` post
+  `CrossviewLoginBroken` through the Alertmanager to Slack. One read with
+  either `true` ends the run healthy, and a
   run that never gets a clear answer fails, which the CronJob failure detector
   above reports. The same answer comes back when the app cannot reach its
   database, so the alert's runbook checks the database first: a database that
