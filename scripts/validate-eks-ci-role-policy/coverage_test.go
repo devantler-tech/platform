@@ -621,6 +621,16 @@ func shellKeepsErrexit(shell string) bool {
 	return false
 }
 
+// enforces reports whether a gate step's verdict can stop its job. A step-level
+// `if:` is evaluated at run time, so `if: false` — or any condition — can skip
+// the gate on the very run it was meant to judge; and a tolerated failure
+// (`continue-on-error: true`, or an expression, whose value is unknowable here)
+// turns a red gate into a green step. Either way the gate is written into the
+// route and decides nothing, so neither counts as running it (#4361).
+func (s step) enforces() bool {
+	return s.If == "" && !errorIsTolerated(s.ContinueOnError)
+}
+
 // runsValidator reports whether any job in the workflow actually executes the
 // gate.
 func (w workflow) runsValidator() bool {
@@ -635,7 +645,7 @@ func (w workflow) runsValidator() bool {
 // runsValidator reports whether THIS job executes the authorization gate.
 func (j job) runsValidator() bool {
 	for _, step := range j.Steps {
-		if shellKeepsErrexit(step.Shell) && runsGate(step.Run, validatorInvocation) {
+		if step.enforces() && shellKeepsErrexit(step.Shell) && runsGate(step.Run, validatorInvocation) {
 			return true
 		}
 	}
@@ -651,7 +661,7 @@ func (j job) runsIsolatedChartNamespaceValidator() bool {
 		if runsCommand(step.Run, ".github/scripts/setup-ksail.sh") {
 			ksailReady = true
 		}
-		if ksailReady && step.If == "" && step.TimeoutMinutes.is(10) &&
+		if ksailReady && step.enforces() && step.TimeoutMinutes.is(10) &&
 			shellKeepsErrexit(step.Shell) &&
 			runsGate(step.Run, isolatedChartNamespaceValidatorInvocation) {
 			return true
