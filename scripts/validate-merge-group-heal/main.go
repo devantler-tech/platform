@@ -7,13 +7,15 @@
 // PR had already left the queue (#3091), and on nothing else; it must
 // hold the shared prod-deploy lock; that lock must not be preemptible, or the
 // heal is cancelled by the next deploy midway through; it must check out
-// main, or it restores the wrong revision; and it must opt in to orphaned-fence
-// recovery, or it cannot clear the GHCR Lease a dead deploy left held.
+// main, or it restores the wrong revision; it must opt in to orphaned-fence
+// recovery, or it cannot clear the GHCR Lease a dead deploy left held; and it
+// must then check for objects the failed deploy left outside every Flux
+// inventory, or its success does not mean prod matches main (#3502).
 //
-// Each is one line of workflow YAML, and none of them fails loudly when it is
-// wrong — the damage shows up later, during an incident, when the heal either
-// does not run or restores the wrong thing. Pinning all five here turns that
-// into a CI failure on the pull request that breaks one.
+// Each is a line or a step of workflow YAML, and none of them fails loudly when
+// it is wrong — the damage shows up later, during an incident, when the heal
+// either does not run or restores the wrong thing. Pinning all six here turns
+// that into a CI failure on the pull request that breaks one.
 package main
 
 import (
@@ -39,6 +41,15 @@ const recoveryOptIn = `          recover-orphaned-fence: "true"`
 
 // The shared composite both prod-deploy paths call.
 const deployCompositePath = "./.github/actions/deploy-prod"
+
+// Re-deploying main restores what main declares, but an object the failed
+// revision applied with `prune: disabled` stays behind outside every Flux
+// inventory, and the heal used to report success over it (#3502). This check
+// is what makes a green heal mean prod matches main.
+const (
+	orphanCheckCommand = "./scripts/check-flux-orphaned-objects.sh"
+	orphanCheckSince   = "          FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}"
+)
 
 func validateWorkflowContract(workflow string) error {
 	healJob, ok := extractJob(workflow, "heal-prod-on-failure")
@@ -106,6 +117,45 @@ func validateWorkflowContract(workflow string) error {
 		}
 	}
 
+	return validateOrphanCheck(healJob)
+}
+
+// validateOrphanCheck pins the step that fails the heal when an object the
+// failed deploy applied is still in prod outside every Flux inventory. It must
+// run after the re-deploy, because before it the check reads the failed
+// revision's state, and nothing may let it pass without running or failing.
+func validateOrphanCheck(healJob string) error {
+	for _, line := range strings.Split(healJob, "\n") {
+		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), "continue-on-error:") {
+			return errors.New("heal job must not suppress a failed check with continue-on-error")
+		}
+	}
+
+	check, ok := extractStep(healJob, func(line string) bool {
+		return strings.TrimSpace(line) == orphanCheckCommand
+	})
+	if !ok {
+		return errors.New("heal job does not check for objects the failed deploy left outside every Flux inventory")
+	}
+	for _, line := range strings.Split(check, "\n") {
+		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), "if:") {
+			return errors.New("orphaned-object check must not carry a condition that can skip it")
+		}
+	}
+	// Only objects created since the merge group was built can be its deploy's
+	// residue; the check warns about older ones without failing. A later
+	// boundary would pass that residue off as an older orphan.
+	if !containsExactLine(check, orphanCheckSince) {
+		return errors.New("orphaned-object check is missing the merge-group creation time")
+	}
+
+	deploy, ok := extractDeployStep(healJob)
+	if !ok {
+		return errors.New("heal job does not reach the shared deploy composite")
+	}
+	if strings.Index(healJob, check) < strings.Index(healJob, deploy) {
+		return errors.New("orphaned-object check must run after the heal re-deploys main")
+	}
 	return nil
 }
 

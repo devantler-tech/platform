@@ -59,6 +59,12 @@ jobs:
       - uses: ./.github/actions/deploy-prod
         with:
           recover-orphaned-fence: "true"
+      - name: verify nothing outlived the failed deploy
+        shell: bash
+        env:
+          FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}
+        run: |
+          ./scripts/check-flux-orphaned-objects.sh
 
   required-checks:
     runs-on: ubuntu-latest
@@ -269,6 +275,67 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
           recover-orphaned-fence: "true"
       - uses: ./.github/actions/deploy-prod`,
 			wantError: "heal job is missing orphaned-fence recovery",
+		},
+		{
+			// Re-deploying main cannot remove what a failed revision applied with
+			// prune disabled, so without the check a green heal says nothing about
+			// whether prod matches main (#3502).
+			name:        "heal job drops the orphaned-object check",
+			old:         "          ./scripts/check-flux-orphaned-objects.sh\n",
+			replacement: "          echo healed\n",
+			wantError:   "heal job does not check for objects the failed deploy left outside every Flux inventory",
+		},
+		{
+			// Before the re-deploy, the check would read the failed revision's
+			// state rather than the restored one.
+			name: "orphaned-object check runs before the re-deploy",
+			old: `      - uses: ./.github/actions/deploy-prod
+        with:
+          recover-orphaned-fence: "true"
+      - name: verify nothing outlived the failed deploy
+        shell: bash
+        env:
+          FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}
+        run: |
+          ./scripts/check-flux-orphaned-objects.sh
+`,
+			replacement: `      - name: verify nothing outlived the failed deploy
+        shell: bash
+        env:
+          FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}
+        run: |
+          ./scripts/check-flux-orphaned-objects.sh
+      - uses: ./.github/actions/deploy-prod
+        with:
+          recover-orphaned-fence: "true"
+`,
+			wantError: "orphaned-object check must run after the heal re-deploys main",
+		},
+		{
+			// A later boundary would pass the failed deploy's own residue off as
+			// an older orphan, which the check only warns about.
+			name:        "orphaned-object check judges residue from the wrong time",
+			old:         "          FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}",
+			replacement: "          FLUX_ORPHANS_SINCE: ${{ github.event.repository.pushed_at }}",
+			wantError:   "orphaned-object check is missing the merge-group creation time",
+		},
+		{
+			name:        "orphaned-object check can be skipped",
+			old:         "      - name: verify nothing outlived the failed deploy\n        shell: bash\n",
+			replacement: "      - name: verify nothing outlived the failed deploy\n        if: ${{ false }}\n        shell: bash\n",
+			wantError:   "orphaned-object check must not carry a condition that can skip it",
+		},
+		{
+			name:        "orphaned-object check suppresses failure",
+			old:         "      - name: verify nothing outlived the failed deploy\n        shell: bash\n",
+			replacement: "      - name: verify nothing outlived the failed deploy\n        continue-on-error: true\n        shell: bash\n",
+			wantError:   "heal job must not suppress a failed check with continue-on-error",
+		},
+		{
+			name:        "heal job suppresses failure",
+			old:         "    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@example\n",
+			replacement: "    runs-on: ubuntu-latest\n    continue-on-error: true\n    steps:\n      - uses: actions/checkout@example\n",
+			wantError:   "heal job must not suppress a failed check with continue-on-error",
 		},
 	}
 
