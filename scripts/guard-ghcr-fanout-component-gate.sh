@@ -36,8 +36,10 @@
 # Exit codes:
 #   0  parity holds
 #   1  drift: an enabled ghcr-auth app is unlisted, a disabled one is listed, or
-#      a listed namespace is neither a ghcr-auth app nor a declared non-app
-#   2  could not check: missing root or inputs, or a selector that matched
+#      a listed namespace is neither a ghcr-auth app nor a declared non-app,
+#      or an app keeps a ghcr-auth declaration its kustomization does not deploy
+#   2  could not check: missing root or inputs, an app with no kustomization or
+#      a reference that does not resolve, or a selector that matched
 #      NOTHING (no ghcr-auth app, or an empty FANOUT_NAMESPACES). An empty
 #      result from a filtered read is a claim about the filter, and a guard that
 #      checked nothing must never look like a guard that passed.
@@ -65,6 +67,47 @@ fanout_script="$repo_root/scripts/refresh-flux-ghcr-auth.sh"
 [ -r "$fanout_script" ] || die "guard: unreadable $fanout_script"
 command -v yq >/dev/null 2>&1 || die "guard: yq is required"
 
+# --- what an app's kustomization actually deploys ---------------------------
+# Kustomize deploys what a kustomization REFERENCES, not what sits on disk. A
+# manifest kept beside the kustomization but dropped from its `.resources` is
+# never created, so counting it as a declaration would make the guard report
+# parity for an ExternalSecret production never reconciles (platform#3499).
+#
+# reachable_manifests <dir> prints the canonical path of every local file the
+# kustomization in <dir> reaches through `resources:`, `components:` and the legacy `bases:`,
+# recursing into referenced directories. A remote entry (a URL or a git
+# reference) is skipped: it cannot hold a manifest from this repository. Any
+# local reference this cannot resolve exits 2, because a reachable set that is
+# missing an entry would read a deployed declaration as dead.
+reachable_manifests() { # <dir>
+  local dir kustomization entry target
+  dir="$(cd "$1" 2>/dev/null && pwd -P)" || die "guard: cannot resolve $1"
+  case " ${reachable_visited:-} " in *" $dir "*) return 0 ;; esac
+  reachable_visited="${reachable_visited:-} $dir"
+  kustomization=""
+  for target in kustomization.yaml kustomization.yml Kustomization; do
+    [ -f "$dir/$target" ] && { kustomization="$dir/$target"; break; }
+  done
+  [ -n "$kustomization" ] ||
+    die "guard: $dir has no kustomization, so what it deploys is unknown"
+  local entries
+  entries="$(yq -N -r '(.resources // []) + (.components // []) + (.bases // []) | .[]' "$kustomization" 2>/dev/null)" ||
+    die "guard: could not parse .resources/.components/.bases from $kustomization"
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    case "$entry" in
+      *://* | git@* | github.com/*) continue ;;
+    esac
+    if [ -d "$dir/$entry" ]; then
+      reachable_manifests "$dir/$entry"
+    elif [ -f "$dir/$entry" ]; then
+      printf '%s/%s\n' "$(cd "$(dirname "$dir/$entry")" && pwd -P)" "$(basename "$entry")"
+    else
+      die "guard: $kustomization references $entry, which does not exist"
+    fi
+  done <<<"$entries"
+}
+
 # --- the apps that declare a ghcr-auth ExternalSecret -----------------------
 # Match the DECLARATION (kind + metadata.name), never a bare `name: ghcr-auth`:
 # a ServiceAccount imagePullSecret and an OCIRepository secretRef both REFERENCE
@@ -72,18 +115,33 @@ command -v yq >/dev/null 2>&1 || die "guard: yq is required"
 # apps whose credential is declared elsewhere.
 ghcr_apps=()
 ghcr_gates=()
+unreachable=()
 for app_path in "$apps_dir"/*/ "$prod_apps_dir"/*/; do
   [ -d "$app_path" ] || continue
   app="$(basename "$app_path")"
   declares=""
+  reachable=""
+  reachable_done=""
   while IFS= read -r manifest; do
     [ -n "$manifest" ] || continue
     if hit="$(yq -N -r 'select(.kind == "ExternalSecret" and .metadata.name == "ghcr-auth") | .metadata.name' \
       "$manifest" 2>/dev/null)" && [ -n "$hit" ]; then
-      declares=yes
-      break
+      if [ -z "$reachable_done" ]; then
+        # A die inside the substitution exits only its subshell, so pass its
+        # status on: an unresolvable reference must end the guard with 2, never
+        # leave an empty set that reads every declaration as undeployed.
+        reachable_visited=""
+        reachable="$(reachable_manifests "$app_path")" || exit 2
+        reachable_done=yes
+      fi
+      canonical="$(cd "$(dirname "$manifest")" && pwd -P)/$(basename "$manifest")"
+      if grep -qxF -- "$canonical" <<<"$reachable"; then
+        declares=yes
+      else
+        unreachable+=("$app: ${manifest#"$repo_root"/}")
+      fi
     fi
-  done < <(find "$app_path" -type f \( -name '*.yaml' -o -name '*.yml' \) 2>/dev/null)
+  done < <(find "$app_path" \( -type f -o -type l \) \( -name '*.yaml' -o -name '*.yml' \) 2>/dev/null)
   if [ -n "$declares" ]; then
     if ((${#ghcr_apps[@]} > 0)); then
       case " ${ghcr_apps[*]} " in
@@ -97,6 +155,21 @@ for app_path in "$apps_dir"/*/ "$prod_apps_dir"/*/; do
     esac
   fi
 done
+
+# A declaration on disk that the app's kustomization does not deploy is drift
+# on its own: the guard cannot say whether the author meant to stage the
+# credential off or forgot to list the file, and either way the inventory above
+# would not match what production creates. Reported before the empty-set check
+# so an app whose only declaration is dead is named rather than read as "no
+# ghcr-auth app at all".
+if ((${#unreachable[@]} > 0)); then
+  for entry in "${unreachable[@]}"; do
+    printf '  FAIL %s declares a ghcr-auth ExternalSecret that its kustomization does not deploy; reference the file from its kustomization or delete it.\n' \
+      "$entry"
+  done
+  printf '\nA ghcr-auth declaration on disk is not what production deploys.\n' >&2
+  exit 1
+fi
 
 ((${#ghcr_apps[@]} > 0)) ||
   die "guard: found NO app declaring a ghcr-auth ExternalSecret under $apps_dir — refusing to report parity on an empty set"
