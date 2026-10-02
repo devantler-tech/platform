@@ -49,6 +49,18 @@ const deployCompositePath = "./.github/actions/deploy-prod"
 const (
 	orphanCheckCommand = "./scripts/check-flux-orphaned-objects.sh"
 	orphanCheckSince   = "          FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}"
+	// The whole script of the step. Its only early exit is the legacy branch for
+	// a main that predates the check, which the changes job keeps unreachable
+	// once the check is on main: it fails when the check's script is missing.
+	// Pinning the script whole stops any other early exit, and a missing
+	// boundary from silently failing every older orphan.
+	orphanCheckRun = `        run: |
+          if [[ ! -f scripts/check-flux-orphaned-objects.sh ]]; then
+            echo '- Flux orphaned objects: main predates the check; not run.' >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          : "${FLUX_ORPHANS_SINCE:?the merge group creation time is required}"
+          ./scripts/check-flux-orphaned-objects.sh`
 )
 
 func validateWorkflowContract(workflow string) error {
@@ -90,6 +102,12 @@ func validateWorkflowContract(workflow string) error {
 		)
 	}
 
+	// The heal's result is what says prod was restored, so nothing in it may let
+	// a failed step pass.
+	if hasKey(healJob, "continue-on-error") {
+		return errors.New("heal job must not suppress a failed check with continue-on-error")
+	}
+
 	if err := validateMembershipJob(workflow); err != nil {
 		return err
 	}
@@ -125,28 +143,23 @@ func validateWorkflowContract(workflow string) error {
 // run after the re-deploy, because before it the check reads the failed
 // revision's state, and nothing may let it pass without running or failing.
 func validateOrphanCheck(healJob string) error {
-	for _, line := range strings.Split(healJob, "\n") {
-		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), "continue-on-error:") {
-			return errors.New("heal job must not suppress a failed check with continue-on-error")
-		}
-	}
-
 	check, ok := extractStep(healJob, func(line string) bool {
 		return strings.TrimSpace(line) == orphanCheckCommand
 	})
 	if !ok {
 		return errors.New("heal job does not check for objects the failed deploy left outside every Flux inventory")
 	}
-	for _, line := range strings.Split(check, "\n") {
-		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), "if:") {
-			return errors.New("orphaned-object check must not carry a condition that can skip it")
-		}
+	if hasKey(check, "if") {
+		return errors.New("orphaned-object check must not carry a condition that can skip it")
 	}
 	// Only objects created since the merge group was built can be its deploy's
 	// residue; the check warns about older ones without failing. A later
 	// boundary would pass that residue off as an older orphan.
 	if !containsExactLine(check, orphanCheckSince) {
 		return errors.New("orphaned-object check is missing the merge-group creation time")
+	}
+	if !strings.HasSuffix(strings.TrimRight(check, "\n "), orphanCheckRun) {
+		return errors.New("orphaned-object check must run exactly the pinned script")
 	}
 
 	deploy, ok := extractDeployStep(healJob)
@@ -194,10 +207,8 @@ func validateMembershipJob(workflow string) error {
 
 	// A failed read must fail the job. continue-on-error at either scope lets it
 	// succeed with no output, which the heal reads as "not evicted".
-	for _, line := range strings.Split(job, "\n") {
-		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), "continue-on-error:") {
-			return errors.New("queue-membership job must not suppress a failed check with continue-on-error")
-		}
+	if hasKey(job, "continue-on-error") {
+		return errors.New("queue-membership job must not suppress a failed check with continue-on-error")
 	}
 
 	// The output names the step by id, so the id, its inputs and the command
@@ -211,10 +222,8 @@ func validateMembershipJob(workflow string) error {
 	}
 	// A skipped step succeeds with no output, which the heal also reads as
 	// "not evicted", so the step runs whenever its job does.
-	for _, line := range strings.Split(step, "\n") {
-		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), "if:") {
-			return errors.New("membership step must not carry a condition that can skip it")
-		}
+	if hasKey(step, "if") {
+		return errors.New("membership step must not carry a condition that can skip it")
 	}
 	stepRequirements := []struct {
 		line        string
@@ -316,6 +325,17 @@ func extractStep(job string, matches func(string) bool) (string, bool) {
 	}
 
 	return strings.Join(lines[start:end], "\n"), true
+}
+
+// hasKey reports whether any line of a job or step sets the YAML key, either on
+// its own line or on a list item's first line.
+func hasKey(block string, key string) bool {
+	for _, line := range strings.Split(block, "\n") {
+		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), key+":") {
+			return true
+		}
+	}
+	return false
 }
 
 func containsExactLine(block string, want string) bool {

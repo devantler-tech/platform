@@ -47,6 +47,11 @@ fi
 
 if [[ "$*" == "api-resources --verbs=list -o name" ]]; then
   cat "${FAKE_DIR}/resources.txt"
+  # kubectl prints what it could discover, then fails naming each group it could not.
+  if [[ -n "${FAKE_DISCOVERY_ERROR:-}" ]]; then
+    printf 'error: unable to retrieve the complete list of server APIs: %s\n' "${FAKE_DISCOVERY_ERROR}" >&2
+    exit 1
+  fi
   exit 0
 fi
 
@@ -54,7 +59,7 @@ if [[ "$#" -eq 8 && "$1" == get && "$3 $4 $5 $6 $7 $8" == "--all-namespaces -l k
   printf '%s\n' "$2" >"${FAKE_DIR}/listed.${read_number}"
   printf 'Warning: v1 Endpoints is deprecated in v1.33+\n' >&2
   if [[ ",${FAKE_FAIL_READS:-}," == *",${read_number},"* ]]; then
-    printf 'The connection to the server was refused\n' >&2
+    printf 'Unable to connect to the server: dial tcp 203.0.113.7:6443: i/o timeout (Get "https://api.prod.example:6443/api?timeout=60s")\n' >&2
     exit 1
   fi
   serve objects
@@ -64,6 +69,12 @@ fi
 if [[ "$*" == "get kustomizations.kustomize.toolkit.fluxcd.io --all-namespaces -o json" ]]; then
   printf 'Warning: kustomize.toolkit.fluxcd.io/v1beta2 Kustomization is deprecated\n' >&2
   serve kustomizations
+  exit 0
+fi
+
+if [[ "$#" -eq 5 && "$1" == get && "$2" == *.source.toolkit.fluxcd.io* && "$3 $4 $5" == "--all-namespaces -o json" ]]; then
+  printf '%s\n' "$2" >"${FAKE_DIR}/sources-listed.${read_number}"
+  serve sources
   exit 0
 fi
 
@@ -94,16 +105,32 @@ obj() {
 }
 
 # ks <namespace> <name> <Ready status> [inventory ids...] — "none" as the only id
-# records no inventory.
+# records no inventory. The Kustomization has applied revision `rev-1` from the
+# OCIRepository `src` in its own namespace.
 ks() {
   local ns="$1" name="$2" ready="$3"
   shift 3
   jq -cn --arg ns "${ns}" --arg name "${name}" --arg ready "${ready}" '
     {metadata: {namespace: $ns, name: $name},
-     status: ({conditions: [{type: "Ready", status: $ready}]}
+     spec: {sourceRef: {kind: "OCIRepository", name: "src"}},
+     status: ({conditions: [{type: "Ready", status: $ready}], lastAppliedRevision: "rev-1"}
               + (if $ARGS.positional == ["none"] then {}
                  else {inventory: {entries: [$ARGS.positional[] | {id: ., v: "v1"}]}} end))}' \
     --args "$@"
+}
+
+# src <kind> <namespace> <name> <artifact revision>
+src() {
+  jq -cn --arg kind "$1" --arg ns "$2" --arg name "$3" --arg revision "$4" '
+    {kind: $kind, metadata: {namespace: $ns, name: $name}, status: {artifact: {revision: $revision}}}'
+}
+
+# set_ks <file> <ns/name> <jq update>: change one Kustomization in that list.
+set_ks() {
+  jq --arg ns "${2%/*}" --arg name "${2#*/}" \
+    "(.items[] | select(.metadata.namespace == \$ns and .metadata.name == \$name)) |= ($3)" \
+    "$1" >"$1.new"
+  mv "$1.new" "$1"
 }
 
 # items <file>: the JSON objects on stdin become that file's list.
@@ -145,6 +172,10 @@ RESOURCES
     ks flux-system infrastructure-controllers True \
       _kyverno__reports-controller__read-nodes_rbac.authorization.k8s.io_ClusterRole
   } | items "${dir}/kustomizations.json"
+  {
+    src OCIRepository flux-system src rev-1
+    src OCIRepository tenant src rev-1
+  } | items "${dir}/sources.json"
   printf '%s\n' "${dir}"
 }
 
@@ -223,7 +254,8 @@ expect_reads() {
 }
 
 # Every Flux-applied object is in an inventory, including an RBAC name whose
-# colons Flux writes as double underscores. One read is enough.
+# colons Flux writes as double underscores, and every Kustomization is Ready at
+# its source's revision. One read is enough.
 case_name='clean cluster'
 dir="$(scenario clean)"
 run "${dir}"
@@ -232,11 +264,14 @@ expect_line '✅ No object is outside every inventory among all Flux-applied obj
 expect_reads 1
 expect_summary '- Flux orphaned objects: none among all Flux-applied objects — 4 Flux-applied objects, 2 Kustomizations.'
 
-# The aggregated API is never listed; every other listable type is, in one call.
+# The aggregated API is never listed; every other listable type is, in one call,
+# and only the source kinds the Kustomizations use are read.
 case_name='aggregated APIs are not read'
 listed="$(cat "${dir}/listed.1")"
 [[ "${listed}" == 'namespaces,configmaps,endpoints,clusterroles.rbac.authorization.k8s.io,endpointslices.discovery.k8s.io,helmreleases.helm.toolkit.fluxcd.io,ciliumnetworkpolicies.cilium.io,orders.acme.cert-manager.io' ]] ||
   fail "unexpected resource list: ${listed}"
+[[ "$(cat "${dir}/sources-listed.1")" == 'ocirepositories.source.toolkit.fluxcd.io' ]] ||
+  fail "unexpected source list: $(cat "${dir}/sources-listed.1")"
 
 # The #3502 incident: an evicted revision's namespace and HelmRelease, and a
 # network policy, stay in prod after main is restored. The HelmRelease and the
@@ -295,6 +330,65 @@ run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T16:17:34+02:00
 expect_status 2
 expect_text "::error::FLUX_ORPHANS_SINCE '2026-08-30T16:17:34+02:00' is not a UTC timestamp."
 
+# The residue is still in the inventory of a Kustomization that has not applied
+# main yet: it would pass as tracked, so the result is UNKNOWN until apps is
+# Ready at the revision its source holds.
+case_name='inventory still at the failed revision'
+dir="$(scenario stale)"
+{
+  obj v1 Namespace - data-product-controller uid-ns-dpc flux-system/apps kustomize-controller "${prune_disabled}"
+} | add_objects "${dir}"
+record "${dir}/kustomizations.json" '_data-product-controller__Namespace'
+jq '(.items[] | select(.metadata.namespace == "flux-system") | .status.artifact.revision) = "rev-2"' \
+  "${dir}/sources.json" >"${dir}/sources.json.new"
+mv "${dir}/sources.json.new" "${dir}/sources.json"
+set_ks "${dir}/kustomizations.json" flux-system/infrastructure-controllers '.status.lastAppliedRevision = "rev-2"'
+run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z
+expect_status 2
+expect_reads 2
+expect_line '  Kustomization flux-system/apps (ready=true applied=rev-1 source=rev-2)'
+expect_no_text 'flux-system/infrastructure-controllers (ready'
+expect_text '::error::Could not tell whether Flux left objects outside every inventory: the inventories could not be trusted to judge every recent object.'
+
+# A Kustomization behind its source matters only when its inventory lists a
+# recent object, because only a recent object can be a failed revision's residue.
+case_name='behind its source, nothing recent'
+run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T15:00:00Z
+expect_status 0
+expect_reads 1
+
+# Ready=False at the right revision is no better, and without a boundary any
+# Kustomization behind its source counts.
+case_name='not Ready at its source revision'
+dir="$(scenario stale-not-ready)"
+set_ks "${dir}/kustomizations.json" flux-system/apps '.status.conditions = [{type: "Ready", status: "False"}]'
+run "${dir}"
+expect_status 2
+expect_line '  Kustomization flux-system/apps (ready=false applied=rev-1 source=rev-1)'
+
+# A source this cannot read leaves its Kustomizations unproven.
+case_name='unknown source kind'
+dir="$(scenario unknown-source)"
+set_ks "${dir}/kustomizations.json" flux-system/apps '.spec.sourceRef.kind = "Imaginary"'
+run "${dir}"
+expect_status 2
+expect_line '  Kustomization flux-system/apps (ready=true applied=rev-1 source=unread)'
+[[ "$(cat "${dir}/sources-listed.1")" == 'ocirepositories.source.toolkit.fluxcd.io' ]] ||
+  fail "unexpected source list: $(cat "${dir}/sources-listed.1")"
+
+# A GitRepository in another namespace is read and matched by kind, namespace and name.
+case_name='GitRepository source in another namespace'
+dir="$(scenario git-source)"
+set_ks "${dir}/kustomizations.json" flux-system/apps \
+  '.spec.sourceRef = {kind: "GitRepository", name: "repo", namespace: "sources"} | .status.lastAppliedRevision = "main@sha1:abc"'
+src GitRepository sources repo main@sha1:abc | jq -s '.' >"${tmp_dir}/git-source.json"
+jq --slurpfile extra "${tmp_dir}/git-source.json" '.items += $extra[0]' "${dir}/sources.json" >"${dir}/sources.json.new"
+mv "${dir}/sources.json.new" "${dir}/sources.json"
+run "${dir}"
+expect_status 0
+[[ "$(cat "${dir}/sources-listed.1")" == 'gitrepositories.source.toolkit.fluxcd.io,ocirepositories.source.toolkit.fluxcd.io' ]] ||
+  fail "unexpected source list: $(cat "${dir}/sources-listed.1")"
+
 # Controllers copy a Service's or Certificate's labels onto what they derive
 # from it. None of those carries kustomize-controller's field manager, so none
 # is Flux's to track. An API that ignores the label selector returns unlabelled
@@ -338,7 +432,7 @@ record "${dir}/kustomizations.2.json" 'web_fresh__ConfigMap'
 run "${dir}"
 expect_status 0
 expect_reads 2
-expect_text '✅ No object stayed outside every inventory across both reads among all Flux-applied objects: the 1 found on the first read were in an inventory by the second'
+expect_text '✅ Nothing stayed outside every inventory across both reads among all Flux-applied objects: the 1 finding(s) on the first read had cleared by the second'
 expect_summary '(1 cleared on re-read)'
 
 # An object that first appears outside every inventory on the second read is
@@ -363,17 +457,16 @@ expect_status 1
 expect_line '  ConfigMap web/left (claims=web/web-app created=2026-08-30T14:17:34Z prune=-)'
 
 # A Kustomization that has recorded no inventory, or is not Ready, may simply not
-# have finished an apply, so what it claims cannot be judged: UNKNOWN, never clean
-# and never an orphan.
+# have finished an apply, so a recent object it claims cannot be judged:
+# UNKNOWN, never clean and never an orphan.
 case_name='Kustomization without an inventory'
 dir="$(scenario no-inventory)"
 obj v1 ConfigMap tenant cfg uid-tenant tenant/tenant kustomize-controller | add_objects "${dir}"
 ks tenant tenant True none | add_kustomizations "${dir}/kustomizations.json"
 run "${dir}"
 expect_status 2
-expect_text 'is not Ready or has recorded no inventory, so they cannot be judged:'
 expect_line '  ConfigMap tenant/cfg (claims=tenant/tenant created=2026-08-30T14:17:34Z prune=- reason=no-inventory)'
-expect_text '::error::Could not tell whether Flux left objects outside every inventory: a Kustomization that claims objects outside every inventory is not Ready or has no inventory.'
+expect_text '::error::Could not tell whether Flux left objects outside every inventory: the inventories could not be trusted to judge every recent object.'
 # The reads succeeded, so their warnings are not offered as the reason.
 expect_no_text 'deprecated'
 
@@ -385,22 +478,49 @@ run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z
 expect_status 2
 expect_line '  ConfigMap tenant/cfg (claims=tenant/tenant created=2026-08-30T14:17:34Z prune=- reason=not-ready)'
 
+# An older orphan is only a warning even when its Kustomization is not Ready: a
+# retirement leftover must not fail the heal because some apply is failing.
+case_name='older orphan of a Kustomization that is not Ready'
+run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T15:00:00Z
+expect_status 0
+expect_text '::warning::1 object(s) outside every inventory predate'
+expect_line '  ConfigMap tenant/cfg (claims=tenant/tenant created=2026-08-30T14:17:34Z prune=-)'
+
 # An orphan still fails the check beside an object that cannot be judged.
 case_name='orphan beside an unjudgeable object'
 obj v1 ConfigMap web stray uid-stray flux-system/apps kustomize-controller | add_objects "${dir}"
 run "${dir}"
 expect_status 1
 expect_line '  ConfigMap web/stray (claims=flux-system/apps created=2026-08-30T14:17:34Z prune=-)'
-expect_text 'These objects could not be judged'
+expect_text 'These could not be judged:'
 
-# A read that fails every attempt is UNKNOWN, and says why.
+# Discovery that fails only for aggregated groups loses nothing this reads.
+case_name='aggregated discovery failure'
+dir="$(scenario aggregated-discovery)"
+run "${dir}" FAKE_DISCOVERY_ERROR='spdx.softwarecomposition.kubescape.io/v1beta1: the server is currently unable to handle the request'
+expect_status 0
+expect_text 'Discovery failed for aggregated groups that are not read anyway: spdx.softwarecomposition.kubescape.io.'
+expect_text '✅ No object is outside every inventory'
+
+# Discovery that fails for any other group would hide its objects.
+case_name='discovery failure beyond the aggregated groups'
+run "${dir}" FAKE_DISCOVERY_ERROR='apps/v1: the server could not find the requested resource, spdx.softwarecomposition.kubescape.io/v1beta1: the server is currently unable to handle the request'
+expect_status 2
+expect_reads 3
+expect_text 'the cluster could not be read.'
+
+# A read that fails every attempt is UNKNOWN, and says why without the
+# endpoint or address kubectl put in its error.
 case_name='cluster unreadable'
 dir="$(scenario unreadable)"
 run "${dir}" FAKE_FAIL_READS=1,2,3
 expect_status 2
 expect_reads 3
 expect_text '::error::Could not tell whether Flux left objects outside every inventory: the cluster could not be read.'
-expect_text 'The connection to the server was refused'
+expect_text 'Unable to connect to the server: dial tcp <address>: i/o timeout (Get "<url>")'
+expect_no_text '203.0.113.7'
+expect_no_text 'api.prod.example'
+expect_no_text 'Warning:'
 expect_summary '- Flux orphaned objects: UNKNOWN'
 
 # A transient failure is retried.

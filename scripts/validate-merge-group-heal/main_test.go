@@ -59,15 +59,23 @@ jobs:
       - uses: ./.github/actions/deploy-prod
         with:
           recover-orphaned-fence: "true"
-      - name: verify nothing outlived the failed deploy
+` + orphanCheckStep + `
+  required-checks:
+    runs-on: ubuntu-latest
+`
+
+// The heal's orphaned-object check step, as ci.yaml writes it.
+const orphanCheckStep = `      - name: verify nothing outlived the failed deploy
         shell: bash
         env:
           FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}
         run: |
+          if [[ ! -f scripts/check-flux-orphaned-objects.sh ]]; then
+            echo '- Flux orphaned objects: main predates the check; not run.' >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          : "${FLUX_ORPHANS_SINCE:?the merge group creation time is required}"
           ./scripts/check-flux-orphaned-objects.sh
-
-  required-checks:
-    runs-on: ubuntu-latest
 `
 
 func TestValidateWorkflowContractAcceptsFailClosedHealJob(t *testing.T) {
@@ -292,24 +300,27 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			old: `      - uses: ./.github/actions/deploy-prod
         with:
           recover-orphaned-fence: "true"
-      - name: verify nothing outlived the failed deploy
-        shell: bash
-        env:
-          FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}
-        run: |
-          ./scripts/check-flux-orphaned-objects.sh
-`,
-			replacement: `      - name: verify nothing outlived the failed deploy
-        shell: bash
-        env:
-          FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}
-        run: |
-          ./scripts/check-flux-orphaned-objects.sh
-      - uses: ./.github/actions/deploy-prod
+` + orphanCheckStep,
+			replacement: orphanCheckStep + `      - uses: ./.github/actions/deploy-prod
         with:
           recover-orphaned-fence: "true"
 `,
 			wantError: "orphaned-object check must run after the heal re-deploys main",
+		},
+		{
+			// Any early exit lets the heal pass without the check having run.
+			name:        "orphaned-object check exits before it runs",
+			old:         "          : \"${FLUX_ORPHANS_SINCE:?the merge group creation time is required}\"\n",
+			replacement: "          exit 0\n",
+			wantError:   "orphaned-object check must run exactly the pinned script",
+		},
+		{
+			// Without a boundary the check fails on every older orphan, which a
+			// retirement leaves on purpose.
+			name:        "orphaned-object check tolerates a missing boundary",
+			old:         "          : \"${FLUX_ORPHANS_SINCE:?the merge group creation time is required}\"\n",
+			replacement: "",
+			wantError:   "orphaned-object check must run exactly the pinned script",
 		},
 		{
 			// A later boundary would pass the failed deploy's own residue off as

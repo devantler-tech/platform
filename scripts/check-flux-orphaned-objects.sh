@@ -39,30 +39,35 @@
 # What is deliberately not reported, as in the CronJob: an object handed to
 # another controller on purpose (annotated
 # `platform.devantler.tech/prune-orphan: adopted`, or carrying ownerReferences),
-# and an object already being deleted. An object whose Kustomization exists but
-# is not Ready, or has recorded no inventory, cannot be judged, because Flux
+# and an object already being deleted. A recent object whose Kustomization exists
+# but is not Ready, or has recorded no inventory, cannot be judged, because Flux
 # records the inventory only after a whole apply succeeds; that is UNKNOWN.
 #
-# The inventories must reflect the revision being checked: run this after a
-# reconcile that waited for every Kustomization to apply it. The heal's deploy
-# composite does, through `ksail workload reconcile`.
+# An inventory says nothing about a revision its Kustomization has not applied
+# yet. If one still records the failed revision, that revision's residue is in it
+# and would pass as tracked. So every Kustomization must be Ready at the revision
+# its source currently holds; one that is not, and whose inventory lists a recent
+# object (any object, without FLUX_ORPHANS_SINCE), makes the result UNKNOWN. The
+# sources themselves must hold the revision being checked: the heal's deploy
+# composite proves that before this runs, through `ksail workload reconcile`.
 #
 # Every listable resource type is read except the aggregated APIs, which an
 # extension server serves rather than the API server. They hold no objects Flux
 # applies here, and the largest of them ignores label selectors and returns every
 # object it stores (about 17,000 scan results). The groups skipped are printed, so
-# the scope of a read is never implicit.
+# the scope of a read is never implicit. For the same reason, a discovery failure
+# confined to aggregated groups does not fail the read.
 #
 # Flux applies an object before it records the new inventory, so an object
 # created during a reconcile can be read before its Kustomization lists it.
-# Objects are therefore read before the inventories, and a failing finding is
-# reported only when a second read after FLUX_ORPHANS_SETTLE_SECONDS still finds
-# the same object (by UID) outside every inventory.
+# Objects are therefore read before the inventories, and those before the
+# sources, and a finding is reported only when a second read after
+# FLUX_ORPHANS_SETTLE_SECONDS still has it.
 #
 #   exit 0  no orphan to fail on (older orphans, if any, are listed as warnings)
 #   exit 1  an orphan to fail on: it is named, and nothing will update or prune it
-#   exit 2  the cluster could not be read completely, nothing was examined, or an
-#           object outside every inventory could not be judged
+#   exit 2  the cluster could not be read completely, nothing was examined, or
+#           the inventories could not be trusted to judge a recent object
 #
 # Read-only. Every API request is bounded by a request timeout.
 
@@ -80,6 +85,7 @@ readonly owner_namespace_label='kustomize.toolkit.fluxcd.io/namespace'
 readonly prune_annotation='kustomize.toolkit.fluxcd.io/prune'
 readonly adopted_annotation='platform.devantler.tech/prune-orphan'
 readonly flux_manager='kustomize-controller'
+readonly partial_discovery='unable to retrieve the complete list of server APIs: '
 
 summary() {
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
@@ -109,27 +115,63 @@ kubectl_cluster() {
   "${kubectl_bin}" --context "${context}" --request-timeout="${request_timeout}" "$@"
 }
 
+# The public job log gets the reason a read failed, without the endpoints and
+# addresses kubectl puts in its errors.
+print_error() {
+  [[ -s "${tmp_dir}/error.log" ]] || return 0
+  grep -v '^Warning: ' "${tmp_dir}/error.log" | head -c 2000 |
+    sed -E 's#[a-z]+://[^ "]+#<url>#g; s/[0-9]{1,3}(\.[0-9]{1,3}){3}(:[0-9]+)?/<address>/g'
+  echo
+}
+
 unknown() {
   echo "::error::Could not tell whether Flux left objects outside every inventory: $1"
-  if [[ -s "${tmp_dir}/error.log" ]]; then
-    head -c 2000 "${tmp_dir}/error.log"
-    echo
-  fi
+  print_error
   summary "- Flux orphaned objects: UNKNOWN — $1"
   exit 2
 }
 
-# read_state <dir>: the objects first, then the inventories (see the header).
+# discovery_partial <dir>: true when `kubectl api-resources` failed only because
+# aggregated groups, which are not read, could not be discovered. kubectl still
+# prints every other group's resources in that case. Its error names each failed
+# group as `<group>/<version>: <reason>`.
+discovery_partial() {
+  local dir="$1" line failed group
+  line="$(grep -F -m1 -- "${partial_discovery}" "${tmp_dir}/error.log")" || return 1
+  failed="$(grep -oE ', [a-z0-9.-]+/v[0-9][a-z0-9]*: ' <<<", ${line#*"${partial_discovery}"}" |
+    sed -E 's/^, //; s#/.*##' | sort -u)" || return 1
+  [[ -n "${failed}" && -s "${dir}/resources.txt" ]] || return 1
+  while IFS= read -r group; do
+    grep -Fxq -- "${group}" "${dir}/aggregated.txt" || return 1
+  done <<<"${failed}"
+  echo "Discovery failed for aggregated groups that are not read anyway: $(paste -s -d, - <<<"${failed}" | sed 's/,/, /g')."
+}
+
+# source_resource <kind>: the resource that serves a Kustomization's sourceRef kind.
+source_resource() {
+  case "$1" in
+    OCIRepository) echo ocirepositories.source.toolkit.fluxcd.io ;;
+    GitRepository) echo gitrepositories.source.toolkit.fluxcd.io ;;
+    Bucket) echo buckets.source.toolkit.fluxcd.io ;;
+    ExternalArtifact) echo externalartifacts.source.toolkit.fluxcd.io ;;
+    *) return 1 ;;
+  esac
+}
+
+# read_state <dir>: the objects first, then the inventories, then their sources
+# (see the header).
 read_state() {
-  local dir="$1" resource group listed=''
+  local dir="$1" resource group listed='' kind sources=''
   mkdir -p "${dir}"
   kubectl_cluster get apiservices.apiregistration.k8s.io -o json \
     >"${dir}/apiservices.json" 2>"${tmp_dir}/error.log" || return 1
   jq -r '.items[] | select(.spec.service != null) | .spec.group' "${dir}/apiservices.json" \
     >"${dir}/aggregated.unsorted" 2>"${tmp_dir}/error.log" || return 1
   sort -u "${dir}/aggregated.unsorted" >"${dir}/aggregated.txt"
-  kubectl_cluster api-resources --verbs=list -o name \
-    >"${dir}/resources.txt" 2>"${tmp_dir}/error.log" || return 1
+  if ! kubectl_cluster api-resources --verbs=list -o name \
+    >"${dir}/resources.txt" 2>"${tmp_dir}/error.log"; then
+    discovery_partial "${dir}" || return 1
+  fi
   # `kubectl api-resources -o name` prints `<plural>.<group>`, or `<plural>` for
   # the core group. A plural never contains a dot.
   while IFS= read -r resource; do
@@ -151,6 +193,21 @@ read_state() {
     --show-managed-fields -o json >"${dir}/objects.json" 2>"${tmp_dir}/error.log" || return 1
   kubectl_cluster get kustomizations.kustomize.toolkit.fluxcd.io --all-namespaces -o json \
     >"${dir}/kustomizations.json" 2>"${tmp_dir}/error.log" || return 1
+  # Only the source kinds the Kustomizations use. A kind this does not know is
+  # left unread, so its Kustomizations read as not at their source's revision.
+  jq -r '[.items[].spec.sourceRef.kind] | unique[]' "${dir}/kustomizations.json" \
+    >"${dir}/source-kinds.txt" 2>"${tmp_dir}/error.log" || return 1
+  while IFS= read -r kind; do
+    if resource="$(source_resource "${kind}")"; then
+      sources+="${sources:+,}${resource}"
+    fi
+  done <"${dir}/source-kinds.txt"
+  if [[ -z "${sources}" ]]; then
+    printf '{"items":[]}\n' >"${dir}/sources.json"
+    return 0
+  fi
+  kubectl_cluster get "${sources}" --all-namespaces -o json \
+    >"${dir}/sources.json" 2>"${tmp_dir}/error.log" || return 1
 }
 
 # read_with_retry <dir>: a deploy that just finished can still be restarting an
@@ -169,14 +226,15 @@ read_with_retry() {
   return 1
 }
 
-# Writes one line per object outside every inventory, then the counts the read
-# examined:
+# Writes one line per finding, then the counts the read examined:
 #   <category> <uid> <inventory id> <object> claims=<ns/name> created=<time> prune=<annotation|-> [reason=<why>]
+#   stale <ns/name> - Kustomization <ns/name> ready=<status> applied=<revision> source=<revision>
 #   checked=<Flux-applied objects evaluated>
 #   kustomizations=<Kustomizations read>
-# where <category> is `orphan` (fails the check), `pre-existing` (an orphan
-# created before $since) or `unjudged` (its Kustomization is not Ready or has no
-# inventory).
+# <category> is `orphan` (fails the check), `pre-existing` (an orphan created
+# before $since) or `unjudged` (its Kustomization is not Ready or has no
+# inventory). `stale` is a Kustomization not Ready at its source's revision whose
+# inventory lists an object created since $since (any object without $since).
 # shellcheck disable=SC2016 # jq program, not shell expansion
 readonly evaluate_program='
   def rbac_kind: . as $k | ["Role", "ClusterRole", "RoleBinding", "ClusterRoleBinding"] | any(. == $k);
@@ -189,16 +247,21 @@ readonly evaluate_program='
     | "\(.metadata.namespace // "")_\($name)_\($g)_\(.kind)";
   def object_label:
     "\(.kind)\(group_of | if . == "" then "" else ".\(.)" end) \(.metadata.namespace // "" | if . == "" then "" else "\(.)/" end)\(.metadata.name)";
+  def recent: $since == "" or .metadata.creationTimestamp >= $since;
+  def entries: if (.status.inventory.entries | type) == "array" then [.status.inventory.entries[].id] else null end;
   ($kustomizations[0].items // []) as $ks
-  | (reduce ($ks[] | .status.inventory.entries[]?.id) as $id ({}; .[$id] = true)) as $inventory
+  | (reduce (($sources[0].items // [])[]) as $s ({};
+      .["\($s.kind)/\($s.metadata.namespace)/\($s.metadata.name)"] = ($s.status.artifact.revision // null))) as $artifacts
+  | (reduce ($ks[] | entries // [] | .[]) as $id ({}; .[$id] = true)) as $inventory
   | (reduce $ks[] as $k ({};
       .["\($k.metadata.namespace)/\($k.metadata.name)"] = {
         ready: any($k.status.conditions[]?; .type == "Ready" and .status == "True"),
-        inventory: ($k.status.inventory != null)
+        inventory: (($k | entries) != null)
       })) as $owners
   | [($objects[0].items // [])[]
      | select((.metadata.labels // {})[$owner_label] != null)
      | select(any(.metadata.managedFields[]?; .manager == $manager))] as $applied
+  | (reduce ($applied[] | select(recent)) as $o ({}; .[$o | inventory_id] = true)) as $recent_ids
   | ($applied[]
      | select(.metadata.deletionTimestamp == null)
      | select((.metadata.annotations // {})[$adopted_annotation] != "adopted")
@@ -211,17 +274,25 @@ readonly evaluate_program='
         elif ($owner.inventory | not) then "reason=no-inventory"
         elif ($owner.ready | not) then "reason=not-ready"
         else "" end) as $unjudged
-     | (if $unjudged != "" then "unjudged"
-        elif $since != "" and .metadata.creationTimestamp < $since then "pre-existing"
+     | (if (recent | not) then "pre-existing"
+        elif $unjudged != "" then "unjudged"
         else "orphan" end) as $category
-     | "\($category) \(.metadata.uid) \($id) \(object_label) claims=\($claims) created=\(.metadata.creationTimestamp) prune=\((.metadata.annotations // {})[$prune_annotation] // "-")\(if $unjudged == "" then "" else " \($unjudged)" end)"),
+     | "\($category) \(.metadata.uid) \($id) \(object_label) claims=\($claims) created=\(.metadata.creationTimestamp) prune=\((.metadata.annotations // {})[$prune_annotation] // "-")\(if $unjudged == "" or $category == "pre-existing" then "" else " \($unjudged)" end)"),
+    ($ks[]
+     | "\(.metadata.namespace)/\(.metadata.name)" as $name
+     | $artifacts["\(.spec.sourceRef.kind)/\(.spec.sourceRef.namespace // .metadata.namespace)/\(.spec.sourceRef.name)"] as $source
+     | (any(.status.conditions[]?; .type == "Ready" and .status == "True")) as $ready
+     | select(($ready and $source != null and .status.lastAppliedRevision == $source) | not)
+     | select(any((entries // [])[]; $recent_ids[.]) or $since == "")
+     | "stale \($name) - Kustomization \($name) ready=\($ready) applied=\(.status.lastAppliedRevision // "none") source=\($source // "unread")"),
     "checked=\($applied | length)",
     "kustomizations=\($ks | length)"
 '
 
-# evaluate <dir>: writes <dir>/findings.txt and fails when the read examined nothing.
+# evaluate <dir>: writes <dir>/findings.txt and sets `checked` and
+# `kustomizations`; fails when the read examined nothing.
 evaluate() {
-  local dir="$1" checked kustomizations
+  local dir="$1"
   jq -r -n \
     --arg owner_label "${owner_label}" \
     --arg owner_namespace_label "${owner_namespace_label}" \
@@ -231,6 +302,7 @@ evaluate() {
     --arg since "${since}" \
     --slurpfile objects "${dir}/objects.json" \
     --slurpfile kustomizations "${dir}/kustomizations.json" \
+    --slurpfile sources "${dir}/sources.json" \
     "${evaluate_program}" >"${dir}/result.txt" 2>"${tmp_dir}/error.log" || return 1
   checked="$(sed -n 's/^checked=//p' "${dir}/result.txt")"
   kustomizations="$(sed -n 's/^kustomizations=//p' "${dir}/result.txt")"
@@ -242,7 +314,7 @@ evaluate() {
       "${kustomizations:-no}" "${checked:-no}" >"${tmp_dir}/error.log"
     return 1
   fi
-  grep -E '^(orphan|pre-existing|unjudged) ' "${dir}/result.txt" >"${dir}/findings.txt" || true
+  grep -E '^(orphan|pre-existing|unjudged|stale) ' "${dir}/result.txt" >"${dir}/findings.txt" || true
 }
 
 # print_findings <file>: one indented line per finding, without the UID and ID.
@@ -251,6 +323,14 @@ print_findings() {
   while IFS= read -r line; do
     read -r _ _ _ object_kind object_name rest <<<"${line}"
     printf '  %s %s (%s)\n' "${object_kind}" "${object_name}" "${rest}"
+  done <"$1"
+}
+
+# summarise_findings <file>: the same, as Markdown list items in the step summary.
+summarise_findings() {
+  local line
+  while IFS= read -r line; do
+    summary "  - \`$(cut -d' ' -f4-5 <<<"${line}")\` ($(cut -d' ' -f6- <<<"${line}"))"
   done <"$1"
 }
 
@@ -264,49 +344,45 @@ skipped_groups() {
 
 # report_pre_existing <file>: older orphans, listed but not failed on.
 report_pre_existing() {
-  local line
   [[ -s "$1" ]] || return 0
   echo "::warning::$(wc -l <"$1" | tr -d ' ') object(s) outside every inventory predate ${since}, so no deploy since then left them; they are not failed on here:"
   print_findings "$1"
   echo "If a retirement removed their manifests on purpose, delete them by hand once nothing depends on them (AGENTS.md, \"Persistence retirement is always two-stage\"); the prune-protected-orphan-alert CronJob escalates them after its grace period (#3503)."
   summary "- Flux orphaned objects older than ${since}, not failed on:"
-  while IFS= read -r line; do
-    summary "  - \`$(cut -d' ' -f4-5 <<<"${line}")\` ($(cut -d' ' -f6- <<<"${line}"))"
-  done <"$1"
+  summarise_findings "$1"
 }
 
 scope() {
-  local subject="all Flux-applied objects"
   if [[ -n "${since}" ]]; then
-    subject="Flux-applied objects created since ${since}"
+    printf 'Flux-applied objects created since %s' "${since}"
+  else
+    printf 'all Flux-applied objects'
   fi
-  printf '%s' "${subject}"
 }
 
 first="${tmp_dir}/first"
 read_with_retry "${first}" || unknown "the cluster could not be read."
 evaluate "${first}" || unknown "the first read examined nothing."
-checked="$(sed -n 's/^checked=//p' "${first}/result.txt")"
-kustomizations="$(sed -n 's/^kustomizations=//p' "${first}/result.txt")"
 grep '^pre-existing ' "${first}/findings.txt" >"${tmp_dir}/pre-existing-first.txt" || true
 
-if ! grep -Eq '^(orphan|unjudged) ' "${first}/findings.txt"; then
+if ! grep -Eq '^(orphan|unjudged|stale) ' "${first}/findings.txt"; then
   report_pre_existing "${tmp_dir}/pre-existing-first.txt"
   echo "✅ No object is outside every inventory among $(scope) (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${first}"))."
   summary "- Flux orphaned objects: none among $(scope) — ${checked} Flux-applied objects, ${kustomizations} Kustomizations."
   exit 0
 fi
 
-echo "$(grep -Ec '^(orphan|unjudged) ' "${first}/findings.txt") object(s) are outside every inventory; reading again in ${settle_seconds}s to rule out a reconcile in progress."
+echo "$(grep -Ec '^(orphan|unjudged|stale) ' "${first}/findings.txt") finding(s) on the first read; reading again in ${settle_seconds}s to rule out a reconcile in progress."
 sleep "${settle_seconds}"
 
 second="${tmp_dir}/second"
 read_with_retry "${second}" || unknown "the cluster could not be read a second time."
 evaluate "${second}" || unknown "the second read examined nothing."
 
-# A finding is confirmed when the same object (UID and inventory ID) is outside
-# every inventory in both reads; its category is the one the second read gives.
-# A finding only the second read has appeared in between, so it is not confirmed.
+# A finding is confirmed when the same object (UID and inventory ID), or the
+# same Kustomization, has one in both reads; its category is the one the second
+# read gives. A finding only the second read has appeared in between, so it is
+# not confirmed.
 cut -d' ' -f2-3 "${first}/findings.txt" | sort -u >"${tmp_dir}/first-keys.txt"
 : >"${tmp_dir}/confirmed.txt"
 : >"${tmp_dir}/unconfirmed.txt"
@@ -318,7 +394,7 @@ while IFS= read -r line; do
   fi
 done <"${second}/findings.txt"
 grep '^orphan ' "${tmp_dir}/confirmed.txt" >"${tmp_dir}/orphans.txt" || true
-grep '^unjudged ' "${tmp_dir}/confirmed.txt" >"${tmp_dir}/unjudged.txt" || true
+grep -E '^(unjudged|stale) ' "${tmp_dir}/confirmed.txt" >"${tmp_dir}/unjudged.txt" || true
 grep '^pre-existing ' "${second}/findings.txt" >"${tmp_dir}/pre-existing.txt" || true
 grep -Ev '^pre-existing ' "${tmp_dir}/unconfirmed.txt" >"${tmp_dir}/unconfirmed-new.txt" || true
 
@@ -336,28 +412,25 @@ merge-group deploy that failed or was evicted (#3502). Delete each one, or
 declare it in Git again so its Kustomization adopts it.
 EOF
   summary "- Flux orphaned objects: **${count} found** among $(scope) — in no Kustomization inventory:"
-  while IFS= read -r line; do
-    summary "  - \`$(cut -d' ' -f4-5 <<<"${line}")\` ($(cut -d' ' -f6- <<<"${line}"))"
-  done <"${tmp_dir}/orphans.txt"
+  summarise_findings "${tmp_dir}/orphans.txt"
   if [[ -s "${tmp_dir}/unjudged.txt" ]]; then
-    echo "These objects could not be judged, because their Kustomization is not Ready or has recorded no inventory:"
+    echo "These could not be judged:"
     print_findings "${tmp_dir}/unjudged.txt"
   fi
   exit 1
 fi
 
 if [[ -s "${tmp_dir}/unjudged.txt" ]]; then
-  echo "These objects are outside every inventory, but their Kustomization is not Ready or has recorded no inventory, so they cannot be judged:"
+  echo "These could not be judged. An object outside every inventory whose Kustomization is not Ready or has no inventory may simply not be recorded yet, and a Kustomization that is not Ready at its source's revision may still list what a replaced revision applied:"
   print_findings "${tmp_dir}/unjudged.txt"
-  unknown "a Kustomization that claims objects outside every inventory is not Ready or has no inventory."
+  : >"${tmp_dir}/error.log"
+  unknown "the inventories could not be trusted to judge every recent object."
 fi
 
-cleared="$(grep -Ec '^(orphan|unjudged) ' "${first}/findings.txt")"
-checked="$(sed -n 's/^checked=//p' "${second}/result.txt")"
-kustomizations="$(sed -n 's/^kustomizations=//p' "${second}/result.txt")"
-echo "✅ No object stayed outside every inventory across both reads among $(scope): the ${cleared} found on the first read were in an inventory by the second (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${second}"))."
+cleared="$(grep -Ec '^(orphan|unjudged|stale) ' "${first}/findings.txt")"
+echo "✅ Nothing stayed outside every inventory across both reads among $(scope): the ${cleared} finding(s) on the first read had cleared by the second (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${second}"))."
 if [[ -s "${tmp_dir}/unconfirmed-new.txt" ]]; then
-  echo "The second read found these outside every inventory for the first time, so they are not confirmed and are expected to be a reconcile in progress:"
+  echo "The second read found these for the first time, so they are not confirmed and are expected to be a reconcile in progress:"
   print_findings "${tmp_dir}/unconfirmed-new.txt"
 fi
 summary "- Flux orphaned objects: none confirmed among $(scope) — ${checked} Flux-applied objects, ${kustomizations} Kustomizations (${cleared} cleared on re-read)."

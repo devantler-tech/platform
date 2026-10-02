@@ -3023,7 +3023,8 @@ jobs:
         # re-deploy restored, after its reconcile waited for every flux-system
         # Kustomization to apply main. During this PR's own merge-group run, main
         # still predates the check; keep that one legacy heal path working, as
-        # the root source repair above does.
+        # the root source repair above does. The changes job keeps it unreachable
+        # once the check is on main, and the heal contract pins this script.
         shell: bash
         env:
           FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}
@@ -3032,6 +3033,7 @@ jobs:
             echo '- Flux orphaned objects: main predates the check; not run.' >>"${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
+          : "${FLUX_ORPHANS_SINCE:?the merge group creation time is required}"
           ./scripts/check-flux-orphaned-objects.sh
 
   ci-required-checks:
