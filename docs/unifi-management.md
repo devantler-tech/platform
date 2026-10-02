@@ -97,10 +97,15 @@ create a duplicate:
 1. Write the Managed Resource to match what already exists on the controller.
 2. Annotate it `crossplane.io/external-name: <unifi-id>` (the controller's internal
    `_id`) so Crossplane binds the live object instead of creating a new one.
-3. **(Safest) observe first:** set `spec.managementPolicies: ["Observe"]` and let it
-   reconcile; confirm `kubectl -n unifi get <kind> <name> -o yaml` shows
-   `Synced=True`, `Ready=True`, and a `.status.atProvider` matching the live object.
-   **Only then** widen back to the default `["*"]` to manage it.
+3. **(Safest) observe first:** annotate it
+   `platform.devantler.tech/unifi-management: observe-only` and let it reconcile; the
+   Platform applies it with `spec.managementPolicies: ["Observe"]`. Confirm
+   `kubectl -n unifi get <kind> <name> -o yaml` shows `Synced=True`, `Ready=True`, and
+   a `.status.atProvider` matching the live object. **Only then** remove the annotation
+   to manage it. The annotation is what counts: the Platform replaces a
+   tenant-declared `spec.managementPolicies` on every managed resource (see
+   *Deletion* below), so `["Observe"]` declared without the annotation is widened.
+   Declaring both, as the tenant runbook does, is harmless.
 4. Only now edit fields to change the network, in a follow-up commit.
 
 A genuinely **new** object (nothing to adopt — everything in the repo today) needs
@@ -108,14 +113,15 @@ no annotation; Crossplane creates it. See the tenant repo's
 [`docs/runbook.md`](https://github.com/devantler-tech/unifi/blob/main/docs/runbook.md)
 for the full procedure and how to find a live object's `_id`.
 
-> **Deletion:** the Platform Flux `Kustomization` deliberately has `prune: false`,
-> and its `unifi` ServiceAccount has no `delete` permission. Removing a resource
-> from the tenant repository therefore leaves both the Managed Resource and the
-> live UniFi object in place. Retirement is an explicit, reviewed Platform
-> operation: choose `deletionPolicy: Delete` to remove the backing object or
-> `deletionPolicy: Orphan` to preserve it, wait for that policy to reconcile, then
-> delete the Managed Resource with a platform-operator identity and verify the
-> intended live-object outcome. There is no Git-removal-only deletion path.
+> **Deletion:** the Platform Flux `Kustomization` prunes like every other one, and
+> its `unifi` ServiceAccount may delete the Managed Resources it applies. The
+> Platform applies every Managed Resource **without** the `Delete` management policy
+> (`["Observe", "Create", "Update", "LateInitialize"]`, the Crossplane v2 form of
+> `deletionPolicy: Orphan`), so removing a resource from the tenant repository
+> deletes the Managed Resource and leaves the live UniFi object in place,
+> unmanaged. A source compromise or an accidental removal therefore cannot delete
+> network config. Deleting a live UniFi object is a deliberate act in UniFi itself,
+> after its Managed Resource has been removed from the tenant repository and pruned.
 
 ## Validation notes (confirm on the live cluster)
 

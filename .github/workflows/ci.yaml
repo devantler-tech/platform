@@ -111,6 +111,15 @@ jobs:
           shellcheck scripts/tests/test-pvc-prune-safety.sh
           bash scripts/tests/test-pvc-prune-safety.sh
 
+      - name: ✂️ Validate every Flux Kustomization prunes
+        # Flux defaults spec.prune to false, so an omitted field silently opts a
+        # whole tree out of deletion (#3373). The unifi tree prunes too and keeps
+        # its live network objects at the resource layer instead; the test renders
+        # that patch so a target that matches nothing cannot pass.
+        run: |
+          shellcheck scripts/tests/test-flux-kustomization-prune.sh
+          bash scripts/tests/test-flux-kustomization-prune.sh
+
       - name: 🔐 Validate directly-invoked scripts are tracked executable
         # A script a workflow runs as ./scripts/<name> must be tracked 100755, because
         # CI clones from git and the tracked mode is what the runner gets. Caught live on
@@ -392,6 +401,7 @@ jobs:
               - 'scripts/tests/test-provider-drc-pod-seccomp.sh'
               - 'tests/validate-pod-security-provider-deployment/**'
               - 'scripts/tests/test-pvc-prune-safety.sh'
+              - 'scripts/tests/test-flux-kustomization-prune.sh'
               - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
