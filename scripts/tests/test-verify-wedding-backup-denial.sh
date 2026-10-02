@@ -496,7 +496,15 @@ set -euo pipefail
 shift 5
 printf '%s\n' "$*" >>"${CASE}/calls"
 case "$1 $2" in
-  'get clusters.postgresql.cnpg.io') cat "${CASE}/cluster.json" ;;
+  'get clusters.postgresql.cnpg.io')
+    count=$(( $(cat "${CASE}/cluster-read-count" 2>/dev/null || echo 0) + 1 ))
+    printf '%s' "${count}" >"${CASE}/cluster-read-count"
+    if [[ "${count}" -gt 1 && -e "${CASE}/cluster-after.json" ]]; then
+      cat "${CASE}/cluster-after.json"
+    else
+      cat "${CASE}/cluster.json"
+    fi
+    ;;
   'get objectstores.barmancloud.cnpg.io') cat "${CASE}/store-$3.json" ;;
   'create configmap')
     if [[ -e "${CASE}/configmap-exists" ]]; then printf 'Error from server (AlreadyExists)\n' >&2; exit 1; fi
@@ -527,9 +535,11 @@ new_case() {
   CASE="${work_dir}/runner-$1"
   export CASE
   mkdir -p "${CASE}"
-  jq -n '{apiVersion:"postgresql.cnpg.io/v1",kind:"Cluster",metadata:{name:"wedding-db",namespace:"wedding-app"},
-    spec:{plugins:[{name:"barman-cloud.cloudnative-pg.io",enabled:true,isWALArchiver:true,
-      parameters:{barmanObjectName:"wedding-db-dedicated",serverName:"wedding-db-20260909"}}]}}' >"${CASE}/cluster.json"
+  jq -n '{apiVersion:"postgresql.cnpg.io/v1",kind:"Cluster",
+    metadata:{name:"wedding-db",namespace:"wedding-app",uid:"11111111-1111-1111-1111-111111111111",generation:7},
+    spec:{instances:3,plugins:[{name:"barman-cloud.cloudnative-pg.io",enabled:true,isWALArchiver:true,
+      parameters:{barmanObjectName:"wedding-db-dedicated",serverName:"wedding-db-20260909"}}]},
+    status:{readyInstances:3,conditions:[{type:"Ready",status:"True"},{type:"ContinuousArchiving",status:"True"}]}}' >"${CASE}/cluster.json"
   store platform-backups wedding-db-backup-r2 >"${CASE}/store-wedding-db.json"
   store wedding-db-backups wedding-db-backup-r2-dedicated >"${CASE}/store-wedding-db-dedicated.json"
   printf 'Succeeded' >"${CASE}/phase"
@@ -594,6 +604,66 @@ run_runner --confirm
 [[ "${run_rc}" -ne 0 ]] || fail 'a Cluster archiving through the shared store must be refused'
 require_text "${run_err}" 'does not archive through wedding-db-dedicated' 'an unused credential names its reason'
 [[ ! -e "${CASE}/manifest.yaml" ]] || fail 'no pod starts when the credential is not the one in use'
+
+# Historical catalogue access is not evidence of a currently active archive.
+# Run the actual runner and prove each bad state is refused before staging.
+for test in \
+  'wal-disabled|.spec.plugins[0].isWALArchiver = false' \
+  'wal-absent|del(.spec.plugins[0].isWALArchiver)' \
+  'archiving-false|.status.conditions[1].status = "False"' \
+  'archiving-unknown|.status.conditions[1].status = "Unknown"' \
+  'archiving-absent|.status.conditions |= map(select(.type != "ContinuousArchiving"))' \
+  'archiving-contradictory|.status.conditions += [{type:"ContinuousArchiving",status:"False"}]' \
+  'archiving-duplicate-true|.status.conditions += [{type:"ContinuousArchiving",status:"True"}]' \
+  'ready-false|.status.conditions[0].status = "False"' \
+  'ready-absent|.status.conditions |= map(select(.type != "Ready"))' \
+  'replicas-missing|del(.status.readyInstances)' \
+  'replicas-not-ready|.status.readyInstances = 2' \
+  'replicas-zero|.spec.instances = 0 | .status.readyInstances = 0' \
+  'replicas-fractional|.spec.instances = 3.5 | .status.readyInstances = 3.5' \
+  'uid-absent|del(.metadata.uid)' \
+  'generation-absent|del(.metadata.generation)' \
+  'observed-generation-stale|.status.observedGeneration = 6'
+do
+  name="${test%%|*}"
+  mutation="${test#*|}"
+  new_case "preflight-${name}"
+  jq "${mutation}" "${CASE}/cluster.json" >"${CASE}/changed.json"
+  cmp -s "${CASE}/changed.json" "${CASE}/cluster.json" && fail "${name}: mutation did not apply"
+  mv "${CASE}/changed.json" "${CASE}/cluster.json"
+  run_runner --confirm
+  [[ "${run_rc}" -ne 0 ]] || fail "${name}: inactive or unhealthy archive passed the actual runner"
+  refute_text "${run_out}" 'DENIAL OBSERVED' "${name}: no success receipt"
+  [[ ! -e "${CASE}/staged.sh" && ! -e "${CASE}/manifest.yaml" && ! -e "${CASE}/deleted" ]] ||
+    fail "${name}: no probe is staged or cleaned up before the precondition holds"
+  printf 'PASS: inactive archive preflight refuses %s before staging\n' "${name}"
+done
+
+# Even a complete pod receipt cannot vouch for an unhealthy or different live
+# source. The second Cluster read deliberately differs from the first.
+for test in \
+  'archiving-stopped|.status.conditions[1].status = "False"' \
+  'wal-disabled|.spec.plugins[0].isWALArchiver = false' \
+  'ready-lost|.status.readyInstances = 2' \
+  'uid-changed|.metadata.uid = "22222222-2222-2222-2222-222222222222"' \
+  'generation-changed|.metadata.generation = 8'
+do
+  name="${test%%|*}"
+  mutation="${test#*|}"
+  new_case "readback-${name}"
+  jq "${mutation}" "${CASE}/cluster.json" >"${CASE}/cluster-after.json"
+  cmp -s "${CASE}/cluster-after.json" "${CASE}/cluster.json" && fail "${name}: readback mutation did not apply"
+  run_runner --confirm
+  [[ "${run_rc}" -ne 0 ]] || fail "${name}: stale source snapshot produced a success receipt"
+  refute_text "${run_out}" 'DENIAL OBSERVED' "${name}: no success receipt"
+  [[ -e "${CASE}/manifest.yaml" ]] || fail "${name}: the initial healthy state must permit the probe"
+  [[ "$(cat "${CASE}/cluster-read-count")" == 2 ]] || fail "${name}: the final source must actually be read"
+  require_text "$(cat "${CASE}/deleted")" 'pod wedding-backup-denial-4242-1' "${name}: owned pod is cleaned up"
+  require_text "$(cat "${CASE}/deleted")" 'configmap wedding-backup-denial-4242-1' "${name}: owned script is cleaned up"
+  printf 'PASS: final archive readback refuses %s and cleans up\n' "${name}"
+done
+[[ "$(cat "${work_dir}/runner-pass/cluster-read-count")" == 2 ]] ||
+  fail 'the healthy passing proof validates its source both before and after the pod'
 
 new_case dedicated-drift
 store other-bucket wedding-db-backup-r2-dedicated >"${CASE}/store-wedding-db-dedicated.json"
