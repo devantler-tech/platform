@@ -8,15 +8,16 @@
 # token was configured rather than on what the destination enforces.
 #
 # WHAT IT DOES, in order, refusing at the first thing it cannot prove:
-#   1. Confirms the wedding-db Cluster archives through wedding-db-dedicated, so
-#      the credential under test is the one the database actually uses.
+#   1. Confirms the wedding-db Cluster has a healthy active WAL archiver through
+#      wedding-db-dedicated, so the credential under test is the one in use.
 #   2. Reads both live ObjectStores and requires the reviewed destination and
 #      Secret for each. The shared bucket and the endpoint are pinned to the
 #      committed bootstrap ConfigMap, because both credentials are about to be
 #      handed to that endpoint and the shared bucket is the one under test.
 #   3. Runs scripts/verify-wedding-backup-denial-pod.sh in a short-lived pod in
 #      wedding-app, where both credentials and R2 egress already exist, and
-#      accepts only its complete receipt.
+#      accepts only its complete receipt after rechecking the same healthy
+#      Cluster UID and configuration generation.
 #
 # Exit status: 0 when list, read and write were each refused with AccessDenied;
 # 1 when anything was refused, failed or not proven. Needs --confirm, because the
@@ -115,14 +116,32 @@ readonly endpoint shared_bucket
 [[ "${shared_bucket}" != "${dedicated_bucket}" ]] ||
   fail 'the committed shared backup bucket is the dedicated bucket'
 
-kube get clusters.postgresql.cnpg.io "${cluster}" -o json >"${work_dir}/cluster.json" 2>/dev/null ||
-  fail "could not read the ${cluster} Cluster"
-jq -e --arg plugin "${plugin}" --arg store "${dedicated_store}" '
-  .metadata.deletionTimestamp == null and
-  ([.spec.plugins[]? | select(.name == $plugin)] |
-    length == 1 and .[0].enabled == true and .[0].parameters.barmanObjectName == $store)
-' "${work_dir}/cluster.json" >/dev/null 2>&1 ||
-  fail "the ${cluster} Cluster does not archive through ${dedicated_store}, so its credential is not the one in use"
+check_cluster() {
+  kube get clusters.postgresql.cnpg.io "${cluster}" -o json >"${work_dir}/cluster.json" 2>/dev/null ||
+    fail "could not read the ${cluster} Cluster"
+  jq -e --arg plugin "${plugin}" --arg store "${dedicated_store}" '
+    .metadata.generation as $generation |
+    def healthy($kind):
+      [.status.conditions[]? | select(.type == $kind)] |
+      length == 1 and .[0].status == "True" and
+      (.[0].observedGeneration == null or .[0].observedGeneration == $generation);
+    .metadata.deletionTimestamp == null and
+    (.metadata.uid | type == "string" and length > 0) and
+    ($generation | type == "number" and . > 0 and floor == .) and
+    (.spec.instances | type == "number" and . > 0 and floor == .) and
+    .status.readyInstances == .spec.instances and
+    (.status.observedGeneration == null or .status.observedGeneration == $generation) and
+    ([.spec.plugins[]? | select(.name == $plugin)] |
+      length == 1 and .[0].enabled == true and .[0].isWALArchiver == true and
+      .[0].parameters.barmanObjectName == $store) and
+    healthy("Ready") and healthy("ContinuousArchiving")
+  ' "${work_dir}/cluster.json" >/dev/null 2>&1 ||
+    fail "the ${cluster} Cluster does not archive through ${dedicated_store} with a healthy active WAL archiver"
+}
+check_cluster
+source_uid="$(jq -r '.metadata.uid' "${work_dir}/cluster.json")"
+source_generation="$(jq -r '.metadata.generation' "${work_dir}/cluster.json")"
+readonly source_uid source_generation
 
 # require_store <store> <bucket> <secret> refuses unless the live ObjectStore
 # writes to the reviewed destination through exactly the reviewed Secret keys the
@@ -315,6 +334,16 @@ fi
 # lines, is a pass: a partial or reordered log is not evidence.
 [[ "$(tail -n 2 "${work_dir}/log")" == "${receipt}"$'\n'"${ready_marker}" ]] ||
   fail 'the denial proof pod succeeded without its complete receipt'
+
+# A historical catalogue and a complete refusal receipt cannot attest to a
+# database that stopped archiving or changed during the probe. CNPG may omit
+# observedGeneration, so do not infer freshness from an old transition time;
+# reread the live health and bind it to the initial UID and generation instead.
+check_cluster
+jq -e --arg uid "${source_uid}" --argjson generation "${source_generation}" '
+  .metadata.uid == $uid and .metadata.generation == $generation
+' "${work_dir}/cluster.json" >/dev/null 2>&1 ||
+  fail 'the Cluster identity or configuration changed during the denial proof'
 
 printf '%s\n' "${receipt}"
 printf 'DENIAL OBSERVED: the dedicated Wedding backup credential reaches its own catalogue, and the shared destination refused its list, read and write with AccessDenied.\n'
