@@ -69,6 +69,11 @@ jobs:
           shellcheck scripts/tests/test-restore-stranded-prod-workflow.sh
           bash scripts/tests/test-restore-stranded-prod-workflow.sh
 
+      - name: 🧱 Validate the reviewed KSail kernel-argument fold
+        run: |
+          go test ./scripts/reconcile-talos-kernel-args
+          go run ./scripts/reconcile-talos-kernel-args --check-pins
+
       # The Wedding backup catalogue must be proven complete before the database
       # switches to its dedicated bucket, and continuous after it. The evaluator's
       # refusals (credential reuse, wrong destination, partial copy, source changed
@@ -793,18 +798,22 @@ jobs:
             talos:
               - 'talos/**'
               - 'talos-local/**'
+              - 'scripts/reconcile-talos-kernel-args/**'
+              - 'scripts/tests/test-talos-render-kernel-args.sh'
               - 'scripts/register-talos-factory-schematic.sh'
               - 'scripts/verify-talos-schematic-readback.sh'
               - 'scripts/tests/test-talos-factory-schematic-registration.sh'
               - 'scripts/tests/test-talos-schematic-readback.sh'
               - 'scripts/tests/test-talos-apparmor-lsm.sh'
               - 'ksail.prod.yaml'
+              - 'ksail.yaml'
               - '.github/scripts/setup-talosctl.sh'
               - 'scripts/validate-talos-kubernetes-compatibility/**'
               - '.github/actions/deploy-prod/**'
               - 'go.mod'
               - 'go.sum'
               - '.github/workflows/ci.yaml'
+              - '.github/workflows/cd.yaml'
 
   validate-publication-contract:
     name: 🖋️ Validate Publication Contract
@@ -2549,6 +2558,11 @@ jobs:
           shellcheck scripts/verify-talos-schematic-readback.sh scripts/tests/test-talos-schematic-readback.sh
           bash scripts/tests/test-talos-schematic-readback.sh
 
+      - name: 🧱 Prove folded Talos render and invalid-patch rejection
+        run: |
+          shellcheck scripts/tests/test-talos-render-kernel-args.sh
+          bash scripts/tests/test-talos-render-kernel-args.sh
+
       - name: ✅ Render + validate patched machine configs
         run: |
           set -euo pipefail
@@ -2567,7 +2581,7 @@ jobs:
           export WG_SERVER_PRIVATE_KEY GHCR_USERNAME GHCR_TOKEN GHCR_PULL_REVISION
 
           validate_overlay() {
-            local dir="$1" mode="$2"
+            local dir="$1" mode="$2" cluster_config="$3"
             echo "::group::${dir} (${mode})"
 
             # Every ${VAR} referenced by the overlay's patches must be set and
@@ -2618,14 +2632,22 @@ jobs:
               else
                 cp "${base}" "${out}/${role}-patched.yaml"
               fi
+            done
+
+            # KSail folds the union of both roles' arguments, only when Image
+            # Factory extensions are present. Reconcile both before validating
+            # either, matching the reviewed production post-installer fold.
+            go run ./scripts/reconcile-talos-kernel-args "${cluster_config}" \
+              "${out}/control-planes-patched.yaml" "${out}/workers-patched.yaml"
+            for role in control-planes workers; do
               talosctl validate -c "${out}/${role}-patched.yaml" -m "${mode}" >/dev/null
               echo "${dir}/${role}: rendered + validated (${mode})"
             done
             echo "::endgroup::"
           }
 
-          validate_overlay talos cloud          # prod (Hetzner)
-          validate_overlay talos-local container # local Docker test-bed
+          validate_overlay talos cloud ksail.prod.yaml
+          validate_overlay talos-local container ksail.yaml
 
   validate-root-verify-merge-group:
     name: 🛡️ Validate Root Source Repair (merge group)
