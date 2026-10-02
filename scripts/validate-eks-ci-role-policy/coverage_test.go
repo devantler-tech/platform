@@ -36,8 +36,13 @@ const prodDeployComposite = "./.github/actions/deploy-prod"
 // files describe this very trigger in their comments, so a text search would
 // pass on prose alone and keep passing after the trigger itself was deleted.
 type workflow struct {
-	On   triggerSet     `yaml:"on"`
-	Jobs map[string]job `yaml:"jobs"`
+	On          triggerSet     `yaml:"on"`
+	Jobs        map[string]job `yaml:"jobs"`
+	Permissions any            `yaml:"permissions"`
+	Concurrency struct {
+		Group            string `yaml:"group"`
+		CancelInProgress bool   `yaml:"cancel-in-progress"`
+	} `yaml:"concurrency"`
 }
 
 // job and step are named rather than inlined so the workflow-coverage guards in
@@ -50,6 +55,7 @@ type job struct {
 	Needs           any    `yaml:"needs"`
 	If              string `yaml:"if"`
 	ContinueOnError any    `yaml:"continue-on-error"`
+	Permissions     any    `yaml:"permissions"`
 }
 
 type step struct {
@@ -148,7 +154,12 @@ func (t *triggerSet) UnmarshalYAML(value *yaml.Node) error {
 // (`merge_group:` is null, `push:` is a mapping), so unmarshalling is lenient
 // and a null trigger simply yields no branches.
 type triggerSpec struct {
-	Branches []string `yaml:"branches"`
+	Branches       []string `yaml:"branches"`
+	BranchesIgnore []string `yaml:"branches-ignore"`
+	Paths          []string `yaml:"paths"`
+	PathsIgnore    []string `yaml:"paths-ignore"`
+	Tags           []string `yaml:"tags"`
+	TagsIgnore     []string `yaml:"tags-ignore"`
 }
 
 func (t *triggerSpec) UnmarshalYAML(value *yaml.Node) error {
