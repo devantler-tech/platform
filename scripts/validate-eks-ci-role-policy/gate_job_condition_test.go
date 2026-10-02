@@ -93,9 +93,13 @@ func (j job) runsDespiteSkippedNeeds() bool {
 // A job that `needs:` a skipped job is itself skipped unless its condition
 // calls a status function, so pinning only the gate job's own `if:` would let
 // an `if: false` on any upstream job switch the gate off unseen. The walk stops
-// at a job that runs despite skipped needs, because past that point an upstream
-// condition no longer controls it. A dependency that cannot be read, or that
-// names no job in the workflow, is returned as a finding.
+// at a job that runs despite skipped needs: an upstream job being skipped no
+// longer skips it implicitly. Its own condition is still pinned, and it can
+// still read an upstream job's result or outputs — heal-prod-on-failure does —
+// so an upstream `if: false` can still stop it. That stops its deploy along
+// with its gate, so it cannot let anything reach production ungated. A
+// dependency that cannot be read, or that names no job in the workflow, is
+// returned as a finding.
 func gateDecidingJobs(name string, parsed workflow) (map[string]bool, []string) {
 	deciding := make(map[string]bool)
 	var findings []string
