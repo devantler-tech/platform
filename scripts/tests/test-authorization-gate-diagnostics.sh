@@ -98,11 +98,19 @@ step_shell_flags() {
 step_disarm() {
   local workflow="$1" selector has_condition condition='' tolerance
   selector=".jobs[\"${job}\"].steps[] | select(.name == \"${step}\")"
-  has_condition="$(yq -r "[${selector} | has(\"if\")] | any" "${workflow}")"
+  # A failed read is UNKNOWN: command substitution does not inherit errexit, so an
+  # unchecked yq error would yield an empty answer that reads as "no disarm".
+  if ! has_condition="$(yq -r "[${selector} | has(\"if\")] | any" "${workflow}" 2>&1)" ||
+    ! tolerance="$(yq -r "[${selector} | .[\"continue-on-error\"] // false | tostring | select(. != \"false\")] | join(\", \")" "${workflow}" 2>&1)"; then
+    printf 'could not read the gate step in %s, so whether it is disarmed is UNKNOWN\n' "${workflow##*/}"
+    return 0
+  fi
   if [ "${has_condition}" = "true" ]; then
     condition="$(yq -r "[${selector} | select(has(\"if\")) | .if | tostring] | join(\", \")" "${workflow}")"
+  elif [ "${has_condition}" != "false" ]; then
+    printf 'could not read the gate step in %s, so whether it is disarmed is UNKNOWN\n' "${workflow##*/}"
+    return 0
   fi
-  tolerance="$(yq -r "[${selector} | .[\"continue-on-error\"] // false | tostring | select(. != \"false\")] | join(\", \")" "${workflow}")"
   if [ "${has_condition}" = "true" ]; then
     printf 'the gate step carries if: %s, so it can be skipped on the run it was meant to judge\n' "${condition}"
   fi
@@ -289,20 +297,39 @@ assert_disarm_reported expression '.["continue-on-error"] = "${{ inputs.skip-gat
   'carries continue-on-error: ${{ inputs.skip-gate }}'
 assert_disarm_reported default '.["continue-on-error"] = false' ''
 
-# A SECOND step carrying the gate's name, disarmed, beside the untouched first:
+# A SECOND step carrying the gate's name, disarmed, beside an untouched first:
 # every read must fold both into one answer rather than split into two lines.
+# Written out rather than derived with a yq update: a self-referencing `+=`
+# evaluates differently across yq releases (measured: it produced this case
+# locally and not on the CI runner), and the fixture must not depend on that.
 duplicated="${work_dir}/disarmed-duplicate.yaml"
-cp "${root_dir}/.github/workflows/ci.yaml" "${duplicated}"
-yq -i ".jobs[\"${job}\"].steps += [(.jobs[\"${job}\"].steps[] | select(.name == \"${step}\") | .if = false)]" \
-  "${duplicated}"
+cat >"${duplicated}" <<EOF
+jobs:
+  ${job}:
+    steps:
+      - name: ${step}
+        run: go run ./scripts/validate-eks-ci-role-policy .
+      - name: ${step}
+        if: false
+        run: go run ./scripts/validate-eks-ci-role-policy .
+EOF
 if [ "$(yq -r "[.jobs[\"${job}\"].steps[] | select(.name == \"${step}\")] | length" "${duplicated}")" != "2" ]; then
-  fail 'ABLATION duplicate: the second gate step was not added, so this control proves nothing'
+  fail 'ABLATION duplicate: the fixture does not hold two gate steps, so this control proves nothing'
 else
   case "$(step_disarm "${duplicated}")" in
     *'carries if: false'*) : ;;
-    *) fail "ABLATION duplicate: a disarmed second step with the gate's name was not reported" ;;
+    *) fail "ABLATION duplicate: a disarmed second step with the gate's name was not reported (got: '$(step_disarm "${duplicated}")')" ;;
   esac
 fi
+
+# An unreadable workflow is UNKNOWN, never "no disarm": a yq failure inside the
+# reads must surface as a finding rather than an empty answer.
+unreadable="${work_dir}/disarmed-unreadable.yaml"
+printf 'jobs: [unclosed\n' >"${unreadable}"
+case "$(step_disarm "${unreadable}")" in
+  *'could not read'*) : ;;
+  *) fail "ABLATION unreadable: a workflow yq cannot parse read as carrying no disarm" ;;
+esac
 
 if [ "${failures}" -ne 0 ]; then
   printf '%s: %d assertion(s) failed\n' "$(basename "$0")" "${failures}" >&2
