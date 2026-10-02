@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"net"
 	"reflect"
 	"strings"
 )
@@ -43,6 +44,11 @@ umask 077
 access=$(cat /credentials/ACCESS_KEY_ID)
 password=$(cat /credentials/SECRET_ACCESS_KEY)
 test "$(cat /credentials/REGION)" = auto
+# Test the Pod IP directly: the Service publishes only 9000 and would hide an
+# unrestricted management listener even if the network policy were missing.
+nc -z -w 5 "${S3_POD_IP:?}" 9000 >/dev/null 2>&1
+if nc -z -w 3 "$S3_POD_IP" 19000 >/dev/null 2>&1; then exit 1; fi
+nc -z -w 5 "$S3_POD_IP" 9000 >/dev/null 2>&1
 printf '{"url":"http://minio:9000","accessKey":"%s","secretKey":"%s","api":"S3v4","path":"on"}' "$access" "$password" >/tmp/alias.json
 mc --config-dir /tmp/mc alias import local /tmp/alias.json >/dev/null 2>&1
 unset access password
@@ -67,6 +73,33 @@ func randomCredential(size int) (string, error) {
 		return "", refused
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func bindPeerAddress(p, server object, run string) error {
+	ip := net.ParseIP(str(server, "status", "podIP"))
+	if !owned(server, "minio", "wedding-bootstrap-"+run, run) || ip == nil || !ip.IsGlobalUnicast() {
+		return refused
+	}
+	c := at(p, "spec", "containers").([]any)[0].(map[string]any)
+	c["env"] = append(at(c, "env").([]any), object{"name": "S3_POD_IP", "value": ip.String()})
+	return nil
+}
+
+func unchangedPeerServer(before, after object, run string) bool {
+	name, ns := "minio", "wedding-bootstrap-"+run
+	statuses, _ := at(before, "status", "containerStatuses").([]any)
+	if !owned(before, name, ns, run) || !owned(after, name, ns, run) || !ready(before) || !ready(after) ||
+		at(before, "metadata", "deletionTimestamp") != nil || at(after, "metadata", "deletionTimestamp") != nil ||
+		str(before, "metadata", "uid") != str(after, "metadata", "uid") ||
+		str(before, "status", "podIP") == "" || str(before, "status", "podIP") != str(after, "status", "podIP") || len(statuses) != 1 {
+		return false
+	}
+	status, ok := statuses[0].(map[string]any)
+	if !ok || str(status, "name") != "minio" || str(status, "state", "running", "startedAt") == "" {
+		return false
+	}
+	count, ok := status["restartCount"].(float64)
+	return ok && count >= 0 && reflect.DeepEqual(statuses, at(after, "status", "containerStatuses"))
 }
 
 func unchangedSource(before, after object) bool {

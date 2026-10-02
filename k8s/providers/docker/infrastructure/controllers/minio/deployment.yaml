@@ -1,19 +1,18 @@
 ---
-# Local-only stand-in for Cloudflare R2 so Velero + CNPG exercise the
-# exact same S3 code path in CI as in prod. Single replica, ephemeral
+# Local-only SeaweedFS stand-in for Cloudflare R2, retaining the minio:9000
+# S3 endpoint used by Velero and CNPG. Single replica, ephemeral
 # emptyDir storage -- backups themselves are throw-away here; what
 # matters is that the backup/restore flow runs end-to-end.
 #
-# The archived community build is temporary and receives no security updates.
-# It serves disposable test storage only; production backups use Cloudflare R2.
-# Replacement: https://github.com/devantler-tech/platform/issues/4326.
-# Keep the 2025.4.22 release: the later 2025.7.23 build rejects Velero's
-# ordinary S3 access keys with strict 32-character SigV4 validation.
+# Production backups use Cloudflare R2. This component serves disposable storage.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: minio
   namespace: minio
+  annotations:
+    # This script contains shell parameter expansion, not Flux variables.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
   labels:
     app.kubernetes.io/name: minio
 spec:
@@ -28,12 +27,11 @@ spec:
       labels:
         app.kubernetes.io/name: minio
     spec:
-      # minio is a pure S3 server and never calls the Kubernetes API, so it has
+      # The S3 server never calls the Kubernetes API, so it has
       # no use for a mounted ServiceAccount token (kubescape C-0034).
       automountServiceAccountToken: false
-      # Invoke the server binary directly, without the distribution's setup
-      # wrapper. fsGroup makes the data and temporary emptyDirs writable by the
-      # high unprivileged UID even though the image declares UID 1001.
+      # fsGroup makes only the data and temporary emptyDirs writable. The
+      # distribution's ownership-changing entrypoint is not invoked.
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -43,39 +41,44 @@ spec:
           type: RuntimeDefault
       containers:
         - name: minio
-          image: docker.io/bitnamilegacy/minio:2025.7.23-debian-12-r1@sha256:ba958aa5e12c8b1426dd95de61d8f1ed14741efa0ec730019ed57086930a4299
+          image: docker.io/chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
           command:
-            - /opt/bitnami/minio/bin/minio
+            - /bin/sh
+            - -ec
           args:
-            - server
-            - /data
-            - --console-address
-            - :9001
-            - --certs-dir
-            - /tmp/certs
+            - |
+              umask 077
+              access=$(cat /etc/minio-credentials/rootUser)
+              password=$(cat /etc/minio-credentials/rootPassword)
+              case "$access" in ''|*[!A-Za-z0-9_+=/-]*) exit 1;; esac
+              case "$password" in ''|*[!A-Za-z0-9_+=/-]*) exit 1;; esac
+              test "${#access}" -ge 3
+              test "${#access}" -le 64
+              test "${#password}" -ge 8
+              test "${#password}" -le 128
+              test "$(wc -c </etc/minio-credentials/rootUser)" -eq "${#access}"
+              test "$(wc -c </etc/minio-credentials/rootPassword)" -eq "${#password}"
+              printf '{"identities":[{"name":"fixture","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","List","Tagging","Write"]}]}' "$access" "$password" >/tmp/s3.json
+              unset access password
+              exec /usr/bin/weed -logtostderr=true server -dir=/data -filer -s3 \
+                -ip=127.0.0.1 -ip.bind=127.0.0.1 -s3.ip.bind=0.0.0.0 \
+                -s3.port=9000 -s3.port.grpc=19000 -s3.config=/tmp/s3.json -s3.iam=false \
+                -s3.port.iceberg=0 -s3.port.lance=0 -master.telemetry=false \
+                -master.volumeSizeLimitMB=64 -volume.max=4
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
             readOnlyRootFilesystem: true
-          # Root credentials are read from the mounted Secret rather than passed
-          # as environment variables (checkov CKV_K8S_35). MinIO resolves the
-          # *_FILE form by reading the file's contents at startup; these two
-          # variables carry a path, not a credential, so nothing sensitive is
-          # left in the process environment. The unsuffixed MINIO_ROOT_USER /
-          # MINIO_ROOT_PASSWORD take precedence when set, so they must stay
-          # absent for the file form to be used at all.
-          env:
-            - name: MINIO_ROOT_USER_FILE
-              value: /etc/minio-credentials/rootUser
-            - name: MINIO_ROOT_PASSWORD_FILE
-              value: /etc/minio-credentials/rootPassword
+          # The shell's printf builtin generates one private identity file from
+          # required, JSON-safe mounted keys. Empty/malformed keys stop startup;
+          # credential bytes never enter environment variables or process argv.
+          # Internal HTTP APIs bind loopback; Cilium permits only S3 HTTP
+          # ingress from Pod peers, blocking the additional management gRPC port.
           ports:
             - name: api
               containerPort: 9000
-            - name: console
-              containerPort: 9001
           readinessProbe:
             tcpSocket:
               port: api

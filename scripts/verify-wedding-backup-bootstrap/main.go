@@ -37,6 +37,28 @@ const baoImage = "quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd
 const mcImage = "quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f"
 const toolsImage = "docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8"
 
+// This reviewed startup tuple must match the local-provider recipe. The fixture
+// refuses a configuration that could omit authentication or expose other APIs.
+const s3ServerScript = `umask 077
+access=$(cat /etc/minio-credentials/rootUser)
+password=$(cat /etc/minio-credentials/rootPassword)
+case "$access" in ''|*[!A-Za-z0-9_+=/-]*) exit 1;; esac
+case "$password" in ''|*[!A-Za-z0-9_+=/-]*) exit 1;; esac
+test "${#access}" -ge 3
+test "${#access}" -le 64
+test "${#password}" -ge 8
+test "${#password}" -le 128
+test "$(wc -c </etc/minio-credentials/rootUser)" -eq "${#access}"
+test "$(wc -c </etc/minio-credentials/rootPassword)" -eq "${#password}"
+printf '{"identities":[{"name":"fixture","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","List","Tagging","Write"]}]}' "$access" "$password" >/tmp/s3.json
+unset access password
+exec /usr/bin/weed -logtostderr=true server -dir=/data -filer -s3 \
+  -ip=127.0.0.1 -ip.bind=127.0.0.1 -s3.ip.bind=0.0.0.0 \
+  -s3.port=9000 -s3.port.grpc=19000 -s3.config=/tmp/s3.json -s3.iam=false \
+  -s3.port.iceberg=0 -s3.port.lance=0 -master.telemetry=false \
+  -master.volumeSizeLimitMB=64 -volume.max=4
+`
+
 var digits = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 var uuid = regexp.MustCompile(`^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`)
 
@@ -112,10 +134,10 @@ func validateRecipe(r recipe) error {
 		return refused
 	}
 	c, ok := containers[0].(map[string]any)
-	if !ok || !regexp.MustCompile(`^docker\.io/bitnamilegacy/minio:[0-9.]+-debian-12-r[0-9]+@sha256:[a-f0-9]{64}$`).MatchString(str(c, "image")) {
+	if !ok || !regexp.MustCompile(`^docker\.io/chrislusf/seaweedfs:[0-9]+\.[0-9]+@sha256:[a-f0-9]{64}$`).MatchString(str(c, "image")) {
 		return refused
 	}
-	if !reflect.DeepEqual(at(c, "env"), []any{object{"name": "MINIO_ROOT_USER_FILE", "value": "/etc/minio-credentials/rootUser"}, object{"name": "MINIO_ROOT_PASSWORD_FILE", "value": "/etc/minio-credentials/rootPassword"}}) {
+	if at(c, "env") != nil || at(c, "envFrom") != nil || !reflect.DeepEqual(at(c, "command"), []any{"/bin/sh", "-ec"}) || !reflect.DeepEqual(at(c, "args"), []any{s3ServerScript}) {
 		return refused
 	}
 	return nil
@@ -169,6 +191,7 @@ ui = false
 	pull["spec"].(map[string]any)["secretStoreRef"] = object{"name": "fixture-openbao", "kind": "SecretStore"}
 	pull["spec"].(map[string]any)["refreshInterval"] = "5s"
 	pull["spec"].(map[string]any)["target"].(map[string]any)["template"].(map[string]any)["metadata"] = object{"labels": object{ownerKey: run}}
+	apiPorts := []any{object{"ports": []any{object{"port": "9000", "protocol": "TCP"}, object{"port": "8200", "protocol": "TCP"}}}}
 	return []object{
 		{"apiVersion": "v1", "kind": "Namespace", "metadata": nsm},
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta("openbao-config", ns, run), "data": object{"config.hcl": config}},
@@ -178,7 +201,7 @@ ui = false
 		{"apiVersion": "v1", "kind": "Pod", "metadata": podmeta("minio", minioLabels), "spec": minioSpec},
 		{"apiVersion": "v1", "kind": "Service", "metadata": meta("openbao", ns, run), "spec": object{"selector": baoLabels, "ports": []any{object{"port": 8200, "targetPort": 8200}}}},
 		{"apiVersion": "v1", "kind": "Service", "metadata": meta("minio", ns, run), "spec": object{"selector": minioLabels, "ports": []any{object{"port": 9000, "targetPort": 9000}}}},
-		{"apiVersion": "cilium.io/v2", "kind": "CiliumNetworkPolicy", "metadata": meta("fixture-isolation", ns, run), "spec": object{"endpointSelector": object{}, "ingress": []any{object{"fromEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": ns}}, object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": "external-secrets"}}}}, object{"fromEntities": []any{"host", "remote-node", "kube-apiserver"}}}, "egress": []any{object{"toEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": ns}}}}, object{"toEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": "kube-system", "k8s-app": "kube-dns"}}}, "toPorts": []any{object{"ports": []any{object{"port": "53", "protocol": "UDP"}, object{"port": "53", "protocol": "TCP"}}}}}}}},
+		{"apiVersion": "cilium.io/v2", "kind": "CiliumNetworkPolicy", "metadata": meta("fixture-isolation", ns, run), "spec": object{"endpointSelector": object{}, "ingress": []any{object{"fromEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": ns}}, object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": "external-secrets"}}}, "toPorts": apiPorts}, object{"fromEntities": []any{"host", "remote-node", "kube-apiserver"}, "toPorts": apiPorts}}, "egress": []any{object{"toEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": ns}}}}, object{"toEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": "kube-system", "k8s-app": "kube-dns"}}}, "toPorts": []any{object{"ports": []any{object{"port": "53", "protocol": "UDP"}, object{"port": "53", "protocol": "TCP"}}}}}}}},
 		push, pull,
 	}, nil
 }

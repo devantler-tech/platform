@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -121,20 +123,142 @@ func TestProductionRecipeRefusesCredentialAndDestinationDrift(t *testing.T) {
 	}
 }
 
-func TestFixtureAcceptsPinnedCommunityServerAndRefusesForeignOrUnpinnedImages(t *testing.T) {
+func TestFixtureAcceptsMaintainedServerAndRefusesArchivedForeignOrUnpinnedImages(t *testing.T) {
 	r := recipeForTest(t)
 	c := at(r.minio, "spec", "template", "spec", "containers").([]any)[0].(map[string]any)
-	c["image"] = "docker.io/bitnamilegacy/minio:2025.4.22-debian-12-r1@sha256:d7cd0e172c4cc0870f4bdc3142018e2a37be9acf04d68f386600daad427e0cab"
+	c["image"] = "docker.io/chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
 	if _, err := fixture("1234", r, "fixtureAccess123456", "fixturePassword1234567890"); err != nil {
-		t.Fatal("pinned community server cannot be used for the disposable fixture")
+		t.Fatal("maintained pinned server cannot be used for the disposable fixture")
 	}
 	for _, image := range []string{
+		"docker.io/chrislusf/seaweedfs:latest",
+		"docker.io/chrislusf/seaweedfs:4.48",
 		"docker.io/bitnamilegacy/minio:latest",
+		"docker.io/bitnamilegacy/minio:2025.7.23-debian-12-r1@sha256:ba958aa5e12c8b1426dd95de61d8f1ed14741efa0ec730019ed57086930a4299",
 		"docker.io/foreign/minio:2025.4.22-debian-12-r1@sha256:d7cd0e172c4cc0870f4bdc3142018e2a37be9acf04d68f386600daad427e0cab",
 	} {
 		c["image"] = image
 		if validateRecipe(r) == nil {
 			t.Fatal("unreviewed server image accepted")
+		}
+	}
+}
+
+func TestServerStartupRefusesMissingEmptyOrUnsafeCredentialFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name, access, password string
+		missing, valid         bool
+	}{
+		{"local", "minio", "minio-local-development-only", false, true},
+		{"generated", "fixtureAccess123456", "fixturePassword1234567890", false, true},
+		{"missing", "", "", true, false},
+		{"empty-access", "", "fixturePassword1234567890", false, false},
+		{"empty-secret", "fixtureAccess123456", "", false, false},
+		{"short-access", "ab", "fixturePassword1234567890", false, false},
+		{"short-secret", "fixtureAccess123456", "1234567", false, false},
+		{"oversized-secret", "fixtureAccess123456", strings.Repeat("a", 129), false, false},
+		{"quoted", "fixtureAccess123456", "bad\"secret-value", false, false},
+		{"backslash", "fixtureAccess123456", `bad\secret-value`, false, false},
+		{"newline", "fixtureAccess123456", "secret-value\n", false, false},
+		{"oversized", strings.Repeat("a", 65), "fixturePassword1234567890", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := recipeForTest(t)
+			c := at(r.minio, "spec", "template", "spec", "containers").([]any)[0].(map[string]any)
+			args := at(c, "args").([]any)
+			if len(args) != 1 {
+				t.Fatal("server has no fail-closed startup script")
+			}
+			dir := t.TempDir()
+			config := filepath.Join(dir, "s3.json")
+			invoked := filepath.Join(dir, "invoked")
+			if !tc.missing {
+				if err := os.WriteFile(filepath.Join(dir, "rootUser"), []byte(tc.access), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "rootPassword"), []byte(tc.password), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			weed := filepath.Join(dir, "weed")
+			if err := os.WriteFile(weed, []byte("#!/bin/sh\n: > '"+invoked+"'\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			script := strings.NewReplacer("/etc/minio-credentials", dir, "/tmp/s3.json", config, "/usr/bin/weed", weed).Replace(args[0].(string))
+			cmd := exec.Command("/bin/sh", "-ec", script)
+			cmd.Env = []string{"PATH=/usr/bin:/bin", "LC_ALL=C"}
+			err := cmd.Run()
+			_, called := os.Stat(invoked)
+			if !tc.valid {
+				if err == nil || !os.IsNotExist(called) {
+					t.Fatal("unsafe credentials launched the S3 server")
+				}
+				return
+			}
+			if err != nil || called != nil {
+				t.Fatal("valid file credentials could not launch server")
+			}
+			b, err := os.ReadFile(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got object
+			if json.Unmarshal(b, &got) != nil {
+				t.Fatal("invalid S3 configuration")
+			}
+			want := object{"identities": []any{object{"name": "fixture", "credentials": []any{object{"accessKey": tc.access, "secretKey": tc.password}}, "actions": []any{"Admin", "Read", "List", "Tagging", "Write"}}}}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatal("server configuration has another or anonymous identity")
+			}
+			info, err := os.Stat(config)
+			if err != nil || info.Mode().Perm() != 0600 {
+				t.Fatal("generated credential file is not private")
+			}
+		})
+	}
+}
+
+func TestS3NetworkBoundariesHaveNoUnrestrictedIngressRule(t *testing.T) {
+	local, err := readObject("../../k8s/providers/docker/infrastructure/controllers/minio/cilium-network-policy.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := fixture("1234", recipeForTest(t), "fixtureAccess123456", "fixturePassword1234567890")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := []object{local}
+	for _, item := range items {
+		if str(item, "kind") == "CiliumNetworkPolicy" {
+			policies = append(policies, item)
+		}
+	}
+	if len(policies) != 2 {
+		t.Fatal("missing S3 ingress policy")
+	}
+	for _, policy := range policies {
+		rules := at(policy, "spec", "ingress").([]any)
+		if len(rules) == 0 {
+			t.Fatal("missing S3 ingress restriction")
+		}
+		for _, value := range rules {
+			rule := value.(map[string]any)
+			groups, _ := rule["toPorts"].([]any)
+			if len(groups) == 0 {
+				t.Fatal("S3 ingress rule allows the management listener")
+			}
+			for _, group := range groups {
+				ports, _ := group.(map[string]any)["ports"].([]any)
+				if len(ports) == 0 {
+					t.Fatal("unbounded S3 ingress ports")
+				}
+				for _, value := range ports {
+					port := value.(map[string]any)
+					if str(port, "protocol") != "TCP" || (str(port, "port") != "9000" && (str(policy, "metadata", "name") != "fixture-isolation" || str(port, "port") != "8200")) {
+						t.Fatal("S3 ingress permits a management port")
+					}
+				}
+			}
 		}
 	}
 }

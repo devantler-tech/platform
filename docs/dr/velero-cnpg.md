@@ -171,26 +171,33 @@ CSI snapshots need cluster-wide plumbing that the hetzner overlay adds:
   advance the server name in the same reviewed recovery change that creates the
   new Cluster. Do not change it for an ordinary rollout of a healthy Cluster.
 
-## Local clusters: MinIO replaces R2
+## Local clusters: disposable S3 storage replaces R2
 
-Same Velero install, different backend. Local uses an in-cluster
-**Bitnami MinIO** chart (single replica, ephemeral storage) so the entire
-S3 code path runs end-to-end in CI. The redirection happens via Flux
-variable overrides in `k8s/clusters/local/bootstrap/`:
+The optional local backup components use a pinned **SeaweedFS** Deployment
+with one replica and ephemeral storage. The existing `minio` resource names
+and S3 endpoint remain compatible with Velero and CNPG configuration. Enable
+the components explicitly for a manual restore drill; ordinary CI validates
+manifests without creating a cluster. Flux variable overrides in
+`k8s/clusters/local/bootstrap/` select the local backend:
 
 | Variable               | Local value                                       |
 | ---------------------- | ------------------------------------------------- |
 | `r2_endpoint`          | `http://minio.minio.svc.cluster.local:9000`       |
-| `r2_region`            | `us-east-1` (MinIO ignores; Velero requires)      |
+| `r2_region`            | `us-east-1`                                       |
 | `r2_bucket`            | `platform-backups`                                |
 | `r2_access_key_id`     | `minio` (SOPS-encrypted)                          |
 | `r2_secret_access_key` | `minio-local-development-only` (SOPS-encrypted)   |
 
-No code changes between local and prod — only the variable values differ.
-This is the whole point of the substitution layer: the CI restore drill
-(see [restore-drill.md](./restore-drill.md))
-exercises the *exact* same `velero backup` / `velero restore` calls
-that an operator would run against R2 in prod.
+Velero uses the same backup and restore commands with these endpoint overrides.
+The server starts as UID/GID 65532 with a read-only root filesystem and no
+capabilities or ServiceAccount token. Its launcher requires valid mounted
+credential files and creates one private S3 identity; missing, empty or
+malformed credentials stop startup. Internal HTTP APIs bind loopback, and the
+network policy permits only S3 HTTP ingress from Pod peers, blocking their access
+to the additional management gRPC listener. This does not claim isolation from
+trusted node processes. See [restore-drill.md](./restore-drill.md) for the full manual drill.
+Fixture S3 operations and the protected Wedding bootstrap verification do not
+establish a real Velero/CNPG restore or production R2 compatibility.
 
 Wedding is deliberately absent from the Docker apps overlay because its tenant
 deployment depends on production-only GHCR, CNPG, and Longhorn resources. The
@@ -199,7 +206,7 @@ dedicated Wedding bootstrap credential nor an unused `wedding-db-backups`
 bucket. Dedicated ObjectStore acceptance uses the hosted manifest checks and a
 live production backup, WAL archive, and isolated restore instead.
 
-The MinIO credentials are hard-coded local-only secrets. They are
+The S3 credentials are hard-coded local-only secrets. They are
 SOPS-encrypted at rest per the platform-wide rule, but they are not
 sensitive — the bucket is in-cluster and ephemeral, accessible only from
 inside the local Docker cluster, and is wiped on every
