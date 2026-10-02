@@ -24,6 +24,7 @@ import (
 	"os"
 	"regexp"
 	"regexp/syntax"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -489,6 +490,10 @@ func scanForDuplicateKeys(dec *json.Decoder, scope foldScope) error {
 // rather than of its spelling, so no internal structure can widen it. Already-anchored values stay
 // correct — the anchors are zero-width and still match at the same positions.
 func compileFullMatch(pattern string) (*regexp.Regexp, error) {
+	if err := refuseUndecidableConstructs(pattern); err != nil {
+		return nil, err
+	}
+
 	re, err := regexp.Compile("^(?:" + pattern + ")$")
 	if err != nil {
 		return nil, err
@@ -519,13 +524,103 @@ func compileFullMatch(pattern string) (*regexp.Regexp, error) {
 	return re, nil
 }
 
+// refuseUndecidableConstructs refuses the constructs canMatchNonEmpty cannot
+// decide exactly (#4086), naming the construct.
+//
+//   - A word boundary (`\b`, `\B`) depends on the characters around it, which
+//     the analysis does not model, so `a\bb` reads as matchable and never is.
+//   - A multi-line anchor (`(?m)^`, `(?m)$`) holds mid-string at a newline, so
+//     `(?m)a^b` reads as matchable and never is.
+//   - A text anchor that input can be consumed before (`^`) or after (`$`) is
+//     unsatisfiable on that path. The analysis catches that only when the anchor
+//     and the consuming input are siblings in one concatenation; inside an
+//     alternative or a repetition — `(?:a$|b$)c`, `(?:a$)+b` — it does not.
+//
+// An anchor at the start or end of the pattern, or of one of its top-level
+// alternatives, can have no input consumed on its outer side, so every real
+// shape the generator emits is unaffected. The test is structural: an anchor is
+// refused when any element on its outer side CAN consume input, without asking
+// whether that element can also match, which errs toward refusing.
+func refuseUndecidableConstructs(pattern string) error {
+	parsed, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		return fmt.Errorf("parse %q: %w", pattern, err)
+	}
+
+	if construct := undecidableConstruct(parsed, false, false); construct != "" {
+		return fmt.Errorf("pattern %q uses a %s, which the check that refuses never-matching "+
+			"patterns cannot decide; anchor only at the start or end of the pattern or of a "+
+			"top-level alternative, and drop word boundaries and (?m)", pattern, construct)
+	}
+
+	return nil
+}
+
+// undecidableConstruct names the first construct in r that canMatchNonEmpty
+// cannot decide, or returns "". before and after report whether input can be
+// consumed on either side of r within the whole pattern.
+func undecidableConstruct(r *syntax.Regexp, before, after bool) string {
+	switch r.Op {
+	case syntax.OpWordBoundary, syntax.OpNoWordBoundary:
+		return "word boundary"
+	case syntax.OpBeginLine, syntax.OpEndLine:
+		return "multi-line anchor"
+	case syntax.OpBeginText:
+		if before {
+			return "start anchor after consumable input"
+		}
+	case syntax.OpEndText:
+		if after {
+			return "end anchor before consumable input"
+		}
+	case syntax.OpConcat:
+		for i, sub := range r.Sub {
+			subBefore := before || slices.ContainsFunc(r.Sub[:i], canConsume)
+			subAfter := after || slices.ContainsFunc(r.Sub[i+1:], canConsume)
+
+			if construct := undecidableConstruct(sub, subBefore, subAfter); construct != "" {
+				return construct
+			}
+		}
+	case syntax.OpStar, syntax.OpPlus, syntax.OpRepeat:
+		// Another iteration can sit on either side of this one.
+		again := canConsume(r.Sub[0]) && (r.Op != syntax.OpRepeat || r.Max != 1)
+
+		return undecidableConstruct(r.Sub[0], before || again, after || again)
+	default:
+		for _, sub := range r.Sub {
+			if construct := undecidableConstruct(sub, before, after); construct != "" {
+				return construct
+			}
+		}
+	}
+
+	return ""
+}
+
+// canConsume reports whether any part of r consumes input, ignoring whether r
+// can match at all.
+func canConsume(r *syntax.Regexp) bool {
+	switch r.Op {
+	case syntax.OpLiteral, syntax.OpCharClass:
+		return len(r.Rune) > 0
+	case syntax.OpAnyChar, syntax.OpAnyCharNotNL:
+		return true
+	default:
+		return slices.ContainsFunc(r.Sub, canConsume)
+	}
+}
+
 // canMatchNonEmpty reports whether pattern can match at least one non-empty
 // string.
 //
-// It deliberately FAILS TOWARD TRUE: it answers false only when no part of the
-// expression can consume input at all. A false rejection breaks real artifacts,
-// which is the failure this branch has already made twice; a missed exotic
-// pattern only leaves the gap that existed before.
+// It is EXACT for the constructs refuseUndecidableConstructs admits — literals,
+// character classes, `.`, `*` `+` `?` and counted repetition, alternation,
+// grouping, and `^`/`$` with no consumable input on their outer side — which
+// TestVacuityCheckIsExactForAcceptedConstructs guards against an exhaustive
+// search. Outside them it fails toward true: a false rejection breaks real
+// artifacts, while a missed exotic pattern only leaves the gap that existed
+// before.
 //
 // Note that "matches the empty string" is NOT the question — `^(a|)$` matches
 // "" and also matches "a", and `^.*$` matches everything.
