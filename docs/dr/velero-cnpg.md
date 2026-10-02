@@ -193,8 +193,9 @@ The server starts as UID/GID 65532 with a read-only root filesystem and no
 capabilities or ServiceAccount token. Its launcher requires valid mounted
 credential files and creates one private S3 identity; missing, empty or
 malformed credentials stop startup. Internal HTTP APIs bind loopback, and the
-network policy permits only S3 HTTP ingress, blocking the additional management
-gRPC listener. See [restore-drill.md](./restore-drill.md) for the full manual drill.
+network policy permits only S3 HTTP ingress from Pod peers, blocking their access
+to the additional management gRPC listener. This does not claim isolation from
+trusted node processes. See [restore-drill.md](./restore-drill.md) for the full manual drill.
 Fixture S3 operations and the protected Wedding bootstrap verification do not
 establish a real Velero/CNPG restore or production R2 compatibility.
 

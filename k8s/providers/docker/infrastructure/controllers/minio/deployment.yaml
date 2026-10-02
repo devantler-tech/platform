@@ -75,7 +75,7 @@ spec:
           # required, JSON-safe mounted keys. Empty/malformed keys stop startup;
           # credential bytes never enter environment variables or process argv.
           # Internal HTTP APIs bind loopback; Cilium permits only S3 HTTP
-          # ingress and blocks the server's additional management gRPC port.
+          # ingress from Pod peers, blocking the additional management gRPC port.
           ports:
             - name: api
               containerPort: 9000

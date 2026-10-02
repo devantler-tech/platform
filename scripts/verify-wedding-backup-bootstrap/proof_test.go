@@ -102,6 +102,33 @@ func TestProbeChecksTheServerPodAddressInsteadOfTheFilteredService(t *testing.T)
 	if !strings.Contains(script, `nc -z -w 5 "${S3_POD_IP:?}" 9000`) || !strings.Contains(script, `if nc -z -w 3 "$S3_POD_IP" 19000`) {
 		t.Fatal("peer isolation proof could pass without testing the actual management listener")
 	}
+	if !strings.Contains(script, "then exit 1; fi\nnc -z -w 5 \"$S3_POD_IP\" 9000") {
+		t.Fatal("an unavailable server could count as management-port isolation")
+	}
+}
+
+func TestPeerProofRefusesARecreatedRestartedOrUnavailableServer(t *testing.T) {
+	server := object{"metadata": meta("minio", "wedding-bootstrap-1234", "1234"), "status": object{"podIP": "10.0.0.2", "conditions": []any{object{"type": "Ready", "status": "True"}}, "containerStatuses": []any{object{"name": "minio", "restartCount": float64(0), "state": object{"running": object{"startedAt": "2026-10-02T00:00:00Z"}}}}}}
+	server["metadata"].(map[string]any)["uid"] = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	if !unchangedPeerServer(server, copyObject(server), "1234") {
+		t.Fatal("stable ready server refused")
+	}
+	for _, mutate := range []func(object){
+		func(o object) { o["metadata"].(map[string]any)["uid"] = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee" },
+		func(o object) { o["metadata"].(map[string]any)["deletionTimestamp"] = "2026-10-02T00:00:00Z" },
+		func(o object) { o["status"].(map[string]any)["podIP"] = "10.0.0.3" },
+		func(o object) { at(o, "status", "conditions").([]any)[0].(map[string]any)["status"] = "False" },
+		func(o object) {
+			at(o, "status", "containerStatuses").([]any)[0].(map[string]any)["restartCount"] = float64(1)
+		},
+		func(o object) { o["status"].(map[string]any)["containerStatuses"] = []any{} },
+	} {
+		bad := copyObject(server)
+		mutate(bad)
+		if unchangedPeerServer(server, bad, "1234") {
+			t.Fatal("changed server could establish a false isolation result")
+		}
+	}
 }
 
 func TestPeerAddressIsBoundToAnOwnedFixturePod(t *testing.T) {

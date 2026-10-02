@@ -184,7 +184,7 @@ func prove(k client, r recipe) (err error) {
 		return e
 	}
 	server, e := k.get(ns, "pods", "minio")
-	if e != nil || bindPeerAddress(p, server, k.run) != nil {
+	if e != nil || !unchangedPeerServer(server, server, k.run) || bindPeerAddress(p, server, k.run) != nil {
 		return refused
 	}
 	if e = k.create(p); e != nil {
@@ -197,6 +197,10 @@ func prove(k client, r recipe) (err error) {
 		}
 		switch str(o, "status", "phase") {
 		case "Succeeded":
+			after, e := k.get(ns, "pods", "minio")
+			if e != nil || !unchangedPeerServer(server, after, k.run) {
+				return false, refused
+			}
 			return true, nil
 		case "Failed":
 			return false, refused
