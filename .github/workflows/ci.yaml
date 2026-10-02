@@ -401,6 +401,7 @@ jobs:
               # and the fixture guard.
               - 'tests/**'
               - 'scripts/tests/test-restrict-tenant-network-policies.sh'
+              - 'scripts/tests/test-add-default-deny-shape.sh'
               - 'scripts/tests/test-add-baseline-context.sh'
               - 'scripts/tests/test-longhorn-ui-baseline-context.sh'
               - 'scripts/tests/test-cilium-hubble-baseline-context.sh'
@@ -1423,6 +1424,8 @@ jobs:
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
           shellcheck scripts/tests/test-restrict-tenant-network-policies.sh
           bash scripts/tests/test-restrict-tenant-network-policies.sh
+          shellcheck scripts/tests/test-add-default-deny-shape.sh
+          bash scripts/tests/test-add-default-deny-shape.sh
           shellcheck scripts/tests/test-restrict-homepage-service-groups.sh
           bash scripts/tests/test-restrict-homepage-service-groups.sh
           shellcheck scripts/tests/test-kyverno-umami-mutation-rbac.sh
