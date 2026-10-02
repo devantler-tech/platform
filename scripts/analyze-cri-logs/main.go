@@ -67,19 +67,24 @@ var (
 	logMessage   = regexp.MustCompile(`(?:^|\s)msg=("(?:\\.|[^"\\])*")`)
 	pullPattern  = regexp.MustCompile(`^PullImage ("(?:\\.|[^"\\])*")(.*)$`)
 	uidPattern   = regexp.MustCompile(`(?:\buid:"|\bUid:)([a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})`)
-	criPattern   = regexp.MustCompile(`^(?:RunPodSandbox|PullImage|StopPodSandbox|RemovePodSandbox|CreateContainer|StartContainer|StopContainer|RemoveContainer|ContainerStatus|ImageStatus|ListImages)\b`)
+	criPattern   = regexp.MustCompile(`^(?:Version|RunPodSandbox|StopPodSandbox|RemovePodSandbox|PodSandboxStatus|ListPodSandbox|CreateContainer|StartContainer|StopContainer|RemoveContainer|ListContainers|ContainerStatus|UpdateContainerResources|ReopenContainerLog|ExecSync|Exec|Attach|PortForward|ContainerStats|ListContainerStats|PodSandboxStats|ListPodSandboxStats|UpdateRuntimeConfig|Status|CheckpointContainer|GetContainerEvents|ListMetricDescriptors|ListPodSandboxMetrics|RuntimeConfig|UpdatePodSandboxResources|ListImages|ImageStatus|PullImage|RemoveImage|ImageFsInfo)\b`)
 )
+
+func envelope(raw string) (string, string) {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "{") || strings.HasPrefix(raw, "time=") {
+		return "", raw
+	}
+	if prefix, rest, ok := strings.Cut(raw, ": "); ok && (strings.HasPrefix(rest, "{") || strings.HasPrefix(rest, "time=")) {
+		return prefix, rest
+	}
+	return "", raw
+}
 
 // Only structured envelope timestamps count. A timestamp in a message cannot
 // turn a malformed record into timing evidence.
 func parseLine(raw string) (time.Time, string, error) {
-	raw = strings.TrimSpace(raw)
-	if i := strings.Index(raw, ": "); i >= 0 {
-		rest := raw[i+2:]
-		if strings.HasPrefix(rest, "{") || strings.HasPrefix(rest, "time=") {
-			raw = rest
-		}
-	}
+	_, raw = envelope(raw)
 	var stamp, msg string
 	if strings.HasPrefix(raw, "{") {
 		var fields struct{ Time, Msg string }
@@ -150,7 +155,15 @@ func parseOperation(msg string) (operation, bool) {
 func analyze(label string, data io.Reader, from, to time.Time, slow time.Duration, r *report) (nodeStats, error) {
 	n := nodeStats{Label: label}
 	pending := map[string]pendingCall{}
+	invalidate := func() {
+		for _, p := range pending {
+			n.PendingStarts += p.count
+		}
+		clear(pending)
+	}
 	var earliest, latest, previous time.Time
+	var nodePrefix string
+	var havePrefix bool
 	scanner := bufio.NewScanner(data)
 	scanner.Buffer(make([]byte, 65536), maxLineBytes)
 	for scanner.Scan() {
@@ -158,8 +171,14 @@ func analyze(label string, data io.Reader, from, to time.Time, slow time.Duratio
 		when, msg, err := parseLine(scanner.Text())
 		if err != nil {
 			n.Malformed++
+			invalidate()
 			continue
 		}
+		prefix, _ := envelope(scanner.Text())
+		if havePrefix && prefix != nodePrefix {
+			return n, errors.New("mixed node prefixes or envelope styles")
+		}
+		nodePrefix, havePrefix = prefix, true
 		n.Parsed++
 		if earliest.IsZero() || when.Before(earliest) {
 			earliest = when
@@ -169,10 +188,7 @@ func analyze(label string, data io.Reader, from, to time.Time, slow time.Duratio
 		}
 		if !previous.IsZero() && when.Before(previous) {
 			n.OrderingGaps++
-			for _, p := range pending {
-				n.PendingStarts += p.count
-			}
-			clear(pending)
+			invalidate()
 		}
 		previous = when
 		inWindow := !when.Before(from) && !when.After(to)
@@ -183,6 +199,11 @@ func analyze(label string, data io.Reader, from, to time.Time, slow time.Duratio
 		if !ok {
 			if criPattern.MatchString(msg) {
 				n.Unsupported++
+			}
+			// An unrecognized record for a pairable method may be a lost
+			// terminal or retry start; do not pair across that uncertainty.
+			if strings.HasPrefix(msg, "RunPodSandbox ") || strings.HasPrefix(msg, "PullImage ") {
+				invalidate()
 			}
 			continue
 		}
@@ -322,7 +343,10 @@ func run(args []string, stdout io.Writer) int {
 		n, analyzeErr := analyze(label, io.TeeReader(limited, h), from, to, slow, &r)
 		after, statErr := f.Stat()
 		closeErr := f.Close()
-		if analyzeErr != nil || statErr != nil || closeErr != nil || limited.N == 0 {
+		if analyzeErr != nil {
+			return fail("input analysis refused: " + label + " (" + analyzeErr.Error() + ")")
+		}
+		if statErr != nil || closeErr != nil || limited.N == 0 {
 			return fail("input analysis failed or exceeded its limit: " + label)
 		}
 		if before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {

@@ -69,7 +69,7 @@ func invoke(t *testing.T, inputs map[string]string, extra ...string) (int, strin
 
 func TestPairBothFormatsAndDoNotLeakTargets(t *testing.T) {
 	secret := "https://registry.example/image?token=DO-NOT-EMIT"
-	data := "node-address: " + jsonLine("2026-10-02T09:59:59Z", "ready") +
+	data := jsonLine("2026-10-02T09:59:59Z", "ready") +
 		jsonLine("2026-10-02T10:00:00Z", sandbox) + jsonLine("2026-10-02T10:00:06Z", sandbox+" returns sandbox id abc") +
 		logfmtLine("2026-10-02T10:00:07Z", fmt.Sprintf("PullImage %q", secret)) +
 		logfmtLine("2026-10-02T10:00:10Z", fmt.Sprintf("PullImage %q returns image reference abc", secret)) +
@@ -225,10 +225,10 @@ func TestRejectOversizeLineAndDoNotEchoIt(t *testing.T) {
 
 func TestObservedProtobufFormatPreservesNanoSeconds(t *testing.T) {
 	metadata := `RunPodSandbox for name:"example-job"  uid:"` + uid + `"  namespace:"example"`
-	data := jsonLine("2026-10-02T09:59:59Z", "ready") +
+	data := "192.0.2.10: " + jsonLine("2026-10-02T09:59:59Z", "ready") +
 		"192.0.2.10: " + jsonLine("2026-10-02T10:00:00.100000001Z", metadata) +
 		"192.0.2.10: " + jsonLine("2026-10-02T10:00:12.200000001Z", metadata+` returns sandbox id "abc"`) +
-		jsonLine("2026-10-02T10:01:01Z", "ready")
+		"192.0.2.10: " + jsonLine("2026-10-02T10:01:01Z", "ready")
 	code, _, r, _ := invoke(t, map[string]string{"node-1": data})
 	if code != 0 || len(r.Samples) != 1 || r.Samples[0].Milliseconds != 12100 || r.Samples[0].PodUID != uid {
 		t.Fatalf("observed protobuf format lost: %d %+v", code, r)
@@ -312,5 +312,47 @@ func TestBoundedRegularInputAndNoSymlinkFollowing(t *testing.T) {
 	}
 	if _, err := os.Stat(output); !os.IsNotExist(err) {
 		t.Fatal("refused file wrote report")
+	}
+}
+
+func TestRejectMultiplexedNodePrefixes(t *testing.T) {
+	data := "192.0.2.10: " + jsonLine("2026-10-02T10:00:00Z", sandbox) +
+		"192.0.2.11: " + jsonLine("2026-10-02T10:00:05Z", sandbox+" returns sandbox id a")
+	code, _, _, output := invoke(t, map[string]string{"node-1": data})
+	if code != 2 {
+		t.Fatalf("cross-node timing accepted: %d", code)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatal("mixed node stream wrote report")
+	}
+}
+
+func TestMalformedGapInvalidatesPendingCalls(t *testing.T) {
+	data := jsonLine("2026-10-02T09:59:59Z", "ready") + jsonLine("2026-10-02T10:00:00Z", sandbox) +
+		"truncated terminal and lost retry start\n" + jsonLine("2026-10-02T10:00:15Z", sandbox+" returns sandbox id a") +
+		jsonLine("2026-10-02T10:01:01Z", "ready")
+	code, _, r, _ := invoke(t, map[string]string{"node-1": data})
+	if code != 1 || len(r.Nodes) != 1 || r.Nodes[0].Pairs != 0 || len(r.Samples) != 0 || r.Nodes[0].PendingStarts != 1 || r.Nodes[0].OrphanReturns != 1 {
+		t.Fatalf("pair manufactured across loss: %d %+v", code, r)
+	}
+}
+
+func TestPreviouslyOmittedCRIMethodsCountAsUnsupported(t *testing.T) {
+	data := jsonLine("2026-10-02T09:59:59Z", "ready") + jsonLine("2026-10-02T10:00:00Z", "ExecSync for container abc") +
+		jsonLine("2026-10-02T10:00:01Z", "PodSandboxStatus for sandbox abc") + jsonLine("2026-10-02T10:00:02Z", "ListPodSandbox with filter") +
+		jsonLine("2026-10-02T10:01:01Z", "ready")
+	code, _, r, _ := invoke(t, map[string]string{"node-1": data})
+	if code != 1 || len(r.Nodes) != 1 || r.Nodes[0].Unsupported != 3 {
+		t.Fatalf("unsupported CRI silently omitted: %d %+v", code, r)
+	}
+}
+
+func TestUnrecognizedPairableRecordInvalidatesPendingCalls(t *testing.T) {
+	data := jsonLine("2026-10-02T09:59:59Z", "ready") + jsonLine("2026-10-02T10:00:00Z", sandbox) +
+		jsonLine("2026-10-02T10:00:01Z", "RunPodSandbox for missing-identity returns error") +
+		jsonLine("2026-10-02T10:00:15Z", sandbox+" returns sandbox id a") + jsonLine("2026-10-02T10:01:01Z", "ready")
+	code, _, r, _ := invoke(t, map[string]string{"node-1": data})
+	if code != 1 || len(r.Nodes) != 1 || r.Nodes[0].Pairs != 0 || r.Nodes[0].PendingStarts != 1 || r.Nodes[0].Unsupported != 1 {
+		t.Fatalf("pair manufactured across unknown operation: %d %+v", code, r)
 	}
 }

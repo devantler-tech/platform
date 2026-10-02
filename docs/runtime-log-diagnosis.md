@@ -65,12 +65,17 @@ Exit codes are:
 | 2 | Analysis refused or input/output failed; no new report is retained. |
 
 JSON envelopes and `time=... level=... msg="..."` logfmt records are supported,
-including Talos's node-address prefix. A timestamp found only inside a message
-does not count. Unrecognized records, unsupported CRI methods, overlapping
+including Talos's node-address prefix. Mixed node prefixes or mixed prefixed and
+unprefixed envelopes in one file are refused. A timestamp found only inside a
+message does not count. Unrecognized records, known unsupported CRI methods, overlapping
 identities, unmatched results/starts and timestamp regressions are counted.
 Overlapping requests remain ambiguous until every outstanding result drains;
 the analyzer never guesses FIFO ordering. A clock regression invalidates all
-pending starts. Retries after a completed pair can form new independent pairs.
+pending starts. Malformed records or unrecognized records for the pairable
+methods also invalidate pending starts; timings cannot bridge those gaps.
+Retries after a completed pair can form new independent pairs. The known CRI
+method inventory is explicit in the parser; an otherwise structured message
+outside that inventory is not classified as a CRI operation.
 
 `Earliest`/`Latest` and `WindowBracketed` describe observed envelope timestamps.
 Even a bracketed window does not establish complete capture, absence of dropped
