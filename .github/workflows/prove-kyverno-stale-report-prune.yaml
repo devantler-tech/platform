@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/prove-kyverno-stale-report-prune.yaml
       - scripts/prove-kyverno-stale-report-prune.sh
+      - scripts/tests/test-kyverno-exemption-report.sh
       - tests/kyverno-stale-report-prune/**
       - k8s/bases/infrastructure/deleting-policies/**
       - k8s/bases/infrastructure/cluster-roles/kyverno-cleanup-policy-reports.yaml
@@ -36,6 +37,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+
+      - name: Check exemption report evidence
+        run: bash scripts/tests/test-kyverno-exemption-report.sh
 
       - name: Create a kind cluster
         env:
