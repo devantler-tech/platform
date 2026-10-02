@@ -72,7 +72,11 @@ identities, unmatched results/starts and timestamp regressions are counted.
 Overlapping requests remain ambiguous until every outstanding result drains;
 the analyzer never guesses FIFO ordering. A clock regression invalidates all
 pending starts. Malformed records or unrecognized records for the pairable
-methods also invalidate pending starts; timings cannot bridge those gaps.
+methods also invalidate pending starts; timings cannot bridge those gaps. Their
+identities remain quarantined for the rest of that input, with later starts
+counted as `QuarantinedStarts` and results as ambiguous. A retry cannot absorb
+the delayed result of an earlier invalidated request. Use a new independent
+finite capture for fresh evidence rather than clearing this uncertainty.
 Retries after a completed pair can form new independent pairs. The known CRI
 method inventory is explicit in the parser; an otherwise structured message
 outside that inventory is not classified as a CRI operation.

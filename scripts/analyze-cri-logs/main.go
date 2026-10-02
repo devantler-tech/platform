@@ -35,6 +35,7 @@ type nodeStats struct {
 	Label                                                                           string
 	Lines, Parsed, Malformed, Unsupported, Starts, Returns, Pairs, FailedPairs      int
 	OverlappingStarts, AmbiguousReturns, OrphanReturns, PendingStarts, OrderingGaps int
+	QuarantinedStarts                                                               int
 	OutsideWindow, WindowPairs, SlowPairs                                           int
 	Earliest, Latest                                                                string
 	WindowBracketed                                                                 bool
@@ -155,9 +156,11 @@ func parseOperation(msg string) (operation, bool) {
 func analyze(label string, data io.Reader, from, to time.Time, slow time.Duration, r *report) (nodeStats, error) {
 	n := nodeStats{Label: label}
 	pending := map[string]pendingCall{}
+	quarantined := map[string]bool{}
 	invalidate := func() {
-		for _, p := range pending {
+		for key, p := range pending {
 			n.PendingStarts += p.count
+			quarantined[key] = true
 		}
 		clear(pending)
 	}
@@ -210,6 +213,10 @@ func analyze(label string, data io.Reader, from, to time.Time, slow time.Duratio
 		p := pending[op.key]
 		if op.stage == "start" {
 			n.Starts++
+			if quarantined[op.key] {
+				n.QuarantinedStarts++
+				continue
+			}
 			if p.count == 0 {
 				p = pendingCall{start: when, op: op}
 			} else {
@@ -218,12 +225,16 @@ func analyze(label string, data io.Reader, from, to time.Time, slow time.Duratio
 			}
 			p.count++
 			pending[op.key] = p
-			if len(pending) > maxPending || p.count > maxPending {
+			if len(pending)+len(quarantined) > maxPending || p.count > maxPending {
 				return n, errors.New("pending-operation limit exceeded")
 			}
 			continue
 		}
 		n.Returns++
+		if quarantined[op.key] {
+			n.AmbiguousReturns++
+			continue
+		}
 		if p.count == 0 {
 			n.OrphanReturns++
 			continue
@@ -278,7 +289,7 @@ func analyze(label string, data io.Reader, from, to time.Time, slow time.Duratio
 }
 
 func hasGaps(n nodeStats) bool {
-	return n.Malformed+n.Unsupported+n.OverlappingStarts+n.AmbiguousReturns+n.OrphanReturns+n.PendingStarts+n.OrderingGaps > 0 || !n.WindowBracketed
+	return n.Malformed+n.Unsupported+n.OverlappingStarts+n.AmbiguousReturns+n.OrphanReturns+n.PendingStarts+n.OrderingGaps+n.QuarantinedStarts > 0 || !n.WindowBracketed
 }
 
 func run(args []string, stdout io.Writer) int {

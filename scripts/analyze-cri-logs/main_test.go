@@ -332,7 +332,7 @@ func TestMalformedGapInvalidatesPendingCalls(t *testing.T) {
 		"truncated terminal and lost retry start\n" + jsonLine("2026-10-02T10:00:15Z", sandbox+" returns sandbox id a") +
 		jsonLine("2026-10-02T10:01:01Z", "ready")
 	code, _, r, _ := invoke(t, map[string]string{"node-1": data})
-	if code != 1 || len(r.Nodes) != 1 || r.Nodes[0].Pairs != 0 || len(r.Samples) != 0 || r.Nodes[0].PendingStarts != 1 || r.Nodes[0].OrphanReturns != 1 {
+	if code != 1 || len(r.Nodes) != 1 || r.Nodes[0].Pairs != 0 || len(r.Samples) != 0 || r.Nodes[0].PendingStarts != 1 || r.Nodes[0].AmbiguousReturns != 1 {
 		t.Fatalf("pair manufactured across loss: %d %+v", code, r)
 	}
 }
@@ -354,5 +354,18 @@ func TestUnrecognizedPairableRecordInvalidatesPendingCalls(t *testing.T) {
 	code, _, r, _ := invoke(t, map[string]string{"node-1": data})
 	if code != 1 || len(r.Nodes) != 1 || r.Nodes[0].Pairs != 0 || r.Nodes[0].PendingStarts != 1 || r.Nodes[0].Unsupported != 1 {
 		t.Fatalf("pair manufactured across unknown operation: %d %+v", code, r)
+	}
+}
+
+func TestRetryCannotStealDelayedResultAfterInvalidation(t *testing.T) {
+	key := `PullImage "registry.example/image:tag"`
+	for _, gap := range []string{"malformed record\n", jsonLine("2026-10-02T10:00:01Z", "PullImage unrecognized terminal"), jsonLine("2026-10-02T09:59:59Z", "clock regressed")} {
+		data := jsonLine("2026-10-02T09:59:58Z", "ready") + jsonLine("2026-10-02T10:00:00Z", key) + gap +
+			jsonLine("2026-10-02T10:00:02Z", key) + jsonLine("2026-10-02T10:00:03Z", key+" returns image reference a") +
+			jsonLine("2026-10-02T10:00:04Z", key+" returns image reference b") + jsonLine("2026-10-02T10:01:01Z", "ready")
+		code, _, r, _ := invoke(t, map[string]string{"node-1": data})
+		if code != 1 || len(r.Nodes) != 1 || r.Nodes[0].Pairs != 0 || len(r.Samples) != 0 || r.Nodes[0].AmbiguousReturns != 2 {
+			t.Fatalf("retry stole delayed result after gap: %d %+v", code, r)
+		}
 	}
 }
