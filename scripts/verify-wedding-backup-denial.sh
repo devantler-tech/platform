@@ -33,6 +33,9 @@ readonly shared_secret='wedding-db-backup-r2'
 readonly dedicated_secret='wedding-db-backup-r2-dedicated'
 readonly catalogue_prefix='cnpg/wedding-db'
 readonly dedicated_bucket='wedding-db-backups'
+# The pod script names its probe objects under the same prefix; the test
+# asserts the two stay identical.
+readonly probe_prefix='wedding-backup-denial-probe'
 readonly plugin='barman-cloud.cloudnative-pg.io'
 readonly ready_marker='==== DENIAL OBSERVED ===='
 readonly receipt='{"dedicatedCatalogueReachable":true,"sharedCatalogueReferenced":true,"listDenied":true,"readDenied":true,"writeDenied":true}'
@@ -305,7 +308,7 @@ kube logs "pod/${name}" -c probe >"${work_dir}/log" 2>/dev/null || : >"${work_di
 if [[ "${phase}" != Succeeded ]]; then
   grep '^denial-pod: ' "${work_dir}/log" >&2 || true
   # The pod removes a probe object that landed, but not if it was stopped first.
-  fail "the denial proof pod did not succeed (phase '${phase:-unknown}'). If it reached the write, check ${shared_bucket}/wedding-backup-denial-probe/${run_id}; the next run refuses while that prefix exists"
+  fail "the denial proof pod did not succeed (phase '${phase:-unknown}'). If it reached the write, check ${shared_bucket}/${probe_prefix}/${run_id}; the next run refuses while that prefix exists"
 fi
 
 # Only the exact receipt immediately followed by the marker, as the final two

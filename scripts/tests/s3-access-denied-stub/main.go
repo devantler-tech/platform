@@ -8,8 +8,8 @@
 //
 // The ready file is created once the listener is open, so a caller can wait for
 // it instead of guessing how long startup takes. Each request is appended to the
-// request log as "<method> <path>", so a caller can tell which accesses actually
-// reached the destination.
+// request log as "<method> <request-uri>", so a caller can tell which accesses
+// actually reached the destination, including the query that marks a listing.
 package main
 
 import (
@@ -30,7 +30,9 @@ func main() {
 		os.Exit(2)
 	}
 
-	requests, err := os.OpenFile(os.Args[3], os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	// The log holds only methods and request URIs, and the test reads it as a different
+	// user from the one the stub runs as in the container.
+	requests, err := os.OpenFile(os.Args[3], os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -39,7 +41,7 @@ func main() {
 	var mu sync.Mutex
 	refuse := func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		_, logErr := fmt.Fprintf(requests, "%s %s\n", r.Method, r.URL.Path)
+		_, logErr := fmt.Fprintf(requests, "%s %s\n", r.Method, r.URL.RequestURI())
 		mu.Unlock()
 		if logErr != nil {
 			fmt.Fprintln(os.Stderr, logErr)

@@ -459,9 +459,11 @@ if [[ -n "${DENIAL_POD_RUNTIME_IMAGE:-}" ]]; then
   [[ "${real_rc}" -eq 0 ]] || fail "the pinned mc could not be run against the refusing stub (exit ${real_rc})"
   # Each access must actually have been put to the destination, so the refusal
   # is the destination's and not something the client decided on its own.
-  grep -q '^GET /platform-backups/' "${real}/requests" || fail 'the pinned mc never asked the stub for the listing'
-  grep -Eq "^(GET|HEAD) /${reference_path}\$" "${real}/requests" || fail 'the pinned mc never asked the stub for the object'
-  grep -q "^PUT /${write_path}\$" "${real}/requests" || fail 'the pinned mc never sent the probe object to the stub'
+  # Every mc process also asks for the bucket location, so only a list-type=2
+  # query is the listing itself.
+  grep -Eq '^GET /platform-backups/\?(.*&)?list-type=2(&|$)' "${real}/requests" || fail 'the pinned mc never asked the stub for the listing'
+  grep -Eq "^(GET|HEAD) /${reference_path}(\\?.*)?\$" "${real}/requests" || fail 'the pinned mc never asked the stub for the object'
+  grep -Eq "^PUT /${write_path}(\\?.*)?\$" "${real}/requests" || fail 'the pinned mc never sent the probe object to the stub'
 
   dir="$(new_pod_case real-mc-refusal)"
   for name in list read write; do
@@ -495,7 +497,9 @@ printf '%s\n' "$*" >>"${CASE}/calls"
 case "$1 $2" in
   'get clusters.postgresql.cnpg.io') cat "${CASE}/cluster.json" ;;
   'get objectstores.barmancloud.cnpg.io') cat "${CASE}/store-$3.json" ;;
-  'create configmap') cp "${4#--from-file=denial.sh=}" "${CASE}/staged.sh" ;;
+  'create configmap')
+    if [[ -e "${CASE}/configmap-exists" ]]; then printf 'Error from server (AlreadyExists)\n' >&2; exit 1; fi
+    cp "${4#--from-file=denial.sh=}" "${CASE}/staged.sh" ;;
   'create -f')
     if [[ -e "${CASE}/pod-exists" ]]; then printf 'Error from server (AlreadyExists)\n' >&2; exit 1; fi
     cat >"${CASE}/manifest.yaml" ;;
@@ -571,6 +575,10 @@ require_text "${manifest}" 'automountServiceAccountToken: false' 'the pod carrie
 refute_text "${manifest}" '__' 'every manifest placeholder is replaced'
 require_text "$(cat "${CASE}/deleted")" 'pod wedding-backup-denial-4242-1' 'the pod is removed'
 require_text "$(cat "${CASE}/deleted")" 'configmap wedding-backup-denial-4242-1' 'the script ConfigMap is removed'
+
+# The runner names a stalled run's probe object with the pod's own prefix.
+[[ "$(grep "^readonly probe_prefix=" "${runner}")" == "$(grep "^readonly probe_prefix=" "${pod_script}")" ]] ||
+  fail 'the runner and the pod script must name the same probe prefix'
 
 # The denial pod runs in the images the mirror runtime test exercises.
 for image in mc_image tools_image; do
@@ -650,6 +658,14 @@ refute_text "${run_calls}" 'logs pod/' 'an existing pod is never read as the res
 refute_text "${run_calls}" 'get pod ' 'an existing pod phase is never read as the result'
 refute_text "$(cat "${CASE}/deleted")" 'pod wedding-backup-denial-4242-1' 'a pod this run did not create is never deleted'
 require_text "$(cat "${CASE}/deleted")" 'configmap wedding-backup-denial-4242-1' 'the ConfigMap this run created is removed'
+
+new_case configmap-exists
+: >"${CASE}/configmap-exists"
+run_runner --confirm
+[[ "${run_rc}" -ne 0 ]] || fail 'an existing ConfigMap with the run name must be refused'
+require_text "${run_err}" 'could not stage the denial proof script' 'an existing ConfigMap names the reason'
+[[ ! -e "${CASE}/deleted" ]] || fail 'nothing this run did not create is deleted'
+[[ ! -e "${CASE}/manifest.yaml" ]] || fail 'no pod starts after the script could not be staged'
 
 new_case local-run
 run_rc=0
