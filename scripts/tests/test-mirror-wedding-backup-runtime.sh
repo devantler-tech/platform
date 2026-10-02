@@ -37,3 +37,15 @@ docker run --rm --network none --read-only --user 65532:65532 \
   "${image}" -ec 'mc --version; for tool in sed grep awk sort tail sha256sum cut date cat sleep mkdir rm; do command -v "$tool" >/dev/null; done'
 
 MIRROR_POD_RUNTIME_IMAGE="${image}" bash "${root_dir}/scripts/tests/test-mirror-wedding-backup-catalogue.sh"
+# The denial proof pins the same images (its test asserts that), so its pod
+# script runs in this image too, and so does the pinned mc against a refusing
+# stub. Require that case to have run: it is skipped outside this image.
+denial_out="$(DENIAL_POD_RUNTIME_IMAGE="${image}" bash "${root_dir}/scripts/tests/test-verify-wedding-backup-denial.sh" 2>&1)" || {
+  printf '%s\n' "${denial_out}" >&2
+  exit 1
+}
+printf '%s\n' "${denial_out}"
+grep -qxF "PASS: the pinned mc's refusals classify as denials" <<<"${denial_out}" || {
+  printf 'FAIL: the pinned mc was never run against the refusing stub\n' >&2
+  exit 1
+}
