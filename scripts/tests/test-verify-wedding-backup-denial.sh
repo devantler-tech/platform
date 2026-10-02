@@ -314,6 +314,7 @@ printf 'mc: <ERROR> Unable to list folder. dial tcp: lookup %s on 10.96.0.10:53:
 run_pod "${dir}"
 [[ "${pod_rc}" -ne 0 ]] || fail 'a network failure must not pass as a refusal'
 require_text "${pod_err}" 'the list refusal is unproven' 'a network failure is reported as unproven'
+refute_text "${pod_err}" '10.96.0.10' 'an internal address is never printed'
 refute_text "${pod_err}${pod_out}" "${host}" 'a bare endpoint host is never printed either'
 
 # A successful exit is an accepted access, whatever else mc printed.
@@ -429,7 +430,7 @@ if [[ -n "${DENIAL_POD_RUNTIME_IMAGE:-}" ]]; then
     --entrypoint /tools/sh -v "${real}:${real}" -e "OUT=${real}" -e MC_CONFIG_DIR=/tmp/mc \
     -e 'MC_HOST_dedicated=http://REFUSEDBYSTUB:refused-by-stub-secret@127.0.0.1:9000' \
     "${DENIAL_POD_RUNTIME_IMAGE}" -c '
-      "${OUT}/s3-access-denied-stub" 127.0.0.1:9000 "${OUT}/ready" 2>"${OUT}/stub.err" &
+      "${OUT}/s3-access-denied-stub" 127.0.0.1:9000 "${OUT}/ready" "${OUT}/requests" 2>"${OUT}/stub.err" &
       i=0
       while [ ! -e "${OUT}/ready" ]; do
         i=$((i + 1))
@@ -453,7 +454,14 @@ if [[ -n "${DENIAL_POD_RUNTIME_IMAGE:-}" ]]; then
     printf '  pinned mc %s against the refusing stub (exit %s):\n' "${name}" "$(cat "${real}/${name}.rc" 2>/dev/null || printf 'none')"
     sed 's/^/    /' "${real}/${name}.out" 2>/dev/null || true
   done
+  printf '  requests that reached the refusing stub:\n'
+  sed 's/^/    /' "${real}/requests" 2>/dev/null || true
   [[ "${real_rc}" -eq 0 ]] || fail "the pinned mc could not be run against the refusing stub (exit ${real_rc})"
+  # Each access must actually have been put to the destination, so the refusal
+  # is the destination's and not something the client decided on its own.
+  grep -q '^GET /platform-backups/' "${real}/requests" || fail 'the pinned mc never asked the stub for the listing'
+  grep -Eq "^(GET|HEAD) /${reference_path}\$" "${real}/requests" || fail 'the pinned mc never asked the stub for the object'
+  grep -q "^PUT /${write_path}\$" "${real}/requests" || fail 'the pinned mc never sent the probe object to the stub'
 
   dir="$(new_pod_case real-mc-refusal)"
   for name in list read write; do
@@ -462,6 +470,7 @@ if [[ -n "${DENIAL_POD_RUNTIME_IMAGE:-}" ]]; then
   done
   run_pod "${dir}"
   [[ "${pod_rc}" -eq 0 ]] || fail "the pinned mc's own report of an AccessDenied refusal must pass the proof (rc ${pod_rc}): ${pod_err}"
+  printf "PASS: the pinned mc's refusals classify as denials\n"
 fi
 
 # The passing pod output feeds the runner below.
@@ -639,6 +648,8 @@ run_runner --confirm
 require_text "${run_err}" 'could not start the denial proof pod' 'an existing pod names the reason'
 refute_text "${run_calls}" 'logs pod/' 'an existing pod is never read as the result'
 refute_text "${run_calls}" 'get pod ' 'an existing pod phase is never read as the result'
+refute_text "$(cat "${CASE}/deleted")" 'pod wedding-backup-denial-4242-1' 'a pod this run did not create is never deleted'
+require_text "$(cat "${CASE}/deleted")" 'configmap wedding-backup-denial-4242-1' 'the ConfigMap this run created is removed'
 
 new_case local-run
 run_rc=0
@@ -653,6 +664,7 @@ printf 'Running' >"${CASE}/phase"
 run_runner --confirm
 [[ "${run_rc}" -ne 0 ]] || fail 'a pod that never finishes must fail the proof'
 require_text "${run_err}" "phase 'Running'" 'a pod that never finishes names its phase'
+require_text "${run_err}" 'check platform-backups/wedding-backup-denial-probe/4242-1' 'a stalled run names the probe object to check'
 require_text "$(cat "${CASE}/deleted")" 'configmap wedding-backup-denial-4242-1' 'a pod that never finishes is cleaned up'
 [[ "$(grep -c '^get pod ' "${CASE}/calls")" -eq 3 ]] || fail 'the phase poll is bounded'
 

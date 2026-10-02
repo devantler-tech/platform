@@ -68,10 +68,12 @@ readonly probe_prefix='wedding-backup-denial-probe'
 probe_key="${probe_prefix}/${PROBE_ID}"
 
 # redact prints the last lines of an mc log as `denial-pod: ` lines, without the
-# endpoint host (with or without its scheme) or any long hex token such as an
-# access key ID or request ID.
+# endpoint host (with or without its scheme), any IPv4 address such as a pod or
+# cluster DNS address, or any long hex token such as an access key ID or request
+# ID. These lines reach a public workflow log.
 redact() {
   sed -e 's#https\{0,1\}://[^/ "`]*#<endpoint>#g' -e "s#${host}#<endpoint>#g" \
+    -e 's/[0-9]\{1,3\}\(\.[0-9]\{1,3\}\)\{3\}\(:[0-9]\{1,5\}\)\{0,1\}/<ip>/g' \
     -e 's/[0-9a-fA-F]\{32,\}/<hex>/g' "$1" | tail -n 5 | sed -e 's/^/denial-pod:   /' >&2
 }
 

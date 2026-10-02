@@ -11,10 +11,11 @@ name: Verify Wedding Backup Denial
 # production kubeconfig. The prod environment already refuses non-main refs; the
 # explicit check below fails fast and names the reason.
 #
-# READ-ONLY UNLESS ISOLATION IS BROKEN. Every access the proof makes with the
-# dedicated credential is one the shared destination must refuse. The only write
-# it attempts is a run-owned probe object; if that write is accepted, the proof
-# removes the object with the shared credential and fails.
+# ONE PROBE WRITE. Every access the proof makes with the dedicated credential is
+# one the shared destination must refuse. Its only write is a run-owned probe
+# object; unless that write was refused, the proof removes the probe object with
+# the shared credential and fails. Beyond that removal, the shared credential
+# only lists.
 on:
   workflow_dispatch:
     inputs:

@@ -90,8 +90,9 @@ the endpoint host. Inside it:
    so the refused targets exist and a mistyped bucket cannot pass.
 3. With the dedicated credential, the pod lists the shared catalogue, reads that
    object, and writes a run-owned object under `wedding-backup-denial-probe/` in
-   `platform-backups`. Each must be refused with the S3 error code
-   `AccessDenied`.
+   `platform-backups`. Each must be refused with `AccessDenied`, which the
+   client reports either as the S3 error code or as its own
+   insufficient-permissions error for the shared path.
 
 All three accesses are attempted and reported. An access counts as refused only
 when the client exits with an error, reports `AccessDenied`, and leaves no trace:

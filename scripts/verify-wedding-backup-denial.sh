@@ -53,15 +53,19 @@ readonly poll_interval poll_limit
 
 work_dir="$(mktemp -d)"
 readonly work_dir
-created=false
+# Cleanup removes only what this run created, never a same-named object it found.
+created_configmap=false
+created_pod=false
 name=''
 # Invoked by the EXIT trap below. shellcheck reports this trap-only handler as
 # unused (SC2329 on 0.11) or unreachable (SC2317 on the older CI runner); the
 # test suite asserts both deletions actually happen.
 # shellcheck disable=SC2317,SC2329
 cleanup() {
-  if [[ "${created}" == true ]]; then
+  if [[ "${created_pod}" == true ]]; then
     kube delete pod "${name}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  fi
+  if [[ "${created_configmap}" == true ]]; then
     kube delete configmap "${name}" --ignore-not-found >/dev/null 2>&1 || true
   fi
   rm -rf "${work_dir}"
@@ -136,9 +140,9 @@ require_store() {
 require_store "${shared_store}" "${shared_bucket}" "${shared_secret}"
 require_store "${dedicated_store}" "${dedicated_bucket}" "${dedicated_secret}"
 
-created=true
 kube create configmap "${name}" --from-file="denial.sh=${pod_script}" >/dev/null ||
   fail 'could not stage the denial proof script'
+created_configmap=true
 
 # The heredoc is quoted, so nothing in it expands, and each placeholder is
 # replaced by a value validated above. Every one of those values is restricted to
@@ -288,6 +292,7 @@ manifest="${manifest//__PROBE_ID__/${run_id}}"
 # create, never apply: an earlier pod with this name must not have its old
 # phase and log read as this run's result.
 printf '%s\n' "${manifest}" | kube create -f - >/dev/null || fail 'could not start the denial proof pod'
+created_pod=true
 
 phase=''
 for ((attempt = 0; attempt < poll_limit; attempt++)); do
@@ -299,7 +304,8 @@ done
 kube logs "pod/${name}" -c probe >"${work_dir}/log" 2>/dev/null || : >"${work_dir}/log"
 if [[ "${phase}" != Succeeded ]]; then
   grep '^denial-pod: ' "${work_dir}/log" >&2 || true
-  fail "the denial proof pod did not succeed (phase '${phase:-unknown}')"
+  # The pod removes a probe object that landed, but not if it was stopped first.
+  fail "the denial proof pod did not succeed (phase '${phase:-unknown}'). If it reached the write, check ${shared_bucket}/wedding-backup-denial-probe/${run_id}; the next run refuses while that prefix exists"
 fi
 
 # Only the exact receipt immediately followed by the marker, as the final two
