@@ -43,6 +43,14 @@ Why each set is drawn where it is:
   watching after the container did, so the profile does not describe the whole container; the
   check reports it as a failure. A profile still learning inside its learning period (24 hours by
   default, read from the profile's own label) is `PENDING`, not a failure.
+- **A vulnerability summary must agree with itself.** The storage server keeps each result twice: a
+  metadata row, which every list reads, and the stored object, which a read by name returns. When
+  the two carry different `resourceVersion`s the summary is `SPLIT`: every later update is refused
+  as a version conflict, so the scanner keeps re-scanning but the result can never be refreshed
+  and turns stale. A split is reported even while the scan time still looks current, because it
+  is already guaranteed to go stale.
+  The two reads are seconds apart, so a summary the scanner rewrites in that window can show as
+  split once; a real split is still there on the next run.
 
 ### What the check cannot see
 
@@ -77,19 +85,29 @@ It needs read access to the cluster and issues only `kubectl get`:
 scripts/check-kubescape-result-coverage.sh --context <kube-context>
 ```
 
-It prints one `MISSING`, `STALE`, `PARTIAL` or `EMPTY` line per failure, `PENDING` and `ORPHAN`
-lines for information, and one `COVERAGE` line per surface. It exits `0` when every expected
-object has a current result, `1` when any is missing or stale, and `2` when it cannot check. An
-empty read of any input, or posture objects that read back short, is `2`, never a pass. The same
-fail-closed result applies when a running pod lacks a configured container status or controller
-revision, a posture result's namespace label disagrees with its Kubernetes namespace, a scan time
-is invalid or in the future, or a present runtime learning period is malformed. Workloads and pods
+It prints one `MISSING`, `STALE`, `SPLIT`, `PARTIAL` or `EMPTY` line per failure, `PENDING` and
+`ORPHAN` lines for information, and one `COVERAGE` line per surface. It exits `0` when every
+expected object has a current result, `1` when any is missing, stale or split, and `2` when it
+cannot check. An empty read of any input, or posture objects or vulnerability summaries that read
+back short, is `2`, never a pass. The same fail-closed result applies when a running pod lacks a
+configured container status or controller revision, a posture result's namespace label disagrees
+with its Kubernetes namespace, a scan time is invalid or in the future, a vulnerability summary has
+no `resourceVersion`, or a present runtime learning period is malformed. Workloads and pods
 are classified directly against the reviewed exclusion list, so an object observed after the
 earlier Namespace read remains in scope.
 
 The aggregated storage API returns `.spec` as null on a LIST, which reads exactly like "no
 controls". So the check lists the posture objects, then reads the workload-kind ones back by name
-in batches. Only the four workload kinds are read back, which keeps a run to about 20 seconds.
+in batches. Only the four workload kinds are read back. Vulnerability summaries are read back the
+same way, to compare each stored version with the listed one. A run takes about 40 seconds.
+
+### Repairing a split summary
+
+A split summary cannot repair itself: the scanner's own update is the write that keeps failing.
+Delete it, and the next vulnerability scan (daily, or on the next workload change) recreates it
+through the create path, which writes both copies afresh. Deleting removes that result until the
+rescan, so re-run the check after the next scan and expect no `SPLIT` line for it. This is a
+production write, so it is done by an operator with write access, never by the read-only check.
 
 CI has no cluster, so it runs only the fixture test
 (`scripts/tests/test-check-kubescape-result-coverage.sh`). The test includes the negative control:
