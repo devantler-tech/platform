@@ -93,19 +93,28 @@ func validateWorkflowContract(workflow string) error {
 		{"deploy-prod", "deploy"},
 		{"heal-prod-on-failure", "heal"},
 	} {
-		job, ok := extractJob(workflow, target.key)
-		if !ok {
-			return fmt.Errorf("missing %s job", target.key)
-		}
-		step, ok := extractDeployStep(job)
-		if !ok {
-			return fmt.Errorf("%s job does not reach the shared deploy composite", target.label)
-		}
-		if !containsExactLine(step, recoveryOptIn) {
-			return fmt.Errorf("%s job is missing orphaned-fence recovery", target.label)
+		if err := validateDeployRecovery(workflow, target.key, target.label); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+// CD reaches the same default-off recovery input, but has no merge-group heal
+// or membership jobs. Check only its deploy step with the same contract as CI.
+func validateDeployRecovery(workflow, jobKey, label string) error {
+	job, ok := extractJob(workflow, jobKey)
+	if !ok {
+		return fmt.Errorf("missing %s job", jobKey)
+	}
+	step, ok := extractDeployStep(job)
+	if !ok {
+		return fmt.Errorf("%s job does not reach the shared deploy composite", label)
+	}
+	if !containsExactLine(step, recoveryOptIn) {
+		return fmt.Errorf("%s job is missing orphaned-fence recovery", label)
+	}
 	return nil
 }
 
@@ -317,11 +326,27 @@ func run(workflowPath string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
-	if len(args) != 1 {
+	if len(args) == 2 && args[0] == "--deploy-only" {
+		return runDeployOnly(args[1], stdout, stderr)
+	}
+	if len(args) != 1 || strings.HasPrefix(args[0], "--") {
 		_, _ = fmt.Fprintln(stderr, "usage: validate-merge-group-heal <workflow-path>")
 		return 2
 	}
 	return run(args[0], stdout, stderr)
+}
+
+func runDeployOnly(workflowPath string, stdout, stderr io.Writer) int {
+	workflow, err := os.ReadFile(workflowPath) //nolint:gosec // Explicit validator input.
+	if err == nil {
+		err = validateDeployRecovery(string(workflow), "deploy-prod", "deploy")
+	}
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "deploy recovery contract (%s): %v\n", workflowPath, err)
+		return 1
+	}
+	_, _ = fmt.Fprintf(stdout, "Deploy recovery workflow contract passed (%s).\n", workflowPath)
+	return 0
 }
 
 func main() {
