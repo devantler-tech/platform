@@ -40,6 +40,21 @@ mkdir -p "$BASE/k8s/clusters/prod" "$BASE/k8s/bases/apps/alpha" "$BASE/k8s/bases
   "$BASE/k8s/bases/infrastructure/tenant-rgd" "$BASE/k8s/providers/prod/apps" \
   "$BASE/k8s/providers/prod/infrastructure"
 
+# KSail publishes this directory as the platform artifact and bootstraps its generated
+# OCIRepository flux-system/flux-system. Root agreement alone cannot establish that source.
+cat >"$BASE/ksail.prod.yaml" <<'YAML'
+apiVersion: ksail.io/v1alpha1
+kind: Cluster
+spec:
+  cluster:
+    gitOpsEngine: Flux
+    localRegistry:
+      registry: ghcr.io/devantler-tech/platform/manifests
+  workload:
+    sourceDirectory: k8s
+    kustomizationFile: clusters/prod
+YAML
+
 cat >"$BASE/k8s/clusters/prod/kustomization.yaml" <<'YAML'
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -665,6 +680,232 @@ grep -q 'publish-app.*publish-manifests' "$root/k8s/bases/apps/beta/oci-reposito
   fail 'ambiguous: the subject does not name both workflows, so this case proves nothing'
 expect_refusal 'an ambiguous consumer in production is refused, not dropped' "$root" \
   'ambiguous:' 'rendered set is UNKNOWN'
+
+# ---------------------------------------------------------------------------
+# 10. SOURCE ATTRIBUTION: agreeing roots must use this checkout's platform artifact.
+# ---------------------------------------------------------------------------
+for field in name kind namespace; do
+  root="$(fixture "unrelated-source-$field")"
+  case "$field" in
+    name) yq -i '.spec.sourceRef.name = "unrelated-source"' "$root/k8s/clusters/prod/flux-kustomizations.yaml" ;;
+    kind) yq -i '.spec.sourceRef.kind = "GitRepository"' "$root/k8s/clusters/prod/flux-kustomizations.yaml" ;;
+    namespace) yq -i '.spec.sourceRef.namespace = "elsewhere"' "$root/k8s/clusters/prod/flux-kustomizations.yaml" ;;
+  esac
+  expect_refusal "agreeing roots on an unrelated source $field are refused" "$root" \
+    'not the KSail-generated platform source' 'consumers are UNKNOWN'
+done
+
+root="$(fixture explicit-source-namespace)"
+yq -i '.spec.sourceRef.namespace = "flux-system"' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+expect_pass 'an explicit canonical platform source namespace passes' "$root" '2 consumer(s)'
+
+for field in registry sourceDirectory kustomizationFile; do
+  root="$(fixture "different-ksail-$field")"
+  case "$field" in
+    registry) yq -i '.spec.cluster.localRegistry.registry = "ghcr.io/devantler-tech/another/manifests"' "$root/ksail.prod.yaml" ;;
+    sourceDirectory) yq -i '.spec.workload.sourceDirectory = "elsewhere"' "$root/ksail.prod.yaml" ;;
+    kustomizationFile) yq -i '.spec.workload.kustomizationFile = "clusters/another"' "$root/ksail.prod.yaml" ;;
+  esac
+  expect_refusal "a different production KSail $field is refused" "$root" \
+    'KSail production artifact contract' 'UNKNOWN'
+done
+
+root="$(fixture missing-ksail)"
+rm "$root/ksail.prod.yaml"
+expect_refusal 'a missing production artifact declaration is refused' "$root" \
+  'KSail production artifact contract' 'UNKNOWN'
+
+root="$(fixture multiple-ksail)"
+cat "$root/ksail.prod.yaml" >"$WORK/config-copy"
+printf '\n---\n' >>"$root/ksail.prod.yaml"
+cat "$WORK/config-copy" >>"$root/ksail.prod.yaml"
+expect_refusal 'multiple production artifact declarations are refused' "$root" \
+  'exactly one KSail Cluster' 'UNKNOWN'
+
+root="$(fixture credentialed-registry)"
+# shellcheck disable=SC2016 # KSail expands this credential later; it is not a shell value.
+yq -i '.spec.cluster.localRegistry.registry = "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"' "$root/ksail.prod.yaml"
+expect_pass 'an ordinary credential variable in the KSail registry is accepted' "$root" '2 consumer(s)'
+
+# A reader can produce all expected rows and still fail. Its partial output is not proof.
+real_yq="$(command -v yq)"
+mkdir "$WORK/partial-yq-bin"
+cat >"$WORK/partial-yq-bin/yq" <<'SH'
+#!/usr/bin/env bash
+"$REAL_YQ" "$@" || exit $?
+case "${!#}" in */ksail.prod.yaml) exit 2 ;; esac
+SH
+chmod +x "$WORK/partial-yq-bin/yq"
+root="$(fixture partial-artifact-reader)"
+REAL_YQ="$real_yq" PATH="$WORK/partial-yq-bin:$PATH" expect_refusal \
+  'partial artifact-reader output is refused' "$root" \
+  'could not read the KSail production artifact contract' 'UNKNOWN'
+
+# ---------------------------------------------------------------------------
+# 11. FLUX POST-BUILD SUBSTITUTION can change kind before consumer discovery.
+# ---------------------------------------------------------------------------
+root="$(fixture substituted-consumer-kind)"
+cp "$root/k8s/bases/apps/beta/oci-repository.yaml" "$root/k8s/providers/prod/apps/gamma.yaml"
+# shellcheck disable=SC2016 # The literal Flux expression is supplied below.
+yq -i '.kind = "${CONSUMER_KIND}" | .metadata.name = "gamma" | .spec.url = "oci://ghcr.io/devantler-tech/gamma/manifests"' \
+  "$root/k8s/providers/prod/apps/gamma.yaml"
+printf '  - gamma.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+yq -i '.spec.postBuild.substitute.CONSUMER_KIND = "OCIRepository"' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+expect_refusal 'a supplied Flux variable creating another OCIRepository is refused' "$root" \
+  'kind is decided by substitution' 'consumers are UNKNOWN'
+
+root="$(fixture substituted-root-kind)"
+# shellcheck disable=SC2016 # Substitution is part of the fixture, never shell execution.
+yq -i 'select(.metadata.name == "apps").kind = "${ROOT_KIND}"' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+expect_refusal 'a substituted root kind cannot hide one production layer' "$root" \
+  'kind is decided by substitution' 'consumers are UNKNOWN'
+
+root="$(fixture substituted-template-kind)"
+# shellcheck disable=SC2016 # The carrier's type is not known before substitution.
+yq -i '.spec.resources[0].template.kind = "${SOURCE_KIND}"' \
+  "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
+expect_refusal 'a substituted template kind cannot hide consumer-producing objects' "$root" \
+  'kind is decided by substitution' 'consumers are UNKNOWN'
+
+root="$(fixture ordinary-postbuild-variable)"
+cat >"$root/k8s/providers/prod/apps/config-map.yaml" <<'YAML'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ordinary
+data:
+  domain: ${DOMAIN}
+YAML
+printf '  - config-map.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+yq -i '.spec.postBuild.substitute.DOMAIN = "example.test"' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+expect_pass 'ordinary post-build data variables do not change consumer discovery' "$root" '2 consumer(s)'
+
+# Even a canonical name can be overridden by declarations in the rendered artifact. The
+# source generated at bootstrap and the source that the production layers keep must agree.
+for target in platform another; do
+  root="$(fixture "source-object-$target")"
+  cat >"$root/k8s/providers/prod/apps/platform-source.yaml" <<YAML
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  url: oci://ghcr.io/devantler-tech/$target/manifests
+YAML
+  printf '  - platform-source.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  if [ "$target" = platform ]; then
+    expect_pass 'an explicit source declaration for the same platform artifact passes' "$root" '2 consumer(s)'
+  else
+    expect_refusal 'a rendered source declaration cannot override the platform artifact' "$root" \
+      'platform source override' 'consumers are UNKNOWN'
+  fi
+done
+
+for target in platform another; do
+  root="$(fixture "source-sync-$target")"
+  cat >"$root/k8s/providers/prod/infrastructure/flux-instance.yaml" <<YAML
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  sync:
+    kind: OCIRepository
+    url: oci://ghcr.io/devantler-tech/$target/manifests
+    ref: latest
+    path: clusters/prod
+YAML
+  printf '  - flux-instance.yaml\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  if [ "$target" = platform ]; then
+    expect_pass 'an explicit FluxInstance sync for the same platform artifact passes' "$root" '2 consumer(s)'
+  else
+    expect_refusal 'FluxInstance sync cannot override the platform artifact' "$root" \
+      'platform source override' 'consumers are UNKNOWN'
+  fi
+done
+
+root="$(fixture source-url-patch)"
+cat >"$root/k8s/providers/prod/infrastructure/flux-instance.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  kustomize:
+    patches:
+      - target:
+          kind: OCIRepository
+          name: flux-system
+          namespace: flux-system
+        patch: |-
+          - op: replace
+            path: /spec/url
+            value: oci://ghcr.io/devantler-tech/another/manifests
+YAML
+printf '  - flux-instance.yaml\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+expect_refusal 'a FluxInstance patch cannot override the platform source URL' "$root" \
+  'platform source override' 'consumers are UNKNOWN'
+
+root="$(fixture source-preserving-patch)"
+cat >"$root/k8s/providers/prod/infrastructure/flux-instance.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  kustomize:
+    patches:
+      - target:
+          kind: OCIRepository
+          name: flux-system
+          namespace: flux-system
+        patch: |-
+          - op: add
+            path: /spec/verify
+            value:
+              provider: cosign
+          - op: replace
+            path: /spec/ref/tag
+            value: latest
+YAML
+printf '  - flux-instance.yaml\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+expect_pass 'verification and ref patches preserve platform source attribution' "$root" '2 consumer(s)'
+
+root="$(fixture partial-kind-reader)"
+mkdir "$WORK/partial-kind-bin"
+cat >"$WORK/partial-kind-bin/yq" <<'SH'
+#!/usr/bin/env bash
+"$REAL_YQ" "$@" || exit $?
+case "$*" in *'has("apiVersion")'*) exit 2 ;; esac
+SH
+chmod +x "$WORK/partial-kind-bin/yq"
+REAL_YQ="$real_yq" PATH="$WORK/partial-kind-bin:$PATH" expect_refusal \
+  'partial kind-reader output cannot clear consumer discovery' "$root" \
+  'could not read object kinds' 'consumers are UNKNOWN'
+
+root="$(fixture partial-source-reader)"
+mkdir "$WORK/partial-source-bin"
+cat >"$WORK/partial-source-bin/yq" <<'SH'
+#!/usr/bin/env bash
+"$REAL_YQ" "$@" || exit $?
+case "$*" in *'.spec.url == "oci://ghcr.io/devantler-tech/platform/manifests"'*) exit 2 ;; esac
+SH
+chmod +x "$WORK/partial-source-bin/yq"
+REAL_YQ="$real_yq" PATH="$WORK/partial-source-bin:$PATH" expect_refusal \
+  'partial source-reader output cannot attest the production artifact' "$root" \
+  'could not read platform source declarations' 'consumers are UNKNOWN'
+
+root="$(fixture nested-source-kind-substitution)"
+# shellcheck disable=SC2016 # Flux receives the supplied source-kind variable.
+yq -i '.spec.sourceRef.kind = "${SOURCE_KIND}" | .spec.sourceRef.name = "flux-system" | .spec.sourceRef.namespace = "flux-system"' \
+  "$root/k8s/bases/apps/alpha/flux-kustomization.yaml"
+yq -i '.spec.postBuild.substitute.SOURCE_KIND = "OCIRepository"' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+expect_refusal 'a nested source kind cannot hide an unrendered platform layer' "$root" \
+  'source is decided by Flux substitution' 'consumers are UNKNOWN'
 
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

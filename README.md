@@ -95,6 +95,28 @@ ksail --config ksail.prod.yaml workload validate
 
 This is faster than a full cluster test and catches YAML errors, missing fields, and broken kustomize overlays.
 
+CI also checks that the publish-workflow signing-revision report discovers exactly the
+consumers declared by the production overlay and its Flux layers:
+
+```bash
+bash scripts/guard-consumer-discovery-conservation.sh
+bash scripts/tests/test-guard-consumer-discovery-conservation.sh
+```
+
+This check uses `yq` and `kubectl kustomize` without a cluster or credentials. It binds the
+layers to the platform artifact configured in `ksail.prod.yaml` and the generated
+`OCIRepository/flux-system/flux-system` source. Agreeing references to a different source, or
+declarations that redirect that source, are unknown and fail the check. FluxInstance source
+patches are supported only when their operations preserve the source identity and artifact
+(verification and ref fields).
+
+Flux [substitutes the final YAML after the build](https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-variable-substitution),
+so a variable in an object or template kind can hide an OCI consumer from literal discovery.
+The check refuses those kinds and consumer URL, ref or signer-subject variables; ordinary
+variables in workload fields, ConfigMap data and registry credentials remain supported. A
+failed reader or render is unknown even when it produced partial output. Tenant artifacts
+and Helm chart output remain outside this repository's static comparison.
+
 ## Clusters
 
 ### Local
