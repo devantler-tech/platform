@@ -8,9 +8,9 @@ nonempty, remove `machine.install.extraKernelArgs` and set
 arguments, both files stay byte-for-byte unchanged. Auxiliary documents keep
 their values and order; this does not migrate dedicated Talos install documents.
 
-The audited implementation is KSail **7.193.5**, commit
-`2741ab8bb9e1321939eb2952bde287d44e2b0c79`, in
-[`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/2741ab8bb9e1321939eb2952bde287d44e2b0c79/pkg/fsutil/configmanager/talos/configs.go#L1082).
+The audited implementation is KSail **7.193.6**, commit
+`a0622ef7d0f3072823832248a4f79612ed3a0e69`, in
+[`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/a0622ef7d0f3072823832248a4f79612ed3a0e69/pkg/fsutil/configmanager/talos/configs.go#L1082).
 KSail first computes the schematic and installs its image; this helper mirrors
 the subsequent fold, using CI's already-generated install sections. It does not
 register a schematic, replace installer images, contact a cluster or change

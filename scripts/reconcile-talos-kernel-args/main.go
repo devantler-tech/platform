@@ -1,4 +1,4 @@
-// Mirror the post-installer kernel-argument fold audited in KSail v7.193.5,
+// Mirror the post-installer kernel-argument fold audited in KSail v7.193.6,
 // configs.go applySchematic/schematicKernelArgs/reconcileFoldedKernelArgs.
 package main
 
@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const reviewedKSailVersion = "7.193.5"
+const reviewedKSailVersion = "7.193.6"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {

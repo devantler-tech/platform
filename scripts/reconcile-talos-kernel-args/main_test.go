@@ -109,12 +109,12 @@ func TestFoldRejectsAmbiguousOrMalformedInputs(t *testing.T) {
 }
 
 func TestVersionContractRejectsUnreviewedOrDivergentPins(t *testing.T) {
-	ci := "jobs:\n  deploy-prod:\n    steps:\n      - env:\n          KSAIL_VERSION: '7.193.5'\n      - env:\n          KSAIL_VERSION: '7.193.5'\n"
-	cd := "jobs:\n  deploy:\n    steps:\n      - env:\n          KSAIL_VERSION: '7.193.5'\n"
+	ci := "jobs:\n  deploy-prod:\n    steps:\n      - env:\n          KSAIL_VERSION: '7.193.6'\n      - env:\n          KSAIL_VERSION: '7.193.6'\n"
+	cd := "jobs:\n  deploy:\n    steps:\n      - env:\n          KSAIL_VERSION: '7.193.6'\n"
 	if err := verifyPins([]byte(ci), []byte(cd)); err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{strings.Replace(ci, "7.193.5", "7.193.6", 1), strings.ReplaceAll(ci, "7.193.5", "7.193.6"), "jobs: {}\n", "jobs: ["} {
+	for _, bad := range []string{strings.Replace(ci, "7.193.6", "7.193.7", 1), strings.ReplaceAll(ci, "7.193.6", "7.193.7"), "jobs: {}\n", "jobs: ["} {
 		if err := verifyPins([]byte(bad), []byte(cd)); err == nil {
 			t.Fatal("unreviewed, missing or malformed pin accepted")
 		}
@@ -128,7 +128,7 @@ func TestCommandDoesNotWriteEitherRoleAfterInvalidInput(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte("env:\n  KSAIL_VERSION: '7.193.5'\n"), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte("env:\n  KSAIL_VERSION: '7.193.6'\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
