@@ -91,18 +91,22 @@ step_shell_flags() {
 # the first draft of this check). For the tolerance that same folding is wanted:
 # an absent key and an explicit `false` are both the default, under which the
 # step fails its job.
+#
+# Each read is folded to ONE answer across every step carrying the gate's name, so
+# a second step with that name cannot split the result into lines that compare
+# unequal to the single value tested below.
 step_disarm() {
   local workflow="$1" selector has_condition condition='' tolerance
   selector=".jobs[\"${job}\"].steps[] | select(.name == \"${step}\")"
-  has_condition="$(yq -r "${selector} | has(\"if\")" "${workflow}")"
+  has_condition="$(yq -r "[${selector} | has(\"if\")] | any" "${workflow}")"
   if [ "${has_condition}" = "true" ]; then
-    condition="$(yq -r "${selector} | .if" "${workflow}")"
+    condition="$(yq -r "[${selector} | select(has(\"if\")) | .if | tostring] | join(\", \")" "${workflow}")"
   fi
-  tolerance="$(yq -r "${selector} | .[\"continue-on-error\"] // \"false\"" "${workflow}")"
+  tolerance="$(yq -r "[${selector} | .[\"continue-on-error\"] // false | tostring | select(. != \"false\")] | join(\", \")" "${workflow}")"
   if [ "${has_condition}" = "true" ]; then
     printf 'the gate step carries if: %s, so it can be skipped on the run it was meant to judge\n' "${condition}"
   fi
-  if [ "${tolerance}" != "false" ]; then
+  if [ -n "${tolerance}" ]; then
     printf 'the gate step carries continue-on-error: %s, so a failing gate leaves the step green\n' "${tolerance}"
   fi
 }
@@ -284,6 +288,21 @@ assert_disarm_reported tolerated '.["continue-on-error"] = true' 'carries contin
 assert_disarm_reported expression '.["continue-on-error"] = "${{ inputs.skip-gate }}"' \
   'carries continue-on-error: ${{ inputs.skip-gate }}'
 assert_disarm_reported default '.["continue-on-error"] = false' ''
+
+# A SECOND step carrying the gate's name, disarmed, beside the untouched first:
+# every read must fold both into one answer rather than split into two lines.
+duplicated="${work_dir}/disarmed-duplicate.yaml"
+cp "${root_dir}/.github/workflows/ci.yaml" "${duplicated}"
+yq -i ".jobs[\"${job}\"].steps += [(.jobs[\"${job}\"].steps[] | select(.name == \"${step}\") | .if = false)]" \
+  "${duplicated}"
+if [ "$(yq -r "[.jobs[\"${job}\"].steps[] | select(.name == \"${step}\")] | length" "${duplicated}")" != "2" ]; then
+  fail 'ABLATION duplicate: the second gate step was not added, so this control proves nothing'
+else
+  case "$(step_disarm "${duplicated}")" in
+    *'carries if: false'*) : ;;
+    *) fail "ABLATION duplicate: a disarmed second step with the gate's name was not reported" ;;
+  esac
+fi
 
 if [ "${failures}" -ne 0 ]; then
   printf '%s: %d assertion(s) failed\n' "$(basename "$0")" "${failures}" >&2
