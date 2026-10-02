@@ -664,6 +664,66 @@ make_multiline_string_fixture "$work/unpaired-bash" 'line"; bash ./scripts/fixtu
 expect "UNPAIRED an interpreter after a string's closing quote stays accepted" 0 \
   "exec-bit guard OK" "$work/unpaired-bash"
 
+# A SCRIPT PATH AS AN ARGUMENT (#4066): `./scripts/a.sh ./scripts/b.sh` execs a.sh
+# and hands it b.sh. Extraction takes the longest match, so both paths used to land
+# in ONE occurrence ending at b.sh; a.sh was read as the command whose argument is
+# b.sh, b.sh was rightly discarded, and a.sh itself was never judged at all. Each
+# case invokes the anchor only as an argument, so the anchor's own `run:` step is
+# what keeps the sweep non-vacuous.
+make_fixture "$work/argpath" -x './scripts/fixture-target.sh ./scripts/fixture-anchor.sh' anchor
+expect "ARGPATH a direct invocation with a script path argument is rejected" 1 \
+  "is tracked 100644, not 100755" "$work/argpath"
+
+make_fixture "$work/argpath-bare" -x 'scripts/fixture-target.sh scripts/fixture-anchor.sh' anchor
+expect "ARGPATH a bare run: command with a script path argument is rejected" 1 \
+  "is tracked 100644, not 100755" "$work/argpath-bare"
+
+make_fixture "$work/argpath-wrapped" -x 'timeout 10 ./scripts/fixture-target.sh ./scripts/fixture-anchor.sh' anchor
+expect "ARGPATH a wrapped invocation with a script path argument is rejected" 1 \
+  "is tracked 100644, not 100755" "$work/argpath-wrapped"
+
+# The control the issue names: the 100644 script is only the ARGUMENT, so it is
+# never execed and needs no bit. The executable anchor is the command.
+make_fixture "$work/argpath-arg" -x './scripts/fixture-anchor.sh ./scripts/fixture-target.sh' anchor
+expect "ARGPATH a script path that is only an argument stays accepted" 0 \
+  "exec-bit guard OK" "$work/argpath-arg"
+
+# And behind an interpreter neither path is execed directly.
+make_fixture "$work/argpath-bash" -x 'bash ./scripts/fixture-target.sh ./scripts/fixture-anchor.sh' anchor
+expect "ARGPATH an interpreter-run script with a script path argument stays accepted" 0 \
+  "exec-bit guard OK" "$work/argpath-bash"
+
+# The run-block form, and its continuation-line control: a backslash-continued line
+# is an argument list, so two bare paths there are both arguments.
+make_argpath_block_fixture() {
+  local dir="$1" first="$2" second="$3"
+  mkdir -p "$dir/scripts" "$dir/.github/workflows"
+  cd "$dir"
+  git init -q .
+  git config user.email t@example.com
+  git config user.name t
+  printf '#!/usr/bin/env bash\necho hi\n' > scripts/fixture-target.sh
+  printf '#!/usr/bin/env bash\necho anchor\n' > scripts/fixture-anchor.sh
+  {
+    printf 'jobs:\n  j:\n    steps:\n      - run: |\n'
+    printf '          %s\n' "$first"
+    [[ -z "$second" ]] || printf '            %s\n' "$second"
+    printf '      - run: ./scripts/fixture-anchor.sh\n'
+  } > .github/workflows/w.yaml
+  git add -A
+  git update-index --chmod=-x scripts/fixture-target.sh
+  git update-index --chmod=+x scripts/fixture-anchor.sh
+  git -c commit.gpgsign=false commit -qm fixture
+  cd - > /dev/null
+}
+make_argpath_block_fixture "$work/argpath-block" 'scripts/fixture-target.sh scripts/fixture-anchor.sh' ''
+expect "ARGPATH a run-block command with a script path argument is rejected" 1 \
+  "is tracked 100644, not 100755" "$work/argpath-block"
+
+make_argpath_block_fixture "$work/argpath-cont" "shellcheck \\" 'scripts/fixture-target.sh scripts/fixture-anchor.sh'
+expect "ARGPATH two paths on a continued argument line stay accepted" 0 \
+  "exec-bit guard OK" "$work/argpath-cont"
+
 if ((failures > 0)); then
   echo "::error::$failures exec-bit guard assertion(s) failed"
   exit 1
