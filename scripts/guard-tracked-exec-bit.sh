@@ -231,12 +231,50 @@ split_separators() {
 }
 segmented="$(printf '%s\n' "$scan" | split_separators)"
 
+# 🔴 A SCRIPT PATH IN FRONT OF THE MATCHED ONE IS JUDGED AS ITS OWN OCCURRENCE (#4066).
+#
+# `grep -o` takes the longest match, so `./scripts/a.sh ./scripts/b.sh` is ONE
+# occurrence ending at b.sh. The walk below rightly reads b.sh as a.sh's argument
+# and discards it, and a.sh — the file actually execed — was never judged at all.
+# So every earlier word that is itself a script path also yields the occurrence
+# that ends at it, carrying the same leading context; the walk then decides each
+# one exactly as it would a path with nothing after it.
+#
+# `allow_bare` mirrors the extraction shape. An explicitly-relative `./` or `../`
+# word is always expanded, as the `./` shapes extract one anywhere a command can
+# stand. A BARE word is expanded only for the `run:` and run-block shapes, the
+# only positions where a bare path is extracted at all, so a bare filter entry or
+# argument never gains a command position it did not already have.
+expand_leading_paths() {
+  EXPAND_SCRIPT_PATH_RE="$SCRIPT_PATH_RE" EXPAND_RELATIVE_PATH_RE="$RELATIVE_PATH_RE" \
+    awk -v allow_bare="$1" '
+      BEGIN {
+        rel = "(^|[\"\047])" ENVIRON["EXPAND_RELATIVE_PATH_RE"] "$"
+        bare = "^[\"\047]?" ENVIRON["EXPAND_SCRIPT_PATH_RE"] "$"
+      }
+      {
+        print
+        rest = $0; consumed = 0
+        while (match(rest, /[^[:space:]]+/)) {
+          word = substr(rest, RSTART, RLENGTH)
+          end = consumed + RSTART + RLENGTH - 1
+          consumed = end
+          rest = substr(rest, RSTART + RLENGTH)
+          if (rest !~ /[^[:space:]]/) break
+          if (word ~ rel || (allow_bare == 1 && word ~ bare)) print substr($0, 1, end)
+        }
+      }
+    '
+}
+
 invocations="$(
   {
-    printf '%s\n' "$segmented" |
-      grep -oE "${LEADING_DELIM}(${TOKEN_RE}[[:space:]]+)*\./${SCRIPT_PATH_RE}" || true
-    printf '%s\n' "$segmented" |
-      grep -oE "run:[[:space:]]+[\"']?(${TOKEN_RE}[[:space:]]+)*(\./)?${SCRIPT_PATH_RE}" || true
+    { printf '%s\n' "$segmented" |
+      grep -oE "${LEADING_DELIM}(${TOKEN_RE}[[:space:]]+)*\./${SCRIPT_PATH_RE}" || true; } |
+      expand_leading_paths 0
+    { printf '%s\n' "$segmented" |
+      grep -oE "run:[[:space:]]+[\"']?(${TOKEN_RE}[[:space:]]+)*(\./)?${SCRIPT_PATH_RE}" || true; } |
+      expand_leading_paths 1
     # A run block puts the command at the START of its own line. But line-leading
     # position is command position only when the PREVIOUS line did not end in a
     # backslash: a continuation line is an ARGUMENT list, and this repository has
@@ -246,16 +284,19 @@ invocations="$(
     # of state and nothing else; the extraction is left to grep so the emitted
     # occurrence STOPS at the path instead of running to the end of the line,
     # which is what lets a trailing argument coexist with a line-leading command.
-    awk '!cont { print }
-         { cont = ($0 ~ /\\[[:space:]]*$/) }' <<<"$segmented" |
-      grep -oE "^[[:space:]]*(${TOKEN_RE}[[:space:]]+)*(\./)?${SCRIPT_PATH_RE}" || true
+    { awk '!cont { print }
+           { cont = ($0 ~ /\\[[:space:]]*$/) }' <<<"$segmented" |
+      grep -oE "^[[:space:]]*(${TOKEN_RE}[[:space:]]+)*(\./)?${SCRIPT_PATH_RE}" || true; } |
+      expand_leading_paths 1
     # Any other relative path, extracted in the same two command-position shapes
     # as a `./scripts/` path, so the classifier below still decides whether it
     # is execed at all.
-    printf '%s\n' "$segmented" |
-      grep -oE "${LEADING_DELIM}(${TOKEN_RE}[[:space:]]+)*${RELATIVE_PATH_RE}" || true
-    printf '%s\n' "$segmented" |
-      grep -oE "run:[[:space:]]+[\"']?(${TOKEN_RE}[[:space:]]+)*${RELATIVE_PATH_RE}" || true
+    { printf '%s\n' "$segmented" |
+      grep -oE "${LEADING_DELIM}(${TOKEN_RE}[[:space:]]+)*${RELATIVE_PATH_RE}" || true; } |
+      expand_leading_paths 0
+    { printf '%s\n' "$segmented" |
+      grep -oE "run:[[:space:]]+[\"']?(${TOKEN_RE}[[:space:]]+)*${RELATIVE_PATH_RE}" || true; } |
+      expand_leading_paths 1
   }
 )"
 
