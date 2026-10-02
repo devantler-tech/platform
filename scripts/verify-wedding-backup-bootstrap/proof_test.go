@@ -92,6 +92,47 @@ func TestProbeConsumesOnlyTheControllerProjectedSecret(t *testing.T) {
 	}
 }
 
+func TestProbeChecksTheServerPodAddressInsteadOfTheFilteredService(t *testing.T) {
+	p, err := probePod("1234", recipeForTest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := at(p, "spec", "containers").([]any)[0].(map[string]any)
+	script := at(c, "command").([]any)[2].(string)
+	if !strings.Contains(script, `nc -z -w 5 "${S3_POD_IP:?}" 9000`) || !strings.Contains(script, `if nc -z -w 3 "$S3_POD_IP" 19000`) {
+		t.Fatal("peer isolation proof could pass without testing the actual management listener")
+	}
+}
+
+func TestPeerAddressIsBoundToAnOwnedFixturePod(t *testing.T) {
+	server := object{"metadata": meta("minio", "wedding-bootstrap-1234", "1234"), "status": object{"podIP": "10.0.0.2"}}
+	server["metadata"].(map[string]any)["uid"] = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	p, _ := probePod("1234", recipeForTest(t))
+	if bindPeerAddress(p, server, "1234") != nil {
+		t.Fatal("owned fixture Pod refused")
+	}
+	c := at(p, "spec", "containers").([]any)[0].(map[string]any)
+	want := object{"name": "S3_POD_IP", "value": "10.0.0.2"}
+	env := at(c, "env").([]any)
+	if !reflect.DeepEqual(env[len(env)-1], want) {
+		t.Fatal("peer probe is not bound to the actual Pod IP")
+	}
+	for _, mutate := range []func(object){
+		func(o object) { o["metadata"].(map[string]any)["namespace"] = "foreign" },
+		func(o object) { o["metadata"].(map[string]any)["uid"] = "foreign" },
+		func(o object) { at(o, "metadata", "labels").(map[string]any)[ownerKey] = "foreign" },
+		func(o object) { o["status"] = object{} },
+		func(o object) { o["status"] = object{"podIP": "127.0.0.1"} },
+		func(o object) { o["status"] = object{"podIP": "10.0.0.2; exit 0"} },
+	} {
+		bad := copyObject(server)
+		mutate(bad)
+		if bindPeerAddress(p, bad, "1234") == nil {
+			t.Fatal("peer probe accepted an unowned or invalid address")
+		}
+	}
+}
+
 // The official client contains cat, but no cmp or self-contained shell tools.
 // A bare client Pod starts yet fails only after it has uploaded the sentinel.
 func TestProbeHasExecutableUtilitiesWithoutWritingTheClientFilesystem(t *testing.T) {

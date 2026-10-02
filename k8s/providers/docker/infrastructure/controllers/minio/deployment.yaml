@@ -74,7 +74,8 @@ spec:
           # The shell's printf builtin generates one private identity file from
           # required, JSON-safe mounted keys. Empty/malformed keys stop startup;
           # credential bytes never enter environment variables or process argv.
-          # Only the S3 listener is reachable outside this Pod.
+          # Internal HTTP APIs bind loopback; Cilium permits only S3 HTTP
+          # ingress and blocks the server's additional management gRPC port.
           ports:
             - name: api
               containerPort: 9000

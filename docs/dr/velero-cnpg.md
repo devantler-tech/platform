@@ -192,8 +192,9 @@ Velero uses the same backup and restore commands with these endpoint overrides.
 The server starts as UID/GID 65532 with a read-only root filesystem and no
 capabilities or ServiceAccount token. Its launcher requires valid mounted
 credential files and creates one private S3 identity; missing, empty or
-malformed credentials stop startup. Only the S3 listener is reachable outside
-the Pod. See [restore-drill.md](./restore-drill.md) for the full manual drill.
+malformed credentials stop startup. Internal HTTP APIs bind loopback, and the
+network policy permits only S3 HTTP ingress, blocking the additional management
+gRPC listener. See [restore-drill.md](./restore-drill.md) for the full manual drill.
 Fixture S3 operations and the protected Wedding bootstrap verification do not
 establish a real Velero/CNPG restore or production R2 compatibility.
 

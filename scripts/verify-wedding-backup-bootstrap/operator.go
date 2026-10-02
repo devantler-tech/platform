@@ -183,6 +183,10 @@ func prove(k client, r recipe) (err error) {
 	if e != nil {
 		return e
 	}
+	server, e := k.get(ns, "pods", "minio")
+	if e != nil || bindPeerAddress(p, server, k.run) != nil {
+		return refused
+	}
 	if e = k.create(p); e != nil {
 		return e
 	}

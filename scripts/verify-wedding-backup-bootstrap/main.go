@@ -191,6 +191,7 @@ ui = false
 	pull["spec"].(map[string]any)["secretStoreRef"] = object{"name": "fixture-openbao", "kind": "SecretStore"}
 	pull["spec"].(map[string]any)["refreshInterval"] = "5s"
 	pull["spec"].(map[string]any)["target"].(map[string]any)["template"].(map[string]any)["metadata"] = object{"labels": object{ownerKey: run}}
+	apiPorts := []any{object{"ports": []any{object{"port": "9000", "protocol": "TCP"}, object{"port": "8200", "protocol": "TCP"}}}}
 	return []object{
 		{"apiVersion": "v1", "kind": "Namespace", "metadata": nsm},
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": meta("openbao-config", ns, run), "data": object{"config.hcl": config}},
@@ -200,7 +201,7 @@ ui = false
 		{"apiVersion": "v1", "kind": "Pod", "metadata": podmeta("minio", minioLabels), "spec": minioSpec},
 		{"apiVersion": "v1", "kind": "Service", "metadata": meta("openbao", ns, run), "spec": object{"selector": baoLabels, "ports": []any{object{"port": 8200, "targetPort": 8200}}}},
 		{"apiVersion": "v1", "kind": "Service", "metadata": meta("minio", ns, run), "spec": object{"selector": minioLabels, "ports": []any{object{"port": 9000, "targetPort": 9000}}}},
-		{"apiVersion": "cilium.io/v2", "kind": "CiliumNetworkPolicy", "metadata": meta("fixture-isolation", ns, run), "spec": object{"endpointSelector": object{}, "ingress": []any{object{"fromEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": ns}}, object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": "external-secrets"}}}}, object{"fromEntities": []any{"host", "remote-node", "kube-apiserver"}}}, "egress": []any{object{"toEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": ns}}}}, object{"toEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": "kube-system", "k8s-app": "kube-dns"}}}, "toPorts": []any{object{"ports": []any{object{"port": "53", "protocol": "UDP"}, object{"port": "53", "protocol": "TCP"}}}}}}}},
+		{"apiVersion": "cilium.io/v2", "kind": "CiliumNetworkPolicy", "metadata": meta("fixture-isolation", ns, run), "spec": object{"endpointSelector": object{}, "ingress": []any{object{"fromEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": ns}}, object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": "external-secrets"}}}, "toPorts": apiPorts}, object{"fromEntities": []any{"host", "remote-node", "kube-apiserver"}, "toPorts": apiPorts}}, "egress": []any{object{"toEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": ns}}}}, object{"toEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": "kube-system", "k8s-app": "kube-dns"}}}, "toPorts": []any{object{"ports": []any{object{"port": "53", "protocol": "UDP"}, object{"port": "53", "protocol": "TCP"}}}}}}}},
 		push, pull,
 	}, nil
 }

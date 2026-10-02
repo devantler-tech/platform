@@ -218,6 +218,51 @@ func TestServerStartupRefusesMissingEmptyOrUnsafeCredentialFiles(t *testing.T) {
 	}
 }
 
+func TestS3NetworkBoundariesHaveNoUnrestrictedIngressRule(t *testing.T) {
+	local, err := readObject("../../k8s/providers/docker/infrastructure/controllers/minio/cilium-network-policy.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := fixture("1234", recipeForTest(t), "fixtureAccess123456", "fixturePassword1234567890")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := []object{local}
+	for _, item := range items {
+		if str(item, "kind") == "CiliumNetworkPolicy" {
+			policies = append(policies, item)
+		}
+	}
+	if len(policies) != 2 {
+		t.Fatal("missing S3 ingress policy")
+	}
+	for _, policy := range policies {
+		rules := at(policy, "spec", "ingress").([]any)
+		if len(rules) == 0 {
+			t.Fatal("missing S3 ingress restriction")
+		}
+		for _, value := range rules {
+			rule := value.(map[string]any)
+			groups, _ := rule["toPorts"].([]any)
+			if len(groups) == 0 {
+				t.Fatal("S3 ingress rule allows the management listener")
+			}
+			for _, group := range groups {
+				ports, _ := group.(map[string]any)["ports"].([]any)
+				if len(ports) == 0 {
+					t.Fatal("unbounded S3 ingress ports")
+				}
+				for _, value := range ports {
+					port := value.(map[string]any)
+					if str(port, "protocol") != "TCP" || (str(port, "port") != "9000" && (str(policy, "metadata", "name") != "fixture-isolation" || str(port, "port") != "8200")) {
+						t.Fatal("S3 ingress permits a management port")
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestFixturePreservesProductionMappingsAndNeverUsesProductionCredentials(t *testing.T) {
 	r := recipeForTest(t)
 	before := cloneForTest(r.push)
