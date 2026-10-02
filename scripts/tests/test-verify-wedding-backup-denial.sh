@@ -396,6 +396,23 @@ SHARED_OVERRIDE=wedding-db-backups run_pod "${dir}"
 [[ "${pod_rc}" -ne 0 ]] || fail 'one bucket on both sides must be refused'
 require_text "${pod_err}" 'are the same bucket' 'one bucket on both sides names its reason'
 
+# What the pinned mc printed for each refused access when the runtime test ran
+# it against the refusing stub below (CI log, 2026-10-02), with the stub address
+# replaced by the endpoint. The copy reports no error code, and the upload
+# reports success before it is refused, so neither may decide the verdict.
+dir="$(new_pod_case recorded-mc-refusal)"
+printf '{"status":"error","error":{"message":"Unable to list folder.","cause":{"message":"Access Denied","error":{"Code":"AccessDenied","Message":"Access Denied","BucketName":"","Key":"","Resource":"","RequestID":"","HostID":"","Region":"","Server":""}},"type":"error"}}\n' >"${dir}/mc/list.out"
+# shellcheck disable=SC2016 # the backticks are literal mc output
+printf '{"status":"error","error":{"message":"Unable to prepare URL for copying.","cause":{"message":"Insufficient permissions to access this path `https://%s/%s`","error":{}},"type":"error"}}\n' "${host}" "${reference_path}" >"${dir}/mc/read.out"
+# shellcheck disable=SC2016 # the backticks are literal mc output
+{
+  printf '{"status":"success","source":"/work/write-probe","target":"dedicated/%s","size":5,"totalCount":1,"totalSize":0}\n' "${write_path}"
+  printf '{"status":"error","error":{"message":"Unable to copy `/work/write-probe`.","cause":{"message":"Insufficient permissions to access this path `https://%s/%s`","error":{"Path":"https://%s/%s"}},"type":"error"}}\n' "${host}" "${write_path}" "${host}" "${write_path}"
+} >"${dir}/mc/write.out"
+run_pod "${dir}"
+[[ "${pod_rc}" -eq 0 ]] || fail "the pinned mc's recorded refusals must pass the proof (rc ${pod_rc}): ${pod_err}"
+[[ ! -e "${dir}/mc/removed" ]] || fail 'a refused write whose upload mc reported as started is not cleaned up as if it landed'
+
 # The pinned mc client against a destination that refuses every request the way
 # R2 refuses a bucket-scoped token. Its real output for the three accesses must
 # classify as refusals, so the classifier does not rest on hand-written fixtures.

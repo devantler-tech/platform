@@ -97,8 +97,8 @@ if ! mc alias set dedicated "${ENDPOINT}" "${dedicated_id}" \
 fi
 unset shared_id dedicated_id
 
-# mc prints a success record compactly and an error record indented, so both
-# spellings of the status field are recognised.
+# mc prints its JSON records compactly or indented depending on the command and
+# terminal, so both spellings of the status field are recognised.
 has_success() { grep -Eq '"status": ?"success"' "$1"; }
 has_error() { grep -Eq '"status": ?"error"' "$1"; }
 
@@ -157,9 +157,10 @@ esac
 
 # 3. Each access with the dedicated credential must be refused.
 
-# denial_reported <log> succeeds when mc reported S3's AccessDenied: as the
-# error code itself, or as its insufficient-permissions error for a path in the
-# shared bucket.
+# denial_reported <log> succeeds when mc reported S3's AccessDenied. The pinned
+# client reports it as the error code for a listing, but as its own
+# insufficient-permissions error, with no code, for a copy; that error only
+# counts when it names a path in the shared bucket, never a local one.
 denial_reported() {
   if grep -Eq '"Code": ?"AccessDenied"' "$1"; then
     return 0
@@ -208,6 +209,8 @@ else
 fi
 
 printf 'Wedding backup denial probe %s\n' "${PROBE_ID}" >"${work}/write-probe"
+# mc reports an upload as successful before the destination answers it, so a
+# success record says nothing about the write; where the object ended up does.
 attempt write mc cp --json "${work}/write-probe" "dedicated/${SHARED_BUCKET}/${probe_key}"
 # The shared credential, which owns the bucket, decides whether the write landed.
 case "$(probe_state)" in
