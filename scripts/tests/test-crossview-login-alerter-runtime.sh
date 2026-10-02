@@ -106,7 +106,7 @@ db_password="db-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
 admin_password="admin-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
 session_secret="session-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
 admin_username="$(pick '[.[] | select(.kind == "Secret" and .metadata.name == "crossview-secrets")
-  | .data.adminusername] | first' | jq -r . | base64 -d)"
+  | (.stringData.adminusername // (.data.adminusername | @base64d))] | first' | jq -r .)"
 [ -n "${admin_username}" ] || fail 'the chart must name the break-glass admin'
 jq -r --argjson config "${config}" --arg db "${db_password}" --arg admin "${admin_password}" \
   --arg session "${session_secret}" --arg user "${admin_username}" '
@@ -167,7 +167,7 @@ run_sensor() {
   rm -f "${work_dir}"/capture/alerts-*.json
   sensor_status=0
   docker run --rm --network "${net}" --user 65532:65532 --read-only \
-    --tmpfs /tmp:size=1m --cap-drop ALL --security-opt no-new-privileges \
+    --tmpfs /tmp:size=1m,mode=1777 --cap-drop ALL --security-opt no-new-privileges \
     -v "${work_dir}/sensor:/sensor:ro" -v "${work_dir}/capture:/capture" \
     -e PATH="/sensor/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     -e SAMPLES="${samples}" -e SAMPLE_INTERVAL_SECONDS=2 \
@@ -195,15 +195,16 @@ start_db() {
     --env-file "${work_dir}/db.env" "${db_image}" >/dev/null
   # Only the final server listens on TCP; the image's init-time server does not.
   for _ in $(seq 1 60); do
-    docker exec "${db}" psql -h 127.0.0.1 -U "${db_user}" -d "${db_name}" -tAc 'SELECT 1' >/dev/null 2>&1 && return 0
+    db_query 'SELECT 1' >/dev/null 2>&1 && return 0
     sleep 2
   done
   fail 'the bundled PostgreSQL never accepted TCP connections'
 }
-users_table() {
-  docker exec "${db}" psql -h 127.0.0.1 -U "${db_user}" -d "${db_name}" -tAc \
-    "SELECT to_regclass('public.users') IS NOT NULL"
+db_query() {
+  docker exec -e PGPASSWORD="${db_password}" "${db}" \
+    psql -h 127.0.0.1 -U "${db_user}" -d "${db_name}" -tAc "$1"
 }
+users_table() { db_query "SELECT to_regclass('public.users') IS NOT NULL"; }
 
 docker network create --internal "${net}" >/dev/null
 start_db
