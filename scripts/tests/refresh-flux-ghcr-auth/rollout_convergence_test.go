@@ -508,6 +508,67 @@ func TestRemovedNodeAfterMutationStillFailsClosed(t *testing.T) {
 	requireNoLine(t, operations, "root-patch")
 }
 
+func TestDeletedNodeHasNoSchedulingFenceToRelease(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_NODE_REMOVED_AFTER_IMAGE_MARKER": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "No scheduling fence remains on deleted Talos node prod-worker-1")
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
+	requireLine(t, operations, "talos-revision:10.0.0.2")
+	requireNoLine(t, operations, "node-uncordon:prod-worker-1")
+	requireNoLine(t, operations, "root-patch")
+}
+
+func TestRemovedNodeCleanupDoesNotAcceptUnknownReads(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"before-release-read", "before-final-release-patch"} {
+		for _, mode := range []string{"forbidden", "not-found-error", "partial-failure", "malformed-success"} {
+			t.Run(phase+"/"+mode, func(t *testing.T) {
+				t.Parallel()
+				f := newFixture(t)
+				env := map[string]string{"FAKE_REMOVAL_CONFIRMATION": mode}
+				if phase == "before-release-read" {
+					env["FAKE_NODE_REMOVED_AFTER_IMAGE_MARKER"] = "prod-worker-1"
+				} else {
+					env["FAKE_NODE_REMOVED_BEFORE_RELEASE_PATCH_NODE"] = "prod-worker-1"
+					env["FAKE_NODE_RELEASE_DELETE_ATTEMPT"] = "3"
+				}
+				result := f.runHelper(validConfig(), nil, env)
+				requireFailureResult(t, result)
+				requireNotContains(t, result.stdout+result.stderr, "No scheduling fence remains on deleted Talos node")
+				operations := readLines(f.operationLog)
+				requireLine(t, operations, "talos-revision:10.0.0.2")
+				requireNoLine(t, operations, "node-uncordon:prod-worker-1")
+				requireNoLine(t, operations, "root-patch")
+			})
+		}
+	}
+}
+
+func TestNodeDeletedAtCordonReleasePatchIsConfirmedWithoutMutation(t *testing.T) {
+	t.Parallel()
+	for _, attempt := range []string{"1", "3"} {
+		t.Run("release-attempt-"+attempt, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, map[string]string{
+				"FAKE_NODE_REMOVED_BEFORE_RELEASE_PATCH_NODE": "prod-worker-1",
+				"FAKE_NODE_RELEASE_DELETE_ATTEMPT":            attempt,
+			})
+			requireFailureResult(t, result)
+			requireContains(t, result.stdout+result.stderr, "No scheduling fence remains on deleted Talos node prod-worker-1")
+			operations := readLines(f.operationLog)
+			requireLine(t, operations, "node-deleted-before-release:prod-worker-1")
+			requireNoLine(t, operations, "node-uncordon:prod-worker-1")
+			requireNoLine(t, operations, "root-patch")
+		})
+	}
+}
+
 func TestRemovedBootstrapOwnedNodeStillFailsClosed(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

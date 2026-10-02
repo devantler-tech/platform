@@ -2445,11 +2445,16 @@ restore_node_schedulability_if_needed() {
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     get node "${node_name}" \
+    --ignore-not-found \
     --output json \
     >"${cordon_state_file}" 2>"${result_file}"; then
     echo "::error::Could not re-read Talos node ${node_name}; refusing to uncordon it."
     emit_safe_operation_output "uncordon-read" "${result_file}"
     return 1
+  fi
+  if [[ ! -s "${cordon_state_file}" ]]; then
+    echo "No scheduling fence remains on deleted Talos node ${node_name}."
+    return 0
   fi
   if node_schedulability_release_is_complete \
     "${cordon_state_file}" "${initial_node_uid}" "${was_cordoned}" \
@@ -2574,6 +2579,22 @@ restore_node_schedulability_if_needed() {
     --type=json \
     --patch-file="${cordon_release_patch_file}" \
     >"${result_file}" 2>&1; then
+    # A failed patch alone cannot prove deletion. Confirm absence through a
+    # successful API read, including when the final patch attempt races deletion.
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get node "${node_name}" \
+      --ignore-not-found \
+      --output json \
+      >"${cordon_state_file}" 2>>"${result_file}"; then
+      echo "::error::Could not re-read Talos node ${node_name} after its failed fence release; refusing to uncordon it."
+      emit_safe_operation_output "uncordon-read" "${result_file}"
+      return 1
+    fi
+    if [[ ! -s "${cordon_state_file}" ]]; then
+      echo "No scheduling fence remains on deleted Talos node ${node_name}."
+      return 0
+    fi
     if ((release_attempt < CORDON_RELEASE_ATTEMPTS)); then
       sleep "${SYNC_INTERVAL}"
       if restore_node_schedulability_if_needed \
