@@ -38,6 +38,7 @@ jobs:
         run: |
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
+          go run ./scripts/validate-merge-group-heal --deploy-only .github/workflows/cd.yaml
           shellcheck scripts/merge-group-evicted.sh scripts/tests/test-merge-group-evicted.sh
           bash scripts/tests/test-merge-group-evicted.sh
 
