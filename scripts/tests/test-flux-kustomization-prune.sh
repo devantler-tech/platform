@@ -272,10 +272,10 @@ role_groups="$(yq eval -r '
 ' "${unifi_role}" | sed '/^$/d' | sort -u)"
 [[ -n "${role_groups}" ]] ||
   fail 'the unifi Role grants no UniFi managed-resource group; cannot check prune'
-role_resource_count="$(yq eval -r '
+role_resources="$(yq eval -r '
   select(.kind == "Role") | .rules[] |
   select(.apiGroups[] | test("\.unifi\.m\.crossplane\.io$")) | .resources[]
-' "${unifi_role}" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')"
+' "${unifi_role}" | sed '/^$/d' | sort -u)"
 
 # Every kind the unifi ServiceAccount may write must be one the admission policy
 # guards, in every rule; otherwise a newly granted kind could be applied with
@@ -289,9 +289,11 @@ for rule in apply-without-delete observe-only-is-observe prune-only-without-dele
   policy_groups="$(printf '%s\n' "${policy_kinds}" | cut -d/ -f1 | sort -u)"
   [[ "${policy_groups}" == "${role_groups}" ]] ||
     fail "rule ${rule} guards groups [${policy_groups//$'\n'/ }] but the unifi Role grants [${role_groups//$'\n'/ }]"
-  policy_kind_count="$(printf '%s\n' "${policy_kinds}" | wc -l | tr -d ' ')"
-  [[ "${policy_kind_count}" -eq "${role_resource_count}" ]] ||
-    fail "rule ${rule} guards ${policy_kind_count} kinds but the unifi Role grants ${role_resource_count} resources"
+  # Pair kinds with resources, so swapping one granted resource for another in
+  # the same group fails too. Every UniFi kind's plural is its lowercase + s.
+  policy_resources="$(printf '%s\n' "${policy_kinds}" | cut -d/ -f3 | tr '[:upper:]' '[:lower:]' | sed 's/$/s/' | sort -u)"
+  [[ "${policy_resources}" == "${role_resources}" ]] ||
+    fail "rule ${rule} guards [${policy_resources//$'\n'/ }] but the unifi Role grants [${role_resources//$'\n'/ }]"
 done
 
 printf 'flux kustomization prune: %s pruning, unifi retention holds on %s fixture resources\n' \
