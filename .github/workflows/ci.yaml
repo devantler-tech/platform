@@ -591,6 +591,8 @@ jobs:
               - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
               - 'scripts/tests/test-crossview-coroot-postgres-integration.sh'
               - 'scripts/tests/test-crossview-postgres-durable-storage.sh'
+              - 'scripts/tests/test-crossview-login-alerter.sh'
+              - 'scripts/tests/test-crossview-login-alerter-runtime.sh'
               - 'scripts/tests/test-coroot-api-key-contract.sh'
               - 'scripts/tests/test-coroot-availability-remediation.sh'
               - 'scripts/tests/test-descheduler-availability.sh'
@@ -1603,6 +1605,18 @@ jobs:
         run: |
           shellcheck scripts/tests/test-crossview-postgres-durable-storage.sh
           bash scripts/tests/test-crossview-postgres-durable-storage.sh
+
+      - name: 🔓 Validate the Crossview login alert
+        if: needs.changes.outputs.k8s == 'true'
+        # Crossview's only probe never touches its database, so an empty schema
+        # broke every sign-in for six days with the pod Ready (#3315). The first
+        # test pins the sensor's verdicts and wiring against stubbed answers; the
+        # second reproduces the outage on the real pinned app and database, so a
+        # chart bump that changes what /api/auth/check reports fails here.
+        run: |
+          shellcheck scripts/tests/test-crossview-login-alerter.sh scripts/tests/test-crossview-login-alerter-runtime.sh
+          bash scripts/tests/test-crossview-login-alerter.sh
+          bash scripts/tests/test-crossview-login-alerter-runtime.sh
 
       - name: 🔑 Validate Coroot API key and registry egress
         if: needs.changes.outputs.k8s == 'true'

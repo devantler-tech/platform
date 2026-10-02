@@ -127,7 +127,10 @@ spec:
     # Bump this value to make the app re-run that bootstrap against whatever
     # database is currently live; the changed pod template is what rolls it. It is
     # the only lever available — the chart is third-party and its `/api/health`
-    # probe does not touch the database, so nothing else notices an empty schema.
+    # probe does not touch the database, so the pod stays Ready on an empty
+    # schema. In prod the crossview-login-alerter CronJob
+    # (providers/hetzner/infrastructure/coroot/) notices instead: it alerts when
+    # /api/auth/check keeps answering that no admin user exists (#3315).
     #
     # Note this rolls ONLY the app. That is deliberate: it re-bootstraps against
     # the running database, with no second Deployment reconciling underneath it.

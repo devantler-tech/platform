@@ -136,6 +136,18 @@ stays quiet by design, exactly as the old Alertmanager did.
   `VolumeAttachment`, because the strand lives in the cloud provider while the
   Kubernetes objects can look consistent; it is read-only, and force-detach
   stays a manual step (#2754).
+- **A Crossview login that cannot work alerts.** Crossview's sign-in was broken
+  for six days in August 2026 while every probe stayed green: its database came
+  back empty, and the chart's only probe (`/api/health`) never touches the
+  database (#3315).
+  `providers/hetzner/infrastructure/coroot/cron-job-crossview-login-alerter.yaml`
+  reads the unauthenticated `/api/auth/check` every 15 minutes. A bootstrapped
+  Crossview always has the admin it creates at startup, so three reads a minute
+  apart that all answer `"hasAdmin":false` post `CrossviewLoginSchemaMissing`
+  through the Alertmanager to Slack. One `true` read ends the run healthy, and a
+  run that never gets a clear answer fails, which the CronJob failure detector
+  above reports. The fix is to roll the app so it re-runs its schema bootstrap;
+  the alert's runbook annotation names the annotation to bump.
 - **kube-apiserver audit logs are searchable in Coroot again.** Coroot's
   node-agent ingests container logs/traces, not host audit-log files, so the
   previous alloy-audit → Loki pipeline was removed with the migration. The
