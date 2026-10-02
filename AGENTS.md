@@ -414,6 +414,7 @@ After making changes, validate at the appropriate level. **For maintenance, only
 1. **Kustomize build** — the cluster overlays and every layer listed under [Validation](#validation) build; the overlays alone cover only the Flux wiring.
 2. **YAML / schema** — `kubectl apply --dry-run=client -f <file>` on changed manifests (no Flux variable substitution).
 3. **Coverage** — each changed file appears in the validator's output (its path for `ksail workload validate`, its resource for a layer build); a zero exit alone proves nothing.
+4. **Post-renderers** — no build above executes a HelmRelease's `postRenderers`; only helm-controller does, against the chart's rendered output. When a change touches a release that carries them (its post-renderers, chart version, values or substitution variables), run `bash scripts/guard-helm-post-renderers.sh --base origin/main --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s`: it pulls each changed release's chart, renders it with the release's own values as an install and an upgrade, and applies its post-renderers as Flux does, failing where one cannot apply (#3581). CI runs the same check in the `validate-helm-post-renderers` job.
 
 ### Cluster scenarios (CI / full local dev only)
 1. **Cluster creation** — `ksail cluster create` succeeds.

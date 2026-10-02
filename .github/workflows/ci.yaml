@@ -721,6 +721,9 @@ jobs:
               - 'scripts/tests/test-guard-floating-image-tags.sh'
               - 'scripts/floating-image-tag-exceptions.tsv'
               # Both halves, for the same reason as the guards above.
+              - 'scripts/guard-helm-post-renderers.sh'
+              - 'scripts/tests/test-guard-helm-post-renderers.sh'
+              # Both halves, for the same reason as the guards above.
               - 'scripts/guard-pod-security-exception-scope.sh'
               - 'scripts/tests/test-guard-pod-security-exception-scope.sh'
               # Both halves, for the same reason as the guards above. The guard also
@@ -2735,6 +2738,46 @@ jobs:
           bash scripts/guard-floating-image-tags.sh k8s
           bash scripts/tests/test-guard-floating-image-tags.sh
 
+  validate-helm-post-renderers:
+    name: 🧩 Validate Helm Post-Renderers
+    needs: [changes]
+    # A HelmRelease's postRenderers run only inside helm-controller, against the chart's
+    # rendered output, so no other check here ever executes one. #3577 merged fully green with
+    # a JSON-6902 add beneath a path flux-operator 0.50.0 does not render; the upgrade failed
+    # and the release could not upgrade at all, while it still reported Ready (#3581). This
+    # renders the chart of every HelmRelease whose definition changed since the base, with the
+    # release's own values, and applies its post-renderers the way Flux does. Releases that did
+    # not change pull no chart. It runs on the merge-group revision too, and deploy-prod needs
+    # it: a chart bump and a post-renderer change can each pass alone and fail combined.
+    if: (github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true') || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    # Changed releases pull their charts from upstream registries; a stalled registry fails
+    # this job instead of holding the merge group.
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The guard renders the base revision too, to find which releases changed.
+          fetch-depth: 0
+
+      - name: 🧩 Validate the post-renderer guard
+        run: |
+          shellcheck scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
+          bash scripts/tests/test-guard-helm-post-renderers.sh
+
+      - name: 🧩 Apply every changed HelmRelease's post-renderers to its chart
+        env:
+          BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          bash scripts/guard-helm-post-renderers.sh --base "$BASE_SHA" \
+            --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s
+
   # Every merge-group validator that ci-required-checks enforces is listed here too.
   # A required validator the deploy does not wait for runs in parallel with it, so
   # production can receive a revision that validator then rejects (#4148).
@@ -2745,6 +2788,7 @@ jobs:
       [
         changes,
         validate-floating-image-tags,
+        validate-helm-post-renderers,
         validate-eks-authorization,
         validate-publication-contract,
         validate-matcher-efficacy,
@@ -3018,6 +3062,7 @@ jobs:
         validate-eks-authorization,
         validate,
         validate-floating-image-tags,
+        validate-helm-post-renderers,
         naming,
         validate-talos,
         validate-root-verify-merge-group,
@@ -3038,6 +3083,7 @@ jobs:
             ${{ needs.validate-eks-authorization.result }}
             ${{ needs.validate.result }}
             ${{ needs.validate-floating-image-tags.result }}
+            ${{ needs.validate-helm-post-renderers.result }}
             ${{ needs.naming.result }}
             ${{ needs.validate-talos.result }}
             ${{ needs.validate-root-verify-merge-group.result }}
