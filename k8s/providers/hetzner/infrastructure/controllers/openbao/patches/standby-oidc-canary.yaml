@@ -1,6 +1,6 @@
-# Deliver the already-selected standby OIDC repair to one production replica.
-# Keep the lower ordinals on their current revision until the canary is unsealed
-# and healthy. Advancing this partition requires a separate reviewed change and
+# Deliver the standby OIDC repair to the next ordinal after healthy canary readback.
+# Keep ordinal 0 on its current revision while the second replica is replaced.
+# Advancing this partition requires a separate reviewed change and
 # deployment readback (#4391); the base/local chart retains OnDelete.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -27,4 +27,4 @@ spec:
                 updateStrategy:
                   type: RollingUpdate
                   rollingUpdate:
-                    partition: 2
+                    partition: 1

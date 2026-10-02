@@ -59,7 +59,7 @@ yq -o=json '.spec.postRenderers' "${release}" | jq -e '
     "group": "apps", "version": "v1", "kind": "StatefulSet",
     "name": "openbao", "namespace": "openbao"
   }
-' >/dev/null || fail 'production OpenBao must permit only the highest-ordinal canary replacement'
+' >/dev/null || fail 'production OpenBao must keep the lowest ordinal held during standby rollout'
 yq '.spec.postRenderers[0].kustomize.patches // [] |
   {"apiVersion": "kustomize.config.k8s.io/v1beta1", "kind": "Kustomization",
    "resources": ["rendered.yaml"], "patches": .}' "${release}" >"${scratch}/kustomization.yaml"
@@ -68,9 +68,9 @@ kubectl kustomize "${scratch}" |
 readonly statefulset="${scratch}/statefulset.yaml"
 
 yq -e '.spec.updateStrategy.type == "RollingUpdate" and
-  .spec.updateStrategy.rollingUpdate.partition == 2 and
+  .spec.updateStrategy.rollingUpdate.partition == 1 and
   .spec.replicas == 3' "${statefulset}" >/dev/null ||
-  fail 'production OpenBao must permit only the highest-ordinal canary replacement'
+  fail 'production OpenBao must keep the lowest ordinal held during standby rollout'
 yq -e '.spec.template.spec.containers[] | select(.name == "openbao") |
   .image == "quay.io/openbao/openbao:2.6.3"' "${statefulset}" >/dev/null ||
   fail 'the canary must use the released standby OIDC repair'
@@ -95,4 +95,4 @@ grep -Fq "'scripts/tests/test-openbao-standby-canary.sh'" "${root_dir}/.github/w
 grep -Fq 'bash scripts/tests/test-openbao-standby-canary.sh' "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must execute the OpenBao canary regression'
 
-printf 'PASS: OpenBao 2.6.3 rollout is confined to the production canary\n'
+printf 'PASS: OpenBao 2.6.3 rollout is confined to the two highest production ordinals\n'
