@@ -22,6 +22,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 const expectedHealCondition = "always() && " +
@@ -341,12 +343,41 @@ func runDeployOnly(workflowPath string, stdout, stderr io.Writer) int {
 	if err == nil {
 		err = validateDeployRecovery(string(workflow), "deploy-prod", "deploy")
 	}
+	if err == nil {
+		err = validateCDRecoveryInput(workflow)
+	}
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "deploy recovery contract (%s): %v\n", workflowPath, err)
 		return 1
 	}
 	_, _ = fmt.Fprintf(stdout, "Deploy recovery workflow contract passed (%s).\n", workflowPath)
 	return 0
+}
+
+// A lookalike environment variable does not opt the action in. The pinned
+// input must be in the deploy step's with mapping, not elsewhere in that step.
+func validateCDRecoveryInput(workflow []byte) error {
+	var parsed struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Uses string         `yaml:"uses"`
+				With map[string]any `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(workflow, &parsed); err != nil {
+		return fmt.Errorf("invalid CD workflow: %w", err)
+	}
+	for _, step := range parsed.Jobs["deploy-prod"].Steps {
+		if step.Uses != deployCompositePath {
+			continue
+		}
+		if value, ok := step.With["recover-orphaned-fence"].(string); ok && value == "true" {
+			return nil
+		}
+		break
+	}
+	return errors.New("deploy job is missing orphaned-fence recovery in the composite inputs")
 }
 
 func main() {
