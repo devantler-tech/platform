@@ -35,6 +35,12 @@ spec:
   # managed resources have no deletionPolicy; leaving out Delete is its Orphan
   # form.) Deleting a live UniFi object therefore stays a deliberate act in UniFi.
   #
+  # Flux appends these patches to the source's own root kustomization, whose
+  # commonAnnotations and transformers run after them, so the render alone
+  # cannot stop a source putting Delete back. The
+  # restrict-unifi-management-policies Kyverno policy enforces the outcome at
+  # admission for the unifi ServiceAccount, on apply and on prune.
+  #
   # The two patches split every managed resource by one annotation, so each gets
   # exactly one of them and the source can only ever narrow what Crossplane may
   # do. A resource being adopted (docs/unifi-management.md) is annotated

@@ -105,7 +105,9 @@ create a duplicate:
    to manage it. The annotation is what counts: the Platform replaces a
    tenant-declared `spec.managementPolicies` on every managed resource (see
    *Deletion* below), so `["Observe"]` declared without the annotation is widened.
-   Declaring both, as the tenant runbook does, is harmless.
+   Declaring both, as the tenant runbook does, is harmless. Set the annotation on
+   the resource itself: one added through `commonAnnotations` or a transformer lands
+   after the Platform's patches and is refused at admission.
 4. Only now edit fields to change the network, in a follow-up commit.
 
 A genuinely **new** object (nothing to adopt — everything in the repo today) needs
@@ -119,8 +121,12 @@ for the full procedure and how to find a live object's `_id`.
 > (`["Observe", "Create", "Update", "LateInitialize"]`, the Crossplane v2 form of
 > `deletionPolicy: Orphan`), so removing a resource from the tenant repository
 > deletes the Managed Resource and leaves the live UniFi object in place,
-> unmanaged. A source compromise or an accidental removal therefore cannot delete
-> network config. Deleting a live UniFi object is a deliberate act in UniFi itself,
+> unmanaged. Those patches run at render time inside the tenant's kustomization,
+> so the `restrict-unifi-management-policies` Kyverno policy enforces the same
+> outcome at admission: the `unifi` ServiceAccount cannot apply a Managed Resource
+> with `Delete` or `*`, nor prune one whose live policies still have them. A source
+> compromise or an accidental removal therefore cannot delete network config; it
+> fails the Kustomization instead. Deleting a live UniFi object is a deliberate act in UniFi itself,
 > after its Managed Resource has been removed from the tenant repository and pruned.
 
 ## Validation notes (confirm on the live cluster)
