@@ -5984,9 +5984,15 @@ print_flux_controller_handoff_diagnostics() {
             + (if .reason then " reason=\(.reason)" else "" end)
             + (if .message then " message=\(.message)" else "" end)),
         ((.status.containerStatuses // []) + (.status.initContainerStatuses // []) | .[]
-          | (.state.waiting // .state.terminated // empty) as $state
-          | "    container \(.name): \($state.reason // "unknown")"
-            + (if $state.message then " message=\($state.message)" else "" end))
+          | if .state.waiting then
+              "    container \(.name): waiting \(.state.waiting.reason // "unknown")"
+                + (if .state.waiting.message then " message=\(.state.waiting.message)" else "" end)
+            elif .state.terminated then
+              # A terminated message can carry the tail of the container log, so print the
+              # reason and exit code only.
+              "    container \(.name): terminated \(.state.terminated.reason // "unknown")"
+                + " exitCode=\(.state.terminated.exitCode // "unknown")"
+            else empty end)
     ' "${flux_controller_diagnostics_file}" 2>/dev/null | mask_cluster_addresses ||
       echo "  (could not read the Pods)"
   else

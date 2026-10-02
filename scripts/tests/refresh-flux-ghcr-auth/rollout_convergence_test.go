@@ -3001,8 +3001,12 @@ func TestFluxControllerRolloutFailurePrintsHandoffDiagnostics(t *testing.T) {
 func TestFluxControllerRolloutSuccessPrintsNoHandoffDiagnostics(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	result := f.runHelper(validConfig(), nil, nil)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_LOG_FLUX_CONTROLLER_RESTART": "true",
+	})
 	requireSuccessResult(t, result)
+	// The handoff restart must actually have run, or this proves nothing about its success path.
+	requireLine(t, readLines(f.operationLog), "flux-controller-old-processes-terminated:kustomize-controller")
 	requireNotContains(t, result.stdout+result.stderr, "handoff diagnostics")
 }
 
