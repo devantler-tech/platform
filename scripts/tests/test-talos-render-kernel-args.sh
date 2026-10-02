@@ -72,6 +72,39 @@ for role in control-planes workers; do
 done
 echo 'PASS: actual CI caller folds both production roles and preserves both local roles'
 
+# KSail's explicit schematic selection bypasses the extension fold even when
+# extensions remain configured. A whitespace-only ID still permits the fold.
+for selection in explicit blank; do
+  case_dir="$work/schematic-$selection"
+  cp -R "$work/base" "$case_dir"
+  mkdir "$case_dir/observed"
+  export OBSERVED="$case_dir/observed"
+  case "$selection" in
+    explicit) yq -i '.spec.cluster.talos.schematicId = " explicit-proof "' "$case_dir/ksail.prod.yaml" ;;
+    blank) yq -i '.spec.cluster.talos.schematicId = "   "' "$case_dir/ksail.prod.yaml" ;;
+  esac
+  cat >> "$case_dir/talos/cluster/zz-fold-proof.yaml" <<'YAML'
+    extraKernelArgs:
+      - schematic-proof=unchanged
+YAML
+  if ! (cd "$case_dir" && bash "$work/render.sh") > "$case_dir/result.log" 2>&1; then
+    echo "FAIL: actual $selection schematic render step failed"
+    tail -n 12 "$case_dir/result.log"
+    exit 1
+  fi
+  for role in control-planes workers; do
+    prod="$OBSERVED/cloud-$role-patched.yaml"
+    if [[ "$selection" == explicit ]]; then
+      [[ $(yq 'select(.version == "v1alpha1") | .machine.install.grubUseUKICmdline' "$prod") == false ]] || { echo 'FAIL: explicit schematic changed UKI'; exit 1; }
+      [[ $(yq 'select(.version == "v1alpha1") | .machine.install.extraKernelArgs | contains(["schematic-proof=unchanged"])' "$prod") == true ]] || { echo 'FAIL: explicit schematic folded arguments'; exit 1; }
+    else
+      [[ $(yq 'select(.version == "v1alpha1") | .machine.install.grubUseUKICmdline' "$prod") == true ]] || { echo 'FAIL: blank schematic suppressed UKI'; exit 1; }
+      [[ $(yq 'select(.version == "v1alpha1") | .machine.install | has("extraKernelArgs")' "$prod") == false ]] || { echo 'FAIL: blank schematic suppressed argument fold'; exit 1; }
+    fi
+  done
+  echo "PASS: actual CI caller respects $selection schematic selection for both production roles"
+done
+
 for overlay in talos talos-local; do
   for role in control-planes workers; do
     case_dir="$work/invalid-$overlay-$role"

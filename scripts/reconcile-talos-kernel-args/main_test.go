@@ -72,6 +72,35 @@ func TestFoldNoopPreservesBytes(t *testing.T) {
 	}
 }
 
+func TestExplicitSchematicSelectionBoundary(t *testing.T) {
+	for _, test := range []struct {
+		name, id string
+		folded   bool
+	}{
+		{"explicit schematic", "explicit-id", false},
+		{"normalized explicit schematic", " explicit-id ", false},
+		{"blank schematic", "", true},
+		{"whitespace schematic", "   ", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := strings.Replace(extensions, "      extensions:", "      schematicId: '"+test.id+"'\n      extensions:", 1)
+			if config == extensions {
+				t.Fatal("schematic selection fixture did not change")
+			}
+			cp, worker, err := fold([]byte(config), []byte(argsConfig), []byte(argsConfig))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.folded {
+				assertFolded(t, cp)
+				assertFolded(t, worker)
+			} else if !bytes.Equal(cp, []byte(argsConfig)) || !bytes.Equal(worker, []byte(argsConfig)) {
+				t.Fatal("explicit schematic must preserve both role files byte-for-byte")
+			}
+		})
+	}
+}
+
 func TestFoldPreservesOtherDocumentsAndAbsentInstall(t *testing.T) {
 	other := "---\napiVersion: v1alpha1\nkind: HostnameConfig\nhostname: unchanged\n"
 	cp, worker, err := fold([]byte(extensions), []byte(argsConfig+other), []byte("version: v1alpha1\nmachine:\n  type: worker\n"))
@@ -97,6 +126,7 @@ func TestFoldRejectsAmbiguousOrMalformedInputs(t *testing.T) {
 		{"args wrong type", extensions, strings.Replace(argsConfig, "[' lsm=apparmor ', '', lsm=apparmor]", "bad", 1), plainConfig},
 		{"numeric args", extensions, strings.Replace(argsConfig, "[' lsm=apparmor ', '', lsm=apparmor]", "[123]", 1), plainConfig},
 		{"numeric extension", "spec:\n  cluster:\n    talos:\n      extensions: [123]\n", argsConfig, plainConfig},
+		{"numeric schematic", strings.Replace(extensions, "      extensions:", "      schematicId: 123\n      extensions:", 1), argsConfig, plainConfig},
 		{"multiple cluster configs", extensions + "---\n" + extensions, argsConfig, plainConfig},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -114,7 +144,12 @@ func TestVersionContractRejectsUnreviewedOrDivergentPins(t *testing.T) {
 	if err := verifyPins([]byte(ci), []byte(cd)); err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{strings.Replace(ci, "7.193.6", "7.193.7", 1), strings.ReplaceAll(ci, "7.193.6", "7.193.7"), "jobs: {}\n", "jobs: ["} {
+	// Both exact releases were source-audited, but a mixed set of pins is not
+	// a coherent caller even when every individual version is approved.
+	if err := verifyPins([]byte(strings.ReplaceAll(ci, "7.193.6", "7.193.8")), []byte(strings.ReplaceAll(cd, "7.193.6", "7.193.8"))); err != nil {
+		t.Fatal("audited 7.193.8 pins rejected", err)
+	}
+	for _, bad := range []string{strings.Replace(ci, "7.193.6", "7.193.7", 1), strings.ReplaceAll(ci, "7.193.6", "7.193.7"), strings.Replace(ci, "7.193.6", "7.193.8", 1), strings.ReplaceAll(ci, "7.193.6", "7.193.8"), "jobs: {}\n", "jobs: ["} {
 		if err := verifyPins([]byte(bad), []byte(cd)); err == nil {
 			t.Fatal("unreviewed, missing or malformed pin accepted")
 		}

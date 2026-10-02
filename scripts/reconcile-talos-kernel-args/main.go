@@ -1,4 +1,4 @@
-// Mirror the post-installer kernel-argument fold audited in KSail v7.193.6,
+// Mirror the post-installer kernel-argument fold audited in KSail v7.193.6 and v7.193.8,
 // configs.go applySchematic/schematicKernelArgs/reconcileFoldedKernelArgs.
 package main
 
@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const reviewedKSailVersion = "7.193.6"
+const reviewedKSailVersions = "7.193.6 and 7.193.8"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -37,7 +37,7 @@ func run(args []string) error {
 		return err
 	}
 	if len(args) == 1 {
-		fmt.Printf("kernel-argument fold matches reviewed KSail %s pins\n", reviewedKSailVersion)
+		fmt.Printf("kernel-argument fold matches audited KSail pins (%s)\n", reviewedKSailVersions)
 		return nil
 	}
 	if args[1] == args[2] {
@@ -65,7 +65,7 @@ func run(args []string) error {
 			return fmt.Errorf("write rendered config: %w", err)
 		}
 	}
-	fmt.Printf("%s: reconciled post-installer kernel arguments (KSail %s)\n", args[0], reviewedKSailVersion)
+	fmt.Printf("%s: reconciled source-audited post-installer kernel arguments\n", args[0])
 	return nil
 }
 
@@ -170,6 +170,17 @@ func fold(config, cp, worker []byte) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	schematic, err := lookup(cluster[0], "spec", "cluster", "talos", "schematicId")
+	if err != nil {
+		return nil, nil, err
+	}
+	explicitSchematic := false
+	if schematic != nil && schematic.Tag != "!!null" {
+		if schematic.Kind != yaml.ScalarNode || schematic.Tag != "!!str" {
+			return nil, nil, fmt.Errorf("schematicId is not a string")
+		}
+		explicitSchematic = strings.TrimSpace(schematic.Value) != ""
+	}
 	var roleDocs [2][]*yaml.Node
 	var installs [2]*yaml.Node
 	var args []string
@@ -227,7 +238,9 @@ func fold(config, cp, worker []byte) ([]byte, []byte, error) {
 			}
 		}
 	}
-	if len(ext) == 0 || len(args) == 0 {
+	// KSail does not pass extensions to the Talos config manager when an
+	// explicit schematic is selected. That path never reaches the fold.
+	if explicitSchematic || len(ext) == 0 || len(args) == 0 {
 		return cp, worker, nil
 	}
 	outputs := [2][]byte{cp, worker}
@@ -262,6 +275,7 @@ func verifyPins(inputs ...[]byte) error {
 	if len(inputs) == 0 {
 		return fmt.Errorf("deployment pin evidence absent")
 	}
+	selectedVersion := ""
 	for _, data := range inputs {
 		docs, err := documents(data)
 		if err != nil || len(docs) != 1 {
@@ -276,9 +290,13 @@ func verifyPins(inputs ...[]byte) error {
 						continue
 					}
 					v := n.Content[i+1]
-					if v.Kind != yaml.ScalarNode || v.Tag != "!!str" || v.Value != reviewedKSailVersion {
-						return fmt.Errorf("KSail fold audited at %s; deployment pin %q requires a new source audit", reviewedKSailVersion, v.Value)
+					if v.Kind != yaml.ScalarNode || v.Tag != "!!str" || (v.Value != "7.193.6" && v.Value != "7.193.8") {
+						return fmt.Errorf("KSail fold audited at %s; deployment pin %q requires a new source audit", reviewedKSailVersions, v.Value)
 					}
+					if selectedVersion != "" && v.Value != selectedVersion {
+						return fmt.Errorf("divergent KSail deployment pins %q and %q", selectedVersion, v.Value)
+					}
+					selectedVersion = v.Value
 					count++
 				}
 			}
