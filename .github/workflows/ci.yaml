@@ -214,6 +214,19 @@ jobs:
           shellcheck scripts/tests/test-publish-workflow-signing-revisions.sh
           bash scripts/tests/test-publish-workflow-signing-revisions.sh
 
+      # The report above discovers its consumers with a raw FILE SCAN, while production is
+      # what Flux RENDERS. This renders every production root (read from k8s/clusters/prod)
+      # and fails when the two consumer sets differ — an excluded base, a patched ref or URL,
+      # a consumer in a file the scan never opens — or when the render cannot be judged
+      # statically (#3332). Renders only manifests. Unconditional, like the report: one half
+      # of what it compares lives under scripts/, outside the k8s paths.
+      - name: 🔐 Validate consumer discovery against the production render
+        run: |
+          shellcheck -x scripts/guard-consumer-discovery-conservation.sh
+          shellcheck scripts/tests/test-guard-consumer-discovery-conservation.sh
+          bash scripts/tests/test-guard-consumer-discovery-conservation.sh
+          ./scripts/guard-consumer-discovery-conservation.sh
+
       # The report names the two revisions per consumer; the generator (#3550) turns them
       # into the committed approved set the matcher narrowing (#3308) is derived from. Its
       # cluster read and its pin read are both stubbed here, so this proves the fail-closed

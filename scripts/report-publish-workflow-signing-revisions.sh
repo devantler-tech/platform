@@ -176,7 +176,23 @@ registry_tag_for_git_tag() {
   printf '%s\n' "${tag//+/_}"
 }
 
-# Print "<repo>\t<workflow>\t<pinned-version-or-empty>" per consumer.
+# Print "<repo>\t<workflow>\t<pinned-version-or-empty>\t<artifact>" per consumer.
+#
+# Discovery is a raw FILE SCAN of the repository: the files carrying a shared-workflow subject,
+# then every consumer document in each (`consumer_rows`). Production is what Flux RENDERS, and
+# the two can disagree — a base production excludes, a ref or URL an overlay patches, a consumer
+# in a file this scan never opens. `guard-consumer-discovery-conservation.sh` applies the same
+# `consumer_rows` to the production render and fails when the two sets differ (#3332).
+discover_consumers() {
+  local root="$1" file
+  [ -d "$root" ] || return 0
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    consumer_rows "$file"
+  done < <(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' "$root" 2>/dev/null | sort -u) | sort -u
+}
+
+# Print one discovery row per consumer DOCUMENT in one (possibly multi-document) YAML file.
 #
 # 🔴 ITERATES DOCUMENTS, NOT FILES. Reading one value per FILE drops every consumer after
 # the first in a multi-document manifest, and — worse — pairs fields across documents: with
@@ -189,68 +205,64 @@ registry_tag_for_git_tag() {
 # grep: an unanchored grep matches prose, so a comment mentioning the other workflow
 # reattributed a consumer — and where a consumer's cd.yaml calls both shared workflows
 # that returns the wrong revision silently.
-discover_consumers() {
-  local root="$1" file url version subjects repo workflow workflows artifact
-  [ -d "$root" ] || return 0
-  while IFS= read -r file; do
-    [ -n "$file" ] || continue
-    while IFS=$'\t' read -r url subjects version; do
-      # 🔴 TAB IS IFS WHITESPACE, so `read` COLLAPSES consecutive tabs and an empty MIDDLE
-      # field silently shifts every later field left. Two consumers pin no `spec.ref.tag`,
-      # so their row was `url\t\tsubject` and the subject landed in `version` — both
-      # vanished from discovery. Every field is emitted with a `-` placeholder instead of
-      # empty, so no field is ever blank and no collapse is possible.
-      [ "$version" = "-" ] && version=""
-      [ "$subjects" = "-" ] && subjects=""
-      [ -n "$url" ] || continue
-      case "$url" in
-        oci://ghcr.io/devantler-tech/*) ;;
-        *) continue ;;
-      esac
-      # Exactly one shared publish workflow per document, or the attribution is ambiguous
-      # and a guess would be worse than a failure.
-      workflows="$(printf '%s\n' "$subjects" |
-        grep -oE 'publish-(app|manifests)\\?\.yaml@' | sed 's/\\\{0,1\}\.yaml@$//' | sort -u || true)"
-      [ -n "$workflows" ] || continue
-      if [ "$(printf '%s\n' "$workflows" | grep -c .)" -ne 1 ]; then
-        printf 'ambiguous: %s names more than one shared publish workflow\n' "$url" >&2
-        continue
-      fi
-      workflow="$workflows"
-      repo="${url#oci://ghcr.io/devantler-tech/}"
-      repo="${repo%%/*}"
-      [ -n "$repo" ] || continue
-      repo="$(oci_name_to_repo "$repo")"
-      plausible_repo "$repo" || continue
-      # The artifact names the deployed consumer; the repository only names its source.
-      artifact="${url#oci://ghcr.io/devantler-tech/}"
-      artifact="${artifact%/}"
-      printf '%s\t%s\t%s\t%s\n' "$repo" "$workflow" "$version" "$artifact"
-      # 🔴 FLUX RESOLVES `spec.ref` AS digest > semver > tag, AND AN OMITTED `ref` MEANS
-      # the mutable `latest` tag. Reading `tag` first inverts that: a document carrying BOTH
-      # a tag and a digest (or a tag and a semver) would be attributed to a tag Flux never
-      # serves, and the real signer would be omitted from the proposed allow-list — a
-      # confident wrong answer, which is the one outcome this report must never produce. A
-      # digest or an omitted ref also collapsed to the meaningless `semver:`, which
-      # `effective_version` then refused as a bounded constraint, so a resolvable consumer
-      # read as UNRESOLVED.
-      #
-      # An omitted ref emits `unpinned`, NOT the literal `latest`, so it stays distinct from
-      # a document that explicitly writes `tag: latest`. The two are different questions: an
-      # explicit tag is a written-down selector this resolver can look up, while an omitted
-      # ref is a mutable pointer with no release version behind it. Emitting `latest` for
-      # both made the omitted case an exact lookup for a tag that is not a release, and
-      # `effective_version` refuses `unpinned` by name instead.
-      #
-      # These live OUTSIDE the single-quoted yq program deliberately: a backtick inside it
-      # reads as a command substitution to shellcheck (SC2016), so prose belongs out here.
-    done < <(yq eval -r '
-      select(.kind == "OCIRepository") |
-      [(.spec.url // "-"),
-       ((.spec.verify.matchOIDCIdentity // []) | map(.subject // "") | join(" ") | select(. != "") // "-"),
-       (((.spec.ref.digest // "") | select(. != "") | "digest:" + .) // ((.spec.ref.semver // "") | select(. != "") | "semver:" + .) // ((.spec.ref.tag // "") | select(. != "")) // "unpinned")] | @tsv
-    ' "$file" 2>/dev/null || true)
-  done < <(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' "$root" 2>/dev/null | sort -u) | sort -u
+consumer_rows() {
+  local file="$1" url version subjects repo workflow workflows artifact
+  while IFS=$'\t' read -r url subjects version; do
+    # 🔴 TAB IS IFS WHITESPACE, so `read` COLLAPSES consecutive tabs and an empty MIDDLE
+    # field silently shifts every later field left. Two consumers pin no `spec.ref.tag`,
+    # so their row was `url\t\tsubject` and the subject landed in `version` — both
+    # vanished from discovery. Every field is emitted with a `-` placeholder instead of
+    # empty, so no field is ever blank and no collapse is possible.
+    [ "$version" = "-" ] && version=""
+    [ "$subjects" = "-" ] && subjects=""
+    [ -n "$url" ] || continue
+    case "$url" in
+      oci://ghcr.io/devantler-tech/*) ;;
+      *) continue ;;
+    esac
+    # Exactly one shared publish workflow per document, or the attribution is ambiguous
+    # and a guess would be worse than a failure.
+    workflows="$(printf '%s\n' "$subjects" |
+      grep -oE 'publish-(app|manifests)\\?\.yaml@' | sed 's/\\\{0,1\}\.yaml@$//' | sort -u || true)"
+    [ -n "$workflows" ] || continue
+    if [ "$(printf '%s\n' "$workflows" | grep -c .)" -ne 1 ]; then
+      printf 'ambiguous: %s names more than one shared publish workflow\n' "$url" >&2
+      continue
+    fi
+    workflow="$workflows"
+    repo="${url#oci://ghcr.io/devantler-tech/}"
+    repo="${repo%%/*}"
+    [ -n "$repo" ] || continue
+    repo="$(oci_name_to_repo "$repo")"
+    plausible_repo "$repo" || continue
+    # The artifact names the deployed consumer; the repository only names its source.
+    artifact="${url#oci://ghcr.io/devantler-tech/}"
+    artifact="${artifact%/}"
+    printf '%s\t%s\t%s\t%s\n' "$repo" "$workflow" "$version" "$artifact"
+    # 🔴 FLUX RESOLVES `spec.ref` AS digest > semver > tag, AND AN OMITTED `ref` MEANS
+    # the mutable `latest` tag. Reading `tag` first inverts that: a document carrying BOTH
+    # a tag and a digest (or a tag and a semver) would be attributed to a tag Flux never
+    # serves, and the real signer would be omitted from the proposed allow-list — a
+    # confident wrong answer, which is the one outcome this report must never produce. A
+    # digest or an omitted ref also collapsed to the meaningless `semver:`, which
+    # `effective_version` then refused as a bounded constraint, so a resolvable consumer
+    # read as UNRESOLVED.
+    #
+    # An omitted ref emits `unpinned`, NOT the literal `latest`, so it stays distinct from
+    # a document that explicitly writes `tag: latest`. The two are different questions: an
+    # explicit tag is a written-down selector this resolver can look up, while an omitted
+    # ref is a mutable pointer with no release version behind it. Emitting `latest` for
+    # both made the omitted case an exact lookup for a tag that is not a release, and
+    # `effective_version` refuses `unpinned` by name instead.
+    #
+    # These live OUTSIDE the single-quoted yq program deliberately: a backtick inside it
+    # reads as a command substitution to shellcheck (SC2016), so prose belongs out here.
+  done < <(yq eval -r '
+    select(.kind == "OCIRepository") |
+    [(.spec.url // "-"),
+     ((.spec.verify.matchOIDCIdentity // []) | map(.subject // "") | join(" ") | select(. != "") // "-"),
+     (((.spec.ref.digest // "") | select(. != "") | "digest:" + .) // ((.spec.ref.semver // "") | select(. != "") | "semver:" + .) // ((.spec.ref.tag // "") | select(. != "")) // "unpinned")] | @tsv
+  ' "$file" 2>/dev/null || true)
 }
 
 # 🔴 A SEMVER RANGE IS A CONSTRAINT, NOT "WHATEVER IS NEWEST". Discovery carries the
