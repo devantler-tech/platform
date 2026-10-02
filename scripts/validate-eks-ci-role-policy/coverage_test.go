@@ -614,10 +614,18 @@ func shellKeepsErrexit(shell string) bool {
 // gate.
 func (w workflow) runsValidator() bool {
 	for _, job := range w.Jobs {
-		for _, step := range job.Steps {
-			if shellKeepsErrexit(step.Shell) && runsGate(step.Run, validatorInvocation) {
-				return true
-			}
+		if job.runsValidator() {
+			return true
+		}
+	}
+	return false
+}
+
+// runsValidator reports whether THIS job executes the authorization gate.
+func (j job) runsValidator() bool {
+	for _, step := range j.Steps {
+		if shellKeepsErrexit(step.Shell) && runsGate(step.Run, validatorInvocation) {
+			return true
 		}
 	}
 	return false
