@@ -74,7 +74,7 @@ command -v yq >/dev/null 2>&1 || die "guard: yq is required"
 # parity for an ExternalSecret production never reconciles (platform#3499).
 #
 # reachable_manifests <dir> prints the canonical path of every local file the
-# kustomization in <dir> reaches through `resources:` and `components:`,
+# kustomization in <dir> reaches through `resources:`, `components:` and the legacy `bases:`,
 # recursing into referenced directories. A remote entry (a URL or a git
 # reference) is skipped: it cannot hold a manifest from this repository. Any
 # local reference this cannot resolve exits 2, because a reachable set that is
@@ -91,8 +91,8 @@ reachable_manifests() { # <dir>
   [ -n "$kustomization" ] ||
     die "guard: $dir has no kustomization, so what it deploys is unknown"
   local entries
-  entries="$(yq -N -r '(.resources // []) + (.components // []) | .[]' "$kustomization" 2>/dev/null)" ||
-    die "guard: could not parse .resources/.components from $kustomization"
+  entries="$(yq -N -r '(.resources // []) + (.components // []) + (.bases // []) | .[]' "$kustomization" 2>/dev/null)" ||
+    die "guard: could not parse .resources/.components/.bases from $kustomization"
   while IFS= read -r entry; do
     [ -n "$entry" ] || continue
     case "$entry" in
@@ -141,7 +141,7 @@ for app_path in "$apps_dir"/*/ "$prod_apps_dir"/*/; do
         unreachable+=("$app: ${manifest#"$repo_root"/}")
       fi
     fi
-  done < <(find "$app_path" -type f \( -name '*.yaml' -o -name '*.yml' \) 2>/dev/null)
+  done < <(find "$app_path" \( -type f -o -type l \) \( -name '*.yaml' -o -name '*.yml' \) 2>/dev/null)
   if [ -n "$declares" ]; then
     if ((${#ghcr_apps[@]} > 0)); then
       case " ${ghcr_apps[*]} " in
@@ -164,7 +164,7 @@ done
 # ghcr-auth app at all".
 if ((${#unreachable[@]} > 0)); then
   for entry in "${unreachable[@]}"; do
-    printf '  FAIL %s declares a ghcr-auth ExternalSecret that its kustomization does not deploy; list the file in its .resources or delete it.\n' \
+    printf '  FAIL %s declares a ghcr-auth ExternalSecret that its kustomization does not deploy; reference the file from its kustomization or delete it.\n' \
       "$entry"
   done
   printf '\nA ghcr-auth declaration on disk is not what production deploys.\n' >&2
