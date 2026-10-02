@@ -183,13 +183,19 @@ registry_tag_for_git_tag() {
 # the two can disagree — a base production excludes, a ref or URL an overlay patches, a consumer
 # in a file this scan never opens. `guard-consumer-discovery-conservation.sh` applies the same
 # `consumer_rows` to the production render and fails when the two sets differ (#3332).
+#
+# Fails when a selected file cannot be parsed: it carries a shared-workflow subject, so its
+# consumers are UNKNOWN, and dropping it would report the rest as the whole set.
 discover_consumers() {
-  local root="$1" file
+  local root="$1" file files rows found=''
   [ -d "$root" ] || return 0
+  files="$(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' "$root" 2>/dev/null | sort -u || true)"
   while IFS= read -r file; do
     [ -n "$file" ] || continue
-    consumer_rows "$file"
-  done < <(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' "$root" 2>/dev/null | sort -u) | sort -u
+    rows="$(consumer_rows "$file")" || return 1
+    found="$found$rows"$'\n'
+  done <<<"$files"
+  printf '%s' "$found" | sed '/^$/d' | sort -u
 }
 
 # Print one discovery row per consumer DOCUMENT in one (possibly multi-document) YAML file.
@@ -205,8 +211,25 @@ discover_consumers() {
 # grep: an unanchored grep matches prose, so a comment mentioning the other workflow
 # reattributed a consumer — and where a consumer's cd.yaml calls both shared workflows
 # that returns the wrong revision silently.
+#
+# 🔴 A FILE yq CANNOT PARSE IS NOT A FILE WITH NO CONSUMERS. The extraction used to end in
+# `|| true`, so a parse failure read as zero rows and the file's consumers silently left the
+# set. It now fails, naming the file; documents that parse but hold no consumer still yield
+# nothing.
 consumer_rows() {
-  local file="$1" url version subjects repo workflow workflows artifact
+  local file="$1" rows url version subjects repo workflow workflows artifact
+  # The prose about each field lives OUTSIDE the single-quoted yq program deliberately: a
+  # backtick inside it reads as a command substitution to shellcheck (SC2016), so it is in
+  # the comment block at the end of the loop below.
+  if ! rows="$(yq eval -r '
+    select(.kind == "OCIRepository") |
+    [(.spec.url // "-"),
+     ((.spec.verify.matchOIDCIdentity // []) | map(.subject // "") | join(" ") | select(. != "") // "-"),
+     (((.spec.ref.digest // "") | select(. != "") | "digest:" + .) // ((.spec.ref.semver // "") | select(. != "") | "semver:" + .) // ((.spec.ref.tag // "") | select(. != "")) // "unpinned")] | @tsv
+  ' "$file" 2>/dev/null)"; then
+    printf 'could not parse %s as YAML, so the consumers it declares are UNKNOWN\n' "$file" >&2
+    return 1
+  fi
   while IFS=$'\t' read -r url subjects version; do
     # 🔴 TAB IS IFS WHITESPACE, so `read` COLLAPSES consecutive tabs and an empty MIDDLE
     # field silently shifts every later field left. Two consumers pin no `spec.ref.tag`,
@@ -254,15 +277,7 @@ consumer_rows() {
     # ref is a mutable pointer with no release version behind it. Emitting `latest` for
     # both made the omitted case an exact lookup for a tag that is not a release, and
     # `effective_version` refuses `unpinned` by name instead.
-    #
-    # These live OUTSIDE the single-quoted yq program deliberately: a backtick inside it
-    # reads as a command substitution to shellcheck (SC2016), so prose belongs out here.
-  done < <(yq eval -r '
-    select(.kind == "OCIRepository") |
-    [(.spec.url // "-"),
-     ((.spec.verify.matchOIDCIdentity // []) | map(.subject // "") | join(" ") | select(. != "") // "-"),
-     (((.spec.ref.digest // "") | select(. != "") | "digest:" + .) // ((.spec.ref.semver // "") | select(. != "") | "semver:" + .) // ((.spec.ref.tag // "") | select(. != "")) // "unpinned")] | @tsv
-  ' "$file" 2>/dev/null || true)
+  done <<<"$rows"
 }
 
 # 🔴 A SEMVER RANGE IS A CONSTRAINT, NOT "WHATEVER IS NEWEST". Discovery carries the
@@ -1015,7 +1030,8 @@ identity_floor() {
 main() {
   local root="${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}"
   local consumers
-  consumers="$(discover_consumers "$root")"
+  consumers="$(discover_consumers "$root")" ||
+    fail 'consumer discovery could not read every file it selected (see above), so the consumer set is UNKNOWN'
 
   # The repository floor first: EXPECTED_CONSUMERS is what the approved revision set is keyed on.
   identity_floor consumer EXPECTED_CONSUMERS "$(printf '%s' "$consumers" | cut -f1 | sort -u)" \

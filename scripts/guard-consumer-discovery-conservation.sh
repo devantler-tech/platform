@@ -46,7 +46,8 @@
 #   - an instance of a ResourceGraphDefinition kind whose template is a shared-workflow
 #     consumer: kro creates that OCIRepository inside the cluster, so neither the scan nor any
 #     render has a document for it;
-#   - a root that is missing or does not render, and an EMPTY consumer set on both sides —
+#   - a root that is missing or does not render, a file either side selected but cannot
+#     parse (two partial sets can still agree), and an EMPTY consumer set on both sides —
 #     an empty set compared to an empty set is agreement about nothing.
 #
 # USAGE
@@ -210,14 +211,20 @@ while IFS= read -r kind; do
 done <<<"$consumer_kinds"
 
 # ── 3. Compare the two consumer sets ───────────────────────────────────────────────────
-# `consumer_rows` reads a file it cannot parse as having no consumers. Every render has
-# already been parsed by the checks above, each of which refuses on a parse failure, so an
-# unreadable render never reaches this point as an empty set.
+# A file either side cannot parse refuses: its consumers are UNKNOWN, and dropping it would
+# compare two partial sets that can still agree.
+rendered=''
 while IFS= read -r file; do
   [ -n "$file" ] || continue
-  consumer_rows "$file"
-done <<<"$root_files" | LC_ALL=C sort -u >"$work/rendered"
-discover_consumers "$SCAN_ROOT" | LC_ALL=C sort -u >"$work/scanned"
+  rows="$(consumer_rows "$file")" ||
+    refuse 'could not read the consumers in a production render, so the rendered set is UNKNOWN'
+  rendered="$rendered$rows
+"
+done <<<"$root_files"
+printf '%s' "$rendered" | sed '/^$/d' | LC_ALL=C sort -u >"$work/rendered"
+scanned="$(discover_consumers "$SCAN_ROOT")" ||
+  refuse 'the file scan could not read every file it selected, so the scanned set is UNKNOWN'
+printf '%s\n' "$scanned" | sed '/^$/d' | LC_ALL=C sort -u >"$work/scanned"
 
 if [ ! -s "$work/rendered" ] && [ ! -s "$work/scanned" ]; then
   refuse "neither the file scan nor the production render found a single consumer; an empty set agreeing with an empty set compares nothing (roots: $root_labels)"

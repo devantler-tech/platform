@@ -440,6 +440,23 @@ rm -f "$root/k8s/clusters/prod/flux-kustomizations.yaml.bak"
 expect_refusal 'a root of ./ is rendered rather than skipped' "$root" \
   'could not render production root .,'
 
+# A file the scan selects (it carries a shared-workflow subject) but cannot parse. It sits
+# outside every production root, so the render is unaffected and both sides still hold
+# alpha and beta: dropping the file would make two partial sets agree.
+root="$(fixture unparsable)"
+mkdir -p "$root/docs"
+cat >"$root/docs/broken.yaml" <<'YAML'
+kind: OCIRepository
+spec:
+  url: oci://ghcr.io/devantler-tech/eta/manifests
+  verify:
+    matchOIDCIdentity:
+      - subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
+  ref: [unclosed
+YAML
+expect_refusal 'a file the scan selects but cannot parse is refused' "$root" \
+  'could not parse' 'docs/broken.yaml' 'the file scan could not read every file it selected'
+
 root="$(fixture no-overlay)"
 rm -rf "$root/k8s/clusters/prod"
 expect_refusal 'a tree with no production overlay is refused' "$root" 'no production overlay'

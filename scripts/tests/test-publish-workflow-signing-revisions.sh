@@ -154,6 +154,38 @@ else
   pass 'a tree matching nothing fails closed instead of reporting a clean portfolio'
 fi
 
+# 3b. A file the scan SELECTS (it carries a shared-workflow subject) but yq cannot parse.
+#     Its consumers are unknown; reading it as "no consumers" let it drop out of the set
+#     unseen (#3332). The real consumers sit beside it, so only the parse failure can fail
+#     this run: the identity floor is satisfied by the copies.
+unparsable_root="$WORK/unparsable"
+mkdir -p "$unparsable_root"
+while IFS= read -r src; do
+  cp "$src" "$unparsable_root/$(printf '%s' "${src#"$REPO_ROOT"/}" | tr '/' '_')"
+done < <(grep -rl 'kind: OCIRepository' --include='*.yaml' "$REPO_ROOT/k8s")
+cat >"$unparsable_root/broken.yaml" <<'YAML'
+kind: OCIRepository
+spec:
+  verify:
+    matchOIDCIdentity:
+      - subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
+  ref: [unclosed
+YAML
+unparsable_out="$WORK/unparsable.out"
+if PUBLISH_CONSUMER_ROOT="$unparsable_root" "$SCRIPT" --list-consumers >"$unparsable_out" 2>&1; then
+  fail "a selected file yq cannot parse was read as having no consumers: $(cat "$unparsable_out")"
+elif ! grep -q 'could not parse .*broken.yaml' "$unparsable_out" ||
+  ! grep -q 'consumer set is UNKNOWN' "$unparsable_out"; then
+  fail "the run failed, but not by naming the unparsable file: $(cat "$unparsable_out")"
+else
+  rm -f "$unparsable_root/broken.yaml"
+  if PUBLISH_CONSUMER_ROOT="$unparsable_root" "$SCRIPT" --list-consumers >"$unparsable_out" 2>&1; then
+    pass 'a selected file yq cannot parse fails discovery, naming the file'
+  else
+    fail "control: the same tree without the unparsable file must discover cleanly: $(cat "$unparsable_out")"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 4. RIGHT SIZE, WRONG MEMBERSHIP. This is why the floor is an identity check and not a
 #    count: one real consumer dropping out while any other file drops in leaves the total
