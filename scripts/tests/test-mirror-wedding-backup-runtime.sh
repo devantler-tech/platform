@@ -37,3 +37,6 @@ docker run --rm --network none --read-only --user 65532:65532 \
   "${image}" -ec 'mc --version; for tool in sed grep awk sort tail sha256sum cut date cat sleep mkdir rm; do command -v "$tool" >/dev/null; done'
 
 MIRROR_POD_RUNTIME_IMAGE="${image}" bash "${root_dir}/scripts/tests/test-mirror-wedding-backup-catalogue.sh"
+# The denial proof pins the same images (its test asserts that), so its pod
+# script runs in this image too.
+DENIAL_POD_RUNTIME_IMAGE="${image}" bash "${root_dir}/scripts/tests/test-verify-wedding-backup-denial.sh"

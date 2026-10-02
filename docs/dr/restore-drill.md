@@ -65,8 +65,44 @@ force-cancel the job or force-delete a stuck namespace; investigate its finalize
 
 Require `dedicatedRestoreVerified`, `productionClusterStable` and
 `cleanupVerified` to be true in a successful production run, bound to its source
-SHA. This demonstrates dedicated archive recovery. Retiring shared access still
-requires the separate destination access-denial and bootstrap acceptance gates.
+SHA. This demonstrates dedicated archive recovery. Retiring shared access also
+requires the shared-destination denial proof below and the bootstrap proof above.
+
+## Shared-destination denial proof
+
+Dispatch **Verify Wedding Backup Denial** from `main` with
+`confirm=verify-wedding-backup-denial`. It shares the production deployment lock
+and touches neither database. It shows what the shared `platform-backups`
+destination enforces against the deployed dedicated credential, rather than how
+that credential's token was configured.
+
+The job first checks that the Wedding Cluster archives through
+`wedding-db-dedicated`, so the credential under test is the one in use, and that
+both ObjectStores name their reviewed bucket, prefix and Secret at the R2
+endpoint committed in the bootstrap ConfigMap. It then starts a short-lived pod
+in `wedding-app`, where both credentials and R2 egress already exist, from the
+same pinned images as the catalogue mirror. The pod never prints a credential or
+the endpoint host. Inside it:
+
+1. The dedicated credential lists its own catalogue. A refusal observed later
+   therefore cannot come from a broken key, endpoint or network path.
+2. The shared credential lists the shared catalogue and names one object in it,
+   so the refused targets exist and a mistyped bucket cannot pass.
+3. With the dedicated credential, the pod lists the shared catalogue, reads that
+   object, and writes a run-owned object under `wedding-backup-denial-probe/` in
+   `platform-backups`. Each must be refused with the S3 error code
+   `AccessDenied`.
+
+All three accesses are attempted and reported. An accepted access is reported as
+broken isolation, and an accepted write is removed with the shared credential
+before the run fails. Any other error, such as a timeout or `NoSuchBucket`, is
+reported as unproven rather than counted as a refusal.
+
+Require the receipt with `dedicatedCatalogueReachable`,
+`sharedCatalogueReferenced`, `listDenied`, `readDenied` and `writeDenied` all
+true, followed by `DENIAL OBSERVED`, in a successful production run bound to its
+source SHA. Run it again after every rotation of the dedicated token: the new
+token must be refused exactly as the one it replaces.
 
 ## Velero namespace drill
 
