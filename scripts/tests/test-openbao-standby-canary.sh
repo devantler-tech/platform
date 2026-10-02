@@ -59,7 +59,7 @@ yq -o=json '.spec.postRenderers' "${release}" | jq -e '
     "group": "apps", "version": "v1", "kind": "StatefulSet",
     "name": "openbao", "namespace": "openbao"
   }
-' >/dev/null || fail 'production OpenBao must keep the lowest ordinal held during standby rollout'
+' >/dev/null || fail 'production OpenBao must use a single scoped rollout-safety patch'
 yq '.spec.postRenderers[0].kustomize.patches // [] |
   {"apiVersion": "kustomize.config.k8s.io/v1beta1", "kind": "Kustomization",
    "resources": ["rendered.yaml"], "patches": .}' "${release}" >"${scratch}/kustomization.yaml"
@@ -67,10 +67,9 @@ kubectl kustomize "${scratch}" |
   yq ea 'select(.kind == "StatefulSet" and .metadata.name == "openbao")' - >"${scratch}/statefulset.yaml"
 readonly statefulset="${scratch}/statefulset.yaml"
 
-yq -e '.spec.updateStrategy.type == "RollingUpdate" and
-  .spec.updateStrategy.rollingUpdate.partition == 1 and
-  .spec.replicas == 3' "${statefulset}" >/dev/null ||
-  fail 'production OpenBao must keep the lowest ordinal held during standby rollout'
+yq -o=json '.spec' "${statefulset}" | jq -e '
+  .updateStrategy == {"type": "OnDelete"} and .replicas == 3' >/dev/null ||
+  fail 'production OpenBao must not automatically replace another replica while sealed servers can be Ready'
 yq -e '.spec.template.spec.containers[] | select(.name == "openbao") |
   .image == "quay.io/openbao/openbao:2.6.3"' "${statefulset}" >/dev/null ||
   fail 'the canary must use the released standby OIDC repair'
@@ -95,4 +94,4 @@ grep -Fq "'scripts/tests/test-openbao-standby-canary.sh'" "${root_dir}/.github/w
 grep -Fq 'bash scripts/tests/test-openbao-standby-canary.sh' "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must execute the OpenBao canary regression'
 
-printf 'PASS: OpenBao 2.6.3 rollout is confined to the two highest production ordinals\n'
+printf 'PASS: OpenBao 2.6.3 preserves deliberate production replica replacement\n'

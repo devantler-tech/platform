@@ -1,7 +1,7 @@
-# Deliver the standby OIDC repair to the next ordinal after healthy canary readback.
-# Keep ordinal 0 on its current revision while the second replica is replaced.
-# Advancing this partition requires a separate reviewed change and
-# deployment readback (#4391); the base/local chart retains OnDelete.
+# Retain the repaired canary without automatically replacing another replica.
+# The bootstrap readiness probe accepts sealed servers, so a partition advance
+# cannot guarantee that the canary still participates in Raft quorum (#4391).
+# Further replacement requires a separately reviewed, fail-closed health gate.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -25,6 +25,4 @@ spec:
                 namespace: openbao
               spec:
                 updateStrategy:
-                  type: RollingUpdate
-                  rollingUpdate:
-                    partition: 1
+                  type: OnDelete
