@@ -294,7 +294,7 @@ rbac.authorization.k8s.io/v1|Role|longhorn-system|kyverno:background-controller:
 
 rbac.authorization.k8s.io/v1|Role|longhorn-system|longhorn-stale-node-cleanup bb761c018fb1648ee65a6ffe72e770e3cdf125b40a8774f11369f303beb85d50
 
-rbac.authorization.k8s.io/v1|Role|observability|cronjob-failure-alert 3b244783f53c17c55abfbae0a09973d244d258dbfbfdc8aa816539ae02bf4e6c
+rbac.authorization.k8s.io/v1|Role|observability|cronjob-failure-alert 208ea569644d0750f7ab9ca3e4d2fefcbd56e5fb2fc6b871b30a350393b1c4c3
 
 rbac.authorization.k8s.io/v1|Role|observability|prune-protected-orphan-alert 7a815989a665e8c9d5f6434e51f3dde0e6e9116e05f195f1e56ed34cd7b3b1c2
 

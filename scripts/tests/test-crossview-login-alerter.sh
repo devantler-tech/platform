@@ -34,7 +34,9 @@ readonly container="${pod}.containers[] | select(.name == \"alerter\")"
 env_value() { yq -r "${container} | .env[] | select(.name == \"$1\") | .value" "${manifest}"; }
 script_body="$(yq -r "${container} | .command[2]" "${manifest}")"
 readonly script_body
-[ -n "${script_body}" ] && [ "${script_body}" != null ] || fail 'could not extract the sensor script'
+if [ -z "${script_body}" ] || [ "${script_body}" = null ]; then
+  fail 'could not extract the sensor script'
+fi
 
 # ---- Wiring ----------------------------------------------------------------
 # Render what Flux applies, so a file that exists but is not referenced fails.
@@ -111,8 +113,9 @@ worst=$((samples * 40 + (samples - 1) * interval + 2 * 30))
 [ "${deadline}" -gt "${worst}" ] || fail "the Job deadline (${deadline}s) must cover the worst case (${worst}s)"
 # One healthy read ends a run; a page needs every read over this window false,
 # so a planned database restart (volume detach, reattach, start) is quiet.
-[ "${samples}" -ge 3 ] && [ $(((samples - 1) * interval)) -ge 300 ] ||
+if [ "${samples}" -lt 3 ] || [ $(((samples - 1) * interval)) -lt 300 ]; then
   fail 'an alert must need at least three false reads spanning five minutes'
+fi
 pass "the deadline covers the worst case (${worst}s of ${deadline}s) and the alert needs a sustained answer"
 
 watch_entry="$(yq -r '.spec.jobTemplate.spec.template.spec.containers[0].env[] | select(.name == "WATCH") | .value' "${watcher}" |

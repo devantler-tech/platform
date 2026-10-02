@@ -97,8 +97,9 @@ sensor_image="$(yq -r '.spec.jobTemplate.spec.template.spec.containers[] | selec
 service_port="$(jq -r '.spec.ports[] | select(.name == "http") | .port' <<<"${service}")"
 target_port="$(jq -r '.spec.ports[] | select(.name == "http") | .targetPort' <<<"${service}")"
 container_port="$(jq -r '.ports[] | select(.name == "http") | .containerPort' <<<"${app_container}")"
-[ "${service_port}" = 80 ] && [ "${target_port}" = "${container_port}" ] ||
+if [ "${service_port}" != 80 ] || [ "${target_port}" != "${container_port}" ]; then
   fail "the sensor reads crossview-service:80, but the chart serves ${service_port} -> ${target_port}"
+fi
 [ "$(yq -r '.spec.ingress[0].toPorts[0].ports[0].port' "${app_policy}")" = "${container_port}" ] ||
   fail "the network policy must admit the sensor to the app's container port ${container_port}"
 subset_of_app_labels() {
