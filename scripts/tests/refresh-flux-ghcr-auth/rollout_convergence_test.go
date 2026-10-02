@@ -2976,3 +2976,47 @@ func TestFluxChildNotProvablyPastApplyBlocksPolicyHandoff(t *testing.T) {
 		})
 	}
 }
+
+// A failed handoff rollout explains itself (#4178): the captured kubectl output, each
+// controller Pod's state and the Pods' recent events are printed, with Pod addresses
+// masked and other Pods' events left out.
+func TestFluxControllerRolloutFailurePrintsHandoffDiagnostics(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_CONTROLLER_ROLLOUT_FAIL": "true",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output, "::group::kustomize-controller handoff diagnostics")
+	requireContains(t, output, "kustomize-controller rollout did not converge")
+	requireContains(t, output, "kustomize-controller-0: phase=")
+	requireContains(t, output, "condition Ready=True")
+	requireContains(t, output, `Warning Unhealthy kustomize-controller-0: Readiness probe failed: Get "http://<address>:9440/readyz"`)
+	requireNotContains(t, output, "10.244.1.5")
+	requireNotContains(t, output, "unrelated-pod-event")
+}
+
+// The success path prints none of the failure diagnostics.
+func TestFluxControllerRolloutSuccessPrintsNoHandoffDiagnostics(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, nil)
+	requireSuccessResult(t, result)
+	requireNotContains(t, result.stdout+result.stderr, "handoff diagnostics")
+}
+
+// A restart patch that is rejected and cannot be adopted explains itself too (#4178).
+func TestFluxControllerRestartRejectionPrintsHandoffDiagnostics(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_CONTROLLER_RESTART_REJECTED": "true",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output, "Could not atomically restart or adopt")
+	requireContains(t, output, "::group::kustomize-controller handoff diagnostics")
+	requireContains(t, output, "admission webhook denied the restart from <address>")
+	requireNotContains(t, output, "10.0.0.9")
+}
