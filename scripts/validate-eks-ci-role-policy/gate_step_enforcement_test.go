@@ -13,12 +13,7 @@ import (
 // applied, so a control cannot pass on an unchanged tree.
 func withGateStep(t *testing.T, key, invocation string, edit func(*step)) map[string]workflow {
 	t.Helper()
-	workflows := loadWorkflows(t)
-	name, jobName, _ := strings.Cut(key, "/")
-	parsedJob, ok := workflows[name].Jobs[jobName]
-	if !ok {
-		t.Fatalf("%s is missing, so this control cannot be applied", key)
-	}
+	workflows, name, jobName, parsedJob := loadGateControlJob(t, key)
 	index := slices.IndexFunc(parsedJob.Steps, func(s step) bool { return runsGate(s.Run, invocation) })
 	if index < 0 {
 		t.Fatalf("%s runs no step invoking %q, so this control cannot be applied", key, invocation)
