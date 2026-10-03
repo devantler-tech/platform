@@ -80,11 +80,15 @@ STUB
 }
 # A stub release resolver: appends one line per call to <name>.calls, then prints <answer>
 # (with `\n` escapes expanded) and exits <status>.
-make_release_resolver() { # <name> <answer> <status>
+make_release_resolver() { # <name> <answer> <status> [<only-workflow>]
   local path="$WORK/release-$1.sh"
   cat >"$path" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$1" >>"$WORK/release-$1.calls"
+if [ -n '${4:-}' ] && [ "\$1" != '${4:-}' ]; then
+  printf '%s\n' '$SHA_R'
+  exit 0
+fi
 printf '%b\n' '$2'
 exit $3
 STUB
@@ -134,7 +138,7 @@ if run_gen "$observer_full" "$pin_ok" "$out1" 2026-01-01 "$log1"; then
   if tail -n +2 "$out1" | awk -F'\t' -v s="$SHA_A" -v p="$SHA_B" -v d="$DIGEST_A" \
     -v r="$SHA_R" \
     'NF != 8 || $3 != "1.2.3" || $4 != d || $5 != s || $6 != p || $8 != "2026-01-01" { bad = 1 }
-     $2 == "publish-app" && $7 != r { bad = 1 } $2 != "publish-app" && $7 != "-" { bad = 1 } END { exit bad }'; then
+     $7 != r { bad = 1 } END { exit bad }'; then
     pass 'every row carries tag, digest, signer, pin, candidate and date in the expected columns'
   else
     fail 'a row is malformed'; cat "$out1"
@@ -271,8 +275,10 @@ else
   down_calls="$(grep -c . "$WORK/release-down.calls" || true)"
   if [ "$app_rows" -lt 2 ]; then
     fail "only $app_rows publish-app consumer(s); the single-attempt case would pass vacuously"
-  elif [ "$down_calls" -eq 1 ]; then
-    pass "an unreadable release is attempted once across $app_rows publish-app rows"
+  elif [ "$down_calls" -eq 2 ] &&
+    [ "$(grep -cxF publish-app "$WORK/release-down.calls")" -eq 1 ] &&
+    [ "$(grep -cxF publish-manifests "$WORK/release-down.calls")" -eq 1 ]; then
+    pass 'an unreadable release is attempted once for each publishing workflow'
   else
     fail "an unreadable release was attempted $down_calls time(s) across $app_rows publish-app rows"
   fi
@@ -290,13 +296,15 @@ else
     fi
   done
 
-  # One shared fact: the release is read once however many publish-app consumers there are.
+  # Resolve each workflow once, including checking that its released file exists.
   release_once="$(make_release_resolver once "$SHA_R" 0)"
   out12="$WORK/out12.tsv"
   if run_gen "$observer_full" "$pin_ok" "$out12" 2026-01-01 "$WORK/log12" "$release_once"; then
     calls="$(grep -c . "$WORK/release-once.calls" || true)"
-    if [ "$calls" -eq 1 ] && grep -qxF publish-app "$WORK/release-once.calls"; then
-      pass 'the release is resolved once, for the publish-app workflow'
+    if [ "$calls" -eq 2 ] &&
+      [ "$(grep -cxF publish-app "$WORK/release-once.calls")" -eq 1 ] &&
+      [ "$(grep -cxF publish-manifests "$WORK/release-once.calls")" -eq 1 ]; then
+      pass 'the release is resolved once for each supported publishing workflow'
     else
       fail "the release resolver ran $calls time(s): $(tr '\n' ' ' <"$WORK/release-once.calls")"
     fi
@@ -304,18 +312,36 @@ else
     fail 'a resolvable release failed the run'; cat "$WORK/log12"
   fi
 
-  # A new release moves only the publish-app rows, which are re-stamped; the others keep
-  # their date because their tuple did not move.
+  # A new release moves both publishing workflows, preserving their signer and pin.
   release_new="$(make_release_resolver new "$SHA_C" 0)"
   if run_gen "$observer_full" "$pin_ok" "$out12" 2026-04-04 "$WORK/log13" "$release_new" &&
     tail -n +2 "$out12" | awk -F'\t' -v n="$SHA_C" '
-      $2 == "publish-app" && ($7 != n || $8 != "2026-04-04") { bad = 1 }
-      $2 != "publish-app" && ($7 != "-" || $8 != "2026-01-01") { bad = 1 } END { exit bad }'; then
-    pass 'a new release re-stamps only the publish-app rows'
+      $7 != n || $8 != "2026-04-04" { bad = 1 } END { exit bad }'; then
+    pass 'a new release re-stamps both publishing workflows'
   else
-    fail 'a new release did not move exactly the publish-app rows'; cat "$out12"
+    fail 'a new release did not move both publishing workflows'; cat "$out12"
   fi
 fi
+
+# One workflow's successful lookup must not hide a failed or malformed other lookup.
+for workflow in publish-app publish-manifests; do
+  for shape in unavailable malformed; do
+    answer=''; status=7
+    [ "$shape" != malformed ] || { answer=main; status=0; }
+    release_one="$(make_release_resolver "$workflow-$shape" "$answer" "$status" "$workflow")"
+    out="$WORK/one-workflow.tsv"
+    cp "$WORK/out1.before" "$out"
+    if run_gen "$observer_full" "$pin_ok" "$out" 2026-04-04 "$WORK/one-workflow.log" "$release_one"; then
+      fail "a $shape $workflow candidate was hidden by the other workflow"
+    elif cmp -s "$out" "$WORK/out1.before" &&
+      grep -qF "($workflow)" "$WORK/one-workflow.log" &&
+      [ "$(grep -cxF "$workflow" "$WORK/release-$workflow-$shape.calls")" -eq 1 ]; then
+      pass "a $shape $workflow candidate is refused once with the existing set untouched"
+    else
+      fail "a $shape $workflow refusal changed the set or did not name its workflow"
+    fi
+  done
+done
 
 # ── The default signer lookup says WHY it refused (#4127) ─────────────────────────────────
 # The daily run refused `.github` four times on inputs that resolved an hour later or when
