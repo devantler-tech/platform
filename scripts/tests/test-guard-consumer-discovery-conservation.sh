@@ -242,6 +242,142 @@ expect_refusal() {
   fi
 }
 
+# OCI object identities are part of conservation even when report selectors are equal.
+regression_consumer_identities() {
+  local root field value target boundary
+  for field in name namespace url; do
+    root="$(fixture "identity-patched-$field")"
+    case "$field" in
+      name) target='/metadata/name'; value='beta-renamed' ;;
+      namespace) target='/metadata/namespace'; value='beta-other' ;;
+      url) target='/spec/url'; value='oci://ghcr.io/devantler-tech/beta/manifests/' ;;
+    esac
+    cat >>"$root/k8s/providers/prod/apps/kustomization.yaml" <<YAML
+patches:
+  - target:
+      kind: OCIRepository
+      name: beta
+    patch: |-
+      - op: replace
+        path: $target
+        value: $value
+YAML
+    case "$field" in
+      name) expect_refusal 'a rename-only overlay cannot conserve the old OCI identity' "$root" 'DISAGREE' 'source=beta/beta ' 'source=beta/beta-renamed ' ;;
+      namespace) expect_refusal 'a namespace-only overlay cannot conserve the old OCI identity' "$root" 'DISAGREE' 'source=beta/beta ' 'source=beta-other/beta ' ;;
+      url) expect_refusal 'an exact URL change cannot hide behind the same report artifact' "$root" 'DISAGREE' 'artifact=beta/manifests' 'url=oci://ghcr.io/devantler-tech/beta/manifests/' ;;
+    esac
+  done
+
+  for field in name namespace; do
+    root="$(fixture "identity-distinct-$field")"
+    cp "$root/k8s/bases/apps/beta/oci-repository.yaml" "$root/k8s/providers/prod/apps/peer.yaml"
+    if [ "$field" = name ]; then
+      yq -i '.metadata.name = "beta-peer"' "$root/k8s/providers/prod/apps/peer.yaml"
+    else
+      yq -i '.metadata.namespace = "beta-peer"' "$root/k8s/providers/prod/apps/peer.yaml"
+    fi
+    printf '  - peer.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_pass "different OCI $field identities using one artifact remain distinct" "$root" '3 consumer(s)'
+  done
+
+  root="$(fixture identity-repeated-root)"
+  printf '  - ../../../bases/apps/beta\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  expect_pass 'identical OCI identities repeated across roots remain one consumer' "$root" '2 consumer(s)'
+
+  root="$(fixture identity-conflicting-roots)"
+  cp "$root/k8s/bases/apps/beta/oci-repository.yaml" "$root/k8s/providers/prod/infrastructure/conflict.yaml"
+  yq -i '.spec.ref.tag = "9.9.9"' "$root/k8s/providers/prod/infrastructure/conflict.yaml"
+  printf '  - conflict.yaml\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  expect_refusal 'conflicting declarations of one OCI identity are UNKNOWN' "$root" 'conflicting OCIRepository identity' 'beta/beta' 'UNKNOWN'
+
+  # Unsigned declarations are absent from report rows but can overwrite the same
+  # object. Missing namespaces cannot prove those objects are disjoint.
+  for target in explicit unsigned-absent consumer-absent foreign-registry; do
+    root="$(fixture "identity-unsigned-overwrite-$target")"
+    cp "$root/k8s/bases/apps/beta/oci-repository.yaml" "$root/k8s/providers/prod/infrastructure/unsigned.yaml"
+    yq -i 'del(.spec.verify) | .spec.url = "oci://ghcr.io/devantler-tech/epsilon/manifests"' \
+      "$root/k8s/providers/prod/infrastructure/unsigned.yaml"
+    case "$target" in
+      unsigned-absent) yq -i 'del(.metadata.namespace)' "$root/k8s/providers/prod/infrastructure/unsigned.yaml" ;;
+      consumer-absent) yq -i 'del(.metadata.namespace)' "$root/k8s/bases/apps/beta/oci-repository.yaml" ;;
+      foreign-registry) yq -i '.spec.url = "oci://registry.example.test/epsilon/manifests"' "$root/k8s/providers/prod/infrastructure/unsigned.yaml" ;;
+    esac
+    printf '  - unsigned.yaml\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    expect_refusal "an unsigned $target declaration cannot overwrite an attributed OCI object" "$root" 'conflicting OCIRepository identity' 'beta' 'UNKNOWN'
+  done
+
+  for field in name namespace; do
+    root="$(fixture "identity-unsigned-unrelated-$field")"
+    cp "$root/k8s/bases/apps/beta/oci-repository.yaml" "$root/k8s/providers/prod/infrastructure/unsigned.yaml"
+    yq -i 'del(.spec.verify) | .spec.url = "oci://ghcr.io/devantler-tech/epsilon/manifests"' \
+      "$root/k8s/providers/prod/infrastructure/unsigned.yaml"
+    if [ "$field" = name ]; then
+      yq -i '.metadata.name = "epsilon"' "$root/k8s/providers/prod/infrastructure/unsigned.yaml"
+    else
+      yq -i '.metadata.namespace = "epsilon"' "$root/k8s/providers/prod/infrastructure/unsigned.yaml"
+    fi
+    printf '  - unsigned.yaml\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    expect_pass "an unsigned unrelated OCI $field identity remains outside the report" "$root" '2 consumer(s)'
+  done
+
+  for boundary in failure truncated; do
+    root="$(fixture "identity-all-object-partial-$boundary")"
+    mkdir "$WORK/identity-all-object-partial-$boundary-bin"
+    cat >"$WORK/identity-all-object-partial-$boundary-bin/yq" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'(.spec.verify // {} | sort_keys(..) | to_json(0))'*)
+    if [ "$PARTIAL_IDENTITY" = truncated ]; then
+      "$REAL_YQ" "$@" | cut -f1-9
+      exit 0
+    fi
+    "$REAL_YQ" "$@" || exit $?
+    exit 2 ;;
+esac
+exec "$REAL_YQ" "$@"
+SH
+    chmod +x "$WORK/identity-all-object-partial-$boundary-bin/yq"
+    REAL_YQ="$(command -v yq)" PARTIAL_IDENTITY="$boundary" PATH="$WORK/identity-all-object-partial-$boundary-bin:$PATH" \
+      expect_refusal "partial $boundary all-object evidence cannot attest conservation" "$root" 'could not read OCI object contracts' 'UNKNOWN'
+  done
+
+  for target in missing-name numeric-name mapping-name template-name numeric-namespace; do
+    root="$(fixture "identity-malformed-$target")"
+    mkdir "$root/docs"
+    cp "$root/k8s/bases/apps/beta/oci-repository.yaml" "$root/docs/malformed.yaml"
+    case "$target" in
+      missing-name) yq -i 'del(.metadata.name)' "$root/docs/malformed.yaml" ;;
+      numeric-name) yq -i '.metadata.name = 123' "$root/docs/malformed.yaml" ;;
+      mapping-name) yq -i '.metadata.name = {"value":"beta"}' "$root/docs/malformed.yaml" ;;
+      template-name) yq -i '.metadata.name = "{{ inputs.name }}"' "$root/docs/malformed.yaml" ;;
+      numeric-namespace) yq -i '.metadata.namespace = 123' "$root/docs/malformed.yaml" ;;
+    esac
+    expect_refusal "a $target raw consumer has no literal object identity" "$root" 'consumer identity' 'malformed.yaml' 'UNKNOWN'
+  done
+
+  for boundary in failure truncated; do
+    root="$(fixture "identity-partial-$boundary")"
+    mkdir "$WORK/identity-partial-$boundary-bin"
+    cat >"$WORK/identity-partial-$boundary-bin/yq" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'(.metadata.name | type)'*)
+  if [ "$PARTIAL_IDENTITY" = truncated ]; then
+    "$REAL_YQ" "$@" | cut -f1-6
+    exit 0
+  fi
+  "$REAL_YQ" "$@" || exit $?
+  exit 2 ;;
+esac
+exec "$REAL_YQ" "$@"
+SH
+    chmod +x "$WORK/identity-partial-$boundary-bin/yq"
+    REAL_YQ="$(command -v yq)" PARTIAL_IDENTITY="$boundary" PATH="$WORK/identity-partial-$boundary-bin:$PATH" \
+      expect_refusal "partial $boundary consumer identity evidence cannot attest conservation" "$root" 'could not read the consumers in the production render' 'UNKNOWN'
+  done
+}
+
 # Exact-current-head review regressions: admission, controller carriers and tag filters.
 regression_latest_findings() {
   local root placement target field boundary want
@@ -1148,6 +1284,13 @@ SH
       expect_refusal "partial platform $boundary output is not an attestation" "$root" "$want" 'UNKNOWN'
   done
 }
+
+if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = identity ]; then
+  regression_consumer_identities
+  printf '\n%d failure(s)\n' "$failures"
+  [ "$failures" -eq 0 ]
+  exit
+fi
 
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = aliases ]; then
   regression_platform_source_aliases
@@ -2242,6 +2385,7 @@ printf '  - tenant.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
 expect_refusal 'a matching custom-group kro instance is still refused' "$root" \
   'production renders 1 Tenant instance(s)' 'tenants.example.test/v1alpha1'
 
+regression_consumer_identities
 regression_latest_findings
 regression_controller_findings
 regression_native_admission_findings

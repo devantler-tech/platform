@@ -187,6 +187,8 @@ registry_tag_for_git_tag() {
 # Fails when the scan cannot read the tree or a selected file: its consumers are UNKNOWN, and
 # dropping them would report the rest as the whole set. A second argument of `with-subject`
 # appends each consumer's cosign subjects as a fifth column (see `consumer_rows`).
+# The guard-only `with-identity` mode adds the literal object namespace/name and exact URL
+# after that subject; default discovery and --list-consumers keep their four-column contract.
 discover_consumers() {
   local root="$1" mode="${2:-}" file files rows found='' rc=0
   [ -d "$root" ] || return 0
@@ -232,26 +234,53 @@ discover_consumers() {
 # `with-subject` as the second argument appends the document's cosign subjects as a fifth
 # column. The conservation guard compares on it, so a patched signer constraint is a
 # divergence; the report's own four-column rows are unchanged.
+# `with-identity` retains those five fields and appends namespace, name and the exact URL.
+# An absent/empty namespace is recorded as `-`, never guessed to be a default namespace.
+# The guard-only `with-object-contract` mode emits namespace, name, URL, effective ref,
+# subjects, filter/activity flags and verification settings for EVERY top-level Flux OCI
+# document, including unsigned sources that could overwrite an attributed consumer.
 consumer_rows() {
-  local file="$1" mode="${2:-}" rows url version subjects repo workflow workflows artifact filtered active literal_keys
+  local file="$1" mode="${2:-}" rows row url version subjects repo workflow workflows artifact filtered active literal_keys namespace name literal_identity verification extra identity_fields='' contract_field=''
+  # Append conservation fields to the same yq array so omitted refs and namespaces keep
+  # the original boolean columns and cannot shift later fields into earlier ones.
+  if [ "$mode" = with-identity ] || [ "$mode" = with-object-contract ]; then
+    identity_fields=',
+     ((.metadata.namespace // "" | select(. != "")) // "-" | tostring),
+     ((.metadata.name // "" | select(. != "")) // "-" | tostring),
+     (((.metadata.name | type) == "!!str"
+       and (.metadata.name | test("^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"))
+       and (.metadata.namespace == null or .metadata.namespace == ""
+         or ((.metadata.namespace | type) == "!!str"
+           and (.metadata.namespace | test("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"))))) | tostring)'
+  fi
+  if [ "$mode" = with-object-contract ]; then
+    # Read verification before the subject path: yq can materialize missing parent
+    # mappings while traversing them, which must not change an absent verify contract.
+    contract_field='(.spec.verify // {} | sort_keys(..) | to_json(0)), '
+  fi
   # The prose about each field lives OUTSIDE the single-quoted yq program deliberately: a
   # backtick inside it reads as a command substitution to shellcheck (SC2016), so it is in
   # the comment block at the end of the loop below.
   if ! rows="$(yq eval -r '
     select(.kind == "OCIRepository" and ((.apiVersion // "" | tostring) | test("^source[.]toolkit[.]fluxcd[.]io/[^/]+$"))) |
-    [(.spec.url // "-"),
+    ['"$contract_field"'(.spec.url // "-"),
      ((.spec.verify.matchOIDCIdentity // []) | map(.subject // "") | join(" ") | select(. != "") // "-"),
      (((.spec.ref.digest // "") | select(. != "") | "digest:" + .) // ((.spec.ref.semver // "") | select(. != "") | "semver:" + .) // ((.spec.ref.tag // "") | select(. != "")) // "unpinned"),
      (.spec.ref | has("semverFilter") | tostring),
      (((.spec | has("suspend") | not) or
         ((.spec.suspend | type) == "!!bool" and .spec.suspend == false)) | tostring),
      (([.. | select(type == "!!map") | to_entries | .[] | .key
-          | select(test("\\$\\{"))] | length) == 0 | tostring)] | @tsv
+          | select(test("\\$\\{"))] | length) == 0 | tostring)'"$identity_fields"'] | @tsv
   ' "$file" 2>/dev/null)"; then
     printf 'could not parse %s as YAML, so the consumers it declares are UNKNOWN\n' "$file" >&2
     return 1
   fi
-  while IFS=$'\t' read -r url subjects version filtered active literal_keys; do
+  while IFS= read -r row; do
+    if [ "$mode" = with-object-contract ]; then
+      IFS=$'\t' read -r verification url subjects version filtered active literal_keys namespace name literal_identity extra <<<"$row"
+    else
+      IFS=$'\t' read -r url subjects version filtered active literal_keys namespace name literal_identity extra <<<"$row"
+    fi
     # 🔴 TAB IS IFS WHITESPACE, so `read` COLLAPSES consecutive tabs and an empty MIDDLE
     # field silently shifts every later field left. Two consumers pin no `spec.ref.tag`,
     # so their row was `url\t\tsubject` and the subject landed in `version` — both
@@ -263,6 +292,17 @@ consumer_rows() {
     if [ "$literal_keys" != true ]; then
       printf 'consumer mapping key in %s is decided by substitution, so its consumers are UNKNOWN\n' "$file" >&2
       return 1
+    fi
+    if [ "$mode" = with-object-contract ]; then
+      if [ "$literal_identity" != true ] || [ -z "$verification" ] || [ -n "$extra" ] ||
+          { [ "$filtered" != true ] && [ "$filtered" != false ]; } ||
+          { [ "$active" != true ] && [ "$active" != false ]; }; then
+        printf 'OCI object contract in %s is incomplete or has no literal identity, so its consumers are UNKNOWN\n' "$file" >&2
+        return 1
+      fi
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$namespace" "$name" "$url" "$version" "${subjects:--}" "$filtered" "$active" "$verification"
+      continue
     fi
     case "$url" in
       oci://ghcr.io/devantler-tech/*) ;;
@@ -292,6 +332,10 @@ consumer_rows() {
       return 1
     fi
     workflow="$workflows"
+    if [ "$mode" = with-identity ] && [ "$literal_identity" != true ]; then
+      printf 'consumer identity in %s is missing, malformed or decided at runtime, so its consumers are UNKNOWN\n' "$file" >&2
+      return 1
+    fi
     repo="${url#oci://ghcr.io/devantler-tech/}"
     repo="${repo%%/*}"
     [ -n "$repo" ] && repo="$(oci_name_to_repo "$repo")"
@@ -303,7 +347,10 @@ consumer_rows() {
     # The artifact names the deployed consumer; the repository only names its source.
     artifact="${url#oci://ghcr.io/devantler-tech/}"
     artifact="${artifact%/}"
-    if [ "$mode" = 'with-subject' ]; then
+    if [ "$mode" = with-identity ]; then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$repo" "$workflow" "$version" "$artifact" "$subjects" "$namespace" "$name" "$url"
+    elif [ "$mode" = 'with-subject' ]; then
       printf '%s\t%s\t%s\t%s\t%s\n' "$repo" "$workflow" "$version" "$artifact" "$subjects"
     else
       printf '%s\t%s\t%s\t%s\n' "$repo" "$workflow" "$version" "$artifact"

@@ -73,6 +73,127 @@ fi
 consumer_count="$(printf '%s\n' "$consumers" | grep -c .)"
 expected_insync=$((consumer_count - 1))
 
+# Conservation adds object identity without changing the report's public rows.
+identity_root="$WORK/identity-contract"
+mkdir "$identity_root"
+cat >"$identity_root/source.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: beta
+  namespace: beta
+spec:
+  url: oci://ghcr.io/devantler-tech/beta/manifests/
+  ref:
+    tag: 1.2.3
+  verify:
+    matchOIDCIdentity:
+      - subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@[0-9a-f]{40}$'
+YAML
+identity_subject='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@[0-9a-f]{40}$'
+legacy_row=$(printf 'beta\tpublish-manifests\t1.2.3\tbeta/manifests')
+subject_row=$(printf '%s\t%s' "$legacy_row" "$identity_subject")
+identity_row=$(printf '%s\tbeta\tbeta\toci://ghcr.io/devantler-tech/beta/manifests/' "$subject_row")
+for mode in default with-subject with-identity; do
+  expected="$legacy_row"
+  [ "$mode" != with-subject ] || expected="$subject_row"
+  [ "$mode" != with-identity ] || expected="$identity_row"
+  if actual=$(bash -c 'source "$1"; consumer_rows "$2" "$3"' \
+      bash "$SCRIPT" "$identity_root/source.yaml" "$mode") && [ "$actual" = "$expected" ]; then
+    pass "$mode discovery has its exact documented columns and values"
+  else
+    fail "$mode discovery changed its row contract: $actual"
+  fi
+done
+
+cp "$identity_root/source.yaml" "$WORK/identity-unpinned.yaml"
+yq -i 'del(.spec.ref) | del(.metadata.namespace)' "$WORK/identity-unpinned.yaml"
+unpinned_row=$(printf 'beta\tpublish-manifests\tunpinned\tbeta/manifests')
+for mode in default with-subject with-identity; do
+  expected="$unpinned_row"
+  [ "$mode" != with-subject ] || expected=$(printf '%s\t%s' "$unpinned_row" "$identity_subject")
+  [ "$mode" != with-identity ] || expected=$(printf '%s\t%s\t-\tbeta\toci://ghcr.io/devantler-tech/beta/manifests/' "$unpinned_row" "$identity_subject")
+  if actual=$(bash -c 'source "$1"; consumer_rows "$2" "$3"' \
+      bash "$SCRIPT" "$WORK/identity-unpinned.yaml" "$mode") && [ "$actual" = "$expected" ]; then
+    pass "$mode discovery preserves omitted-ref and absent-namespace fields"
+  else
+    fail "$mode discovery shifted absent fields: $actual"
+  fi
+done
+
+# The all-object census sees unsigned/foreign-registry sources but keeps its fields
+# together per top-level OCI document, including omitted refs and namespaces.
+cp "$identity_root/source.yaml" "$WORK/object-contract.yaml"
+yq -i 'del(.spec.verify) | .spec.url = "oci://registry.example.test/beta/manifests"' "$WORK/object-contract.yaml"
+expected=$(printf 'beta\tbeta\toci://registry.example.test/beta/manifests\t1.2.3\t-\tfalse\ttrue\t{}')
+if actual=$(bash -c 'source "$1"; consumer_rows "$2" with-object-contract' \
+    bash "$SCRIPT" "$WORK/object-contract.yaml") && [ "$actual" = "$expected" ]; then
+  pass 'the all-object reader preserves unsigned foreign-registry contracts'
+else
+  fail "the all-object reader omitted or shifted an unsigned contract: $actual"
+fi
+yq -i 'del(.metadata.namespace) | del(.spec.ref)' "$WORK/object-contract.yaml"
+expected=$(printf '%s\tbeta\toci://registry.example.test/beta/manifests\tunpinned\t-\tfalse\ttrue\t{}' '-')
+if actual=$(bash -c 'source "$1"; consumer_rows "$2" with-object-contract' \
+    bash "$SCRIPT" "$WORK/object-contract.yaml") && [ "$actual" = "$expected" ]; then
+  pass 'the all-object reader preserves absent namespace, ref and verification fields'
+else
+  fail "the all-object reader shifted absent fields: $actual"
+fi
+cat >>"$WORK/object-contract.yaml" <<'YAML'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unrelated
+data:
+  source:
+    kind: OCIRepository
+YAML
+if actual=$(bash -c 'source "$1"; consumer_rows "$2" with-object-contract' \
+    bash "$SCRIPT" "$WORK/object-contract.yaml") && [ "$actual" = "$expected" ]; then
+  pass 'the all-object census selects only top-level Flux OCI documents'
+else
+  fail 'the all-object census attributed a nested or unrelated mapping as an OCI object'
+fi
+yq -i 'select(.kind == "OCIRepository") | del(.metadata.name)' "$WORK/object-contract.yaml"
+if ! bash -c 'source "$1"; consumer_rows "$2" with-object-contract' \
+    bash "$SCRIPT" "$WORK/object-contract.yaml" >"$WORK/object-contract-malformed.out" 2>&1 &&
+    grep -q 'OCI object contract.*UNKNOWN' "$WORK/object-contract-malformed.out"; then
+  pass 'the all-object census cannot accept an unsigned object with unknown identity'
+else
+  fail 'the all-object census accepted an unsigned object with unknown identity'
+fi
+
+cp "$identity_root/source.yaml" "$identity_root/peer.yaml"
+yq -i '.metadata.name = "beta-peer"' "$identity_root/peer.yaml"
+legacy_discovery=$(bash -c 'source "$1"; discover_consumers "$2"' bash "$SCRIPT" "$identity_root")
+object_discovery=$(bash -c 'source "$1"; discover_consumers "$2" with-identity' bash "$SCRIPT" "$identity_root")
+if [ "$legacy_discovery" = "$legacy_row" ] &&
+    [ "$(printf '%s\n' "$object_discovery" | grep -c .)" -eq 2 ] &&
+    printf '%s\n' "$object_discovery" | awk -F '\t' 'NF != 8 { exit 1 }'; then
+  pass 'the report deduplicates an artifact while conservation preserves distinct OCI names'
+else
+  fail 'guard-only object identity changed legacy artifact deduplication or collapsed distinct names'
+fi
+
+yq -i 'del(.metadata.name)' "$identity_root/peer.yaml"
+legacy_discovery=$(bash -c 'source "$1"; consumer_rows "$2"' bash "$SCRIPT" "$identity_root/peer.yaml")
+if [ "$legacy_discovery" = "$legacy_row" ] &&
+    ! bash -c 'source "$1"; consumer_rows "$2" with-identity' \
+      bash "$SCRIPT" "$identity_root/peer.yaml" >"$WORK/identity-malformed.out" 2>&1 &&
+    grep -q 'consumer identity.*UNKNOWN' "$WORK/identity-malformed.out"; then
+  pass 'an unknown object name is refused only by the conservation reader'
+else
+  fail 'missing object identity was accepted by conservation or changed report discovery'
+fi
+
+if printf '%s\n' "$consumers" | awk -F '\t' 'NF != 4 { exit 1 }'; then
+  pass '--list-consumers retains the four-column report and resolver contract'
+else
+  fail '--list-consumers leaked guard-only identity columns'
+fi
+
 write_table() { # <path> <special-repo|""> <special-signing> <special-current>
   local table="$1" special="$2" s_sign="$3" s_cur="$4" repo workflow
   : >"$table"

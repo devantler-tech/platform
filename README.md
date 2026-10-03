@@ -103,7 +103,15 @@ bash scripts/guard-consumer-discovery-conservation.sh
 bash scripts/tests/test-guard-consumer-discovery-conservation.sh
 ```
 
-This check uses `yq` and `kubectl kustomize` without a cluster or credentials. It binds the
+This check uses `yq` and `kubectl kustomize` without a cluster or credentials. It compares
+literal OCIRepository names and namespaces, exact URLs, effective refs and signer subjects.
+An overlay rename is a divergence even when it keeps the same artifact and revision.
+Identical consumer rows repeated across roots are deduplicated. All rendered top-level Flux
+OCI declarations are checked for conflicting contracts that could overwrite an attributed
+consumer, including unsigned sources; an absent namespace cannot establish disjointness.
+Such conflicts are unknown and fail the check. Unrelated unsigned identities remain outside
+the report. Guard-only identity rows preserve the
+report's four-column `--list-consumers` output and artifact-based revision tables. It binds the
 layers to the platform artifact configured in `ksail.prod.yaml` and the generated
 `OCIRepository/flux-system/flux-system` source. Agreeing references to a different source, or
 declarations that redirect that source, are unknown and fail the check. FluxInstance source

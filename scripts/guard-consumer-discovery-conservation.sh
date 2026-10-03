@@ -28,11 +28,13 @@
 # the only things that can differ are WHICH documents each side sees and what their fields say
 # once kustomize has applied every patch.
 #
-# THE COMPARED IDENTITY is every field the report acts on — the source repository and the
+# THE COMPARED IDENTITY includes the literal OCIRepository name and namespace, the exact URL,
+# and every field the report acts on — the source repository and the
 # artifact (both from `spec.url`), the shared workflow, and the effective `spec.ref` (digest >
 # semver > tag, `unpinned` when omitted) — plus the cosign subjects themselves, so an overlay
-# that narrows or widens a consumer's signer constraint is a divergence too. `metadata.name` is
-# not part of it: nothing reads it, so a rename changes nothing the report says.
+# that narrows or widens a consumer's signer constraint is a divergence too. A rename or
+# namespace change is a divergence even when the report's artifact selector stays the same.
+# The report retains its public rows; only this guard asks for the richer object identity.
 #
 # WHAT A STATIC RENDER CANNOT SEE IS REFUSED, NEVER ASSUMED EQUAL
 #   - a Flux-side transform on a production root (`spec.patches`, `spec.components`,
@@ -663,15 +665,21 @@ done <<<"$(printf '%s' "$consumer_gvks" | sort -u)"
 # A file either side cannot read, parse or attribute refuses: its consumers are UNKNOWN, and
 # dropping it would compare two partial sets that can still agree.
 rendered=''
+object_contracts=''
 while IFS=$'\t' read -r file label; do
   [ -n "$file" ] || continue
-  rows="$(consumer_rows "$file" with-subject)" ||
+  rows="$(consumer_rows "$file" with-identity)" ||
     refuse "could not read the consumers in the production render of $label, so the rendered set is UNKNOWN"
   rendered="$rendered$rows
 "
+  rows="$(consumer_rows "$file" with-object-contract)" ||
+    refuse "could not read OCI object contracts in the production render of $label, so the rendered set is UNKNOWN"
+  object_contracts="$object_contracts$rows
+"
 done <<<"$sources"
 printf '%s' "$rendered" | sed '/^$/d' | LC_ALL=C sort -u >"$work/rendered"
-scanned="$(discover_consumers "$SCAN_ROOT" with-subject)" ||
+printf '%s' "$object_contracts" | sed '/^$/d' | LC_ALL=C sort -u >"$work/object-contracts"
+scanned="$(discover_consumers "$SCAN_ROOT" with-identity)" ||
   refuse 'the file scan could not read every file it selected, so the scanned set is UNKNOWN'
 printf '%s\n' "$scanned" | sed '/^$/d' | LC_ALL=C sort -u >"$work/scanned"
 
@@ -682,12 +690,13 @@ fi
 LC_ALL=C comm -23 "$work/scanned" "$work/rendered" >"$work/only-scanned"
 LC_ALL=C comm -13 "$work/scanned" "$work/rendered" >"$work/only-rendered"
 
+# Print each mismatched conservation row's selectors and literal object identity together.
 describe() {
-  local repo workflow version artifact subjects
-  while IFS=$'\t' read -r repo workflow version artifact subjects; do
+  local repo workflow version artifact subjects namespace name url
+  while IFS=$'\t' read -r repo workflow version artifact subjects namespace name url; do
     [ -n "$repo" ] || continue
-    printf '    artifact=%s repo=%s workflow=%s ref=%s subject=%s\n' \
-      "$artifact" "$repo" "$workflow" "${version:-<none>}" "$subjects"
+    printf '    artifact=%s repo=%s workflow=%s ref=%s subject=%s source=%s/%s url=%s\n' \
+      "$artifact" "$repo" "$workflow" "${version:-<none>}" "$subjects" "$namespace" "$name" "$url"
   done <"$1"
 }
 
@@ -699,13 +708,35 @@ if [ -s "$work/only-scanned" ] || [ -s "$work/only-rendered" ]; then
       describe "$work/only-scanned"
     fi
     if [ -s "$work/only-rendered" ]; then
-      printf '  Rendered by production but NOT discovered by the file scan (a patched ref, URL or subject, or a consumer in a file the scan never opens):\n'
+      printf '  Rendered by production but NOT discovered by the file scan (a patched identity, ref, URL or subject, or a consumer in a file the scan never opens):\n'
       describe "$work/only-rendered"
     fi
     printf 'The same artifact on both sides means an overlay changed one of its fields. Until the two agree, the\n'
-    printf 'publish-revision report names a selector production does not deploy, or misses one it does.\n'
+    printf 'publish-revision report discovery does not describe production\047s exact OCI objects.\n'
   } >&2
   exit 1
+fi
+
+# The complete consumer sets now agree, but an unsigned or foreign-registry OCI source
+# can overwrite one of those objects without contributing a report row. Compare EVERY
+# rendered top-level Flux OCI contract where its identity could coincide with an attributed
+# consumer. An absent namespace is unknown, so it overlaps every explicit namespace for
+# that name. Identical contracts repeat harmlessly; unrelated unsigned identities stay out.
+conflicts="$(awk -F '\t' '
+  NR == FNR { consumer_namespace[++count] = $6; consumer_name[count] = $7; next }
+  {
+    contract = $0; sub(/^[^\t]*\t[^\t]*\t/, "", contract)
+    for (i = 1; i <= count; i++) {
+      if ($2 != consumer_name[i] || ($1 != "-" && consumer_namespace[i] != "-" && $1 != consumer_namespace[i])) continue
+      if (seen[i] && previous[i] != contract) conflicts[consumer_namespace[i] "/" consumer_name[i]] = 1
+      previous[i] = contract; seen[i] = 1
+    }
+  }
+  END { for (identity in conflicts) print identity }
+' "$work/rendered" "$work/object-contracts" | LC_ALL=C sort)"
+if [ -n "$conflicts" ]; then
+  conflicts="$(printf '%s\n' "$conflicts" | paste -sd ' ' -)"
+  refuse "the rendered set has a conflicting OCIRepository identity $conflicts, so its consumers are UNKNOWN"
 fi
 
 printf 'guard-consumer-discovery-conservation: %d consumer(s) found by the file scan match the production render exactly (overlay and roots: %s, %s).\n' \
