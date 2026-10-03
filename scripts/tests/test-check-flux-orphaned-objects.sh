@@ -461,6 +461,49 @@ regression_always_settle() {
   expect_summary 'none confirmed'
 }
 
+regression_active_reconcile() {
+  local state
+  for state in building reconciling unknown attempted; do
+    case_name="pre-boundary inventory cannot clear an active ${state} reconcile"
+    dir="$(scenario "active-${state}")"
+    jq '.items[].metadata.creationTimestamp = "2026-08-28T12:00:00Z"
+      | .items[].metadata.managedFields[].time = "2026-08-28T12:00:00Z"' \
+      "${dir}/objects.json" >"${dir}/objects.json.new"
+    mv "${dir}/objects.json.new" "${dir}/objects.json"
+    case "${state}" in
+      building) set_ks "${dir}/kustomizations.json" flux-system/apps \
+        '.status.conditions[0].status = "Unknown" | .status.lastAttemptedRevision = "candidate"' ;;
+      reconciling) set_ks "${dir}/kustomizations.json" flux-system/apps \
+        '.status.conditions += [{type:"Reconciling",status:"True",observedGeneration:1}]' ;;
+      unknown) set_ks "${dir}/kustomizations.json" flux-system/apps \
+        '.status.conditions[0].status = "Unknown"' ;;
+      attempted) set_ks "${dir}/kustomizations.json" flux-system/apps \
+        '.status.lastAttemptedRevision = "candidate"' ;;
+    esac
+    run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z
+    expect_status 2
+    expect_reads 2
+    expect_text 'Kustomization flux-system/apps'
+    expect_text 'active=true'
+    expect_summary 'UNKNOWN'
+    expect_no_text '✅'
+  done
+
+  case_name='an active candidate becomes quiescent at the recovery revision'
+  cp "${dir}/kustomizations.json" "${dir}/kustomizations.2.json"
+  set_ks "${dir}/kustomizations.2.json" flux-system/apps '.status.lastAttemptedRevision = "rev-1"'
+  run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z
+  expect_status 0
+  expect_reads 2
+  expect_summary '(1 cleared on re-read)'
+}
+
+if [[ "${FLUX_ORPHANS_REGRESSION:-}" == active ]]; then
+  regression_active_reconcile
+  echo "check-flux-orphaned-objects: active-reconcile cases passed (${run_count} CLI fixture runs)"
+  exit
+fi
+
 # An evicted revision can reapply an older protected object without changing
 # its creation time. Only Flux writes to the object itself extend this scope.
 regression_flux_write_time() {
@@ -952,5 +995,6 @@ regression_metadata_storage
 regression_auxiliary_metadata_storage
 regression_baseline_attribution
 regression_always_settle
+regression_active_reconcile
 
 echo "check-flux-orphaned-objects: all cases passed (${run_count} CLI fixture runs)"

@@ -58,6 +58,10 @@
 # its source currently holds, with both reporting Ready for their current
 # metadata generation; one that is not, and whose inventory lists a recent
 # object (any object, without FLUX_ORPHANS_SINCE), makes the result UNKNOWN. The
+# result is also UNKNOWN while any Kustomization is Reconciling, reports Ready
+# as Unknown, or last attempted a different revision from its current source.
+# An old inventory cannot rule out a candidate build that has not applied yet.
+# Those states must clear on the settling read before recovery can pass. The
 # sources themselves must hold the revision being checked: a cached artifact
 # or Ready condition from an earlier spec does not establish this. The heal's
 # deploy composite reconciles them through `ksail workload reconcile`, and this
@@ -257,7 +261,8 @@ read_state() {
       metadata: {name: .metadata.name, namespace: .metadata.namespace, generation: .metadata.generation},
       spec: {sourceRef: {kind: .spec.sourceRef.kind, name: .spec.sourceRef.name, namespace: .spec.sourceRef.namespace}},
       status: {observedGeneration: .status.observedGeneration, lastAppliedRevision: .status.lastAppliedRevision,
-        conditions: [.status.conditions[]? | select(.type == "Ready") | {type, status, observedGeneration}],
+        lastAttemptedRevision: .status.lastAttemptedRevision,
+        conditions: [.status.conditions[]? | select(.type == "Ready" or .type == "Reconciling") | {type, status, observedGeneration}],
         inventory: {entries: (if (.status.inventory.entries | type) == "array"
           then [.status.inventory.entries[] | {id}] else null end)}}}]} end' \
     get kustomizations.kustomize.toolkit.fluxcd.io --all-namespaces -o json || return 1
@@ -341,6 +346,11 @@ readonly evaluate_program='
         .type == "Ready" and .status == "True" and .observedGeneration == $generation);
   def source_revision($artifacts):
     $artifacts["\(.spec.sourceRef.kind)/\(.spec.sourceRef.namespace // .metadata.namespace)/\(.spec.sourceRef.name)"];
+  def potentially_applying($source):
+    any(.status.conditions[]?;
+      (.type == "Reconciling" and .status == "True") or (.type == "Ready" and .status == "Unknown"))
+    or ((.status.lastAttemptedRevision | type) == "string"
+      and .status.lastAttemptedRevision != "" and .status.lastAttemptedRevision != $source);
   def entries: if (.status.inventory.entries | type) == "array" then [.status.inventory.entries[].id] else null end;
   ($kustomizations[0].items // []) as $ks
   | (reduce (($sources[0].items // [])[]) as $s ({};
@@ -380,9 +390,10 @@ readonly evaluate_program='
      | "\(.metadata.namespace)/\(.metadata.name)" as $name
      | source_revision($artifacts) as $source
      | current_ready as $ready
-     | select(($ready and $source != null and .status.lastAppliedRevision == $source) | not)
-     | select(any((entries // [])[]; $recent_ids[.]) or $since == "")
-     | "stale \($name) - Kustomization \($name) ready=\($ready) applied=\(.status.lastAppliedRevision // "none") source=\($source // "unread")"),
+     | potentially_applying($source) as $active
+     | select($active or (($ready and $source != null and .status.lastAppliedRevision == $source) | not))
+     | select($active or any((entries // [])[]; $recent_ids[.]) or $since == "")
+     | "stale \($name) - Kustomization \($name) ready=\($ready) applied=\(.status.lastAppliedRevision // "none") source=\($source // "unread")\(if $active then " active=true attempted=\(.status.lastAttemptedRevision // "none")" else "" end)"),
     "checked=\($applied | length)",
     "kustomizations=\($ks | length)"
 '

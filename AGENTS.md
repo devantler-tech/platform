@@ -903,7 +903,9 @@ posts it to Slack after that. Run it on demand with `kubectl -n observability cr
 complete when that Job **Succeeded** and its log does not name the object (a failed Job judged
 nothing, and an object still Terminating is not listed). The heal's orphan check includes older
 objects written by Flux during the speculative deployment and trusts an inventory only after its
-Kustomization and Source report Ready for their current generations at the same revision. When a
+Kustomization and Source report Ready for their current generations at the same revision. Active
+reconciles, Unknown readiness and attempts at another source revision must settle even when the
+existing inventory contains only older objects. When a
 protected object is instead handed to another controller on purpose, annotate it
 `platform.devantler.tech/prune-orphan: adopted` in
 the PR that protects it, so the check does not report it; an owner reference alone is not that handoff.
