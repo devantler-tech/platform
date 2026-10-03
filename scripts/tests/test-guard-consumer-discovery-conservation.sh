@@ -1764,7 +1764,7 @@ SH
 }
 
 regression_platform_source_aliases() {
-  local placement root source_file namespace url boundary want
+  local placement root source_file namespace url boundary want escaped_path escaped_name
   for placement in direct cross-root reverse-root overlay resources steps default-namespace explicit-namespace unknown-namespace trailing-slash unresolved-url; do
     root="$(fixture "platform-alias-$placement")"
     mkdir -p "$root/k8s/bases/hidden"
@@ -1845,6 +1845,27 @@ YAML
   yq -i '.metadata.namespace = "another"' "$root/k8s/providers/prod/apps/extra-root.yaml"
   printf '  - platform-alias.yaml\n  - extra-root.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
   expect_pass 'a literal unrelated namespace does not match an artifact alias' "$root" '2 consumer(s)'
+
+  # Root labels are path data. Shell escape decoding must neither drop a later
+  # render nor change the label of the render that follows an artifact alias.
+  for escaped_name in 'apps\c-tail' 'apps\t-tail' 'apps\n-tail'; do
+    escaped_path="providers/prod/$escaped_name"
+    root="$(fixture "literal-alias-$escaped_name")"
+    cp "$WORK/platform-alias-cross-root/k8s/providers/prod/infrastructure/platform-alias.yaml" "$root/k8s/providers/prod/infrastructure/platform-alias.yaml"
+    cp "$WORK/platform-alias-cross-root/k8s/providers/prod/apps/extra-root.yaml" "$root/k8s/providers/prod/apps/extra-root.yaml"
+    printf '  - platform-alias.yaml\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    printf '  - extra-root.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    mv "$root/k8s/providers/prod/apps" "$root/k8s/$escaped_path"
+    LITERAL_ROOT="$escaped_path" yq -i '(select(.metadata.name == "apps") | .spec.path) = strenv(LITERAL_ROOT)' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+    expect_refusal "a literal $escaped_name root cannot omit an artifact alias" "$root" "production render $escaped_path" 'platform-artifact source' 'UNKNOWN'
+
+    root="$(fixture "literal-unused-$escaped_name")"
+    cp "$WORK/unused-platform-alias/k8s/providers/prod/apps/platform-alias.yaml" "$root/k8s/providers/prod/apps/platform-alias.yaml"
+    printf '  - platform-alias.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    mv "$root/k8s/providers/prod/apps" "$root/k8s/$escaped_path"
+    LITERAL_ROOT="$escaped_path" yq -i '(select(.metadata.name == "apps") | .spec.path) = strenv(LITERAL_ROOT)' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+    expect_pass "an unused alias in a literal $escaped_name root remains valid" "$root" '2 consumer(s)'
+  done
 
   # A reader can print complete-looking rows and then fail. Neither alias
   # collection nor reference collection may turn that partial output into PASS.

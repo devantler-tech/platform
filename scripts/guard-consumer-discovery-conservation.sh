@@ -174,8 +174,9 @@ while IFS= read -r -d '' manifest; do
     "$K8S_DIR"/*) ;;
     *) refuse 'a selected manifest resolves outside the source k8s tree, so its consumers are UNKNOWN' ;;
   esac
-  [ -f "$resolved_manifest" ] && [ -r "$resolved_manifest" ] ||
+  if [ ! -f "$resolved_manifest" ] || [ ! -r "$resolved_manifest" ]; then
     refuse 'could not read a selected manifest in the source k8s tree, so its consumers are UNKNOWN'
+  fi
   [ -s "$resolved_manifest" ] || refuse 'an empty selected manifest cannot be attested, so its consumers are UNKNOWN'
   destination="$PUBLISHED_K8S_DIR/${manifest#"$K8S_DIR"/}"
   mkdir -p "$(dirname "$destination")"
@@ -263,9 +264,10 @@ validate_published_inputs() {
     refuse "could not read the published k8s dependency closure of $label, so its consumers are UNKNOWN"
   fi
   IFS=$'\t' read -r valid_shapes valid_paths declared inline_declared extra <<<"$checks"
-  [ "$valid_shapes" = true ] && [ "$valid_paths" = true ] && [ -z "$extra" ] &&
-    [[ "$declared" =~ ^[0-9]+$ ]] && [[ "$inline_declared" =~ ^[0-9]+$ ]] && [[ "$checks" != *$'\n'* ]] ||
+  if [ "$valid_shapes" != true ] || [ "$valid_paths" != true ] || [ -n "$extra" ] ||
+    [[ ! "$declared" =~ ^[0-9]+$ ]] || [[ ! "$inline_declared" =~ ^[0-9]+$ ]] || [[ "$checks" == *$'\n'* ]]; then
     refuse "could not render $label, so its malformed published k8s dependency closure is UNKNOWN"
+  fi
   # from_yaml decodes only the first document of an inline string. Parse each whole
   # candidate with eval-all before trusting the census, preserving separators in
   # literal data. Bind decoded bytes to the serialized scalar (including yq's one
@@ -309,8 +311,9 @@ validate_published_inputs() {
   while IFS= read -r reference; do
     [ -n "$reference" ] || continue
     IFS=$'\t' read -r mode reference extra <<<"$reference"
-    [ -n "$reference" ] && [ -z "$extra" ] ||
+    if [ -z "$reference" ] || [ -n "$extra" ]; then
       refuse "could not read the complete published k8s dependency closure of $label, so its consumers are UNKNOWN"
+    fi
     case "$reference" in
       /* | *:* | git@* | *'?'* | *'#'*)
         refuse "$label has an absolute or nonlocal reference outside the inspectable published k8s dependency closure, so its consumers are UNKNOWN" ;;
@@ -596,7 +599,7 @@ while IFS=$'\t' read -r file label; do
     platform_aliases="$platform_aliases$alias_ns"$'\t'"$alias_name
 "
   done <<<"$aliases"
-done <<<"$(printf '%b' "$sources")"
+done <<<"$sources"
 
 if [ -n "$platform_aliases" ]; then
   while IFS=$'\t' read -r file label; do
@@ -625,7 +628,7 @@ if [ -n "$platform_aliases" ]; then
         fi
       done <<<"$platform_aliases"
     done <<<"$alias_refs"
-  done <<<"$(printf '%b' "$sources")"
+  done <<<"$sources"
 fi
 
 # ── 3. Refuse what a static render cannot see ────────────────────────────────────────
