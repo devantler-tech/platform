@@ -92,7 +92,7 @@
     },
     {
       "customType": "regex",
-      "description": "Track the upstream commit the vendored origin-ca-issuer CRDs are fetched at, as a digest of the trunk branch — the ref the CRDs were rendered from before they were vendored. The chart ships no CRDs, so the flux manager's chart bumps never move them. The datasource is github-digest, NOT git-refs: git-refs reports no release timestamp, and the repository-wide minimumReleaseAge holds an update without one indefinitely, so that manager would never open a PR. github-digest dates the branch head by its commit, so the update is raised once that commit has aged. A commit-only bump fails CI's --validate-committed until scripts/update-vendored-operators.sh --render-remotes has re-fetched both CRDs at the new commit.",
+      "description": "Track the upstream commit the vendored origin-ca-issuer CRDs are fetched at, as a digest of the trunk branch — the ref the CRDs were rendered from before they were vendored. The flux manager's chart bumps never touch these vendored files. The datasource is github-digest, NOT git-refs: both resolve the branch head, but git-refs reports no release timestamp, and Renovate withholds an undated update whenever a release-age cooldown applies to it. The matching packageRule below turns that cooldown off for this source and says why. A commit-only bump fails CI until scripts/update-vendored-operators.sh --render-remotes has re-fetched both CRDs at the new commit.",
       "managerFilePatterns": [
         "/^scripts/update-vendored-operators\\.sh$/"
       ],
@@ -292,9 +292,10 @@
       "addLabels": ["security/review-required"]
     },
     {
-      "description": "The origin-ca-issuer CRDs are vendored upstream bytes pinned by source commit and SHA-256 (custom manager above). Renovate can only move the commit: the update PR is the signal that upstream moved, and it stays red until the CRDs are re-fetched at that commit. Scoped to the github-digest datasource so the chart, which the flux manager tracks under its own name, keeps its normal updates. Digest updates do not automerge by default here; automerge:false is explicit so a later automerge default cannot adopt a commit whose CRDs were never fetched.",
+      "description": "The origin-ca-issuer CRDs are vendored upstream bytes pinned by source commit and SHA-256 (custom manager above). Renovate can only move the commit: the update PR is the signal that upstream moved, and it stays red until the CRDs are re-fetched at that commit. Scoped to the github-digest datasource so the chart, which the flux manager tracks under its own name, keeps its normal updates. minimumReleaseAge is 0 days here, and only here: the age of a branch head is the age of its newest commit, so every upstream commit restarts the repository-wide cooldown and a branch that moves at least weekly would never be proposed at all. Nothing is adopted by raising the PR early, because it cannot merge without the reviewed re-fetch. Digest updates do not automerge by default here; automerge:false is explicit, and must stay the last word on this package, so a later automerge default cannot adopt a commit whose CRDs were never fetched.",
       "matchDatasources": ["github-digest"],
       "matchPackageNames": ["cloudflare/origin-ca-issuer"],
+      "minimumReleaseAge": "0 days",
       "automerge": false,
       "addLabels": ["vendored-manifest"],
       "prBodyNotes": [

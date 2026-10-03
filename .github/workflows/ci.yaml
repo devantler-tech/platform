@@ -373,8 +373,11 @@ jobs:
       # Renovate moves only the source commit of the vendored origin-ca-issuer CRDs, and
       # the bytes do not change with it, so nothing but the updater's own record can tell
       # a bump from a refresh (#4136). The test runs a copy of the updater against stub
-      # binaries: no network, no Checkov. Unconditional, like the gate above: one half of
-      # its subject is the Renovate policy, which sits outside the k8s paths.
+      # binaries: no network, no Checkov. Its first case validates the tree as committed,
+      # so this step is also what fails on a pull request that moves only the pin, and it
+      # fails in the merge group too, where the pull-request-only manifest job never runs.
+      # Unconditional, like the gate above: one half of its subject is the Renovate
+      # policy, which sits outside the k8s paths.
       - name: 🔐 Validate the origin-ca-issuer CRD source pin
         run: |
           shellcheck scripts/tests/test-origin-ca-issuer-crd-source-pin.sh

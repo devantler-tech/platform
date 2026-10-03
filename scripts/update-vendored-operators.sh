@@ -222,10 +222,14 @@ validate_crd() {
     --bundle origin-ca-issuer --validate-source <"${file}")
 }
 
+# Spelled out rather than written as ranges: a range follows the locale's collation, and in some
+# locales [a-f] admits characters outside ASCII hex.
+readonly full_commit_sha='^[0123456789abcdef]{40}$'
+
 # A branch or tag name would fetch whatever it points at on the day of the refresh. Checked in every
 # mode, before anything is downloaded.
 require_origin_ca_issuer_commit_pin() {
-  if ! [[ "${origin_ca_issuer_commit}" =~ ^[0-9a-f]{40}$ ]]; then
+  if ! [[ "${origin_ca_issuer_commit}" =~ ${full_commit_sha} ]]; then
     printf 'origin_ca_issuer_commit must be a full 40-character lowercase commit SHA; found %s\n' \
       "${origin_ca_issuer_commit:-<nothing>}" >&2
     exit 2
@@ -241,7 +245,7 @@ validate_origin_ca_issuer_source_commit() {
   local recorded
   local record="${origin_ca_issuer_source_commit_file#"${repo_root}/"}"
   if ! recorded="$(cat "${origin_ca_issuer_source_commit_file}" 2>/dev/null)" ||
-    ! [[ "${recorded}" =~ ^[0-9a-f]{40}$ ]]; then
+    ! [[ "${recorded}" =~ ${full_commit_sha} ]]; then
     printf 'could not read exactly one 40-character commit SHA from %s\n' "${record}" >&2
     printf 'Run scripts/update-vendored-operators.sh --render-remotes to record the commit the origin-ca-issuer CRDs are fetched at.\n' >&2
     exit 2

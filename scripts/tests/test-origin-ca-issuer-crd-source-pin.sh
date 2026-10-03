@@ -111,9 +111,9 @@ manager_field() { # <jq-path> -> that field of the manager, or an empty string
 assert_eq "the manager is a regex manager" regex "$(manager_field .customType)"
 assert_eq "the manager tracks the upstream repository" cloudflare/origin-ca-issuer "$(manager_field .packageNameTemplate)"
 assert_eq "the manager follows the branch the CRDs came from" trunk "$(manager_field .currentValueTemplate)"
-# git-refs resolves the same commit but reports no release timestamp, and the repository-wide
-# minimumReleaseAge holds an update without one indefinitely. github-digest dates the branch head by
-# its commit, so the update is raised once that commit has aged.
+# github-digest reports the branch head together with its commit date. git-refs resolves the same
+# commit with no date at all, and Renovate withholds an undated update whenever a release-age
+# cooldown applies to it.
 assert_eq "the datasource dates the branch head" github-digest "$(manager_field .datasourceTemplate)"
 
 file_pattern="$(manager_field '.managerFilePatterns | if length == 1 then .[0] else "" end')"
@@ -138,12 +138,32 @@ extracted="$(jq -rn --rawfile script "$updater" --argjson managers "$managers" '
 readonly extracted
 assert_eq "the manager extracts exactly the pinned commit from the updater" "$pinned" "$extracted"
 
-rules="$(jq -c '[.packageRules[] | select((.matchPackageNames // []) | index("cloudflare/origin-ca-issuer"))]' "$renovate_config")" ||
-  die "cannot parse $renovate_config"
+rules="$(jq -c '
+  [.packageRules | to_entries[]
+    | select((.value.matchPackageNames // []) | index("cloudflare/origin-ca-issuer"))
+    | .value + {position: .key}]
+' "$renovate_config")" || die "cannot parse $renovate_config"
 readonly rules
 assert_eq "exactly one package rule covers the source" 1 "$(jq -r 'length' <<<"$rules")"
-assert_eq "the rule is scoped to the digest datasource" '["github-digest"]' "$(jq -c '(.[0] // {}).matchDatasources // []' <<<"$rules")"
-assert_eq "a source bump never automerges" false "$(jq -r '(.[0] // {}) | if has("automerge") then .automerge else "unset" end' <<<"$rules")"
+
+rule_field() { # <jq-expression over the rule> -> its value, or an empty string
+  jq -r "(.[0] // {}) | $1" <<<"$rules"
+}
+
+assert_eq "the rule is scoped to the digest datasource" '["github-digest"]' "$(rule_field '.matchDatasources // [] | tojson')"
+assert_eq "a source bump never automerges" false "$(rule_field 'if has("automerge") then .automerge else "unset" end')"
+# The age of a branch head is the age of its newest commit, so every upstream commit restarts the
+# repository-wide cooldown and a branch that moves weekly would never be proposed. The update is a
+# signal that cannot merge without the refresh, so it is raised at once.
+assert_eq "the cooldown does not withhold the signal" '0 days' "$(rule_field '.minimumReleaseAge // "unset"')"
+# Renovate applies package rules in order and a later match wins, so a rule after this one that turns
+# automerge on could undo it. No matcher is evaluated here: any later rule doing so fails.
+later_automerge="$(jq -r --argjson rules "$rules" '
+  ($rules[0].position // -1) as $position
+  | [.packageRules | to_entries[] | select($position >= 0 and .key > $position and .value.automerge == true)]
+  | length
+' "$renovate_config")" || later_automerge='<jq failed>'
+assert_eq "no later package rule turns automerge back on" 0 "$later_automerge"
 
 # --- A scratch copy of everything the updater reads, and the stubs it runs against ---------------
 
@@ -245,13 +265,18 @@ set_constant() { # <tree> <name> <value>
   grep -qF -- "readonly $2='$3'" "$script" || die "the copy does not declare $2"
 }
 
-make_tree() { # <name> -> echoes a scratch root holding a copy of everything the updater reads
+# Every tree but the first starts from a record that agrees with the pin, so each case fails for the
+# one condition it sets up. `committed` keeps the record exactly as it is committed.
+make_tree() { # <name> [committed] -> echoes a scratch root holding a copy of everything the updater reads
   local root="$scratch/$1"
   mkdir -p "$root/scripts" "$root/$crd_dir" "$root/$approver_dir" \
     "$root/k8s/bases/infrastructure/controllers/cdi" "$root/k8s/bases/infrastructure/controllers/kubevirt"
   cp -p "$updater" "$repo_root/scripts/megalinter-scan-counts.sh" \
     "$repo_root/scripts/guard-cert-approver-image-pin.sh" "$root/scripts/"
   cp -p "$repo_root/$crd_dir"/custom-resource-definition* "$root/$crd_dir/"
+  if [ "${2:-}" != committed ]; then
+    printf '%s\n' "$pinned" >"$root/$record"
+  fi
   cp -p "$repo_root/$approver_dir/kustomization.yaml" "$root/$approver_dir/"
   # Only ever read by the stubbed Go helper.
   : >"$root/k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml"
@@ -273,8 +298,10 @@ run_updater() { # <tree> <upstream-fixture> [updater arguments]; sets OUT and RC
   fi
 }
 
+# The one case that reads the record as committed, which makes it the live gate as well: on a pull
+# request that moves only the pin, this is the assertion that fails, with the updater's own message.
 echo "== the committed tree validates =="
-tree="$(make_tree committed)" || die "cannot build the committed scratch tree"
+tree="$(make_tree committed committed)" || die "cannot build the committed scratch tree"
 run_updater "$tree" "$upstream_same" --validate-committed
 assert_rc "the committed pin, record and CRDs agree" 0
 
@@ -299,6 +326,7 @@ unreadable_record() { # <case-name> <label> <record-content>
   printf '%s' "$3" >"$tree/$record"
   run_updater "$tree" "$upstream_same" --validate-committed
   assert_rc "$2" 2
+  assert_contains "$2 is reported as unreadable" "could not read exactly one 40-character commit SHA"
 }
 unreadable_record record-empty "empty record" ''
 unreadable_record record-branch "record names a branch" $'trunk\n'
@@ -313,13 +341,14 @@ assert_rc "pin names a branch" 2
 assert_contains "names the malformed pin" "origin_ca_issuer_commit"
 run_updater "$tree" "$upstream_same" --render-remotes
 assert_rc "a branch pin is refused before any download" 2
-assert_eq "nothing was downloaded for a branch pin" '' "$(grep -F 'cloudflare/origin-ca-issuer' "$tree/curl.log")"
+assert_eq "nothing at all was requested for a branch pin" '' "$(cat "$tree/curl.log")"
 
 echo "== the digests still bind the bytes =="
 tree="$(make_tree bytes-edited)" || die "cannot build the bytes-edited scratch tree"
 printf '# edited by hand\n' >>"$tree/$crd_dir/custom-resource-definition-originissuers.yaml"
 run_updater "$tree" "$upstream_same" --validate-committed
 assert_rc "edited CRD" 1
+assert_contains "the edited CRD fails its digest" "custom-resource-definition-originissuers.yaml: FAILED"
 
 echo "== a refresh at the bumped commit records it =="
 tree="$(make_tree refresh)" || die "cannot build the refresh scratch tree"
@@ -335,12 +364,14 @@ assert_rc "the refreshed tree validates" 0
 echo "== a refresh that meets changed upstream bytes changes nothing =="
 tree="$(make_tree refresh-changed)" || die "cannot build the refresh-changed scratch tree"
 set_constant "$tree" origin_ca_issuer_commit "$bumped"
+cp "$tree/$record" "$scratch/record-before-refresh"
 run_updater "$tree" "$upstream_changed" --render-remotes
 assert_rc "refresh with a changed CRD" 1
 changed_sha256="$(sha256sum "$upstream_changed/originissuers.yaml")"
-assert_contains "names the digest the new bytes hash to" "${changed_sha256%% *}"
-assert_contains "names the constant to review" "originissuers_sha256"
-assert_same_file "the record is untouched" "$repo_root/$record" "$tree/$record"
+assert_contains "names the digest the new bytes hash to" "hashes to ${changed_sha256%% *}"
+# The leading space keeps clusteroriginissuers_sha256 from satisfying this.
+assert_contains "names the constant to review" " originissuers_sha256 is "
+assert_same_file "the record is untouched" "$scratch/record-before-refresh" "$tree/$record"
 assert_same_file "the committed CRD is untouched" \
   "$repo_root/$crd_dir/custom-resource-definition-originissuers.yaml" \
   "$tree/$crd_dir/custom-resource-definition-originissuers.yaml"
