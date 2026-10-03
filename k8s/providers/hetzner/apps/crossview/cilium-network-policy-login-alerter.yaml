@@ -1,0 +1,26 @@
+# Let only the crossview-login-alerter CronJob (observability, hetzner overlay)
+# reach the Crossview app on 3001, where it reads the unauthenticated
+# /api/auth/check to notice a database that has lost its schema (#3315).
+# Additive to allow-crossview: that base policy keeps public traffic behind
+# oauth2-proxy and auth-proxy, and this prod-only policy opens one more path,
+# scoped to the alerter's pod label, to the app pods only. The observability
+# side already allows egress to every namespace (allow-coroot).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-login-alerter
+  namespace: crossview
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: crossview
+      app.kubernetes.io/component: app
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability
+            app: crossview-login-alerter
+      toPorts:
+        - ports:
+            - port: "3001"
+              protocol: TCP
