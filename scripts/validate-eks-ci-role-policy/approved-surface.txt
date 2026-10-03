@@ -118,7 +118,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controll
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|github-config|github-config 72a37b4f3edda8d7f432f5d5afc456e8bfef0061eecab0cdac31e829a5ab5d31
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|unifi|unifi bcf9f876e3b42bc411bcdf17262887cb082fdaea80fb593f02fa59b91c5059b7
+kustomize.toolkit.fluxcd.io/v1|Kustomization|unifi|unifi e3b3caea1b9c5a3fc994d9f68c9609d7f77843f24dae91c567e4dd7b5051868a
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|wedding-app|wedding-app 1b680e05b65c96f2f91d709e8dd838dea064b15a132fcab2520606c9467241fe
 
@@ -306,7 +306,7 @@ rbac.authorization.k8s.io/v1|Role|umami|kyverno:background-controller:mutate-uma
 
 rbac.authorization.k8s.io/v1|Role|umami|umami-provision-tenants acd94d4b7b034d6feafb4a9a32a7f57b88421bb9e21f6304fb6f0b5ba3e96662
 
-rbac.authorization.k8s.io/v1|Role|unifi|unifi-managed-resources 437740d30cde427a100aaf0ae38667db1a2fefab4d3d4eb2cfc01fdeb56fcd6d
+rbac.authorization.k8s.io/v1|Role|unifi|unifi-managed-resources 5012f601b75e3f9b69b5bb0f4de33fab3ef2346b3899d0f3b6785769690a736a
 
 rbac.authorization.k8s.io/v1|Role|velero|velero-maintenance-oom-alert 062076b82e1a6bb9af4b6f647f2d297cbe683e70792b05f1f34c1ed881a7981f
 
