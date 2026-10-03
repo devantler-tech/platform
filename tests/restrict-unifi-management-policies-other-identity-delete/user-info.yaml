@@ -1,0 +1,12 @@
+---
+# The source-only prune boundary must leave the provider's identity unaffected.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: UserInfo
+metadata:
+  name: unifi-provider
+userInfo:
+  username: system:serviceaccount:crossplane-system:provider-upjet-unifi
+  groups:
+    - system:serviceaccounts
+    - system:serviceaccounts:crossplane-system
+    - system:authenticated

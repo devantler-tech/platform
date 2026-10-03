@@ -1,0 +1,37 @@
+---
+# Live list already patched: Flux may prune it, the UniFi object is kept.
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: retained
+  namespace: unifi
+spec:
+  managementPolicies: [Observe, Create, Update, LateInitialize]
+  forProvider: {}
+---
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: observing
+  namespace: unifi
+spec:
+  managementPolicies: [Observe]
+  forProvider: {}
+---
+# Removed in the same reconcile that first applies the patch: still the default.
+apiVersion: vpn.unifi.m.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  name: never-patched
+  namespace: unifi
+spec:
+  forProvider: {}
+---
+apiVersion: route.unifi.m.crossplane.io/v1alpha1
+kind: TrafficRoute
+metadata:
+  name: delete-restored
+  namespace: unifi
+spec:
+  managementPolicies: [Observe, Delete]
+  forProvider: {}
