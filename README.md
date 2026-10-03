@@ -300,6 +300,7 @@ Deeper guides and design notes live in [`docs/`](docs):
 
 - [`TEMPLATING.md`](docs/TEMPLATING.md) — the exact set of files a fork needs to edit to stand up its own instance.
 - [`TENANTS.md`](docs/TENANTS.md) — onboarding a new GitOps tenant (an app that runs on the platform from its own repository).
+- [`deletion-and-data-retention.md`](docs/deletion-and-data-retention.md) — the decision that Git owns deletion and the storage layer keeps the data, and the order it rolls out in.
 - [`node-autoscaling.md`](docs/node-autoscaling.md) — how the Cluster Autoscaler is configured on Hetzner.
 - [`oidc-kubectl.md`](docs/oidc-kubectl.md) — authenticating `kubectl` against the cluster via OIDC.
 - [`progressive-delivery.md`](docs/progressive-delivery.md) — Flagger Gateway API canary deployments and the per-app onboarding recipe.
