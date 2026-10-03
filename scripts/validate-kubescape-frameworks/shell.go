@@ -29,8 +29,14 @@ type shellEffects struct {
 func analyzeShell(source string) shellAnalysis { return analyzeShellDepth(source, 0) }
 
 func analyzeShellDepth(source string, depth int) shellAnalysis {
+	remaining := 1 << 20
+	return analyzeShellRegion(source, depth, nil, nil, &remaining)
+}
+
+func analyzeShellRegion(source string, depth int, inherited map[string]string, bindings map[string]bool, remaining *int) shellAnalysis {
 	result := shellAnalysis{source: source}
-	if depth > 8 {
+	*remaining -= len(source)
+	if depth > 8 || *remaining < 0 {
 		result.candidate = true
 		result.err = fmt.Errorf("nested executable shell input is not decidable from the text")
 		return result
@@ -52,7 +58,15 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 	var stack []syntax.Node
 	errexit, successExit := true, false
 	successTraps := make(map[string]bool)
-	functions := make(map[string]shellEffects)
+	functions := make(map[string]string)
+	shadowed := make(map[string]bool)
+	for name, body := range inherited {
+		functions[name] = body
+		shadowed[name] = true
+	}
+	for name, replaced := range bindings {
+		shadowed[name] = replaced
+	}
 	applyEffects := func(effects shellEffects) {
 		if effects.errexit != nil {
 			errexit, result.effects.errexit = *effects.errexit, effects.errexit
@@ -102,11 +116,18 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 			if n.Name.Value == "ksail" {
 				refuse("a local function replaces the scanner executable")
 			}
-			view := analyzeShellDepth(printShellNode(n.Body), depth+1)
-			if view.err != nil {
-				refuse("local function execution cannot be certified from the bounded text")
+			if current, guaranteed := shellEffectsContext(stack); current {
+				for _, parent := range stack[:len(stack)-1] {
+					if _, nested := parent.(*syntax.FuncDecl); nested {
+						guaranteed = false
+					}
+				}
+				functions[n.Name.Value] = ""
+				if guaranteed {
+					functions[n.Name.Value] = printShellNode(n.Body)
+				}
+				shadowed[n.Name.Value] = true
 			}
-			functions[n.Name.Value] = view.effects
 		case *syntax.CallExpr:
 			if len(n.Args) == 0 {
 				return true
@@ -137,17 +158,51 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 					deferred = true
 				}
 			}
+			propagateEffects := func(effects shellEffects) {
+				current, guaranteed := shellEffectsContext(stack)
+				if deferred || !current {
+					return
+				}
+				if !guaranteed {
+					// An optional branch may weaken the gate, but cannot prove
+					// restoration: the shell may never run that branch.
+					if effects.errexit != nil && *effects.errexit {
+						effects.errexit = nil
+					}
+					traps := make(map[string]bool)
+					for signal, masks := range effects.successTraps {
+						if masks {
+							traps[signal] = true
+						}
+					}
+					effects.successTraps = traps
+				}
+				applyEffects(effects)
+			}
 			if !deferred {
-				if effects, found := functions[effectiveCommand]; found {
-					applyEffects(effects)
+				if body, found := functions[effectiveCommand]; found {
+					if body == "" {
+						refuse("local function binding is conditional or belongs to another scope")
+					}
+					view := analyzeShellRegion(body, depth+1, functions, shadowed, remaining)
+					if view.err != nil {
+						refuse("local function execution cannot be certified from the bounded text")
+					}
+					propagateEffects(view.effects)
+				}
+				if shadowed[effectiveCommand] {
+					switch effectiveCommand {
+					case "set", "exit", "trap", "eval", "alias":
+						refuse("a local binding replaces shell failure-handling semantics")
+					}
 				}
 				if effectiveCommand == "set" {
 					if mode := shellErrexitChange(effectiveWords, effectiveStatic); mode != nil {
-						applyEffects(shellEffects{errexit: mode})
+						propagateEffects(shellEffects{errexit: mode})
 					}
 				}
-				if effectiveCommand == "exit" && (len(effectiveWords) == 1 || !effectiveStatic[1] || effectiveWords[1] == "0") {
-					applyEffects(shellEffects{successExit: true})
+				if effectiveCommand == "exit" && shellExitMaySucceed(effectiveWords, effectiveStatic) {
+					propagateEffects(shellEffects{successExit: true})
 				}
 			}
 
@@ -164,21 +219,29 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 				if literal {
 					text := strings.Join(effectiveWords[1:], " ")
 					if !deferred {
-						applyEffects(analyzeShellDepth(text, depth+1).effects)
+						view := analyzeShellRegion(text, depth+1, functions, shadowed, remaining)
+						if view.err != nil {
+							refuse("eval execution cannot be certified from the bounded text")
+						}
+						propagateEffects(view.effects)
 					}
 					if payloadMayScan(text) {
 						refuse("eval reparses executable scan text")
 					}
 				}
 			}
-			if effectiveCommand == "trap" && len(effectiveWords) > 2 && effectiveStatic[1] && effectiveWords[1] != "-p" && !deferred {
-				for _, signal := range effectiveWords[2:] {
+			trapAction := 1
+			if len(effectiveWords) > 1 && effectiveStatic[1] && effectiveWords[1] == "--" {
+				trapAction++
+			}
+			if effectiveCommand == "trap" && len(effectiveWords) > trapAction+1 && effectiveStatic[trapAction] && effectiveWords[trapAction] != "-p" && effectiveWords[trapAction] != "-l" && !deferred {
+				for _, signal := range effectiveWords[trapAction+1:] {
 					if signal == "EXIT" || signal == "0" || signal == "ERR" {
 						if signal == "0" {
 							signal = "EXIT"
 						}
-						mask := effectiveWords[1] != "-" && analyzeShellDepth(effectiveWords[1], depth+1).effects.successExit
-						applyEffects(shellEffects{successTraps: map[string]bool{signal: mask}})
+						mask := effectiveWords[trapAction] != "-" && analyzeShellRegion(effectiveWords[trapAction], depth+1, functions, shadowed, remaining).effects.successExit
+						propagateEffects(shellEffects{successTraps: map[string]bool{signal: mask}})
 					}
 				}
 			}
@@ -186,6 +249,10 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 				for i := 1; i < len(effectiveWords); i++ {
 					text := effectiveWords[i]
 					if effectiveCommand == "alias" {
+						if !effectiveStatic[i] {
+							refuse("alias query or assignment mode is not statically readable")
+							continue
+						}
 						name, value, found := strings.Cut(text, "=")
 						if !found {
 							continue
@@ -193,6 +260,7 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 						if name == "ksail" {
 							refuse("a local alias replaces the scanner executable")
 						}
+						shadowed[name] = true
 						text = value
 					}
 					if effectiveStatic[i] && payloadMayScan(text) {
@@ -287,7 +355,7 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 				refuse(reason)
 				return true
 			}
-			if shellStatusUnsafe(stack, input) {
+			if shellStatusUnsafe(stack, input, shadowed) {
 				refuse("scan is conditional, nested or its failure is discarded")
 				return true
 			}
@@ -312,6 +380,30 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 		return true
 	})
 	return result
+}
+
+// Child shells cannot change the caller's error handling. Optional current-shell
+// branches can change it, but do not prove that a restoration was executed.
+func shellEffectsContext(stack []syntax.Node) (current, guaranteed bool) {
+	guaranteed = true
+	for _, parent := range stack {
+		switch node := parent.(type) {
+		case *syntax.CmdSubst, *syntax.ProcSubst, *syntax.Subshell:
+			return false, false
+		case *syntax.Stmt:
+			if node.Background || node.Coprocess {
+				return false, false
+			}
+		case *syntax.IfClause, *syntax.WhileClause, *syntax.ForClause, *syntax.CaseClause:
+			guaranteed = false
+		case *syntax.BinaryCmd:
+			if node.Op.String() == "|" || node.Op.String() == "|&" {
+				return false, false
+			}
+			guaranteed = false
+		}
+	}
+	return true, guaranteed
 }
 
 // set changes the current shell; -- separates positional data from options.
@@ -346,6 +438,14 @@ func shellErrexitChange(words []string, static []bool) *bool {
 		mode = &enabled
 	}
 	return mode
+}
+
+func shellExitMaySucceed(words []string, static []bool) bool {
+	if len(words) == 1 || !static[1] {
+		return true
+	}
+	code, err := strconv.Atoi(words[1])
+	return err == nil && code%256 == 0
 }
 
 // The same bounded executable resolution applies to direct and delegated calls.
@@ -793,7 +893,7 @@ func nodeContains(container syntax.Node, target syntax.Node) bool {
 	return container != nil && container.Pos().Offset() <= target.Pos().Offset() && container.End().Offset() >= target.End().Offset()
 }
 
-func shellStatusUnsafe(stack []syntax.Node, source string) bool {
+func shellStatusUnsafe(stack []syntax.Node, source string, shadowed map[string]bool) bool {
 	call := stack[len(stack)-1]
 	for _, parent := range stack {
 		switch n := parent.(type) {
@@ -818,6 +918,10 @@ func shellStatusUnsafe(stack []syntax.Node, source string) bool {
 				if nodeContains(n.X, call) {
 					start, end := n.Y.Pos().Offset(), n.Y.End().Offset()
 					if int(end) > len(source) || !provablyFails(source[start:end]) {
+						return true
+					}
+					fallback := strings.Fields(source[start:end])
+					if len(fallback) == 0 || shadowed[fallback[0]] {
 						return true
 					}
 				}

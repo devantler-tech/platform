@@ -137,6 +137,7 @@ func TestSharedParserOrdinaryShellControls(t *testing.T) {
 		"unused ordinary helper":                    "helper() { set +e; echo ready; }\necho ready",
 		"invoked helper preserves failure mode":     "helper() { set +e; set -e; }\nhelper",
 		"successful exit handler removed":           "trap 'exit 0' EXIT\ntrap - EXIT",
+		"transitive helper preserves failure mode":  "restore() { set -e; }; helper() { restore; }; helper",
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -157,6 +158,18 @@ func TestSharedParserOrdinaryShellControls(t *testing.T) {
 	}
 }
 
+func TestLocalFallbackMustStillProveFailure(t *testing.T) {
+	for _, binding := range []string{"false() { return 0; }", "shopt -s expand_aliases; alias false=true", "exit() { return 0; }"} {
+		fallback := "false"
+		if strings.HasPrefix(binding, "exit()") {
+			fallback = "exit 1"
+		}
+		if _, err := setOf(t, binding+"\n"+goodScan+" || "+fallback); err == nil {
+			t.Errorf("locally replaced fallback credited: %s", binding)
+		}
+	}
+}
+
 func TestScannerCannotRunWithFailureHandlingDisabled(t *testing.T) {
 	for _, prefix := range []string{
 		"set +e",
@@ -166,6 +179,15 @@ func TestScannerCannotRunWithFailureHandlingDisabled(t *testing.T) {
 		"helper() { set +e; }; helper",
 		"exit 0",
 		"trap 'exit 0' EXIT\ntrap - ERR",
+		"set +e\nif false; then set -e; fi",
+		"set +e\n(set -e)",
+		"trap 'exit 0' EXIT\nif false; then trap - EXIT; fi",
+		"disable() { set +e; }; helper() { disable; }; helper",
+		"exit 256",
+		"trap 'exit 256' EXIT",
+		"trap -- 'exit 0' EXIT",
+		"helper() { set +e; }; if false; then helper() { set -e; }; fi; helper",
+		"set +e\nset() { :; }; set -e",
 	} {
 		if _, err := setOf(t, prefix+"\n"+goodScan); err == nil {
 			t.Errorf("scanner failure can be discarded by: %s", prefix)
@@ -176,6 +198,7 @@ func TestScannerCannotRunWithFailureHandlingDisabled(t *testing.T) {
 func TestLocallyShadowedScannerCannotSupplyTheOnlyGate(t *testing.T) {
 	for _, binding := range []string{
 		"shopt -s expand_aliases\nalias ksail=echo",
+		"shopt -s expand_aliases\nB='ksail=echo'\nalias \"$B\"",
 		"ksail() { echo ready; }",
 	} {
 		if _, err := setOf(t, binding+"\n"+goodScan); err == nil {
@@ -236,6 +259,9 @@ func TestParserRegressionBashWitnesses(t *testing.T) {
 		"successful exit handler":                   {"trap 'exit 0' EXIT\n" + goodScan, true},
 		"successful error handler":                  {"trap 'exit 0' ERR\n" + goodScan + "\necho ready", true},
 		"helper changes errexit":                    {"helper() { set +e; }; helper\n" + goodScan + "\necho ready", true},
+		"conditional restoration is not executed":   {"set +e\nif false; then set -e; fi\n" + goodScan + "\necho ready", true},
+		"subshell restoration does not propagate":   {"set +e\n(set -e)\n" + goodScan + "\necho ready", true},
+		"conditional handler clearing not executed": {"trap 'exit 0' EXIT\nif false; then trap - EXIT; fi\n" + goodScan, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := witness.body
