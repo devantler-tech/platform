@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly script="${root_dir}/scripts/verify-data-product-ui-rollout.sh"
+scratch="$(mktemp -d)"
+trap 'rm -rf "${scratch}"' EXIT
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
+mkdir "${scratch}/bin" "${scratch}/healthy"
+printf 'synthetic dedicated kubeconfig\n' >"${scratch}/kubeconfig"
+index="sha256:$(printf 'a%.0s' {1..64})"
+child="sha256:$(printf 'b%.0s' {1..64})"
+chart="sha256:$(printf 'c%.0s' {1..64})"
+apps="sha256:$(printf 'd%.0s' {1..64})"
+readonly index child chart apps
+
+cat >"${scratch}/fixtures.jq" <<'JQ'
+def meta($name;$ns): {name:$name,namespace:$ns,uid:($name+"-uid"),generation:3};
+def condition($type): {type:$type,status:"True",observedGeneration:3};
+def owner($kind;$name): {apiVersion:"apps/v1",kind:$kind,name:$name,uid:($name+"-uid"),controller:true};
+def deployment($name;$container): {apiVersion:"apps/v1",kind:"Deployment",metadata:(meta($name;"data-product-controller") + {annotations:{"deployment.kubernetes.io/revision":"7"}}),
+  spec:{replicas:2,template:{spec:{containers:[{name:$container,image:($repo+"@"+$index)}]}}},
+  status:{observedGeneration:3,replicas:2,updatedReplicas:2,readyReplicas:2,availableReplicas:2}};
+def rs($name;$container): {apiVersion:"apps/v1",kind:"ReplicaSet",metadata:(meta($name+"-new";"data-product-controller") + {annotations:{"deployment.kubernetes.io/revision":"7"},ownerReferences:[owner("Deployment";$name)]}),
+  spec:{replicas:2,template:{spec:{containers:[{name:$container,image:($repo+"@"+$index)}]}}},status:{observedGeneration:3,replicas:2,readyReplicas:2,availableReplicas:2}};
+def pod($name;$container;$ordinal): {apiVersion:"v1",kind:"Pod",metadata:(meta($name+"-pod-"+($ordinal|tostring);"data-product-controller") + {ownerReferences:[owner("ReplicaSet";$name+"-new")]}),
+  spec:{containers:[{name:$container,image:($repo+"@"+$index)}]},status:{phase:"Running",conditions:[{type:"Ready",status:"True"}],containerStatuses:[{name:$container,ready:true,imageID:($repo+"@"+$child),state:{running:{startedAt:"2026-10-03T00:00:00Z"}}}]}};
+def route($suffix;$host;$backend): {apiVersion:"gateway.networking.k8s.io/v1",kind:"HTTPRoute",metadata:meta("data-product-controller-"+$suffix;"data-product-controller"),
+  spec:{parentRefs:[{name:"platform",namespace:"kube-system",sectionName:"https"}],hostnames:[$host+".example.com"],rules:[{matches:[{path:{type:"PathPrefix",value:"/"}}],backendRefs:[$backend],filters:(if $suffix == "registry" then [] else [{type:"RequestHeaderModifier",requestHeaderModifier:{remove:["Cookie","Authorization"]}}] end)}]},
+  status:{parents:[{parentRef:{group:"gateway.networking.k8s.io",kind:"Gateway",name:"platform",namespace:"kube-system",sectionName:"https"},controllerName:"io.cilium/gateway-controller",conditions:[condition("Accepted"),condition("ResolvedRefs")]}]}};
+{apps:{apiVersion:"kustomize.toolkit.fluxcd.io/v1",kind:"Kustomization",metadata:meta("apps";"flux-system"),spec:{suspend:false},status:{observedGeneration:3,conditions:[condition("Ready")],lastAppliedRevision:("latest@"+$apps)}},
+ chart:{apiVersion:"source.toolkit.fluxcd.io/v1",kind:"OCIRepository",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,url:"oci://ghcr.io/devantler-tech/charts/data-product-controller",ref:{digest:$chart},verify:{provider:"cosign"}},status:{observedGeneration:3,conditions:[condition("Ready"),condition("SourceVerified")],artifact:{revision:$chart,digest:("sha256:"+([range(64)|"e"]|join("")))}}},
+ helm:{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,chartRef:{kind:"OCIRepository",name:"data-product-controller"},values:{image:{repository:$repo,tag:"1.20.0",digest:$index},uiContract:{enabled:true,additionalHostOrigins:["https://product-ui.example.com"]},uiAppearance:{enabled:true},controller:{replicas:2},demoProduct:{enabled:true,replicas:2,publicBaseURL:"https://harbour-data.example.com"},route:{enabled:true,host:"data-products.example.com"}}},status:{observedGeneration:3,conditions:[condition("Ready")],lastAttemptedRevision:("1.20.0+"+$chart[7:19]),lastAttemptedRevisionDigest:$chart,lastAttemptedConfigDigest:("sha256:"+([range(64)|"f"]|join(""))),history:[{name:"data-product-controller",namespace:"data-product-controller",chartName:"data-product-controller",chartVersion:("1.20.0+"+$chart[7:19]),ociDigest:$chart,configDigest:("sha256:"+([range(64)|"f"]|join(""))),status:"deployed",version:10}]}},
+ "deployment-controller":deployment("data-product-controller";"controller"),
+ "deployment-harbour":deployment("data-product-controller-harbour";"product"),
+ "deployment-ui-kit":deployment("data-product-controller-ui-kit";"ui-kit"),
+ replicasets:{apiVersion:"apps/v1",kind:"ReplicaSetList",items:[rs("data-product-controller";"controller"),rs("data-product-controller-harbour";"product"),rs("data-product-controller-ui-kit";"ui-kit")]},
+ pods:{apiVersion:"v1",kind:"PodList",items:[pod("data-product-controller";"controller";1),pod("data-product-controller";"controller";2),pod("data-product-controller-harbour";"product";1),pod("data-product-controller-harbour";"product";2),pod("data-product-controller-ui-kit";"ui-kit";1),pod("data-product-controller-ui-kit";"ui-kit";2)]},
+ "route-registry":route("registry";"data-products";{name:"oauth2-proxy",namespace:"oauth2-proxy",port:80}),
+ "route-harbour":route("harbour";"harbour-data";{name:"data-product-controller-harbour",port:80}),
+ "route-ui-kit":route("ui-kit";"product-ui";{name:"data-product-controller-ui-kit",port:80}),
+ gateway:{apiVersion:"gateway.networking.k8s.io/v1",kind:"Gateway",metadata:meta("platform";"kube-system"),spec:{gatewayClassName:"cilium",listeners:[{name:"https",protocol:"HTTPS",port:443,tls:{mode:"Terminate"}}]},status:{conditions:[condition("Accepted"),condition("Programmed")],listeners:[{name:"https",conditions:[condition("Accepted"),condition("ResolvedRefs"),condition("Programmed")]}]}}}
+JQ
+jq -n --arg index "$index" --arg child "$child" --arg chart "$chart" --arg apps "$apps" \
+  --arg repo 'ghcr.io/devantler-tech/data-product-controller' -f "${scratch}/fixtures.jq" >"${scratch}/all.json"
+while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/all.json" >"${scratch}/healthy/${key}.json"; done < <(jq -r 'keys[]' "${scratch}/all.json")
+
+cat >"${scratch}/bin/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == --kubeconfig && "$2" == "$KUBECONFIG" && "$3 $4 $5" == '--context synthetic-ci --namespace' ]] || exit 91
+namespace=$6
+[[ "$7" == --request-timeout && "$8" =~ ^[1-5]s$ && "$9" == get ]] || exit 92
+shift 9
+resource=$1 name=${2:-}
+key=''
+case "$namespace:$resource:$name" in
+  flux-system:kustomizations.kustomize.toolkit.fluxcd.io:apps) key=apps ;;
+  data-product-controller:ocirepositories.source.toolkit.fluxcd.io:data-product-controller) key=chart ;;
+  data-product-controller:helmreleases.helm.toolkit.fluxcd.io:data-product-controller) key=helm ;;
+  data-product-controller:deployments.apps:data-product-controller) key=deployment-controller ;;
+  data-product-controller:deployments.apps:data-product-controller-harbour) key=deployment-harbour ;;
+  data-product-controller:deployments.apps:data-product-controller-ui-kit) key=deployment-ui-kit ;;
+  data-product-controller:httproutes.gateway.networking.k8s.io:data-product-controller-registry) key=route-registry ;;
+  data-product-controller:httproutes.gateway.networking.k8s.io:data-product-controller-harbour) key=route-harbour ;;
+  data-product-controller:httproutes.gateway.networking.k8s.io:data-product-controller-ui-kit) key=route-ui-kit ;;
+  kube-system:gateways.gateway.networking.k8s.io:platform) key=gateway ;;
+  data-product-controller:replicasets.apps:-o) key=replicasets ;;
+  data-product-controller:pods:-o) key=pods ;;
+  *) exit 93 ;;
+esac
+if [[ "$key" == pods || "$key" == replicasets ]]; then
+  [[ "$*" == "$resource -o json" ]] || exit 94
+else
+  [[ "$*" == "$resource $name -o json" ]] || exit 95
+fi
+printf '%s\n' "$key" >>"$FIXTURE/reads"
+if [[ "$key" == apps && "${MODE:-}" == hang ]]; then
+  (trap '' TERM; sleep 30) &
+  printf '%s\n' "$!" >"$FIXTURE/child.pid"
+  wait
+fi
+if [[ "$key" == chart && "${MODE:-}" == orphan ]]; then
+  (trap '' TERM; sleep 30) >/dev/null 2>&1 &
+  printf '%s\n' "$!" >>"$FIXTURE/orphan.pids"
+fi
+if [[ "$key" == chart ]]; then
+  case "${MODE:-}" in
+    forbidden) printf 'PRIVATE-ERROR-CANARY\n' >&2; exit 1 ;;
+    empty) exit 0 ;;
+    multi) cat "$FIXTURE/chart.json" "$FIXTURE/chart.json"; exit 0 ;;
+  esac
+fi
+count=0
+[[ ! -f "$FIXTURE/$key.count" ]] || count=$(cat "$FIXTURE/$key.count")
+count=$((count + 1)); printf '%s\n' "$count" >"$FIXTURE/$key.count"
+if ((count >= 2)) && [[ -f "$FIXTURE/after/$key.json" ]]; then
+  cat "$FIXTURE/after/$key.json"
+else
+  cat "$FIXTURE/$key.json"
+fi
+SH
+cat >"${scratch}/bin/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == --disable ]] || exit 91
+shift
+headers='' body='' url='' cookie=0 authorization=0 proto=0 proxy=0
+while (($#)); do
+  case "$1" in
+    --silent|--show-error) shift ;;
+    --proxy) [[ "$2" == '' ]] || exit 92; proxy=1; shift 2 ;;
+    --connect-timeout) [[ "$2" =~ ^[1-5]$ ]] || exit 93; shift 2 ;;
+    --max-time) [[ "$2" =~ ^[1-9][0-9]*$ ]] || exit 94; shift 2 ;;
+    --max-filesize) [[ "$2" == 262144 ]] || exit 95; shift 2 ;;
+    --proto) [[ "$2" == '=https' ]] || exit 96; proto=1; shift 2 ;;
+    --header) case "$2" in Cookie:) cookie=1 ;; Authorization:) authorization=1 ;; *) exit 97 ;; esac; shift 2 ;;
+    --dump-header) headers=$2; shift 2 ;;
+    --output) body=$2; shift 2 ;;
+    --write-out) [[ "$2" == '%{http_code}' ]] || exit 98; shift 2 ;;
+    --url) url=$2; shift 2 ;;
+    *) exit 99 ;;
+  esac
+done
+[[ "$cookie:$authorization:$proto:$proxy" == 1:1:1:1 && -n "$headers" && -n "$body" ]] || exit 100
+printf '%s\n' "$url" >>"$FIXTURE/urls"
+[[ "$(stat -f '%Lp' "$(dirname "$body")" 2>/dev/null || stat -c '%a' "$(dirname "$body")")" == 700 ]] || exit 101
+csp="default-src 'self'; connect-src 'none'; frame-src https:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'"
+printf 'HTTP/2 200\r\nContent-Security-Policy: %s\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\n\r\n' "$csp" >"$headers"
+case "$url" in
+  https://harbour-data.example.com/healthz) printf '' >"$body" ;;
+  https://harbour-data.example.com/api/observations) printf '{"items":[{"station":"Nordhavn","temperatureCelsius":12.4,"salinityPsu":7.8,"observedAt":"2026-01-01T00:00:00Z"},{"station":"Sydhavnen","temperatureCelsius":13.1,"salinityPsu":7.2,"observedAt":"2026-01-01T00:00:00Z"}]}\n' >"$body" ;;
+  https://harbour-data.example.com/openapi.json) printf '{"openapi":"3.1.0","info":{"title":"Harbour observations"},"paths":{"/api/observations":{"get":{"responses":{"200":{}}}}}}\n' >"$body" ;;
+  https://harbour-data.example.com/ui-contract-config) printf '{"hostOrigins":["https://data-products.example.com","https://product-ui.example.com"],"appearanceEnabled":true}\n' >"$body" ;;
+  https://product-ui.example.com/healthz) printf 'ok\n' >"$body" ;;
+  https://product-ui.example.com/) printf '<body data-appearance-enabled="true"><form id="manifest-form"></form><script src="ui-contract.js"></script><script src="kit.js"></script><link href="kit.css">\n' >"$body" ;;
+  https://product-ui.example.com/ui-contract.js) printf 'window.DataProductUI = {};\n' >"$body" ;;
+  https://product-ui.example.com/kit.js) printf 'DataProductUI.mount({});\n' >"$body" ;;
+  https://product-ui.example.com/kit.css) printf ':root { color-scheme: light; }\n' >"$body" ;;
+  *) exit 102 ;;
+esac
+case "${MODE:-}" in
+  http-failure) printf '503'; exit 0 ;;
+  redirect) printf '302'; exit 0 ;;
+  missing-csp) printf 'HTTP/2 200\r\n\r\n' >"$headers" ;;
+  weak-csp) printf 'HTTP/2 200\r\nContent-Security-Policy: default-src *\r\n\r\n' >"$headers" ;;
+  duplicate-csp) printf 'Content-Security-Policy: %s\r\n' "$csp" >>"$headers" ;;
+  wrong-body) printf '{"items":[]}\n' >"$body" ;;
+  wrong-asset) [[ "$url" != */ui-contract.js ]] || printf 'not a protocol library\n' >"$body" ;;
+esac
+printf '200'
+SH
+chmod +x "${scratch}/bin/kubectl" "${scratch}/bin/curl"
+
+run_case() {
+  local name=$1 expected=$2 mode=${3:-} result=0 timeout_seconds=${4:-10}
+  local fixture="${scratch}/${name}"
+  [[ -d "$fixture" ]] || {
+    mkdir "$fixture"
+    cp "${scratch}/healthy/"*.json "$fixture/"
+  }
+  if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset ]]; then timeout_seconds=1; fi
+  PATH="${scratch}/bin:$PATH" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
+    bash "$script" --context synthetic-ci --domain example.com --image-digest "$index" \
+    --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --timeout "$timeout_seconds" \
+    >"$fixture/stdout" 2>"$fixture/stderr" || result=$?
+  if [[ "$expected" == pass ]]; then
+    if [[ "$result" != 0 ]] || ! jq -e '.complete == true and .deployments == 3 and .pods == 6 and .routes == 3 and .publicChecks == 9' "$fixture/stdout" >/dev/null; then fail "$name: healthy live-shaped rollout was not accepted"; fi
+    [[ $(wc -l <"$fixture/urls") -eq 9 ]] || fail "$name: public checks were incomplete"
+  else
+    if [[ "$result" == 0 ]] || ! jq -e '.complete == false and (.failure | type == "string")' "$fixture/stdout" >/dev/null; then fail "$name: incomplete or unsafe rollout was accepted"; fi
+  fi
+  [[ $(cat "${scratch}/kubeconfig") == 'synthetic dedicated kubeconfig' ]] || fail "$name: kubeconfig changed"
+  if grep -Eq 'PRIVATE-ERROR-CANARY|example.com|synthetic-ci|sha256:|data-product-controller|environment-canary' "$fixture/stdout" "$fixture/stderr"; then fail "$name: output was not sanitized"; fi
+  printf 'PASS: %s\n' "$name"
+}
+mutate_case() {
+  local name=$1 key=$2 mutation=$3
+  mkdir "${scratch}/$name"
+  cp "${scratch}/healthy/"*.json "${scratch}/$name/"
+  jq "$mutation" "${scratch}/healthy/$key.json" >"${scratch}/$name/$key.json"
+  run_case "$name" fail '' "${4:-1}"
+}
+
+run_case healthy pass
+run_case orphan-plugin pass orphan
+while IFS= read -r pid; do
+  if kill -0 "$pid" 2>/dev/null; then fail 'successful read left a credential-plugin child running'; fi
+done <"${scratch}/orphan-plugin/orphan.pids"
+mkdir "${scratch}/generic-lists"
+cp "${scratch}/healthy/"*.json "${scratch}/generic-lists/"
+for key in pods replicasets; do jq '.kind="List" | .apiVersion="v1"' "${scratch}/healthy/$key.json" >"${scratch}/generic-lists/$key.json"; done
+run_case generic-lists pass
+mkdir -p "${scratch}/warming/after"
+cp "${scratch}/healthy/"*.json "${scratch}/warming/"
+cp "${scratch}/healthy/apps.json" "${scratch}/warming/after/apps.json"
+jq '.status.conditions[0].status="False"' "${scratch}/healthy/apps.json" >"${scratch}/warming/apps.json"
+run_case warming pass
+mkdir "${scratch}/scaled-down-old-rs"
+cp "${scratch}/healthy/"*.json "${scratch}/scaled-down-old-rs/"
+jq '.items += [(.items[2] | .metadata.name="retired-rs" | .metadata.uid="retired-rs-uid" | .metadata.annotations["deployment.kubernetes.io/revision"]="6" | .spec.replicas=0 | .status.replicas=0 | .status.readyReplicas=0 | .status.availableReplicas=0)]' \
+  "${scratch}/healthy/replicasets.json" >"${scratch}/scaled-down-old-rs/replicasets.json"
+run_case scaled-down-old-rs pass
+mkdir "${scratch}/unrelated-workload"
+cp "${scratch}/healthy/"*.json "${scratch}/unrelated-workload/"
+jq '.items += [(.items[5] | .metadata.name="unrelated" | .metadata.uid="unrelated-uid" | .metadata.ownerReferences[0].name="unrelated-rs" | .metadata.ownerReferences[0].uid="unrelated-rs-uid")]' \
+  "${scratch}/healthy/pods.json" >"${scratch}/unrelated-workload/pods.json"
+run_case unrelated-workload pass
+mutate_case incomplete-page pods '.metadata.continue="next-page"' 10
+mutate_case malformed-unrelated-inventory pods '.items += [(.items[5] | .metadata.namespace="foreign" | .metadata.uid=null | .metadata.ownerReferences[0].name="unrelated-rs" | .metadata.ownerReferences[0].uid="unrelated-rs-uid")]' 10
+mutate_case wrong-publication apps '.status.lastAppliedRevision="latest@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"'
+mutate_case stale-apps apps '.status.observedGeneration=2'
+mutate_case duplicate-ready apps '.status.conditions += [.status.conditions[0]]'
+mutate_case unverified-chart chart '.status.conditions[1].status="False"'
+mutate_case wrong-chart-revision chart '.status.artifact.revision="sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"'
+mutate_case no-file-digest chart 'del(.status.artifact.digest)'
+mutate_case helm-wrong-oci helm '.status.lastAttemptedRevisionDigest="sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"'
+mutate_case helm-stale-history helm '.status.history[0].ociDigest="sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"'
+mutate_case helm-wrong-profile helm '.spec.values.uiAppearance.enabled=false'
+mutate_case missing-approved-host helm '.spec.values.uiContract.additionalHostOrigins=[]'
+mutate_case partial-deployment deployment-ui-kit '.status.availableReplicas=1'
+mutate_case stale-deployment deployment-controller '.status.observedGeneration=2'
+mutate_case zero-replicas deployment-harbour '.spec.replicas=0 | .status.replicas=0 | .status.readyReplicas=0 | .status.updatedReplicas=0 | .status.availableReplicas=0'
+mutate_case wrong-container deployment-ui-kit '.spec.template.spec.containers[0].name="other"'
+mutate_case partial-rs replicasets '.items[2].status.readyReplicas=1'
+mutate_case old-rs replicasets '.items[2].metadata.annotations["deployment.kubernetes.io/revision"]="6"'
+mutate_case foreign-rs replicasets '.items[2].metadata.ownerReferences[0].uid="foreign-uid"'
+mutate_case duplicate-rs replicasets '.items += [.items[2]]'
+mutate_case partial-pods pods '.items |= .[:-1]'
+mutate_case old-pod pods '.items[5].metadata.ownerReferences[0].name="old-rs" | .items[5].metadata.ownerReferences[0].uid="old-rs-uid"'
+mutate_case foreign-pod pods '.items[5].metadata.ownerReferences[0].controller=false'
+mutate_case terminating-pod pods '.items[5].metadata.deletionTimestamp="2026-10-03T00:00:00Z"'
+mutate_case wrong-runtime pods '.items[5].status.containerStatuses[0].imageID="containerd://sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"'
+mutate_case foreign-runtime-repo pods '.items[5].status.containerStatuses[0].imageID |= sub("devantler-tech";"foreign")'
+mutate_case not-running pods '.items[5].status.containerStatuses[0].state={waiting:{reason:"Starting"}}'
+mutate_case generic-list-wrong-kind pods '.kind="List" | .items[0].kind="Secret"'
+mutate_case route-stale route-ui-kit '.status.parents[0].conditions[0].observedGeneration=2'
+mutate_case route-duplicate-parent route-ui-kit '.status.parents += [.status.parents[0]]'
+mutate_case route-duplicate-condition route-harbour '.status.parents[0].conditions += [.status.parents[0].conditions[0]]'
+mutate_case registry-bypass route-registry '.spec.rules[0].backendRefs=[{name:"data-product-controller",port:8082}]'
+mutate_case wrong-gateway-listener gateway '.spec.listeners[0].protocol="HTTP"'
+mutate_case gateway-not-programmed gateway '.status.conditions[1].status="False"'
+for mode in forbidden empty multi http-failure redirect missing-csp weak-csp duplicate-csp wrong-body wrong-asset; do run_case "$mode" fail "$mode"; done
+for key in apps chart helm deployment-ui-kit route-ui-kit gateway pods; do
+  name="changed-$key"
+  mkdir -p "${scratch}/$name/after"
+  cp "${scratch}/healthy/"*.json "${scratch}/$name/"
+  jq 'if .kind == "PodList" then .items[5].metadata.uid="recreated-uid" else .metadata.uid="recreated-uid" end' \
+    "${scratch}/healthy/$key.json" >"${scratch}/$name/after/$key.json"
+  run_case "$name" fail
+done
+run_case bounded-credential-plugin fail hang
+child_pid=$(cat "${scratch}/bounded-credential-plugin/child.pid")
+if kill -0 "$child_pid" 2>/dev/null; then fail 'deadline left a credential-plugin child running'; fi
+printf 'PASS: rollout readback behavior and bounded, read-only request scopes\n'

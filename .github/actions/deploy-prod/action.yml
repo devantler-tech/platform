@@ -545,3 +545,30 @@ runs:
         )
       shell: bash
       run: ./scripts/verify-gateway-routes-applied.sh
+
+    - name: Verify the deployed data product UI release
+      # The protected deployment must prove current Apps/chart/Helm identities,
+      # all current Pods and public endpoints before its candidate can merge.
+      # Recovery reads this action from main's checkout with main's release pins.
+      if: >-
+        !cancelled() &&
+        steps.wait_flux_revision.outcome == 'success' &&
+        (
+          steps.cluster_update.outcome == 'skipped' ||
+          steps.wait_prod_api_stability.outcome == 'success'
+        )
+      shell: bash
+      env:
+        PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
+        # Verified single-platform v1.18.0 publication; its runtime and image
+        # manifest digests are identical. Update with verified release evidence.
+        DPC_RUNTIME_DIGEST: sha256:c5c5fdcb0bfc65279231b9a0209ab951544adffd827953035dda9e15c3a5c703
+      run: |
+        export KUBECONFIG="${HOME}/.kube/config"
+        domain="$(yq -er '.data.domain' k8s/clusters/prod/bootstrap/config-map.yaml)"
+        image_digest="$(yq -er '.spec.values.image.digest' k8s/bases/apps/data-product-controller/helm-release.yaml)"
+        chart_digest="$(yq -er '.spec.ref.digest' k8s/bases/apps/data-product-controller/oci-repository.yaml)"
+        ./scripts/verify-data-product-ui-rollout.sh \
+          --context admin@prod --domain "${domain}" \
+          --image-digest "${image_digest}" --runtime-digest "${DPC_RUNTIME_DIGEST}" \
+          --chart-digest "${chart_digest}" --apps-digest "${PLATFORM_MANIFEST_DIGEST}"
