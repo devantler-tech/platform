@@ -23,15 +23,15 @@
 #   pin      â `.jobs[].uses` of the consumer's cd.yaml at its default branch, via the report's
 #              `pin_at_ref`.
 #
-# THE RELEASE CANDIDATE (publish-app rows only, #3960)
-# Application tenants move their pin to a new `devantler-tech/actions` release by dependency
+# THE RELEASE CANDIDATE (#3960, #4416)
+# Consumers move their pin to a new `devantler-tech/actions` release by dependency
 # bump, often within hours of the release, while this set only learns a pin once it has landed.
-# So each publish-app row also records the commit of the latest published (non-draft,
+# So each publishing row also records the commit of the latest published (non-draft,
 # non-prerelease) `actions` release, and a matcher built from the row can accept the revision a
 # tenant is about to move to before it moves. The candidate is derived, never hand-written: a
 # release that cannot be resolved to one commit carrying the shared workflow fails the run like
-# any other unresolved input. Rows for other workflows carry `-`, because that release stream
-# does not move their consumers.
+# any other unresolved input. Each workflow is resolved separately so a release must carry
+# the actual publishing workflow the consumer will use.
 #
 # FAIL CLOSED, WRITE NOTHING. A consumer that cannot be resolved on either half is named on
 # stderr and the run exits 1 having written NO file: an approved set missing a consumer, or
@@ -281,7 +281,7 @@ split_observation() {
 
 main() {
   local observer="${APPROVED_REVISION_OBSERVER:-}" pin_resolver="${APPROVED_REVISION_PIN_RESOLVER:-}"
-  local release_resolver="${APPROVED_REVISION_RELEASE_RESOLVER:-}" release_candidate='' release_attempted=0
+  local release_resolver="${APPROVED_REVISION_RELEASE_RESOLVER:-}" release_candidates='' release_attempted=' '
   local today="${APPROVED_REVISIONS_OBSERVED_ON:-$(date -u +%Y-%m-%d)}"
   is_date "$today" || { refuse "APPROVED_REVISIONS_OBSERVED_ON must be YYYY-MM-DD, got '$today'"; exit 1; }
 
@@ -326,26 +326,31 @@ main() {
       unresolved=$((unresolved + 1))
       continue
     fi
-    # The release candidate is one fact shared by every publish-app row, so it is resolved
-    # at most once per run. A failed read is that one attempt too: it leaves the candidate empty, and
-    # every publish-app row is then refused by name without reading the release again.
-    local candidate='-'
-    if [ "$workflow" = publish-app ]; then
-      if [ "$release_attempted" -eq 0 ]; then
-        release_attempted=1
+    # Resolve at most once per workflow, including failed reads. Reusing an app-only
+    # lookup would not prove the released commit carries the manifests publisher.
+    local candidate=''
+    case "$workflow" in
+      publish-app | publish-manifests) ;;
+      *) refuse "$repo: unsupported publishing workflow '$workflow'"; unresolved=$((unresolved + 1)); continue ;;
+    esac
+    case "$release_attempted" in
+      *" $workflow "*) ;;
+      *)
+        release_attempted="${release_attempted}${workflow} "
         if [ -n "$release_resolver" ]; then
-          release_candidate="$("$release_resolver" "$workflow")" || release_candidate=''
+          candidate="$("$release_resolver" "$workflow")" || candidate=''
         else
-          release_candidate="$(default_release_resolver "$workflow")" || release_candidate=''
+          candidate="$(default_release_resolver "$workflow")" || candidate=''
         fi
-        case "$release_candidate" in *$'\n'*) release_candidate='' ;; esac
-      fi
-      if ! is_sha "${release_candidate:-}"; then
-        refuse "$repo ($workflow): latest devantler-tech/actions release not resolved to one commit carrying $workflow.yaml; refusing to write a set without its release candidate"
-        unresolved=$((unresolved + 1))
-        continue
-      fi
-      candidate="$release_candidate"
+        is_sha "$candidate" || candidate=''
+        release_candidates="${release_candidates}${workflow}"$'\t'"${candidate}"$'\n'
+        ;;
+    esac
+    candidate="$(printf '%s' "$release_candidates" | awk -F'\t' -v w="$workflow" '$1 == w {print $2; exit}')"
+    if ! is_sha "$candidate"; then
+      refuse "$repo ($workflow): latest devantler-tech/actions release not resolved to one commit carrying $workflow.yaml; refusing to write a set without its release candidate"
+      unresolved=$((unresolved + 1))
+      continue
     fi
     local key="$repo	$workflow" tuple="$OBS_TAG	$OBS_DIGEST	$OBS_SIGNER	$pin	$candidate" observed prev prev_date
     prev="$(prev_row "$repo" "$workflow")"
