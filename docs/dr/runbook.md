@@ -94,17 +94,23 @@ ISO. Bump `spec.cluster.talos.version` (Renovate bumps this pin in
 `ksail.prod.yaml`; KSail derives the matching `machine.install.image` installer
 from it plus `spec.cluster.talos.extensions`) and/or
 `spec.cluster.kubernetesVersion`, then re-run `ksail cluster update`.
-KSail performs an **in-place rolling upgrade** — one node at a time, workers
-first, rebooting each node into the new installer image (Kubernetes upgrades
-roll the static control-plane pods and kubelets); PDBs and `maxUnavailable: 0`
-keep workloads available across the reboots.
+KSail performs an **in-place rolling upgrade of static nodes** — one node at a
+time, workers first, rebooting each node into the new installer image
+(Kubernetes upgrades roll the static control-plane pods and kubelets). Existing
+autoscaler nodes are recycled on a version change, rather than upgraded in
+place: KSail refreshes the snapshot and worker config, then cordons and drains
+them one at a time using the eviction API, honoring PDBs, and deletes their
+provider servers. The autoscaler replaces still-needed capacity from the new
+snapshot. A no-op update leaves autoscaler nodes untouched; a blocked drain
+fails the update rather than forcing eviction. See
+[Talos version upgrades](../node-autoscaling.md#talos-version-upgrades).
+PDBs and `maxUnavailable: 0` protect workload availability during the rollout.
 
-The Hetzner `iso` field is **not** an upgrade lever: a change to it is applied
-in-place and only affects **newly provisioned** nodes (autoscaler scale-ups and
-full rebuilds boot from it). Bump it so new nodes come up on the new version,
-but a stale `iso` does not block the in-place upgrade of the existing nodes.
-(This runbook previously said to bump the ISO to roll nodes — that was never how
-`ksail cluster update` upgrades existing nodes.)
+The Hetzner `iso` field selects temporary snapshot-builder boot media, not the
+installed Talos version. Keep it set to an available Talos ISO so snapshot
+creation can run. Changing it alone does not upgrade existing nodes;
+autoscaler nodes boot from the managed snapshot, and KSail derives the
+installed image from the Talos version and extension pins.
 
 ```bash
 # Pre-flight: confirm every multi-replica workload has a PDB
@@ -113,7 +119,7 @@ kubectl get pdb -A
 # Pre-flight: confirm RollingUpdate strategy uses maxUnavailable: 0
 kubectl get deploy -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}\t{.spec.strategy.rollingUpdate.maxUnavailable}{"\n"}{end}'
 
-# Apply the upgrade (in-place rolling Talos OS + Kubernetes upgrade)
+# Apply the upgrade (rolling static nodes; recycle autoscaler nodes on a version change)
 ./scripts/run-ksail-prod-with-pull-auth.sh cluster update
 ```
 
@@ -121,13 +127,12 @@ If anything reports `maxUnavailable` other than `0`, that workload was
 either added without an HA configuration or has a chart limitation — fix
 before upgrading.
 
-> **If a rolling upgrade is interrupted** (a node fails to rejoin), the cluster
-> is left mixed — some nodes upgraded, some not. KSail releases **before** the fix
-> in [devantler-tech/ksail#5359](https://github.com/devantler-tech/ksail/pull/5359)
-> read the cluster's current version from a single node, so the next `cluster
-> update` mis-reads the cluster as already upgraded and silently skips the
-> laggards (the deploy stays green while the stragglers never move). Recover by
-> upgrading each stuck node directly, one at a time, preserving etcd quorum:
+> **If a rolling upgrade is interrupted**, re-run the production `cluster update`
+> command above. The pinned KSail release resumes upgrades of lagging static
+> nodes; a mixed version alone does not indicate that the rollout completed.
+> Check both static-node convergence and autoscaler replacement before declaring
+> recovery. If a static node is genuinely stuck and cannot recover through the
+> normal update, upgrade it directly, one at a time, preserving etcd quorum:
 >
 > ```bash
 > # Read the installer image KSail derived (from spec.cluster.talos.version +
@@ -135,9 +140,6 @@ before upgrading.
 > IMAGE=$(talosctl --nodes <healthy-ip> get machineconfig -o jsonpath='{.spec.machine.install.image}')
 > talosctl --nodes <node-ip> upgrade --image "$IMAGE"
 > ```
->
-> Once the platform tracks a KSail release containing the fix, `cluster update`
-> resumes interrupted upgrades on its own.
 
 ---
 
@@ -366,10 +368,11 @@ Choose the credential by bucket before editing it:
 
 They are independent identities. Wedding archives through its dedicated token;
 Umami, Coroot, and Velero use the shared platform token. Wedding retains shared
-recovery access until a dedicated-only isolated restore and access-denial proof
-permit its retirement. Rotating the dedicated Wedding token does not affect the
-shared consumers. A shared-token rotation must preserve that recovery access
-as well as verify the active shared consumers before revocation.
+recovery access until a dedicated-only isolated restore and the
+`Verify Wedding Backup Denial` access-denial proof permit its retirement.
+Rotating the dedicated Wedding token does not affect the shared consumers. A
+shared-token rotation must preserve that recovery access as well as verify the
+active shared consumers before revocation.
 
 ```bash
 set -euo pipefail
@@ -453,12 +456,20 @@ gh run view "$run_id" --repo devantler-tech/platform --log |
 #    denial gates complete; those gates do not retire other platform users.
 #    Do not revoke the shared credential as part of archive cutover.
 
+# 7. For wedding-db-backups, dispatch Verify Wedding Backup Denial on main
+#    with confirm=verify-wedding-backup-denial. Bind its run to the main SHA
+#    as above and require DENIAL OBSERVED: the new token reaches its own
+#    catalogue, and platform-backups refuses its list, read and write with
+#    AccessDenied. Any other result means the new token is scoped wrongly or
+#    the refusal is unproven, so keep the old token active and mint a token
+#    scoped only to wedding-db-backups.
+
 # For a platform-backups credential rotation, observe a new successful Velero
 # backup plus new backups and WAL archives from Umami and Coroot, and verify
 # Wedding's retained shared recovery access before revocation.
 kubectl -n velero get backups.velero.io -w
 
-# 7. Revoke the old token only after the checks for its active bucket succeed.
+# 8. Revoke the old token only after the checks for its active bucket succeed.
 #    A queued workflow, an old backup, or a healthy
 #    unrelated consumer is not sufficient evidence.
 ```

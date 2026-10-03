@@ -1,0 +1,9 @@
+---
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: wildcard
+  namespace: unifi
+spec:
+  managementPolicies: ["*"]
+  forProvider: {}

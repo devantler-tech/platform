@@ -18,6 +18,9 @@ name: Validate Main
 on:
   push:
     branches: [main]
+  # Validate a trusted prospective revision with the original read-only jobs.
+  # The two writer jobs below remain restricted to an actual push on main.
+  workflow_dispatch:
 
 permissions: {}
 
@@ -80,7 +83,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.193.5"
+          KSAIL_VERSION: "7.194.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -230,6 +233,7 @@ jobs:
 
   kubescape-baseline:
     name: 🛡️ Publish Kubescape Baseline
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # ci.yaml scans and uploads on `pull_request` only, so every Kubescape
     # analysis lands on an ephemeral `refs/pull/<n>/merge` ref. Code Scanning
@@ -264,7 +268,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.193.5"
+          KSAIL_VERSION: "7.194.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -460,6 +464,7 @@ jobs:
   # main before this push landed could still overwrite prod after a CONVERGED reading.
   observe-prod-convergence:
     name: 🧭 Observe Production Convergence
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     concurrency:
       group: prod-deploy

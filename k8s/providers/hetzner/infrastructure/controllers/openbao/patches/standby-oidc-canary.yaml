@@ -1,0 +1,30 @@
+# Deliver the already-selected standby OIDC repair to one production replica.
+# Keep the lower ordinals on their current revision until the canary is unsealed
+# and healthy. Advancing this partition requires a separate reviewed change and
+# deployment readback (#4391); the base/local chart retains OnDelete.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: openbao
+  namespace: openbao
+spec:
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              group: apps
+              version: v1
+              kind: StatefulSet
+              name: openbao
+              namespace: openbao
+            patch: |
+              apiVersion: apps/v1
+              kind: StatefulSet
+              metadata:
+                name: openbao
+                namespace: openbao
+              spec:
+                updateStrategy:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    partition: 2
