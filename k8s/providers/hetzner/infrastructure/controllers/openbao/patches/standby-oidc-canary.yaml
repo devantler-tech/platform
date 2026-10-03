@@ -1,7 +1,9 @@
-# Retain the repaired canary without automatically replacing another replica.
+# Retain the running repaired canary without advancing any other replica.
 # The bootstrap readiness probe accepts sealed servers, so a partition advance
 # cannot guarantee that the canary still participates in Raft quorum (#4391).
-# Further replacement requires a separately reviewed, fail-closed health gate.
+# Freeze all three ordinals: a deleted/evicted pod returns at the old revision,
+# including the canary if it is lost. OnDelete would instead promote its replacement.
+# Further promotion requires a separately reviewed, fail-closed health gate.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -25,4 +27,6 @@ spec:
                 namespace: openbao
               spec:
                 updateStrategy:
-                  type: OnDelete
+                  type: RollingUpdate
+                  rollingUpdate:
+                    partition: 3

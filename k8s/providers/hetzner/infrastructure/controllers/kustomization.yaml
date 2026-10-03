@@ -126,7 +126,7 @@ patches:
   # Prod-only: HARD-pin OpenBao to the static baseline workers so its hcloud
   # block volumes never ride a node the autoscaler can reclaim (#2363) — see file.
   - path: openbao/patches/keep-off-autoscale-nodes.yaml
-  # Retain the repaired OpenBao canary; further replacements stay deliberate.
+  # Retain the running OpenBao canary; freeze promotion, including pod recovery.
   - path: openbao/patches/standby-oidc-canary.yaml
   # Umami's Namespace moved into the preceding controllers layer with its
   # Kyverno Role; keep the prod-only user-namespace label with its new owner.

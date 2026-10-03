@@ -68,8 +68,9 @@ kubectl kustomize "${scratch}" |
 readonly statefulset="${scratch}/statefulset.yaml"
 
 yq -o=json '.spec' "${statefulset}" | jq -e '
-  .updateStrategy == {"type": "OnDelete"} and .replicas == 3' >/dev/null ||
-  fail 'production OpenBao must not automatically replace another replica while sealed servers can be Ready'
+  .updateStrategy == {"type": "RollingUpdate", "rollingUpdate": {"partition": 3}} and
+  .replicas == 3' >/dev/null ||
+  fail 'production OpenBao must freeze every replica at its previous revision during recovery'
 yq -e '.spec.template.spec.containers[] | select(.name == "openbao") |
   .image == "quay.io/openbao/openbao:2.6.3"' "${statefulset}" >/dev/null ||
   fail 'the canary must use the released standby OIDC repair'
@@ -94,4 +95,4 @@ grep -Fq "'scripts/tests/test-openbao-standby-canary.sh'" "${root_dir}/.github/w
 grep -Fq 'bash scripts/tests/test-openbao-standby-canary.sh' "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must execute the OpenBao canary regression'
 
-printf 'PASS: OpenBao 2.6.3 preserves deliberate production replica replacement\n'
+printf 'PASS: OpenBao 2.6.3 freezes promotion and previous-revision recovery for all production ordinals\n'
