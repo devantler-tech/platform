@@ -11,6 +11,7 @@ readonly coroot="${root_dir}/k8s/bases/infrastructure/coroot/coroot.yaml"
 readonly coroot_patch="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/patches/enable-ha.yaml"
 readonly coroot_db="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/cluster.yaml"
 readonly vault_snapshot="${root_dir}/k8s/bases/infrastructure/vault-backup/cron-job.yaml"
+readonly heartbeat="${CLUSTER_HEARTBEAT_MANIFEST:-${root_dir}/k8s/bases/infrastructure/controllers/coroot/cron-job.yaml}"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -19,6 +20,19 @@ fail() {
 
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
 command -v kubectl >/dev/null 2>&1 || fail 'kubectl is required'
+
+# The heartbeat calls a dotted public hostname, not a relative cluster service.
+# Keep its resolver change local to that template, without replacing cluster DNS.
+yq -e '
+  .spec.jobTemplate.spec.template.spec |
+  (((.dnsConfig.options | length) == 1) and
+  (.dnsConfig.options[0].name == "ndots") and
+  (.dnsConfig.options[0].value == "1") and
+  ((.dnsPolicy // "ClusterFirst") == "ClusterFirst") and
+  (.dnsConfig.nameservers == null) and (.dnsConfig.searches == null))
+' "${heartbeat}" >/dev/null ||
+  fail 'the heartbeat must try dotted names first without overriding cluster DNS or search domains'
+
 command -v kyverno >/dev/null 2>&1 || fail 'Kyverno CLI is required'
 
 policies="$(kubectl kustomize "${policy_dir}")" ||
