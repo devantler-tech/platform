@@ -54,7 +54,9 @@ const (
 	orphanCheckBase     = "          FLUX_ORPHANS_BASE_SHA: ${{ github.event.merge_group.base_sha }}"
 	orphanCheckRecovery = "          FLUX_ORPHANS_RECOVERY_SHA: ${{ steps.recovery-baseline.outputs.sha }}"
 	recoveryBaselineRun = `        run: |
-          recovery_sha="$(git --no-replace-objects rev-parse --verify 'HEAD^{commit}')"
+          recovery_sha="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+            git --no-replace-objects -C "${GITHUB_WORKSPACE:?the recovery checkout workspace is required}" \
+            rev-parse --verify 'HEAD^{commit}')"
           [[ "${recovery_sha}" =~ ^[0-9a-f]{40}$ ]]
           printf 'sha=%s\n' "${recovery_sha}" >>"${GITHUB_OUTPUT}"`
 	// The whole script of the step. Its only early exit is the legacy branch for
@@ -168,7 +170,8 @@ func validateOrphanCheck(healJob string) error {
 	baseline, ok := extractStep(healJob, func(line string) bool {
 		return strings.TrimSpace(line) == "id: recovery-baseline"
 	})
-	if !ok || hasKey(baseline, "if") || !containsExactLine(baseline, "        shell: bash") ||
+	if !ok || hasKey(baseline, "if") || hasKey(baseline, "working-directory") || hasKey(baseline, "env") ||
+		!containsExactLine(baseline, "        shell: bash") ||
 		!strings.HasSuffix(strings.TrimRight(baseline, "\n "), recoveryBaselineRun) {
 		return errors.New("heal job is missing the unconditional recorded recovery checkout step")
 	}

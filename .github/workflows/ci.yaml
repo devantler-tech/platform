@@ -3020,10 +3020,14 @@ jobs:
           persist-credentials: false
 
       - name: 🧭 Record the exact recovery checkout
+        # Read this checkout even if the shell directory or inherited Git
+        # environment points at another repository.
         id: recovery-baseline
         shell: bash
         run: |
-          recovery_sha="$(git --no-replace-objects rev-parse --verify 'HEAD^{commit}')"
+          recovery_sha="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+            git --no-replace-objects -C "${GITHUB_WORKSPACE:?the recovery checkout workspace is required}" \
+            rev-parse --verify 'HEAD^{commit}')"
           [[ "${recovery_sha}" =~ ^[0-9a-f]{40}$ ]]
           printf 'sha=%s\n' "${recovery_sha}" >>"${GITHUB_OUTPUT}"
 

@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const validWorkflow = `name: CI
@@ -69,7 +72,9 @@ const recoveryBaselineStep = `      - name: record the recovery checkout
         id: recovery-baseline
         shell: bash
         run: |
-          recovery_sha="$(git --no-replace-objects rev-parse --verify 'HEAD^{commit}')"
+          recovery_sha="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+            git --no-replace-objects -C "${GITHUB_WORKSPACE:?the recovery checkout workspace is required}" \
+            rev-parse --verify 'HEAD^{commit}')"
           [[ "${recovery_sha}" =~ ^[0-9a-f]{40}$ ]]
           printf 'sha=%s\n' "${recovery_sha}" >>"${GITHUB_OUTPUT}"
 
@@ -115,6 +120,8 @@ func TestRecoveryBaselineContract(t *testing.T) {
 		{"drops output", "          printf 'sha=%s\\n' \"${recovery_sha}\" >>\"${GITHUB_OUTPUT}\"\n", "", "recorded recovery checkout step"},
 		{"conditional capture", "        id: recovery-baseline\n", "        id: recovery-baseline\n        if: ${{ false }}\n", "recorded recovery checkout step"},
 		{"wrong capture shell", "        id: recovery-baseline\n        shell: bash\n", "        id: recovery-baseline\n        shell: sh\n", "recorded recovery checkout step"},
+		{"capture directory override", "        id: recovery-baseline\n", "        id: recovery-baseline\n        working-directory: ${{ runner.temp }}/candidate-checkout\n", "recorded recovery checkout step"},
+		{"capture environment override", "        id: recovery-baseline\n", "        id: recovery-baseline\n        env:\n          GIT_DIR: ${{ runner.temp }}/candidate.git\n", "recorded recovery checkout step"},
 		{"unvalidated commit", "          [[ \"${recovery_sha}\" =~ ^[0-9a-f]{40}$ ]]\n", "", "recorded recovery checkout step"},
 		{"capture before checkout", "          ref: main\n" + recoveryBaselineStep, recoveryBaselineStep + "          ref: main\n", "recorded recovery checkout step"},
 		{"capture after deploy", recoveryBaselineStep + "      - uses: ./.github/actions/deploy-prod\n        with:\n          recover-orphaned-fence: \"true\"\n", "      - uses: ./.github/actions/deploy-prod\n        with:\n          recover-orphaned-fence: \"true\"\n" + recoveryBaselineStep, "must follow checkout and precede deployment"},
@@ -129,6 +136,94 @@ func TestRecoveryBaselineContract(t *testing.T) {
 			err := validateWorkflowContract(workflow)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("validateWorkflowContract() = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestActualRecoveryCaptureUsesWorkspace executes the workflow's capture, not a
+// copied script, so changing its Git context cannot record another repository.
+func TestActualRecoveryCaptureUsesWorkspace(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../../.github/workflows/ci.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				ID  string `yaml:"id"`
+				Run string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	var script string
+	for _, step := range workflow.Jobs["heal-prod-on-failure"].Steps {
+		if step.ID == "recovery-baseline" {
+			if script != "" {
+				t.Fatal("multiple recovery capture steps")
+			}
+			script = step.Run
+		}
+	}
+	if script == "" {
+		t.Fatal("actual recovery capture script is missing")
+	}
+
+	// Ignore the host's Git configuration and environment. These repositories
+	// contain only disposable unsigned fixture commits and never have a remote.
+	var fixtureEnv []string
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, "GIT_") && !strings.HasPrefix(value, "GITHUB_WORKSPACE=") && !strings.HasPrefix(value, "GITHUB_OUTPUT=") {
+			fixtureEnv = append(fixtureEnv, value)
+		}
+	}
+	fixtureEnv = append(fixtureEnv, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	makeRepository := func(name string) (string, string) {
+		dir := filepath.Join(t.TempDir(), name)
+		git := func(args ...string) string {
+			t.Helper()
+			cmd := exec.Command("git", args...)
+			cmd.Env = fixtureEnv
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("fixture git %v: %v: %s", args, err, out)
+			}
+			return strings.TrimSpace(string(out))
+		}
+		git("init", "--quiet", "--initial-branch=main", "--object-format=sha1", dir)
+		git("-C", dir, "-c", "user.name=Recovery Capture Fixture", "-c", "user.email=recovery-capture-fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", name)
+		return dir, git("-C", dir, "rev-parse", "HEAD")
+	}
+	workspace, workspaceSHA := makeRepository("workspace")
+	alternate, alternateSHA := makeRepository("alternate")
+	if workspaceSHA == alternateSHA {
+		t.Fatal("fixture repositories must have different commits")
+	}
+
+	for _, tc := range []struct {
+		name string
+		env  []string
+	}{
+		{"different cwd", nil},
+		{"inherited Git directories", []string{"GIT_DIR=" + filepath.Join(alternate, ".git"), "GIT_WORK_TREE=" + alternate, "GIT_COMMON_DIR=" + filepath.Join(alternate, ".git")}},
+		{"inherited common directory", []string{"GIT_COMMON_DIR=" + filepath.Join(alternate, ".git")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output := filepath.Join(t.TempDir(), "capture-output")
+			cmd := exec.Command("bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script)
+			cmd.Dir = alternate
+			cmd.Env = append(append([]string{}, fixtureEnv...), "GITHUB_WORKSPACE="+workspace, "GITHUB_OUTPUT="+output)
+			cmd.Env = append(cmd.Env, tc.env...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("actual recovery capture failed: %v: %s", err, out)
+			}
+			got, err := os.ReadFile(output)
+			if err != nil || string(got) != "sha="+workspaceSHA+"\n" {
+				t.Fatalf("capture must emit workspace commit %s, not alternate %s: got %q, error %v", workspaceSHA, alternateSHA, got, err)
 			}
 		})
 	}
