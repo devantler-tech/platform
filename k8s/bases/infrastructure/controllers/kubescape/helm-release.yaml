@@ -163,6 +163,15 @@ spec:
     # this into an empty GVR watch pool, so scheduled keepLocal scans persist
     # detailed posture without restoring the per-resource queue flood observed
     # in issue #2463. Add a match only after that command path carries keepLocal.
+    #
+    # An empty watch pool also means the operator sees no deletions, and its
+    # deletion handler is the only upstream path that removes the posture
+    # result of a non-workload object: the storage cleanup compares results
+    # with the live cluster for workload kinds only. So the result of a deleted
+    # Role, ServiceAccount, Secret, Service or policy stays in the store, and a
+    # stored result is not proof that its object exists (#3697). Check one with
+    # scripts/report-kubescape-scan-orphans.sh; a watch added here would not
+    # remove the results already left behind.
     continuousScanning:
       matchingRules:
         match: []
