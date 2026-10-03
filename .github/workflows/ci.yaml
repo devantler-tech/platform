@@ -712,6 +712,7 @@ jobs:
               # Both halves, for the same reason as the guard above.
               - 'scripts/verify-published-evidence.sh'
               - 'scripts/tests/test-verify-published-evidence.sh'
+              - 'scripts/tests/test-publication-subject.sh'
               # Both halves, for the same reason. This gate runs on the deploy path
               # itself, so a PR that edits it without running its test would ship a
               # change to the last check standing between a bad matcher and prod.
@@ -1984,7 +1985,11 @@ jobs:
         # production starts following within the minute. This pins the gate's
         # verdict in both rollout states and the wiring that reaches it — a gate
         # that runs after latest already moved has verified nothing that matters.
-        run: bash scripts/tests/test-verify-published-evidence.sh
+        run: |
+          bash scripts/tests/test-publication-subject.sh
+          SUBJECT_NAME="$(yq -r '.runs.steps[] | select(.id == "staging_reference").env.SUBJECT_NAME' .github/actions/deploy-prod/publish-platform-manifests/action.yml)"
+          export SUBJECT_NAME
+          bash scripts/tests/test-verify-published-evidence.sh
 
       - name: 🔏 Validate the matcher-accepts-staged-digest gate
         if: needs.changes.outputs.k8s == 'true'
