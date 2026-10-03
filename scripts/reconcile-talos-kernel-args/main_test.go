@@ -156,6 +156,27 @@ func TestVersionContractRejectsUnreviewedOrDivergentPins(t *testing.T) {
 	}
 }
 
+func TestVersionContractForAudited71940(t *testing.T) {
+	for _, test := range []struct {
+		name, ci, cd string
+		wantErr      bool
+	}{
+		{"uniform audited release", "7.194.0", "7.194.0", false},
+		{"mixed audited releases", "7.194.0", "7.193.8", true},
+		{"mixed audited releases reversed", "7.193.8", "7.194.0", true},
+		{"unaudited patch release", "7.194.1", "7.194.1", true},
+		{"unaudited minor release", "7.195.0", "7.195.0", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ci := []byte("env:\n  KSAIL_VERSION: '" + test.ci + "'\n")
+			cd := []byte("env:\n  KSAIL_VERSION: '" + test.cd + "'\n")
+			if err := verifyPins(ci, cd); (err != nil) != test.wantErr {
+				t.Fatalf("verifyPins(%q, %q) error = %v, wantErr %v", test.ci, test.cd, err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestCommandDoesNotWriteEitherRoleAfterInvalidInput(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
