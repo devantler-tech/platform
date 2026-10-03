@@ -33,7 +33,7 @@ def rs($name;$container): {apiVersion:"apps/v1",kind:"ReplicaSet",metadata:(meta
 def pod($name;$container;$ordinal): {apiVersion:"v1",kind:"Pod",metadata:(meta($name+"-pod-"+($ordinal|tostring);"data-product-controller") + {labels:labels($name),ownerReferences:[owner("ReplicaSet";$name+"-new")]}),
   spec:{containers:[{name:$container,image:($repo+"@"+$index),ports:ports}]},status:{phase:"Running",podIP:("10.0.0."+($ordinal|tostring)),podIPs:[{ip:("10.0.0."+($ordinal|tostring))}],conditions:[{type:"Ready",status:"True"}],containerStatuses:[{name:$container,ready:true,imageID:($repo+"@"+$child),state:{running:{startedAt:"2026-10-03T00:00:00Z"}}}]}};
 def service($name): {apiVersion:"v1",kind:"Service",metadata:meta($name;"data-product-controller"),spec:{type:"ClusterIP",selector:labels($name),ports:[{name:"http",port:80,targetPort:"http",protocol:"TCP"}]}};
-def slice($name): {apiVersion:"discovery.k8s.io/v1",kind:"EndpointSlice",metadata:(meta($name+"-slice";"data-product-controller") + {labels:{"kubernetes.io/service-name":$name},ownerReferences:[{apiVersion:"v1",kind:"Service",name:$name,uid:($name+"-uid"),controller:true}]}),addressType:"IPv4",ports:[{name:"http",port:8080,protocol:"TCP"}],endpoints:[range(1;3) as $ordinal | {addresses:[("10.0.0."+($ordinal|tostring))],conditions:{ready:true,serving:true,terminating:false},targetRef:{apiVersion:"v1",kind:"Pod",namespace:"data-product-controller",name:($name+"-pod-"+($ordinal|tostring)),uid:($name+"-pod-"+($ordinal|tostring)+"-uid")}}]};
+def slice($name): {apiVersion:"discovery.k8s.io/v1",kind:"EndpointSlice",metadata:(meta($name+"-slice";"data-product-controller") + {labels:{"kubernetes.io/service-name":$name},ownerReferences:[{apiVersion:"v1",kind:"Service",name:$name,uid:($name+"-uid"),controller:true}]}),addressType:"IPv4",ports:[{name:"http",port:8080,protocol:"TCP"}],endpoints:[range(1;3) as $ordinal | {addresses:[("10.0.0."+($ordinal|tostring))],conditions:{ready:true,serving:true,terminating:false},targetRef:{kind:"Pod",namespace:"data-product-controller",name:($name+"-pod-"+($ordinal|tostring)),uid:($name+"-pod-"+($ordinal|tostring)+"-uid")}}]};
 def route($suffix;$host;$backend): {apiVersion:"gateway.networking.k8s.io/v1",kind:"HTTPRoute",metadata:meta("data-product-controller-"+$suffix;"data-product-controller"),
   spec:{parentRefs:[{name:"platform",namespace:"kube-system",sectionName:"https"}],hostnames:[$host+".example.com"],rules:[{matches:[{path:{type:"PathPrefix",value:"/"}}],backendRefs:[$backend],filters:(if $suffix == "registry" then [] else [{type:"RequestHeaderModifier",requestHeaderModifier:{remove:["Cookie","Authorization"]}}] end)}]},
   status:{parents:[{parentRef:{group:"gateway.networking.k8s.io",kind:"Gateway",name:"platform",namespace:"kube-system",sectionName:"https"},controllerName:"io.cilium/gateway-controller",conditions:[condition("Accepted"),condition("ResolvedRefs")]}]}};
@@ -304,6 +304,7 @@ mutate_case endpoint-unready endpoints '.items[1].endpoints[0].conditions.ready=
 mutate_case endpoint-terminating endpoints '.items[1].endpoints[0].conditions.terminating=true' 3
 mutate_case endpoint-wrong-pod endpoints '.items[1].endpoints[0].targetRef.uid="foreign"' 3
 mutate_case endpoint-wrong-name endpoints '.items[1].endpoints[0].targetRef.name="foreign"' 3
+mutate_case endpoint-wrong-version endpoints '.items[1].endpoints[0].targetRef.apiVersion="apps/v1"' 3
 mutate_case endpoint-wrong-ip endpoints '.items[1].endpoints[0].addresses=["10.0.1.1"]' 3
 mutate_case endpoint-wrong-family endpoints '.items[1].addressType="IPv6"' 3
 mutate_case endpoint-missing-current-pod endpoints '.items[1].endpoints |= .[:1]' 3
@@ -329,6 +330,14 @@ cp "${scratch}/healthy/"*.json "${scratch}/multiple-slices/"
 jq '.items |= [.[] | . as $slice | .endpoints | to_entries[] | . as $entry | $slice | .metadata.name += ("-"+($entry.key|tostring)) | .metadata.uid += ("-"+($entry.key|tostring)) | .endpoints=[$entry.value]]' \
   "${scratch}/healthy/endpoints.json" >"${scratch}/multiple-slices/endpoints.json"
 run_case multiple-slices pass
+for version in v1 ''; do
+  name="endpoint-explicit-${version:-empty}-version"
+  mkdir "${scratch}/$name"
+  cp "${scratch}/healthy/"*.json "${scratch}/$name/"
+  jq --arg version "$version" '.items[].endpoints[].targetRef.apiVersion=$version' \
+    "${scratch}/healthy/endpoints.json" >"${scratch}/$name/endpoints.json"
+  run_case "$name" pass
+done
 mkdir "${scratch}/declared-policy-update"
 cp "${scratch}/healthy/"*.json "${scratch}/declared-policy-update/"
 cp "${scratch}/apps-verify.json" "${scratch}/saved-policy.json"

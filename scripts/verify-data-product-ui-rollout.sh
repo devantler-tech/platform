@@ -120,7 +120,8 @@ if $role == "pods" or $role == "replicasets" or $role == "endpoints" then
   then {items:[.items[] | if $role == "pods" then pod elif $role == "endpoints" then
     {apiVersion,kind,metadata:(.metadata|metadata),addressType,ports:[.ports[]? | {name,port,protocol:(.protocol//"TCP")}],
       endpoints:[.endpoints[]? | {addresses,conditions:{ready:.conditions.ready,serving:.conditions.serving,terminating:.conditions.terminating},
-        targetRef:(.targetRef|{apiVersion,kind,name,namespace,uid})}]} else workload end]}
+        # The EndpointSlice controller leaves the core Pod reference version unset.
+        targetRef:(.targetRef|{apiVersion:(if .apiVersion==null or .apiVersion=="" then "v1" else .apiVersion end),kind,name,namespace,uid})}]} else workload end]}
   else error("incomplete inventory") end
 elif $role|startswith("deployment-") then workload
 elif $role == "apps" then {apiVersion,kind,metadata:(.metadata|metadata),spec:{suspend:.spec.suspend,sourceRef:.spec.sourceRef},
