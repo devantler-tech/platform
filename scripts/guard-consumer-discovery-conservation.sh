@@ -47,11 +47,13 @@
 #   - a nested Flux Kustomization that applies another path from that same source: only the
 #     overlay's roots are rendered, so that layer would go unseen;
 #   - an admission mutation with unbounded kinds or a consumer/root kind match, and
-#     unevaluated CEL mutations: persisted objects can differ from the static render;
+#     unevaluated CEL mutations or native mutating webhooks that reach sources, roots
+#     or their policy/controller carriers: persisted objects can differ from the static render;
 #   - Kyverno generate/clone rules targeting consumers, roots or controller carriers,
 #     including unbounded targets; kro instances in mapping-backed carriers count too;
 #   - a mapping-backed nested Kustomization template on the platform source, including
-#     ResourceSet resources and step resources: its applied path is not rendered here;
+#     ResourceSet resources and step resources, or a substituted nested source reference:
+#     its applied path is not rendered here;
 #   - an OCIRepository declaring semverFilter: the report does not evaluate Flux tag filters;
 #   - an attributed OCIRepository with suspension other than absence or literal false:
 #     the selected registry revision is not necessarily its fetched artifact;
@@ -162,7 +164,8 @@ refuse_substituted_object_types() {
         (has("apiVersion") or has("kind") or has("spec") or has("metadata")))
         | to_entries | .[] | .key | select(test("\\$\\{"))),
       (.. | select(type == "!!map" and (.kind == "OCIRepository"
-        or .kind == "Kustomization" or .kind == "FluxInstance"))
+        or .kind == "Kustomization" or .kind == "FluxInstance"
+        or .kind == "MutatingWebhookConfiguration"))
         | .. | select(type == "!!map") | to_entries | .[] | .key
         | select(test("\\$\\{")))
     ] | length' "$file" 2>"$work/yq.err")"; then
@@ -359,6 +362,23 @@ consumer_gvks=''
 while IFS=$'\t' read -r file label; do
   [ -n "$file" ] || continue
   refuse_source_overrides "$file" "$label"
+  # Native callbacks are not evaluated by a static build. Refuse rules that
+  # can reach sources, roots or their policy/controller carriers. Selectors and
+  # operation restrictions cannot establish what the callback will persist.
+  if ! native_mutations="$(yq -N -r '[.. | select(type == "!!map" and
+      .kind == "MutatingWebhookConfiguration") | .webhooks[] | .rules[]
+      | select(((.apiGroups | type) != "!!seq" or (.apiGroups | length) == 0
+          or ([.apiGroups[] | select(type != "!!str" or (. | tostring |
+            test("^(source[.]toolkit[.]fluxcd[.]io|kustomize[.]toolkit[.]fluxcd[.]io|fluxcd[.]controlplane[.]io|kro[.]run|kyverno[.]io|admissionregistration[.]k8s[.]io)$|\\*|\\$\\{")))] | length) > 0)
+        and ((.resources | type) != "!!seq" or (.resources | length) == 0
+          or ([.resources[] | select(type != "!!str" or (. | tostring |
+            test("^(ocirepositories|kustomizations|fluxinstances|resourcesets|resourcegraphdefinitions|clusterpolicies|policies|mutatingpolicies|mutatingadmissionpolicies|mutatingwebhookconfigurations)(/|$)|\\*|\\$\\{")))] | length) > 0))] | length' "$file" 2>"$work/yq.err")"; then
+    refuse "could not bound native admission mutations in the render of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r count; do
+    [ -z "$count" ] || [ "$count" = 0 ] ||
+      refuse "production render $label holds a native admission mutation that can change consumers or their controller carriers, so its consumers are UNKNOWN"
+  done <<<"$native_mutations"
   # Admission and mutate-existing run after this build. Literal unrelated kind
   # matches are safe; source/root matches, wildcards and missing kind bounds are
   # unknown even when a rule has exclusions or conditional preconditions.
@@ -409,6 +429,24 @@ while IFS=$'\t' read -r file label; do
     [ -z "$count" ] || [ "$count" = 0 ] ||
       refuse "production render $label holds an unevaluated CEL admission mutation, so its consumers are UNKNOWN"
   done <<<"$mutations"
+  # Substitution precedes controller creation, including the inherited source
+  # namespace. A nonliteral nested reference can become the platform's source.
+  # OCI-producing RGDs are bounded below by a complete literal schema GVK and
+  # zero matching instances across every render. Only their dormant documents
+  # may defer this check; Kustomization-only RGDs have no such existing bound.
+  if ! nested_sources="$(yq -N -r 'select(.kind != "ResourceGraphDefinition"
+      or ([.. | select(type == "!!map" and .kind == "OCIRepository" and has("spec"))] | length) == 0)
+      | [.. | select(type == "!!map"
+      and .kind == "Kustomization" and has("spec") and (path | length) > 0)
+      | [(.spec.sourceRef.kind // ""), (.spec.sourceRef.name // ""),
+          (.spec.sourceRef.namespace // .metadata.namespace // "")]
+      | map(tostring) | join(" ") | select(test("\\$\\{"))] | length' "$file" 2>"$work/yq.err")"; then
+    refuse "could not read nested source references in the render of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r count; do
+    [ -z "$count" ] || [ "$count" = 0 ] ||
+      refuse "production render $label holds a nested source reference decided by substitution, so its consumers are UNKNOWN"
+  done <<<"$nested_sources"
   # A controller-created Kustomization can apply an otherwise unseen path from
   # this artifact. path excludes the document root, which is handled above.
   if ! nested_templates="$(yq -N -r '[.. | select(type == "!!map"

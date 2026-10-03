@@ -122,7 +122,13 @@ and an attributed source must have no suspension field or a literal boolean fals
 Generated sources, roots and controller carriers are refused; literal unrelated generated
 kinds remain supported. Consumer-producing kro instances are counted in mapping-backed
 controller carriers as well as top-level documents. Substituted structural or consumer
-contract keys are unknown, just like substituted contract values.
+contract keys are unknown, just like substituted contract values. Nested source
+references must also be literal, including an inherited namespace. An OCI-producing
+kro definition may retain dormant references only while its complete literal schema
+GVK has zero matching instances across every production render. Native mutating
+webhooks that can target sources, roots or their policy/controller carriers are
+refused because the static build cannot evaluate their callbacks; literal unrelated
+resource groups and Pod-only rules remain supported.
 
 Flux [substitutes the final YAML after the build](https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-variable-substitution),
 so a variable in an object or template kind or API version can hide an OCI consumer from literal discovery.

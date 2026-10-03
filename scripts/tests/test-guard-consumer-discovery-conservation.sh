@@ -382,7 +382,7 @@ YAML
 case "$PARTIAL_LATEST:$*" in
   admission:*'select(.mutates == true)'*) exit 2 ;;
   cel:*'.kind == "MutatingAdmissionPolicy"'*) exit 2 ;;
-  nested:*'and (path | length) > 0'*) exit 2 ;;
+  nested:*'select(.spec.sourceRef.kind == "OCIRepository"'*) exit 2 ;;
   filter:*'has("semverFilter")'*) exit 2 ;;
 esac
 SH
@@ -565,6 +565,160 @@ SH
       expect_refusal "partial $boundary output cannot clear the controller chain" "$root" "$want" 'UNKNOWN'
   done
 }
+
+# Exercise runtime mutation paths that can leave both static consumer sets incomplete.
+regression_native_admission_findings() {
+  local root placement field target want
+  for placement in resources steps; do
+    for field in kind name namespace default-namespace; do
+      root="$(fixture "nested-source-value-$placement-$field")"
+      cat >"$root/k8s/providers/prod/apps/resource-set.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: additional-roots
+spec:
+  resources:
+    - apiVersion: kustomize.toolkit.fluxcd.io/v1
+      kind: Kustomization
+      metadata:
+        name: hidden-layer
+        namespace: flux-system
+      spec:
+        sourceRef:
+          kind: OCIRepository
+          name: flux-system
+          namespace: flux-system
+        path: bases/unseen
+YAML
+      mkdir -p "$root/k8s/bases/unseen"
+      cp "$root/k8s/bases/apps/alpha/oci-repository.yaml" "$root/k8s/bases/unseen/hidden.yml"
+      yq -i '.metadata.name = "hidden" | .spec.url = "oci://ghcr.io/devantler-tech/hidden/manifests"' "$root/k8s/bases/unseen/hidden.yml"
+      printf 'resources:\n  - hidden.yml\n' >"$root/k8s/bases/unseen/kustomization.yaml"
+      # shellcheck disable=SC2016 # Flux resolves the literal source reference after this build.
+      if [ "$field" = default-namespace ]; then
+        # shellcheck disable=SC2016 # The namespace supplies an omitted source namespace.
+        yq -i '.spec.resources[0].metadata.namespace = "${NESTED_SOURCE}" | del(.spec.resources[0].spec.sourceRef.namespace)' "$root/k8s/providers/prod/apps/resource-set.yaml"
+      else
+        # shellcheck disable=SC2016 # The nested source field is resolved after discovery.
+        FIELD="$field" yq -i '.spec.resources[0].spec.sourceRef[strenv(FIELD)] = "${NESTED_SOURCE}"' "$root/k8s/providers/prod/apps/resource-set.yaml"
+      fi
+      if [ "$placement" = steps ]; then
+        yq -i '.spec.steps = [{"name":"extra","resources":.spec.resources}] | del(.spec.resources)' "$root/k8s/providers/prod/apps/resource-set.yaml"
+      fi
+      printf '  - resource-set.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+      expect_refusal "a $placement template cannot substitute its platform source $field" "$root" 'nested source reference' 'UNKNOWN'
+    done
+  done
+
+  for target in source root carrier wildcard-group wildcard-resources substituted-group substituted-resource missing-group missing-resource missing-operation substituted-operation substituted-key; do
+    root="$(fixture "native-webhook-$target")"
+    cat >"$root/k8s/providers/prod/apps/webhook.yaml" <<'YAML'
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: source-mutator
+webhooks:
+  - name: sources.example.test
+    admissionReviewVersions: [v1]
+    sideEffects: None
+    clientConfig:
+      url: https://example.test/mutate
+    rules:
+      - apiGroups: [source.toolkit.fluxcd.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [ocirepositories]
+YAML
+    want='native admission mutation'
+    # shellcheck disable=SC2016 # These literal substitutions are controller inputs.
+    case "$target" in
+      root) yq -i '.webhooks[0].rules[0].apiGroups = ["kustomize.toolkit.fluxcd.io"] | .webhooks[0].rules[0].resources = ["kustomizations"]' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
+      carrier) yq -i '.webhooks[0].rules[0].apiGroups = ["fluxcd.controlplane.io"] | .webhooks[0].rules[0].resources = ["resourcesets"]' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
+      wildcard-group) yq -i '.webhooks[0].rules[0].apiGroups = ["*"]' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
+      wildcard-resources) yq -i '.webhooks[0].rules[0].resources = ["*/*"]' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
+      substituted-group) yq -i '.webhooks[0].rules[0].apiGroups = ["${SOURCE_GROUP}"]' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
+      substituted-resource) yq -i '.webhooks[0].rules[0].resources = ["${SOURCE_RESOURCE}"]' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
+      missing-group) yq -i 'del(.webhooks[0].rules[0].apiGroups)' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
+      missing-resource) yq -i 'del(.webhooks[0].rules[0].resources)' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
+      missing-operation) yq -i 'del(.webhooks[0].rules[0].operations)' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
+      substituted-operation) yq -i '.webhooks[0].rules[0].operations = ["${SOURCE_OPERATION}"]' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
+      substituted-key) yq -i '.webhooks[0]["${RULES_FIELD}"] = .webhooks[0].rules | del(.webhooks[0].rules)' "$root/k8s/providers/prod/apps/webhook.yaml"; want='mapping key' ;;
+    esac
+    printf '  - webhook.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_refusal "a $target native mutator cannot attest a static consumer" "$root" "$want" 'UNKNOWN'
+  done
+
+  for target in pod foreign validating; do
+    root="$(fixture "unrelated-native-webhook-$target")"
+    cp "$WORK/native-webhook-source/k8s/providers/prod/apps/webhook.yaml" "$root/k8s/providers/prod/apps/webhook.yaml"
+    case "$target" in
+      pod) yq -i '.webhooks[0].rules[0].apiGroups = [""] | .webhooks[0].rules[0].resources = ["pods"]' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
+      foreign) yq -i '.webhooks[0].rules[0].apiGroups = ["unrelated.example.test"]' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
+      validating) yq -i '.kind = "ValidatingWebhookConfiguration"' "$root/k8s/providers/prod/apps/webhook.yaml" ;;
+    esac
+    printf '  - webhook.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_pass "a $target webhook does not mutate the guarded consumer fields" "$root" '2 consumer(s)'
+  done
+  root="$(fixture partial-native-webhook)"
+  mkdir "$WORK/partial-native-webhook-bin"
+  cat >"$WORK/partial-native-webhook-bin/yq" <<'SH'
+#!/usr/bin/env bash
+"$REAL_YQ" "$@" || exit $?
+case "$*" in *'.webhooks[]'*) exit 2 ;; esac
+SH
+  chmod +x "$WORK/partial-native-webhook-bin/yq"
+  REAL_YQ="$(command -v yq)" PATH="$WORK/partial-native-webhook-bin:$PATH" \
+    expect_refusal 'partial native webhook evidence cannot clear consumer discovery' "$root" 'could not bound native admission' 'UNKNOWN'
+  root="$(fixture partial-nested-source)"
+  mkdir "$WORK/partial-nested-source-bin"
+  cat >"$WORK/partial-nested-source-bin/yq" <<'SH'
+#!/usr/bin/env bash
+"$REAL_YQ" "$@" || exit $?
+case "$*" in *'| [(.spec.sourceRef.kind // "")'*) exit 2 ;; esac
+SH
+  chmod +x "$WORK/partial-nested-source-bin/yq"
+  REAL_YQ="$(command -v yq)" PATH="$WORK/partial-nested-source-bin:$PATH" \
+    expect_refusal 'partial nested source evidence cannot clear consumer discovery' "$root" 'could not read nested source references' 'UNKNOWN'
+
+  root="$(fixture dormant-nested-source-rgd)"
+  cat >>"$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml" <<'YAML'
+    - id: nestedRoot
+      template:
+        apiVersion: kustomize.toolkit.fluxcd.io/v1
+        kind: Kustomization
+        metadata:
+          name: generated-root
+          namespace: ${schema.spec.name}
+        spec:
+          sourceRef:
+            kind: OCIRepository
+            name: ${ociRepository.metadata.name}
+          path: deploy
+YAML
+  expect_pass 'an OCI-producing RGD with no instances keeps its dormant nested references' "$root" '2 consumer(s)'
+  cat >"$root/k8s/providers/prod/apps/tenant.yaml" <<'YAML'
+apiVersion: kro.run/v1alpha1
+kind: Tenant
+metadata:
+  name: generated
+spec:
+  name: generated
+YAML
+  printf '  - tenant.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_refusal 'a matching instance still refuses a dormant nested-reference carrier' "$root" 'production renders 1 Tenant instance(s)' 'kro turns each into an OCIRepository'
+  root="$(fixture unbounded-nested-source-rgd)"
+  cp "$WORK/dormant-nested-source-rgd/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml" "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
+  yq -i 'del(.spec.resources[0])' "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
+  expect_refusal 'a Kustomization-only RGD has no existing OCI-instance bound' "$root" 'nested source reference' 'UNKNOWN'
+}
+
+if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = native ]; then
+  regression_native_admission_findings
+  printf '\n%d failure(s)\n' "$failures"
+  [ "$failures" -eq 0 ]
+  exit
+fi
 
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = controller ]; then
   regression_controller_findings
@@ -1633,6 +1787,7 @@ expect_refusal 'a matching custom-group kro instance is still refused' "$root" \
 
 regression_latest_findings
 regression_controller_findings
+regression_native_admission_findings
 
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]
