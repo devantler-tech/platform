@@ -13,6 +13,9 @@ readonly cdi_sha256='e96d59abdf358c5161cb96adcfdcc6107efc3fb608ec93ade11578c94a2
 readonly kubevirt_version='v1.8.0'
 readonly kubevirt_sha256='e9e92c15bca0531bf0b7db2c2dfc83b6b9bdbf1a6f3f96945f67d90d702193b5'
 # The former render-time remotes use immutable commits as well as byte digests.
+# Renovate moves origin_ca_issuer_commit to the head of the upstream trunk branch, the ref these CRDs
+# were rendered from before they were vendored. --validate-committed then fails until --render-remotes
+# has re-fetched both CRDs at that commit (#4136).
 readonly origin_ca_issuer_commit='e375d9c00a66f47a15fb56457686f8629022b50d'
 readonly clusteroriginissuers_sha256='cf6af6f155cd087a1ab2a4bec68cd014f05be3cf3d0240ad331ee1fe1bec574e'
 readonly originissuers_sha256='d085e763718cf34e675b62f8394e20854237b3997f825d86556659585940b170'
@@ -36,6 +39,9 @@ readonly isolated_scan_skip_check='CKV2_K8S_6'
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly repo_root
 readonly render_controllers="${repo_root}/k8s/providers/hetzner/infrastructure/controllers"
+# The vendored CRD bytes carry no trace of the commit they were fetched at, so the refresh records it
+# beside them. Only install_render_remotes writes this file.
+readonly origin_ca_issuer_source_commit_file="${render_controllers}/origin-ca-issuer/custom-resource-definitions.source-commit"
 work_dir="$(mktemp -d)"
 readonly work_dir
 trap 'rm -rf "${work_dir}"' EXIT
@@ -203,6 +209,7 @@ validate_committed_bundles() {
     scripts/guard-cert-approver-image-pin.sh \
       "${render_controllers}/kubelet-serving-cert-approver/kustomization.yaml" \
       "${cert_approver_version}" "${cert_approver_image_digest}"
+    validate_origin_ca_issuer_source_commit
     validate_crd "${render_controllers}/origin-ca-issuer/custom-resource-definition-clusteroriginissuers.yaml" "${clusteroriginissuers_sha256}"
     validate_crd "${render_controllers}/origin-ca-issuer/custom-resource-definition-originissuers.yaml" "${originissuers_sha256}"
   )
@@ -213,6 +220,56 @@ validate_crd() {
   printf '%s  %s\n' "${digest}" "${file}" | sha256sum -c -
   (cd "${repo_root}" && go run ./scripts/annotate-vendored-checkov \
     --bundle origin-ca-issuer --validate-source <"${file}")
+}
+
+# Spelled out rather than written as ranges: a range follows the locale's collation, and in some
+# locales [a-f] admits characters outside ASCII hex.
+readonly full_commit_sha='^[0123456789abcdef]{40}$'
+
+# A branch or tag name would fetch whatever it points at on the day of the refresh. Checked in every
+# mode, before anything is downloaded.
+require_origin_ca_issuer_commit_pin() {
+  if ! [[ "${origin_ca_issuer_commit}" =~ ${full_commit_sha} ]]; then
+    printf 'origin_ca_issuer_commit must be a full 40-character lowercase commit SHA; found %s\n' \
+      "${origin_ca_issuer_commit:-<nothing>}" >&2
+    exit 2
+  fi
+}
+
+# A bump of origin_ca_issuer_commit alone leaves both CRD digests matching, because the committed
+# bytes did not move. Refuse that state: the recorded commit only changes when --render-remotes
+# re-fetches the CRDs at the pinned commit, so a Renovate digest update stays red until it has. A
+# record that is missing or is not exactly one commit is exit 2: it cannot be compared, and must
+# never read as a match.
+validate_origin_ca_issuer_source_commit() {
+  local recorded
+  local record="${origin_ca_issuer_source_commit_file#"${repo_root}/"}"
+  if ! recorded="$(cat "${origin_ca_issuer_source_commit_file}" 2>/dev/null)" ||
+    ! [[ "${recorded}" =~ ${full_commit_sha} ]]; then
+    printf 'could not read exactly one 40-character commit SHA from %s\n' "${record}" >&2
+    printf 'Run scripts/update-vendored-operators.sh --render-remotes to record the commit the origin-ca-issuer CRDs are fetched at.\n' >&2
+    exit 2
+  fi
+  if [ "${recorded}" != "${origin_ca_issuer_commit}" ]; then
+    printf 'origin_ca_issuer_commit is %s, but the vendored origin-ca-issuer CRDs were fetched at %s.\n' \
+      "${origin_ca_issuer_commit}" "${recorded}" >&2
+    printf 'Run scripts/update-vendored-operators.sh --render-remotes to re-fetch them at the pinned commit.\n' >&2
+    exit 1
+  fi
+}
+
+# Stop on changed upstream bytes with the digest they hash to, so a commit bump that really moved a
+# CRD names what has to be reviewed. validate_crd re-checks the digest afterwards.
+require_crd_source_digest() {
+  local name="$1" source="$2" digest="$3" actual
+  actual="$(sha256sum "${source}")"
+  actual="${actual%% *}"
+  if [ "${actual}" != "${digest}" ]; then
+    printf 'the %s CRD at origin-ca-issuer commit %s hashes to %s, but %s_sha256 is %s.\n' \
+      "${name}" "${origin_ca_issuer_commit}" "${actual}" "${name}" "${digest}" >&2
+    printf 'Review the upstream change to that CRD before recording the new digest in scripts/update-vendored-operators.sh.\n' >&2
+    exit 1
+  fi
 }
 
 # Resolve what the pinned cert-approver tag points at in the registry NOW, and refuse to refresh when
@@ -254,6 +311,7 @@ prepare_render_remotes() {
       --retry 3 --retry-all-errors \
       "https://raw.githubusercontent.com/cloudflare/origin-ca-issuer/${origin_ca_issuer_commit}/deploy/crds/cert-manager.k8s.cloudflare.com_${name}.yaml" \
       --output "${source}"
+    require_crd_source_digest "${name}" "${source}" "${digest}"
     validate_crd "${source}" "${digest}"
     # CRDs have no applicable Kubernetes workload/RBAC checks. Require their
     # exact CRD identity and a real secrets-framework scan with its canary.
@@ -280,6 +338,9 @@ prepare_render_remotes() {
 install_render_remotes() {
   mv "${work_dir}/clusteroriginissuers.yaml" "${render_controllers}/origin-ca-issuer/custom-resource-definition-clusteroriginissuers.yaml"
   mv "${work_dir}/originissuers.yaml" "${render_controllers}/origin-ca-issuer/custom-resource-definition-originissuers.yaml"
+  # After both CRDs, so an interrupted install leaves a record that still disagrees with the pin.
+  printf '%s\n' "${origin_ca_issuer_commit}" >"${work_dir}/origin-ca-issuer-source-commit"
+  mv "${work_dir}/origin-ca-issuer-source-commit" "${origin_ca_issuer_source_commit_file}"
   local resource
   for resource in "${work_dir}/cert-approver/"*.yaml; do
     mv "${resource}" "${render_controllers}/kubelet-serving-cert-approver/"
@@ -287,6 +348,7 @@ install_render_remotes() {
 }
 
 require_checkov_pin_matches_ci
+require_origin_ca_issuer_commit_pin
 
 mode=all
 if [ "$#" -ne 0 ]; then

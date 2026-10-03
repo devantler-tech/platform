@@ -5,6 +5,8 @@ resources:
   - helm-release.yaml
   - helm-repository.yaml
   - pod-disruption-budget.yaml
-  # Immutable source commits/digests live in scripts/update-vendored-operators.sh.
+  # Immutable source commits/digests live in scripts/update-vendored-operators.sh,
+  # which records the commit these two files were fetched at in
+  # custom-resource-definitions.source-commit. Never edit that record by hand.
   - custom-resource-definition-clusteroriginissuers.yaml
   - custom-resource-definition-originissuers.yaml
