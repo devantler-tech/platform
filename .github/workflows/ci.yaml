@@ -251,7 +251,6 @@ jobs:
         run: |
           shellcheck -x scripts/guard-consumer-discovery-conservation.sh
           shellcheck scripts/tests/test-guard-consumer-discovery-conservation.sh
-          bash scripts/tests/test-guard-consumer-discovery-conservation.sh
           ./scripts/guard-consumer-discovery-conservation.sh
 
       # The report names the two revisions per consumer; the generator (#3550) turns them
@@ -876,6 +875,24 @@ jobs:
               - 'k8s/clusters/prod/bootstrap/config-map.yaml'
               - 'scripts/tests/test-crossview-login-alerter-runtime.sh'
               - '.github/workflows/ci.yaml'
+
+  # The full offline fixture suite runs alongside changes, which retains the real production
+  # render and ShellCheck. Both deployment and the required gate wait for these regressions.
+  # Like changes, this uses kubectl, yq and jq supplied by the ubuntu-latest runner.
+  validate-consumer-discovery:
+    name: 🔐 Validate Consumer Discovery Regressions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🔐 Validate the full consumer discovery fixture suite
+        run: |
+          bash scripts/tests/test-guard-consumer-discovery-conservation.sh
 
   validate-publication-contract:
     name: 🖋️ Validate Publication Contract
@@ -2879,6 +2896,7 @@ jobs:
     needs:
       [
         changes,
+        validate-consumer-discovery,
         validate-floating-image-tags,
         validate-eks-authorization,
         validate-publication-contract,
@@ -3148,6 +3166,7 @@ jobs:
     needs:
       [
         changes,
+        validate-consumer-discovery,
         validate-publication-contract,
         validate-matcher-efficacy,
         validate-eks-authorization,
@@ -3168,6 +3187,7 @@ jobs:
         with:
           job-results: >-
             ${{ needs.changes.result }}
+            ${{ needs.validate-consumer-discovery.result }}
             ${{ needs.validate-publication-contract.result }}
             ${{ needs.validate-matcher-efficacy.result }}
             ${{ needs.validate-eks-authorization.result }}

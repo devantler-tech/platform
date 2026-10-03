@@ -1043,6 +1043,119 @@ SH
     expect_refusal 'partial ResourceSet type output cannot attest a complete census' "$root" 'could not read ResourceSet object types' 'UNKNOWN'
 }
 
+regression_platform_source_aliases() {
+  local placement root source_file namespace url boundary want
+  for placement in direct cross-root reverse-root overlay resources steps default-namespace explicit-namespace unknown-namespace trailing-slash unresolved-url; do
+    root="$(fixture "platform-alias-$placement")"
+    mkdir -p "$root/k8s/bases/hidden"
+    cp "$root/k8s/bases/apps/alpha/oci-repository.yaml" "$root/k8s/bases/hidden/consumer.yml"
+    yq -i '.metadata.name = "hidden"' "$root/k8s/bases/hidden/consumer.yml"
+    printf 'resources:\n  - consumer.yml\n' >"$root/k8s/bases/hidden/kustomization.yaml"
+    source_file="$root/k8s/providers/prod/apps/platform-alias.yaml"
+    namespace=flux-system
+    url=oci://ghcr.io/devantler-tech/platform/manifests
+    case "$placement" in
+      cross-root|reverse-root) source_file="$root/k8s/providers/prod/infrastructure/platform-alias.yaml" ;;
+      overlay) source_file="$root/k8s/clusters/prod/platform-alias.yaml" ;;
+      explicit-namespace) namespace=other ;;
+      trailing-slash) url="$url/" ;;
+      unresolved-url)
+        # shellcheck disable=SC2016 # Flux resolves this literal variable, not the shell.
+        url='oci://ghcr.io/${REPOSITORY}/manifests' ;;
+    esac
+    cat >"$source_file" <<YAML
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: platform-extra
+  namespace: $namespace
+spec:
+  interval: 1m
+  url: $url
+YAML
+    printf '  - platform-alias.yaml\n' >>"${source_file%/*}/kustomization.yaml"
+    if [ "$placement" = unknown-namespace ]; then
+      yq -i 'del(.metadata.namespace)' "$source_file"
+    fi
+    cat >"$root/k8s/providers/prod/apps/extra-root.yaml" <<'YAML'
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: extra
+  namespace: flux-system
+spec:
+  interval: 1m
+  path: bases/hidden
+  prune: true
+  sourceRef:
+    kind: OCIRepository
+    name: platform-extra
+YAML
+    case "$placement" in
+      reverse-root) yq eval-all -i '[.] | reverse | .[] | split_doc' "$root/k8s/clusters/prod/flux-kustomizations.yaml" ;;
+      default-namespace) yq -i 'del(.metadata.namespace)' "$root/k8s/providers/prod/apps/extra-root.yaml" ;;
+      explicit-namespace) yq -i '.spec.sourceRef.namespace = "other"' "$root/k8s/providers/prod/apps/extra-root.yaml" ;;
+      resources|steps)
+        yq -i '{"apiVersion":"fluxcd.controlplane.io/v1","kind":"ResourceSet","metadata":{"name":"roots","namespace":"flux-system"},"spec":{"resources":[.]}}' "$root/k8s/providers/prod/apps/extra-root.yaml"
+        if [ "$placement" = steps ]; then
+          yq -i '.spec.steps = [{"resources":.spec.resources}] | del(.spec.resources)' "$root/k8s/providers/prod/apps/extra-root.yaml"
+        fi ;;
+    esac
+    printf '  - extra-root.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    if [ "$placement" = unresolved-url ]; then
+      expect_refusal 'an unresolved artifact URL cannot hide a yml consumer' "$root" 'Flux substitution'
+    else
+      expect_refusal "a $placement platform-artifact alias cannot hide a yml consumer" "$root" 'platform-artifact source' 'UNKNOWN'
+    fi
+  done
+  root="$(fixture unused-platform-alias)"
+  cp "$WORK/platform-alias-direct/k8s/providers/prod/apps/platform-alias.yaml" "$root/k8s/providers/prod/apps/platform-alias.yaml"
+  printf '  - platform-alias.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'an unused platform alias creates no unseen root' "$root" '2 consumer(s)'
+  root="$(fixture foreign-platform-alias)"
+  cp "$WORK/platform-alias-direct/k8s/providers/prod/apps/platform-alias.yaml" "$root/k8s/providers/prod/apps/platform-alias.yaml"
+  cp "$WORK/platform-alias-direct/k8s/providers/prod/apps/extra-root.yaml" "$root/k8s/providers/prod/apps/extra-root.yaml"
+  yq -i '.spec.url = "oci://ghcr.io/devantler-tech/another/manifests"' "$root/k8s/providers/prod/apps/platform-alias.yaml"
+  printf '  - platform-alias.yaml\n  - extra-root.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'a literal external-artifact alias stays outside this checkout' "$root" '2 consumer(s)'
+  root="$(fixture other-namespace-platform-alias)"
+  cp "$WORK/foreign-platform-alias/k8s/providers/prod/apps/platform-alias.yaml" "$root/k8s/providers/prod/apps/platform-alias.yaml"
+  cp "$WORK/foreign-platform-alias/k8s/providers/prod/apps/extra-root.yaml" "$root/k8s/providers/prod/apps/extra-root.yaml"
+  yq -i '.spec.url = "oci://ghcr.io/devantler-tech/platform/manifests"' "$root/k8s/providers/prod/apps/platform-alias.yaml"
+  yq -i '.metadata.namespace = "another"' "$root/k8s/providers/prod/apps/extra-root.yaml"
+  printf '  - platform-alias.yaml\n  - extra-root.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'a literal unrelated namespace does not match an artifact alias' "$root" '2 consumer(s)'
+
+  # A reader can print complete-looking rows and then fail. Neither alias
+  # collection nor reference collection may turn that partial output into PASS.
+  for boundary in aliases references; do
+    root="$(fixture "partial-platform-$boundary")"
+    cp "$WORK/unused-platform-alias/k8s/providers/prod/apps/platform-alias.yaml" "$root/k8s/providers/prod/apps/platform-alias.yaml"
+    printf '  - platform-alias.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    mkdir "$WORK/partial-platform-$boundary-bin"
+    cat >"$WORK/partial-platform-$boundary-bin/yq" <<'SH'
+#!/usr/bin/env bash
+"$REAL_YQ" "$@" || exit $?
+case "$PARTIAL_PLATFORM:$*" in
+  aliases:*'sub("/+$", "")'*) exit 2 ;;
+  references:*'strenv(CONSUMER_ALIAS_INCLUDE_ROOT)'*) exit 2 ;;
+esac
+SH
+    chmod +x "$WORK/partial-platform-$boundary-bin/yq"
+    want='could not read platform-artifact source aliases'
+    [ "$boundary" != references ] || want='could not read platform-artifact source alias references'
+    REAL_YQ="$(command -v yq)" PARTIAL_PLATFORM="$boundary" PATH="$WORK/partial-platform-$boundary-bin:$PATH" \
+      expect_refusal "partial platform $boundary output is not an attestation" "$root" "$want" 'UNKNOWN'
+  done
+}
+
+if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = aliases ]; then
+  regression_platform_source_aliases
+  printf '\n%d failure(s)\n' "$failures"
+  [ "$failures" -eq 0 ]
+  exit
+fi
+
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = templates ]; then
   regression_controller_template_findings
   printf '\n%d failure(s)\n' "$failures"
@@ -2134,6 +2247,7 @@ regression_controller_findings
 regression_native_admission_findings
 regression_runtime_chain_findings
 regression_controller_template_findings
+regression_platform_source_aliases
 
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

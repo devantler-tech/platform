@@ -46,6 +46,8 @@
 #   - a suspended production root, or a path that resolves outside the published k8s/ tree;
 #   - a nested Flux Kustomization that applies another path from that same source: only the
 #     overlay's roots are rendered, so that layer would go unseen;
+#   - another rendered OCIRepository pointing at the platform artifact, followed by a
+#     Kustomization or mapping-backed template: renaming a source cannot hide another layer;
 #   - an admission mutation with unbounded kinds or a consumer/root kind match, and
 #     unevaluated CEL mutations or native mutating webhooks that reach sources, roots
 #     or their policy/controller carriers: persisted objects can differ from the static render;
@@ -365,6 +367,59 @@ while IFS= read -r root; do
     fi
   done <<<"$nested"
 done <<<"$roots"
+
+# An OCI source's identity is not its artifact. Gather aliases from EVERY render
+# before following references, so roots cannot evade this bound by declaration
+# order. A missing namespace may inherit the source namespace at runtime.
+platform_aliases=''
+while IFS=$'\t' read -r file label; do
+  [ -n "$file" ] || continue
+  if ! aliases="$(yq -N -r 'select(.kind == "OCIRepository"
+      and ((.apiVersion // "") | test("^source\\.toolkit\\.fluxcd\\.io/")))
+      | select(((.spec.url // "") | sub("/+$", "")) == "oci://ghcr.io/devantler-tech/platform/manifests")
+      | [(.metadata.namespace // ""), (.metadata.name // "")]
+      | map(sub("^$", "-")) | join("\t")' "$file" 2>"$work/yq.err")"; then
+    refuse "could not read platform-artifact source aliases in $label, so its consumers are UNKNOWN"
+  fi
+  while IFS=$'\t' read -r alias_ns alias_name; do
+    [ -n "$alias_ns" ] || continue
+    # The generated identity already has explicit root/template checks below.
+    [ "$alias_ns/$alias_name" != "$src_ns/$src_name" ] || continue
+    [ "$alias_name" != '-' ] || refuse "a platform-artifact source in $label has no name, so its consumers are UNKNOWN"
+    platform_aliases="$platform_aliases$alias_ns"$'\t'"$alias_name
+"
+  done <<<"$aliases"
+done <<<"$(printf '%b' "$sources")"
+
+if [ -n "$platform_aliases" ]; then
+  while IFS=$'\t' read -r file label; do
+    [ -n "$file" ] || continue
+    # Overlay document roots are the paths we rendered. Its nested templates,
+    # and every root's top-level or nested Kustomizations, can add unseen paths.
+    export CONSUMER_ALIAS_INCLUDE_ROOT=false
+    [ "$label" = "$OVERLAY_LABEL" ] || export CONSUMER_ALIAS_INCLUDE_ROOT=true
+    if ! alias_refs="$(yq -N -r '.. | select(type == "!!map"
+        and .kind == "Kustomization" and has("spec")
+        and ((.apiVersion // "") | test("^kustomize\\.toolkit\\.fluxcd\\.io/"))
+        and ((path | length) > 0 or strenv(CONSUMER_ALIAS_INCLUDE_ROOT) == "true"))
+        | select(.spec.sourceRef.kind == "OCIRepository")
+        | [(.metadata.name // ""), (.spec.sourceRef.namespace // .metadata.namespace // ""),
+            (.spec.sourceRef.name // "")]
+        | map(sub("^$", "-")) | join("\t")' "$file" 2>"$work/yq.err")"; then
+      refuse "could not read platform-artifact source alias references in $label, so its consumers are UNKNOWN"
+    fi
+    while IFS=$'\t' read -r ref_name ref_ns ref_source; do
+      [ -n "$ref_name" ] || continue
+      while IFS=$'\t' read -r alias_ns alias_name; do
+        [ -n "$alias_ns" ] || continue
+        if [ "$ref_source" = "$alias_name" ] &&
+          { [ "$ref_ns" = "$alias_ns" ] || [ "$ref_ns" = '-' ] || [ "$alias_ns" = '-' ]; }; then
+          refuse "production render $label holds Kustomization $ref_name following platform-artifact source $alias_ns/$alias_name; its additional path is not rendered here, so its consumers are UNKNOWN"
+        fi
+      done <<<"$platform_aliases"
+    done <<<"$alias_refs"
+  done <<<"$(printf '%b' "$sources")"
+fi
 
 # ── 3. Refuse what a static render cannot see ────────────────────────────────────────
 consumer_gvks=''
