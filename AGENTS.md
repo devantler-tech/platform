@@ -194,6 +194,18 @@ digest must equal the updater's `cert_approver_version` and `cert_approver_image
 matches. On a bump, review the image the new tag points at, then update the version, the digest
 constant and the `images:` entry together.
 
+Renovate tracks the origin-ca-issuer CRD source as a digest of the upstream `trunk` branch, the ref
+the CRDs were rendered from before they were vendored (#4136). Its update PR moves only
+`origin_ca_issuer_commit`, and that alone cannot go green: `--render-remotes` records the commit it
+fetched in `custom-resource-definitions.source-commit` beside the CRDs, and `--validate-committed`
+fails while that record and the pin disagree. To finish such a PR, run `--render-remotes` on its
+branch and commit what it changes. If the refresh stops on a CRD digest, the upstream CRD changed:
+review that change, then record the digest the refresh printed and run it again. Never edit the
+record by hand; a record that is missing or malformed is a failed check, not a match. The Renovate
+manager uses the `github-digest` datasource because `git-refs` reports no release timestamp, and the
+repository-wide `minimumReleaseAge` holds an update without one indefinitely.
+`scripts/tests/test-origin-ca-issuer-crd-source-pin.sh` pins both halves offline.
+
 ## Local Development Cluster
 
 **Primary method (requires KSail + Docker):**
