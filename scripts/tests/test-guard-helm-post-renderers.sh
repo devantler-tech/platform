@@ -10,7 +10,7 @@
 # base, which proves it finds the repository's post-rendered releases and renders none of them when
 # nothing changed. Every other case is a fixture tree in its own git repository. Charts come from a
 # `helm pull` stand-in that packages a local fixture chart, so no case reaches a registry; `helm
-# template` and `kubectl kustomize` are the real tools.
+# template` uses the real audited controller SDK command; `kubectl kustomize` is real.
 #
 # The fixture chart renders its Deployment the way flux-operator 0.50.0 does: a container
 # securityContext, and no pod-level securityContext at all. #3577's exact post-renderer, a JSON-6902
@@ -33,6 +33,11 @@ done
 
 failures=0
 assertions=0
+
+if [ -z "${CONTROLLER_HELM:-}" ]; then
+  export CONTROLLER_HELM="$scratch/controller-helm"
+  "$repo_root/scripts/build-controller-helm.sh" "$CONTROLLER_HELM" || exit 1
+fi
 
 # `helm pull` packages the fixture chart named by the reference instead of reaching a registry, and
 # records each pull. Every other subcommand runs the real helm.
@@ -877,12 +882,117 @@ printf '%s\n' '{{ if eq .Capabilities.HelmVersion.Version "v4.2.0" }}' 'apiVersi
 pr_3580 | release
 yq -i '.spec.chart.spec.chart = "revision-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
 run_guard "$TREE"
-assert_rc 'CLI and SDK HelmVersion capabilities cannot be assumed equivalent' 2
+assert_rc 'the audited SDK renders HelmVersion-dependent charts' 0
 # shellcheck disable=SC2016 # Go raw-string template keys must remain literal.
 printf '%s\n' '{{ if eq (index (.Capabilities | toJson | fromJson) `HelmVersion`).Version "v4.2.0" }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: cli-version' '{{ end }}' \
   >"$scratch/charts/revision-sensitive/templates/revision.yaml"
 run_guard "$TREE"
-assert_rc 'raw-string HelmVersion properties also require matching SDK metadata' 2
+assert_rc 'raw-string HelmVersion properties use the audited SDK metadata' 0
+
+# The official CLI adds a pod securityContext only in its v4.2.0 capability branch.
+# Flux's embedded SDK exposes v4.2, so its render lacks that parent and the JSON leaf add must
+# fail. A renderer that silently returns to the CLI would incorrectly report this patch clean.
+cp -R "$chart" "$scratch/charts/sdk-sensitive"
+yq -i '.name = "sdk-sensitive"' "$scratch/charts/sdk-sensitive/Chart.yaml"
+sed 's/semverCompare "<0.50.0" .Chart.Version/eq .Capabilities.HelmVersion.Version "v4.2.0"/' \
+  "$chart/templates/deployment.yaml" >"$scratch/charts/sdk-sensitive/templates/deployment.yaml"
+new_tree
+pr_pod_leaf_add | release
+yq -i '.spec.chart.spec.chart = "sdk-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
+
+# Demonstrate the divergence with both real rendering commands and the actual
+# patch, independently of the guard's refusal of a mismatched renderer binary.
+mkdir -p "$scratch/cli-divergence"
+yq -o=json '.spec.postRenderers[0].kustomize' "$TREE/k8s/controllers/test/helm-release.yaml" | \
+  jq '. + {apiVersion:"kustomize.config.k8s.io/v1beta1",kind:"Kustomization",resources:["rendered.yaml"]}' \
+  >"$scratch/cli-divergence/kustomization.yaml"
+for cli_mode in install upgrade; do
+  cli_args=(template flux-operator "$scratch/charts/sdk-sensitive" --namespace flux-system)
+  [ "$cli_mode" != upgrade ] || cli_args+=(--is-upgrade)
+  GUARD_RC=0
+  "$HELM_SHIM_REAL" "${cli_args[@]}" \
+    >"$scratch/cli-divergence/rendered.yaml" 2>"$scratch/cli-divergence/error" || GUARD_RC=$?
+  if [ "$GUARD_RC" = 0 ]; then
+    kubectl kustomize "$scratch/cli-divergence" >"$scratch/cli-divergence/patched.yaml" \
+      2>"$scratch/cli-divergence/error" || GUARD_RC=$?
+  fi
+  GUARD_OUT="$(cat "$scratch/cli-divergence/error")"
+  assert_rc "the official CLI incorrectly accepts the SDK-sensitive $cli_mode patch" 0
+done
+run_guard "$TREE"
+assert_rc 'SDK capability divergence exposes a patch the CLI would incorrectly accept' 1
+assert_contains 'the SDK-specific missing parent is reported' 'doc is missing path'
+pr_3580 | release
+yq -i '.spec.chart.spec.chart = "sdk-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
+run_guard "$TREE"
+assert_rc 'a correct post-renderer applies to both SDK install and upgrade renders' 0
+
+cp -R "$scratch/charts/sdk-sensitive" "$scratch/charts/sdk-upgrade-sensitive"
+yq -i '.name = "sdk-upgrade-sensitive"' "$scratch/charts/sdk-upgrade-sensitive/Chart.yaml"
+sed 's/(eq .Capabilities.HelmVersion.Version "v4.2.0")/(or (not .Release.IsUpgrade) (eq .Capabilities.HelmVersion.Version "v4.2.0"))/' \
+  "$scratch/charts/sdk-sensitive/templates/deployment.yaml" >"$scratch/charts/sdk-upgrade-sensitive/templates/deployment.yaml"
+pr_pod_leaf_add | release
+yq -i '.spec.chart.spec.chart = "sdk-upgrade-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
+run_guard "$TREE"
+assert_rc 'SDK capability divergence is checked on the upgrade after a valid install' 1
+assert_contains 'the SDK-specific upgrade refusal is named' 'upgrade render'
+assert_contains 'the SDK-specific upgrade fails because its patched parent is absent' 'doc is missing path'
+pr_3580 | release
+yq -i '.spec.chart.spec.chart = "sdk-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
+
+# The complete metadata, not just Version, must match. A computed tpl payload
+# accesses it through a serialized context, so an incomplete property-name scan
+# or a renderer built with the host's compiler cannot make this control pass.
+cat >"$scratch/charts/sdk-sensitive/templates/metadata.yaml" <<'YAML'
+{{ $context := fromJson (toJson .) }}
+{{ $build := get (get $context "Capabilities") "HelmVersion" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sdk-metadata
+data:
+  version: {{ get $build "version" | quote }}
+  commit: {{ get $build "git_commit" | quote }}
+  tree: {{ get $build "git_tree_state" | quote }}
+  compiler: {{ tpl (printf "{{ .Capabilities.%s.%s }}" "HelmVersion" "GoVersion") . | quote }}
+  client: {{ get $build "kube_client_version" | quote }}
+YAML
+{
+  pr_3580
+  cat <<'YAML'
+          - target:
+              kind: ConfigMap
+              name: sdk-metadata
+            patch: |
+              - op: test
+                path: /data/version
+                value: v4.2
+              - op: test
+                path: /data/commit
+                value: ""
+              - op: test
+                path: /data/tree
+                value: ""
+              - op: test
+                path: /data/compiler
+                value: go1.26.3
+              - op: test
+                path: /data/client
+                value: v1.36
+YAML
+} | release
+yq -i '.spec.chart.spec.chart = "sdk-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
+run_guard "$TREE"
+assert_rc 'serialized, aliased and computed metadata match the complete controller build profile' 0
+CONTROLLER_HELM="$HELM_SHIM_REAL" run_guard "$TREE"
+assert_rc 'an official CLI cannot impersonate the embedded SDK renderer' 2
+assert_contains 'the mismatched complete metadata is refused' 'unaudited capability metadata'
+
+run_guard "$TREE" --release absent/absent
+assert_rc 'a missing explicit release selector cannot pass without checking a release' 2
+assert_contains 'the missing selector refusal is explicit' 'nothing was checked'
+run_guard "$TREE" --release flux-system/flux-operator
+assert_rc 'an exact release selector still evaluates its actual post-renderers' 0
 
 new_tree
 pr_3580 | release

@@ -6,7 +6,7 @@ import (
 )
 
 // TestPublishMatcherProjectionAllowsOnlyNarrowerSignerSets proves that rotating
-// exact signer pairs preserves the existing approval without hiding other edits.
+// exact signer sets preserves the existing approval without hiding other edits.
 func TestPublishMatcherProjectionAllowsOnlyNarrowerSignerSets(t *testing.T) {
 	const manifest = `apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
@@ -56,13 +56,9 @@ spec:
 			original := strings.ReplaceAll(manifest, "github-config", consumer.name)
 			original = strings.ReplaceAll(original, "publish-manifests", consumer.workflow)
 			baseline := entry(original)
-			refs := []string{a, "(" + a + ")", "(" + a + "|" + b + ")", "(" + b + "|" + c + ")"}
-			tooMany := "(" + a + "|" + b + "|" + c + ")"
-			if consumer.workflow == "publish-app" {
-				// An application tenant's set also carries the latest released revision (#3917).
-				refs = append(refs, "("+a+"|"+b+"|"+c+")")
-				tooMany = "(" + a + "|" + b + "|" + c + "|" + strings.Repeat("4", 40) + ")"
-			}
+			// Both publisher families carry the deployed signer, current pin, and release candidate.
+			refs := []string{a, "(" + a + ")", "(" + a + "|" + b + ")", "(" + b + "|" + c + ")", "(" + a + "|" + b + "|" + c + ")"}
+			tooMany := "(" + a + "|" + b + "|" + c + "|" + strings.Repeat("4", 40) + ")"
 			for _, ref := range refs {
 				if entry(strings.Replace(original, "[0-9a-f]{40}", ref, 1)) != baseline {
 					t.Errorf("exact signer subset %q moved the approval fingerprint", ref)
@@ -91,7 +87,7 @@ spec:
 		{"unanchored subject", "subject: '^https", "subject: 'https"},
 		{"unanchored suffix", b + ")$'", b + ")'"},
 		{"regex injection", "(" + a + "|" + b + ")", "(" + a + "|.*)"},
-		{"too many signers", "(" + a + "|" + b + ")", "(" + a + "|" + b + "|" + c + ")"},
+		{"too many signers", "(" + a + "|" + b + ")", "(" + a + "|" + b + "|" + c + "|" + strings.Repeat("4", 40) + ")"},
 		{"branch signer", "(" + a + "|" + b + ")", "main"},
 		{"uppercase signer", "(" + a + "|" + b + ")", strings.Repeat("A", 40)},
 		{"wider character class", "(" + a + "|" + b + ")", "[0-9a-z]{40}"},
