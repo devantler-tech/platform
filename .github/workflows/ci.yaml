@@ -787,6 +787,11 @@ jobs:
               - 'scripts/tests/test-guard-helm-post-renderers.sh'
               - 'scripts/build-controller-helm.sh'
               - 'scripts/render-helm-chart/**'
+              # Both halves and the reviewed exception list, for the same reasons. The
+              # guard renders charts with the renderer the two entries above build.
+              - 'scripts/guard-pdb-selector-match.sh'
+              - 'scripts/tests/test-guard-pdb-selector-match.sh'
+              - 'scripts/pdb-selector-exceptions.tsv'
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-pod-security-exception-scope.sh'
               - 'scripts/tests/test-guard-pod-security-exception-scope.sh'
@@ -2997,6 +3002,55 @@ jobs:
             --base-kube-version "$base_kube_version" \
             --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s
 
+  validate-pdb-selectors:
+    name: 🛟 Validate PodDisruptionBudget Selectors
+    needs: [changes]
+    # A PodDisruptionBudget whose selector matches no pod is valid YAML: it renders, passes
+    # schema validation and the Kubescape scan, and its only symptom is expectedPods: 0 on the
+    # live cluster. homepage's budget shipped that way (#4365). This renders every cluster
+    # overlay the way Flux applies it and requires each budget to select a workload rendered
+    # into its namespace. Most budgets here guard a workload only a chart renders, so the
+    # HelmReleases installed beside an unsatisfied budget are rendered too, with their values
+    # and post-renderers, and a Flagger Canary's primary is derived from its target (#3596).
+    #
+    # Pull requests only. Every run pulls the chart of each release it has to render, over
+    # twenty today, so on the merge group it would make every production deploy wait on that
+    # many upstream registries. A chart bump, a selector edit and a new budget each run it on
+    # their own pull request.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    # A stalled registry fails this job instead of holding it for the default six hours.
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup the audited controller's Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: scripts/render-helm-chart/go.mod
+          cache: false
+
+      - name: 🛟 Validate the PodDisruptionBudget selector guard
+        # The fixture suite pulls no chart: a stand-in packages its fixture charts, and the
+        # renderer built here renders them.
+        run: |
+          shellcheck scripts/guard-pdb-selector-match.sh scripts/tests/test-guard-pdb-selector-match.sh
+          controller_helm="$RUNNER_TEMP/controller-helm"
+          bash scripts/build-controller-helm.sh "$controller_helm"
+          echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
+          export CONTROLLER_HELM="$controller_helm"
+          bash scripts/tests/test-guard-pdb-selector-match.sh
+
+      - name: 🛟 Validate every PodDisruptionBudget selects a rendered workload
+        run: |
+          kube_version="$(yq -er '.spec.cluster.kubernetesVersion | select(tag == "!!str" and . != "")' ksail.prod.yaml)"
+          bash scripts/guard-pdb-selector-match.sh --kube-version "$kube_version" k8s
+
   # Every merge-group validator that ci-required-checks enforces is listed here too.
   # A required validator the deploy does not wait for runs in parallel with it, so
   # production can receive a revision that validator then rejects (#4148).
@@ -3326,6 +3380,7 @@ jobs:
         validate,
         validate-floating-image-tags,
         validate-helm-post-renderers,
+        validate-pdb-selectors,
         naming,
         validate-talos,
         validate-root-verify-merge-group,
@@ -3348,6 +3403,7 @@ jobs:
             ${{ needs.validate.result }}
             ${{ needs.validate-floating-image-tags.result }}
             ${{ needs.validate-helm-post-renderers.result }}
+            ${{ needs.validate-pdb-selectors.result }}
             ${{ needs.naming.result }}
             ${{ needs.validate-talos.result }}
             ${{ needs.validate-root-verify-merge-group.result }}

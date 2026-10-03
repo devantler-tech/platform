@@ -1,0 +1,17 @@
+# Reviewed exceptions for scripts/guard-pdb-selector-match.sh (#3596).
+#
+# One tab-separated row per PodDisruptionBudget whose pods nothing in this repository renders:
+#   <namespace>/<name>	<producer>	<where the pod labels come from, and where they were verified>
+#
+# <producer> is what builds the pods:
+#   <Kind>/<namespace>/<name>   an object the same cluster renders, from which a controller builds the
+#                               workload at runtime. The guard requires it to be rendered. A
+#                               HelmRelease is accepted only while the guard cannot render its chart.
+#   external:<what>             something outside every render, such as the node OS.
+#
+# A row is a tracked disposition, never an approval of a mismatch: the guard cannot check the
+# selector of a budget listed here, so re-verify its labels at the source the row names whenever
+# that source changes version. A row for a budget that a rendered workload satisfies, or that no
+# cluster renders, fails the guard, so remove it then.
+kube-system/coredns	external:talos	Talos installs the CoreDNS Deployment from its own bootstrap manifests, so no layer of the prod cluster renders it (the local cluster renders its own, which the guard checks). Pod label k8s-app=kube-dns verified in Talos v1.13.10, internal/app/machined/pkg/controllers/k8s/internal/k8stemplates/coredns.go.
+observability/coroot-coroot	Coroot/observability/coroot	coroot-operator builds the coroot-coroot StatefulSet from this custom resource at runtime; its chart renders only the operator. Pod labels managed-by=coroot-operator, part-of=<resource name> and component=coroot verified in coroot-operator v1.10.5 (chart 0.10.5), controller/controller.go Labels and controller/coroot.go.
