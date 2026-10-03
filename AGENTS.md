@@ -920,8 +920,8 @@ This is the rule in force today, and it is being replaced.
 [`docs/deletion-and-data-retention.md`](docs/deletion-and-data-retention.md) records the decision
 to keep data at the storage layer (`Retain` on every StorageClass and PersistentVolume) and to
 remove every prune opt-out, and the order that happens in. Until the step that removes the opt-outs
-has landed, everything above still applies unchanged, including the protection on new stateful
-resources.
+(#4444) has merged and deployed, everything above still applies unchanged, including the protection
+on new stateful resources.
 
 **Feature flags — four independent layers (feature-flag-first, monorepo#2059).** Land new behaviour **off**, validate it, then flip it on — using the right layer, coarsest first:
 1. **Runtime per-request flags → flagd + OpenFeature Operator** (`k8s/bases/infrastructure/controllers/openfeature-operator/`, `#2510`). Flag definitions live in Git as **`FeatureFlag` CRs** (`core.openfeature.dev/v1beta1`) reconciled by Flux; workloads opt in with the `openfeature.dev/enabled` + `openfeature.dev/featureflagsource` pod annotations. Prefer **flagd-proxy** sync (`provider: flagd-proxy` on the `FeatureFlagSource`) so pods need no cluster-wide API RBAC — and so Flux never fights the operator over the `flagd-kubernetes-sync` ClusterRoleBinding (that drift only happens under `provider: kubernetes`). A `FeatureFlag` CR belongs in the **`infrastructure` layer**, never the controllers layer (a CR can't share a Flux Kustomization with the controller that installs its CRD).

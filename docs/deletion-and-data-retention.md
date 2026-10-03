@@ -35,7 +35,7 @@ What the protection costs:
 - A tenant removed from Git keeps running until someone deletes it by hand (#3367).
 - A namespace or release that a failed candidate created stays when `main` is restored. The heal
   job and a daily check report such leftovers (#3502), but nothing removes them.
-- Retiring anything that holds data takes two merged revisions and a manual deletion
+- Retiring a claim, a release or a namespace takes two merged revisions and a manual deletion
   (`AGENTS.md`, "Persistence retirement is always two-stage").
 
 One tree already protects itself at the resource layer instead. The UniFi tree prunes, and its
@@ -77,8 +77,10 @@ Read from the charts this repository references and from the released source of 
 - **CSI provisioner.** It deletes the storage behind a volume only when the volume is `Released`
   and its policy is `Delete`.
 - **Flux kustomize-controller 1.8.** All four layers set `force: true`, so an object whose change
-  is rejected as immutable is deleted and created again. Classes are applied in an earlier stage
-  than HelmReleases.
+  the API server rejects as invalid, which is what an immutable field produces, is deleted and
+  created again. The annotation `kustomize.toolkit.fluxcd.io/force` is read only as an opt-in
+  (`enabled`): `force: disabled` does not exempt an object from a layer that forces. Within one
+  Kustomization, classes are applied in an earlier stage than HelmReleases.
 - **Flux helm-controller 1.5 (Helm 4.2).** Helm updates an object in place and never deletes it to
   recreate it, so a changed `reclaimPolicy` fails the upgrade. Helm creates an object that is
   missing, and deletes one that left the chart unless it carries `helm.sh/resource-policy: keep`.
@@ -90,8 +92,9 @@ Read from the charts this repository references and from the released source of 
   confirmation setting is turned on, and that setting is off here.
 - **hcloud-csi 2.23.0.** The chart renders each entry of `storageClasses` as an ordinary
   Helm-managed class. An empty list renders none.
-- **Velero 1.18.** Its data mover sets `Delete` on the temporary volume it creates for each
-  snapshot backup, so that volume is removed when the backup finishes whatever the class says.
+- **Velero 1.18.** Its data mover creates a temporary claim and volume in Velero's own namespace
+  for each snapshot backup. It sets `Delete` on that volume before it deletes the claim, so the
+  volume is removed when Velero cleans up after the backup, whatever the class says.
 
 ## Options considered
 
@@ -124,8 +127,8 @@ would keep creating `Delete` volumes until the workload itself is recreated.
 ## Decision
 
 1. **Data is retained at the storage layer.** Every StorageClass is `Retain`. Every
-   PersistentVolume is `Retain`, except a temporary volume whose own controller sets `Delete` on
-   it, as Velero's data mover does.
+   PersistentVolume is `Retain`, except a temporary volume that its own controller sets to `Delete`
+   in order to remove it, as Velero's data mover does.
 2. **Nothing opts out of pruning to protect what it holds.** The transformer clause and every
    hand-written `prune: disabled` are removed. The opt-outs that guard something other than stored
    data (the admission controller's namespace, one tenant's host policy, one handover between
@@ -139,19 +142,23 @@ would keep creating `Delete` volumes until the workload itself is recreated.
    | `longhorn-wffc` | set `reclaimPolicy: Retain` in its manifest | Flux recreates the class |
    | `longhorn` | set `persistence.reclaimPolicy: Retain` in the chart values | Longhorn recreates the class |
    | `longhorn-static` | declare it in Git with `Retain` | Longhorn leaves an existing class alone; Flux then owns it |
-   | `hcloud` | take it out of the chart and declare it as a manifest with `Retain` and `helm.sh/resource-policy: keep` | Helm cannot replace a class and Flux can; `keep` stops Helm deleting the class when it leaves the chart |
+   | `hcloud` | take it out of the chart and declare it as a manifest in the same layer as the release, with `Retain` and `helm.sh/resource-policy: keep` | Helm cannot replace a class and Flux can; `keep` stops Helm deleting the class when it leaves the chart |
 
    A claim created in the moment a class is being replaced waits, and is provisioned when the class
    is back. Existing claims and volumes refer to a class by name only and are not affected. On a
-   cluster rebuilt from nothing, each class is created with the declared policy from the start.
+   cluster rebuilt from nothing, each class is created with the declared policy. KSail installs the
+   `hcloud-csi` chart with its defaults before Flux takes over, so the chart's own default class
+   exists there, as `Delete`, until the first Flux upgrade of the release removes it.
 4. **Existing volumes are changed one by one, through Git.** A one-shot job or a policy sets
    `Retain` on every volume that has `Delete`, so the change is reviewed and can run again on a
-   rebuilt cluster. It only ever moves `Delete` to `Retain` on volumes that are in use, and it
-   leaves a deliberate way to discard a single released volume.
-5. **`kustomize.toolkit.fluxcd.io/force: disabled` stays** on claims and database clusters. It is
-   not an opt-out from deletion: Flux still updates those objects, and only refuses to delete and
-   recreate them when a change is immutable. `Retain` makes such a replacement recoverable, not
-   harmless.
+   rebuilt cluster. It only ever moves `Delete` to `Retain`. It leaves Velero's temporary volumes
+   alone, which are the ones bound to claims in Velero's own namespace. And it leaves a deliberate
+   way to discard a single released volume.
+5. **Forced replacement is a separate hazard with the same backstop.** All four layers force, and
+   `kustomize.toolkit.fluxcd.io/force: disabled` on a claim or a database cluster does not exempt
+   it. A change to such an object that the API server rejects is therefore answered by deleting
+   and recreating it. `Retain` turns that from data loss into an outage with recoverable data. It
+   does not prevent it. Preventing it is tracked in #4448 and is not part of this rollout.
 6. **The order is fixed:** retain the data, prove it can be brought back, stop evicted candidates
    deleting anything, and only then remove the opt-outs. Steps 2 and 3 of the order first written
    on #3369 are swapped; the reason is under "Before the opt-outs are removed".
@@ -160,12 +167,12 @@ would keep creating `Delete` volumes until the workload itself is recreated.
 
 | Step | Change | Rollback | Issue |
 | --- | --- | --- | --- |
-| 1 | The three Longhorn classes become `Retain`. | Revert. The classes are recreated as `Delete` the same way. Volumes provisioned in between stay `Retain`, which is the safe direction. | #4439 |
-| 2 | The `hcloud` class becomes `Retain` and moves from the chart to a manifest. | Revert. The class returns to the chart as `Delete`. The step rehearses this path before it merges. | #4440 |
-| 3 | Every existing volume becomes `Retain`. A standing check reports any class or in-use volume that is `Delete`, and any volume left `Released`. | Remove the mechanism. A bound volume may be set back by hand. A released volume is never set back to `Delete` unless it is being discarded, because that deletes its data at once. | #4441 |
+| 1 | The three Longhorn classes become `Retain`. | Revert. `longhorn-wffc` and `longhorn` are recreated as `Delete` the same way; `longhorn-static` is pruned and Longhorn creates it again. Volumes provisioned in between stay `Retain`, which is the safe direction. | #4439 |
+| 2 | The `hcloud` class becomes `Retain` and moves from the chart to a manifest. | Revert. The class returns to the chart as `Delete`. The Helm upgrade can fail until Flux has pruned the manifest class, and the class is briefly absent. The step rehearses this path before it merges. | #4440 |
+| 3 | Every existing volume becomes `Retain`, apart from Velero's temporary volumes. A standing check reports any class that is `Delete`, any other volume that is `Delete`, and any volume left `Released`. | Remove the mechanism. A bound volume may be set back by hand. A released volume is never set back to `Delete` unless it is being discarded, because that deletes its data at once. | #4441 |
 | 4 | The reclaim procedure below is written into the disaster-recovery runbook and drilled once per driver. | Revert the documentation. | #4442 |
 | 5 | A merge-queue candidate that is evicted has deleted nothing in production. | Revert to the current merge-queue deploy. | #4443 |
-| 6 | Every prune opt-out is removed, and the contract flips from "everything must be protected" to "nothing may be". | Revert; the annotations return on the next reconcile. Anything pruned in between is not restored by the revert: its volumes are released and are brought back with the reclaim procedure. | #4444 |
+| 6 | Every prune opt-out is removed, apart from a handover annotation that is still in flight, and the contract flips from "everything must be protected" to "nothing may be". | Revert; the annotations return on the next reconcile. Anything pruned in between is not restored by the revert: its volumes are released and are brought back with the reclaim procedure. | #4444 |
 | 7 | Tenant decommissioning is documented as deleting the tenant's directory. | Revert the documentation. | #4445 |
 
 Steps 1, 2 and 5 do not depend on each other. Step 3 follows 1 and 2, step 4 follows 3, step 6
@@ -184,11 +191,13 @@ on this cluster yet: step 4 of the rollout drills it, and nothing depends on it 
 
 1. Act before the claim is recreated. A claim that comes back first, for example because its
    manifest was restored, is given a new, empty volume.
-2. Reserve the released volume for the claim that should own it: replace the stale claim reference
-   on the volume with that claim's namespace and name. The volume becomes `Available`, and only
-   that claim can bind it.
+2. Reserve the released volume for the claim that should own it: edit the claim reference on the
+   volume so that it holds only that claim's namespace and name, and remove the old claim's `uid`
+   and `resourceVersion` from it. The volume becomes `Available`, and only that claim can bind it.
+   Leaving the old `uid` in place reserves nothing, even when the namespace and name are unchanged.
 3. Let the claim be created, by restoring the manifest or by letting the operator or StatefulSet
-   create it. It binds the reserved volume and provisions nothing new.
+   create it. It binds the reserved volume and provisions nothing new, provided it asks for no more
+   than the volume's capacity and for the same volume mode.
 4. A claim that an operator owns may also need the labels and annotations the operator expects on
    it. Step 4 of the rollout records these per operator. For databases, the backups described in
    [`dr/velero-cnpg.md`](dr/velero-cnpg.md) remain the recovery path of record.
@@ -218,9 +227,9 @@ kept by accident.
 
 All of the following hold first:
 
-- **Every class and every in-use volume is `Retain` on the live cluster**, and a standing check
-  reports any that is not. The check reads the cluster, not the manifests: 29 of the 30 claims are
-  not manifests in this repository.
+- **Every class and every volume is `Retain` on the live cluster**, apart from Velero's temporary
+  volumes, and a standing check reports any that is not. The check reads the cluster, not the
+  manifests: 29 of the 30 claims are not manifests in this repository.
 - **A released volume has been brought back, and one has been discarded**, once for each driver,
   by following the written procedure, including a claim owned by an operator.
 - **An evicted merge-queue candidate deletes nothing in production.** `Retain` keeps the data but
@@ -235,14 +244,16 @@ All of the following hold first:
   `Retain` covers volumes only. It does not cover a secret that exists only in the cluster, a
   custom resource removed together with its definition, an external resource managed through
   Crossplane, or the storage system itself.
-- **Backups stay the recovery path of record.** A retained volume is on the same disks and in the
-  same account as the workload it belonged to. It is not a backup.
+- **Backups stay the recovery path of record**, and step 6 checks that every claim on the live
+  cluster is covered by one or records why it needs none. A retained volume is on the same disks
+  and in the same account as the workload it belonged to. It is not a backup.
 
 ## Consequences
 
 **Positive.** Removing a tenant is deleting its directory. An object that a failed deploy left in a
-Flux inventory is pruned when `main` is restored. Retirement no longer needs two revisions and a
-manual deletion. The protection no longer depends on an annotation reaching 29 claims indirectly.
+Flux inventory is pruned when `main` is restored. Retirement no longer needs two revisions; the
+manual step that remains is discarding the released volume. The protection no longer depends on an
+annotation reaching 29 claims indirectly.
 
 **Trade-offs.** Deleted claims leave volumes that cost money or disk space until someone reclaims
 them. Restoring a manifest does not restore its data unless the released volume is reserved first.
