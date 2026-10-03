@@ -237,6 +237,9 @@ func TestScannerCannotRunWithFailureHandlingDisabled(t *testing.T) {
 		"set -n",
 		"set -o noexec",
 		"set +e; set -Ze",
+		"exec -a /tmp/command true",
+		"exec -a /tmp/builtin true",
+		"exec -a /tmp/exec true",
 	} {
 		if _, err := setOf(t, prefix+"\n"+goodScan); err == nil {
 			t.Errorf("scanner failure can be discarded by: %s", prefix)
@@ -353,6 +356,31 @@ func TestNoexecCannotProveScannerExecution(t *testing.T) {
 			}
 			if _, err := os.Stat(trace); !os.IsNotExist(err) {
 				t.Fatalf("noexec must leave the scanner unexecuted: %v", err)
+			}
+		})
+	}
+}
+
+func TestExecArgvZeroCannotProveScannerExecution(t *testing.T) {
+	truePath, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"command", "builtin", "exec"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			trace := filepath.Join(dir, "trace")
+			stub := "#!/usr/bin/env bash\nprintf executed > \"$SCAN_WITNESS_TRACE\"\nexit 42\n"
+			if err := os.WriteFile(filepath.Join(dir, "ksail"), []byte(stub), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", "exec -a /tmp/"+name+" \"$1\"\n"+goodScan, "witness", truePath)
+			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "SCAN_WITNESS_TRACE="+trace)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("exec should complete without invoking the failing stand-in: %v, %s", err, output)
+			}
+			if _, err := os.Stat(trace); !os.IsNotExist(err) {
+				t.Fatalf("exec must leave the later scanner unexecuted: %v", err)
 			}
 		})
 	}

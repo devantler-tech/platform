@@ -160,11 +160,13 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 			if !static[0] {
 				refuse("command position is dynamically assembled")
 			}
-			executable, resolutionErr := resolveShellExecutable(words, static, envAssignments)
-			if resolutionErr != "" {
-				refuse(resolutionErr)
+			dispatch := resolveShellDispatch(words, static, envAssignments)
+			executable := dispatch.executable
+			if dispatch.reason != "" {
+				refuse(dispatch.reason)
 			}
-			for _, prefix := range words[:executable] {
+			for _, index := range dispatch.wrappers {
+				prefix := words[index]
 				if prefix == filepath.Base(prefix) && shadowed[prefix] {
 					refuse("a local binding replaces command-wrapper semantics")
 				}
@@ -172,7 +174,8 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 			effectiveWords, effectiveStatic := words[executable:], static[executable:]
 			effectiveCommand := filepath.Base(effectiveWords[0])
 			callerWrappers := true
-			for _, prefix := range words[:executable] {
+			for _, index := range dispatch.wrappers {
+				prefix := words[index]
 				name := filepath.Base(prefix)
 				if (name == "command" || name == "builtin" || name == "exec") && prefix != name {
 					callerWrappers = false
@@ -187,7 +190,8 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 			}
 			propagateEffects := func(effects shellEffects) {
 				current, guaranteed := shellEffectsContext(stack)
-				for _, prefix := range words[:executable] {
+				for _, index := range dispatch.wrappers {
+					prefix := words[index]
 					if filepath.Base(prefix) == "env" || filepath.Base(prefix) == "sudo" {
 						current = false
 					}
@@ -238,12 +242,17 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 					propagateEffects(shellEffects{flowUncertain: true})
 				}
 				child := false
-				for _, prefix := range words[:executable] {
+				callerPrefix := true
+				for _, index := range dispatch.wrappers {
+					prefix := words[index]
 					name := filepath.Base(prefix)
-					if name == "exec" && prefix == name && callerWrappers && !child {
+					if name == "exec" && prefix == name && callerPrefix && !child {
 						if current, _ := shellEffectsContext(stack); current {
 							applyEffects(shellEffects{successExit: true})
 						}
+					}
+					if (name == "command" || name == "builtin" || name == "exec") && prefix != name {
+						callerPrefix = false
 					}
 					child = child || name == "env" || name == "sudo"
 				}
@@ -546,21 +555,40 @@ func shellExitMaySucceed(words []string, static []bool) bool {
 // The same bounded executable resolution applies to direct and delegated calls.
 // env split-string has a different language from Bash; it is refused explicitly.
 func resolveShellExecutable(words []string, static, envAssignments []bool) (int, string) {
+	dispatch := resolveShellDispatch(words, static, envAssignments)
+	return dispatch.executable, dispatch.reason
+}
+
+type shellDispatch struct {
+	executable int
+	wrappers   []int
+	reason     string
+}
+
+// Only actual executable positions carry wrapper semantics. Options and their
+// operands remain data even when their basename spells a wrapper name.
+func resolveShellDispatch(words []string, static, envAssignments []bool) shellDispatch {
+	var dispatch shellDispatch
 	current := 0
 	for current < len(words) {
+		dispatch.executable = current
 		if !static[current] {
-			return current, "wrapper command position is dynamically assembled"
+			dispatch.reason = "wrapper command position is dynamically assembled"
+			return dispatch
 		}
 		index, reason := wrappedExecutable(words[current:], static[current:], envAssignments[current:])
 		if reason != "" {
-			return current, reason
+			dispatch.reason = reason
+			return dispatch
 		}
 		if index <= 0 {
-			return current, ""
+			return dispatch
 		}
+		dispatch.wrappers = append(dispatch.wrappers, current)
 		current += index
 	}
-	return current, ""
+	dispatch.executable = current
+	return dispatch
 }
 
 // Redirections on enclosing groups feed descendants, while closer statements
