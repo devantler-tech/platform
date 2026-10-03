@@ -125,7 +125,9 @@ readonly PLATFORM_SOURCE='OCIRepository/flux-system/flux-system'
 # A policy can rewrite or create another policy/controller before that carrier
 # creates a consumer. Keep the complete carrier boundary shared across checks.
 readonly CONSUMER_CARRIER_KINDS='OCIRepository|Kustomization|FluxInstance|ResourceSet|ResourceGraphDefinition|ClusterPolicy|Policy|MutatingPolicy|GeneratingPolicy|MutatingAdmissionPolicy|MutatingWebhookConfiguration'
-export CONSUMER_CARRIER_KINDS
+readonly CONSUMER_LITERAL_KIND='^[A-Za-z][A-Za-z0-9]*$'
+readonly CONSUMER_LITERAL_API_VERSION='^([a-z0-9]([a-z0-9.-]*[a-z0-9])?/)?[A-Za-z0-9]+$'
+export CONSUMER_CARRIER_KINDS CONSUMER_LITERAL_KIND CONSUMER_LITERAL_API_VERSION
 if ! artifact_contract="$(yq -N -r '[
     (.apiVersion == "ksail.io/v1alpha1"), (.kind == "Cluster"),
     (.spec.cluster.gitOpsEngine == "Flux"),
@@ -170,7 +172,11 @@ refuse_substituted_object_types() {
       (.. | select(type == "!!map" and
         ((.kind // "" | tostring) | test("^(" + strenv(CONSUMER_CARRIER_KINDS) + ")$")))
         | .. | select(type == "!!map") | to_entries | .[] | .key
-        | select(test("\\$\\{")))
+        | select(test("\\$\\{"))),
+      (.. | select(type == "!!map" and .kind == "ResourceSet")
+        | [.spec.resources[], .spec.steps[].resources[]] | .[]
+        | .. | select(type == "!!map") | to_entries | .[] | .key
+        | select(test("<<")))
     ] | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not read object mapping keys in the render of $label, so its consumers are UNKNOWN"
   fi
@@ -365,6 +371,21 @@ consumer_gvks=''
 while IFS=$'\t' read -r file label; do
   [ -n "$file" ] || continue
   refuse_source_overrides "$file" "$label"
+  # ResourceSet evaluates Go templates in mapping-backed resource objects too.
+  # Require literal primary GVK fields before looking for a consumer or schema
+  # instance. Reference metadata and workload data are not primary object types.
+  if ! resource_types="$(yq -N -r '[.. | select(type == "!!map" and .kind == "ResourceSet")
+      | [(.spec.resources // []), (.spec.steps[].resources // [])] | .[]
+      | select(type != "!!seq" or ([.[] | select(type != "!!map"
+          or (.kind | type) != "!!str" or (.apiVersion | type) != "!!str"
+          or ((.kind | tostring | test(strenv(CONSUMER_LITERAL_KIND))) | not)
+          or ((.apiVersion | tostring | test(strenv(CONSUMER_LITERAL_API_VERSION))) | not))] | length) > 0)] | length' "$file" 2>"$work/yq.err")"; then
+    refuse "could not read ResourceSet object types in the render of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r count; do
+    [ -z "$count" ] || [ "$count" = 0 ] ||
+      refuse "production render $label holds ResourceSet object types decided at runtime, so its consumers are UNKNOWN"
+  done <<<"$resource_types"
   # Native callbacks are not evaluated by a static build. Refuse rules that
   # can reach sources, roots or their policy/controller carriers. Selectors and
   # operation restrictions cannot establish what the callback will persist.
@@ -372,10 +393,10 @@ while IFS=$'\t' read -r file label; do
       .kind == "MutatingWebhookConfiguration") | .webhooks[] | .rules[]
       | select(((.apiGroups | type) != "!!seq" or (.apiGroups | length) == 0
           or ([.apiGroups[] | select(type != "!!str" or (. | tostring |
-            test("^(source[.]toolkit[.]fluxcd[.]io|kustomize[.]toolkit[.]fluxcd[.]io|fluxcd[.]controlplane[.]io|kro[.]run|kyverno[.]io|policies[.]kyverno[.]io|admissionregistration[.]k8s[.]io)$|\\*|\\$\\{")))] | length) > 0)
+            test("^(source[.]toolkit[.]fluxcd[.]io|kustomize[.]toolkit[.]fluxcd[.]io|fluxcd[.]controlplane[.]io|kro[.]run|kyverno[.]io|policies[.]kyverno[.]io|admissionregistration[.]k8s[.]io)$|\\*|\\$\\{|<<|\\{\\{")))] | length) > 0)
         and ((.resources | type) != "!!seq" or (.resources | length) == 0
           or ([.resources[] | select(type != "!!str" or (. | tostring |
-            test("^(ocirepositories|kustomizations|fluxinstances|resourcesets|resourcegraphdefinitions|clusterpolicies|policies|mutatingpolicies|generatingpolicies|mutatingadmissionpolicies|mutatingwebhookconfigurations)(/|$)|\\*|\\$\\{")))] | length) > 0))] | length' "$file" 2>"$work/yq.err")"; then
+            test("^(ocirepositories|kustomizations|fluxinstances|resourcesets|resourcegraphdefinitions|clusterpolicies|policies|mutatingpolicies|generatingpolicies|mutatingadmissionpolicies|mutatingwebhookconfigurations)(/|$)|\\*|\\$\\{|<<|\\{\\{")))] | length) > 0))] | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not bound native admission mutations in the render of $label, so its consumers are UNKNOWN"
   fi
   while IFS= read -r count; do
@@ -392,10 +413,10 @@ while IFS=$'\t' read -r file label; do
         or ([.match | .. | select(type == "!!map" and has("resources"))
           | select((.resources.kinds | type) != "!!seq" or (.resources.kinds | length) == 0)] | length) > 0
         or ([.match | .. | select(type == "!!map" and has("resources")) | .resources.kinds[]
-          | select(type != "!!str" or (. | tostring | test("^$|(^|/)(" + strenv(CONSUMER_CARRIER_KINDS) + ")(/|$)|\\*|\\?|\\[|\\$\\{|\\{\\{")))] | length) > 0
+          | select(type != "!!str" or (. | tostring | test("^$|(^|/)(" + strenv(CONSUMER_CARRIER_KINDS) + ")(/|$)|\\*|\\?|\\[|\\$\\{|<<|\\{\\{")))] | length) > 0
         or ([.mutate | .. | select(type == "!!map" and has("targets")) | .targets[]
           | select(.kind == null or (.kind | type) != "!!str"
-            or (.kind | tostring | test("^$|(^|/)(" + strenv(CONSUMER_CARRIER_KINDS) + ")(/|$)|\\*|\\?|\\[|\\$\\{|\\{\\{")))] | length) > 0)}
+            or (.kind | tostring | test("^$|(^|/)(" + strenv(CONSUMER_CARRIER_KINDS) + ")(/|$)|\\*|\\?|\\[|\\$\\{|<<|\\{\\{")))] | length) > 0)}
       | select(.mutates == true) | .affected' "$file" 2>"$work/yq.err")"; then
     refuse "could not bound admission mutations in the render of $label, so its consumers are UNKNOWN"
   fi
@@ -416,11 +437,14 @@ while IFS=$'\t' read -r file label; do
         or ([[.generate, .generate.foreach[]] | .[]
           | select((.kind == null and .cloneList == null and .foreach == null)
             or (.kind != null and ((.kind | type) != "!!str"
-              or (.kind | tostring | test("^$|(^|/)(" + strenv(CONSUMER_CARRIER_KINDS) + ")(/|$)|\\*|\\?|\\[|\\$\\{|\\{\\{"))))
+              or (.apiVersion | type) != "!!str"
+              or ((.kind | tostring | test(strenv(CONSUMER_LITERAL_KIND))) | not)
+              or ((.apiVersion | tostring | test(strenv(CONSUMER_LITERAL_API_VERSION))) | not)
+              or (.kind | tostring | test("^$|(^|/)(" + strenv(CONSUMER_CARRIER_KINDS) + ")(/|$)|\\*|\\?|\\[|\\$\\{|<<|\\{\\{"))))
             or (has("cloneList") and
               ((.cloneList.kinds | type) != "!!seq" or (.cloneList.kinds | length) == 0
                 or ([.cloneList.kinds[] | select(type != "!!str"
-                  or (. | tostring | test("^$|(^|/)(" + strenv(CONSUMER_CARRIER_KINDS) + ")(/|$)|\\*|\\?|\\[|\\$\\{|\\{\\{")))] | length) > 0)))
+                  or (. | tostring | test("^$|(^|/)(" + strenv(CONSUMER_CARRIER_KINDS) + ")(/|$)|\\*|\\?|\\[|\\$\\{|<<|\\{\\{")))] | length) > 0)))
           ] | length) > 0)]
       | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not bound consumer generation in the render of $label, so its consumers are UNKNOWN"
@@ -451,13 +475,27 @@ while IFS=$'\t' read -r file label; do
       and .kind == "Kustomization" and has("spec") and (path | length) > 0)
       | [(.spec.sourceRef.kind // ""), (.spec.sourceRef.name // ""),
           (.spec.sourceRef.namespace // .metadata.namespace // "")]
-      | map(tostring) | join(" ") | select(test("\\$\\{"))] | length' "$file" 2>"$work/yq.err")"; then
+      | map(tostring) | join(" ") | select(test("\\$\\{|<<|\\{\\{"))] | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not read nested source references in the render of $label, so its consumers are UNKNOWN"
   fi
   while IFS= read -r count; do
     [ -z "$count" ] || [ "$count" = 0 ] ||
       refuse "production render $label holds a nested source reference decided by substitution, so its consumers are UNKNOWN"
   done <<<"$nested_sources"
+  # A nested FluxInstance is a source/root factory, even without a literal OCI
+  # mapping in its template. Its generated sync is not rendered here. The same
+  # dormant OCI-RGD exception still requires the complete schema and absence of
+  # matching instances across all roots below.
+  if ! nested_instances="$(yq -N -r 'select(.kind != "ResourceGraphDefinition"
+      or ([.. | select(type == "!!map" and .kind == "OCIRepository" and has("spec"))] | length) == 0)
+      | [.. | select(type == "!!map" and .kind == "FluxInstance" and has("spec")
+        and (path | length) > 0)] | length' "$file" 2>"$work/yq.err")"; then
+    refuse "could not read nested FluxInstance templates in the render of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r count; do
+    [ -z "$count" ] || [ "$count" = 0 ] ||
+      refuse "production render $label holds a nested FluxInstance that can create unseen sources or roots, so its consumers are UNKNOWN"
+  done <<<"$nested_instances"
   # A controller-created Kustomization can apply an otherwise unseen path from
   # this artifact. path excludes the document root, which is handled above.
   if ! nested_templates="$(yq -N -r '[.. | select(type == "!!map"

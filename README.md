@@ -134,6 +134,13 @@ rewrite those resources later. Nested ResourceSet string templates and substitut
 carrier keys are unknown. Direct and foreach clone lists are checked against every
 consumer-producing kro schema across all production roots; only literal foreign
 group/version selectors can rule out a schema. CEL generation remains unevaluated.
+Mapping-backed [ResourceSet resources](https://fluxoperator.dev/docs/crd/resourceset/#resources-configuration) and Kyverno generation branches must name
+literal object types before that comparison. Controller template expressions in
+nested source references are also unknown; workload metadata references remain
+supported when the generated object type is literal.
+Nested FluxInstance templates also create sources and roots outside the static
+render and are refused. Dormant OCI-producing kro definitions retain the complete
+schema and zero-instance requirement across every root.
 
 Flux [substitutes the final YAML after the build](https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-variable-substitution),
 so a variable in an object or template kind or API version can hide an OCI consumer from literal discovery.

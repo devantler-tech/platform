@@ -849,6 +849,207 @@ SH
   done
 }
 
+regression_controller_template_findings() {
+  local root field placement want
+  for placement in resources steps nested; do
+    for field in canonical alternate; do
+      root="$(fixture "nested-instance-$placement-$field")"
+      cat >"$root/k8s/providers/prod/apps/resource-set.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: root-factory
+spec:
+  inputs:
+    - id: root
+  resources:
+    - apiVersion: fluxcd.controlplane.io/v1
+      kind: FluxInstance
+      metadata:
+        name: flux
+        namespace: flux-system
+      spec:
+        distribution:
+          version: 2.8.x
+          registry: ghcr.io/fluxcd
+        components: [source-controller, kustomize-controller]
+        sync:
+          kind: OCIRepository
+          url: oci://ghcr.io/devantler-tech/platform/manifests
+          ref: latest
+          path: clusters/prod
+YAML
+      if [ "$field" = alternate ]; then yq -i '.spec.resources[0].spec.sync.path = "bases/unseen"' "$root/k8s/providers/prod/apps/resource-set.yaml"; fi
+      case "$placement" in
+        steps) yq -i '.spec.steps = [{"name":"root","resources":.spec.resources}] | del(.spec.resources)' "$root/k8s/providers/prod/apps/resource-set.yaml" ;;
+        nested) yq -i '.spec = {"resources":[{"apiVersion":"fluxcd.controlplane.io/v1","kind":"ResourceSet","metadata":{"name":"inner"},"spec":.spec}]}' "$root/k8s/providers/prod/apps/resource-set.yaml" ;;
+      esac
+      printf '  - resource-set.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+      expect_refusal "a $placement FluxInstance $field sync cannot create unseen roots" "$root" 'nested FluxInstance' 'UNKNOWN'
+    done
+  done
+  root="$(fixture dormant-nested-flux-instance)"
+  yq -i '.spec.resources += [{"id":"flux","template":{"apiVersion":"fluxcd.controlplane.io/v1","kind":"FluxInstance","metadata":{"name":"generated","namespace":"generated"},"spec":{"distribution":{"version":"2.8.x","registry":"ghcr.io/fluxcd"},"sync":{"kind":"OCIRepository","url":"oci://ghcr.io/devantler-tech/platform/manifests","ref":"latest","path":"bases/unseen"}}}}]' "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
+  expect_pass 'a complete OCI-producing kro schema keeps dormant FluxInstance templates' "$root" '2 consumer(s)'
+  cat >"$root/k8s/providers/prod/apps/tenant.yaml" <<'YAML'
+apiVersion: kro.run/v1alpha1
+kind: Tenant
+metadata:
+  name: generated
+spec:
+  name: generated
+YAML
+  printf '  - tenant.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_refusal 'a matching instance still refuses the dormant FluxInstance carrier' "$root" 'production renders 1 Tenant instance(s)'
+  for field in mutation clone native-group native-resource; do
+    root="$(fixture "resource-set-policy-$field")"
+    cat >"$root/k8s/providers/prod/apps/resource-set.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: policy-templates
+spec:
+  inputs:
+    - id: policy
+      affectedKind: OCIRepository
+      affectedGroup: source.toolkit.fluxcd.io
+      affectedResource: ocirepositories
+      schema: kro.run/v1alpha1/Tenant
+  resources:
+    - apiVersion: kyverno.io/v1
+      kind: ClusterPolicy
+      metadata:
+        name: controller-template
+      spec:
+        rules:
+          - name: runtime
+            match:
+              any:
+                - resources:
+                    kinds: ['<< inputs.affectedKind >>']
+            mutate:
+              patchesJson6902: |-
+                - op: replace
+                  path: /spec/url
+                  value: oci://ghcr.io/devantler-tech/changed/manifests
+YAML
+    want='admission mutation'
+    case "$field" in
+      clone) yq -i 'del(.spec.resources[0].spec.rules[0].mutate) | .spec.resources[0].spec.rules[0].match.any[0].resources.kinds = ["Namespace"] | .spec.resources[0].spec.rules[0].generate.cloneList = {"kinds":["<< inputs.schema >>"],"namespace":"existing"}' "$root/k8s/providers/prod/apps/resource-set.yaml"; want='consumer generation' ;;
+      native-group|native-resource) yq -i '.spec.resources[0] = {"apiVersion":"admissionregistration.k8s.io/v1","kind":"MutatingWebhookConfiguration","metadata":{"name":"runtime"},"webhooks":[{"name":"runtime.example.test","clientConfig":{"url":"https://webhook.example.test/"},"admissionReviewVersions":["v1"],"sideEffects":"None","rules":[{"apiGroups":["source.toolkit.fluxcd.io"],"apiVersions":["v1"],"operations":["CREATE","UPDATE"],"resources":["ocirepositories"]}]}]}' "$root/k8s/providers/prod/apps/resource-set.yaml"
+        if [ "$field" = native-group ]; then yq -i '.spec.resources[0].webhooks[0].rules[0].apiGroups = ["<< inputs.affectedGroup >>"]' "$root/k8s/providers/prod/apps/resource-set.yaml"; else yq -i '.spec.resources[0].webhooks[0].rules[0].resources = ["<< inputs.affectedResource >>"]' "$root/k8s/providers/prod/apps/resource-set.yaml"; fi
+        want='native admission mutation' ;;
+    esac
+    printf '  - resource-set.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_refusal "a ResourceSet policy $field contract must remain literal" "$root" "$want" 'UNKNOWN'
+  done
+  for placement in resources steps nested; do
+    for field in kind api-version source-kind source-name source-namespace inherited-namespace key; do
+      root="$(fixture "controller-template-$placement-$field")"
+      cat >"$root/k8s/providers/prod/apps/resource-set.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: runtime-templates
+spec:
+  inputs:
+    - id: hidden
+      sourceKind: OCIRepository
+      sourceName: flux-system
+      namespace: flux-system
+      group: kro.run
+      resourceKind: Tenant
+      typeField: kind
+  resources:
+    - apiVersion: kustomize.toolkit.fluxcd.io/v1
+      kind: Kustomization
+      metadata:
+        name: unseen
+        namespace: flux-system
+      spec:
+        path: bases/unseen
+        sourceRef:
+          kind: OCIRepository
+          name: alpha
+YAML
+      want='nested source reference'
+      case "$field" in
+        kind) yq -i '.spec.resources[0].apiVersion = "kro.run/v1alpha1" | .spec.resources[0].kind = "<< inputs.resourceKind >>" | .spec.resources[0].spec = {"name":"generated"}' "$root/k8s/providers/prod/apps/resource-set.yaml"; want='ResourceSet object types' ;;
+        api-version) yq -i '.spec.resources[0].kind = "Tenant" | .spec.resources[0].apiVersion = "<< inputs.group >>/v1alpha1" | .spec.resources[0].spec = {"name":"generated"}' "$root/k8s/providers/prod/apps/resource-set.yaml"; want='ResourceSet object types' ;;
+        source-kind) yq -i '.spec.resources[0].spec.sourceRef = {"kind":"<< inputs.sourceKind >>","name":"flux-system"}' "$root/k8s/providers/prod/apps/resource-set.yaml" ;;
+        source-name) yq -i '.spec.resources[0].spec.sourceRef.name = "<< inputs.sourceName >>"' "$root/k8s/providers/prod/apps/resource-set.yaml" ;;
+        source-namespace) yq -i '.spec.resources[0].spec.sourceRef.name = "flux-system" | .spec.resources[0].spec.sourceRef.namespace = "<< inputs.namespace >>"' "$root/k8s/providers/prod/apps/resource-set.yaml" ;;
+        inherited-namespace) yq -i '.spec.resources[0].spec.sourceRef.name = "flux-system" | .spec.resources[0].metadata.namespace = "<< inputs.namespace >>"' "$root/k8s/providers/prod/apps/resource-set.yaml" ;;
+        key) yq -i '.spec.resources[0]["<< inputs.typeField >>"] = .spec.resources[0].kind | del(.spec.resources[0].kind)' "$root/k8s/providers/prod/apps/resource-set.yaml"; want='mapping key' ;;
+      esac
+      case "$placement" in
+        steps) yq -i '.spec.steps = [{"name":"sources","resources":.spec.resources}] | del(.spec.resources)' "$root/k8s/providers/prod/apps/resource-set.yaml" ;;
+        nested) yq -i '.spec = {"resources":[{"apiVersion":"fluxcd.controlplane.io/v1","kind":"ResourceSet","metadata":{"name":"inner"},"spec":.spec}]}' "$root/k8s/providers/prod/apps/resource-set.yaml" ;;
+      esac
+      printf '  - resource-set.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+      expect_refusal "$placement $field runtime selection cannot hide consumers" "$root" "$want" 'UNKNOWN'
+    done
+  done
+  for placement in direct foreach owner-references; do
+    root="$(fixture "generated-object-template-$placement")"
+    cat >"$root/k8s/providers/prod/apps/generate.yaml" <<'YAML'
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: runtime-group
+spec:
+  rules:
+    - name: generate
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+      generate:
+        apiVersion: '{{ request.object.metadata.labels.group }}/v1alpha1'
+        kind: Tenant
+        name: generated
+        data:
+          spec:
+            name: generated
+YAML
+    case "$placement" in
+      foreach) yq -i '.spec.rules[0].generate = {"foreach":[.spec.rules[0].generate + {"list":"request.object.metadata.labels"}]}' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+      owner-references) yq -i '.spec.rules[0].generate.apiVersion = "autoscaling.k8s.io/v1" | .spec.rules[0].generate.kind = "VerticalPodAutoscaler" |
+        .spec.rules[0].generate.data.metadata.ownerReferences = [{"apiVersion":"{{request.object.apiVersion}}","kind":"{{request.object.kind}}","name":"{{request.object.metadata.name}}","uid":"{{request.object.metadata.uid}}"}]' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+    esac
+    printf '  - generate.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    if [ "$placement" = owner-references ]; then
+      expect_pass 'literal generated GVKs retain templated workload owner references' "$root" '2 consumer(s)'
+    else
+      expect_refusal "$placement generation needs a literal complete object GVK" "$root" 'consumer generation' 'UNKNOWN'
+    fi
+  done
+  root="$(fixture resource-set-owner-references)"
+  cp "$WORK/controller-template-resources-kind/k8s/providers/prod/apps/resource-set.yaml" "$root/k8s/providers/prod/apps/resource-set.yaml"
+  yq -i '.spec.resources[0].apiVersion = "v1" | .spec.resources[0].kind = "ConfigMap" | .spec.resources[0].spec = null | del(.spec.resources[0].spec) |
+    .spec.resources[0].data = {"ordinary":"<< inputs.id >>"} |
+    .spec.resources[0].metadata.ownerReferences = [{"apiVersion":"<< inputs.apiVersion >>","kind":"<< inputs.kind >>","name":"<< inputs.name >>","uid":"<< inputs.uid >>"}]' "$root/k8s/providers/prod/apps/resource-set.yaml"
+  printf '  - resource-set.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'literal ResourceSet object GVKs retain templated metadata references and data' "$root" '2 consumer(s)'
+  root="$(fixture partial-resource-set-types)"
+  mkdir "$WORK/partial-resource-set-types-bin"
+  cat >"$WORK/partial-resource-set-types-bin/yq" <<'SH'
+#!/usr/bin/env bash
+"$REAL_YQ" "$@" || exit $?
+case "$*" in *'strenv(CONSUMER_LITERAL_KIND)'*'ResourceSet'*) exit 2 ;; *'ResourceSet'*'strenv(CONSUMER_LITERAL_KIND)'*) exit 2 ;; esac
+SH
+  chmod +x "$WORK/partial-resource-set-types-bin/yq"
+  REAL_YQ="$(command -v yq)" PATH="$WORK/partial-resource-set-types-bin:$PATH" \
+    expect_refusal 'partial ResourceSet type output cannot attest a complete census' "$root" 'could not read ResourceSet object types' 'UNKNOWN'
+}
+
+if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = templates ]; then
+  regression_controller_template_findings
+  printf '\n%d failure(s)\n' "$failures"
+  [ "$failures" -eq 0 ]
+  exit
+fi
+
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = chains ]; then
   regression_runtime_chain_findings
   printf '\n%d failure(s)\n' "$failures"
@@ -1932,6 +2133,7 @@ regression_latest_findings
 regression_controller_findings
 regression_native_admission_findings
 regression_runtime_chain_findings
+regression_controller_template_findings
 
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]
