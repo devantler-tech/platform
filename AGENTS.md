@@ -343,17 +343,18 @@ Secrets* above and the rules under *Validate before any manifest PR* below.
 
 ### File and Directory Naming Conventions
 
-Enforced by the shared `devantler-tech/actions/validate-naming` action in the
-`naming` job in `ci.yaml`. Repository-owned roots and exceptions live in
+Enforced by the shared `devantler-tech/.github/actions/validate-naming` action in the
+`naming` job in `ci.yaml`. Validation is enabled by default, and CI requires its
+completed-scan output. Repository-owned roots and exceptions live in
 [`.github/manifest-naming.yaml`](.github/manifest-naming.yaml); the `talos*` root
 pattern includes new machine-config environments automatically. Run the same
 pinned gate locally before a manifest PR, with Go installed:
 
 ```bash
 actions_dir="$(mktemp -d)"
-git clone --quiet --depth 1 --branch v13.5.0 https://github.com/devantler-tech/actions.git "$actions_dir"
-git -C "$actions_dir" checkout --quiet --detach 883d891a0e6a2c9420d2b60aea9d5f47c20ce803
-GOWORK=off go -C "$actions_dir/validate-naming" run -mod=readonly . \
+git clone --quiet --depth 1 --branch v4.9.1 https://github.com/devantler-tech/.github.git "$actions_dir"
+git -C "$actions_dir" checkout --quiet --detach 30882cccda9e41c622f6493e21e7eb6f3339b91f
+GOWORK=off go -C "$actions_dir/actions/validate-naming" run -mod=readonly . \
   --root "$PWD" --config .github/manifest-naming.yaml
 ```
 

@@ -5,6 +5,7 @@ go 1.26.6
 require (
 	github.com/siderolabs/talos/pkg/machinery v1.14.0
 	gopkg.in/yaml.v3 v3.0.1
+	mvdan.cc/sh/v3 v3.12.0
 )
 
 require (
