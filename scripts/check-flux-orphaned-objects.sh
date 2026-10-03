@@ -134,6 +134,18 @@ kubectl_cluster() {
   "${kubectl_bin}" --context "${context}" --request-timeout="${request_timeout}" "$@"
 }
 
+# read_projected <file> <jq program> <kubectl arguments...>: no raw response
+# reaches disk, even when kubectl emits valid JSON and then returns an error.
+read_projected() {
+  local output="$1" projection="$2"
+  shift 2
+  kubectl_cluster "$@" 2>"${tmp_dir}/error.log" |
+    jq "${projection}" >"${output}" 2>"${tmp_dir}/projection-error.log" || {
+      cat "${tmp_dir}/projection-error.log" >>"${tmp_dir}/error.log"
+      return 1
+    }
+}
+
 # The public job log gets the reason a read failed, without the endpoints and
 # addresses kubectl puts in its errors.
 print_error() {
@@ -185,8 +197,12 @@ source_resource() {
 read_state() {
   local dir="$1" resource group listed='' kind sources=''
   mkdir -p "${dir}"
-  kubectl_cluster get apiservices.apiregistration.k8s.io -o json \
-    >"${dir}/apiservices.json" 2>"${tmp_dir}/error.log" || return 1
+  # Discovery needs only the API group and whether an aggregated service exists.
+  read_projected "${dir}/apiservices.json" '
+    if (.items | type) != "array" then error("APIService response has no items array") else
+    {items: [.items[] | {spec: {group: .spec.group,
+      service: (if .spec.service != null then {} else null end)}}]} end' \
+    get apiservices.apiregistration.k8s.io -o json || return 1
   jq -r '.items[] | select(.spec.service != null) | .spec.group' "${dir}/apiservices.json" \
     >"${dir}/aggregated.unsorted" 2>"${tmp_dir}/error.log" || return 1
   sort -u "${dir}/aggregated.unsorted" >"${dir}/aggregated.txt"
@@ -233,8 +249,18 @@ read_state() {
       cat "${tmp_dir}/projection-error.log" >>"${tmp_dir}/error.log"
       return 1
     }
-  kubectl_cluster get kustomizations.kustomize.toolkit.fluxcd.io --all-namespaces -o json \
-    >"${dir}/kustomizations.json" 2>"${tmp_dir}/error.log" || return 1
+  # Separate inventory and source reads need no annotations, last-applied
+  # documents, managed field payloads, unrelated spec fields or status messages.
+  read_projected "${dir}/kustomizations.json" '
+    if (.items | type) != "array" then error("Kustomization response has no items array") else
+    {items: [.items[] | {kind,
+      metadata: {name: .metadata.name, namespace: .metadata.namespace, generation: .metadata.generation},
+      spec: {sourceRef: {kind: .spec.sourceRef.kind, name: .spec.sourceRef.name, namespace: .spec.sourceRef.namespace}},
+      status: {observedGeneration: .status.observedGeneration, lastAppliedRevision: .status.lastAppliedRevision,
+        conditions: [.status.conditions[]? | select(.type == "Ready") | {type, status, observedGeneration}],
+        inventory: {entries: (if (.status.inventory.entries | type) == "array"
+          then [.status.inventory.entries[] | {id}] else null end)}}}]} end' \
+    get kustomizations.kustomize.toolkit.fluxcd.io --all-namespaces -o json || return 1
   # Only the source kinds the Kustomizations use. A kind this does not know is
   # left unread, so its Kustomizations read as not at their source's revision.
   jq -r '[.items[].spec.sourceRef.kind] | unique[]' "${dir}/kustomizations.json" \
@@ -248,8 +274,14 @@ read_state() {
     printf '{"items":[]}\n' >"${dir}/sources.json"
     return 0
   fi
-  kubectl_cluster get "${sources}" --all-namespaces -o json \
-    >"${dir}/sources.json" 2>"${tmp_dir}/error.log" || return 1
+  read_projected "${dir}/sources.json" '
+    if (.items | type) != "array" then error("source response has no items array") else
+    {items: [.items[] | {kind,
+      metadata: {name: .metadata.name, namespace: .metadata.namespace, generation: .metadata.generation},
+      status: {observedGeneration: .status.observedGeneration,
+        conditions: [.status.conditions[]? | select(.type == "Ready") | {type, status, observedGeneration}],
+        artifact: {revision: .status.artifact.revision}}}]} end' \
+    get "${sources}" --all-namespaces -o json || return 1
 }
 
 # read_with_retry <dir>: a deploy that just finished can still be restarting an

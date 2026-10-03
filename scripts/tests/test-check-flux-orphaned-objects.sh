@@ -43,6 +43,7 @@ if [[ "$*" == "get apiservices.apiregistration.k8s.io -o json" ]]; then
   read_number=$((read_number + 1))
   printf '%s\n' "${read_number}" >"${FAKE_DIR}/reads"
   serve apiservices
+  if [[ ",${FAKE_FAIL_APISERVICE_READS:-}," == *",${read_number},"* ]]; then exit 1; fi
   exit 0
 fi
 
@@ -83,12 +84,14 @@ fi
 if [[ "$*" == "get kustomizations.kustomize.toolkit.fluxcd.io --all-namespaces -o json" ]]; then
   printf 'Warning: kustomize.toolkit.fluxcd.io/v1beta2 Kustomization is deprecated\n' >&2
   serve kustomizations
+  if [[ ",${FAKE_FAIL_KUSTOMIZATION_READS:-}," == *",${read_number},"* ]]; then exit 1; fi
   exit 0
 fi
 
 if [[ "$#" -eq 5 && "$1" == get && "$2" == *.source.toolkit.fluxcd.io* && "$3 $4 $5" == "--all-namespaces -o json" ]]; then
   printf '%s\n' "$2" >"${FAKE_DIR}/sources-listed.${read_number}"
   serve sources
+  if [[ ",${FAKE_FAIL_SOURCE_READS:-}," == *",${read_number},"* ]]; then exit 1; fi
   exit 0
 fi
 
@@ -335,6 +338,64 @@ regression_metadata_storage() {
   done
 }
 
+regression_auxiliary_metadata_storage() {
+  local failed_read override target canary='LATER_READ_FIXTURE_CANARY_4384'
+  for failed_read in none apiservice kustomization source; do
+    case_name="auxiliary streams cannot reach scan disk, failed read=${failed_read}"
+    dir="$(scenario "auxiliary-metadata-${failed_read}")"
+    for target in apiservices kustomizations sources; do
+      jq --arg canary "${canary}" '
+        .items[].metadata.annotations = {
+          "kubectl.kubernetes.io/last-applied-configuration": $canary,
+          "fixture-sensitive-annotation": $canary}
+        | .items[].metadata.managedFields = [{manager: "fixture", fieldsV1: {password: $canary}}]
+        | .items[].status.conditions += [{type: "Ready", status: "False", message: $canary}]
+        | .items[].spec.fixtureUnusedPayload = $canary' \
+        "${dir}/${target}.json" >"${dir}/${target}.json.new"
+      mv "${dir}/${target}.json.new" "${dir}/${target}.json"
+      grep -Fq "${canary}" "${dir}/${target}.json" || fail 'source response has no canary'
+    done
+    override='FAKE_FAIL_APISERVICE_READS='
+    case "${failed_read}" in
+      apiservice) override='FAKE_FAIL_APISERVICE_READS=1,2,3' ;;
+      kustomization) override='FAKE_FAIL_KUSTOMIZATION_READS=1,2,3' ;;
+      source) override='FAKE_FAIL_SOURCE_READS=1,2,3' ;;
+    esac
+    run "${dir}" PATH="${tmp_dir}/capture-bin:${PATH}" \
+      FAKE_SCAN_CAPTURE_DIR="${dir}/captured-scan" "${override}"
+    if [[ "${failed_read}" == none ]]; then expect_status 0; else expect_status 2; fi
+    [[ -f "${dir}/captured-scan/first/apiservices.json" ]] || fail 'no actual scan file was captured'
+    if grep -RFq -- "${canary}" "${dir}/captured-scan"; then
+      fail 'credential canary from auxiliary response reached a scan file'
+    fi
+    expect_no_text "${canary}"
+    if grep -Fq -- "${canary}" "${dir}/summary.md"; then fail 'credential canary reached step summary'; fi
+    if [[ "${failed_read}" == none ]]; then
+      jq -e '.items[0] | .metadata.name == "apps" and .metadata.generation == 1
+        and .spec.sourceRef.kind == "OCIRepository" and .spec.sourceRef.name == "src"
+        and .status.observedGeneration == 1 and .status.lastAppliedRevision == "rev-1"
+        and .status.inventory.entries[0].id == "_web__Namespace"
+        and .status.conditions[0].status == "True"
+        and .metadata.annotations == null and .metadata.managedFields == null
+        and .spec.fixtureUnusedPayload == null and .status.conditions[0].message == null' \
+        "${dir}/captured-scan/first/kustomizations.json" >/dev/null || fail 'required Kustomization fields were not preserved alone'
+      jq -e '.items[0] | .kind == "OCIRepository" and .metadata.name == "src"
+        and .metadata.generation == 1 and .status.observedGeneration == 1
+        and .status.conditions[0].status == "True" and .status.artifact.revision == "rev-1"
+        and .metadata.annotations == null and .metadata.managedFields == null
+        and .spec == null and .status.conditions[0].message == null' \
+        "${dir}/captured-scan/first/sources.json" >/dev/null || fail 'required source fields were not preserved alone'
+    fi
+    if [[ -n "${FLUX_ORPHANS_TEST_RECEIPT:-}" ]]; then
+      jq -cn --arg failed_read "${failed_read}" --argjson status "${status}" '
+        {case: "auxiliary metadata-only stream and disk", failedRead: $failed_read,
+         exitStatus: $status, fixtureResponsesContainCanary: true,
+         scanFilesContainCanary: false, stdoutContainsCanary: false, summaryContainsCanary: false}' \
+        >>"${FLUX_ORPHANS_TEST_RECEIPT}"
+    fi
+  done
+}
+
 regression_baseline_attribution() {
   local override
   case_name='recent retirement on newer recovered main has ambiguous attribution'
@@ -560,7 +621,7 @@ regression_explicit_adoption() {
 
 if [[ -n "${FLUX_ORPHANS_TEST_REGRESSION:-}" ]]; then
   case "${FLUX_ORPHANS_TEST_REGRESSION}" in
-    metadata) regression_metadata_storage ;;
+    metadata) regression_metadata_storage; regression_auxiliary_metadata_storage ;;
     attribution) regression_baseline_attribution ;;
     settle) regression_always_settle ;;
     *) echo 'unknown regression selector' >&2; exit 2 ;;
@@ -888,6 +949,7 @@ regression_current_generations
 regression_long_stderr
 regression_explicit_adoption
 regression_metadata_storage
+regression_auxiliary_metadata_storage
 regression_baseline_attribution
 regression_always_settle
 
