@@ -565,10 +565,27 @@ runs:
         DPC_RUNTIME_DIGEST: sha256:c5c5fdcb0bfc65279231b9a0209ab951544adffd827953035dda9e15c3a5c703
       run: |
         export KUBECONFIG="${HOME}/.kube/config"
+        umask 077
+        apps_verify_file="$(mktemp "${RUNNER_TEMP}/dpc-apps-verify.XXXXXX")"
+        trap 'rm -f "${apps_verify_file}"' EXIT
+        # Read the exact declared root-source policy, including its immutable
+        # approved signers, rather than maintaining a second signer list.
+        yq -o=json '[.spec.kustomize.patches[] |
+          select(.target.kind == "OCIRepository" and .target.name == "flux-system")]' \
+          k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml |
+          jq -er 'if length == 1 then .[0].patch else error("ambiguous root source patch") end' |
+          yq -o=json '.' |
+          jq -e 'if type != "array" then error("invalid root policy patch") else . end |
+            [.[] | select((.path // "") as $p | $p == "/spec/verify" or
+              ($p | startswith("/spec/verify/")) or ("/spec/verify" | startswith($p + "/")))] |
+            if length == 1 and .[0].path == "/spec/verify" and
+              (.[0].op == "add" or .[0].op == "replace") and (.[0].value | type) == "object"
+            then .[0].value else error("ambiguous root verification policy") end' >"${apps_verify_file}"
         domain="$(yq -er '.data.domain' k8s/clusters/prod/bootstrap/config-map.yaml)"
         image_digest="$(yq -er '.spec.values.image.digest' k8s/bases/apps/data-product-controller/helm-release.yaml)"
         chart_digest="$(yq -er '.spec.ref.digest' k8s/bases/apps/data-product-controller/oci-repository.yaml)"
         ./scripts/verify-data-product-ui-rollout.sh \
           --context admin@prod --domain "${domain}" \
           --image-digest "${image_digest}" --runtime-digest "${DPC_RUNTIME_DIGEST}" \
-          --chart-digest "${chart_digest}" --apps-digest "${PLATFORM_MANIFEST_DIGEST}"
+          --chart-digest "${chart_digest}" --apps-digest "${PLATFORM_MANIFEST_DIGEST}" \
+          --apps-verify-file "${apps_verify_file}"

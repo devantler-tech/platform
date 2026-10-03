@@ -19,26 +19,36 @@ readonly index child chart apps
 
 cat >"${scratch}/fixtures.jq" <<'JQ'
 def meta($name;$ns): {name:$name,namespace:$ns,uid:($name+"-uid"),generation:3};
+def labels($name): {"app.kubernetes.io/name":"data-product-controller","app.kubernetes.io/instance":"data-product-controller","app.kubernetes.io/component":(if $name|endswith("-harbour") then "harbour-product" elif $name|endswith("-ui-kit") then "ui-kit" else "controller" end)};
+def ports: [{name:"http",containerPort:8080,protocol:"TCP"}];
+def chart_verify: {provider:"cosign",matchOIDCIdentity:[{issuer:"^https://token\\.actions\\.githubusercontent\\.com$",subject:"^https://github\\.com/devantler-tech/data-product-controller/\\.github/workflows/publish-chart\\.yaml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+$"}]};
+def root_verify: {provider:"cosign",matchOIDCIdentity:[{issuer:"^https://token\\.actions\\.githubusercontent\\.com$",subject:"^https://github\\.com/devantler-tech/platform/approved-synthetic-publication$"}]};
 def condition($type): {type:$type,status:"True",observedGeneration:3};
 def owner($kind;$name): {apiVersion:"apps/v1",kind:$kind,name:$name,uid:($name+"-uid"),controller:true};
 def deployment($name;$container): {apiVersion:"apps/v1",kind:"Deployment",metadata:(meta($name;"data-product-controller") + {annotations:{"deployment.kubernetes.io/revision":"7"}}),
-  spec:{replicas:2,template:{spec:{containers:[{name:$container,image:($repo+"@"+$index)}]}}},
+  spec:{replicas:2,selector:{matchLabels:labels($name)},template:{metadata:{labels:labels($name)},spec:{containers:[{name:$container,image:($repo+"@"+$index),ports:ports}]}}},
   status:{observedGeneration:3,replicas:2,updatedReplicas:2,readyReplicas:2,availableReplicas:2}};
 def rs($name;$container): {apiVersion:"apps/v1",kind:"ReplicaSet",metadata:(meta($name+"-new";"data-product-controller") + {annotations:{"deployment.kubernetes.io/revision":"7"},ownerReferences:[owner("Deployment";$name)]}),
   spec:{replicas:2,template:{spec:{containers:[{name:$container,image:($repo+"@"+$index)}]}}},status:{observedGeneration:3,replicas:2,readyReplicas:2,availableReplicas:2}};
-def pod($name;$container;$ordinal): {apiVersion:"v1",kind:"Pod",metadata:(meta($name+"-pod-"+($ordinal|tostring);"data-product-controller") + {ownerReferences:[owner("ReplicaSet";$name+"-new")]}),
-  spec:{containers:[{name:$container,image:($repo+"@"+$index)}]},status:{phase:"Running",conditions:[{type:"Ready",status:"True"}],containerStatuses:[{name:$container,ready:true,imageID:($repo+"@"+$child),state:{running:{startedAt:"2026-10-03T00:00:00Z"}}}]}};
+def pod($name;$container;$ordinal): {apiVersion:"v1",kind:"Pod",metadata:(meta($name+"-pod-"+($ordinal|tostring);"data-product-controller") + {labels:labels($name),ownerReferences:[owner("ReplicaSet";$name+"-new")]}),
+  spec:{containers:[{name:$container,image:($repo+"@"+$index),ports:ports}]},status:{phase:"Running",podIP:("10.0.0."+($ordinal|tostring)),podIPs:[{ip:("10.0.0."+($ordinal|tostring))}],conditions:[{type:"Ready",status:"True"}],containerStatuses:[{name:$container,ready:true,imageID:($repo+"@"+$child),state:{running:{startedAt:"2026-10-03T00:00:00Z"}}}]}};
+def service($name): {apiVersion:"v1",kind:"Service",metadata:meta($name;"data-product-controller"),spec:{type:"ClusterIP",selector:labels($name),ports:[{name:"http",port:80,targetPort:"http",protocol:"TCP"}]}};
+def slice($name): {apiVersion:"discovery.k8s.io/v1",kind:"EndpointSlice",metadata:(meta($name+"-slice";"data-product-controller") + {labels:{"kubernetes.io/service-name":$name},ownerReferences:[{apiVersion:"v1",kind:"Service",name:$name,uid:($name+"-uid"),controller:true}]}),addressType:"IPv4",ports:[{name:"http",port:8080,protocol:"TCP"}],endpoints:[range(1;3) as $ordinal | {addresses:[("10.0.0."+($ordinal|tostring))],conditions:{ready:true,serving:true,terminating:false},targetRef:{apiVersion:"v1",kind:"Pod",namespace:"data-product-controller",name:($name+"-pod-"+($ordinal|tostring)),uid:($name+"-pod-"+($ordinal|tostring)+"-uid")}}]};
 def route($suffix;$host;$backend): {apiVersion:"gateway.networking.k8s.io/v1",kind:"HTTPRoute",metadata:meta("data-product-controller-"+$suffix;"data-product-controller"),
   spec:{parentRefs:[{name:"platform",namespace:"kube-system",sectionName:"https"}],hostnames:[$host+".example.com"],rules:[{matches:[{path:{type:"PathPrefix",value:"/"}}],backendRefs:[$backend],filters:(if $suffix == "registry" then [] else [{type:"RequestHeaderModifier",requestHeaderModifier:{remove:["Cookie","Authorization"]}}] end)}]},
   status:{parents:[{parentRef:{group:"gateway.networking.k8s.io",kind:"Gateway",name:"platform",namespace:"kube-system",sectionName:"https"},controllerName:"io.cilium/gateway-controller",conditions:[condition("Accepted"),condition("ResolvedRefs")]}]}};
-{apps:{apiVersion:"kustomize.toolkit.fluxcd.io/v1",kind:"Kustomization",metadata:meta("apps";"flux-system"),spec:{suspend:false},status:{observedGeneration:3,conditions:[condition("Ready")],lastAppliedRevision:("latest@"+$apps)}},
- chart:{apiVersion:"source.toolkit.fluxcd.io/v1",kind:"OCIRepository",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,url:"oci://ghcr.io/devantler-tech/charts/data-product-controller",ref:{digest:$chart},verify:{provider:"cosign"}},status:{observedGeneration:3,conditions:[condition("Ready"),condition("SourceVerified")],artifact:{revision:$chart,digest:("sha256:"+([range(64)|"e"]|join("")))}}},
+{apps:{apiVersion:"kustomize.toolkit.fluxcd.io/v1",kind:"Kustomization",metadata:meta("apps";"flux-system"),spec:{suspend:false,sourceRef:{kind:"OCIRepository",name:"flux-system"}},status:{observedGeneration:3,conditions:[condition("Ready")],lastAppliedRevision:("latest@"+$apps)}},
+ root:{apiVersion:"source.toolkit.fluxcd.io/v1",kind:"OCIRepository",metadata:meta("flux-system";"flux-system"),spec:{suspend:false,verify:root_verify},status:{observedGeneration:3,conditions:[condition("Ready"),condition("SourceVerified")],artifact:{revision:("latest@"+$apps),digest:("sha256:"+([range(64)|"e"]|join("")))}}},
+ chart:{apiVersion:"source.toolkit.fluxcd.io/v1",kind:"OCIRepository",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,url:"oci://ghcr.io/devantler-tech/charts/data-product-controller",ref:{digest:$chart},verify:chart_verify},status:{observedGeneration:3,conditions:[condition("Ready"),condition("SourceVerified")],artifact:{revision:$chart,digest:("sha256:"+([range(64)|"e"]|join("")))}}},
+ product:{apiVersion:"data.devantler.tech/v1alpha1",kind:"DataProduct",metadata:meta("harbour-observations";"data-product-controller"),spec:{ui:{url:"https://harbour-data.example.com/ui",contract:{apiVersion:"data-product-ui/v2",hostOrigins:["https://data-products.example.com","https://product-ui.example.com"],capabilities:["status","resize","appearance"]}}},status:{observedGeneration:3,conditions:[condition("Ready")]}},
  helm:{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,chartRef:{kind:"OCIRepository",name:"data-product-controller"},values:{image:{repository:$repo,tag:"1.20.0",digest:$index},uiContract:{enabled:true,additionalHostOrigins:["https://product-ui.example.com"]},uiAppearance:{enabled:true},controller:{replicas:2},demoProduct:{enabled:true,replicas:2,publicBaseURL:"https://harbour-data.example.com"},route:{enabled:true,host:"data-products.example.com"}}},status:{observedGeneration:3,conditions:[condition("Ready")],lastAttemptedRevision:("1.20.0+"+$chart[7:19]),lastAttemptedRevisionDigest:$chart,lastAttemptedConfigDigest:("sha256:"+([range(64)|"f"]|join(""))),history:[{name:"data-product-controller",namespace:"data-product-controller",chartName:"data-product-controller",chartVersion:("1.20.0+"+$chart[7:19]),ociDigest:$chart,configDigest:("sha256:"+([range(64)|"f"]|join(""))),status:"deployed",version:10}]}},
  "deployment-controller":deployment("data-product-controller";"controller"),
  "deployment-harbour":deployment("data-product-controller-harbour";"product"),
  "deployment-ui-kit":deployment("data-product-controller-ui-kit";"ui-kit"),
  replicasets:{apiVersion:"apps/v1",kind:"ReplicaSetList",items:[rs("data-product-controller";"controller"),rs("data-product-controller-harbour";"product"),rs("data-product-controller-ui-kit";"ui-kit")]},
  pods:{apiVersion:"v1",kind:"PodList",items:[pod("data-product-controller";"controller";1),pod("data-product-controller";"controller";2),pod("data-product-controller-harbour";"product";1),pod("data-product-controller-harbour";"product";2),pod("data-product-controller-ui-kit";"ui-kit";1),pod("data-product-controller-ui-kit";"ui-kit";2)]},
+ "service-harbour":service("data-product-controller-harbour"),"service-ui-kit":service("data-product-controller-ui-kit"),
+ endpoints:{apiVersion:"discovery.k8s.io/v1",kind:"EndpointSliceList",metadata:{},items:[slice("data-product-controller-harbour"),slice("data-product-controller-ui-kit")]},
  "route-registry":route("registry";"data-products";{name:"oauth2-proxy",namespace:"oauth2-proxy",port:80}),
  "route-harbour":route("harbour";"harbour-data";{name:"data-product-controller-harbour",port:80}),
  "route-ui-kit":route("ui-kit";"product-ui";{name:"data-product-controller-ui-kit",port:80}),
@@ -47,6 +57,7 @@ JQ
 jq -n --arg index "$index" --arg child "$child" --arg chart "$chart" --arg apps "$apps" \
   --arg repo 'ghcr.io/devantler-tech/data-product-controller' -f "${scratch}/fixtures.jq" >"${scratch}/all.json"
 while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/all.json" >"${scratch}/healthy/${key}.json"; done < <(jq -r 'keys[]' "${scratch}/all.json")
+jq '.root.spec.verify' "${scratch}/all.json" >"${scratch}/apps-verify.json"
 
 cat >"${scratch}/bin/kubectl" <<'SH'
 #!/usr/bin/env bash
@@ -59,8 +70,13 @@ resource=$1 name=${2:-}
 key=''
 case "$namespace:$resource:$name" in
   flux-system:kustomizations.kustomize.toolkit.fluxcd.io:apps) key=apps ;;
+  flux-system:ocirepositories.source.toolkit.fluxcd.io:flux-system) key=root ;;
   data-product-controller:ocirepositories.source.toolkit.fluxcd.io:data-product-controller) key=chart ;;
   data-product-controller:helmreleases.helm.toolkit.fluxcd.io:data-product-controller) key=helm ;;
+  data-product-controller:dataproducts.data.devantler.tech:harbour-observations) key=product ;;
+  data-product-controller:services:data-product-controller-harbour) key=service-harbour ;;
+  data-product-controller:services:data-product-controller-ui-kit) key=service-ui-kit ;;
+  data-product-controller:endpointslices.discovery.k8s.io:-o) key=endpoints ;;
   data-product-controller:deployments.apps:data-product-controller) key=deployment-controller ;;
   data-product-controller:deployments.apps:data-product-controller-harbour) key=deployment-harbour ;;
   data-product-controller:deployments.apps:data-product-controller-ui-kit) key=deployment-ui-kit ;;
@@ -72,7 +88,7 @@ case "$namespace:$resource:$name" in
   data-product-controller:pods:-o) key=pods ;;
   *) exit 93 ;;
 esac
-if [[ "$key" == pods || "$key" == replicasets ]]; then
+if [[ "$key" == pods || "$key" == replicasets || "$key" == endpoints ]]; then
   [[ "$*" == "$resource -o json" ]] || exit 94
 else
   [[ "$*" == "$resource $name -o json" ]] || exit 95
@@ -162,16 +178,19 @@ run_case() {
     mkdir "$fixture"
     cp "${scratch}/healthy/"*.json "$fixture/"
   }
-  if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset ]]; then timeout_seconds=1; fi
+  if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset ]]; then timeout_seconds=3; fi
   PATH="${scratch}/bin:$PATH" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
     bash "$script" --context synthetic-ci --domain example.com --image-digest "$index" \
-    --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --timeout "$timeout_seconds" \
+    --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
     >"$fixture/stdout" 2>"$fixture/stderr" || result=$?
   if [[ "$expected" == pass ]]; then
     if [[ "$result" != 0 ]] || ! jq -e '.complete == true and .deployments == 3 and .pods == 6 and .routes == 3 and .publicChecks == 9' "$fixture/stdout" >/dev/null; then fail "$name: healthy live-shaped rollout was not accepted"; fi
     [[ $(wc -l <"$fixture/urls") -eq 9 ]] || fail "$name: public checks were incomplete"
   else
     if [[ "$result" == 0 ]] || ! jq -e '.complete == false and (.failure | type == "string")' "$fixture/stdout" >/dev/null; then fail "$name: incomplete or unsafe rollout was accepted"; fi
+    if [[ "$name" == changed-* ]]; then
+      [[ -f "$fixture/urls" && $(wc -l <"$fixture/urls") -eq 9 ]] || fail "$name: failure preceded the public checks"
+    fi
   fi
   [[ $(cat "${scratch}/kubeconfig") == 'synthetic dedicated kubeconfig' ]] || fail "$name: kubeconfig changed"
   if grep -Eq 'PRIVATE-ERROR-CANARY|example.com|synthetic-ci|sha256:|data-product-controller|environment-canary' "$fixture/stdout" "$fixture/stderr"; then fail "$name: output was not sanitized"; fi
@@ -182,17 +201,18 @@ mutate_case() {
   mkdir "${scratch}/$name"
   cp "${scratch}/healthy/"*.json "${scratch}/$name/"
   jq "$mutation" "${scratch}/healthy/$key.json" >"${scratch}/$name/$key.json"
-  run_case "$name" fail '' "${4:-1}"
+  run_case "$name" fail '' "${4:-3}"
 }
 
 run_case healthy pass
+run_case healthy-acceptance-bound pass '' 3
 run_case orphan-plugin pass orphan
 while IFS= read -r pid; do
   if kill -0 "$pid" 2>/dev/null; then fail 'successful read left a credential-plugin child running'; fi
 done <"${scratch}/orphan-plugin/orphan.pids"
 mkdir "${scratch}/generic-lists"
 cp "${scratch}/healthy/"*.json "${scratch}/generic-lists/"
-for key in pods replicasets; do jq '.kind="List" | .apiVersion="v1"' "${scratch}/healthy/$key.json" >"${scratch}/generic-lists/$key.json"; done
+for key in pods replicasets endpoints; do jq '.kind="List" | .apiVersion="v1"' "${scratch}/healthy/$key.json" >"${scratch}/generic-lists/$key.json"; done
 run_case generic-lists pass
 mkdir -p "${scratch}/warming/after"
 cp "${scratch}/healthy/"*.json "${scratch}/warming/"
@@ -244,7 +264,7 @@ mutate_case registry-bypass route-registry '.spec.rules[0].backendRefs=[{name:"d
 mutate_case wrong-gateway-listener gateway '.spec.listeners[0].protocol="HTTP"'
 mutate_case gateway-not-programmed gateway '.status.conditions[1].status="False"'
 for mode in forbidden empty multi http-failure redirect missing-csp weak-csp duplicate-csp wrong-body wrong-asset; do run_case "$mode" fail "$mode"; done
-for key in apps chart helm deployment-ui-kit route-ui-kit gateway pods; do
+for key in apps chart helm deployment-ui-kit route-ui-kit gateway pods root product service-ui-kit; do
   name="changed-$key"
   mkdir -p "${scratch}/$name/after"
   cp "${scratch}/healthy/"*.json "${scratch}/$name/"
@@ -252,7 +272,76 @@ for key in apps chart helm deployment-ui-kit route-ui-kit gateway pods; do
     "${scratch}/healthy/$key.json" >"${scratch}/$name/after/$key.json"
   run_case "$name" fail
 done
-run_case bounded-credential-plugin fail hang
+mutate_case foreign-source-ref apps '.spec.sourceRef.name="foreign"' 3
+mutate_case foreign-source-namespace apps '.spec.sourceRef.namespace="foreign"' 3
+mutate_case root-advanced root '.status.artifact.revision="latest@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' 3
+mutate_case root-unverified root '.status.conditions[1].status="False"' 3
+mutate_case root-stale root '.status.observedGeneration=2' 3
+mutate_case root-foreign-policy root '.spec.verify.matchOIDCIdentity[0].subject=".*"' 3
+mutate_case foreign-chart-key chart '.spec.verify.secretRef={name:"foreign"}' 3
+mutate_case foreign-chart-issuer chart '.spec.verify.matchOIDCIdentity[0].issuer=".*"' 3
+mutate_case foreign-chart-subject chart '.spec.verify.matchOIDCIdentity[0].subject=".*"' 3
+mutate_case product-stale product '.status.observedGeneration=2' 3
+mutate_case product-stale-condition product '.status.conditions[0].observedGeneration=2' 3
+mutate_case product-not-ready product '.status.conditions[0].status="False"' 3
+mutate_case product-wrong-version product '.spec.ui.contract.apiVersion="data-product-ui/v1"' 3
+mutate_case product-wrong-ui product '.spec.ui.url="http://harbour-data.example.com/ui"' 3
+mutate_case product-wrong-origins product '.spec.ui.contract.hostOrigins=["https://data-products.example.com"]' 3
+mutate_case product-missing-appearance product '.spec.ui.contract.capabilities=["status","resize"]' 3
+mutate_case service-selector service-ui-kit '.spec.selector["app.kubernetes.io/component"]="foreign"' 3
+mutate_case service-port service-harbour '.spec.ports[0].targetPort=9090' 3
+mutate_case service-type service-ui-kit '.spec.type="ExternalName"' 3
+mutate_case named-container-port deployment-ui-kit '.spec.template.spec.containers[0].ports[0].containerPort=9090' 3
+mutate_case pod-selector pods '.items[5].metadata.labels["app.kubernetes.io/component"]="foreign"' 3
+mutate_case pod-container-port pods '.items[5].spec.containers[0].ports[0].containerPort=9090' 3
+mutate_case endpoint-partial-page endpoints '.metadata.continue="next"' 3
+mutate_case endpoint-duplicate-inventory endpoints '.items += [.items[1]]' 3
+mutate_case endpoint-malformed-unrelated endpoints '.items += [(.items[1]|.metadata.uid=null|.metadata.labels["kubernetes.io/service-name"]="unrelated")]' 3
+mutate_case endpoint-wrong-service-owner endpoints '.items[1].metadata.ownerReferences[0].uid="foreign"' 3
+mutate_case endpoint-wrong-service-label endpoints '.items[1].metadata.labels["kubernetes.io/service-name"]="foreign"' 3
+mutate_case endpoint-wrong-port endpoints '.items[1].ports[0].port=9090' 3
+mutate_case endpoint-unready endpoints '.items[1].endpoints[0].conditions.ready=false' 3
+mutate_case endpoint-terminating endpoints '.items[1].endpoints[0].conditions.terminating=true' 3
+mutate_case endpoint-wrong-pod endpoints '.items[1].endpoints[0].targetRef.uid="foreign"' 3
+mutate_case endpoint-wrong-name endpoints '.items[1].endpoints[0].targetRef.name="foreign"' 3
+mutate_case endpoint-wrong-ip endpoints '.items[1].endpoints[0].addresses=["10.0.1.1"]' 3
+mutate_case endpoint-wrong-family endpoints '.items[1].addressType="IPv6"' 3
+mutate_case endpoint-missing-current-pod endpoints '.items[1].endpoints |= .[:1]' 3
+mkdir "${scratch}/non-generational-services"
+cp "${scratch}/healthy/"*.json "${scratch}/non-generational-services/"
+for key in service-harbour service-ui-kit; do
+  jq 'del(.metadata.generation)' "${scratch}/healthy/$key.json" >"${scratch}/non-generational-services/$key.json"
+done
+jq '.items[] |= del(.metadata.generation)' "${scratch}/healthy/endpoints.json" >"${scratch}/non-generational-services/endpoints.json"
+run_case non-generational-services pass
+mkdir "${scratch}/dual-stack"
+cp "${scratch}/healthy/"*.json "${scratch}/dual-stack/"
+jq '.items |= map(.status.podIPs += [{ip:("fd00::"+(.metadata.name|split("-")|last))}])' "${scratch}/healthy/pods.json" >"${scratch}/dual-stack/pods.json"
+jq '.items += [.items[] | .metadata.name += "-v6" | .metadata.uid += "-v6" | .addressType="IPv6" | .endpoints |= map(.addresses=["fd00::"+(.targetRef.name|split("-")|last)])]' \
+  "${scratch}/healthy/endpoints.json" >"${scratch}/dual-stack/endpoints.json"
+run_case dual-stack pass
+mkdir "${scratch}/dual-stack-partial-family"
+cp "${scratch}/dual-stack/"*.json "${scratch}/dual-stack-partial-family/"
+jq '.items[3].endpoints |= .[:1]' "${scratch}/dual-stack/endpoints.json" >"${scratch}/dual-stack-partial-family/endpoints.json"
+run_case dual-stack-partial-family fail '' 3
+mkdir "${scratch}/multiple-slices"
+cp "${scratch}/healthy/"*.json "${scratch}/multiple-slices/"
+jq '.items |= [.[] | . as $slice | .endpoints | to_entries[] | . as $entry | $slice | .metadata.name += ("-"+($entry.key|tostring)) | .metadata.uid += ("-"+($entry.key|tostring)) | .endpoints=[$entry.value]]' \
+  "${scratch}/healthy/endpoints.json" >"${scratch}/multiple-slices/endpoints.json"
+run_case multiple-slices pass
+mkdir "${scratch}/declared-policy-update"
+cp "${scratch}/healthy/"*.json "${scratch}/declared-policy-update/"
+cp "${scratch}/apps-verify.json" "${scratch}/saved-policy.json"
+jq '.matchOIDCIdentity[0].subject="new-explicit-declared-publisher"' "${scratch}/saved-policy.json" >"${scratch}/apps-verify.json"
+jq --slurpfile policy "${scratch}/apps-verify.json" '.spec.verify=$policy[0]' "${scratch}/healthy/root.json" >"${scratch}/declared-policy-update/root.json"
+run_case declared-policy-update pass
+cp "${scratch}/saved-policy.json" "${scratch}/apps-verify.json"
+printf '[]\n' >"${scratch}/apps-verify.json"
+run_case invalid-policy fail '' 3
+printf '%16385s' ' ' >"${scratch}/apps-verify.json"
+run_case oversized-policy fail '' 3
+cp "${scratch}/saved-policy.json" "${scratch}/apps-verify.json"
+run_case bounded-credential-plugin fail hang 1
 child_pid=$(cat "${scratch}/bounded-credential-plugin/child.pid")
 if kill -0 "$child_pid" 2>/dev/null; then fail 'deadline left a credential-plugin child running'; fi
 printf 'PASS: rollout readback behavior and bounded, read-only request scopes\n'

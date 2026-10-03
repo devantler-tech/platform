@@ -6,10 +6,10 @@ umask 077
 # the caller's context; this script never changes context or kubeconfig contents.
 # --context NAME --domain PUBLIC_DOMAIN --image-digest sha256:...
 # --runtime-digest sha256:... (repeat) --chart-digest sha256:...
-# --apps-digest sha256:... [--timeout SECONDS]
-# Browser authentication, embedding handshakes and DataProduct conditions remain
-# separate acceptance checks. This helper reads no Secrets or authenticated URLs.
-context='' domain='' image_digest='' chart_digest='' apps_digest='' timeout_seconds=300
+# --apps-digest sha256:... --apps-verify-file /absolute/public-policy.json [--timeout SECONDS]
+# Browser authentication and embedding handshakes remain separate acceptance
+# checks. This helper reads no Secrets or authenticated URLs.
+context='' domain='' image_digest='' chart_digest='' apps_digest='' apps_verify_file='' timeout_seconds=300
 runtime_digests=() scratch='' active='' watchdog='' started_at=$SECONDS
 readonly repository='ghcr.io/devantler-tech/data-product-controller'
 readonly namespace='data-product-controller'
@@ -37,6 +37,7 @@ while (($#)); do
   --runtime-digest) runtime_digests+=("$2") ;;
   --chart-digest) chart_digest=$2 ;;
   --apps-digest) apps_digest=$2 ;;
+  --apps-verify-file) apps_verify_file=$2 ;;
   --timeout) timeout_seconds=$2 ;;
   *) fail invalid_arguments 2 ;;
   esac
@@ -44,6 +45,7 @@ while (($#)); do
 done
 [[ -n "$context" && ${#context} -le 253 && "$context" != *$'\n'* && "$context" != *$'\r'* ]] || fail invalid_arguments 2
 [[ ${KUBECONFIG:-} == /* && "$KUBECONFIG" != *:* && -f "$KUBECONFIG" && -r "$KUBECONFIG" ]] || fail invalid_arguments 2
+[[ "$apps_verify_file" == /* && -f "$apps_verify_file" && -r "$apps_verify_file" ]] || fail invalid_arguments 2
 [[ ${#domain} -le 253 && "$domain" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ && ! "$domain" =~ ^[0-9.]+$ ]] || fail invalid_arguments 2
 case "$domain" in *.local | *.localhost | *.lan | *.invalid | *.test) fail invalid_arguments 2 ;; esac
 [[ ${#runtime_digests[@]} -gt 0 && ${#runtime_digests[@]} -le 8 ]] || fail invalid_arguments 2
@@ -80,39 +82,57 @@ bounded() {
   remaining
   return "$result"
 }
+read_verify_policy() {
+  [[ $(wc -c <"$apps_verify_file") -le 16384 ]] || return 1
+  jq -se 'length==1 and (.[0]|type=="object" and keys==["matchOIDCIdentity","provider"] and
+    .provider=="cosign" and (.matchOIDCIdentity|type=="array" and length==1 and
+      all(.[]; type=="object" and keys==["issuer","subject"] and
+        (.issuer|type=="string" and length>0) and (.subject|type=="string" and length>0))))' "$apps_verify_file" >/dev/null || return 1
+  jq -c '.' "$apps_verify_file" >"$scratch/apps-verify.json"
+}
+bounded read_verify_policy || fail invalid_verification_policy 2
+apps_verify=$(<"$scratch/apps-verify.json")
 
 cat >"$scratch/project.jq" <<'JQ'
-def metadata: {name,namespace,uid,generation,deletionTimestamp,
+def metadata: {name,namespace,uid,generation,deletionTimestamp,labels,
   revision:.annotations["deployment.kubernetes.io/revision"],
   owners:[.ownerReferences[]? | {apiVersion,kind,name,uid,controller}]};
 def conditions: [.[]? | {type,status,observedGeneration}];
-def containers: [.[]? | {name,image}];
+def containers: [.[]? | {name,image,ports:[.ports[]? | {name,containerPort,protocol:(.protocol//"TCP")}]}];
 def workload: {apiVersion,kind,metadata:(.metadata|metadata),
-  spec:{replicas:.spec.replicas,containers:(.spec.template.spec.containers|containers)},
+  spec:{replicas:.spec.replicas,selector:.spec.selector,labels:.spec.template.metadata.labels,containers:(.spec.template.spec.containers|containers)},
   status:(.status|{observedGeneration,replicas,updatedReplicas,readyReplicas,availableReplicas})};
 def pod: {apiVersion,kind,metadata:(.metadata|metadata),spec:{containers:(.spec.containers|containers)},
-  status:{phase:.status.phase,conditions:(.status.conditions|conditions),
+  status:{phase:.status.phase,podIP:.status.podIP,podIPs:[.status.podIPs[]? | .ip],conditions:(.status.conditions|conditions),
     containers:[.status.containerStatuses[]? | {name,ready,imageID,
       running:(.state.running|type=="object"),waiting:(.state.waiting!=null),terminated:(.state.terminated!=null)}]}};
 if length != 1 then error("incomplete response") else .[0] end |
 {key:$role,value:(
-if $role == "pods" or $role == "replicasets" then
-  (if $role == "pods" then "Pod" else "ReplicaSet" end) as $kind |
-  (if $role == "pods" then "v1" else "apps/v1" end) as $version |
+if $role == "pods" or $role == "replicasets" or $role == "endpoints" then
+  (if $role == "pods" then "Pod" elif $role == "endpoints" then "EndpointSlice" else "ReplicaSet" end) as $kind |
+  (if $role == "pods" then "v1" elif $role == "endpoints" then "discovery.k8s.io/v1" else "apps/v1" end) as $version |
   if ((.kind == ($kind+"List") and .apiVersion == $version) or (.kind == "List" and .apiVersion == "v1")) and
     (.items|type=="array" and length<=4096) and (.metadata.continue//"")=="" and
     all(.items[]; .kind==$kind and .apiVersion==$version and .metadata.namespace==$namespace and
       (.metadata.name|type=="string" and length>0) and (.metadata.uid|type=="string" and length>0)) and
     ([.items[].metadata.uid]|length)==([.items[].metadata.uid]|unique|length) and
     ([.items[].metadata.name]|length)==([.items[].metadata.name]|unique|length)
-  then {items:[.items[] | if $role == "pods" then pod else workload end]}
+  then {items:[.items[] | if $role == "pods" then pod elif $role == "endpoints" then
+    {apiVersion,kind,metadata:(.metadata|metadata),addressType,ports:[.ports[]? | {name,port,protocol:(.protocol//"TCP")}],
+      endpoints:[.endpoints[]? | {addresses,conditions:{ready:.conditions.ready,serving:.conditions.serving,terminating:.conditions.terminating},
+        targetRef:(.targetRef|{apiVersion,kind,name,namespace,uid})}]} else workload end]}
   else error("incomplete inventory") end
 elif $role|startswith("deployment-") then workload
-elif $role == "apps" then {apiVersion,kind,metadata:(.metadata|metadata),spec:{suspend:.spec.suspend},
+elif $role == "apps" then {apiVersion,kind,metadata:(.metadata|metadata),spec:{suspend:.spec.suspend,sourceRef:.spec.sourceRef},
   status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions),lastAppliedRevision:.status.lastAppliedRevision}}
-elif $role == "chart" then {apiVersion,kind,metadata:(.metadata|metadata),
-  spec:{suspend:.spec.suspend,url:.spec.url,ref:{digest:.spec.ref.digest},verify:{provider:.spec.verify.provider}},
+elif $role == "chart" or $role == "root" then {apiVersion,kind,metadata:(.metadata|metadata),
+  spec:{suspend:.spec.suspend,url:.spec.url,ref:{digest:.spec.ref.digest},verify:.spec.verify},
   status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions),artifact:(.status.artifact|{revision,digest})}}
+elif $role == "product" then {apiVersion,kind,metadata:(.metadata|metadata),
+  spec:{ui:{url:.spec.ui.url,contract:(.spec.ui.contract|{apiVersion,hostOrigins,capabilities})}},
+  status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions)}}
+elif $role|startswith("service-") then {apiVersion,kind,metadata:(.metadata|metadata),
+  spec:{type:.spec.type,selector:.spec.selector,ports:[.spec.ports[]? | {name,port,targetPort,protocol:(.protocol//"TCP")}]}}
 elif $role == "helm" then {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{suspend:.spec.suspend,chartRef:.spec.chartRef,values:{image:(.spec.values.image|{repository,tag,digest}),
     uiContract:(.spec.values.uiContract|{enabled,additionalHostOrigins}),uiAppearance:(.spec.values.uiAppearance|{enabled}),
@@ -134,9 +154,10 @@ def positive: type=="number" and .==floor and .>0;
 def digest: type=="string" and test("^sha256:[a-f0-9]{64}$");
 def revision($expected): .==$expected or
   (type=="string" and (split("@") as $parts | ($parts|length)==2 and ($parts[0]|length)>0 and $parts[1]==$expected));
-def identity($kind;$version;$name;$ns):
+def object_identity($kind;$version;$name;$ns):
   .kind==$kind and .apiVersion==$version and .metadata.name==$name and .metadata.namespace==$ns and
-  (.metadata.uid|type=="string" and length>0) and (.metadata.generation|positive) and .metadata.deletionTimestamp==null;
+  (.metadata.uid|type=="string" and length>0) and .metadata.deletionTimestamp==null;
+def identity($kind;$version;$name;$ns): object_identity($kind;$version;$name;$ns) and (.metadata.generation|positive);
 def ready($types): . as $resource |
   all($types[]; . as $type | [$resource.status.conditions[]? | select(.type==$type)] as $conditions |
     ($conditions|length)==1 and $conditions[0].status=="True" and $conditions[0].observedGeneration==$resource.metadata.generation) and
@@ -177,6 +198,39 @@ def workload($deployment;$container;$tag;$sets;$pods):
     all($owned[] | select(.metadata.uid!=$current[0].metadata.uid); .spec.replicas==0 and (.status.replicas//0)==0) and
     ([$pods[] | . as $pod | select(any($owned[]; . as $rs | $pod | owned("ReplicaSet";$rs.metadata.name;$rs.metadata.uid)))] as $owned_pods |
       ($owned_pods|length)==2 and all($owned_pods[];pod_ready($current[0];$container;$tag))));
+def family: if contains(":") then "IPv6" else "IPv4" end;
+def backend($service;$deployment;$container;$sets;$pods;$slices):
+  $deployment.spec.selector.matchLabels as $selector |
+  [$sets[] | select(owned("Deployment";$deployment.metadata.name;$deployment.metadata.uid)) | .metadata.uid] as $rs_uids |
+  [$pods[] | select(any(.metadata.owners[]?; .kind=="ReplicaSet" and (.uid as $uid | $rs_uids|index($uid))!=null))] as $current_pods |
+  [$current_pods[].metadata.uid]|sort as $pod_uids |
+  [$slices[] | select(.metadata.labels["kubernetes.io/service-name"]==$service.metadata.name or
+    any(.metadata.owners[]?;.uid==$service.metadata.uid))] as $owned_slices |
+  ($service|object_identity("Service";"v1";$deployment.metadata.name;$namespace)) and $service.spec.type=="ClusterIP" and
+  ($selector|type=="object" and length>0) and $service.spec.selector==$selector and
+  all($selector|to_entries[];. as $label | $deployment.spec.labels[$label.key]==$label.value) and
+  $service.spec.ports==[{name:"http",port:80,targetPort:"http",protocol:"TCP"}] and
+  ([$deployment.spec.containers[] | select(.name==$container) | .ports[] | select(.name=="http")]==[{name:"http",containerPort:8080,protocol:"TCP"}]) and
+  ($current_pods|length)==2 and all($current_pods[]; . as $pod |
+    all($selector|to_entries[];. as $label | $pod.metadata.labels[$label.key]==$label.value) and
+    ([.spec.containers[] | select(.name==$container) | .ports[] | select(.name=="http")]==[{name:"http",containerPort:8080,protocol:"TCP"}]) and
+    (.status.podIPs|type=="array" and length>0 and length==(unique|length) and all(.[];type=="string" and length>0)) and
+    (.status.podIP as $primary|.status.podIPs|index($primary)!=null)) and
+  ($owned_slices|length)>0 and all($owned_slices[]; . as $slice |
+    object_identity("EndpointSlice";"discovery.k8s.io/v1";.metadata.name;$namespace) and
+    .metadata.labels["kubernetes.io/service-name"]==$service.metadata.name and
+    ([.metadata.owners[]? | select(.controller==true)]==[{apiVersion:"v1",kind:"Service",name:$service.metadata.name,uid:$service.metadata.uid,controller:true}]) and
+    (.addressType=="IPv4" or .addressType=="IPv6") and .ports==[{name:"http",port:8080,protocol:"TCP"}] and
+    (.endpoints|type=="array") and all(.endpoints[]; . as $endpoint |
+      .conditions.ready==true and (.conditions.terminating//false)==false and (.conditions.serving//true)==true and
+      .targetRef.apiVersion=="v1" and .targetRef.kind=="Pod" and .targetRef.namespace==$namespace and
+      ([$current_pods[] | select(.metadata.uid==$endpoint.targetRef.uid and .metadata.name==$endpoint.targetRef.name)] as $target |
+        ($target|length)==1 and (.addresses|type=="array" and length>0 and length==(unique|length)) and
+        (.addresses|sort)==([$target[0].status.podIPs[] | select(family==$slice.addressType)]|sort)))) and
+  ([$owned_slices[].endpoints[].targetRef.uid]|unique|sort)==$pod_uids and
+  ([$current_pods[].status.podIPs[]|family]|unique|sort)==([$owned_slices[].addressType]|unique|sort) and
+  all([$owned_slices[].addressType]|unique|.[];. as $family |
+    ([$owned_slices[]|select(.addressType==$family)|.endpoints[].targetRef.uid]|unique|sort)==$pod_uids);
 def parent($ns): {group:(.group//"gateway.networking.k8s.io"),kind:(.kind//"Gateway"),namespace:(.namespace//$ns),name,sectionName,port:(.port//null)};
 def route($name;$host;$backend;$public):
   .metadata.generation as $resource_generation |
@@ -195,10 +249,15 @@ def route($name;$host;$backend;$public):
 .helm.spec.values.image.tag as $tag |
 (.apps|identity("Kustomization";"kustomize.toolkit.fluxcd.io/v1";"apps";"flux-system") and
   (.spec.suspend//false)==false and .status.observedGeneration==.metadata.generation and ready(["Ready"]) and
+  .spec.sourceRef.kind=="OCIRepository" and .spec.sourceRef.name=="flux-system" and (.spec.sourceRef.namespace//"flux-system")=="flux-system" and
   (.status.lastAppliedRevision|revision($apps_digest))) and
+(.root|identity("OCIRepository";"source.toolkit.fluxcd.io/v1";"flux-system";"flux-system") and
+  (.spec.suspend//false)==false and .status.observedGeneration==.metadata.generation and ready(["Ready","SourceVerified"]) and
+  .spec.verify==$apps_verify and (.status.artifact.revision|revision($apps_digest)) and (.status.artifact.digest|digest)) and
 (.chart|identity("OCIRepository";"source.toolkit.fluxcd.io/v1";"data-product-controller";$namespace) and
   (.spec.suspend//false)==false and .status.observedGeneration==.metadata.generation and ready(["Ready","SourceVerified"]) and
-  .spec.url=="oci://ghcr.io/devantler-tech/charts/data-product-controller" and .spec.ref.digest==$chart_digest and .spec.verify.provider=="cosign" and
+  .spec.url=="oci://ghcr.io/devantler-tech/charts/data-product-controller" and .spec.ref.digest==$chart_digest and
+  .spec.verify=={provider:"cosign",matchOIDCIdentity:[{issuer:"^https://token\\.actions\\.githubusercontent\\.com$",subject:"^https://github\\.com/devantler-tech/data-product-controller/\\.github/workflows/publish-chart\\.yaml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+$"}]} and
   # The cached file digest differs from the upstream OCI manifest revision.
   (.status.artifact.revision|revision($chart_digest)) and (.status.artifact.digest|digest)) and
 (.helm|identity("HelmRelease";"helm.toolkit.fluxcd.io/v2";"data-product-controller";$namespace) and
@@ -214,10 +273,18 @@ def route($name;$host;$backend;$public):
   (.status.lastAttemptedConfigDigest|digest) and .status.history[0].status=="deployed" and (.status.history[0].version|positive) and
   .status.history[0].name=="data-product-controller" and .status.history[0].namespace==$namespace and .status.history[0].chartName=="data-product-controller" and
   .status.history[0].chartVersion==.status.lastAttemptedRevision and .status.history[0].ociDigest==$chart_digest and .status.history[0].configDigest==.status.lastAttemptedConfigDigest) and
+(.product|identity("DataProduct";"data.devantler.tech/v1alpha1";"harbour-observations";$namespace) and
+  .status.observedGeneration==.metadata.generation and ready(["Ready"]) and .spec.ui.url==("https://harbour-data."+$domain+"/ui") and
+  .spec.ui.contract.apiVersion=="data-product-ui/v2" and
+  (.spec.ui.contract.hostOrigins|sort)==(["https://data-products."+$domain,"https://product-ui."+$domain]|sort) and
+  (.spec.ui.contract.capabilities|sort)==["appearance","resize","status"]) and
 (.replicasets|inventory("ReplicaSet";"apps/v1")) and (.pods|inventory("Pod";"v1")) and
+(.endpoints|inventory("EndpointSlice";"discovery.k8s.io/v1")) and
 all([["deployment-controller","data-product-controller","controller"],["deployment-harbour","data-product-controller-harbour","product"],["deployment-ui-kit","data-product-controller-ui-kit","ui-kit"]][];
   . as $id | $snapshot[$id[0]] as $deployment |
   $deployment.metadata.name==$id[1] and workload($deployment;$id[2];$tag;$snapshot.replicasets.items;$snapshot.pods.items)) and
+all([["harbour","product"],["ui-kit","ui-kit"]][];. as $id |
+  backend($snapshot["service-"+$id[0]];$snapshot["deployment-"+$id[0]];$id[1];$snapshot.replicasets.items;$snapshot.pods.items;$snapshot.endpoints.items)) and
 all([["route-registry","data-product-controller-registry","data-products",{name:"oauth2-proxy",namespace:"oauth2-proxy",port:80},false],
      ["route-harbour","data-product-controller-harbour","harbour-data",{name:"data-product-controller-harbour",namespace:$namespace,port:80},true],
      ["route-ui-kit","data-product-controller-ui-kit","product-ui",{name:"data-product-controller-ui-kit",namespace:$namespace,port:80},true]][];
@@ -249,8 +316,13 @@ collect() {
   local directory=$1
   mkdir -p "$directory"
   read_resource "$directory" apps flux-system kustomizations.kustomize.toolkit.fluxcd.io apps
+  read_resource "$directory" root flux-system ocirepositories.source.toolkit.fluxcd.io flux-system
   read_resource "$directory" chart "$namespace" ocirepositories.source.toolkit.fluxcd.io data-product-controller
   read_resource "$directory" helm "$namespace" helmreleases.helm.toolkit.fluxcd.io data-product-controller
+  read_resource "$directory" product "$namespace" dataproducts.data.devantler.tech harbour-observations
+  read_resource "$directory" service-harbour "$namespace" services data-product-controller-harbour
+  read_resource "$directory" service-ui-kit "$namespace" services data-product-controller-ui-kit
+  read_resource "$directory" endpoints "$namespace" endpointslices.discovery.k8s.io
   read_resource "$directory" deployment-controller "$namespace" deployments.apps data-product-controller
   read_resource "$directory" deployment-harbour "$namespace" deployments.apps data-product-controller-harbour
   read_resource "$directory" deployment-ui-kit "$namespace" deployments.apps data-product-controller-ui-kit
@@ -270,7 +342,10 @@ aggregate() {
     [."deployment-controller".metadata.uid,."deployment-harbour".metadata.uid,."deployment-ui-kit".metadata.uid] as $deployment_uids |
     .replicasets.items |= (map(select(owner_in("Deployment";$deployment_uids))) | sort_by(.metadata.uid)) |
     [.replicasets.items[].metadata.uid] as $rs_uids |
-    .pods.items |= (map(select(owner_in("ReplicaSet";$rs_uids))) | sort_by(.metadata.uid))
+    .pods.items |= (map(select(owner_in("ReplicaSet";$rs_uids))) | sort_by(.metadata.uid)) |
+    [."service-harbour",."service-ui-kit"] as $services |
+    .endpoints.items |= (map(select(. as $slice | any($services[];. as $service |
+      $slice.metadata.labels["kubernetes.io/service-name"]==$service.metadata.name or any($slice.metadata.owners[]?;.uid==$service.metadata.uid)))) | sort_by(.metadata.uid))
   ' "$1/"*.json >"$1/snapshot" 2>/dev/null
 }
 make_runtime_json() { printf '%s\n' "${runtime_digests[@]}" | jq -Rsc 'split("\n")[:-1]|unique' >"$scratch/runtime-digests.json"; }
@@ -278,7 +353,7 @@ bounded make_runtime_json || fail read_incomplete
 runtime_json=$(<"$scratch/runtime-digests.json")
 check() {
   jq -e --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" \
-    --arg chart_digest "$chart_digest" --arg apps_digest "$apps_digest" --argjson runtime_digests "$runtime_json" \
+    --arg chart_digest "$chart_digest" --arg apps_digest "$apps_digest" --argjson apps_verify "$apps_verify" --argjson runtime_digests "$runtime_json" \
     -f "$scratch/check.jq" "$1/snapshot" >/dev/null 2>&1
 }
 while :; do
