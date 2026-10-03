@@ -13,3 +13,9 @@ resources:
   - cilium-network-policy-harbour.yaml
   - http-route-registry.yaml
   - http-route-harbour.yaml
+  - deployment-ui-kit.yaml
+  - service-ui-kit.yaml
+  - service-account-ui-kit.yaml
+  - pod-disruption-budget-ui-kit.yaml
+  - cilium-network-policy-ui-kit.yaml
+  - http-route-ui-kit.yaml

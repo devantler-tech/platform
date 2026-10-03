@@ -42,7 +42,7 @@ func publishMatcherSurfaceDocument(identity resourceIdentity, document map[strin
 		return document
 	}
 	ref := strings.TrimSuffix(strings.TrimPrefix(subject, prefix), "$")
-	if !isExactPublishRevisionSet(ref, maxPublishRevisions(workflow)) {
+	if !isExactPublishRevisionSet(ref, maxPublishRevisions()) {
 		return document
 	}
 
@@ -59,12 +59,9 @@ func publishMatcherSurfaceDocument(identity resourceIdentity, document map[strin
 
 // maxPublishRevisions is the largest approved set a workflow's consumers carry: the
 // applied signer and the default-branch pin, plus the latest released actions revision
-// for publish-app consumers (#3917).
-func maxPublishRevisions(workflow string) int {
-	if workflow == "publish-app" {
-		return 3
-	}
-	return 2
+// for both publish-app and publish-manifests consumers (#4416).
+func maxPublishRevisions() int {
+	return 3
 }
 
 // isExactPublishRevisionSet accepts one concrete SHA or one parenthesized set of at most

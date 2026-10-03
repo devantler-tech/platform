@@ -424,6 +424,9 @@ jobs:
               - 'scripts/tests/test-actual-budget-auth-route.sh'
               - 'scripts/tests/test-umami-sso-dashboard-route.sh'
               - 'scripts/tests/test-data-product-controller-trial.sh'
+              - 'scripts/tests/test-data-product-ui-host.sh'
+              - 'scripts/tests/test-data-product-ui-rollout.sh'
+              - 'scripts/verify-data-product-ui-rollout.sh'
               - 'scripts/tests/test-oauth2-proxy-sso-redirects.sh'
               - 'scripts/tests/test-umami-tracking-probe.sh'
               - 'scripts/tests/fixtures/umami-curl-stub.sh'
@@ -709,6 +712,7 @@ jobs:
               # Both halves, for the same reason as the guard above.
               - 'scripts/verify-published-evidence.sh'
               - 'scripts/tests/test-verify-published-evidence.sh'
+              - 'scripts/tests/test-publication-subject.sh'
               # Both halves, for the same reason. This gate runs on the deploy path
               # itself, so a PR that edits it without running its test would ship a
               # change to the last check standing between a bad matcher and prod.
@@ -782,6 +786,8 @@ jobs:
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-helm-post-renderers.sh'
               - 'scripts/tests/test-guard-helm-post-renderers.sh'
+              - 'scripts/build-controller-helm.sh'
+              - 'scripts/render-helm-chart/**'
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-pod-security-exception-scope.sh'
               - 'scripts/tests/test-guard-pod-security-exception-scope.sh'
@@ -1252,6 +1258,15 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 📌 Install the reviewed YAML parser
+        if: needs.changes.outputs.k8s == 'true'
+        env:
+          GOBIN: ${{ runner.temp }}/platform-validation-tools
+        run: |
+          go install github.com/mikefarah/yq/v4@v4.54.1
+          printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+          "$GOBIN/yq" --version
+
       - name: 🔐 Validate KSail installer integrity guard
         if: needs.changes.outputs.k8s == 'true'
         run: |
@@ -1572,6 +1587,10 @@ jobs:
           bash scripts/tests/test-umami-sso-dashboard-route.sh
           shellcheck scripts/tests/test-data-product-controller-trial.sh
           bash scripts/tests/test-data-product-controller-trial.sh
+          shellcheck scripts/tests/test-data-product-ui-host.sh
+          bash scripts/tests/test-data-product-ui-host.sh
+          shellcheck scripts/verify-data-product-ui-rollout.sh scripts/tests/test-data-product-ui-rollout.sh
+          bash scripts/tests/test-data-product-ui-rollout.sh
           shellcheck scripts/tests/test-oauth2-proxy-sso-redirects.sh
           bash scripts/tests/test-oauth2-proxy-sso-redirects.sh
           shellcheck scripts/tests/test-umami-tracking-probe.sh
@@ -1975,7 +1994,11 @@ jobs:
         # production starts following within the minute. This pins the gate's
         # verdict in both rollout states and the wiring that reaches it — a gate
         # that runs after latest already moved has verified nothing that matters.
-        run: bash scripts/tests/test-verify-published-evidence.sh
+        run: |
+          bash scripts/tests/test-publication-subject.sh
+          SUBJECT_NAME="$(yq -r '.runs.steps[] | select(.id == "staging_reference").env.SUBJECT_NAME' .github/actions/deploy-prod/publish-platform-manifests/action.yml)"
+          export SUBJECT_NAME
+          bash scripts/tests/test-verify-published-evidence.sh
 
       - name: 🔏 Validate the matcher-accepts-staged-digest gate
         if: needs.changes.outputs.k8s == 'true'
@@ -2929,6 +2952,12 @@ jobs:
           # The guard renders the base revision too, to find which releases changed.
           fetch-depth: 0
 
+      - name: ⚙️ Setup the audited controller's Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: scripts/render-helm-chart/go.mod
+          cache: false
+
       - name: 🧩 Install the audited controller's Helm renderer
         # Flux 2.8.8 / helm-controller 1.5.5 embeds upstream Helm 4.2.0. The
         # runner's ambient Helm is not proof of matching template capabilities.
@@ -2946,8 +2975,17 @@ jobs:
 
       - name: 🧩 Validate the post-renderer guard
         run: |
-          shellcheck scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
+          shellcheck scripts/build-controller-helm.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
+          controller_helm="$RUNNER_TEMP/controller-helm"
+          bash scripts/build-controller-helm.sh "$controller_helm"
+          echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
+          export CONTROLLER_HELM="$controller_helm"
           bash scripts/tests/test-guard-helm-post-renderers.sh
+
+      - name: 🧩 Apply the actual Whoami chart's post-renderers
+        run: |
+          bash scripts/guard-helm-post-renderers.sh --flux-version 2.8.8 --release whoami/whoami \
+            --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s
 
       - name: 🧩 Apply every changed HelmRelease's post-renderers to its chart
         env:
