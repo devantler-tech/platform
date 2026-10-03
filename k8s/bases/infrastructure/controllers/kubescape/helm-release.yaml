@@ -305,15 +305,17 @@ spec:
     persistence:
       size:
         backingStorage: 10Gi
-    # Chart defaults are grossly overprovisioned for small clusters.
-    # Align with VPA recommendations.
+    # Keep the idle reservation small while allowing vulnerability scans to
+    # burst. VPA scales limits with requests: the former 10:1 CPU ratio squeezed
+    # scans against their limit despite spare node capacity. A 20:1 ratio gives
+    # one core at the 50m floor without raising the idle request (#4389).
     kubevuln:
       resources:
         requests:
           cpu: 50m
           memory: 256Mi
         limits:
-          cpu: 500m
+          cpu: "1"
           memory: 1Gi
   # Drop all capabilities and pin a CONTAINER-level seccompProfile on the four
   # kubescape-operator Deployments. Post-rendered rather than set through
