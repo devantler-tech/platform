@@ -111,8 +111,7 @@ verify_as() {
   cosign verify \
     --certificate-oidc-issuer-regexp "${issuer}" \
     --certificate-identity-regexp "$1" \
-    "${artifact}" >"${stdout_log}" 2>"${log}" || verification_rc=$?
-  cat "${log}" >&2 || return 1
+    "${artifact}" 2>&1 >"${stdout_log}" | tee "${log}" >&2 || verification_rc=$?
   if [[ "${verification_rc}" != 0 ]]; then
     cat "${stdout_log}" >&2 || return 1
     cat "${stdout_log}" >>"${log}" || return 1
