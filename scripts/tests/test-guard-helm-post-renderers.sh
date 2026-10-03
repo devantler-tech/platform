@@ -70,6 +70,18 @@ exec "$HELM_SHIM_REAL" "$@"
 EOF
 chmod +x "$scratch/bin/helm"
 
+export GREP_SHIM_REAL
+GREP_SHIM_REAL="$(command -v grep)"
+cat >"$scratch/bin/grep" <<'EOF'
+#!/usr/bin/env bash
+if [[ -n "${GREP_SHIM_FAIL_SCAN:-}" && "${1:-}" == -R && "${4:-}" == *"$GREP_SHIM_FAIL_SCAN"* ]]; then
+  printf 'grep: fixture inspection failure\n' >&2
+  exit 2
+fi
+exec "$GREP_SHIM_REAL" "$@"
+EOF
+chmod +x "$scratch/bin/grep"
+
 # The fixture chart. Below 0.50.0 it also renders a pod-level securityContext, so a chart bump to
 # 0.50.0 removes the parent an unchanged JSON-6902 add relies on.
 chart="$scratch/charts/flux-operator"
@@ -802,6 +814,13 @@ if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" "$TREE/k8s" 2>&1)"; then GUAR
 assert_rc 'a missing audited controller profile is cannot-check' 2
 run_guard "$TREE" --flux-version 2.9.5
 assert_rc 'an unaudited controller profile is cannot-check' 2
+
+GREP_SHIM_FAIL_SCAN=Revision run_guard "$TREE"
+assert_rc 'a failed revision-input inspection is cannot-check, not no match' 2
+assert_contains 'the revision scan failure is reported' 'cannot inspect revision inputs'
+GREP_SHIM_FAIL_SCAN=HelmVersion run_guard "$TREE"
+assert_rc 'a failed SDK-capability inspection is cannot-check, not no match' 2
+assert_contains 'the SDK-capability scan failure is reported' 'cannot inspect HelmVersion inputs'
 
 new_tree
 {

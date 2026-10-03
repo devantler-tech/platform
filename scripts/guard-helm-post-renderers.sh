@@ -513,12 +513,18 @@ check_release() { # <record> <work>
     >"$work/template-inputs" || die "$label: cannot inspect its template values"
   # An offline Helm template upgrade always has Revision=1. Refuse charts (including dependencies)
   # and input values that read Revision anywhere, including raw-string property keys.
-  if grep -R -E -q "\.[[:space:]]*Revision|[\"'\`]Revision[\"'\`]" "$work/chart" "$work/dependencies" "$work/template-inputs"; then
-    die "$label: revision-dependent chart $chart_desc needs release history this guard cannot render"
-  fi
-  if grep -R -E -q "\.[[:space:]]*HelmVersion|[\"'\`]HelmVersion[\"'\`]" "$work/chart" "$work/dependencies" "$work/template-inputs"; then
-    die "$label: HelmVersion-dependent chart $chart_desc needs the controller SDK capabilities, not the CLI build metadata"
-  fi
+  grep -R -E -q "\.[[:space:]]*Revision|[\"'\`]Revision[\"'\`]" "$work/chart" "$work/dependencies" "$work/template-inputs"
+  case $? in
+    0) die "$label: revision-dependent chart $chart_desc needs release history this guard cannot render" ;;
+    1) ;;
+    *) die "$label: cannot inspect revision inputs in $chart_desc" ;;
+  esac
+  grep -R -E -q "\.[[:space:]]*HelmVersion|[\"'\`]HelmVersion[\"'\`]" "$work/chart" "$work/dependencies" "$work/template-inputs"
+  case $? in
+    0) die "$label: HelmVersion-dependent chart $chart_desc needs the controller SDK capabilities, not the CLI build metadata" ;;
+    1) ;;
+    *) die "$label: cannot inspect HelmVersion inputs in $chart_desc" ;;
+  esac
 
   release="$(jq -r '.release.spec.releaseName // (if .release.spec.targetNamespace then
       "\(.release.spec.targetNamespace)-\(.release.metadata.name)" else .release.metadata.name end)' "$record")"
