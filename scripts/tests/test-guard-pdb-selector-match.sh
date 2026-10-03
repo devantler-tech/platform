@@ -368,9 +368,9 @@ assert_contains 'describes the empty selector' 'selector: {} (every pod in the n
 expression() { # <operator> [values as flow YAML]
   printf '{matchExpressions: [{key: tier, operator: %s%s}]}' "$1" "${2:+, values: $2}"
 }
-for case in 'In|[web, api]|0' 'In|[api]|1' 'NotIn|[api]|0' 'NotIn|[web]|1' 'Exists||0' 'DoesNotExist||1'; do
-  operator="${case%%|*}"
-  rest="${case#*|}"
+for arm in 'In|[web, api]|0' 'In|[api]|1' 'NotIn|[api]|0' 'NotIn|[web]|1' 'Exists||0' 'DoesNotExist||1'; do
+  operator="${arm%%|*}"
+  rest="${arm#*|}"
   new_tree
   pdb demo web "$(expression "$operator" "${rest%%|*}")"
   workload Deployment demo web '{tier: web}' 2
