@@ -56,7 +56,7 @@ jobs:
       - uses: actions/checkout@example
         with:
           ref: main
-      - uses: ./.github/actions/deploy-prod
+` + recoveryBaselineStep + `      - uses: ./.github/actions/deploy-prod
         with:
           recover-orphaned-fence: "true"
 ` + orphanCheckStep + `
@@ -64,11 +64,24 @@ jobs:
     runs-on: ubuntu-latest
 `
 
-// The heal's orphaned-object check step, as ci.yaml writes it.
+// recoveryBaselineStep records the checked-out commit before the recovery deploy.
+const recoveryBaselineStep = `      - name: record the recovery checkout
+        id: recovery-baseline
+        shell: bash
+        run: |
+          recovery_sha="$(git --no-replace-objects rev-parse --verify 'HEAD^{commit}')"
+          [[ "${recovery_sha}" =~ ^[0-9a-f]{40}$ ]]
+          printf 'sha=%s\n' "${recovery_sha}" >>"${GITHUB_OUTPUT}"
+
+`
+
+// orphanCheckStep supplies the merge-group boundary and the actual recovery checkout.
 const orphanCheckStep = `      - name: verify nothing outlived the failed deploy
         shell: bash
         env:
           FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}
+          FLUX_ORPHANS_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          FLUX_ORPHANS_RECOVERY_SHA: ${{ steps.recovery-baseline.outputs.sha }}
         run: |
           if [[ ! -f scripts/check-flux-orphaned-objects.sh ]]; then
             echo '- Flux orphaned objects: main predates the check; not run.' >>"${GITHUB_STEP_SUMMARY}"
@@ -78,6 +91,7 @@ const orphanCheckStep = `      - name: verify nothing outlived the failed deploy
           ./scripts/check-flux-orphaned-objects.sh
 `
 
+// TestValidateWorkflowContractAcceptsFailClosedHealJob keeps the complete recovery path valid.
 func TestValidateWorkflowContractAcceptsFailClosedHealJob(t *testing.T) {
 	t.Parallel()
 
@@ -86,6 +100,41 @@ func TestValidateWorkflowContractAcceptsFailClosedHealJob(t *testing.T) {
 	}
 }
 
+// TestRecoveryBaselineContract rejects missing, aliased and unproduced residue inputs.
+func TestRecoveryBaselineContract(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, old, replacement, want string
+	}{
+		{"missing base", "          FLUX_ORPHANS_BASE_SHA: ${{ github.event.merge_group.base_sha }}\n", "", "merge-group base"},
+		{"missing recovery", "          FLUX_ORPHANS_RECOVERY_SHA: ${{ steps.recovery-baseline.outputs.sha }}\n", "", "recovery checkout input"},
+		{"recovery aliases base", "${{ steps.recovery-baseline.outputs.sha }}", "${{ github.event.merge_group.base_sha }}", "recovery checkout input"},
+		{"base aliases recovery", "FLUX_ORPHANS_BASE_SHA: ${{ github.event.merge_group.base_sha }}", "FLUX_ORPHANS_BASE_SHA: ${{ steps.recovery-baseline.outputs.sha }}", "merge-group base"},
+		{"missing producing step", recoveryBaselineStep, "", "recorded recovery checkout step"},
+		{"records wrong commit", "rev-parse --verify 'HEAD^{commit}'", "rev-parse --verify 'origin/main^{commit}'", "recorded recovery checkout step"},
+		{"drops output", "          printf 'sha=%s\\n' \"${recovery_sha}\" >>\"${GITHUB_OUTPUT}\"\n", "", "recorded recovery checkout step"},
+		{"conditional capture", "        id: recovery-baseline\n", "        id: recovery-baseline\n        if: ${{ false }}\n", "recorded recovery checkout step"},
+		{"wrong capture shell", "        id: recovery-baseline\n        shell: bash\n", "        id: recovery-baseline\n        shell: sh\n", "recorded recovery checkout step"},
+		{"unvalidated commit", "          [[ \"${recovery_sha}\" =~ ^[0-9a-f]{40}$ ]]\n", "", "recorded recovery checkout step"},
+		{"capture before checkout", "          ref: main\n" + recoveryBaselineStep, recoveryBaselineStep + "          ref: main\n", "recorded recovery checkout step"},
+		{"capture after deploy", recoveryBaselineStep + "      - uses: ./.github/actions/deploy-prod\n        with:\n          recover-orphaned-fence: \"true\"\n", "      - uses: ./.github/actions/deploy-prod\n        with:\n          recover-orphaned-fence: \"true\"\n" + recoveryBaselineStep, "must follow checkout and precede deployment"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			workflow := strings.Replace(validWorkflow, tt.old, tt.replacement, 1)
+			if workflow == validWorkflow {
+				t.Fatal("fixture mutation did not change the workflow")
+			}
+			err := validateWorkflowContract(workflow)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("validateWorkflowContract() = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestValidateWorkflowContractRejectsBrokenHealContracts removes one recovery safeguard per case.
 func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 	t.Parallel()
 
@@ -221,11 +270,11 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			// prevent -- the heal cannot clear a Lease a dead deploy left held.
 			name: "heal job drops orphaned-fence recovery",
 			old: `          ref: main
-      - uses: ./.github/actions/deploy-prod
+` + recoveryBaselineStep + `      - uses: ./.github/actions/deploy-prod
         with:
           recover-orphaned-fence: "true"`,
 			replacement: `          ref: main
-      - uses: ./.github/actions/deploy-prod
+` + recoveryBaselineStep + `      - uses: ./.github/actions/deploy-prod
         with:
           sops-age-key: placeholder`,
 			wantError: "heal job is missing orphaned-fence recovery",
@@ -274,14 +323,14 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			old: `      - uses: actions/checkout@example
         with:
           ref: main
-      - uses: ./.github/actions/deploy-prod
+` + recoveryBaselineStep + `      - uses: ./.github/actions/deploy-prod
         with:
           recover-orphaned-fence: "true"`,
 			replacement: `      - uses: actions/checkout@example
         with:
           ref: main
           recover-orphaned-fence: "true"
-      - uses: ./.github/actions/deploy-prod`,
+` + recoveryBaselineStep + `      - uses: ./.github/actions/deploy-prod`,
 			wantError: "heal job is missing orphaned-fence recovery",
 		},
 		{
@@ -367,6 +416,7 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 	}
 }
 
+// TestRunReportsValidationResult checks success and failure diagnostics at the command boundary.
 func TestRunReportsValidationResult(t *testing.T) {
 	t.Parallel()
 
@@ -415,6 +465,7 @@ func TestRunReportsValidationResult(t *testing.T) {
 	}
 }
 
+// TestRunReportsWorkflowReadFailure prevents a missing workflow from reporting success.
 func TestRunReportsWorkflowReadFailure(t *testing.T) {
 	t.Parallel()
 
@@ -433,6 +484,7 @@ func TestRunReportsWorkflowReadFailure(t *testing.T) {
 	}
 }
 
+// TestRunCLIUsesExplicitWorkflowPathOutsideRepository rejects reliance on the current directory.
 func TestRunCLIUsesExplicitWorkflowPathOutsideRepository(t *testing.T) {
 	workflowPath := filepath.Join(t.TempDir(), "ci.yaml")
 	if err := os.WriteFile(workflowPath, []byte(validWorkflow), 0o600); err != nil {
@@ -450,6 +502,7 @@ func TestRunCLIUsesExplicitWorkflowPathOutsideRepository(t *testing.T) {
 	}
 }
 
+// TestRunCLIRequiresOneWorkflowPath rejects absent and ambiguous workflow arguments.
 func TestRunCLIRequiresOneWorkflowPath(t *testing.T) {
 	t.Parallel()
 

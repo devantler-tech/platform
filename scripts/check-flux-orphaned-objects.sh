@@ -110,6 +110,7 @@ readonly adopted_annotation='platform.devantler.tech/prune-orphan'
 readonly flux_manager='kustomize-controller'
 readonly partial_discovery='unable to retrieve the complete list of server APIs: '
 
+# summary appends operator-readable results when GitHub provides a step summary.
 summary() {
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     printf '%s\n' "$@" >>"${GITHUB_STEP_SUMMARY}"
@@ -134,6 +135,7 @@ fi
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
+# kubectl_cluster binds every read to the selected context without mutating resources.
 kubectl_cluster() {
   "${kubectl_bin}" --context "${context}" --request-timeout="${request_timeout}" "$@"
 }
@@ -162,6 +164,7 @@ print_error() {
   echo
 }
 
+# unknown records that incomplete evidence cannot establish the absence of residue.
 unknown() {
   echo "::error::Could not tell whether Flux left objects outside every inventory: $1"
   print_error
@@ -444,6 +447,7 @@ summarise_findings() {
   done <"$1"
 }
 
+# skipped_groups discloses aggregated APIs excluded from the inventory comparison.
 skipped_groups() {
   if [[ -s "$1/aggregated.txt" ]]; then
     paste -s -d, "$1/aggregated.txt" | sed 's/,/, /g'
@@ -462,6 +466,7 @@ report_pre_existing() {
   summarise_findings "$1"
 }
 
+# scope separates newly attributable residue from objects predating the failed deploy.
 scope() {
   if [[ -n "${since}" ]]; then
     printf 'Flux-applied objects created or written by Flux since %s' "${since}"

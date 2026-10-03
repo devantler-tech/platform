@@ -31,6 +31,7 @@ if [[ -f "${FAKE_DIR}/reads" ]]; then
   read_number="$(<"${FAKE_DIR}/reads")"
 fi
 
+# serve returns one fixture response while preserving kubectl's status and diagnostics.
 serve() {
   if [[ -f "${FAKE_DIR}/$1.${read_number}.json" ]]; then
     cat "${FAKE_DIR}/$1.${read_number}.json"
@@ -236,6 +237,7 @@ record() {
   mv "$1.new" "$1"
 }
 
+# run invokes the actual checker with the fixture cluster and captures its exit status.
 run() {
   local dir="$1"
   shift
@@ -256,39 +258,47 @@ run() {
   set -e
 }
 
+# fail identifies the scenario and preserves its checker output for diagnosis.
 fail() {
   printf 'FAIL %s: %s\n--- output ---\n%s\n' "${case_name}" "$1" "${output}" >&2
   exit 1
 }
 
+# expect_status verifies whether the real command accepted, rejected or refused the evidence.
 expect_status() {
   [[ "${status}" -eq "$1" ]] || fail "expected exit $1, got ${status}"
 }
 
+# expect_line requires a complete result line to avoid accepting an unrelated substring.
 expect_line() {
   grep -Fxq -- "$1" <<<"${output}" || fail "missing line: $1"
 }
 
+# expect_text checks the operator-facing reason for a fixture's disposition.
 expect_text() {
   grep -Fq -- "$1" <<<"${output}" || fail "missing text: $1"
 }
 
+# expect_no_text detects forbidden diagnostics or private payloads in command output.
 expect_no_text() {
   if grep -Fq -- "$1" <<<"${output}"; then
     fail "unexpected text: $1"
   fi
 }
 
+# expect_summary checks the separately emitted GitHub step-summary result.
 expect_summary() {
   grep -Fq -- "$1" "${dir}/summary.md" || fail "the step summary is missing: $1"
 }
 
+# expect_reads verifies that both observations occur when the first is already inconclusive.
 expect_reads() {
   local reads
   reads="$(cat "${dir}/reads")"
   [[ "${reads}" == "$1" ]] || fail "expected $1 read(s), got ${reads}"
 }
 
+# regression_metadata_storage proves Secret payloads never reach scratch files or output.
 regression_metadata_storage() {
   local failures canary='RklYVFVSRV9TRUNSRVRfNDM4NA=='
   for failures in '' '1,2,3'; do
@@ -338,6 +348,7 @@ regression_metadata_storage() {
   done
 }
 
+# regression_auxiliary_metadata_storage covers payload exclusion for sources and aggregated APIs.
 regression_auxiliary_metadata_storage() {
   local failed_read override target canary='LATER_READ_FIXTURE_CANARY_4384'
   for failed_read in none apiservice kustomization source; do
@@ -396,6 +407,7 @@ regression_auxiliary_metadata_storage() {
   done
 }
 
+# regression_baseline_attribution requires distinct verified failed and restored revision inputs.
 regression_baseline_attribution() {
   local override
   case_name='recent retirement on newer recovered main has ambiguous attribution'
@@ -430,6 +442,7 @@ regression_baseline_attribution() {
   expect_summary '**1 found**'
 }
 
+# regression_always_settle keeps the second observation mandatory after an unknown first read.
 regression_always_settle() {
   case_name='clean first snapshot followed by candidate-only object is not GREEN'
   dir="$(scenario initially-clean-late-object)"
@@ -461,6 +474,7 @@ regression_always_settle() {
   expect_summary 'none confirmed'
 }
 
+# regression_active_reconcile refuses stale inventories while Flux is applying another revision.
 regression_active_reconcile() {
   local state
   for state in building reconciling unknown attempted; do
@@ -621,6 +635,7 @@ regression_current_generations() {
   expect_summary 'UNKNOWN'
 }
 
+# regression_long_stderr ensures lengthy discovery warnings cannot hide the underlying error.
 regression_long_stderr() {
   case_name='long kubectl error preserves UNKNOWN and its summary'
   dir="$(scenario long-stderr)"
@@ -641,6 +656,7 @@ regression_long_stderr() {
   expect_no_text 'Warning:'
 }
 
+# regression_explicit_adoption distinguishes a new owner from stale leftover ownership labels.
 regression_explicit_adoption() {
   case_name='owner references alone do not establish a handoff'
   dir="$(scenario owner-reference)"
