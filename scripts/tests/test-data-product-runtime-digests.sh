@@ -30,8 +30,9 @@ cat >"${scratch}/bin/docker" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "$*" == "buildx imagetools inspect ghcr.io/devantler-tech/data-product-controller@${index} --raw" ]] || exit 91
-[[ "${REGISTRY_FAILURE:-false}" == false ]] || exit 92
+[[ "${REGISTRY_FAILURE:-false}" != empty ]] || exit 92
 cat "$REGISTRY_MANIFEST"
+[[ "${REGISTRY_FAILURE:-false}" == false ]] || exit 92
 SH
 cat >"${scratch}/scripts/verify-data-product-ui-rollout.sh" <<'SH'
 #!/usr/bin/env bash
@@ -109,4 +110,6 @@ printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json"
 run_case missing-runtime-digest fail
 printf 'not JSON\n' >"$REGISTRY_MANIFEST"
 run_case invalid-json fail
+printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{},"layers":[]}\n' >"$REGISTRY_MANIFEST"
 run_case registry-read-failure fail true
+run_case empty-registry-read-failure fail empty
