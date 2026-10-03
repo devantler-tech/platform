@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Build the unmodified Helm command with the audited controller's SDK metadata.
 set -euo pipefail
-[ "$#" -eq 1 ] && [ -n "$1" ] || { echo 'usage: build-controller-helm.sh <output-binary>' >&2; exit 2; }
+if [ "$#" -ne 1 ] || [ -z "${1:-}" ]; then
+  echo 'usage: build-controller-helm.sh <output-binary>' >&2
+  exit 2
+fi
 module="$(cd "$(dirname "${BASH_SOURCE[0]}")/render-helm-chart" && pwd)"
 output="$1"
 work="$(mktemp -d)"
