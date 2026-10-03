@@ -23,6 +23,11 @@
 # object preserves its creation time. Status writes and other field managers
 # do not establish a Flux apply. Missing or invalid write times cannot prove
 # that an object predates the boundary, so those are included conservatively.
+# When the heal restores a newer main, those times cannot distinguish a failed
+# candidate from a legitimate retirement on main. FLUX_ORPHANS_BASE_SHA is the
+# failed merge group's base, and FLUX_ORPHANS_RECOVERY_SHA is the exact checked-
+# out recovery commit. Recent untracked objects are UNKNOWN unless both are
+# valid matching commit IDs. Without a time boundary every orphan still fails.
 # An older one is reported but does not fail it: it is usually a prune-protected
 # object whose manifest a retirement removed on purpose and which is waiting to
 # be deleted by hand, and the prune-protected-orphan-alert CronJob escalates
@@ -69,7 +74,8 @@
 # created during a reconcile can be read before its Kustomization lists it.
 # Objects are therefore read before the inventories, and those before the
 # sources, and a finding is reported only when a second read after
-# FLUX_ORPHANS_SETTLE_SECONDS still has it.
+# FLUX_ORPHANS_SETTLE_SECONDS still has it. Even a clean first snapshot must be
+# read again: an in-flight candidate apply may not have created its residue yet.
 #
 #   exit 0  no orphan to fail on (older orphans, if any, are listed as warnings)
 #   exit 1  an orphan to fail on: it is named, and nothing will update or prune it
@@ -83,6 +89,12 @@ set -euo pipefail
 kubectl_bin="${FLUX_ORPHANS_KUBECTL_BIN:-kubectl}"
 context="${FLUX_ORPHANS_CONTEXT:-admin@prod}"
 since="${FLUX_ORPHANS_SINCE:-}"
+base_sha="${FLUX_ORPHANS_BASE_SHA:-}"
+recovery_sha="${FLUX_ORPHANS_RECOVERY_SHA:-}"
+baseline_matches=false
+if [[ "${base_sha}" =~ ^[0-9a-f]{40}$ && "${recovery_sha}" =~ ^[0-9a-f]{40}$ && "${base_sha}" == "${recovery_sha}" ]]; then
+  baseline_matches=true
+fi
 settle_seconds="${FLUX_ORPHANS_SETTLE_SECONDS:-60}"
 retry_seconds="${FLUX_ORPHANS_RETRY_SECONDS:-20}"
 readonly read_attempts=3
@@ -199,8 +211,28 @@ read_state() {
     echo "the API server listed no resource types" >"${tmp_dir}/error.log"
     return 1
   fi
+  # Discovery includes Secrets. Project the response before any stdout reaches
+  # disk, including on a failed read. Arbitrary annotations (notably kubectl's
+  # last-applied document), fieldsV1 and resource payloads are not needed.
+  # shellcheck disable=SC2016 # jq variables, passed explicitly below
   kubectl_cluster get "${listed}" --all-namespaces -l "${owner_label}" \
-    --show-managed-fields -o json >"${dir}/objects.json" 2>"${tmp_dir}/error.log" || return 1
+    --show-managed-fields -o json 2>"${tmp_dir}/error.log" |
+    jq --arg owner_label "${owner_label}" --arg owner_namespace_label "${owner_namespace_label}" \
+      --arg prune_annotation "${prune_annotation}" --arg adopted_annotation "${adopted_annotation}" '
+      if (.items | type) != "array" then error("object response has no items array") else
+      {apiVersion, kind, items: [.items[] | .metadata as $m | {apiVersion, kind,
+        metadata: {
+          name: $m.name, namespace: $m.namespace, uid: $m.uid,
+          creationTimestamp: $m.creationTimestamp, deletionTimestamp: $m.deletionTimestamp,
+          labels: {($owner_label): $m.labels[$owner_label],
+                   ($owner_namespace_label): $m.labels[$owner_namespace_label]},
+          annotations: {($prune_annotation): $m.annotations[$prune_annotation],
+                        ($adopted_annotation): $m.annotations[$adopted_annotation]},
+          managedFields: [$m.managedFields[]? | {manager, operation, subresource, time}]
+        }}]} end' >"${dir}/objects.json" 2>"${tmp_dir}/projection-error.log" || {
+      cat "${tmp_dir}/projection-error.log" >>"${tmp_dir}/error.log"
+      return 1
+    }
   kubectl_cluster get kustomizations.kustomize.toolkit.fluxcd.io --all-namespaces -o json \
     >"${dir}/kustomizations.json" 2>"${tmp_dir}/error.log" || return 1
   # Only the source kinds the Kustomizations use. A kind this does not know is
@@ -304,6 +336,9 @@ readonly evaluate_program='
      | (if $owner == null then ""
         elif ($owner.inventory | not) then "reason=no-inventory"
         elif ($owner.ready | not) then "reason=not-ready"
+        else "" end) as $inventory_unjudged
+     | (if $inventory_unjudged != "" then $inventory_unjudged
+        elif $since != "" and ($baseline_matches | not) then "reason=ambiguous-recovery-baseline"
         else "" end) as $unjudged
      | (if (recent | not) then "pre-existing"
         elif $unjudged != "" then "unjudged"
@@ -331,6 +366,7 @@ evaluate() {
     --arg adopted_annotation "${adopted_annotation}" \
     --arg manager "${flux_manager}" \
     --arg since "${since}" \
+    --argjson baseline_matches "${baseline_matches}" \
     --slurpfile objects "${dir}/objects.json" \
     --slurpfile kustomizations "${dir}/kustomizations.json" \
     --slurpfile sources "${dir}/sources.json" \
@@ -394,16 +430,8 @@ scope() {
 first="${tmp_dir}/first"
 read_with_retry "${first}" || unknown "the cluster could not be read."
 evaluate "${first}" || unknown "the first read examined nothing."
-grep '^pre-existing ' "${first}/findings.txt" >"${tmp_dir}/pre-existing-first.txt" || true
-
-if ! grep -Eq '^(orphan|unjudged|stale) ' "${first}/findings.txt"; then
-  report_pre_existing "${tmp_dir}/pre-existing-first.txt"
-  echo "✅ No object is outside every inventory among $(scope) (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${first}"))."
-  summary "- Flux orphaned objects: none among $(scope) — ${checked} Flux-applied objects, ${kustomizations} Kustomizations."
-  exit 0
-fi
-
-echo "$(grep -Ec '^(orphan|unjudged|stale) ' "${first}/findings.txt") finding(s) on the first read; reading again in ${settle_seconds}s to rule out a reconcile in progress."
+first_findings="$(grep -Ec '^(orphan|unjudged|stale) ' "${first}/findings.txt" || true)"
+echo "${first_findings} finding(s) on the first read; reading again in ${settle_seconds}s to rule out a reconcile in progress."
 sleep "${settle_seconds}"
 
 second="${tmp_dir}/second"
@@ -452,6 +480,12 @@ EOF
 fi
 
 if [[ -s "${tmp_dir}/unjudged.txt" ]]; then
+  if grep -Fq 'reason=ambiguous-recovery-baseline' "${tmp_dir}/unjudged.txt"; then
+    echo "Write times cannot attribute these objects to the failed candidate when the recovery checkout differs from its base, or either commit ID is missing or invalid:"
+    print_findings "${tmp_dir}/unjudged.txt"
+    : >"${tmp_dir}/error.log"
+    unknown "the failed revision could not be distinguished from a newer or unknown recovery baseline."
+  fi
   echo "These could not be judged. An object outside every inventory whose Kustomization is not Ready or has no inventory may simply not be recorded yet, and a Kustomization that is not Ready at its source's revision may still list what a replaced revision applied:"
   print_findings "${tmp_dir}/unjudged.txt"
   : >"${tmp_dir}/error.log"
@@ -464,7 +498,11 @@ if [[ -s "${tmp_dir}/unconfirmed-new.txt" ]]; then
   : >"${tmp_dir}/error.log"
   unknown "the final read contains findings that have not settled."
 fi
-cleared="$(grep -Ec '^(orphan|unjudged|stale) ' "${first}/findings.txt")"
-echo "✅ Nothing stayed outside every inventory across both reads among $(scope): the ${cleared} finding(s) on the first read had cleared by the second (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${second}"))."
+cleared="${first_findings}"
+if ((cleared == 0)); then
+  echo "✅ No object is outside every inventory across both reads among $(scope) (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${second}"))."
+else
+  echo "✅ Nothing stayed outside every inventory across both reads among $(scope): the ${cleared} finding(s) on the first read had cleared by the second (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${second}"))."
+fi
 summary "- Flux orphaned objects: none confirmed among $(scope) — ${checked} Flux-applied objects, ${kustomizations} Kustomizations (${cleared} cleared on re-read)."
 exit 0

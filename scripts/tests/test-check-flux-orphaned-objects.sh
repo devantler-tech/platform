@@ -60,6 +60,11 @@ if [[ "$#" -eq 8 && "$1" == get && "$3 $4 $5 $6 $7 $8" == "--all-namespaces -l k
   printf '%s\n' "$2" >"${FAKE_DIR}/listed.${read_number}"
   printf 'Warning: v1 Endpoints is deprecated in v1.33+\n' >&2
   if [[ ",${FAKE_FAIL_READS:-}," == *",${read_number},"* ]]; then
+    if [[ "${FAKE_FAIL_WITH_OBJECTS:-}" == 1 ]]; then
+      # A read can print a valid response before returning a nonzero status.
+      # Its credential payload must still never reach a scan file.
+      serve objects
+    fi
     if [[ "${FAKE_LONG_ERROR:-}" == 1 ]]; then
       # Larger than a pipe buffer: truncating a middle pipeline stage must not
       # turn UNKNOWN into SIGPIPE or omit the step summary.
@@ -91,6 +96,21 @@ printf 'unexpected kubectl arguments: %s\n' "$*" >&2
 exit 92
 EOF
 chmod +x "${fake_kubectl}"
+
+# Preserve the scan's own temporary files immediately before its cleanup.
+# The fixture source is outside that directory, so the canary distinguishes
+# raw responses from what the production check actually writes to disk.
+mkdir -p "${tmp_dir}/capture-bin"
+cat >"${tmp_dir}/capture-bin/rm" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${FAKE_SCAN_CAPTURE_DIR:-}" && "$#" -eq 2 && "$1" == -rf && -d "$2" ]]; then
+  mkdir -p "${FAKE_SCAN_CAPTURE_DIR}"
+  cp -R "$2"/. "${FAKE_SCAN_CAPTURE_DIR}"/
+fi
+exec /bin/rm "$@"
+EOF
+chmod +x "${tmp_dir}/capture-bin/rm"
 
 readonly prune_disabled='{"annotations":{"kustomize.toolkit.fluxcd.io/prune":"disabled"}}'
 readonly applied_at='2026-08-30T14:17:34Z'
@@ -224,6 +244,8 @@ run() {
     FLUX_ORPHANS_KUBECTL_BIN="${fake_kubectl}" \
     FLUX_ORPHANS_SETTLE_SECONDS=0 \
     FLUX_ORPHANS_RETRY_SECONDS=0 \
+    FLUX_ORPHANS_BASE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    FLUX_ORPHANS_RECOVERY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     GITHUB_STEP_SUMMARY="${dir}/summary.md" \
     FAKE_DIR="${dir}" \
     "$@" bash "${script}" 2>&1)"
@@ -264,6 +286,120 @@ expect_reads() {
   [[ "${reads}" == "$1" ]] || fail "expected $1 read(s), got ${reads}"
 }
 
+regression_metadata_storage() {
+  local failures canary='RklYVFVSRV9TRUNSRVRfNDM4NA=='
+  for failures in '' '1,2,3'; do
+    case_name="Secret stream cannot reach scan disk, failed reads=${failures:-none}"
+    dir="$(scenario "metadata-${failures:-none}")"
+    printf 'secrets\n' >>"${dir}/resources.txt"
+    obj v1 Secret web login uid-secret flux-system/apps kustomize-controller |
+      jq --arg canary "${canary}" '
+        .data = {password: $canary} | .stringData = {password: $canary}
+        | .metadata.annotations = {
+            "kubectl.kubernetes.io/last-applied-configuration": $canary,
+            "fixture-sensitive-annotation": $canary}
+        | .metadata.managedFields[0].fieldsV1 = {"fixture-sensitive-field": $canary}' |
+      add_objects "${dir}"
+    record "${dir}/kustomizations.json" 'web_login__Secret'
+    # This assertion binds the canary to the response the fake really serves.
+    grep -Fq "${canary}" "${dir}/objects.json" || fail 'source response has no canary'
+    run "${dir}" PATH="${tmp_dir}/capture-bin:${PATH}" \
+      FAKE_SCAN_CAPTURE_DIR="${dir}/captured-scan" FAKE_FAIL_READS="${failures}" FAKE_FAIL_WITH_OBJECTS=1
+    if [[ -n "${failures}" ]]; then expect_status 2; else expect_status 0; fi
+    [[ -f "${dir}/captured-scan/first/objects.json" ]] || fail 'no actual scan file was captured'
+    if grep -RFq -- "${canary}" "${dir}/captured-scan"; then
+      fail 'credential canary from response payload/metadata reached a scan file'
+    fi
+    expect_no_text "${canary}"
+    if grep -Fq -- "${canary}" "${dir}/summary.md"; then fail 'credential canary reached step summary'; fi
+    if [[ -z "${failures}" ]]; then
+      jq -e '.items[] | select(.kind == "Secret")
+        | .apiVersion == "v1" and .metadata.uid == "uid-secret"
+          and .metadata.managedFields[0].manager == "kustomize-controller"
+          and .metadata.managedFields[0].operation == "Apply"
+          and .metadata.managedFields[0].time != null
+          and .data == null and .stringData == null
+          and .metadata.managedFields[0].fieldsV1 == null
+          and (.metadata.annotations | keys | length) == 2' \
+        "${dir}/captured-scan/first/objects.json" >/dev/null || fail 'required attribution metadata was not preserved alone'
+    fi
+    if [[ -n "${FLUX_ORPHANS_TEST_RECEIPT:-}" ]]; then
+      jq -cn --arg failed_reads "${failures}" --argjson status "${status}" \
+        --slurpfile stored "${dir}/captured-scan/first/objects.json" '
+        {case: "metadata-only stream and disk", failedReads: $failed_reads, exitStatus: $status,
+         fixtureResponseContainsCanary: true, scanFilesContainCanary: false,
+         stdoutContainsCanary: false, summaryContainsCanary: false,
+         storedSecret: [$stored[0].items[] | select(.kind == "Secret")
+           | {apiVersion, kind, metadata}]}' >>"${FLUX_ORPHANS_TEST_RECEIPT}"
+    fi
+  done
+}
+
+regression_baseline_attribution() {
+  local override
+  case_name='recent retirement on newer recovered main has ambiguous attribution'
+  dir="$(scenario newer-main-retirement)"
+  obj v1 ConfigMap web retained uid-retained flux-system/apps kustomize-controller \
+    '{"creationTimestamp":"2026-08-28T12:00:00Z","managedFields":[{"manager":"kustomize-controller","operation":"Apply","time":"2026-08-30T15:00:00Z"}],"annotations":{"kustomize.toolkit.fluxcd.io/prune":"disabled"}}' |
+    add_objects "${dir}"
+  run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z \
+    FLUX_ORPHANS_RECOVERY_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  expect_status 2
+  expect_reads 2
+  expect_text 'reason=ambiguous-recovery-baseline'
+  expect_summary 'UNKNOWN'
+  expect_no_text '**1 found**'
+  expect_no_text '✅'
+
+  for override in 'FLUX_ORPHANS_BASE_SHA=' 'FLUX_ORPHANS_RECOVERY_SHA=' \
+    'FLUX_ORPHANS_BASE_SHA=short' 'FLUX_ORPHANS_RECOVERY_SHA=not-a-commit'; do
+    case_name="recent untracked object with unusable attribution: ${override}"
+    run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z "${override}"
+    expect_status 2
+    expect_text 'reason=ambiguous-recovery-baseline'
+    expect_summary 'UNKNOWN'
+    expect_no_text '**1 found**'
+    expect_no_text '✅'
+  done
+
+  case_name='recent untracked object at the original recovered baseline is residue'
+  run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z
+  expect_status 1
+  expect_reads 2
+  expect_summary '**1 found**'
+}
+
+regression_always_settle() {
+  case_name='clean first snapshot followed by candidate-only object is not GREEN'
+  dir="$(scenario initially-clean-late-object)"
+  obj v1 ConfigMap web late uid-late flux-system/apps kustomize-controller "${prune_disabled}" | add_objects "${dir}" 2
+  run "${dir}"
+  expect_status 2
+  expect_reads 2
+  expect_text 'ConfigMap web/late'
+  expect_summary 'UNKNOWN'
+  expect_no_text '✅'
+
+  case_name='clean first snapshot does not excuse an unreadable settling snapshot'
+  dir="$(scenario initially-clean-unreadable)"
+  run "${dir}" FAKE_FAIL_READS=2,3,4
+  expect_status 2
+  expect_reads 4
+  expect_text 'the cluster could not be read a second time.'
+  expect_summary 'UNKNOWN'
+  expect_no_text '✅'
+
+  case_name='clean first snapshot and newly inventoried object settle cleanly'
+  dir="$(scenario initially-clean-late-tracked)"
+  obj v1 ConfigMap web late uid-late flux-system/apps kustomize-controller | add_objects "${dir}" 2
+  cp "${dir}/kustomizations.json" "${dir}/kustomizations.2.json"
+  record "${dir}/kustomizations.2.json" 'web_late__ConfigMap'
+  run "${dir}"
+  expect_status 0
+  expect_reads 2
+  expect_summary 'none confirmed'
+}
+
 # An evicted revision can reapply an older protected object without changing
 # its creation time. Only Flux writes to the object itself extend this scope.
 regression_flux_write_time() {
@@ -297,7 +433,7 @@ regression_flux_write_time() {
     '{"creationTimestamp":"2026-08-28T12:00:00Z","managedFields":[{"manager":"kustomize-controller","operation":"Apply","time":"2026-08-30T14:05:11.999Z"},{"manager":"kustomize-controller","subresource":"status","time":"2026-08-30T14:17:34Z"},{"manager":"another-controller","time":"2026-08-30T14:17:34Z"}]}' | add_objects "${dir}"
   run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z
   expect_status 0
-  expect_reads 1
+  expect_reads 2
   expect_text '::warning::1 object(s)'
 
   case_name='older orphan with an unrecorded Flux write time'
@@ -353,7 +489,7 @@ regression_current_generations() {
     '.metadata.generation = 3 | .status.observedGeneration = 3 | .status.conditions[0].observedGeneration = 3'
   run "${dir}"
   expect_status 0
-  expect_reads 1
+  expect_reads 2
 
   case_name='stale status becomes current on the settling read'
   set_ks "${dir}/kustomizations.json" flux-system/apps '.metadata.generation = 3'
@@ -372,7 +508,7 @@ regression_current_generations() {
   set_ks "${dir}/sources.json" flux-system/src '.kind = "ExternalArtifact" | del(.status.observedGeneration)'
   run "${dir}"
   expect_status 0
-  expect_reads 1
+  expect_reads 2
 
   case_name='ExternalArtifact with an older Ready-condition generation'
   set_ks "${dir}/sources.json" flux-system/src '.metadata.generation = 2'
@@ -418,20 +554,31 @@ regression_explicit_adoption() {
   mv "${dir}/objects.json.new" "${dir}/objects.json"
   run "${dir}"
   expect_status 0
-  expect_reads 1
+  expect_reads 2
   expect_no_text 'ConfigMap web/retained'
 }
 
+if [[ -n "${FLUX_ORPHANS_TEST_REGRESSION:-}" ]]; then
+  case "${FLUX_ORPHANS_TEST_REGRESSION}" in
+    metadata) regression_metadata_storage ;;
+    attribution) regression_baseline_attribution ;;
+    settle) regression_always_settle ;;
+    *) echo 'unknown regression selector' >&2; exit 2 ;;
+  esac
+  echo "check-flux-orphaned-objects: selected regression passed (${run_count} CLI fixture runs)"
+  exit 0
+fi
+
 # Every Flux-applied object is in an inventory, including an RBAC name whose
 # colons Flux writes as double underscores, and every Kustomization is Ready at
-# its source's revision. One read is enough.
+# its source's revision. A clean snapshot still needs the settling read.
 case_name='clean cluster'
 dir="$(scenario clean)"
 run "${dir}"
 expect_status 0
-expect_line '✅ No object is outside every inventory among all Flux-applied objects (4 Flux-applied objects, 2 Kustomizations; aggregated API groups not read: spdx.softwarecomposition.kubescape.io).'
-expect_reads 1
-expect_summary '- Flux orphaned objects: none among all Flux-applied objects — 4 Flux-applied objects, 2 Kustomizations.'
+expect_line '✅ No object is outside every inventory across both reads among all Flux-applied objects (4 Flux-applied objects, 2 Kustomizations; aggregated API groups not read: spdx.softwarecomposition.kubescape.io).'
+expect_reads 2
+expect_summary '- Flux orphaned objects: none confirmed among all Flux-applied objects — 4 Flux-applied objects, 2 Kustomizations (0 cleared on re-read).'
 
 # The aggregated API is never listed; every other listable type is, in one call,
 # and only the source kinds the Kustomizations use are read.
@@ -474,11 +621,11 @@ expect_summary '`HelmRelease.helm.toolkit.fluxcd.io data-product-controller/data
 case_name='orphans older than the merge group'
 run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T15:00:00Z
 expect_status 0
-expect_reads 1
+expect_reads 2
 expect_text '::warning::3 object(s) outside every inventory predate 2026-08-30T15:00:00Z in creation and Flux write times; they are not failed on here:'
 expect_line '  Namespace data-product-controller (claims=flux-system/apps created=2026-08-30T14:17:34Z prune=disabled)'
 expect_text 'prune-protected-orphan-alert CronJob'
-expect_line '✅ No object is outside every inventory among Flux-applied objects created or written by Flux since 2026-08-30T15:00:00Z (7 Flux-applied objects, 2 Kustomizations; aggregated API groups not read: spdx.softwarecomposition.kubescape.io).'
+expect_line '✅ No object is outside every inventory across both reads among Flux-applied objects created or written by Flux since 2026-08-30T15:00:00Z (7 Flux-applied objects, 2 Kustomizations; aggregated API groups not read: spdx.softwarecomposition.kubescape.io).'
 expect_summary '- Flux orphaned objects older than 2026-08-30T15:00:00Z, not failed on:'
 
 # An object created at the very second the group was built is residue, and a
@@ -524,7 +671,7 @@ expect_text '::error::Could not tell whether Flux left objects outside every inv
 case_name='behind its source, nothing recent'
 run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T15:00:00Z
 expect_status 0
-expect_reads 1
+expect_reads 2
 
 # Ready=False at the right revision is no better, and without a boundary any
 # Kustomization behind its source counts.
@@ -579,7 +726,7 @@ dir="$(scenario not-reported)"
 } | add_objects "${dir}"
 run "${dir}"
 expect_status 0
-expect_reads 1
+expect_reads 2
 expect_text '(7 Flux-applied objects, 2 Kustomizations;'
 
 # Flux transcodes colons only for the four RBAC kinds, exactly as its inventory does.
@@ -700,7 +847,7 @@ case_name='transient read failure'
 dir="$(scenario transient)"
 run "${dir}" FAKE_FAIL_READS=1
 expect_status 0
-expect_reads 2
+expect_reads 3
 expect_text 'Read 1/3 failed; retrying in 0s.'
 expect_text '✅ No object is outside every inventory'
 
@@ -740,5 +887,8 @@ regression_flux_write_time
 regression_current_generations
 regression_long_stderr
 regression_explicit_adoption
+regression_metadata_storage
+regression_baseline_attribution
+regression_always_settle
 
 echo "check-flux-orphaned-objects: all cases passed (${run_count} CLI fixture runs)"
