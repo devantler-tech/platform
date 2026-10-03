@@ -21,6 +21,7 @@ jobs:
       k8s: ${{ steps.filter.outputs.k8s }}
       bridge_validation: ${{ steps.filter.outputs.bridge_validation }}
       talos: ${{ steps.filter.outputs.talos }}
+      crossview: ${{ steps.filter.outputs.crossview }}
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -626,6 +627,8 @@ jobs:
               - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
               - 'scripts/tests/test-crossview-coroot-postgres-integration.sh'
               - 'scripts/tests/test-crossview-postgres-durable-storage.sh'
+              - 'scripts/tests/test-crossview-login-alerter.sh'
+              - 'scripts/tests/test-crossview-login-alerter-runtime.sh'
               - 'scripts/tests/test-coroot-api-key-contract.sh'
               - 'scripts/tests/test-coroot-availability-remediation.sh'
               - 'scripts/tests/test-descheduler-availability.sh'
@@ -844,6 +847,21 @@ jobs:
               - 'go.sum'
               - '.github/workflows/ci.yaml'
               - '.github/workflows/cd.yaml'
+            # What the Docker reproduction of the Crossview login outage reads:
+            # the chart pin and values, the prod apps overlay and the shared
+            # components it applies to every HelmRelease, the sensor and its test.
+            crossview:
+              - 'k8s/bases/apps/crossview/**'
+              - 'k8s/bases/apps/kustomization.yaml'
+              - 'k8s/bases/components/annotations-transformers/**'
+              - 'k8s/bases/components/helmrelease-drift-detection/**'
+              - 'k8s/bases/components/helmrelease-flux-defaults/**'
+              - 'k8s/providers/hetzner/apps/crossview/**'
+              - 'k8s/providers/hetzner/apps/kustomization.yaml'
+              - 'k8s/providers/hetzner/infrastructure/coroot/cron-job-crossview-login-alerter.yaml'
+              - 'k8s/clusters/prod/bootstrap/config-map.yaml'
+              - 'scripts/tests/test-crossview-login-alerter-runtime.sh'
+              - '.github/workflows/ci.yaml'
 
   validate-publication-contract:
     name: 🖋️ Validate Publication Contract
@@ -1651,6 +1669,25 @@ jobs:
         run: |
           shellcheck scripts/tests/test-crossview-postgres-durable-storage.sh
           bash scripts/tests/test-crossview-postgres-durable-storage.sh
+
+      - name: 🔓 Validate the Crossview login alert
+        if: needs.changes.outputs.k8s == 'true'
+        # Crossview's only probe never touches its database, so an empty schema
+        # broke every sign-in for six days with the pod Ready (#3315). This pins
+        # the sensor's verdicts and wiring against stubbed answers.
+        run: |
+          shellcheck scripts/tests/test-crossview-login-alerter.sh scripts/tests/test-crossview-login-alerter-runtime.sh
+          bash scripts/tests/test-crossview-login-alerter.sh
+
+      - name: 🔓 Reproduce the Crossview login outage
+        if: needs.changes.outputs.crossview == 'true'
+        # Measured at about 30s; the bound only stops a hung pull holding the job.
+        timeout-minutes: 15
+        # Runs the pinned app and database in Docker, empties the database
+        # under the running app and runs the deployed sensor against it, so a
+        # chart bump that changes what /api/auth/check reports fails here. Only
+        # Crossview changes pay for the image pulls.
+        run: bash scripts/tests/test-crossview-login-alerter-runtime.sh
 
       - name: 🔑 Validate Coroot API key and registry egress
         if: needs.changes.outputs.k8s == 'true'
