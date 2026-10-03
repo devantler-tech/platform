@@ -165,13 +165,20 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 				refuse(resolutionErr)
 			}
 			for _, prefix := range words[:executable] {
-				if shadowed[filepath.Base(prefix)] {
+				if prefix == filepath.Base(prefix) && shadowed[prefix] {
 					refuse("a local binding replaces command-wrapper semantics")
 				}
 			}
 			effectiveWords, effectiveStatic := words[executable:], static[executable:]
 			effectiveCommand := filepath.Base(effectiveWords[0])
-			callerCommand := effectiveWords[0] == effectiveCommand
+			callerWrappers := true
+			for _, prefix := range words[:executable] {
+				name := filepath.Base(prefix)
+				if (name == "command" || name == "builtin" || name == "exec") && prefix != name {
+					callerWrappers = false
+				}
+			}
+			callerCommand := effectiveWords[0] == effectiveCommand && callerWrappers
 			deferred := false
 			for _, parent := range stack {
 				if _, ok := parent.(*syntax.FuncDecl); ok {
@@ -222,9 +229,7 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 					}
 				}
 				if effectiveCommand == "set" {
-					if mode := shellErrexitChange(effectiveWords, effectiveStatic); mode != nil {
-						propagateEffects(shellEffects{errexit: mode})
-					}
+					propagateEffects(shellSetEffects(effectiveWords, effectiveStatic))
 				}
 				if effectiveCommand == "exit" && shellExitMaySucceed(effectiveWords, effectiveStatic) {
 					propagateEffects(shellEffects{successExit: true})
@@ -235,7 +240,7 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 				child := false
 				for _, prefix := range words[:executable] {
 					name := filepath.Base(prefix)
-					if name == "exec" && !child {
+					if name == "exec" && prefix == name && callerWrappers && !child {
 						if current, _ := shellEffectsContext(stack); current {
 							applyEffects(shellEffects{successExit: true})
 						}
@@ -459,12 +464,28 @@ func shellEffectsContext(stack []syntax.Node) (current, guaranteed bool) {
 
 // set changes the current shell; -- separates positional data from options.
 // A dynamic leading option cannot prove that errexit remains enabled.
-func shellErrexitChange(words []string, static []bool) *bool {
-	var mode *bool
+func shellSetEffects(words []string, static []bool) shellEffects {
+	var effects shellEffects
+	unknown := func() shellEffects {
+		// An unreadable or invalid option sequence cannot prove restoration;
+		// it may also stop execution before the scanner is reached.
+		disabled := false
+		effects.errexit, effects.flowUncertain = &disabled, true
+		return effects
+	}
+	applyOption := func(option string, enabled bool) {
+		switch option {
+		case "e", "errexit":
+			effects.errexit = &enabled
+		case "n", "t", "noexec", "onecmd":
+			if enabled {
+				effects.flowUncertain = true
+			}
+		}
+	}
 	for i := 1; i < len(words); i++ {
 		if !static[i] {
-			unknown := false
-			return &unknown
+			return unknown()
 		}
 		word := words[i]
 		if word == "--" || (!strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "+")) {
@@ -476,19 +497,24 @@ func shellErrexitChange(words []string, static []bool) *bool {
 			}
 			i++
 			if !static[i] {
-				unknown := false
-				return &unknown
+				return unknown()
 			}
-			if words[i] != "errexit" {
-				continue
+			switch words[i] {
+			case "allexport", "braceexpand", "emacs", "errexit", "errtrace", "functrace", "hashall", "histexpand", "history", "ignoreeof", "interactive-comments", "keyword", "monitor", "noclobber", "noexec", "noglob", "nolog", "notify", "nounset", "onecmd", "physical", "pipefail", "posix", "privileged", "verbose", "vi", "xtrace":
+				applyOption(words[i], word == "-o")
+			default:
+				return unknown()
 			}
-		} else if !strings.Contains(word[1:], "e") {
 			continue
 		}
-		enabled := strings.HasPrefix(word, "-")
-		mode = &enabled
+		for _, option := range word[1:] {
+			if !strings.ContainsRune("abefhkmnptuvxBCEHPT", option) {
+				return unknown()
+			}
+			applyOption(string(option), strings.HasPrefix(word, "-"))
+		}
 	}
-	return mode
+	return effects
 }
 
 func shellExitMaySucceed(words []string, static []bool) bool {

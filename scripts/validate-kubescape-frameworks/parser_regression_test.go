@@ -231,6 +231,10 @@ func TestScannerCannotRunWithFailureHandlingDisabled(t *testing.T) {
 		"trap 'exit 0' DEBUG",
 		"set +e; /nonexistent/set -e",
 		"restore() { set -e; }; set +e; ./restore",
+		"set +e; /nonexistent/command set -e",
+		"set -n",
+		"set -o noexec",
+		"set +e; set -Ze",
 	} {
 		if _, err := setOf(t, prefix+"\n"+goodScan); err == nil {
 			t.Errorf("scanner failure can be discarded by: %s", prefix)
@@ -305,6 +309,8 @@ func TestParserRegressionBashWitnesses(t *testing.T) {
 		"conditional restoration is not executed":   {"set +e\nif false; then set -e; fi\n" + goodScan + "\necho ready", true},
 		"subshell restoration does not propagate":   {"set +e\n(set -e)\n" + goodScan + "\necho ready", true},
 		"conditional handler clearing not executed": {"trap 'exit 0' EXIT\nif false; then trap - EXIT; fi\n" + goodScan, true},
+		"path wrapper cannot restore caller":        {"set +e; /nonexistent/command set -e\n" + goodScan + "\necho ready", true},
+		"invalid option does not restore caller":    {"set +e; set -Ze\n" + goodScan + "\necho ready", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := witness.body
@@ -325,6 +331,27 @@ func TestParserRegressionBashWitnesses(t *testing.T) {
 				t.Fatalf("failing stand-in must fail unmasked shape: %q", body)
 			}
 			t.Logf("executed %q, shell success=%v", strings.TrimSpace(string(data)), err == nil)
+		})
+	}
+}
+
+func TestNoexecCannotProveScannerExecution(t *testing.T) {
+	for _, options := range []string{"-n", "-o noexec"} {
+		t.Run(options, func(t *testing.T) {
+			dir := t.TempDir()
+			trace := filepath.Join(dir, "trace")
+			stub := "#!/usr/bin/env bash\nprintf executed > \"$SCAN_WITNESS_TRACE\"\nexit 42\n"
+			if err := os.WriteFile(filepath.Join(dir, "ksail"), []byte(stub), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", "set "+options+"\n"+goodScan)
+			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "SCAN_WITNESS_TRACE="+trace)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("noexec should complete without invoking the failing stand-in: %v, %s", err, output)
+			}
+			if _, err := os.Stat(trace); !os.IsNotExist(err) {
+				t.Fatalf("noexec must leave the scanner unexecuted: %v", err)
+			}
 		})
 	}
 }
