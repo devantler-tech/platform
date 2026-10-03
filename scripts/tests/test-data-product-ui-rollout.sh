@@ -143,7 +143,15 @@ while (($#)); do
 done
 [[ "$cookie:$authorization:$proto:$proxy" == 1:1:1:1 && -n "$headers" && -n "$body" ]] || exit 100
 printf '%s\n' "$url" >>"$FIXTURE/urls"
-[[ "$(stat -f '%Lp' "$(dirname "$body")" 2>/dev/null || stat -c '%a' "$(dirname "$body")")" == 700 ]] || exit 101
+storage_dir=$(dirname "$body")
+if [[ "${MODE:-}" == unsafe-storage ]]; then chmod 755 "$storage_dir"; fi
+# GNU stat -f may emit filesystem data even when the BSD-style attempt fails.
+if permission=$(stat -f '%Lp' "$storage_dir" 2>/dev/null); then
+  :
+else
+  permission=$(stat -c '%a' "$storage_dir") || exit 101
+fi
+[[ "$permission" == 700 ]] || exit 101
 csp="default-src 'self'; connect-src 'none'; frame-src https:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'"
 printf 'HTTP/2 200\r\nContent-Security-Policy: %s\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\n\r\n' "$csp" >"$headers"
 case "$url" in
@@ -184,10 +192,21 @@ run_case() {
     --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
     >"$fixture/stdout" 2>"$fixture/stderr" || result=$?
   if [[ "$expected" == pass ]]; then
-    if [[ "$result" != 0 ]] || ! jq -e '.complete == true and .deployments == 3 and .pods == 6 and .routes == 3 and .publicChecks == 9' "$fixture/stdout" >/dev/null; then fail "$name: healthy live-shaped rollout was not accepted"; fi
+    if [[ "$result" != 0 ]] || ! jq -e '.complete == true and .deployments == 3 and .pods == 6 and .routes == 3 and .publicChecks == 9' "$fixture/stdout" >/dev/null; then
+      local reason
+      reason=$(jq -r '.failure // "invalid_report"' "$fixture/stdout" 2>/dev/null) || reason=invalid_report
+      case "$reason" in
+      invalid_arguments | missing_dependency | private_storage_unavailable | deadline_exceeded | invalid_verification_policy | read_incomplete | public_contract_incomplete | rollout_changed | interrupted) ;;
+      *) reason=invalid_report ;;
+      esac
+      fail "$name: healthy live-shaped rollout was not accepted (helper exit $result, $reason)"
+    fi
     [[ $(wc -l <"$fixture/urls") -eq 9 ]] || fail "$name: public checks were incomplete"
   else
     if [[ "$result" == 0 ]] || ! jq -e '.complete == false and (.failure | type == "string")' "$fixture/stdout" >/dev/null; then fail "$name: incomplete or unsafe rollout was accepted"; fi
+    if [[ "$mode" == unsafe-storage ]]; then
+      jq -e '.failure == "public_contract_incomplete"' "$fixture/stdout" >/dev/null || fail "$name: unsafe permissions were not refused during public checks"
+    fi
     if [[ "$name" == changed-* ]]; then
       [[ -f "$fixture/urls" && $(wc -l <"$fixture/urls") -eq 9 ]] || fail "$name: failure preceded the public checks"
     fi
@@ -263,7 +282,7 @@ mutate_case route-duplicate-condition route-harbour '.status.parents[0].conditio
 mutate_case registry-bypass route-registry '.spec.rules[0].backendRefs=[{name:"data-product-controller",port:8082}]'
 mutate_case wrong-gateway-listener gateway '.spec.listeners[0].protocol="HTTP"'
 mutate_case gateway-not-programmed gateway '.status.conditions[1].status="False"'
-for mode in forbidden empty multi http-failure redirect missing-csp weak-csp duplicate-csp wrong-body wrong-asset; do run_case "$mode" fail "$mode"; done
+for mode in forbidden empty multi http-failure redirect missing-csp weak-csp duplicate-csp wrong-body wrong-asset unsafe-storage; do run_case "$mode" fail "$mode"; done
 for key in apps chart helm deployment-ui-kit route-ui-kit gateway pods root product service-ui-kit; do
   name="changed-$key"
   mkdir -p "${scratch}/$name/after"
