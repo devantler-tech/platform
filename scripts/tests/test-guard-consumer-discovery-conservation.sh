@@ -1109,8 +1109,189 @@ SH
   esac
   REAL_YQ="$real_yq" PARTIAL_BOUNDARY="$boundary" PATH="$WORK/partial-$boundary-bin:$PATH" \
     expect_refusal "partial $boundary-reader output is not an attestation" "$root" \
-      "$want" 'consumers are UNKNOWN'
+    "$want" 'consumers are UNKNOWN'
 done
+
+# A canonical URL must still select the checkout's generated latest artifact.
+platform_source() {
+  local root="$1"
+  cat >"$root/k8s/providers/prod/apps/platform-source.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  url: oci://ghcr.io/devantler-tech/platform/manifests
+YAML
+  printf '  - platform-source.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+}
+for ref in tag semver digest latest-digest latest-semver; do
+  root="$(fixture "platform-ref-$ref")"
+  platform_source "$root"
+  case "$ref" in
+    tag) yq -i '.spec.ref.tag = "old"' "$root/k8s/providers/prod/apps/platform-source.yaml" ;;
+    semver) yq -i '.spec.ref.semver = ">=1.0.0"' "$root/k8s/providers/prod/apps/platform-source.yaml" ;;
+    digest) yq -i '.spec.ref.digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"' "$root/k8s/providers/prod/apps/platform-source.yaml" ;;
+    latest-digest) yq -i '.spec.ref.tag = "latest" | .spec.ref.digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"' "$root/k8s/providers/prod/apps/platform-source.yaml" ;;
+    latest-semver) yq -i '.spec.ref.tag = "latest" | .spec.ref.semver = ">=1.0.0"' "$root/k8s/providers/prod/apps/platform-source.yaml" ;;
+  esac
+  expect_refusal "a canonical platform URL with $ref cannot attest latest" "$root" \
+    'platform source reference' 'latest' 'consumers are UNKNOWN'
+done
+root="$(fixture platform-ref-latest)"
+platform_source "$root"
+yq -i '.spec.ref.tag = "latest"' "$root/k8s/providers/prod/apps/platform-source.yaml"
+expect_pass 'an explicit latest platform source reference passes' "$root" '2 consumer(s)'
+
+for ref in old digest missing; do
+  root="$(fixture "platform-sync-ref-$ref")"
+  cat >"$root/k8s/providers/prod/infrastructure/flux-instance.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  sync:
+    kind: OCIRepository
+    url: oci://ghcr.io/devantler-tech/platform/manifests
+    ref: latest
+    path: clusters/prod
+YAML
+  case "$ref" in
+    old) yq -i '.spec.sync.ref = "old"' "$root/k8s/providers/prod/infrastructure/flux-instance.yaml" ;;
+    digest) yq -i '.spec.sync.ref = "sha256:0000000000000000000000000000000000000000000000000000000000000000"' "$root/k8s/providers/prod/infrastructure/flux-instance.yaml" ;;
+    missing) yq -i 'del(.spec.sync.ref)' "$root/k8s/providers/prod/infrastructure/flux-instance.yaml" ;;
+  esac
+  printf '  - flux-instance.yaml\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  expect_refusal "FluxInstance $ref sync reference cannot attest latest" "$root" \
+    'platform source override' 'consumers are UNKNOWN'
+done
+
+for ref in tag digest whole-ref; do
+  root="$(fixture "platform-patch-ref-$ref")"
+  cat >"$root/k8s/providers/prod/infrastructure/flux-instance.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  kustomize:
+    patches:
+      - target:
+          kind: OCIRepository
+          name: flux-system
+          namespace: flux-system
+        patch: |
+          - op: add
+            path: /spec/ref/tag
+            value: old
+YAML
+  case "$ref" in
+    digest) yq -i '.spec.kustomize.patches[0].patch = "- op: add\n  path: /spec/ref/digest\n  value: sha256:0000000000000000000000000000000000000000000000000000000000000000\n"' "$root/k8s/providers/prod/infrastructure/flux-instance.yaml" ;;
+    whole-ref) yq -i '.spec.kustomize.patches[0].patch = "- op: replace\n  path: /spec/ref\n  value:\n    semver: \">=1.0.0\"\n"' "$root/k8s/providers/prod/infrastructure/flux-instance.yaml" ;;
+  esac
+  printf '  - flux-instance.yaml\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  expect_refusal "a FluxInstance $ref patch cannot change latest selection" "$root" \
+    'platform source override' 'consumers are UNKNOWN'
+done
+
+root="$(fixture suspended-root)"
+yq -i 'select(.metadata.name == "apps").spec.suspend = true' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+expect_refusal 'a suspended production root cannot attest current deployment' "$root" 'is suspended' 'UNKNOWN'
+root="$(fixture active-root)"
+yq -i '.spec.suspend = false' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+expect_pass 'explicitly active production roots pass' "$root" '2 consumer(s)'
+
+# Make the outside root render exactly the same consumers: disagreement cannot catch it.
+for escape in outside prefix-peer symlink; do
+  root="$(fixture "escaped-root-$escape")"
+  outside="$root/outside"
+  [ "$escape" != prefix-peer ] || outside="$root/k8s-peer/apps"
+  mkdir -p "$outside"
+  relative_k8s='../k8s'
+  [ "$escape" != prefix-peer ] || relative_k8s='../../k8s'
+  cat >"$outside/kustomization.yaml" <<YAML
+resources:
+  - $relative_k8s/bases/apps/alpha
+  - $relative_k8s/bases/apps/beta
+YAML
+  case "$escape" in
+    outside) escaped_path='../outside' ;;
+    prefix-peer) escaped_path='../k8s-peer/apps' ;;
+    symlink)
+      ln -s "$outside" "$root/k8s/providers/prod/escape"
+      escaped_path='providers/prod/escape'
+      ;;
+  esac
+  ROOT_PATH="$escaped_path" yq -i 'select(.metadata.name == "apps").spec.path = strenv(ROOT_PATH)' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+  expect_refusal "a $escape root outside the published tree is refused" "$root" 'outside the published k8s tree' 'UNKNOWN'
+done
+root="$(fixture canonical-inside-root)"
+yq -i 'select(.metadata.name == "apps").spec.path = "./providers/prod/apps/../apps"' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+expect_pass 'a canonicalized root that stays inside the published tree passes' "$root" '2 consumer(s)'
+
+for placement in top-level step; do
+  root="$(fixture "resourceset-string-$placement")"
+  cat >"$root/k8s/providers/prod/apps/resource-set.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: tenants
+  namespace: flux-system
+spec:
+  resourcesTemplate: |
+    apiVersion: source.toolkit.fluxcd.io/v1
+    kind: OCIRepository
+    metadata:
+      name: generated
+    spec:
+      url: oci://ghcr.io/devantler-tech/generated/manifests
+YAML
+  if [ "$placement" = step ]; then
+    yq -i '.spec.steps = [{"name": "sources", "resourcesTemplate": .spec.resourcesTemplate}] | del(.spec.resourcesTemplate)' \
+      "$root/k8s/providers/prod/apps/resource-set.yaml"
+  fi
+  printf '  - resource-set.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_refusal "ResourceSet $placement string templates are not silently omitted" "$root" 'resourcesTemplate' 'consumers are UNKNOWN'
+done
+
+for peer in another-group another-version custom-schema-group; do
+  root="$(fixture "rgd-peer-$peer")"
+  peer_api='unrelated.example.test/v1alpha1'
+  case "$peer" in
+    another-version) peer_api='kro.run/v1beta1' ;;
+    custom-schema-group)
+      yq -i '.spec.schema.group = "tenants.example.test"' "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
+      peer_api='kro.run/v1alpha1'
+      ;;
+  esac
+  cat >"$root/k8s/providers/prod/apps/peer.yaml" <<YAML
+apiVersion: $peer_api
+kind: Tenant
+metadata:
+  name: unrelated
+spec:
+  name: unrelated
+YAML
+  printf '  - peer.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass "an unrelated same-kind $peer peer is not a kro instance" "$root" '2 consumer(s)'
+done
+root="$(fixture rgd-custom-group-instance)"
+yq -i '.spec.schema.group = "tenants.example.test"' "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
+cat >"$root/k8s/providers/prod/apps/tenant.yaml" <<'YAML'
+apiVersion: tenants.example.test/v1alpha1
+kind: Tenant
+metadata:
+  name: generated
+spec:
+  name: generated
+YAML
+printf '  - tenant.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+expect_refusal 'a matching custom-group kro instance is still refused' "$root" \
+  'production renders 1 Tenant instance(s)' 'tenants.example.test/v1alpha1'
 
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

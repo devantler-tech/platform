@@ -42,7 +42,8 @@
 #   - production roots whose sole source is not the KSail-generated platform artifact:
 #     agreeing source references do not prove this checkout holds their manifests;
 #   - a rendered declaration or FluxInstance sync/patch that could redirect that generated
-#     source to another artifact or change its content selection (`ignore`/`layerSelector`);
+#     source to another artifact or revision, or change its content selection (`ignore`/`layerSelector`);
+#   - a suspended production root, or a path that resolves outside the published k8s/ tree;
 #   - a nested Flux Kustomization that applies another path from that same source: only the
 #     overlay's roots are rendered, so that layer would go unseen;
 #   - an OCIRepository whose URL, ref or subject carries `${`: Flux post-build substitution
@@ -54,8 +55,10 @@
 #   - an OCIRepository TEMPLATE (a nested mapping with a `spec`, not a `sourceRef`) inside any
 #     rendered document: a controller creates that object inside the cluster, so neither the
 #     scan nor any render has a document for it. A kro ResourceGraphDefinition is admitted
-#     only while it names its schema kind and production renders no instance of that kind;
+#     only while it names its complete schema GVK and production renders no matching instance;
 #     any other carrier (a Flux Operator ResourceSet, say) is refused outright;
+#   - non-empty ResourceSet resourcesTemplate strings, including step templates: their
+#     runtime templating cannot be reproduced by traversing static YAML mappings;
 #   - a root that is missing or does not render, a file either side selected but cannot read,
 #     parse or attribute (two partial sets can still agree), and an EMPTY consumer set on both
 #     sides — an empty set compared to an empty set is agreement about nothing.
@@ -90,7 +93,7 @@ command -v kubectl >/dev/null 2>&1 || refuse 'kubectl is required to render the 
 
 SCAN_ROOT="${1:-$REPO_ROOT}"
 [ -d "$SCAN_ROOT" ] || refuse "repository root $SCAN_ROOT does not exist"
-SCAN_ROOT="$(cd "$SCAN_ROOT" && pwd)"
+SCAN_ROOT="$(cd -P "$SCAN_ROOT" && pwd -P)"
 readonly SCAN_ROOT
 readonly K8S_DIR="$SCAN_ROOT/k8s"
 readonly OVERLAY="$K8S_DIR/clusters/prod"
@@ -165,6 +168,19 @@ refuse_source_overrides() {
     [ -z "$check" ] || [ "$check" = true ] ||
       refuse "production render $label holds a platform source override outside the configured artifact, so its consumers are UNKNOWN"
   done <<<"$checks"
+  # The checkout being rendered is what KSail publishes to latest. A different ref
+  # can select older manifests even when the artifact URL still matches. An omitted
+  # or empty ref uses Flux's latest default; explicit digest/semver fields do not.
+  if ! checks="$(yq -N -r 'select(.kind == "OCIRepository" and .metadata.name == "flux-system"
+      and ((.metadata.namespace // "") == "" or .metadata.namespace == "flux-system"))
+      | (.spec.ref // {} | (type == "!!map" and
+          ((keys | length) == 0 or ((keys | length) == 1 and .tag == "latest"))))' "$file" 2>"$work/yq.err")"; then
+    refuse "could not read the platform source reference in the render of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r check; do
+    [ -z "$check" ] || [ "$check" = true ] ||
+      refuse "production render $label changes the platform source reference from latest, so its consumers are UNKNOWN"
+  done <<<"$checks"
   # The generated source extracts its default layer with the default file exclusions.
   # URL equality does not attest that tree when a declaration changes source contents.
   # Presence is refused even for empty/null fields rather than inferring equivalence.
@@ -179,6 +195,7 @@ refuse_source_overrides() {
   done <<<"$checks"
   if ! checks="$(yq -N -r 'select(.kind == "FluxInstance" and .metadata.name == "flux" and .metadata.namespace == "flux-system" and .spec.sync != null)
       | (.spec.sync.kind == "OCIRepository" and .spec.sync.url == "oci://ghcr.io/devantler-tech/platform/manifests"
+          and .spec.sync.ref == "latest"
           and (.spec.sync.name // "flux-system") == "flux-system"
           and ((.spec.sync.path // "") | sub("^\\./", "")) == "clusters/prod")' "$file" 2>"$work/yq.err")"; then
     refuse "could not read FluxInstance sync in the render of $label, so its consumers are UNKNOWN"
@@ -188,12 +205,17 @@ refuse_source_overrides() {
       refuse "production render $label holds a FluxInstance platform source override, so its consumers are UNKNOWN"
   done <<<"$checks"
   # Controller Deployment patches cannot target the source. All other patch targets could
-  # select it; only JSON operations confined to verify/ref are established as preserving its
-  # identity and artifact. A strategic patch or broader operation is UNKNOWN, never ignored.
+  # select it; verification operations and ref changes that preserve latest are established
+  # as preserving its identity and artifact. A strategic patch or broader operation is UNKNOWN.
   if ! checks="$(yq -N -r 'select(.kind == "FluxInstance" and .metadata.name == "flux" and .metadata.namespace == "flux-system")
       | .spec.kustomize.patches[] | select(.target.kind != "Deployment") | (.patch | from_yaml) | .[]
       | (.op == "test" or ((.op == "add" or .op == "replace" or .op == "remove")
-          and ((.path // "") | test("^/spec/(verify|ref)(/|$)"))))' "$file" 2>"$work/yq.err")"; then
+          and (((.path // "") | test("^/spec/verify(/|$)"))
+            or (.op == "remove" and (.path == "/spec/ref" or .path == "/spec/ref/tag"))
+            or ((.op == "add" or .op == "replace") and
+              ((.path == "/spec/ref/tag" and .value == "latest")
+                or (.path == "/spec/ref" and (.value // {} | (type == "!!map" and
+                    ((keys | length) == 0 or ((keys | length) == 1 and .tag == "latest"))))))))))' "$file" 2>"$work/yq.err")"; then
     refuse "could not rule out a FluxInstance platform source override in the render of $label, so its consumers are UNKNOWN"
   fi
   while IFS= read -r check; do
@@ -220,7 +242,8 @@ if ! yq -N -r "$FLUX_KUSTOMIZATION"' | [
     ((((.spec.patches // []) | length) + ((.spec.components // []) | length)
       + ((.spec.patchesStrategicMerge // []) | length) + ((.spec.patchesJson6902 // []) | length)
       + ((.spec.namePrefix // "") | length) + ((.spec.nameSuffix // "") | length)
-      + ((.spec.targetNamespace // "") | length)) | tostring)
+      + ((.spec.targetNamespace // "") | length)) | tostring),
+    ((.spec.suspend // false) | tostring)
   ] | map(sub("^$", "-")) | join("	")' "$work/overlay.yaml" >"$work/overlay.rows" 2>"$work/overlay.rows.err"; then
   refuse "could not read the production overlay's render: $(tr '\n' ' ' <"$work/overlay.rows.err")"
 fi
@@ -229,9 +252,10 @@ roots=''
 src_kind=''
 src_ns=''
 src_name=''
-while IFS=$'\t' read -r name path kind ns source transforms; do
+while IFS=$'\t' read -r name path kind ns source transforms suspended; do
   [ -n "$name" ] || continue
   [ "$path" != '-' ] || refuse "production Flux Kustomization $name names no spec.path"
+  [ "$suspended" = false ] || refuse "production Flux Kustomization $name is suspended or has an invalid suspension state, so its current consumers are UNKNOWN"
   if [ "$transforms" != '0' ]; then
     refuse "production Flux Kustomization $name carries spec.patches, spec.components, spec.patchesStrategicMerge, spec.patchesJson6902, spec.namePrefix, spec.nameSuffix or spec.targetNamespace; Flux applies those after the build, so a static render does not show what it applies"
   fi
@@ -264,6 +288,11 @@ while IFS= read -r root; do
   i=$((i + 1))
   dir="$K8S_DIR/$root"
   [ -d "$dir" ] || refuse "production root $root does not exist under k8s/, so what it applies is UNKNOWN"
+  dir="$(cd -P "$dir" && pwd -P)" || refuse "could not resolve production root $root, so its consumers are UNKNOWN"
+  case "$dir" in
+    "$K8S_DIR" | "$K8S_DIR"/*) ;;
+    *) refuse "production root $root resolves outside the published k8s tree, so its consumers are UNKNOWN" ;;
+  esac
   file="$work/root-$i.yaml"
   if ! kubectl kustomize "$dir" >"$file" 2>"$work/root.err"; then
     refuse "could not render production root $root, so its consumers are UNKNOWN: $(tr '\n' ' ' <"$work/root.err")"
@@ -297,10 +326,22 @@ while IFS= read -r root; do
 done <<<"$roots"
 
 # ── 3. Refuse what a static render cannot see ────────────────────────────────────────
-consumer_kinds=''
+consumer_gvks=''
 while IFS=$'\t' read -r file label; do
   [ -n "$file" ] || continue
   refuse_source_overrides "$file" "$label"
+  # ResourceSet strings are controller templates, not YAML object mappings. They
+  # may contain multi-document YAML and Go-template control flow, so refuse any
+  # non-empty top-level or step template rather than silently omit its objects.
+  if ! templates="$(yq -N -r 'select(.kind == "ResourceSet")
+      | [(.spec.resourcesTemplate // ""), (.spec.steps[].resourcesTemplate // "")]
+      | map(select(. != "")) | length' "$file" 2>"$work/yq.err")"; then
+    refuse "could not read ResourceSet resourcesTemplate in the render of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r count; do
+    [ -z "$count" ] || [ "$count" = 0 ] ||
+      refuse "production render $label holds non-empty ResourceSet resourcesTemplate or step resourcesTemplate, so its consumers are UNKNOWN"
+  done <<<"$templates"
   # The literal characters `${` mark a Flux post-build substitution, deliberately not
   # expanded by the shell.
   if ! substituted="$(yq -N -r 'select(.kind == "OCIRepository")
@@ -322,11 +363,11 @@ while IFS=$'\t' read -r file label; do
   # selecting first fed nulls to `sub`.
   if ! carriers="$(yq -N -r '[(.kind // ""), ((.metadata.namespace // "-") + "/" + (.metadata.name // "-")),
          ([.. | select(type == "!!map" and .kind == "OCIRepository" and has("spec"))] | length | tostring),
-         (.spec.schema.kind // "")]
+         (.spec.schema.kind // ""), (.spec.schema.group // "kro.run"), (.spec.schema.apiVersion // "")]
       | select(.[0] != "OCIRepository" and .[2] != "0") | map(sub("^$", "-")) | join("	")' "$file" 2>"$work/yq.err")"; then
     refuse "could not read the render of $label: $(tr '\n' ' ' <"$work/yq.err")"
   fi
-  while IFS=$'\t' read -r c_kind c_id _count c_schema; do
+  while IFS=$'\t' read -r c_kind c_id _count c_schema c_group c_version; do
     [ -n "$c_kind" ] || continue
     if [ "$c_kind" != 'ResourceGraphDefinition' ]; then
       refuse "production render $label holds $c_kind $c_id, which carries an OCIRepository template; the objects it generates exist only in the cluster, so neither the file scan nor this render has a document for them"
@@ -334,20 +375,26 @@ while IFS=$'\t' read -r file label; do
     if [ "$c_schema" = '-' ]; then
       refuse "production render $label holds ResourceGraphDefinition $c_id, which templates an OCIRepository but names no schema kind, so its instances cannot be counted"
     fi
-    consumer_kinds="$consumer_kinds$c_schema
+    # shellcheck disable=SC2016 # A literal substitution marker, never shell expansion.
+    if [ "$c_group" = '-' ] || [ "$c_version" = '-' ] ||
+      [[ "$c_group/$c_version/$c_schema" == *'${'* ]] ||
+      [[ "$c_group" == */* ]] || [[ "$c_version" == */* ]]; then
+      refuse "production render $label holds ResourceGraphDefinition $c_id without a literal complete schema GVK, so its instances cannot be counted"
+    fi
+    consumer_gvks="$consumer_gvks$c_schema"$'\t'"$c_group/$c_version
 "
   done <<<"$carriers"
 done <<<"$sources"
 
-# kro creates a templated OCIRepository for every instance of its RGD's kind, inside the
-# cluster. The RGD may sit in one render and its instances in another, so every kind is
+# kro creates a templated OCIRepository for every instance of its RGD's complete GVK, inside the
+# cluster. The RGD may sit in one render and its instances in another, so every GVK is
 # collected before any render is searched for instances.
-while IFS= read -r kind; do
+while IFS=$'\t' read -r kind api_version; do
   [ -n "$kind" ] || continue
   instances=0
   while IFS=$'\t' read -r file label; do
     [ -n "$file" ] || continue
-    if ! count="$(KIND="$kind" yq -N -r '[select(.kind == strenv(KIND))] | length' "$file" 2>"$work/yq.err")"; then
+    if ! count="$(CONSUMER_GVK_KIND="$kind" CONSUMER_GVK_API_VERSION="$api_version" yq -N -r '[select(.kind == strenv(CONSUMER_GVK_KIND) and .apiVersion == strenv(CONSUMER_GVK_API_VERSION))] | length' "$file" 2>"$work/yq.err")"; then
       refuse "could not count $kind instances in the render of $label: $(tr '\n' ' ' <"$work/yq.err")"
     fi
     while IFS= read -r c; do
@@ -356,9 +403,9 @@ while IFS= read -r kind; do
     done <<<"$count"
   done <<<"$sources"
   if [ "$instances" -gt 0 ]; then
-    refuse "production renders $instances $kind instance(s); kro turns each into an OCIRepository inside the cluster, which neither the file scan nor this render has a document for"
+    refuse "production renders $instances $kind instance(s) of $api_version; kro turns each into an OCIRepository inside the cluster, which neither the file scan nor this render has a document for"
   fi
-done <<<"$(printf '%s' "$consumer_kinds" | sort -u)"
+done <<<"$(printf '%s' "$consumer_gvks" | sort -u)"
 
 # ── 4. Compare the two consumer sets ───────────────────────────────────────────────────
 # A file either side cannot read, parse or attribute refuses: its consumers are UNKNOWN, and
