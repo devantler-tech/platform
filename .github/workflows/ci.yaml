@@ -757,8 +757,7 @@ jobs:
               - 'scripts/guard-oci-repository-verify.sh'
               - 'scripts/tests/test-guard-oci-repository-verify.sh'
               # Both halves, for the same reason as the guard above.
-              - 'scripts/validate-kubescape-frameworks/main.go'
-              - 'scripts/validate-kubescape-frameworks/main_test.go'
+              - 'scripts/validate-kubescape-frameworks/**'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
               - 'scripts/guard-checkov-skip-reasons.sh'
