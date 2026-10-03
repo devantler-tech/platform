@@ -33,8 +33,8 @@ stayed `Terminating` under a running pod and failed every later deploy.
 What the protection costs:
 
 - A tenant removed from Git keeps running until someone deletes it by hand (#3367).
-- Objects left behind by a failed candidate cannot be cleaned up by restoring `main`. The heal job
-  and a daily check report them (#3502), but nothing removes them.
+- A namespace or release that a failed candidate created stays when `main` is restored. The heal
+  job and a daily check report such leftovers (#3502), but nothing removes them.
 - Retiring anything that holds data takes two merged revisions and a manual deletion
   (`AGENTS.md`, "Persistence retirement is always two-stage").
 
@@ -84,10 +84,10 @@ Read from the charts this repository references and from the released source of 
   missing, and deletes one that left the chart unless it carries `helm.sh/resource-policy: keep`.
 - **Longhorn 1.12.1.** The chart writes the `longhorn` class into a ConfigMap, and Longhorn deletes
   and recreates the class when that ConfigMap changes. Longhorn creates `longhorn-static` only when
-  it is missing and sets no policy on it, so the class is `Delete`; the volumes Longhorn itself
-  binds through it are always `Retain`. Longhorn never deletes a volume because its claim went
-  away: only the CSI delete call does that. Longhorn refuses to uninstall unless a confirmation
-  setting is turned on, and that setting is off here.
+  it is missing and sets no policy on it, so the class is `Delete`; the PersistentVolumes Longhorn
+  itself creates with that class are always `Retain`. Longhorn never deletes a volume because its
+  claim went away: only the CSI delete call does that. Longhorn refuses to uninstall unless a
+  confirmation setting is turned on, and that setting is off here.
 - **hcloud-csi 2.23.0.** The chart renders each entry of `storageClasses` as an ordinary
   Helm-managed class. An empty list renders none.
 - **Velero 1.18.** Its data mover sets `Delete` on the temporary volume it creates for each
@@ -226,9 +226,9 @@ All of the following hold first:
 - **An evicted merge-queue candidate deletes nothing in production.** `Retain` keeps the data but
   not the service. With the opt-outs gone and candidates still deployed before they merge, any
   evicted pull request that removes a tenant, a release or a namespace would cause an outage that
-  restoring `main` cannot repair, and the failure in #3167 would return. The same applies to objects
-  a candidate created and `main` never contained: they become removable only when restoring `main`
-  may prune them.
+  restoring `main` cannot repair, and the failure in #3167 would return. Removing the opt-outs does
+  not clean up after such a candidate either: an object that a failed apply never recorded in a
+  Flux inventory is invisible to pruning (#3502).
 - **No rule depends on knowing which tenants are stateful.** That cannot be read from this
   repository, so nothing in the rollout classifies tenants.
 - **Each removed opt-out names what else is deleted with the object, and where that is kept.**
@@ -240,8 +240,8 @@ All of the following hold first:
 
 ## Consequences
 
-**Positive.** Removing a tenant is deleting its directory. Objects left by a failed deploy are
-ordinary resources that restoring `main` can remove. Retirement no longer needs two revisions and a
+**Positive.** Removing a tenant is deleting its directory. An object that a failed deploy left in a
+Flux inventory is pruned when `main` is restored. Retirement no longer needs two revisions and a
 manual deletion. The protection no longer depends on an annotation reaching 29 claims indirectly.
 
 **Trade-offs.** Deleted claims leave volumes that cost money or disk space until someone reclaims
