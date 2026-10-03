@@ -22,7 +22,7 @@ type shellAnalysis struct {
 
 type shellEffects struct {
 	errexit       *bool
-	successTraps  map[string]bool
+	trapActions   map[string][]string
 	successExit   bool
 	bindings      map[string]bool
 	flowUncertain bool
@@ -59,7 +59,7 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 	}
 	var stack []syntax.Node
 	errexit, successExit, flowUncertain := true, false, false
-	successTraps := make(map[string]bool)
+	trapActions := make(map[string][]string)
 	functions := make(map[string]string)
 	shadowed := make(map[string]bool)
 	for name, body := range inherited {
@@ -84,12 +84,12 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 		if effects.errexit != nil {
 			errexit, result.effects.errexit = *effects.errexit, effects.errexit
 		}
-		for signal, masks := range effects.successTraps {
-			successTraps[signal] = masks
-			if result.effects.successTraps == nil {
-				result.effects.successTraps = make(map[string]bool)
+		for signal, actions := range effects.trapActions {
+			trapActions[signal] = actions
+			if result.effects.trapActions == nil {
+				result.effects.trapActions = make(map[string][]string)
 			}
-			result.effects.successTraps[signal] = masks
+			result.effects.trapActions[signal] = actions
 		}
 		if effects.successExit {
 			successExit, result.effects.successExit = true, true
@@ -132,7 +132,7 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 			if current, guaranteed := shellEffectsContext(stack); current {
 				for _, parent := range stack[:len(stack)-1] {
 					if _, nested := parent.(*syntax.FuncDecl); nested {
-						guaranteed = false
+						return true
 					}
 				}
 				functions[n.Name.Value] = ""
@@ -167,6 +167,11 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 			if resolutionErr != "" {
 				refuse(resolutionErr)
 			}
+			for _, prefix := range words[:executable] {
+				if shadowed[filepath.Base(prefix)] {
+					refuse("a local binding replaces command-wrapper semantics")
+				}
+			}
 			effectiveWords, effectiveStatic := words[executable:], static[executable:]
 			effectiveCommand := filepath.Base(effectiveWords[0])
 			deferred := false
@@ -191,18 +196,16 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 					if effects.errexit != nil && *effects.errexit {
 						effects.errexit = nil
 					}
-					traps := make(map[string]bool)
-					for signal, masks := range effects.successTraps {
-						if masks {
-							traps[signal] = true
-						}
+					traps := make(map[string][]string)
+					for signal, actions := range effects.trapActions {
+						traps[signal] = append(append([]string(nil), trapActions[signal]...), actions...)
 					}
-					effects.successTraps = traps
+					effects.trapActions = traps
 				}
 				applyEffects(effects)
 			}
 			if !deferred {
-				if body, found := functions[effectiveCommand]; found {
+				if body, found := functions[effectiveCommand]; found && executable == 0 {
 					if body == "" {
 						refuse("local function binding is conditional or belongs to another scope")
 					}
@@ -211,10 +214,10 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 						refuse("local function execution cannot be certified from the bounded text")
 					}
 					propagateEffects(view.effects)
-				} else if shadowed[effectiveCommand] {
+				} else if shadowed[effectiveCommand] && executable == 0 {
 					refuse("an opaque local binding replaces command semantics")
 				}
-				if shadowed[effectiveCommand] {
+				if shadowed[effectiveCommand] && executable == 0 {
 					switch effectiveCommand {
 					case "set", "exit", "trap", "eval", "alias":
 						refuse("a local binding replaces shell failure-handling semantics")
@@ -231,10 +234,15 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 				if effectiveCommand == "return" {
 					propagateEffects(shellEffects{flowUncertain: true})
 				}
+				child := false
 				for _, prefix := range words[:executable] {
-					if filepath.Base(prefix) == "exec" {
-						propagateEffects(shellEffects{successExit: true})
+					name := filepath.Base(prefix)
+					if name == "exec" && !child {
+						if current, _ := shellEffectsContext(stack); current {
+							applyEffects(shellEffects{successExit: true})
+						}
 					}
+					child = child || name == "env" || name == "sudo"
 				}
 			}
 
@@ -272,12 +280,11 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 						if signal == "0" {
 							signal = "EXIT"
 						}
-						view := analyzeShellRegion(effectiveWords[trapAction], depth+1, functions, shadowed, remaining)
-						if view.err != nil {
-							refuse("trap execution cannot be certified from the bounded text")
+						var actions []string
+						if effectiveWords[trapAction] != "-" {
+							actions = []string{effectiveWords[trapAction]}
 						}
-						mask := effectiveWords[trapAction] != "-" && view.effects.successExit
-						propagateEffects(shellEffects{successTraps: map[string]bool{signal: mask}})
+						propagateEffects(shellEffects{trapActions: map[string][]string{signal: actions}})
 					}
 				}
 			}
@@ -296,7 +303,6 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 						if name == "ksail" {
 							refuse("a local alias replaces the scanner executable")
 						}
-						shadowed[name] = true
 						propagateEffects(shellEffects{bindings: map[string]bool{name: true}})
 						text = value
 					}
@@ -376,7 +382,15 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 				return true
 			}
 			result.candidate = true
-			if !deferred && (!errexit || successTraps["EXIT"] || successTraps["ERR"] || successExit || flowUncertain) {
+			trapMasks := false
+			for _, actions := range trapActions {
+				for _, action := range actions {
+					// Traps resolve local bindings when triggered, not registered.
+					view := analyzeShellRegion(action, depth+1, functions, shadowed, remaining)
+					trapMasks = trapMasks || view.err != nil || view.effects.successExit || view.effects.flowUncertain
+				}
+			}
+			if !deferred && (!errexit || trapMasks || successExit || flowUncertain) {
 				refuse("scanner failure handling is disabled or a successful exit can replace the gate")
 				return true
 			}

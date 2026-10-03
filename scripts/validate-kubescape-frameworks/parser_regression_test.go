@@ -138,6 +138,9 @@ func TestSharedParserOrdinaryShellControls(t *testing.T) {
 		"invoked helper preserves failure mode":     "helper() { set +e; set -e; }\nhelper",
 		"successful exit handler removed":           "trap 'exit 0' EXIT\ntrap - EXIT",
 		"transitive helper preserves failure mode":  "restore() { set -e; }; helper() { restore; }; helper",
+		"child alias does not escape":               "(alias false=true)",
+		"unused local alias does not escape":        "helper() { alias false=true; }",
+		"unused nested function does not escape":    "helper() { false() { return 0; }; }",
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -155,6 +158,14 @@ func TestSharedParserOrdinaryShellControls(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestChildLocalBindingsDoNotShadowFailureFallback(t *testing.T) {
+	for _, prefix := range []string{"(alias false=true)", "helper() { alias false=true; }", "helper() { false() { return 0; }; }"} {
+		if _, err := setOf(t, prefix+"\n"+goodScan+" || false"); err != nil {
+			t.Errorf("child-local binding escaped: %s: %v", prefix, err)
+		}
 	}
 }
 
@@ -202,6 +213,10 @@ func TestScannerCannotRunWithFailureHandlingDisabled(t *testing.T) {
 		"shopt -s lastpipe\ntrue | set +e",
 		"exit -- 0",
 		"trap 'exit -- 0' EXIT",
+		"trap 'finish' EXIT\nfinish() { exit 0; }",
+		"finish() { echo ready; }; trap 'finish' EXIT\nfinish() { exit 0; }",
+		"set +e; restore() { set -e; }; command restore",
+		"exec env echo ready",
 	} {
 		if _, err := setOf(t, prefix+"\n"+goodScan); err == nil {
 			t.Errorf("scanner failure can be discarded by: %s", prefix)
