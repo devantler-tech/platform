@@ -159,7 +159,22 @@ rules:
              (has(s.ingress) && size(s.ingress) > 0) ||
              (has(s.ingressDeny) && size(s.ingressDeny) > 0) ||
              (has(s.egress) && size(s.egress) > 0) ||
-             (has(s.egressDeny) && size(s.egressDeny) > 0)))))
+             (has(s.egressDeny) && size(s.egressDeny) > 0)))) &&
+        (!has(r.generate.foreach) || r.generate.foreach.all(g,
+          !has(g.foreach) || g.foreach.all(n,
+            !has(n.foreach) &&
+            (!has(n.kind) ||
+             !(n.kind in ['CiliumNetworkPolicy', 'CiliumClusterwideNetworkPolicy']) ||
+             (has(n.apiVersion) && !n.apiVersion.startsWith('cilium.io/')) ||
+             !has(n.data) ||
+             (((has(n.data.spec) ? [n.data.spec] : []) +
+               (has(n.data.specs) ? n.data.specs : [])).size() > 0 &&
+              ((has(n.data.spec) ? [n.data.spec] : []) +
+               (has(n.data.specs) ? n.data.specs : [])).all(s,
+                (has(s.ingress) && size(s.ingress) > 0) ||
+                (has(s.ingressDeny) && size(s.ingressDeny) > 0) ||
+                (has(s.egress) && size(s.egress) > 0) ||
+                (has(s.egressDeny) && size(s.egressDeny) > 0))))))))
     message: >-
       every Cilium policy a Kyverno rule generates needs a rule in at least one
       direction (use `ingress: [{}]` for a default-deny that allows nothing);

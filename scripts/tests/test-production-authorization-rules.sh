@@ -251,6 +251,79 @@ spec:
               spec:
                 endpointSelector: {}' 'require-generated-cilium-policy-rules'
 
+# The pinned Kyverno v1 schema does not yet admit nested generate foreach
+# entries, so use a future Kyverno API version to exercise the CEL guard itself
+# instead of passing because kubeconform rejected the document first.
+assert_rejected 'kyverno-nested-foreach-generates-empty-cilium-policy' 'apiVersion: kyverno.io/v9
+kind: ClusterPolicy
+metadata:
+  name: nested-foreach-generates-empty-policy
+spec:
+  rules:
+    - name: generate-per-nested-entry
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+      generate:
+        foreach:
+          - list: request.object.data
+            foreach:
+              - list: element.value
+                apiVersion: cilium.io/v2
+                kind: CiliumNetworkPolicy
+                name: "{{element}}"
+                namespace: "{{request.object.metadata.namespace}}"
+                data:
+                  spec:
+                    endpointSelector: {}' 'require-generated-cilium-policy-rules'
+
+assert_accepted 'kyverno-nested-foreach-generates-valid-cilium-policy' 'apiVersion: kyverno.io/v9
+kind: ClusterPolicy
+metadata:
+  name: nested-foreach-generates-valid-policy
+spec:
+  rules:
+    - name: generate-per-nested-entry
+      generate:
+        foreach:
+          - list: request.object.data
+            foreach:
+              - list: element.value
+                apiVersion: cilium.io/v2
+                kind: CiliumNetworkPolicy
+                name: "{{element}}"
+                namespace: "{{request.object.metadata.namespace}}"
+                data:
+                  spec:
+                    endpointSelector: {}
+                    ingress:
+                      - {}'
+
+assert_rejected 'kyverno-deeply-nested-generate-is-fail-closed' 'apiVersion: kyverno.io/v9
+kind: ClusterPolicy
+metadata:
+  name: deeply-nested-generate
+spec:
+  rules:
+    - name: generate-per-deep-entry
+      generate:
+        foreach:
+          - list: request.object.data
+            foreach:
+              - list: element.value
+                foreach:
+                  - list: element.children
+                    apiVersion: cilium.io/v2
+                    kind: CiliumNetworkPolicy
+                    name: "{{element}}"
+                    namespace: "{{request.object.metadata.namespace}}"
+                    data:
+                      spec:
+                        endpointSelector: {}
+                        ingress:
+                          - {}' 'require-generated-cilium-policy-rules'
+
 # One empty rule per direction is valid and allows nothing; a non-Cilium kind
 # of the same name, a generated standard NetworkPolicy (where an absent rule
 # list is the normal default-deny) and a clone without inline data stay out of
