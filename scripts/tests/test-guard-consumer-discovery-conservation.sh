@@ -242,6 +242,590 @@ expect_refusal() {
   fi
 }
 
+# Published artifacts contain k8s, so checkout-only dependencies cannot attest production.
+regression_published_closure() {
+  local root field placement reference boundary dependency_field
+  for field in resources bases components; do
+    for placement in direct transitive; do
+      dependency_field="$field"
+      root="$(fixture "closure-$field-$placement")"
+      mkdir "$root/outside"
+      cp "$root/k8s/bases/apps/beta/oci-repository.yaml" "$root/outside/oci-repository.yaml"
+      yq -i '.metadata.name = "gamma" | .metadata.namespace = "gamma" | .spec.url = "oci://ghcr.io/devantler-tech/gamma/manifests"' "$root/outside/oci-repository.yaml"
+      printf 'resources:\n  - oci-repository.yaml\n' >"$root/outside/kustomization.yaml"
+      if [ "$field" = components ]; then
+        printf 'apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n' >>"$root/outside/kustomization.yaml"
+      fi
+      reference='../../../../outside'
+      if [ "$placement" = transitive ]; then
+        mkdir "$root/k8s/bases/closure"
+        printf '%s:\n  - ../../../outside\n' "$field" >"$root/k8s/bases/closure/kustomization.yaml"
+        dependency_field=resources
+        reference='../../../bases/closure'
+      fi
+      if [ "$dependency_field" = resources ]; then
+        printf '  - %s\n' "$reference" >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+      else
+        printf '%s:\n  - %s\n' "$dependency_field" "$reference" >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+      fi
+      expect_refusal "a $placement $field directory escape is absent from the published artifact" "$root" 'published k8s' 'UNKNOWN'
+    done
+  done
+
+  root="$(fixture closure-overlay)"
+  mkdir "$root/outside"
+  cp "$root/k8s/bases/apps/beta/oci-repository.yaml" "$root/outside/oci-repository.yaml"
+  yq -i '.metadata.name = "gamma" | .metadata.namespace = "gamma" | .spec.url = "oci://ghcr.io/devantler-tech/gamma/manifests"' "$root/outside/oci-repository.yaml"
+  printf 'resources:\n  - oci-repository.yaml\n' >"$root/outside/kustomization.yaml"
+  printf '  - ../../../outside\n' >>"$root/k8s/clusters/prod/kustomization.yaml"
+  expect_refusal 'the production overlay cannot load an unpublished directory' "$root" 'published k8s' 'UNKNOWN'
+
+  for boundary in absolute relative; do
+    root="$(fixture "closure-symlink-$boundary")"
+    mkdir "$root/outside"
+    cp "$root/k8s/bases/apps/beta/kustomization.yaml" "$root/k8s/bases/apps/beta/oci-repository.yaml" "$root/outside/"
+    if [ "$boundary" = absolute ]; then
+      ln -s "$root/outside" "$root/k8s/outside-link"
+    else
+      ln -s ../outside "$root/k8s/outside-link"
+    fi
+    printf '  - ../../../outside-link\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    expect_refusal "a $boundary symlink cannot escape the published artifact" "$root" 'published k8s' 'UNKNOWN'
+  done
+
+  root="$(fixture closure-overlay-symlink)"
+  mv "$root/k8s/clusters/prod" "$root/outside-overlay"
+  ln -s "$root/outside-overlay" "$root/k8s/clusters/prod"
+  expect_refusal 'the overlay itself cannot be an outside symlink' "$root" 'published k8s' 'UNKNOWN'
+
+  root="$(fixture closure-source-symlink)"
+  mv "$root/k8s" "$root/k8s-real"
+  ln -s "$root/k8s-real" "$root/k8s"
+  expect_refusal 'a symlinked publication root is refused before copying' "$root" 'symlinked k8s' 'UNKNOWN'
+
+  root="$(fixture closure-absolute-directory)"
+  printf '  - %s\n' "$root/k8s/bases/apps/beta" >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  expect_refusal 'absolute directory references cannot depend on a checkout path' "$root" 'published k8s' 'UNKNOWN'
+
+  root="$(fixture closure-contained-base)"
+  printf '  - ../../../bases/apps/beta\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  expect_pass 'contained relative bases retain exact consumer conservation' "$root" '2 consumer(s)'
+
+  root="$(fixture closure-contained-symlink)"
+  ln -s ../../../bases/apps/beta "$root/k8s/providers/prod/infrastructure/beta-link"
+  printf '  - beta-link\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  expect_refusal 'even contained directory symlinks are absent from the published artifact' "$root" 'published k8s' 'UNKNOWN'
+
+  root="$(fixture closure-contained-file-symlink)"
+  printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: file-link\ndata:\n  key: value\n' >"$root/k8s/file-link-target.txt"
+  ln -s ../../../file-link-target.txt "$root/k8s/providers/prod/infrastructure/file-link.yaml"
+  printf '  - file-link.yaml\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  expect_pass 'contained selected file symlinks publish regular manifest bytes' "$root" '2 consumer(s)'
+
+  root="$(fixture closure-unpublished-txt)"
+  printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: unpublished-txt\n' >"$root/k8s/providers/prod/infrastructure/unpublished.txt"
+  printf '  - unpublished.txt\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  expect_refusal 'non-manifest resource files are absent from the published artifact' "$root" 'published k8s' 'UNKNOWN'
+
+  root="$(fixture closure-unpublished-env)"
+  printf 'setting=value\n' >"$root/k8s/providers/prod/infrastructure/settings.env"
+  printf 'configMapGenerator:\n  - name: unpublished-env\n    envs:\n      - settings.env\n' >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  expect_refusal 'non-manifest generator inputs are absent from the published artifact' "$root" 'published k8s' 'UNKNOWN'
+
+  root="$(fixture closure-unpublished-kustomization)"
+  mv "$root/k8s/providers/prod/infrastructure/kustomization.yaml" "$root/k8s/providers/prod/infrastructure/Kustomization"
+  expect_refusal 'extensionless Kustomization files are absent from the published artifact' "$root" 'published k8s' 'UNKNOWN'
+
+  root="$(fixture closure-zero-selected)"
+  : >"$root/k8s/empty.yaml"
+  expect_refusal 'an empty selected manifest prevents publication even when unused' "$root" 'empty selected manifest' 'UNKNOWN'
+
+  root="$(fixture closure-selected-directory-link)"
+  ln -s ../../../bases/apps/beta "$root/k8s/providers/prod/infrastructure/directory-link.yaml"
+  expect_refusal 'a selected directory link prevents publication even when unused' "$root" 'selected manifest' 'directory link' 'UNKNOWN'
+
+  root="$(fixture closure-unreferenced-outside-file-link)"
+  printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: outside-file-link\n' >"$root/outside.yaml"
+  ln -s "$root/outside.yaml" "$root/k8s/outside-file-link.yaml"
+  expect_refusal 'selected file links cannot read outside the source artifact boundary' "$root" 'selected manifest' 'outside' 'UNKNOWN'
+
+  for boundary in uppercase-yaml uppercase-json ignored-yml; do
+    root="$(fixture "closure-published-$boundary")"
+    reference='selected.YAML'
+    printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: selected\n' >"$WORK/selected.yaml"
+    case "$boundary" in
+      uppercase-json)
+        reference='selected.JSON'
+        yq -o=json '.' "$WORK/selected.yaml" >"$root/k8s/providers/prod/infrastructure/$reference" ;;
+      ignored-yml)
+        reference='.selected.YmL'
+        cp "$WORK/selected.yaml" "$root/k8s/providers/prod/infrastructure/$reference"
+        printf '.selected.YmL\n' >"$root/k8s/providers/prod/infrastructure/.gitignore" ;;
+      *) cp "$WORK/selected.yaml" "$root/k8s/providers/prod/infrastructure/$reference" ;;
+    esac
+    printf '  - %s\n' "$reference" >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    expect_pass "publisher selection retains $boundary manifest bytes" "$root" '2 consumer(s)'
+  done
+
+  root="$(fixture closure-unused)"
+  mkdir "$root/k8s/unused"
+  printf 'resources:\n  - https://github.com/devantler-tech/platform//k8s/unresolved\n' >"$root/k8s/unused/kustomization.yaml"
+  expect_pass 'unused Kustomizations do not enter the reachable dependency closure' "$root" '2 consumer(s)'
+
+  for boundary in scalar entry; do
+    root="$(fixture "closure-malformed-$boundary")"
+    if [ "$boundary" = scalar ]; then
+      yq -i '.resources = "../../../bases/apps/beta"' "$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    else
+      yq -i '.resources = [true]' "$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    fi
+    expect_refusal "a malformed $boundary dependency cannot attest artifact closure" "$root" 'published k8s dependency closure' 'UNKNOWN'
+  done
+
+  root="$(fixture closure-remote)"
+  printf '  - https://github.com/devantler-tech/platform//k8s/bases/apps/beta?ref=7421f9ddaf6e72efe1366079e906fffdb37966a2\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  mkdir "$WORK/closure-remote-bin"
+  cat >"$WORK/closure-remote-bin/kubectl" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = kustomize ] && grep -qF 'https://' "$2/kustomization.yaml"; then
+  touch "$REMOTE_RENDER_ATTEMPT"
+  printf 'offline control intercepted remote loading before any fetch\n' >&2
+  exit 2
+fi
+exec "$REAL_KUBECTL" "$@"
+SH
+  chmod +x "$WORK/closure-remote-bin/kubectl"
+  REAL_KUBECTL="$(command -v kubectl)" REMOTE_RENDER_ATTEMPT="$WORK/remote-render-attempt" PATH="$WORK/closure-remote-bin:$PATH" \
+    expect_refusal 'reachable remote dependencies are refused before rendering' "$root" 'published k8s dependency closure' 'UNKNOWN'
+  if [ -e "$WORK/remote-render-attempt" ]; then
+    fail 'a remote dependency reached kubectl instead of refusing before rendering'
+  else
+    pass 'no remote dependency reached kubectl or performed a fetch'
+  fi
+
+  for boundary in checks references; do
+    root="$(fixture "closure-partial-reader-$boundary")"
+    mkdir "$WORK/closure-partial-reader-$boundary-bin"
+    cat >"$WORK/closure-partial-reader-$boundary-bin/yq" <<'SH'
+#!/usr/bin/env bash
+"$REAL_YQ" "$@" || exit $?
+case "$PARTIAL_CLOSURE:$3" in
+  checks:*'as $closure_paths'*) exit 2 ;;
+  references:*'[.mode, .path]'*) exit 2 ;;
+esac
+SH
+    chmod +x "$WORK/closure-partial-reader-$boundary-bin/yq"
+    REAL_YQ="$(command -v yq)" PARTIAL_CLOSURE="$boundary" PATH="$WORK/closure-partial-reader-$boundary-bin:$PATH" \
+      expect_refusal "partial $boundary closure evidence cannot attest an artifact" "$root" 'could not read the published k8s dependency closure' 'UNKNOWN'
+  done
+}
+
+# Require preflight refusal before a renderer can inspect a deliberately unavailable input.
+# The wrapper is a no-fetch witness, not a substitute successful render.
+closure_expect_no_render() {
+  local title="$1" root="$2" marker="$WORK/closure-loader-attempt"
+  rm -f "$marker"
+  REAL_KUBECTL="$(command -v kubectl)" CLOSURE_RENDER_ATTEMPT="$marker" PATH="$WORK/closure-loader-bin:$PATH" \
+    expect_refusal "$title" "$root" 'published k8s dependency closure' 'UNKNOWN'
+  if [ -e "$marker" ]; then
+    fail "$title reached kubectl instead of refusing before rendering"
+  else
+    pass "$title never reached the loader"
+  fi
+}
+
+# Intercept unavailable inputs before the real renderer can perform any file/network load.
+closure_make_loader_witness() {
+  [ ! -d "$WORK/closure-loader-bin" ] || return 0
+  mkdir "$WORK/closure-loader-bin"
+  cat >"$WORK/closure-loader-bin/kubectl" <<'SH'
+#!/usr/bin/env bash
+case "$1:$2" in
+  kustomize:*/providers/prod/infrastructure)
+    touch "$CLOSURE_RENDER_ATTEMPT"
+    printf 'offline control intercepted build inputs before any load or fetch\n' >&2
+    exit 2 ;;
+esac
+exec "$REAL_KUBECTL" "$@"
+SH
+  chmod +x "$WORK/closure-loader-bin/kubectl"
+}
+
+# All declared file-loader inputs must be accounted for, not only resource directories.
+regression_published_loader_inputs() {
+  local root boundary field reference config
+  closure_make_loader_witness
+
+  for boundary in empty truncated; do
+    root="$(fixture "closure-successful-partial-$boundary")"
+    printf '  - https://github.com/devantler-tech/platform//k8s/bases/apps/beta?ref=7421f9dd\n' \
+      >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    mkdir "$WORK/closure-successful-partial-$boundary-bin"
+    cat >"$WORK/closure-successful-partial-$boundary-bin/yq" <<'SH'
+#!/usr/bin/env bash
+case "$3" in
+  '[.resources[], .bases[], .components[]] | .[]' | *'[.mode, .path]'*)
+    if [ "$SUCCESSFUL_PARTIAL" = empty ]; then exit 0; fi
+    "$REAL_YQ" "$@" | head -n 1
+    exit 0 ;;
+esac
+exec "$REAL_YQ" "$@"
+SH
+    chmod +x "$WORK/closure-successful-partial-$boundary-bin/yq"
+    REAL_YQ="$(command -v yq)" SUCCESSFUL_PARTIAL="$boundary" \
+      PATH="$WORK/closure-successful-partial-$boundary-bin:$PATH" \
+      closure_expect_no_render "successful $boundary path extraction cannot attest completeness" "$root"
+  done
+
+  for field in patches patchesJson6902 patchesStrategicMerge configurations crds transformers generators \
+    configMap-files secret-files configMap-envs secret-envs configMap-env secret-env replacements openapi; do
+    for boundary in remote omitted; do
+      root="$(fixture "closure-loader-$field-$boundary")"
+      reference='unpublished.txt'
+      [ "$boundary" != remote ] || reference='https://github.com/devantler-tech/platform/raw/7421f9dd/loader.yaml'
+      config="$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+      case "$field" in
+        patches | patchesJson6902 | replacements) printf '%s:\n  - path: %s\n' "$field" "$reference" >>"$config" ;;
+        patchesStrategicMerge | configurations | crds | transformers | generators) printf '%s:\n  - %s\n' "$field" "$reference" >>"$config" ;;
+        configMap-files | secret-files)
+          printf '%sGenerator:\n  - name: loader\n    files:\n      - key=%s\n' "${field%-files}" "$reference" >>"$config" ;;
+        configMap-envs | secret-envs)
+          printf '%sGenerator:\n  - name: loader\n    envs:\n      - %s\n' "${field%-envs}" "$reference" >>"$config" ;;
+        configMap-env | secret-env)
+          printf '%sGenerator:\n  - name: loader\n    env: %s\n' "${field%-env}" "$reference" >>"$config" ;;
+        openapi) printf 'openapi:\n  path: %s\n' "$reference" >>"$config" ;;
+      esac
+      closure_expect_no_render "$field $boundary inputs must refuse before rendering" "$root"
+    done
+  done
+
+  for field in patches patchesJson6902 patchesStrategicMerge configurations crds transformers generators \
+    configMap-files secret-files configMap-envs secret-envs configMap-env secret-env replacements openapi; do
+    root="$(fixture "closure-loader-local-$field")"
+    config="$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: input\ndata:\n  value: unchanged\n' \
+      >"${config%/*}/input.yaml"
+    printf '  - input.yaml\n' >>"$config"
+    case "$field" in
+      patches | patchesStrategicMerge)
+        printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: input\ndata:\n  value: unchanged\n' >"${config%/*}/loader.yaml"
+        if [ "$field" = patches ]; then
+          printf 'patches:\n  - path: loader.yaml\n' >>"$config"
+        else
+          printf 'patchesStrategicMerge:\n  - loader.yaml\n' >>"$config"
+        fi ;;
+      patchesJson6902)
+        printf '[{"op":"replace","path":"/data/value","value":"unchanged"}]\n' >"${config%/*}/loader.json"
+        printf 'patchesJson6902:\n  - target:\n      version: v1\n      kind: ConfigMap\n      name: input\n    path: loader.json\n' >>"$config" ;;
+      configurations)
+        printf 'namePrefix:\n  - path: metadata/name\n' >"${config%/*}/loader.yaml"
+        printf 'configurations:\n  - loader.yaml\n' >>"$config" ;;
+      crds | openapi)
+        if [ "$field" = openapi ]; then
+          printf '{"swagger":"2.0","info":{"title":"fixture","version":"v1"},"paths":{},"definitions":{}}\n' >"${config%/*}/loader.json"
+          printf 'openapi:\n  path: loader.json\n' >>"$config"
+        else
+          printf '{"fixture":{"type":"object"}}\n' >"${config%/*}/loader.json"
+          printf 'crds:\n  - loader.json\n' >>"$config"
+        fi ;;
+      transformers)
+        printf 'apiVersion: builtin\nkind: AnnotationsTransformer\nmetadata:\n  name: loader\nannotations:\n  fixture: local\nfieldSpecs:\n  - path: metadata/annotations\n    create: true\n' >"${config%/*}/loader.yaml"
+        printf 'transformers:\n  - loader.yaml\n' >>"$config" ;;
+      generators)
+        mkdir "${config%/*}/nested"
+        printf 'apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata:\n  name: loader\nfiles:\n  - settings.yaml\n' >"${config%/*}/nested/loader.yaml"
+        printf 'setting=value\n' >"${config%/*}/settings.yaml"
+        printf 'generators:\n  - nested/loader.yaml\n' >>"$config" ;;
+      configMap-files | secret-files)
+        printf 'setting=value\n' >"${config%/*}/settings.yaml"
+        printf '%sGenerator:\n  - name: loader\n    files:\n      - key=settings.yaml\n' "${field%-files}" >>"$config" ;;
+      configMap-envs | secret-envs)
+        printf 'setting=value\n' >"${config%/*}/settings.yaml"
+        printf '%sGenerator:\n  - name: loader\n    envs:\n      - settings.yaml\n' "${field%-envs}" >>"$config" ;;
+      configMap-env | secret-env)
+        printf 'setting=value\n' >"${config%/*}/settings.yaml"
+        printf '%sGenerator:\n  - name: loader\n    env: settings.yaml\n' "${field%-env}" >>"$config" ;;
+      replacements)
+        printf 'source:\n  kind: ConfigMap\n  name: input\n  fieldPath: data.value\ntargets:\n  - select:\n      kind: ConfigMap\n      name: input\n    fieldPaths:\n      - data.value\n' >"${config%/*}/loader.yaml"
+        printf 'replacements:\n  - path: loader.yaml\n' >>"$config" ;;
+    esac
+    expect_pass "$field retains valid selected local-file inputs" "$root" '2 consumer(s)'
+  done
+
+  root="$(fixture closure-inline-loaders)"
+  cat >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml" <<'YAML'
+patchesStrategicMerge:
+  - |-
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: inline
+    data:
+      value: https://example.test/data
+patches:
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: inline
+      data:
+        value: https://example.test/data
+transformers:
+  - |-
+    apiVersion: builtin
+    kind: AnnotationsTransformer
+    metadata:
+      name: inline
+    annotations:
+      fixture: https://example.test/data
+    fieldSpecs:
+      - path: metadata/annotations
+        create: true
+generators:
+  - |-
+    apiVersion: builtin
+    kind: ConfigMapGenerator
+    metadata:
+      name: inline
+    literals:
+      - value=https://example.test/data
+secretGenerator:
+  - name: inline-secret
+    literals:
+      - fixture=https://example.test/data
+YAML
+  expect_pass 'inline patches, builtin configs and literal URLs remain data' "$root" '2 consumer(s)'
+
+  root="$(fixture closure-inline-json-patch)"
+  printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: inline-json\n' >"$root/k8s/providers/prod/infrastructure/input.yaml"
+  printf '  - input.yaml\npatchesStrategicMerge:\n  - '\''{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"inline-json"}}'\''\n' \
+    >>"$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  expect_pass 'single-line JSON strategic patches remain inline data' "$root" '2 consumer(s)'
+
+  for field in generator-file generator-inline secret-generator-file generator-envs secret-generator-envs generator-env patch-transformer patch-transformer-inline; do
+    root="$(fixture "closure-builtin-$field")"
+    config="$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    case "$field" in
+      generator* | secret-generator*)
+        reference='generators'
+        boundary=ConfigMapGenerator
+        [[ "$field" != secret-* ]] || boundary=SecretGenerator
+        printf 'apiVersion: builtin\nkind: %s\nmetadata:\n  name: loader\n' "$boundary" >"${config%/*}/loader.yaml"
+        case "$field" in
+          *-envs) printf 'envs:\n  - https://example.test/unavailable.yaml\n' >>"${config%/*}/loader.yaml" ;;
+          *-env) printf 'env: https://example.test/unavailable.yaml\n' >>"${config%/*}/loader.yaml" ;;
+          *) printf 'files:\n  - key=https://example.test/unavailable.yaml\n' >>"${config%/*}/loader.yaml" ;;
+        esac ;;
+      patch-transformer*)
+        reference='transformers'
+        printf 'apiVersion: builtin\nkind: PatchTransformer\nmetadata:\n  name: loader\npath: https://example.test/unavailable.yaml\n' >"${config%/*}/loader.yaml" ;;
+    esac
+    if [[ "$field" = *-inline ]]; then
+      LOADER="$(cat "${config%/*}/loader.yaml")" FIELD="$reference" yq -i '.[strenv(FIELD)] = [strenv(LOADER)]' "$config"
+    else
+      printf '%s:\n  - loader.yaml\n' "$reference" >>"$config"
+    fi
+    closure_expect_no_render "$field refuses builtin-config remote paths before rendering" "$root"
+  done
+
+  for boundary in patches-array patches-path configurations generators-files generators-envs generator-file-type openapi path-control legacy-mapping-path; do
+    root="$(fixture "closure-malformed-loader-$boundary")"
+    config="$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    case "$boundary" in
+      patches-array) yq -i '.patches = {"path":"missing.yaml"}' "$config" ;;
+      patches-path) yq -i '.patches = [{"path":123}]' "$config" ;;
+      configurations) yq -i '.configurations = "missing.yaml"' "$config" ;;
+      generators-files) yq -i '.configMapGenerator = [{"name":"loader","files":"missing.yaml"}]' "$config" ;;
+      generators-envs) yq -i '.secretGenerator = [{"name":"loader","envs":"missing.yaml"}]' "$config" ;;
+      generator-file-type) yq -i '.configMapGenerator = [{"name":"loader","files":[true]}]' "$config" ;;
+      openapi) yq -i '.openapi = "missing.yaml"' "$config" ;;
+      path-control) yq -i '.patches = [{"path":"missing\t.yaml"}]' "$config" ;;
+      legacy-mapping-path) yq -i '.patchesStrategicMerge = ["https://example.test/patch: payload"]' "$config" ;;
+    esac
+    closure_expect_no_render "malformed $boundary cannot authorize a loader" "$root"
+  done
+}
+
+# Installed builtin legacy strategic transformers load paths[] from their owning root.
+regression_builtin_legacy_paths() {
+  local root boundary config
+  closure_make_loader_witness
+  for boundary in file inline; do
+    root="$(fixture "closure-legacy-builtin-$boundary")"
+    config="$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    printf 'apiVersion: builtin\nkind: PatchStrategicMergeTransformer\nmetadata:\n  name: loader\npaths:\n  - https://example.test/unavailable.yaml\n' >"${config%/*}/loader.yaml"
+    if [ "$boundary" = inline ]; then
+      LOADER="$(cat "${config%/*}/loader.yaml")" yq -i '.transformers = [strenv(LOADER)]' "$config"
+    else
+      printf 'transformers:\n  - loader.yaml\n' >>"$config"
+    fi
+    closure_expect_no_render "legacy builtin $boundary paths refuse before rendering" "$root"
+  done
+  root="$(fixture closure-legacy-builtin-local)"
+  config="$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: legacy-input\ndata:\n  value: local\n' >"${config%/*}/input.yaml"
+  printf '  - input.yaml\ntransformers:\n  - loader.yaml\n' >>"$config"
+  printf 'apiVersion: builtin\nkind: PatchStrategicMergeTransformer\nmetadata:\n  name: loader\npaths:\n  - patch.yaml\n' >"${config%/*}/loader.yaml"
+  printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: legacy-input\ndata:\n  value: local\n' >"${config%/*}/patch.yaml"
+  expect_pass 'legacy builtin paths retain selected local strategic patches' "$root" '2 consumer(s)'
+  root="$(fixture closure-legacy-builtin-inline-patch)"
+  config="$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+  printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: legacy-input\ndata:\n  value: local\n' >"${config%/*}/input.yaml"
+  printf '  - input.yaml\ntransformers:\n  - loader.yaml\n' >>"$config"
+  printf 'apiVersion: builtin\nkind: PatchStrategicMergeTransformer\nmetadata:\n  name: loader\npatches: |-\n  apiVersion: v1\n  kind: ConfigMap\n  metadata:\n    name: legacy-input\n  data:\n    value: local\n' >"${config%/*}/loader.yaml"
+  expect_pass 'legacy builtin inline patch strings remain data' "$root" '2 consumer(s)'
+}
+
+# Inline replacement configs have the same secondary file inputs as selected config files.
+regression_inline_replacement_paths() {
+  local root config boundary
+  closure_make_loader_witness
+  for boundary in remote local malformed; do
+    root="$(fixture "closure-inline-replacement-$boundary")"
+    config="$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: replacement-input\ndata:\n  value: unchanged\n' >"${config%/*}/input.yaml"
+    printf '  - input.yaml\n' >>"$config"
+    cat >>"$config" <<'YAML'
+transformers:
+  - |-
+    apiVersion: builtin
+    kind: ReplacementTransformer
+    metadata:
+      name: replacements
+    replacements:
+      - path: replacement.yaml
+YAML
+    case "$boundary" in
+      remote)
+        yq -i '.transformers[0] |= sub("replacement.yaml", "https://example.test/unavailable.yaml")' "$config"
+        closure_expect_no_render 'inline builtin replacement paths refuse before rendering' "$root" ;;
+      local)
+        printf 'source:\n  kind: ConfigMap\n  name: replacement-input\n  fieldPath: data.value\ntargets:\n  - select:\n      kind: ConfigMap\n      name: replacement-input\n    fieldPaths:\n      - data.value\n' >"${config%/*}/replacement.yaml"
+        expect_pass 'inline builtin replacement paths retain selected local files' "$root" '2 consumer(s)' ;;
+      malformed)
+        yq -i '.transformers[0] = "apiVersion: builtin\nkind: ReplacementTransformer\nmetadata:\n  name: replacements\nreplacements:\n  path: missing.yaml\n"' "$config"
+        closure_expect_no_render 'malformed inline replacements cannot authorize a loader' "$root" ;;
+    esac
+  done
+}
+
+# Parse whole inline strings: from_yaml alone does not attest later YAML documents.
+regression_inline_document_bounds() {
+  local root field boundary first second inline config
+  closure_make_loader_witness
+  for field in generators transformers; do
+    if [ "$field" = generators ]; then
+      first=$'apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata:\n  name: first\nliterals:\n  - value=local\n'
+      second=$'apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata:\n  name: second\nfiles:\n  - key=https://example.test/unavailable.yaml\n'
+    else
+      first=$'apiVersion: builtin\nkind: AnnotationsTransformer\nmetadata:\n  name: first\nannotations:\n  value: local\nfieldSpecs:\n  - path: metadata/annotations\n    create: true\n'
+      second=$'apiVersion: builtin\nkind: ReplacementTransformer\nmetadata:\n  name: second\nreplacements:\n  - path: https://example.test/unavailable.yaml\n'
+    fi
+    for boundary in plain commented middle-null; do
+      root="$(fixture "closure-inline-documents-$field-$boundary")"
+      config="$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+      case "$boundary" in
+        plain) inline="$first"$'---\n'"$second" ;;
+        commented) inline="$first"$'--- # another document\n'"$second" ;;
+        middle-null) inline="$first"$'---\n\n---\n'"$second" ;;
+      esac
+      INLINE="$inline" FIELD="$field" yq -i '.[strenv(FIELD)] = [strenv(INLINE)]' "$config"
+      closure_expect_no_render "multi-document inline $field $boundary must refuse before rendering" "$root"
+    done
+
+    root="$(fixture "closure-inline-literal-separator-$field")"
+    config="$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    if [ "$field" = generators ]; then
+      inline=$'---\napiVersion: builtin\nkind: ConfigMapGenerator\nmetadata:\n  name: literal-separator\nliterals:\n  - |-\n    value=first\n    --- # literal data\n    second\n'
+    else
+      inline=$'---\napiVersion: builtin\nkind: AnnotationsTransformer\nmetadata:\n  name: literal-separator\nannotations:\n  value: |-\n    first\n    --- # literal data\n    second\nfieldSpecs:\n  - path: metadata/annotations\n    create: true\n'
+    fi
+    INLINE="$inline" FIELD="$field" yq -i '.[strenv(FIELD)] = [strenv(INLINE)]' "$config"
+    expect_pass "single-document inline $field preserves leading marker and literal separators" "$root" '2 consumer(s)'
+  done
+
+  for boundary in empty truncated failed; do
+    root="$(fixture "closure-inline-document-receipt-$boundary")"
+    INLINE="$first" FIELD=transformers yq -i '.[strenv(FIELD)] = [strenv(INLINE)]' "$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    mkdir "$WORK/closure-inline-doc-$boundary-bin"
+    cat >"$WORK/closure-inline-doc-$boundary-bin/yq" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'INLINE_DOCUMENTS'*)
+    case "$INLINE_PARTIAL" in
+      empty) exit 0 ;;
+      truncated) "$REAL_YQ" "$@" | cut -f1-2; exit 0 ;;
+      failed) "$REAL_YQ" "$@" || exit $?; exit 2 ;;
+    esac ;;
+esac
+exec "$REAL_YQ" "$@"
+SH
+    chmod +x "$WORK/closure-inline-doc-$boundary-bin/yq"
+    REAL_YQ="$(command -v yq)" INLINE_PARTIAL="$boundary" PATH="$WORK/closure-inline-doc-$boundary-bin:$PATH" \
+      closure_expect_no_render "incomplete $boundary document receipt cannot authorize inline input" "$root"
+  done
+
+  for boundary in empty truncated; do
+    root="$(fixture "closure-inline-extraction-$boundary")"
+    INLINE="$first" yq -i '.transformers = [strenv(INLINE), strenv(INLINE)]' "$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    mkdir "$WORK/closure-inline-extract-$boundary-bin"
+    cat >"$WORK/closure-inline-extract-$boundary-bin/yq" <<'SH'
+#!/usr/bin/env bash
+case "$3" in
+  '[.transformers[], .generators[]] | .[] | to_json(0)')
+    if [ "$INLINE_PARTIAL" = empty ]; then exit 0; fi
+    "$REAL_YQ" "$@" | head -n 1
+    exit 0 ;;
+esac
+exec "$REAL_YQ" "$@"
+SH
+    chmod +x "$WORK/closure-inline-extract-$boundary-bin/yq"
+    REAL_YQ="$(command -v yq)" INLINE_PARTIAL="$boundary" PATH="$WORK/closure-inline-extract-$boundary-bin:$PATH" \
+      closure_expect_no_render "successful $boundary inline extraction cannot attest complete input" "$root"
+  done
+
+  for boundary in empty truncated failed; do
+    root="$(fixture "closure-inline-decoder-$boundary")"
+    INLINE="$first"$'---\n'"$second" yq -i '.transformers = [strenv(INLINE)]' "$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    mkdir "$WORK/closure-inline-decoder-$boundary-bin"
+    cat >"$WORK/closure-inline-decoder-$boundary-bin/yq" <<'SH'
+#!/usr/bin/env bash
+if [ "$3" = . ] && [[ "$4" = */inline-input.json ]]; then
+  case "$INLINE_PARTIAL" in
+    empty) exit 0 ;;
+    truncated) "$REAL_YQ" "$@" | head -n 1; exit 0 ;;
+    failed) "$REAL_YQ" "$@" || exit $?; exit 2 ;;
+  esac
+fi
+exec "$REAL_YQ" "$@"
+SH
+    chmod +x "$WORK/closure-inline-decoder-$boundary-bin/yq"
+    REAL_YQ="$(command -v yq)" INLINE_PARTIAL="$boundary" PATH="$WORK/closure-inline-decoder-$boundary-bin:$PATH" \
+      closure_expect_no_render "partial $boundary decoder output cannot lose later inline documents" "$root"
+  done
+
+  for boundary in empty truncated failed; do
+    root="$(fixture "closure-inline-byte-receipt-$boundary")"
+    INLINE="$first" yq -i '.transformers = [strenv(INLINE)]' "$root/k8s/providers/prod/infrastructure/kustomization.yaml"
+    mkdir "$WORK/closure-inline-bytes-$boundary-bin"
+    cat >"$WORK/closure-inline-bytes-$boundary-bin/yq" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'load_str(strenv(DECODED_INPUT))'*)
+    case "$INLINE_PARTIAL" in
+      empty) exit 0 ;;
+      truncated) "$REAL_YQ" "$@" | cut -c1-2; exit 0 ;;
+      failed) "$REAL_YQ" "$@" || exit $?; exit 2 ;;
+    esac ;;
+esac
+exec "$REAL_YQ" "$@"
+SH
+    chmod +x "$WORK/closure-inline-bytes-$boundary-bin/yq"
+    REAL_YQ="$(command -v yq)" INLINE_PARTIAL="$boundary" PATH="$WORK/closure-inline-bytes-$boundary-bin:$PATH" \
+      closure_expect_no_render "incomplete $boundary decoded-byte receipt cannot authorize inline input" "$root"
+  done
+}
+
 # OCI object identities are part of conservation even when report selectors are equal.
 regression_consumer_identities() {
   local root field value target boundary
@@ -1285,6 +1869,48 @@ SH
   done
 }
 
+if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = inline-documents ]; then
+  regression_inline_document_bounds
+  printf '\n%d failure(s)\n' "$failures"
+  [ "$failures" -eq 0 ]
+  exit
+fi
+
+if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = inline-replacements ]; then
+  regression_inline_replacement_paths
+  printf '\n%d failure(s)\n' "$failures"
+  [ "$failures" -eq 0 ]
+  exit
+fi
+
+if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = legacy-loaders ]; then
+  regression_builtin_legacy_paths
+  printf '\n%d failure(s)\n' "$failures"
+  [ "$failures" -eq 0 ]
+  exit
+fi
+
+if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = loaders ]; then
+  regression_published_loader_inputs
+  regression_builtin_legacy_paths
+  regression_inline_replacement_paths
+  regression_inline_document_bounds
+  printf '\n%d failure(s)\n' "$failures"
+  [ "$failures" -eq 0 ]
+  exit
+fi
+
+if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = closure ]; then
+  regression_published_closure
+  regression_published_loader_inputs
+  regression_builtin_legacy_paths
+  regression_inline_replacement_paths
+  regression_inline_document_bounds
+  printf '\n%d failure(s)\n' "$failures"
+  [ "$failures" -eq 0 ]
+  exit
+fi
+
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = identity ]; then
   regression_consumer_identities
   printf '\n%d failure(s)\n' "$failures"
@@ -1972,7 +2598,7 @@ mkdir "$WORK/partial-kind-bin"
 cat >"$WORK/partial-kind-bin/yq" <<'SH'
 #!/usr/bin/env bash
 "$REAL_YQ" "$@" || exit $?
-case "$*" in *'has("apiVersion")'*) exit 2 ;; esac
+case "$3" in *'| (.kind // "" | tostring)'*) exit 2 ;; esac
 SH
 chmod +x "$WORK/partial-kind-bin/yq"
 REAL_YQ="$real_yq" PATH="$WORK/partial-kind-bin:$PATH" expect_refusal \
@@ -2385,6 +3011,11 @@ printf '  - tenant.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
 expect_refusal 'a matching custom-group kro instance is still refused' "$root" \
   'production renders 1 Tenant instance(s)' 'tenants.example.test/v1alpha1'
 
+regression_published_closure
+regression_published_loader_inputs
+regression_builtin_legacy_paths
+regression_inline_replacement_paths
+regression_inline_document_bounds
 regression_consumer_identities
 regression_latest_findings
 regression_controller_findings

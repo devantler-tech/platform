@@ -103,7 +103,25 @@ bash scripts/guard-consumer-discovery-conservation.sh
 bash scripts/tests/test-guard-consumer-discovery-conservation.sh
 ```
 
-This check uses `yq` and `kubectl kustomize` without a cluster or credentials. It compares
+This check uses `yq`, `realpath` and `kubectl kustomize` without a cluster or credentials.
+The overlay and all production roots render from an isolated snapshot of KSail's published
+`k8s` files: YAML/YML/JSON files selected by case-insensitive extension, without
+ignore-file filtering. Directory links are not traversed and other inputs are omitted; selected file links
+are read only after their targets are bounded to the source tree and staged as regular bytes.
+Reachable resources, bases, components and file-loader inputs (patches, transformer
+configurations, CRDs, generators, replacements and OpenAPI definitions) must resolve within
+that artifact. Absolute, nonlocal, omitted or uninspectable inputs are unknown and fail before
+rendering. A separate declared-path count must match the complete extracted path census;
+successful but empty or truncated reader output cannot authorize a build. Inline patches,
+single-document transformer configs and generator literals remain supported. Inline generator
+and transformer strings must have exactly one document according to the YAML parser;
+decoded bytes must match the original serialized string, and multiple documents or incomplete
+parser receipts are unknown. Separators inside literal data
+remain supported.
+Contained relative manifest bases and selected file links remain supported; unused Kustomizations
+are not traversed. Empty regular selected files and selected directory links prevent publication
+and fail the check. Empty selected link targets are conservatively refused as unknown.
+It compares
 literal OCIRepository names and namespaces, exact URLs, effective refs and signer subjects.
 An overlay rename is a divergence even when it keeps the same artifact and revision.
 Identical consumer rows repeated across roots are deduplicated. All rendered top-level Flux

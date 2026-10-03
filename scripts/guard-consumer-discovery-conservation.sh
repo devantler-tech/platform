@@ -107,18 +107,19 @@ refuse() {
 
 command -v yq >/dev/null 2>&1 || refuse 'yq is required and was not found on PATH'
 command -v kubectl >/dev/null 2>&1 || refuse 'kubectl is required to render the production roots'
+command -v realpath >/dev/null 2>&1 || refuse 'realpath is required to bound the published artifact'
 
 SCAN_ROOT="${1:-$REPO_ROOT}"
 [ -d "$SCAN_ROOT" ] || refuse "repository root $SCAN_ROOT does not exist"
 SCAN_ROOT="$(cd -P "$SCAN_ROOT" && pwd -P)"
 readonly SCAN_ROOT
 readonly K8S_DIR="$SCAN_ROOT/k8s"
-readonly OVERLAY="$K8S_DIR/clusters/prod"
 readonly OVERLAY_LABEL='clusters/prod'
-[ -d "$OVERLAY" ] || refuse "no production overlay at ${OVERLAY#"$SCAN_ROOT"/}"
+[ -d "$K8S_DIR/$OVERLAY_LABEL" ] || refuse "no production overlay at k8s/$OVERLAY_LABEL"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+work="$(cd -P "$work" && pwd -P)"
 
 # KSail publishes k8s/ to this artifact and initializes Flux from clusters/prod. The platform's
 # generated source identity is recorded by validate-flux-verify/instance.go and the production
@@ -149,6 +150,200 @@ done <<<"$artifact_contract"
 [ "$contract_rows" -eq 1 ] || refuse 'the KSail production artifact contract must name exactly one KSail Cluster, so the platform source is UNKNOWN'
 [ "$artifact_contract" = $'true\ttrue\ttrue\ttrue\ttrue\ttrue' ] ||
   refuse 'the KSail production artifact contract does not bind k8s/clusters/prod to the platform OCI artifact through Flux, so the platform source is UNKNOWN'
+
+# KSail walks k8s without following directory symlinks and selects YAML/YML/JSON
+# files (case-insensitive), dereferencing selected file links. Empty regular entries
+# prevent publication; empty link targets are conservatively uninspectable here. Stage
+# regular bytes, bounding file-link targets before reading them; a plain copy would retain
+# unpublished inputs and outside links that never describe the actual OCI artifact.
+[ ! -L "$K8S_DIR" ] || refuse 'a symlinked k8s publication root is uninspectable, so its consumers are UNKNOWN'
+readonly PUBLISHED_K8S_DIR="$work/published-k8s"
+mkdir "$PUBLISHED_K8S_DIR"
+if ! find "$K8S_DIR" ! -type d -print0 >"$work/manifest-files"; then
+  refuse 'could not enumerate selected manifests in the source k8s tree, so its consumers are UNKNOWN'
+fi
+while IFS= read -r -d '' manifest; do
+  case "$manifest" in
+    *.[Yy][Aa][Mm][Ll] | *.[Yy][Mm][Ll] | *.[Jj][Ss][Oo][Nn]) ;;
+    *) continue ;;
+  esac
+  [ ! -d "$manifest" ] || refuse 'a selected manifest is a directory link and cannot be published, so its consumers are UNKNOWN'
+  resolved_manifest="$(realpath "$manifest" 2>"$work/path.err")" ||
+    refuse 'could not resolve a selected manifest in the source k8s tree, so its consumers are UNKNOWN'
+  case "$resolved_manifest" in
+    "$K8S_DIR"/*) ;;
+    *) refuse 'a selected manifest resolves outside the source k8s tree, so its consumers are UNKNOWN' ;;
+  esac
+  [ -f "$resolved_manifest" ] && [ -r "$resolved_manifest" ] ||
+    refuse 'could not read a selected manifest in the source k8s tree, so its consumers are UNKNOWN'
+  [ -s "$resolved_manifest" ] || refuse 'an empty selected manifest cannot be attested, so its consumers are UNKNOWN'
+  destination="$PUBLISHED_K8S_DIR/${manifest#"$K8S_DIR"/}"
+  mkdir -p "$(dirname "$destination")"
+  cp "$resolved_manifest" "$destination" ||
+    refuse 'could not stage selected manifest bytes in the published k8s tree, so its consumers are UNKNOWN'
+done <"$work/manifest-files"
+readonly OVERLAY="$PUBLISHED_K8S_DIR/$OVERLAY_LABEL"
+: >"$work/closure-dirs"
+: >"$work/closure-inputs"
+
+# Return the canonical path only when it is inspectable within the isolated artifact.
+# This also bounds symlink targets before a Kustomization or resource can be read.
+published_path() {
+  local path="$1" label="$2" resolved
+  resolved="$(realpath "$path" 2>"$work/path.err")" ||
+    refuse "could not render $label, so its unresolved published k8s dependency closure is UNKNOWN"
+  case "$resolved" in
+    "$PUBLISHED_K8S_DIR" | "$PUBLISHED_K8S_DIR"/*) ;;
+    *) refuse "$label resolves outside the published k8s tree, so its consumers are UNKNOWN" ;;
+  esac
+  [ -e "$resolved" ] || refuse "could not render $label, so its incomplete published k8s dependency closure is UNKNOWN"
+  printf '%s\n' "$resolved"
+}
+
+# Census every supported path-loader input before kubectl runs. The receipt records
+# declared path count separately from the extracted typed rows, so even a status-zero
+# empty/truncated reader cannot authorize a render. Inline patches/configs and generator
+# literals remain data; referenced builtin generator/transformer configs are inspected too.
+validate_published_inputs() {
+  local config="$1" dir="$2" label="$3" checks references reference resolved mode extra
+  local valid_shapes valid_paths declared observed=0 path_census inline_declared inline_records inline_record doc_receipt decoded_receipt
+  if grep -qxF "$config"$'\t'"$dir" "$work/closure-inputs"; then return; fi
+  printf '%s\t%s\n' "$config" "$dir" >>"$work/closure-inputs"
+  path_census='[
+    ((.resources[], .bases[], .components[]) | {"mode": "tree", "path": .}),
+    (((select(.kind != "PatchStrategicMergeTransformer") | .patches[]), .patchesJson6902[], .replacements[])
+      | select(has("path")) | {"mode": "file", "path": .path}),
+    ((.configurations[], .crds[]) | {"mode": "file", "path": .}),
+    (.patchesStrategicMerge[] | select((from_yaml | (type == "!!map" and has("kind") and has("apiVersion"))) | not) | {"mode": "file", "path": .}),
+    ((.transformers[], .generators[]) | select((from_yaml | (type == "!!map" and has("kind") and has("apiVersion"))) | not) | {"mode": "loader", "path": .}),
+    ((.configMapGenerator[], .secretGenerator[],
+      (select(.kind == "ConfigMapGenerator" or .kind == "SecretGenerator")),
+      ((.transformers[], .generators[]) | from_yaml | select(type == "!!map" and (.kind == "ConfigMapGenerator" or .kind == "SecretGenerator"))))
+      | ((.files[] | {"mode": "file", "path": sub("^[^=]+=", "")}),
+         (.envs[] | {"mode": "file", "path": .}),
+         (select(has("env")) | {"mode": "file", "path": .env}))),
+    (.openapi | select(has("path")) | {"mode": "file", "path": .path}),
+    (select((.kind == "PatchTransformer" or .kind == "PatchStrategicMergeTransformer" or .kind == "PatchJson6902Transformer") and has("path"))
+      | {"mode": "file", "path": .path}),
+    ((.transformers[], .generators[]) | from_yaml
+      | select(type == "!!map" and (.kind == "PatchTransformer" or .kind == "PatchStrategicMergeTransformer" or .kind == "PatchJson6902Transformer") and has("path"))
+      | {"mode": "file", "path": .path}),
+    ((select(.kind == "PatchStrategicMergeTransformer") | .paths[]) | {"mode": "file", "path": .}),
+    ((.transformers[], .generators[]) | from_yaml | select(type == "!!map" and .kind == "PatchStrategicMergeTransformer")
+      | .paths[] | {"mode": "file", "path": .}),
+    ((.transformers[], .generators[]) | from_yaml | select(type == "!!map" and .kind == "ReplacementTransformer")
+      | .replacements[] | select(has("path")) | {"mode": "file", "path": .path})
+  ]'
+  # shellcheck disable=SC2016 # $closure_paths is a yq variable, not a shell expansion.
+  if ! checks="$(yq -N -r "$path_census"' as $closure_paths | [
+      ([.resources, .bases, .components, (select(.kind != "PatchStrategicMergeTransformer") | .patches), .patchesJson6902, .patchesStrategicMerge,
+        .configurations, .crds, .transformers, .generators, .replacements, .configMapGenerator, .secretGenerator]
+        | map(select(. != null) | type == "!!seq") | contains([false]) | not)
+      and ([(select(.kind != "PatchStrategicMergeTransformer") | .patches[]), .patchesJson6902[], .replacements[], .configMapGenerator[], .secretGenerator[]]
+        | map(type == "!!map") | contains([false]) | not)
+      and ([.patchesStrategicMerge[], .transformers[], .generators[]]
+        | map(type == "!!str") | contains([false]) | not)
+      and ((.openapi == null) or (.openapi | type == "!!map"))
+      and ([(select(.kind == "PatchStrategicMergeTransformer") | .paths),
+        ((.transformers[], .generators[]) | from_yaml | select(type == "!!map" and .kind == "PatchStrategicMergeTransformer") | .paths)]
+        | map(select(. != null) | type == "!!seq") | contains([false]) | not)
+      and ([(.transformers[], .generators[]) | from_yaml | select(type == "!!map" and .kind == "ReplacementTransformer")]
+        | map(((.replacements == null) or (.replacements | type == "!!seq"))
+          and ([.replacements[]] | map(type == "!!map") | contains([false]) | not))
+        | contains([false]) | not)
+      and ([.configMapGenerator[], .secretGenerator[],
+        (select(.kind == "ConfigMapGenerator" or .kind == "SecretGenerator")),
+        ((.transformers[], .generators[]) | from_yaml | select(type == "!!map" and (.kind == "ConfigMapGenerator" or .kind == "SecretGenerator")))]
+        | map(([.files, .envs] | map(select(. != null) | type == "!!seq") | contains([false]) | not))
+        | contains([false]) | not),
+      ($closure_paths | map((.path | type) == "!!str" and .path != "" and ((.path | test("[\\t\\n\\r]")) | not)) | contains([false]) | not),
+      ($closure_paths | length),
+      ([.transformers[], .generators[]] | length)
+    ] | map(tostring) | join("\t")' "$config" 2>"$work/closure.err")"; then
+    refuse "could not read the published k8s dependency closure of $label, so its consumers are UNKNOWN"
+  fi
+  IFS=$'\t' read -r valid_shapes valid_paths declared inline_declared extra <<<"$checks"
+  [ "$valid_shapes" = true ] && [ "$valid_paths" = true ] && [ -z "$extra" ] &&
+    [[ "$declared" =~ ^[0-9]+$ ]] && [[ "$inline_declared" =~ ^[0-9]+$ ]] && [[ "$checks" != *$'\n'* ]] ||
+    refuse "could not render $label, so its malformed published k8s dependency closure is UNKNOWN"
+  # from_yaml decodes only the first document of an inline string. Parse each whole
+  # candidate with eval-all before trusting the census, preserving separators in
+  # literal data. Bind decoded bytes to the serialized scalar (including yq's one
+  # wrapper LF), count extracted strings too, and require a framed complete receipt.
+  if [ "$inline_declared" != 0 ]; then
+    if ! inline_records="$(yq -N -r '[.transformers[], .generators[]] | .[] | to_json(0)' "$config" 2>"$work/closure.err")"; then
+      refuse "could not read inline inputs in the published k8s dependency closure of $label, so its consumers are UNKNOWN"
+    fi
+    while IFS= read -r inline_record; do
+      [ -z "$inline_record" ] || observed=$((observed + 1))
+    done <<<"$inline_records"
+    [ "$observed" = "$inline_declared" ] ||
+      refuse "could not read complete inline inputs in the published k8s dependency closure of $label, so its consumers are UNKNOWN"
+    while IFS= read -r inline_record; do
+      [ -n "$inline_record" ] || continue
+      printf '%s\n' "$inline_record" >"$work/inline-input.json"
+      if ! yq -N -r '.' "$work/inline-input.json" >"$work/inline-input.yaml" 2>"$work/closure.err"; then
+        refuse "could not decode inline input in the published k8s dependency closure of $label, so its consumers are UNKNOWN"
+      fi
+      if ! decoded_receipt="$(DECODED_INPUT="$work/inline-input.yaml" yq -N -r 'load_str(strenv(DECODED_INPUT)) == (. + "\n")' "$work/inline-input.json" 2>"$work/closure.err")"; then
+        refuse "could not attest decoded inline bytes in the published k8s dependency closure of $label, so its consumers are UNKNOWN"
+      fi
+      [ "$decoded_receipt" = true ] ||
+        refuse "could not attest complete decoded inline bytes in the published k8s dependency closure of $label, so its consumers are UNKNOWN"
+      if ! doc_receipt="$(yq eval-all -N -r '[.] | ["INLINE_DOCUMENTS", length, "COMPLETE"] | @tsv' "$work/inline-input.yaml" 2>"$work/closure.err")"; then
+        refuse "could not count inline documents in the published k8s dependency closure of $label, so its consumers are UNKNOWN"
+      fi
+      [ "$doc_receipt" = $'INLINE_DOCUMENTS\t1\tCOMPLETE' ] ||
+        refuse "could not attest a single complete inline document in the published k8s dependency closure of $label, so its consumers are UNKNOWN"
+    done <<<"$inline_records"
+  fi
+  observed=0
+  if ! references="$(yq -N -r "$path_census"' | .[] | [.mode, .path] | join("\t")' "$config" 2>"$work/closure.err")"; then
+    refuse "could not read the published k8s dependency closure of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r reference; do
+    [ -z "$reference" ] || observed=$((observed + 1))
+  done <<<"$references"
+  [ "$observed" = "$declared" ] ||
+    refuse "could not read the complete published k8s dependency closure of $label, so its consumers are UNKNOWN"
+  while IFS= read -r reference; do
+    [ -n "$reference" ] || continue
+    IFS=$'\t' read -r mode reference extra <<<"$reference"
+    [ -n "$reference" ] && [ -z "$extra" ] ||
+      refuse "could not read the complete published k8s dependency closure of $label, so its consumers are UNKNOWN"
+    case "$reference" in
+      /* | *:* | git@* | *'?'* | *'#'*)
+        refuse "$label has an absolute or nonlocal reference outside the inspectable published k8s dependency closure, so its consumers are UNKNOWN" ;;
+    esac
+    resolved="$(published_path "$dir/$reference" "$label dependency")" || exit 1
+    case "$mode" in
+      tree) if [ -d "$resolved" ]; then validate_published_closure "$resolved" "$label"; fi ;;
+      file | loader)
+        [ -f "$resolved" ] || refuse "could not render $label, so its non-file published k8s dependency closure is UNKNOWN"
+        # Builtin configs retain their Kustomization loader root, even when their
+        # own config file lives in a subdirectory.
+        if [ "$mode" = loader ]; then validate_published_inputs "$resolved" "$dir" "$label loader"; fi ;;
+      *) refuse "could not read the complete published k8s dependency closure of $label, so its consumers are UNKNOWN" ;;
+    esac
+  done <<<"$references"
+}
+
+# Walk only dependency directories reachable from this render. Missing Kustomizations
+# retain the renderer's refusal; an ambiguous declaration cannot establish closure.
+validate_published_closure() {
+  local dir="$1" label="$2" config='' candidate
+  dir="$(published_path "$dir" "$label")" || exit 1
+  if grep -qxF "$dir" "$work/closure-dirs"; then return; fi
+  printf '%s\n' "$dir" >>"$work/closure-dirs"
+  for candidate in kustomization.yaml kustomization.yml Kustomization; do
+    if [ -e "$dir/$candidate" ] || [ -L "$dir/$candidate" ]; then
+      [ -z "$config" ] || refuse "could not render $label, so its ambiguous published k8s dependency closure is UNKNOWN"
+      config="$(published_path "$dir/$candidate" "$label Kustomization")" || exit 1
+    fi
+  done
+  [ -n "$config" ] || return 0
+  validate_published_inputs "$config" "$dir" "$label"
+}
 
 # Flux substitutes the final YAML after kustomize build, including kind and apiVersion. Selectors for
 # literal OCIRepository/Kustomization kinds cannot see a document whose type is decided
@@ -274,8 +469,9 @@ refuse_source_overrides() {
 readonly FLUX_KUSTOMIZATION='select(.kind == "Kustomization" and ((.apiVersion // "") | test("^kustomize\\.toolkit\\.fluxcd\\.io/")))'
 
 # ── 1. The production roots, read from the overlay's render ───────────────────────────
+validate_published_closure "$OVERLAY" "k8s/$OVERLAY_LABEL"
 if ! kubectl kustomize "$OVERLAY" >"$work/overlay.yaml" 2>"$work/overlay.err"; then
-  refuse "could not render k8s/$OVERLAY_LABEL, so the production roots are UNKNOWN: $(tr '\n' ' ' <"$work/overlay.err")"
+  refuse "could not render k8s/$OVERLAY_LABEL from the published k8s tree, so the production roots are UNKNOWN: $(tr '\n' ' ' <"$work/overlay.err")"
 fi
 refuse_substituted_object_types "$work/overlay.yaml" "$OVERLAY_LABEL"
 if ! yq -N -r "$FLUX_KUSTOMIZATION"' | [
@@ -331,16 +527,25 @@ i=0
 while IFS= read -r root; do
   [ -n "$root" ] || continue
   i=$((i + 1))
-  dir="$K8S_DIR/$root"
-  [ -d "$dir" ] || refuse "production root $root does not exist under k8s/, so what it applies is UNKNOWN"
+  # Preserve the source root's original boundary diagnosis even when publication
+  # omits an escaping directory link. Resolve metadata only; never read its contents.
+  if source_dir="$(realpath "$K8S_DIR/$root" 2>/dev/null)"; then
+    case "$source_dir" in
+      "$K8S_DIR" | "$K8S_DIR"/*) ;;
+      *) refuse "production root $root resolves outside the published k8s tree, so its consumers are UNKNOWN" ;;
+    esac
+  fi
+  dir="$PUBLISHED_K8S_DIR/$root"
+  [ -d "$dir" ] || refuse "production root $root does not exist in the published k8s tree, so what it applies is UNKNOWN"
   dir="$(cd -P "$dir" && pwd -P)" || refuse "could not resolve production root $root, so its consumers are UNKNOWN"
   case "$dir" in
-    "$K8S_DIR" | "$K8S_DIR"/*) ;;
+    "$PUBLISHED_K8S_DIR" | "$PUBLISHED_K8S_DIR"/*) ;;
     *) refuse "production root $root resolves outside the published k8s tree, so its consumers are UNKNOWN" ;;
   esac
+  validate_published_closure "$dir" "production root $root"
   file="$work/root-$i.yaml"
   if ! kubectl kustomize "$dir" >"$file" 2>"$work/root.err"; then
-    refuse "could not render production root $root, so its consumers are UNKNOWN: $(tr '\n' ' ' <"$work/root.err")"
+    refuse "could not render production root $root, so its consumers are UNKNOWN in the published k8s tree: $(tr '\n' ' ' <"$work/root.err")"
   fi
   refuse_substituted_object_types "$file" "$root"
   sources="$sources$file	$root
