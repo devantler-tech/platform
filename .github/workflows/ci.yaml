@@ -421,6 +421,11 @@ jobs:
               # and the fixture guard.
               - 'tests/**'
               - 'scripts/tests/test-restrict-tenant-network-policies.sh'
+              - '.github/workflows/prove-cilium-default-deny.yaml'
+              - '.github/scripts/fetch-cilium-deny-candidate.sh'
+              - 'scripts/prove-cilium-default-deny.sh'
+              - 'scripts/tests/test-fetch-cilium-deny-candidate.sh'
+              - 'scripts/tests/test-prove-cilium-default-deny.sh'
               - 'scripts/tests/test-add-baseline-context.sh'
               - 'scripts/tests/test-longhorn-ui-baseline-context.sh'
               - 'scripts/tests/test-cilium-hubble-baseline-context.sh'
@@ -1453,6 +1458,9 @@ jobs:
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
           shellcheck scripts/tests/test-restrict-tenant-network-policies.sh
           bash scripts/tests/test-restrict-tenant-network-policies.sh
+          shellcheck .github/scripts/fetch-cilium-deny-candidate.sh scripts/prove-cilium-default-deny.sh scripts/tests/test-fetch-cilium-deny-candidate.sh scripts/tests/test-prove-cilium-default-deny.sh
+          bash scripts/tests/test-fetch-cilium-deny-candidate.sh
+          bash scripts/tests/test-prove-cilium-default-deny.sh
           shellcheck scripts/tests/test-restrict-homepage-service-groups.sh
           bash scripts/tests/test-restrict-homepage-service-groups.sh
           shellcheck scripts/tests/test-kyverno-umami-mutation-rbac.sh
