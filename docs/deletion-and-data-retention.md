@@ -177,6 +177,9 @@ When a claim is deleted, its volume moves to `Released`. The PersistentVolume ob
 still names the deleted claim. The storage behind it is untouched. Nothing reuses or removes it on
 its own.
 
+The procedure below follows from how Kubernetes and the CSI provisioner behave. It has not been run
+on this cluster yet: step 4 of the rollout drills it, and nothing depends on it before then.
+
 **To bring the data back:**
 
 1. Act before the claim is recreated. A claim that comes back first, for example because its
