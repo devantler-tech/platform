@@ -133,6 +133,8 @@ func TestSharedParserOrdinaryShellControls(t *testing.T) {
 		"round6 alias query":                        "alias ksail 2>/dev/null || true",
 		"round6 quoted substitution env value":      "env \"TEST_VALUE=$(printf '%s' \"$@\")\" echo ready",
 		"failure mode restored":                     "set +e\nset -e",
+		"combined strict shell options":             "set -euo pipefail",
+		"combined options restore failure mode":     "set +e; set -euo pipefail",
 		"eval failure mode restored":                "eval 'set +e; set -e'",
 		"unused ordinary helper":                    "helper() { set +e; echo ready; }\necho ready",
 		"invoked helper preserves failure mode":     "helper() { set +e; set -e; }\nhelper",

@@ -483,6 +483,14 @@ func shellSetEffects(words []string, static []bool) shellEffects {
 			}
 		}
 	}
+	applyNamedOption := func(option string, enabled bool) bool {
+		switch option {
+		case "allexport", "braceexpand", "emacs", "errexit", "errtrace", "functrace", "hashall", "histexpand", "history", "ignoreeof", "interactive-comments", "keyword", "monitor", "noclobber", "noexec", "noglob", "nolog", "notify", "nounset", "onecmd", "physical", "pipefail", "posix", "privileged", "verbose", "vi", "xtrace":
+			applyOption(option, enabled)
+			return true
+		}
+		return false
+	}
 	for i := 1; i < len(words); i++ {
 		if !static[i] {
 			return unknown()
@@ -499,15 +507,21 @@ func shellSetEffects(words []string, static []bool) shellEffects {
 			if !static[i] {
 				return unknown()
 			}
-			switch words[i] {
-			case "allexport", "braceexpand", "emacs", "errexit", "errtrace", "functrace", "hashall", "histexpand", "history", "ignoreeof", "interactive-comments", "keyword", "monitor", "noclobber", "noexec", "noglob", "nolog", "notify", "nounset", "onecmd", "physical", "pipefail", "posix", "privileged", "verbose", "vi", "xtrace":
-				applyOption(words[i], word == "-o")
-			default:
+			if !applyNamedOption(words[i], word == "-o") {
 				return unknown()
 			}
 			continue
 		}
 		for _, option := range word[1:] {
+			if option == 'o' {
+				if i+1 < len(words) {
+					i++
+					if !static[i] || !applyNamedOption(words[i], strings.HasPrefix(word, "-")) {
+						return unknown()
+					}
+				}
+				continue
+			}
 			if !strings.ContainsRune("abefhkmnptuvxBCEHPT", option) {
 				return unknown()
 			}
