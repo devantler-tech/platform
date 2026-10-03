@@ -233,7 +233,7 @@ discover_consumers() {
 # column. The conservation guard compares on it, so a patched signer constraint is a
 # divergence; the report's own four-column rows are unchanged.
 consumer_rows() {
-  local file="$1" mode="${2:-}" rows url version subjects repo workflow workflows artifact
+  local file="$1" mode="${2:-}" rows url version subjects repo workflow workflows artifact filtered
   # The prose about each field lives OUTSIDE the single-quoted yq program deliberately: a
   # backtick inside it reads as a command substitution to shellcheck (SC2016), so it is in
   # the comment block at the end of the loop below.
@@ -241,12 +241,13 @@ consumer_rows() {
     select(.kind == "OCIRepository") |
     [(.spec.url // "-"),
      ((.spec.verify.matchOIDCIdentity // []) | map(.subject // "") | join(" ") | select(. != "") // "-"),
-     (((.spec.ref.digest // "") | select(. != "") | "digest:" + .) // ((.spec.ref.semver // "") | select(. != "") | "semver:" + .) // ((.spec.ref.tag // "") | select(. != "")) // "unpinned")] | @tsv
+     (((.spec.ref.digest // "") | select(. != "") | "digest:" + .) // ((.spec.ref.semver // "") | select(. != "") | "semver:" + .) // ((.spec.ref.tag // "") | select(. != "")) // "unpinned"),
+     (.spec.ref | has("semverFilter") | tostring)] | @tsv
   ' "$file" 2>/dev/null)"; then
     printf 'could not parse %s as YAML, so the consumers it declares are UNKNOWN\n' "$file" >&2
     return 1
   fi
-  while IFS=$'\t' read -r url subjects version; do
+  while IFS=$'\t' read -r url subjects version filtered; do
     # 🔴 TAB IS IFS WHITESPACE, so `read` COLLAPSES consecutive tabs and an empty MIDDLE
     # field silently shifts every later field left. Two consumers pin no `spec.ref.tag`,
     # so their row was `url\t\tsubject` and the subject landed in `version` — both
@@ -264,6 +265,13 @@ consumer_rows() {
     workflows="$(printf '%s\n' "$subjects" |
       grep -oE 'publish-(app|manifests)\\?\.yaml@' | sed 's/\\\{0,1\}\.yaml@$//' | sort -u || true)"
     [ -n "$workflows" ] || continue
+    # Flux filters registry tags before SemVer selection. This resolver has no
+    # compatible evaluator. Refuse filters on attributed report consumers; an
+    # unrelated chart or unsigned artifact remains outside this report's scope.
+    if [ "$filtered" != false ]; then
+      printf 'semverFilter in %s needs Flux-compatible tag filtering, so its consumers are UNKNOWN\n' "$file" >&2
+      return 1
+    fi
     if [ "$(printf '%s\n' "$workflows" | grep -c .)" -ne 1 ]; then
       printf 'ambiguous: %s in %s names more than one shared publish workflow, so its attribution is UNKNOWN\n' \
         "$url" "$file" >&2

@@ -46,6 +46,11 @@
 #   - a suspended production root, or a path that resolves outside the published k8s/ tree;
 #   - a nested Flux Kustomization that applies another path from that same source: only the
 #     overlay's roots are rendered, so that layer would go unseen;
+#   - an admission mutation with unbounded kinds or a consumer/root kind match, and
+#     unevaluated CEL mutations: persisted objects can differ from the static render;
+#   - a mapping-backed nested Kustomization template on the platform source, including
+#     ResourceSet resources and step resources: its applied path is not rendered here;
+#   - an OCIRepository declaring semverFilter: the report does not evaluate Flux tag filters;
 #   - an OCIRepository whose URL, ref or subject carries `${`: Flux post-build substitution
 #     decides it at apply time;
 #   - a document or object template whose kind or apiVersion carries `${`: substitution can turn it into
@@ -330,6 +335,51 @@ consumer_gvks=''
 while IFS=$'\t' read -r file label; do
   [ -n "$file" ] || continue
   refuse_source_overrides "$file" "$label"
+  # Admission and mutate-existing run after this build. Literal unrelated kind
+  # matches are safe; source/root matches, wildcards and missing kind bounds are
+  # unknown even when a rule has exclusions or conditional preconditions.
+  if ! mutations="$(yq -N -r '.. | select(type == "!!map" and
+      (.kind == "ClusterPolicy" or .kind == "Policy"))
+      | .spec.rules[] | {"mutates": has("mutate"),
+        "affected": (([.match | .. | select(type == "!!map" and has("resources"))] | length) == 0
+        or ([.match | .. | select(type == "!!map" and has("resources"))
+          | select(.resources.kinds == null or (.resources.kinds | length) == 0)] | length) > 0
+        or ([.match | .. | select(type == "!!map" and has("resources")) | .resources.kinds[]
+          | select(type != "!!str" or (. | tostring | test("(^|/)(OCIRepository|Kustomization|FluxInstance)(/|$)|\\*|\\?|\\[|\\$\\{")))] | length) > 0
+        or ([.mutate | .. | select(type == "!!map" and has("targets")) | .targets[]
+          | select(.kind == null or (.kind | type) != "!!str"
+            or (.kind | tostring | test("(^|/)(OCIRepository|Kustomization|FluxInstance)(/|$)|\\*|\\?|\\[|\\$\\{")))] | length) > 0)}
+      | select(.mutates == true) | .affected' "$file" 2>"$work/yq.err")"; then
+    refuse "could not bound admission mutations in the render of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r affected; do
+    [ -z "$affected" ] || [ "$affected" = false ] ||
+      refuse "production render $label holds an admission mutation that can change consumers or production roots, so its consumers are UNKNOWN"
+  done <<<"$mutations"
+  # CEL mutations are not evaluated by this static guard. Refuse their declared
+  # presence rather than infer identity preservation from a pre-admission row.
+  if ! mutations="$(yq -N -r '[.. | select(type == "!!map" and
+      (.kind == "MutatingPolicy" or .kind == "MutatingAdmissionPolicy"))] | length' "$file" 2>"$work/yq.err")"; then
+    refuse "could not read CEL admission mutations in the render of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r count; do
+    [ -z "$count" ] || [ "$count" = 0 ] ||
+      refuse "production render $label holds an unevaluated CEL admission mutation, so its consumers are UNKNOWN"
+  done <<<"$mutations"
+  # A controller-created Kustomization can apply an otherwise unseen path from
+  # this artifact. path excludes the document root, which is handled above.
+  if ! nested_templates="$(yq -N -r '[.. | select(type == "!!map"
+      and .kind == "Kustomization" and has("spec") and (path | length) > 0)
+      | select(.spec.sourceRef.kind == "OCIRepository"
+          and .spec.sourceRef.name == "flux-system"
+          and ((.spec.sourceRef.namespace // .metadata.namespace // "") == "flux-system"
+            or (.spec.sourceRef.namespace // .metadata.namespace // "") == ""))] | length' "$file" 2>"$work/yq.err")"; then
+    refuse "could not read nested Kustomization templates in the render of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r count; do
+    [ -z "$count" ] || [ "$count" = 0 ] ||
+      refuse "production render $label holds a Kustomization template that can apply an unseen platform-artifact path, so its consumers are UNKNOWN"
+  done <<<"$nested_templates"
   # ResourceSet strings are controller templates, not YAML object mappings. They
   # may contain multi-document YAML and Go-template control flow, so refuse any
   # non-empty top-level or step template rather than silently omit its objects.

@@ -242,6 +242,169 @@ expect_refusal() {
   fi
 }
 
+# Exact-current-head review regressions: admission, controller carriers and tag filters.
+regression_latest_findings() {
+  local root placement target field boundary want
+  for field in url ref verify; do
+    root="$(fixture "admission-$field")"
+    cat >"$root/k8s/providers/prod/apps/mutation.yaml" <<'YAML'
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: consumer-mutation
+spec:
+  rules:
+    - name: rewrite-consumer
+      match:
+        any:
+          - resources:
+              kinds: [OCIRepository]
+      mutate:
+        patchStrategicMerge:
+          spec:
+            url: oci://ghcr.io/devantler-tech/changed/manifests
+YAML
+    case "$field" in
+      ref) yq -i 'del(.spec.rules[0].mutate.patchStrategicMerge.spec.url) | .spec.rules[0].mutate.patchStrategicMerge.spec.ref.tag = "old"' "$root/k8s/providers/prod/apps/mutation.yaml" ;;
+      verify) yq -i 'del(.spec.rules[0].mutate.patchStrategicMerge.spec.url) | .spec.rules[0].mutate.patchStrategicMerge.spec.verify.provider = "cosign"' "$root/k8s/providers/prod/apps/mutation.yaml" ;;
+    esac
+    printf '  - mutation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_refusal "admission $field changes cannot attest consumer identity" "$root" 'admission mutation' 'consumers are UNKNOWN'
+  done
+  for target in wildcard qualified missing mutate-existing cel; do
+    root="$(fixture "admission-$target")"
+    cp "$WORK/admission-url/k8s/providers/prod/apps/mutation.yaml" "$root/k8s/providers/prod/apps/mutation.yaml"
+    case "$target" in
+      wildcard) yq -i '.spec.rules[0].match.any[0].resources.kinds = ["*"]' "$root/k8s/providers/prod/apps/mutation.yaml" ;;
+      qualified) yq -i '.spec.rules[0].match.any[0].resources.kinds = ["source.toolkit.fluxcd.io/v1/OCIRepository"]' "$root/k8s/providers/prod/apps/mutation.yaml" ;;
+      missing) yq -i 'del(.spec.rules[0].match.any[0].resources.kinds)' "$root/k8s/providers/prod/apps/mutation.yaml" ;;
+      mutate-existing) yq -i '.spec.rules[0].match.any[0].resources.kinds = ["ConfigMap"] | .spec.rules[0].mutate.targets = [{"apiVersion":"source.toolkit.fluxcd.io/v1","kind":"OCIRepository"}]' "$root/k8s/providers/prod/apps/mutation.yaml" ;;
+      cel) cat >"$root/k8s/providers/prod/apps/mutation.yaml" <<'YAML'
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: consumer-mutation
+spec:
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [source.toolkit.fluxcd.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [ocirepositories]
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: 'Object{spec: Object.spec{url: "oci://ghcr.io/devantler-tech/changed/manifests"}}'
+YAML
+        ;;
+    esac
+    printf '  - mutation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_refusal "$target admission policy cannot attest consumer identity" "$root" 'admission mutation' 'consumers are UNKNOWN'
+  done
+  root="$(fixture unrelated-admission)"
+  cp "$WORK/admission-url/k8s/providers/prod/apps/mutation.yaml" "$root/k8s/providers/prod/apps/mutation.yaml"
+  yq -i '.spec.rules[0].match.any[0].resources.kinds = ["Pod"]' "$root/k8s/providers/prod/apps/mutation.yaml"
+  printf '  - mutation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'a literal Pod-only mutation does not alter consumers' "$root" '2 consumer(s)'
+
+  for placement in resources steps; do
+    root="$(fixture "nested-kustomization-$placement")"
+    cat >"$root/k8s/providers/prod/apps/resource-set.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: additional-roots
+  namespace: flux-system
+spec:
+  resources:
+    - apiVersion: kustomize.toolkit.fluxcd.io/v1
+      kind: Kustomization
+      metadata:
+        name: hidden-layer
+        namespace: flux-system
+      spec:
+        sourceRef:
+          kind: OCIRepository
+          name: flux-system
+        path: bases/unseen
+YAML
+    mkdir -p "$root/k8s/bases/unseen"
+    cp "$root/k8s/bases/apps/alpha/oci-repository.yaml" "$root/k8s/bases/unseen/hidden.yml"
+    yq -i '.metadata.name = "hidden" | .spec.url = "oci://ghcr.io/devantler-tech/hidden/manifests"' "$root/k8s/bases/unseen/hidden.yml"
+    printf 'resources:\n  - hidden.yml\n' >"$root/k8s/bases/unseen/kustomization.yaml"
+    if [ "$placement" = steps ]; then
+      yq -i '.spec.steps = [{"name":"extra", "resources":.spec.resources}] | del(.spec.resources)' "$root/k8s/providers/prod/apps/resource-set.yaml"
+    fi
+    printf '  - resource-set.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_refusal "a ResourceSet $placement nested platform Kustomization cannot hide a layer" "$root" 'Kustomization template' 'consumers are UNKNOWN'
+  done
+  root="$(fixture nested-tenant-kustomization)"
+  cp "$WORK/nested-kustomization-resources/k8s/providers/prod/apps/resource-set.yaml" "$root/k8s/providers/prod/apps/resource-set.yaml"
+  yq -i '.spec.resources[0].spec.sourceRef.name = "tenant"' "$root/k8s/providers/prod/apps/resource-set.yaml"
+  printf '  - resource-set.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'a nested tenant-source Kustomization stays outside the platform artifact' "$root" '2 consumer(s)'
+
+  root="$(fixture semver-filter-source)"
+  yq -i '.spec.ref.semverFilter = "^v.*-stable$"' "$root/k8s/bases/apps/alpha/oci-repository.yaml"
+  expect_refusal 'equal filtered source rows cannot attribute an unfiltered release' "$root" 'semverFilter' 'UNKNOWN'
+  root="$(fixture semver-filter-overlay)"
+  cat >>"$root/k8s/providers/prod/apps/kustomization.yaml" <<'YAML'
+patches:
+  - target:
+      kind: OCIRepository
+      name: alpha
+    patch: |-
+      - op: add
+        path: /spec/ref/semverFilter
+        value: ^v.*-stable$
+YAML
+  expect_refusal 'an overlay tag filter cannot preserve the old consumer identity' "$root" 'semverFilter' 'UNKNOWN'
+
+  for target in foreign unsigned; do
+    root="$(fixture "unrelated-filter-$target")"
+    cp "$root/k8s/bases/apps/alpha/oci-repository.yaml" "$root/k8s/providers/prod/apps/unrelated.yaml"
+    yq -i '.metadata.name = "unrelated" | .spec.ref.semverFilter = "^v.*-stable$"' "$root/k8s/providers/prod/apps/unrelated.yaml"
+    if [ "$target" = foreign ]; then
+      yq -i '.spec.url = "oci://registry.example/vendor/chart"' "$root/k8s/providers/prod/apps/unrelated.yaml"
+    else
+      yq -i 'del(.spec.verify)' "$root/k8s/providers/prod/apps/unrelated.yaml"
+    fi
+    printf '  - unrelated.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_pass "an unrelated $target filtered artifact stays outside the signing report" "$root" '2 consumer(s)'
+  done
+
+  for boundary in admission cel nested filter; do
+    root="$(fixture "partial-latest-$boundary")"
+    mkdir "$WORK/partial-latest-$boundary-bin"
+    cat >"$WORK/partial-latest-$boundary-bin/yq" <<'SH'
+#!/usr/bin/env bash
+"$REAL_YQ" "$@" || exit $?
+case "$PARTIAL_LATEST:$*" in
+  admission:*'select(.mutates == true)'*) exit 2 ;;
+  cel:*'.kind == "MutatingAdmissionPolicy"'*) exit 2 ;;
+  nested:*'and (path | length) > 0'*) exit 2 ;;
+  filter:*'has("semverFilter")'*) exit 2 ;;
+esac
+SH
+    chmod +x "$WORK/partial-latest-$boundary-bin/yq"
+    case "$boundary" in
+      admission) want='could not bound admission mutations' ;;
+      cel) want='could not read CEL admission mutations' ;;
+      nested) want='could not read nested Kustomization templates' ;;
+      filter) want='could not parse' ;;
+    esac
+    REAL_YQ="$(command -v yq)" PARTIAL_LATEST="$boundary" PATH="$WORK/partial-latest-$boundary-bin:$PATH" \
+      expect_refusal "a partial $boundary reader is not an attestation" "$root" "$want" 'UNKNOWN'
+  done
+}
+
+if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = latest ]; then
+  regression_latest_findings
+  printf '\n%d failure(s)\n' "$failures"
+  [ "$failures" -eq 0 ]
+  exit
+fi
+
 # ---------------------------------------------------------------------------
 # 1. AGREEING: every consumer discovered is rendered, field for field. The nested
 #    Flux Kustomization on the consumer's own source and the instance-less RGD template
@@ -1292,6 +1455,8 @@ YAML
 printf '  - tenant.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
 expect_refusal 'a matching custom-group kro instance is still refused' "$root" \
   'production renders 1 Tenant instance(s)' 'tenants.example.test/v1alpha1'
+
+regression_latest_findings
 
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

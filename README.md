@@ -112,6 +112,13 @@ patches are supported only when their operations preserve the source identity an
 are refused because the same URL can produce a different tree. A production root's non-empty
 `targetNamespace` is also an unseen Flux transform and is refused.
 
+Admission mutations that can match consumer or production-root kinds are refused, as are
+unbounded kind matches and unevaluated CEL mutations. Literal mutations of unrelated kinds
+remain supported. Mapping-backed controller templates cannot add a Kustomization on the
+platform source: its additional path would be missing from the rendered set. A declared
+`semverFilter` also fails closed because the signing-revision resolver does not evaluate
+Flux's tag filtering.
+
 Flux [substitutes the final YAML after the build](https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-variable-substitution),
 so a variable in an object or template kind or API version can hide an OCI consumer from literal discovery.
 The check refuses those object types, top-level source name/namespace variables, and consumer URL,
