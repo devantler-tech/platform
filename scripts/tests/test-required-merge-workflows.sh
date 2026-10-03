@@ -9,12 +9,16 @@ mkdir -p "$work/bin"
 cat > "$work/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$*" == 'api repos/devantler-tech/platform/rules/branches/main --paginate --slurp' ]] || exit 99
 [[ "${FAIL_READ:-0}" == 0 ]] || exit 47
-cat "$RULES"
+case "$*" in
+  'api repos/devantler-tech/platform/rules/branches/main --paginate --slurp') cat "$RULES" ;;
+  "api --paginate --slurp repos/devantler-tech/platform/actions/runs?head_sha=${TEST_HEAD}&per_page=100") cat "$RUNS" ;;
+  *) exit 99 ;;
+esac
 EOF
 chmod +x "$work/bin/gh"
-export PATH="$work/bin:$PATH" RULES="$work/rules.json"
+export PATH="$work/bin:$PATH" RULES="$work/rules.json" RUNS="$work/runs.json"
+export TEST_HEAD=0123456789012345678901234567890123456789
 fail() { echo "$*" >&2; exit 1; }
 fixture() {
   jq -n --arg path "$1" '[[{type:"required_status_checks",parameters:{required_status_checks:[{context:"CI - Required Checks"}]} }],[{type:"workflows",ruleset_id:12,ruleset_source_type:"Organization",ruleset_source:"devantler-tech",parameters:{workflows:[{path:$path,repository_id:948529001,ref:"refs/heads/main"}]}}]]' > "$RULES"
@@ -46,4 +50,49 @@ if bash "$root/scripts/required-merge-workflows.sh" > "$work/output" 2> "$work/e
 printf '[[{"type":"merge_queue","parameters":{}}]]\n' > "$RULES"
 output="$(bash "$root/scripts/required-merge-workflows.sh")"
 [[ "$output" == '[]' ]] || fail 'a complete source without workflow rules invented a requirement'
+
+# Consume the actual runbook query blocks against a changed live source model.
+# Reintroducing a stale literal in either query or the poll must fail this test.
+runbook="${RUNBOOK_PATH:-$root/docs/operations/merge-queue-blocked.md}"
+extract_block() {
+  local heading="$1" destination="$2"
+  awk -v heading="$heading" '
+    index($0, heading)==1 {wanted=1}
+    wanted && /^```(sh|bash)$/ {inside=1; next}
+    inside && /^```$/ {exit}
+    inside {print}
+  ' "$runbook" | sed "s/<head>/$TEST_HEAD/g" > "$destination"
+  [[ -s "$destination" ]] || fail "runbook query missing: $heading"
+}
+extract_block '**Did it fire at all?**' "$work/count.sh"
+extract_block '**Is the requirement satisfied?**' "$work/success.sh"
+extract_block '**Run this one with Bash specifically**' "$work/poll.sh"
+fixture .github/workflows/replacement.yaml
+export managed
+managed="$(bash "$root/scripts/required-merge-workflows.sh" | jq -er '.[0].path')"
+export new_head="$TEST_HEAD"
+jq -n --arg path "$managed" '[{workflow_runs:[{path:".github/workflows/unrelated.yaml",status:"completed",conclusion:"success"},{path:$path,status:"completed",conclusion:"failure"}]},{workflow_runs:[{path:$path,status:"completed",conclusion:"success"}]}]' > "$RUNS"
+[[ "$(bash -e -o pipefail "$work/count.sh")" == 2 ]] || fail 'actual runbook count used a stale path or lost a page'
+[[ "$(bash -e -o pipefail "$work/success.sh")" == 1 ]] || fail 'actual runbook success query used a stale path or accepted a failed run'
+cat > "$work/bin/seq" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == '1 30' ]] || exit 99
+printf '1\n'
+EOF
+cat > "$work/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$work/bin/seq" "$work/bin/sleep"
+# shellcheck disable=SC2016 # These variables belong to the runbook subprocess.
+printf '\nprintf "%%s|%%s\\n" "$managed_run" "$managed_conclusion"\n' >> "$work/poll.sh"
+[[ "$(bash -e -o pipefail "$work/poll.sh")" == '1|success' ]] || fail 'actual runbook poll used a stale path or stopped before a verdict'
+jq -n --arg path "$managed" '[{workflow_runs:[{path:$path,status:"in_progress",conclusion:null}]}]' > "$RUNS"
+[[ "$(bash -e -o pipefail "$work/success.sh")" == 0 ]] || fail 'actual runbook strict query accepted a running run'
+[[ "$(bash -e -o pipefail "$work/poll.sh")" == '|' ]] || fail 'actual runbook poll called a running run failed or satisfied'
+jq -n --arg path "$managed" '[{workflow_runs:[{path:$path,status:"completed",conclusion:"failure"}]}]' > "$RUNS"
+[[ "$(bash -e -o pipefail "$work/poll.sh")" == '1|failed' ]] || fail 'actual runbook poll hid a genuinely failed run'
+printf '[{"workflow_runs":[]}]\n' > "$RUNS"
+[[ "$(bash -e -o pipefail "$work/poll.sh")" == '|' ]] || fail 'actual runbook poll inferred failure or satisfaction from absence'
+if FAIL_READ=1 bash -e -o pipefail "$work/count.sh" >/dev/null 2>&1; then fail 'actual runbook query accepted a failed API read'; fi
 printf 'Required merge-workflow source consumer passed.\n'

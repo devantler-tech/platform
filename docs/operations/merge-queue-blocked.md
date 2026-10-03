@@ -24,6 +24,11 @@ printf '%s\n' "$required_json" | jq -e --arg managed "$managed" \
 Diagnose **every** required workflow before judging the PR ready; one satisfied workflow does not
 satisfy the others. Preserve the selected record's source repository/ref as well as its path for the
 provenance check below. An unreadable or malformed response is UNKNOWN; do not guess a workflow name.
+The run API queries below identify a **path and run status**, not the current required source
+repository/ref. A source rule can change while retaining the same path. If source provenance cannot
+be bound through authenticated native evidence, keep requirement satisfaction UNKNOWN. Only an
+authorized exact-head enqueue, after the other readiness gates pass, lets GitHub confirm its current
+policy; do not enqueue as a read-only diagnostic probe.
 The workflow requirement is evaluated against a run **for the current head**, and a workflow
 cannot fire retroactively — so a PR whose head predates the requirement can never be enqueued, no
 matter what is done to it.
@@ -61,8 +66,8 @@ gh api --paginate --slurp "repos/devantler-tech/platform/actions/runs?head_sha=<
          | select(.path == $managed)] | length'
 ```
 
-**Is the requirement satisfied?** — the question that decides whether it can enqueue. Only a completed
-successful run counts:
+**Is the requirement satisfied?** — a completed successful path-matching run is necessary evidence,
+but the source/provenance and native-policy confirmation above still apply:
 
 ```sh
 gh api --paginate --slurp "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100" \
@@ -347,7 +352,8 @@ done
 # `managed_conclusion` now ANSWERS the "is the requirement satisfied?" question directly, and
 # it is the same test that query applies (`status == "completed"` and some run `success`), so
 # read it rather than re-issuing the strict query — re-reading only reopens the window where a
-# still-running run answers `0`. `success` = satisfied, enqueue. `failed` = a genuinely red
+# still-running run answers `0`. `success` = a green path-matching run, subject to the source
+# and native-policy confirmation above. `failed` = a genuinely red
 # build to fix, NOT a head to move again. Empty = UNKNOWN, per the bound above.
 ```
 
