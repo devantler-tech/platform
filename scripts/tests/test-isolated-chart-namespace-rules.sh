@@ -738,13 +738,27 @@ image_digest="$(yq -r '.spec.values.image.digest' "${release}")"
   exit 1
 }
 # trial_contract_matches checks the standard registry listener and complete
-# rendered presentation contract, publication endpoints, host and admission rule.
+# rendered presentation contract, publication endpoints, host, admission rule
+# and the exact controller-local leader-election Event grant.
 trial_contract_matches() {
   jq -e --arg image "ghcr.io/devantler-tech/data-product-controller@${image_digest}" \
     --arg harbour "${harbour_origin}" \
     --arg registry "${registry_origin}" --arg kit "${kit_origin}" \
     --arg cel_rule "self.apiVersion != 'data-product-ui/v1' || !self.capabilities.exists(c, c == 'appearance')" '
       ([$registry,$kit] | sort) as $host_origins |
+      ([.[] | select(.kind == "Deployment" and .metadata.name == "data-product-controller") |
+        .spec.template.spec.serviceAccountName]) as $accounts |
+      $accounts == ["data-product-controller"] and
+      [.[] | select(.kind == "Role" and .metadata.name == "data-product-controller-leader-election") |
+        (.metadata.namespace == "data-product-controller" and
+         [.rules[] | select(.resources | index("events"))] ==
+           [{apiGroups:[""],resources:["events"],verbs:["create","patch"]}])] == [true] and
+      [.[] | select(.kind == "RoleBinding" and .metadata.name == "data-product-controller-leader-election") |
+        (.metadata.namespace == "data-product-controller" and
+         .roleRef == {apiGroup:"rbac.authorization.k8s.io",kind:"Role",name:"data-product-controller-leader-election"} and
+         .subjects == [{kind:"ServiceAccount",name:$accounts[0],namespace:"data-product-controller"}])] == [true] and
+      [.[] | select(.kind == "ClusterRole") | .rules[] |
+        select(.resources | index("events"))] == [] and
       ([.[] | select(.kind == "Deployment") | .metadata.name] | sort) ==
         ["data-product-controller", "data-product-controller-harbour"] and
       [.[] | select(.kind == "Deployment") | .spec.template.spec.containers[0] |
@@ -776,15 +790,25 @@ trial_contract_matches() {
     ' "$1" >/dev/null
 }
 trial_contract_matches "${render_dir}/resources.json" || {
-  printf 'FAIL: rendered trial must serve the default registry and enact both appearance gates, immutable images and the bounded approved-origin contract\n' >&2
+  printf 'FAIL: rendered trial must retain local Event writes, the default registry, appearance gates, immutable images and the bounded approved-origin contract\n' >&2
   exit 1
 }
 
 # Negative controls operate on the actual signed chart children and prove that a
 # lost listener, retired flag, lost gate, publication mismatch, inappropriate host
-# or disabled admission rule fails this assertion.
-for broken in listener service retired-flag gate publication origin missing-portable-origin origin-desynchronization admission; do
+# or disabled admission rule fails this assertion. Event writes must also retain
+# their required verbs and single, namespace-local controller recipient.
+for broken in listener service retired-flag gate publication origin missing-portable-origin origin-desynchronization admission event-grant event-verbs event-subject; do
   case "${broken}" in
+  event-grant) jq 'map(if .kind == "Role" then
+      .rules |= map(select((.resources | index("events")) == null)) else . end)' \
+    "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+  event-verbs) jq 'map(if .kind == "Role" then
+      (.rules[] | select(.resources | index("events")) | .verbs) += ["delete"] else . end)' \
+    "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+  event-subject) jq 'map(if .kind == "RoleBinding" then
+      .subjects += [{kind:"User",name:"other-user"}] else . end)' \
+    "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
   listener) jq 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller" then
       (.spec.template.spec.containers[0].ports[] | select(.name == "registry") | .containerPort) = 8083
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
