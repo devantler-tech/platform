@@ -1,0 +1,2 @@
+Error: Get "https://ghcr.io/v2/": net/http: TLS handshake timeout
+error during command execution: Get "https://ghcr.io/v2/": net/http: TLS handshake timeout
