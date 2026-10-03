@@ -424,6 +424,9 @@ jobs:
               - 'scripts/tests/test-actual-budget-auth-route.sh'
               - 'scripts/tests/test-umami-sso-dashboard-route.sh'
               - 'scripts/tests/test-data-product-controller-trial.sh'
+              - 'scripts/tests/test-data-product-ui-host.sh'
+              - 'scripts/tests/test-data-product-ui-rollout.sh'
+              - 'scripts/verify-data-product-ui-rollout.sh'
               - 'scripts/tests/test-oauth2-proxy-sso-redirects.sh'
               - 'scripts/tests/test-umami-tracking-probe.sh'
               - 'scripts/tests/fixtures/umami-curl-stub.sh'
@@ -1572,6 +1575,10 @@ jobs:
           bash scripts/tests/test-umami-sso-dashboard-route.sh
           shellcheck scripts/tests/test-data-product-controller-trial.sh
           bash scripts/tests/test-data-product-controller-trial.sh
+          shellcheck scripts/tests/test-data-product-ui-host.sh
+          bash scripts/tests/test-data-product-ui-host.sh
+          shellcheck scripts/verify-data-product-ui-rollout.sh scripts/tests/test-data-product-ui-rollout.sh
+          bash scripts/tests/test-data-product-ui-rollout.sh
           shellcheck scripts/tests/test-oauth2-proxy-sso-redirects.sh
           bash scripts/tests/test-oauth2-proxy-sso-redirects.sh
           shellcheck scripts/tests/test-umami-tracking-probe.sh

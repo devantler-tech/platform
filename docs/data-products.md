@@ -11,6 +11,13 @@ sample is public at `https://harbour-data.${domain}/ui`; its query API is
 The sample route removes cookies and authorization headers before forwarding.
 It contains synthetic observations and requires no data-source credentials.
 
+Open `https://product-ui.${domain}` to try a product UI outside the registry. Paste
+the product's UI descriptor and select its declared permissions before connecting.
+The host only loads the declared HTTPS UI in an opaque sandbox. It does not fetch
+the product's data or reuse registry credentials. The Harbour sample approves both
+the registry and this host. Status, resize and appearance permissions are explicit;
+changing the connected product starts a new session.
+
 The release pins both the signed chart and controller image by immutable digest.
 The registry workspace is standard behavior and the sample is enabled. Portable UI
 status, resize and appearance grants are active for the publisher-approved registry
@@ -24,14 +31,18 @@ Flux owns the release, API definition, product registration, workloads, and rout
 Helm installs the DataProduct API before registering the sample, so a clean rebuild
 does not depend on a pre-existing CRD. The chart's broad network policies and direct
 registry route are removed by its post-renderer. Platform policies admit the registry
-only from the authenticated proxy and the sample only from the Gateway.
+only from the authenticated proxy, and the sample and portable host only from the
+Gateway. The portable host has no outbound network access, service-account token,
+or data-source credentials. Two replicas keep it available during ordinary updates.
 
 Recovery uses a reviewed change to the pinned release or its values while retaining
 the Namespace and HelmRelease. Both are protected from pruning; removing the app
 reference alone does not uninstall the release. Keep the app reference and its
 credential fan-out entry consistent.
 
-After each deployment, verify the OCI source signature and Ready condition, release
-readiness, exact running image, current route generations, and healthy workloads.
+Every deployment checks the exact published Apps revision, signed chart, installed
+release and running image, current route generations, and healthy current Pods.
 Anonymous registry access must require SSO; the sample query and contract must work
-directly. Finish with an authenticated registry-to-sandbox query in the browser.
+directly. The portable host's health endpoint, assets and sandbox policy must also
+pass. Finish with an authenticated registry-to-sandbox query and a separately
+connected portable-host query in the browser, including Light and Dark appearance.
