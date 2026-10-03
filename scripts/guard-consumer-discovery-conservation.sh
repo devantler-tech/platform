@@ -48,9 +48,15 @@
 #     overlay's roots are rendered, so that layer would go unseen;
 #   - an admission mutation with unbounded kinds or a consumer/root kind match, and
 #     unevaluated CEL mutations: persisted objects can differ from the static render;
+#   - Kyverno generate/clone rules targeting consumers, roots or controller carriers,
+#     including unbounded targets; kro instances in mapping-backed carriers count too;
 #   - a mapping-backed nested Kustomization template on the platform source, including
 #     ResourceSet resources and step resources: its applied path is not rendered here;
 #   - an OCIRepository declaring semverFilter: the report does not evaluate Flux tag filters;
+#   - an attributed OCIRepository with suspension other than absence or literal false:
+#     the selected registry revision is not necessarily its fetched artifact;
+#   - structural or consumer contract mapping keys decided by post-build substitution:
+#     selecting only literal field names can omit an entire consumer;
 #   - an OCIRepository whose URL, ref or subject carries `${`: Flux post-build substitution
 #     decides it at apply time;
 #   - a document or object template whose kind or apiVersion carries `${`: substitution can turn it into
@@ -137,7 +143,7 @@ done <<<"$artifact_contract"
 # later. Refuse that uncertainty before selecting either roots or consumers. Ordinary
 # variables in ConfigMap data, workload fields and template names are still allowed.
 refuse_substituted_object_types() {
-  local file="$1" label="$2" kinds api_versions
+  local file="$1" label="$2" kinds api_versions mapping_keys
   if ! kinds="$(yq -N -r '.. | select(type == "!!map" and (has("apiVersion") or has("spec")))
       | (.kind // "" | tostring) | select(test("\\$\\{"))' "$file" 2>"$work/yq.err")"; then
     refuse "could not read object kinds in the render of $label, so its consumers are UNKNOWN"
@@ -148,6 +154,24 @@ refuse_substituted_object_types() {
     refuse "could not read object API versions in the render of $label, so its consumers are UNKNOWN"
   fi
   [ -z "$api_versions" ] || refuse "production render $label holds a document or object template whose apiVersion is decided by substitution, so its consumers are UNKNOWN; spell object API versions literally"
+  # Substitution applies to keys too. Inspect structural keys on every object
+  # mapping, then the complete contract of literal Flux source/root objects.
+  # Ordinary keys inside unrelated workload/configuration data stay outside it.
+  if ! mapping_keys="$(yq -N -r '[
+      (.. | select(type == "!!map" and
+        (has("apiVersion") or has("kind") or has("spec") or has("metadata")))
+        | to_entries | .[] | .key | select(test("\\$\\{"))),
+      (.. | select(type == "!!map" and (.kind == "OCIRepository"
+        or .kind == "Kustomization" or .kind == "FluxInstance"))
+        | .. | select(type == "!!map") | to_entries | .[] | .key
+        | select(test("\\$\\{")))
+    ] | length' "$file" 2>"$work/yq.err")"; then
+    refuse "could not read object mapping keys in the render of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r count; do
+    [ -z "$count" ] || [ "$count" = 0 ] ||
+      refuse "production render $label holds a consumer or object mapping key decided by substitution, so its consumers are UNKNOWN"
+  done <<<"$mapping_keys"
 }
 
 refuse_source_overrides() {
@@ -356,6 +380,25 @@ while IFS=$'\t' read -r file label; do
     [ -z "$affected" ] || [ "$affected" = false ] ||
       refuse "production render $label holds an admission mutation that can change consumers or production roots, so its consumers are UNKNOWN"
   done <<<"$mutations"
+  # Generate and clone execute after this render too. A literal unrelated kind
+  # is bounded; missing/wildcard kinds or source/root/controller carriers are not.
+  if ! generated="$(yq -N -r '[.. | select(type == "!!map" and
+      (.kind == "ClusterPolicy" or .kind == "Policy"))
+      | .spec.rules[] | select(has("generate"))
+      | select((.generate.kind == null and .generate.cloneList == null)
+        or (.generate.kind != null and ((.generate.kind | type) != "!!str"
+          or (.generate.kind | tostring | test("(^|/)(OCIRepository|Kustomization|FluxInstance|ResourceSet|ResourceGraphDefinition)(/|$)|\\*|\\?|\\[|\\$\\{"))))
+        or ((.generate | has("cloneList")) and
+          (.generate.cloneList.kinds == null or (.generate.cloneList.kinds | length) == 0
+            or ([.generate.cloneList.kinds[] | select(type != "!!str"
+              or (. | tostring | test("(^|/)(OCIRepository|Kustomization|FluxInstance|ResourceSet|ResourceGraphDefinition)(/|$)|\\*|\\?|\\[|\\$\\{")))] | length) > 0)))]
+      | length' "$file" 2>"$work/yq.err")"; then
+    refuse "could not bound consumer generation in the render of $label, so its consumers are UNKNOWN"
+  fi
+  while IFS= read -r count; do
+    [ -z "$count" ] || [ "$count" = 0 ] ||
+      refuse "production render $label holds consumer generation or cloning that cannot be accounted for by a static build, so its consumers are UNKNOWN"
+  done <<<"$generated"
   # CEL mutations are not evaluated by this static guard. Refuse their declared
   # presence rather than infer identity preservation from a pre-admission row.
   if ! mutations="$(yq -N -r '[.. | select(type == "!!map" and
@@ -444,8 +487,8 @@ while IFS=$'\t' read -r kind api_version; do
   instances=0
   while IFS=$'\t' read -r file label; do
     [ -n "$file" ] || continue
-    if ! count="$(CONSUMER_GVK_KIND="$kind" CONSUMER_GVK_API_VERSION="$api_version" yq -N -r '[select(.kind == strenv(CONSUMER_GVK_KIND) and .apiVersion == strenv(CONSUMER_GVK_API_VERSION))] | length' "$file" 2>"$work/yq.err")"; then
-      refuse "could not count $kind instances in the render of $label: $(tr '\n' ' ' <"$work/yq.err")"
+    if ! count="$(CONSUMER_GVK_KIND="$kind" CONSUMER_GVK_API_VERSION="$api_version" yq -N -r '[.. | select(type == "!!map" and .kind == strenv(CONSUMER_GVK_KIND) and .apiVersion == strenv(CONSUMER_GVK_API_VERSION))] | length' "$file" 2>"$work/yq.err")"; then
+      refuse "could not count $kind instances in the render of $label, so its consumers are UNKNOWN: $(tr '\n' ' ' <"$work/yq.err")"
     fi
     while IFS= read -r c; do
       [ -n "$c" ] || continue

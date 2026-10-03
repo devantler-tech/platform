@@ -398,6 +398,181 @@ SH
   done
 }
 
+regression_controller_findings() {
+  local root target placement want boundary
+  for target in foreign missing; do
+    root="$(fixture "consumer-api-$target")"
+    if [ "$target" = foreign ]; then
+      yq -i '.apiVersion = "unrelated.example.test/v1"' "$root/k8s/bases/apps/alpha/oci-repository.yaml"
+    else
+      yq -i 'del(.apiVersion)' "$root/k8s/bases/apps/alpha/oci-repository.yaml"
+    fi
+    expect_pass "a $target API-group peer is not a Flux consumer" "$root" '1 consumer(s)'
+  done
+  root="$(fixture consumer-api-flux-beta)"
+  yq -i '.apiVersion = "source.toolkit.fluxcd.io/v1beta2"' "$root/k8s/bases/apps/alpha/oci-repository.yaml"
+  expect_pass 'another Flux source API version remains a consumer' "$root" '2 consumer(s)'
+
+  for target in source root clone clone-list wildcard carrier; do
+    root="$(fixture "generated-consumer-$target")"
+    cat >"$root/k8s/providers/prod/apps/generate.yaml" <<'YAML'
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: generated-source
+spec:
+  rules:
+    - name: generate
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+      generate:
+        apiVersion: source.toolkit.fluxcd.io/v1
+        kind: OCIRepository
+        name: generated
+        namespace: generated
+        data:
+          spec:
+            url: oci://ghcr.io/devantler-tech/generated/manifests
+YAML
+    case "$target" in
+      root) yq -i '.spec.rules[0].generate.apiVersion = "kustomize.toolkit.fluxcd.io/v1" | .spec.rules[0].generate.kind = "Kustomization" |
+          .spec.rules[0].generate.data.spec = {"path":"bases/unseen","sourceRef":{"kind":"OCIRepository","name":"flux-system"}}' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+      clone) yq -i 'del(.spec.rules[0].generate.data) | .spec.rules[0].generate.clone = {"namespace":"alpha","name":"alpha"}' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+      clone-list) yq -i 'del(.spec.rules[0].generate.kind,.spec.rules[0].generate.apiVersion,.spec.rules[0].generate.data) |
+          .spec.rules[0].generate.cloneList = {"kinds":["source.toolkit.fluxcd.io/v1/OCIRepository"],"namespace":"alpha"}' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+      wildcard) yq -i '.spec.rules[0].generate.kind = "*"' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+      carrier) yq -i '.spec.rules[0].generate.kind = "ResourceSet" | .spec.rules[0].generate.apiVersion = "fluxcd.controlplane.io/v1"' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+    esac
+    printf '  - generate.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_refusal "Kyverno $target generation cannot omit a runtime consumer" "$root" 'consumer generation' 'UNKNOWN'
+  done
+  root="$(fixture unrelated-generation)"
+  cp "$WORK/generated-consumer-source/k8s/providers/prod/apps/generate.yaml" "$root/k8s/providers/prod/apps/generate.yaml"
+  yq -i '.spec.rules[0].generate.kind = "ConfigMap" | .spec.rules[0].generate.apiVersion = "v1" |
+    .spec.rules[0].generate.data = {"data":{"ordinary":"value"}}' "$root/k8s/providers/prod/apps/generate.yaml"
+  printf '  - generate.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'literal ConfigMap-only generation remains unrelated' "$root" '2 consumer(s)'
+
+  for target in subject url spec; do
+    root="$(fixture "substituted-key-$target")"
+    # shellcheck disable=SC2016 # These are literal Flux post-build mapping keys.
+    case "$target" in
+      subject) yq -i '.spec.verify.matchOIDCIdentity[0]["${SUBJECT_FIELD}"] = .spec.verify.matchOIDCIdentity[0].subject |
+          del(.spec.verify.matchOIDCIdentity[0].subject)' "$root/k8s/bases/apps/alpha/oci-repository.yaml" ;;
+      url) yq -i '.spec["${URL_FIELD}"] = .spec.url | del(.spec.url)' "$root/k8s/bases/apps/alpha/oci-repository.yaml" ;;
+      spec) yq -i '.["${SPEC_FIELD}"] = .spec | del(.spec)' "$root/k8s/bases/apps/alpha/oci-repository.yaml" ;;
+    esac
+    yq -i '.spec.postBuild.substitute = {"SUBJECT_FIELD":"subject","URL_FIELD":"url","SPEC_FIELD":"spec","KIND_FIELD":"kind"}' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+    expect_refusal "a substituted consumer $target key is not silently omitted" "$root" 'mapping key' 'UNKNOWN'
+  done
+  root="$(fixture ordinary-data-key)"
+  cat >"$root/k8s/providers/prod/apps/config-map.yaml" <<'YAML'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ordinary
+data:
+  ${DATA_FIELD}: value
+YAML
+  printf '  - config-map.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'a data-only ConfigMap mapping key does not change consumers' "$root" '2 consumer(s)'
+
+  for placement in resources steps generation; do
+    root="$(fixture "carried-kro-instance-$placement")"
+    cat >"$root/k8s/providers/prod/apps/carrier.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: tenants
+spec:
+  resources:
+    - apiVersion: kro.run/v1alpha1
+      kind: Tenant
+      metadata:
+        name: generated
+      spec:
+        name: generated
+YAML
+    case "$placement" in
+      steps) yq -i '.spec.steps = [{"name":"instances","resources":.spec.resources}] | del(.spec.resources)' "$root/k8s/providers/prod/apps/carrier.yaml" ;;
+      generation) cat >"$root/k8s/providers/prod/apps/carrier.yaml" <<'YAML'
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: tenants
+spec:
+  rules:
+    - name: tenant
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+      generate:
+        apiVersion: kro.run/v1alpha1
+        kind: Tenant
+        name: generated
+        data:
+          spec:
+            name: generated
+YAML
+        ;;
+    esac
+    printf '  - carrier.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_refusal "a $placement carrier cannot hide a consumer-producing kro instance" "$root" 'production renders 1 Tenant instance(s)' 'kro.run/v1alpha1'
+  done
+  root="$(fixture unrelated-carried-kro-peer)"
+  cp "$WORK/carried-kro-instance-resources/k8s/providers/prod/apps/carrier.yaml" "$root/k8s/providers/prod/apps/carrier.yaml"
+  yq -i '.spec.resources[0].apiVersion = "unrelated.example.test/v1alpha1"' "$root/k8s/providers/prod/apps/carrier.yaml"
+  printf '  - carrier.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'a same-kind carrier in another group is not a kro instance' "$root" '2 consumer(s)'
+
+  for target in true string null substituted; do
+    root="$(fixture "consumer-suspend-$target")"
+    # shellcheck disable=SC2016 # Flux, not the test shell, resolves the expression.
+    case "$target" in
+      true) yq -i '.spec.suspend = true' "$root/k8s/bases/apps/alpha/oci-repository.yaml" ;;
+      string) yq -i '.spec.suspend = "false"' "$root/k8s/bases/apps/alpha/oci-repository.yaml" ;;
+      null) yq -i '.spec.suspend = null' "$root/k8s/bases/apps/alpha/oci-repository.yaml" ;;
+      substituted) yq -i '.spec.suspend = "${SOURCE_SUSPEND}"' "$root/k8s/bases/apps/alpha/oci-repository.yaml" ;;
+    esac
+    expect_refusal "a $target consumer suspension cannot attribute a fetched revision" "$root" 'consumer suspension' 'UNKNOWN'
+  done
+  root="$(fixture consumer-suspend-false)"
+  yq -i '.spec.suspend = false' "$root/k8s/bases/apps/alpha/oci-repository.yaml"
+  expect_pass 'a literal false consumer suspension remains active' "$root" '2 consumer(s)'
+
+  for boundary in generation keys instances; do
+    root="$(fixture "partial-controller-$boundary")"
+    mkdir "$WORK/partial-controller-$boundary-bin"
+    cat >"$WORK/partial-controller-$boundary-bin/yq" <<'SH'
+#!/usr/bin/env bash
+"$REAL_YQ" "$@" || exit $?
+case "$PARTIAL_CONTROLLER:$*" in
+  generation:*'.generate.cloneList'*) exit 2 ;;
+  keys:*'to_entries'*) exit 2 ;;
+  instances:*'[.. | select(type == "!!map"'*'strenv(CONSUMER_GVK_KIND)'*) exit 2 ;;
+esac
+SH
+    chmod +x "$WORK/partial-controller-$boundary-bin/yq"
+    case "$boundary" in
+      generation) want='could not bound consumer generation' ;;
+      keys) want='could not read object mapping keys' ;;
+      instances) want='could not count Tenant instances' ;;
+    esac
+    REAL_YQ="$(command -v yq)" PARTIAL_CONTROLLER="$boundary" PATH="$WORK/partial-controller-$boundary-bin:$PATH" \
+      expect_refusal "partial $boundary output cannot clear the controller chain" "$root" "$want" 'UNKNOWN'
+  done
+}
+
+if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = controller ]; then
+  regression_controller_findings
+  printf '\n%d failure(s)\n' "$failures"
+  [ "$failures" -eq 0 ]
+  exit
+fi
+
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = latest ]; then
   regression_latest_findings
   printf '\n%d failure(s)\n' "$failures"
@@ -1457,6 +1632,7 @@ expect_refusal 'a matching custom-group kro instance is still refused' "$root" \
   'production renders 1 Tenant instance(s)' 'tenants.example.test/v1alpha1'
 
 regression_latest_findings
+regression_controller_findings
 
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

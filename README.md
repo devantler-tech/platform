@@ -117,7 +117,12 @@ unbounded kind matches and unevaluated CEL mutations. Literal mutations of unrel
 remain supported. Mapping-backed controller templates cannot add a Kustomization on the
 platform source: its additional path would be missing from the rendered set. A declared
 `semverFilter` also fails closed because the signing-revision resolver does not evaluate
-Flux's tag filtering.
+Flux's tag filtering. Only objects in the Flux source API group count as OCI consumers,
+and an attributed source must have no suspension field or a literal boolean false.
+Generated sources, roots and controller carriers are refused; literal unrelated generated
+kinds remain supported. Consumer-producing kro instances are counted in mapping-backed
+controller carriers as well as top-level documents. Substituted structural or consumer
+contract keys are unknown, just like substituted contract values.
 
 Flux [substitutes the final YAML after the build](https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-variable-substitution),
 so a variable in an object or template kind or API version can hide an OCI consumer from literal discovery.

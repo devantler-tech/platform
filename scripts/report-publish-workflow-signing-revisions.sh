@@ -233,21 +233,25 @@ discover_consumers() {
 # column. The conservation guard compares on it, so a patched signer constraint is a
 # divergence; the report's own four-column rows are unchanged.
 consumer_rows() {
-  local file="$1" mode="${2:-}" rows url version subjects repo workflow workflows artifact filtered
+  local file="$1" mode="${2:-}" rows url version subjects repo workflow workflows artifact filtered active literal_keys
   # The prose about each field lives OUTSIDE the single-quoted yq program deliberately: a
   # backtick inside it reads as a command substitution to shellcheck (SC2016), so it is in
   # the comment block at the end of the loop below.
   if ! rows="$(yq eval -r '
-    select(.kind == "OCIRepository") |
+    select(.kind == "OCIRepository" and ((.apiVersion // "" | tostring) | test("^source[.]toolkit[.]fluxcd[.]io/[^/]+$"))) |
     [(.spec.url // "-"),
      ((.spec.verify.matchOIDCIdentity // []) | map(.subject // "") | join(" ") | select(. != "") // "-"),
      (((.spec.ref.digest // "") | select(. != "") | "digest:" + .) // ((.spec.ref.semver // "") | select(. != "") | "semver:" + .) // ((.spec.ref.tag // "") | select(. != "")) // "unpinned"),
-     (.spec.ref | has("semverFilter") | tostring)] | @tsv
+     (.spec.ref | has("semverFilter") | tostring),
+     (((.spec | has("suspend") | not) or
+        ((.spec.suspend | type) == "!!bool" and .spec.suspend == false)) | tostring),
+     (([.. | select(type == "!!map") | to_entries | .[] | .key
+          | select(test("\\$\\{"))] | length) == 0 | tostring)] | @tsv
   ' "$file" 2>/dev/null)"; then
     printf 'could not parse %s as YAML, so the consumers it declares are UNKNOWN\n' "$file" >&2
     return 1
   fi
-  while IFS=$'\t' read -r url subjects version filtered; do
+  while IFS=$'\t' read -r url subjects version filtered active literal_keys; do
     # 🔴 TAB IS IFS WHITESPACE, so `read` COLLAPSES consecutive tabs and an empty MIDDLE
     # field silently shifts every later field left. Two consumers pin no `spec.ref.tag`,
     # so their row was `url\t\tsubject` and the subject landed in `version` — both
@@ -256,6 +260,10 @@ consumer_rows() {
     [ "$version" = "-" ] && version=""
     [ "$subjects" = "-" ] && subjects=""
     [ -n "$url" ] || continue
+    if [ "$literal_keys" != true ]; then
+      printf 'consumer mapping key in %s is decided by substitution, so its consumers are UNKNOWN\n' "$file" >&2
+      return 1
+    fi
     case "$url" in
       oci://ghcr.io/devantler-tech/*) ;;
       *) continue ;;
@@ -265,6 +273,12 @@ consumer_rows() {
     workflows="$(printf '%s\n' "$subjects" |
       grep -oE 'publish-(app|manifests)\\?\.yaml@' | sed 's/\\\{0,1\}\.yaml@$//' | sort -u || true)"
     [ -n "$workflows" ] || continue
+    # A paused source keeps an older artifact, even while its registry selector
+    # resolves to a newer revision. Only absence or literal false proves activity.
+    if [ "$active" != true ]; then
+      printf 'consumer suspension in %s prevents attribution of a fetched revision, so its consumers are UNKNOWN\n' "$file" >&2
+      return 1
+    fi
     # Flux filters registry tags before SemVer selection. This resolver has no
     # compatible evaluator. Refuse filters on attributed report consumers; an
     # unrelated chart or unsigned artifact remains outside this report's scope.
