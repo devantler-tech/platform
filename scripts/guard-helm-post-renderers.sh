@@ -16,7 +16,7 @@
 # `components`, `targetNamespace`, `namePrefix` and `nameSuffix`), applies Flux's `postBuild`
 # substitution to the release, its source and referenced ConfigMaps, then for each release:
 #   1. pulls its chart at the pinned version from the source the release names;
-#   2. renders it with `helm template` from the release's own values, as both an install and an
+#   2. renders it with the audited embedded-SDK Helm command from the release's own values, as both an install and an
 #      upgrade, because a chart can render differently on `.Release.IsUpgrade`;
 #   3. applies the post-renderers in order, each through `kubectl kustomize` exactly as Flux builds
 #      them (a Kustomization over the rendered output carrying the renderer's `patches` and
@@ -51,14 +51,14 @@
 # kustomize `patches`/`images` renderer, a chart that fails to pull or render, or an unresolved
 # `${...}` in the chart source. Historical preserveValues and revision-dependent templates are
 # also UNKNOWN: helm template --is-upgrade still renders revision 1, not the deployed revision.
-# HelmVersion-dependent charts are UNKNOWN too: the official CLI injects v4.2.0 into template
-# capabilities, whereas helm-controller's SDK build defaults to v4.2. Pinning the binary alone
-# does not make that input identical.
+# Rendering uses the unmodified Helm 4.2.0 command built with Go 1.26.3 and no version linker
+# flags, matching the controller's complete embedded-SDK build metadata. The official release
+# CLI is used only to pull charts: it injects v4.2.0 rather than the controller's v4.2 capability.
 # No cluster overlay, or an overlay that names no Flux
 # Kustomization, or a tree that renders no HelmRelease at all, is exit 2 as well: a selector that
 # matched nothing is indistinguishable from a clean tree.
 #
-# Usage: guard-helm-post-renderers.sh --flux-version 2.8.8 [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>
+# Usage: guard-helm-post-renderers.sh --flux-version 2.8.8 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>
 #
 # Exit codes:
 #   0  every checked HelmRelease's post-renderers apply to its chart's rendered output
@@ -73,16 +73,24 @@ die() {
   exit 2
 }
 
-usage="usage: $0 --flux-version 2.8.8 [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>"
+usage="usage: $0 --flux-version 2.8.8 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>"
 base=''
 kube_version=''
 base_kube_version=''
 flux_version=''
+release_selector=''
 while [ "$#" -gt 0 ]; do
   case $1 in
     --flux-version)
       if [ "$#" -lt 2 ] || [ -z "$2" ]; then die "$usage"; fi
       flux_version="${2#v}"
+      shift 2
+      ;;
+    --release)
+      if [ "$#" -lt 2 ] || [[ ! "$2" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]; then
+        die '--release requires a literal namespace/name'
+      fi
+      release_selector="$2"
       shift 2
       ;;
     --base)
@@ -141,6 +149,24 @@ export HELM_CACHE_HOME="$scratch/helm/cache" HELM_CONFIG_HOME="$scratch/helm/con
   DOCKER_CONFIG="$scratch/docker" HELM_PLUGINS="$scratch/helm/plugins"
 helm_version="$(helm version --template '{{.Version}}')" || die "cannot read the Helm version"
 [ "$helm_version" = v4.2.0 ] || die "Flux $flux_version requires Helm v4.2.0, not '$helm_version'"
+
+controller_helm="${CONTROLLER_HELM:-}"
+controller_helm_checked=0
+ensure_controller_renderer() {
+  [ "$controller_helm_checked" = 0 ] || return 0
+  if [ -z "$controller_helm" ]; then
+    controller_helm="$scratch/controller-helm"
+    "$(dirname "${BASH_SOURCE[0]}")/build-controller-helm.sh" "$controller_helm" ||
+      die 'cannot build the audited controller SDK renderer'
+  fi
+  [ -x "$controller_helm" ] || die 'the controller SDK renderer is not executable'
+  local metadata
+  metadata="$("$controller_helm" version --template '{{ printf "%#v" . }}')" ||
+    die 'cannot read the controller SDK renderer metadata'
+  [ "$metadata" = 'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.3", KubeClientVersion:"v1.36"}' ] ||
+    die 'the controller SDK renderer has unaudited capability metadata'
+  controller_helm_checked=1
+}
 
 tab="$(printf '\t')"
 
@@ -523,8 +549,7 @@ check_release() { # <record> <work>
   esac
   grep -R -E -q "\.[[:space:]]*HelmVersion|[\"'\`]HelmVersion[\"'\`]" "$work/chart" "$work/dependencies" "$work/template-inputs"
   case $? in
-    0) die "$label: HelmVersion-dependent chart $chart_desc needs the controller SDK capabilities, not the CLI build metadata" ;;
-    1) ;;
+    0 | 1) ;;
     *) die "$label: cannot inspect HelmVersion inputs in $chart_desc" ;;
   esac
 
@@ -542,6 +567,8 @@ check_release() { # <record> <work>
   fi
   namespace="$(jq -r '.release.spec.targetNamespace // .release.metadata.namespace' "$record")"
 
+  ensure_controller_renderer
+
   for mode in install upgrade; do
     rendered="$work/$mode.yaml"
     if [ "$mode" = upgrade ]; then
@@ -552,7 +579,7 @@ check_release() { # <record> <work>
     if [ -n "$kube_version" ]; then
       set -- "$@" --kube-version "$kube_version"
     fi
-    helm template "$release" "$tgz" --namespace "$namespace" "${value_args[@]}" "$@" \
+    "$controller_helm" template "$release" "$tgz" --namespace "$namespace" "${value_args[@]}" "$@" \
       >"$rendered" 2>"$rendered.err" ||
       die "$label: cannot assemble its values or render $chart_desc as an $mode: $(head -c 500 "$rendered.err")"
     yq 'select(tag == "!!map") | select(.metadata.annotations["helm.sh/hook"] == null)' "$rendered" >"$work/$mode.manifests.yaml" ||
@@ -602,6 +629,11 @@ unchanged=0
 checked=0
 for record in "$scratch/head/records"/*.json; do
   [ -f "$record" ] || continue
+  if [ -n "$release_selector" ]; then
+    identity="$(jq -er '.release.metadata.namespace + "/" + .release.metadata.name' "$record")" ||
+      die 'cannot identify a post-rendered HelmRelease'
+    [ "$identity" = "$release_selector" ] || continue
+  fi
   post_rendered_count=$((post_rendered_count + 1))
   key="$(basename "$record" .json)"
   if [ "$base_usable" = 1 ] && [ -f "$scratch/base/canon/$key.json" ] &&
@@ -612,6 +644,10 @@ for record in "$scratch/head/records"/*.json; do
   checked=$((checked + 1))
   check_release "$record" "$scratch/work/$key"
 done
+
+if [ -n "$release_selector" ] && [ "$post_rendered_count" = 0 ]; then
+  die "selected HelmRelease $release_selector was not found with post-renderers; nothing was checked"
+fi
 
 summary="$clusters cluster(s), $all_releases HelmRelease(s), $post_rendered_count with post-renderers"
 if [ "$base_usable" = 1 ]; then
