@@ -21,9 +21,11 @@ type shellAnalysis struct {
 }
 
 type shellEffects struct {
-	errexit      *bool
-	successTraps map[string]bool
-	successExit  bool
+	errexit       *bool
+	successTraps  map[string]bool
+	successExit   bool
+	bindings      map[string]bool
+	flowUncertain bool
 }
 
 func analyzeShell(source string) shellAnalysis { return analyzeShellDepth(source, 0) }
@@ -56,7 +58,7 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 		return result
 	}
 	var stack []syntax.Node
-	errexit, successExit := true, false
+	errexit, successExit, flowUncertain := true, false, false
 	successTraps := make(map[string]bool)
 	functions := make(map[string]string)
 	shadowed := make(map[string]bool)
@@ -68,6 +70,17 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 		shadowed[name] = replaced
 	}
 	applyEffects := func(effects shellEffects) {
+		for name := range effects.bindings {
+			shadowed[name] = true
+			functions[name] = ""
+			if result.effects.bindings == nil {
+				result.effects.bindings = make(map[string]bool)
+			}
+			result.effects.bindings[name] = true
+		}
+		if effects.flowUncertain {
+			flowUncertain, result.effects.flowUncertain = true, true
+		}
 		if effects.errexit != nil {
 			errexit, result.effects.errexit = *effects.errexit, effects.errexit
 		}
@@ -127,6 +140,10 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 					functions[n.Name.Value] = printShellNode(n.Body)
 				}
 				shadowed[n.Name.Value] = true
+				if result.effects.bindings == nil {
+					result.effects.bindings = make(map[string]bool)
+				}
+				result.effects.bindings[n.Name.Value] = true
 			}
 		case *syntax.CallExpr:
 			if len(n.Args) == 0 {
@@ -160,6 +177,11 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 			}
 			propagateEffects := func(effects shellEffects) {
 				current, guaranteed := shellEffectsContext(stack)
+				for _, prefix := range words[:executable] {
+					if filepath.Base(prefix) == "env" || filepath.Base(prefix) == "sudo" {
+						current = false
+					}
+				}
 				if deferred || !current {
 					return
 				}
@@ -189,6 +211,8 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 						refuse("local function execution cannot be certified from the bounded text")
 					}
 					propagateEffects(view.effects)
+				} else if shadowed[effectiveCommand] {
+					refuse("an opaque local binding replaces command semantics")
 				}
 				if shadowed[effectiveCommand] {
 					switch effectiveCommand {
@@ -203,6 +227,14 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 				}
 				if effectiveCommand == "exit" && shellExitMaySucceed(effectiveWords, effectiveStatic) {
 					propagateEffects(shellEffects{successExit: true})
+				}
+				if effectiveCommand == "return" {
+					propagateEffects(shellEffects{flowUncertain: true})
+				}
+				for _, prefix := range words[:executable] {
+					if filepath.Base(prefix) == "exec" {
+						propagateEffects(shellEffects{successExit: true})
+					}
 				}
 			}
 
@@ -240,7 +272,11 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 						if signal == "0" {
 							signal = "EXIT"
 						}
-						mask := effectiveWords[trapAction] != "-" && analyzeShellRegion(effectiveWords[trapAction], depth+1, functions, shadowed, remaining).effects.successExit
+						view := analyzeShellRegion(effectiveWords[trapAction], depth+1, functions, shadowed, remaining)
+						if view.err != nil {
+							refuse("trap execution cannot be certified from the bounded text")
+						}
+						mask := effectiveWords[trapAction] != "-" && view.effects.successExit
 						propagateEffects(shellEffects{successTraps: map[string]bool{signal: mask}})
 					}
 				}
@@ -261,6 +297,7 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 							refuse("a local alias replaces the scanner executable")
 						}
 						shadowed[name] = true
+						propagateEffects(shellEffects{bindings: map[string]bool{name: true}})
 						text = value
 					}
 					if effectiveStatic[i] && payloadMayScan(text) {
@@ -339,7 +376,7 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 				return true
 			}
 			result.candidate = true
-			if !deferred && (!errexit || successTraps["EXIT"] || successTraps["ERR"] || successExit) {
+			if !deferred && (!errexit || successTraps["EXIT"] || successTraps["ERR"] || successExit || flowUncertain) {
 				refuse("scanner failure handling is disabled or a successful exit can replace the gate")
 				return true
 			}
@@ -397,9 +434,8 @@ func shellEffectsContext(stack []syntax.Node) (current, guaranteed bool) {
 		case *syntax.IfClause, *syntax.WhileClause, *syntax.ForClause, *syntax.CaseClause:
 			guaranteed = false
 		case *syntax.BinaryCmd:
-			if node.Op.String() == "|" || node.Op.String() == "|&" {
-				return false, false
-			}
+			// lastpipe may run a final builtin in the caller. A pipeline
+			// therefore may weaken state, but cannot certify restoration.
 			guaranteed = false
 		}
 	}
@@ -441,10 +477,14 @@ func shellErrexitChange(words []string, static []bool) *bool {
 }
 
 func shellExitMaySucceed(words []string, static []bool) bool {
-	if len(words) == 1 || !static[1] {
+	i := 1
+	if len(words) > i && static[i] && words[i] == "--" {
+		i++
+	}
+	if len(words) <= i || !static[i] {
 		return true
 	}
-	code, err := strconv.Atoi(words[1])
+	code, err := strconv.Atoi(words[i])
 	return err == nil && code%256 == 0
 }
 

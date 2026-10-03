@@ -170,6 +170,14 @@ func TestLocalFallbackMustStillProveFailure(t *testing.T) {
 	}
 }
 
+func TestEvalBindingsMustReachTheCaller(t *testing.T) {
+	for _, declaration := range []string{"false() { return 0; }", "alias false=true"} {
+		if _, err := setOf(t, "eval '"+declaration+"'\n"+goodScan+" || false"); err == nil {
+			t.Errorf("eval binding lost in caller: %s", declaration)
+		}
+	}
+}
+
 func TestScannerCannotRunWithFailureHandlingDisabled(t *testing.T) {
 	for _, prefix := range []string{
 		"set +e",
@@ -188,6 +196,12 @@ func TestScannerCannotRunWithFailureHandlingDisabled(t *testing.T) {
 		"trap -- 'exit 0' EXIT",
 		"helper() { set +e; }; if false; then helper() { set -e; }; fi; helper",
 		"set +e\nset() { :; }; set -e",
+		"restore() { return 0; set -e; }; set +e; restore",
+		"exec bash -c 'echo hello'",
+		"set +e\nenv set -e",
+		"shopt -s lastpipe\ntrue | set +e",
+		"exit -- 0",
+		"trap 'exit -- 0' EXIT",
 	} {
 		if _, err := setOf(t, prefix+"\n"+goodScan); err == nil {
 			t.Errorf("scanner failure can be discarded by: %s", prefix)
