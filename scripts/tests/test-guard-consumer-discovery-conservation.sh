@@ -550,7 +550,7 @@ YAML
 #!/usr/bin/env bash
 "$REAL_YQ" "$@" || exit $?
 case "$PARTIAL_CONTROLLER:$*" in
-  generation:*'.generate.cloneList'*) exit 2 ;;
+  generation:*'.generate.foreach[]'*'.cloneList.kinds'*) exit 2 ;;
   keys:*'to_entries'*) exit 2 ;;
   instances:*'[.. | select(type == "!!map"'*'strenv(CONSUMER_GVK_KIND)'*) exit 2 ;;
 esac
@@ -712,6 +712,149 @@ YAML
   yq -i 'del(.spec.resources[0])' "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"
   expect_refusal 'a Kustomization-only RGD has no existing OCI-instance bound' "$root" 'nested source reference' 'UNKNOWN'
 }
+
+regression_runtime_chain_findings() {
+  local root target placement want boundary
+  for target in ResourceSet ResourceGraphDefinition ClusterPolicy Policy MutatingPolicy GeneratingPolicy MutatingAdmissionPolicy MutatingWebhookConfiguration; do
+    for placement in match targets generate clone; do
+      root="$(fixture "runtime-carrier-$target-$placement")"
+      cat >"$root/k8s/providers/prod/apps/policy.yaml" <<'YAML'
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: runtime-carrier
+spec:
+  rules:
+    - name: rewrite
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+      mutate:
+        patchesJson6902: |-
+          - op: add
+            path: /spec/resourcesTemplate
+            value: "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nspec: {}"
+YAML
+      want='admission mutation'
+      case "$placement" in
+        match) TARGET_KIND="$target" yq -i '.spec.rules[0].match.any[0].resources.kinds = [strenv(TARGET_KIND)]' "$root/k8s/providers/prod/apps/policy.yaml" ;;
+        targets) TARGET_KIND="$target" yq -i '.spec.rules[0].mutate.targets = [{"apiVersion":"example.test/v1","kind":strenv(TARGET_KIND)}]' "$root/k8s/providers/prod/apps/policy.yaml" ;;
+        generate) TARGET_KIND="$target" yq -i 'del(.spec.rules[0].mutate) | .spec.rules[0].generate = {"apiVersion":"example.test/v1","kind":strenv(TARGET_KIND),"name":"carrier","data":{"spec":{}}}' "$root/k8s/providers/prod/apps/policy.yaml"; want='consumer generation' ;;
+        clone) TARGET_KIND="$target" yq -i 'del(.spec.rules[0].mutate) | .spec.rules[0].generate.cloneList = {"kinds":["example.test/v1/" + strenv(TARGET_KIND)],"namespace":"existing"}' "$root/k8s/providers/prod/apps/policy.yaml"; want='consumer generation' ;;
+      esac
+      printf '  - policy.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+      expect_refusal "$placement cannot hide a runtime $target carrier" "$root" "$want" 'UNKNOWN'
+    done
+  done
+
+  for placement in resources steps substituted-key; do
+    root="$(fixture "recursive-resource-set-$placement")"
+    cat >"$root/k8s/providers/prod/apps/carrier.yaml" <<'YAML'
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: outer
+spec:
+  resources:
+    - apiVersion: fluxcd.controlplane.io/v1
+      kind: ResourceSet
+      metadata:
+        name: inner
+      spec:
+        resourcesTemplate: |-
+          apiVersion: source.toolkit.fluxcd.io/v1
+          kind: OCIRepository
+          spec: {}
+YAML
+    want='resourcesTemplate'
+    case "$placement" in
+      steps) yq -i '.spec.resources[0].spec.steps = [{"name":"source","resourcesTemplate":.spec.resources[0].spec.resourcesTemplate}] | del(.spec.resources[0].spec.resourcesTemplate)' "$root/k8s/providers/prod/apps/carrier.yaml" ;;
+      substituted-key)
+        # shellcheck disable=SC2016 # Flux substitutes this mapping key after the static build.
+        yq -i '.spec.resources[0].spec["${TEMPLATE_FIELD}"] = .spec.resources[0].spec.resourcesTemplate | del(.spec.resources[0].spec.resourcesTemplate)' "$root/k8s/providers/prod/apps/carrier.yaml"
+        yq -i '.spec.postBuild.substitute.TEMPLATE_FIELD = "resourcesTemplate"' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+        want='mapping key' ;;
+    esac
+    printf '  - carrier.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_refusal "a nested ResourceSet $placement string cannot escape the census" "$root" "$want" 'UNKNOWN'
+  done
+  root="$(fixture substituted-policy-key)"
+  cp "$WORK/runtime-carrier-ResourceSet-match/k8s/providers/prod/apps/policy.yaml" "$root/k8s/providers/prod/apps/policy.yaml"
+  # shellcheck disable=SC2016 # A controller-significant key decided by Flux substitution.
+  yq -i '.spec.rules[0]["${MUTATE_FIELD}"] = .spec.rules[0].mutate | del(.spec.rules[0].mutate)' "$root/k8s/providers/prod/apps/policy.yaml"
+  yq -i '.spec.postBuild.substitute.MUTATE_FIELD = "mutate"' "$root/k8s/clusters/prod/flux-kustomizations.yaml"
+  printf '  - policy.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_refusal 'a substituted mutation key cannot hide a policy rule' "$root" 'mapping key' 'UNKNOWN'
+
+  for target in exact custom-group kind-only version-kind foreach foreach-source foreign-group foreign-version unrelated-foreach malformed-match malformed-clone empty-foreach unknown-foreach nested-foreach cel; do
+    root="$(fixture "clone-schema-$target")"
+    cat >"$root/k8s/providers/prod/apps/generate.yaml" <<'YAML'
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: clone-tenants
+spec:
+  rules:
+    - name: clone
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+      generate:
+        cloneList:
+          kinds: [kro.run/v1alpha1/Tenant]
+          namespace: existing
+YAML
+    want='consumer-producing schema'
+    case "$target" in
+      custom-group) yq -i '.spec.schema.group = "tenants.example.test"' "$root/k8s/bases/infrastructure/tenant-rgd/resource-graph-definition.yaml"; yq -i '.spec.rules[0].generate.cloneList.kinds = ["tenants.example.test/v1alpha1/Tenant"]' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+      kind-only) yq -i '.spec.rules[0].generate.cloneList.kinds = ["Tenant"]' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+      version-kind) yq -i '.spec.rules[0].generate.cloneList.kinds = ["v1alpha1/Tenant"]' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+      foreach|foreach-source) yq -i '.spec.rules[0].generate = {"foreach":[{"list":"request.object.metadata.labels","cloneList":.spec.rules[0].generate.cloneList}]}' "$root/k8s/providers/prod/apps/generate.yaml"
+        if [ "$target" = foreach-source ]; then yq -i '.spec.rules[0].generate.foreach[0].cloneList.kinds = ["source.toolkit.fluxcd.io/v1/OCIRepository"]' "$root/k8s/providers/prod/apps/generate.yaml"; want='consumer generation'; fi ;;
+      foreign-group) yq -i '.spec.rules[0].generate.cloneList.kinds = ["other.example.test/v1alpha1/Tenant"]' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+      foreign-version) yq -i '.spec.rules[0].generate.cloneList.kinds = ["kro.run/v9/Tenant"]' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+      unrelated-foreach) yq -i '.spec.rules[0].generate = {"foreach":[{"list":"request.object.metadata.labels","apiVersion":"v1","kind":"ConfigMap","name":"ordinary","data":{"data":{"ordinary":"value"}}}]}' "$root/k8s/providers/prod/apps/generate.yaml" ;;
+      malformed-match) yq -i '.spec.rules[0].generate = null | .spec.rules[0].mutate.patchStrategicMerge.metadata.labels.ordinary = "value" | .spec.rules[0].match.any[0].resources.kinds = {"bad":"Pod"} | del(.spec.rules[0].generate)' "$root/k8s/providers/prod/apps/generate.yaml"; want='admission mutation' ;;
+      malformed-clone) yq -i '.spec.rules[0].generate.cloneList.kinds = {"bad":"v1/ConfigMap"}' "$root/k8s/providers/prod/apps/generate.yaml"; want='consumer generation' ;;
+      empty-foreach) yq -i '.spec.rules[0].generate = {"foreach":[]}' "$root/k8s/providers/prod/apps/generate.yaml"; want='consumer generation' ;;
+      unknown-foreach) yq -i '.spec.rules[0].generate = {"foreach":[{"list":"request.object.metadata.labels","data":{}}]}' "$root/k8s/providers/prod/apps/generate.yaml"; want='consumer generation' ;;
+      nested-foreach) yq -i '.spec.rules[0].generate = {"foreach":[{"foreach":[{"kind":"ConfigMap"}]}]}' "$root/k8s/providers/prod/apps/generate.yaml"; want='consumer generation' ;;
+      cel) yq -i '.apiVersion = "policies.kyverno.io/v1" | .kind = "GeneratingPolicy" | .spec = {"generation":[{"expression":"generator.Apply(\"v1\", \"configmaps\", \"default\", [])"}]}' "$root/k8s/providers/prod/apps/generate.yaml"; want='unevaluated CEL' ;;
+    esac
+    printf '  - generate.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    case "$target" in
+      foreign-group|foreign-version|unrelated-foreach) expect_pass "a bounded $target generator does not match a consumer schema" "$root" '2 consumer(s)' ;;
+      *) expect_refusal "$target generation cannot hide an unseen consumer instance" "$root" "$want" 'UNKNOWN' ;;
+    esac
+  done
+  for boundary in clone templates; do
+    root="$(fixture "partial-runtime-$boundary")"
+    cp "$WORK/clone-schema-foreign-group/k8s/providers/prod/apps/generate.yaml" "$root/k8s/providers/prod/apps/generate.yaml"
+    printf '  - generate.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    mkdir "$WORK/partial-runtime-$boundary-bin"
+    cat >"$WORK/partial-runtime-$boundary-bin/yq" <<'SH'
+#!/usr/bin/env bash
+"$REAL_YQ" "$@" || exit $?
+case "$PARTIAL_RUNTIME:$*" in
+  clone:*'CONSUMER_GVK_SELECTOR'*) exit 2 ;;
+  templates:*'and .kind == "ResourceSet"'*'resourcesTemplate'*) exit 2 ;;
+esac
+SH
+    chmod +x "$WORK/partial-runtime-$boundary-bin/yq"
+    case "$boundary" in clone) want='could not bound cloning of Tenant';; templates) want='could not read ResourceSet resourcesTemplate';; esac
+    REAL_YQ="$(command -v yq)" PARTIAL_RUNTIME="$boundary" PATH="$WORK/partial-runtime-$boundary-bin:$PATH" \
+      expect_refusal "partial $boundary reader cannot clear a runtime chain" "$root" "$want" 'UNKNOWN'
+  done
+}
+
+if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = chains ]; then
+  regression_runtime_chain_findings
+  printf '\n%d failure(s)\n' "$failures"
+  [ "$failures" -eq 0 ]
+  exit
+fi
 
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = native ]; then
   regression_native_admission_findings
@@ -1788,6 +1931,7 @@ expect_refusal 'a matching custom-group kro instance is still refused' "$root" \
 regression_latest_findings
 regression_controller_findings
 regression_native_admission_findings
+regression_runtime_chain_findings
 
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

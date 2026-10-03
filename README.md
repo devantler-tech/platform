@@ -129,6 +129,11 @@ GVK has zero matching instances across every production render. Native mutating
 webhooks that can target sources, roots or their policy/controller carriers are
 refused because the static build cannot evaluate their callbacks; literal unrelated
 resource groups and Pod-only rules remain supported.
+The same boundary includes policies and controller carriers that can create or
+rewrite those resources later. Nested ResourceSet string templates and substituted
+carrier keys are unknown. Direct and foreach clone lists are checked against every
+consumer-producing kro schema across all production roots; only literal foreign
+group/version selectors can rule out a schema. CEL generation remains unevaluated.
 
 Flux [substitutes the final YAML after the build](https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-variable-substitution),
 so a variable in an object or template kind or API version can hide an OCI consumer from literal discovery.

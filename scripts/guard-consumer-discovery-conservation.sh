@@ -122,6 +122,10 @@ trap 'rm -rf "$work"' EXIT
 # against this directory would be agreement about a different artifact. Credentials may use
 # variables, but neither their bytes nor their scope belong in these diagnostics.
 readonly PLATFORM_SOURCE='OCIRepository/flux-system/flux-system'
+# A policy can rewrite or create another policy/controller before that carrier
+# creates a consumer. Keep the complete carrier boundary shared across checks.
+readonly CONSUMER_CARRIER_KINDS='OCIRepository|Kustomization|FluxInstance|ResourceSet|ResourceGraphDefinition|ClusterPolicy|Policy|MutatingPolicy|GeneratingPolicy|MutatingAdmissionPolicy|MutatingWebhookConfiguration'
+export CONSUMER_CARRIER_KINDS
 if ! artifact_contract="$(yq -N -r '[
     (.apiVersion == "ksail.io/v1alpha1"), (.kind == "Cluster"),
     (.spec.cluster.gitOpsEngine == "Flux"),
@@ -163,9 +167,8 @@ refuse_substituted_object_types() {
       (.. | select(type == "!!map" and
         (has("apiVersion") or has("kind") or has("spec") or has("metadata")))
         | to_entries | .[] | .key | select(test("\\$\\{"))),
-      (.. | select(type == "!!map" and (.kind == "OCIRepository"
-        or .kind == "Kustomization" or .kind == "FluxInstance"
-        or .kind == "MutatingWebhookConfiguration"))
+      (.. | select(type == "!!map" and
+        ((.kind // "" | tostring) | test("^(" + strenv(CONSUMER_CARRIER_KINDS) + ")$")))
         | .. | select(type == "!!map") | to_entries | .[] | .key
         | select(test("\\$\\{")))
     ] | length' "$file" 2>"$work/yq.err")"; then
@@ -369,10 +372,10 @@ while IFS=$'\t' read -r file label; do
       .kind == "MutatingWebhookConfiguration") | .webhooks[] | .rules[]
       | select(((.apiGroups | type) != "!!seq" or (.apiGroups | length) == 0
           or ([.apiGroups[] | select(type != "!!str" or (. | tostring |
-            test("^(source[.]toolkit[.]fluxcd[.]io|kustomize[.]toolkit[.]fluxcd[.]io|fluxcd[.]controlplane[.]io|kro[.]run|kyverno[.]io|admissionregistration[.]k8s[.]io)$|\\*|\\$\\{")))] | length) > 0)
+            test("^(source[.]toolkit[.]fluxcd[.]io|kustomize[.]toolkit[.]fluxcd[.]io|fluxcd[.]controlplane[.]io|kro[.]run|kyverno[.]io|policies[.]kyverno[.]io|admissionregistration[.]k8s[.]io)$|\\*|\\$\\{")))] | length) > 0)
         and ((.resources | type) != "!!seq" or (.resources | length) == 0
           or ([.resources[] | select(type != "!!str" or (. | tostring |
-            test("^(ocirepositories|kustomizations|fluxinstances|resourcesets|resourcegraphdefinitions|clusterpolicies|policies|mutatingpolicies|mutatingadmissionpolicies|mutatingwebhookconfigurations)(/|$)|\\*|\\$\\{")))] | length) > 0))] | length' "$file" 2>"$work/yq.err")"; then
+            test("^(ocirepositories|kustomizations|fluxinstances|resourcesets|resourcegraphdefinitions|clusterpolicies|policies|mutatingpolicies|generatingpolicies|mutatingadmissionpolicies|mutatingwebhookconfigurations)(/|$)|\\*|\\$\\{")))] | length) > 0))] | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not bound native admission mutations in the render of $label, so its consumers are UNKNOWN"
   fi
   while IFS= read -r count; do
@@ -387,12 +390,12 @@ while IFS=$'\t' read -r file label; do
       | .spec.rules[] | {"mutates": has("mutate"),
         "affected": (([.match | .. | select(type == "!!map" and has("resources"))] | length) == 0
         or ([.match | .. | select(type == "!!map" and has("resources"))
-          | select(.resources.kinds == null or (.resources.kinds | length) == 0)] | length) > 0
+          | select((.resources.kinds | type) != "!!seq" or (.resources.kinds | length) == 0)] | length) > 0
         or ([.match | .. | select(type == "!!map" and has("resources")) | .resources.kinds[]
-          | select(type != "!!str" or (. | tostring | test("(^|/)(OCIRepository|Kustomization|FluxInstance)(/|$)|\\*|\\?|\\[|\\$\\{")))] | length) > 0
+          | select(type != "!!str" or (. | tostring | test("^$|(^|/)(" + strenv(CONSUMER_CARRIER_KINDS) + ")(/|$)|\\*|\\?|\\[|\\$\\{|\\{\\{")))] | length) > 0
         or ([.mutate | .. | select(type == "!!map" and has("targets")) | .targets[]
           | select(.kind == null or (.kind | type) != "!!str"
-            or (.kind | tostring | test("(^|/)(OCIRepository|Kustomization|FluxInstance)(/|$)|\\*|\\?|\\[|\\$\\{")))] | length) > 0)}
+            or (.kind | tostring | test("^$|(^|/)(" + strenv(CONSUMER_CARRIER_KINDS) + ")(/|$)|\\*|\\?|\\[|\\$\\{|\\{\\{")))] | length) > 0)}
       | select(.mutates == true) | .affected' "$file" 2>"$work/yq.err")"; then
     refuse "could not bound admission mutations in the render of $label, so its consumers are UNKNOWN"
   fi
@@ -405,13 +408,20 @@ while IFS=$'\t' read -r file label; do
   if ! generated="$(yq -N -r '[.. | select(type == "!!map" and
       (.kind == "ClusterPolicy" or .kind == "Policy"))
       | .spec.rules[] | select(has("generate"))
-      | select((.generate.kind == null and .generate.cloneList == null)
-        or (.generate.kind != null and ((.generate.kind | type) != "!!str"
-          or (.generate.kind | tostring | test("(^|/)(OCIRepository|Kustomization|FluxInstance|ResourceSet|ResourceGraphDefinition)(/|$)|\\*|\\?|\\[|\\$\\{"))))
-        or ((.generate | has("cloneList")) and
-          (.generate.cloneList.kinds == null or (.generate.cloneList.kinds | length) == 0
-            or ([.generate.cloneList.kinds[] | select(type != "!!str"
-              or (. | tostring | test("(^|/)(OCIRepository|Kustomization|FluxInstance|ResourceSet|ResourceGraphDefinition)(/|$)|\\*|\\?|\\[|\\$\\{")))] | length) > 0)))]
+      | select((.generate | type) != "!!map"
+        or ((.generate | has("foreach")) and
+          ((.generate.foreach | type) != "!!seq" or (.generate.foreach | length) == 0
+            or ([.generate.foreach[] | select(type != "!!map"
+              or (.kind == null and .cloneList == null) or has("foreach"))] | length) > 0))
+        or ([[.generate, .generate.foreach[]] | .[]
+          | select((.kind == null and .cloneList == null and .foreach == null)
+            or (.kind != null and ((.kind | type) != "!!str"
+              or (.kind | tostring | test("^$|(^|/)(" + strenv(CONSUMER_CARRIER_KINDS) + ")(/|$)|\\*|\\?|\\[|\\$\\{|\\{\\{"))))
+            or (has("cloneList") and
+              ((.cloneList.kinds | type) != "!!seq" or (.cloneList.kinds | length) == 0
+                or ([.cloneList.kinds[] | select(type != "!!str"
+                  or (. | tostring | test("^$|(^|/)(" + strenv(CONSUMER_CARRIER_KINDS) + ")(/|$)|\\*|\\?|\\[|\\$\\{|\\{\\{")))] | length) > 0)))
+          ] | length) > 0)]
       | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not bound consumer generation in the render of $label, so its consumers are UNKNOWN"
   fi
@@ -422,12 +432,13 @@ while IFS=$'\t' read -r file label; do
   # CEL mutations are not evaluated by this static guard. Refuse their declared
   # presence rather than infer identity preservation from a pre-admission row.
   if ! mutations="$(yq -N -r '[.. | select(type == "!!map" and
-      (.kind == "MutatingPolicy" or .kind == "MutatingAdmissionPolicy"))] | length' "$file" 2>"$work/yq.err")"; then
+      (.kind == "MutatingPolicy" or .kind == "MutatingAdmissionPolicy"
+        or .kind == "GeneratingPolicy"))] | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not read CEL admission mutations in the render of $label, so its consumers are UNKNOWN"
   fi
   while IFS= read -r count; do
     [ -z "$count" ] || [ "$count" = 0 ] ||
-      refuse "production render $label holds an unevaluated CEL admission mutation, so its consumers are UNKNOWN"
+      refuse "production render $label holds an unevaluated CEL admission mutation or generation, so its consumers are UNKNOWN"
   done <<<"$mutations"
   # Substitution precedes controller creation, including the inherited source
   # namespace. A nonliteral nested reference can become the platform's source.
@@ -463,8 +474,8 @@ while IFS=$'\t' read -r file label; do
   done <<<"$nested_templates"
   # ResourceSet strings are controller templates, not YAML object mappings. They
   # may contain multi-document YAML and Go-template control flow, so refuse any
-  # non-empty top-level or step template rather than silently omit its objects.
-  if ! templates="$(yq -N -r 'select(.kind == "ResourceSet")
+  # non-empty top-level, step or nested template rather than omit its objects.
+  if ! templates="$(yq -N -r '.. | select(type == "!!map" and .kind == "ResourceSet")
       | [(.spec.resourcesTemplate // ""), (.spec.steps[].resourcesTemplate // "")]
       | map(select(. != "")) | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not read ResourceSet resourcesTemplate in the render of $label, so its consumers are UNKNOWN"
@@ -532,6 +543,23 @@ while IFS=$'\t' read -r kind api_version; do
       [ -n "$c" ] || continue
       instances=$((instances + c))
     done <<<"$count"
+    # A cloneList names GVKs as strings, so mapping-backed instance counting
+    # cannot see the instances it creates. Join every root's direct/foreach
+    # clone selectors to the complete schemas collected from every root first.
+    # Kind-only and two-part selectors cannot rule out this schema; explicit
+    # three-part foreign group/version selectors retain their literal boundary.
+    if ! clones="$(CONSUMER_GVK_KIND="$kind" CONSUMER_GVK_SELECTOR="$api_version/$kind" yq -N -r '[.. | select(type == "!!map" and
+        (.kind == "ClusterPolicy" or .kind == "Policy")) | .spec.rules[]
+        | [.generate, .generate.foreach[]] | .[] | .cloneList.kinds[]
+        | select(. == strenv(CONSUMER_GVK_SELECTOR) or . == strenv(CONSUMER_GVK_KIND)
+          or (((split("/") | length) == 2) and
+            ((split("/") | .[1]) == strenv(CONSUMER_GVK_KIND))))] | length' "$file" 2>"$work/yq.err")"; then
+      refuse "could not bound cloning of $kind in the render of $label, so its consumers are UNKNOWN"
+    fi
+    while IFS= read -r c; do
+      [ -z "$c" ] || [ "$c" = 0 ] ||
+        refuse "production render $label clones a consumer-producing schema ($api_version/$kind) after the static build, so its consumers are UNKNOWN"
+    done <<<"$clones"
   done <<<"$sources"
   if [ "$instances" -gt 0 ]; then
     refuse "production renders $instances $kind instance(s) of $api_version; kro turns each into an OCIRepository inside the cluster, which neither the file scan nor this render has a document for"
