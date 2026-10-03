@@ -751,14 +751,14 @@ trial_contract_matches() {
       $accounts == ["data-product-controller"] and
       [.[] | select(.kind == "Role" and .metadata.name == "data-product-controller-leader-election") |
         (.metadata.namespace == "data-product-controller" and
-         [.rules[] | select(.resources | index("events"))] ==
+         [.rules[] | select(.resources | any(. == "events" or . == "*"))] ==
            [{apiGroups:[""],resources:["events"],verbs:["create","patch"]}])] == [true] and
       [.[] | select(.kind == "RoleBinding" and .metadata.name == "data-product-controller-leader-election") |
         (.metadata.namespace == "data-product-controller" and
          .roleRef == {apiGroup:"rbac.authorization.k8s.io",kind:"Role",name:"data-product-controller-leader-election"} and
          .subjects == [{kind:"ServiceAccount",name:$accounts[0],namespace:"data-product-controller"}])] == [true] and
       [.[] | select(.kind == "ClusterRole") | .rules[] |
-        select(.resources | index("events"))] == [] and
+        select(.resources | any(. == "events" or . == "*"))] == [] and
       ([.[] | select(.kind == "Deployment") | .metadata.name] | sort) ==
         ["data-product-controller", "data-product-controller-harbour"] and
       [.[] | select(.kind == "Deployment") | .spec.template.spec.containers[0] |
@@ -798,8 +798,14 @@ trial_contract_matches "${render_dir}/resources.json" || {
 # lost listener, retired flag, lost gate, publication mismatch, inappropriate host
 # or disabled admission rule fails this assertion. Event writes must also retain
 # their required verbs and single, namespace-local controller recipient.
-for broken in listener service retired-flag gate publication origin missing-portable-origin origin-desynchronization admission event-grant event-verbs event-subject; do
+for broken in listener service retired-flag gate publication origin missing-portable-origin origin-desynchronization admission event-grant event-verbs event-subject event-wildcard-role event-wildcard-clusterrole; do
   case "${broken}" in
+  event-wildcard-role) jq 'map(if .kind == "Role" and .metadata.name == "data-product-controller-leader-election" then
+      .rules += [{apiGroups:[""],resources:["*"],verbs:["create","patch"]}] else . end)' \
+    "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+  event-wildcard-clusterrole) jq 'map(if .kind == "ClusterRole" and .metadata.name == "data-product-controller" then
+      .rules += [{apiGroups:[""],resources:["*"],verbs:["create","patch"]}] else . end)' \
+    "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
   event-grant) jq 'map(if .kind == "Role" then
       .rules |= map(select((.resources | index("events")) == null)) else . end)' \
     "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
