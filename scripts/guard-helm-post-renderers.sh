@@ -114,7 +114,9 @@ if [ -n "$base" ] && [ -n "$kube_version" ]; then
   [ -n "$base_kube_version" ] || die "--base-kube-version is required when comparing an explicit Kubernetes profile"
 fi
 if [ -n "$base_kube_version" ]; then
-  [ -n "$base" ] && [ -n "$kube_version" ] || die "--base-kube-version requires --base and --kube-version"
+  if [ -z "$base" ] || [ -z "$kube_version" ]; then
+    die "--base-kube-version requires --base and --kube-version"
+  fi
 fi
 root="${1%/}"
 [ -d "$root/clusters" ] || die "'$root/clusters' is not a directory"
