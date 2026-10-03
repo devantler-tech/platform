@@ -21,4 +21,4 @@ spec:
       # publish-app.yaml revisions: the deployed artifact signer, this consumer's
       # current pin, and the latest actions release candidate.
       - issuer: '^https://token\.actions\.githubusercontent\.com$'
-        subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@(3c3a6348b3e7aacc995ae49fc60032f95f70a779|df7fd4f83edade31c121a9de563d9a7b9b1f900d|0bd47a5862cc4662cbfa6be327e06ba8e2562c4e)$'
+        subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@(3c3a6348b3e7aacc995ae49fc60032f95f70a779|df7fd4f83edade31c121a9de563d9a7b9b1f900d|9293ed7fd2a2c18819fc1d9cfb3a2d600cd8fec6)$'
