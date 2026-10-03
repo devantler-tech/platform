@@ -126,9 +126,6 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 		stack = append(stack, node)
 		switch n := node.(type) {
 		case *syntax.FuncDecl:
-			if n.Name.Value == "ksail" {
-				refuse("a local function replaces the scanner executable")
-			}
 			if current, guaranteed := shellEffectsContext(stack); current {
 				for _, parent := range stack[:len(stack)-1] {
 					if _, nested := parent.(*syntax.FuncDecl); nested {
@@ -174,6 +171,7 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 			}
 			effectiveWords, effectiveStatic := words[executable:], static[executable:]
 			effectiveCommand := filepath.Base(effectiveWords[0])
+			callerCommand := effectiveWords[0] == effectiveCommand
 			deferred := false
 			for _, parent := range stack {
 				if _, ok := parent.(*syntax.FuncDecl); ok {
@@ -187,7 +185,7 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 						current = false
 					}
 				}
-				if deferred || !current {
+				if deferred || !current || !callerCommand {
 					return
 				}
 				if !guaranteed {
@@ -205,7 +203,7 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 				applyEffects(effects)
 			}
 			if !deferred {
-				if body, found := functions[effectiveCommand]; found && executable == 0 {
+				if body, found := functions[effectiveCommand]; found && executable == 0 && callerCommand {
 					if body == "" {
 						refuse("local function binding is conditional or belongs to another scope")
 					}
@@ -214,10 +212,10 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 						refuse("local function execution cannot be certified from the bounded text")
 					}
 					propagateEffects(view.effects)
-				} else if shadowed[effectiveCommand] && executable == 0 {
+				} else if shadowed[effectiveCommand] && executable == 0 && callerCommand {
 					refuse("an opaque local binding replaces command semantics")
 				}
-				if shadowed[effectiveCommand] && executable == 0 {
+				if shadowed[effectiveCommand] && executable == 0 && callerCommand {
 					switch effectiveCommand {
 					case "set", "exit", "trap", "eval", "alias":
 						refuse("a local binding replaces shell failure-handling semantics")
@@ -276,7 +274,7 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 			}
 			if effectiveCommand == "trap" && len(effectiveWords) > trapAction+1 && effectiveStatic[trapAction] && effectiveWords[trapAction] != "-p" && effectiveWords[trapAction] != "-l" && !deferred {
 				for _, signal := range effectiveWords[trapAction+1:] {
-					if signal == "EXIT" || signal == "0" || signal == "ERR" {
+					if signal == "EXIT" || signal == "0" || signal == "ERR" || signal == "DEBUG" || signal == "RETURN" {
 						if signal == "0" {
 							signal = "EXIT"
 						}
@@ -299,9 +297,6 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 						name, value, found := strings.Cut(text, "=")
 						if !found {
 							continue
-						}
-						if name == "ksail" {
-							refuse("a local alias replaces the scanner executable")
 						}
 						propagateEffects(shellEffects{bindings: map[string]bool{name: true}})
 						text = value
@@ -382,12 +377,18 @@ func analyzeShellRegion(source string, depth int, inherited map[string]string, b
 				return true
 			}
 			result.candidate = true
+			if shadowed["ksail"] {
+				refuse("a local binding replaces the scanner executable")
+			}
 			trapMasks := false
 			for _, actions := range trapActions {
 				for _, action := range actions {
 					// Traps resolve local bindings when triggered, not registered.
 					view := analyzeShellRegion(action, depth+1, functions, shadowed, remaining)
-					trapMasks = trapMasks || view.err != nil || view.effects.successExit || view.effects.flowUncertain
+					// A callback that changes shell control state is not a cleanup
+					// handler: it can install another callback or change the gate
+					// while the failing command is being unwound.
+					trapMasks = trapMasks || view.err != nil || view.effects.successExit || view.effects.flowUncertain || view.effects.errexit != nil || len(view.effects.trapActions) != 0 || len(view.effects.bindings) != 0
 				}
 			}
 			if !deferred && (!errexit || trapMasks || successExit || flowUncertain) {
@@ -949,7 +950,16 @@ func nodeContains(container syntax.Node, target syntax.Node) bool {
 
 func shellStatusUnsafe(stack []syntax.Node, source string, shadowed map[string]bool) bool {
 	call := stack[len(stack)-1]
-	for _, parent := range stack {
+	hasSuccessor := false
+	if file, ok := stack[0].(*syntax.File); ok {
+		for i, stmt := range file.Stmts {
+			if nodeContains(stmt, call) {
+				hasSuccessor = i+1 < len(file.Stmts)
+				break
+			}
+		}
+	}
+	for index, parent := range stack {
 		switch n := parent.(type) {
 		case *syntax.Stmt:
 			if n.Negated || n.Background || n.Coprocess {
@@ -964,6 +974,20 @@ func shellStatusUnsafe(stack []syntax.Node, source string, shadowed map[string]b
 			case "&&":
 				if nodeContains(n.Y, call) {
 					return true
+				}
+				if hasSuccessor {
+					// errexit does not stop a failure on the left of &&. Its
+					// status reaches the script only when this is terminal or an
+					// enclosing || supplies a proven failing fallback.
+					protected := false
+					for _, ancestor := range stack[:index] {
+						if outer, ok := ancestor.(*syntax.BinaryCmd); ok && outer.Op.String() == "||" && nodeContains(outer.X, n) {
+							protected = true
+						}
+					}
+					if !protected {
+						return true
+					}
 				}
 			case "||":
 				if nodeContains(n.Y, call) {

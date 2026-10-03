@@ -141,6 +141,8 @@ func TestSharedParserOrdinaryShellControls(t *testing.T) {
 		"child alias does not escape":               "(alias false=true)",
 		"unused local alias does not escape":        "helper() { alias false=true; }",
 		"unused nested function does not escape":    "helper() { false() { return 0; }; }",
+		"unused scanner alias does not escape":      "helper() { alias ksail=echo; }",
+		"child scanner function does not escape":    "(ksail() { :; })",
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -158,6 +160,14 @@ func TestSharedParserOrdinaryShellControls(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNonterminalScanConjunctionCannotHideFailure(t *testing.T) {
+	for _, separator := range []string{"\n", "; "} {
+		if _, err := setOf(t, goodScan+" && echo scanned"+separator+"echo ready"); err == nil {
+			t.Errorf("nonterminal scan conjunction accepted with %q", separator)
+		}
 	}
 }
 
@@ -217,6 +227,10 @@ func TestScannerCannotRunWithFailureHandlingDisabled(t *testing.T) {
 		"finish() { echo ready; }; trap 'finish' EXIT\nfinish() { exit 0; }",
 		"set +e; restore() { set -e; }; command restore",
 		"exec env echo ready",
+		"trap 'trap \"exit 0\" EXIT' ERR",
+		"trap 'exit 0' DEBUG",
+		"set +e; /nonexistent/set -e",
+		"restore() { set -e; }; set +e; ./restore",
 	} {
 		if _, err := setOf(t, prefix+"\n"+goodScan); err == nil {
 			t.Errorf("scanner failure can be discarded by: %s", prefix)
