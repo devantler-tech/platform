@@ -18,9 +18,12 @@
 # still running outside Flux.
 #
 # FLUX_ORPHANS_SINCE (a UTC timestamp, such as the merge group's creation time)
-# separates that residue from older orphans. An orphan created at or after it
-# can only have come from a revision applied since, and fails the check. An
-# older one is reported but does not fail it: it is usually a prune-protected
+# separates that residue from older orphans. An orphan created or written by
+# kustomize-controller at or after it fails the check: reapplying a retained
+# object preserves its creation time. Status writes and other field managers
+# do not establish a Flux apply. Missing or invalid write times cannot prove
+# that an object predates the boundary, so those are included conservatively.
+# An older one is reported but does not fail it: it is usually a prune-protected
 # object whose manifest a retirement removed on purpose and which is waiting to
 # be deleted by hand, and the prune-protected-orphan-alert CronJob escalates
 # those once that window has passed (#3503). Without FLUX_ORPHANS_SINCE every
@@ -36,9 +39,10 @@
 # Flux's own encoding, `<namespace>_<name>_<group>_<kind>`, with `:` in the name
 # of an RBAC Role, ClusterRole, RoleBinding or ClusterRoleBinding written as `__`.
 #
-# What is deliberately not reported, as in the CronJob: an object handed to
+# What is deliberately not reported: an object handed to
 # another controller on purpose (annotated
-# `platform.devantler.tech/prune-orphan: adopted`, or carrying ownerReferences),
+# `platform.devantler.tech/prune-orphan: adopted`),
+# because an ownerReference alone proves only a garbage-collection dependency,
 # and an object already being deleted. A recent object whose Kustomization exists
 # but is not Ready, or has recorded no inventory, cannot be judged, because Flux
 # records the inventory only after a whole apply succeeds; that is UNKNOWN.
@@ -46,10 +50,13 @@
 # An inventory says nothing about a revision its Kustomization has not applied
 # yet. If one still records the failed revision, that revision's residue is in it
 # and would pass as tracked. So every Kustomization must be Ready at the revision
-# its source currently holds; one that is not, and whose inventory lists a recent
+# its source currently holds, with both reporting Ready for their current
+# metadata generation; one that is not, and whose inventory lists a recent
 # object (any object, without FLUX_ORPHANS_SINCE), makes the result UNKNOWN. The
-# sources themselves must hold the revision being checked: the heal's deploy
-# composite proves that before this runs, through `ksail workload reconcile`.
+# sources themselves must hold the revision being checked: a cached artifact
+# or Ready condition from an earlier spec does not establish this. The heal's
+# deploy composite reconciles them through `ksail workload reconcile`, and this
+# check verifies the resulting status before trusting the inventories.
 #
 # Every listable resource type is read except the aggregated APIs, which an
 # extension server serves rather than the API server. They hold no objects Flux
@@ -97,9 +104,9 @@ if ! [[ "${settle_seconds}" =~ ^[0-9]+$ && "${retry_seconds}" =~ ^[0-9]+$ ]]; th
   echo "::error::FLUX_ORPHANS_SETTLE_SECONDS and FLUX_ORPHANS_RETRY_SECONDS must be whole numbers of seconds."
   exit 2
 fi
-# Kubernetes writes creationTimestamp in UTC with a Z, so a UTC timestamp in the
-# same form compares correctly as text. A merge-group commit timestamp may carry
-# +00:00 instead; any other offset is refused rather than compared wrongly.
+# The boundary uses whole UTC seconds. Kubernetes write times may also contain
+# fractional seconds, which evaluation normalizes before comparing. A merge-
+# group timestamp may carry +00:00; any other offset is refused.
 case "${since}" in
   *+00:00) since="${since%+00:00}Z" ;;
 esac
@@ -119,8 +126,11 @@ kubectl_cluster() {
 # addresses kubectl puts in its errors.
 print_error() {
   [[ -s "${tmp_dir}/error.log" ]] || return 0
-  grep -v '^Warning: ' "${tmp_dir}/error.log" | head -c 2000 |
-    sed -E 's#[a-z]+://[^ "]+#<url>#g; s/[0-9]{1,3}(\.[0-9]{1,3}){3}(:[0-9]+)?/<address>/g'
+  # Sanitize before truncating, and finish consuming stderr before head reads a
+  # regular file. A large error must not abort UNKNOWN through pipefail/SIGPIPE.
+  sed -E '/^Warning: /d; s#[a-z]+://[^ "]+#<url>#g; s/[0-9]{1,3}(\.[0-9]{1,3}){3}(:[0-9]+)?/<address>/g' \
+    "${tmp_dir}/error.log" >"${tmp_dir}/safe-error.log"
+  head -c 2000 "${tmp_dir}/safe-error.log"
   echo
 }
 
@@ -231,10 +241,12 @@ read_with_retry() {
 #   stale <ns/name> - Kustomization <ns/name> ready=<status> applied=<revision> source=<revision>
 #   checked=<Flux-applied objects evaluated>
 #   kustomizations=<Kustomizations read>
-# <category> is `orphan` (fails the check), `pre-existing` (an orphan created
-# before $since) or `unjudged` (its Kustomization is not Ready or has no
-# inventory). `stale` is a Kustomization not Ready at its source's revision whose
-# inventory lists an object created since $since (any object without $since).
+# <category> is `orphan` (fails the check), `pre-existing` (an orphan created and
+# last written by Flux before $since) or `unjudged` (its Kustomization or source
+# is not currently Ready or has no inventory). `stale` is a Kustomization not
+# Ready at its source's revision whose
+# inventory lists an object created or written by Flux since $since (any object
+# without $since).
 # shellcheck disable=SC2016 # jq program, not shell expansion
 readonly evaluate_program='
   def rbac_kind: . as $k | ["Role", "ClusterRole", "RoleBinding", "ClusterRoleBinding"] | any(. == $k);
@@ -247,15 +259,35 @@ readonly evaluate_program='
     | "\(.metadata.namespace // "")_\($name)_\($g)_\(.kind)";
   def object_label:
     "\(.kind)\(group_of | if . == "" then "" else ".\(.)" end) \(.metadata.namespace // "" | if . == "" then "" else "\(.)/" end)\(.metadata.name)";
-  def recent: $since == "" or .metadata.creationTimestamp >= $since;
+  def since_or_newer:
+    if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$")
+    then (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= ($since | fromdateiso8601)
+    else true end;
+  def recent:
+    $since == "" or (.metadata.creationTimestamp | since_or_newer)
+    or any(.metadata.managedFields[]?;
+      .manager == $manager and (.subresource // "") != "status" and (.time | since_or_newer));
+  def current_ready:
+    .metadata.generation as $generation
+    | ($generation | type) == "number" and $generation >= 1
+      # ExternalArtifact defines the observed generation on its Ready condition.
+      # Native Flux sources and Kustomizations also report it on status itself.
+      and (.kind == "ExternalArtifact" or .status.observedGeneration == $generation)
+      and any(.status.conditions[]?;
+        .type == "Ready" and .status == "True" and .observedGeneration == $generation);
+  def source_revision($artifacts):
+    $artifacts["\(.spec.sourceRef.kind)/\(.spec.sourceRef.namespace // .metadata.namespace)/\(.spec.sourceRef.name)"];
   def entries: if (.status.inventory.entries | type) == "array" then [.status.inventory.entries[].id] else null end;
   ($kustomizations[0].items // []) as $ks
   | (reduce (($sources[0].items // [])[]) as $s ({};
-      .["\($s.kind)/\($s.metadata.namespace)/\($s.metadata.name)"] = ($s.status.artifact.revision // null))) as $artifacts
+      .["\($s.kind)/\($s.metadata.namespace)/\($s.metadata.name)"] =
+        (if ($s | current_ready) and ($s.status.artifact.revision | type) == "string" and $s.status.artifact.revision != ""
+         then $s.status.artifact.revision else null end))) as $artifacts
   | (reduce ($ks[] | entries // [] | .[]) as $id ({}; .[$id] = true)) as $inventory
   | (reduce $ks[] as $k ({};
       .["\($k.metadata.namespace)/\($k.metadata.name)"] = {
-        ready: any($k.status.conditions[]?; .type == "Ready" and .status == "True"),
+        ready: (($k | current_ready) and ($k | source_revision($artifacts)) != null
+          and $k.status.lastAppliedRevision == ($k | source_revision($artifacts))),
         inventory: (($k | entries) != null)
       })) as $owners
   | [($objects[0].items // [])[]
@@ -265,7 +297,6 @@ readonly evaluate_program='
   | ($applied[]
      | select(.metadata.deletionTimestamp == null)
      | select((.metadata.annotations // {})[$adopted_annotation] != "adopted")
-     | select((.metadata.ownerReferences // []) | length == 0)
      | inventory_id as $id
      | select($inventory[$id] | not)
      | "\(.metadata.labels[$owner_namespace_label] // "")/\(.metadata.labels[$owner_label])" as $claims
@@ -280,8 +311,8 @@ readonly evaluate_program='
      | "\($category) \(.metadata.uid) \($id) \(object_label) claims=\($claims) created=\(.metadata.creationTimestamp) prune=\((.metadata.annotations // {})[$prune_annotation] // "-")\(if $unjudged == "" or $category == "pre-existing" then "" else " \($unjudged)" end)"),
     ($ks[]
      | "\(.metadata.namespace)/\(.metadata.name)" as $name
-     | $artifacts["\(.spec.sourceRef.kind)/\(.spec.sourceRef.namespace // .metadata.namespace)/\(.spec.sourceRef.name)"] as $source
-     | (any(.status.conditions[]?; .type == "Ready" and .status == "True")) as $ready
+     | source_revision($artifacts) as $source
+     | current_ready as $ready
      | select(($ready and $source != null and .status.lastAppliedRevision == $source) | not)
      | select(any((entries // [])[]; $recent_ids[.]) or $since == "")
      | "stale \($name) - Kustomization \($name) ready=\($ready) applied=\(.status.lastAppliedRevision // "none") source=\($source // "unread")"),
@@ -345,7 +376,7 @@ skipped_groups() {
 # report_pre_existing <file>: older orphans, listed but not failed on.
 report_pre_existing() {
   [[ -s "$1" ]] || return 0
-  echo "::warning::$(wc -l <"$1" | tr -d ' ') object(s) outside every inventory predate ${since}, so no deploy since then left them; they are not failed on here:"
+  echo "::warning::$(wc -l <"$1" | tr -d ' ') object(s) outside every inventory predate ${since} in creation and Flux write times; they are not failed on here:"
   print_findings "$1"
   echo "If a retirement removed their manifests on purpose, delete them by hand once nothing depends on them (AGENTS.md, \"Persistence retirement is always two-stage\"); the prune-protected-orphan-alert CronJob escalates them after its grace period (#3503)."
   summary "- Flux orphaned objects older than ${since}, not failed on:"
@@ -354,7 +385,7 @@ report_pre_existing() {
 
 scope() {
   if [[ -n "${since}" ]]; then
-    printf 'Flux-applied objects created since %s' "${since}"
+    printf 'Flux-applied objects created or written by Flux since %s' "${since}"
   else
     printf 'all Flux-applied objects'
   fi

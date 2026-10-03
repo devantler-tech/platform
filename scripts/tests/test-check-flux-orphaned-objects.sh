@@ -5,6 +5,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 script="${repo_root}/scripts/check-flux-orphaned-objects.sh"
+run_count=0
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
@@ -59,6 +60,14 @@ if [[ "$#" -eq 8 && "$1" == get && "$3 $4 $5 $6 $7 $8" == "--all-namespaces -l k
   printf '%s\n' "$2" >"${FAKE_DIR}/listed.${read_number}"
   printf 'Warning: v1 Endpoints is deprecated in v1.33+\n' >&2
   if [[ ",${FAKE_FAIL_READS:-}," == *",${read_number},"* ]]; then
+    if [[ "${FAKE_LONG_ERROR:-}" == 1 ]]; then
+      # Larger than a pipe buffer: truncating a middle pipeline stage must not
+      # turn UNKNOWN into SIGPIPE or omit the step summary.
+      for ((line = 0; line < 2000; line++)); do
+        printf 'Unable to connect: https://api.prod.example:6443/api dial tcp 203.0.113.7:6443; diagnostic %s\n' "${line}" >&2
+      done
+    fi
+    [[ "${FAKE_WARNING_ONLY:-}" != 1 ]] || exit 1
     printf 'Unable to connect to the server: dial tcp 203.0.113.7:6443: i/o timeout (Get "https://api.prod.example:6443/api?timeout=60s")\n' >&2
     exit 1
   fi
@@ -96,7 +105,7 @@ obj() {
     --arg claims "$6" --arg manager "$7" --argjson extra "${extra}" --arg created "${applied_at}" '
     {apiVersion: $apiVersion, kind: $kind,
      metadata: ({name: $name, uid: $uid, creationTimestamp: $created,
-                 managedFields: [{manager: $manager, operation: "Apply"}]}
+                 managedFields: [{manager: $manager, operation: "Apply", time: ($extra.creationTimestamp // $created)}]}
                 + (if $ns == "-" then {} else {namespace: $ns} end)
                 + (if $claims == "-" then {} else {labels: {
                     "kustomize.toolkit.fluxcd.io/name": ($claims | split("/")[1]),
@@ -111,9 +120,9 @@ ks() {
   local ns="$1" name="$2" ready="$3"
   shift 3
   jq -cn --arg ns "${ns}" --arg name "${name}" --arg ready "${ready}" '
-    {metadata: {namespace: $ns, name: $name},
+    {metadata: {namespace: $ns, name: $name, generation: 1},
      spec: {sourceRef: {kind: "OCIRepository", name: "src"}},
-     status: ({conditions: [{type: "Ready", status: $ready}], lastAppliedRevision: "rev-1"}
+     status: ({observedGeneration: 1, conditions: [{type: "Ready", status: $ready, observedGeneration: 1}], lastAppliedRevision: "rev-1"}
               + (if $ARGS.positional == ["none"] then {}
                  else {inventory: {entries: [$ARGS.positional[] | {id: ., v: "v1"}]}} end))}' \
     --args "$@"
@@ -122,7 +131,8 @@ ks() {
 # src <kind> <namespace> <name> <artifact revision>
 src() {
   jq -cn --arg kind "$1" --arg ns "$2" --arg name "$3" --arg revision "$4" '
-    {kind: $kind, metadata: {namespace: $ns, name: $name}, status: {artifact: {revision: $revision}}}'
+    {kind: $kind, metadata: {namespace: $ns, name: $name, generation: 1},
+     status: {observedGeneration: 1, conditions: [{type: "Ready", status: "True", observedGeneration: 1}], artifact: {revision: $revision}}}'
 }
 
 # set_ks <file> <ns/name> <jq update>: change one Kustomization in that list.
@@ -206,6 +216,7 @@ record() {
 run() {
   local dir="$1"
   shift
+  run_count=$((run_count + 1))
   : >"${dir}/summary.md"
   rm -f "${dir}/reads"
   set +e
@@ -253,6 +264,164 @@ expect_reads() {
   [[ "${reads}" == "$1" ]] || fail "expected $1 read(s), got ${reads}"
 }
 
+# An evicted revision can reapply an older protected object without changing
+# its creation time. Only Flux writes to the object itself extend this scope.
+regression_flux_write_time() {
+  local write
+  for write in 2026-08-30T14:17:34Z 2026-08-30T14:05:12Z 2026-08-30T14:05:12.123Z; do
+    case_name="older orphan written by Flux at ${write}"
+    dir="$(scenario "flux-write-${write}")"
+    obj v1 ConfigMap web retained uid-retained flux-system/apps kustomize-controller \
+      "{\"creationTimestamp\":\"2026-08-28T12:00:00Z\",\"managedFields\":[{\"manager\":\"kustomize-controller\",\"operation\":\"Apply\",\"time\":\"${write}\"}]}" | add_objects "${dir}"
+    run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z
+    expect_status 1
+    expect_reads 2
+    expect_text 'ConfigMap web/retained'
+    expect_no_text '::warning::'
+    expect_summary '**1 found**'
+  done
+
+  case_name='older tracked object written by Flux at a stale inventory'
+  dir="$(scenario flux-write-tracked)"
+  obj v1 ConfigMap web retained uid-retained flux-system/apps kustomize-controller \
+    '{"creationTimestamp":"2026-08-28T12:00:00Z","managedFields":[{"manager":"kustomize-controller","operation":"Update","time":"2026-08-30T14:17:34Z"}]}' | add_objects "${dir}"
+  record "${dir}/kustomizations.json" 'web_retained__ConfigMap'
+  set_ks "${dir}/kustomizations.json" flux-system/apps '.status.lastAppliedRevision = "candidate"'
+  run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z
+  expect_status 2
+  expect_summary 'UNKNOWN'
+
+  case_name='older orphan with only status or another manager written recently'
+  dir="$(scenario irrelevant-writes)"
+  obj v1 ConfigMap web retired uid-retired flux-system/apps kustomize-controller \
+    '{"creationTimestamp":"2026-08-28T12:00:00Z","managedFields":[{"manager":"kustomize-controller","operation":"Apply","time":"2026-08-30T14:05:11.999Z"},{"manager":"kustomize-controller","subresource":"status","time":"2026-08-30T14:17:34Z"},{"manager":"another-controller","time":"2026-08-30T14:17:34Z"}]}' | add_objects "${dir}"
+  run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z
+  expect_status 0
+  expect_reads 1
+  expect_text '::warning::1 object(s)'
+
+  case_name='older orphan with an unrecorded Flux write time'
+  dir="$(scenario missing-write-time)"
+  obj v1 ConfigMap web retained uid-retained flux-system/apps kustomize-controller \
+    '{"creationTimestamp":"2026-08-28T12:00:00Z","managedFields":[{"manager":"kustomize-controller","operation":"Apply"}]}' | add_objects "${dir}"
+  run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z
+  expect_status 1
+  expect_reads 2
+}
+
+# Old matching revision strings cannot establish that a restored spec was
+# reconciled. Exercise status and condition generations independently for both
+# the source and Kustomization, including missing status and source readiness.
+regression_current_generations() {
+  local target update
+  for target in kustomizations sources; do
+    for update in '.metadata.generation = 2' 'del(.status.observedGeneration)' \
+      '.status.conditions[0].observedGeneration = 0' 'del(.status.conditions[0].observedGeneration)' 'del(.status.conditions)' \
+      'del(.metadata.generation)'; do
+      case_name="${target} not currently observed: ${update}"
+      dir="$(scenario "${target}-generation")"
+      set_ks "${dir}/${target}.json" flux-system/"$(if [[ "${target}" == sources ]]; then echo src; else echo apps; fi)" "${update}"
+      run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z
+      expect_status 2
+      expect_reads 2
+      expect_text 'Kustomization flux-system/apps'
+      expect_summary 'UNKNOWN'
+      expect_no_text '✅'
+    done
+  done
+
+  case_name='source Ready=False with a matching cached artifact'
+  dir="$(scenario source-not-ready)"
+  set_ks "${dir}/sources.json" flux-system/src '.status.conditions[0].status = "False"'
+  run "${dir}"
+  expect_status 2
+  expect_summary 'UNKNOWN'
+
+  case_name='untracked object cannot be judged before its source is current'
+  obj v1 ConfigMap web waiting uid-waiting flux-system/apps kustomize-controller | add_objects "${dir}"
+  run "${dir}"
+  expect_status 2
+  expect_text 'ConfigMap web/waiting'
+  expect_text 'reason=not-ready'
+  expect_no_text '**1 found**'
+
+  case_name='new generations with current Ready statuses and matching revisions'
+  dir="$(scenario current-new-generations)"
+  set_ks "${dir}/kustomizations.json" flux-system/apps \
+    '.metadata.generation = 2 | .status.observedGeneration = 2 | .status.conditions[0].observedGeneration = 2'
+  set_ks "${dir}/sources.json" flux-system/src \
+    '.metadata.generation = 3 | .status.observedGeneration = 3 | .status.conditions[0].observedGeneration = 3'
+  run "${dir}"
+  expect_status 0
+  expect_reads 1
+
+  case_name='stale status becomes current on the settling read'
+  set_ks "${dir}/kustomizations.json" flux-system/apps '.metadata.generation = 3'
+  cp "${dir}/kustomizations.json" "${dir}/kustomizations.2.json"
+  set_ks "${dir}/kustomizations.2.json" flux-system/apps \
+    '.status.observedGeneration = 3 | .status.conditions[0].observedGeneration = 3'
+  run "${dir}"
+  expect_status 0
+  expect_reads 2
+  expect_summary '(1 cleared on re-read)'
+
+  case_name='ExternalArtifact with current Ready-condition generation'
+  dir="$(scenario external-artifact)"
+  set_ks "${dir}/kustomizations.json" flux-system/apps '.spec.sourceRef.kind = "ExternalArtifact"'
+  set_ks "${dir}/kustomizations.json" flux-system/infrastructure-controllers '.spec.sourceRef.kind = "ExternalArtifact"'
+  set_ks "${dir}/sources.json" flux-system/src '.kind = "ExternalArtifact" | del(.status.observedGeneration)'
+  run "${dir}"
+  expect_status 0
+  expect_reads 1
+
+  case_name='ExternalArtifact with an older Ready-condition generation'
+  set_ks "${dir}/sources.json" flux-system/src '.metadata.generation = 2'
+  run "${dir}"
+  expect_status 2
+  expect_summary 'UNKNOWN'
+}
+
+regression_long_stderr() {
+  case_name='long kubectl error preserves UNKNOWN and its summary'
+  dir="$(scenario long-stderr)"
+  run "${dir}" FAKE_FAIL_READS=1,2,3 FAKE_LONG_ERROR=1
+  expect_status 2
+  expect_reads 3
+  expect_summary 'UNKNOWN'
+  expect_text 'Unable to connect: <url> dial tcp <address>'
+  expect_no_text 'api.prod.example'
+  expect_no_text '203.0.113.7'
+  expect_no_text 'Warning:'
+  [[ "${#output}" -lt 2600 ]] || fail "diagnostic was not bounded: ${#output} characters"
+
+  case_name='warning-only failure preserves UNKNOWN and its summary'
+  run "${dir}" FAKE_FAIL_READS=1,2,3 FAKE_WARNING_ONLY=1
+  expect_status 2
+  expect_summary 'UNKNOWN'
+  expect_no_text 'Warning:'
+}
+
+regression_explicit_adoption() {
+  case_name='owner references alone do not establish a handoff'
+  dir="$(scenario owner-reference)"
+  obj v1 ConfigMap web retained uid-retained flux-system/apps kustomize-controller \
+    '{"ownerReferences":[{"apiVersion":"kro.run/v1alpha1","kind":"Tenant","name":"a","uid":"x"}],"annotations":{"kustomize.toolkit.fluxcd.io/prune":"disabled"}}' | add_objects "${dir}"
+  run "${dir}"
+  expect_status 1
+  expect_reads 2
+  expect_summary '**1 found**'
+  expect_text 'ConfigMap web/retained'
+
+  case_name='explicit handoff exempts a Flux-applied object with an owner'
+  jq '.items[-1].metadata.annotations["platform.devantler.tech/prune-orphan"] = "adopted"' \
+    "${dir}/objects.json" >"${dir}/objects.json.new"
+  mv "${dir}/objects.json.new" "${dir}/objects.json"
+  run "${dir}"
+  expect_status 0
+  expect_reads 1
+  expect_no_text 'ConfigMap web/retained'
+}
+
 # Every Flux-applied object is in an inventory, including an RBAC name whose
 # colons Flux writes as double underscores, and every Kustomization is Ready at
 # its source's revision. One read is enough.
@@ -288,7 +457,7 @@ dir="$(scenario residue)"
 run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:05:12Z
 expect_status 1
 expect_reads 2
-expect_text "::error::3 object(s) among Flux-applied objects created since 2026-08-30T14:05:12Z are in no Kustomization's inventory, so nothing will update or prune them:"
+expect_text "::error::3 object(s) among Flux-applied objects created or written by Flux since 2026-08-30T14:05:12Z are in no Kustomization's inventory, so nothing will update or prune them:"
 expect_line '  Namespace data-product-controller (claims=flux-system/apps created=2026-08-30T14:17:34Z prune=disabled)'
 expect_line '  HelmRelease.helm.toolkit.fluxcd.io data-product-controller/data-product-controller (claims=flux-system/apps created=2026-08-30T14:17:34Z prune=disabled)'
 expect_line '  CiliumNetworkPolicy.cilium.io data-product-controller/allow-data-product-controller (claims=flux-system/apps created=2026-08-30T14:17:34Z prune=-)'
@@ -306,10 +475,10 @@ case_name='orphans older than the merge group'
 run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T15:00:00Z
 expect_status 0
 expect_reads 1
-expect_text '::warning::3 object(s) outside every inventory predate 2026-08-30T15:00:00Z, so no deploy since then left them; they are not failed on here:'
+expect_text '::warning::3 object(s) outside every inventory predate 2026-08-30T15:00:00Z in creation and Flux write times; they are not failed on here:'
 expect_line '  Namespace data-product-controller (claims=flux-system/apps created=2026-08-30T14:17:34Z prune=disabled)'
 expect_text 'prune-protected-orphan-alert CronJob'
-expect_line '✅ No object is outside every inventory among Flux-applied objects created since 2026-08-30T15:00:00Z (7 Flux-applied objects, 2 Kustomizations; aggregated API groups not read: spdx.softwarecomposition.kubescape.io).'
+expect_line '✅ No object is outside every inventory among Flux-applied objects created or written by Flux since 2026-08-30T15:00:00Z (7 Flux-applied objects, 2 Kustomizations; aggregated API groups not read: spdx.softwarecomposition.kubescape.io).'
 expect_summary '- Flux orphaned objects older than 2026-08-30T15:00:00Z, not failed on:'
 
 # An object created at the very second the group was built is residue, and a
@@ -317,7 +486,7 @@ expect_summary '- Flux orphaned objects older than 2026-08-30T15:00:00Z, not fai
 case_name='created at the boundary'
 run "${dir}" FLUX_ORPHANS_SINCE=2026-08-30T14:17:34+00:00
 expect_status 1
-expect_text 'created since 2026-08-30T14:17:34Z'
+expect_text 'created or written by Flux since 2026-08-30T14:17:34Z'
 
 # Without a boundary every orphan fails the check.
 case_name='no boundary'
@@ -404,7 +573,7 @@ dir="$(scenario not-reported)"
   obj v1 Namespace - tenant-a uid-adopted flux-system/apps kustomize-controller \
     '{"annotations":{"kustomize.toolkit.fluxcd.io/prune":"disabled","platform.devantler.tech/prune-orphan":"adopted"}}'
   obj v1 ConfigMap web owned uid-owned flux-system/apps kustomize-controller \
-    '{"ownerReferences":[{"apiVersion":"kro.run/v1alpha1","kind":"Tenant","name":"a","uid":"x"}]}'
+    '{"ownerReferences":[{"apiVersion":"kro.run/v1alpha1","kind":"Tenant","name":"a","uid":"x"}],"annotations":{"platform.devantler.tech/prune-orphan":"adopted"}}'
   obj v1 Namespace - leaving uid-leaving flux-system/apps kustomize-controller \
     '{"deletionTimestamp":"2026-08-30T15:00:00Z"}'
 } | add_objects "${dir}"
@@ -567,4 +736,9 @@ run "${dir}" FLUX_ORPHANS_SETTLE_SECONDS=soon
 expect_status 2
 expect_text 'must be whole numbers of seconds'
 
-echo 'check-flux-orphaned-objects: all cases passed'
+regression_flux_write_time
+regression_current_generations
+regression_long_stderr
+regression_explicit_adoption
+
+echo "check-flux-orphaned-objects: all cases passed (${run_count} CLI fixture runs)"

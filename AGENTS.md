@@ -904,9 +904,13 @@ that is missing from its Kustomization's inventory, logs it while it is younger 
 posts it to Slack after that. Run it on demand with `kubectl -n observability create job
 --from=cronjob/prune-protected-orphan-alert "prune-protected-orphan-check-$(date +%s)"`; step 3 is
 complete when that Job **Succeeded** and its log does not name the object (a failed Job judged
-nothing, and an object still Terminating is not listed). When a protected object is instead handed
-to another controller on purpose, annotate it `platform.devantler.tech/prune-orphan: adopted` in
-the PR that protects it, so the check does not report it. `scripts/tests/test-pvc-prune-safety.sh` checks every production reconciliation root,
+nothing, and an object still Terminating is not listed). The heal's orphan check includes older
+objects written by Flux during the speculative deployment and trusts an inventory only after its
+Kustomization and Source report Ready for their current generations at the same revision. When a
+protected object is instead handed to another controller on purpose, annotate it
+`platform.devantler.tech/prune-orphan: adopted` in
+the PR that protects it, so the check does not report it; an owner reference alone is not that handoff.
+`scripts/tests/test-pvc-prune-safety.sh` checks every production reconciliation root,
 rejects an unprotected current or base resource, and compares a deploy candidate with the actual
 live Flux-owned objects before the mutable production artifact moves. Do not collapse the two
 revisions or use Flux force replacement for a PVC migration.
