@@ -799,6 +799,12 @@ printf '%s\n' '{{ $r := .Release }}{{ if eq $r.Revision 1 }}' 'apiVersion: v1' '
   >"$scratch/charts/revision-sensitive/templates/revision.yaml"
 run_guard "$TREE"
 assert_rc 'aliased Release.Revision is also historical input' 2
+printf '%s\n' '{{ if eq .Capabilities.HelmVersion.Version "v4.2.0" }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: cli-version' '{{ end }}' \
+  >"$scratch/charts/revision-sensitive/templates/revision.yaml"
+pr_3580 | release
+yq -i '.spec.chart.spec.chart = "revision-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
+run_guard "$TREE"
+assert_rc 'CLI and SDK HelmVersion capabilities cannot be assumed equivalent' 2
 
 new_tree
 pr_3580 | release

@@ -49,6 +49,9 @@
 # kustomize `patches`/`images` renderer, a chart that fails to pull or render, or an unresolved
 # `${...}` in the chart source. Historical preserveValues and revision-dependent templates are
 # also UNKNOWN: helm template --is-upgrade still renders revision 1, not the deployed revision.
+# HelmVersion-dependent charts are UNKNOWN too: the official CLI injects v4.2.0 into template
+# capabilities, whereas helm-controller's SDK build defaults to v4.2. Pinning the binary alone
+# does not make that input identical.
 # No cluster overlay, or an overlay that names no Flux
 # Kustomization, or a tree that renders no HelmRelease at all, is exit 2 as well: a selector that
 # matched nothing is indistinguishable from a clean tree.
@@ -494,6 +497,9 @@ check_release() { # <record> <work>
   # that read Revision anywhere; do not pretend revision 2 proves every future upgrade either.
   if grep -R -E -q "\.[[:space:]]*Revision|[\"']Revision[\"']" "$work/chart" "$work/dependencies"; then
     die "$label: revision-dependent chart $chart_desc needs release history this guard cannot render"
+  fi
+  if grep -R -E -q "\.[[:space:]]*HelmVersion|[\"']HelmVersion[\"']" "$work/chart" "$work/dependencies"; then
+    die "$label: HelmVersion-dependent chart $chart_desc needs the controller SDK capabilities, not the CLI build metadata"
   fi
 
   release="$(jq -r '.release.spec.releaseName // (if .release.spec.targetNamespace then
