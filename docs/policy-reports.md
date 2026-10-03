@@ -97,10 +97,12 @@ so the filters decide which namespaces get reports:
 
 - **kube-system, kube-public and kube-node-lease are scanned.** The platform drops
   them from the chart's default filters (#4234), so a policy that matches a
-  resource there gets a current report, as in any other namespace. Admission there
-  is unchanged in effect: the webhooks never send kube-system objects to Kyverno,
-  and kube-public and kube-node-lease hold only ConfigMaps and node Leases, which no
-  enforcing rule matches. Every policy that generates or changes existing resources
+  resource there gets a current report, as in any other namespace. The webhooks
+  exclude kube-system at admission. kube-public and kube-node-lease are within
+  the webhook scope: kube-public's bootstrap Role matches the enforcing
+  `audit-privileged-rbac` rule, while node Leases remain resource-filtered.
+  Creating a different kind there can match other admission policies; these
+  namespaces are not blanket enforcement exemptions. Every policy that generates or changes existing resources
   excludes these three namespaces by name, so Kyverno creates and edits nothing
   there.
 - **kyverno is not evaluated.** It stays in the filters, because two generate
@@ -108,6 +110,36 @@ so the filters decide which namespaces get reports:
   policy and a LimitRange in Kyverno's own namespace. No report there is ever
   created or rewritten; any report found there predates the filters and shows a
   past result, not a current one.
+
+### Coverage decision and admission review
+
+The decision for #4228 retains the deployed three-namespace background coverage
+from #4235 and Kyverno's own self-protection filter. This restores visibility for
+matching system resources without sending kube-system or kyverno through the
+resource admission webhooks. Removing Kyverno's own filter would let its generate
+policies target the policy engine itself, so that namespace remains a declared
+coverage gap in Kyverno reports.
+
+The admission review distinguishes selectors from resource filters. Background
+coverage does not imply new kube-system admission enforcement. kube-public can
+receive enforcing RBAC validation, and its existing Role has a passing result;
+future privileged grants there must satisfy the existing reviewed RBAC boundary.
+Leases remain filtered. The generate and mutate-existing rules exclude all three
+Kubernetes system namespaces, so they do not create or edit resources there. This
+decision changes no filter, selector, policy action or reviewed RBAC exclusion.
+
+Read-only verification on 2026-10-03 joined fresh replica-policy results to the
+current kube-system Deployments and confirmed the observed Kyverno release and
+resource webhook selectors. It establishes the issue's required current report
+and the deployed admission scope, not complete coverage of every resource or a
+week of reports-controller memory stability. Empty collections and retained June
+reports are not compliance evidence.
+
+Kubescape supplies separate posture visibility for Kyverno's workloads, not
+equivalent Kyverno admission enforcement. Its stored results lack per-object scan
+timestamps and source workload UIDs, so their freshness is unproven; see the
+[result coverage contract](kubescape-result-coverage.md). Kubescape excludes the
+other three system namespaces and cannot replace their Kyverno background coverage.
 
 A `DeletingPolicy` cannot clear reports in the kyverno namespace either: Kyverno's
 cleanup controller skips the namespaces the filters exclude. A policy matching them
