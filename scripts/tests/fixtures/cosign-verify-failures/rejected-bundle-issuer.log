@@ -1,0 +1,2 @@
+Error: no matching attestations: failed to verify certificate identity: no matching CertificateIdentity found, last error: expected issuer value to match regex "^https://accounts\.example\.com$", got "https://token.actions.githubusercontent.com"
+error during command execution: no matching attestations: failed to verify certificate identity: no matching CertificateIdentity found, last error: expected issuer value to match regex "^https://accounts\.example\.com$", got "https://token.actions.githubusercontent.com"
