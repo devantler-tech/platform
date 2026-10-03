@@ -87,9 +87,9 @@ new_tree() {
   mkdir -p "$root/bases/infrastructure/cluster-security-exceptions" \
     "$root/bases/infrastructure/controllers/kubescape" \
     "$root/providers/hetzner/infrastructure/crossplane"
-  printf 'apiVersion: spdx.softwarecomposition.kubescape.io/v1beta1\nkind: ClusterSecurityException\n' \
+  printf 'apiVersion: spdx.softwarecomposition.kubescape.io/v1beta1\nkind: ClusterSecurityException\nspec:\n  patterns: |\n' \
     >"$root/bases/infrastructure/cluster-security-exceptions/secret-reader-rbac.yaml"
-  printf 'apiVersion: v1\nkind: ConfigMap\n' \
+  printf 'apiVersion: v1\nkind: ConfigMap\ndata:\n  patterns: |\n' \
     >"$root/bases/infrastructure/controllers/kubescape/config-map-headlamp-exceptions.yaml"
   printf '%s\n' "$root"
 }
@@ -242,13 +242,80 @@ assert_rc 'control: the same tree without the unreadable document passes' 0 "$GU
 cat >"$t/providers/hetzner/infrastructure/crossplane/flow-style.yaml" <<'YAML'
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
-metadata: { name: sneaky-alias }
+metadata: {}
 spec: { package: xpkg.upbound.io/upbound/provider-family-aws:v2.6.1 }
 YAML
 run_guard "$t"
 assert_rc 'an unreadable Provider is exit 2, not a silent skip' 2 "$GUARD_RC"
 assert_contains 'blames the file it could not read' 'flow-style.yaml'
 assert_contains 'names the field it could not read' 'metadata.name'
+
+# Semantic flow-style inputs are readable. Keep the unreadable-input assertions
+# above for a genuinely absent name, and prove a readable alias is actual drift.
+for shape in flow whole-flow alias merge; do
+  t="$(new_tree "semantic-$shape")"
+  add_exception "$t" upbound-provider-family-aws both
+  case "$shape" in
+    flow)
+      printf '%s\n' 'apiVersion: pkg.crossplane.io/v1' 'kind: Provider' \
+        'metadata: { name: upbound-provider-family-aws }' \
+        'spec: { package: xpkg.upbound.io/upbound/provider-family-aws:v2.6.1 }' \
+        >"$t/providers/canonical.yaml" ;;
+    whole-flow)
+      printf '%s\n' '{apiVersion: pkg.crossplane.io/v1, kind: Provider, metadata: {name: upbound-provider-family-aws}, spec: {package: "xpkg.upbound.io/upbound/provider-family-aws:v2.6.1"}}' \
+        >"$t/providers/canonical.yml" ;;
+    alias)
+      printf '%s\n' 'apiVersion: pkg.crossplane.io/v1' 'kind: Provider' \
+        'identity: &metadata {name: upbound-provider-family-aws}' \
+        'packageRef: &package {package: "xpkg.upbound.io/upbound/provider-family-aws:v2.6.1"}' \
+        'metadata: *metadata' 'spec: *package' >"$t/providers/canonical.yaml" ;;
+    merge)
+      printf '%s\n' 'apiVersion: pkg.crossplane.io/v1' 'kind: Provider' \
+        'defaults: &defaults {name: shortened}' \
+        'metadata: {name: upbound-provider-family-aws, <<: *defaults}' \
+        'spec: {package: "xpkg.upbound.io/upbound/provider-family-aws:v2.6.1"}' \
+        >"$t/providers/canonical.yaml" ;;
+  esac
+  run_guard "$t"
+  assert_rc "$shape canonical Provider is checked" 0 "$GUARD_RC"
+  assert_contains "$shape canonical Provider has a nonzero checked count" 'Crossplane Provider(s) checked'
+done
+
+t="$(new_tree flow-alias-drift)"
+add_exception "$t" shortened both
+cat >"$t/providers/shortened.yaml" <<'YAML'
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata: { name: shortened }
+spec: { package: xpkg.upbound.io/upbound/provider-family-aws:v2.6.1 }
+YAML
+run_guard "$t"
+assert_rc 'a readable flow alias is drift rather than unreadable' 1 "$GUARD_RC"
+assert_contains 'flow drift names the derived name' 'upbound-provider-family-aws'
+
+for field in name package; do
+  t="$(new_tree "typed-$field")"
+  add_provider "$t" upbound-provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
+  add_exception "$t" upbound-provider-family-aws both
+  if [ "$field" = name ]; then
+    yq -i '.metadata.name = ["invalid"]' "$t/providers/hetzner/infrastructure/crossplane/upbound-provider-family-aws.yaml"
+    expected_field=metadata.name
+  else
+    yq -i '.spec.package = false' "$t/providers/hetzner/infrastructure/crossplane/upbound-provider-family-aws.yaml"
+    expected_field=spec.package
+  fi
+  run_guard "$t"
+  assert_rc "a nonstring $field is unreadable" 2 "$GUARD_RC"
+  assert_contains "the nonstring $field refusal identifies the field" "$expected_field"
+done
+
+t="$(new_tree invalid-yaml)"
+add_provider "$t" upbound-provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
+add_exception "$t" upbound-provider-family-aws both
+printf '%s\n' 'apiVersion: pkg.crossplane.io/v1' 'kind: Provider' 'metadata: {' >"$t/providers/broken.yaml"
+run_guard "$t"
+assert_rc 'a malformed Provider is unreadable beside a valid one' 2 "$GUARD_RC"
+assert_contains 'the malformed input identifies its file' 'broken.yaml'
 
 printf '\n%d assertion(s), %d failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ]

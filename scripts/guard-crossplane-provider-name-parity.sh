@@ -79,32 +79,31 @@ provider-upjet-github
 provider-upjet-unifi
 "
 
-# Emit "<name>\t<package>\t<file>" for every pkg.crossplane.io Provider document.
-# shellcheck disable=SC2016  # the awk program is data; the shell must not expand it.
+# Decode every YAML document semantically, including flow maps and aliases.
+# Emit "<name>\t<package>\t<file>" only after checking required field types.
+command -v yq >/dev/null 2>&1 || die 'yq is required to parse Provider manifests'
+command -v jq >/dev/null 2>&1 || die 'jq is required to check Provider field types'
+# shellcheck disable=SC2016  # the yq and jq programs are data.
 providers="$(
-  find "$root" -type f -name '*.yaml' -print0 |
-    xargs -0 awk '
-      function flush(  where) {
-        if (is_xp && is_provider) {
-          where = (srcfile == "" ? FILENAME : srcfile)
-          if (name != "" && pkg != "")
-            printf "%s\t%s\t%s\n", name, pkg, where
-          else
-            # A Provider this line-oriented parser cannot read is NOT skipped: a
-            # silently omitted document is exactly how an aliased provider would
-            # slip past a guard that still exits 0 on its neighbours.
-            printf "!unparseable\t%s\t%s\n", (name == "" ? "metadata.name" : "spec.package"), where
-        }
-        is_xp = 0; is_provider = 0; name = ""; pkg = ""; srcfile = ""
-      }
-      FNR == 1 { flush() }
-      /^---[[:space:]]*$/ { flush(); next }
-      /^apiVersion:[[:space:]]*pkg\.crossplane\.io\// { is_xp = 1; srcfile = FILENAME }
-      /^kind:[[:space:]]*Provider[[:space:]]*$/ { is_provider = 1; srcfile = FILENAME }
-      /^  name:[[:space:]]*[^[:space:]]/ { if (name == "") { name = $2; if (srcfile == "") srcfile = FILENAME } }
-      /^  package:[[:space:]]*[^[:space:]]/ { if (pkg == "") { pkg = $2; if (srcfile == "") srcfile = FILENAME } }
-      END { flush() }
-    '
+  find "$root" -type f \( -name '*.yaml' -o -name '*.yml' \) -print0 |
+    while IFS= read -r -d '' file; do
+      documents="$(yq eval-all --yaml-fix-merge-anchor-to-spec -o=json -I=0 -N '
+        explode(.) | select(tag == "!!map") | select(.kind == "Provider") |
+        select(.apiVersion | test("^pkg\\.crossplane\\.io/")) |
+        {"name": .metadata.name, "package": .spec.package}
+      ' "$file")" || die "cannot parse YAML input '$file'"
+      rows="$(jq -r '
+        if (.name | type) != "string" then "!unparseable\tmetadata.name"
+        elif (.name | length) == 0 or (.name | test("[[:space:]]")) then "!unparseable\tmetadata.name"
+        elif (.package | type) != "string" then "!unparseable\tspec.package"
+        elif (.package | length) == 0 or (.package | test("[[:space:]]")) then "!unparseable\tspec.package"
+        else [.name, .package] | @tsv end
+      ' <<<"$documents")" || die "cannot read Provider fields in '$file'"
+      while IFS= read -r row; do
+        [ -n "$row" ] || continue
+        printf '%s\t%s\n' "$row" "$file"
+      done <<<"$rows"
+    done
 )" || die 'failed to enumerate Provider manifests'
 
 [ -n "$providers" ] || die "found no pkg.crossplane.io Provider manifests under '$root' — refusing to pass vacuously"
@@ -143,7 +142,7 @@ while IFS="$(printf '\t')" read -r name pkg file; do
   [ -n "$name" ] || continue
 
   if [ "$name" = "!unparseable" ]; then
-    die "$(printf '%s declares a pkg.crossplane.io Provider whose %s this guard could not read.\n  Refusing to pass: an unreadable Provider is indistinguishable from an aliased one, and skipping it is how platform#3454 would recur.\n  Write it in block style (the shape the rest of the tree uses), or teach this parser the shape.' "$file" "$pkg")"
+    die "$(printf '%s declares a pkg.crossplane.io Provider whose %s this guard could not read.\n  Refusing to pass: an unreadable Provider is indistinguishable from an aliased one, and skipping it is how platform#3454 would recur.\n  Supply a nonempty string for the required field.' "$file" "$pkg")"
   fi
 
   checked=$((checked + 1))
