@@ -42,6 +42,8 @@ jobs:
           go run ./scripts/validate-merge-group-heal --deploy-only .github/workflows/cd.yaml
           shellcheck scripts/merge-group-evicted.sh scripts/tests/test-merge-group-evicted.sh
           bash scripts/tests/test-merge-group-evicted.sh
+          shellcheck scripts/check-flux-orphaned-objects.sh scripts/tests/test-check-flux-orphaned-objects.sh
+          bash scripts/tests/test-check-flux-orphaned-objects.sh
 
       # A merge-group validator that ci-required-checks enforces but deploy-prod does not
       # need runs in parallel with the deploy, so prod can receive a revision it rejects (#4148).
@@ -3017,6 +3019,18 @@ jobs:
           ref: main
           persist-credentials: false
 
+      - name: 🧭 Record the exact recovery checkout
+        # Read this checkout even if the shell directory or inherited Git
+        # environment points at another repository.
+        id: recovery-baseline
+        shell: bash
+        run: |
+          recovery_sha="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+            git --no-replace-objects -C "${GITHUB_WORKSPACE:?the recovery checkout workspace is required}" \
+            rev-parse --verify 'HEAD^{commit}')"
+          [[ "${recovery_sha}" =~ ^[0-9a-f]{40}$ ]]
+          printf 'sha=%s\n' "${recovery_sha}" >>"${GITHUB_OUTPUT}"
+
       - name: 🛡️ Validate the root source repair on main
         # The merge-group gate tested a speculative checkout; main may have
         # advanced before this heal publishes and reconciles its own checkout.
@@ -3128,6 +3142,36 @@ jobs:
           # other fence is held, the heartbeat has stopped, and the holder's run
           # attempt is proven terminal via the API (#3343).
           recover-orphaned-fence: "true"
+
+      - name: 🧹 Verify nothing the failed deploy applied outlived the heal
+        # Re-deploying main restores what main declares. An object the failed
+        # revision applied that main does not declare is pruned, unless it
+        # carries `prune: disabled`: Flux then drops it from its inventory and
+        # leaves it running. This heal once reported success while such a
+        # HelmRelease sat Ready=False in prod for 38 hours (#3502). Fail the heal
+        # instead, naming each object, so a green heal means nothing the failed
+        # revision applied is still running outside Flux. Write times identify
+        # its residue only when recovery restores the failed group's own base.
+        # If main advanced, recent untracked objects are UNKNOWN: a newer main
+        # may have deliberately retired them. Older ones are listed as a warning
+        # until they are deleted by hand (#3503). Read-only, against the kubeconfig the
+        # re-deploy restored, after its reconcile waited for every flux-system
+        # Kustomization to apply main. During this PR's own merge-group run, main
+        # still predates the check; keep that one legacy heal path working, as
+        # the root source repair above does. The changes job keeps it unreachable
+        # once the check is on main, and the heal contract pins this script.
+        shell: bash
+        env:
+          FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}
+          FLUX_ORPHANS_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          FLUX_ORPHANS_RECOVERY_SHA: ${{ steps.recovery-baseline.outputs.sha }}
+        run: |
+          if [[ ! -f scripts/check-flux-orphaned-objects.sh ]]; then
+            echo '- Flux orphaned objects: main predates the check; not run.' >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          : "${FLUX_ORPHANS_SINCE:?the merge group creation time is required}"
+          ./scripts/check-flux-orphaned-objects.sh
 
   ci-required-checks:
     name: CI - Required Checks

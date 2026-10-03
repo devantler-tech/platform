@@ -7,13 +7,15 @@
 // PR had already left the queue (#3091), and on nothing else; it must
 // hold the shared prod-deploy lock; that lock must not be preemptible, or the
 // heal is cancelled by the next deploy midway through; it must check out
-// main, or it restores the wrong revision; and it must opt in to orphaned-fence
-// recovery, or it cannot clear the GHCR Lease a dead deploy left held.
+// main, or it restores the wrong revision; it must opt in to orphaned-fence
+// recovery, or it cannot clear the GHCR Lease a dead deploy left held; and it
+// must then check for objects the failed deploy left outside every Flux
+// inventory, or its success does not mean prod matches main (#3502).
 //
-// Each is one line of workflow YAML, and none of them fails loudly when it is
-// wrong — the damage shows up later, during an incident, when the heal either
-// does not run or restores the wrong thing. Pinning all five here turns that
-// into a CI failure on the pull request that breaks one.
+// Each is a line or a step of workflow YAML, and none of them fails loudly when
+// it is wrong — the damage shows up later, during an incident, when the heal
+// either does not run or restores the wrong thing. Pinning all six here turns
+// that into a CI failure on the pull request that breaks one.
 package main
 
 import (
@@ -42,6 +44,36 @@ const recoveryOptIn = `          recover-orphaned-fence: "true"`
 // The shared composite both prod-deploy paths call.
 const deployCompositePath = "./.github/actions/deploy-prod"
 
+// Re-deploying main restores what main declares, but an object the failed
+// revision applied with `prune: disabled` stays behind outside every Flux
+// inventory, and the heal used to report success over it (#3502). This check
+// is what makes a green heal mean prod matches main.
+const (
+	orphanCheckCommand  = "./scripts/check-flux-orphaned-objects.sh"
+	orphanCheckSince    = "          FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}"
+	orphanCheckBase     = "          FLUX_ORPHANS_BASE_SHA: ${{ github.event.merge_group.base_sha }}"
+	orphanCheckRecovery = "          FLUX_ORPHANS_RECOVERY_SHA: ${{ steps.recovery-baseline.outputs.sha }}"
+	recoveryBaselineRun = `        run: |
+          recovery_sha="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+            git --no-replace-objects -C "${GITHUB_WORKSPACE:?the recovery checkout workspace is required}" \
+            rev-parse --verify 'HEAD^{commit}')"
+          [[ "${recovery_sha}" =~ ^[0-9a-f]{40}$ ]]
+          printf 'sha=%s\n' "${recovery_sha}" >>"${GITHUB_OUTPUT}"`
+	// The whole script of the step. Its only early exit is the legacy branch for
+	// a main that predates the check, which the changes job keeps unreachable
+	// once the check is on main: it fails when the check's script is missing.
+	// Pinning the script whole stops any other early exit, and a missing
+	// boundary from silently failing every older orphan.
+	orphanCheckRun = `        run: |
+          if [[ ! -f scripts/check-flux-orphaned-objects.sh ]]; then
+            echo '- Flux orphaned objects: main predates the check; not run.' >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          : "${FLUX_ORPHANS_SINCE:?the merge group creation time is required}"
+          ./scripts/check-flux-orphaned-objects.sh`
+)
+
+// validateWorkflowContract checks the complete CI recovery path without executing it.
 func validateWorkflowContract(workflow string) error {
 	healJob, ok := extractJob(workflow, "heal-prod-on-failure")
 	if !ok {
@@ -81,6 +113,12 @@ func validateWorkflowContract(workflow string) error {
 		)
 	}
 
+	// The heal's result is what says prod was restored, so nothing in it may let
+	// a failed step pass.
+	if hasKey(healJob, "continue-on-error") {
+		return errors.New("heal job must not suppress a failed check with continue-on-error")
+	}
+
 	if err := validateMembershipJob(workflow); err != nil {
 		return err
 	}
@@ -100,6 +138,58 @@ func validateWorkflowContract(workflow string) error {
 		}
 	}
 
+	return validateOrphanCheck(healJob)
+}
+
+// validateOrphanCheck pins the step that fails the heal when an object the
+// failed deploy applied is still in prod outside every Flux inventory. It must
+// run after the re-deploy, because before it the check reads the failed
+// revision's state, and nothing may let it pass without running or failing.
+func validateOrphanCheck(healJob string) error {
+	check, ok := extractStep(healJob, func(line string) bool {
+		return strings.TrimSpace(line) == orphanCheckCommand
+	})
+	if !ok {
+		return errors.New("heal job does not check for objects the failed deploy left outside every Flux inventory")
+	}
+	if hasKey(check, "if") {
+		return errors.New("orphaned-object check must not carry a condition that can skip it")
+	}
+	// Only objects created since the merge group was built can be its deploy's
+	// residue; the check warns about older ones without failing. A later
+	// boundary would pass that residue off as an older orphan.
+	if !containsExactLine(check, orphanCheckSince) {
+		return errors.New("orphaned-object check is missing the merge-group creation time")
+	}
+	if !containsExactLine(check, orphanCheckBase) {
+		return errors.New("orphaned-object check is missing the merge-group base")
+	}
+	if !containsExactLine(check, orphanCheckRecovery) {
+		return errors.New("orphaned-object check is missing the recovery checkout input")
+	}
+	baseline, ok := extractStep(healJob, func(line string) bool {
+		return strings.TrimSpace(line) == "id: recovery-baseline"
+	})
+	if !ok || hasKey(baseline, "if") || hasKey(baseline, "working-directory") || hasKey(baseline, "env") ||
+		!containsExactLine(baseline, "        shell: bash") ||
+		!strings.HasSuffix(strings.TrimRight(baseline, "\n "), recoveryBaselineRun) {
+		return errors.New("heal job is missing the unconditional recorded recovery checkout step")
+	}
+	if !strings.HasSuffix(strings.TrimRight(check, "\n "), orphanCheckRun) {
+		return errors.New("orphaned-object check must run exactly the pinned script")
+	}
+
+	deploy, ok := extractDeployStep(healJob)
+	if !ok {
+		return errors.New("heal job does not reach the shared deploy composite")
+	}
+	if strings.Index(healJob, check) < strings.Index(healJob, deploy) {
+		return errors.New("orphaned-object check must run after the heal re-deploys main")
+	}
+	if strings.Index(healJob, baseline) > strings.Index(healJob, deploy) ||
+		strings.Index(healJob, baseline) < strings.Index(healJob, "          ref: main") {
+		return errors.New("recorded recovery checkout step must follow checkout and precede deployment")
+	}
 	return nil
 }
 
@@ -155,10 +245,8 @@ func validateMembershipJob(workflow string) error {
 
 	// A failed read must fail the job. continue-on-error at either scope lets it
 	// succeed with no output, which the heal reads as "not evicted".
-	for _, line := range strings.Split(job, "\n") {
-		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), "continue-on-error:") {
-			return errors.New("queue-membership job must not suppress a failed check with continue-on-error")
-		}
+	if hasKey(job, "continue-on-error") {
+		return errors.New("queue-membership job must not suppress a failed check with continue-on-error")
 	}
 
 	// The output names the step by id, so the id, its inputs and the command
@@ -172,10 +260,8 @@ func validateMembershipJob(workflow string) error {
 	}
 	// A skipped step succeeds with no output, which the heal also reads as
 	// "not evicted", so the step runs whenever its job does.
-	for _, line := range strings.Split(step, "\n") {
-		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), "if:") {
-			return errors.New("membership step must not carry a condition that can skip it")
-		}
+	if hasKey(step, "if") {
+		return errors.New("membership step must not carry a condition that can skip it")
 	}
 	stepRequirements := []struct {
 		line        string
@@ -199,6 +285,7 @@ func validateMembershipJob(workflow string) error {
 	return nil
 }
 
+// extractJob isolates a named job so sibling jobs cannot satisfy its checks.
 func extractJob(workflow string, jobKey string) (string, bool) {
 	lines := strings.Split(workflow, "\n")
 	start := -1
@@ -279,6 +366,18 @@ func extractStep(job string, matches func(string) bool) (string, bool) {
 	return strings.Join(lines[start:end], "\n"), true
 }
 
+// hasKey reports whether any line of a job or step sets the YAML key, either on
+// its own line or on a list item's first line.
+func hasKey(block string, key string) bool {
+	for _, line := range strings.Split(block, "\n") {
+		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), key+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// containsExactLine requires a complete YAML line rather than a matching comment or suffix.
 func containsExactLine(block string, want string) bool {
 	for _, line := range strings.Split(block, "\n") {
 		if line == want {
@@ -288,6 +387,7 @@ func containsExactLine(block string, want string) bool {
 	return false
 }
 
+// extractMultilineCondition reads the folded job condition and stops at the next key.
 func extractMultilineCondition(job string) (string, bool) {
 	lines := strings.Split(job, "\n")
 	for i, line := range lines {
@@ -311,6 +411,7 @@ func extractMultilineCondition(job string) (string, bool) {
 	return "", false
 }
 
+// run reports workflow read or contract failures through the command's exit status.
 func run(workflowPath string, stdout io.Writer, stderr io.Writer) int {
 	workflow, err := os.ReadFile(workflowPath) //nolint:gosec // The explicit CLI path is the validator input.
 	if err != nil {
@@ -327,6 +428,7 @@ func run(workflowPath string, stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
+// runCLI requires an explicit workflow path, including when invoked outside the repository.
 func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(args) == 2 && args[0] == "--deploy-only" {
 		return runDeployOnly(args[1], stdout, stderr)
@@ -338,6 +440,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	return run(args[0], stdout, stderr)
 }
 
+// runDeployOnly validates the CD workflow's recovery input without requiring CI-only jobs.
 func runDeployOnly(workflowPath string, stdout, stderr io.Writer) int {
 	workflow, err := os.ReadFile(workflowPath) //nolint:gosec // Explicit validator input.
 	if err == nil {
@@ -380,6 +483,7 @@ func validateCDRecoveryInput(workflow []byte) error {
 	return errors.New("deploy job is missing orphaned-fence recovery in the composite inputs")
 }
 
+// main selects the CI or CD validation mode and preserves its exit status.
 func main() {
 	os.Exit(runCLI(os.Args[1:], os.Stdout, os.Stderr))
 }
