@@ -12,7 +12,10 @@ set -euo pipefail
 [[ "${FAIL_READ:-0}" == 0 ]] || exit 47
 case "$*" in
   'api repos/devantler-tech/platform/rules/branches/main --paginate --slurp') cat "$RULES" ;;
-  "api --paginate --slurp repos/devantler-tech/platform/actions/runs?head_sha=${TEST_HEAD}&per_page=100") cat "$RUNS" ;;
+  "api --paginate --slurp repos/devantler-tech/platform/actions/runs?head_sha=${TEST_HEAD}&per_page=100")
+    cat "$RUNS"
+    [[ "${PARTIAL_READ:-0}" == 0 ]] || exit 47
+    ;;
   *) exit 99 ;;
 esac
 EOF
@@ -72,8 +75,12 @@ export managed
 managed="$(bash "$root/scripts/required-merge-workflows.sh" | jq -er '.[0].path')"
 export new_head="$TEST_HEAD"
 jq -n --arg path "$managed" '[{workflow_runs:[{path:".github/workflows/unrelated.yaml",status:"completed",conclusion:"success"},{path:$path,status:"completed",conclusion:"failure"}]},{workflow_runs:[{path:$path,status:"completed",conclusion:"success"}]}]' > "$RUNS"
-[[ "$(bash -e -o pipefail "$work/count.sh")" == 2 ]] || fail 'actual runbook count used a stale path or lost a page'
-[[ "$(bash -e -o pipefail "$work/success.sh")" == 1 ]] || fail 'actual runbook success query used a stale path or accepted a failed run'
+[[ "$(bash "$work/count.sh")" == 2 ]] || fail 'actual runbook count used a stale path or lost a page'
+[[ "$(bash "$work/success.sh")" == 1 ]] || fail 'actual runbook success query used a stale path or accepted a failed run'
+for block in count success; do
+  if PARTIAL_READ=1 bash "$work/$block.sh" > "$work/output" 2> "$work/error"; then fail "actual runbook $block query accepted a partial API read"; fi
+  [[ ! -s "$work/output" ]] || fail "actual runbook $block query emitted a usable partial result"
+done
 cat > "$work/bin/seq" <<'EOF'
 #!/usr/bin/env bash
 [[ "$*" == '1 30' ]] || exit 99
@@ -86,13 +93,14 @@ EOF
 chmod +x "$work/bin/seq" "$work/bin/sleep"
 # shellcheck disable=SC2016 # These variables belong to the runbook subprocess.
 printf '\nprintf "%%s|%%s\\n" "$managed_run" "$managed_conclusion"\n' >> "$work/poll.sh"
-[[ "$(bash -e -o pipefail "$work/poll.sh")" == '1|success' ]] || fail 'actual runbook poll used a stale path or stopped before a verdict'
+[[ "$(bash "$work/poll.sh")" == '1|success' ]] || fail 'actual runbook poll used a stale path or stopped before a verdict'
+[[ "$(PARTIAL_READ=1 bash "$work/poll.sh")" == '|' ]] || fail 'actual runbook poll accepted a partial API read'
 jq -n --arg path "$managed" '[{workflow_runs:[{path:$path,status:"in_progress",conclusion:null}]}]' > "$RUNS"
-[[ "$(bash -e -o pipefail "$work/success.sh")" == 0 ]] || fail 'actual runbook strict query accepted a running run'
-[[ "$(bash -e -o pipefail "$work/poll.sh")" == '|' ]] || fail 'actual runbook poll called a running run failed or satisfied'
+[[ "$(bash "$work/success.sh")" == 0 ]] || fail 'actual runbook strict query accepted a running run'
+[[ "$(bash "$work/poll.sh")" == '|' ]] || fail 'actual runbook poll called a running run failed or satisfied'
 jq -n --arg path "$managed" '[{workflow_runs:[{path:$path,status:"completed",conclusion:"failure"}]}]' > "$RUNS"
-[[ "$(bash -e -o pipefail "$work/poll.sh")" == '1|failed' ]] || fail 'actual runbook poll hid a genuinely failed run'
+[[ "$(bash "$work/poll.sh")" == '1|failed' ]] || fail 'actual runbook poll hid a genuinely failed run'
 printf '[{"workflow_runs":[]}]\n' > "$RUNS"
-[[ "$(bash -e -o pipefail "$work/poll.sh")" == '|' ]] || fail 'actual runbook poll inferred failure or satisfaction from absence'
-if FAIL_READ=1 bash -e -o pipefail "$work/count.sh" >/dev/null 2>&1; then fail 'actual runbook query accepted a failed API read'; fi
+[[ "$(bash "$work/poll.sh")" == '|' ]] || fail 'actual runbook poll inferred failure or satisfaction from absence'
+if FAIL_READ=1 bash "$work/count.sh" >/dev/null 2>&1; then fail 'actual runbook query accepted a failed API read'; fi
 printf 'Required merge-workflow source consumer passed.\n'

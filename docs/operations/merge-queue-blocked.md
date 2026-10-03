@@ -61,20 +61,28 @@ on a head that is perfectly satisfied. Ask which workflows ran instead:
 requirement" from "the workflow ran and went red". `0` here is the defect this section is about:
 
 ```sh
-gh api --paginate --slurp "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100" \
-  | jq --arg managed "$managed" '[.[].workflow_runs[]
-         | select(.path == $managed)] | length'
+set -euo pipefail
+runs_json="$(gh api --paginate --slurp \
+  "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100")" || {
+  echo 'workflow run read failed — UNKNOWN' >&2; exit 2
+}
+jq --arg managed "$managed" '[.[].workflow_runs[]
+  | select(.path == $managed)] | length' <<< "$runs_json"
 ```
 
 **Is the requirement satisfied?** — a completed successful path-matching run is necessary evidence,
 but the source/provenance and native-policy confirmation above still apply:
 
 ```sh
-gh api --paginate --slurp "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100" \
-  | jq --arg managed "$managed" '[.[].workflow_runs[]
-         | select(.path == $managed
-                  and .status == "completed"
-                  and .conclusion == "success")] | length'
+set -euo pipefail
+runs_json="$(gh api --paginate --slurp \
+  "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100")" || {
+  echo 'workflow run read failed — UNKNOWN' >&2; exit 2
+}
+jq --arg managed "$managed" '[.[].workflow_runs[]
+  | select(.path == $managed
+           and .status == "completed"
+           and .conclusion == "success")] | length' <<< "$runs_json"
 ```
 
 ⚠️ **Both queries must paginate, and `--paginate` ALONE is not the fix.** `per_page=100` caps one
@@ -86,7 +94,10 @@ one object *per page* and a `--jq` filter runs **per page**: measured on a real 
 numeric shell test then mis-reads or errors on. `--slurp` wraps the pages into one array, which is
 why the filter moves to a standalone `jq` over `.[].workflow_runs[]`. `gh api` rejects `--slurp`
 together with `--jq` (`the --slurp option is not supported with --jq or --template`), so the pipe is
-required rather than stylistic.
+required as a separate processing stage rather than stylistic. The examples capture and check the
+API response before passing it to `jq`, so a later-page failure cannot emit a usable partial count.
+Run these Bash fragments in the same operator script as the selected `managed` record; they are
+not POSIX shell. A pipeline variant must retain `pipefail` and check its status before using output.
 
 ⚠️ **Do not use the first query to answer the second.** A run that is queued, in progress, cancelled or
 **failed** still appears in `workflow_runs`, so a `>= 1` from the path-only form will report a red or
