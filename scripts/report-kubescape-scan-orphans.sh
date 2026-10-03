@@ -108,7 +108,8 @@ case "${list}" in
   *) usage_error ;;
 esac
 
-work_dir="$(mktemp -d)"
+# Exit 1 means ORPHANED, so a failure before anything was read must not leave with it.
+work_dir="$(mktemp -d)" || exit 2
 readonly work_dir
 
 # The report goes to stdout, or to stderr when stdout carries a record list.
@@ -152,17 +153,23 @@ kube() {
 }
 
 # 1. The scan records, as `R <namespace> <name> <label kind> <label group> <wlid>`. The kind and the
-#    group are printed in the report, so anything outside the label alphabet is replaced.
+#    group are printed in the report, so anything outside the label alphabet is replaced. A wlid
+#    holding a control character, a backslash or a blank is dropped, because a list could only
+#    ever "fail to find" it: `@tsv` rewrites the first two into a different name, and a name with
+#    a blank cannot be read back from a table whose columns are split on blanks.
 # shellcheck disable=SC2016 # jq program, not shell expansion
 readonly record_program='
   def labelled($key): (.metadata.labels[$key]? // "") | tostring | gsub("[^A-Za-z0-9_.-]"; "?");
+  def reference:
+    (.metadata.annotations["kubescape.io/wlid"]? // "" | tostring)
+    | if test("[[:cntrl:][:space:]\\\\]") then "" else . end;
   if (.items | type) != "array" then error("the reply holds no record list") else .items[] end
   | ["R",
      (.metadata.namespace // ""),
      (.metadata.name // ""),
      labelled("kubescape.io/workload-kind"),
      labelled("kubescape.io/workload-api-group"),
-     (.metadata.annotations["kubescape.io/wlid"]? // "" | tostring)]
+     reference]
   | @tsv
 '
 if ! kube get "${records}.${record_group}" -A -o json >"${work_dir}/records.json" ||

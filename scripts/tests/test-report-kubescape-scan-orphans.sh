@@ -176,10 +176,8 @@ run() {
   local dir="$1"
   shift
   : >"${dir}/calls.log"
-  set +e
-  FIXTURES="${dir}" PATH="${path_prefix}${fake_bin}:${PATH}" bash "${script}" "$@" >"${dir}/stdout" 2>"${dir}/stderr"
-  rc=$?
-  set -e
+  rc=0
+  FIXTURES="${dir}" PATH="${path_prefix}${fake_bin}:${PATH}" bash "${script}" "$@" >"${dir}/stdout" 2>"${dir}/stderr" || rc=$?
   stdout="$(cat "${dir}/stdout")"
   output="${stdout}
 $(cat "${dir}/stderr")"
@@ -348,14 +346,22 @@ dir="$(fixture no-reference)"
 record "${dir}/items.jsonl" shop deployment-ghost Deployment apps -
 record "${dir}/items.jsonl" shop deployment-odd Deployment apps 'not-a-wlid'
 record "${dir}/items.jsonl" shop deployment-bare Deployment apps 'wlid://cluster-test/namespace-/deployment-bare'
+# No object name holds a tab, a line break or a backslash, and writing one into a tab-separated row
+# changes it. Such a reference names nothing that a list could confirm or deny.
+record "${dir}/items.jsonl" shop deployment-tab Deployment apps $'wlid://cluster-test/namespace-shop/deployment-api\tworker'
+record "${dir}/items.jsonl" shop deployment-newline Deployment apps $'wlid://cluster-test/namespace-shop/deployment-api\nworker'
+record "${dir}/items.jsonl" shop deployment-return Deployment apps $'wlid://cluster-test/namespace-shop/deployment-api\rworker'
+record "${dir}/items.jsonl" shop deployment-backslash Deployment apps 'wlid://cluster-test/namespace-shop/deployment-api\worker'
+# A name holding a space cannot be read back from a table either, whose columns are split on blanks.
+record "${dir}/items.jsonl" shop deployment-space Deployment apps 'wlid://cluster-test/namespace-shop/deployment-api worker'
 jq -s '{items: .}' "${dir}/items.jsonl" >"${dir}/records/${scans}.json"
 run "${dir}" --context scoped@test
 require_rc 2 'a record that names no object must not pass'
-require_text 'Total: records=10 live=7 orphaned=0 unknown=3' 'records without a usable reference are unknown'
+require_text 'Total: records=15 live=7 orphaned=0 unknown=8' 'records without a usable reference are unknown'
 require_text 'the record carries no usable object reference' 'the report must say why the record is unknown'
 # A list row never has an empty field, so a shell `read` splitting on tabs cannot shift its columns.
 run "${dir}" --context scoped@test --list unknown
-[[ "$(grep -c . <<<"${stdout}")" -eq 3 ]] || fail 'every record without a reference must be listed'
+[[ "$(grep -c . <<<"${stdout}")" -eq 8 ]] || fail 'every record without a reference must be listed'
 if ! awk -F '\t' 'NF != 5 { exit 1 } { for (i = 1; i <= 5; i++) if ($i == "") exit 1 }' <<<"${stdout}"; then
   fail 'a list row must hold five non-empty fields'
 fi
@@ -423,6 +429,18 @@ path_prefix=''
 require_rc 2 'a run that stopped before its verdict must be UNKNOWN'
 require_text 'Verdict: UNKNOWN — the report stopped before reaching a verdict' 'an aborted run must say it reached no verdict'
 refute_text 'Verdict: CLEAN' 'an aborted run must not print a clean verdict'
+
+# 18. Exit 1 means ORPHANED, so a failure before anything was read must not leave with it.
+case_name='no-work-dir'
+dir="$(fixture no-work-dir)"
+mkdir -p "${work_dir}/no-mktemp"
+printf '#!/usr/bin/env bash\nexit 1\n' >"${work_dir}/no-mktemp/mktemp"
+chmod +x "${work_dir}/no-mktemp/mktemp"
+path_prefix="${work_dir}/no-mktemp:"
+run "${dir}" --context scoped@test
+path_prefix=''
+require_rc 2 'a run that could not start must be UNKNOWN'
+[[ ! -s "${dir}/calls.log" ]] || fail 'a run that could not start must not reach the cluster'
 
 finished=true
 printf 'PASS: the Kubescape scan-record orphan report holds its contract.\n'
