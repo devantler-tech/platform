@@ -1255,6 +1255,15 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 📌 Install the reviewed YAML parser
+        if: needs.changes.outputs.k8s == 'true'
+        env:
+          GOBIN: ${{ runner.temp }}/platform-validation-tools
+        run: |
+          go install github.com/mikefarah/yq/v4@v4.54.1
+          printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+          "$GOBIN/yq" --version
+
       - name: 🔐 Validate KSail installer integrity guard
         if: needs.changes.outputs.k8s == 'true'
         run: |

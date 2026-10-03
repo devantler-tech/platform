@@ -317,5 +317,24 @@ run_guard "$t"
 assert_rc 'a malformed Provider is unreadable beside a valid one' 2 "$GUARD_RC"
 assert_contains 'the malformed input identifies its file' 'broken.yaml'
 
+t="$(new_tree unsupported-yq)"
+add_provider "$t" upbound-provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
+add_exception "$t" upbound-provider-family-aws both
+mkdir -p "$scratch/old-yq-bin"
+cat >"$scratch/old-yq-bin/yq" <<'SH'
+#!/usr/bin/env bash
+echo 'unknown flag: --yaml-fix-merge-anchor-to-spec' >&2
+exit 1
+SH
+chmod +x "$scratch/old-yq-bin/yq"
+if GUARD_OUT="$(PATH="$scratch/old-yq-bin:$PATH" "$guard" "$t" 2>&1)"; then
+  GUARD_RC=0
+else
+  GUARD_RC=$?
+fi
+assert_rc 'an incompatible YAML parser is unreadable' 2 "$GUARD_RC"
+assert_contains 'tool incompatibility identifies the required parser capability' 'yq with --yaml-fix-merge-anchor-to-spec support is required'
+assert_not_contains 'tool incompatibility is not reported as malformed input' 'cannot parse YAML input'
+
 printf '\n%d assertion(s), %d failure(s)\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ]

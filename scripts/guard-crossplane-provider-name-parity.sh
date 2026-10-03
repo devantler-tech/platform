@@ -83,6 +83,10 @@ provider-upjet-unifi
 # Emit "<name>\t<package>\t<file>" only after checking required field types.
 command -v yq >/dev/null 2>&1 || die 'yq is required to parse Provider manifests'
 command -v jq >/dev/null 2>&1 || die 'jq is required to check Provider field types'
+# Probe the exact required behavior before opening any repository input. CI
+# installs the reviewed version; local tools must support the same capability.
+yq eval --yaml-fix-merge-anchor-to-spec -n -e 'true' >/dev/null 2>&1 ||
+  die 'Mike Farah yq with --yaml-fix-merge-anchor-to-spec support is required (CI pins v4.54.1)'
 # shellcheck disable=SC2016  # the yq and jq programs are data.
 providers="$(
   find "$root" -type f \( -name '*.yaml' -o -name '*.yml' \) -print0 |
