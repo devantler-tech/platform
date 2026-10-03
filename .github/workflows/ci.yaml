@@ -243,6 +243,18 @@ jobs:
           shellcheck scripts/tests/test-publish-workflow-signing-revisions.sh
           bash scripts/tests/test-publish-workflow-signing-revisions.sh
 
+      # The report above discovers its consumers with a raw FILE SCAN, while production is
+      # what Flux RENDERS. This renders every production root (read from k8s/clusters/prod)
+      # and fails when the two consumer sets differ — an excluded base, a patched ref or URL,
+      # a consumer in a file the scan never opens — or when the render cannot be judged
+      # statically (#3332). Renders only manifests. Unconditional, like the report: one half
+      # of what it compares lives under scripts/, outside the k8s paths.
+      - name: 🔐 Validate consumer discovery against the production render
+        run: |
+          shellcheck -x scripts/guard-consumer-discovery-conservation.sh
+          shellcheck scripts/tests/test-guard-consumer-discovery-conservation.sh
+          ./scripts/guard-consumer-discovery-conservation.sh
+
       # The report names the two revisions per consumer; the generator (#3550) turns them
       # into the committed approved set the matcher narrowing (#3308) is derived from. Its
       # cluster read and its pin read are both stubbed here, so this proves the fail-closed
@@ -877,6 +889,24 @@ jobs:
               - 'k8s/clusters/prod/bootstrap/config-map.yaml'
               - 'scripts/tests/test-crossview-login-alerter-runtime.sh'
               - '.github/workflows/ci.yaml'
+
+  # The full offline fixture suite runs alongside changes, which retains the real production
+  # render and ShellCheck. Both deployment and the required gate wait for these regressions.
+  # Like changes, this uses kubectl, yq and jq supplied by the ubuntu-latest runner.
+  validate-consumer-discovery:
+    name: 🔐 Validate Consumer Discovery Regressions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🔐 Validate the full consumer discovery fixture suite
+        run: |
+          bash scripts/tests/test-guard-consumer-discovery-conservation.sh
 
   validate-publication-contract:
     name: 🖋️ Validate Publication Contract
@@ -2946,6 +2976,7 @@ jobs:
     needs:
       [
         changes,
+        validate-consumer-discovery,
         validate-floating-image-tags,
         validate-helm-post-renderers,
         validate-eks-authorization,
@@ -3258,6 +3289,7 @@ jobs:
     needs:
       [
         changes,
+        validate-consumer-discovery,
         validate-publication-contract,
         validate-matcher-efficacy,
         validate-eks-authorization,
@@ -3279,6 +3311,7 @@ jobs:
         with:
           job-results: >-
             ${{ needs.changes.result }}
+            ${{ needs.validate-consumer-discovery.result }}
             ${{ needs.validate-publication-contract.result }}
             ${{ needs.validate-matcher-efficacy.result }}
             ${{ needs.validate-eks-authorization.result }}
