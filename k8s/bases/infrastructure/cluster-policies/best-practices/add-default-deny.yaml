@@ -65,10 +65,19 @@ spec:
             # Selecting every endpoint activates whitelist mode. Keep this as
             # default-deny-by-selection: an explicit ingressDeny/egressDeny
             # rule would take precedence over the namespace's allow policies.
-            # Cilium's CRD also requires at least one policy direction to be
-            # present, so retain empty allow lists for both directions.
-            ingress: []
-            egress: []
+            # The CRD schema only asks for a direction key to be present, but
+            # the Cilium agent rejects the whole policy (Valid=False, nothing
+            # enforced) unless at least one direction holds a rule, so an empty
+            # list (`ingress: []`) is not enough. A single empty rule names no
+            # peer and no port, so it allows nothing and only switches each
+            # direction to default-deny — the same rule Cilium derives from the
+            # standard NetworkPolicy default-deny below. Never copy this shape
+            # into a standard NetworkPolicy: there, `ingress: [{}]` and
+            # `egress: [{}]` allow ALL traffic.
+            ingress:
+              - {}
+            egress:
+              - {}
             enableDefaultDeny:
               ingress: true
               egress: true

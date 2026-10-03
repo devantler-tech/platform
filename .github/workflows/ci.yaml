@@ -42,6 +42,8 @@ jobs:
           go run ./scripts/validate-merge-group-heal --deploy-only .github/workflows/cd.yaml
           shellcheck scripts/merge-group-evicted.sh scripts/tests/test-merge-group-evicted.sh
           bash scripts/tests/test-merge-group-evicted.sh
+          shellcheck scripts/check-flux-orphaned-objects.sh scripts/tests/test-check-flux-orphaned-objects.sh
+          bash scripts/tests/test-check-flux-orphaned-objects.sh
 
       # A merge-group validator that ci-required-checks enforces but deploy-prod does not
       # need runs in parallel with the deploy, so prod can receive a revision it rejects (#4148).
@@ -433,6 +435,12 @@ jobs:
               # and the fixture guard.
               - 'tests/**'
               - 'scripts/tests/test-restrict-tenant-network-policies.sh'
+              - '.github/workflows/prove-cilium-default-deny.yaml'
+              - '.github/scripts/fetch-cilium-deny-candidate.sh'
+              - 'scripts/prove-cilium-default-deny.sh'
+              - 'scripts/tests/test-fetch-cilium-deny-candidate.sh'
+              - 'scripts/tests/test-prove-cilium-default-deny.sh'
+              - 'scripts/tests/test-add-default-deny-shape.sh'
               - 'scripts/tests/test-add-baseline-context.sh'
               - 'scripts/tests/test-longhorn-ui-baseline-context.sh'
               - 'scripts/tests/test-cilium-hubble-baseline-context.sh'
@@ -695,6 +703,12 @@ jobs:
               # change to the last check standing between a bad matcher and prod.
               - 'scripts/verify-matcher-accepts-digest.sh'
               - 'scripts/tests/test-verify-matcher-accepts-digest.sh'
+              # The gate words its failures through this classifier (#3545), so an
+              # edit to it, its own test, or the cosign output fixtures both tests
+              # read must still run the gate's test.
+              - 'scripts/cosign-failure-lib.sh'
+              - 'scripts/tests/test-cosign-failure-lib.sh'
+              - 'scripts/tests/fixtures/cosign-verify-failures/**'
               # The pin guard itself runs unconditionally in the validate job, so
               # only its TEST is selected here. Both halves are listed anyway: a PR
               # that edits the guard must also run the test that pins its ablations,
@@ -754,6 +768,9 @@ jobs:
               - 'scripts/guard-floating-image-tags.sh'
               - 'scripts/tests/test-guard-floating-image-tags.sh'
               - 'scripts/floating-image-tag-exceptions.tsv'
+              # Both halves, for the same reason as the guards above.
+              - 'scripts/guard-helm-post-renderers.sh'
+              - 'scripts/tests/test-guard-helm-post-renderers.sh'
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-pod-security-exception-scope.sh'
               - 'scripts/tests/test-guard-pod-security-exception-scope.sh'
@@ -927,6 +944,16 @@ jobs:
       - name: 🔏 Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
+      - name: 🔏 Test the cosign failure classifier
+        # The check below words its failure by WHY cosign failed (#3545). This
+        # pins that a genuine identity mismatch keeps the matcher finding, and
+        # that an outage, a refused credential or a server error never borrows
+        # it — at the classifier and through the check step itself, with cosign
+        # stubbed. No registry, network or credential is involved.
+        run: |
+          shellcheck -x scripts/cosign-failure-lib.sh scripts/tests/test-cosign-failure-lib.sh
+          bash scripts/tests/test-cosign-failure-lib.sh
+
       - name: 🔏 Check the configured matcher verifies the real artifact
         # 🔴 THE PATTERNS ARE NEVER SPELLED HERE. They are printed out of the
         # manifests we deploy and handed straight to cosign, so this tests the
@@ -967,12 +994,27 @@ jobs:
 
           # THE CHECK. Fails when the deployed matcher would not verify the
           # artifact it guards — which is #3005, caught before the deploy.
+          #
+          # Every failure fails the job; only the WORDING depends on why cosign
+          # failed. The matcher finding is reserved for output showing cosign
+          # read the signature and refused its identity. A ghcr.io timeout used
+          # to be reported as the matcher failing to verify (#3545), so an
+          # outage, a refused credential or an unrecognised failure is now named
+          # as what it is.
+          source scripts/cosign-failure-lib.sh
+          COSIGN_LOG="$(mktemp)"
+          trap 'rm -f "${COSIGN_LOG}"' EXIT
           if ! cosign verify \
             --certificate-oidc-issuer-regexp "${ISSUER}" \
             --certificate-identity-regexp "${SUBJECT}" \
-            "${ARTIFACT}" > /dev/null; then
-            echo "::error::the cosign matcher in the manifests does not verify ${ARTIFACT}."
-            echo "::error::a matcher that matches nothing is inert: present, green, and enforcing nothing."
+            "${ARTIFACT}" 2>&1 > /dev/null | tee "${COSIGN_LOG}" >&2; then
+            FAILURE_CLASS="$(cosign_failure_class "${COSIGN_LOG}")"
+            if [ "${FAILURE_CLASS}" = "rejected" ]; then
+              echo "::error::the cosign matcher in the manifests does not verify ${ARTIFACT}."
+              echo "::error::a matcher that matches nothing is inert: present, green, and enforcing nothing."
+            else
+              cosign_report_no_verdict "${FAILURE_CLASS}" "${ARTIFACT}" "${COSIGN_LOG}"
+            fi
             exit 1
           fi
           echo "the configured matcher verifies the artifact"
@@ -1104,7 +1146,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.193.8"
+          KSAIL_VERSION: "7.194.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1483,6 +1525,11 @@ jobs:
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
           shellcheck scripts/tests/test-restrict-tenant-network-policies.sh
           bash scripts/tests/test-restrict-tenant-network-policies.sh
+          shellcheck .github/scripts/fetch-cilium-deny-candidate.sh scripts/prove-cilium-default-deny.sh scripts/tests/test-fetch-cilium-deny-candidate.sh scripts/tests/test-prove-cilium-default-deny.sh
+          bash scripts/tests/test-fetch-cilium-deny-candidate.sh
+          bash scripts/tests/test-prove-cilium-default-deny.sh
+          shellcheck scripts/tests/test-add-default-deny-shape.sh
+          bash scripts/tests/test-add-default-deny-shape.sh
           shellcheck scripts/tests/test-restrict-homepage-service-groups.sh
           bash scripts/tests/test-restrict-homepage-service-groups.sh
           shellcheck scripts/tests/test-kyverno-umami-mutation-rbac.sh
@@ -1909,7 +1956,8 @@ jobs:
         # cannot see a change to the publishing identity itself (#3289). This pins
         # the gate that asks it of the staged digest instead, including its negative
         # control and the liveness sandwich that stops an outage being counted as a
-        # refusal, plus the wiring that puts it before the promotion.
+        # refusal, the wording that keeps an outage from being reported as a matcher
+        # finding (#3545), plus the wiring that puts it before the promotion.
         run: bash scripts/tests/test-verify-matcher-accepts-digest.sh
 
       - name: 🔐 Validate the shared-publish-workflow pin guard
@@ -2176,7 +2224,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.193.8"
+          KSAIL_VERSION: "7.194.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2827,6 +2875,63 @@ jobs:
           bash scripts/guard-floating-image-tags.sh k8s
           bash scripts/tests/test-guard-floating-image-tags.sh
 
+  validate-helm-post-renderers:
+    name: 🧩 Validate Helm Post-Renderers
+    needs: [changes]
+    # A HelmRelease's postRenderers run only inside helm-controller, against the chart's
+    # rendered output, so no other check here ever executes one. #3577 merged fully green with
+    # a JSON-6902 add beneath a path flux-operator 0.50.0 does not render; the upgrade failed
+    # and the release could not upgrade at all, while it still reported Ready (#3581). This
+    # renders the chart of every HelmRelease whose definition changed since the base, with the
+    # release's own values, and applies its post-renderers the way Flux does. Releases that did
+    # not change pull no chart. It runs on the merge-group revision too, and deploy-prod needs
+    # it: a chart bump and a post-renderer change can each pass alone and fail combined.
+    if: (github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true') || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    # Changed releases pull their charts from upstream registries; a stalled registry fails
+    # this job instead of holding the merge group.
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The guard renders the base revision too, to find which releases changed.
+          fetch-depth: 0
+
+      - name: 🧩 Install the audited controller's Helm renderer
+        # Flux 2.8.8 / helm-controller 1.5.5 embeds upstream Helm 4.2.0. The
+        # runner's ambient Helm is not proof of matching template capabilities.
+        env:
+          HELM_VERSION: v4.2.0
+        run: |
+          install_dir="$(mktemp -d)"
+          cd "$install_dir"
+          archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl --fail --location --retry 3 --output "$archive" "https://get.helm.sh/$archive"
+          curl --fail --location --retry 3 --output "$archive.sha256sum" "https://get.helm.sh/$archive.sha256sum"
+          sha256sum --check "$archive.sha256sum"
+          tar -xzf "$archive"
+          echo "$install_dir/linux-amd64" >> "$GITHUB_PATH"
+
+      - name: 🧩 Validate the post-renderer guard
+        run: |
+          shellcheck scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
+          bash scripts/tests/test-guard-helm-post-renderers.sh
+
+      - name: 🧩 Apply every changed HelmRelease's post-renderers to its chart
+        env:
+          BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          base_kube_version="$(git show "${BASE_SHA}:ksail.prod.yaml" | yq -er '.spec.cluster.kubernetesVersion | select(tag == "!!str" and . != "")')"
+          bash scripts/guard-helm-post-renderers.sh --flux-version 2.8.8 --base "$BASE_SHA" \
+            --base-kube-version "$base_kube_version" \
+            --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s
+
   # Every merge-group validator that ci-required-checks enforces is listed here too.
   # A required validator the deploy does not wait for runs in parallel with it, so
   # production can receive a revision that validator then rejects (#4148).
@@ -2837,6 +2942,7 @@ jobs:
       [
         changes,
         validate-floating-image-tags,
+        validate-helm-post-renderers,
         validate-eks-authorization,
         validate-publication-contract,
         validate-matcher-efficacy,
@@ -2987,6 +3093,18 @@ jobs:
           ref: main
           persist-credentials: false
 
+      - name: 🧭 Record the exact recovery checkout
+        # Read this checkout even if the shell directory or inherited Git
+        # environment points at another repository.
+        id: recovery-baseline
+        shell: bash
+        run: |
+          recovery_sha="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+            git --no-replace-objects -C "${GITHUB_WORKSPACE:?the recovery checkout workspace is required}" \
+            rev-parse --verify 'HEAD^{commit}')"
+          [[ "${recovery_sha}" =~ ^[0-9a-f]{40}$ ]]
+          printf 'sha=%s\n' "${recovery_sha}" >>"${GITHUB_OUTPUT}"
+
       - name: 🛡️ Validate the root source repair on main
         # The merge-group gate tested a speculative checkout; main may have
         # advanced before this heal publishes and reconciles its own checkout.
@@ -3032,7 +3150,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.193.8"
+          KSAIL_VERSION: "7.194.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -3099,6 +3217,36 @@ jobs:
           # attempt is proven terminal via the API (#3343).
           recover-orphaned-fence: "true"
 
+      - name: 🧹 Verify nothing the failed deploy applied outlived the heal
+        # Re-deploying main restores what main declares. An object the failed
+        # revision applied that main does not declare is pruned, unless it
+        # carries `prune: disabled`: Flux then drops it from its inventory and
+        # leaves it running. This heal once reported success while such a
+        # HelmRelease sat Ready=False in prod for 38 hours (#3502). Fail the heal
+        # instead, naming each object, so a green heal means nothing the failed
+        # revision applied is still running outside Flux. Write times identify
+        # its residue only when recovery restores the failed group's own base.
+        # If main advanced, recent untracked objects are UNKNOWN: a newer main
+        # may have deliberately retired them. Older ones are listed as a warning
+        # until they are deleted by hand (#3503). Read-only, against the kubeconfig the
+        # re-deploy restored, after its reconcile waited for every flux-system
+        # Kustomization to apply main. During this PR's own merge-group run, main
+        # still predates the check; keep that one legacy heal path working, as
+        # the root source repair above does. The changes job keeps it unreachable
+        # once the check is on main, and the heal contract pins this script.
+        shell: bash
+        env:
+          FLUX_ORPHANS_SINCE: ${{ github.event.merge_group.head_commit.timestamp }}
+          FLUX_ORPHANS_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          FLUX_ORPHANS_RECOVERY_SHA: ${{ steps.recovery-baseline.outputs.sha }}
+        run: |
+          if [[ ! -f scripts/check-flux-orphaned-objects.sh ]]; then
+            echo '- Flux orphaned objects: main predates the check; not run.' >>"${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          : "${FLUX_ORPHANS_SINCE:?the merge group creation time is required}"
+          ./scripts/check-flux-orphaned-objects.sh
+
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
@@ -3110,6 +3258,7 @@ jobs:
         validate-eks-authorization,
         validate,
         validate-floating-image-tags,
+        validate-helm-post-renderers,
         naming,
         validate-talos,
         validate-root-verify-merge-group,
@@ -3130,6 +3279,7 @@ jobs:
             ${{ needs.validate-eks-authorization.result }}
             ${{ needs.validate.result }}
             ${{ needs.validate-floating-image-tags.result }}
+            ${{ needs.validate-helm-post-renderers.result }}
             ${{ needs.naming.result }}
             ${{ needs.validate-talos.result }}
             ${{ needs.validate-root-verify-merge-group.result }}

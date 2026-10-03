@@ -1,0 +1,2 @@
+Error: GET https://ghcr.io/v2/devantler-tech/platform/manifests/manifests/latest: TOOMANYREQUESTS: retry-after: 818.11µs, allowed: 44000/minute
+error during command execution: GET https://ghcr.io/v2/devantler-tech/platform/manifests/manifests/latest: TOOMANYREQUESTS: retry-after: 818.11µs, allowed: 44000/minute
