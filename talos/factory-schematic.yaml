@@ -1,6 +1,7 @@
 customization:
     extraKernelArgs:
-        - lsm=yama,selinux,loadpin,safesetid,integrity,bpf,apparmor,lockdown,landlock
+        - apparmor=1
+        - lsm=yama,apparmor,selinux,loadpin,safesetid,integrity,bpf,lockdown,landlock
     systemExtensions:
         officialExtensions:
             - siderolabs/iscsi-tools
