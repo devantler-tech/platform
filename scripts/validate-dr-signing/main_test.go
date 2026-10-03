@@ -1598,6 +1598,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		deployNeeds   = `    needs:
       [
         changes,
+        validate-consumer-discovery,
         validate-floating-image-tags,
         validate-helm-post-renderers,
         validate-eks-authorization,
@@ -1611,6 +1612,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		deployNeedsWithoutGate = `    needs:
       [
         changes,
+        validate-consumer-discovery,
         validate-floating-image-tags,
         validate-helm-post-renderers,
         validate-eks-authorization,
