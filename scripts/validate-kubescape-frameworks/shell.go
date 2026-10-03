@@ -17,6 +17,13 @@ type shellAnalysis struct {
 	candidate bool
 	scans     []string
 	err       error
+	effects   shellEffects
+}
+
+type shellEffects struct {
+	errexit      *bool
+	successTraps map[string]bool
+	successExit  bool
 }
 
 func analyzeShell(source string) shellAnalysis { return analyzeShellDepth(source, 0) }
@@ -43,6 +50,24 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 		return result
 	}
 	var stack []syntax.Node
+	errexit, successExit := true, false
+	successTraps := make(map[string]bool)
+	functions := make(map[string]shellEffects)
+	applyEffects := func(effects shellEffects) {
+		if effects.errexit != nil {
+			errexit, result.effects.errexit = *effects.errexit, effects.errexit
+		}
+		for signal, masks := range effects.successTraps {
+			successTraps[signal] = masks
+			if result.effects.successTraps == nil {
+				result.effects.successTraps = make(map[string]bool)
+			}
+			result.effects.successTraps[signal] = masks
+		}
+		if effects.successExit {
+			successExit, result.effects.successExit = true, true
+		}
+	}
 	refuse := func(reason string) {
 		result.candidate = true
 		if result.err == nil {
@@ -77,6 +102,11 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 			if n.Name.Value == "ksail" {
 				refuse("a local function replaces the scanner executable")
 			}
+			view := analyzeShellDepth(printShellNode(n.Body), depth+1)
+			if view.err != nil {
+				refuse("local function execution cannot be certified from the bounded text")
+			}
+			functions[n.Name.Value] = view.effects
 		case *syntax.CallExpr:
 			if len(n.Args) == 0 {
 				return true
@@ -101,6 +131,25 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 			}
 			effectiveWords, effectiveStatic := words[executable:], static[executable:]
 			effectiveCommand := filepath.Base(effectiveWords[0])
+			deferred := false
+			for _, parent := range stack {
+				if _, ok := parent.(*syntax.FuncDecl); ok {
+					deferred = true
+				}
+			}
+			if !deferred {
+				if effects, found := functions[effectiveCommand]; found {
+					applyEffects(effects)
+				}
+				if effectiveCommand == "set" {
+					if mode := shellErrexitChange(effectiveWords, effectiveStatic); mode != nil {
+						applyEffects(shellEffects{errexit: mode})
+					}
+				}
+				if effectiveCommand == "exit" && (len(effectiveWords) == 1 || !effectiveStatic[1] || effectiveWords[1] == "0") {
+					applyEffects(shellEffects{successExit: true})
+				}
+			}
 
 			// Text reparsed by another interpreter is an execution boundary,
 			// including its stdin. Ordinary data consumers never reparse it.
@@ -112,15 +161,35 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 						literal = false
 					}
 				}
-				if literal && payloadMayScan(strings.Join(effectiveWords[1:], " ")) {
-					refuse("eval reparses executable scan text")
+				if literal {
+					text := strings.Join(effectiveWords[1:], " ")
+					if !deferred {
+						applyEffects(analyzeShellDepth(text, depth+1).effects)
+					}
+					if payloadMayScan(text) {
+						refuse("eval reparses executable scan text")
+					}
+				}
+			}
+			if effectiveCommand == "trap" && len(effectiveWords) > 2 && effectiveStatic[1] && effectiveWords[1] != "-p" && !deferred {
+				for _, signal := range effectiveWords[2:] {
+					if signal == "EXIT" || signal == "0" || signal == "ERR" {
+						if signal == "0" {
+							signal = "EXIT"
+						}
+						mask := effectiveWords[1] != "-" && analyzeShellDepth(effectiveWords[1], depth+1).effects.successExit
+						applyEffects(shellEffects{successTraps: map[string]bool{signal: mask}})
+					}
 				}
 			}
 			if effectiveCommand == "trap" || effectiveCommand == "alias" {
 				for i := 1; i < len(effectiveWords); i++ {
 					text := effectiveWords[i]
 					if effectiveCommand == "alias" {
-						name, value, _ := strings.Cut(text, "=")
+						name, value, found := strings.Cut(text, "=")
+						if !found {
+							continue
+						}
 						if name == "ksail" {
 							refuse("a local alias replaces the scanner executable")
 						}
@@ -202,6 +271,10 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 				return true
 			}
 			result.candidate = true
+			if !deferred && (!errexit || successTraps["EXIT"] || successTraps["ERR"] || successExit) {
+				refuse("scanner failure handling is disabled or a successful exit can replace the gate")
+				return true
+			}
 			if flagsErr != "" {
 				refuse(flagsErr)
 				return true
@@ -239,6 +312,40 @@ func analyzeShellDepth(source string, depth int) shellAnalysis {
 		return true
 	})
 	return result
+}
+
+// set changes the current shell; -- separates positional data from options.
+// A dynamic leading option cannot prove that errexit remains enabled.
+func shellErrexitChange(words []string, static []bool) *bool {
+	var mode *bool
+	for i := 1; i < len(words); i++ {
+		if !static[i] {
+			unknown := false
+			return &unknown
+		}
+		word := words[i]
+		if word == "--" || (!strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "+")) {
+			break
+		}
+		if word == "-o" || word == "+o" {
+			if i+1 == len(words) {
+				continue
+			}
+			i++
+			if !static[i] {
+				unknown := false
+				return &unknown
+			}
+			if words[i] != "errexit" {
+				continue
+			}
+		} else if !strings.Contains(word[1:], "e") {
+			continue
+		}
+		enabled := strings.HasPrefix(word, "-")
+		mode = &enabled
+	}
+	return mode
 }
 
 // The same bounded executable resolution applies to direct and delegated calls.
@@ -468,6 +575,10 @@ func shellEnvAssignment(word *syntax.Word) bool {
 	}
 	multiword := false
 	syntax.Walk(word, func(node syntax.Node) bool {
+		switch node.(type) {
+		case *syntax.CmdSubst, *syntax.ProcSubst:
+			return false
+		}
 		if parameter, ok := node.(*syntax.ParamExp); ok && !parameter.Length {
 			if parameter.Param.Value == "@" || printShellNode(parameter.Index) == "@" || parameter.Excl {
 				multiword = true

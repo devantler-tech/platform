@@ -130,6 +130,13 @@ func TestSharedParserOrdinaryShellControls(t *testing.T) {
 		"round4 shell positional stdin data":        "bash -s -- \"$ARG\" <<'CODE'\necho ready\nCODE",
 		"round5 env attached unset operand":         "env -uSHELL echo ready",
 		"round5 command permuted query options":     "command -vp \"$TOOL\"",
+		"round6 alias query":                        "alias ksail 2>/dev/null || true",
+		"round6 quoted substitution env value":      "env \"TEST_VALUE=$(printf '%s' \"$@\")\" echo ready",
+		"failure mode restored":                     "set +e\nset -e",
+		"eval failure mode restored":                "eval 'set +e; set -e'",
+		"unused ordinary helper":                    "helper() { set +e; echo ready; }\necho ready",
+		"invoked helper preserves failure mode":     "helper() { set +e; set -e; }\nhelper",
+		"successful exit handler removed":           "trap 'exit 0' EXIT\ntrap - EXIT",
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -147,6 +154,22 @@ func TestSharedParserOrdinaryShellControls(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestScannerCannotRunWithFailureHandlingDisabled(t *testing.T) {
+	for _, prefix := range []string{
+		"set +e",
+		"eval 'set +e'",
+		"trap 'exit 0' EXIT",
+		"trap 'exit 0' ERR",
+		"helper() { set +e; }; helper",
+		"exit 0",
+		"trap 'exit 0' EXIT\ntrap - ERR",
+	} {
+		if _, err := setOf(t, prefix+"\n"+goodScan); err == nil {
+			t.Errorf("scanner failure can be discarded by: %s", prefix)
+		}
 	}
 }
 
@@ -208,6 +231,11 @@ func TestParserRegressionBashWitnesses(t *testing.T) {
 		// This is a literal substitution witness; it does not exercise Actions.
 		"quoted Actions literal after substitution": {"'ksail' workload scan --framework nsa", false},
 		"failure-preserving fallback":               {goodScan + " || exit 1", false},
+		"errexit disabled":                          {"set +e\n" + goodScan + "\necho ready", true},
+		"eval changes errexit":                      {"eval 'set +e'\n" + goodScan + "\necho ready", true},
+		"successful exit handler":                   {"trap 'exit 0' EXIT\n" + goodScan, true},
+		"successful error handler":                  {"trap 'exit 0' ERR\n" + goodScan + "\necho ready", true},
+		"helper changes errexit":                    {"helper() { set +e; }; helper\n" + goodScan + "\necho ready", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := witness.body
