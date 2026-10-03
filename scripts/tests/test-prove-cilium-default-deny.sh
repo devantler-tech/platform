@@ -192,7 +192,7 @@ check_case() {
     if ! jq -e '([.probe_bindings[].name] | sort) == ["client-allowed","client-denied","server-allowed","server-denied"] and all(.probe_bindings[]; (.uid | startswith("pod-")) and (.ip_sha256 | test("^[0-9a-f]{64}$")) and (.container_sha256 | test("^[0-9a-f]{64}$")) and (.image_sha256 | test("^[0-9a-f]{64}$")) and .restart_count == 0 and .ready == true) and .tests.denied_target_http' "$receipt" >/dev/null; then
       printf 'FAIL %s: healthy stable probe identity receipt absent\n' "$name"; failures=$((failures + 1))
     fi
-    if rg -q '10[.]1[.]0[.]|containerd://' "$receipt"; then
+    if grep -Eq '10[.]1[.]0[.]|containerd://' "$receipt"; then
       printf 'FAIL %s: receipt exposes private probe IP/container identity\n' "$name"; failures=$((failures + 1))
     fi
     # Read the recorded process boundary to prove all helper-only positive
@@ -218,19 +218,19 @@ check_case() {
     printf 'FAIL %s: failure produced a green receipt\n' "$name"; failures=$((failures + 1))
   fi
   if [[ "$name" == floor_* ]]; then
-    if ! rg -q '^FAIL: floor-only healthy target/admitted HTTP and independent ingress/egress denial did not converge$' "${state}/output" ||
+    if ! grep -Eq '^FAIL: floor-only healthy target/admitted HTTP and independent ingress/egress denial did not converge$' "${state}/output" ||
        ! jq -e '.verdict == "FAIL" and .cleanup == "PASS" and .floor_valid_cnp_count == 0' "$receipt" >/dev/null ||
-       rg -q 'apply -f .*allow-dns[.]json$' "${state}/commands"; then
+       grep -Eq 'apply -f .*allow-dns[.]json$' "${state}/commands"; then
       printf 'FAIL %s: witness did not reach and reject the isolated floor before DNS\n' "$name"; failures=$((failures + 1))
     fi
   elif [[ "$name" == dns_after_floor_error ]]; then
-    if ! rg -q '^FAIL: complete healthy target/DNS/admitted/independent ingress and egress denial did not converge$' "${state}/output" ||
+    if ! grep -Eq '^FAIL: complete healthy target/DNS/admitted/independent ingress and egress denial did not converge$' "${state}/output" ||
        ! jq -e '.verdict == "FAIL" and .cleanup == "PASS" and .floor_valid_cnp_count == 2 and .floor_tests.denied_ingress and .floor_tests.denied_egress' "$receipt" >/dev/null; then
       printf 'FAIL %s: final DNS failure bypassed the proven floor phase\n' "$name"; failures=$((failures + 1))
     fi
   fi
   if [[ "$name" == unconfirmed || "$name" == occupied || "$name" == tampered || "$name" == docker_error || "$name" == wrong_ksail ]]; then
-    if [[ -f "${state}/commands" ]] && rg -q 'ksail .*cluster (create|delete)|kubectl' "${state}/commands"; then
+    if [[ -f "${state}/commands" ]] && grep -Eq 'ksail .*cluster (create|delete)|kubectl' "${state}/commands"; then
       printf 'FAIL %s: rejected preflight touched a cluster\n' "$name"; failures=$((failures + 1))
     fi
   elif [[ "$name" != cleanup_error && -f "${state}/created" ]]; then
@@ -238,7 +238,7 @@ check_case() {
   fi
   # Every Kubernetes call must use only the private context/config. Deleting
   # by ambient context, a changed provider or a whole Docker prune is unsafe.
-  if [[ -f "${state}/commands" ]] && rg '^kubectl ' "${state}/commands" | rg -v -- '--kubeconfig .*/cilium-deny-proof-123-1/kubeconfig --context kind-deny-proof-123-1' >/dev/null; then
+  if [[ -f "${state}/commands" ]] && grep -E '^kubectl ' "${state}/commands" | grep -Ev -- '--kubeconfig .*/cilium-deny-proof-123-1/kubeconfig --context kind-deny-proof-123-1' >/dev/null; then
     printf 'FAIL %s: ambient Kubernetes call\n' "$name"; failures=$((failures + 1))
   fi
 }
