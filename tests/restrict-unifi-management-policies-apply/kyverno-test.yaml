@@ -1,0 +1,61 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-unifi-management-policies-apply
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-management-policies.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  - policy: restrict-unifi-management-policies
+    rule: apply-without-delete
+    resources:
+      - unifi/retained
+      - unifi/observing
+      - unifi/observe-only-widened
+    kind: Record
+    result: pass
+  - policy: restrict-unifi-management-policies
+    rule: apply-without-delete
+    resources:
+      # An empty list is falsy, so it reads as the "*" default: refused.
+      - unifi/omitted
+      - unifi/observe-only-empty
+    kind: Record
+    result: fail
+  - policy: restrict-unifi-management-policies
+    rule: apply-without-delete
+    resources:
+      - unifi/delete-restored
+    kind: Client
+    result: fail
+  - policy: restrict-unifi-management-policies
+    rule: apply-without-delete
+    resources:
+      - unifi/wildcard
+    kind: TrafficRoute
+    result: fail
+  - policy: restrict-unifi-management-policies
+    rule: observe-only-is-observe
+    resources:
+      - unifi/observing
+    kind: Record
+    result: pass
+  - policy: restrict-unifi-management-policies
+    rule: observe-only-is-observe
+    resources:
+      - unifi/observe-only-widened
+      - unifi/observe-only-empty
+    kind: Record
+    result: fail
+  - policy: restrict-unifi-management-policies
+    rule: observe-only-is-observe
+    resources:
+      - unifi/retained
+      - unifi/omitted
+    kind: Record
+    result: skip

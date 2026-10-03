@@ -936,7 +936,43 @@ yq -n '.apiVersion = "kustomize.toolkit.fluxcd.io/v1" |
   }]' >"$WORK/$FLUX_RGD_PATCH"
 expect_rejected "a Flux Kustomization patch targeting an RGD" \
   "Flux Kustomization targets or ambiguously selects" "ResourceGraphDefinition"
+
+# Selector fields are conjunctive. A group-only UniFi patch cannot select either the RGD
+# definitions or their generated APIs, while an unconstrained/matching group still can.
+yq -i '.spec.patches[0].target = {"group": ".+\\.unifi\\.m\\.crossplane\\.io"}' "$WORK/$FLUX_RGD_PATCH"
+"$GATE" "$WORK" || fail "a group-only Flux patch disjoint from every protected API was refused"
+echo "PASS(probe): a group-only Flux patch outside protected API groups is accepted."
+
+yq -i '.spec.patches[0].target = {"group": "kro.run"}' "$WORK/$FLUX_RGD_PATCH"
+expect_rejected "a group-only Flux patch matching protected APIs" \
+  "Flux Kustomization targets or ambiguously selects" "missing kind"
+
+yq -i '.spec.patches[0].target = {"group": "kro.run", "kind": ""}' "$WORK/$FLUX_RGD_PATCH"
+expect_rejected "an empty-kind Flux selector matching protected APIs" \
+  "Flux Kustomization targets or ambiguously selects" "missing kind"
+
+yq -i '.spec.patches[0].target = {"group": "(kro.run|.+\\.unifi\\.m\\.crossplane\\.io)"}' "$WORK/$FLUX_RGD_PATCH"
+expect_rejected "a regex group spanning UniFi and protected APIs" \
+  "Flux Kustomization targets or ambiguously selects" "missing kind"
+
+yq -i '.spec.patches[0].target = {"group": "example.io", "kind": "ResourceGraphDefinition"}' "$WORK/$FLUX_RGD_PATCH"
+"$GATE" "$WORK" || fail "a same-kind Flux patch in a disjoint API group was refused"
+echo "PASS(probe): a same-kind Flux patch outside protected API groups is accepted."
 rm -f "$WORK/$FLUX_RGD_PATCH"
+
+# Kustomize overlays can insert the same Flux control through an inline strategic patch.
+# That separate inspection path must apply the same API-group proof.
+mkdir -p "$WORK/k8s/clusters/prod"
+yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" | .kind = "Kustomization" |
+  .patches = [{"patch": "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: unifi\n  namespace: unifi\nspec:\n  patches:\n    - target:\n        group: .+\\.unifi\\.m\\.crossplane\\.io\n      patch: |-\n        - op: add\n          path: /spec/managementPolicies\n          value: [Observe]"}]' \
+  >"$WORK/k8s/clusters/prod/kustomization.yaml"
+"$GATE" "$WORK" || fail "an overlay inserting a disjoint group-only Flux patch was refused"
+echo "PASS(probe): overlays may insert Flux patches outside protected API groups."
+yq -i '.patches[0].patch |= sub("group: .+", "group: kro.run")' \
+  "$WORK/k8s/clusters/prod/kustomization.yaml"
+expect_rejected "an overlay inserting a Flux patch over protected API groups" \
+  "Kustomization patch mutates protected Flux controls" "missing kind"
+rm -f "$WORK/k8s/clusters/prod/kustomization.yaml"
 
 # Kubernetes List items may themselves be Flux Kustomizations. The post-render patch scan must use
 # the same recursive List traversal as protected resource discovery.

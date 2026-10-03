@@ -70,7 +70,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 8cc1b89c7760cbd9f65a1
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager 4ee4b8a2fc512253c45182114812f6b5ccf3b33492091169ac1f5a9bf5610e21
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 199c39221ecee136c20155aaa8e8cf1f93c1f870eb9e9f021b88560084f781cf
+helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape ac042dabaebb79fc3ca9e19b1bafba76d8e1c49bc3db0e6b0bb72ea0c97efad4
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 3a6ac464cd62f30e69068309e14d7d7409cd0ff395c4fbac735d514e0b8616a8
 
@@ -84,7 +84,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|observability|coroot-operator a6c5d6dfdec7
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-operator da38c30c19aea0c3e099bb86cda46d89ab6301ff5898b4fad8f020812f8ad800
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao c17dae50d7f4c73727cc21fa25aab6af110c35327dc1abb49329d75f3945ff2f
+helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao 068ad0ebbbc391a567ad211c7254130c0b949de8bec7a27f87fcab8ac034b452
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter f92d67d39b5638fa931d19f4015ee490d6c98043e00a01319f4ef1a5fc64bc29
 
@@ -118,7 +118,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controll
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|github-config|github-config 72a37b4f3edda8d7f432f5d5afc456e8bfef0061eecab0cdac31e829a5ab5d31
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|unifi|unifi bcf9f876e3b42bc411bcdf17262887cb082fdaea80fb593f02fa59b91c5059b7
+kustomize.toolkit.fluxcd.io/v1|Kustomization|unifi|unifi e3b3caea1b9c5a3fc994d9f68c9609d7f77843f24dae91c567e4dd7b5051868a
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|wedding-app|wedding-app 1b680e05b65c96f2f91d709e8dd838dea064b15a132fcab2520606c9467241fe
 
@@ -294,7 +294,7 @@ rbac.authorization.k8s.io/v1|Role|longhorn-system|kyverno:background-controller:
 
 rbac.authorization.k8s.io/v1|Role|longhorn-system|longhorn-stale-node-cleanup bb761c018fb1648ee65a6ffe72e770e3cdf125b40a8774f11369f303beb85d50
 
-rbac.authorization.k8s.io/v1|Role|observability|cronjob-failure-alert 3b244783f53c17c55abfbae0a09973d244d258dbfbfdc8aa816539ae02bf4e6c
+rbac.authorization.k8s.io/v1|Role|observability|cronjob-failure-alert 208ea569644d0750f7ab9ca3e4d2fefcbd56e5fb2fc6b871b30a350393b1c4c3
 
 rbac.authorization.k8s.io/v1|Role|observability|prune-protected-orphan-alert 7a815989a665e8c9d5f6434e51f3dde0e6e9116e05f195f1e56ed34cd7b3b1c2
 
@@ -306,7 +306,7 @@ rbac.authorization.k8s.io/v1|Role|umami|kyverno:background-controller:mutate-uma
 
 rbac.authorization.k8s.io/v1|Role|umami|umami-provision-tenants acd94d4b7b034d6feafb4a9a32a7f57b88421bb9e21f6304fb6f0b5ba3e96662
 
-rbac.authorization.k8s.io/v1|Role|unifi|unifi-managed-resources 437740d30cde427a100aaf0ae38667db1a2fefab4d3d4eb2cfc01fdeb56fcd6d
+rbac.authorization.k8s.io/v1|Role|unifi|unifi-managed-resources 5012f601b75e3f9b69b5bb0f4de33fab3ef2346b3899d0f3b6785769690a736a
 
 rbac.authorization.k8s.io/v1|Role|velero|velero-maintenance-oom-alert 062076b82e1a6bb9af4b6f647f2d297cbe683e70792b05f1f34c1ed881a7981f
 

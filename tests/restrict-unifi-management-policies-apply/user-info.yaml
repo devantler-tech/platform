@@ -1,0 +1,11 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: UserInfo
+metadata:
+  name: unifi-source
+userInfo:
+  username: system:serviceaccount:unifi:unifi
+  groups:
+    - system:serviceaccounts
+    - system:serviceaccounts:unifi
+    - system:authenticated

@@ -37,11 +37,13 @@ patch selects `wedding-db-dedicated` for the live Wedding Cluster and preserves
 its `wedding-db-20260909` archive identity. The shared `wedding-db` ObjectStore
 and its credential projection remain available for recovery until the isolated
 restore and credential-denial gates are complete. The dispatch-only
-`Mirror Wedding Backup Catalogue` workflow does the copy from inside the
-`wedding-app` namespace and reports the evaluator's parity verdict: it can be
-re-run safely, and only a `CONVERGED` run means the switch may start. Run it once
-more immediately before the switch. `CONVERGED` does not cover WAL archived between
-that run and the reference change, so after the reference change the cutover
+`Verify Wedding Backup Denial` workflow is the credential-denial gate; see
+restore-drill.md. The dispatch-only `Mirror Wedding Backup Catalogue` workflow
+does the copy from inside the `wedding-app` namespace and reports the
+evaluator's parity verdict: it can be re-run safely, and only a `CONVERGED` run
+means the switch may start. Run it once more immediately before the switch.
+`CONVERGED` does not cover WAL archived between that run and the reference
+change, so after the reference change the cutover
 **must** run the same workflow in `catch-up` mode with the recorded switch time.
 That pass requires the Cluster to archive through `wedding-db-dedicated`, copies
 the now-quiescent shared catalogue once more, and refuses any destination object
@@ -274,11 +276,12 @@ manually with `verify-wedding-backup-staging=true`; the verifier checks the
 bootstrap Secret, OpenBao projection, both ObjectStores, the dedicated live
 Cluster reference, and live source stability without printing either
 credential. Use `Verify Wedding Backup Cutover` to take and verify a fresh
-backup after a Wedding credential rotation. The catalogue and WAL checks must
-also pass before retiring the replaced dedicated token. Retiring Wedding's
-shared recovery access additionally requires a dedicated-only isolated restore;
-the shared platform identity still serves other databases and Velero. See
-runbook.md Scenario 7.
+backup after a Wedding credential rotation, and `Verify Wedding Backup Denial`
+to prove that `platform-backups` refuses the new token. The catalogue and WAL
+checks must also pass before retiring the replaced dedicated token. Retiring
+Wedding's shared recovery access additionally requires a dedicated-only
+isolated restore; the shared platform identity still serves other databases and
+Velero. See runbook.md Scenario 7.
 
 ## Related
 

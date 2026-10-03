@@ -44,6 +44,9 @@ resources:
   - crossview/cilium-network-policy.yaml
   - crossview/password-coroot-monitor.yaml
   - crossview/external-secret-coroot-monitor.yaml
+  # Admits only the prod crossview-login-alerter CronJob (observability) to the
+  # app's port, so an empty database is reported without anyone logging in.
+  - crossview/cilium-network-policy-login-alerter.yaml
 components:
   - ../../../bases/components/annotations-transformers
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
