@@ -73,6 +73,127 @@ fi
 consumer_count="$(printf '%s\n' "$consumers" | grep -c .)"
 expected_insync=$((consumer_count - 1))
 
+# Conservation adds object identity without changing the report's public rows.
+identity_root="$WORK/identity-contract"
+mkdir "$identity_root"
+cat >"$identity_root/source.yaml" <<'YAML'
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: beta
+  namespace: beta
+spec:
+  url: oci://ghcr.io/devantler-tech/beta/manifests/
+  ref:
+    tag: 1.2.3
+  verify:
+    matchOIDCIdentity:
+      - subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@[0-9a-f]{40}$'
+YAML
+identity_subject='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@[0-9a-f]{40}$'
+legacy_row=$(printf 'beta\tpublish-manifests\t1.2.3\tbeta/manifests')
+subject_row=$(printf '%s\t%s' "$legacy_row" "$identity_subject")
+identity_row=$(printf '%s\tbeta\tbeta\toci://ghcr.io/devantler-tech/beta/manifests/' "$subject_row")
+for mode in default with-subject with-identity; do
+  expected="$legacy_row"
+  [ "$mode" != with-subject ] || expected="$subject_row"
+  [ "$mode" != with-identity ] || expected="$identity_row"
+  if actual=$(bash -c 'source "$1"; consumer_rows "$2" "$3"' \
+      bash "$SCRIPT" "$identity_root/source.yaml" "$mode") && [ "$actual" = "$expected" ]; then
+    pass "$mode discovery has its exact documented columns and values"
+  else
+    fail "$mode discovery changed its row contract: $actual"
+  fi
+done
+
+cp "$identity_root/source.yaml" "$WORK/identity-unpinned.yaml"
+yq -i 'del(.spec.ref) | del(.metadata.namespace)' "$WORK/identity-unpinned.yaml"
+unpinned_row=$(printf 'beta\tpublish-manifests\tunpinned\tbeta/manifests')
+for mode in default with-subject with-identity; do
+  expected="$unpinned_row"
+  [ "$mode" != with-subject ] || expected=$(printf '%s\t%s' "$unpinned_row" "$identity_subject")
+  [ "$mode" != with-identity ] || expected=$(printf '%s\t%s\t-\tbeta\toci://ghcr.io/devantler-tech/beta/manifests/' "$unpinned_row" "$identity_subject")
+  if actual=$(bash -c 'source "$1"; consumer_rows "$2" "$3"' \
+      bash "$SCRIPT" "$WORK/identity-unpinned.yaml" "$mode") && [ "$actual" = "$expected" ]; then
+    pass "$mode discovery preserves omitted-ref and absent-namespace fields"
+  else
+    fail "$mode discovery shifted absent fields: $actual"
+  fi
+done
+
+# The all-object census sees unsigned/foreign-registry sources but keeps its fields
+# together per top-level OCI document, including omitted refs and namespaces.
+cp "$identity_root/source.yaml" "$WORK/object-contract.yaml"
+yq -i 'del(.spec.verify) | .spec.url = "oci://registry.example.test/beta/manifests"' "$WORK/object-contract.yaml"
+expected=$(printf 'beta\tbeta\toci://registry.example.test/beta/manifests\t1.2.3\t-\tfalse\ttrue\t{}')
+if actual=$(bash -c 'source "$1"; consumer_rows "$2" with-object-contract' \
+    bash "$SCRIPT" "$WORK/object-contract.yaml") && [ "$actual" = "$expected" ]; then
+  pass 'the all-object reader preserves unsigned foreign-registry contracts'
+else
+  fail "the all-object reader omitted or shifted an unsigned contract: $actual"
+fi
+yq -i 'del(.metadata.namespace) | del(.spec.ref)' "$WORK/object-contract.yaml"
+expected=$(printf '%s\tbeta\toci://registry.example.test/beta/manifests\tunpinned\t-\tfalse\ttrue\t{}' '-')
+if actual=$(bash -c 'source "$1"; consumer_rows "$2" with-object-contract' \
+    bash "$SCRIPT" "$WORK/object-contract.yaml") && [ "$actual" = "$expected" ]; then
+  pass 'the all-object reader preserves absent namespace, ref and verification fields'
+else
+  fail "the all-object reader shifted absent fields: $actual"
+fi
+cat >>"$WORK/object-contract.yaml" <<'YAML'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: unrelated
+data:
+  source:
+    kind: OCIRepository
+YAML
+if actual=$(bash -c 'source "$1"; consumer_rows "$2" with-object-contract' \
+    bash "$SCRIPT" "$WORK/object-contract.yaml") && [ "$actual" = "$expected" ]; then
+  pass 'the all-object census selects only top-level Flux OCI documents'
+else
+  fail 'the all-object census attributed a nested or unrelated mapping as an OCI object'
+fi
+yq -i 'select(.kind == "OCIRepository") | del(.metadata.name)' "$WORK/object-contract.yaml"
+if ! bash -c 'source "$1"; consumer_rows "$2" with-object-contract' \
+    bash "$SCRIPT" "$WORK/object-contract.yaml" >"$WORK/object-contract-malformed.out" 2>&1 &&
+    grep -q 'OCI object contract.*UNKNOWN' "$WORK/object-contract-malformed.out"; then
+  pass 'the all-object census cannot accept an unsigned object with unknown identity'
+else
+  fail 'the all-object census accepted an unsigned object with unknown identity'
+fi
+
+cp "$identity_root/source.yaml" "$identity_root/peer.yaml"
+yq -i '.metadata.name = "beta-peer"' "$identity_root/peer.yaml"
+legacy_discovery=$(bash -c 'source "$1"; discover_consumers "$2"' bash "$SCRIPT" "$identity_root")
+object_discovery=$(bash -c 'source "$1"; discover_consumers "$2" with-identity' bash "$SCRIPT" "$identity_root")
+if [ "$legacy_discovery" = "$legacy_row" ] &&
+    [ "$(printf '%s\n' "$object_discovery" | grep -c .)" -eq 2 ] &&
+    printf '%s\n' "$object_discovery" | awk -F '\t' 'NF != 8 { exit 1 }'; then
+  pass 'the report deduplicates an artifact while conservation preserves distinct OCI names'
+else
+  fail 'guard-only object identity changed legacy artifact deduplication or collapsed distinct names'
+fi
+
+yq -i 'del(.metadata.name)' "$identity_root/peer.yaml"
+legacy_discovery=$(bash -c 'source "$1"; consumer_rows "$2"' bash "$SCRIPT" "$identity_root/peer.yaml")
+if [ "$legacy_discovery" = "$legacy_row" ] &&
+    ! bash -c 'source "$1"; consumer_rows "$2" with-identity' \
+      bash "$SCRIPT" "$identity_root/peer.yaml" >"$WORK/identity-malformed.out" 2>&1 &&
+    grep -q 'consumer identity.*UNKNOWN' "$WORK/identity-malformed.out"; then
+  pass 'an unknown object name is refused only by the conservation reader'
+else
+  fail 'missing object identity was accepted by conservation or changed report discovery'
+fi
+
+if printf '%s\n' "$consumers" | awk -F '\t' 'NF != 4 { exit 1 }'; then
+  pass '--list-consumers retains the four-column report and resolver contract'
+else
+  fail '--list-consumers leaked guard-only identity columns'
+fi
+
 write_table() { # <path> <special-repo|""> <special-signing> <special-current>
   local table="$1" special="$2" s_sign="$3" s_cur="$4" repo workflow
   : >"$table"
@@ -152,6 +273,61 @@ else
   grep -q 'not discovered' "$nomatch_out" ||
     fail 'the discovery failure does not say which consumers went missing'
   pass 'a tree matching nothing fails closed instead of reporting a clean portfolio'
+fi
+
+# 3b. A file the scan SELECTS (it carries a shared-workflow subject) but yq cannot parse.
+#     Its consumers are unknown; reading it as "no consumers" let it drop out of the set
+#     unseen (#3332). The real consumers sit beside it, so only the parse failure can fail
+#     this run: the identity floor is satisfied by the copies.
+unparsable_root="$WORK/unparsable"
+mkdir -p "$unparsable_root"
+while IFS= read -r src; do
+  cp "$src" "$unparsable_root/$(printf '%s' "${src#"$REPO_ROOT"/}" | tr '/' '_')"
+done < <(grep -rl 'kind: OCIRepository' --include='*.yaml' "$REPO_ROOT/k8s")
+cat >"$unparsable_root/broken.yaml" <<'YAML'
+kind: OCIRepository
+spec:
+  verify:
+    matchOIDCIdentity:
+      - subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
+  ref: [unclosed
+YAML
+unparsable_out="$WORK/unparsable.out"
+if PUBLISH_CONSUMER_ROOT="$unparsable_root" "$SCRIPT" --list-consumers >"$unparsable_out" 2>&1; then
+  fail "a selected file yq cannot parse was read as having no consumers: $(cat "$unparsable_out")"
+elif ! grep -q 'could not parse .*broken.yaml' "$unparsable_out" ||
+  ! grep -q 'consumer set is UNKNOWN' "$unparsable_out"; then
+  fail "the run failed, but not by naming the unparsable file: $(cat "$unparsable_out")"
+else
+  rm -f "$unparsable_root/broken.yaml"
+  if PUBLISH_CONSUMER_ROOT="$unparsable_root" "$SCRIPT" --list-consumers >"$unparsable_out" 2>&1; then
+    pass 'a selected file yq cannot parse fails discovery, naming the file'
+  else
+    fail "control: the same tree without the unparsable file must discover cleanly: $(cat "$unparsable_out")"
+  fi
+fi
+
+# 3c. The scan's grep could not read part of the tree (exit 2). A file it failed to read is
+#     never selected, so its consumers would leave the set without any refusal. Injected with
+#     a shim rather than a permission bit, so it holds when the suite runs as root.
+grep_shim="$WORK/grep-shim"
+mkdir -p "$grep_shim"
+real_grep="$(command -v grep)"
+cat >"$grep_shim/grep" <<SHIM
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  [ "\$arg" = '-rlE' ] && { "$real_grep" "\$@"; exit 2; }
+done
+exec "$real_grep" "\$@"
+SHIM
+chmod +x "$grep_shim/grep"
+grep_err_out="$WORK/grep-error.out"
+if PATH="$grep_shim:$PATH" PUBLISH_CONSUMER_ROOT="$unparsable_root" "$SCRIPT" --list-consumers >"$grep_err_out" 2>&1; then
+  fail "a scan whose grep could not read the tree reported a complete consumer set: $(cat "$grep_err_out")"
+elif ! grep -q 'could not scan .* (grep exit 2)' "$grep_err_out"; then
+  fail "the run failed, but not by naming the unreadable scan: $(cat "$grep_err_out")"
+else
+  pass 'a scan whose grep could not read the tree fails discovery instead of dropping files'
 fi
 
 # ---------------------------------------------------------------------------
