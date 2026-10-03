@@ -2896,6 +2896,21 @@ jobs:
           # The guard renders the base revision too, to find which releases changed.
           fetch-depth: 0
 
+      - name: 🧩 Install the audited controller's Helm renderer
+        # Flux 2.8.8 / helm-controller 1.5.5 embeds upstream Helm 4.2.0. The
+        # runner's ambient Helm is not proof of matching template capabilities.
+        env:
+          HELM_VERSION: v4.2.0
+        run: |
+          install_dir="$(mktemp -d)"
+          cd "$install_dir"
+          archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl --fail --location --retry 3 --output "$archive" "https://get.helm.sh/$archive"
+          curl --fail --location --retry 3 --output "$archive.sha256sum" "https://get.helm.sh/$archive.sha256sum"
+          sha256sum --check "$archive.sha256sum"
+          tar -xzf "$archive"
+          echo "$install_dir/linux-amd64" >> "$GITHUB_PATH"
+
       - name: 🧩 Validate the post-renderer guard
         run: |
           shellcheck scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
@@ -2907,7 +2922,7 @@ jobs:
             ${{ github.event.pull_request.base.sha ||
             github.event.merge_group.base_sha }}
         run: |
-          bash scripts/guard-helm-post-renderers.sh --base "$BASE_SHA" \
+          bash scripts/guard-helm-post-renderers.sh --flux-version 2.8.8 --base "$BASE_SHA" \
             --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s
 
   # Every merge-group validator that ci-required-checks enforces is listed here too.

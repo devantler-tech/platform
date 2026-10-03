@@ -14,7 +14,7 @@
 # WHAT THIS DOES. It renders every cluster overlay under `<k8s-root>/clusters` the way Flux applies
 # it (following the `spec.path` of each Flux Kustomization, with its `images`, `patches`,
 # `components`, `targetNamespace`, `namePrefix` and `nameSuffix`), applies Flux's `postBuild`
-# substitution to each HelmRelease that carries post-renderers, then for each one:
+# substitution to the release, its source and referenced ConfigMaps, then for each release:
 #   1. pulls its chart at the pinned version from the source the release names;
 #   2. renders it with `helm template` from the release's own values, as both an install and an
 #      upgrade, because a chart can render differently on `.Release.IsUpgrade`;
@@ -23,19 +23,18 @@
 #      `images`). Any error kustomize reports is the error helm-controller would report.
 #
 # WHICH RELEASES. With `--base <revision>`, only HelmReleases whose effective definition differs
-# from that revision are rendered: the release spec after substitution, and the spec of its chart
-# source. That covers a changed post-renderer, and also a chart bump or values change that moves
+# from that revision are rendered: the release spec after substitution, its chart source,
+# selected ConfigMap values, and the admitted rendering profile. That covers a changed post-renderer,
+# and also a chart bump or values change that moves
 # what an unchanged post-renderer patches. Every other release is skipped without a chart pull, so
 # the check stays proportionate to what a pull request changes. Without `--base`, every release
 # with post-renderers is rendered. A base tree that cannot be rendered is no reason to check less:
 # every release is checked instead.
 #
-# HOW HOOKS ARE TREATED. helm-controller's `spec.postRenderStrategy` decides whether hook
-# resources pass through the post-renderers: `nohooks` sends only the regular manifests,
-# `combined` sends hooks and manifests as one stream, and `separate` sends them as two. When the
-# field is unset the controller default applies, which has changed between Flux releases, so the
-# guard checks both streams separately: the manifests are post-rendered under every strategy, and
-# the hooks under every strategy except `nohooks`.
+# CONTROLLER PROFILE. --flux-version is an explicit, audited offline profile, not live version
+# discovery. Flux 2.8.8 embeds Helm 4.2.0 and post-renders regular manifests only (nohooks).
+# Its API has no postRenderStrategy field. Other profiles are UNKNOWN until audited. A matching
+# 2.8.x selector does not prove the running patch: production delivery still needs OIDC readback.
 #
 # ⚠️ WHAT THIS DOES NOT SEE. The chart renders without a cluster, so a template that branches on
 # `.Capabilities.APIVersions` or on a `lookup` renders as if those APIs and objects were absent.
@@ -48,11 +47,13 @@
 # a chart source that needs credentials or is not a HelmRepository or OCIRepository, a
 # `valuesFrom` entry without a `targetPath`, `valuesFiles`, a post-renderer that is not a
 # kustomize `patches`/`images` renderer, a chart that fails to pull or render, or an unresolved
-# `${...}` in the chart source. No cluster overlay, or an overlay that names no Flux
+# `${...}` in the chart source. Historical preserveValues and revision-dependent templates are
+# also UNKNOWN: helm template --is-upgrade still renders revision 1, not the deployed revision.
+# No cluster overlay, or an overlay that names no Flux
 # Kustomization, or a tree that renders no HelmRelease at all, is exit 2 as well: a selector that
 # matched nothing is indistinguishable from a clean tree.
 #
-# Usage: guard-helm-post-renderers.sh [--base <git-revision>] [--kube-version <version>] <k8s-root>
+# Usage: guard-helm-post-renderers.sh --flux-version 2.8.8 [--base <git-revision>] [--kube-version <version>] <k8s-root>
 #
 # Exit codes:
 #   0  every checked HelmRelease's post-renderers apply to its chart's rendered output
@@ -67,11 +68,17 @@ die() {
   exit 2
 }
 
-usage="usage: $0 [--base <git-revision>] [--kube-version <version>] <k8s-root>"
+usage="usage: $0 --flux-version 2.8.8 [--base <git-revision>] [--kube-version <version>] <k8s-root>"
 base=''
 kube_version=''
+flux_version=''
 while [ "$#" -gt 0 ]; do
   case $1 in
+    --flux-version)
+      if [ "$#" -lt 2 ] || [ -z "$2" ]; then die "$usage"; fi
+      flux_version="${2#v}"
+      shift 2
+      ;;
     --base)
       if [ "$#" -lt 2 ] || [ -z "$2" ]; then die "$usage"; fi
       base="$2"
@@ -91,6 +98,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ "$#" -eq 1 ] || die "$usage"
+[ "$flux_version" = 2.8.8 ] || die "an audited --flux-version 2.8.8 profile is required"
 root="${1%/}"
 [ -d "$root/clusters" ] || die "'$root/clusters' is not a directory"
 for tool in helm jq kubectl yq; do
@@ -111,7 +119,9 @@ printf '{}\n' >"$scratch/docker/config.json"
 printf '{}\n' >"$scratch/helm/registry.json"
 export HELM_CACHE_HOME="$scratch/helm/cache" HELM_CONFIG_HOME="$scratch/helm/config" \
   HELM_DATA_HOME="$scratch/helm/data" HELM_REGISTRY_CONFIG="$scratch/helm/registry.json" \
-  DOCKER_CONFIG="$scratch/docker"
+  DOCKER_CONFIG="$scratch/docker" HELM_PLUGINS="$scratch/helm/plugins"
+helm_version="$(helm version --template '{{.Version}}')" || die "cannot read the Helm version"
+[ "$helm_version" = v4.2.0 ] || die "Flux $flux_version requires Helm v4.2.0, not '$helm_version'"
 
 tab="$(printf '\t')"
 
@@ -138,7 +148,7 @@ relpath() { # <from-dir> <to-dir>
 # shellcheck disable=SC2016 # awk program text, not shell expansions
 substitute() { # <variables.tsv> <yaml>
   awk -F '\t' '
-    FNR == NR { vars[$1] = substr($0, length($1) + 2); next }
+    FILENAME == ARGV[1] { vars[$1] = substr($0, length($1) + 2); next }
     {
       line = $0
       out = ""
@@ -176,8 +186,7 @@ wrapper='.spec as $s
   | with(select($s.namePrefix != null); .namePrefix = $s.namePrefix)
   | with(select($s.nameSuffix != null); .nameSuffix = $s.nameSuffix)'
 
-# The HelmReleases a render carries post-renderers on. Substitution runs on the text of these
-# documents only, and not on one annotated `kustomize.toolkit.fluxcd.io/substitute: disabled`.
+# Substitution preserves objects annotated `kustomize.toolkit.fluxcd.io/substitute: disabled`.
 post_rendered='select(.kind == "HelmRelease" and ((.apiVersion // "") | test("^helm[.]toolkit[.]fluxcd[.]io/"))
   and ((.spec.postRenderers // []) | length) > 0)'
 substitute_disabled='(.metadata.annotations["kustomize.toolkit.fluxcd.io/substitute"] // "") == "disabled"'
@@ -206,6 +215,12 @@ record='.[] | select(. != null) | . as $r
         namespace: ($r.spec.chart.spec.sourceRef.namespace // $ns)}
      else null end) as $ref
   | {cluster: $cluster, layer: $layer, release: $r, sourceRef: $ref,
+     profile: $profile,
+     valuesRefs: [($r.spec.valuesFrom // [])[] | . as $v
+       | ([$all[0][] | select(.kind == $v.kind and .metadata.name == $v.name
+           and (.metadata.namespace // "") == $ns)][0] // null) as $obj
+       | {ref: $v, present: ($obj != null), value: (if $v.kind == "Secret" then "placeholder"
+           else ($obj.data[$v.valuesKey // "values.yaml"] // null) end)}],
      source: (if $ref == null then null else
        ([$all[0][] | select(.kind == $ref.kind and .metadata.name == $ref.name
          and (.metadata.namespace // "") == $ref.namespace)][0] // null) end)}'
@@ -217,6 +232,7 @@ record='.[] | select(. != null) | . as $r
 collect() { # <k8s-root> <out>
   local tree="$1" out="$2" tree_real overlay cluster work doc path layers rendered wrap resource
   local component component_dir component_real flux_json releases key clusters=0 all_releases=0
+  local profile selector line
   mkdir -p "$out/records" "$out/canon" || die "cannot create '$out'"
   tree_real="$(cd "$tree" && pwd -P)" || die "cannot resolve '$tree'"
   for overlay in "$tree"/clusters/*/; do
@@ -289,18 +305,37 @@ collect() { # <k8s-root> <out>
       flux_json="$(yq -o=json -I=0 '.' "$doc")" || die "cannot read the Flux Kustomization for '$path'"
       jq -r --argjson flux "$flux_json" "$variables" "$work/all.json" >"$rendered.vars" 2>"$rendered.vars.err" ||
         die "cannot read the substitution variables for '$path': $(head -c 500 "$rendered.vars.err")"
-      yq "$post_rendered | select(($substitute_disabled) | not)" "$rendered.yaml" >"$rendered.hr.yaml" ||
-        die "cannot read the HelmReleases rendered from '$path'"
-      yq "$post_rendered | select($substitute_disabled)" "$rendered.yaml" >"$rendered.hr-literal.yaml" ||
-        die "cannot read the HelmReleases rendered from '$path'"
+      yq "select(($substitute_disabled) | not)" "$rendered.yaml" >"$rendered.input.yaml" ||
+        die "cannot read the objects rendered from '$path'"
+      yq "select($substitute_disabled)" "$rendered.yaml" >"$rendered.literal.yaml" ||
+        die "cannot read the literal objects rendered from '$path'"
       if [ "$(jq -r '.spec.postBuild != null' <<<"$flux_json")" = true ]; then
-        substitute "$rendered.vars" "$rendered.hr.yaml" >"$rendered.hr-substituted.yaml" ||
-          die "cannot substitute the HelmReleases rendered from '$path'"
+        substitute "$rendered.vars" "$rendered.input.yaml" >"$rendered.substituted.yaml" ||
+          die "cannot substitute the objects rendered from '$path'"
       else
-        cp "$rendered.hr.yaml" "$rendered.hr-substituted.yaml" || die "cannot copy the HelmReleases rendered from '$path'"
+        cp "$rendered.input.yaml" "$rendered.substituted.yaml" || die "cannot copy the objects rendered from '$path'"
       fi
-      releases="$(yq ea -o=json -I=0 '[.] | map(select(. != null))' "$rendered.hr-substituted.yaml" "$rendered.hr-literal.yaml" 2>"$rendered.releases.err")" ||
+      yq ea '.' "$rendered.substituted.yaml" "$rendered.literal.yaml" >"$rendered.resolved.yaml" ||
+        die "cannot collect the substituted objects rendered from '$path'"
+    done <"$work/layers.tsv"
+    # Sources can be rendered by a different layer than their release. Resolve every layer first.
+    # shellcheck disable=SC2046 # one word per layer file, none with spaces
+    yq ea -o=json -I=0 '[.] | map(select(. != null))' $(cut -f2 "$work/layers.tsv" | sed 's/$/.resolved.yaml/') \
+      >"$work/resolved.json" || die "cannot collect the substituted cluster '$cluster'"
+    selector="$(jq -er '[.[] | select(.kind == "FluxInstance") | .spec.distribution.version] | unique
+      | if length == 1 then .[0] else error("missing or conflicting FluxInstance selectors") end' "$work/resolved.json")" ||
+      die "cluster '$cluster' has no unique FluxInstance distribution selector"
+    case $selector in
+      2.8.x | 2.8.8 | v2.8.8) ;;
+      *) die "cluster '$cluster' selector '$selector' does not admit audited Flux $flux_version" ;;
+    esac
+    profile="$(jq -n --arg flux "$flux_version" --arg helm "$helm_version" --arg kube "$kube_version" --arg selector "$selector" \
+      '{flux: $flux, helm: $helm, kube: $kube, selector: $selector, hooks: "nohooks"}')"
+    while IFS="$tab" read -r doc rendered path; do
+      releases="$(yq ea -o=json -I=0 "[. | $post_rendered] | map(select(. != null))" "$rendered.resolved.yaml" 2>"$rendered.releases.err")" ||
         die "cannot parse the substituted HelmReleases rendered from '$path': $(head -c 500 "$rendered.releases.err")"
+      jq -c --arg cluster "$cluster" --arg layer "$path" --argjson profile "$profile" --slurpfile all "$work/resolved.json" "$record" \
+        <<<"$releases" >"$rendered.records.jsonl" || die "cannot resolve the releases rendered from '$path'"
       while IFS= read -r line; do
         [ -n "$line" ] || continue
         key="$(jq -r '"\(.cluster)__\(.release.metadata.namespace // "")__\(.release.metadata.name)"' <<<"$line")" ||
@@ -308,9 +343,9 @@ collect() { # <k8s-root> <out>
         [ ! -e "$out/records/$key.json" ] ||
           die "cluster '$cluster' renders HelmRelease ${key#*__} more than once (again from '$path')"
         printf '%s\n' "$line" >"$out/records/$key.json"
-        jq -cS '{spec: .release.spec, sourceKind: (.source.kind // null), source: (.source.spec // null)}' \
+        jq -cS '{spec: .release.spec, sourceKind: (.source.kind // null), source: (.source.spec // null), valuesRefs, profile}' \
           <<<"$line" >"$out/canon/$key.json" || die "cannot summarise HelmRelease ${key#*__}"
-      done < <(jq -c --arg cluster "$cluster" --arg layer "$path" --slurpfile all "$work/all.json" "$record" <<<"$releases")
+      done <"$rendered.records.jsonl"
     done <"$work/layers.tsv"
   done
   [ "$clusters" -gt 0 ] || die "no cluster overlay with a kustomization.yaml under '$tree/clusters'"
@@ -368,8 +403,9 @@ apply_post_renderers() { # <record> <stream.yaml> <dir>
 # to $scratch/findings when they do not apply; exits 2 when the release cannot be rendered the way
 # Flux does.
 check_release() { # <record> <work>
-  local record="$1" work="$2" label pull ref repo version chart_desc tgz release namespace strategy
-  local mode stream streams error rendered selector
+  local record="$1" work="$2" label pull ref repo version chart_desc tgz release namespace
+  local mode error rendered value_ref target value hash dependency pending inspected=0
+  local value_args=()
   label="$(jq -r '"\(.cluster): HelmRelease \(.release.metadata.namespace)/\(.release.metadata.name)"' "$record")"
   mkdir -p "$work" || die "cannot create '$work'"
 
@@ -378,23 +414,31 @@ check_release() { # <record> <work>
       (((.kustomize // {}).patches // []) | all(.[]; keys - ["patch", "target"] | length == 0)))' \
     "$record" >/dev/null ||
     die "$label: a post-renderer is not a kustomize patches/images renderer, which is all Flux's Kustomize post-renderer applies — this guard cannot execute it"
-  strategy="$(jq -r '.release.spec.postRenderStrategy // ""' "$record")"
-  case $strategy in
-    '' | nohooks | combined | separate) ;;
-    *) die "$label: unknown spec.postRenderStrategy '$strategy'" ;;
-  esac
+  jq -e '.release.spec.postRenderStrategy == null' "$record" >/dev/null ||
+    die "$label: spec.postRenderStrategy is unsupported by Flux $flux_version"
+  jq -e '.release.spec.upgrade.preserveValues != true' "$record" >/dev/null ||
+    die "$label: spec.upgrade.preserveValues needs historical release values this offline guard cannot read"
   jq -e '((.release.spec.chart.spec.valuesFiles // []) | length == 0) and (.release.spec.chart.spec.valuesFile == null)' \
     "$record" >/dev/null || die "$label: spec.chart.spec.valuesFiles is not rendered by this guard"
 
   # A targetPath reference overwrites inline values in Flux. Start with spec.values, then apply
-  # each targetPath in reference order. A Secret or ConfigMap value renders as a placeholder;
-  # a whole values document cannot be stood in for.
+  # each targetPath in reference order. ConfigMaps use their selected data, parsed by Helm's own
+  # strvals parser (--set), including numeric/boolean types and escaped separators. Secret values
+  # retain the declared placeholder limitation; a whole values document cannot be stood in for.
   jq -e '(.release.spec.valuesFrom // []) | all(.[]; (.targetPath // "") | test("^[A-Za-z0-9_-]+([.][A-Za-z0-9_-]+)*$"))' \
     "$record" >/dev/null ||
     die "$label: a spec.valuesFrom entry has no plain dotted targetPath, so the values it merges cannot be stood in for"
-  jq '(.release.spec.values // {}) as $inline
-      | reduce ((.release.spec.valuesFrom // [])[] | .targetPath | split(".")) as $p
-          ($inline; setpath($p; "placeholder"))' "$record" >"$work/values.json" || die "$label: cannot assemble its values"
+  jq '.release.spec.values // {}' "$record" >"$work/values.json" || die "$label: cannot assemble its values"
+  value_args=(--values "$work/values.json")
+  while IFS= read -r value_ref; do
+    if [ "$(jq '.value == null' <<<"$value_ref")" = true ]; then
+      [ "$(jq '.ref.optional == true and .present == false' <<<"$value_ref")" = true ] && continue
+      die "$label: required valuesFrom $(jq -r '.ref.kind + "/" + .ref.name + ":" + (.ref.valuesKey // "values.yaml")' <<<"$value_ref") is not rendered"
+    fi
+    target="$(jq -r '.ref.targetPath' <<<"$value_ref")"
+    value="$(jq -r '.value' <<<"$value_ref")"
+    value_args+=(--set "$target=$value")
+  done < <(jq -c '.valuesRefs[]' "$record")
 
   # The chart reference, as `helm pull` arguments, or the reason it cannot be pulled anonymously.
   pull="$(jq -c '
@@ -426,9 +470,44 @@ check_release() { # <record> <work>
   version="$(jq -r '.version' <<<"$pull")"
   chart_desc="$ref${version:+@$version}"
   tgz="$(pull_chart "$label" "$ref" "$repo" "$version")" || exit 2
+  mkdir -p "$work/chart" || die "cannot create the chart inspection directory"
+  tar -xzf "$tgz" -C "$work/chart" || die "$label: cannot inspect $chart_desc"
+  mkdir -p "$work/dependencies" || die "cannot create the dependency inspection directory"
+  : >"$work/inspected"
+  # Dependencies may themselves be packaged charts. Inspect their templates too, without running
+  # chart code or fetching any extra artifacts. A bounded nesting failure is UNKNOWN, never clean.
+  while :; do
+    pending=0
+    find "$work/chart" "$work/dependencies" -name '*.tgz' -type f >"$work/archives" || die "$label: cannot enumerate chart dependencies"
+    while IFS= read -r dependency; do
+      grep -qxF "$dependency" "$work/inspected" && continue
+      inspected=$((inspected + 1))
+      [ "$inspected" -le 100 ] || die "$label: too many packaged chart dependencies to inspect"
+      mkdir -p "$work/dependencies/$inspected" || die "$label: cannot create a dependency inspection directory"
+      tar -xzf "$dependency" -C "$work/dependencies/$inspected" || die "$label: cannot inspect a packaged chart dependency"
+      printf '%s\n' "$dependency" >>"$work/inspected"
+      pending=1
+    done <"$work/archives"
+    [ "$pending" = 1 ] || break
+  done
+  # An offline Helm template upgrade always has Revision=1. Refuse charts (including dependencies)
+  # that read Revision anywhere; do not pretend revision 2 proves every future upgrade either.
+  if grep -R -E -q "\.[[:space:]]*Revision|[\"']Revision[\"']" "$work/chart" "$work/dependencies"; then
+    die "$label: revision-dependent chart $chart_desc needs release history this guard cannot render"
+  fi
 
   release="$(jq -r '.release.spec.releaseName // (if .release.spec.targetNamespace then
       "\(.release.spec.targetNamespace)-\(.release.metadata.name)" else .release.metadata.name end)' "$record")"
+  if [ "$(jq '.release.spec.releaseName == null' "$record")" = true ] && [ "${#release}" -gt 53 ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      hash="$(printf '%s' "$release" | sha256sum)" || die "$label: cannot hash its release name"
+    elif command -v shasum >/dev/null 2>&1; then
+      hash="$(printf '%s' "$release" | shasum -a 256)" || die "$label: cannot hash its release name"
+    else
+      die "$label: sha256sum or shasum is required to shorten its release name"
+    fi
+    release="${release:0:40}-${hash:0:12}"
+  fi
   namespace="$(jq -r '.release.spec.targetNamespace // .release.metadata.namespace' "$record")"
 
   for mode in install upgrade; do
@@ -441,36 +520,21 @@ check_release() { # <record> <work>
     if [ -n "$kube_version" ]; then
       set -- "$@" --kube-version "$kube_version"
     fi
-    helm template "$release" "$tgz" --namespace "$namespace" --values "$work/values.json" "$@" \
+    helm template "$release" "$tgz" --namespace "$namespace" "${value_args[@]}" "$@" \
       >"$rendered" 2>"$rendered.err" ||
-      die "$label: cannot render $chart_desc as an $mode with its values: $(head -c 500 "$rendered.err")"
-    for stream in manifests hooks combined; do
-      case $stream in
-        manifests) selector='select(.metadata.annotations["helm.sh/hook"] == null)' ;;
-        hooks) selector='select(.metadata.annotations["helm.sh/hook"] != null)' ;;
-        combined) selector='.' ;;
-      esac
-      yq "select(tag == \"!!map\") | $selector" "$rendered" >"$work/$mode.$stream.yaml" ||
-        die "$label: cannot split the $mode render of $chart_desc into hooks and manifests"
-    done
-    case $strategy in
-      nohooks) streams=manifests ;;
-      combined) streams=combined ;;
-      *) streams='manifests hooks' ;;
-    esac
-    for stream in $streams; do
-      [ "$stream" = manifests ] || [ -s "$work/$mode.$stream.yaml" ] || continue
-      error="$(apply_post_renderers "$record" "$work/$mode.$stream.yaml" "$work/$mode.$stream")"
+      die "$label: cannot assemble its values or render $chart_desc as an $mode: $(head -c 500 "$rendered.err")"
+    yq 'select(tag == "!!map") | select(.metadata.annotations["helm.sh/hook"] == null)' "$rendered" >"$work/$mode.manifests.yaml" ||
+      die "$label: cannot split the $mode render of $chart_desc into hooks and manifests"
+      error="$(apply_post_renderers "$record" "$work/$mode.manifests.yaml" "$work/$mode.manifests")"
       case $? in
         0) ;;
         1)
           printf '%s: its post-renderers do not apply to the %s render of %s (%s): %s\n' \
-            "$label" "$mode" "$chart_desc" "$stream" "$error" >>"$scratch/findings"
+            "$label" "$mode" "$chart_desc" manifests "$error" >>"$scratch/findings"
           return 0
           ;;
         *) exit 2 ;;
       esac
-    done
   done
   printf '  ok  %s: %s post-renderer(s) apply to %s (install and upgrade)\n' \
     "$label" "$(jq '.release.spec.postRenderers | length' "$record")" "$chart_desc"

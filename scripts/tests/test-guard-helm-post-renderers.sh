@@ -41,6 +41,10 @@ export HELM_SHIM_REAL HELM_SHIM_CHARTS="$scratch/charts" HELM_SHIM_LOG="$scratch
 HELM_SHIM_REAL="$(command -v helm)"
 cat >"$scratch/bin/helm" <<'EOF'
 #!/usr/bin/env bash
+if [ "${1:-}" = version ] && [ -n "${HELM_SHIM_VERSION:-}" ]; then
+  printf '%s\n' "$HELM_SHIM_VERSION"
+  exit 0
+fi
 if [ "${1:-}" = pull ]; then
   shift
   ref='' repo='' version='' destination=''
@@ -76,7 +80,7 @@ cat >"$chart/templates/deployment.yaml" <<'EOF'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: flux-operator
+  name: {{ if .Values.useReleaseName }}{{ .Release.Name }}{{ else }}flux-operator{{ end }}
   labels:
     app.kubernetes.io/name: flux-operator
 spec:
@@ -123,11 +127,16 @@ spec:
 {{- end }}
 EOF
 
+cp -R "$chart" "$scratch/charts/revision-sensitive"
+yq -i '.name = "revision-sensitive"' "$scratch/charts/revision-sensitive/Chart.yaml"
+printf '%s\n' '{{ if eq .Release.Revision 1 }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: revision-one' '{{ end }}' \
+  >"$scratch/charts/revision-sensitive/templates/revision.yaml"
+
 run_guard() { # <tree> [guard-args...]
   local tree="$1"
   shift
   : >"$HELM_SHIM_LOG"
-  if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" "$@" "$tree/k8s" 2>&1)"; then
+  if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" --flux-version 2.8.8 "$@" "$tree/k8s" 2>&1)"; then
     GUARD_RC=0
   else
     GUARD_RC=$?
@@ -218,7 +227,9 @@ EOF
   printf '%s\n' 'apiVersion: kustomize.toolkit.fluxcd.io/v1' 'kind: Kustomization' 'metadata:' '  name: apps' \
     '  namespace: flux-system' 'spec:' '  path: ./__PROVIDER__/apps' >"$k8s/clusters/base/flux.yaml"
   printf '%s\n' 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources:' '  - config-map.yaml' \
-    >"$k8s/bootstrap/test/kustomization.yaml"
+    '  - flux-instance.yaml' >"$k8s/bootstrap/test/kustomization.yaml"
+  printf '%s\n' 'apiVersion: fluxcd.controlplane.io/v1' 'kind: FluxInstance' 'metadata:' '  name: flux' \
+    '  namespace: flux-system' 'spec:' '  distribution:' '    version: 2.8.x' >"$k8s/bootstrap/test/flux-instance.yaml"
   variables 3
   printf '%s\n' 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources:' \
     '  - helm-repository.yaml' '  - helm-release.yaml' >"$k8s/controllers/test/kustomization.yaml"
@@ -371,7 +382,7 @@ printf 'guard-helm-post-renderers:\n'
 
 printf 'the committed tree, compared with itself\n'
 : >"$HELM_SHIM_LOG"
-if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" --base HEAD "$repo_root/k8s" 2>&1)"; then GUARD_RC=0; else GUARD_RC=$?; fi
+if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" --flux-version 2.8.8 --base HEAD "$repo_root/k8s" 2>&1)"; then GUARD_RC=0; else GUARD_RC=$?; fi
 assert_rc 'an unchanged tree passes' 0
 assert_contains 'nothing is rendered when nothing changed' ', 0 checked'
 assertions=$((assertions + 1))
@@ -502,21 +513,19 @@ new_tree
   pr_job_leaf_add
 } | release
 run_guard "$TREE"
-assert_rc 'hooks are post-rendered when no strategy is set' 1
-assert_contains 'as their own stream' '(hooks)'
+assert_rc 'Flux 2.8.8 leaves hooks out of post-rendering by default' 0
 {
   printf '%s\n' '  postRenderStrategy: combined' '  values:' '    hook: true'
   pr_job_leaf_add
 } | release
 run_guard "$TREE"
-assert_rc 'hooks are post-rendered with the manifests under combined' 1
-assert_contains 'as one stream' '(combined)'
+assert_rc 'Flux 2.8.8 rejects the unsupported strategy field' 2
 {
   printf '%s\n' '  postRenderStrategy: nohooks' '  values:' '    hook: true'
   pr_job_leaf_add
 } | release
 run_guard "$TREE"
-assert_rc 'hooks are not post-rendered under nohooks' 0
+assert_rc 'even nohooks is an unsupported field on the admitted API' 2
 
 new_tree
 cat <<'EOF' | release
@@ -609,6 +618,8 @@ cat <<'EOF' | release
                 path: /spec/template/metadata/annotations/token
                 value: inline-must-not-win
 EOF
+printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: operator' '  namespace: flux-system' 'data:' '  token: actual-token' >"$TREE/k8s/controllers/test/operator.yaml"
+printf '%s\n' '  - operator.yaml' >>"$TREE/k8s/controllers/test/kustomization.yaml"
 run_guard "$TREE"
 assert_rc 'a post-renderer that depends on the overwritten inline value fails' 1
 assert_contains 'the overwrite fails the actual JSON test' 'test failed'
@@ -640,11 +651,13 @@ cat <<'EOF' | release
                 value: placeholder
               - op: test
                 path: /spec/template/metadata/annotations/second
-                value: placeholder
+                value: actual-second
               - op: test
                 path: /spec/template/metadata/annotations/untouched
                 value: kept
 EOF
+printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: operator' '  namespace: flux-system' 'data:' '  second: actual-second' >"$TREE/k8s/controllers/test/operator.yaml"
+printf '%s\n' '  - operator.yaml' >>"$TREE/k8s/controllers/test/kustomization.yaml"
 run_guard "$TREE"
 assert_rc 'multiple targetPath references override inline values without dropping siblings' 0
 
@@ -692,6 +705,123 @@ run_guard "$TREE"
 assert_rc 'a chartRef to an OCIRepository is pulled by digest' 0
 assert_pulled 'by its digest' \
   'oci://ghcr.io/example/charts/flux-operator@sha256:0000000000000000000000000000000000000000000000000000000000000000||'
+
+# Sources receive their owning Kustomization's substitution, including when
+# only the source's variable changed and the HelmRelease itself did not.
+new_tree
+pr_3577 | release
+# shellcheck disable=SC2016 # Flux substitutes this literal, not the shell.
+yq -i '.spec.chart.spec.version = "${chart_version}"' "$TREE/k8s/controllers/test/helm-release.yaml"
+yq -i '.spec.postBuild.substitute.chart_version = "0.49.0"' "$TREE/k8s/clusters/test/flux.yaml"
+run_guard "$TREE"
+assert_rc 'a substituted chart version renders its real chart' 0
+
+new_tree
+pr_3577 | release
+yq -i '.spec.chart.spec.sourceRef.kind = "OCIRepository" | del(.spec.chart)' "$TREE/k8s/controllers/test/helm-release.yaml"
+yq -i '.spec.chartRef = {"kind": "OCIRepository", "name": "flux-operator"}' "$TREE/k8s/controllers/test/helm-release.yaml"
+# shellcheck disable=SC2016 # Flux substitutes this literal, not the shell.
+yq -i '.kind = "OCIRepository" | .spec = {"url": "oci://ghcr.io/example/charts/flux-operator", "ref": {"semver": "${chart_version}"}}' "$TREE/k8s/controllers/test/helm-repository.yaml"
+yq -i '.spec.postBuild.substitute.chart_version = "0.49.0"' "$TREE/k8s/clusters/test/flux.yaml"
+commit "$TREE" base
+yq -i '.spec.postBuild.substitute.chart_version = "0.50.0"' "$TREE/k8s/clusters/test/flux.yaml"
+run_guard "$TREE" --base HEAD
+assert_rc 'a source-only substitution change cannot skip a newly broken chart' 1
+assert_pulled 'the resolved changed source version is pulled' 'oci://ghcr.io/example/charts/flux-operator||0.50.0'
+
+# The ConfigMap's selected value participates in both rendering and scope.
+new_tree
+{
+  printf '%s\n' '  valuesFrom:' '    - kind: ConfigMap' '      name: operator-values' '      valuesKey: replicas' '      targetPath: replicas'
+  pr_replicas_are 3
+} | release
+printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: operator-values' '  namespace: flux-system' 'data:' '  replicas: "3"' >"$TREE/k8s/controllers/test/operator-values.yaml"
+printf '%s\n' '  - operator-values.yaml' >>"$TREE/k8s/controllers/test/kustomization.yaml"
+run_guard "$TREE"
+assert_rc 'a ConfigMap targetPath uses its actual numeric Helm value' 0
+commit "$TREE" base
+yq -i '.data.unrelated = "changed"' "$TREE/k8s/controllers/test/operator-values.yaml"
+run_guard "$TREE" --base HEAD
+assert_rc 'an unselected ConfigMap key does not change rendering scope' 0
+assert_pulls 'an unselected ConfigMap key pulls no chart' 0
+yq -i '.data.replicas = "4"' "$TREE/k8s/controllers/test/operator-values.yaml"
+run_guard "$TREE" --base HEAD
+assert_rc 'a referenced ConfigMap-only change re-renders the release' 1
+assert_contains 'the actual changed value breaks the post-renderer' 'testing value /spec/replicas failed'
+
+new_tree
+{
+  printf '%s\n' '  valuesFrom:' '    - kind: ConfigMap' '      name: absent' '      valuesKey: replicas' '      targetPath: replicas'
+  pr_3580
+} | release
+run_guard "$TREE"
+assert_rc 'an absent required ConfigMap value is cannot-check, never a placeholder success' 2
+yq -i '.spec.valuesFrom[0].optional = true' "$TREE/k8s/controllers/test/helm-release.yaml"
+run_guard "$TREE"
+assert_rc 'a genuinely missing optional ConfigMap is skipped' 0
+printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: absent' '  namespace: flux-system' 'data:' '  unrelated: value' >"$TREE/k8s/controllers/test/optional.yaml"
+printf '%s\n' '  - optional.yaml' >>"$TREE/k8s/controllers/test/kustomization.yaml"
+run_guard "$TREE"
+assert_rc 'optional does not ignore a missing key in an existing ConfigMap' 2
+
+new_tree
+pr_3577 | release
+yq -i '.data = {}' "$TREE/k8s/bootstrap/test/config-map.yaml"
+run_guard "$TREE"
+assert_rc 'an empty substitution map must not swallow the HelmRelease' 1
+
+new_tree
+pr_3580 | release
+commit "$TREE" base
+yq -i '.spec.distribution.version = "2.9.x"' "$TREE/k8s/bootstrap/test/flux-instance.yaml"
+run_guard "$TREE" --base HEAD
+assert_rc 'a runtime-only change cannot be skipped as unchanged' 2
+
+new_tree
+pr_3580 | release
+HELM_SHIM_VERSION=v3.19.0 run_guard "$TREE"
+assert_rc 'a Helm runtime different from the controller is cannot-check' 2
+if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" "$TREE/k8s" 2>&1)"; then GUARD_RC=0; else GUARD_RC=$?; fi
+assert_rc 'a missing audited controller profile is cannot-check' 2
+run_guard "$TREE" --flux-version 2.9.5
+assert_rc 'an unaudited controller profile is cannot-check' 2
+
+new_tree
+{
+  printf '%s\n' '  values:' '    revisionSensitive: true'
+  pr_pod_leaf_add
+} | release
+yq -i '.spec.chart.spec.chart = "revision-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
+run_guard "$TREE"
+assert_rc 'revision-dependent charts cannot be proven by --is-upgrade revision one' 2
+# shellcheck disable=SC2016 # Helm template variables, not shell expansions.
+printf '%s\n' '{{ $r := .Release }}{{ if eq $r.Revision 1 }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: revision-one' '{{ end }}' \
+  >"$scratch/charts/revision-sensitive/templates/revision.yaml"
+run_guard "$TREE"
+assert_rc 'aliased Release.Revision is also historical input' 2
+
+new_tree
+pr_3580 | release
+yq -i '.spec.upgrade.preserveValues = true' "$TREE/k8s/controllers/test/helm-release.yaml"
+run_guard "$TREE"
+assert_rc 'historical preserveValues cannot receive an offline clean verdict' 2
+yq -i '.spec.upgrade.preserveValues = false' "$TREE/k8s/controllers/test/helm-release.yaml"
+run_guard "$TREE"
+assert_rc 'explicit false preserveValues remains supported' 0
+
+new_tree
+{
+  printf '%s\n' '  targetNamespace: a-very-lengthy-target-namespace' '  values:' '    useReleaseName: true'
+  pr_pod_leaf_add
+} | release
+yq -i '.metadata.name = "a-very-lengthy-helm-release-name" | .spec.postRenderers[0].kustomize.patches[0].target.name = "a-very-lengthy-target-namespace-a-very-l-132d54d8b62f"' "$TREE/k8s/controllers/test/helm-release.yaml"
+run_guard "$TREE"
+assert_rc 'Flux shortens a long composed release name before Helm rendering' 1
+assert_contains 'the hashed-name target actually matches and fails its patch' 'doc is missing path'
+yq -i '.spec.releaseName = "explicit-operator" | .spec.postRenderers[0].kustomize.patches[0].target.name = "explicit-operator"' "$TREE/k8s/controllers/test/helm-release.yaml"
+run_guard "$TREE"
+assert_rc 'an explicit release name is used without namespace composition' 1
+assert_contains 'the explicit-name target actually matches' 'doc is missing path'
 
 # --- Cannot check is exit 2, never clean ----------------------------------------------------
 
