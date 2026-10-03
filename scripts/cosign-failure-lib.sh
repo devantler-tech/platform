@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 # Say WHY a `cosign verify` failed, so a gate names the failure it actually saw.
 #
 # WHY THIS EXISTS (#3545)

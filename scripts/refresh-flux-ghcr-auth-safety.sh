@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 
 # Safety-critical helpers for refresh-flux-ghcr-auth.sh. Keep these functions
 # side-effect free except where their names explicitly describe an operation so
