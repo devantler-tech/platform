@@ -54,12 +54,7 @@ func TestGateJobToleranceGuardIsNotVacuous(t *testing.T) {
 
 	tolerated := func(t *testing.T, key string, value any) map[string]workflow {
 		t.Helper()
-		workflows := loadWorkflows(t)
-		name, jobName, _ := strings.Cut(key, "/")
-		parsedJob, ok := workflows[name].Jobs[jobName]
-		if !ok {
-			t.Fatalf("%s is missing, so this control cannot be applied", key)
-		}
+		workflows, name, jobName, parsedJob := loadGateControlJob(t, key)
 		if errorIsTolerated(parsedJob.ContinueOnError) == errorIsTolerated(value) {
 			t.Fatalf("the perturbation of %s to %v would not change whether it tolerates failure", key, value)
 		}

@@ -213,12 +213,7 @@ func TestGateJobConditionGuardIsNotVacuous(t *testing.T) {
 	// condition. Jobs are map values, so the edit is written back explicitly.
 	perturbed := func(t *testing.T, key, condition string) map[string]workflow {
 		t.Helper()
-		workflows := loadWorkflows(t)
-		name, jobName, _ := strings.Cut(key, "/")
-		parsedJob, ok := workflows[name].Jobs[jobName]
-		if !ok {
-			t.Fatalf("%s is missing, so this control cannot be applied", key)
-		}
+		workflows, name, jobName, parsedJob := loadGateControlJob(t, key)
 		before := parsedJob.If
 		parsedJob.If = condition
 		workflows[name].Jobs[jobName] = parsedJob
