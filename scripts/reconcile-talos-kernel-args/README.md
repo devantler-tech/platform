@@ -11,11 +11,16 @@ extensions to config generation; a whitespace-only ID does not. Auxiliary docume
 their values and order; this does not migrate dedicated Talos install documents.
 
 The audited implementations are KSail **7.193.6**, commit
-`a0622ef7d0f3072823832248a4f79612ed3a0e69`, and **7.193.8**, commit
-`00e671710f10bb251d54ecd71fac3d36634e66be`. Their Talos configuration and schematic
-code, config manager and KSail distribution caller are byte-identical. See
-[`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/00e671710f10bb251d54ecd71fac3d36634e66be/pkg/fsutil/configmanager/talos/configs.go#L1082)
-and the [explicit schematic selection boundary](https://github.com/devantler-tech/ksail/blob/00e671710f10bb251d54ecd71fac3d36634e66be/pkg/fsutil/configmanager/ksail/distribution.go#L154).
+`a0622ef7d0f3072823832248a4f79612ed3a0e69`, **7.193.8**, commit
+`00e671710f10bb251d54ecd71fac3d36634e66be`, **7.194.0**, commit
+`bbe44951bfd0adcc570080c48007866460c709ca`, and **7.194.3**, commit
+`6c2d2f4b14594521e5001dec9a2796e7902ad610`. Their Talos configuration and schematic
+code, config manager and KSail distribution caller are byte-identical. The whole
+`pkg/fsutil/configmanager/` tree is unchanged between 7.193.8 and 7.194.3. The
+7.194.0 and 7.194.3 releases share tree
+`d34f5f8c4f6467f6fc3f11f8bd791c904a5e50b6`, with all 98 entries unchanged. See
+[`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/talos/configs.go#L1082)
+and the [explicit schematic selection boundary](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/ksail/distribution.go#L154).
 KSail first computes the schematic and installs its image; this helper mirrors
 the subsequent fold, using CI's already-generated install sections. It does not
 register a schematic, replace installer images, contact a cluster or change
@@ -29,7 +34,7 @@ bash scripts/tests/test-talos-render-kernel-args.sh
 ```
 
 The version check reads all explicit KSail pins in CI, CD and the production
-deployment action. All pins must agree on one of the two audited releases. A
+deployment action. All pins must agree on one of the four audited releases. A
 missing, malformed, divergent or unaudited pin fails the unconditional changes
 job. Another version requires reviewing the owned KSail source and
 updating this contract, rather than silently assuming the fold is unchanged.

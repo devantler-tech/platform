@@ -156,6 +156,54 @@ func TestVersionContractRejectsUnreviewedOrDivergentPins(t *testing.T) {
 	}
 }
 
+func TestVersionContractForAudited71940(t *testing.T) {
+	for _, test := range []struct {
+		name, ci, cd string
+		wantErr      bool
+	}{
+		{"uniform audited release", "7.194.0", "7.194.0", false},
+		{"mixed audited releases", "7.194.0", "7.193.8", true},
+		{"mixed audited releases reversed", "7.193.8", "7.194.0", true},
+		{"unaudited patch release", "7.194.1", "7.194.1", true},
+		{"unaudited minor release", "7.195.0", "7.195.0", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ci := []byte("env:\n  KSAIL_VERSION: '" + test.ci + "'\n")
+			cd := []byte("env:\n  KSAIL_VERSION: '" + test.cd + "'\n")
+			if err := verifyPins(ci, cd); (err != nil) != test.wantErr {
+				t.Fatalf("verifyPins(%q, %q) error = %v, wantErr %v", test.ci, test.cd, err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestVersionContractForAudited71943(t *testing.T) {
+	for _, test := range []struct {
+		name, ci, cd, action string
+		wantErr              string
+	}{
+		{"uniform audited release", "7.194.3", "7.194.3", "7.194.3", ""},
+		{"mixed audited releases", "7.194.0", "7.194.3", "7.194.3", "divergent KSail deployment pins"},
+		{"mixed audited releases reversed", "7.194.3", "7.194.0", "7.194.0", "divergent KSail deployment pins"},
+		{"mixed deployment action", "7.194.3", "7.194.3", "7.194.0", "divergent KSail deployment pins"},
+		{"unaudited patch release", "7.194.4", "7.194.4", "7.194.4", "requires a new source audit"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ci := []byte("env:\n  KSAIL_VERSION: '" + test.ci + "'\n")
+			cd := []byte("env:\n  KSAIL_VERSION: '" + test.cd + "'\n")
+			action := []byte("env:\n  KSAIL_VERSION: '" + test.action + "'\n")
+			err := verifyPins(ci, cd, action)
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("audited uniform deployment pins rejected: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("verifyPins(%q, %q, %q) error = %v, want %q", test.ci, test.cd, test.action, err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestCommandDoesNotWriteEitherRoleAfterInvalidInput(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

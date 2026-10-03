@@ -104,3 +104,79 @@ rules:
       a clusterwide Cilium policy with only deny rules in a direction must set
       enableDefaultDeny for that direction, or it revokes all of that traffic
     severity: error
+
+  # The Cilium agent refuses a policy spec whose ingress, ingressDeny, egress and
+  # egressDeny are all empty ("rule must have at least one of Ingress,
+  # IngressDeny, Egress, EgressDeny"), or a policy with neither spec nor specs,
+  # and marks the whole object Valid=False, so nothing in it is enforced. The CRD
+  # schema only asks for one of those keys to be PRESENT, so `ingress: []` passes
+  # the API server, Flux and Kyverno, and every one of them reports success. A
+  # default-deny that allows nothing uses one empty rule per direction
+  # (`ingress: [{}]`): no peer and no port, so it selects no traffic.
+  # Kinds are unique only within an API group, so only cilium.io kinds match.
+  - name: require-cilium-policy-rules
+    expression: >-
+      !has(object.kind) || !has(object.apiVersion) ||
+      !(object.kind in ['CiliumNetworkPolicy', 'CiliumClusterwideNetworkPolicy']) ||
+      !object.apiVersion.startsWith('cilium.io/') ||
+      (((has(object.spec) ? [object.spec] : []) +
+        (has(object.specs) ? object.specs : [])).size() > 0 &&
+       ((has(object.spec) ? [object.spec] : []) +
+        (has(object.specs) ? object.specs : [])).all(s,
+         (has(s.ingress) && size(s.ingress) > 0) ||
+         (has(s.ingressDeny) && size(s.ingressDeny) > 0) ||
+         (has(s.egress) && size(s.egress) > 0) ||
+         (has(s.egressDeny) && size(s.egressDeny) > 0)))
+    message: >-
+      every Cilium policy spec needs a rule in at least one direction (use
+      `ingress: [{}]` for a default-deny that allows nothing); otherwise Cilium
+      rejects the whole policy and enforces none of it
+    severity: error
+
+  # The same check for the Cilium policies a Kyverno rule generates from inline
+  # data, including each generate foreach entry. Those copies are not rendered
+  # documents — they exist only inside the rule that writes them — so the rule
+  # above never sees them. The add-default-deny ClusterPolicy generated
+  # `ingress: []` / `egress: []` into every namespace for ~101 days, all of it
+  # Valid=False, before this was checked (#3501). A clone carries no inline data
+  # and copies a policy that is checked where it is rendered.
+  - name: require-generated-cilium-policy-rules
+    expression: >-
+      !has(object.kind) || !has(object.apiVersion) ||
+      !(object.kind in ['ClusterPolicy', 'Policy']) ||
+      !object.apiVersion.startsWith('kyverno.io/') ||
+      !has(object.spec) || !has(object.spec.rules) ||
+      object.spec.rules.all(r, !has(r.generate) ||
+        ((has(r.generate.foreach) ? r.generate.foreach : []) + [r.generate]).all(g,
+          !has(g.kind) ||
+          !(g.kind in ['CiliumNetworkPolicy', 'CiliumClusterwideNetworkPolicy']) ||
+          (has(g.apiVersion) && !g.apiVersion.startsWith('cilium.io/')) ||
+          !has(g.data) ||
+          (((has(g.data.spec) ? [g.data.spec] : []) +
+            (has(g.data.specs) ? g.data.specs : [])).size() > 0 &&
+           ((has(g.data.spec) ? [g.data.spec] : []) +
+            (has(g.data.specs) ? g.data.specs : [])).all(s,
+             (has(s.ingress) && size(s.ingress) > 0) ||
+             (has(s.ingressDeny) && size(s.ingressDeny) > 0) ||
+             (has(s.egress) && size(s.egress) > 0) ||
+             (has(s.egressDeny) && size(s.egressDeny) > 0)))) &&
+        (!has(r.generate.foreach) || r.generate.foreach.all(g,
+          !has(g.foreach) || g.foreach.all(n,
+            !has(n.foreach) &&
+            (!has(n.kind) ||
+             !(n.kind in ['CiliumNetworkPolicy', 'CiliumClusterwideNetworkPolicy']) ||
+             (has(n.apiVersion) && !n.apiVersion.startsWith('cilium.io/')) ||
+             !has(n.data) ||
+             (((has(n.data.spec) ? [n.data.spec] : []) +
+               (has(n.data.specs) ? n.data.specs : [])).size() > 0 &&
+              ((has(n.data.spec) ? [n.data.spec] : []) +
+               (has(n.data.specs) ? n.data.specs : [])).all(s,
+                (has(s.ingress) && size(s.ingress) > 0) ||
+                (has(s.ingressDeny) && size(s.ingressDeny) > 0) ||
+                (has(s.egress) && size(s.egress) > 0) ||
+                (has(s.egressDeny) && size(s.egressDeny) > 0))))))))
+    message: >-
+      every Cilium policy a Kyverno rule generates needs a rule in at least one
+      direction (use `ingress: [{}]` for a default-deny that allows nothing);
+      otherwise Cilium rejects every generated copy and enforces none of it
+    severity: error
