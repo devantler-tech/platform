@@ -19,14 +19,62 @@ spec:
   timeout: 5m
   retryInterval: 2m
   path: ./
-  # Do not prune Crossplane managed resources sourced from the separate
-  # devantler-tech/unifi repository. A source compromise or accidental removal
-  # there must not cause Flux to delete the Kubernetes managed resource and let
-  # Crossplane cascade-delete the backing live UniFi object.
-  prune: false
+  # Flux stays authoritative for this tree like every other Kustomization: a
+  # resource removed from devantler-tech/unifi is deleted from the cluster.
+  prune: true
   wait: true
   serviceAccountName: unifi
   sourceRef:
     kind: GitRepository
     name: unifi
   targetNamespace: unifi
+  # The live UniFi objects are retained at the resource layer instead. Every
+  # managed resource is applied without the Delete management policy, so a
+  # source compromise or an accidental removal deletes only the Kubernetes
+  # object, never the network object behind it. (Namespaced Crossplane v2
+  # managed resources have no deletionPolicy; leaving out Delete is its Orphan
+  # form.) Deleting a live UniFi object therefore stays a deliberate act in UniFi.
+  #
+  # Flux appends these patches to the source's own root kustomization, whose
+  # commonAnnotations and transformers run after them, so the render alone
+  # cannot stop a source putting Delete back. The
+  # restrict-unifi-management-policies Kyverno policy enforces the outcome at
+  # admission for the unifi ServiceAccount, on apply and on prune.
+  #
+  # The two patches split every managed resource by one annotation, so each gets
+  # exactly one of them and the source can only ever narrow what Crossplane may
+  # do. A resource being adopted (docs/unifi-management.md) is annotated
+  # observe-only and gets ["Observe"]; every other resource gets every policy but
+  # Delete. A source-declared managementPolicies is replaced either way, because
+  # a strategic-merge patch replaces a custom resource's list wholesale.
+  #
+  # The group regex is anchored by kustomize and matches every managed-resource
+  # group the provider serves (dns., vpn., route., ... .unifi.m.crossplane.io),
+  # including groups it adds later, but not the provider's own configuration
+  # group unifi.m.crossplane.io.
+  patches:
+    - target:
+        group: '.+\.unifi\.m\.crossplane\.io'
+        annotationSelector: platform.devantler.tech/unifi-management!=observe-only
+      patch: |
+        apiVersion: unifi.m.crossplane.io/v1alpha1
+        kind: ManagedResource
+        metadata:
+          name: retain-live-unifi-object
+        spec:
+          managementPolicies:
+            - Observe
+            - Create
+            - Update
+            - LateInitialize
+    - target:
+        group: '.+\.unifi\.m\.crossplane\.io'
+        annotationSelector: platform.devantler.tech/unifi-management=observe-only
+      patch: |
+        apiVersion: unifi.m.crossplane.io/v1alpha1
+        kind: ManagedResource
+        metadata:
+          name: observe-adopted-unifi-object
+        spec:
+          managementPolicies:
+            - Observe

@@ -103,11 +103,30 @@ same way, to compare each stored version with the listed one. A run takes about 
 
 ### Repairing a split summary
 
-A split summary cannot repair itself: the scanner's own update is the write that keeps failing.
-Delete it, and the next vulnerability scan (daily, or on the next workload change) recreates it
-through the create path, which writes both copies afresh. Deleting removes that result until the
-rescan, so re-run the check after the next scan and expect no `SPLIT` line for it. This is a
-production write, so it is done by an operator with write access, never by the read-only check.
+A lasting split blocks the scanner's updates. Preserve the result while investigating it: repeat
+successful LIST and full-object GET reads, bind them to the same name, namespace and UID, and
+compare both versions again. A changed object or failed, partial or malformed read is an unknown
+observation, not permission to repair it. A single mismatch during a concurrent scan is not enough.
+
+Do not use deletion or a forced update as the routine repair. The storage implementation must
+actually enforce the intended identity and version preconditions; supplying them in a command
+does not prove that it does. Deletion also removes the available finding until a successful rescan,
+whose completion is not guaranteed by the delete operation.
+
+A production repair belongs in a reviewed Platform change under #4263. Prefer reconciling a
+lagging metadata row to an intact, proven newer stored object while preserving its UID, payload
+and scan timestamp. Before an operator runs any repair, its evidence must establish:
+
+- The exact summary identity and both observed versions, with complete reads and a repeatable split.
+- Write semantics that enforce those observations atomically and refuse concurrent scanner changes,
+  replacement objects, missing or corrupt payloads, and an unproven direction of version drift.
+- A recovery path for the affected storage and a bounded scope that leaves unrelated results intact.
+
+After the repair, confirm fresh LIST and full-object GET agreement for the same identity. Then
+verify a successful scanner update and a current scan result, and re-run the full coverage check.
+Metadata agreement alone establishes storage coherence, not scan freshness, a paired vulnerability
+result, or complete coverage. Keep the remaining missing and stale results tracked in #4263. The
+detector stays read-only; it performs none of these repairs.
 
 CI has no cluster, so it runs only the fixture test
 (`scripts/tests/test-check-kubescape-result-coverage.sh`). The test includes the negative control:

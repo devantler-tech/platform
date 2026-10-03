@@ -35,6 +35,12 @@ declaring `pass` or `fail` is Excluded, when a fixture names a rule that no
 policy it loads defines, or when a declared resource produced no row. Declare a
 resource the rule should leave alone as `result: skip`.
 
+The stale-report proof also updates an exemption while its resource already has
+a stored failure. The same report and resource UIDs must then carry exactly one
+fresh `skip` for that rule, with no retained failure. Three unexempted controls
+must still have fresh failures. This observes background report replacement,
+which a static rule-evaluation test cannot establish.
+
 ## Safe rollout and verification
 
 1. Express a new replica-floor exemption as a precondition in
@@ -46,7 +52,7 @@ resource the rule should leave alone as `result: skip`.
    hour), then verify the target rule has no failures:
 
    ```bash
-   kubectl --context=admin@prod get policyreports.wgpolicyk8s.io -A -o json \
+   kubectl --context=oidc@prod get policyreports.wgpolicyk8s.io -A -o json \
      | jq '[.items[].results[]? | select(.policy == "validate-replica-floor")]
        | group_by(.result)
        | map({result: .[0].result, count: length})'

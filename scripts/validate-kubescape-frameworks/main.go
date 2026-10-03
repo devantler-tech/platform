@@ -1392,6 +1392,12 @@ func undecidableCommandWord(fields []string) string {
 // anchors can be constructed away (`work${LOAD}`, `--frame${SUFFIX}`) while the line
 // still executes a scan. A quoted fragment (`"ksail`) is not a plain word, so quoted
 // prose stays readable; an empty reason means the line is decidable.
+//
+// THE PLAIN WORD MUST HAVE ROOM TO TAKE PART IN AN INVOCATION (#3585). Keying on the
+// word alone refused `echo scan "$STATUS"`, an ordinary diagnostic line in which `scan`
+// cannot belong to any `ksail workload scan` invocation: see roomForInvocation. Every
+// plain `ksail`, and every `workload` or `scan` that does have room, still triggers the
+// refusal below.
 func undecidableScanCandidate(fields []string) string {
 	// TOKENS INSIDE A MULTI-WORD QUOTED STRING ARE NOT PLAIN WORDS. resolveToken flags only
 	// the token that opens or closes the string; the words between them resolve as plain
@@ -1400,21 +1406,34 @@ func undecidableScanCandidate(fields []string) string {
 	// the quoting opt-out the messages name must keep working when the prose carries a
 	// variable. A balanced token (`"$X"`, `--frame"work"`) is outside any such string.
 	inQuote := false
-	scanWord := ""
-	for _, f := range fields {
+	plain := make([]string, len(fields))
+	// capacity[i] bounds how many argv words fields[i] can become. Quoted prose that a
+	// line break left open counts as unlimited: its other end is not on this line.
+	capacity := make([]int, len(fields))
+	for i, f := range fields {
 		word, fragment := resolveToken(f)
 		if fragment {
 			inQuote = !inQuote
+			capacity[i] = unlimitedWords
 			continue
 		}
 		if inQuote {
+			capacity[i] = unlimitedWords
 			continue
 		}
-		switch word {
-		case "ksail", "workload", "scan":
-			if scanWord == "" {
-				scanWord = f
-			}
+		plain[i] = word
+		capacity[i] = wordCapacity(f)
+	}
+	// before[i] is how many words the fields in front of position i can supply.
+	before := make([]int, len(fields)+1)
+	for i := range fields {
+		before[i+1] = before[i] + capacity[i]
+	}
+	scanWord := ""
+	for i, f := range fields {
+		if roomForInvocation(plain[i], before[i], before[len(fields)]-before[i+1]) {
+			scanWord = f
+			break
 		}
 	}
 	if scanWord == "" {
@@ -1449,6 +1468,15 @@ func undecidableScanCandidate(fields []string) string {
 // becomes two options only when the shell runs — and counts as an expansion too;
 // inside double quotes braces are literal.
 func carriesExpansion(tok string) bool {
+	quoted, unquoted := expansionKinds(tok)
+	return quoted || unquoted
+}
+
+// expansionKinds splits carriesExpansion's answer by where the expansion sits: quoted
+// is a `$` or backtick inside double quotes, unquoted is any expansion or pattern
+// outside quotes. The distinction decides how many words the token can become — an
+// unquoted expansion is word-split and globbed, a double-quoted one is not.
+func expansionKinds(tok string) (quoted, unquoted bool) {
 	const (
 		plain = iota
 		single
@@ -1467,7 +1495,7 @@ func carriesExpansion(tok string) bool {
 			case '\\':
 				i++
 			case '$', '`', '*', '?', '[', '{':
-				return true
+				unquoted = true
 			}
 		case single:
 			if c == '\'' {
@@ -1480,11 +1508,78 @@ func carriesExpansion(tok string) bool {
 			case '\\':
 				i++
 			case '$', '`':
-				return true
+				quoted = true
 			}
 		}
 	}
+	return quoted, unquoted
+}
+
+// unlimitedWords is the capacity of a token that can expand to any number of words.
+// Large enough that a sum of them can never fall below a role's need, small enough
+// that summing a line's worth cannot overflow.
+const unlimitedWords = 1 << 20
+
+// wordCapacity bounds how many argv words one shell word can become. A word with no
+// expansion is exactly one. An UNQUOTED expansion is split on whitespace, globbed and
+// brace-expanded, so it is unlimited — and that includes the ANSI-C `$'…'` form, which
+// is one word in fact but is not worth a special case on a check that must not
+// under-count. A DOUBLE-QUOTED expansion is one word, with one exception the quotes do
+// not prevent: `"$@"` and `"${a[@]}"` expand to one word per element, so any `@` in an
+// expanding token is unlimited too.
+func wordCapacity(tok string) int {
+	quoted, unquoted := expansionKinds(tok)
+	switch {
+	case unquoted:
+		return unlimitedWords
+	case quoted && strings.Contains(tok, "@"):
+		return unlimitedWords
+	}
+	return 1
+}
+
+// roomForInvocation reports whether a plain scan word, with `front` words available
+// before it and `back` words after it, could take part in a `ksail workload scan`
+// invocation. `workload` or `scan` may be a renamed binary, which needs `workload scan`
+// after it — two words. `workload` may also be the subcommand, needing the binary in
+// front and `scan` behind; `scan` may also be the subcommand, needing the binary and
+// `workload` in front.
+//
+// `ksail` ITSELF IS ALWAYS EVIDENCE, whatever surrounds it. It names the binary, and a
+// wrapper that appends arguments it reads at run time (`xargs ksail`, see #4164) gives
+// it room the line does not show. Narrowing it would buy nothing #3585 asked for. A
+// renamed binary fed its arguments that way is the residual every name shares — it is
+// as open for `scan2` as for `scan` — so a scan word needs no stricter count there.
+//
+// THE COUNT IS POSITIONAL, NOT LEXICAL. It never asks whether a neighbouring word
+// spells `workload` or names a wrapper, so a subcommand alias, a wrapper such as `env`
+// or `sudo`, or an option between the words cannot make it under-count: every word
+// counts as able to fill a role. It answers "no" only where no reading of the line can
+// place the word in an invocation, as in `echo scan "$STATUS"` — one word in front of
+// `scan`, and one single word after it.
+func roomForInvocation(word string, front, back int) bool {
+	switch word {
+	case "ksail":
+		return true
+	case "workload":
+		return back >= 2 || (front >= 1 && back >= 1)
+	case "scan":
+		return back >= 2 || front >= 2
+	}
 	return false
+}
+
+// plainOptionName is an option name spelled with no shell syntax at all: no quote, no
+// backslash, no expansion. Only such a name is the option the raw text shows.
+var plainOptionName = regexp.MustCompile(`^--?[A-Za-z0-9][A-Za-z0-9-]*$`)
+
+// plainOptionAssignment reports whether tok is `<name>=<value>` with the name, up to
+// the first `=`, spelled plainly. The first `=` is necessarily outside any quote,
+// because the name before it contains no quote character, so whatever quoting follows
+// belongs to the value and cannot change which option this is.
+func plainOptionAssignment(tok string) bool {
+	name, _, found := strings.Cut(tok, "=")
+	return found && plainOptionName.MatchString(name)
 }
 
 func undecidableOptionWord(args []string) string {
@@ -1503,6 +1598,13 @@ func undecidableOptionWord(args []string) string {
 		spelled := bareToken(tok) != tok
 		switch {
 		case !expansion && !spelled:
+			continue
+		case !expansion && plainOptionAssignment(tok):
+			// `--framework="nsa,mitre"`: the option NAME is spelled plainly and the quoting
+			// sits only in its VALUE, with nothing to expand. The shell resolves that at
+			// parse time into exactly `--framework=nsa,mitre`, so the option is the one the
+			// text names and frameworkArgument reads the value the shell passes (#3585). A
+			// quoted or escaped NAME (`--frame"work"=…`) is not this shape and is refused below.
 			continue
 		case strings.HasPrefix(bareToken(tok), "-") || strings.HasPrefix(tok, "-"):
 			return fmt.Sprintf("option word %q is not a plain token", tok)
@@ -1685,10 +1787,11 @@ func scanInvocations(scalar string) ([]string, error) {
 				// be the bypass. The opt-out is to QUOTE the text, which the message names and
 				// TestUnrelatedPrefixedCommandIsStillIgnored pins as the accepted control.
 				// ANY PLAIN SCAN WORD BESIDE ANY EXPANSION IS REFUSED, before either anchor below
-				// is consulted. Both anchors can be constructed away at once: `ksail work${LOAD}
-				// scan --frame${SUFFIX} nsa` carries no literal `--framework` and no resolvable
-				// `workload scan` pair, so it fell between the two branches while executing a
-				// scan the guard never read. The whitelist is therefore keyed on the one thing
+				// is consulted — any that could take part in an invocation, which every `ksail`
+				// can and `scan` in `echo scan "$STATUS"` cannot (#3585). Both anchors can be
+				// constructed away at once: `ksail work${LOAD} scan --frame${SUFFIX} nsa` carries
+				// no literal `--framework` and no resolvable `workload scan` pair, so it fell
+				// between the two branches while executing a scan the guard never read. The whitelist is therefore keyed on the one thing
 				// a constructed invocation cannot hide — the plain scan word it still needs —
 				// and refuses the line whenever any other token expands, whatever the rest
 				// spells. The residual is a line that expands all three words, which no lexical
@@ -1811,13 +1914,31 @@ func scanInvocations(scalar string) ([]string, error) {
 // character, it TRUNCATES at it: `nsa,mitre,cis-v1.23-t1.0.1` and
 // `nsa,mitre,cis-v1.24-t1.0.0` both normalised to `cis,mitre,nsa`, so two
 // workflows scanning genuinely different sets compared EQUAL.
+//
+// THE FLAG IS FOUND AMONG SHELL WORDS, not whitespace-separated text. Splitting the raw
+// line on spaces found a `--framework` INSIDE a quoted argument — `-o "x --framework
+// nsa,mitre " --framework nsa` read `nsa,mitre` while bash passed that text as the value
+// of `-o` and scanned `nsa` alone. A quoted argument is one word here, exactly as it is
+// to the shell and to scanInvocations, which already read this line that way.
+//
+// The `--framework=` VALUE is read as the shell passes it: `--framework="nsa,mitre"` is
+// the argument `--framework=nsa,mitre` (#3585). Only quoting with nothing to expand is
+// resolved; undecidableOptionWord has already refused anything else, and a value that
+// still carried an expansion would arrive raw and fail frameworkTokens. The separate-word
+// form `--framework 'nsa,mitre'` is NOT resolved: its value stays refused by
+// frameworkTokens, as TestQuotedOptionValueExpansionIsStillRead pins.
 func frameworkArgument(invocation string) (string, error) {
-	fields := strings.Fields(invocation)
+	fields := shellFields(invocation)
 	for i, f := range fields {
 		if f == "--framework" && i+1 < len(fields) {
 			return fields[i+1], nil
 		}
 		if v, ok := strings.CutPrefix(f, "--framework="); ok {
+			if !carriesExpansion(v) {
+				if word, fragment := resolveToken(v); !fragment {
+					v = word
+				}
+			}
 			return v, nil
 		}
 	}

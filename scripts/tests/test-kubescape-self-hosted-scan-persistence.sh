@@ -148,6 +148,21 @@ readonly scanner_cpu_limit
 [[ "${scanner_cpu_limit}" == "2" ]] ||
   fail 'the Kubescape scanner must retain the reviewed 8:1 CPU burst ratio'
 
+# Vulnerability scans need a separate burst envelope from posture scans. Keep
+# the idle request unchanged: VPA preserves this 20:1 ratio, giving kubevuln
+# one core at the 50m floor instead of squeezing bursts into half a core.
+kubevuln_cpu_request="$(yq -er '.spec.values.kubevuln.resources.requests.cpu' "${helm_release}")" ||
+  fail 'the kubevuln CPU request is missing'
+readonly kubevuln_cpu_request
+[[ "${kubevuln_cpu_request}" == "50m" ]] ||
+  fail 'kubevuln must preserve its authored idle CPU request for VPA ratio scaling'
+
+kubevuln_cpu_limit="$(yq -er '.spec.values.kubevuln.resources.limits.cpu' "${helm_release}")" ||
+  fail 'the kubevuln CPU limit is missing'
+readonly kubevuln_cpu_limit
+[[ "${kubevuln_cpu_limit}" == "1" ]] ||
+  fail 'kubevuln must retain the reviewed 20:1 CPU burst ratio'
+
 # The chart hashes one shared cluster seed for both default schedules, so its
 # nominally different posture/vulnerability defaults render to the same cron
 # instant. Both scans are high-volume writers to one SQLite-backed storage API;
@@ -237,6 +252,26 @@ rendered_scanner_cpu_limit="$(yq ea -er '
 readonly rendered_scanner_cpu_limit
 [[ "${rendered_scanner_cpu_limit}" == "2" ]] ||
   fail 'the rendered Kubescape scanner does not retain the reviewed CPU burst ceiling'
+
+rendered_kubevuln_cpu_request="$(yq ea -er '
+  select(.kind == "Deployment" and .metadata.name == "kubevuln") |
+  .spec.template.spec.containers[] |
+  select(.name == "kubevuln") |
+  .resources.requests.cpu
+' "${rendered_chart}")" || fail 'the rendered kubevuln CPU request is missing'
+readonly rendered_kubevuln_cpu_request
+[[ "${rendered_kubevuln_cpu_request}" == "${kubevuln_cpu_request}" ]] ||
+  fail 'the rendered kubevuln Deployment does not preserve its authored idle CPU request'
+
+rendered_kubevuln_cpu_limit="$(yq ea -er '
+  select(.kind == "Deployment" and .metadata.name == "kubevuln") |
+  .spec.template.spec.containers[] |
+  select(.name == "kubevuln") |
+  .resources.limits.cpu
+' "${rendered_chart}")" || fail 'the rendered kubevuln CPU limit is missing'
+readonly rendered_kubevuln_cpu_limit
+[[ "${rendered_kubevuln_cpu_limit}" == "${kubevuln_cpu_limit}" ]] ||
+  fail 'the rendered kubevuln Deployment does not retain the reviewed CPU burst ceiling'
 
 # Chart 1.40.4 removed the node-agent's existing read-only profile rule while
 # node-agent still lists ApplicationProfiles during its storage readiness gate.
