@@ -2922,7 +2922,9 @@ jobs:
             ${{ github.event.pull_request.base.sha ||
             github.event.merge_group.base_sha }}
         run: |
+          base_kube_version="$(git show "${BASE_SHA}:ksail.prod.yaml" | yq -er '.spec.cluster.kubernetesVersion | select(tag == "!!str" and . != "")')"
           bash scripts/guard-helm-post-renderers.sh --flux-version 2.8.8 --base "$BASE_SHA" \
+            --base-kube-version "$base_kube_version" \
             --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s
 
   # Every merge-group validator that ci-required-checks enforces is listed here too.

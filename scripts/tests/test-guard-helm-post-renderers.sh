@@ -450,6 +450,23 @@ assert_rc 'a chart bump under an unchanged post-renderer is rendered' 1
 assert_pulled 'at the bumped version' 'oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator||0.50.0'
 
 new_tree
+cp -R "$chart" "$scratch/charts/kube-sensitive"
+yq -i '.name = "kube-sensitive"' "$scratch/charts/kube-sensitive/Chart.yaml"
+sed 's/semverCompare "<0.50.0" .Chart.Version/semverCompare "<1.37.0" .Capabilities.KubeVersion.Version/' \
+  "$chart/templates/deployment.yaml" >"$scratch/charts/kube-sensitive/templates/deployment.yaml"
+pr_pod_leaf_add | release
+yq -i '.spec.chart.spec.chart = "kube-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
+commit "$TREE" base
+run_guard "$TREE" --base HEAD --kube-version v1.37.0
+assert_rc 'a missing base Kubernetes profile cannot silently skip a pin-only change' 2
+run_guard "$TREE" --base HEAD --kube-version v1.37.0 --base-kube-version v1.36.4
+assert_rc 'a Kubernetes-only profile change checks unchanged release definitions' 1
+assert_contains 'the new Kubernetes branch removes the patched parent' 'doc is missing path'
+run_guard "$TREE" --base HEAD --kube-version v1.36.4 --base-kube-version v1.36.4
+assert_rc 'an unchanged explicit Kubernetes profile still skips unchanged releases' 0
+assert_pulls 'the unchanged explicit profile pulls no chart' 0
+
+new_tree
 {
   printf '%s\n' '  values:' "$replicas"
   pr_replicas_are 3
@@ -799,12 +816,54 @@ printf '%s\n' '{{ $r := .Release }}{{ if eq $r.Revision 1 }}' 'apiVersion: v1' '
   >"$scratch/charts/revision-sensitive/templates/revision.yaml"
 run_guard "$TREE"
 assert_rc 'aliased Release.Revision is also historical input' 2
+# shellcheck disable=SC2016 # Go raw-string template keys must remain literal.
+printf '%s\n' '{{ if eq (index .Release `Revision`) 1 }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: revision-one' '{{ end }}' \
+  >"$scratch/charts/revision-sensitive/templates/revision.yaml"
+pr_3580 | release
+yq -i '.spec.chart.spec.chart = "revision-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
+run_guard "$TREE"
+assert_rc 'a raw-string Revision property is also historical input' 2
+printf '%s\n' '{{ tpl .Values.extraTemplate . }}' >"$scratch/charts/revision-sensitive/templates/revision.yaml"
+yq -i '.spec.values.extraTemplate = "{{ if eq .Release.Revision 1 }}apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: revision-one\n{{ end }}"' "$TREE/k8s/controllers/test/helm-release.yaml"
+run_guard "$TREE"
+assert_rc 'revision-dependent templates supplied through values are cannot-check' 2
+cat <<'EOF' | release
+  valuesFrom:
+    - kind: ConfigMap
+      name: template-input
+      valuesKey: template
+      targetPath: extraTemplate
+EOF
+pr_3580 >>"$TREE/k8s/controllers/test/helm-release.yaml"
+yq -i '.spec.chart.spec.chart = "revision-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
+cat >"$TREE/k8s/controllers/test/template-input.yaml" <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: template-input
+  namespace: flux-system
+data:
+  template: '{{ if eq .Release.Revision 1 }}apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: revision-one
+    {{ end }}'
+EOF
+printf '%s\n' '  - template-input.yaml' >>"$TREE/k8s/controllers/test/kustomization.yaml"
+run_guard "$TREE"
+assert_rc 'revision-dependent templates supplied by selected ConfigMap data are cannot-check' 2
+assert_contains 'selected template values reach the historical-input check' 'revision-dependent chart'
 printf '%s\n' '{{ if eq .Capabilities.HelmVersion.Version "v4.2.0" }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: cli-version' '{{ end }}' \
   >"$scratch/charts/revision-sensitive/templates/revision.yaml"
 pr_3580 | release
 yq -i '.spec.chart.spec.chart = "revision-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
 run_guard "$TREE"
 assert_rc 'CLI and SDK HelmVersion capabilities cannot be assumed equivalent' 2
+# shellcheck disable=SC2016 # Go raw-string template keys must remain literal.
+printf '%s\n' '{{ if eq (index (.Capabilities | toJson | fromJson) `HelmVersion`).Version "v4.2.0" }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: cli-version' '{{ end }}' \
+  >"$scratch/charts/revision-sensitive/templates/revision.yaml"
+run_guard "$TREE"
+assert_rc 'raw-string HelmVersion properties also require matching SDK metadata' 2
 
 new_tree
 pr_3580 | release

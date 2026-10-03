@@ -24,7 +24,9 @@
 #
 # WHICH RELEASES. With `--base <revision>`, only HelmReleases whose effective definition differs
 # from that revision are rendered: the release spec after substitution, its chart source,
-# selected ConfigMap values, and the admitted rendering profile. That covers a changed post-renderer,
+# selected ConfigMap values, and the admitted rendering profile. With an explicit Kubernetes
+# version, --base-kube-version supplies the base revision's input separately; a pin-only change
+# must not disappear by assigning the current pin to both profiles. That covers a changed post-renderer,
 # and also a chart bump or values change that moves
 # what an unchanged post-renderer patches. Every other release is skipped without a chart pull, so
 # the check stays proportionate to what a pull request changes. Without `--base`, every release
@@ -56,7 +58,7 @@
 # Kustomization, or a tree that renders no HelmRelease at all, is exit 2 as well: a selector that
 # matched nothing is indistinguishable from a clean tree.
 #
-# Usage: guard-helm-post-renderers.sh --flux-version 2.8.8 [--base <git-revision>] [--kube-version <version>] <k8s-root>
+# Usage: guard-helm-post-renderers.sh --flux-version 2.8.8 [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>
 #
 # Exit codes:
 #   0  every checked HelmRelease's post-renderers apply to its chart's rendered output
@@ -71,9 +73,10 @@ die() {
   exit 2
 }
 
-usage="usage: $0 --flux-version 2.8.8 [--base <git-revision>] [--kube-version <version>] <k8s-root>"
+usage="usage: $0 --flux-version 2.8.8 [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>"
 base=''
 kube_version=''
+base_kube_version=''
 flux_version=''
 while [ "$#" -gt 0 ]; do
   case $1 in
@@ -92,6 +95,11 @@ while [ "$#" -gt 0 ]; do
       kube_version="$2"
       shift 2
       ;;
+    --base-kube-version)
+      if [ "$#" -lt 2 ] || [ -z "$2" ]; then die "$usage"; fi
+      base_kube_version="$2"
+      shift 2
+      ;;
     --)
       shift
       break
@@ -102,6 +110,12 @@ while [ "$#" -gt 0 ]; do
 done
 [ "$#" -eq 1 ] || die "$usage"
 [ "$flux_version" = 2.8.8 ] || die "an audited --flux-version 2.8.8 profile is required"
+if [ -n "$base" ] && [ -n "$kube_version" ]; then
+  [ -n "$base_kube_version" ] || die "--base-kube-version is required when comparing an explicit Kubernetes profile"
+fi
+if [ -n "$base_kube_version" ]; then
+  [ -n "$base" ] && [ -n "$kube_version" ] || die "--base-kube-version requires --base and --kube-version"
+fi
 root="${1%/}"
 [ -d "$root/clusters" ] || die "'$root/clusters' is not a directory"
 for tool in helm jq kubectl yq; do
@@ -232,10 +246,10 @@ record='.[] | select(. != null) | . as $r
 # HelmRelease to <out>/records/<cluster>__<namespace>__<name>.json, with the part that decides the
 # render in <out>/canon/ under the same name. Counts go to <out>/counts. Exits 2 on any failure:
 # call it in a subshell.
-collect() { # <k8s-root> <out>
+collect() { # <k8s-root> <out> <kube-version>
   local tree="$1" out="$2" tree_real overlay cluster work doc path layers rendered wrap resource
   local component component_dir component_real flux_json releases key clusters=0 all_releases=0
-  local profile selector line
+  local profile selector line kube_version="$3"
   mkdir -p "$out/records" "$out/canon" || die "cannot create '$out'"
   tree_real="$(cd "$tree" && pwd -P)" || die "cannot resolve '$tree'"
   for overlay in "$tree"/clusters/*/; do
@@ -493,12 +507,16 @@ check_release() { # <record> <work>
     done <"$work/archives"
     [ "$pending" = 1 ] || break
   done
+  # tpl can evaluate templates supplied through inline or selected ConfigMap values. Inspect
+  # those strings too, without treating the post-renderer patches as Helm template inputs.
+  jq -r '[.release.spec.values // {}, [.valuesRefs[].value]] | .. | strings' "$record" \
+    >"$work/template-inputs" || die "$label: cannot inspect its template values"
   # An offline Helm template upgrade always has Revision=1. Refuse charts (including dependencies)
-  # that read Revision anywhere; do not pretend revision 2 proves every future upgrade either.
-  if grep -R -E -q "\.[[:space:]]*Revision|[\"']Revision[\"']" "$work/chart" "$work/dependencies"; then
+  # and input values that read Revision anywhere, including raw-string property keys.
+  if grep -R -E -q "\.[[:space:]]*Revision|[\"'\`]Revision[\"'\`]" "$work/chart" "$work/dependencies" "$work/template-inputs"; then
     die "$label: revision-dependent chart $chart_desc needs release history this guard cannot render"
   fi
-  if grep -R -E -q "\.[[:space:]]*HelmVersion|[\"']HelmVersion[\"']" "$work/chart" "$work/dependencies"; then
+  if grep -R -E -q "\.[[:space:]]*HelmVersion|[\"'\`]HelmVersion[\"'\`]" "$work/chart" "$work/dependencies" "$work/template-inputs"; then
     die "$label: HelmVersion-dependent chart $chart_desc needs the controller SDK capabilities, not the CLI build metadata"
   fi
 
@@ -546,7 +564,7 @@ check_release() { # <record> <work>
     "$label" "$(jq '.release.spec.postRenderers | length' "$record")" "$chart_desc"
 }
 
-(collect "$root" "$scratch/head") || exit 2
+(collect "$root" "$scratch/head" "$kube_version") || exit 2
 read -r clusters all_releases <"$scratch/head/counts"
 
 base_usable=0
@@ -561,7 +579,7 @@ if [ -n "$base" ]; then
     printf 'guard-helm-post-renderers: %s holds no %s; checking every post-rendered HelmRelease\n' "$base" "${prefix:-tree}"
   elif ! tar -x -C "$scratch/base-tree" -f "$scratch/base.tar"; then
     die "cannot unpack the base tree at $base"
-  elif ! (collect "$scratch/base-tree" "$scratch/base") 2>"$scratch/base.err"; then
+  elif ! (collect "$scratch/base-tree" "$scratch/base" "$base_kube_version") 2>"$scratch/base.err"; then
     printf 'guard-helm-post-renderers: the tree at %s cannot be rendered (%s); checking every post-rendered HelmRelease\n' \
       "$base" "$(tr '\n' ' ' <"$scratch/base.err" | head -c 300)"
   else
