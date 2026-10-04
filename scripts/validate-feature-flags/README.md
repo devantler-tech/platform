@@ -1,5 +1,10 @@
 # FeatureFlag definitions
 
+The guard uses Kubernetes-compatible YAML 1.1 decoding. Quote variant names such
+as `"on"` and `"off"`; an unquoted boolean default is rejected. Duplicate keys
+are rejected before validation. Symlinks to YAML, directories or unresolved
+targets fail coverage; ordinary non-manifest file symlinks are ignored.
+
 ```bash
 go run ./scripts/validate-feature-flags [YAML-ROOT]
 go test ./scripts/validate-feature-flags

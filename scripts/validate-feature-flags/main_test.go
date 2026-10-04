@@ -16,9 +16,9 @@ spec:
     flags:
       enabled:
         state: ENABLED
-        defaultVariant: off
-        variants: {on: true, off: false}
-        targeting: {if: [{"==": [{var: role}, admin]}, on, off]}
+        defaultVariant: "off"
+        variants: {"on": true, "off": false}
+        targeting: {if: [{"==": [{var: role}, admin]}, "on", "off"]}
 `
 
 func fixture(t *testing.T, data string) string {
@@ -36,9 +36,10 @@ func TestActualGuardAcceptsValidAndRejectsMalformedDefinitions(t *testing.T) {
 		valid      bool
 	}{
 		{"valid", validFlag, true},
-		{"default absent", strings.ReplaceAll(validFlag, "        defaultVariant: off\n", ""), false},
-		{"default missing from variants", strings.ReplaceAll(validFlag, "defaultVariant: off", "defaultVariant: missing"), false},
-		{"mixed variant types", strings.ReplaceAll(validFlag, "off: false", "off: 42"), false},
+		{"default absent", strings.ReplaceAll(validFlag, "        defaultVariant: \"off\"\n", ""), false},
+		{"default missing from variants", strings.ReplaceAll(validFlag, "defaultVariant: \"off\"", "defaultVariant: missing"), false},
+		{"unquoted YAML 1.1 boolean default", strings.ReplaceAll(validFlag, "defaultVariant: \"off\"", "defaultVariant: off"), false},
+		{"mixed variant types", strings.ReplaceAll(validFlag, "\"off\": false", "\"off\": 42"), false},
 		{"unknown targeting operator", strings.ReplaceAll(validFlag, "{var: role}", "{wrong: role}"), false},
 		{"duplicate key", strings.ReplaceAll(validFlag, "state: ENABLED", "state: ENABLED\n        state: DISABLED"), false},
 		{"unsupported API", strings.ReplaceAll(validFlag, "v1beta1", "v9"), false},
@@ -76,7 +77,7 @@ func TestListsAndMultipleDocumentsCannotHideFlags(t *testing.T) {
 	if !strings.Contains(output.String(), "Validated 2 FeatureFlag") {
 		t.Fatal(output.String())
 	}
-	data = strings.ReplaceAll(data, "off: false", "off: 42")
+	data = strings.ReplaceAll(data, "\"off\": false", "\"off\": 42")
 	if err := validate(fixture(t, data), &output); err == nil {
 		t.Fatal("nested invalid flags passed")
 	}
@@ -98,7 +99,7 @@ func TestTypedListItemsWithoutHeadersAreValidated(t *testing.T) {
 	if !strings.Contains(output.String(), "Validated 1 FeatureFlag") {
 		t.Fatal(output.String())
 	}
-	data = strings.ReplaceAll(data, "off: false", "off: 42")
+	data = strings.ReplaceAll(data, "\"off\": false", "\"off\": 42")
 	if err := validate(fixture(t, data), &output); err == nil {
 		t.Fatal("typed list hid an invalid definition")
 	}
@@ -111,5 +112,37 @@ func TestSymlinkedDirectoriesCannotHideFlagCoverage(t *testing.T) {
 	}
 	if err := validate(dir, &bytes.Buffer{}); err == nil {
 		t.Fatal("symlink was reported as empty coverage")
+	}
+}
+
+func TestNonManifestSymlinksDoNotBlockValidation(t *testing.T) {
+	dir := fixture(t, validFlag)
+	target := filepath.Join(t.TempDir(), "README.md")
+	if err := os.WriteFile(target, []byte("documentation"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "README.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := validate(dir, &bytes.Buffer{}); err != nil {
+		t.Fatalf("non-manifest symlink blocked valid flags: %v", err)
+	}
+}
+
+func TestManifestAndUnresolvedSymlinksCannotHideCoverage(t *testing.T) {
+	for _, name := range []string{"flag.yaml", "flag.yml", "unresolved"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(fixture(t, validFlag), "flag.yaml")
+			if name == "unresolved" {
+				target = filepath.Join(t.TempDir(), "missing")
+			}
+			if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
+				t.Fatal(err)
+			}
+			if err := validate(dir, &bytes.Buffer{}); err == nil {
+				t.Fatal("unexamined manifest coverage reported clean")
+			}
+		})
 	}
 }

@@ -13,7 +13,8 @@ import (
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v2"
+	kubernetesyaml "sigs.k8s.io/yaml"
 )
 
 //go:embed schema/*.json
@@ -134,7 +135,12 @@ func validate(root string, output io.Writer) error {
 			return walkErr
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("refusing YAML symlink: %s", path)
+			info, statErr := os.Stat(path)
+			ext := filepath.Ext(path)
+			if statErr != nil || info.IsDir() || ext == ".yaml" || ext == ".yml" {
+				return fmt.Errorf("refusing symlink that may hide manifests: %s", path)
+			}
+			return nil
 		}
 		if entry.IsDir() || (filepath.Ext(path) != ".yaml" && filepath.Ext(path) != ".yml") {
 			return nil
@@ -144,9 +150,10 @@ func validate(root string, output io.Writer) error {
 			return err
 		}
 		decoder := yaml.NewDecoder(bytes.NewReader(data))
+		decoder.SetStrict(true)
 		for {
-			var node yaml.Node
-			err := decoder.Decode(&node)
+			var value any
+			err := decoder.Decode(&value)
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
@@ -154,11 +161,21 @@ func validate(root string, output io.Writer) error {
 				return fmt.Errorf("%s: %w", path, err)
 			}
 			// Standalone JSON6902 patch arrays and scalar overlay inputs are not CRs.
-			if len(node.Content) == 0 || node.Content[0].Kind != yaml.MappingNode {
+			if _, mapping := value.(map[any]any); !mapping {
 				continue
 			}
+			// Use the Kubernetes YAML 1.1 resolver before JSON conversion. Re-encoding
+			// a yaml.v3 node would turn plain on/off into quoted strings instead.
+			documentYAML, err := yaml.Marshal(value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			documentJSON, err := kubernetesyaml.YAMLToJSONStrict(documentYAML)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
 			var document map[string]any
-			if err := node.Decode(&document); err != nil {
+			if err := json.Unmarshal(documentJSON, &document); err != nil {
 				return fmt.Errorf("%s: %w", path, err)
 			}
 			if err := inspect(document, schema, &count); err != nil {

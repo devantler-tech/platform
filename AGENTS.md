@@ -589,7 +589,7 @@ on new stateful resources.
 **Pick the right tool, not always a flag:** a permanent setting is plain config; a version/traffic rollout is Flagger (layer 2), not a runtime flag. **Flag lifecycle:** a *release* flag is short-lived and **removed after rollout** (file the removal when it's born); only *kill-switch* and *permissioning* flags are long-lived. FeatureFlag/FeatureFlagSource CRDs are runtime-installed, so add them to `validation.skipKinds` in `ksail.yaml`+`ksail.prod.yaml` when the first CR lands (same as the Flagger/Tenant CRDs).
 
 CI checks every authored `FeatureFlag.spec.flagSpec` with the pinned, offline
-flagd schema via `go run ./scripts/validate-feature-flags`. Run it before adding
+flagd schema via [`go run ./scripts/validate-feature-flags`](scripts/validate-feature-flags/README.md). Run it before adding
 or changing flags. The check reports empty coverage explicitly until a real flag
 exists; skipping the runtime-installed CRD's manifest schema does not skip its
 flag definitions. The operator requires a string default variant, which must
