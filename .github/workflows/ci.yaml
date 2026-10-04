@@ -73,6 +73,11 @@ jobs:
           shellcheck scripts/required-merge-workflows.sh scripts/tests/test-required-merge-workflows.sh
           bash scripts/tests/test-required-merge-workflows.sh
 
+      - name: 🛟 Validate the DR Longhorn disk preflight
+        run: |
+          shellcheck scripts/tests/test-dr-longhorn-disk-preflight.sh
+          bash scripts/tests/test-dr-longhorn-disk-preflight.sh
+
       # Run on merge groups too: the manifest job below is PR-only.
       - name: 🔐 Validate Cilium SNI hostname coverage
         run: |
