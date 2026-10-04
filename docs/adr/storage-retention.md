@@ -204,10 +204,14 @@ on this cluster yet: step 4 of the rollout drills it, and nothing depends on it 
 2. Reserve the released volume for the claim that should own it: edit the claim reference on the
    volume so that it holds only that claim's namespace and name, and remove the old claim's `uid`
    and `resourceVersion` from it. The volume becomes `Available`, and only that claim can bind it.
-   Leaving the old `uid` in place reserves nothing, even when the namespace and name are unchanged.
+   Leaving the old `uid` in place keeps the reference tied to the deleted claim and prevents the
+   replacement claim from binding, even when the namespace and name are unchanged.
 3. Let the claim be created, by restoring the manifest or by letting the operator or StatefulSet
-   create it. It binds the reserved volume and provisions nothing new, provided it asks for no more
-   than the volume's capacity and for the same volume mode.
+   create it. Verify that its storage class, requested access modes, volume mode, selector and
+   capacity match the retained volume. Verify that its workload can schedule under the volume's
+   node affinity; reservation does not make an incompatible placement usable. After binding,
+   compare the volume UID and storage handle with the private pre-drill record and read back a
+   seeded data checksum. A new empty volume or a Pending claim is a failed recovery drill.
 4. A claim that an operator owns may also need the labels and annotations the operator expects on
    it. Step 4 of the rollout records these per operator. For databases, the backups described in
    [`dr/velero-cnpg.md`](../dr/velero-cnpg.md) remain the recovery path of record.
