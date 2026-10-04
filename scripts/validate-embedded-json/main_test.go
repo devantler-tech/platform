@@ -27,6 +27,53 @@ func TestSuccessfulValidationCannotIgnoreFailedResultOutput(t *testing.T) {
 	}
 }
 
+type failOnWrite struct{ calls, failAt int }
+
+func (w *failOnWrite) Write(p []byte) (int, error) {
+	w.calls++
+	if w.calls == w.failAt {
+		return 0, errors.New("fixture report output refused")
+	}
+	return len(p), nil
+}
+
+func TestViolationReportOutputFailuresAreDiagnosed(t *testing.T) {
+	for _, failAt := range []int{1, 2, 3} {
+		t.Run(string(rune('0'+failAt)), func(t *testing.T) {
+			root := fixture(t, map[string]string{"config.yaml": "kind: ConfigMap\ndata:\n  config.json: broken\n"})
+			var stderr bytes.Buffer
+			writer := &failOnWrite{failAt: failAt}
+			if rc := run([]string{"-root", root}, writer, &stderr); rc != 1 || !strings.Contains(stderr.String(), "cannot write validation result") {
+				t.Fatalf("report write %d: exit=%d stderr=%q", failAt, rc, stderr.String())
+			}
+			if writer.calls != failAt {
+				t.Fatalf("continued writing after failure: calls=%d want=%d", writer.calls, failAt)
+			}
+		})
+	}
+}
+
+func TestYAMLCommentsPreserveDocumentAndDataSelection(t *testing.T) {
+	for _, marker := range []string{"--- # next document", "---\t# next document"} {
+		t.Run(marker, func(t *testing.T) {
+			root := fixture(t, map[string]string{"mixed.yaml": "kind: ConfigMap\ndata:\n  good.json: {}\n" + marker + "\nkind: Secret\ndata:\n  ignored.json: broken\n" + marker + "\nkind: ConfigMap\ndata:\n  second.json: []\n"})
+			rc, out, stderr := check(t, root)
+			if rc != 0 || out != "✓ 2 embedded JSON blob(s) parse cleanly.\n" || stderr != "" {
+				t.Fatalf("mixed documents: exit=%d stdout=%q stderr=%q", rc, out, stderr)
+			}
+		})
+	}
+	for _, header := range []string{"kind: ConfigMap\ndata: # JSON configuration", "kind: ConfigMap # configuration\ndata:"} {
+		t.Run(header, func(t *testing.T) {
+			root := fixture(t, map[string]string{"comment.yaml": header + "\n  config.json: broken\n"})
+			rc, out, stderr := check(t, root)
+			if rc != 1 || !strings.Contains(out, "comment.yaml:3  (config.json:") || stderr != "" {
+				t.Fatalf("comment hid JSON: exit=%d stdout=%q stderr=%q", rc, out, stderr)
+			}
+		})
+	}
+}
+
 func fixture(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -61,6 +108,7 @@ func TestAcceptedManifestForms(t *testing.T) {
 		{"literal chomping", "kind: ConfigMap\ndata:\n  config.json: |-\n    [1,2]\n", "1"},
 		{"literal indentation", "kind: ConfigMap\ndata:\n  config.json: |2+\n    {\"valid\":true}\n\n", "1"},
 		{"plain", "kind: ConfigMap\ndata:\n  config.json: {\"valid\":true}\n", "1"},
+		{"commented mapping", "kind: ConfigMap # configuration\ndata: # JSON values\n  config.json: {\"marker\":\"--- # literal\"}\n", "1"},
 		{"single quoted", "kind: ConfigMap\ndata:\n  config.json: '{\"valid\":true}'\n", "1"},
 		{"double quoted", "kind: ConfigMap\ndata:\n  config.json: \"true\"\n", "1"},
 		{"large number", "kind: ConfigMap\ndata:\n  config.json: 1e1000\n", "1"},

@@ -89,6 +89,22 @@ func blockScalar(lines []string, start, end, keyIndent int) (string, int) {
 	return strings.Join(content, "\n"), index
 }
 
+func emptyOrComment(value string) bool {
+	value = strings.Trim(value, " \t")
+	return value == "" || strings.HasPrefix(value, "#")
+}
+
+func scalarWithOptionalComment(value, scalar string) bool {
+	if value == scalar {
+		return true
+	}
+	if !strings.HasPrefix(value, scalar) {
+		return false
+	}
+	tail := value[len(scalar):]
+	return len(tail) > 0 && (tail[0] == ' ' || tail[0] == '\t') && emptyOrComment(tail)
+}
+
 func embeddedValues(text string) []blob {
 	// The previous reader used universal newlines. Normalize before scanning so
 	// CRLF and CR inputs retain the same source selection and line positions.
@@ -103,8 +119,8 @@ func embeddedValues(text string) []blob {
 	for start := 0; start < len(lines); {
 		end := start
 		isConfigMap := false
-		for end < len(lines) && strings.TrimRight(lines[end], " \t") != "---" {
-			if strings.HasPrefix(lines[end], "kind:") && strings.Trim(lines[end][5:], " \t") == "ConfigMap" {
+		for end < len(lines) && !scalarWithOptionalComment(lines[end], "---") {
+			if strings.HasPrefix(lines[end], "kind:") && scalarWithOptionalComment(strings.TrimLeft(lines[end][5:], " \t"), "ConfigMap") {
 				isConfigMap = true
 			}
 			end++
@@ -119,7 +135,7 @@ func embeddedValues(text string) []blob {
 					continue
 				}
 				if indent == 0 {
-					inData, dataIndent = key == "data" && value == "", -1
+					inData, dataIndent = key == "data" && emptyOrComment(value), -1
 					continue
 				}
 				if !inData {
@@ -267,6 +283,13 @@ func run(args []string, out, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "validate-embedded-json: cannot complete validation: %v\n", err)
 		return 1
 	}
+	writeResult := func(format string, args ...any) bool {
+		if _, err := fmt.Fprintf(out, format, args...); err != nil {
+			fmt.Fprintf(stderr, "validate-embedded-json: cannot write validation result: %v\n", err)
+			return false
+		}
+		return true
+	}
 	for _, category := range []struct {
 		items []string
 		label string
@@ -278,17 +301,20 @@ func run(args []string, out, stderr io.Writer) int {
 			continue
 		}
 		sort.Strings(category.items)
-		fmt.Fprintf(out, "\n✗ %s (%d):\n", category.label, len(category.items))
+		if !writeResult("\n✗ %s (%d):\n", category.label, len(category.items)) {
+			return 1
+		}
 		for _, item := range category.items {
-			fmt.Fprintln(out, "   "+item)
+			if !writeResult("   %s\n", item) {
+				return 1
+			}
 		}
 	}
 	if problems := len(invalid) + len(folded); problems > 0 {
-		fmt.Fprintf(out, "\n%d embedded-JSON violation(s). See scripts/validate-embedded-json/.\n", problems)
+		writeResult("\n%d embedded-JSON violation(s). See scripts/validate-embedded-json/.\n", problems)
 		return 1
 	}
-	if _, err := fmt.Fprintf(out, "✓ %d embedded JSON blob(s) parse cleanly.\n", checked); err != nil {
-		fmt.Fprintf(stderr, "validate-embedded-json: cannot write validation result: %v\n", err)
+	if !writeResult("✓ %d embedded JSON blob(s) parse cleanly.\n", checked) {
 		return 1
 	}
 	return 0
