@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,11 @@ func TestLocalReads(t *testing.T) {
 		{"short variable append", "set -u\nf(){ local q; q=\"$q/x\"; }", 1},
 		{"prepend", "set -u\nf(){ local q; q=\"prefix${q}\"; }", 1},
 		{"ordinary read before assignment", "set -u\nf(){ local q; echo \"$q\"; q=ready; }", 1},
+		{"array initializer still reads existing local", "set -u\nf(){ local q; local -a values=(\"$q\"); }", 1},
+		{"global initializer still reads existing local", "set -u\nf(){ local q; declare -g value=\"$q\"; }", 1},
+		{"initialized local expands outer value", "set -u\nq=outer\nf(){ local q=\"$q\"; }", 0},
+		{"bare declaration precedes later initializer", "set -u\nf(){ local q value=\"$q\"; }", 1},
+		{"initializer reads previously bare local", "set -u\nf(){ local q; local q=\"$q\"; }", 1},
 		{"initialized historical queue", "set -euo pipefail\nf(){ local provider=$1 queue=\"\" seen_k=\"\"; queue=\"${queue}path\"; }", 0},
 		{"assignment before read", "set -u\nf(){ local q; q=ready; echo \"$q\"; }", 0},
 		{"while read assigns first", "set -u\nf(){ local q; while IFS= read -r q; do q=\"${q}x\"; done; }", 0},
@@ -119,5 +125,20 @@ func TestScanReportsARealFileAndRefusesMalformedShell(t *testing.T) {
 				t.Fatalf("success has no coverage evidence: %s", output.String())
 			}
 		})
+	}
+}
+
+type refusingWriter struct{}
+
+func (refusingWriter) Write([]byte) (int, error) { return 0, errors.New("fixture output refused") }
+
+func TestFailedCoverageOutputCannotReportSuccess(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "clean.sh")
+	if err := os.WriteFile(path, []byte("set -u\nf(){ local q=ready; echo \"$q\"; }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if status := run([]string{path}, refusingWriter{}); status != 2 {
+		t.Fatalf("failed coverage output reported exit %d instead of unknown", status)
 	}
 }

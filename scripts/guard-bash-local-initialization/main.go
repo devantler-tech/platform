@@ -21,6 +21,7 @@ type event struct {
 	enabled    bool
 }
 
+// arithmeticEvents preserves reads before writes for supported arithmetic forms.
 func arithmeticEvents(expr syntax.ArithmExpr) []event {
 	if expr == nil {
 		return nil
@@ -127,6 +128,7 @@ func builtinWrites(call *syntax.CallExpr) []string {
 	return nil
 }
 
+// lintSource orders declaration, read and write events within each function.
 func lintSource(path string, input io.Reader) ([]string, error) {
 	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(input, path)
 	if err != nil {
@@ -163,18 +165,28 @@ func lintSource(path string, input io.Reader) ([]string, error) {
 				if n.Variant.Value != "local" && n.Variant.Value != "declare" && n.Variant.Value != "typeset" {
 					break
 				}
-				// Global and array declarations have different initialization rules.
+				// Global and array destinations have different initialization rules,
+				// but their initializers still read previously declared locals.
+				skipDeclarations := false
 				for _, arg := range n.Args {
 					if arg.Name == nil && arg.Value != nil {
 						option := arg.Value.Lit()
 						if strings.HasPrefix(option, "-") && strings.ContainsAny(option[1:], "gaA") {
-							return false
+							skipDeclarations = true
 						}
 					}
 				}
+				if skipDeclarations {
+					break
+				}
 				for _, arg := range n.Args {
 					if arg.Name != nil {
-						events = append(events, event{pos: arg.Name.Pos(), kind: "local", name: arg.Name.Value})
+						position := arg.Name.Pos()
+						if !arg.Naked {
+							// The initializer expands before its destination is local.
+							position = arg.End()
+						}
+						events = append(events, event{pos: position, kind: "local", name: arg.Name.Value})
 					}
 				}
 			case *syntax.Assign:
@@ -243,6 +255,7 @@ func lintSource(path string, input io.Reader) ([]string, error) {
 	return findings, nil
 }
 
+// run reads caller-selected local paths and returns 2 when coverage is unknown.
 func run(paths []string, output io.Writer) int {
 	files := map[string]bool{}
 	unknown := false
@@ -257,12 +270,14 @@ func run(paths []string, output io.Writer) int {
 			return nil
 		})
 		if err != nil {
-			fmt.Fprintf(output, "UNKNOWN: %s: %v\n", path, err)
+			if _, err := fmt.Fprintf(output, "UNKNOWN: %s: %v\n", path, err); err != nil {
+				return 2
+			}
 			unknown = true
 		}
 	}
 	if len(files) == 0 {
-		fmt.Fprintln(output, "UNKNOWN: no shell files examined")
+		_, _ = fmt.Fprintln(output, "UNKNOWN: no shell files examined") // Already failing closed.
 		return 2
 	}
 	ordered := make([]string, 0, len(files))
@@ -274,24 +289,32 @@ func run(paths []string, output io.Writer) int {
 	for _, path := range ordered {
 		file, err := os.Open(path)
 		if err != nil {
-			fmt.Fprintf(output, "UNKNOWN: %s: %v\n", path, err)
+			if _, err := fmt.Fprintf(output, "UNKNOWN: %s: %v\n", path, err); err != nil {
+				return 2
+			}
 			unknown = true
 			continue
 		}
 		findings, err := lintSource(path, file)
 		closeErr := file.Close()
 		if err != nil || closeErr != nil {
-			fmt.Fprintf(output, "UNKNOWN: %s: parse=%v close=%v\n", path, err, closeErr)
+			if _, err := fmt.Fprintf(output, "UNKNOWN: %s: parse=%v close=%v\n", path, err, closeErr); err != nil {
+				return 2
+			}
 			unknown = true
 			continue
 		}
 		examined++
 		for _, finding := range findings {
-			fmt.Fprintln(output, finding)
+			if _, err := fmt.Fprintln(output, finding); err != nil {
+				return 2
+			}
 			count++
 		}
 	}
-	fmt.Fprintf(output, "examined=%d findings=%d\n", examined, count)
+	if _, err := fmt.Fprintf(output, "examined=%d findings=%d\n", examined, count); err != nil {
+		return 2
+	}
 	if unknown {
 		return 2
 	}
