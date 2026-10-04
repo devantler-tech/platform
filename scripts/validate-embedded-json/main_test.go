@@ -261,15 +261,34 @@ func TestTruncatedBlockPositionIgnoresTerminalLineBreak(t *testing.T) {
 }
 
 func TestBashCallerFromAnotherDirectory(t *testing.T) {
-	root := fixture(t, map[string]string{"config.yaml": "kind: ConfigMap\ndata:\n  config.json: {}\n"})
 	repo, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("bash", filepath.Join(repo, "scripts", "validate-embedded-json.sh"), "-root", root)
-	cmd.Dir = t.TempDir()
-	out, err := cmd.CombinedOutput()
-	if err != nil || string(out) != "✓ 1 embedded JSON blob(s) parse cleanly.\n" {
-		t.Fatalf("alternate-CWD caller: err=%v output=%q", err, out)
+	for _, tc := range []struct {
+		name, value, diagnostic string
+		exit                    int
+	}{
+		{"valid", "{}", "✓ 1 embedded JSON blob(s) parse cleanly.\n", 0},
+		{"invalid JSON", "broken", "Embedded JSON does not parse (1)", 1},
+		{"folded scalar", ">\n    {}", "Embedded JSON in a folded scalar", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := fixture(t, map[string]string{"config.yaml": "kind: ConfigMap\ndata:\n  config.json: " + tc.value + "\n"})
+			cmd := exec.Command("bash", filepath.Join(repo, "scripts", "validate-embedded-json.sh"), "-root", root)
+			cmd.Dir = t.TempDir()
+			out, err := cmd.CombinedOutput()
+			exit := 0
+			if err != nil {
+				var exitError *exec.ExitError
+				if !errors.As(err, &exitError) {
+					t.Fatalf("alternate-CWD caller could not run: %v", err)
+				}
+				exit = exitError.ExitCode()
+			}
+			if exit != tc.exit || !strings.Contains(string(out), tc.diagnostic) {
+				t.Fatalf("alternate-CWD caller: exit=%d output=%q; want exit=%d diagnostic=%q", exit, out, tc.exit, tc.diagnostic)
+			}
+		})
 	}
 }
