@@ -577,6 +577,7 @@ jobs:
               # The bookmark validator and its tests guard the same ConfigMap (#2909).
               - 'scripts/validate-homepage-bookmarks.sh'
               - 'scripts/tests/test-validate-homepage-bookmarks.sh'
+              - 'scripts/tests/homepage-bookmarks/**'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
               - 'scripts/tests/test-kyverno-github-team-report-rbac.sh'
               - 'scripts/tests/test-tenant-route-hostname-boundary.sh'
