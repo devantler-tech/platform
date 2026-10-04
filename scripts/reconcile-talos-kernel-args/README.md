@@ -46,7 +46,21 @@ range 7.194.7 → 7.194.8. The configuration-manager tree
 `go.sum` are byte-identical to 7.194.7, so the mirrored fold is unchanged. The only
 shipped source changes are in the Hetzner autoscaler provisioner, which now drops the
 Longhorn default-disk label from autoscaled workers after the pool labels are applied;
-the rest of the release is test and CI plumbing. See
+the rest of the release is test and CI plumbing.
+
+**7.194.9**, commit `40e3015e171eb037b31238c021d4b676f1f05858`, is audited as the
+range 7.194.8 → 7.194.9. The configuration-manager tree
+(`439ee0a33cf6ca597f5773bcb6db316900cb8149`), the cluster API tree, `go.mod` and
+`go.sum` are byte-identical to 7.194.8, so the mirrored fold is unchanged. The
+shipped source changes are outside the fold: the vcluster provisioner and the retry
+helper it shares with KWOK drop an unused recovery path, the local-path-storage
+installer takes an injectable transport, the generated chat documentation is
+refreshed, and the Talos ingress-firewall generator adds the default pod CIDR
+(`10.244.0.0/16`) to the kubelet rule of both the control-plane and the worker rule
+sets. That last change does reach this cluster, because KSail injects those
+rules at runtime when its own generated patch files are absent, as they are here. It
+widens nothing in practice: `talos/*/allow-internal-nodepod-ingress.yaml` already
+admits the pod CIDR to the kubelet port, and the rule count is unchanged. See
 [`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/talos/configs.go#L1082)
 and the [explicit schematic selection boundary](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/ksail/distribution.go#L154).
 KSail first computes the schematic and installs its image; this helper mirrors
