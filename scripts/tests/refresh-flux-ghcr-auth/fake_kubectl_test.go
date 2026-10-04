@@ -1455,6 +1455,21 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid synchronization lease lookup")
 	}
+	// Only release combines this finite timeout with ignore-not-found. Delete a
+	// Lease that was actually acquired just before that read, rather than faking
+	// a failed kubectl command or preventing acquisition in the first place.
+	if os.Getenv("FAKE_SYNC_LEASE_DELETED_BEFORE_RELEASE") == "true" &&
+		containsArg(args, "--request-timeout=30s") && containsArg(args, "--ignore-not-found") &&
+		markerExists("sync-lease-holder") {
+		removeMarker("sync-lease-holder")
+		touchMarker("sync-lease-deleted-before-release")
+	}
+	if markerExists("sync-lease-deleted-before-release") {
+		if !containsArg(args, "--ignore-not-found") {
+			return commandFailure(44, "lease not found")
+		}
+		return 0
+	}
 	// The outage lasts until the script's own API-recovery wait has run, so
 	// every Lease read before recovery fails, however many there are.
 	if os.Getenv("FAKE_TRANSIENT_SYNC_LEASE_API_FAIL_BEFORE_CLAIM") == "true" &&
@@ -1602,6 +1617,7 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 	}
 	currentResourceVersion := defaultString(markerContent("sync-lease-resource-version"), "10")
 	currentHolder := markerContent("sync-lease-holder")
+	afterReleaseFixture := os.Getenv("FAKE_SYNC_LEASE_ORPHANED_HEARTBEAT_WRITE_AFTER_RELEASE") == "true"
 
 	// release_sync_lease kills the heartbeat shell, but not a kubectl child that
 	// shell may be blocked in. That orphaned renewal lands after the release has
@@ -1620,11 +1636,14 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 	}
 	// A real apiserver evaluates the `test` operations a patch actually carries,
 	// and nothing more -- so honour resourceVersion exactly when it is present.
-	// The holderIdentity test is what makes any write to this Lease safe, so a
-	// caller that omits it is rejected outright. Which writers must ALSO pin
+	// Existing fixtures also require the holder test as a caller policy. The
+	// post-release fixture instead permits missing tests so an applied mutation
+	// must fail through the actual replay semantics, not through that policy.
+	// Which writers must ALSO pin
 	// resourceVersion is a policy question, not an apiserver one, and it is
 	// asserted separately below.
-	if !hasPatchOperation(patch, "test", "/spec/holderIdentity", currentHolder) {
+	if (hasPatchPath(patch, "test", "/spec/holderIdentity") && !hasPatchOperation(patch, "test", "/spec/holderIdentity", currentHolder)) ||
+		(!afterReleaseFixture && !hasPatchPath(patch, "test", "/spec/holderIdentity")) {
 		return commandFailure(56, "synchronization lease CAS failed")
 	}
 	if hasPatchPath(patch, "test", "/metadata/resourceVersion") &&
@@ -1639,7 +1658,7 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 	// of them rather than dropping the check for everyone.
 	releasesTheLease := hasPatchPath(patch, "replace", "/spec/holderIdentity") &&
 		patchValueString(patch, "replace", "/spec/holderIdentity") == ""
-	if !releasesTheLease && !hasPatchPath(patch, "test", "/metadata/resourceVersion") {
+	if !afterReleaseFixture && !releasesTheLease && !hasPatchPath(patch, "test", "/metadata/resourceVersion") {
 		return commandFailure(56, "synchronization lease CAS failed")
 	}
 	for _, path := range []string{"/spec/acquireTime", "/spec/renewTime"} {
@@ -1648,6 +1667,9 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 				return commandFailure(91, `Lease in version "v1" cannot be handled as a Lease: %v`, err)
 			}
 		}
+	}
+	if afterReleaseFixture && !hasPatchPath(patch, "replace", "/spec/holderIdentity") && hasPatchPath(patch, "replace", "/spec/renewTime") {
+		setMarkerContent("sync-lease-delayed-renewal", encodeJSON(delayedLeaseRenewal{Patch: patch, Before: leasePatchSnapshot()}))
 	}
 	if os.Getenv("FAKE_SYNC_LEASE_RENEW_CONFLICT_ONCE") == "true" &&
 		!markerExists("sync-lease-renew-conflict") &&
@@ -1701,6 +1723,11 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 		}
 	}
 	setMarkerContent("sync-lease-resource-version", incrementDecimal(currentResourceVersion))
+	if afterReleaseFixture && releasesTheLease {
+		if err := exerciseDelayedLeaseRenewal(); err != nil {
+			return commandFailure(91, "post-release replay fixture: %v", err)
+		}
+	}
 	fmt.Println("lease.coordination.k8s.io/ghcr-auth-refresh patched")
 	return 0
 }
