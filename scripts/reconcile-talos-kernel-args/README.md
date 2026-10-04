@@ -60,7 +60,15 @@ refreshed, and the Talos ingress-firewall generator adds the default pod CIDR
 sets. That last change does reach this cluster, because KSail injects those
 rules at runtime when its own generated patch files are absent, as they are here. It
 widens nothing in practice: `talos/*/allow-internal-nodepod-ingress.yaml` already
-admits the pod CIDR to the kubelet port, and the rule count is unchanged. See
+admits the pod CIDR to the kubelet port, and the rule count is unchanged.
+
+**7.194.10**, commit `40c72e342ec90a5ea5cb50b69be34a5c2e897b90`, is audited as the
+range 7.194.9 → 7.194.10. The configuration-manager tree
+(`439ee0a33cf6ca597f5773bcb6db316900cb8149`), the cluster API tree, `go.mod` and
+`go.sum` are byte-identical to 7.194.9, so the mirrored fold is unchanged. The
+release ships no source change at all: its single commit touches only three of
+KSail's own CI actions, which keep its system-test registry mirror cache complete
+and within the cache budget. See
 [`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/talos/configs.go#L1082)
 and the [explicit schematic selection boundary](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/ksail/distribution.go#L154).
 KSail first computes the schematic and installs its image; this helper mirrors
