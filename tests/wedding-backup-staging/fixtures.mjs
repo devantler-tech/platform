@@ -29,10 +29,6 @@ export function fixtures() {
     target: { name: 'wedding-db-backup-r2-dedicated', creationPolicy: 'Owner', template: { data: { ACCESS_KEY_ID: '{{ .ACCESS_KEY_ID }}', SECRET_ACCESS_KEY: '{{ .SECRET_ACCESS_KEY }}', REGION: 'auto' } } },
     data: [['ACCESS_KEY_ID','access_key_id'], ['SECRET_ACCESS_KEY','secret_access_key']].map(([secretKey, property]) => ({ secretKey, remoteRef: { key: 'apps/wedding-app/backup/r2', property } }))
   };
-  docs.active.spec.configuration = {
-    destinationPath: 's3://platform-backups/cnpg/wedding-db', endpointURL: opts.endpoint,
-    s3Credentials: Object.fromEntries([['accessKeyId','ACCESS_KEY_ID'],['secretAccessKey','SECRET_ACCESS_KEY'],['region','REGION']].map(([key, value]) => [key, { name: 'wedding-db-backup-r2', key: value }]))
-  };
   docs.staged.spec.configuration = {
     destinationPath: 's3://wedding-db-backups/cnpg/wedding-db', endpointURL: opts.endpoint,
     s3Credentials: Object.fromEntries([['accessKeyId','ACCESS_KEY_ID'],['secretAccessKey','SECRET_ACCESS_KEY'],['region','REGION']].map(([key, value]) => [key, { name: 'wedding-db-backup-r2-dedicated', key: value }]))

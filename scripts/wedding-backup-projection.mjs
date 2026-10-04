@@ -5,7 +5,6 @@ export const targets = [
   ...['bootstrap','infrastructure','apps'].map(x => [x,'kustomize.toolkit.fluxcd.io/v1','Kustomization','kustomizations.kustomize.toolkit.fluxcd.io','flux-system',x,null]),
   ['seed','external-secrets.io/v1alpha1','PushSecret','pushsecrets.external-secrets.io','flux-system','seed-wedding-db-backup-r2','infrastructure'],
   ['projection','external-secrets.io/v1','ExternalSecret','externalsecrets.external-secrets.io','wedding-app','wedding-db-backup-r2-dedicated','apps'],
-  ['active','barmancloud.cnpg.io/v1','ObjectStore','objectstores.barmancloud.cnpg.io','wedding-app','wedding-db','apps'],
   ['staged','barmancloud.cnpg.io/v1','ObjectStore','objectstores.barmancloud.cnpg.io','wedding-app','wedding-db-dedicated','apps'],
   ['cluster','postgresql.cnpg.io/v1','Cluster','clusters.postgresql.cnpg.io','wedding-app','wedding-db',null],
   ['bootstrapSecret','v1','Secret','secrets','flux-system','wedding-db-backup-r2-bootstrap','bootstrap'],
@@ -73,9 +72,6 @@ function validateControllers(d, options) {
   check(!projection.dataFrom && !projection.target.template.templateFrom && !projection.target.template.stringData);
   check(projection.data?.length === 2);
   for (const [key, property] of [['ACCESS_KEY_ID','access_key_id'], ['SECRET_ACCESS_KEY','secret_access_key']]) check(projection.data.filter(x => x.secretKey === key && x.remoteRef?.key === 'apps/wedding-app/backup/r2' && x.remoteRef.property === property).length === 1);
-  const active = d.active.spec.configuration;
-  check(active?.destinationPath === 's3://platform-backups/cnpg/wedding-db');
-  for (const [key, value] of [['accessKeyId','ACCESS_KEY_ID'],['secretAccessKey','SECRET_ACCESS_KEY'],['region','REGION']]) check(active.s3Credentials?.[key]?.name === 'wedding-db-backup-r2' && active.s3Credentials[key].key === value);
   const staged = d.staged.spec.configuration;
   check(staged?.destinationPath === 's3://wedding-db-backups/cnpg/wedding-db');
   for (const [key, value] of [['accessKeyId','ACCESS_KEY_ID'],['secretAccessKey','SECRET_ACCESS_KEY'],['region','REGION']]) check(staged.s3Credentials?.[key]?.name === 'wedding-db-backup-r2-dedicated' && staged.s3Credentials[key].key === value);

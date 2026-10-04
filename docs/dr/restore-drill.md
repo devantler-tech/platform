@@ -65,10 +65,17 @@ force-cancel the job or force-delete a stuck namespace; investigate its finalize
 
 Require `dedicatedRestoreVerified`, `productionClusterStable` and
 `cleanupVerified` to be true in a successful production run, bound to its source
-SHA. This demonstrates dedicated archive recovery. Retiring shared access also
-requires the shared-destination denial proof below and the bootstrap proof above.
+SHA. This demonstrates dedicated archive recovery. Shared access was retired
+(#3253) only after this proof, the shared-destination denial proof below and the
+bootstrap proof above had all passed.
 
 ## Shared-destination denial proof
+
+> **Passed once, cannot run now.** Protected `main` run 37234932425 observed
+> the denial on 2026-10-04, and Wedding's shared access was retired on that
+> evidence. The proof mounts the shared credential inside `wedding-app`, where
+> it no longer exists, so a dispatch now refuses before it reaches either bucket.
+> #4482 re-homes it. The rest of this section describes the proof as it ran.
 
 Dispatch **Verify Wedding Backup Denial** from `main` with
 `confirm=verify-wedding-backup-denial`. It shares the production deployment lock
@@ -106,8 +113,8 @@ unproven rather than counted as a refusal.
 Require the receipt with `dedicatedCatalogueReachable`,
 `sharedCatalogueReferenced`, `listDenied`, `readDenied` and `writeDenied` all
 true, followed by `DENIAL OBSERVED`, in a successful production run bound to its
-source SHA. Run it again after every rotation of the dedicated token: the new
-token must be refused exactly as the one it replaces.
+source SHA. A new dedicated token must be refused exactly as the one it
+replaces, so this proof belongs after every rotation once #4482 re-homes it.
 
 ## Velero namespace drill
 
