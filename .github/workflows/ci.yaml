@@ -35,6 +35,15 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 🛡️ Validate preserved policy failure actions
+        run: |
+          go test ./scripts/validate-policy-actions
+          go run ./scripts/validate-policy-actions
+          policy_render="$(mktemp -d)"
+          trap 'rm -rf "$policy_render"' EXIT
+          kubectl kustomize k8s/providers/hetzner/infrastructure > "$policy_render/production.yaml"
+          go run ./scripts/validate-policy-actions "$policy_render"
+
       - name: 🩹 Validate merge-group heal contract
         run: |
           go test ./scripts/validate-merge-group-heal
@@ -406,6 +415,8 @@ jobs:
               - 'talos*/**'
               - '.github/manifest-naming.yaml'
               - 'scripts/validate-embedded-json.py'
+              - 'scripts/validate-policy-actions/**'
+              - 'tests/policy-failure-actions.json'
               - '.github/scripts/setup-ksail.sh'
               - '.github/scripts/kyverno-version.sh'
               - 'scripts/guard-cilium-sni/**'
