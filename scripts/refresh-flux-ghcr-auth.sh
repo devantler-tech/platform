@@ -4219,6 +4219,51 @@ validate_talos_node_inventory() {
 # up in the next pass. Two consecutive clean inventories close the common
 # cutover race, and the bounded loop fails before root auth changes if the set
 # never stabilizes.
+reconcile_completed_node_phases() {
+  local inventory_file="$1"
+  local desired_revision="$2"
+  local operator_image="$3"
+  local candidates_file="${work_dir}/completed-phase-candidates.jsonl"
+  local node_file="${work_dir}/completed-phase-node.json"
+  local patch_file="${work_dir}/completed-phase-patch.json"
+  local result_file="${work_dir}/completed-phase-result.txt"
+  local candidate="" node_name="" node_uid=""
+  reconciled_phase_count=0
+
+  jq -c --arg phase "${CORDON_PHASE_ANNOTATION}" '
+    .items[] | select((.metadata.annotations // {}) | has($phase))
+    | select(((.metadata.annotations["platform.devantler.tech/ghcr-auth-drain-owner"] // "") == "")
+      and ((.metadata.annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] // "") == ""))
+    | {name:.metadata.name, uid:.metadata.uid}
+  ' "${inventory_file}" >"${candidates_file}" || return 1
+  while IFS= read -r candidate; do
+    node_name="$(jq -er .name <<<"${candidate}")" || return 1
+    node_uid="$(jq -er .uid <<<"${candidate}")" || return 1
+    assert_sync_lease_held || return 1
+    kubectl --context "${KUBE_CONTEXT}" get node "${node_name}" --output json \
+      >"${node_file}" || return 1
+    jq -e --arg uid "${node_uid}" '.metadata.uid == $uid' \
+      "${node_file}" >/dev/null || return 1
+    if ! completed_node_phase_cleanup_patch \
+      "${node_file}" "${desired_revision}" "${operator_image}" >"${patch_file}"; then
+      echo "::error::Refusing ambiguous historical node phase cleanup."
+      return 1
+    fi
+    if jq -e 'length == 0' "${patch_file}" >/dev/null; then
+      continue
+    fi
+    assert_sync_lease_held || return 1
+    # A lost patch response is accepted only after exact identity and completed
+    # release readback. No retry can erase a successor phase or ownership record.
+    kubectl --context "${KUBE_CONTEXT}" patch node "${node_name}" --type=json \
+      --patch-file "${patch_file}" >"${result_file}" 2>&1 || true
+    kubectl --context "${KUBE_CONTEXT}" get node "${node_name}" --output json \
+      >"${node_file}" || return 1
+    node_schedulability_release_is_complete "${node_file}" "${node_uid}" 0 0 || return 1
+    reconciled_phase_count=$((reconciled_phase_count + 1))
+  done <"${candidates_file}"
+}
+
 sync_talos_registry_auth() {
   local desired_revision="$1"
   local operator_image="$2"
@@ -4300,6 +4345,18 @@ sync_talos_registry_auth() {
           echo "::error::Every Talos node must expose a non-empty unique UID and exactly one non-empty unique InternalIP before GHCR auth can be synchronized."
           return 1
         fi
+      fi
+    fi
+    # Historical phase-only records are reconciled only on the first inventory
+    # while this transaction holds the Lease. Later inventories may contain a
+    # phase this very transaction is using, and must never be cleaned this way.
+    if ((convergence_attempt == 1)); then
+      reconcile_completed_node_phases \
+        "${talos_nodes_file}" "${desired_revision}" "${operator_image}" || return 1
+      if ((reconciled_phase_count > 0)); then
+        kubectl --context "${KUBE_CONTEXT}" get nodes -o json \
+          >"${talos_nodes_file}" || return 1
+        validate_talos_node_inventory "${talos_nodes_file}" || return 1
       fi
     fi
     if ! select_talos_node_targets \
@@ -6855,7 +6912,7 @@ ghcr_chain_is_converged_without_writes() {
       --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" \
       --arg scale_down_owner_annotation "${SCALE_DOWN_GUARD_OWNER_ANNOTATION}" '
       all(.items[];
-        (((.metadata.annotations // {})[$phase_annotation] // "") == "")
+        (((.metadata.annotations // {}) | has($phase_annotation)) | not)
         and (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == ""))
     ' "${converged_nodes_file}" >/dev/null 2>&1 || return 1
     select_talos_node_targets \
