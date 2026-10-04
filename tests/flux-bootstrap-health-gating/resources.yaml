@@ -1,0 +1,87 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: github-config
+  namespace: github-config
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  prune: true
+  wait: false
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: healthy
+  namespace: tenant
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  prune: true
+  wait: true
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: github-config
+  namespace: tenant
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  prune: true
+  wait: false
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: sibling
+  namespace: github-config
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  prune: true
+  wait: false
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  prune: true
+  wait: false
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 1m
+  path: ./bootstrap
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
