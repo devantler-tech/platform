@@ -144,7 +144,7 @@ func embeddedValues(text string) []blob {
 				if dataIndent < 0 {
 					dataIndent = indent
 				}
-				if indent != dataIndent || !(registeredKeys[key] || strings.HasSuffix(key, ".json")) {
+				if indent != dataIndent || (!registeredKeys[key] && !strings.HasSuffix(key, ".json")) {
 					continue
 				}
 				style := "plain"
@@ -242,7 +242,8 @@ func run(args []string, out, stderr io.Writer) int {
 		return 2
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "usage: validate-embedded-json [-root <repository>]")
+		// Diagnostic output is best effort; this path already exits unsuccessfully.
+		_, _ = fmt.Fprintln(stderr, "usage: validate-embedded-json [-root <repository>]")
 		return 2
 	}
 	var invalid, folded []string
@@ -252,7 +253,7 @@ func run(args []string, out, stderr io.Writer) int {
 			return err
 		}
 		name := entry.Name()
-		if entry.IsDir() || !(strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml")) || strings.HasSuffix(name, ".enc.yaml") {
+		if entry.IsDir() || (!strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml")) || strings.HasSuffix(name, ".enc.yaml") {
 			return nil
 		}
 		text, err := os.ReadFile(path)
@@ -280,12 +281,14 @@ func run(args []string, out, stderr io.Writer) int {
 		return nil
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "validate-embedded-json: cannot complete validation: %v\n", err)
+		// A failed diagnostic write cannot change the unsuccessful scan result.
+		_, _ = fmt.Fprintf(stderr, "validate-embedded-json: cannot complete validation: %v\n", err)
 		return 1
 	}
 	writeResult := func(format string, args ...any) bool {
 		if _, err := fmt.Fprintf(out, format, args...); err != nil {
-			fmt.Fprintf(stderr, "validate-embedded-json: cannot write validation result: %v\n", err)
+			// There is no further output channel; the caller still fails closed.
+			_, _ = fmt.Fprintf(stderr, "validate-embedded-json: cannot write validation result: %v\n", err)
 			return false
 		}
 		return true
