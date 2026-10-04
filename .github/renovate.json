@@ -92,6 +92,20 @@
     },
     {
       "customType": "regex",
+      "description": "Track the upstream commit the vendored origin-ca-issuer CRDs are fetched at, as a digest of the trunk branch — the ref the CRDs were rendered from before they were vendored. The flux manager's chart bumps never touch these vendored files. The datasource is github-digest, NOT git-refs: both resolve the branch head, but git-refs reports no release timestamp, and Renovate withholds an undated update whenever a release-age cooldown applies to it. The matching packageRule below turns that cooldown off for this source and says why. A commit-only bump fails CI until scripts/update-vendored-operators.sh --render-remotes has re-fetched both CRDs at the new commit.",
+      "managerFilePatterns": [
+        "/^scripts/update-vendored-operators\\.sh$/"
+      ],
+      "matchStrings": [
+        "readonly origin_ca_issuer_commit='(?<currentDigest>[0-9a-f]{40})'"
+      ],
+      "currentValueTemplate": "trunk",
+      "datasourceTemplate": "github-digest",
+      "depNameTemplate": "cloudflare/origin-ca-issuer",
+      "packageNameTemplate": "cloudflare/origin-ca-issuer"
+    },
+    {
+      "customType": "regex",
       "description": "Track the Kubernetes version pinned for the prod cluster in ksail.prod.yaml (kubernetesVersion), resolved from the authoritative kubernetes/kubernetes GitHub releases. This pin is the version's ONLY home in the repo, so Renovate edits ksail.prod.yaml to bump it. KSail/Talos own this pin and the docker system-test runs off ksail.yaml (which has no kubernetesVersion), so the built-in kubernetes/flux managers — scoped to k8s/** — never see it; a custom manager is the only way to track it. The v regex literal sits outside the capture group and extractVersionTemplate strips the leading v from the vX.Y.Z release tags, so the resolved version matches the captured X.Y.Z while the file keeps its v prefix. Renovate opens the PR automatically — the same flow as every other dependency, with no Dependency Dashboard approval gate. It is NOT automerged (see the matching packageRule): CI never validates this prod pin, and a Kubernetes minor/major can exceed the pinned Talos version's supported Kubernetes ceiling, so each bump is reviewed and promoted in lockstep with Talos.",
       "managerFilePatterns": ["/^ksail\\.prod\\.ya?ml$/"],
       "matchStrings": ["kubernetesVersion:\\s*v(?<currentValue>[0-9.]+)"],
@@ -276,6 +290,17 @@
       "matchPackageNames": ["alex1989hu/kubelet-serving-cert-approver", "ghcr.io/alex1989hu/kubelet-serving-cert-approver"],
       "automerge": false,
       "addLabels": ["security/review-required"]
+    },
+    {
+      "description": "The origin-ca-issuer CRDs are vendored upstream bytes pinned by source commit and SHA-256 (custom manager above). Renovate can only move the commit: the update PR is the signal that upstream moved, and it stays red until the CRDs are re-fetched at that commit. Scoped to the github-digest datasource so the chart, which the flux manager tracks under its own name, keeps its normal updates. minimumReleaseAge is 0 days here, and only here: the age of a branch head is the age of its newest commit, so every upstream commit restarts the repository-wide cooldown and a branch that moves at least weekly would never be proposed at all. Nothing is adopted by raising the PR early, because it cannot merge without the reviewed re-fetch. Digest updates do not automerge by default here; automerge:false is explicit, and must stay the last word on this package, so a later automerge default cannot adopt a commit whose CRDs were never fetched.",
+      "matchDatasources": ["github-digest"],
+      "matchPackageNames": ["cloudflare/origin-ca-issuer"],
+      "minimumReleaseAge": "0 days",
+      "automerge": false,
+      "addLabels": ["vendored-manifest"],
+      "prBodyNotes": [
+        "**This PR cannot go green as opened.** It moves only `origin_ca_issuer_commit`. Run `scripts/update-vendored-operators.sh --render-remotes` on this branch and commit what it changes. If it stops on a CRD digest, review the upstream change to that CRD before recording the new digest."
+      ]
     },
     {
       "description": "Review the Kyverno chart and CI policy engine together. Grouping can produce a one-sided update because their releases are independent; require the chart appVersion to match the shared CLI pin before merging. automerge:false follows the broad controller and major-update rules so they cannot bypass this comparison.",

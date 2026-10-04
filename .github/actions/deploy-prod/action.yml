@@ -66,7 +66,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.194.3"
+        KSAIL_VERSION: "7.194.7"
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-ksail.sh
@@ -545,3 +545,66 @@ runs:
         )
       shell: bash
       run: ./scripts/verify-gateway-routes-applied.sh
+
+    - name: Verify the deployed data product UI release
+      # The protected deployment must prove current Apps/chart/Helm identities,
+      # all current Pods and public endpoints before its candidate can merge.
+      # Recovery reads this action from main's checkout with main's release pins.
+      if: >-
+        !cancelled() &&
+        steps.wait_flux_revision.outcome == 'success' &&
+        (
+          steps.cluster_update.outcome == 'skipped' ||
+          steps.wait_prod_api_stability.outcome == 'success'
+        )
+      shell: bash
+      env:
+        PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
+      run: |
+        export KUBECONFIG="${HOME}/.kube/config"
+        umask 077
+        apps_verify_file="$(mktemp "${RUNNER_TEMP}/dpc-apps-verify.XXXXXX")"
+        trap 'rm -f "${apps_verify_file}"' EXIT
+        # Read the exact declared root-source policy, including its immutable
+        # approved signers, rather than maintaining a second signer list.
+        yq -o=json '[.spec.kustomize.patches[] |
+          select(.target.kind == "OCIRepository" and .target.name == "flux-system")]' \
+          k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml |
+          jq -er 'if length == 1 then .[0].patch else error("ambiguous root source patch") end' |
+          yq -o=json '.' |
+          jq -e 'if type != "array" then error("invalid root policy patch") else . end |
+            [.[] | select((.path // "") as $p | $p == "/spec/verify" or
+              ($p | startswith("/spec/verify/")) or ("/spec/verify" | startswith($p + "/")))] |
+            if length == 1 and .[0].path == "/spec/verify" and
+              (.[0].op == "add" or .[0].op == "replace") and (.[0].value | type) == "object"
+            then .[0].value else error("ambiguous root verification policy") end' >"${apps_verify_file}"
+        domain="$(yq -er '.data.domain' k8s/clusters/prod/bootstrap/config-map.yaml)"
+        image_digest="$(yq -er '.spec.values.image.digest' k8s/bases/apps/data-product-controller/helm-release.yaml)"
+        chart_digest="$(yq -er '.spec.ref.digest' k8s/bases/apps/data-product-controller/oci-repository.yaml)"
+        # Pods report a platform manifest digest rather than the image index.
+        # Resolve only the selected immutable release, never a mutable tag or
+        # an independently maintained runtime pin. Attestations are not runtimes.
+        runtime_digests="$(docker buildx imagetools inspect \
+          "ghcr.io/devantler-tech/data-product-controller@${image_digest}" --raw |
+          jq -ers --arg image_digest "${image_digest}" '
+            if length != 1 then error("ambiguous image manifest") else .[0] end |
+            if .schemaVersion != 2 then error("unsupported image schema")
+            elif .mediaType == "application/vnd.oci.image.manifest.v1+json" or
+                 .mediaType == "application/vnd.docker.distribution.manifest.v2+json"
+            then $image_digest
+            elif .mediaType == "application/vnd.oci.image.index.v1+json" or
+                 .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
+            then [.manifests[] | select(.platform.os == "linux" and
+                   (.platform.architecture == "amd64" or .platform.architecture == "arm64")) | .digest] |
+              if length > 0 and all(.[]; type == "string" and test("^sha256:[0-9a-f]{64}$"))
+              then unique[] else error("no valid runtime manifests") end
+            else error("unsupported image media type") end')"
+        runtime_args=()
+        while IFS= read -r runtime_digest; do
+          runtime_args+=(--runtime-digest "${runtime_digest}")
+        done <<<"${runtime_digests}"
+        ./scripts/verify-data-product-ui-rollout.sh \
+          --context admin@prod --domain "${domain}" \
+          --image-digest "${image_digest}" "${runtime_args[@]}" \
+          --chart-digest "${chart_digest}" --apps-digest "${PLATFORM_MANIFEST_DIGEST}" \
+          --apps-verify-file "${apps_verify_file}"

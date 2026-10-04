@@ -1115,13 +1115,13 @@ func TestPublicationActionRejectsEachAblation(t *testing.T) {
 		},
 		{
 			name:    "without signing the promoted bytes are unverifiable",
-			old:     `cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"`,
+			old:     `cosign sign --yes --recursive "${SUBJECT_NAME}@${STAGING_DIGEST}"`,
 			new:     `echo skip-signing`,
 			wantErr: "without signing",
 		},
 		{
 			name:    "signing latest reintroduces a mutable-tag race",
-			old:     `ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}`,
+			old:     `${SUBJECT_NAME}@${STAGING_DIGEST}`,
 			new:     `ghcr.io/devantler-tech/platform/manifests:latest`,
 			wantErr: "resolved staging digest",
 		},
@@ -1133,7 +1133,7 @@ func TestPublicationActionRejectsEachAblation(t *testing.T) {
 		},
 		{
 			name:    "SBOM generation must inspect the same immutable digest",
-			old:     `registry:ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}`,
+			old:     `registry:${SUBJECT_NAME}@${STAGING_DIGEST}`,
 			new:     `registry:ghcr.io/devantler-tech/platform/manifests:latest`,
 			wantErr: "resolved staging digest",
 		},
@@ -1598,6 +1598,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		deployNeeds   = `    needs:
       [
         changes,
+        validate-consumer-discovery,
         validate-floating-image-tags,
         validate-helm-post-renderers,
         validate-eks-authorization,
@@ -1611,6 +1612,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		deployNeedsWithoutGate = `    needs:
       [
         changes,
+        validate-consumer-discovery,
         validate-floating-image-tags,
         validate-helm-post-renderers,
         validate-eks-authorization,
@@ -1793,14 +1795,16 @@ func TestPublicationActionIgnoresNonExecutableText(t *testing.T) {
 				"      id: generate_sbom\n" +
 				"      shell: bash\n" +
 				"      env:\n" +
+				"        SUBJECT_NAME: ${{ steps.staging_reference.outputs.subject_name }}\n" +
 				"        STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}\n" +
 				"      run: |\n" +
 				"        set -euo pipefail\n" +
-				`        syft scan "registry:ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json`,
-			new: `- name: 'syft scan "registry:ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json'` + "\n" +
+				`        syft scan "registry:${SUBJECT_NAME}@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json`,
+			new: `- name: 'syft scan "registry:${SUBJECT_NAME}@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json'` + "\n" +
 				"      id: generate_sbom\n" +
 				"      shell: bash\n" +
 				"      env:\n" +
+				"        SUBJECT_NAME: ${{ steps.staging_reference.outputs.subject_name }}\n" +
 				"        STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}\n" +
 				"      run: |\n" +
 				"        set -euo pipefail\n" +
@@ -1809,33 +1813,33 @@ func TestPublicationActionIgnoresNonExecutableText(t *testing.T) {
 		},
 		{
 			name: "a signing command quoted in a comment signs nothing",
-			old:  `        cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"`,
+			old:  `        cosign sign --yes --recursive "${SUBJECT_NAME}@${STAGING_DIGEST}"`,
 			new: "        echo skip-signing\n" +
-				`        # cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"`,
+				`        # cosign sign --yes --recursive "${SUBJECT_NAME}@${STAGING_DIGEST}"`,
 			wantErr: "without signing",
 		},
 		{
 			name:    "a signing command in an inline comment signs nothing",
-			old:     `        cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"`,
-			new:     `        : # cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"`,
+			old:     `        cosign sign --yes --recursive "${SUBJECT_NAME}@${STAGING_DIGEST}"`,
+			new:     `        : # cosign sign --yes --recursive "${SUBJECT_NAME}@${STAGING_DIGEST}"`,
 			wantErr: "sign the resolved staging digest",
 		},
 		{
 			name:    "an echoed signing command signs nothing",
-			old:     `        cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"`,
-			new:     `        echo 'cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"'`,
+			old:     `        cosign sign --yes --recursive "${SUBJECT_NAME}@${STAGING_DIGEST}"`,
+			new:     `        echo 'cosign sign --yes --recursive "${SUBJECT_NAME}@${STAGING_DIGEST}"'`,
 			wantErr: "sign the resolved staging digest",
 		},
 		{
 			name:    "an SBOM command in an inline comment scans nothing",
-			old:     `        syft scan "registry:ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json`,
-			new:     `        : # syft scan "registry:ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json`,
+			old:     `        syft scan "registry:${SUBJECT_NAME}@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json`,
+			new:     `        : # syft scan "registry:${SUBJECT_NAME}@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json`,
 			wantErr: "generate the CycloneDX SBOM",
 		},
 		{
 			name:    "an echoed SBOM command scans nothing",
-			old:     `        syft scan "registry:ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json`,
-			new:     `        echo 'syft scan "registry:ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json'`,
+			old:     `        syft scan "registry:${SUBJECT_NAME}@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json`,
+			new:     `        echo 'syft scan "registry:${SUBJECT_NAME}@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json'`,
 			wantErr: "generate the CycloneDX SBOM",
 		},
 		{
@@ -1846,20 +1850,20 @@ func TestPublicationActionIgnoresNonExecutableText(t *testing.T) {
 		},
 		{
 			name:    "a signing command printed by a heredoc signs nothing",
-			old:     `        cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"`,
-			new:     "        cat <<'EOF'\n" + `        cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"` + "\n        EOF",
+			old:     `        cosign sign --yes --recursive "${SUBJECT_NAME}@${STAGING_DIGEST}"`,
+			new:     "        cat <<'EOF'\n" + `        cosign sign --yes --recursive "${SUBJECT_NAME}@${STAGING_DIGEST}"` + "\n        EOF",
 			wantErr: "sign the resolved staging digest",
 		},
 		{
 			name:    "an SBOM command printed by a heredoc scans nothing",
-			old:     `        syft scan "registry:ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json`,
-			new:     "        cat <<'EOF'\n" + `        syft scan "registry:ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json` + "\n        EOF",
+			old:     `        syft scan "registry:${SUBJECT_NAME}@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json`,
+			new:     "        cat <<'EOF'\n" + `        syft scan "registry:${SUBJECT_NAME}@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json` + "\n        EOF",
 			wantErr: "generate the CycloneDX SBOM",
 		},
 		{
 			name:    "an early exit prevents signing",
-			old:     `        cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"`,
-			new:     "        exit 0\n" + `        cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"`,
+			old:     `        cosign sign --yes --recursive "${SUBJECT_NAME}@${STAGING_DIGEST}"`,
+			new:     "        exit 0\n" + `        cosign sign --yes --recursive "${SUBJECT_NAME}@${STAGING_DIGEST}"`,
 			wantErr: "sign the resolved staging digest",
 		},
 		{

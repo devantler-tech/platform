@@ -8,7 +8,7 @@
 # Audit ONLY for now: third-party chart images can't be enumerated
 # statically, and an Enforce policy that trips on one would wedge its
 # HelmRelease mid-upgrade (the enforce-flux-best-practices failure mode).
-# Flip validationFailureAction to Enforce once prod PolicyReports
+# Flip rule failureAction to Enforce once prod PolicyReports
 # (`kubectl get polr -A | grep disallow-latest-tag`) show zero violations.
 #
 # Namespace exclusions mirror validate-pod-security: infrastructure
@@ -18,6 +18,7 @@ kind: ClusterPolicy
 metadata:
   name: disallow-latest-tag
   annotations:
+    policies.kyverno.io/minversion: 1.13.0
     policies.kyverno.io/title: Disallow Latest Tag
     policies.kyverno.io/category: Best Practices
     policies.kyverno.io/subject: Pod
@@ -26,7 +27,6 @@ metadata:
       mutable ':latest' tag, so what runs is reproducible and the
       signature-verification layers gate immutable references.
 spec:
-  validationFailureAction: Audit
   background: true
   rules:
     - name: require-image-tag
@@ -53,6 +53,7 @@ spec:
                 - observability
                 - velero
       validate:
+        failureAction: Audit
         message: >-
           An explicit image tag is required — a tagless reference silently
           resolves to the mutable ':latest'.
@@ -88,6 +89,7 @@ spec:
                 - observability
                 - velero
       validate:
+        failureAction: Audit
         message: >-
           The mutable ':latest' tag is not allowed — pin a version tag so
           rollbacks and signature verification reference immutable images.

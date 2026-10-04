@@ -1,0 +1,20 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-data-product-controller-ui-kit
+  namespace: data-product-controller
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s:app.kubernetes.io/name: data-product-controller
+      k8s:app.kubernetes.io/instance: data-product-controller
+      k8s:app.kubernetes.io/component: ui-kit
+  ingress:
+    # The public host serves packaged assets without outbound connections.
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+  egress: []

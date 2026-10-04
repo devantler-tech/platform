@@ -62,6 +62,7 @@ kind: ClusterPolicy
 metadata:
   name: require-baseline-workers-for-hcloud-volumes
   annotations:
+    policies.kyverno.io/minversion: 1.13.0
     # Pod-only, no controller variants. Kyverno's autogen rewrites the claim
     # lookup's namespace to spec.template.metadata.namespace, which pod
     # templates never set, so every Deployment, StatefulSet, Job and CronJob

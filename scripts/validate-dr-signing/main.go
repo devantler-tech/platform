@@ -351,6 +351,7 @@ func drRequiredPermissionNames() string {
 // comments are deliberately absent — they are documentation, and a contract
 // satisfied by documentation is satisfied by an action that publishes nothing.
 type publicationStep struct {
+	id   string
 	uses string
 	run  string
 	env  map[string]any
@@ -437,10 +438,11 @@ func parsePublicationSteps(action string) ([]publicationStep, error) {
 			return nil, fmt.Errorf("publication action step %d is not a mapping, so it cannot be checked", index)
 		}
 		uses, _ := step["uses"].(string)
+		id, _ := step["id"].(string)
 		run, _ := step["run"].(string)
 		env, _ := step["env"].(map[string]any)
 		with, _ := step["with"].(map[string]any)
-		steps = append(steps, publicationStep{uses: strings.TrimSpace(uses), run: run, env: env, with: with})
+		steps = append(steps, publicationStep{id: id, uses: strings.TrimSpace(uses), run: run, env: env, with: with})
 	}
 	return steps, nil
 }
@@ -518,6 +520,30 @@ func validatePublicationAction(action string) error {
 	if installIdx >= pushIdx {
 		return errors.New("publication action must install verified supply-chain tools before publishing")
 	}
+	stagingIdx, ok := findPublicationStep(steps, func(step publicationStep) bool { return step.id == "staging_reference" })
+	if !ok || stagingIdx >= pushIdx {
+		return errors.New("publication action must define the shared subject before pushing")
+	}
+	subject, _ := steps[stagingIdx].env["SUBJECT_NAME"].(string)
+	if strings.TrimSpace(subject) == "" || strings.ContainsAny(subject, "$\r\n") {
+		return errors.New("publication action must declare one literal shared subject")
+	}
+	stagingLines := []string{
+		`STAGING_TAG="staging-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"`,
+		`echo "subject_name=${SUBJECT_NAME}" >>"${GITHUB_OUTPUT}"`,
+		`echo "oci_ref=oci://${SUBJECT_NAME}:${STAGING_TAG}" >>"${GITHUB_OUTPUT}"`,
+		`echo "registry_ref=${SUBJECT_NAME}:${STAGING_TAG}" >>"${GITHUB_OUTPUT}"`,
+	}
+	var actualStagingLines []string
+	for _, line := range executableRunLines(steps[stagingIdx].run) {
+		line = strings.TrimSpace(line)
+		if line != "" && line != "set -euo pipefail" {
+			actualStagingLines = append(actualStagingLines, line)
+		}
+	}
+	if strings.Join(actualStagingLines, "\n") != strings.Join(stagingLines, "\n") {
+		return errors.New("publication action must derive every staging reference from the shared subject without overwrites or skipped outputs")
+	}
 	resolveIdx, ok := findPublicationStep(steps, func(step publicationStep) bool {
 		return step.runsLineContaining(`docker buildx imagetools inspect "${STAGING_REF}"`)
 	})
@@ -531,7 +557,7 @@ func validatePublicationAction(action string) error {
 		return errors.New("publication action would promote the artifact without signing it")
 	}
 	if !steps[signIdx].runsExactly(
-		`cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"`,
+		`cosign sign --yes --recursive "${SUBJECT_NAME}@${STAGING_DIGEST}"`,
 	) {
 		return errors.New(
 			"publication action must sign the resolved staging digest rather than a mutable tag",
@@ -544,7 +570,7 @@ func validatePublicationAction(action string) error {
 		return errors.New("publication action is missing SBOM generation")
 	}
 	if !steps[sbomIdx].runsExactly(
-		`syft scan "registry:ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json`,
+		`syft scan "registry:${SUBJECT_NAME}@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json`,
 	) {
 		return errors.New("publication action must generate the CycloneDX SBOM from the resolved staging digest")
 	}
@@ -579,6 +605,23 @@ func validatePublicationAction(action string) error {
 	}
 	if !steps[promoteIdx].runsLineContaining(`if [[ "${LATEST_DIGEST}" != "${STAGING_DIGEST}" ]]; then`) {
 		return errors.New("publication action must verify latest resolves to the staged digest")
+	}
+	const subjectBinding = "${{ steps.staging_reference.outputs.subject_name }}"
+	for _, index := range []int{signIdx, sbomIdx, promoteIdx} {
+		if steps[index].env["SUBJECT_NAME"] != subjectBinding {
+			return errors.New("publication action must bind every producer and promotion to the shared subject")
+		}
+	}
+	for _, index := range []int{attestSBOMIdx, provenanceIdx} {
+		if steps[index].with["subject-name"] != subjectBinding {
+			return errors.New("publication action must bind every attestation to the shared subject")
+		}
+	}
+	for _, id := range []string{"verify_evidence", "verify_matcher_accepts_staged"} {
+		index, found := findPublicationStep(steps, func(step publicationStep) bool { return step.id == id })
+		if !found || index >= promoteIdx || steps[index].env["SUBJECT_NAME"] != subjectBinding {
+			return errors.New("publication action must bind both verification gates to the shared subject before promotion")
+		}
 	}
 
 	return publicationStepsAreEnforced(action)

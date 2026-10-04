@@ -287,6 +287,24 @@ expect_fail "a failing kyverno test" "${root}" 1 "kyverno test tests failed"
 
 expect_fail "a missing tests directory" "${repo_root}" 2 "tests directory not found" no-such-dir
 
+mkdir -p "${work}/empty-fixtures/tests" "${work}/listing-bin"
+expect_fail "an empty fixture census" "${work}/empty-fixtures" 2 "no kyverno-test.yaml found"
+cat >"${work}/listing-bin/find" <<'EOF'
+#!/usr/bin/env bash
+exit 45
+EOF
+chmod +x "${work}/listing-bin/find"
+PATH="${work}/listing-bin:${PATH}" expect_fail "an unreadable fixture listing" "${repo_root}" 2 "could not list kyverno fixtures"
+rm "${work}/listing-bin/find"
+cat >"${work}/listing-bin/sort" <<'EOF'
+#!/usr/bin/env bash
+exit 46
+EOF
+chmod +x "${work}/listing-bin/sort"
+PATH="${work}/listing-bin:${PATH}" expect_fail "a failed fixture sort" "${repo_root}" 2 "could not sort kyverno fixtures"
+root="$(copy 'paths with spaces')"
+expect_pass "fixture paths containing spaces" "${root}"
+
 if [ "${failures}" -gt 0 ]; then
   echo "${failures} case(s) failed"
   exit 1

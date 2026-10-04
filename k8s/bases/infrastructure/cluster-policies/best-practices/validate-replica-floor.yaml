@@ -53,14 +53,13 @@ metadata:
     policies.kyverno.io/category: Best Practices, High Availability
     policies.kyverno.io/severity: medium
     policies.kyverno.io/subject: Deployment, StatefulSet
-    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/minversion: 1.13.0
     policies.kyverno.io/description: >-
       Flags Deployments and StatefulSets running fewer than 2 replicas so their
       drain-safe PDBs actually preserve availability. Workloads that are
       intentionally singleton, scale-to-zero or controller-managed opt out with
       the platform.devantler.tech/replica-floor: exempt label.
 spec:
-  validationFailureAction: Audit
   background: true
   rules:
     - name: require-replica-floor
@@ -143,6 +142,7 @@ spec:
               - crossview
               - crossview-postgres
       validate:
+        failureAction: Audit
         message: >-
           {{ request.object.kind }} '{{ request.object.metadata.name }}' runs
           {{ request.object.spec.replicas || `1` }} replica(s); the platform HA

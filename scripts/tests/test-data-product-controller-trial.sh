@@ -22,6 +22,7 @@ yq ea -o=json '[.]' "${scratch}/controllers.yaml" >"${scratch}/controllers.json"
 jq -e '[.[] | select(.kind == "HelmRelease" and .metadata.namespace == "data-product-controller")
   | ((.spec.values | has("registryUI") | not) and .spec.values.demoProduct.enabled == true
      and .spec.values.uiContract.enabled == true
+     and .spec.values.uiContract.additionalHostOrigins == ["https://product-ui.${domain}"]
      and .spec.values.uiAppearance.enabled == true
      and .spec.values.demoProduct.publicBaseURL == "https://harbour-data.${domain}"
      and ([.spec.values.engineProviders.enabled, .spec.values.provisionedSources.enabled,
@@ -72,7 +73,7 @@ jq -e '[.[] | select(.kind == "CiliumNetworkPolicy" and .metadata.name == "allow
 	"${scratch}/controllers.json" >/dev/null || fail "${provider}: auth-proxy egress must reach only the registry component port"
 
 jq -e '[.[] | select(.kind == "CiliumNetworkPolicy" and .metadata.namespace == "data-product-controller")
-  | .metadata.name] | sort == ["allow-data-product-controller", "allow-data-product-controller-harbour"]' \
+  | .metadata.name] | sort == ["allow-data-product-controller", "allow-data-product-controller-harbour", "allow-data-product-controller-ui-kit"]' \
 	"${scratch}/apps.json" >/dev/null || fail "${provider}: no additional namespace policy may bypass the component boundary"
 jq -e '[.[] | select(.kind == "CiliumNetworkPolicy" and .metadata.namespace == "data-product-controller")
   | select(.spec.endpointSelector.matchLabels["k8s:app.kubernetes.io/component"] == "controller")

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 # Shared secret-safe helpers for the Git/SOPS GHCR pull credential.
 
 # Fail before any decrypt or mutation when the YAML query implementation used
