@@ -554,7 +554,7 @@ data:
             "controlID": "^C-0237$"
           }
         ],
-        "reason": "First-party images (ghcr.io/devantler-tech/*) are cosign-signed and verified at both the Flux OCI source layer and the Talos containerd pull layer (ImageVerificationConfig). Third-party chart images are not all signed and there is no admission-layer signature enforcement, so this cluster-wide control still fails on unsigned workload images."
+        "reason": "First-party images (ghcr.io/devantler-tech/*) are cosign-signed and verified at Pod admission by Kyverno's verify-app-images policy, at the Talos containerd pull layer (ImageVerificationConfig), and at the Flux OCI source layer. Third-party chart images are not all signed or verified at admission, so this cluster-wide control still fails on unsigned workload images."
       },
       {
         "name": "infrastructure-privileged",

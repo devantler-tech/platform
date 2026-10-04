@@ -201,7 +201,8 @@ misconfigurations:
     statement: >-
       Upstream ships both operator Deployments with allowPrivilegeEscalation disabled, all
       capabilities dropped and runAsNonRoot set, omitting only readOnlyRootFilesystem; the bundles
-      are SHA-256 pinned artifacts vendored verbatim, and trivy reads the raw file, so a kustomize
+      come from upstream artifacts whose SHA-256 is verified on download before this repository
+      adds resource-scoped Checkov annotations. Trivy reads the raw committed file, so a kustomize
       patch would change the deployed posture without clearing this finding. The two Deployments
       ship only to the docker (local/CI) provider and are excluded from the production overlay.
   #
@@ -312,7 +313,8 @@ misconfigurations:
     statement: >-
       The operators reconcile DataVolumes and VirtualMachines that carry their own TLS material and
       registry pull credentials, so their install bundles grant secret access cluster-wide. The
-      grant is upstream's, in a SHA-256 pinned release artifact this repository vendors verbatim.
+      grant is upstream's, in a release artifact whose SHA-256 is verified on download before
+      this repository adds its resource-scoped Checkov annotations.
   - id: KSV-0046
     paths:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
@@ -320,15 +322,17 @@ misconfigurations:
     statement: >-
       The KubeVirt and CDI operators install and reconcile their own CustomResourceDefinitions and
       the controllers behind them, which upstream expresses as a wildcard rule in the install
-      bundle. The grant is upstream's, in a SHA-256 pinned release artifact vendored verbatim.
+      bundle. The grant is upstream's, in a release artifact whose SHA-256 is verified on download
+      before this repository adds its resource-scoped Checkov annotations.
   - id: KSV-0053
     paths:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
       - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
     statement: >-
       virt-operator execs into the virt-handler and virt-launcher pods it manages, for VM lifecycle
-      and migration. The grant is upstream's, in a SHA-256 pinned release artifact vendored
-      verbatim. This disposition covers both operator bundles as one class; of the two, only the
+      and migration. The grant is upstream's, in a release artifact whose SHA-256 is verified on
+      download before this repository adds its resource-scoped Checkov annotations.
+      This disposition covers both operator bundles as one class; of the two, only the
       KubeVirt bundle currently carries such a rule.
   - id: KSV-0056
     paths:
@@ -336,7 +340,8 @@ misconfigurations:
       - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
     statement: >-
       Both operators create and reconcile the services and endpoints fronting their API and webhook
-      deployments. The grant is upstream's, in a SHA-256 pinned release artifact vendored verbatim.
+      deployments. The grant is upstream's, in a release artifact whose SHA-256 is verified on
+      download before this repository adds its resource-scoped Checkov annotations.
   - id: KSV-0114
     paths:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
@@ -344,7 +349,8 @@ misconfigurations:
     statement: >-
       Both operators register, update and remove their own validating and mutating admission
       webhooks as part of installing and upgrading themselves. The grant is upstream's, in a
-      SHA-256 pinned release artifact vendored verbatim.
+      release artifact whose SHA-256 is verified on download before this repository adds its
+      resource-scoped Checkov annotations.
   - id: KSV-0048
     paths:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
@@ -354,7 +360,8 @@ misconfigurations:
       uploader and cloner pods that populate a DataVolume; virt-operator creates and upgrades the
       virt-api, virt-controller and virt-handler deployments that make up KubeVirt itself. A grant
       narrow enough to satisfy this check would stop either operator installing or running. The
-      grant is upstream's, in a SHA-256 pinned release artifact vendored verbatim.
+      grant is upstream's, in a release artifact whose SHA-256 is verified on download before
+      this repository adds its resource-scoped Checkov annotations.
   - id: KSV-0049
     paths:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
@@ -362,7 +369,8 @@ misconfigurations:
     statement: >-
       Both operators own the configmaps that configure the components they install, including their
       generated CA bundles, and must create them to install and rotate them. The grant is upstream's,
-      in a SHA-256 pinned release artifact vendored verbatim.
+      in a release artifact whose SHA-256 is verified on download before this repository adds
+      its resource-scoped Checkov annotations.
   - id: KSV-0113
     paths:
       - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
@@ -373,7 +381,8 @@ misconfigurations:
       rule adds create because CDI generates that material itself. The fifth, KubeVirt's namespaced
       Role, does grant create/patch/delete — but is resourceNames-scoped to sixteen explicitly named
       kubevirt-* certificate secrets it issues and rotates, so it cannot reach any other secret in
-      the namespace. The grant is upstream's, in a SHA-256 pinned release artifact vendored verbatim.
+      the namespace. The grant is upstream's, in a release artifact whose SHA-256 is verified on
+      download before this repository adds its resource-scoped Checkov annotations.
 
   # First-party RBAC this repository authors — the 7 HIGH/CRITICAL the vendored-operator block
   # above deliberately left live, now dispositioned per class (#2990). Each verdict was checked

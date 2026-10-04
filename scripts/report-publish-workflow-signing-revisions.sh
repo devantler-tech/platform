@@ -537,8 +537,11 @@ pin_at_ref() {
   # calling the same shared workflow at the same revision is not ambiguity, and counting call
   # SITES rather than revisions would report a perfectly unambiguous consumer as UNRESOLVED and
   # fail the run. Zero means this consumer does not call that workflow at that ref.
-  local matches count
-  matches="$(printf '%s\n' "$body" | yq eval -r '.jobs[].uses // ""' - 2>/dev/null |
+  # A streaming parser can emit one valid document before failing on the next.
+  # Only a complete successful parse may supply evidence to the pin filter.
+  local calls matches count
+  calls="$(printf '%s\n' "$body" | yq eval -r '.jobs[].uses // ""' - 2>/dev/null)" || return 1
+  matches="$(printf '%s\n' "$calls" |
     grep -E "^devantler-tech/actions/\\.github/workflows/${workflow}\\.yaml@[0-9a-f]{40}$" |
     sort -u || true)"
   count="$(printf '%s' "$matches" | grep -c . || true)"

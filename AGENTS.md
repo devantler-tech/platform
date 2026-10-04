@@ -546,7 +546,10 @@ verify that deployment before treating the production lane as clean.
 **Persistence retirement is always two-stage.** A merge-group artifact is speculative, but
 Kubernetes PVC deletion is irreversible once `deletionTimestamp` is set: queue eviction and the
 heal job cannot un-delete it. The production persistence-safety component therefore disables Flux
-pruning on every PVC, HelmRelease, and Namespace, and disables Flux force replacement on PVCs.
+pruning on every PVC, HelmRelease, and Namespace. Platform and generated tenant Flux layers set
+`spec.force: false`; only individual Jobs that need recreation carry `force: enabled`.
+`force: disabled` on a resource cannot override a forcing layer. The replacement-safety guard
+checks layer defaults, both tenant template branches, and rendered patches before publication.
 HelmRelease protection prevents chart uninstall from deleting chart-owned claims; Namespace
 protection prevents cascading deletion from bypassing a claim's own annotation. To retire any of
 these objects, first merge and deploy that protection in its own revision; only a later PR may
