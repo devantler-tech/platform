@@ -11,6 +11,15 @@ export const targets = [
   ['projectedSecret','v1','Secret','secrets','wedding-app','wedding-db-backup-r2-dedicated',null],
 ].map(([id,apiVersion,kind,resource,namespace,name,owner]) => ({id,apiVersion,kind,resource,namespace,name,owner}));
 
+// Retired with Wedding's shared backup access (#3253). The tenant namespace must
+// not hold the platform-wide backup credential or a store on the shared bucket,
+// so the verifier refuses unless each of these is observed absent.
+export const retired = [
+  ['retiredStore','objectstores.barmancloud.cnpg.io','wedding-app','wedding-db'],
+  ['retiredProjection','externalsecrets.external-secrets.io','wedding-app','wedding-db-backup-r2'],
+  ['retiredSecret','secrets','wedding-app','wedding-db-backup-r2'],
+].map(([id,resource,namespace,name]) => ({id,resource,namespace,name}));
+
 const check = condition => { if (!condition) throw Error('refused'); };
 const keys = (obj, expected) => check(obj && typeof obj === 'object' && !Array.isArray(obj) && Object.keys(obj).sort().join(',') === [...expected].sort().join(','));
 const equal = (a, b) => { const x = Buffer.from(a), y = Buffer.from(b); try { return x.length === y.length && timingSafeEqual(x, y); } finally { x.fill(0); y.fill(0); } };
@@ -47,7 +56,7 @@ function pair(bootstrap, projected) {
   check(equal(source.access_key_id, result.access_key_id) && equal(source.secret_access_key, result.secret_access_key));
   return result;
 }
-/** Verify controller readiness, credential projection wiring and the dedicated archive reference before reading either Secret. */
+/** Verify controller readiness, credential projection wiring and the dedicated archive reference before reading either Secret. Retired shared access is checked right after, also before either Secret read. */
 function validateControllers(d, options) {
   ready(d.source, true);
   check(d.source.spec.url === 'oci://ghcr.io/devantler-tech/platform/manifests' && d.source.spec.ref?.tag === 'latest' && d.source.spec.verify?.provider === 'cosign');
@@ -89,6 +98,8 @@ async function snapshot(options, deps) {
     docs[target.id] = await deps.read(target); identities[target.id] = metadata(docs[target.id], target);
   }
   validateControllers(docs, options);
+  // An absence read returns only whether the object exists, never its content.
+  for (const target of retired) check(await deps.absent(target) === true);
   for (const target of targets.filter(t => t.kind === 'Secret')) {
     docs[target.id] = await deps.read(target); identities[target.id] = metadata(docs[target.id], target);
   }

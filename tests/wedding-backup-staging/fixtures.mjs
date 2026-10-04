@@ -45,14 +45,16 @@ export function fixtures() {
 }
 export function harness(change = () => {}, invocationPatch = {}) {
   const docs = fixtures(); change(docs);
-  const reads = [], calls = [], receipts = [], bindings = [];
+  const reads = [], calls = [], receipts = [], bindings = [], absences = [];
   const deps = {
     invocation: { ...invocation, ...invocationPatch },
     read: async target => { reads.push(target.id); return structuredClone(docs[target.id]); },
+    // A retired object is present only when a test adds it to docs under its id.
+    absent: async target => { absences.push(target.id); return docs[target.id] === undefined; },
     decrypt: async () => { calls.push('decrypt'); return {access_key_id:id,secret_access_key:secret}; },
     sourceUnchanged: async binding => { bindings.push(structuredClone(binding)); return true; },
     probe: async () => { throw Error('S3 execution is forbidden'); },
     record: async () => { throw Error('Private identity recording is forbidden'); }
   };
-  return { docs, reads, calls, receipts, bindings, deps };
+  return { docs, reads, calls, receipts, bindings, absences, deps };
 }

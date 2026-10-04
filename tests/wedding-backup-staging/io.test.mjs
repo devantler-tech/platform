@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-import {capture,createReader,createSourceGuard} from '../../scripts/wedding-backup-io.mjs';
+import {capture,createReader,createAbsenceReader,createSourceGuard} from '../../scripts/wedding-backup-io.mjs';
 const node=process.execPath,hash=b=>createHash('sha256').update(b).digest('hex');
 async function temp(t){const p=await realpath(await mkdtemp(path.join(tmpdir(),'projection-io-')));t.after(()=>rm(p,{recursive:true,force:true}));return p;}
 test('bounded private capture returns stdout without diagnostic output',async()=>{
@@ -25,6 +25,21 @@ test('reader invokes only the selected object with an explicit context and confi
  const read=createReader({kubectl:bin,kubeconfig:config});
  assert.deepEqual(await read({id:'bootstrapSecret'}),{apiVersion:'v1',kind:'Secret'});
  await assert.rejects(read({id:'anything-else'}),e=>e.message==='read_refused');
+});
+test('absence reader asks only for the retired object name and treats any output or failure as not absent',async t=>{
+ const dir=await temp(t),bin=path.join(dir,'kubectl'),config=path.join(dir,'config');
+ const script=body=>`#!${node}\nconst expected=['--kubeconfig',${JSON.stringify(config)},'--context','admin@prod','--namespace','wedding-app','get','secrets','wedding-db-backup-r2','--ignore-not-found','--output=name','--request-timeout=20s'];if(JSON.stringify(process.argv.slice(2))!==JSON.stringify(expected))process.exit(3);if(Object.keys(process.env).some(x=>!['PATH','__CF_USER_TEXT_ENCODING'].includes(x)))process.exit(4);${body}`;
+ const absent=createAbsenceReader({kubectl:bin,kubeconfig:config});
+ await writeFile(bin,script(''),{mode:0o700});
+ assert.equal(await absent({id:'retiredSecret'}),true);
+ await assert.rejects(absent({id:'retiredStore'}),e=>e.message==='read_refused');
+ await assert.rejects(absent({id:'bootstrapSecret'}),e=>e.message==='read_refused');
+ await writeFile(bin,script('process.stdout.write("secret/wedding-db-backup-r2\\n")'),{mode:0o700});
+ assert.equal(await absent({id:'retiredSecret'}),false);
+ await writeFile(bin,script('process.exit(1)'),{mode:0o700});
+ await assert.rejects(absent({id:'retiredSecret'}),e=>e.message==='read_refused');
+ await writeFile(bin,script('process.stdout.write("x".repeat(4096))'),{mode:0o700});
+ await assert.rejects(absent({id:'retiredSecret'}),e=>e.message==='read_refused');
 });
 test('malformed or oversized object response is suppressed',async t=>{
  const dir=await temp(t),bin=path.join(dir,'kubectl');

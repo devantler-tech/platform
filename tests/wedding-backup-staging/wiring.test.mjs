@@ -104,6 +104,17 @@ test('dedicated ObjectStore and credential are the only Wedding backup wiring',a
   const text=await readFile(path.join(root,'k8s/bases/apps/wedding-app',file),'utf8');
   assert.doesNotMatch(text,/infrastructure\/backup\/r2|\$\{r2_bucket\}/,file+' must not reach the shared backup credential or bucket');
  }
+ // The same holds for what production actually renders, whichever file or
+ // overlay patch a regression would arrive through.
+ const rendered=execFileSync('yq',['-o=json','-I=0','.'],{input:execFileSync('kubectl',['kustomize',path.join(root,'k8s/providers/hetzner/apps')],{encoding:'utf8',maxBuffer:64*1024*1024}),encoding:'utf8',maxBuffer:64*1024*1024}).split('\n').filter(Boolean).map(line=>JSON.parse(line));
+ const wedding=rendered.filter(doc=>doc.metadata?.namespace==='wedding-app');
+ assert.ok(wedding.some(doc=>doc.kind==='ObjectStore'&&doc.metadata.name==='wedding-db-dedicated'),'the render must contain the dedicated store, or nothing was examined');
+ assert.ok(rendered.some(doc=>doc.metadata?.namespace!=='wedding-app'&&JSON.stringify(doc).includes('infrastructure/backup/r2')),'the render must contain a shared consumer, or the pattern below matches nothing');
+ for(const doc of wedding){
+  const label=doc.kind+'/'+doc.metadata.name,text=JSON.stringify(doc);
+  assert.ok(!(doc.kind==='ObjectStore'&&doc.metadata.name!=='wedding-db-dedicated'),label+' is not the dedicated store');
+  assert.doesNotMatch(text,/infrastructure\/backup\/r2|\$\{r2_bucket\}|platform-backups|"wedding-db-backup-r2"/,label+' reaches the shared backup credential or bucket');
+ }
 });
 
 test('thin local cluster does not advertise an unavailable Wedding backup path',async()=>{
