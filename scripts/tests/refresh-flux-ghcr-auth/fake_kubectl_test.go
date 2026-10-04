@@ -1956,6 +1956,9 @@ func fakeInventoryNode(
 	if phase := markerContent("cordon-phase-" + name); phase != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = phase
 	}
+	if name == os.Getenv("FAKE_EMPTY_PHASE_PRESENT_NODE") {
+		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = ""
+	}
 	if recovery := markerContent("cordon-recovery-" + name); recovery != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
 	}
@@ -2199,6 +2202,9 @@ func fakeKubectlGetNode(args []string) int {
 	}
 	if phase := markerContent("cordon-phase-" + nodeName); phase != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = phase
+	}
+	if nodeName == os.Getenv("FAKE_EMPTY_PHASE_PRESENT_NODE") {
+		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = ""
 	}
 	if recovery := markerContent("cordon-recovery-" + nodeName); recovery != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
@@ -2468,6 +2474,27 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		return commandFailure(91, "parse node patch: %v", err)
 	}
 	currentResourceVersion := defaultString(markerContent("resource-version-"+nodeName), "10")
+	const phasePath = "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase"
+	if len(patch) == 4 && hasPatchPath(patch, "remove", phasePath) {
+		if nodeName == os.Getenv("FAKE_OWNER_BEFORE_HISTORICAL_CLEANUP_NODE") {
+			setMarkerContent("cordon-owner-"+nodeName, "successor")
+			currentResourceVersion = incrementDecimal(currentResourceVersion)
+			setMarkerContent("resource-version-"+nodeName, currentResourceVersion)
+		}
+		if !hasPatchOperation(patch, "test", "/metadata/uid", fakeExpectedNodeUID(nodeName)) ||
+			!hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
+			!hasPatchOperation(patch, "test", phasePath, markerContent("cordon-phase-"+nodeName)) {
+			return commandFailure(57, "historical phase changed before cleanup")
+		}
+		removeMarker("cordon-phase-" + nodeName)
+		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+		appendEnvFile("OPERATION_LOG", "historical-phase-cleanup:"+nodeName+"\n")
+		if nodeName == os.Getenv("FAKE_LOST_HISTORICAL_CLEANUP_RESPONSE_NODE") {
+			return commandFailure(93, "historical cleanup response was lost")
+		}
+		fmt.Printf("node/%s patched\n", nodeName)
+		return 0
+	}
 	isClaim := hasPatchOperation(patch, "add", "/spec/unschedulable", true)
 	isFencePhase := hasPatchPath(
 		patch,
