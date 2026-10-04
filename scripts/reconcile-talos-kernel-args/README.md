@@ -68,7 +68,19 @@ range 7.194.9 → 7.194.10. The configuration-manager tree
 `go.sum` are byte-identical to 7.194.9, so the mirrored fold is unchanged. The
 release ships no source change at all: its single commit touches only three of
 KSail's own CI actions, which keep its system-test registry mirror cache complete
-and within the cache budget. See
+and within the cache budget.
+
+**7.195.0**, commit `5d7556de76d1a6343f6e41ea8b9754deac09a99c`, is audited as the
+range 7.194.10 → 7.195.0. The configuration-manager tree
+(`439ee0a33cf6ca597f5773bcb6db316900cb8149`), the cluster API tree, the chart
+tree, `go.mod` and `go.sum` are byte-identical to 7.194.10, so the mirrored fold
+is unchanged. Its single commit changes `ksail workload validate`: the command
+now evaluates the source's own Kyverno policies by default when the
+configuration names Kyverno as the policy engine, as both `ksail.yaml` and
+`ksail.prod.yaml` do. So that an explicit opt-out reaches the command, KSail's
+generated assistant tool calls also forward a boolean flag set to false instead
+of dropping it. That changes what this repository's CI and deploy validation
+steps check, not what KSail writes to a cluster. See
 [`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/talos/configs.go#L1082)
 and the [explicit schematic selection boundary](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/ksail/distribution.go#L154).
 KSail first computes the schematic and installs its image; this helper mirrors
