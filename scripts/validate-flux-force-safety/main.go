@@ -89,7 +89,7 @@ func inspect(node *yaml.Node, count *int, ancestors map[*yaml.Node]bool) error {
 			}
 			if force.Kind != 0 {
 				if force.Kind != yaml.ScalarNode || force.Tag != "!!bool" {
-					return errors.New("Flux force must be a literal boolean")
+					return errors.New("flux force must be a literal boolean")
 				}
 				var enabled bool
 				if err := force.Decode(&enabled); err != nil {

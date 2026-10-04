@@ -156,11 +156,12 @@ would keep creating `Delete` volumes until the workload itself is recreated.
    rebuilt cluster. It only ever moves `Delete` to `Retain`. It leaves Velero's temporary volumes
    alone, which are the ones bound to claims in Velero's own namespace. And it leaves a deliberate
    way to discard a single released volume.
-5. **Forced replacement is a separate hazard with the same backstop.** All four layers force, and
-   `kustomize.toolkit.fluxcd.io/force: disabled` on a claim or a database cluster does not exempt
-   it. A change to such an object that the API server rejects is therefore answered by deleting
-   and recreating it. `Retain` turns that from data loss into an outage with recoverable data. It
-   does not prevent it. Preventing it is tracked in #4448 and is not part of this rollout.
+5. **Forced replacement is a separate hazard with the same backstop.** Platform and generated
+   tenant layers set `force: false`, and the repository guard rejects forcing layers or force
+   opt-ins on manifest-owned claims and database clusters. Three setup Jobs explicitly opt into
+   recreation. `force: disabled` still cannot exempt an object from a forcing layer, while
+   `Retain` protects data but not service availability. The force-safety safeguard tracked by
+   #4448 is enforced separately from the storage-retention rollout described here.
 6. **The order is fixed:** retain the data, prove it can be brought back, stop evicted candidates
    deleting anything, and only then remove the opt-outs. Steps 2 and 3 of the order first written
    on #3369 are swapped; the reason is under "Before the opt-outs are removed".

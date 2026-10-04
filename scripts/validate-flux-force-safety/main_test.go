@@ -19,7 +19,7 @@ func TestForceBoundary(t *testing.T) {
 		{"disabled-annotation-does-not-override", strings.Replace(layer, "force: false", "force: true", 1) + "---\napiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata: {name: db, annotations: {kustomize.toolkit.fluxcd.io/force: disabled}}\n", "layer-wide force"},
 		{"forcing-tenant-template", "apiVersion: kro.run/v1alpha1\nkind: ResourceGraphDefinition\nspec:\n  resources:\n  - id: tenant\n    template:\n      " + strings.ReplaceAll(strings.Replace(layer, "force: false", "force: true", 1), "\n", "\n      "), "layer-wide force"},
 		{"safe-tenant-template", "kind: ResourceGraphDefinition\nspec:\n  resources:\n  - template:\n      " + strings.ReplaceAll(layer, "\n", "\n      "), ""},
-		{"invalid-force", strings.Replace(layer, "force: false", "force: '${schema.spec.force}'", 1), "literal boolean"},
+		{"invalid-force", strings.Replace(layer, "force: false", "force: '${schema.spec.force}'", 1), "flux force must be a literal boolean"},
 		{"claim-opt-in", layer + "---\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata: {name: data, annotations: {kustomize.toolkit.fluxcd.io/force: enabled}}\n", "persistent resource"},
 		{"database-opt-in", layer + "---\napiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata: {name: db, annotations: {kustomize.toolkit.fluxcd.io/force: ENABLED}}\n", "persistent resource"},
 		{"job-opt-in", layer + "---\napiVersion: batch/v1\nkind: Job\nmetadata: {name: setup, annotations: {kustomize.toolkit.fluxcd.io/force: enabled}}\n", ""},
