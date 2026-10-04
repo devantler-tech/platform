@@ -33,17 +33,31 @@ for(const [label,change] of [
  ['unverified source',d=>d.source.status.conditions.pop()],
  ['wrong mapping',d=>d.projection.spec.data[0].remoteRef.property='secret_access_key'],
  ['shared archive regression',d=>d.cluster.spec.plugins[0].parameters.barmanObjectName='wedding-db'],
- ['shared store overwritten',d=>{
-   d.active.spec.configuration.destinationPath='s3://wedding-db-backups/cnpg/wedding-db';
-   for(const credential of Object.values(d.active.spec.configuration.s3Credentials))credential.name='wedding-db-backup-r2-dedicated';
+ ['shared credential on the dedicated store',d=>{
+   for(const credential of Object.values(d.staged.spec.configuration.s3Credentials))credential.name='wedding-db-backup-r2';
  }],
  ['wrong staged destination',d=>d.staged.spec.configuration.destinationPath='s3://platform-backups/cnpg/wedding-db'],
  ['reused predecessor archive',d=>d.cluster.spec.plugins[0].parameters.serverName='wedding-db'],
- ['deleted seed',d=>d.seed.metadata.deletionTimestamp='2026-01-01T00:00:00Z']
+ ['deleted seed',d=>d.seed.metadata.deletionTimestamp='2026-01-01T00:00:00Z'],
+ ['retired shared store still present',d=>d.retiredStore={}],
+ ['retired shared projection still present',d=>d.retiredProjection={}],
+ ['retired shared Secret still present',d=>d.retiredSecret={}]
 ])test(label+' refuses without payload output',async()=>{
  const h=harness(change);const result=await verifyProjection({...opts,enabled:'true'},h.deps);
  assert.deepEqual(result,{verified:false});
  assert.deepEqual(h.calls,[]);
+});
+test('retired shared access is checked absent in both samples, before either Secret read',async()=>{
+ const h=harness();
+ assert.deepEqual(await verifyProjection({...opts,enabled:true},h.deps),{verified:true,projectionEqual:true,liveSourceStable:true});
+ assert.deepEqual(h.absences,['retiredStore','retiredProjection','retiredSecret','retiredStore','retiredProjection','retiredSecret']);
+ const present=harness(d=>d.retiredSecret={});
+ assert.deepEqual(await verifyProjection({...opts,enabled:true},present.deps),{verified:false});
+ assert.equal(present.reads.some(x=>x.endsWith('Secret')),false);
+ const failing=harness();failing.deps.absent=async()=>{throw Error('read_refused');};
+ assert.deepEqual(await verifyProjection({...opts,enabled:true},failing.deps),{verified:false});
+ const vague=harness();vague.deps.absent=async()=>undefined;
+ assert.deepEqual(await verifyProjection({...opts,enabled:true},vague.deps),{verified:false});
 });
 test('controller refusal happens before either Secret read',async()=>{
  const h=harness(d=>d.seed.status.conditions=[]);
