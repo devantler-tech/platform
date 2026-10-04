@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 # Shared, read-only validation and consumer attribution for the matcher guard and writer.
 # Sourcing validates the complete approved set and source tree before either caller acts.
 
