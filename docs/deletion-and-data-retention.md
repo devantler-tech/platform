@@ -76,11 +76,13 @@ Read from the charts this repository references and from the released source of 
   `Released` and the volume controller does nothing more with it.
 - **CSI provisioner.** It deletes the storage behind a volume only when the volume is `Released`
   and its policy is `Delete`.
-- **Flux kustomize-controller 1.8.** All four layers set `force: true`, so an object whose change
-  the API server rejects as invalid, which is what an immutable field produces, is deleted and
-  created again. The annotation `kustomize.toolkit.fluxcd.io/force` is read only as an opt-in
-  (`enabled`): `force: disabled` does not exempt an object from a layer that forces. Within one
-  Kustomization, classes are applied in an earlier stage than HelmReleases.
+- **Flux kustomize-controller 1.8.** Platform and generated tenant layers set `force: false`:
+  an immutable conflict fails without replacing the object. Three setup Jobs explicitly opt
+  into recreation with `kustomize.toolkit.fluxcd.io/force: enabled`. That annotation is only an
+  opt-in; `force: disabled` cannot exempt an object from a forcing layer. The repository guard
+  rejects forcing layers, including tenant templates and rendered patches, and force opt-ins
+  on manifest-owned claims or database clusters. Within one Kustomization, classes are applied
+  in an earlier stage than HelmReleases.
 - **Flux helm-controller 1.5 (Helm 4.2).** Helm updates an object in place and never deletes it to
   recreate it, so a changed `reclaimPolicy` fails the upgrade. Helm creates an object that is
   missing, and deletes one that left the chart unless it carries `helm.sh/resource-policy: keep`.

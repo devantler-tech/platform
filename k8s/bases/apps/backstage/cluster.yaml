@@ -13,11 +13,8 @@ metadata:
   name: backstage-db
   namespace: backstage
   annotations:
-    # Never let Flux force-delete+recreate this DB: the apps Flux Kustomization
-    # runs force + prune and longhorn PVCs are reclaimPolicy=Delete, so a
-    # force-recreate would wipe the data (the failure that hit coroot-db on
-    # 2026-06-18). Flux can still update it in place.
-    kustomize.toolkit.fluxcd.io/force: disabled
+    # The owning Flux layer has force=false, so immutable conflicts fail rather
+    # than replacing this database. Preserve it when its manifest is removed.
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   # Pin the PostgreSQL operand image to clear fixable base-OS + PostgreSQL CVEs in

@@ -35,6 +35,12 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 💾 Validate Flux replacement safety
+        run: |
+          go test ./scripts/validate-flux-force-safety
+          shellcheck scripts/tests/test-flux-force-safety.sh
+          bash scripts/tests/test-flux-force-safety.sh
+
       - name: 🛡️ Validate preserved policy failure actions
         run: |
           go test ./scripts/validate-policy-actions
