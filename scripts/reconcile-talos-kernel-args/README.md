@@ -38,7 +38,15 @@ an upgrade or snapshot uses it. `schematicKernelArgs`, `reconcileFoldedKernelArg
 `resolveInstallerVersion` and `applyInstallerImage` are byte-identical to 7.194.5, as
 are the distribution caller, the cluster API tree, `go.mod` and `go.sum`; 7.194.7
 itself changes only Hetzner bootstrap code. The intermediate 7.194.6 was never
-deployed and stays refused. See
+deployed and stays refused.
+
+**7.194.8**, commit `82a359d423a2c1f13a13560b6af0aed9031354c8`, is audited as the
+range 7.194.7 → 7.194.8. The configuration-manager tree
+(`439ee0a33cf6ca597f5773bcb6db316900cb8149`), the cluster API tree, `go.mod` and
+`go.sum` are byte-identical to 7.194.7, so the mirrored fold is unchanged. The only
+shipped source changes are in the Hetzner autoscaler provisioner, which now drops the
+Longhorn default-disk label from autoscaled workers after the pool labels are applied;
+the rest of the release is test and CI plumbing. See
 [`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/talos/configs.go#L1082)
 and the [explicit schematic selection boundary](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/ksail/distribution.go#L154).
 KSail first computes the schematic and installs its image; this helper mirrors
