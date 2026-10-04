@@ -44,6 +44,15 @@ time the app reconciles, the provider (infrastructure tier) has installed the
 namespaced github CRDs the `ProviderConfig` and managed resources need. On a
 fresh install the app's `Kustomization` retries benignly until those CRDs exist.
 
+GitHub API reconciliation is asynchronous: the tenant Kustomization uses
+`wait: false` and has no explicit managed-resource health checks. A repository
+awaiting manual bootstrap cannot freeze unrelated application delivery. Artifact
+verification, admission and apply failures still fail the tenant reconciliation;
+the parent continues checking application health. Crossplane's separate sync
+exporter and `crossplane-sync-alert` report unsynced repositories and failed
+alert delivery rather than hiding them behind Flux readiness. The bootstrap
+isolation guard checks the rendered tenant before publication.
+
 The GitHub App credentials are **not** SOPS-managed. The vault-config bootstrap
 Job seeds **placeholder** values into OpenBao (`secret/infrastructure/github/app`)
 **only when the secret is absent**, and the maintainer overwrites them in place
@@ -61,8 +70,8 @@ Velero), so the manually-set values are durable without a GitOps source of truth
    required for the `maintainers`-team resources**: `Team` observe needs
    `read`, and `TeamMembership`/`TeamRepository` create needs `write` —
    without it they stay stuck on `CannotObserveExternalResource` /
-   `403 must be an organization owner or team maintainer` and flap the
-   `github-config` Flux health check. Install it on **all repositories**
+   `403 must be an organization owner or team maintainer` and raise the
+   Crossplane sync alert. Install it on **all repositories**
    of the org. No webhook.
 2. **Overwrite the placeholders in OpenBao** with the App's real values — the
    keys already exist (seeded by the vault-config Job), so just set them. The

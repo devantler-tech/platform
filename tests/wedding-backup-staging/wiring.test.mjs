@@ -19,7 +19,9 @@ test('production patches select the dedicated archive without replacing the data
  assert.deepEqual(rendered.spec.plugins,[{name:'barman-cloud.cloudnative-pg.io',enabled:true,isWALArchiver:true,parameters:{barmanObjectName:'wedding-db-dedicated',serverName:'wedding-db-20260909'}}]);
  assert.equal(rendered.spec.instances,3);
  assert.equal(rendered.metadata.annotations['kustomize.toolkit.fluxcd.io/prune'],'disabled');
- assert.equal(rendered.metadata.annotations['kustomize.toolkit.fluxcd.io/force'],'disabled');
+ assert.notEqual(rendered.metadata.annotations['kustomize.toolkit.fluxcd.io/force'],'enabled');
+ // Flux has no per-resource force opt-out: the owning layer must disable it.
+ assert.equal(yaml('k8s/clusters/base/flux-kustomization-apps.yaml').spec.force,false);
 });
 // Test-only resolution of scalar context references; the production proposal
 // contains no expression language beyond these direct input/step handoffs.

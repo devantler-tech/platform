@@ -46,7 +46,41 @@ range 7.194.7 → 7.194.8. The configuration-manager tree
 `go.sum` are byte-identical to 7.194.7, so the mirrored fold is unchanged. The only
 shipped source changes are in the Hetzner autoscaler provisioner, which now drops the
 Longhorn default-disk label from autoscaled workers after the pool labels are applied;
-the rest of the release is test and CI plumbing. See
+the rest of the release is test and CI plumbing.
+
+**7.194.9**, commit `40e3015e171eb037b31238c021d4b676f1f05858`, is audited as the
+range 7.194.8 → 7.194.9. The configuration-manager tree
+(`439ee0a33cf6ca597f5773bcb6db316900cb8149`), the cluster API tree, `go.mod` and
+`go.sum` are byte-identical to 7.194.8, so the mirrored fold is unchanged. The
+shipped source changes are outside the fold: the vcluster provisioner and the retry
+helper it shares with KWOK drop an unused recovery path, the local-path-storage
+installer takes an injectable transport, the generated chat documentation is
+refreshed, and the Talos ingress-firewall generator adds the default pod CIDR
+(`10.244.0.0/16`) to the kubelet rule of both the control-plane and the worker rule
+sets. That last change does reach this cluster, because KSail injects those
+rules at runtime when its own generated patch files are absent, as they are here. It
+widens nothing in practice: `talos/*/allow-internal-nodepod-ingress.yaml` already
+admits the pod CIDR to the kubelet port, and the rule count is unchanged.
+
+**7.194.10**, commit `40c72e342ec90a5ea5cb50b69be34a5c2e897b90`, is audited as the
+range 7.194.9 → 7.194.10. The configuration-manager tree
+(`439ee0a33cf6ca597f5773bcb6db316900cb8149`), the cluster API tree, `go.mod` and
+`go.sum` are byte-identical to 7.194.9, so the mirrored fold is unchanged. The
+release ships no source change at all: its single commit touches only three of
+KSail's own CI actions, which keep its system-test registry mirror cache complete
+and within the cache budget.
+
+**7.195.0**, commit `5d7556de76d1a6343f6e41ea8b9754deac09a99c`, is audited as the
+range 7.194.10 → 7.195.0. The configuration-manager tree
+(`439ee0a33cf6ca597f5773bcb6db316900cb8149`), the cluster API tree, the chart
+tree, `go.mod` and `go.sum` are byte-identical to 7.194.10, so the mirrored fold
+is unchanged. Its single commit changes `ksail workload validate`: the command
+now evaluates the source's own Kyverno policies by default when the
+configuration names Kyverno as the policy engine, as both `ksail.yaml` and
+`ksail.prod.yaml` do. So that an explicit opt-out reaches the command, KSail's
+generated assistant tool calls also forward a boolean flag set to false instead
+of dropping it. That changes what this repository's CI and deploy validation
+steps check, not what KSail writes to a cluster. See
 [`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/talos/configs.go#L1082)
 and the [explicit schematic selection boundary](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/ksail/distribution.go#L154).
 KSail first computes the schematic and installs its image; this helper mirrors

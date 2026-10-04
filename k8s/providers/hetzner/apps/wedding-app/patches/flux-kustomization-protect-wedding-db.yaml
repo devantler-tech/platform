@@ -21,11 +21,8 @@ spec:
         metadata:
           name: wedding-db
           annotations:
-            # Never let Flux delete+recreate this database (force-recreate +
-            # reclaimPolicy=Delete PVCs = data loss, the failure that hit
-            # coroot-db on 2026-06-18). Flux can still update it; immutable
-            # changes need a manual backup/restore by an operator.
-            kustomize.toolkit.fluxcd.io/force: disabled
+            # The tenant's Flux layer has force=false. Preserve the database
+            # if its manifest is removed; immutable changes need an operator plan.
             kustomize.toolkit.fluxcd.io/prune: disabled
         spec:
           # Quorum-based SYNCHRONOUS replication, same rationale as umami-db: a

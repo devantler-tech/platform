@@ -51,6 +51,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
       - name: 💾 Validate two-stage PVC retirement
         env:
           PVC_PRUNE_BASE_SHA: ${{ github.sha }}
@@ -179,7 +185,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.194.8"
+          KSAIL_VERSION: "7.195.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

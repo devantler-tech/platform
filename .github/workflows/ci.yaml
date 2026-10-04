@@ -35,6 +35,18 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 💾 Validate Flux replacement safety
+        run: |
+          go test ./scripts/validate-flux-force-safety
+          shellcheck scripts/tests/test-flux-force-safety.sh
+          bash scripts/tests/test-flux-force-safety.sh
+
+      - name: 🧭 Validate GitHub bootstrap isolation
+        run: |
+          shellcheck scripts/guard-github-bootstrap-isolation.sh scripts/tests/test-github-bootstrap-isolation.sh
+          bash scripts/tests/test-github-bootstrap-isolation.sh
+          bash scripts/tests/test-crossplane-sync-alerter.sh
+
       - name: 🛡️ Validate preserved policy failure actions
         run: |
           go test ./scripts/validate-policy-actions
@@ -72,6 +84,11 @@ jobs:
         run: |
           shellcheck scripts/required-merge-workflows.sh scripts/tests/test-required-merge-workflows.sh
           bash scripts/tests/test-required-merge-workflows.sh
+
+      - name: 🐚 Validate Bash local initialization
+        run: |
+          go test -v ./scripts/guard-bash-local-initialization
+          go run ./scripts/guard-bash-local-initialization scripts .github/scripts
 
       - name: 🛟 Validate the DR Longhorn disk preflight
         run: |
@@ -1239,7 +1256,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.194.8"
+          KSAIL_VERSION: "7.195.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2352,7 +2369,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.194.8"
+          KSAIL_VERSION: "7.195.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3347,7 +3364,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.194.8"
+          KSAIL_VERSION: "7.195.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
