@@ -272,7 +272,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "bootstrap"}:                  "1223b3713886063661be32b3e82a8615856e3e01c526180f0d0d5b2bfade331d",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "c366251c694a1647636cc029822fe23da00390dc55337463e30d637cbea375e7",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "062eb303b9d92367e27f7617469375e5145c80728116d987a903f06ce594ad92",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "7e3c5f3293cdbc562ee41b27ea18780238e50128f4906693d6f1ac7f5662cebc",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "325a2db2626235b38b7122c10c06642697aee92f88f33a34423b6c72f3fb680a",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "5af50c107c3ca59ea39bf2fa334fb99b5372acc720e469d0a07f52ec97242440",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "c4ad24936e0e320b41e6742846487e5da26116f719f07a7e683edd1ec800d4ec",
 }
