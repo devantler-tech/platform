@@ -176,7 +176,9 @@ chmod +x "${bin}/kubectl"
 
 readonly endpoint='https://abc123.r2.cloudflarestorage.com'
 readonly old='2026-09-01T00:00:00Z'
-readonly base='wedding-db-20260909/base/20260908T030000'
+# The oldest dedicated backup predates the 30-day retention window, as it does
+# once retention has started pruning.
+readonly base='wedding-db-20260909/base/20260808T030000'
 readonly wal='wedding-db-20260909/wals/0000000200000001/000000020000000100000003.gz'
 readonly later_wal='wedding-db-20260909/wals/0000000300000001/000000030000000100000009.gz'
 
@@ -288,14 +290,14 @@ printf 'PASS: a covered catalogue is reported as covered and both pods are remov
 # the dedicated store has pruned.
 new_case
 {
-  record 'wedding-db-20260909/base/20260801T030000/backup.info' 1100 p1
-  record 'wedding-db-20260909/base/20260801T030000/data.tar.gz' 80000000 p2-5
-  record 'wedding-db-20260909/wals/0000000200000000/0000000200000000000000FE.gz' 3900 p3
+  record 'wedding-db-20260909/base/20260720T030000/backup.info' 1100 p1 2026-07-20T03:10:00Z
+  record 'wedding-db-20260909/base/20260720T030000/data.tar.gz' 80000000 p2-5 2026-07-20T03:10:00Z
+  record 'wedding-db-20260909/wals/0000000200000000/0000000200000000000000FE.gz' 3900 p3 2026-07-21T00:00:00Z
 } >>"${k}/mc-umami/ls"
 run_case --confirm
 [[ "${rc}" -eq 0 ]] || fail "retention: expected exit 0, got ${rc}. stderr: ${err}"
 require_text "${out}" '"sharedObjects":6,"matchedObjects":3,"retentionPrunedObjects":3,"covered":true' 'retention'
-require_text "${out}" 'The other 3 predate both the oldest backup the dedicated store keeps' 'retention'
+require_text "${out}" 'The other 3 were written before the oldest backup the dedicated store keeps' 'retention'
 printf 'PASS: objects the dedicated store pruned by retention do not block the verdict\n'
 
 # A segment only the shared copy holds, archived after the oldest backup the
@@ -466,6 +468,12 @@ require_untouched 'dedicated store keeps another retention'
 require_text "${err}" 'does not keep the reviewed 30-day retention' 'dedicated store keeps another retention'
 
 # A store rooted above the catalogue can write into it without naming it.
+new_case
+printf '{"items":[{"spec":{"configuration":{"destinationPath":"s3://platform-backups/cnpg/"}}}]}\n' \
+  >"${k}/all-objectstores.barmancloud.cnpg.io.json"
+run_case --confirm
+require_untouched 'a store is rooted above the shared catalogue, with a trailing slash'
+
 new_case
 printf '{"items":[{"spec":{"configuration":{"destinationPath":"s3://platform-backups/cnpg"}}}]}\n' \
   >"${k}/all-objectstores.barmancloud.cnpg.io.json"

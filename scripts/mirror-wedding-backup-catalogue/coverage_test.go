@@ -25,7 +25,7 @@ const (
 )
 
 var (
-	sharedListed    = time.Date(2026, 10, 5, 9, 0, 0, 0, time.UTC)
+	sharedListed    = time.Date(2026, 10, 9, 9, 0, 0, 0, time.UTC)
 	dedicatedListed = sharedListed.Add(time.Minute)
 	// Written before the oldest dedicated base backup started and before the
 	// retention window began.
@@ -99,10 +99,22 @@ func TestEvaluateCoverageRefusals(t *testing.T) {
 		{"WAL archived after the oldest dedicated backup started", func(shared, _ *Listing) {
 			shared.Objects = append(shared.Objects, Object{Key: prunedWAL, Size: 3900, ETag: "p3", LastModified: beforeRun})
 		}, ErrNotCovered},
-		{"an older backup still inside the retention window", func(shared, _ *Listing) {
+		{"an old backup missing while the oldest dedicated backup is inside the window", func(shared, dedicated *Listing) {
+			shared.Started = time.Date(2026, 10, 5, 9, 0, 0, 0, time.UTC)
+			dedicated.Started = shared.Started.Add(time.Minute)
 			shared.Objects = append(shared.Objects,
-				Object{Key: prunedInfo, Size: 1100, ETag: "p1", LastModified: time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)})
+				Object{Key: prunedInfo, Size: 1100, ETag: "p1", LastModified: longAgo},
+				Object{Key: prunedData, Size: 80_000_000, ETag: "p2-5", LastModified: longAgo})
 		}, ErrNotCovered},
+		{"an object written within the clock margin of the oldest dedicated backup", func(shared, _ *Listing) {
+			shared.Objects = append(shared.Objects,
+				Object{Key: prunedWAL, Size: 3900, ETag: "p3", LastModified: time.Date(2026, 9, 8, 2, 30, 0, 0, time.UTC)})
+		}, ErrNotCovered},
+		{"a dedicated backup ID that is not a real time", func(_, dedicated *Listing) {
+			dedicated.Objects = append(dedicated.Objects,
+				Object{Key: "wedding-db-20260909/base/20260231T030000/backup.info", Size: 1, ETag: "x1", LastModified: beforeRun},
+				Object{Key: "wedding-db-20260909/base/20260231T030000/data.tar.gz", Size: 1, ETag: "x2", LastModified: beforeRun})
+		}, ErrMalformedListing},
 		{"a non-empty object hashed as empty", func(shared, dedicated *Listing) {
 			shared.Objects[1].SHA256 = emptyDigest
 			dedicated.Objects[1].SHA256 = emptyDigest

@@ -26,8 +26,8 @@
 #      first; the dedicated pod lists afterwards.
 #   4. Has both pods hash every object an ETag cannot prove, and runs the reviewed
 #      evaluator (`evaluate-coverage`): every shared object must be in the
-#      dedicated catalogue with matching content, or be older than what the
-#      dedicated store's retention still keeps.
+#      dedicated catalogue with matching content, or be provably removed there by
+#      the dedicated store's 30-day retention.
 #   5. Repeats step 1.
 #
 # Exit status: 0 covered; 1 refused, failed or not covered. Needs --confirm,
@@ -186,7 +186,7 @@ require_unreferenced() {
       fail "could not list every ${kind}"
     jq -e --arg path "${shared_catalogue}" '
       (.items | type == "array") and
-      ([.items[].spec | .. | strings | select(. == $path or startswith($path + "/") or (. as $root | $path | startswith($root + "/")))] | length == 0)
+      ([.items[].spec | .. | strings | select(. == $path or startswith($path + "/") or (rtrimstr("/") as $root | $path | startswith($root + "/")))] | length == 0)
     ' "${work_dir}/references.json" >/dev/null 2>&1 ||
       fail "a ${kind} still names the shared Wedding catalogue"
   done
@@ -442,6 +442,6 @@ require_retired
 cat "${work_dir}/summary.json"
 printf 'COVERED: of the %s objects in the shared Wedding catalogue, the dedicated bucket holds %s with matching content.\n' \
   "$(jq -r '.sharedObjects' "${work_dir}/summary.json")" "$(jq -r '.matchedObjects' "${work_dir}/summary.json")"
-printf 'The other %s predate both the oldest backup the dedicated store keeps and its 30-day retention window, so retention has removed them there.\n' \
+printf 'The other %s were written before the oldest backup the dedicated store keeps, which itself predates its 30-day retention window, so retention has removed them there.\n' \
   "$(jq -r '.retentionPrunedObjects' "${work_dir}/summary.json")"
 printf 'Nothing was changed. This holds as of this run: the shared copy is no longer written to.\n'

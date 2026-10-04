@@ -17,9 +17,9 @@ package main
 //
 // The dedicated store applies its retention policy and the shared copy no longer
 // does, so the shared copy can hold objects the dedicated store has since
-// pruned. Such an object is accepted only when it was written before the oldest
-// complete base backup the dedicated store keeps in the same server directory
-// and before the retention window began.
+// pruned. Such an object is accepted only when the oldest complete base
+// backup the dedicated store keeps in the same server directory predates the
+// retention window, and the object was written before that backup started.
 // Every other shared object must be present with matching content.
 
 import (
@@ -114,7 +114,9 @@ const emptyDigest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b785
 
 // oldestCompleteBackups returns, per server directory, the start time of the
 // oldest base backup that has both its backup.info and a non-empty data archive.
-func oldestCompleteBackups(objects map[string]Object) map[string]time.Time {
+// A backup ID that is not a real time is refused: skipping it would move the
+// floor later and accept more as pruned.
+func oldestCompleteBackups(objects map[string]Object) (map[string]time.Time, error) {
 	hasInfo := map[string]bool{}
 	hasData := map[string]bool{}
 	for key, object := range objects {
@@ -139,13 +141,13 @@ func oldestCompleteBackups(objects map[string]Object) map[string]time.Time {
 		server, id, _ := strings.Cut(backup, "/")
 		started, err := time.Parse("20060102T150405", id)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("%w: backup ID %s", ErrMalformedListing, backup)
 		}
 		if current, ok := oldest[server]; !ok || started.Before(current) {
 			oldest[server] = started
 		}
 	}
-	return oldest
+	return oldest, nil
 }
 
 // baseBackupIDOf returns the backup ID of a key inside a base backup directory.
@@ -175,22 +177,27 @@ func walPositionOf(key string) string {
 	return segment
 }
 
+// clockMargin covers the difference between the database clock that stamps a
+// backup ID and the object store clock that stamps an object.
+const clockMargin = time.Hour
+
 // prunedByRetention reports whether a shared object the dedicated store lacks
-// can only be missing because retention removed it. Retention never removes
-// anything written at or after the start of the oldest backup it keeps, and
-// never removes anything still inside the retention window, so the object must
-// have been written before both. It is judged by when it was written, not by its
-// name: segment names do not order across timelines, and an object that was
-// never copied has a name just like a pruned one. A server directory with no
-// complete dedicated backup has nothing to measure against, so nothing in it is
-// accepted.
+// can only be missing because retention removed it. Retention keeps the newest
+// backup older than the window and everything written since that backup
+// started. So nothing can have been pruned from a server directory whose oldest
+// complete dedicated backup is still inside the window: an older object missing
+// there was never copied. Where that backup does predate the window, only an
+// object written before it started can be gone. It is judged by when it was
+// written, not by its name: segment names do not order across timelines. A
+// server directory with no complete dedicated backup has nothing to measure
+// against, so nothing in it is accepted.
 func prunedByRetention(object Object, oldest map[string]time.Time, listed time.Time) bool {
 	if baseBackupIDOf(object.Key) == "" && walPositionOf(object.Key) == "" {
 		return false
 	}
 	started, ok := oldest[strings.Split(object.Key, "/")[0]]
-	return ok && object.LastModified.Before(started) &&
-		object.LastModified.Before(listed.Add(-retentionWindow))
+	return ok && !started.After(listed.Add(-retentionWindow)) &&
+		object.LastModified.Before(started.Add(-clockMargin))
 }
 
 // EvaluateCoverage proves the dedicated catalogue covers the shared one. Every
@@ -215,7 +222,10 @@ func EvaluateCoverage(shared, dedicated Listing) (CoverageSummary, error) {
 		return CoverageSummary{}, ErrEmptySource
 	}
 
-	oldest := oldestCompleteBackups(dedicatedIndex)
+	oldest, err := oldestCompleteBackups(dedicatedIndex)
+	if err != nil {
+		return CoverageSummary{}, err
+	}
 	matched, pruned := 0, 0
 	for key, source := range sharedIndex {
 		copied, ok := dedicatedIndex[key]
