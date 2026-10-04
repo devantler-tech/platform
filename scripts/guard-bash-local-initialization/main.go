@@ -156,6 +156,8 @@ func lintSource(path string, input io.Reader) ([]string, error) {
 	var findings []string
 	for _, fn := range functions {
 		var events []event
+		declarationEnds := map[*syntax.Assign]syntax.Pos{}
+		globalAssignments := map[*syntax.Assign]bool{}
 		syntax.Walk(fn.Body, func(node syntax.Node) bool {
 			switch n := node.(type) {
 			case *syntax.FuncDecl:
@@ -168,12 +170,21 @@ func lintSource(path string, input io.Reader) ([]string, error) {
 				// Global and array destinations have different initialization rules,
 				// but their initializers still read previously declared locals.
 				skipDeclarations := false
+				globalDeclaration := false
 				for _, arg := range n.Args {
 					if arg.Name == nil && arg.Value != nil {
 						option := arg.Value.Lit()
 						if strings.HasPrefix(option, "-") && strings.ContainsAny(option[1:], "gaA") {
 							skipDeclarations = true
+							globalDeclaration = globalDeclaration || strings.Contains(option[1:], "g")
 						}
+					}
+				}
+				for _, arg := range n.Args {
+					if arg.Name != nil {
+						// Every argument expands before the declaration builtin runs.
+						declarationEnds[arg] = n.End()
+						globalAssignments[arg] = globalDeclaration
 					}
 				}
 				if skipDeclarations {
@@ -181,17 +192,16 @@ func lintSource(path string, input io.Reader) ([]string, error) {
 				}
 				for _, arg := range n.Args {
 					if arg.Name != nil {
-						position := arg.Name.Pos()
-						if !arg.Naked {
-							// The initializer expands before its destination is local.
-							position = arg.End()
-						}
-						events = append(events, event{pos: position, kind: "local", name: arg.Name.Value})
+						events = append(events, event{pos: n.End(), kind: "local", name: arg.Name.Value})
 					}
 				}
 			case *syntax.Assign:
-				if n.Name != nil && !n.Naked {
-					events = append(events, event{pos: n.End(), kind: "write", name: n.Name.Value})
+				if n.Name != nil && !n.Naked && !globalAssignments[n] {
+					position := n.End()
+					if end, declaration := declarationEnds[n]; declaration {
+						position = end
+					}
+					events = append(events, event{pos: position, kind: "write", name: n.Name.Value})
 				}
 			case *syntax.ParamExp:
 				if n.Exp != nil {

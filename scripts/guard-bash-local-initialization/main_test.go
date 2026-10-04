@@ -4,10 +4,58 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestDeclarationOrderAgainstBash(t *testing.T) {
+	t.Parallel()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := exec.Command(bash, "-c", `printf '%s' "${BASH_VERSINFO[0]}"`).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bashMajor, err := strconv.Atoi(string(version))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("runtime comparison uses Bash %d", bashMajor)
+	for _, test := range []struct {
+		name, source string
+		modern       bool
+		want         int
+	}{
+		{"same declaration reads outer value", `set -u; q=outer; f(){ local q value="$q"; test "$value" = outer; }; f`, false, 0},
+		{"initialized local in earlier argument is still unset during expansion", `set -u; unset q; f(){ local q; local q=ready value="$q"; }; f`, true, 1},
+		{"global declaration leaves local unset", `set -u; unset q; f(){ local q; declare -g q=ready; printf '%s' "$q"; }; f`, true, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.modern && bashMajor < 5 {
+				t.Skip("modern unset-local behavior requires Bash 5 or newer; CI runs these cases")
+			}
+			output, err := exec.Command(bash, "-c", test.source).CombinedOutput()
+			if test.want == 0 && err != nil {
+				t.Fatalf("Bash rejected valid declaration: %v: %s", err, output)
+			}
+			if test.want > 0 {
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) || !strings.Contains(string(output), "unbound variable") {
+					t.Fatalf("Bash did not observe the unset-local failure: %v: %s", err, output)
+				}
+			}
+			findings, err := lintSource("runtime-fixture.sh", strings.NewReader(test.source))
+			if err != nil || len(findings) != test.want {
+				t.Fatalf("lint disagrees with Bash: findings=%v error=%v want=%d", findings, err, test.want)
+			}
+		})
+	}
+}
 
 func TestLocalReads(t *testing.T) {
 	t.Parallel()
@@ -21,8 +69,12 @@ func TestLocalReads(t *testing.T) {
 		{"ordinary read before assignment", "set -u\nf(){ local q; echo \"$q\"; q=ready; }", 1},
 		{"array initializer still reads existing local", "set -u\nf(){ local q; local -a values=(\"$q\"); }", 1},
 		{"global initializer still reads existing local", "set -u\nf(){ local q; declare -g value=\"$q\"; }", 1},
+		{"global assignment does not initialize existing local", "set -u\nf(){ local q; declare -g q=ready; echo \"$q\"; }", 1},
 		{"initialized local expands outer value", "set -u\nq=outer\nf(){ local q=\"$q\"; }", 0},
-		{"bare declaration precedes later initializer", "set -u\nf(){ local q value=\"$q\"; }", 1},
+		{"bare declaration initializer expands outer value", "set -u\nq=outer\nf(){ local q value=\"$q\"; }", 0},
+		{"later initializer expands before earlier assignment", "set -u\nf(){ local q; local q=ready value=\"$q\"; }", 1},
+		{"earlier initializer expands before later assignment", "set -u\nf(){ local q; local value=\"$q\" q=ready; }", 1},
+		{"ordinary assignment follows declaration", "set -u\nf(){ local q=ready value=other; value=\"$q\"; }", 0},
 		{"initializer reads previously bare local", "set -u\nf(){ local q; local q=\"$q\"; }", 1},
 		{"initialized historical queue", "set -euo pipefail\nf(){ local provider=$1 queue=\"\" seen_k=\"\"; queue=\"${queue}path\"; }", 0},
 		{"assignment before read", "set -u\nf(){ local q; q=ready; echo \"$q\"; }", 0},

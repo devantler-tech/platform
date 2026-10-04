@@ -75,7 +75,7 @@ jobs:
 
       - name: 🐚 Validate Bash local initialization
         run: |
-          go test ./scripts/guard-bash-local-initialization
+          go test -v ./scripts/guard-bash-local-initialization
           go run ./scripts/guard-bash-local-initialization scripts .github/scripts
 
       - name: 🛟 Validate the DR Longhorn disk preflight

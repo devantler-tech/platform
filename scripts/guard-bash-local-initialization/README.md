@@ -10,6 +10,8 @@ The check follows textual order within each function. It recognizes explicit
 assignments, default assignments, arithmetic assignments, loop variables, and
 literal destinations of `read`, `mapfile`, and `printf -v`. Safe default
 expansions are allowed. Function scopes are checked independently.
+Declaration initializers expand before any variable in that declaration is
+assigned. A global declaration does not initialize a previously declared local.
 
 This is a bounded lint, not complete control-flow analysis. Conditional writes
 are considered assignments; it does not prove that a branch runs, resolve
