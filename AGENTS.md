@@ -194,6 +194,24 @@ digest must equal the updater's `cert_approver_version` and `cert_approver_image
 matches. On a bump, review the image the new tag points at, then update the version, the digest
 constant and the `images:` entry together.
 
+Renovate tracks the origin-ca-issuer CRD source as a digest of the upstream `trunk` branch, the ref
+the CRDs were rendered from before they were vendored (#4136). Its update PR moves only
+`origin_ca_issuer_commit`, and that alone cannot go green: `--render-remotes` records the commit it
+fetched in `custom-resource-definitions.source-commit` beside the CRDs, and `--validate-committed`
+fails while that record and the pin disagree. To finish such a PR, run `--render-remotes` on its
+branch and commit what it changes. If the refresh stops on a CRD digest, the upstream CRD changed:
+review that change, then record the digest the refresh printed and run it again. Never edit the
+record by hand; a record that is missing or malformed is a failed check, not a match.
+`scripts/tests/test-origin-ca-issuer-crd-source-pin.sh` pins both halves offline and runs
+unconditionally in the `changes` job: its first case validates the tree as committed, so it is the
+step that fails on a commit-only bump, on pull requests and in the merge group alike.
+
+That Renovate rule sets `minimumReleaseAge` to `0 days` for this one source. The age of a branch
+head is the age of its newest commit, so every upstream commit would restart the repository-wide
+cooldown, and a branch that moves at least weekly would never be proposed. Raising the PR adopts
+nothing: it cannot merge without the reviewed refresh. Expect a PR for every upstream commit, not
+only for CRD changes; a refresh that changes nothing but the record is the normal case.
+
 ## Local Development Cluster
 
 **Primary method (requires KSail + Docker):**
