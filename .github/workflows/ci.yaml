@@ -35,6 +35,12 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 🧭 Validate GitHub bootstrap isolation
+        run: |
+          shellcheck scripts/guard-github-bootstrap-isolation.sh scripts/tests/test-github-bootstrap-isolation.sh
+          bash scripts/tests/test-github-bootstrap-isolation.sh
+          bash scripts/tests/test-crossplane-sync-alerter.sh
+
       - name: 🛡️ Validate preserved policy failure actions
         run: |
           go test ./scripts/validate-policy-actions

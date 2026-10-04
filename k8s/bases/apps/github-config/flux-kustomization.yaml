@@ -14,7 +14,10 @@ spec:
   retryInterval: 2m
   path: .
   prune: true
-  wait: true
+  # Applying the signed artifact must succeed, but asynchronous GitHub API
+  # operations (including manual repository bootstrap) cannot gate app delivery.
+  # Crossplane's Synced condition is monitored by crossplane-sync-alert instead.
+  wait: false
   force: true
   # Runs as the app SA: the GitHub managed resources are applied with only the
   # namespace-scoped authority in rbac.yaml. This Kustomization is itself applied
