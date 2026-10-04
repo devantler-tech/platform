@@ -76,11 +76,13 @@ Read from the charts this repository references and from the released source of 
   `Released` and the volume controller does nothing more with it.
 - **CSI provisioner.** It deletes the storage behind a volume only when the volume is `Released`
   and its policy is `Delete`.
-- **Flux kustomize-controller 1.8.** All four layers set `force: true`, so an object whose change
-  the API server rejects as invalid, which is what an immutable field produces, is deleted and
-  created again. The annotation `kustomize.toolkit.fluxcd.io/force` is read only as an opt-in
-  (`enabled`): `force: disabled` does not exempt an object from a layer that forces. Within one
-  Kustomization, classes are applied in an earlier stage than HelmReleases.
+- **Flux kustomize-controller 1.8.** Platform and generated tenant layers set `force: false`:
+  an immutable conflict fails without replacing the object. Three setup Jobs explicitly opt
+  into recreation with `kustomize.toolkit.fluxcd.io/force: enabled`. That annotation is only an
+  opt-in; `force: disabled` cannot exempt an object from a forcing layer. The repository guard
+  rejects forcing layers, including tenant templates and rendered patches, and force opt-ins
+  on manifest-owned claims or database clusters. Within one Kustomization, classes are applied
+  in an earlier stage than HelmReleases.
 - **Flux helm-controller 1.5 (Helm 4.2).** Helm updates an object in place and never deletes it to
   recreate it, so a changed `reclaimPolicy` fails the upgrade. Helm creates an object that is
   missing, and deletes one that left the chart unless it carries `helm.sh/resource-policy: keep`.
@@ -154,11 +156,12 @@ would keep creating `Delete` volumes until the workload itself is recreated.
    rebuilt cluster. It only ever moves `Delete` to `Retain`. It leaves Velero's temporary volumes
    alone, which are the ones bound to claims in Velero's own namespace. And it leaves a deliberate
    way to discard a single released volume.
-5. **Forced replacement is a separate hazard with the same backstop.** All four layers force, and
-   `kustomize.toolkit.fluxcd.io/force: disabled` on a claim or a database cluster does not exempt
-   it. A change to such an object that the API server rejects is therefore answered by deleting
-   and recreating it. `Retain` turns that from data loss into an outage with recoverable data. It
-   does not prevent it. Preventing it is tracked in #4448 and is not part of this rollout.
+5. **Forced replacement is a separate hazard with the same backstop.** Platform and generated
+   tenant layers set `force: false`, and the repository guard rejects forcing layers or force
+   opt-ins on manifest-owned claims and database clusters. Three setup Jobs explicitly opt into
+   recreation. `force: disabled` still cannot exempt an object from a forcing layer, while
+   `Retain` protects data but not service availability. The force-safety safeguard tracked by
+   #4448 is enforced separately from the storage-retention rollout described here.
 6. **The order is fixed:** retain the data, prove it can be brought back, stop evicted candidates
    deleting anything, and only then remove the opt-outs. Steps 2 and 3 of the order first written
    on #3369 are swapped; the reason is under "Before the opt-outs are removed".

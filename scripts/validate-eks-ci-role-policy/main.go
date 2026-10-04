@@ -42,8 +42,8 @@ const (
 
 	expectedKubectlVersion   = "v1.36.2"
 	expectedKustomizeVersion = "v5.8.1"
-	expectedRoleManifestSHA  = "96a77d18160c450340e65b0953f44016a01a08429416f7a82142c3f90a61ca07"
-	expectedBoundarySHA      = "6e79792b08aa023900734d31c45d6abe1765991ad16b63e84598cc8d7d5b05af"
+	expectedRoleManifestSHA  = "75acb24fe16f4ae53107f4a07c514b79f2f8659b674191c794ba49076ac5c0dd"
+	expectedBoundarySHA      = "0f7b67f3434201a7bd4a2433ade6d8718da4e6cd60fd51ae4570cac88a240dee"
 	expectedTrustPolicySHA   = "85d5d45343f9eac5fdc35717c85c88c5b0f8fde9eddffb169c3a223617fd0a5e"
 	expectedInlinePolicySHA  = "60e3086a6d3dac0092ffe8264c04ebae783c0d38f19a3cf073ed8991085a4df8"
 	expectedBoundaryJSONSHA  = "2c9bc1ce56efeb6fa30d885d5f9dff8d5d8129a07d9393ccdeb376605cbc5ad8"
@@ -256,8 +256,8 @@ func validateUnifiPruneExemption(document map[string]any, identity resourceIdent
 // EKS CI identities while the aggregate surface hash pins every selected
 // source, controller, binding, and indirect authorization object.
 var expectedRenderedHashes = map[resourceIdentity]string{
-	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                                        "0967890d16316a8cfcb1cca8a52085c6989c42000fafbbd0ada6323d4e15c97c",
-	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:                       "6f14b5243c945d0d2230821733ea12096d6e92ab155a35482b20a6080c03c037",
+	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                                        "224fe726e49cf9327588731605cfbbd751fffae05de91f14078df1db05f2279a",
+	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:                       "9eb6e5e1b43a470a02cb292f8a449a51b7792e50220c7c3d5c08fe6b73e62f02",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "aws", name: "aws-managed-resources"}:                         "ff4c3264c519b1b4a7ec9b5145412f39ea2ba7b6163d8dc50fb029b1460edcda",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}:                  "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                           "4447f41c03e8297fafdabcadf4fdd8ca3260f2c84264c531b2179cb7df2c1556",
@@ -265,16 +265,16 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "crossview-view"}:                                    "536a4baa1970100ea117d1655f80e06ed874e2248b75f33f161e8b44ca3df50c",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
-	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "072e4478cdad39c0a7d9f5119cad63d4c56a9fc96ba88d657fef97f6b91bae31",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "5cce66713183807de0141b78e3d0e8792f78660102cca1c0b9ad59b51e1cbc77",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "f921a4720a182b24f289c6a5e1ae684a174ed2f5a748c01cc6bc6bc14c644c03",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "ee11a54686a68eb49b833b234949f9d21a7b8106c1b3ae677e5c205e5506f6ac",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "bootstrap"}:                  "7f674a1762f298330c7c9e4d9d4e8bf46108b10727e02a25ca5096d7913cc0a7",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "d1bc403b6458bd22cf967bd570e24718341cbd584f58e7f0069aaffe1e187945",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "9d9b62d3221442d6355d16a34d31c198619fb3b3728df960fd67222a531ece7b",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "785aec7ef00ace6439055d5338cb6d15ef9e3fc56d5b3b13d2f4eccff1d10b09",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "b7dd0ad507a26f2ebd8ddf472a68a638b41dc2f2f1b476d0a6291f15332efe5d",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "bootstrap"}:                  "1223b3713886063661be32b3e82a8615856e3e01c526180f0d0d5b2bfade331d",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "c366251c694a1647636cc029822fe23da00390dc55337463e30d637cbea375e7",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "062eb303b9d92367e27f7617469375e5145c80728116d987a903f06ce594ad92",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "325a2db2626235b38b7122c10c06642697aee92f88f33a34423b6c72f3fb680a",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "5af50c107c3ca59ea39bf2fa334fb99b5372acc720e469d0a07f52ec97242440",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "bf8c003eae3ed35d44b2a54aa73065e429b0c7b463af2efabb722fa709bc3365",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "c4ad24936e0e320b41e6742846487e5da26116f719f07a7e683edd1ec800d4ec",
 }
 
 // fingerprint returns the SHA-256 identity used for byte-exact source checks.
