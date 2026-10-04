@@ -198,9 +198,9 @@ func TestFailedCaptureCannotLeaveCompletionReceipt(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "capture")
 	command := exec.Command("bash", "capture.sh", "reader", dir)
 	command.Env = append(os.Environ(), "PATH="+commands+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if output, err := command.CombinedOutput(); err == nil {
-		t.Fatalf("failed API read accepted: %s", output)
-	}
+	output, err := command.CombinedOutput()
+	exit, ok := err.(*exec.ExitError)
+	if !ok || exit.ExitCode() != 2 { t.Fatalf("API read failure must be UNKNOWN (2): %v %s", err, output) }
 	if _, err := os.Stat(filepath.Join(dir, "capture.json")); !os.IsNotExist(err) {
 		t.Fatalf("completion receipt exists after failure: %v", err)
 	}

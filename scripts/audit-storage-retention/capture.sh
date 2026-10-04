@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Capture only read-only API responses. No output exists as complete until all reads succeed.
 set -Eeuo pipefail
+trap 'exit 2' ERR
 umask 077
 if [[ $# != 2 || -z $1 || -z $2 ]]; then
   echo 'usage: capture.sh CONTEXT NEW_PRIVATE_DIRECTORY' >&2
