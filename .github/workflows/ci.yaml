@@ -79,6 +79,11 @@ jobs:
           shellcheck scripts/required-merge-workflows.sh scripts/tests/test-required-merge-workflows.sh
           bash scripts/tests/test-required-merge-workflows.sh
 
+      - name: 🐚 Validate Bash local initialization
+        run: |
+          go test -v ./scripts/guard-bash-local-initialization
+          go run ./scripts/guard-bash-local-initialization scripts .github/scripts
+
       - name: 🛟 Validate the DR Longhorn disk preflight
         run: |
           shellcheck scripts/tests/test-dr-longhorn-disk-preflight.sh
