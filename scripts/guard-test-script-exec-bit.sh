@@ -28,7 +28,11 @@ if [[ "$count" == 0 ]]; then
 fi
 [[ "$status" == 0 ]] || exit "$status"
 library_filter='(^|/)scripts/(cosign-failure-lib|ghcr-auth-lib|publish-workflow-approved-revisions\.lib|refresh-flux-ghcr-auth-safety)\.sh$'
-if [[ "$(yq -r '.BASH_EXEC_FILTER_REGEX_EXCLUDE' "$repo_root/.mega-linter.yml")" != "$library_filter" ]]; then
+if ! actual_library_filter="$(yq -r '.BASH_EXEC_FILTER_REGEX_EXCLUDE' "$repo_root/.mega-linter.yml")"; then
+  echo '::error::cannot read the bash-exec library exclusion' >&2
+  exit 2
+fi
+if [[ "$actual_library_filter" != "$library_filter" ]]; then
   echo '::error::bash-exec must exclude only the four reviewed sourced libraries' >&2
   exit 1
 fi

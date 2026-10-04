@@ -26,6 +26,12 @@ yq -i '.BASH_EXEC_FILTER_REGEX_EXCLUDE = ".*"' "$work/.mega-linter.yml"
 if bash "$guard" "$work" > "$work/out" 2>&1; then fail 'accepted a broadened bash-exec library exclusion'; fi
 grep -Fq 'exclude only the four reviewed sourced libraries' "$work/out" || fail 'did not identify the broadened boundary'
 cp "$work/valid-linter.yml" "$work/.mega-linter.yml"
+printf '\n---\nmalformed: [\n' >> "$work/.mega-linter.yml"
+parser_status=0
+bash "$guard" "$work" > "$work/out" 2>&1 || parser_status=$?
+[[ "$parser_status" == 2 ]] || fail 'accepted a partial YAML read or did not fail closed'
+grep -Fq 'cannot read the bash-exec library exclusion' "$work/out" || fail 'did not identify the partial YAML read'
+cp "$work/valid-linter.yml" "$work/.mega-linter.yml"
 git -C "$work" update-index --chmod=+x scripts/ghcr-auth-lib.sh
 if bash "$guard" "$work" > "$work/out" 2>&1; then fail 'accepted an executable sourced library'; fi
 grep -Fq 'scripts/ghcr-auth-lib.sh' "$work/out" || fail 'did not identify the library mode regression'
