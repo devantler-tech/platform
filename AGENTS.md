@@ -574,7 +574,7 @@ live Flux-owned objects before the mutable production artifact moves. Do not col
 revisions or use Flux force replacement for a PVC migration.
 
 This is the rule in force today, and it is being replaced.
-[`docs/deletion-and-data-retention.md`](docs/deletion-and-data-retention.md) records the decision
+[`docs/adr/storage-retention.md`](docs/adr/storage-retention.md) records the decision
 to keep data at the storage layer (`Retain` on every StorageClass and PersistentVolume) and to
 remove every prune opt-out, and the order that happens in. Until the step that removes the opt-outs
 (#4444) has merged and deployed, everything above still applies unchanged, including the protection

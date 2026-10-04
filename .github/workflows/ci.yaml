@@ -35,6 +35,11 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 💾 Validate storage audit regressions
+        run: |
+          go test ./scripts/audit-storage-retention
+          shellcheck scripts/audit-storage-retention/capture.sh
+
       - name: 💾 Validate Flux replacement safety
         run: |
           go test ./scripts/validate-flux-force-safety
