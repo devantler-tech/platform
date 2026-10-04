@@ -35,6 +35,15 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 🛡️ Validate preserved policy failure actions
+        run: |
+          go test ./scripts/validate-policy-actions
+          go run ./scripts/validate-policy-actions
+          policy_render="$(mktemp -d)"
+          trap 'rm -rf "$policy_render"' EXIT
+          kubectl kustomize k8s/providers/hetzner/infrastructure > "$policy_render/production.yaml"
+          go run ./scripts/validate-policy-actions "$policy_render"
+
       - name: 🩹 Validate merge-group heal contract
         run: |
           go test ./scripts/validate-merge-group-heal
@@ -58,6 +67,17 @@ jobs:
       # this workflow's k8s filter, so a filter it can no longer parse fails here.
       - name: 🧭 Validate prod convergence resolver
         run: go test ./scripts/resolve-prod-convergence
+
+      - name: 🧭 Validate live required-workflow resolution
+        run: |
+          shellcheck scripts/required-merge-workflows.sh scripts/tests/test-required-merge-workflows.sh
+          bash scripts/tests/test-required-merge-workflows.sh
+
+      # Run on merge groups too: the manifest job below is PR-only.
+      - name: 🔐 Validate Cilium SNI hostname coverage
+        run: |
+          go test ./scripts/guard-cilium-sni
+          go run ./scripts/guard-cilium-sni k8s
 
       # validate-main.yaml runs the report after each push to main (#3848); test it on the
       # pull request too, so a broken report is caught before it can turn main red.
@@ -162,6 +182,9 @@ jobs:
           shellcheck scripts/tests/test-guard-tracked-exec-bit.sh
           bash scripts/guard-tracked-exec-bit.sh .
           bash scripts/tests/test-guard-tracked-exec-bit.sh
+          shellcheck scripts/guard-test-script-exec-bit.sh scripts/tests/test-guard-test-script-exec-bit.sh
+          bash scripts/guard-test-script-exec-bit.sh .
+          bash scripts/tests/test-guard-test-script-exec-bit.sh
 
       # The DR contract runs in its own dedicated job (below). This checks that
       # the verify block is in effect at all: it ran at spec.cluster.verify for
@@ -370,6 +393,19 @@ jobs:
           shellcheck scripts/tests/test-headlamp-oidc-version-gate.sh
           bash scripts/tests/test-headlamp-oidc-version-gate.sh
 
+      # Renovate moves only the source commit of the vendored origin-ca-issuer CRDs, and
+      # the bytes do not change with it, so nothing but the updater's own record can tell
+      # a bump from a refresh (#4136). The test runs a copy of the updater against stub
+      # binaries: no network, no Checkov. Its first case validates the tree as committed,
+      # so this step is also what fails on a pull request that moves only the pin, and it
+      # fails in the merge group too, where the pull-request-only manifest job never runs.
+      # Unconditional, like the gate above: one half of its subject is the Renovate
+      # policy, which sits outside the k8s paths.
+      - name: 🔐 Validate the origin-ca-issuer CRD source pin
+        run: |
+          shellcheck scripts/tests/test-origin-ca-issuer-crd-source-pin.sh
+          bash scripts/tests/test-origin-ca-issuer-crd-source-pin.sh
+
       # Independent of the conditional validate job whose nested-RGD steps this protects. If those
       # steps are removed, this unconditional job must still fail the PR and merge-group revision.
       - name: 🔬 Validate nested RGD workflow wiring
@@ -400,8 +436,11 @@ jobs:
               - 'talos*/**'
               - '.github/manifest-naming.yaml'
               - 'scripts/validate-embedded-json.py'
+              - 'scripts/validate-policy-actions/**'
+              - 'tests/policy-failure-actions.json'
               - '.github/scripts/setup-ksail.sh'
               - '.github/scripts/kyverno-version.sh'
+              - 'scripts/guard-cilium-sni/**'
               - 'scripts/tests/test-setup-ksail.sh'
               - '.github/scripts/setup-talosctl.sh'
               - 'scripts/tests/test-setup-talosctl.sh'
@@ -426,6 +465,7 @@ jobs:
               - 'scripts/tests/test-data-product-controller-trial.sh'
               - 'scripts/tests/test-data-product-ui-host.sh'
               - 'scripts/tests/test-data-product-ui-rollout.sh'
+              - 'scripts/tests/test-data-product-runtime-digests.sh'
               - 'scripts/verify-data-product-ui-rollout.sh'
               - 'scripts/tests/test-oauth2-proxy-sso-redirects.sh'
               - 'scripts/tests/test-umami-tracking-probe.sh'
@@ -809,6 +849,10 @@ jobs:
               # has no cluster; it also reads the reviewed list above.
               - 'scripts/check-kubescape-result-coverage.sh'
               - 'scripts/tests/test-check-kubescape-result-coverage.sh'
+              # The live orphaned-result report (#3697). Both halves, and only the fixture
+              # test runs here for the same reason.
+              - 'scripts/report-kubescape-scan-orphans.sh'
+              - 'scripts/tests/test-report-kubescape-scan-orphans.sh'
               # Both halves, for the same reason as the guards above. The guard also
               # reads the exception manifest itself, covered by 'k8s/**'.
               - 'scripts/guard-pod-security-exception-documented.sh'
@@ -1185,7 +1229,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.194.4"
+          KSAIL_VERSION: "7.194.7"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1276,6 +1320,12 @@ jobs:
         run: |
           shellcheck .github/scripts/setup-ksail.sh scripts/tests/test-setup-ksail.sh
           bash scripts/tests/test-setup-ksail.sh
+
+      - name: 🔐 Validate Cilium SNI hostname coverage
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          go test ./scripts/guard-cilium-sni
+          go run ./scripts/guard-cilium-sni k8s
 
       - name: 🔐 Validate talosctl installer integrity guard
         if: needs.changes.outputs.k8s == 'true'
@@ -1595,6 +1645,8 @@ jobs:
           bash scripts/tests/test-data-product-ui-host.sh
           shellcheck scripts/verify-data-product-ui-rollout.sh scripts/tests/test-data-product-ui-rollout.sh
           bash scripts/tests/test-data-product-ui-rollout.sh
+          shellcheck scripts/tests/test-data-product-runtime-digests.sh
+          bash scripts/tests/test-data-product-runtime-digests.sh
           shellcheck scripts/tests/test-oauth2-proxy-sso-redirects.sh
           bash scripts/tests/test-oauth2-proxy-sso-redirects.sh
           shellcheck scripts/tests/test-umami-tracking-probe.sh
@@ -2136,6 +2188,17 @@ jobs:
         # passing set must fail, and an empty or short read must be UNKNOWN, never clean.
         run: bash scripts/tests/test-check-kubescape-result-coverage.sh
 
+      - name: 👻 Test the Kubescape orphaned-result report
+        if: needs.changes.outputs.k8s == 'true'
+        # The report compares every stored posture result against the live list of its kind
+        # and names the results whose object is gone (#3697). It needs a cluster, so CI runs
+        # only its fixture test: a result whose object exists is never orphaned, a refused,
+        # partial or malformed read ends as UNKNOWN rather than as a pass, kubectl is only
+        # ever asked to read, and no object name reaches the report.
+        run: |
+          shellcheck scripts/report-kubescape-scan-orphans.sh scripts/tests/test-report-kubescape-scan-orphans.sh
+          bash scripts/tests/test-report-kubescape-scan-orphans.sh
+
       - name: 🔎 Validate every suppressed control is documented as failing open
         if: needs.changes.outputs.k8s == 'true'
         # A control added under spec.posture that the file's fail-open warning does
@@ -2279,7 +2342,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.194.4"
+          KSAIL_VERSION: "7.194.7"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2673,9 +2736,13 @@ jobs:
           persist-credentials: false
 
       - name: 🏷️ Validate naming conventions
-        uses: devantler-tech/actions/validate-naming@df7fd4f83edade31c121a9de563d9a7b9b1f900d # v13.10.3
-        with:
-          enabled: "true"
+        id: naming
+        uses: devantler-tech/.github/actions/validate-naming@30882cccda9e41c622f6493e21e7eb6f3339b91f # v4.9.1
+
+      - name: Confirm naming validation completed
+        env:
+          VALIDATED: ${{ steps.naming.outputs.validated }}
+        run: test "$VALIDATED" = true
 
   validate-talos:
     name: 🧪 Validate Talos Machine Config
@@ -3270,7 +3337,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.194.4"
+          KSAIL_VERSION: "7.194.7"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

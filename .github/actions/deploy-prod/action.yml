@@ -66,7 +66,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.194.4"
+        KSAIL_VERSION: "7.194.7"
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-ksail.sh
@@ -560,9 +560,6 @@ runs:
       shell: bash
       env:
         PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
-        # Verified single-platform v1.18.0 publication; its runtime and image
-        # manifest digests are identical. Update with verified release evidence.
-        DPC_RUNTIME_DIGEST: sha256:c5c5fdcb0bfc65279231b9a0209ab951544adffd827953035dda9e15c3a5c703
       run: |
         export KUBECONFIG="${HOME}/.kube/config"
         umask 077
@@ -584,8 +581,30 @@ runs:
         domain="$(yq -er '.data.domain' k8s/clusters/prod/bootstrap/config-map.yaml)"
         image_digest="$(yq -er '.spec.values.image.digest' k8s/bases/apps/data-product-controller/helm-release.yaml)"
         chart_digest="$(yq -er '.spec.ref.digest' k8s/bases/apps/data-product-controller/oci-repository.yaml)"
+        # Pods report a platform manifest digest rather than the image index.
+        # Resolve only the selected immutable release, never a mutable tag or
+        # an independently maintained runtime pin. Attestations are not runtimes.
+        runtime_digests="$(docker buildx imagetools inspect \
+          "ghcr.io/devantler-tech/data-product-controller@${image_digest}" --raw |
+          jq -ers --arg image_digest "${image_digest}" '
+            if length != 1 then error("ambiguous image manifest") else .[0] end |
+            if .schemaVersion != 2 then error("unsupported image schema")
+            elif .mediaType == "application/vnd.oci.image.manifest.v1+json" or
+                 .mediaType == "application/vnd.docker.distribution.manifest.v2+json"
+            then $image_digest
+            elif .mediaType == "application/vnd.oci.image.index.v1+json" or
+                 .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
+            then [.manifests[] | select(.platform.os == "linux" and
+                   (.platform.architecture == "amd64" or .platform.architecture == "arm64")) | .digest] |
+              if length > 0 and all(.[]; type == "string" and test("^sha256:[0-9a-f]{64}$"))
+              then unique[] else error("no valid runtime manifests") end
+            else error("unsupported image media type") end')"
+        runtime_args=()
+        while IFS= read -r runtime_digest; do
+          runtime_args+=(--runtime-digest "${runtime_digest}")
+        done <<<"${runtime_digests}"
         ./scripts/verify-data-product-ui-rollout.sh \
           --context admin@prod --domain "${domain}" \
-          --image-digest "${image_digest}" --runtime-digest "${DPC_RUNTIME_DIGEST}" \
+          --image-digest "${image_digest}" "${runtime_args[@]}" \
           --chart-digest "${chart_digest}" --apps-digest "${PLATFORM_MANIFEST_DIGEST}" \
           --apps-verify-file "${apps_verify_file}"
