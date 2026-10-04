@@ -46,7 +46,16 @@ The `Mirror Wedding Backup Catalogue` and `Verify Wedding Backup Denial`
 workflows both need the shared credential inside `wedding-app`, so neither can
 run any more; #4482 re-homes the denial proof and removes the finished cutover
 tooling, and #4481 removes the predecessor catalogue that still sits in the
-shared bucket. `Verify Wedding Backup Cutover`
+shared bucket. That copy is no longer written to or pruned, and every holder of
+the shared credential can read it. Before it is removed, dispatch `Verify
+Wedding Shared Backup Coverage` on `main` with
+`confirm=verify-wedding-shared-backup-coverage`. It only reads: a pod beside the
+shared credential in `umami` and one beside the dedicated credential in
+`wedding-app` each list their side, and the verdict is `COVERED` only when every
+object in the shared copy is in the dedicated bucket with matching content, or
+was provably removed there by the 30-day retention. Remove the shared copy only
+after a `COVERED` run, and run the proof again afterwards: it then reports
+`EMPTY`. `Verify Wedding Backup Cutover`
 is a main-only, protected production dispatch: confirm
 `verify-wedding-backup-cutover` to request a fresh online primary backup. It
 refuses a shared archive, unhealthy database, changed database identity, or
