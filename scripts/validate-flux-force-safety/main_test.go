@@ -47,6 +47,39 @@ func TestForceBoundary(t *testing.T) {
 	}
 }
 
+func TestPersistentForceRequiresInspectableValues(t *testing.T) {
+	for _, resource := range []string{"apiVersion: v1\nkind: PersistentVolumeClaim", "apiVersion: postgresql.cnpg.io/v1\nkind: Cluster"} {
+		for _, tc := range []struct{ name, metadata, want string }{
+			{"absent", "{name: data}", ""},
+			{"disabled", "{name: data, annotations: {kustomize.toolkit.fluxcd.io/force: disabled}}", ""},
+			{"unrelated-expression", "{name: data, annotations: {description: '${schema.description}'}}", ""},
+			{"force-expression", "{name: data, annotations: {kustomize.toolkit.fluxcd.io/force: '${schema.force}'}}", "literal string"},
+			{"force-map", "{name: data, annotations: {kustomize.toolkit.fluxcd.io/force: {value: enabled}}}", "literal string"},
+			{"force-list", "{name: data, annotations: {kustomize.toolkit.fluxcd.io/force: [enabled]}}", "literal string"},
+			{"force-boolean", "{name: data, annotations: {kustomize.toolkit.fluxcd.io/force: false}}", "literal string"},
+			{"force-null", "{name: data, annotations: {kustomize.toolkit.fluxcd.io/force: null}}", "literal string"},
+			{"annotations-expression", "{name: data, annotations: '${schema.annotations}'}", "expected YAML mapping"},
+			{"metadata-expression", "'${schema.metadata}'", "expected YAML mapping"},
+		} {
+			t.Run(resource+"/"+tc.name, func(t *testing.T) {
+				template := resource + "\nmetadata: " + tc.metadata + "\n"
+				data := layer + "---\napiVersion: kro.run/v1alpha1\nkind: ResourceGraphDefinition\nspec:\n  resources:\n  - id: data\n    template:\n      " + strings.ReplaceAll(template, "\n", "\n      ")
+				path := filepath.Join(t.TempDir(), "manifest.yaml")
+				if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+					t.Fatal(err)
+				}
+				err := verify(path)
+				if tc.want == "" && err != nil {
+					t.Fatal(err)
+				}
+				if tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+					t.Fatalf("wanted %q, got %v", tc.want, err)
+				}
+			})
+		}
+	}
+}
+
 func TestRenderedOverride(t *testing.T) {
 	dir := t.TempDir()
 	for name, data := range map[string]string{

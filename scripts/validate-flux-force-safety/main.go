@@ -33,14 +33,15 @@ func field(node *yaml.Node, keys ...string) (*yaml.Node, error) {
 		if err != nil {
 			return nil, err
 		}
+		if node.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("field %q: expected YAML mapping", key)
+		}
 		found := false
-		if node.Kind == yaml.MappingNode {
-			for i := 0; i < len(node.Content); i += 2 {
-				if node.Content[i].Value == key {
-					node = node.Content[i+1]
-					found = true
-					break
-				}
+		for i := 0; i < len(node.Content); i += 2 {
+			if node.Content[i].Value == key {
+				node = node.Content[i+1]
+				found = true
+				break
 			}
 		}
 		if !found {
@@ -103,6 +104,9 @@ func inspect(node *yaml.Node, count *int, ancestors map[*yaml.Node]bool) error {
 			force, err := field(node, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/force")
 			if err != nil {
 				return err
+			}
+			if force.Kind != 0 && (force.Kind != yaml.ScalarNode || force.Tag != "!!str" || strings.Contains(force.Value, "${")) {
+				return errors.New("persistent force annotation must be a literal string")
 			}
 			if strings.EqualFold(force.Value, "enabled") {
 				return errors.New("persistent resource cannot opt into force replacement")
