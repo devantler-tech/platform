@@ -1,0 +1,34 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-arc-controller
+  namespace: arc-systems
+spec:
+  endpointSelector: {}
+  ingress:
+    - {}
+  egress:
+    - toEntities: [kube-apiserver]
+    - toFQDNs:
+        - matchName: api.github.com
+        - matchName: github.com
+        - matchPattern: "*.actions.githubusercontent.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchName: api.github.com
+              - matchName: github.com
+              - matchPattern: "*.actions.githubusercontent.com"
