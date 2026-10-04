@@ -127,3 +127,21 @@ func TestKustomizePatchDocument(t *testing.T) {
 		t.Fatalf("count=%d err=%v", count, err)
 	}
 }
+
+func TestYAMLAliases(t *testing.T) {
+	input := "kind: CiliumNetworkPolicy\nmetadata: {name: aliased}\nspec:\n  egress:\n  - toFQDNs: [{matchName: api.example.test}]\n    toPorts:\n    - serverNames: &names [&name api.example.test]\n    - serverNames: *names\n    - serverNames: [*name]\n"
+	count, err := check(strings.NewReader(input), "aliases.yaml")
+	if err != nil || count != 1 {
+		t.Fatalf("count=%d err=%v", count, err)
+	}
+}
+
+func TestPolicyInListCannotHide(t *testing.T) {
+	for _, kind := range []string{"List", "CiliumNetworkPolicyList", "CiliumClusterwideNetworkPolicyList"} {
+		input := "kind: CiliumNetworkPolicy\nmetadata: {name: outside}\nspec: {}\n---\nkind: " + kind + "\nitems:\n- kind: List\n  items:\n  - kind: CiliumNetworkPolicy\n    metadata: {name: inside}\n    spec:\n      egress:\n      - toFQDNs: [{matchName: missing.example.test}]\n        toPorts: [{serverNames: [present.example.test]}]\n"
+		_, err := check(strings.NewReader(input), "lists.yaml")
+		if err == nil || !strings.Contains(err.Error(), "missing.example.test") {
+			t.Fatalf("%s: got %v", kind, err)
+		}
+	}
+}
