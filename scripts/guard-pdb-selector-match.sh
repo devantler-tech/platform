@@ -28,7 +28,8 @@
 #      both renders. Charts are pulled and rendered by the Helm command
 #      `scripts/build-controller-helm.sh` builds, the renderer the post-renderer guard audits;
 #      `CONTROLLER_HELM` names one already built.
-#   3. Flagger. A Canary's target is not what serves: Flagger creates `<target>-primary`, whose pod
+#   3. Flagger. A Canary is read from the manifests and from the install and the upgrade render
+#      of every chart rendered. Its target is not what serves: Flagger creates `<target>-primary`, whose pod
 #      template carries the target's labels with one rewritten to `<value>-primary`, and scales
 #      the target itself to 0 between rollouts. So the primary is derived and counted, and the
 #      target is not. The rewritten label is the first of Flagger's `-selector-labels` that the
@@ -44,32 +45,57 @@
 # were absent, and `.Release.Revision` is always 1. A value held only in an encrypted Secret
 # renders as the string `placeholder`. A workload a chart renders into a namespace other than the
 # one it is installed into is not found. A PodDisruptionBudget a chart renders for itself is not
-# checked: only the budgets this repository declares are.
+# checked: only the budgets this repository declares are. A chart is rendered only for a namespace
+# holding a budget the manifests alone do not satisfy, so a Canary that only a chart renders, over
+# a workload a manifest renders, beside a budget that manifest already satisfies, is not read.
 #
 # ⚠️ CANNOT-CHECK IS NEVER CLEAN. A budget nothing rendered satisfies, in a namespace holding a
 # HelmRelease this guard cannot render the way Flux does, is exit 2: a chart source that needs
 # credentials or is not a HelmRepository or OCIRepository, a `valuesFrom` entry without a
 # `targetPath`, `valuesFiles`, `upgrade.preserveValues`, `postRenderStrategy`, a post-renderer that
 # is not a kustomize `patches`/`images` renderer or does not apply, or a chart that fails to pull
-# or render. A release that cannot be rendered is no obstacle to a budget something else
+# or render. A chart pull is tried PDB_GUARD_PULL_ATTEMPTS times (default 3), waiting
+# PDB_GUARD_PULL_BACKOFF seconds (default 2) and twice as long after each failure, before it counts
+# as failed. A release that cannot be rendered is no obstacle to a budget something else
 # satisfies. A Canary whose target nothing renders, or whose primary Flagger could not create, is
-# exit 2 the same way. No cluster overlay, an overlay that names no Flux Kustomization, or a tree
-# that renders no PodDisruptionBudget at all is exit 2 as well: a selector that matched nothing is
+# exit 2 the same way. No cluster overlay, a directory under `clusters/` other than `base` that
+# holds no kustomization file, an overlay that names no Flux Kustomization, or a tree that renders
+# no PodDisruptionBudget at all is exit 2 as well: a selector that matched nothing is
 # indistinguishable from a clean tree.
 #
-# A budget whose pods are built where nothing here can render them (an operator building a
-# workload from its custom resource at runtime, a Deployment the node OS installs, a chart this
-# guard cannot render) is allowed only by a reviewed row in `scripts/pdb-selector-exceptions.tsv`
-# naming the budget, what builds its pods, and where its labels were verified. A row never stands
-# in for a rendered mismatch: one naming a HelmRelease this guard can render is refused. A row for
-# a budget that a rendered workload satisfies, or that no cluster renders, is itself a violation.
+# EXCEPTIONS. A budget whose pods are built where nothing here can render them (an operator
+# building a workload from its custom resource at runtime, a Deployment the node OS installs, a
+# chart this guard cannot render) is allowed only by a reviewed row in
+# `scripts/pdb-selector-exceptions.tsv`. A row applies to ONE cluster and names the budget, what
+# builds its pods, the version pin its labels were verified at, and where they were verified.
+# What a row can and cannot excuse:
+#   - It never applies to another cluster: the same budget in a second cluster is judged there.
+#   - It is refused (exit 1) when the cluster renders a workload into the budget's namespace that
+#     satisfies at least one of the selector's matchLabels, In or Exists requirements: that is a
+#     candidate this guard can judge, and it does not match. The one way past that is for the row
+#     to name the workload, as <Kind>/<name>, in its reviewed-unrelated column: a reviewer's
+#     statement that it is another workload that happens to share a label (a grouping label such
+#     as `app.kubernetes.io/part-of`), not the one the budget was written for. A name listed
+#     there that no longer applies is refused too. A rendered workload that satisfies none of
+#     the requirements is taken to be unrelated without being named; so a row cannot be told
+#     apart from a wrong one when the cluster renders the budget's own workload under labels that
+#     share nothing with the selector. That is the limit of what a row is checked against.
+#   - It is refused when it names a workload kind as the producer (this guard reads those itself),
+#     an object the cluster does not render, a HelmRelease this guard can render, or a HelmRelease
+#     that is not the unrenderable release of that name installed into the budget's namespace.
+#   - It is refused when the budget has no selector: such a budget selects no pod.
+#   - It is refused when the pin it was verified at has moved: the version the cluster renders
+#     today must equal the verified version in the row, so a bump fails until the labels are
+#     verified again at the new version. A pin that cannot be read is exit 2.
+#   - A row for a budget that a rendered workload satisfies, that its cluster does not render, or
+#     for a cluster that is no overlay here, is itself a violation.
 #
 # Usage: guard-pdb-selector-match.sh [--kube-version <version>] <k8s-root>
 #
 # Exit codes:
 #   0  every rendered PodDisruptionBudget selects a rendered workload, or carries a reviewed exception
-#   1  at least one PodDisruptionBudget selects no rendered workload, or an exception row is stale
-#      or names a producer that does not hold
+#   1  at least one PodDisruptionBudget selects no rendered workload, or an exception row is stale,
+#      names a producer that does not hold, or was verified at a version that has since moved
 #   2  cannot check: bad usage, a missing root, tool or exceptions file, a render or parse failure,
 #      a budget that cannot be decided, a malformed exception row, or an anti-vacuity failure.
 #      Budgets found detached in the same run are still listed.
@@ -163,24 +189,46 @@ relpath() { # <from-dir> <to-dir>
 
 # A malformed row is exit 2: a row this guard cannot read is a disposition nobody can audit, and
 # ignoring it would let a detached budget pass on a row that says nothing.
+dns_label='[a-z0-9]([-a-z0-9]*[a-z0-9])?'
+dns_name='[a-z0-9]([-a-z0-9.]*[a-z0-9])?'
 : >"$scratch/exceptions.jsonl"
 lineno=0
 while IFS= read -r row || [ -n "$row" ]; do
   lineno=$((lineno + 1))
   case $row in '' | '#'*) continue ;; esac
-  budget="$(field "$row" 1)"
-  producer="$(field "$row" 2)"
-  reason="$(field "$row" 3)"
-  printf '%s' "$budget" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z0-9.]*[a-z0-9])?$' ||
-    die "$exceptions_file:$lineno: column 1 must name a PodDisruptionBudget as <namespace>/<name>, got '$budget'"
-  printf '%s' "$producer" | grep -Eq '^(external:[a-z0-9]([-a-z0-9]*[a-z0-9])?|[A-Z][A-Za-z0-9]*/[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z0-9.]*[a-z0-9])?)$' ||
-    die "$exceptions_file:$lineno: '$budget' names no producer (column 2 must be <Kind>/<namespace>/<name> of a rendered object, or external:<what>, got '$producer')"
-  [ -n "$reason" ] || die "$exceptions_file:$lineno: '$budget' carries no reason (column 3)"
-  [ "$(jq -r --arg key "$budget" 'select(.key == $key) | .key' "$scratch/exceptions.jsonl" | grep -c .)" = 0 ] ||
-    die "$exceptions_file:$lineno: '$budget' is listed more than once"
-  jq -cn --arg key "$budget" --arg producer "$producer" --arg reason "$reason" \
-    '{key: $key, producer: $producer, reason: $reason}' >>"$scratch/exceptions.jsonl" ||
-    die "$exceptions_file:$lineno: cannot record the row for '$budget'"
+  columns="$(printf '%s\n' "$row" | awk -F '\t' '{ print NF }')"
+  [ "$columns" = 7 ] ||
+    die "$exceptions_file:$lineno: a row has seven tab-separated columns (cluster, budget, producer, pin, verified version, unrelated workloads, reason), this one has $columns"
+  row_cluster="$(field "$row" 1)"
+  budget="$(field "$row" 2)"
+  producer="$(field "$row" 3)"
+  pin="$(field "$row" 4)"
+  verified="$(field "$row" 5)"
+  unrelated="$(field "$row" 6)"
+  reason="$(field "$row" 7)"
+  printf '%s' "$row_cluster" | grep -Eq "^$dns_label\$" ||
+    die "$exceptions_file:$lineno: column 1 must name the cluster the row applies to, got '$row_cluster'"
+  [ "$row_cluster" != base ] ||
+    die "$exceptions_file:$lineno: column 1 names 'base', which is the template the cluster overlays share, not a cluster"
+  printf '%s' "$budget" | grep -Eq "^$dns_label/$dns_name\$" ||
+    die "$exceptions_file:$lineno: column 2 must name a PodDisruptionBudget as <namespace>/<name>, got '$budget'"
+  printf '%s' "$producer" | grep -Eq "^(external:$dns_label|[A-Z][A-Za-z0-9]*/$dns_label/$dns_name)\$" ||
+    die "$exceptions_file:$lineno: '$budget' names no producer (column 3 must be <Kind>/<namespace>/<name> of a rendered object, or external:<what>, got '$producer')"
+  printf '%s' "$pin" | grep -Eq "^(HelmRelease/$dns_label/$dns_name|file:[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*:([.][A-Za-z_][A-Za-z0-9_-]*)+)\$" ||
+    die "$exceptions_file:$lineno: '$budget' names no version pin (column 4 must be HelmRelease/<namespace>/<name>, whose chart version is read, or file:<path>:<.dotted.path> beside the k8s root, got '$pin')"
+  printf '%s' "$verified" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._+-]*$' ||
+    die "$exceptions_file:$lineno: '$budget' carries no verified version (column 5, the value of the pin when its labels were verified, got '$verified')"
+  printf '%s' "$unrelated" | grep -Eq "^(-|[A-Z][A-Za-z0-9]*/$dns_name(,[A-Z][A-Za-z0-9]*/$dns_name)*)\$" ||
+    die "$exceptions_file:$lineno: '$budget' names no reviewed-unrelated workloads (column 6 must be '-' for none, or <Kind>/<name>[,<Kind>/<name>...] of workloads rendered into the budget's namespace, got '$unrelated')"
+  [ -n "$reason" ] || die "$exceptions_file:$lineno: '$budget' carries no reason (column 7)"
+  [ "$(jq -r --arg cluster "$row_cluster" --arg key "$budget" 'select(.cluster == $cluster and .key == $key) | .key' \
+    "$scratch/exceptions.jsonl" | grep -c .)" = 0 ] ||
+    die "$exceptions_file:$lineno: '$budget' is listed more than once for cluster '$row_cluster'"
+  jq -cn --arg cluster "$row_cluster" --arg key "$budget" --arg producer "$producer" --arg pin "$pin" \
+    --arg verified "$verified" --arg unrelated "$unrelated" --arg reason "$reason" \
+    '{cluster: $cluster, key: $key, producer: $producer, pin: $pin, verified: $verified, reason: $reason,
+      unrelated: (if $unrelated == "-" then [] else ($unrelated | split(",")) end)}' \
+    >>"$scratch/exceptions.jsonl" || die "$exceptions_file:$lineno: cannot record the row for '$budget'"
 done <"$exceptions_file"
 jq -cs '.' "$scratch/exceptions.jsonl" >"$scratch/exceptions.json" || die "cannot read the exception rows"
 
@@ -276,12 +324,22 @@ release_record='. as $all
        ([$all[] | select(.kind == $ref.kind and .metadata.name == $ref.name
          and (.metadata.namespace // "") == $ref.namespace)][0] // null) end)}'
 
+# The Canaries among rendered objects that sit beside a budget: only those change a verdict. One a
+# chart renders that names no namespace takes the namespace the chart installs into.
+# shellcheck disable=SC2016 # jq variables, not shell expansions
+canaries='[ .[] | select(.kind == "Canary" and ((.apiVersion // "") | test("^flagger[.]app/")))
+  | {namespace: (.metadata.namespace // $namespace), name: (.metadata.name // ""),
+     kind: (.spec.targetRef.kind // ""), target: (.spec.targetRef.name // ""), origin: $origin, mode: $mode}
+  | select(.namespace as $ns | any($pdbs[0][]; .namespace == $ns)) ]'
+
 # Decides every PodDisruptionBudget of one cluster. Input: {cluster, pdbs, candidates, canaries,
-# releases, objects, exceptions, selectorLabels}. Output: one {status, key, text} per budget,
-# status being ok, excepted, finding or unknown.
+# releases, objects, exceptions, selectorLabels}. Output: one {status, key, row, text} per budget,
+# status being ok, excepted, finding or unknown, and row whether an exception row was applied to
+# it (accepted or refused).
 # shellcheck disable=SC2016 # jq variables, not shell expansions
 verdict='
   def modes: ["install", "upgrade"];
+  def workload_kinds: ["Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "ReplicationController", "Rollout"];
   def pairs: to_entries | map("\(.key)=\(.value)") | sort | join(",") | if . == "" then "(no labels)" else . end;
   # One boolean per requirement of the selector on input, against a label set.
   def satisfied($labels):
@@ -295,6 +353,15 @@ verdict='
           elif $e.operator == "DoesNotExist" then ($has | not)
           else error("selector operator \($e.operator) is not one a label selector defines") end) ];
   def selects($labels): satisfied($labels) | all;
+  # How many requirements that NAME a label the pods must carry (matchLabels, In, Exists) a label
+  # set satisfies. NotIn and DoesNotExist hold for every workload that lacks the label, so they
+  # say nothing about whether a workload is the one a budget was written for.
+  def named($labels):
+    [ ((.matchLabels // {}) | to_entries[] | ($labels[.key] != null and $labels[.key] == (.value | tostring))),
+      ((.matchExpressions // [])[] | select(.operator == "In" or .operator == "Exists") | . as $e
+        | ($labels | has($e.key)) and ($e.operator == "Exists"
+            or any((($e.values // []) | map(tostring))[]; . == $labels[$e.key]))) ]
+    | map(select(.)) | length;
   def describe:
     [ ((.matchLabels // {}) | to_entries[] | "\(.key)=\(.value)"),
       ((.matchExpressions // [])[] | "\(.key) \(.operator)"
@@ -303,8 +370,8 @@ verdict='
 
   . as $d
   # Flagger: per Canary and render, the target it scales to 0 and the primary it creates, or why
-  # that cannot be derived.
-  | [ $d.canaries[] | . as $c | modes[] as $m
+  # that cannot be derived. A Canary a chart renders exists in the render it came from.
+  | [ $d.canaries[] | . as $c | modes[] as $m | select($c.mode == "any" or $c.mode == $m)
       | [ $d.candidates[] | select(.namespace == $c.namespace and .kind == $c.kind and .name == $c.target
           and (.mode == "any" or .mode == $m)) ] as $targets
       | if ($targets | length) == 0 then
@@ -335,7 +402,7 @@ verdict='
             else [ live($p.namespace; $m)[] | . as $w | select($p.selector | selects($w.labels)) ] end)} ] as $renders
       | [ $renders[] | select((.hits | length) == 0) | .mode ] as $missing
       | if ($missing | length) == 0 then
-          {status: "ok", key: $key,
+          {status: "ok", key: $key, row: false,
            text: "\($label) selects \($renders[0].hits[0].kind) \($renders[0].hits[0].name) (\($renders[0].hits[0].origin))"}
         else
           $missing[0] as $m
@@ -344,74 +411,115 @@ verdict='
               | map(. as $w | . + {score: (if $p.selector == null then 0 else ($p.selector | satisfied($w.labels) | map(select(.)) | length) end)})
               | sort_by([(if .idle != null then 1 else 0 end), -.score, .kind, .name])) as $near
           | ([ $near[] | select(.idle != null and .score == $total and $p.selector != null) ]) as $idle_hits
-          | (if $p.selector == null then "\($label) has no selector, and a budget without one selects no pod"
-             else "\($label) selects no workload rendered into namespace \($p.namespace)"
-               + (if ($missing | length) == 1 then " in the \($m) render" else "" end)
-               + "\n    selector: \($p.selector | describe)" end
+          | (if $p.selector == null then "has no selector, and a budget without one selects no pod"
+             else "selects no workload rendered into namespace \($p.namespace)"
+               + (if ($missing | length) == 1 then " in the \($m) render" else "" end) end) as $headline
+          | ((if $p.selector == null then "" else "\n    selector: \($p.selector | describe)" end)
              + (if ($idle_hits | length) > 0 then
                   "\n    it matches only \($idle_hits[0].kind) \($idle_hits[0].name), which Flagger Canary \($idle_hits[0].idle) keeps at 0 replicas between rollouts; the pods that serve belong to \($idle_hits[0].name)-primary"
                 else "" end)
              + (if ($near | length) == 0 then "\n    nearest:  no workload is rendered into namespace \($p.namespace)"
                 else "\n    nearest:  " + ([ $near[0:3][] | "\(.kind) \(.name) (\(.origin)): \(.labels | pairs) — \(.score) of \($total) selector requirement(s) match"
-                  + (if .idle != null then ", scaled to 0 by Flagger" else "" end) ] | join("\n              ")) end)) as $detail
+                  + (if .idle != null then ", scaled to 0 by Flagger" else "" end) ] | join("\n              ")) end)) as $rest
+          | "\($label) \($headline)\($rest)" as $detail
           | ([ $d.releases[] | select(.namespace == $p.namespace and (.rendered | not))
                 | "HelmRelease \(.id) cannot be rendered (\(.reason))" ]
              + ([ $flagger[] | select(.unknown != null and .namespace == $p.namespace) | .unknown ] | unique)) as $blind
+          # The rendered workloads this budget was plausibly written for: in any render that does
+          # not satisfy it, one that carries at least one label the selector names.
+          | ([ $missing[] as $mm | (live($p.namespace; $mm)[], idle($p.namespace; $mm)[])
+                | . as $w | select($p.selector != null and ($p.selector | named($w.labels)) > 0)
+                | {kind, name, origin} ] | unique) as $judged
           | ([ $d.exceptions[] | select(.key == $key) ] | .[0]) as $x
           | if $x == null then
               if ($blind | length) > 0 then
-                {status: "unknown", key: $key, text: "\($detail)\n    cannot decide: \($blind | join("; "))"}
-              else {status: "finding", key: $key, text: $detail} end
-            elif ($x.producer | startswith("external:")) then
-              {status: "excepted", key: $key, text: "\($label) is excepted: its pods are built by \($x.producer) (\($x.reason))"}
-            elif ($d.objects | index($x.producer)) == null then
-              {status: "finding", key: $key,
-               text: "\($detail)\n    its exception names \($x.producer), which cluster \($d.cluster) does not render"}
-            elif ($x.producer | startswith("HelmRelease/")) then
-              ([ $d.releases[] | select("HelmRelease/" + .id == $x.producer) ] | .[0]) as $release
-              | if $release == null then
-                  {status: "finding", key: $key,
-                   text: "\($detail)\n    its exception names \($x.producer), which is not installed into namespace \($p.namespace)"}
-                elif $release.rendered then
-                  {status: "finding", key: $key,
-                   text: "\($detail)\n    its exception names \($x.producer), which renders here: an exception cannot stand in for a rendered mismatch"}
-                else
-                  {status: "excepted", key: $key,
-                   text: "\($label) is excepted: its pods are built by \($x.producer), which cannot be rendered (\($release.reason)) (\($x.reason))"}
-                end
+                # The cause leads: a reader of an exit 2 needs what blocked the check first.
+                {status: "unknown", key: $key, row: false,
+                 text: "\($label) cannot be checked: \($blind | join("; "))\n    what could be rendered: it \($headline)\($rest)"}
+              else {status: "finding", key: $key, row: false, text: $detail} end
             else
-              {status: "excepted", key: $key, text: "\($label) is excepted: its pods are built by \($x.producer) (\($x.reason))"}
+              ($x.producer | split("/")[0]) as $producer_kind
+              | ([ $d.releases[] | select(.namespace == $p.namespace and "HelmRelease/" + .id == $x.producer) ] | .[0]) as $release
+              | ([ $judged[] | select(. as $w | ($x.unrelated | index("\($w.kind)/\($w.name)")) == null) ]) as $unreviewed
+              | ([ $x.unrelated[] | select(. as $u | any($judged[]; "\(.kind)/\(.name)" == $u) | not) ]) as $unneeded
+              | (if $p.selector == null then
+                   "its exception cannot stand: a budget without a selector selects no pod, whatever builds them"
+                 elif ($unreviewed | length) > 0 then
+                   "its exception cannot stand: cluster \($d.cluster) renders \($unreviewed[0].kind) \($unreviewed[0].name) (\($unreviewed[0].origin)), which carries part of what this selector names — an exception never stands in for a workload this guard can judge"
+                 elif ($unneeded | length) > 0 then
+                   "its exception lists \($unneeded[0]) as a reviewed unrelated workload, but cluster \($d.cluster) renders no such workload carrying part of this selector into namespace \($p.namespace): remove it from the row"
+                 elif (workload_kinds | index($producer_kind)) != null then
+                   "its exception names \($x.producer), a workload this guard reads itself: a rendered workload is judged, never excepted"
+                 elif ($x.producer | startswith("external:")) then null
+                 elif ($d.objects | index($x.producer)) == null then
+                   "its exception names \($x.producer), which cluster \($d.cluster) does not render"
+                 elif $producer_kind != "HelmRelease" then null
+                 elif $release == null then
+                   "its exception names \($x.producer), which is not installed into namespace \($p.namespace)"
+                 elif $release.rendered then
+                   "its exception names \($x.producer), which renders here: an exception cannot stand in for a rendered mismatch"
+                 else null end) as $refusal
+              | if $refusal != null then
+                  {status: "finding", key: $key, row: true, text: "\($detail)\n    \($refusal)"}
+                elif $x.observed != $x.verified then
+                  {status: "finding", key: $key, row: true,
+                   text: "\($detail)\n    its exception was verified at \($x.verified), and \($x.pin) now reads \($x.observed): verify the pod labels again at the source the row names, then set the verified version of the row to \($x.observed)"}
+                else
+                  {status: "excepted", key: $key, row: true,
+                   text: ("\($label) is excepted: its pods are built by \($x.producer)"
+                     + (if $release != null then ", which cannot be rendered (\($release.reason))" else "" end)
+                     + " (\($x.reason)); verified at \($x.pin) \($x.verified)")}
+                end
             end
         end ]'
 
-# Pulls a chart once per reference and prints the path of the archive. Returns 1, with the reason
-# in <reason-file>, when the chart cannot be pulled.
+# Pulls a chart once per reference and prints the path of the archive. A registry that is briefly
+# unreachable would otherwise turn every pull request into a cannot-check, so a failed pull is
+# tried again, a bounded number of times and waiting longer each time. Returns 1, with the reason
+# in <reason-file>, when the chart cannot be pulled; a later release naming the same chart reuses
+# that result without pulling again.
+pull_attempts="${PDB_GUARD_PULL_ATTEMPTS:-3}"
+pull_backoff="${PDB_GUARD_PULL_BACKOFF:-2}"
+case $pull_attempts in '' | *[!0-9]* | 0) die "PDB_GUARD_PULL_ATTEMPTS must be a whole number of at least 1, got '$pull_attempts'" ;; esac
+case $pull_backoff in '' | *[!0-9]*) die "PDB_GUARD_PULL_BACKOFF must be a whole number of seconds, got '$pull_backoff'" ;; esac
 : >"$scratch/charts.tsv"
 pull_chart() { # <reason-file> <ref> <repo-url or ""> <version or "">
-  local reason_file="$1" ref="$2" repo="$3" version="$4" key dir archives
+  local reason_file="$1" ref="$2" repo="$3" version="$4" key dir archives attempt delay
   key="$ref|$repo|$version"
   dir="$(awk -F '\t' -v k="$key" '$1 == k { print $2 }' "$scratch/charts.tsv")"
   if [ -z "$dir" ]; then
     dir="$scratch/charts/$(($(wc -l <"$scratch/charts.tsv") + 1))"
-    if ! mkdir -p "$dir"; then
-      printf %s "cannot create a chart directory" >"$reason_file"
-      return 1
-    fi
     printf '%s\t%s\n' "$key" "$dir" >>"$scratch/charts.tsv"
-    if [ -n "$repo" ] && [ -n "$version" ]; then
-      "$controller_helm" pull "$ref" --repo "$repo" --version "$version" --destination "$dir" >"$dir.log" 2>&1
-    elif [ -n "$repo" ]; then
-      "$controller_helm" pull "$ref" --repo "$repo" --destination "$dir" >"$dir.log" 2>&1
-    elif [ -n "$version" ]; then
-      "$controller_helm" pull "$ref" --version "$version" --destination "$dir" >"$dir.log" 2>&1
-    else
-      "$controller_helm" pull "$ref" --destination "$dir" >"$dir.log" 2>&1
-    fi || : # the archive count below decides; a failed pull leaves none
+    attempt=1
+    delay="$pull_backoff"
+    while :; do
+      # Each attempt starts from an empty directory: a partial archive must not be counted.
+      rm -rf "$dir"
+      if ! mkdir -p "$dir"; then
+        printf %s "cannot create a chart directory" >"$reason_file"
+        return 1
+      fi
+      if [ -n "$repo" ] && [ -n "$version" ]; then
+        "$controller_helm" pull "$ref" --repo "$repo" --version "$version" --destination "$dir" >"$dir.log" 2>&1
+      elif [ -n "$repo" ]; then
+        "$controller_helm" pull "$ref" --repo "$repo" --destination "$dir" >"$dir.log" 2>&1
+      elif [ -n "$version" ]; then
+        "$controller_helm" pull "$ref" --version "$version" --destination "$dir" >"$dir.log" 2>&1
+      else
+        "$controller_helm" pull "$ref" --destination "$dir" >"$dir.log" 2>&1
+      fi || : # the archive count decides; a failed pull leaves none
+      archives="$(find "$dir" -maxdepth 1 -name '*.tgz' | wc -l | tr -d ' ')"
+      if [ "$archives" = 1 ] || [ "$attempt" -ge "$pull_attempts" ]; then break; fi
+      sleep "$delay"
+      delay=$((delay * 2))
+      attempt=$((attempt + 1))
+    done
+    printf '%s\n' "$attempt" >"$dir.attempts"
   fi
-  archives="$(find "$dir" -maxdepth 1 -name '*.tgz' | wc -l | tr -d ' ')"
+  archives="$(find "$dir" -maxdepth 1 -name '*.tgz' 2>/dev/null | wc -l | tr -d ' ')"
   if [ "$archives" != 1 ]; then
-    printf 'cannot pull chart %s%s%s: %s' "$ref" "${repo:+ from $repo}" "${version:+ at $version}" \
-      "$(tr '\n' ' ' <"$dir.log" | head -c 300)" >"$reason_file"
+    printf 'cannot pull chart %s%s%s after %s attempt(s): %s' "$ref" "${repo:+ from $repo}" "${version:+ at $version}" \
+      "$(cat "$dir.attempts" 2>/dev/null || printf '?')" "$(tr '\n' ' ' <"$dir.log" | head -c 300)" >"$reason_file"
     return 1
   fi
   find "$dir" -maxdepth 1 -name '*.tgz'
@@ -560,6 +668,7 @@ render_release() { # <resolved.json> <namespace> <name> <work>
 : >"$scratch/findings"
 : >"$scratch/unknown"
 : >"$scratch/used"
+: >"$scratch/clusters"
 clusters=0
 total_pdbs=0
 total_ok=0
@@ -567,11 +676,18 @@ total_excepted=0
 total_rendered=0
 for overlay in "$root"/clusters/*/; do
   overlay="${overlay%/}"
+  [ -d "$overlay" ] || continue # the pattern itself, when `clusters/` holds no directory
   cluster="${overlay##*/}"
   # clusters/base is the template the overlays share; its paths still carry placeholders.
   [ "$cluster" != base ] || continue
-  [ -f "$overlay/kustomization.yaml" ] || continue
+  # Every other directory is a cluster. One this guard skipped would have its budgets go unread
+  # while the run reports the rest as clean, so a directory with none of the three file names
+  # `kubectl kustomize` builds from is refused rather than passed over.
+  if [ ! -f "$overlay/kustomization.yaml" ] && [ ! -f "$overlay/kustomization.yml" ] && [ ! -f "$overlay/Kustomization" ]; then
+    die "'$overlay' holds no kustomization.yaml, kustomization.yml or Kustomization, so it cannot be rendered as a cluster overlay — refusing to skip it"
+  fi
   clusters=$((clusters + 1))
+  printf '%s\n' "$cluster" >>"$scratch/clusters"
   work="$scratch/$cluster"
   mkdir -p "$work/flux" || die "cannot create a scratch directory for '$cluster'"
 
@@ -671,12 +787,8 @@ for overlay in "$root"/clusters/*/; do
 
   jq -c --arg namespace '' --arg origin 'a rendered manifest' --arg mode any "$workloads" "$work/resolved.json" \
     >"$work/manifest-workloads.json" || die "cannot read the workloads cluster '$cluster' renders"
-  # Only a Canary in a namespace that holds a budget changes a verdict.
-  jq -c --slurpfile pdbs "$work/pdbs.json" '[ .[] | select(.kind == "Canary" and ((.apiVersion // "") | test("^flagger[.]app/")))
-      | {namespace: (.metadata.namespace // ""), name: .metadata.name,
-         kind: (.spec.targetRef.kind // ""), target: (.spec.targetRef.name // "")}
-      | select(.namespace as $ns | any($pdbs[0][]; .namespace == $ns)) ]' \
-    "$work/resolved.json" >"$work/canaries.json" || die "cannot read the Canaries cluster '$cluster' renders"
+  jq -c --slurpfile pdbs "$work/pdbs.json" --arg namespace '' --arg origin 'a rendered manifest' --arg mode any \
+    "$canaries" "$work/resolved.json" >"$work/canaries.json" || die "cannot read the Canaries cluster '$cluster' renders"
   jq -c '[ .[] | select(.kind != null and .metadata.name != null) | "\(.kind)/\(.metadata.namespace // "")/\(.metadata.name)" ]' \
     "$work/resolved.json" >"$work/objects.json" || die "cannot list the objects cluster '$cluster' renders"
   jq -c '[ .[] | select(.kind == "HelmRelease" and ((.apiVersion // "") | test("^helm[.]toolkit[.]fluxcd[.]io/")))
@@ -686,8 +798,12 @@ for overlay in "$root"/clusters/*/; do
 
   # Flagger rewrites one of these labels on the primary it creates. The flag's default is modelled;
   # the chart passes -selector-labels only when its selectorLabels value is set.
-  beside="$(jq 'length' "$work/canaries.json")" || die "cannot count the Canaries beside a PodDisruptionBudget in cluster '$cluster'"
-  if [ "$beside" != 0 ]; then
+  # It runs on the manifests' Canaries before any chart is pulled, and again once the charts'
+  # own Canaries have joined them.
+  check_canaries() {
+    local beside unsupported flagger
+    beside="$(jq 'length' "$work/canaries.json")" || die "cannot count the Canaries beside a PodDisruptionBudget in cluster '$cluster'"
+    [ "$beside" != 0 ] || return 0
     unsupported="$(jq -r '[ .[] | select(.kind != "Deployment" and .kind != "DaemonSet" and .kind != "Service") ] | .[0]
         | if . == null then "" else "Canary \(.namespace)/\(.name) targets a \(.kind)" end' "$work/canaries.json")" ||
       die "cannot read the Canary targets cluster '$cluster' renders"
@@ -701,7 +817,50 @@ for overlay in "$root"/clusters/*/; do
       absent) die "cluster '$cluster' renders a Canary beside a PodDisruptionBudget but no flagger HelmRelease, so the labels Flagger rewrites cannot be read" ;;
       *) die "cluster '$cluster': the flagger HelmRelease sets selectorLabels or valuesFrom, and this guard models Flagger's default -selector-labels only" ;;
     esac
-  fi
+  }
+  check_canaries
+
+  # The exception rows of this cluster, each with what its pin reads today. A pin this guard
+  # cannot read is cannot-check: a row whose version nobody can compare says nothing.
+  : >"$work/exceptions.jsonl"
+  jq -c --arg cluster "$cluster" '.[] | select(.cluster == $cluster)' "$scratch/exceptions.json" >"$work/rows.jsonl" ||
+    die "cannot read the exception rows of cluster '$cluster'"
+  while IFS= read -r exception; do
+    [ -n "$exception" ] || continue
+    exception_key="$(jq -r '.key' <<<"$exception")" || die "cannot read an exception row of cluster '$cluster'"
+    pin="$(jq -r '.pin' <<<"$exception")" || die "cannot read the pin of the exception row for '$exception_key'"
+    case $pin in
+      HelmRelease/*)
+        observed="$(jq -r --arg pin "$pin" '[ .[] | select(.kind == "HelmRelease" and ((.apiVersion // "") | test("^helm[.]toolkit[.]fluxcd[.]io/"))
+              and "HelmRelease/\(.metadata.namespace // "")/\(.metadata.name)" == $pin) ]
+            | if length != 1 then error("cluster renders \(length) of it")
+              else (.[0].spec.chart.spec.version // "") | if type == "string" then . else tostring end end' \
+          "$work/resolved.json" 2>"$work/pin.err")" ||
+          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, whose chart version cannot be read: $(head -c 300 "$work/pin.err")"
+        [ -n "$observed" ] ||
+          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, which sets no spec.chart.spec.version"
+        ;;
+      file:*)
+        pin_file="${pin#file:}"
+        pin_path="${pin_file##*:}"
+        pin_file="${pin_file%:*}"
+        [ -f "$root/../$pin_file" ] ||
+          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to '$pin_file' beside '$root', which does not exist"
+        # The path was validated as plain dotted keys when the row was read.
+        observed="$(yq -r "$pin_path | select(tag == \"!!str\" or tag == \"!!int\" or tag == \"!!float\")" "$root/../$pin_file" 2>"$work/pin.err")" ||
+          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, which cannot be read: $(head -c 300 "$work/pin.err")"
+        [ -n "$observed" ] ||
+          die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, which holds no version"
+        ;;
+      *) die "the exception row for '$exception_key' in cluster '$cluster' names a pin this guard cannot read: '$pin'" ;;
+    esac
+    case $observed in
+      *\$\{*) die "the exception row for '$exception_key' in cluster '$cluster' is pinned to $pin, which still carries a \${...} substitution" ;;
+    esac
+    jq -c --arg observed "$observed" '. + {observed: $observed}' <<<"$exception" >>"$work/exceptions.jsonl" ||
+      die "cannot record the pin of the exception row for '$exception_key'"
+  done <"$work/rows.jsonl"
+  jq -cs '.' "$work/exceptions.jsonl" >"$work/exceptions.json" || die "cannot collect the exception rows of cluster '$cluster'"
 
   decide() { # <candidates.json> <releases.json> <exceptions.json> <out>
     jq -n --arg cluster "$cluster" --slurpfile pdbs "$work/pdbs.json" --slurpfile candidates "$1" \
@@ -742,6 +901,16 @@ for overlay in "$root"/clusters/*/; do
             die "cannot add the workloads HelmRelease $release_ns/$release_name renders"
           mv "$work/candidates.next.json" "$work/candidates.json" ||
             die "cannot keep the workloads HelmRelease $release_ns/$release_name renders"
+          # A chart can render the Canary over its own workload. Left unread, the budget would be
+          # judged against the target Flagger scales to 0 instead of the primary that serves.
+          jq -c --slurpfile pdbs "$work/pdbs.json" --arg namespace "$namespace_needed" \
+            --arg origin "HelmRelease $release_ns/$release_name" --arg mode "$mode" \
+            "$canaries" "$release_work/$mode.json" >"$release_work/$mode.canaries.json" ||
+            die "cannot read the Canaries HelmRelease $release_ns/$release_name renders"
+          jq -c -s 'add' "$work/canaries.json" "$release_work/$mode.canaries.json" >"$work/canaries.next.json" ||
+            die "cannot add the Canaries HelmRelease $release_ns/$release_name renders"
+          mv "$work/canaries.next.json" "$work/canaries.json" ||
+            die "cannot keep the Canaries HelmRelease $release_ns/$release_name renders"
         done
         jq -cn --arg namespace "$namespace_needed" --arg id "$release_ns/$release_name" \
           '{namespace: $namespace, id: $id, rendered: true, reason: ""}' >>"$work/attempted.jsonl" ||
@@ -758,7 +927,10 @@ for overlay in "$root"/clusters/*/; do
   done <"$work/namespaces"
   jq -cs '.' "$work/attempted.jsonl" >"$work/attempted.json" || die "cannot collect the HelmReleases rendered for cluster '$cluster'"
 
-  decide "$work/candidates.json" "$work/attempted.json" "$scratch/exceptions.json" "$work/verdict.json"
+  # The charts' own Canaries are held to the same limits as the manifests'.
+  check_canaries
+
+  decide "$work/candidates.json" "$work/attempted.json" "$work/exceptions.json" "$work/verdict.json"
   # Every budget must come back with one of the four verdicts: one the decision dropped would
   # otherwise read as clean.
   counts="$(jq -r '[length] + [("ok", "excepted", "finding", "unknown") as $s | [ .[] | select(.status == $s) ] | length]
@@ -771,7 +943,9 @@ for overlay in "$root"/clusters/*/; do
     die "cannot report the PodDisruptionBudgets of cluster '$cluster'"
   jq -r '.[] | select(.status == "excepted") | "  excepted  " + .text' "$work/verdict.json" ||
     die "cannot report the excepted PodDisruptionBudgets of cluster '$cluster'"
-  jq -r '.[] | select(.status == "excepted") | .key' "$work/verdict.json" >>"$scratch/used" ||
+  # A row is used when it was applied to a budget, whether it was accepted or refused: a refused
+  # row is reported with its reason, not as stale.
+  jq -r --arg cluster "$cluster" '.[] | select(.row == true) | "\($cluster)\t\(.key)"' "$work/verdict.json" >>"$scratch/used" ||
     die "cannot record the exception rows cluster '$cluster' uses"
   jq -r '.[] | select(.status == "finding") | .text' "$work/verdict.json" >>"$scratch/findings" ||
     die "cannot record the detached PodDisruptionBudgets of cluster '$cluster'"
@@ -781,15 +955,21 @@ for overlay in "$root"/clusters/*/; do
   total_excepted=$((total_excepted + excepted))
 done
 
-[ "$clusters" -gt 0 ] || die "no cluster overlay with a kustomization.yaml under '$root/clusters'"
+[ "$clusters" -gt 0 ] || die "no cluster overlay under '$root/clusters'"
 [ "$total_pdbs" -gt 0 ] ||
   die "no cluster renders any PodDisruptionBudget under '$root' — refusing to report an empty render as clean"
 
-jq -r '.[].key' "$scratch/exceptions.json" >"$scratch/exception-keys" || die "cannot list the exception rows"
-while IFS= read -r key || [ -n "$key" ]; do
+# A row is judged in the one cluster it names. One that was applied to no budget there is stale.
+jq -r '.[] | "\(.cluster)\t\(.key)"' "$scratch/exceptions.json" >"$scratch/exception-keys" || die "cannot list the exception rows"
+while IFS="$tab" read -r row_cluster key || [ -n "$row_cluster" ]; do
   [ -n "$key" ] || continue
-  grep -qxF -- "$key" "$scratch/used" ||
-    printf 'stale exception: PodDisruptionBudget %s is satisfied by a rendered workload, or no cluster renders it\n' "$key" >>"$scratch/findings"
+  if ! grep -qxF -- "$row_cluster" "$scratch/clusters"; then
+    printf 'stale exception: the row for PodDisruptionBudget %s names cluster %s, which is no overlay under %s/clusters\n' \
+      "$key" "$row_cluster" "$root" >>"$scratch/findings"
+  elif ! grep -qxF -- "$row_cluster$tab$key" "$scratch/used"; then
+    printf 'stale exception: %s: PodDisruptionBudget %s is satisfied by a rendered workload, or cluster %s does not render it\n' \
+      "$row_cluster" "$key" "$row_cluster" >>"$scratch/findings"
+  fi
 done <"$scratch/exception-keys"
 
 summary="$clusters cluster(s), $total_pdbs PodDisruptionBudget(s), $total_rendered HelmRelease chart(s) rendered"
@@ -798,7 +978,7 @@ if [ -s "$scratch/findings" ]; then
   printf 'guard-pdb-selector-match: PodDisruptionBudgets that select no rendered workload, and exception rows that do not hold:\n' >&2
   sed 's/^/  /' "$scratch/findings" >&2
   printf 'A budget whose selector matches no pod reports expectedPods: 0 and holds back no eviction. Point the selector at the labels of the pod template that serves.\n' >&2
-  printf 'A workload nothing here can render is a reviewed row in %s naming the budget, what builds its pods and where its labels were verified; remove a stale row.\n' "$exceptions_file" >&2
+  printf 'A workload nothing here can render is a reviewed row in %s naming the cluster, the budget, what builds its pods, the version pin its labels were verified at and where; remove a stale row, and verify a row again when its pin moves.\n' "$exceptions_file" >&2
   status=1
 fi
 if [ -s "$scratch/unknown" ]; then

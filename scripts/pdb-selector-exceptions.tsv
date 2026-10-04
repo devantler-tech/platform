@@ -1,17 +1,38 @@
 # Reviewed exceptions for scripts/guard-pdb-selector-match.sh (#3596).
 #
-# One tab-separated row per PodDisruptionBudget whose pods nothing in this repository renders:
-#   <namespace>/<name>	<producer>	<where the pod labels come from, and where they were verified>
+# One row per PodDisruptionBudget whose pods nothing in this repository renders, in ONE cluster.
+# Seven tab-separated columns:
+#   <cluster>	<namespace>/<name>	<producer>	<pin>	<verified version>	<unrelated workloads>	<where the pod labels come from, and where they were verified>
+#
+# <cluster> is the overlay under k8s/clusters/ the row applies to. It applies to no other: the
+# same budget in a second cluster is judged there, and needs its own row to be excepted there.
 #
 # <producer> is what builds the pods:
 #   <Kind>/<namespace>/<name>   an object the same cluster renders, from which a controller builds the
 #                               workload at runtime. The guard requires it to be rendered. A
-#                               HelmRelease is accepted only while the guard cannot render its chart.
+#                               HelmRelease is accepted only while the guard cannot render its chart,
+#                               and only when it is installed into the budget's namespace. A workload
+#                               kind (Deployment, StatefulSet, ...) is refused: the guard reads those.
 #   external:<what>             something outside every render, such as the node OS.
 #
+# <pin> is where the version the labels were verified at is pinned, and <verified version> is its
+# value on the day they were verified:
+#   HelmRelease/<namespace>/<name>   spec.chart.spec.version of that HelmRelease, as the cluster renders it
+#   file:<path>:<.dotted.path>       a value in a YAML file, the path taken from the repository root
+# The guard reads the pin and fails while it differs from the verified version, so a bump cannot
+# merge until the labels have been verified again at the new version and the row updated.
+#
+# <unrelated workloads> is `-`, or a comma-separated list of <Kind>/<name>. The guard refuses a row
+# while the cluster renders, into the budget's namespace, a workload that carries part of what the
+# selector names (one of its matchLabels, In or Exists requirements): that workload can be judged,
+# and it does not match. Naming it here is the reviewed statement that it is a different workload
+# sharing a label, not the one the budget was written for. Never list the budget's own workload: if
+# the cluster renders that, fix the selector and remove the row. A name that stops applying fails.
+#
 # A row is a tracked disposition, never an approval of a mismatch: the guard cannot check the
-# selector of a budget listed here, so re-verify its labels at the source the row names whenever
-# that source changes version. A row for a budget that a rendered workload satisfies, or that no
-# cluster renders, fails the guard, so remove it then.
-kube-system/coredns	external:talos	Talos installs the CoreDNS Deployment from its own bootstrap manifests, so no layer of the prod cluster renders it (the local cluster renders its own, which the guard checks). Pod label k8s-app=kube-dns verified in Talos v1.13.10, internal/app/machined/pkg/controllers/k8s/internal/k8stemplates/coredns.go.
-observability/coroot-coroot	Coroot/observability/coroot	coroot-operator builds the coroot-coroot StatefulSet from this custom resource at runtime; its chart renders only the operator. Pod labels managed-by=coroot-operator, part-of=<resource name> and component=coroot verified in coroot-operator v1.10.5 (chart 0.10.5), controller/controller.go Labels and controller/coroot.go.
+# selector of a budget listed here against its pods. A row is also refused when the budget has no
+# selector and when its producer does not hold. A row for a budget that a rendered workload
+# satisfies, that its cluster does not render, or for a cluster that is no overlay, fails the
+# guard, so remove it then.
+prod	kube-system/coredns	external:talos	file:ksail.prod.yaml:.spec.cluster.talos.version	v1.13.10	-	Talos installs the CoreDNS Deployment from its own bootstrap manifests, so no layer of the prod cluster renders it. Pod label k8s-app=kube-dns verified in the Talos source, internal/app/machined/pkg/controllers/k8s/internal/k8stemplates/coredns.go.
+prod	observability/coroot-coroot	Coroot/observability/coroot	HelmRelease/observability/coroot-operator	0.10.5	Deployment/crossplane-sync-exporter	coroot-operator builds the coroot-coroot StatefulSet from this custom resource at runtime; its chart renders only the operator. Pod labels managed-by=coroot-operator, part-of=<resource name> and component=coroot verified in the coroot-operator source (app version v1.10.5), controller/controller.go Labels and controller/coroot.go. The crossplane-sync-exporter Deployment is this repository's own metrics exporter; it shares only the grouping label part-of=coroot.
