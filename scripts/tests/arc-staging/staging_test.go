@@ -1,0 +1,206 @@
+package arcstaging_test
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+const repoRoot = "../../.."
+
+func readYAML(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repoRoot, path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	return document
+}
+
+func field(t *testing.T, value any, path ...string) any {
+	t.Helper()
+	for _, key := range path {
+		mapping, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: expected a mapping, got %T", strings.Join(path, "."), value)
+		}
+		value, ok = mapping[key]
+		if !ok {
+			t.Fatalf("missing %s", strings.Join(path, "."))
+		}
+	}
+	return value
+}
+
+func equal(t *testing.T, value, want any) {
+	t.Helper()
+	if value != want {
+		t.Fatalf("got %#v, want %#v", value, want)
+	}
+}
+
+func TestStagedReleasesAreSuspendedAndPinned(t *testing.T) {
+	for _, component := range []string{
+		"k8s/bases/infrastructure/controllers/actions-runner-controller",
+		"k8s/bases/infrastructure/ksail-analysis-runners",
+	} {
+		t.Run(filepath.Base(component), func(t *testing.T) {
+			release := readYAML(t, component+"/helm-release.yaml")
+			equal(t, field(t, release, "spec", "suspend"), true)
+			equal(t, field(t, release, "spec", "chartRef", "kind"), "OCIRepository")
+			source := readYAML(t, component+"/oci-repository.yaml")
+			equal(t, field(t, source, "spec", "ref", "tag"), "0.15.0")
+			digest, ok := field(t, source, "spec", "ref", "digest").(string)
+			if !ok || !strings.HasPrefix(digest, "sha256:") || len(digest) != 71 {
+				t.Fatalf("missing immutable chart digest: %#v", digest)
+			}
+		})
+	}
+}
+
+func TestRepositoryScopedPoolCannotCreateUnboundedOrPrivilegedRunners(t *testing.T) {
+	release := readYAML(t, "k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml")
+	values := field(t, release, "spec", "values")
+	equal(t, field(t, values, "githubConfigUrl"), "https://github.com/devantler-tech/ksail")
+	equal(t, field(t, values, "githubConfigSecret"), "arc-ksail-app")
+	equal(t, field(t, values, "runnerScaleSetName"), "ksail-code-quality")
+	equal(t, field(t, values, "minRunners"), 0)
+	equal(t, field(t, values, "maxRunners"), 1)
+	if _, exists := values.(map[string]any)["containerMode"]; exists {
+		t.Fatal("container hooks and Docker-in-Docker are outside this pool's scope")
+	}
+	spec := field(t, values, "template", "spec")
+	equal(t, field(t, spec, "automountServiceAccountToken"), false)
+	equal(t, field(t, spec, "nodeSelector", "platform.devantler.tech/ksail-analysis"), "enabled")
+	containers, ok := field(t, spec, "containers").([]any)
+	if !ok || len(containers) != 1 {
+		t.Fatal("runner must contain exactly one container")
+	}
+	runner := containers[0]
+	equal(t, field(t, runner, "name"), "runner")
+	image, ok := field(t, runner, "image").(string)
+	if !ok || !strings.HasPrefix(image, "ghcr.io/actions/actions-runner@sha256:") {
+		t.Fatal("runner image must be digest-pinned")
+	}
+	for _, name := range []string{"privileged", "allowPrivilegeEscalation"} {
+		equal(t, field(t, runner, "securityContext", name), false)
+	}
+	equal(t, field(t, runner, "resources", "requests", "memory"), "12Gi")
+	equal(t, field(t, runner, "resources", "limits", "memory"), "14Gi")
+	if _, exists := spec.(map[string]any)["volumes"]; exists {
+		t.Fatal("no host, credential or persistent volumes may reach a job runner")
+	}
+	if _, exists := spec.(map[string]any)["initContainers"]; exists {
+		t.Fatal("no privileged bootstrap container is permitted")
+	}
+	listener := field(t, values, "listenerTemplate", "spec", "containers").([]any)
+	if len(listener) != 1 {
+		t.Fatal("listener must be separately bounded")
+	}
+	equal(t, field(t, listener[0], "name"), "listener")
+	equal(t, field(t, listener[0], "resources", "limits", "memory"), "512Mi")
+}
+
+func TestControllerIsNamespaceScopedAndCredentialsAreExternal(t *testing.T) {
+	controller := readYAML(t, "k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml")
+	equal(t, field(t, controller, "spec", "values", "flags", "watchSingleNamespace"), "arc-ksail-analysis")
+	secret := readYAML(t, "k8s/bases/infrastructure/ksail-analysis-runners/external-secret.yaml")
+	equal(t, field(t, secret, "kind"), "ExternalSecret")
+	equal(t, field(t, secret, "spec", "secretStoreRef", "name"), "openbao")
+	equal(t, field(t, secret, "spec", "target", "name"), "arc-ksail-app")
+	entries := field(t, secret, "spec", "data").([]any)
+	if len(entries) != 3 {
+		t.Fatal("only the three App authentication keys are expected")
+	}
+	for _, entry := range entries {
+		equal(t, field(t, entry, "remoteRef", "key"), "github-arc-ksail")
+	}
+}
+
+func TestControllerLayerCreatesBothNamespacesBeforeItsScopedRBAC(t *testing.T) {
+	component := "k8s/bases/infrastructure/controllers/actions-runner-controller"
+	kustomization := readYAML(t, component+"/kustomization.yaml")
+	resources := field(t, kustomization, "resources").([]any)
+	for _, name := range []string{"controller", "runners"} {
+		path := "namespace-" + name + ".yaml"
+		found := false
+		for _, resource := range resources {
+			found = found || resource == path
+		}
+		if !found {
+			t.Fatalf("controller layer must create %s before Helm installs its scoped RBAC", path)
+		}
+		namespace := readYAML(t, component+"/"+path)
+		equal(t, field(t, namespace, "kind"), "Namespace")
+		equal(t, field(t, namespace, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune"), "disabled")
+		equal(t, field(t, namespace, "metadata", "labels", "pod-security.kubernetes.io/enforce"), "restricted")
+	}
+	pool := readYAML(t, "k8s/bases/infrastructure/ksail-analysis-runners/kustomization.yaml")
+	for _, resource := range field(t, pool, "resources").([]any) {
+		if strings.HasPrefix(resource.(string), "namespace") {
+			t.Fatal("pool must not duplicate controller-owned namespaces")
+		}
+	}
+}
+
+func TestStagingGuardRunsUnconditionallyOnPullRequestsAndMergeGroups(t *testing.T) {
+	workflow := readYAML(t, ".github/workflows/ci.yaml")
+	events := field(t, workflow, "on").(map[string]any)
+	for _, event := range []string{"pull_request", "merge_group"} {
+		if _, ok := events[event]; !ok {
+			t.Fatalf("missing %s trigger", event)
+		}
+	}
+	changes := field(t, workflow, "jobs", "changes")
+	if _, conditional := changes.(map[string]any)["if"]; conditional {
+		t.Fatal("staging guard must run even when no deployment path changes")
+	}
+	for _, step := range field(t, changes, "steps").([]any) {
+		mapping := step.(map[string]any)
+		if mapping["run"] == "go test ./scripts/tests/arc-staging" {
+			if _, conditional := mapping["if"]; conditional {
+				t.Fatal("staging guard cannot be conditional")
+			}
+			return
+		}
+	}
+	t.Fatal("missing unconditional staging guard")
+}
+
+func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
+	err := filepath.WalkDir(filepath.Join(repoRoot, "k8s"), func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || entry.Name() != "kustomization.yaml" || strings.Contains(path, "/actions-runner-controller/") || strings.Contains(path, "/ksail-analysis-runners/") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var document struct {
+			Resources  []string `yaml:"resources"`
+			Components []string `yaml:"components"`
+		}
+		if err := yaml.Unmarshal(data, &document); err != nil {
+			return err
+		}
+		for _, reference := range append(document.Resources, document.Components...) {
+			if strings.Contains(reference, "actions-runner-controller") || strings.Contains(reference, "ksail-analysis-runners") {
+				t.Errorf("%s activates ARC through %q", path, reference)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

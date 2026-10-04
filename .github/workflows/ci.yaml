@@ -121,6 +121,9 @@ jobs:
       - name: 🔎 Validate finite runtime-log evidence
         run: go test ./scripts/analyze-cri-logs
 
+      - name: 🛑 Validate inactive ARC staging boundaries
+        run: go test ./scripts/tests/arc-staging
+
       # The copy that feeds the evaluator: each mode must refuse a Cluster that
       # archives through the wrong store or a drifted store, never reuse one
       # credential, and hand the evaluator listings it actually accepts. The
