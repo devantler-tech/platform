@@ -66,7 +66,9 @@ require_rc() {
 # are served, and anything else leaves a marker the assertions look for:
 #   api-resources --no-headers                    the served kinds
 #   get <records>.<group> -A -o json              the scan records, the only JSON read
-#   get <resource> [-A] --no-headers              a live list, as a table and never as objects
+#   get <resource> [-A]                           a live list, as a table and never as objects
+# A live fixture holds the rows only. The header kubectl prints is taken from `<fixture>.header`
+# when a case supplies one, and is otherwise made up with one name per column of the first row.
 # A failed read writes an identity and an address to stderr, the way a real refusal does, so the
 # log assertions cover the error path too.
 cat >"${fake_bin}/kubectl" <<'FAKE'
@@ -97,11 +99,25 @@ if [[ "$#" -eq 5 && "$2" == *.spdx.softwarecomposition.kubescape.io && "$3 $4 $5
   cat "${FIXTURES}/records/$2.json"
   exit 0
 fi
-if [[ "$#" -eq 3 && "$3" == "--no-headers" ]] || [[ "$#" -eq 4 && "$3 $4" == "-A --no-headers" ]]; then
+if [[ "$#" -eq 2 ]] || [[ "$#" -eq 3 && "$3" == "-A" ]]; then
   scope=cluster
-  [[ "$#" -eq 4 ]] && scope=namespaced
-  [[ -f "${FIXTURES}/live/$2.${scope}" ]] || refuse
-  cat "${FIXTURES}/live/$2.${scope}"
+  [[ "$#" -eq 3 ]] && scope=namespaced
+  rows="${FIXTURES}/live/$2.${scope}"
+  [[ -f "${rows}" ]] || refuse
+  if [[ -f "${rows}.header" ]]; then
+    cat "${rows}.header"
+  else
+    awk -v scope="${scope}" '
+      BEGIN { FS = "  +" }
+      NR == 1 {
+        first = (scope == "namespaced" ? 3 : 2)
+        printf "%s", (scope == "namespaced" ? "NAMESPACE   NAME" : "NAME")
+        for (i = first; i <= NF; i++) printf "   COLUMN%d", i
+        printf "\n"
+      }
+    ' "${rows}"
+  fi
+  cat "${rows}"
   exit 0
 fi
 touch "${FIXTURES}/UNEXPECTED_READ"
@@ -326,7 +342,7 @@ touch "${dir}/api-resources.partial"
 printf 'shop      api      2/2   2     2     40d\n' >"${dir}/live/deployments.v1.apps.namespaced"
 run "${dir}" --context scoped@test
 require_rc 1 'kinds a partial discovery did return are still checked'
-require_text 'Total: records=7 live=5 orphaned=1 unknown=1' 'the missing kind is unknown and the deleted object orphaned'
+require_text 'Total: records=7 live=4 orphaned=1 unknown=2' 'the missing kind and the record resolved by kind alone are unknown, and the deleted object orphaned'
 require_text 'the cluster does not serve this kind, or not under one name' 'the report must say why the record is unknown'
 require_text 'The served kinds were read only in part' 'a partial discovery must be stated'
 
@@ -388,6 +404,64 @@ require_text 'the cluster does not serve this kind, or not under one name' 'the 
 if grep -Fq 'nodes.v1beta2.longhorn.io' "${dir}/calls.log"; then
   fail 'no record may be checked against a group it does not name'
 fi
+
+# 14a. After a partial discovery, "the only group that serves this kind" is not known. The subject
+#      record names a binding kind without a group; the one group discovery reached serves that kind
+#      and lists nothing, while the group that holds the real binding was never read. The record is
+#      unknown, not orphaned.
+case_name='discovery-partial-lone-group'
+dir="$(fixture discovery-partial-lone-group)"
+sed 's|rbac.authorization.k8s.io/v1 |other.example/v1            |' "${dir}/api-resources.txt" >"${dir}/api-resources.new"
+mv "${dir}/api-resources.new" "${dir}/api-resources.txt"
+touch "${dir}/api-resources.partial"
+: >"${dir}/live/clusterrolebindings.v1.other.example.cluster"
+run "${dir}" --context scoped@test
+require_rc 2 'a kind resolved through a partial discovery must not be called orphaned'
+require_text 'Total: records=7 live=5 orphaned=0 unknown=2' 'both binding records are unknown after a partial discovery'
+if grep -Fq 'clusterrolebindings.v1.other.example' "${dir}/calls.log"; then
+  fail 'no record may be checked against a group picked from a partial discovery'
+fi
+
+# 14b. A live name holding a blank is one name. Split on single blanks it would be indexed by its
+#      first word, and the record of a deleted object with that word as its name would stay live.
+case_name='blank-in-live-name'
+dir="$(fixture blank-in-live-name)"
+printf 'system:auth-delegator extra   ClusterRole/system:auth-delegator   90d\n' \
+  >"${dir}/live/clusterrolebindings.v1.rbac.authorization.k8s.io.cluster"
+run "${dir}" --context scoped@test
+require_rc 1 'a live name that only starts with the recorded name must not keep the record alive'
+require_text 'Total: records=7 live=5 orphaned=2 unknown=0' 'the binding record and its subject record are orphaned'
+
+# 14c. A row with more columns than the header holds a cell that cannot be split reliably, so the
+#      listing proves nothing: its records are unknown.
+case_name='row-wider-than-header'
+dir="$(fixture row-wider-than-header)"
+printf 'system:auth-delegator   split  name   ClusterRole/system:auth-delegator   90d\n' \
+  >"${dir}/live/clusterrolebindings.v1.rbac.authorization.k8s.io.cluster"
+printf 'NAME   ROLE   AGE\n' >"${dir}/live/clusterrolebindings.v1.rbac.authorization.k8s.io.cluster.header"
+run "${dir}" --context scoped@test
+require_rc 2 'a row that does not fit the header must not be read as a name table'
+require_text 'Total: records=7 live=5 orphaned=0 unknown=2' 'records of a listing with a misfitting row are unknown'
+
+# 14d. A listing whose header is not the name table kubectl prints is not trusted either.
+case_name='unexpected-header'
+dir="$(fixture unexpected-header)"
+printf 'KIND   NAME   AGE\n' >"${dir}/live/clusterrolebindings.v1.rbac.authorization.k8s.io.cluster.header"
+run "${dir}" --context scoped@test
+require_rc 2 'a listing without the expected leading columns must not be read as a name table'
+require_text 'Total: records=7 live=5 orphaned=0 unknown=2' 'records of a listing with another header are unknown'
+
+# 14e. Two things kubectl really prints must not cost a record: an empty cell after the name, which
+#      leaves the row with fewer columns than the header, and the ` (default)` it puts after the
+#      name of a default class. Both were seen on the production cluster.
+case_name='short-row-and-default-marker'
+dir="$(fixture short-row-and-default-marker)"
+printf 'system:auth-delegator (default)   ClusterRole/system:auth-delegator\n' \
+  >"${dir}/live/clusterrolebindings.v1.rbac.authorization.k8s.io.cluster"
+printf 'NAME   ROLE   AGE\n' >"${dir}/live/clusterrolebindings.v1.rbac.authorization.k8s.io.cluster.header"
+run "${dir}" --context scoped@test
+require_rc 0 'an empty trailing cell and the default marker must not hide a live object'
+require_text 'Total: records=7 live=7 orphaned=0 unknown=0' 'every record is still live'
 
 # 15. Summaries are checked the same way when asked for.
 case_name='summaries'

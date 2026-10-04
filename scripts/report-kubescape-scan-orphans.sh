@@ -155,8 +155,8 @@ kube() {
 # 1. The scan records, as `R <namespace> <name> <label kind> <label group> <wlid>`. The kind and the
 #    group are printed in the report, so anything outside the label alphabet is replaced. A wlid
 #    holding a control character, a backslash or a blank is dropped, because a list could only
-#    ever "fail to find" it: `@tsv` rewrites the first two into a different name, and a name with
-#    a blank cannot be read back from a table whose columns are split on blanks.
+#    ever "fail to find" it: `@tsv` rewrites the first two into a different name, and a blank
+#    inside a wlid cannot be told from one that belongs to the reference itself.
 # shellcheck disable=SC2016 # jq program, not shell expansion
 readonly record_program='
   def labelled($key): (.metadata.labels[$key]? // "") | tostring | gsub("[^A-Za-z0-9_.-]"; "?");
@@ -205,7 +205,7 @@ fi
 #      C <resource.version.group> <namespaced> <kind label> <record ns> <record name> <object ns> <object name>
 #    or to the reason it cannot be checked:
 #      U <reference|kind> <kind label> <record ns> <record name> <object ns> <object name>
-awk '
+awk -v complete="${discovery_complete}" '
   BEGIN { FS = OFS = "\t" }
   # Splits a wlid into object_ns, kind and object_name; returns 0 when it is not one.
   function parse(wlid,   prefix, rest, at) {
@@ -245,7 +245,10 @@ awk '
     }
     if (tolower($4) == kind) {
       group = $5
-    } else if (groups[kind] == 1) {
+    } else if (complete == "true" && groups[kind] == 1) {
+      # "The only group serving this kind" is a fact about the whole cluster. After a partial
+      # discovery the kind may also be served by a group that was not reached, and an empty list
+      # from the one that was would report the record orphaned without its real kind being read.
       group = only_group[kind]
     } else {
       print "U", "kind", label, $2, $3, object_ns, object_name
@@ -265,21 +268,38 @@ awk '
 ' "${work_dir}/served.tsv" "${work_dir}/records.tsv" >"${work_dir}/resolved.tsv"
 
 # 4. One table read per kind: `S <target>` when it was read, then `L <target> <namespace> <name>` per
-#    object. A failed read, or a row that is not a name table, leaves no `S` line, so its records end
-#    as unknown rather than as orphaned.
+#    object. A failed read, or a listing that is not a name table, leaves no `S` line, so its records
+#    end as unknown rather than as orphaned. kubectl pads its columns with at least three blanks, so
+#    the columns are split on two or more: a name holding a single blank stays whole instead of being
+#    indexed by its first word, which would keep the record of a deleted object with that first word
+#    as its name alive. The header says how many columns a row can have. A row with more holds a
+#    cell with a run of blanks in it, which may be the name, and then nothing in the listing is
+#    trusted; a row with fewer only has empty cells after the name, which kubectl prints as nothing.
+#    kubectl marks a default class by printing ` (default)` after its name, and that is not part of
+#    the name.
 : >"${work_dir}/live.tsv"
 awk -F '\t' '$1 == "C" { print $2 "\t" $3 }' "${work_dir}/resolved.tsv" | LC_ALL=C sort -u >"${work_dir}/targets.tsv"
 while IFS=$'\t' read -r target namespaced; do
   if [[ "${namespaced}" == true ]]; then
-    kube get "${target}" -A --no-headers >"${work_dir}/listing.txt" || continue
+    kube get "${target}" -A >"${work_dir}/listing.txt" || continue
   else
-    kube get "${target}" --no-headers >"${work_dir}/listing.txt" || continue
+    kube get "${target}" >"${work_dir}/listing.txt" || continue
   fi
   if awk -v target="${target}" -v namespaced="${namespaced}" '
-    NF < (namespaced == "true" ? 2 : 1) { exit 1 }
+    BEGIN { FS = "  +" }
+    { sub(/ +$/, "") }
+    NR == 1 {
+      columns = NF
+      if (namespaced == "true" ? ($1 != "NAMESPACE" || $2 != "NAME") : $1 != "NAME") exit 1
+      next
+    }
+    NF > columns { exit 1 }
     {
-      if (namespaced == "true") printf "L\t%s\t%s\t%s\n", target, $1, $2
-      else printf "L\t%s\t\t%s\n", target, $1
+      name = (namespaced == "true" ? $2 : $1)
+      sub(/ \(default\)$/, "", name)
+      if ($1 == "" || name == "") exit 1
+      if (namespaced == "true") printf "L\t%s\t%s\t%s\n", target, $1, name
+      else printf "L\t%s\t\t%s\n", target, name
     }
   ' "${work_dir}/listing.txt" >"${work_dir}/rows.tsv"; then
     printf 'S\t%s\n' "${target}" >>"${work_dir}/live.tsv"
