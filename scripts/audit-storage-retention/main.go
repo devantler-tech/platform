@@ -185,6 +185,18 @@ func audit(dir string, now time.Time, threshold time.Duration) (report Report, e
 			return report, errors.New("missing or unsupported class reclaim policy")
 		}
 	}
+	// Separate API snapshots can leave an extra Bound claim without a matching PV.
+	// Validate the reverse join too; checking only volumes would report it clean.
+	for _, claim := range claims {
+		if claim.Status.Phase != "Bound" {
+			continue
+		}
+		volume, exists := volumes["/"+claim.Spec.VolumeName]
+		ref := volume.Spec.ClaimRef
+		if !exists || volume.Status.Phase != "Bound" || ref.Namespace != claim.Metadata.Namespace || ref.Name != claim.Metadata.Name || ref.UID != claim.Metadata.UID || volume.Spec.Class != claim.Spec.Class {
+			return report, errors.New("bound claim and volume identities do not join; recapture")
+		}
+	}
 	for _, volume := range volumes {
 		if volume.Spec.Policy != "Retain" && volume.Spec.Policy != "Delete" {
 			return report, errors.New("missing or unsupported volume reclaim policy")

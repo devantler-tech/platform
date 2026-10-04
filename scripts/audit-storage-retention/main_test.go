@@ -162,6 +162,20 @@ func TestIncompleteOrUnjoinableObservationIsUnknown(t *testing.T) {
 		{"wrong binding", func(d map[string]map[string]any) {
 			first(d, "claims.json")["spec"].(map[string]any)["volumeName"] = "other"
 		}},
+		{"extra bound claim points to absent volume", func(d map[string]map[string]any) {
+			claim := resource("PersistentVolumeClaim", "second", "second-id")
+			claim["metadata"].(map[string]any)["namespace"] = "app"
+			claim["spec"] = map[string]any{"volumeName": "absent", "storageClassName": "durable"}
+			claim["status"] = map[string]any{"phase": "Bound"}
+			d["claims.json"]["items"] = append(d["claims.json"]["items"].([]any), claim)
+		}},
+		{"extra bound claim points to another claim's volume", func(d map[string]map[string]any) {
+			claim := resource("PersistentVolumeClaim", "second", "second-id")
+			claim["metadata"].(map[string]any)["namespace"] = "app"
+			claim["spec"] = map[string]any{"volumeName": "data", "storageClassName": "durable"}
+			claim["status"] = map[string]any{"phase": "Bound"}
+			d["claims.json"]["items"] = append(d["claims.json"]["items"].([]any), claim)
+		}},
 		{"duplicate identity", func(d map[string]map[string]any) {
 			d["volumes.json"]["items"] = append(d["volumes.json"]["items"].([]any), first(d, "volumes.json"))
 		}},
@@ -200,7 +214,9 @@ func TestFailedCaptureCannotLeaveCompletionReceipt(t *testing.T) {
 	command.Env = append(os.Environ(), "PATH="+commands+string(os.PathListSeparator)+os.Getenv("PATH"))
 	output, err := command.CombinedOutput()
 	exit, ok := err.(*exec.ExitError)
-	if !ok || exit.ExitCode() != 2 { t.Fatalf("API read failure must be UNKNOWN (2): %v %s", err, output) }
+	if !ok || exit.ExitCode() != 2 {
+		t.Fatalf("API read failure must be UNKNOWN (2): %v %s", err, output)
+	}
 	if _, err := os.Stat(filepath.Join(dir, "capture.json")); !os.IsNotExist(err) {
 		t.Fatalf("completion receipt exists after failure: %v", err)
 	}

@@ -15,7 +15,8 @@ into a generic list and loses the list version, so it is rejected. A failed
 read leaves no completion receipt. The auditor rejects missing lists, API error
 objects, pagination tokens, missing resource versions, duplicate identities,
 empty storage coverage, stale captures over five minutes, future timestamps and
-inconsistent volume/claim bindings. The lists are separate API snapshots: a
+inconsistent volume/claim bindings in both directions, including an extra Bound
+claim pointing at an absent volume. The lists are separate API snapshots: a
 failed UID join during controller activity means **UNKNOWN**, followed by a new
 capture, never clean coverage.
 
