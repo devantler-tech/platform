@@ -3,9 +3,12 @@ module github.com/devantler-tech/platform
 go 1.26.6
 
 require (
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/siderolabs/talos/pkg/machinery v1.14.0
+	go.yaml.in/yaml/v2 v2.4.2
 	gopkg.in/yaml.v3 v3.0.1
 	mvdan.cc/sh/v3 v3.14.1
+	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
