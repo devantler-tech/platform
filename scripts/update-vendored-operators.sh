@@ -16,7 +16,7 @@ readonly kubevirt_sha256='e9e92c15bca0531bf0b7db2c2dfc83b6b9bdbf1a6f3f96945f67d9
 # Renovate moves origin_ca_issuer_commit to the head of the upstream trunk branch, the ref these CRDs
 # were rendered from before they were vendored. --validate-committed then fails until --render-remotes
 # has re-fetched both CRDs at that commit (#4136).
-readonly origin_ca_issuer_commit='e375d9c00a66f47a15fb56457686f8629022b50d'
+readonly origin_ca_issuer_commit='40ff6b2b6395c626609a8c1efde025a94668e0e5'
 readonly clusteroriginissuers_sha256='cf6af6f155cd087a1ab2a4bec68cd014f05be3cf3d0240ad331ee1fe1bec574e'
 readonly originissuers_sha256='d085e763718cf34e675b62f8394e20854237b3997f825d86556659585940b170'
 readonly cert_approver_version='0.12.1'
