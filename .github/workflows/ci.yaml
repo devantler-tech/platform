@@ -844,6 +844,10 @@ jobs:
               # has no cluster; it also reads the reviewed list above.
               - 'scripts/check-kubescape-result-coverage.sh'
               - 'scripts/tests/test-check-kubescape-result-coverage.sh'
+              # The live orphaned-result report (#3697). Both halves, and only the fixture
+              # test runs here for the same reason.
+              - 'scripts/report-kubescape-scan-orphans.sh'
+              - 'scripts/tests/test-report-kubescape-scan-orphans.sh'
               # Both halves, for the same reason as the guards above. The guard also
               # reads the exception manifest itself, covered by 'k8s/**'.
               - 'scripts/guard-pod-security-exception-documented.sh'
@@ -2178,6 +2182,17 @@ jobs:
         # its fixture test, including the negative control: one expected result removed from a
         # passing set must fail, and an empty or short read must be UNKNOWN, never clean.
         run: bash scripts/tests/test-check-kubescape-result-coverage.sh
+
+      - name: 👻 Test the Kubescape orphaned-result report
+        if: needs.changes.outputs.k8s == 'true'
+        # The report compares every stored posture result against the live list of its kind
+        # and names the results whose object is gone (#3697). It needs a cluster, so CI runs
+        # only its fixture test: a result whose object exists is never orphaned, a refused,
+        # partial or malformed read ends as UNKNOWN rather than as a pass, kubectl is only
+        # ever asked to read, and no object name reaches the report.
+        run: |
+          shellcheck scripts/report-kubescape-scan-orphans.sh scripts/tests/test-report-kubescape-scan-orphans.sh
+          bash scripts/tests/test-report-kubescape-scan-orphans.sh
 
       - name: 🔎 Validate every suppressed control is documented as failing open
         if: needs.changes.outputs.k8s == 'true'

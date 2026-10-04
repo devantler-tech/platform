@@ -141,3 +141,84 @@ one expected result removed from a passing set must fail.
 | Runtime | 77 | 70 | 2 (one missing pair and one partial pair), plus 10 profiles still learning |
 
 The remaining vulnerability and runtime gaps are the work of #4263 and #4264.
+
+## Posture results whose object is gone
+
+The coverage check asks whether every expected object has a result. The opposite question, whether
+every result still has an object, needs its own answer, because **a stored posture result is not
+proof that its object exists** (#3697).
+
+Two upstream components remove a result once its object is deleted, and for most kinds neither
+does so on this cluster:
+
+- The **operator** deletes a result when it sees the object's deletion, but only for the kinds its
+  continuous-scanning watch names. That watch is empty here on purpose (see `continuousScanning`
+  in the kubescape HelmRelease), and a deletion it never saw is not revisited.
+- The **storage service** compares the stored results with the live cluster on every cleanup
+  interval, but only for Pods, CronJobs, DaemonSets, Deployments, Jobs, ReplicaSets and
+  StatefulSets. That list is hard-coded, in the pinned v0.0.297 and in v0.0.348 alike; a result of
+  any other kind is skipped.
+
+So the result of a deleted Deployment disappears within hours, while the result of a deleted Role,
+RoleBinding, ServiceAccount, Secret, ConfigMap, Service, policy or host-data object stays
+indefinitely. A reader that treats the result set as an inventory then answers "does this still
+exist?" with yes for an object that is gone, and counts findings nobody can remediate.
+
+[`scripts/report-kubescape-scan-orphans.sh`](../scripts/report-kubescape-scan-orphans.sh) compares
+every result with the live list of its kind. It is read-only (`kubectl api-resources` and
+`kubectl get` only) and puts each result in one of three classes:
+
+| Class | Meaning |
+| --- | --- |
+| `live` | the list of its kind was read and holds the object |
+| `orphaned` | the list of its kind was read and does not hold the object |
+| `unknown` | nothing was observed either way: the list failed, the cluster does not serve the kind under one name, or the result carries no usable object reference |
+
+```bash
+scripts/report-kubescape-scan-orphans.sh --context <kube-context>
+scripts/report-kubescape-scan-orphans.sh --context <kube-context> --resource summaries
+```
+
+The first form checks the `workloadconfigurationscans`, the second the
+`workloadconfigurationscansummaries` a posture count is built from. It prints one line per kind,
+the totals and a verdict, and exits `0` when every result is `live`, `1` when any is `orphaned`,
+and `2` when no orphan was found but something is `unknown`. A failed read never makes a result
+orphaned, and a run that read nothing, or stopped before its verdict, is `2`.
+
+Three properties decide whether its answer can be trusted:
+
+- **The object is the one the `kubescape.io/wlid` annotation names.** The
+  `kubescape.io/workload-name` label cannot hold every object name (a colon is replaced, a long
+  name is cut), so matching on it reports live objects as gone. A result that describes an RBAC
+  subject names the binding that grants it, and is checked against that binding.
+- **Live objects are read as tables.** kubectl then asks the API server for names and columns
+  only, so no object body, and in particular no Secret data, is requested.
+- **`unknown` depends on the credential.** A credential that may not list a kind leaves every
+  result of that kind `unknown`. A read credential without permission to list Secrets, for
+  example, never classifies the Secret results.
+
+The default output holds kinds and counts only. `--list live`, `--list orphaned` or
+`--list unknown` writes that class's results to stdout, one per line, and moves the report to
+stderr; those rows name objects, so keep them out of issues, pull requests and workflow logs. To
+compute a posture figure over objects that exist, hydrate only the `--list live` rows of the
+summaries (see [the exception oracle](kubescape-exception-oracle.md)).
+
+CI has no cluster, so it runs only the fixture test
+(`scripts/tests/test-report-kubescape-scan-orphans.sh`). Its negative controls: a result whose
+object exists is never orphaned, and a refused or malformed list ends as `unknown`.
+
+Nothing deletes an orphaned result yet. The report only makes them visible; removing them is the
+remaining work of #3697.
+
+### First measurement (2026-10-03, with a credential that may not list Secrets)
+
+| Result set | Results | Live | Orphaned | Unknown |
+| --- | --- | --- | --- | --- |
+| `workloadconfigurationscans` | 2725 | 1625 | 388 | 712 |
+| `workloadconfigurationscansummaries` | 2918 | 1625 | 456 | 837 |
+
+The 156 detailed results of the five workload kinds present (Deployment, StatefulSet, DaemonSet,
+Job, CronJob) hold no orphan, which is the storage cleanup at work; every orphan is of a kind that
+cleanup skips. All but one of the unknown detailed results are Secret results, which that
+credential may not list. A sample of 39 orphaned and 35 live results was read back one object at
+a time, and every one agreed with its class.
