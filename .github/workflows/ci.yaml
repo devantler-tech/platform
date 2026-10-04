@@ -68,6 +68,11 @@ jobs:
       - name: 🧭 Validate prod convergence resolver
         run: go test ./scripts/resolve-prod-convergence
 
+      - name: 🧭 Validate live required-workflow resolution
+        run: |
+          shellcheck scripts/required-merge-workflows.sh scripts/tests/test-required-merge-workflows.sh
+          bash scripts/tests/test-required-merge-workflows.sh
+
       # Run on merge groups too: the manifest job below is PR-only.
       - name: 🔐 Validate Cilium SNI hostname coverage
         run: |
