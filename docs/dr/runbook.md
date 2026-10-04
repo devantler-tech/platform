@@ -614,8 +614,21 @@ kubectl -n longhorn-system get volumes.longhorn.io -o json |
 #    (replica-soft-anti-affinity=false) and only three storage nodes, one node
 #    below storage-minimal-available-percentage means degraded volumes can never
 #    rebuild — they sit at ReplicaSchedulingFailure indefinitely.
+#    Check EVERY disk; an unknown capacity or scheduling condition needs
+#    investigation before draining. One healthy disk does not clear another.
 kubectl -n longhorn-system get nodes.longhorn.io -o json |
-  jq -r '.items[]|.metadata.name as $n|(.status.diskStatus//{}|to_entries[0].value) as $s|"\($n) avail=\((($s.storageAvailable//0)*100/($s.storageMaximum//1))|floor)% \([$s.conditions[]?|select(.type=="Schedulable")|"Schedulable=\(.status)"]|join(""))"'
+  jq -r '
+    .items[] | .metadata.name as $n |
+    (.status.diskStatus // {} | to_entries |
+      if length == 0 then [{key:"UNKNOWN",value:{}}] else . end)[] |
+    .key as $disk | .value as $s |
+    (if ($s.storageMaximum | type) == "number" and $s.storageMaximum > 0
+        and ($s.storageAvailable | type) == "number" and $s.storageAvailable >= 0
+      then "\(($s.storageAvailable * 100 / $s.storageMaximum) | floor)%"
+      else "UNKNOWN" end) as $available |
+    ([$s.conditions[]? | select(.type == "Schedulable") | .status] |
+      if length == 0 then "UNKNOWN" else join(",") end) as $schedulable |
+    "\($n) disk=\($disk) avail=\($available) Schedulable=\($schedulable)"'
 ```
 
 ```bash
@@ -814,8 +827,12 @@ The production deploy closes the bootstrap loop in this order:
    infrastructure creation.
 2. Before changing mutable `latest`, list every Kubernetes Node (including
    NotReady/autoscaled nodes). A changed **verified** credential revision takes
-   the fenced Talos `RegistryAuthConfig` and reboot path, workers before control
-   planes: remove the exact incoming KSail image from the CRI cache, pull it
+   the fenced Talos `RegistryAuthConfig` path: apply without reboot, then drain
+   and reboot each node, workers before control planes. Containerd loads
+   registry credentials at startup; a successful Talos image-API pull reads
+   machine-config auth and does **not** prove that the running containerd
+   adopted the new credential. After reboot, remove the exact incoming KSail
+   image from the CRI cache, pull it
    again for a registry round-trip, then record both proof markers. If that
    credential proof is current and only the verified image differs, remove and
    pull a proof copy in Talos containerd's `system` namespace without cordoning
