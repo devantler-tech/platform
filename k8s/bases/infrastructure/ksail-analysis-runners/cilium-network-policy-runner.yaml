@@ -46,4 +46,20 @@ spec:
               protocol: TCP
           rules:
             dns:
-              - matchPattern: "*"
+              - matchName: github.com
+              - matchName: api.github.com
+              - matchName: codeload.github.com
+              - matchName: raw.githubusercontent.com
+              - matchName: objects.githubusercontent.com
+              - matchName: release-assets.githubusercontent.com
+              - matchName: ghcr.io
+              - matchName: pkg-containers.githubusercontent.com
+              - matchPattern: "*.actions.githubusercontent.com"
+              - matchPattern: "*.blob.core.windows.net"
+              - matchName: proxy.golang.org
+              - matchName: sum.golang.org
+              - matchName: storage.googleapis.com
+              - matchName: go.dev
+              - matchName: dl.google.com
+              - matchName: registry.npmjs.org
+              - matchName: nodejs.org

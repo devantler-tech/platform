@@ -204,3 +204,51 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDNSAccessIsLimitedToTheDeclaredExternalDependencies(t *testing.T) {
+	for _, path := range []string{
+		"k8s/bases/infrastructure/controllers/actions-runner-controller/cilium-network-policy.yaml",
+		"k8s/bases/infrastructure/ksail-analysis-runners/cilium-network-policy-runner.yaml",
+	} {
+		t.Run(filepath.Base(filepath.Dir(path)), func(t *testing.T) {
+			policy := readYAML(t, path)
+			egress := field(t, policy, "spec", "egress").([]any)
+			dependencies := map[string]bool{}
+			dnsAllowed := map[string]bool{}
+			for _, rule := range egress {
+				mapping := rule.(map[string]any)
+				if fqdnRules, ok := mapping["toFQDNs"].([]any); ok {
+					for _, target := range fqdnRules {
+						for _, name := range target.(map[string]any) {
+							dependencies[name.(string)] = true
+						}
+					}
+				}
+				if ports, ok := mapping["toPorts"].([]any); ok {
+					for _, port := range ports {
+						rules, ok := port.(map[string]any)["rules"].(map[string]any)
+						if !ok {
+							continue
+						}
+						for _, dnsRule := range rules["dns"].([]any) {
+							for _, name := range dnsRule.(map[string]any) {
+								if name == "*" {
+									t.Fatal("unrestricted DNS permits undeclared outbound traffic")
+								}
+								dnsAllowed[name.(string)] = true
+							}
+						}
+					}
+				}
+			}
+			if len(dependencies) == 0 || len(dependencies) != len(dnsAllowed) {
+				t.Fatal("DNS access must match the finite external dependency list")
+			}
+			for name := range dependencies {
+				if !dnsAllowed[name] {
+					t.Errorf("missing DNS rule for %s", name)
+				}
+			}
+		})
+	}
+}

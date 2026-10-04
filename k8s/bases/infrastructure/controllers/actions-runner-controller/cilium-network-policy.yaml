@@ -29,4 +29,6 @@ spec:
               protocol: TCP
           rules:
             dns:
-              - matchPattern: "*"
+              - matchName: api.github.com
+              - matchName: github.com
+              - matchPattern: "*.actions.githubusercontent.com"
