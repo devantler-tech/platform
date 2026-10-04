@@ -27,4 +27,18 @@ if [[ "$count" == 0 ]]; then
   exit 2
 fi
 [[ "$status" == 0 ]] || exit "$status"
+library_filter='(^|/)scripts/(cosign-failure-lib|ghcr-auth-lib|publish-workflow-approved-revisions\.lib|refresh-flux-ghcr-auth-safety)\.sh$'
+if [[ "$(yq -r '.BASH_EXEC_FILTER_REGEX_EXCLUDE' "$repo_root/.mega-linter.yml")" != "$library_filter" ]]; then
+  echo '::error::bash-exec must exclude only the four reviewed sourced libraries' >&2
+  exit 1
+fi
+for library in cosign-failure-lib.sh ghcr-auth-lib.sh publish-workflow-approved-revisions.lib.sh refresh-flux-ghcr-auth-safety.sh; do
+  path="scripts/$library"
+  entry="$(git -C "$repo_root" ls-files --stage -- "$path")" || exit 2
+  metadata="${entry%%$'\t'*}"
+  if [[ ! "$metadata" =~ ^100644[[:space:]][0-9a-f]+[[:space:]]0$ ]] || [[ -x "$repo_root/$path" ]]; then
+    echo "::error::$path must remain a non-executable tracked sourced library" >&2
+    exit 1
+  fi
+done
 printf 'Verified tracked execute bits on %s test entries.\n' "$count"
