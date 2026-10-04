@@ -2413,6 +2413,7 @@ node_schedulability_release_is_complete() {
     --arg uid "${node_uid}" \
     --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
     --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
+    --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" \
     --arg scale_down_owner_annotation "${SCALE_DOWN_GUARD_OWNER_ANNOTATION}" \
     --arg scale_down_disabled_annotation "${AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION}" \
     --argjson was_cordoned "${was_cordoned}" \
@@ -2420,6 +2421,7 @@ node_schedulability_release_is_complete() {
     .metadata.uid == $uid
     and (((.metadata.annotations // {})[$owner_annotation] // "") == "")
     and (((.metadata.annotations // {})[$recovery_annotation] // "") == "")
+    and (((.metadata.annotations // {}) | has($phase_annotation)) | not)
     and (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == "")
     and (if $scale_down_guard_owned == 1 then
       (((.metadata.annotations // {}) | has($scale_down_disabled_annotation)) | not)
@@ -2434,7 +2436,7 @@ restore_node_schedulability_if_needed() {
   local expected_recovery="${7:-}"
   local scale_down_guard_owned="${8:-0}"
   local release_attempt="${9:-1}"
-  local current_resource_version current_recovery
+  local current_resource_version current_recovery current_phase phase_present
   local current_scale_down_owner current_scale_down_disabled
 
   if [[ -z "${owner_token}" ]]; then
@@ -2482,6 +2484,21 @@ restore_node_schedulability_if_needed() {
     --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
     '.metadata.annotations[$recovery_annotation] // ""' \
     "${cordon_state_file}")"
+  current_phase="$(jq -r \
+    --arg annotation "${CORDON_PHASE_ANNOTATION}" \
+    '(.metadata.annotations // {})[$annotation] // ""' \
+    "${cordon_state_file}")"
+  phase_present="$(jq \
+    --arg annotation "${CORDON_PHASE_ANNOTATION}" \
+    '(.metadata.annotations // {}) | has($annotation)' \
+    "${cordon_state_file}")"
+  case "${current_phase}" in
+    ''|claimed|mutating) ;;
+    *)
+      echo "::error::Drain phase changed or was malformed for Talos node ${node_name}; refusing to release it."
+      return 1
+      ;;
+  esac
   current_scale_down_owner="$(jq -r \
     --arg annotation "${SCALE_DOWN_GUARD_OWNER_ANNOTATION}" \
     '(.metadata.annotations // {})[$annotation] // ""' \
@@ -2538,6 +2555,9 @@ restore_node_schedulability_if_needed() {
     --arg owner "${owner_token}" \
     --arg recovery_path "${CORDON_RECOVERY_JSON_PATH}" \
     --arg recovery "${current_recovery}" \
+    --arg phase_path "${CORDON_PHASE_JSON_PATH}" \
+    --arg phase "${current_phase}" \
+    --argjson phase_present "${phase_present}" \
     --arg scale_down_path "${AUTOSCALER_SCALE_DOWN_DISABLED_JSON_PATH}" \
     --arg scale_down_owner_path "${SCALE_DOWN_GUARD_OWNER_JSON_PATH}" \
     --arg scale_down_owner "${current_scale_down_owner}" \
@@ -2562,6 +2582,12 @@ restore_node_schedulability_if_needed() {
           {op: "remove", path: $recovery_path}
         ]
       end)
+    + (if $phase_present then
+        [
+          {op: "test", path: $phase_path, value: $phase},
+          {op: "remove", path: $phase_path}
+        ]
+      else [] end)
     + (if $scale_down_owner == "" then [] else
         [
           {op: "test", path: $scale_down_owner_path, value: $owner},
