@@ -16,7 +16,7 @@ metadata:
     policies.kyverno.io/category: Security, GitHub
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: Team, TeamMembership, TeamRepository
-    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/minversion: 1.13.0
     policies.kyverno.io/description: >-
       Restricts provider-upjet-github team resources in the github-config
       namespace to the github-config CODEOWNERS teams, requires TeamMembership and
@@ -25,7 +25,6 @@ metadata:
       github-config artifact from adding arbitrary users to arbitrary GitHub
       teams or granting privileged repository access.
 spec:
-  validationFailureAction: Enforce
   background: true
   rules:
     - name: teams-allow-listed
@@ -37,6 +36,7 @@ spec:
               namespaces:
                 - github-config
       validate:
+        failureAction: Enforce
         message: GitHub Team resources managed by github-config must be one of admins or maintainers.
         deny:
           conditions:
@@ -65,6 +65,7 @@ spec:
               namespaces:
                 - github-config
       validate:
+        failureAction: Enforce
         message: GitHub Team spec.forProvider.name and spec.initProvider.name must be omitted or equal to metadata.name, so the allow-listed object name is the team actually reconciled.
         deny:
           conditions:
@@ -100,6 +101,7 @@ spec:
               namespaces:
                 - github-config
       validate:
+        failureAction: Enforce
         message: GitHub TeamMembership resources must set spec.forProvider.teamIdRef.name to admins or maintainers with policy.resolve Always, so the reference re-resolves on every reconcile; selectors are not allowed, and initProvider must not carry a teamId, selector or non-allow-listed reference.
         deny:
           conditions:
@@ -164,6 +166,7 @@ spec:
               namespaces:
                 - github-config
       validate:
+        failureAction: Enforce
         message: GitHub TeamMembership resources may only add allow-listed org members; set spec.forProvider.username to an allow-listed login (currently devantler) and do not supply a different one under initProvider. Adding a member is a reviewed change to restrict-github-team-management.yaml.
         deny:
           conditions:
@@ -214,6 +217,7 @@ spec:
               namespaces:
                 - github-config
       validate:
+        failureAction: Enforce
         message: GitHub TeamMembership resources may grant only the member or maintainer role, in forProvider and initProvider.
         deny:
           conditions:
@@ -245,6 +249,7 @@ spec:
               namespaces:
                 - github-config
       validate:
+        failureAction: Enforce
         message: GitHub TeamRepository resources must reference admins or maintainers by spec.forProvider.teamIdRef.name with policy.resolve Always, and may grant only pull, triage or push permission, in forProvider and initProvider.
         deny:
           conditions:
@@ -333,6 +338,7 @@ spec:
             operator: Equals
             value: maintainers
       validate:
+        failureAction: Enforce
         message: GitHub TeamRepository resources referencing the maintainers team may grant at most maintain; admin is reserved to the admins team.
         deny:
           conditions:
