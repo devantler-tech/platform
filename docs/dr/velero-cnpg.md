@@ -266,7 +266,10 @@ manually with `verify-wedding-backup-staging=true`; the verifier checks the
 bootstrap Secret, OpenBao projection, the dedicated ObjectStore, the dedicated
 live Cluster reference, and live source stability without printing the
 credential. It also refuses unless the retired shared ObjectStore, its
-ExternalSecret and its Secret are observed absent from `wedding-app`. Use `Verify Wedding Backup Cutover` to take and verify a fresh
+ExternalSecret and its Secret are observed absent from `wedding-app`. The
+owned Secret is removed just after its ExternalSecret, so a refusal on the first
+run after the retiring deploy calls for a fresh dispatch, not a re-run. Use
+`Verify Wedding Backup Cutover` to take and verify a fresh
 backup after a Wedding credential rotation. The catalogue and WAL checks must
 also pass before retiring the replaced dedicated token. `Verify Wedding Backup
 Denial` cannot prove that `platform-backups` refuses the new token until #4482

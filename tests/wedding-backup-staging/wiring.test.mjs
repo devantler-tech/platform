@@ -113,7 +113,7 @@ test('dedicated ObjectStore and credential are the only Wedding backup wiring',a
  for(const doc of wedding){
   const label=doc.kind+'/'+doc.metadata.name,text=JSON.stringify(doc);
   assert.ok(!(doc.kind==='ObjectStore'&&doc.metadata.name!=='wedding-db-dedicated'),label+' is not the dedicated store');
-  assert.doesNotMatch(text,/infrastructure\/backup\/r2|\$\{r2_bucket\}|platform-backups|"wedding-db-backup-r2"/,label+' reaches the shared backup credential or bucket');
+  assert.doesNotMatch(text,/infrastructure\/backup\/r2|\$\{r2_bucket\}|platform-backups|wedding-db-backup-r2(?!-dedicated)/,label+' reaches the shared backup credential or bucket');
  }
 });
 
