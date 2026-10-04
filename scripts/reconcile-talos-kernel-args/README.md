@@ -27,7 +27,18 @@ Its autoscaler-node shaping repair is in the provisioner and does not alter this
 post-installer fold. The 7.194.5 release retains the same configuration-manager,
 cluster API and distribution caller trees/blobs. Its dependency versions and
 checksums are unchanged; the only module edit marks the existing x/net dependency
-as direct. Its dry-run transport repair does not change the mirrored fold. See
+as direct. Its dry-run transport repair does not change the mirrored fold.
+
+**7.194.7**, commit `2af05101dd0328cbd9209ed1e435c4bbaebb41b8`, is audited as the
+range 7.194.5 → 7.194.7 and is the first audited release whose configuration-manager
+tree differs (`439ee0a33cf6ca597f5773bcb6db316900cb8149`). The only changed file in
+that tree is `talos/configs.go`, where 7.194.6 makes `applySchematic` return the
+computed schematic alongside its ID so KSail can register it with Image Factory before
+an upgrade or snapshot uses it. `schematicKernelArgs`, `reconcileFoldedKernelArgs`,
+`resolveInstallerVersion` and `applyInstallerImage` are byte-identical to 7.194.5, as
+are the distribution caller, the cluster API tree, `go.mod` and `go.sum`; 7.194.7
+itself changes only Hetzner bootstrap code. The intermediate 7.194.6 was never
+deployed and stays refused. See
 [`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/talos/configs.go#L1082)
 and the [explicit schematic selection boundary](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/ksail/distribution.go#L154).
 KSail first computes the schematic and installs its image; this helper mirrors
