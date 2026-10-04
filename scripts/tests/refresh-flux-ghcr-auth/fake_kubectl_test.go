@@ -2557,16 +2557,14 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		appendEnvFile("OPERATION_LOG", "recovery-phase:"+nodeName+":"+phase+"\n")
 		return 0
 	}
-	// Reclaiming a leaked fence is the only patch that REMOVES the phase
-	// annotation -- a claim adds it, a release leaves it alone -- so that is the
-	// discriminator. Without this branch the reclaim falls through to the
-	// release path, whose first test is the owner rather than the uid, and every
-	// reclaim would fail exit 56 with no coverage of the mutation at all.
+	// A normal release pins the resource version; an orphan reclaim instead
+	// pins the pre-mutation phase. Both remove phase, so removal alone cannot
+	// discriminate them.
 	isReclaim := hasPatchPath(
 		patch,
 		"remove",
 		"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
-	)
+	) && !hasPatchPath(patch, "test", "/metadata/resourceVersion")
 	if isReclaim {
 		if nodeName == os.Getenv("FAKE_RECLAIM_FAIL_NODE") {
 			return commandFailure(56, "fence changed while being reclaimed")
@@ -2766,6 +2764,10 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		!hasPatchPath(patch, "remove", "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner") {
 		return commandFailure(56, "invalid atomic cordon release")
 	}
+	removePhase := hasPatchPath(patch, "remove", "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase")
+	if removePhase && !hasPatchOperation(patch, "test", "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase", markerContent("cordon-phase-"+nodeName)) {
+		return commandFailure(56, "atomic cordon release omitted its current phase test")
+	}
 	currentScaleDownOwner := markerContent("scale-down-owner-" + nodeName)
 	if currentScaleDownOwner != "" {
 		if currentScaleDownOwner != expectedOwner ||
@@ -2814,6 +2816,9 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 	setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
 	removeMarker("cordon-owner-" + nodeName)
 	removeMarker("cordon-recovery-" + nodeName)
+	if removePhase {
+		removeMarker("cordon-phase-" + nodeName)
+	}
 	if hasPatchOperation(patch, "add", "/spec/unschedulable", false) {
 		appendEnvFile("OPERATION_LOG", "node-uncordon:"+nodeName+"\n")
 		removeMarker("cordoned-" + nodeName)
