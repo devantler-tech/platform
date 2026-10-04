@@ -49,19 +49,34 @@ spec:
         message: >-
           Flux Kustomization must set the recommended reliability fields:
           `spec.interval`, `spec.timeout`, `spec.retryInterval`,
-          `spec.prune: true` (garbage collection), `spec.wait: true`
-          (health-gated reconciliation), and `spec.sourceRef`.
+          `spec.prune: true` (garbage collection), and `spec.sourceRef`.
+          `spec.wait: true` is required except for the platform-owned GitHub
+          configuration, whose asynchronous API operations do not gate delivery.
           See https://fluxcd.io/flux/components/kustomize/kustomizations/#recommended-settings.
-        pattern:
-          spec:
-            interval: "?*"
-            timeout: "?*"
-            retryInterval: "?*"
-            prune: true
-            wait: true
-            sourceRef:
-              kind: "?*"
-              name: "?*"
+        anyPattern:
+          - spec:
+              interval: "?*"
+              timeout: "?*"
+              retryInterval: "?*"
+              prune: true
+              wait: true
+              sourceRef:
+                kind: "?*"
+                name: "?*"
+          # Bound the alternative to this exact platform-owned identity. Keep
+          # every other reliability requirement; this is not a policy exclusion.
+          - metadata:
+              name: github-config
+              namespace: github-config
+            spec:
+              interval: "?*"
+              timeout: "?*"
+              retryInterval: "?*"
+              prune: true
+              wait: false
+              sourceRef:
+                kind: "?*"
+                name: "?*"
     - name: helmrelease-recommended-settings
       match:
         any:
