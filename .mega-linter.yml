@@ -63,6 +63,12 @@ BASH_SHFMT_ARGUMENTS:
   # written. Without it shfmt de-indents them and CI commits the reflow.
   - -ci
 
+# These four files are sourced libraries, not executable entry points. MegaLinter
+# 10 selects all .sh files even without a shebang. Only its execute-bit check is
+# scoped off these exact paths; ShellCheck and formatting still inspect them.
+# guard-test-script-exec-bit.sh checks both this boundary and their tracked modes.
+BASH_EXEC_FILTER_REGEX_EXCLUDE: '(^|/)scripts/(cosign-failure-lib|ghcr-auth-lib|publish-workflow-approved-revisions\.lib|refresh-flux-ghcr-auth-safety)\.sh$'
+
 DISABLE_LINTERS:
   # gitleaks is deprecated in MegaLinter's own descriptor, which recommends exactly this entry and
   # prints the notice on every run. Its 2 findings were triaged before removing it: both are
