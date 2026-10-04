@@ -14,8 +14,9 @@ The audited implementations are KSail **7.193.6**, commit
 `a0622ef7d0f3072823832248a4f79612ed3a0e69`, **7.193.8**, commit
 `00e671710f10bb251d54ecd71fac3d36634e66be`, **7.194.0**, commit
 `bbe44951bfd0adcc570080c48007866460c709ca`, **7.194.3**, commit
-`6c2d2f4b14594521e5001dec9a2796e7902ad610`, and **7.194.4**, commit
-`37dd45d12e4f445bf8874ee6e59671aa1eefd330`. Their Talos configuration and schematic
+`6c2d2f4b14594521e5001dec9a2796e7902ad610`, **7.194.4**, commit
+`37dd45d12e4f445bf8874ee6e59671aa1eefd330`, and **7.194.5**, commit
+`d03577f1e0e7465979c97348e5ebb34baf30f4fb`. Their Talos configuration and schematic
 code, config manager and KSail distribution caller are byte-identical. The whole
 `pkg/fsutil/configmanager/` tree is unchanged between 7.193.8 and 7.194.3. The
 7.194.0 and 7.194.3 releases share tree
@@ -23,7 +24,10 @@ code, config manager and KSail distribution caller are byte-identical. The whole
 The 7.194.4 release shares that same configuration-manager tree; its cluster API,
 Go dependency inputs and distribution caller are also unchanged from 7.194.3.
 Its autoscaler-node shaping repair is in the provisioner and does not alter this
-post-installer fold. See
+post-installer fold. The 7.194.5 release retains the same configuration-manager,
+cluster API and distribution caller trees/blobs. Its dependency versions and
+checksums are unchanged; the only module edit marks the existing x/net dependency
+as direct. Its dry-run transport repair does not change the mirrored fold. See
 [`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/talos/configs.go#L1082)
 and the [explicit schematic selection boundary](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/ksail/distribution.go#L154).
 KSail first computes the schematic and installs its image; this helper mirrors
@@ -39,7 +43,7 @@ bash scripts/tests/test-talos-render-kernel-args.sh
 ```
 
 The version check reads all explicit KSail pins in CI, CD and the production
-deployment action. All pins must agree on one of the five audited releases. A
+deployment action. All pins must agree on one of the six audited releases. A
 missing, malformed, divergent or unaudited pin fails the unconditional changes
 job. Another version requires reviewing the owned KSail source and
 updating this contract, rather than silently assuming the fold is unchanged.
