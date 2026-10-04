@@ -829,7 +829,40 @@ func run(args []string, stdout io.Writer) error {
 		}
 		return json.NewEncoder(stdout).Encode(summary)
 	}
-	return errors.New("usage: mirror-wedding-backup-catalogue validate-plan <source-bucket> <source-prefix> <source-secret> <destination-bucket> <destination-prefix> <destination-secret> | evaluate <run-start> <source-bucket> <source-before> <source-after> <destination> | evaluate-catch-up <switch-time> <server-name> <source-bucket> <source-before> <source-after> <destination> | validate-switch-time <switch-time>")
+	if len(args) == 4 && args[0] == "coverage-multipart-keys" {
+		shared, dedicated, err := readCoverageListings(args[1], args[2], args[3])
+		if err != nil {
+			return err
+		}
+		keys, err := MultipartKeys(shared.Objects, dedicated.Objects)
+		if err != nil {
+			return err
+		}
+		for _, key := range keys {
+			if _, err := fmt.Fprintln(stdout, key); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if len(args) == 6 && args[0] == "evaluate-coverage" {
+		shared, dedicated, err := readCoverageListings(args[1], args[2], args[3])
+		if err != nil {
+			return err
+		}
+		if err := applySumsFile(shared.Objects, args[4]); err != nil {
+			return err
+		}
+		if err := applySumsFile(dedicated.Objects, args[5]); err != nil {
+			return err
+		}
+		summary, err := EvaluateCoverage(shared, dedicated)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(summary)
+	}
+	return errors.New("usage: mirror-wedding-backup-catalogue coverage-multipart-keys <shared-bucket> <shared> <dedicated> | evaluate-coverage <shared-bucket> <shared> <dedicated> <shared-sums> <dedicated-sums> | validate-plan <source-bucket> <source-prefix> <source-secret> <destination-bucket> <destination-prefix> <destination-secret> | evaluate <run-start> <source-bucket> <source-before> <source-after> <destination> | evaluate-catch-up <switch-time> <server-name> <source-bucket> <source-before> <source-after> <destination> | validate-switch-time <switch-time>")
 }
 
 // main exits non-zero with the refusal reason when a plan or mirror is not trusted.

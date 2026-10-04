@@ -160,6 +160,15 @@ jobs:
           shellcheck scripts/verify-wedding-backup-denial.sh scripts/verify-wedding-backup-denial-pod.sh scripts/tests/test-verify-wedding-backup-denial.sh
           bash scripts/tests/test-verify-wedding-backup-denial.sh
 
+      # The stale shared copy of the Wedding catalogue is removed on this proof's
+      # word, and that cannot be undone. These cases keep a missing object,
+      # different bytes, a live writer or an unreviewed bucket from passing as
+      # covered, and pin the pod script to commands that only read.
+      - name: 💒 Validate Wedding shared backup coverage proof
+        run: |
+          shellcheck scripts/verify-wedding-shared-backup-coverage.sh scripts/verify-wedding-shared-backup-coverage-pod.sh scripts/tests/test-verify-wedding-shared-backup-coverage.sh
+          bash scripts/tests/test-verify-wedding-shared-backup-coverage.sh
+
       - name: 💾 Validate two-stage PVC retirement
         # A merge-group artifact is speculative, but a PVC deletion is not: its
         # deletionTimestamp survives queue eviction and main cannot undo it.
