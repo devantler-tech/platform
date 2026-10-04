@@ -47,6 +47,11 @@ jobs:
           bash scripts/tests/test-github-bootstrap-isolation.sh
           bash scripts/tests/test-crossplane-sync-alerter.sh
 
+      - name: 🚩 Validate runtime flag definitions
+        run: |
+          go test ./scripts/validate-feature-flags
+          go run ./scripts/validate-feature-flags
+
       - name: 🛡️ Validate preserved policy failure actions
         run: |
           go test ./scripts/validate-policy-actions
