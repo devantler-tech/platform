@@ -265,6 +265,8 @@ jobs:
           shellcheck scripts/report-publish-workflow-signing-revisions.sh
           shellcheck scripts/tests/test-publish-workflow-signing-revisions.sh
           bash scripts/tests/test-publish-workflow-signing-revisions.sh
+          shellcheck -x scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
+          bash scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
 
       # The report above discovers its consumers with a raw FILE SCAN, while production is
       # what Flux RENDERS. This renders every production root (read from k8s/clusters/prod)
